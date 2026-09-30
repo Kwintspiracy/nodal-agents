@@ -48,6 +48,7 @@ import {
   setReviewerReadOnlyPresetAction,
   setAgentRuntimeAction,
   setCliRuntimeModeAction,
+  setCliRuntimeShellAction,
   setSkillScriptsAuthorizedAction,
   setSkillFilesWritableAction,
   assignSkillAction,
@@ -89,6 +90,7 @@ import {
   groupModelCatalog,
   modelOptionLabel,
   modelToolsSupport,
+  cliShellPosture,
 } from '@nodal-agents/shared';
 import {
   reasoningOptionValues,
@@ -756,6 +758,9 @@ export default function AgentComposer({
             onChangeCliMode={setCliMode}
             idleTimeoutSeconds={agent.idleTimeoutSeconds ?? null}
             cliDefaults={agent.cliDefaults}
+            cliShell={agent.cliPermissions?.shell ?? 'none'}
+            cliExtraDisallowed={agent.cliPermissions?.extraDisallowed ?? []}
+            autoRunPaused={autoRunPaused}
             isOwner={isOwner}
           />
         )}
@@ -3118,6 +3123,12 @@ function SettingsTab(props: {
   /** `agents.idle_timeout_seconds` (#442) — null = the platform decides. */
   idleTimeoutSeconds: number | null;
   cliDefaults: AgentRow['cliDefaults'];
+  /** `agents.cli_permissions.shell` (#494), as stored. */
+  cliShell: 'none' | 'auto';
+  /** `agents.cli_permissions.extraDisallowed`: a shell tool listed there never runs. */
+  cliExtraDisallowed: readonly string[];
+  /** The workspace auto-run brake: no Claude command runs while it is on. */
+  autoRunPaused: boolean;
   isOwner: boolean;
 }) {
   const {
@@ -3165,6 +3176,9 @@ function SettingsTab(props: {
     onChangeCliMode,
     idleTimeoutSeconds,
     cliDefaults,
+    cliShell,
+    cliExtraDisallowed,
+    autoRunPaused,
     isOwner,
   } = props;
 
@@ -3770,6 +3784,9 @@ function SettingsTab(props: {
           runtime={runtime}
           mode={cliMode}
           onChangeMode={onChangeCliMode}
+          initialShell={cliShell}
+          extraDisallowed={cliExtraDisallowed}
+          autoRunPaused={autoRunPaused}
           cliDefaults={cliDefaults}
           workspaces={workspaces}
         />
@@ -4057,11 +4074,14 @@ function SettingsTab(props: {
 // quoi un agent Codex aurait affiché le nom d'un autre harnais et testé le
 // mauvais binaire.
 
-function ClaudeCodeRuntimeCard({
+export function ClaudeCodeRuntimeCard({
   agentId,
   runtime,
   mode,
   onChangeMode,
+  initialShell,
+  extraDisallowed = [],
+  autoRunPaused = false,
   cliDefaults,
   workspaces,
 }: {
@@ -4070,6 +4090,10 @@ function ClaudeCodeRuntimeCard({
   /** Lifted to AgentComposer — the hero badge renders the same value. */
   mode: 'read' | 'write';
   onChangeMode: (v: 'read' | 'write') => void;
+  /** agents.cli_permissions.shell (#494), as stored. */
+  initialShell: 'none' | 'auto';
+  extraDisallowed?: readonly string[];
+  autoRunPaused?: boolean;
   cliDefaults: AgentRow['cliDefaults'];
   workspaces: AgentWorkspaceRow[];
 }) {
@@ -4078,6 +4102,44 @@ function ClaudeCodeRuntimeCard({
   const reportsCost = CLI_RUNTIME_REPORTS_COST[runtime];
   const [savingMode, setSavingMode] = useState(false);
   const [confirmWriteOpen, setConfirmWriteOpen] = useState(false);
+  const [shell, setShell] = useState<'none' | 'auto'>(initialShell);
+  const [savingShell, setSavingShell] = useState(false);
+  const [confirmShellOpen, setConfirmShellOpen] = useState(false);
+
+  // #494 : les commandes d'un agent Claude Code. En `-p`, la CLI ne peut
+  // demander à personne : soit elles tournent sans demander, soit l'agent n'a
+  // pas de shell. Le runner lit ce réglage (cliShellPosture, @nodal-agents/shared), et
+  // le bloc d'équipe le dit au routeur avec la même fonction.
+  // Ce que le runner fera, par SA règle (cliShellPosture) : pas ce qui est
+  // stocké. Un réglage 'auto' en lecture seule, sous le frein, ou dont les
+  // outils shell sont interdits ailleurs ne lance aucune commande, et
+  // l'interrupteur le montre éteint (revue Codex de #494).
+  const shellRuns =
+    cliShellPosture(
+      'claude',
+      { mode, shell, extraDisallowed: [...extraDisallowed] },
+      { autoRunPaused },
+    ).kind === 'shell';
+  const shellNote =
+    mode !== 'write'
+      ? 'Needs write mode. In read only, it has no shell.'
+      : autoRunPaused
+        ? 'Auto-run is paused for this workspace, so no command runs.'
+        : shell === 'auto' && !shellRuns
+          ? 'Its shell tools are blocked by another restriction on this agent, so no command runs.'
+          : `Lets it run commands without asking, with your rights on this machine. ${label} cannot ask you command by command.`;
+
+  async function applyShell(next: 'none' | 'auto') {
+    setSavingShell(true);
+    const result = await setCliRuntimeShellAction({ agentId, shell: next });
+    setSavingShell(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
+    }
+    setShell(next);
+    toast.success(next === 'auto' ? 'Shell commands enabled.' : 'Shell commands disabled.');
+  }
 
   async function applyMode(next: 'read' | 'write') {
     setSavingMode(true);
@@ -4160,6 +4222,46 @@ function ClaudeCodeRuntimeCard({
         }}
         onCancel={() => setConfirmWriteOpen(false)}
       />
+
+      {runtime === 'claude-code' ? (
+        <>
+          <div className="mt-4 flex items-start gap-4" data-testid="cli-runtime-shell">
+            <div className="min-w-0 flex-1">
+              <span className="text-medium-14 text-ink">Shell commands</span>
+              <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">{shellNote}</p>
+            </div>
+            <div className="mt-0.5">
+              <Switch
+                checked={shellRuns}
+                onChange={() => {
+                  if (shell === 'auto') void applyShell('none');
+                  else setConfirmShellOpen(true);
+                }}
+                disabled={savingShell || mode !== 'write' || autoRunPaused}
+                ariaLabel="Shell commands"
+              />
+            </div>
+          </div>
+          <ConfirmDialog
+            open={confirmShellOpen}
+            title={`Let ${label} run commands?`}
+            message={`It will run any command without asking you, with your rights on this machine. It starts in the workspace but is not confined to it: it can read and write elsewhere and use the network. Only enable for an agent you fully trust. Pausing auto-run in Settings stops it, even during a run.`}
+            confirmLabel="Enable shell commands"
+            destructive
+            onConfirm={() => {
+              setConfirmShellOpen(false);
+              void applyShell('auto');
+            }}
+            onCancel={() => setConfirmShellOpen(false)}
+          />
+        </>
+      ) : (
+        <p className="mt-4 text-body-13 leading-[1.4]! text-ink-3" data-testid="cli-runtime-shell">
+          {cliShellPosture('codex', null, { autoRunPaused }).kind === 'refused'
+            ? `Shell commands: auto-run is paused for this workspace, and ${label} cannot run without a shell, so it does not start.`
+            : `Shell commands: ${label} runs them inside its own sandbox, without asking.`}
+        </p>
+      )}
 
       <div className="mt-6 space-y-2.5">
         <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">

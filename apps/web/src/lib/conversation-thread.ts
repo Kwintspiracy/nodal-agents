@@ -94,6 +94,20 @@ export const STOPPED_ANSWER_NOTE = 'You stopped this answer.';
 /** Ce que le fil dit sous une réponse coupée avant sa fin (#458). */
 export const CUT_ANSWER_NOTE = 'This answer was cut off: the model stopped responding.';
 
+/**
+ * La note d'une réponse coupée, selon ce qui l'a coupée : une horloge du
+ * modèle (la note ci-dessus), ou le frein d'urgence sur un tour de CLI (#494).
+ */
+const CUT_ANSWER_NOTE_BY_REASON: Readonly<Record<string, string>> = {
+  auto_run_paused: 'This answer was cut off: the workspace emergency brake was engaged.',
+  auto_run_state_unreadable:
+    'This answer was cut off: the emergency brake state could not be read.',
+};
+
+function cutAnswerNote(reason: string): string {
+  return CUT_ANSWER_NOTE_BY_REASON[reason] ?? CUT_ANSWER_NOTE;
+}
+
 /** Une commande de preuve d'un job (ou d'un de ses délégués) et son verdict. */
 export type ThreadProofRun = { command: string; verdict: string };
 
@@ -803,7 +817,7 @@ export function buildConversationThread(input: {
     if (message.stopped === true) {
       items.push({ kind: 'note', text: STOPPED_ANSWER_NOTE, origin: 'thread' });
     } else if (message.cutReason) {
-      items.push({ kind: 'note', text: CUT_ANSWER_NOTE, origin: 'thread' });
+      items.push({ kind: 'note', text: cutAnswerNote(message.cutReason), origin: 'thread' });
     }
 
     if (message.jobId === null) continue;

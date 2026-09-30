@@ -84,6 +84,12 @@ const OFF_DB = {
   workerSecretConfigured: true,
   security: null,
   network: null,
+  // #451 — un fait du SYSTÈME, lu par le CLI : il ne vit pas en base.
+  autostart: {
+    status: { state: 'at_login' as const, lingerCommand: 'sudo loginctl enable-linger pi' },
+    error: null,
+    isOwner: true,
+  },
 };
 
 /**
@@ -330,7 +336,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
     }
   });
 
-  it('les quinze lignes existent, groupées dans l’ordre Access, Safety, Workspace, Advanced', async () => {
+  it('toutes les lignes existent, groupées dans l’ordre Access, Safety, Workspace, Advanced', async () => {
     const rows = await rowsFromDb({ authMode: 'local-auth' });
 
     expect(rows.map((r) => r.id)).toEqual([
@@ -345,6 +351,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
       'root-agent',
       'mcp-server',
       'timezone',
+      'autostart',
       'install-notes',
       'workspaces',
       'urls',
@@ -364,6 +371,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
       'workspace',
       'workspace',
       'workspace',
+      'workspace',
       'advanced',
       'advanced',
     ]);
@@ -373,7 +381,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
     for (const mode of ['local-trust', 'bearer-token'] as const) {
       const rows = await rowsFromDb({ authMode: mode });
       expect(rows.map((r) => r.id)).not.toContain('password');
-      expect(rows).toHaveLength(14);
+      expect(rows).toHaveLength(15);
     }
   });
 });
@@ -395,7 +403,28 @@ describe('buildSettingRows — la config et l’environnement @cap:installer-et-
     agents: [],
     rootAgentId: null,
     rootAutonomy: 'destructive_gate' as const,
+    autostart: null,
   };
+
+  it('#451 — « Start with this machine » dit ce que le SYSTÈME répond, jamais un défaut', async () => {
+    const { buildSettingRows } = await rowsModule();
+    const row = (autostart: Parameters<typeof buildSettingRows>[0]['autostart']) =>
+      buildSettingRows({ ...BASE, autostart }).find((r) => r.id === 'autostart')!;
+    expect(row(null).value).toBe('Could not be read');
+    expect(row({ status: null, error: 'x', isOwner: true }).value).toBe('Could not be read');
+    expect(row({ status: { state: 'off' }, error: null, isOwner: true })).toMatchObject({
+      value: 'Off',
+      toggle: false,
+    });
+    expect(row({ status: { state: 'at_boot' }, error: null, isOwner: true })).toMatchObject({
+      value: 'Starts at boot',
+      toggle: true,
+    });
+    expect(
+      row({ status: { state: 'unsupported', reason: 'no systemd' }, error: null, isOwner: true })
+        .value,
+    ).toBe('Not available on this machine');
+  });
 
   it('Sign-in dit le mode en vigueur, et sa pastille', async () => {
     const { buildSettingRows } = await rowsModule();
@@ -520,6 +549,7 @@ describe('filterSettingRows @cap:installer-et-demarrer/moteur', () => {
       runBudget: null,
       mcpServer: null,
       timezone: null,
+      autostart: null,
       installNotes: null,
       workspaces: [],
       agents: [],

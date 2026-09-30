@@ -36,6 +36,7 @@ import {
   CLAUDE_READONLY_DISALLOWED,
   type NormalizedCliResult,
 } from '@nodal-agents/tools';
+import { claudeShellFlags } from '@nodal-agents/shared';
 
 export interface ClaudeTurnEvent {
   kind: 'tool_use' | 'tool_result' | 'assistant_text';
@@ -96,6 +97,13 @@ export interface ClaudeTurnOptions {
    */
   extraWriteDirs?: readonly string[];
   mode: 'read' | 'write';
+  /**
+   * Les outils shell de Claude que ce tour lance sans demander (#494) ; vide =
+   * aucun, et ils quittent la palette. Calculé par l'appelant depuis
+   * `cliShellPosture` (@nodal-agents/shared), la règle que lisent aussi le
+   * bloc d'équipe et l'écran. Codex l'ignore : son bac à sable décide.
+   */
+  shellTools: readonly string[];
   extraDisallowed?: string[];
   model?: string;
   effort?: string;
@@ -157,7 +165,10 @@ export function buildClaudeTurnArgs(opts: ClaudeTurnOptions, personalityFile: st
     args.push('--disallowedTools', disallowed.join(','));
   } else {
     args.push('--permission-mode', 'acceptEdits');
-    if (extra.length > 0) args.push('--disallowedTools', extra.join(','));
+    // Les commandes (#494) : sans décision, chaque commande était refusée
+    // APRÈS que le modèle l'avait tentée. Les drapeaux sont ceux de la règle
+    // commune, les mêmes que ceux du code_task.
+    args.push(...claudeShellFlags(opts.shellTools, extra));
   }
   return args;
 }

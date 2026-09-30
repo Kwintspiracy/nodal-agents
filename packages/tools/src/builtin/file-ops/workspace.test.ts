@@ -3,10 +3,11 @@
 // checks that must run BEFORE any stat() touches the filesystem).
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, symlink, realpath, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveAndCheckPath, windowsPathViolation } from './workspace';
+import { linkTargetAsPath, resolveAndCheckPath, windowsPathViolation } from './workspace';
+import { fileWriteTool } from './file-write';
 import type { ToolContext } from '../../types';
 
 let ROOT: string;
@@ -175,5 +176,87 @@ describe('resolveAndCheckPath — R6: the workspace ROOT is trusted, only the ag
       'readme.md',
     );
     expect(resolved.toLowerCase().endsWith('readme.md')).toBe(true);
+  });
+});
+
+// Revue Nodal de la PR #618, passe 3, P2-1 : un lien PENDANT (symlink ou
+// jonction vers une cible qui n'existe pas encore). stat() le suit, échoue, et
+// la marche remontait au parent : le nom du lien n'était plus jugé que
+// lexicalement, et une écriture passait au travers vers l'extérieur. Réglé ici,
+// dans le résolveur que partagent file_write, file_edit, file_read, la cible
+// d'un téléchargement et tous les autres usages.
+describe('resolveAndCheckPath — a dangling link is followed, not read as a name (#614, review of #618)', () => {
+  async function dangling(target: string, at: string): Promise<boolean> {
+    try {
+      await symlink(target, at, process.platform === 'win32' ? 'junction' : 'dir');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  it('a dangling link to a place outside every workspace is refused, and so is a path under it', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'nodal-outside-'));
+    try {
+      if (!(await dangling(join(outside, 'not-yet'), join(ROOT, 'x')))) return;
+      const c = ctx([{ label: 'work', path: ROOT }]);
+      await expect(resolveAndCheckPath(c, 'x')).rejects.toMatchObject({
+        code: 'path_traversal_blocked',
+      });
+      await expect(resolveAndCheckPath(c, 'x/new.txt')).rejects.toMatchObject({
+        code: 'path_traversal_blocked',
+      });
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('a chain of dangling links is followed to its end', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'nodal-outside-'));
+    try {
+      if (!(await dangling(join(ROOT, 'hop2'), join(ROOT, 'hop1')))) return;
+      if (!(await dangling(join(outside, 'not-yet'), join(ROOT, 'hop2')))) return;
+      await expect(
+        resolveAndCheckPath(ctx([{ label: 'work', path: ROOT }]), 'hop1/new.txt'),
+      ).rejects.toMatchObject({ code: 'path_traversal_blocked' });
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('a dangling link to a place inside the workspace resolves there', async () => {
+    const inside = join(ROOT, 'later');
+    if (!(await dangling(inside, join(ROOT, 'y')))) return;
+    const resolved = await resolveAndCheckPath(ctx([{ label: 'work', path: ROOT }]), 'y/new.txt');
+    expect(resolved).toBe(join(await realpath(ROOT), 'later', 'new.txt'));
+  });
+
+  it('file_write refuses to write through a dangling link that leaves the workspace', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'nodal-outside-'));
+    try {
+      if (!(await dangling(join(outside, 'not-yet'), join(ROOT, 'x')))) return;
+      const res = await fileWriteTool.execute(
+        { path: 'x/new.txt', content: 'pwned', create_dirs: true },
+        ctx([{ label: 'work', path: ROOT }]),
+      );
+      expect(res).toMatchObject({ ok: false });
+      expect(JSON.stringify(res)).toContain('outside the workspace');
+      await expect(stat(join(outside, 'not-yet', 'new.txt'))).rejects.toThrow();
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('linkTargetAsPath: a link target as Windows writes it (#614, review of #618)', () => {
+  it.each([
+    ['\\\\?\\C:\\Users\\k\\later', 'C:\\Users\\k\\later'],
+    ['\\??\\D:\\data', 'D:\\data'],
+    ['\\\\?\\UNC\\fileserver\\public\\drop', '\\\\fileserver\\public\\drop'],
+    ['\\\\?\\Volume{0b1c}\\x', '\\\\Volume{0b1c}\\x'],
+    ['/home/k/later', '/home/k/later'],
+    ['relative/dir', 'relative/dir'],
+  ])('%s is %s', (raw, path) => {
+    expect(linkTargetAsPath(raw)).toBe(path);
   });
 });

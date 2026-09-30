@@ -10,9 +10,10 @@
 //
 // Nodal sait déjà tout cela : le CLI résout cette URL depuis ~/.nodalai/config.json
 // à chaque `up`. Cette commande fait la même résolution, puis démarre le serveur
-// stdio. La commande utilisateur devient :
-//   claude mcp add nodal -- nodal-agents mcp serve
-// Une ligne, zéro secret, zéro connaissance requise.
+// stdio. La commande utilisateur tient en une ligne, sans secret : l'écran
+// Réglages → Safety → MCP server la donne, bâtie depuis le node et le script
+// qui ont lancé CETTE install (`NODAL_CLI_ARGV`, #485), parce que
+// `nodal-agents` n'est sur le PATH ni d'un poste de dev ni d'une install npx.
 //
 // STDOUT EST LE TRANSPORT MCP : rien ne doit s'y écrire — pas de bannière, pas
 // de chalk, pas de spinner. Toute erreur part sur stderr (voir launch.ts, constat

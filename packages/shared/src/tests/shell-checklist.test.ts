@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  downloadWrites,
   isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
   splitShellWords,
@@ -222,9 +223,28 @@ describe('a command is filed by what it does: fetching is download, installing i
 });
 
 describe('resolveShellPolicy @cap:executer-une-commande/moteur', () => {
-  it('asks for everything when nothing is stored', () => {
-    expect(resolveShellPolicy(null)).toEqual(DEFAULT_SHELL_POLICY);
-    expect(SHELL_CATEGORIES.every((c) => DEFAULT_SHELL_POLICY[c] === 'ask')).toBe(true);
+  // #614 : un agent autonome ne demande que ce qui sort de son espace ou ne se
+  // défait pas (décision de Quentin, 29/09). Télécharger dans l'espace et
+  // lancer du code, écrit dans la commande ou dans un script, ne sortent pas.
+  it('when nothing is stored, downloads and inline code run, every other kind asks (#614)', () => {
+    expect(resolveShellPolicy(null)).toEqual({
+      inline_code: 'allow',
+      delete_files: 'ask',
+      install_software: 'ask',
+      download: 'allow',
+      stop_programs: 'ask',
+      system_settings: 'ask',
+    });
+    expect(resolveShellPolicy(undefined)).toEqual(resolveShellPolicy(null));
+    expect(Object.keys(DEFAULT_SHELL_POLICY)).toEqual([...SHELL_CATEGORIES]);
+  });
+
+  it('a stored "ask" is kept over the default (#614)', () => {
+    expect(resolveShellPolicy({ download: 'ask', inline_code: 'ask' })).toEqual({
+      ...DEFAULT_SHELL_POLICY,
+      download: 'ask',
+      inline_code: 'ask',
+    });
   });
 
   it('keeps what was set and defaults the rest', () => {
@@ -323,5 +343,112 @@ describe('review of PR #476 (Reviewer C): the program a command really runs @cap
 
   it('iwr downloads like Invoke-WebRequest (P3)', () => {
     expect(kinds('iwr https://example.com/a.zip | Set-Content a.zip')).toContain('download');
+  });
+});
+
+// Revue Nodal de la PR #618, P1b : où un téléchargement écrit. Lu sur le texte,
+// comme le reste ; le runner juge ensuite si c'est dans un espace du job.
+describe('downloadWrites: where a download line writes (#614, review P1b) @cap:executer-une-commande/moteur', () => {
+  it.each([
+    ['curl -s -o out/a.jpg https://x/a.jpg', ['out/a.jpg']],
+    ['curl --output=/tmp/a https://x/a', ['/tmp/a']],
+    [
+      'curl -sLo C:\\Users\\k\\.ssh\\authorized_keys https://x/k',
+      ['C:\\Users\\k\\.ssh\\authorized_keys'],
+    ],
+    ['curl -O https://x/a.zip', ['.']],
+    ['curl --output-dir /opt/x -O https://x/a.zip', ['/opt/x']],
+    ['curl https://x/a.zip > /tmp/a.zip', ['/tmp/a.zip']],
+    ['wget https://x/a.zip', ['.']],
+    ['wget -O ../a.zip https://x/a.zip', ['../a.zip']],
+    ['wget -P /var/tmp https://x/a.zip', ['/var/tmp']],
+    ["Invoke-WebRequest -Uri https://x/a -OutFile 'D:\\hors\\a.jpg'", ['D:\\hors\\a.jpg']],
+    ['iwr https://x/a -OutFile:a.jpg', ['a.jpg']],
+    ['Start-BitsTransfer -Source https://x/a -Destination C:\\temp\\a', ['C:\\temp\\a']],
+    ['aria2c -d /data -o m.bin https://x/m', ['/data/m.bin']],
+    ['aria2c https://x/m', ['.']],
+    ['git clone https://github.com/x/y D:\\hors-espace', ['D:\\hors-espace']],
+    ['git clone --depth 1 -b main https://github.com/x/y', ['.']],
+    ['git -C /elsewhere clone https://github.com/x/y z', ['/elsewhere/z']],
+    ['pip download torch -d wheels', ['wheels']],
+    ['hf download org/m f.safetensors --local-dir models/unet', ['models/unet']],
+  ] as const)('%s', (cmd, targets) => {
+    expect(downloadWrites(cmd).targets.map((t) => t.path)).toEqual(targets);
+  });
+
+  it('a target it cannot read is null: a variable, a home path, a sub-shell', () => {
+    const paths = (cmd: string) => downloadWrites(cmd).targets.map((t) => t.path);
+    expect(paths('curl -o $HOME/a https://x/a')).toEqual([null]);
+    expect(paths('curl -o %TEMP%\\a https://x/a')).toEqual([null]);
+    expect(paths('wget -O ~/a https://x/a')).toEqual([null]);
+    expect(paths('curl -o "$(mktemp)" https://x/a')).toEqual([null]);
+    expect(paths('Start-BitsTransfer https://x/a C:\\x')).toEqual([null]);
+  });
+
+  // Revue passe 2 : une cible n'est jugée que depuis les `cd` qui la précèdent.
+  it("each target says how many of the line's folders come before it", () => {
+    expect(downloadWrites('cd shared/x && curl -o a.jpg https://x/a')).toEqual({
+      dirs: ['shared/x'],
+      targets: [{ path: 'a.jpg', after: 1 }],
+    });
+    expect(downloadWrites('curl -o a.jpg https://x/a && cd /elsewhere')).toEqual({
+      dirs: ['/elsewhere'],
+      targets: [{ path: 'a.jpg', after: 0 }],
+    });
+    expect(downloadWrites('cd a && wget -O x https://x && cd b && curl -o y https://y')).toEqual({
+      dirs: ['a', 'b'],
+      targets: [
+        { path: 'x', after: 1 },
+        { path: 'y', after: 2 },
+      ],
+    });
+    // A shell redirection has no known place in the line: judged from every folder.
+    expect(downloadWrites('curl https://x/a > a.zip && cd out').targets).toEqual([
+      { path: 'a.zip', after: null },
+    ]);
+  });
+
+  it('the folders the line moves into are kept in order', () => {
+    expect(downloadWrites('cd shared/x && curl -o a.jpg https://x/a').dirs).toEqual(['shared/x']);
+    expect(downloadWrites('cd && curl -o a.jpg https://x/a').dirs).toEqual([null]);
+    expect(downloadWrites('Push-Location D:\\out; iwr https://x -OutFile a').dirs).toEqual([
+      'D:\\out',
+    ]);
+    expect(downloadWrites('pushd out && popd && curl -o a https://x').dirs).toEqual(['out', null]);
+    expect(downloadWrites('Set-Location -Path D:\\x; iwr https://x -OutFile a').dirs).toEqual([
+      'D:\\x',
+    ]);
+  });
+
+  // Passe 3, P2-3 : une valeur collée à son option courte (`-sLoC:\x`). Une
+  // seule lecture des options courtes pour curl, wget et aria2c : dans un
+  // groupe, la première option qui prend une valeur prend le reste du groupe.
+  it('a value glued to a short option is read, by the same reader for curl, wget and aria2c', () => {
+    const paths = (cmd: string) => downloadWrites(cmd).targets.map((t) => t.path);
+    const glued = 'curl -sLoC:\\Users\\k\\.ssh\\authorized_keys https://x/k';
+    expect(staticShellCategories(glued)).toEqual(['download']);
+    expect(paths(glued)).toEqual(['C:\\Users\\k\\.ssh\\authorized_keys']);
+    expect(paths('curl -oout.bin https://x/a')).toEqual(['out.bin']);
+    expect(paths('wget -qO/tmp/x https://x/a')).toEqual(['/tmp/x']);
+    expect(paths('wget -qO- https://x/a')).toEqual([]);
+    expect(paths('aria2c -d/data -oout.bin https://x/m')).toEqual(['/data/out.bin']);
+    // An option that takes a value swallows the rest of its group: no output there.
+    expect(staticShellCategories('curl -XPOST https://x/api')).toEqual([]);
+    expect(staticShellCategories('curl -sXPOST -H "X-O: 1" https://x/api')).toEqual([]);
+    expect(isDestructiveOrHeavyCommand(glued)).toBe(true);
+    expect(isDestructiveOrHeavyCommand('curl -XPOST https://x/api')).toBe(false);
+  });
+
+  it('a program with its own store names no path: nothing to judge', () => {
+    for (const cmd of [
+      'ollama pull llama3',
+      'docker pull alpine',
+      'comfy model download --url https://x/y --relative-path models/checkpoints',
+      'hf download org/m',
+      'Invoke-RestMethod https://x/status',
+      'git status',
+    ]) {
+      expect(downloadWrites(cmd).targets, cmd).toEqual([]);
+    }
   });
 });

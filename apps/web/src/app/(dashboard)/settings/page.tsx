@@ -23,6 +23,7 @@ import {
   getProofRepairAction,
   getRunBudgetAction,
   getMcpServerSwitchAction,
+  getAutostartAction,
   getInstallNotesAction,
   getWorkspaceTimezoneAction,
   type WorkspaceRow,
@@ -38,6 +39,7 @@ import VerificationSurfacesSection from './VerificationSurfacesSection.tsx';
 import ProofRepairSection from './ProofRepairSection.tsx';
 import RunBudgetSection from './RunBudgetSection.tsx';
 import McpServerSection from './McpServerSection.tsx';
+import AutostartSection from './AutostartSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
 import SettingsSections from './SettingsSections.tsx';
@@ -72,6 +74,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     mcpSwitchResult,
     installNotesResult,
     tzResult,
+    autostartResult,
   ] = await Promise.all([
     getSettingsAction(),
     getSecuritySettingsAction(),
@@ -86,6 +89,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     getMcpServerSwitchAction(),
     getInstallNotesAction(),
     getWorkspaceTimezoneAction(),
+    getAutostartAction(),
   ]);
   const workspaces: WorkspaceRow[] = wsResult.ok ? wsResult.data : [];
 
@@ -113,6 +117,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     runBudget: runBudgetResult.ok ? runBudgetResult.data : null,
     mcpServer: mcpSwitchResult.ok ? mcpSwitchResult.data : null,
     timezone: tzResult.ok ? tzResult.data : null,
+    autostart: autostartResult.ok ? autostartResult.data : null,
     installNotes: installNotesResult.ok ? installNotesResult.data : null,
     workspaces,
     agents: agentsResult.ok ? agentsResult.data : [],
@@ -148,6 +153,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     timezone: tzResult.ok ? (
       <TimezoneForm initial={tzResult.data.timezone} isExplicit={tzResult.data.isExplicit} />
     ) : null,
+    autostart: autostartResult.ok ? <AutostartSection initial={autostartResult.data} /> : null,
     'install-notes': installNotesResult.ok ? (
       <InstallNotesForm initial={installNotesResult.data} />
     ) : null,

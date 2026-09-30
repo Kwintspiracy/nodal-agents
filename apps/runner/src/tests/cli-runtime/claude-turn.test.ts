@@ -15,7 +15,7 @@ import {
   countToolUses,
   type ClaudeTurnEvent,
 } from '../../cli-runtime/claude-turn.ts';
-import { CLI_RUNTIME_RUNS_SHELL_COMMANDS } from '@nodal-agents/tools';
+import { claudeShellTools, cliShellPosture } from '@nodal-agents/shared';
 
 const FIXTURE = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), 'stream-fixture.jsonl'),
@@ -183,6 +183,7 @@ describe('buildClaudeTurnArgs', () => {
     personality: 'Tu es Jarvis.',
     cwd: 'D:\\ws',
     mode: 'read' as const,
+    shellTools: [] as readonly string[],
     timeoutMs: 1000,
   };
   const PERSONA_FILE = 'D:\\tmp\\persona.txt';
@@ -199,28 +200,49 @@ describe('buildClaudeTurnArgs', () => {
     expect(args[args.indexOf('--append-system-prompt-file') + 1]).toBe(PERSONA_FILE);
     const disallowed = args[args.indexOf('--disallowedTools') + 1]!;
     expect(disallowed).toContain('Write');
-    expect(disallowed).toContain('Bash');
+    expect(disallowed.split(',')).toEqual(expect.arrayContaining(['Bash', 'PowerShell']));
     expect(args).not.toContain('--permission-mode');
   });
 
-  // #506 — ce que le bloc d'équipe annonce aux orchestrateurs (« Shell
-  // commands: no » pour ce runtime) doit être ce que l'argv produit. Une
-  // commande ne passe que si Bash reste dans la palette ET qu'une permission
-  // l'accorde sans humain : bypass, skip-permissions, ou Bash autorisé.
-  it.each(['read', 'write'] as const)(
-    'mode %s : la posture shell annoncée au bloc d’équipe est celle de l’argv',
-    (mode) => {
-      const args = buildClaudeTurnArgs({ ...base, mode }, PERSONA_FILE);
+  // #506 + #494 — ce que le bloc d'équipe annonce aux orchestrateurs
+  // (`cliShellPosture`, depuis la ligne de l'agent) doit être ce que l'argv
+  // produit. Une commande ne passe que si Bash reste dans la palette ET qu'une
+  // permission l'accorde sans humain : bypass, skip-permissions, ou Bash
+  // autorisé. Chaque réglage que le propriétaire peut faire, frein compris.
+  it.each([
+    [null, false],
+    [{ mode: 'read' as const }, false],
+    [{ mode: 'read' as const, shell: 'auto' as const }, false],
+    [{ mode: 'write' as const }, false],
+    [{ mode: 'write' as const, shell: 'auto' as const }, false],
+    [{ mode: 'write' as const, shell: 'auto' as const }, true],
+    [{ mode: 'write' as const, shell: 'auto' as const, extraDisallowed: ['Bash'] }, false],
+  ] as [Parameters<typeof cliShellPosture>[1], boolean][])(
+    'réglage %j, frein %s : la posture shell annoncée au bloc d’équipe est celle de l’argv',
+    (perms, autoRunPaused) => {
+      const posture = cliShellPosture('claude', perms, { autoRunPaused });
+      const args = buildClaudeTurnArgs(
+        {
+          ...base,
+          mode: perms?.mode ?? 'read',
+          shellTools: claudeShellTools(posture),
+          extraDisallowed: perms?.extraDisallowed ? [...perms.extraDisallowed] : undefined,
+        },
+        PERSONA_FILE,
+      );
       const valueOf = (flag: string): string =>
         args.includes(flag) ? (args[args.indexOf(flag) + 1] ?? '') : '';
-      const bashInPalette = !valueOf('--disallowedTools').split(',').includes('Bash');
-      const grantedWithoutHuman =
+      // Un shell tourne si UN des outils shell (Bash, PowerShell) reste dans la
+      // palette et passe sans humain : en retirer un seul laisse l'autre.
+      const disallowed = valueOf('--disallowedTools').split(',');
+      const allowed = valueOf('--allowedTools').split(',');
+      const bypass =
         valueOf('--permission-mode') === 'bypassPermissions' ||
-        args.includes('--dangerously-skip-permissions') ||
-        valueOf('--allowedTools').split(',').includes('Bash');
-      expect(bashInPalette && grantedWithoutHuman).toBe(
-        CLI_RUNTIME_RUNS_SHELL_COMMANDS['claude-code'],
+        args.includes('--dangerously-skip-permissions');
+      const shellRuns = ['Bash', 'PowerShell'].some(
+        (tool) => !disallowed.includes(tool) && (bypass || allowed.includes(tool)),
       );
+      expect(shellRuns).toBe(posture.kind === 'shell');
     },
   );
 
@@ -230,7 +252,35 @@ describe('buildClaudeTurnArgs', () => {
       PERSONA_FILE,
     );
     expect(args[args.indexOf('--permission-mode') + 1]).toBe('acceptEdits');
+    expect(args[args.indexOf('--disallowedTools') + 1]).toBe('Bash,PowerShell,WebSearch');
+  });
+
+  // #494 : en `-p`, personne ne répond à une demande de permission. Le tour
+  // doit donc arriver avec une décision : shell autorisé d'avance, ou retiré.
+  it('write mode WITHOUT shell: Bash and PowerShell leave the palette, nothing is pre-allowed @cap:executer-une-commande/moteur', () => {
+    const args = buildClaudeTurnArgs({ ...base, mode: 'write' }, PERSONA_FILE);
+    expect(args[args.indexOf('--disallowedTools') + 1]).toBe('Bash,PowerShell');
+    expect(args).not.toContain('--allowedTools');
+  });
+
+  it('write mode WITH shell: Bash and PowerShell are pre-allowed, never also removed @cap:executer-une-commande/moteur', () => {
+    const args = buildClaudeTurnArgs(
+      {
+        ...base,
+        mode: 'write',
+        shellTools: ['Bash', 'PowerShell'],
+        extraDisallowed: ['WebSearch'],
+      },
+      PERSONA_FILE,
+    );
+    expect(args[args.indexOf('--allowedTools') + 1]).toBe('Bash,PowerShell');
     expect(args[args.indexOf('--disallowedTools') + 1]).toBe('WebSearch');
+    // Sans restriction en plus, aucun --disallowedTools du tout.
+    const bare = buildClaudeTurnArgs(
+      { ...base, mode: 'write', shellTools: ['Bash', 'PowerShell'] },
+      PERSONA_FILE,
+    );
+    expect(bare).not.toContain('--disallowedTools');
   });
 
   it('les dossiers SECONDAIRES sont ouverts — dans les DEUX modes', () => {

@@ -13,8 +13,9 @@
 //
 // Mutation vérifiée : le `--dev` retiré de la commande rendue → le troisième
 // cas rougit, et un copier-coller renverrait un poste de dev en production.
-// Même chose pour `--detach` : sans lui, la stack relancée par le
-// planificateur de tâches mourrait avec le terminal.
+// Même chose pour `--detach` : une stack lancée détachée par la personne,
+// relancée sans lui, mourrait avec le terminal. (Le démarrage avec la machine,
+// #451, lance `up` au premier plan sous la valeur Run de Windows : pas ce cas.)
 
 import { describe, it, expect } from 'vitest';
 import { migrationGapRefusal } from '../commands/up.ts';
@@ -40,10 +41,10 @@ describe('le refus de servir une base à trous @cap:installer-et-demarrer/moteur
   });
 
   it('donne la commande EXACTE, et rend le démarrage qu’on avait', () => {
-    // Les deux drapeaux comptent. `--detach` en particulier : le planificateur
-    // de tâches qui relance Nodal après un redémarrage appelle exactement
-    // `up --detach`, et une commande sans lui rendrait la stack au terminal,
-    // où elle mourrait avec lui (passe 1 de la revue).
+    // Les deux drapeaux comptent. `--detach` en particulier : quand la personne
+    // avait lancé la stack détachée, une commande sans lui la rendrait au
+    // terminal, où elle mourrait avec lui (passe 1 de la revue). Le démarrage
+    // avec la machine (#451) lance `up` au premier plan : il n'est pas concerné.
     const commande = (o: { dev: boolean; detach: boolean }) =>
       migrationGapRefusal([{ tag: '0114_x' }], o)
         .split('\n')
