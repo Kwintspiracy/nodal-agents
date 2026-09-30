@@ -1388,9 +1388,13 @@ export async function buildSystemPrompt(
       // reprendre (donc écraser, donc soumettre à approbation) le PDF d'une
       // demande passée au lieu de faire la nouvelle. Le socle workspace-hygiene
       // la répétait : il ne la dit plus, elle vit à côté de la liste qu'elle
-      // gouverne.
+      // gouverne. La skill obsidian avait la sienne (« une tentative
+      // précédente de CETTE tâche ») : l'agent n'a aucune mémoire de ses
+      // tentatives, le seul critère observable est ce qu'il a écrit pendant ce
+      // job — dit ici, pour tous les fichiers (revue de #640, passe 2).
       'Reuse the workflows, scripts and templates listed below instead of recreating them. ' +
       'A deliverable the user asks for is produced for this request: an existing file is the answer only when the user names it or asks to rework it. ' +
+      'A file you wrote earlier in this job (it is in your transcript) is finished at the same path, never copied under a new name. ' +
       'Save new files into the existing folder that matches their kind:\n\n' +
       // INJECT-001. The listing is produced by the runner, but the NAMES in it
       // are written by whoever created the files — another agent, a download, a

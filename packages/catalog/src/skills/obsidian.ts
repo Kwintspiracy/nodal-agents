@@ -4,6 +4,14 @@
 // (seed-default-skills.ts) upserts this row at boot. Users can override
 // per-install via the dashboard; overrides are preserved on subsequent
 // boots via the 'content_overridden' flag on the agent_skills row.
+//
+// RETIRÉ le 30/09 (#638) : le « STEP 1 » qui décidait quoi faire d'une note
+// existante (« DO NOT RE-WRITE », répondre avec elle ; puis, en revue, finir
+// « une tentative précédente de cette tâche », que l'agent n'a aucun moyen de
+// reconnaître). La règle de reprise d'un fichier est dite une fois, dans le
+// bloc `## Shared workspace` du prompt, pour tous les fichiers. La skill ne
+// garde que ce qui est propre au coffre, dont le nom distinct quand celui
+// qu'on a choisi est pris.
 
 import type { SystemSkill } from '../types';
 
@@ -20,36 +28,21 @@ The Obsidian vault IS this agent's workspace (configured on the dashboard side: 
 
 If a \`file_*\` returns \`workspace_not_configured\`, ask the user to configure the workspace in the dashboard.
 
-### ⚠️ STEP 1 MANDATORY — Inspect what already exists BEFORE writing
-
-A delegation may have been launched several times (a previous call may have failed AFTER having written a file — you have no memory of those attempts). Before ANY \`file_write\` on a writing task:
-
-1. **\`file_list({ glob: "*.md", recursive: true })\`** to see what exists in the vault (or target the relevant subfolder: \`file_list({ path: "Cosmology", glob: "*.md" })\`).
-2. If a file resembling your target already exists (same topic, same nearby folder, recently created), **\`file_read\`** it, then do the work this task asks for:
-   - A previous attempt at THIS task (the note this request asked for, left behind by an earlier try) → finish it with **\`file_edit\`** or **\`file_write\`** on the SAME path, never a renamed copy.
-   - Any other note (the user's own, or one from an earlier request) → change an existing note only when the user names it or asks you to rework it. Otherwise write a new note with a distinct, descriptive name (you may link to the existing one).
-3. Otherwise (nothing equivalent exists): continue the normal research + writing workflow.
-
-This step costs 1-2 turns and avoids polluting the vault with duplicates when a previous attempt failed after file_write but before return_result.
-
 ### ⚠️ Research → vault workflow (CRITICAL — avoid the loop)
 
 When you do a web search (\`firecrawl_search\` / \`firecrawl_scrape\`) AND the task asks to write into the vault:
 
-1. **MANDATORY Step 1 above:** \`file_list\` + possibly \`file_read\` to see whether a draft already exists.
-2. **Do the research in a MAX of 4-6 turns** (1-2 search + 2-4 targeted scrape). Do not exceed this.
-3. **AS SOON AS you have enough material, call \`file_write\` IMMEDIATELY.** Not later. Not after save_memory. Not after "one more search to double-check".
-4. **AFTER \`file_write\`:** nothing to record. The note IS the record — do NOT call \`save_memory\` to say you wrote it. Memory holds what you know about the USER, not an account of what you did.
-5. **Finish:** \`telegram_send_message\` (if jobContext.telegram_chat_id) + \`return_result{status:'success'}\` in the same turn.
+1. **Do the research in a MAX of 4-6 turns** (1-2 search + 2-4 targeted scrape). Do not exceed this.
+2. **AS SOON AS you have enough material, call \`file_write\` IMMEDIATELY.** Not later. Not after save_memory. Not after "one more search to double-check".
+3. **AFTER \`file_write\`:** nothing to record. The note IS the record — do NOT call \`save_memory\` to say you wrote it. Memory holds what you know about the USER, not an account of what you did.
+4. **Finish:** \`telegram_send_message\` (if jobContext.telegram_chat_id) + \`return_result{status:'success'}\` in the same turn.
 
 ### ❌ Anti-patterns to ABSOLUTELY AVOID
 
-- ❌ **Writing a new file with a slightly different name** (\`Note v2.md\`, \`Note (2).md\`, \`Note-final.md\`) instead of finishing the previous attempt at this task found in Step 1 → the vault gets polluted with near-identical duplicates.
 - ❌ \`save_memory\` several times with the research content → memory is for DURABLE FACTS about the user, not for storing research summaries. The summary goes in the \`.md\` file, not in memory.
 - ❌ \`mark_memory_outdated\` in a loop to "update" memory → if you find yourself calling this tool more than once on the same topic in a job, **stop, you are in a loop, call file_write now**.
 - ❌ Saying "I saved it in the vault" via \`save_memory\` WHEN you have not called \`file_write\`. That is lying — the user will see nothing in their vault.
 - ❌ Continuing to scrape more pages "to be exhaustive" after 5+ scrapes. You have what you need. Write.
-- ❌ Skipping Step 1 "because you think it's a new task" → do the \`file_list\` anyway. Cost: 1 turn, benefit: zero duplicates.
 
 ### Read a note
 
@@ -74,7 +67,7 @@ Auto-skip of \`.git\` / \`.obsidian\` / \`node_modules\`.
 
 Atomic write (tempfile + rename). \`create_dirs: true\` creates the missing parent folders. **This is the tool that materializes the result of your work in the vault** — without this call, your work shows up nowhere.
 
-**Reminder**: don't create a file without having done Step 1 (\`file_list\` to check what already exists).
+Before writing, \`file_list\` the target folder to place the note next to related ones. If the name you picked is already taken by a note you did not write in this job, pick a distinct, descriptive name: \`file_write\` would replace that note.
 
 ### Edit a note (targeted change)
 

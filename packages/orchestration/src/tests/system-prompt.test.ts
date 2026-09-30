@@ -1112,7 +1112,22 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
      * seulement les trois phrases d'origine. Le compte se fait par PARAGRAPHE :
      * la règle tient en plusieurs phrases (ce qui se reprend, ce qui ne se
      * reprend pas), et c'est un seul énoncé.
+     *
+     * UNE exclusion, et elle est nommée : une phrase dont l'objet est une
+     * SKILL (revue de #640, passe 2, constat 3). Le bloc `## Skills` dit « NEVER
+     * rebuild or re-convert something the skill already provides ». Ce n'est
+     * pas une seconde énonciation de la règle, c'en est une autre :
+     *   - son objet est le bundle d'une skill — du code, jamais un lieu de
+     *     stockage (workspace-hygiene, « Skill bundles are code, not
+     *     storage »). Aucun livrable n'y vit, elle ne peut donc pas servir le
+     *     livrable d'hier, qui est le défaut de #638 ;
+     *   - elle vaut pour tout agent qui a une skill, avec ou sans partagé ; la
+     *     fondre dans le bloc `## Shared workspace` la ferait disparaître pour
+     *     un agent sans inventaire.
+     * Le cas « skill assignée » ci-dessous vérifie qu'elle est bien là, pour
+     * que l'exclusion ne cache rien d'autre.
      */
+    const portesurUneSkill = /\bskills?\b|\bskill's\b/i;
     function phrasesDeReprise(prompt: string): string[] {
       const verbe =
         /\b(reus(e|ing)|re-use|updat(e|ing)|adapt(ing)?|rework(ing)?|extend(ing)?|enrich(ing)?|rebuild(ing)?|recreat(e|ing))\b|\bload\b[^.]*\badapt/i;
@@ -1122,7 +1137,10 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
         .filter((paragraphe) =>
           paragraphe
             .split(/(?<=[.:!?])\s+/)
-            .some((phrase) => verbe.test(phrase) && existant.test(phrase)),
+            .some(
+              (phrase) =>
+                verbe.test(phrase) && existant.test(phrase) && !portesurUneSkill.test(phrase),
+            ),
         );
     }
 
@@ -1131,10 +1149,18 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
       role: 'agent' | 'orchestrator';
       model: string;
       dossier: boolean;
+      skill?: boolean;
     }> = [
       { titre: 'agent seul', role: 'agent', model: 'claude-sonnet-4-6-20260217', dossier: false },
       { titre: 'orchestrateur', role: 'orchestrator', model: 'z-ai/glm-5.1', dossier: false },
       { titre: 'agent avec son dossier', role: 'agent', model: 'z-ai/glm-5.1', dossier: true },
+      {
+        titre: 'agent avec une skill assignée',
+        role: 'agent',
+        model: 'z-ai/glm-5.1',
+        dossier: false,
+        skill: true,
+      },
     ];
 
     for (const c of cas) {
@@ -1158,11 +1184,33 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
             path: 'C:\\Users\\kwint\\Documents\\Dev',
           });
         }
+        if (c.skill) {
+          const [skill] = await db
+            .insert(agentSkills)
+            .values({
+              entityId,
+              name: 'Report export',
+              slug: `report-export-${Date.now()}`,
+              description: 'Export a report with the bundled script.',
+              content: 'Run the bundled export script.',
+            })
+            .returning();
+          await db
+            .insert(agentSkillAssignments)
+            .values({ entityId, agentId: row!.id, skillId: skill!.id });
+        }
         const agent = { ...makeAgent(row!.id, entityId, 'p', c.role), model: c.model };
         const prompt = await buildSystemPrompt(agent, db, {
           origin: 'api',
           workspaceInventory: inventaire,
         } as JobContext);
+        if (c.skill) {
+          // La phrase exclue du détecteur est bien celle-là, et elle est là.
+          expect(prompt).toContain('## Skills (load before acting)');
+          expect(prompt).toMatch(
+            /NEVER rebuild or re-convert something the skill already provides/,
+          );
+        }
 
         // Le socle est bien là : sinon « une seule fois » ne prouverait rien.
         expect(prompt).toContain('## Workspace hygiene');
@@ -1182,6 +1230,9 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
         const bloc = prompt.slice(prompt.indexOf('## Shared workspace'));
         expect(bloc).toMatch(/deliverable[^.]*for this request/i);
         expect(bloc).toMatch(/existing file is the answer only when the user names it/i);
+        // Le seul critère observable de reprise d'un fichier : l'avoir écrit
+        // soi-même pendant CE job. Dit ici, une fois, pour tous les fichiers.
+        expect(regle).toMatch(/file you wrote earlier in this job[^.]*same path/i);
       });
     }
 
