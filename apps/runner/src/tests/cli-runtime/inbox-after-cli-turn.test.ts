@@ -1,7 +1,7 @@
 // inbox-after-cli-turn.test.ts — un job servi par une CLI (Claude Code, Codex)
 // ne lit pas sa file PENDANT son travail : un tour de CLI n'a pas de frontière
-// de tour où la boucle Nodal la viderait (#531). Ce que la personne a écrit
-// pendant ce tour n'est pas perdu pour autant : à la fin du job, le
+// de tour où la boucle Nodal la viderait (#531). Ce qu'un tour de réponse lui a
+// transmis pendant ce tour n'est pas perdu pour autant : à la fin du job, le
 // déclencheur de la transition terminale (migration 0141) en fait une nouvelle
 // tête de la conversation, qui le lit.
 //
@@ -24,7 +24,7 @@ import {
   asc,
   eq,
   isNull,
-  deliverOrStartTurn,
+  deliverToConversationJob,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { CliTurnOptions, CliTurnResult } from '../../cli-runtime/provider.ts';
@@ -48,9 +48,18 @@ vi.mock('../../cli-runtime/provider.ts', async (importOriginal) => {
   };
 });
 
+/** Le contexte de job que le runtime CLI a passé au prompt, relu par les tests. */
+const promptContexts: unknown[] = [];
+
 vi.mock('@nodal-agents/orchestration', async (importOriginal) => {
   const actual = await importOriginal<typeof OrchestrationModule>();
-  return { ...actual, buildSystemPrompt: async () => 'system prompt (test)' };
+  return {
+    ...actual,
+    buildSystemPrompt: async (_agent: unknown, _db: unknown, jobContext: unknown) => {
+      promptContexts.push(jobContext);
+      return 'system prompt (test)';
+    },
+  };
 });
 
 import { runCliRuntimeJob } from '../../cli-runtime/run-job.ts';
@@ -135,20 +144,14 @@ describe('a job served by a CLI reads its inbox AFTER its turn, through a new he
 
       fakeRun.mockReset();
       fakeRun.mockImplementationOnce(async () => {
-        // La personne écrit PENDANT le tour de CLI : le message va dans la file.
-        const turn = await deliverOrStartTurn(db as unknown as AnyDrizzleDb, {
+        // Un tour de réponse transmet PENDANT le tour de CLI : le message va dans la file.
+        const delivery = await deliverToConversationJob(db as unknown as AnyDrizzleDb, {
           entityId: seed.entityId,
           conversationId,
-          message: { task: FOLLOW_UP, content: FOLLOW_UP },
-          start: {
-            entityId: seed.entityId,
-            agentId: seed.agentId,
-            channel: 'telegram',
-            conversationId,
-            task: FOLLOW_UP,
-          },
+          jobId: job!.id,
+          text: FOLLOW_UP,
         });
-        expect(turn).toMatchObject({ kind: 'delivered', headJobId: job!.id });
+        expect(delivery).toMatchObject({ delivered: true, jobId: job!.id });
         return finished('portrait generated');
       });
 
@@ -188,4 +191,70 @@ describe('a job served by a CLI reads its inbox AFTER its turn, through a new he
     },
     30_000,
   );
+
+  it('a REPLY TURN served by a CLI gets the running work in its prompt, on the CLI surface (no Nodal tool offered)', async () => {
+    await db.update(agents).set({ runtime: 'claude-code' }).where(eq(agents.id, seed.agentId));
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, channel: 'telegram', chatId: '6' })
+      .returning({ id: conversations.id });
+    const conversationId = conv!.id;
+    const [head] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '6',
+        conversationId,
+        task: 'Fais-moi un portrait',
+        status: 'awaiting_delegation',
+      })
+      .returning({ id: agentJobs.id });
+    const [reply] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '6',
+        conversationId,
+        task: FOLLOW_UP,
+        status: 'processing',
+        answersWhileJobId: head!.id,
+      })
+      .returning({ id: agentJobs.id });
+    fakeRun.mockReset();
+    fakeRun.mockResolvedValueOnce(finished('Je vois le portrait en cours ; /stop l’arrête.'));
+    promptContexts.length = 0;
+
+    const outcome = await runCliRuntimeJob({
+      db: db as unknown as Parameters<typeof runCliRuntimeJob>[0]['db'],
+      jobId: reply!.id,
+      job: {
+        entityId: seed.entityId,
+        chatId: '6',
+        channel: 'telegram',
+        conversationId,
+        task: FOLLOW_UP,
+        triggerContext: null,
+        answersWhileJobId: head!.id,
+      },
+      agentRow: { ...baseAgent, runtime: 'claude-code' },
+      workspaces: [{ label: 'ws0', path: workspace }],
+      claimGeneration: 0,
+    });
+
+    expect(outcome.status).toBe('completed');
+    const ctx = promptContexts[0] as {
+      surface?: string;
+      conversation?: {
+        runningWork?: { runs: Array<{ runId: string; status: string; task: string }> };
+      };
+    };
+    expect(ctx.surface).toBe('cli-runtime');
+    expect(ctx.conversation?.runningWork?.runs.map((r) => [r.runId, r.status, r.task])).toEqual([
+      [head!.id, 'awaiting_delegation', 'Fais-moi un portrait'],
+    ]);
+  }, 30_000);
 });

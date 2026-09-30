@@ -17,7 +17,7 @@ import {
   chatMessages,
   conversations,
   agentJobs,
-  deliverOrStartTurn,
+  startConversationTurn,
 } from '@nodal-agents/db';
 import {
   buildSystemPrompt,
@@ -115,9 +115,9 @@ export const CHAT_TOOLS: Record<
       'self-contained by carrying the user’s intent across turns — NOT by enriching it.\n' +
       'Never decline an action the user asks for — escalate it here. For plain conversation or ' +
       'recalling facts, reply in text instead (do not call this).\n' +
-      'While a job launched from this conversation is still running, a call starts nothing new: ' +
-      'the person’s message is handed to that job, which reads it and decides what to do with ' +
-      'it (a clarification of the same request, or other work it takes on).',
+      'While a job launched from this conversation is still running, a call starts a reply turn ' +
+      'that sees that job and decides: pass the person’s words on to it, stop it, or start ' +
+      'other work beside it. The message is never assumed to be about the running job.',
     inputSchema: z.object({ instruction: z.string().min(1).max(16000) }),
   },
 };
@@ -155,33 +155,6 @@ export type ChatTurnResult =
        */
       cutReason?: LlmTimeoutReason;
     };
-
-/** The head job of this conversation still running when the turn called `run_task` (#453, #531). */
-type RunningHead = { id: string; task: string; status: string | null };
-
-/**
- * The tool-result of a `run_task` that started nothing because work launched
- * from this conversation is still running (#453): the person's message was
- * handed to that job instead (#531). LLM-facing: a bracketed platform line
- * built from the running job's typed fields, never shown as the reply.
- * `again` is a second call in the same turn: the message was already handed
- * over, and is not handed over twice.
- */
-export function runTaskDelivered(head: RunningHead, again: boolean): string {
-  const job = `job ${head.id} (status: ${head.status ?? 'unknown'}) task: "${head.task}"`;
-  if (again) {
-    return (
-      `[run_task not launched: the person's message was already handed to the running ${job}. ` +
-      'Nothing was launched.]'
-    );
-  }
-  return (
-    `[run_task not launched: work launched from this conversation is still running: ${job}. ` +
-    "The person's message was handed to that job: it reads it at its next step and decides " +
-    'what to do with it. Nothing new was launched. Tell the person their message reached the ' +
-    'running work; its result will arrive in this conversation.]'
-  );
-}
 
 /**
  * Build the run_task tool-result for a PRIOR chat escalation, reflecting the
@@ -649,7 +622,7 @@ export async function runChatTurn(opts: {
       buildHistoryBlock(r, truncateHeadTail, ledgerLinesByJobId.get(r.jobId ?? '') ?? []),
     );
   }
-  let messages: ModelMessage[] = blocks.flatMap((b) => b);
+  const messages: ModelMessage[] = blocks.flatMap((b) => b);
 
   // 5. One LLM call. The agent may reply in text (pure conversation) and/or call
   //    run_task to escalate an action into a real job. Guarded: some providers
@@ -846,165 +819,64 @@ export async function runChatTurn(opts: {
     return null;
   };
 
-  // 5c. UN TRAVAIL DU FIL COURT DÉJÀ (#453, #531). La personne qui précise sa
-  //     demande pendant que le premier travail tourne faisait lancer un second
-  //     travail identique : l'historique montrait bien le premier en cours, le
-  //     modèle re-déclenchait par-dessus. #453 refusait l'appel — et la
-  //     précision n'atteignait jamais le travail en cours.
+  // 5c. Chaque réponse part d'une réponse : sans texte ni appel, elle est
+  //     redemandée sans outils ; en prose, elle est relue (une fois par tour).
   //
-  //     Le contrat, le MÊME que sur chaque canal (`deliverOrStartTurn`,
-  //     @nodal-agents/db) : un `run_task` démarre une tête seulement si aucune
-  //     tête de la conversation ne vit. Sinon le message de la personne entre
-  //     dans la file de celle qui vit, qui le lira à son prochain pas et jugera
-  //     — précision, ou autre travail qu'elle prend en charge. Le modèle du chat
-  //     reçoit le fait dans le résultat de son appel d'outil et répond une
-  //     seconde fois : le message est arrivé au travail en cours.
-  //
-  //     AUCUNE échappatoire « en parallèle » (revue Codex de #453, passe 3). Un
-  //     champ `alongside` a existé : une reformulation passait sous la
-  //     comparaison de textes, et il ne reposait que sur la parole du modèle.
-  //     Il est retiré plutôt que rafistolé (invariant #11).
-  //
-  //     Un second appel encore retenu ne garde PAS sa phrase : « je lance
-  //     l'autre tâche » posée au-dessus d'un appel jeté annoncerait un travail
-  //     qui n'existe pas. Le texte est vidé, et la relance SANS outils (6b)
-  //     répond avec les deux résultats sous les yeux. Le message n'est remis
-  //     qu'une fois par tour.
-  //
-  //     Chaque passage de la boucle part d'une réponse : sans texte ni appel,
-  //     elle est redemandée sans outils ; en prose, elle est relue (une fois
-  //     par tour) ; un run_task passe ensuite par le point de décision.
-  let refusals = 0;
-  let startedJobId: string | undefined;
-  let deliveredTo: RunningHead | null = null;
-  for (;;) {
-    if (!runTask && !text) {
-      const arret = await repondreSansOutils();
-      if (arret) return arret;
-    }
-    const arretRelecture = await relireUneFois();
-    if (arretRelecture) return arretRelecture;
-    if (!runTask) break;
-
-    if (deliveredTo === null) {
-      const instruction =
-        String(
-          (runTask.input as { instruction?: unknown } | undefined)?.instruction ?? '',
-        ).trim() || message;
-      // SAFETY NET against intent drift: the worker must always see the USER's
-      // actual words, not only the orchestrator's framing. If the instruction did
-      // not already carry them (an orchestrator reworded/compressed despite the steer), append
-      // the user's exact message as the source of truth. Dedup when it's already in.
-      const probe = message.trim().slice(0, 160);
-      const workerContent =
-        probe.length > 0 && !instruction.includes(probe)
-          ? `${instruction}\n\n[User's exact request, verbatim — this is the source of truth; the line above is only framing]\n${message}`
-          : instruction;
-      const decision = await deliverOrStartTurn(db, {
-        entityId,
-        conversationId,
-        // Ce que la tête vivante lira : les mots de la personne, tels quels.
-        message: { task: message, content: message },
-        start: {
-          entityId,
-          agentId,
-          status: 'pending',
-          channel: 'dashboard',
-          task: instruction,
-          // Jobs page grouping (migration 0059): this channel already has a
-          // real conversation entity (the dashboard sidebar thread) — stamp
-          // that id directly rather than re-deriving it from a gap heuristic.
-          conversationId,
-          // Le projet courant du fil (P6) : le travail escaladé naît dans le
-          // dossier où cette conversation travaille, sans attendre qu'une
-          // écriture l'y rattache.
-          projectId: conv.currentProjectId,
-          messages: [{ role: 'user', content: workerContent }],
-        },
-      });
-      if (decision.kind === 'started') {
-        startedJobId = decision.jobId;
-        break;
-      }
-      const [head] = await db
-        .select({ id: agentJobs.id, task: agentJobs.task, status: agentJobs.status })
-        .from(agentJobs)
-        .where(eq(agentJobs.id, decision.headJobId));
-      deliveredTo = head ?? { id: decision.headJobId, task: '', status: null };
-    }
-
-    const toolCallId =
-      (runTask as { toolCallId?: unknown }).toolCallId !== undefined
-        ? String((runTask as { toolCallId?: unknown }).toolCallId)
-        : `run-task-delivered-${String(refusals)}`;
-    // L'historique porte déjà le message de ce tour (écrit en 1b).
-    messages = [
-      ...messages,
-      {
-        role: 'assistant',
-        content: [
-          ...(text ? [{ type: 'text' as const, text }] : []),
-          {
-            type: 'tool-call' as const,
-            toolCallId,
-            toolName: 'run_task',
-            input: runTask.input ?? {},
-          },
-        ],
-      },
-      {
-        role: 'tool',
-        content: [
-          {
-            type: 'tool-result' as const,
-            toolCallId,
-            toolName: 'run_task',
-            output: {
-              type: 'text' as const,
-              value: runTaskDelivered(deliveredTo, refusals >= 1),
-            },
-          },
-        ],
-      },
-    ];
-    // Ce qui a pu passer par le flux n'est plus la réponse.
-    streamed = false;
-    if (refusals >= 1) {
-      // Second appel : ni son appel ni sa phrase ne restent. La relance sans
-      // outils (6b) écrit la réponse, les deux résultats compris.
-      text = '';
-      runTask = undefined;
-      continue;
-    }
-    refusals += 1;
-    try {
-      const again = await llmClient.generateText(
-        { system: systemPrompt, messages, tools: CHAT_TOOLS },
-        abortSignal ? { abortSignal } : undefined,
-      );
-      text = (again.text ?? '').trim();
-      runTask = runTaskOf(again);
-    } catch (err) {
-      if (abortSignal?.aborted) return await keepStoppedReply();
-      const capped = failedOnRefusedTurn(err, 'reply after a delivered run_task', agentRow.slug);
-      if (capped) return capped;
-      console.warn(
-        `[run-chat-turn] reply after a delivered run_task failed (${agentRow.slug}):`,
-        (err as Error).message,
-      );
-      text = '';
-      runTask = undefined;
-    }
-    if (abortSignal?.aborted) return await keepStoppedReply();
+  //     UN TRAVAIL DU FIL COURT DÉJÀ (#453, #531). #453 refusait le `run_task`
+  //     au modèle, et la précision de la personne n'atteignait jamais le
+  //     travail en cours. Le `run_task` passe maintenant par le point de
+  //     décision de toutes les entrées (`startConversationTurn`,
+  //     @nodal-agents/db) : pendant qu'une tête du fil vit, il démarre un TOUR
+  //     DE RÉPONSE qui voit ce qui tourne et décide — transmettre, arrêter,
+  //     lancer autre chose. Le message n'est jamais présumé lié au travail en
+  //     cours. AUCUNE échappatoire `alongside` (revue Codex de #453, passe 3) :
+  //     c'est le tour de réponse, avec ses outils, qui juge.
+  if (!runTask && !text) {
+    const arret = await repondreSansOutils();
+    if (arret) return arret;
   }
+  const arretRelecture = await relireUneFois();
+  if (arretRelecture) return arretRelecture;
 
   // 6a. ESCALATION: the agent wants to act → spawn a real job (the unit of work).
   //     The spawned job runs the ROOT with its full toolset (delegating to
   //     sub-agents → the dispatch cards). The chat just shows its progress.
-  if (runTask && startedJobId) {
-    // Le job est né au point de décision (5c), dans la transaction qui a
-    // vérifié qu'aucune tête de la conversation ne vivait.
-    const job = { id: startedJobId };
+  if (runTask) {
+    const instruction =
+      String((runTask.input as { instruction?: unknown } | undefined)?.instruction ?? '').trim() ||
+      message;
+    // SAFETY NET against intent drift: the worker must always see the USER's
+    // actual words, not only the orchestrator's framing. If the instruction did
+    // not already carry them (an orchestrator reworded/compressed despite the steer), append
+    // the user's exact message as the source of truth. Dedup when it's already in.
+    const probe = message.trim().slice(0, 160);
+    const workerContent =
+      probe.length > 0 && !instruction.includes(probe)
+        ? `${instruction}\n\n[User's exact request, verbatim — this is the source of truth; the line above is only framing]\n${message}`
+        : instruction;
+    // Tour de réponse ou tête d'un fil au repos : la décision de toute entrée
+    // (#531), prise sous le verrou de la conversation.
+    const turn = await startConversationTurn(db, {
+      entityId,
+      conversationId,
+      start: {
+        entityId,
+        agentId,
+        status: 'pending',
+        channel: 'dashboard',
+        task: instruction,
+        // Jobs page grouping (migration 0059): this channel already has a
+        // real conversation entity (the dashboard sidebar thread) — stamp
+        // that id directly rather than re-deriving it from a gap heuristic.
+        conversationId,
+        // Le projet courant du fil (P6) : le travail escaladé naît dans le
+        // dossier où cette conversation travaille, sans attendre qu'une
+        // écriture l'y rattache.
+        projectId: conv.currentProjectId,
+        messages: [{ role: 'user', content: workerContent }],
+      },
+    });
+    const job = { id: turn.jobId };
 
     // The acknowledgment is the agent's OWN words (it's prompted to write a
     // one-liner when it escalates). If it wrote none, the runner stays SILENT

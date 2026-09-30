@@ -162,13 +162,16 @@ describe('runTelegramPoller', () => {
     expect(exit.reason).toBe('aborted');
     expect(exit.finalOffset).toBe(102);
 
-    // Both messages reached the conversation, and ONE job runs (#531): 'second'
-    // arrived while 'first' was still alive (pending), so it waits in that
-    // job's inbox instead of starting a second job — acknowledged by a
-    // reaction, never by text.
-    const jobs = await db.select().from(agentJobs).where(eq(agentJobs.channel, 'telegram'));
-    expect(jobs.map((j) => j.task)).toEqual(['first']);
-    expect(jobs[0]!.inbox.map((e) => e.task)).toEqual(['second']);
+    // One job per update. 'second' arrived while 'first' was still alive
+    // (pending): its job is a REPLY TURN answering while it (#531), and the
+    // message is acknowledged at once by a reaction, never by text.
+    const jobs = await db
+      .select()
+      .from(agentJobs)
+      .where(eq(agentJobs.channel, 'telegram'))
+      .orderBy(agentJobs.createdAt);
+    expect(jobs.map((j) => j.task)).toEqual(['first', 'second']);
+    expect(jobs.map((j) => j.answersWhileJobId)).toEqual([null, jobs[0]!.id]);
     expect(botApiCalls).toEqual([
       {
         method: 'setMessageReaction',
@@ -547,14 +550,10 @@ describe('runTelegramPoller', () => {
     expect(transactionAttempt).toBe(3); // 100 fails, 100 retried (succeeds), 101 (succeeds)
     expect(batchesAfterConfirmation).toBe(1);
 
-    // BOTH updates reached the conversation — 100 was retried and delivered, not
-    // silently dropped because 101 (later in the batch) happened to succeed
-    // first. 101 arrived while 100's job was alive: it waits in its inbox (#531).
+    // BOTH updates ended up as real jobs — 100 was retried and delivered, not
+    // silently dropped because 101 (later in the batch) happened to succeed first.
     const jobs = await db.select().from(agentJobs).where(eq(agentJobs.channel, 'telegram'));
-    expect(jobs.flatMap((j) => [j.task, ...j.inbox.map((e) => e.task)]).sort()).toEqual([
-      'first',
-      'second',
-    ]);
+    expect(jobs.map((j) => j.task).sort()).toEqual(['first', 'second']);
   });
 
   it('#602: /stop creates no job and is acknowledged by a reaction on the message, never by text @cap:parler-par-canal-externe/moteur', async () => {

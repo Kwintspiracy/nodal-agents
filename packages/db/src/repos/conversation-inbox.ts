@@ -1,53 +1,44 @@
-// repos/conversation-inbox.ts — UN travail de tête par conversation (#531).
+// repos/conversation-inbox.ts — un message qui arrive pendant que le travail
+// de sa conversation tourne (#531).
 //
 // Le 23/09 (#453), puis sur chaque canal : une précision envoyée pendant que la
 // première demande tournait (« et mets-le dans le dossier partagé ») démarrait
-// un second job de tête, qui refaisait tout. Sur les canaux, chaque message
-// insérait sa tête ; sur le web, `run_task` était refusé au modèle, et la
-// précision n'atteignait jamais le travail en cours.
+// un job de tête qui ne savait rien du travail en cours, et qui refaisait tout.
 //
-// LA RÈGLE, pour toute entrée qui démarre du travail dans une conversation :
-// tant qu'une tête de cette conversation n'est pas terminale — en cours, en
-// attente d'une approbation ou d'une délégation, ou pas encore prise —, le
-// message va dans SA file (`agent_jobs.inbox`) ; sinon il démarre une tête,
-// comme avant. `deliverOrStartTurn` est ce point de décision, et le seul : les
-// quatre canaux l'appellent par `takeChannelTurn`, le chat web par son
-// `run_task`.
+// LA RÈGLE (spécification de Quentin, 30/09) : un tel message n'est jamais sans
+// réponse, et il n'est pas PRÉSUMÉ lié au travail en cours — il peut demander
+// autre chose. Il démarre donc un TOUR DE RÉPONSE : un job du même agent,
+// marqué `answers_while_job_id`, qui voit ce qui tourne (bloc « Work running in
+// this conversation », conversation-id.ts) et décide avec de vrais outils :
+// répondre, transmettre au travail en cours (`message_conversation_run` → la
+// FILE du job visé), l'arrêter (`stop_conversation_run`), lancer autre chose.
 //
-// Ce que devient une entrée :
-//   - la boucle la vide en haut de chaque tour et avant de conclure sur une
-//     réponse en texte (`drainJobInbox`) : le modèle la lit dans le travail
-//     qu'elle concerne, et c'est lui qui juge — précision, ou autre travail
-//     qu'il délègue ;
-//   - ce qui reste quand la tête finit devient une nouvelle tête (déclencheur
+// `startConversationTurn` est le point de décision, et le seul : les quatre
+// canaux l'appellent par `takeChannelTurn`, le chat web par son `run_task`.
+//
+// La file (`agent_jobs.inbox`) d'un job vivant :
+//   - sa boucle la vide en haut de chaque tour et avant de conclure sur une
+//     réponse en texte (`drainJobInbox`) — avec ce qui restait dans la file de
+//     ses délégués finis ;
+//   - ce qui reste quand une TÊTE finit devient une nouvelle tête (déclencheur
 //     `agent_jobs_inbox_relaunch`, migration 0141) — c'est aussi le chemin d'un
 //     job de CLI, qui n'a pas de frontière de tour ;
 //   - l'arrêt demandé par la personne (`cancelJobTree`) la vide sans la
-//     relancer, et le rend ;
-//   - une entrée dont le canal télécharge encore le média n'est lue qu'une
-//     fois complète.
-//
-// Une tête SUSPENDUE (approbation, délégation) est vivante : le message y
-// attend, accusé tout de suite par le canal, et il est lu à la reprise —
-// décision produit validée par Quentin (#642). `/stop` et `/new` restent les
-// sorties immédiates.
-//
-// Aucun texte n'est écrit par la plateforme : le message est celui de la
-// personne, et le canal accuse réception par une réaction (invariant #2).
+//     relancer, et le rend.
 
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { INBOX_MEDIA_WAIT_MS, LIVE_JOB_STATUSES, inboxMessage } from '@nodal-agents/shared';
-import type { InboxContent, InboxEntry, InboxMessage } from '@nodal-agents/shared';
+import { LIVE_JOB_STATUSES, TERMINAL_STATUSES, inboxMessage } from '@nodal-agents/shared';
+import type { InboxEntry, InboxMessage } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agentJobs } from '../schema/jobs.ts';
 import { ownJobRow, RUN_ACTS_WHILE } from './run-claim.ts';
 
-/** Ce qu'est devenu un message qui aurait démarré du travail. */
-export type ConversationTurn =
-  /** Aucune tête ne vivait : le message a démarré ce job. */
-  | { readonly kind: 'started'; readonly jobId: string }
-  /** Une tête vivait : le message est dans sa file. */
-  | { readonly kind: 'delivered'; readonly headJobId: string; readonly entryId: string };
+/** Ce qu'a démarré un message qui arrive dans une conversation. */
+export interface ConversationTurn {
+  readonly jobId: string;
+  /** La tête vivante pendant laquelle ce tour de réponse est né ; `null` : la conversation était au repos. */
+  readonly answersWhileJobId: string | null;
+}
 
 /**
  * « Vivant » : la définition partagée (`LIVE_JOB_STATUSES`), celle des
@@ -68,56 +59,48 @@ function live() {
 const MAX_DECISION_READS = 5;
 
 /**
- * LE point de décision : remet `message` à la tête vivante de la conversation,
- * ou démarre `start` s'il n'y en a aucune.
+ * LE point de décision : démarre `start` dans la conversation — comme tour de
+ * réponse (`answers_while_job_id`) si une tête y vit, sinon comme tête d'une
+ * conversation au repos.
  *
- * SÉRIALISÉ PAR CONVERSATION (revue de #642, passe 1). Trois courses, fermées
- * chacune par un geste, sur un vrai Postgres à deux connexions
- * (conversation-inbox-race.pg.test.ts) :
- *   - deux messages qui démarrent en même temps : le verrou consultatif de la
- *     conversation (`pg_advisory_xact_lock`) les fait passer l'un après
- *     l'autre, et le second voit la tête du premier ;
- *   - un message qui croise la fin de la tête : la tête est prise en
- *     `FOR UPDATE`, la fin l'attend (et le déclencheur relance l'entrée) ou
- *     elle a gagné — et si sa file n'était pas vide, le déclencheur a fait
- *     naître une tête que la lecture verrouillée, prise sur l'image d'AVANT,
- *     ne voit pas. D'où la RELECTURE : une instruction nouvelle voit ce qui a
- *     été commité pendant l'attente, et le message va à cette tête-là ;
- *   - l'arrêt qui croise la fin de la tête : `cancelJobTree` descend aussi par
- *     `relaunched_from_job_id`, la tête née de la file étant la suite du même
- *     travail.
- * Le déclencheur, lui, ne prend PAS le verrou consultatif : il tourne sous le
- * verrou de ligne que pose l'écriture terminale, alors que la décision prend
- * le verrou consultatif avant la ligne — le prendre là-bas inverserait l'ordre
- * et ferait des interblocages. La relecture ci-dessus rend ce verrou inutile.
+ * SÉRIALISÉ PAR CONVERSATION (revue de #642, passe 1), sur un vrai Postgres à
+ * deux connexions (conversation-inbox-race.pg.test.ts) :
+ *   - deux messages simultanés : le verrou consultatif de la conversation
+ *     (`pg_advisory_xact_lock`) les fait passer l'un après l'autre, et le
+ *     second voit la tête du premier — il répond PENDANT elle au lieu de
+ *     démarrer une seconde tête « au repos » ;
+ *   - un message qui croise la fin de la tête : la tête vivante est lue en
+ *     `FOR UPDATE`. Si la fin l'emporte et que sa file n'était pas vide, le
+ *     déclencheur a fait naître une tête que la lecture verrouillée, prise sur
+ *     l'image d'AVANT, ne voit pas : une instruction NOUVELLE relit donc la
+ *     conversation, et le tour répond pendant cette tête-là.
+ * Le déclencheur ne prend PAS le verrou consultatif : il tourne sous le verrou
+ * de ligne que pose l'écriture terminale, alors que la décision prend le
+ * verrou consultatif avant la ligne — l'y prendre inverserait l'ordre et
+ * ferait des interblocages. La relecture rend ce verrou inutile là-bas.
  *
- * Plusieurs têtes vivantes (un fil d'avant cette règle) : la plus récente
- * reçoit le message, c'est le travail dont la personne parle.
+ * Pas d'emballement : un tour de réponse ne naît QUE d'un message. Un message
+ * qui arrive pendant un tour de réponse suit la même règle — un tour de plus,
+ * un seul, pour ce message.
  */
-export async function deliverOrStartTurn(
+export async function startConversationTurn(
   db: AnyDrizzleDb,
   input: {
     entityId: string;
     conversationId: string;
-    /**
-     * `preparing` : le canal attache encore un média à ce message, hors
-     * transaction ; une entrée remise n'est pas lue avant qu'il soit là
-     * (`attachToInboxEntry`, `releaseInboxEntry`).
-     */
-    message: { task: string; content: InboxContent; preparing?: boolean };
-    /** Le job à démarrer quand rien ne vit, dans cette conversation. */
+    /** Le job à démarrer, dans cette conversation. */
     start: typeof agentJobs.$inferInsert;
   },
 ): Promise<ConversationTurn> {
-  const { entityId, conversationId, message, start } = input;
-  if (start.conversationId !== conversationId || start.entityId !== entityId) {
+  const { entityId, conversationId, start } = input;
+  if (
+    start.conversationId !== conversationId ||
+    start.entityId !== entityId ||
+    (start.parentJobId ?? null) !== null
+  ) {
     throw new Error(
-      'deliverOrStartTurn: the job to start must belong to the same entity and conversation',
+      'startConversationTurn: the job to start must be a head of the same entity and conversation',
     );
-  }
-  if (message.task.trim() === '') {
-    // La tâche d'une tête née de la file (déclencheur) : jamais vide.
-    throw new Error('deliverOrStartTurn: the message has no text');
   }
   return db.transaction(async (tx) => {
     const t = tx as unknown as AnyDrizzleDb;
@@ -131,6 +114,8 @@ export async function deliverOrStartTurn(
       live(),
     );
     for (let read = 0; read < MAX_DECISION_READS; read++) {
+      // La tête la plus récente : le travail dont la personne parle le plus
+      // probablement. Le tour de réponse voit de toute façon TOUT ce qui tourne.
       const [head] = await t
         .select({ id: agentJobs.id })
         .from(agentJobs)
@@ -138,79 +123,118 @@ export async function deliverOrStartTurn(
         .orderBy(desc(agentJobs.createdAt), desc(agentJobs.id))
         .limit(1)
         .for('update');
-
-      if (head) {
-        const entry: InboxEntry = {
-          id: crypto.randomUUID(),
-          task: message.task,
-          content: message.content,
-          receivedAt: new Date().toISOString(),
-          ...(message.preparing ? { preparing: true } : {}),
-        };
-        const [delivered] = await t
-          .update(agentJobs)
-          .set({ inbox: sql`${agentJobs.inbox} || ${JSON.stringify([entry])}::jsonb` })
-          .where(and(eq(agentJobs.id, head.id), live()))
-          .returning({ id: agentJobs.id });
-        if (!delivered) {
-          // Verrouillée et relue vivante juste au-dessus : ne peut pas arriver.
-          throw new Error(`deliverOrStartTurn: head ${head.id} left before the delivery`);
-        }
-        return { kind: 'delivered', headJobId: head.id, entryId: entry.id } as const;
+      if (!head) {
+        // Rien sous verrou. Une instruction NOUVELLE (nouvelle image, READ
+        // COMMITTED) : une tête commitée pendant l'attente du verrou — celle
+        // que le déclencheur fait naître d'une file non vide — est vue ici.
+        const [born] = await t.select({ id: agentJobs.id }).from(agentJobs).where(heads).limit(1);
+        if (born) continue;
       }
-
-      // Rien sous verrou. Une instruction NOUVELLE (nouvelle image, READ
-      // COMMITTED) : une tête commitée pendant l'attente du verrou — celle que
-      // le déclencheur fait naître d'une file non vide — est vue ici.
-      const [born] = await t.select({ id: agentJobs.id }).from(agentJobs).where(heads).limit(1);
-      if (born) continue;
-
-      const [job] = await t.insert(agentJobs).values(start).returning({ id: agentJobs.id });
-      if (!job) throw new Error('deliverOrStartTurn: the job row was not returned');
-      return { kind: 'started', jobId: job.id } as const;
+      const answersWhileJobId = head?.id ?? null;
+      const [job] = await t
+        .insert(agentJobs)
+        .values({ ...start, answersWhileJobId })
+        .returning({ id: agentJobs.id });
+      if (!job) throw new Error('startConversationTurn: the job row was not returned');
+      return { jobId: job.id, answersWhileJobId };
     }
     throw new Error(
-      `deliverOrStartTurn: the heads of conversation ${conversationId} kept changing while it was read`,
+      `startConversationTurn: the heads of conversation ${conversationId} kept changing while it was read`,
     );
   });
 }
 
-/** Ce que le vidage a rendu, et ce qu'il a laissé parce que son média arrive encore. */
-export interface DrainedInbox {
-  readonly messages: InboxMessage[];
-  /** Entrées laissées en file : leur média est en cours de téléchargement. */
-  readonly preparing: number;
-}
+/** Ce que la remise d'un message à un job vivant a donné. */
+export type ConversationJobDelivery =
+  | { readonly delivered: true; readonly jobId: string; readonly entryId: string }
+  | {
+      readonly delivered: false;
+      /** `not_in_conversation` : ce job n'est pas de cette conversation ; `not_live` : il a fini. */
+      readonly reason: 'not_in_conversation' | 'not_live';
+      readonly status: string | null;
+    };
 
-/** Une entrée se lit-elle maintenant ? Oui, sauf un média attendu depuis moins de `INBOX_MEDIA_WAIT_MS`. */
-function readable(entry: InboxEntry, now: number): boolean {
-  if (!entry.preparing) return true;
-  const received = Date.parse(entry.receivedAt);
-  return !Number.isFinite(received) || now - received >= INBOX_MEDIA_WAIT_MS;
+/**
+ * Écrit `text` dans la file du job `jobId` — une tête ou un délégué de la
+ * conversation `conversationId`, encore vivant. Il la lira à son prochain tour,
+ * et avant de conclure. La ligne est verrouillée : une fin concurrente
+ * l'attend et voit l'entrée (une tête la relance, un délégué la laisse à son
+ * parent), ou elle a gagné et la remise est refusée — jamais une entrée écrite
+ * dans la file d'un job fini.
+ */
+export async function deliverToConversationJob(
+  db: AnyDrizzleDb,
+  input: {
+    entityId: string;
+    conversationId: string;
+    jobId: string;
+    text: string;
+    /** Le job qui transmet, s'il y en a un. */
+    fromJobId?: string;
+  },
+): Promise<ConversationJobDelivery> {
+  const { entityId, conversationId, jobId, text } = input;
+  if (text.trim() === '') throw new Error('deliverToConversationJob: the message has no text');
+  return db.transaction(async (tx) => {
+    const t = tx as unknown as AnyDrizzleDb;
+    const [row] = await t
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(
+        and(
+          eq(agentJobs.id, jobId),
+          eq(agentJobs.entityId, entityId),
+          eq(agentJobs.conversationId, conversationId),
+        ),
+      )
+      .for('update');
+    if (!row) return { delivered: false, reason: 'not_in_conversation', status: null } as const;
+    if (row.status === null || !(LIVE_JOB_STATUSES as readonly string[]).includes(row.status)) {
+      return { delivered: false, reason: 'not_live', status: row.status } as const;
+    }
+    const entry: InboxEntry = {
+      id: crypto.randomUUID(),
+      task: text,
+      content: text,
+      receivedAt: new Date().toISOString(),
+      ...(input.fromJobId ? { fromJobId: input.fromJobId } : {}),
+    };
+    await t
+      .update(agentJobs)
+      .set({ inbox: sql`${agentJobs.inbox} || ${JSON.stringify([entry])}::jsonb` })
+      .where(eq(agentJobs.id, jobId));
+    return { delivered: true, jobId, entryId: entry.id } as const;
+  });
 }
 
 /**
  * Vide la file du job que CE run tient (sous sa prise, #566) et rend ce qu'elle
- * contenait, prêt à entrer dans la transcription (marqué, `inboxMessage`).
+ * contenait, prêt à entrer dans la transcription (marqué, `inboxMessage`) —
+ * avec ce qui restait dans la file de ses délégués FINIS : un message transmis
+ * à un délégué qui a terminé avant de le lire revient au parent, qui reprend
+ * justement la main à ce moment-là. Parent puis enfants : l'ordre de verrous
+ * de l'arrêt (`cancelJobTree`).
  *
- * Une entrée dont le média se télécharge encore (`preparing`) RESTE en file et
- * est comptée : elle n'est lue qu'une fois complète (revue de #642, passe 1).
- * Au-delà de `INBOX_MEDIA_WAIT_MS`, elle est lue telle qu'elle est.
- *
- * Les messages lus sont aussi ajoutés à `messages` en base dans la même
+ * Les messages sont aussi ajoutés à `messages` en base dans la même
  * transaction : entre le vidage et le point de reprise suivant, ils ne vivent
  * pas que dans la mémoire du run.
  *
- * Rend une file vide quand il n'y a rien, et quand le run ne tient plus le
- * job : ce n'est pas à lui de la lire, la transition terminale s'en chargera.
+ * Rend `[]` quand il n'y a rien, et quand le run ne tient plus le job : ce
+ * n'est pas à lui de la lire, la transition terminale s'en chargera.
  */
-export async function drainJobInbox(db: AnyDrizzleDb, jobId: string): Promise<DrainedInbox> {
-  // Une lecture sans verrou d'abord : la file est vide à presque tous les tours.
+export async function drainJobInbox(db: AnyDrizzleDb, jobId: string): Promise<InboxMessage[]> {
+  // Une lecture sans verrou d'abord : il n'y a rien à presque tous les tours.
   const [peek] = await db
-    .select({ n: sql<number>`jsonb_array_length(${agentJobs.inbox})` })
+    .select({
+      own: sql<number>`jsonb_array_length(${agentJobs.inbox})`,
+      children: sql<number>`(
+        SELECT count(*) FROM agent_jobs c
+        WHERE c.parent_job_id = ${jobId} AND c.inbox <> '[]'::jsonb
+      )`,
+    })
     .from(agentJobs)
     .where(eq(agentJobs.id, jobId));
-  if (!peek || Number(peek.n) === 0) return { messages: [], preparing: 0 };
+  if (!peek || (Number(peek.own) === 0 && Number(peek.children) === 0)) return [];
 
   return db.transaction(async (tx) => {
     const t = tx as unknown as AnyDrizzleDb;
@@ -219,81 +243,42 @@ export async function drainJobInbox(db: AnyDrizzleDb, jobId: string): Promise<Dr
       .from(agentJobs)
       .where(ownJobRow(jobId, RUN_ACTS_WHILE))
       .for('update');
-    const entries = row?.inbox ?? [];
-    const now = Date.now();
-    const ready = entries.filter((e) => readable(e, now));
-    const waiting = entries.filter((e) => !readable(e, now));
-    if (ready.length === 0) return { messages: [], preparing: waiting.length };
-    const drained = ready.map(inboxMessage);
+    if (!row) return [];
+    const children = await t
+      .select({ id: agentJobs.id, inbox: agentJobs.inbox })
+      .from(agentJobs)
+      .where(
+        and(
+          eq(agentJobs.parentJobId, jobId),
+          inArray(agentJobs.status, [...TERMINAL_STATUSES]),
+          sql`${agentJobs.inbox} <> '[]'::jsonb`,
+        ),
+      )
+      .orderBy(agentJobs.createdAt)
+      .for('update');
+    const entries = [...row.inbox, ...children.flatMap((c) => c.inbox)];
+    if (entries.length === 0) return [];
+    const drained = entries.map(inboxMessage);
     await t
       .update(agentJobs)
       .set({
-        inbox: sql`${JSON.stringify(waiting)}::jsonb`,
+        inbox: sql`'[]'::jsonb`,
         messages: sql`COALESCE(${agentJobs.messages}, '[]'::jsonb) || ${JSON.stringify(drained)}::jsonb`,
       })
       .where(ownJobRow(jobId, RUN_ACTS_WHILE));
-    return { messages: drained, preparing: waiting.length };
+    if (children.length > 0) {
+      await t
+        .update(agentJobs)
+        .set({ inbox: sql`'[]'::jsonb` })
+        .where(
+          inArray(
+            agentJobs.id,
+            children.map((c) => c.id),
+          ),
+        );
+    }
+    return drained;
   });
-}
-
-/**
- * Réécrit l'entrée `entryId`, où qu'elle attende dans l'espace `entityId` :
- * dans la file de la tête qui l'a reçue, ou dans celle de la tête que le
- * déclencheur a relancée. Rend `false` quand l'entrée n'est plus dans aucune
- * file (lue, ou devenue la tâche d'une tête relancée).
- */
-async function rewriteInboxEntry(
-  db: AnyDrizzleDb,
-  input: { entityId: string; entryId: string; patch: Record<string, unknown> },
-): Promise<boolean> {
-  const { entityId, entryId, patch } = input;
-  const rows = await db
-    .update(agentJobs)
-    .set({
-      inbox: sql`(
-        SELECT jsonb_agg(
-          CASE WHEN e ->> 'id' = ${entryId}
-            THEN (e - 'preparing') || ${JSON.stringify(patch)}::jsonb
-            ELSE e END
-          ORDER BY ord)
-        FROM jsonb_array_elements(${agentJobs.inbox}) WITH ORDINALITY AS x(e, ord)
-      )`,
-    })
-    .where(
-      and(
-        eq(agentJobs.entityId, entityId),
-        sql`${agentJobs.inbox} @> ${JSON.stringify([{ id: entryId }])}::jsonb`,
-      ),
-    )
-    .returning({ id: agentJobs.id });
-  return rows.length > 0;
-}
-
-/**
- * Rattache le contenu complet d'un message remis (l'image, téléchargée hors
- * transaction) à son entrée, et la rend lisible. `false` : l'entrée n'attend
- * plus dans aucune file — c'est à l'appelant de le dire.
- */
-export function attachToInboxEntry(
-  db: AnyDrizzleDb,
-  input: { entityId: string; entryId: string; content: InboxContent },
-): Promise<boolean> {
-  return rewriteInboxEntry(db, {
-    entityId: input.entityId,
-    entryId: input.entryId,
-    patch: { content: input.content },
-  });
-}
-
-/**
- * Le téléchargement du média a échoué : l'entrée devient lisible telle qu'elle
- * est, texte seul, au lieu d'attendre `INBOX_MEDIA_WAIT_MS`.
- */
-export function releaseInboxEntry(
-  db: AnyDrizzleDb,
-  input: { entityId: string; entryId: string },
-): Promise<boolean> {
-  return rewriteInboxEntry(db, { ...input, patch: {} });
 }
 
 /**

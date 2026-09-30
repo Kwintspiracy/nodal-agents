@@ -1,34 +1,32 @@
-// inbox-drain.test.ts — le travail en cours LIT ce que la personne ajoute
-// pendant qu'il tourne (#531).
+// inbox-drain.test.ts — un message qui arrive pendant un travail : le TOUR DE
+// RÉPONSE voit ce qui tourne et y transmet, le travail en cours le LIT (#531).
 //
-// Un message envoyé pendant que la tête de la conversation vit entre dans sa
-// file (`deliverOrStartTurn`, prouvé dans packages/db et par les quatre
-// canaux). Ici, la boucle RÉELLE (`executeJob`, vraie base de test, vrai client
-// LLM construit depuis la clé de l'agent) et ce que le fournisseur reçoit,
-// lu à la frontière `fetch` :
-//   - un message déjà en file quand le run démarre est dans le PREMIER appel ;
-//   - un message arrivé PENDANT le dernier appel (le modèle répond en texte, il
-//     allait conclure) est lu avant de conclure : un appel de plus le porte, et
-//     aucune seconde tête ne naît ;
-//   - un message arrivé pendant un dernier appel qui conclut par
+// La spécification (Quentin, 30/09) : un message envoyé pendant qu'un travail
+// tourne n'est jamais sans réponse, et il n'est pas présumé lié à ce travail.
+// Il démarre un tour de réponse (`startConversationTurn`, prouvé dans
+// packages/db et par les quatre canaux). Ici, la boucle RÉELLE (`executeJob`,
+// vraie base de test, vrai client LLM construit depuis la clé de l'agent) et
+// ce que le fournisseur reçoit, lu à la frontière `fetch` :
+//   - le tour de réponse reçoit le bloc « Work running in this conversation »,
+//     construit depuis des faits typés, transmet avec `message_conversation_run`
+//     et répond ; il ne fait naître aucun autre tour ;
+//   - la tête lit ce qui lui a été transmis : dans sa PREMIÈRE requête si c'est
+//     arrivé avant ; AVANT DE CONCLURE si c'est arrivé pendant son dernier
+//     appel (« je te donne suite à la fin » n'est pas une promesse en l'air) ;
+//   - un message transmis pendant un dernier appel qui conclut par
 //     `return_result` (pas de lecture à cet endroit) devient une nouvelle tête
-//     à la transition terminale, et elle est réveillée tout de suite ;
-//   - le tour suivant de la conversation rejoue la précision (thread-history).
-//
-// Mutation vérifiée aussi : `followUps` vidé dans thread-history.ts → « the
-// NEXT turn » rougit (la précision disparaît de l'historique).
+//     à la transition terminale, réveillée tout de suite ;
+//   - le tour suivant de la conversation rejoue le message lu.
 //
 // Mutations vérifiées :
 //   - la lecture avant de conclure retirée (`lireLaFile('before_final_text')`)
-//     → « arrived DURING the last call » rougit (le run conclut sans l'avoir
-//     lu, une seconde tête naît) ;
-//   - la lecture en haut de tour retirée → « already waiting » rougit (le
-//     premier appel ne le porte pas) ;
-//   - `wakeRelaunchedHeads` retiré d'`executeJob` → « return_result » rougit
-//     (aucun réveil de la nouvelle tête) ;
-//   - l'attente du média retirée de `lireLaFile` → « photo is still
-//     downloading » rougit (le run conclut sans la photo) ; le vidage qui lit
-//     aussi les entrées en préparation → le même test rougit (lue texte seul).
+//     → « read BEFORE concluding » rougit (le run conclut sans le message, une
+//     seconde tête naît) ;
+//   - la lecture en haut de tour retirée → « already waiting » rougit ;
+//   - `wakeRelaunchedHeads` retiré d'`executeJob` → « return_result » rougit ;
+//   - `followUps` vidé dans thread-history.ts → « the NEXT turn » rougit ;
+//   - `answersWhileJobId` non transmis à `loadConversationContext` → « a reply
+//     turn sees the running work » rougit (aucun bloc).
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -44,8 +42,7 @@ import {
   asc,
   eq,
   isNull,
-  attachToInboxEntry,
-  deliverOrStartTurn,
+  deliverToConversationJob,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { inboxMessage, isInboxMessage } from '@nodal-agents/shared';
@@ -105,7 +102,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-type Reply = { text?: string; returnResult?: boolean };
+type Reply = { text?: string; toolCall?: { name: string; args: Record<string, unknown> } };
 
 /** Un message de la requête, en texte : une chaîne, ou les parts de texte jointes. */
 function textOf(content: unknown): string {
@@ -118,14 +115,16 @@ function textOf(content: unknown): string {
     .join('');
 }
 
+type Sent = Array<{ role: string; content: unknown }>;
+
 /**
  * Le réseau : chaque appel au modèle est enregistré tel que le fournisseur le
  * reçoit ; la relecture d'action (#600) répond sans rien faire ; les autres
  * appels suivent `script`, et `onCall(n)` s'exécute AVANT la réponse n — pendant
  * l'appel, du point de vue du run.
  */
-function network(script: readonly Reply[], onCall: (n: number) => Promise<void>) {
-  const turns: Array<Array<{ role: string; content: unknown }>> = [];
+function network(script: readonly Reply[], onCall: (n: number) => Promise<void> = async () => {}) {
+  const turns: Sent[] = [];
   const workerWakes: string[] = [];
   let n = 0;
   vi.stubGlobal(
@@ -137,10 +136,7 @@ function network(script: readonly Reply[], onCall: (n: number) => Promise<void>)
         return new Response('{}', { status: 202 });
       }
       if (!url.includes('/chat/completions')) throw new Error(`unexpected fetch ${url}`);
-      const body = JSON.parse(init?.body as string) as {
-        stream?: boolean;
-        messages: Array<{ role: string; content: unknown }>;
-      };
+      const body = JSON.parse(init?.body as string) as { stream?: boolean; messages: Sent };
       const last = body.messages[body.messages.length - 1];
       const recheck = textOf(last?.content) === ACTION_RECHECK;
       let reply: Reply = { text: 'ok' };
@@ -153,17 +149,17 @@ function network(script: readonly Reply[], onCall: (n: number) => Promise<void>)
       const usage = { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 };
       const delta: Record<string, unknown> = { role: 'assistant' };
       if (reply.text) delta['content'] = reply.text;
-      if (reply.returnResult) {
+      if (reply.toolCall) {
         delta['tool_calls'] = [
           {
             index: 0,
             id: `call_${n}`,
             type: 'function',
-            function: { name: 'return_result', arguments: '{"status":"success"}' },
+            function: { name: reply.toolCall.name, arguments: JSON.stringify(reply.toolCall.args) },
           },
         ];
       }
-      const finish = reply.returnResult ? 'tool_calls' : 'stop';
+      const finish = reply.toolCall ? 'tool_calls' : 'stop';
       if (body.stream === true) {
         const chunks = [
           { id: 'c', choices: [{ index: 0, delta }] },
@@ -203,8 +199,11 @@ function makeDeps(): RunnerDeps {
 
 const runnerEnv = { APP_URL: 'http://runner.test', WORKER_SECRET: 'secret' } as RunnerEnv;
 
-/** Une conversation du dashboard et sa tête `pending`, comme l'escalade du chat la crée. */
-async function headJob(task: string): Promise<{ conversationId: string; jobId: string }> {
+/** Une conversation du dashboard et sa tête, comme l'escalade du chat la crée. */
+async function headJob(
+  task: string,
+  status = 'pending',
+): Promise<{ conversationId: string; jobId: string }> {
   const [conv] = await db
     .insert(conversations)
     .values({ entityId: seed.entityId, agentId, channel: 'dashboard' })
@@ -217,28 +216,20 @@ async function headJob(task: string): Promise<{ conversationId: string; jobId: s
       channel: 'dashboard',
       conversationId: conv!.id,
       task,
-      status: 'pending',
+      status,
       messages: [{ role: 'user', content: task }],
     })
     .returning({ id: agentJobs.id });
   return { conversationId: conv!.id, jobId: job!.id };
 }
 
-/** Le message de la personne, par le point de décision que toutes les entrées appellent. */
-async function personWrites(conversationId: string, text: string) {
-  return deliverOrStartTurn(db as unknown as AnyDrizzleDb, {
+/** Ce qu'un tour de réponse transmet à la tête, par le même chemin que l'outil. */
+function forward(conversationId: string, jobId: string, text: string) {
+  return deliverToConversationJob(db as unknown as AnyDrizzleDb, {
     entityId: seed.entityId,
     conversationId,
-    message: { task: text, content: text },
-    start: {
-      entityId: seed.entityId,
-      agentId,
-      channel: 'dashboard',
-      conversationId,
-      status: 'pending',
-      task: text,
-      messages: [{ role: 'user', content: text }],
-    },
+    jobId,
+    text,
   });
 }
 
@@ -251,23 +242,73 @@ async function headsOf(conversationId: string) {
       result: agentJobs.result,
       inbox: agentJobs.inbox,
       messages: agentJobs.messages,
+      answersWhileJobId: agentJobs.answersWhileJobId,
     })
     .from(agentJobs)
     .where(and(eq(agentJobs.conversationId, conversationId), isNull(agentJobs.parentJobId)))
     .orderBy(asc(agentJobs.createdAt));
 }
 
-const userTexts = (messages: ReadonlyArray<{ role: string; content: unknown }>) =>
+const userTexts = (messages: Sent) =>
   messages.filter((m) => m.role === 'user').map((m) => textOf(m.content));
 
-describe('the running work reads what the person adds while it runs (#531) @cap:parler-a-un-agent/moteur', () => {
-  it('a message already waiting when the run starts is in the FIRST request', async () => {
+const systemOf = (messages: Sent) => textOf(messages.find((m) => m.role === 'system')?.content);
+
+describe('a message while the work runs: the reply turn sees it and passes it on, the running work reads it (#531) @cap:parler-a-un-agent/moteur', () => {
+  it('a reply turn sees the running work, passes the person’s words on with message_conversation_run, and answers', async () => {
+    const { conversationId, jobId: head } = await headJob('Fais-moi un portrait', 'processing');
+    const [reply] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId,
+        channel: 'dashboard',
+        conversationId,
+        task: FOLLOW_UP,
+        status: 'pending',
+        answersWhileJobId: head,
+        messages: [{ role: 'user', content: FOLLOW_UP }],
+      })
+      .returning({ id: agentJobs.id });
+    const net = network([
+      {
+        toolCall: {
+          name: 'message_conversation_run',
+          args: { job_id: head, message: 'Range aussi le portrait dans le dossier partagé.' },
+        },
+      },
+      { text: 'C’est transmis au portrait en cours.' },
+    ]);
+
+    await executeJob(reply!.id as JobId, makeDeps(), runnerEnv);
+
+    // Le bloc, dans la requête RÉELLE : les faits de la tête, et les gestes.
+    const system = systemOf(net.turns[0]!);
+    const block = system.slice(system.indexOf('## Work running in this conversation'));
+    expect(block).toContain(`- run ${head} (`);
+    expect(block).toContain('processing');
+    expect(block).toContain('"Fais-moi un portrait"');
+    expect(block).toContain('`message_conversation_run`');
+    // Court : 775 caractères pour un run et un délégué (running-work-block.test.ts).
+    const blockEnd = block.indexOf('\n\n## ', 5);
+    expect((blockEnd === -1 ? block : block.slice(0, blockEnd)).length).toBeLessThan(1_000);
+
+    const heads = await headsOf(conversationId);
+    expect(heads.find((h) => h.id === head)!.inbox.map((e) => e.task)).toEqual([
+      'Range aussi le portrait dans le dossier partagé.',
+    ]);
+    expect(heads.find((h) => h.id === reply!.id)).toMatchObject({
+      status: 'completed',
+      result: 'C’est transmis au portrait en cours.',
+    });
+    // Le tour de réponse n'en fait naître aucun autre : deux têtes, pas trois.
+    expect(heads).toHaveLength(2);
+  }, 30_000);
+
+  it('a message already waiting when the head starts is in its FIRST request', async () => {
     const { conversationId, jobId } = await headJob('Fais-moi un portrait');
-    expect((await personWrites(conversationId, FOLLOW_UP)).kind).toBe('delivered');
-    const net = network(
-      [{ text: 'Portrait fait, rangé dans le dossier partagé.' }],
-      async () => {},
-    );
+    expect((await forward(conversationId, jobId, FOLLOW_UP)).delivered).toBe(true);
+    const net = network([{ text: 'Portrait fait, rangé dans le dossier partagé.' }]);
 
     await executeJob(jobId as JobId, makeDeps(), runnerEnv);
 
@@ -276,13 +317,13 @@ describe('the running work reads what the person adds while it runs (#531) @cap:
     expect(heads.map((h) => [h.id, h.status, h.inbox])).toEqual([[jobId, 'completed', []]]);
   }, 30_000);
 
-  it('a message that arrived DURING the last call is read before concluding: one more request carries it, no second head', async () => {
+  it('a message passed on DURING the head’s last call is read BEFORE concluding: one more request carries it, the result takes it into account, no second head', async () => {
     const { conversationId, jobId } = await headJob('Fais-moi un portrait');
     const net = network(
-      [{ text: 'Voilà ton portrait.' }, { text: 'Je le range dans le dossier partagé.' }],
+      [{ text: 'Voilà ton portrait.' }, { text: 'Portrait rangé dans le dossier partagé.' }],
       async (n) => {
         // Pendant le premier appel — celui qui allait conclure.
-        if (n === 0) expect((await personWrites(conversationId, FOLLOW_UP)).kind).toBe('delivered');
+        if (n === 0) expect((await forward(conversationId, jobId, FOLLOW_UP)).delivered).toBe(true);
       },
     );
 
@@ -290,9 +331,8 @@ describe('the running work reads what the person adds while it runs (#531) @cap:
 
     expect(net.turns).toHaveLength(2);
     expect(userTexts(net.turns[0]!)).toEqual(['Fais-moi un portrait']);
-    // La seconde requête : la réponse qui allait conclure, puis la précision.
-    const second = net.turns[1]!;
-    expect(second.slice(-2).map((m) => [m.role, textOf(m.content)])).toEqual([
+    // La seconde requête : la réponse qui allait conclure, puis le message.
+    expect(net.turns[1]!.slice(-2).map((m) => [m.role, textOf(m.content)])).toEqual([
       ['assistant', 'Voilà ton portrait.'],
       ['user', FOLLOW_UP],
     ]);
@@ -301,66 +341,27 @@ describe('the running work reads what the person adds while it runs (#531) @cap:
     expect(heads[0]).toMatchObject({
       id: jobId,
       status: 'completed',
-      result: 'Je le range dans le dossier partagé.',
+      result: 'Portrait rangé dans le dossier partagé.',
       inbox: [],
     });
-    // Dans la transcription, marqué comme remis pendant le run.
-    const remis = (heads[0]!.messages as unknown[]).filter(isInboxMessage);
-    expect(remis.map((m) => textOf((m as { content: unknown }).content))).toEqual([FOLLOW_UP]);
+    const lus = (heads[0]!.messages as unknown[]).filter(isInboxMessage);
+    expect(lus.map((m) => textOf((m as { content: unknown }).content))).toEqual([FOLLOW_UP]);
     expect(net.workerWakes).toEqual([]);
   }, 30_000);
 
-  it('a message whose photo is still downloading is not read without it: the run waits for the photo before concluding (review of #642, pass 1)', async () => {
+  it('a message passed on during a last call ending with return_result becomes a new head, woken at once', async () => {
     const { conversationId, jobId } = await headJob('Fais-moi un portrait');
-    const photo = [
-      { type: 'text' as const, text: 'dans ce style' },
-      { type: 'image' as const, image: '/ws/shared/telegram/555/style.jpg' },
-    ];
     const net = network(
-      [{ text: 'Voilà ton portrait.' }, { text: 'Refait dans ce style.' }],
+      [
+        {
+          text: 'Voilà ton portrait.',
+          toolCall: { name: 'return_result', args: { status: 'success' } },
+        },
+      ],
       async (n) => {
-        if (n !== 0) return;
-        // Pendant le dernier appel : le message arrive, sa photo se télécharge.
-        const turn = await deliverOrStartTurn(db as unknown as AnyDrizzleDb, {
-          entityId: seed.entityId,
-          conversationId,
-          message: { task: 'dans ce style', content: 'dans ce style', preparing: true },
-          start: {
-            entityId: seed.entityId,
-            agentId,
-            channel: 'dashboard',
-            conversationId,
-            task: 'dans ce style',
-          },
-        });
-        if (turn.kind !== 'delivered') throw new Error('expected a delivery');
-        // …et arrive une seconde et demie plus tard, hors de tout appel.
-        setTimeout(() => {
-          void attachToInboxEntry(db as unknown as AnyDrizzleDb, {
-            entityId: seed.entityId,
-            entryId: turn.entryId,
-            content: photo,
-          });
-        }, 1_500);
+        if (n === 0) expect((await forward(conversationId, jobId, FOLLOW_UP)).delivered).toBe(true);
       },
     );
-
-    await executeJob(jobId as JobId, makeDeps(), runnerEnv);
-
-    expect(net.turns).toHaveLength(2);
-    const heads = await headsOf(conversationId);
-    expect(heads).toHaveLength(1);
-    expect(heads[0]).toMatchObject({ status: 'completed', result: 'Refait dans ce style.' });
-    // La transcription porte le message AVEC sa photo.
-    const remis = (heads[0]!.messages as Array<{ content: unknown }>).filter(isInboxMessage);
-    expect(remis.map((m) => m.content)).toEqual([photo]);
-  }, 30_000);
-
-  it('a message that arrived during a last call ending with return_result becomes a new head, woken at once', async () => {
-    const { conversationId, jobId } = await headJob('Fais-moi un portrait');
-    const net = network([{ text: 'Voilà ton portrait.', returnResult: true }], async (n) => {
-      if (n === 0) expect((await personWrites(conversationId, FOLLOW_UP)).kind).toBe('delivered');
-    });
 
     await executeJob(jobId as JobId, makeDeps(), runnerEnv);
 
@@ -372,12 +373,12 @@ describe('the running work reads what the person adds while it runs (#531) @cap:
     expect(net.workerWakes).toEqual([heads[1]!.id]);
   }, 30_000);
 
-  it('the NEXT turn of a channel conversation replays the follow-up right after the request it clarified', async () => {
+  it('the NEXT turn of a channel conversation replays a message the work read, right after the request it concerned', async () => {
     const [conv] = await db
       .insert(conversations)
       .values({ entityId: seed.entityId, agentId, channel: 'telegram', chatId: '555' })
       .returning({ id: conversations.id });
-    const remis = inboxMessage({
+    const lu = inboxMessage({
       id: randomUUID(),
       task: FOLLOW_UP,
       content: FOLLOW_UP,
@@ -395,7 +396,7 @@ describe('the running work reads what the person adds while it runs (#531) @cap:
       messages: [
         { role: 'user', content: 'Fais-moi un portrait' },
         { role: 'assistant', content: 'Voilà ton portrait.' },
-        remis,
+        lu,
         { role: 'assistant', content: 'Portrait rangé dans le dossier partagé.' },
       ],
     });

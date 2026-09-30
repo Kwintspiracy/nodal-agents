@@ -43,12 +43,12 @@ export interface WhatsAppHandleResult {
    */
   stop?: ChannelStopResult;
   /**
-   * A job of this conversation was still alive (#531): no job was created, the
-   * message is in that job's inbox, which its loop reads at its next turn. The
-   * caller acknowledges it with a reaction where the channel offers one
-   * (`channelTurnReaction`) — never with text (invariant #2).
+   * The job is a REPLY TURN (#531): the message arrived while this head of the
+   * conversation was alive. The caller acknowledges it at once with a reaction
+   * where the channel offers one (`channelTurnReaction`) — never with text
+   * (invariant #2); the reply turn answers.
    */
-  delivered?: { headJobId: string; entryId: string };
+  answersWhileJobId?: string;
   skipped?:
     | 'no_content'
     | 'group_filter'
@@ -187,15 +187,13 @@ export async function handleWhatsAppMessage(args: {
     text: taskText,
     groupPrefix,
     botHandle: null,
-    // Ce canal n'attache aucun média entrant.
-    awaitsMedia: false,
   });
   if (turn.kind === 'stop') return { stop: turn.stop };
 
-  if (turn.kind === 'delivered') {
-    return { delivered: { headJobId: turn.headJobId, entryId: turn.entryId } };
-  }
-  return { jobId: turn.jobId };
+  return {
+    jobId: turn.jobId,
+    ...(turn.answersWhileJobId ? { answersWhileJobId: turn.answersWhileJobId } : {}),
+  };
 }
 
 /**

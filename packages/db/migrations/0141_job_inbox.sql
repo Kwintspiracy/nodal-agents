@@ -1,13 +1,13 @@
 -- Un message arrivé pendant que le travail de sa conversation tourne (#531).
 --
--- Sur Telegram, Discord, Slack et WhatsApp, chaque message insérait un nouveau
--- job de tête : une précision envoyée pendant que la première demande tournait
--- (« et mets-le dans le dossier partagé ») relançait tout le travail une
--- seconde fois. Désormais, tant qu'une tête de la conversation n'est pas
--- terminale, le message entre dans SA file, et la boucle la vide en haut de
--- chaque tour.
+-- Sur Telegram, Discord, Slack et WhatsApp, chaque message insérait un job de
+-- tête qui ne savait rien du travail en cours : une précision (« et mets-le
+-- dans le dossier partagé ») relançait tout le travail une seconde fois.
+-- Désormais un tel message démarre un TOUR DE RÉPONSE (`answers_while_job_id`)
+-- qui voit ce qui tourne et décide : répondre, transmettre au travail en cours
+-- (sa file, `inbox`), l'arrêter, ou lancer autre chose.
 --
--- La file est une colonne de la tête : c'est la ligne que la transition
+-- La file est une colonne du job visé : c'est la ligne que la transition
 -- terminale verrouille, donc la remise d'un message et la fin du job se
 -- sérialisent sur elle — un message ne peut pas tomber entre les deux.
 ALTER TABLE agent_jobs
@@ -26,9 +26,19 @@ CREATE INDEX IF NOT EXISTS idx_agent_jobs_relaunched_from
   ON agent_jobs (relaunched_from_job_id)
   WHERE relaunched_from_job_id IS NOT NULL;
 --> statement-breakpoint
+-- Le travail pendant lequel ce job a été lancé : un TOUR DE RÉPONSE, né d'un
+-- message arrivé pendant que cette tête vivait. Il voit ce qui tourne (bloc
+-- « Work running in this conversation ») et répond toujours. NULL pour une
+-- tête née dans une conversation au repos.
+ALTER TABLE agent_jobs
+  ADD COLUMN IF NOT EXISTS answers_while_job_id uuid;
+--> statement-breakpoint
 -- CE QUI RESTE EN FILE QUAND LA TÊTE FINIT devient une nouvelle tête de la
 -- même conversation : la première entrée en est la tâche, les suivantes sa
--- file (vidée à son premier tour). Aucune perte, par construction : le
+-- file (vidée à son premier tour). Pour une TÊTE seulement : la file restante
+-- d'un délégué reste sur sa ligne, et son parent la lit au tour qui suit son
+-- retour (`drainJobInbox`) — écrire la ligne du parent d'ici prendrait les
+-- verrous dans l'ordre inverse de l'arrêt (parent puis enfants). Aucune perte, par construction : le
 -- déclencheur est posé sur la transition elle-même, pas sur l'un des chemins
 -- qui l'écrivent — la boucle Nodal et ses dizaines de sorties, un tour de CLI
 -- (qui n'a pas de frontière de tour, et dont la file n'est donc lue qu'ici),
@@ -63,5 +73,9 @@ DROP TRIGGER IF EXISTS agent_jobs_inbox_relaunch ON agent_jobs;
 CREATE TRIGGER agent_jobs_inbox_relaunch
   BEFORE UPDATE ON agent_jobs
   FOR EACH ROW
-  WHEN (NEW.status IN ('completed', 'failed', 'cancelled') AND NEW.inbox <> '[]'::jsonb)
+  WHEN (
+    NEW.status IN ('completed', 'failed', 'cancelled')
+    AND NEW.inbox <> '[]'::jsonb
+    AND NEW.parent_job_id IS NULL
+  )
   EXECUTE FUNCTION agent_jobs_inbox_relaunch();

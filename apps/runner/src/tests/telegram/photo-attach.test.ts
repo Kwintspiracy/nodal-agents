@@ -1,21 +1,12 @@
-// photo-attach.test.ts — attachInboundPhoto only writes the image onto a
-// message that is STILL waiting (G1): a job still pending, or — when the
-// message went to the conversation's running work (#531) — its entry still in
-// that job's inbox. If the run already picked the message up, the out-of-txn
-// photo attach must not clobber the in-flight transcript.
-//
-// Review of #642, pass 1: a message delivered to a live job's inbox is not
-// read before its photo is attached; a failed download releases it
-// (`downloadTurnMedia`). Mutation: the release skipped → « a failed download
-// releases the waiting message » goes red.
+// photo-attach.test.ts — attachInboundPhoto only writes the image onto a job
+// that is STILL pending (G1). If the worker/cron already claimed the job, the
+// out-of-txn photo attach must not clobber the in-flight transcript.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, deliverOrStartTurn } from '@nodal-agents/db';
-import { agentJobs, conversations } from '@nodal-agents/db';
-import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { writeFile } from 'node:fs/promises';
+import { eq } from '@nodal-agents/db';
+import { agentJobs } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 
 // The photo download + filesystem writes are external I/O — stub them so the
@@ -38,7 +29,6 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 
-import { getTelegramFile } from '@nodal-agents/delivery';
 import { attachInboundPhoto } from '../../telegram/handler.ts';
 
 let db: TestDb;
@@ -78,9 +68,10 @@ describe('attachInboundPhoto — conditional on pending (G1)', () => {
   it('attaches the image when the job is still pending', async () => {
     const jobId = await makeJob('pending');
     await attachInboundPhoto({
+      jobId,
       entityId: seed.entityId,
       botToken: '123:fake',
-      photo: { fileId: 'f1', chatId: '77', text: 'a photo', target: { kind: 'job', jobId } },
+      photo: { fileId: 'f1', chatId: '77', text: 'a photo' },
       db: db as unknown as RunnerDeps['db'],
     });
 
@@ -95,9 +86,10 @@ describe('attachInboundPhoto — conditional on pending (G1)', () => {
     const before = JSON.stringify(await messagesOf(jobId));
 
     await attachInboundPhoto({
+      jobId,
       entityId: seed.entityId,
       botToken: '123:fake',
-      photo: { fileId: 'f1', chatId: '77', text: 'a photo', target: { kind: 'job', jobId } },
+      photo: { fileId: 'f1', chatId: '77', text: 'a photo' },
       db: db as unknown as RunnerDeps['db'],
     });
 
@@ -105,94 +97,4 @@ describe('attachInboundPhoto — conditional on pending (G1)', () => {
     expect(after).toBe(before); // untouched — no clobber of the in-flight transcript
     expect(after).not.toContain('"type":"image"');
   });
-
-  it('a photo sent while the conversation works (#531): upgrades its entry in the running job’s inbox, file named after that job, and makes it readable', async () => {
-    const { head, target } = await waitingPhotoMessage();
-    vi.mocked(writeFile).mockClear();
-
-    const path = await attachInboundPhoto({
-      entityId: seed.entityId,
-      botToken: '123:fake',
-      photo: { fileId: 'f1', chatId: '77', text: 'dans ce style', target },
-      db: db as unknown as RunnerDeps['db'],
-    });
-
-    expect(path.split('\\').join('/').endsWith(`/${head}.${target.entryId}.jpg`)).toBe(true);
-    expect(await inboxOf(head)).toEqual([
-      {
-        content: [
-          { type: 'text', text: 'dans ce style' },
-          { type: 'image', image: path },
-        ],
-        preparing: undefined,
-      },
-    ]);
-  });
-
-  it('a failed download releases the waiting message: readable at once, text-only (review of #642, pass 1)', async () => {
-    const { head, target } = await waitingPhotoMessage();
-    vi.mocked(getTelegramFile).mockRejectedValueOnce(new Error('telegram_file_timeout'));
-
-    await expect(
-      attachInboundPhoto({
-        entityId: seed.entityId,
-        botToken: '123:fake',
-        photo: { fileId: 'f1', chatId: '77', text: 'dans ce style', target },
-        db: db as unknown as RunnerDeps['db'],
-      }),
-    ).rejects.toThrow('telegram_file_timeout');
-
-    expect(await inboxOf(head)).toEqual([{ content: 'dans ce style', preparing: undefined }]);
-  });
 });
-
-/** Une tête en cours, et un message avec photo remis à sa file, photo encore à télécharger. */
-async function waitingPhotoMessage() {
-  const [conv] = await db
-    .insert(conversations)
-    .values({ entityId: seed.entityId, agentId: seed.agentId, channel: 'telegram', chatId: '77' })
-    .returning({ id: conversations.id });
-  const [head] = await db
-    .insert(agentJobs)
-    .values({
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      channel: 'telegram',
-      chatId: '77',
-      conversationId: conv!.id,
-      task: 'Fais-moi un portrait',
-      status: 'processing',
-    })
-    .returning({ id: agentJobs.id });
-  const turn = await deliverOrStartTurn(db as unknown as AnyDrizzleDb, {
-    entityId: seed.entityId,
-    conversationId: conv!.id,
-    message: { task: 'dans ce style', content: 'dans ce style', preparing: true },
-    start: {
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      channel: 'telegram',
-      conversationId: conv!.id,
-      task: 'dans ce style',
-    },
-  });
-  if (turn.kind !== 'delivered') throw new Error('expected a delivery');
-  expect(await inboxOf(head!.id)).toEqual([{ content: 'dans ce style', preparing: true }]);
-  return {
-    head: head!.id,
-    target: {
-      kind: 'inbox' as const,
-      entityId: seed.entityId,
-      headJobId: head!.id,
-      entryId: turn.entryId,
-    },
-  };
-}
-
-async function inboxOf(jobId: string) {
-  const [row] = await db
-    .select({ inbox: agentJobs.inbox })
-    .from(agentJobs)
-    .where(eq(agentJobs.id, jobId));
-  return row!.inbox.map((e) => ({ content: e.content, preparing: e.preparing }));
-}

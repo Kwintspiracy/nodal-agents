@@ -1323,9 +1323,6 @@ export async function executeJob(
   return result;
 }
 
-/** Entre deux relectures d'une file dont un média se télécharge encore (#531). */
-const INBOX_MEDIA_POLL_MS = 500;
-
 /**
  * Réveille tout de suite la tête que la fin de ce job a pu faire naître de sa
  * file (#531, déclencheur de la migration 0141) : les messages qui y restaient
@@ -1963,6 +1960,7 @@ async function runJobTracked(
         conversationId: job.conversationId ?? null,
         task: job.task ?? null,
         triggerContext: job.triggerContext ?? null,
+        answersWhileJobId: job.answersWhileJobId ?? null,
       },
       // Spread the `agent` already normalised above (line ~856) rather than
       // re-deriving fields here — a second conversion is a second thing to
@@ -2143,6 +2141,8 @@ async function runJobTracked(
         excludeJobId: jobId as string,
         // La tâche sert à reconnaître un `/new` nu — voir openedByCommand.
         task: job.task,
+        // Un tour de réponse voit ce qui tourne (#531).
+        answersWhileJobId: job.answersWhileJobId,
       })
     : null;
   // L'état de la routine dont ce job est une exécution — relu tel quel, jamais
@@ -2233,15 +2233,16 @@ async function runJobTracked(
     .map((n) => registry.get(n))
     .filter((t): t is AnyToolDef => t !== undefined);
 
-  // list_conversation_runs / stop_conversation_run (#567) — offerts au job de
-  // TÊTE d'une conversation, quel que soit son canal et son agent : c'est lui
-  // qui parle à la personne, et chaque message d'un canal en crée un nouveau.
-  // Sans eux, un « arrête » arrivait sur un job neuf qui ne voyait ni
-  // n'atteignait le run lancé par un message précédent. Un délégué ne les a
-  // pas : arrêter les autres runs de la personne n'est pas son travail.
+  // list_conversation_runs / stop_conversation_run (#567) et
+  // message_conversation_run (#531) — offerts au job de TÊTE d'une
+  // conversation, quel que soit son canal et son agent : c'est lui qui parle à
+  // la personne, et un message qui arrive pendant un travail démarre un tour de
+  // réponse qui doit voir ce travail, l'atteindre et pouvoir l'arrêter. Un
+  // délégué ne les a pas : ce n'est pas à lui d'agir sur les autres runs de la
+  // personne.
   const conversationRunToolNames: string[] =
     job.conversationId && !job.parentJobId
-      ? ['list_conversation_runs', 'stop_conversation_run']
+      ? ['list_conversation_runs', 'stop_conversation_run', 'message_conversation_run']
       : [];
   const conversationRunToolDefs: AnyToolDef[] = conversationRunToolNames
     .map((n) => registry.get(n))
@@ -4290,38 +4291,26 @@ async function runJobTracked(
   let reprisesCeTour = 0;
   let partielCeTour = '';
 
-  // #531 — UN travail de tête par conversation. Ce que la personne a écrit
-  // dans cette conversation pendant que ce job vivait attend dans sa file
-  // (`deliverOrStartTurn`) ; il entre ici dans la transcription, tel quel et
-  // marqué (`isInboxMessage`), et c'est le modèle qui juge : une précision de
-  // la même demande, ou un autre travail qu'il délègue. Lue en haut de chaque
-  // tour, et avant de conclure sur une réponse en texte : un message arrivé
-  // pendant le dernier appel est lu par ce run au lieu d'en démarrer un autre.
-  // Ce qui arrive après la dernière lecture devient une nouvelle tête à la
-  // transition terminale (déclencheur de la migration 0141) : jamais perdu.
+  // #531 — la FILE de ce job : ce qu'un tour de réponse lui a transmis pendant
+  // qu'il vivait (`message_conversation_run`), et ce qui restait dans la file
+  // de ses délégués finis. Elle entre ici dans la transcription, telle quelle
+  // et marquée (`isInboxMessage`), et c'est le modèle qui juge. Lue en haut de
+  // chaque tour, et avant de conclure sur une réponse en texte : un message
+  // arrivé pendant le dernier appel est lu par ce run au lieu d'attendre la
+  // suite. Ce qui arrive après la dernière lecture d'une tête devient une
+  // nouvelle tête à la transition terminale (déclencheur de la migration
+  // 0141) : jamais perdu.
   //
-  // Un message de la personne remet la livraison à faire : sur un canal à
-  // outil, ce qu'elle vient d'écrire n'a encore reçu aucune réponse, quoi que
-  // le run ait envoyé avant. Le budget de rappels repart avec lui.
-  //
-  // Un message dont le canal télécharge encore le média (`preparing`) n'est lu
-  // qu'une fois complet. En haut de tour, il attend le tour suivant ; avant de
-  // CONCLURE, le run l'attend — sinon il finirait sans lui, et l'image
-  // n'arriverait qu'à la tête relancée, texte seul. L'attente est bornée : le
-  // vidage lit une entrée telle qu'elle est passé `INBOX_MEDIA_WAIT_MS`, et un
-  // run qui perd son droit d'agir ne vide plus rien.
+  // Un message remet la livraison à faire : sur un canal à outil, ce qui vient
+  // d'arriver n'a encore reçu aucune réponse, quoi que le run ait envoyé avant.
+  // Le budget de rappels repart avec lui.
   const lireLaFile = async (moment: 'turn_start' | 'before_final_text'): Promise<boolean> => {
-    let lu = await drainJobInbox(db, jobId as string);
-    while (moment === 'before_final_text' && lu.messages.length === 0 && lu.preparing > 0) {
-      trace('inbox_media_wait', { turn, preparing: lu.preparing });
-      await new Promise((r) => setTimeout(r, INBOX_MEDIA_POLL_MS));
-      lu = await drainJobInbox(db, jobId as string);
-    }
-    if (lu.messages.length === 0) return false;
-    messages = [...messages, ...(lu.messages as unknown as ModelMessage[])];
+    const arrives = await drainJobInbox(db, jobId as string);
+    if (arrives.length === 0) return false;
+    messages = [...messages, ...(arrives as unknown as ModelMessage[])];
     toolDelivered = false;
     redeliveryNudges = 0;
-    trace('inbox_drained', { turn, count: lu.messages.length, at: moment });
+    trace('inbox_drained', { turn, count: arrives.length, at: moment });
     return true;
   };
 

@@ -145,6 +145,7 @@ const EXPECTED_CARDS: Record<string, ToolCard> = {
   save_routine_state: 'text',
   list_conversation_runs: 'text',
   stop_conversation_run: 'text',
+  message_conversation_run: 'text',
   search_history: 'search',
   send_audio: 'sent',
   send_file: 'sent',

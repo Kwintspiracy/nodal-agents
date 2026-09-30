@@ -243,7 +243,45 @@ export interface ConversationContext {
    * Absent sur les appelants qui ne les chargent pas (aperçu du dashboard).
    */
   registeredProjects?: ReadonlyArray<{ name: string; path: string; kind: 'code' | 'documents' }>;
+  /**
+   * Ce tour est un TOUR DE RÉPONSE (#531) : le message de la personne est
+   * arrivé pendant que ce travail tournait. Rendu en bloc
+   * `## Work running in this conversation`, depuis ces faits typés seulement
+   * (ceux que lit `list_conversation_runs`). Absent pour un tour né dans une
+   * conversation au repos.
+   */
+  runningWork?: RunningWork;
 }
+
+/** Le travail en cours d'une conversation, tel qu'un tour de réponse le voit (#531). */
+export interface RunningWork {
+  /** Les runs vivants, au plus `RUNNING_WORK_MAX_RUNS`, le plus récent en dernier. */
+  runs: ReadonlyArray<{
+    runId: string;
+    agent: string | null;
+    status: string | null;
+    task: string;
+    startedAt: string | null;
+    /** Les délégués encore vivants, au plus `RUNNING_WORK_MAX_JOBS`. */
+    delegates: ReadonlyArray<{
+      jobId: string;
+      agent: string | null;
+      status: string | null;
+      task: string;
+    }>;
+    /** Approbations et questions qui attendent la personne. */
+    pendingRequests: number;
+  }>;
+  /** Runs vivants au-delà de ceux listés : dit, jamais tu. */
+  moreRuns: number;
+}
+
+/** Au plus autant de runs dans le bloc : au-delà, `list_conversation_runs` les donne tous. */
+export const RUNNING_WORK_MAX_RUNS = 3;
+/** Au plus autant de délégués par run dans le bloc. */
+export const RUNNING_WORK_MAX_JOBS = 3;
+/** La consigne d'un job, coupée à cette longueur dans le bloc. */
+export const RUNNING_WORK_TASK_MAX = 160;
 
 // ─── DeploymentContext ────────────────────────────────────────────────────────
 
@@ -556,6 +594,59 @@ function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]
 
 /** Combien de projets déclarés le bloc `## Conversation` liste au plus (P10b). */
 export const REGISTERED_PROJECTS_IN_PROMPT = 12;
+
+/**
+ * Le bloc `## Work running in this conversation` d'un TOUR DE RÉPONSE (#531).
+ *
+ * La spécification (Quentin, 30/09) : un message envoyé pendant un travail
+ * n'est jamais sans réponse, et il n'est pas présumé lié à ce travail. Le bloc
+ * dit donc ce qui tourne — des faits typés, champ par champ, rien qu'un
+ * modèle ne pourrait lire dans une phrase — et les gestes possibles, avec les
+ * outils qui les font. Il ne dit PAS quoi répondre (invariant #2) : c'est le
+ * modèle qui juge si le message concerne ce travail.
+ *
+ * Sans les outils Nodal (runtime CLI, #574), le bloc dit ce qui tourne et que
+ * ce tour ne peut pas l'atteindre : répondre reste possible, `/stop` aussi.
+ */
+export function buildRunningWorkBlock(work: RunningWork, nodalTools: boolean): string {
+  const lines: string[] = [
+    "The user's message arrived while the work below was still running in this conversation. " +
+      'It may be about that work or about something else: judge from the message itself. ' +
+      'Answer the user in every case.',
+  ];
+  lines.push(
+    nodalTools
+      ? 'To have the running work take it into account now or when it concludes, pass it on with ' +
+          "`message_conversation_run` (read at that job's next step, and before it concludes); " +
+          '`stop_conversation_run` stops a run; other work can start beside it with your usual ' +
+          'tools.'
+      : 'You have no tool that reaches this work from here: answer the user, who can stop it ' +
+          'with /stop.',
+  );
+  const clip = (t: string) =>
+    sanitizePromptField(
+      t.length > RUNNING_WORK_TASK_MAX ? `${t.slice(0, RUNNING_WORK_TASK_MAX)}…` : t,
+      RUNNING_WORK_TASK_MAX + 1,
+    );
+  for (const run of work.runs) {
+    lines.push(
+      `- run ${run.runId} (${sanitizePromptField(run.agent ?? 'unknown', 64)}, ` +
+        `${run.status ?? 'unknown'}${run.startedAt ? `, since ${run.startedAt}` : ''}` +
+        `${run.pendingRequests > 0 ? `, ${run.pendingRequests} approval(s) or question(s) waiting` : ''}): ` +
+        `"${clip(run.task)}"`,
+    );
+    for (const d of run.delegates) {
+      lines.push(
+        `  - delegated job ${d.jobId} (${sanitizePromptField(d.agent ?? 'unknown', 64)}, ` +
+          `${d.status ?? 'unknown'}): "${clip(d.task)}"`,
+      );
+    }
+  }
+  if (work.moreRuns > 0) {
+    lines.push(`- ${work.moreRuns} more run(s): \`list_conversation_runs\` lists them all.`);
+  }
+  return `\n\n## Work running in this conversation\n${lines.join('\n')}`;
+}
 
 /**
  * Render the `## Conversation` block (P6).
@@ -1252,6 +1343,11 @@ export async function buildSystemPrompt(
   const conversationBlock = jobContext?.conversation
     ? buildConversationBlock(jobContext.conversation, hasNodalTools)
     : '';
+  // 7ter. Le travail en cours d'un tour de réponse (#531) — volatile, comme le
+  //       bloc de conversation.
+  const runningWorkBlock = jobContext?.conversation?.runningWork
+    ? buildRunningWorkBlock(jobContext.conversation.runningWork, hasNodalTools)
+    : '';
 
   // 8. Behavior layers (see agent-baseline.ts):
   //    L1 baseline — intrinsic discipline for EVERY agent (+ model-aware nudge).
@@ -1432,7 +1528,13 @@ export async function buildSystemPrompt(
     : '';
 
   const volatile =
-    runtimeBlock + memoryBlock + jobContextBlock + conversationBlock + inventoryBlock + gitBlock;
+    runtimeBlock +
+    memoryBlock +
+    jobContextBlock +
+    conversationBlock +
+    runningWorkBlock +
+    inventoryBlock +
+    gitBlock;
 
   return volatile.trim().length > 0 ? stable + SYSTEM_PROMPT_CACHE_BOUNDARY + volatile : stable;
 }

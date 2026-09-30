@@ -184,18 +184,17 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
     // Image attach: download it (network — out of the txn) and attach it to
     // the job BEFORE the worker runs, so the agent sees the image. Best-effort:
     // a failed download leaves the job text-only and the worker still runs.
-    // The target is the new job, or the message's entry in a live job's inbox (#531).
-    if (result.attachment) {
-      const attachmentTarget = result.attachment.target;
+    if (result.jobId && result.attachment) {
       await attachInboundImage({
+        jobId: result.jobId,
         entityId: agentEntityId,
         attachment: result.attachment,
         db: deps.db,
       }).catch((err) => {
         console.warn(
-          `[discord-gateway agent=${agentId}] image attach failed for ${
-            attachmentTarget.kind === 'job' ? attachmentTarget.jobId : attachmentTarget.entryId
-          }: ${err instanceof Error ? err.message : String(err)}`,
+          `[discord-gateway agent=${agentId}] image attach failed for job ${result.jobId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
         );
       });
     }
@@ -205,11 +204,11 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
       triggerJobWorker(result.jobId, env);
     }
 
-    // `/stop` (#602), or a message delivered to the conversation's running
-    // work (#531): already committed. Acknowledge it with a reaction on the
-    // message — the runner writes no text (invariant #2). A failed reaction (no
-    // Add Reactions permission in a guild channel) changes nothing that was
-    // stopped or delivered, and is logged.
+    // `/stop` (#602), or a message that arrived while the conversation's work
+    // runs and started a reply turn (#531): acknowledge it with a reaction on
+    // the message — the runner writes no text (invariant #2). A failed
+    // reaction (no Add Reactions permission in a guild channel) changes
+    // nothing, and is logged.
     const ack = channelTurnReaction(result);
     if (ack) {
       await message.react(ack).catch((err: unknown) => {

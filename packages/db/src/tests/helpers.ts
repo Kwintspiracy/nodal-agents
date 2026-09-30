@@ -204,6 +204,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- mirrors migration 0141 (#531) : la file des messages arrivés pendant que la tête vivait.
       inbox jsonb NOT NULL DEFAULT '[]'::jsonb,
       relaunched_from_job_id uuid,
+      answers_while_job_id uuid,
       search_text text,
       search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', coalesce(search_text, ''))) STORED,
       tools_used text[] DEFAULT '{}',
@@ -283,7 +284,11 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
     CREATE TRIGGER agent_jobs_inbox_relaunch
       BEFORE UPDATE ON agent_jobs
       FOR EACH ROW
-      WHEN (NEW.status IN ('completed', 'failed', 'cancelled') AND NEW.inbox <> '[]'::jsonb)
+      WHEN (
+        NEW.status IN ('completed', 'failed', 'cancelled')
+        AND NEW.inbox <> '[]'::jsonb
+        AND NEW.parent_job_id IS NULL
+      )
       EXECUTE FUNCTION agent_jobs_inbox_relaunch();
 
     CREATE TABLE IF NOT EXISTS agent_tasks (
