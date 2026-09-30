@@ -51,6 +51,7 @@ import {
 } from '@nodal-agents/catalog';
 import type { SystemSkill } from '@nodal-agents/catalog';
 import { resolveBuiltinToolNames } from '@nodal-agents/orchestration';
+import { lintRoutineTask } from '@nodal-agents/tools';
 import type { JobId } from '@nodal-agents/orchestration';
 import { executeJob } from '../../job/execute.ts';
 import { resolveAgentToolNames } from '../../job/resolve-agent-tools.ts';
@@ -223,29 +224,54 @@ describe('an orchestrator holds the tools its owner switched on @cap:assigner-ou
   });
 });
 
+// Written against origin/main a09d3a69, BEFORE the unification: the ordered
+// eager schemas of a worker's turn 1. The fix must not move a single name.
+const WORKER_EAGER = [
+  'return_result',
+  'ask_user',
+  'register_project',
+  'skill_view',
+  'list_schedules',
+  'save_memory',
+  'query_memory',
+  'nodal_docs',
+  'mark_memory_outdated',
+  'web_search',
+  'dashboard_publish',
+  'file_read',
+  'file_write',
+  'file_edit',
+  'file_list',
+  'file_search',
+  'load_tools',
+];
+
+/** An orchestrator (no team): the delegation tools, then a worker's list (#636). */
+const ORCHESTRATOR_EAGER = [
+  'create_task',
+  'list_tasks',
+  'return_result',
+  'ask_user',
+  'register_project',
+  'skill_view',
+  'list_schedules',
+  'save_memory',
+  'query_memory',
+  'nodal_docs',
+  'mark_memory_outdated',
+  'web_search',
+  'dashboard_publish',
+  'file_read',
+  'file_write',
+  'file_edit',
+  'file_list',
+  'file_search',
+  'load_tools',
+];
+
 describe("a worker's list is exactly what it was @cap:assigner-outils/moteur", () => {
-  // Written against origin/main a09d3a69, BEFORE the unification: the ordered
-  // eager schemas of turn 1 and the recorded whitelist of a worker. The fix
-  // must not move a single name.
-  const WORKER_EAGER = [
-    'return_result',
-    'ask_user',
-    'register_project',
-    'skill_view',
-    'list_schedules',
-    'save_memory',
-    'query_memory',
-    'nodal_docs',
-    'mark_memory_outdated',
-    'web_search',
-    'dashboard_publish',
-    'file_read',
-    'file_write',
-    'file_edit',
-    'file_list',
-    'file_search',
-    'load_tools',
-  ];
+  // Written against origin/main a09d3a69, like WORKER_EAGER: the whitelist a
+  // worker records.
   const WORKER_ALL = [
     ...WORKER_EAGER,
     'declare_verification',
@@ -279,6 +305,24 @@ describe("a worker's list is exactly what it was @cap:assigner-outils/moteur", (
     expect((await jobRow(childJobId)).systemPromptTools).toEqual(
       WORKER_ALL.filter((n) => n !== 'dashboard_publish'),
     );
+  });
+});
+
+describe("an orchestrator's turn-1 order is pinned @cap:assigner-outils/moteur", () => {
+  // The order changed ONCE with #636, on purpose: origin/main a09d3a69 sent
+  //   create_task, list_tasks, ask_user, …, file_search, return_result
+  // — return_result after the other always-on tools, because the orchestrator
+  // branch rebuilt its own list. Keeping that order would need a branch per
+  // role again (a worker has always sent return_result first, and its order is
+  // pinned above). One list, one order: the delegation tools, then exactly a
+  // worker's list. Pinned here so it never moves again unnoticed.
+  it('delegation tools, then the same eager tools as a worker, in the same order', async () => {
+    const seeded = await seedJob(db, { model: MODEL, role: 'orchestrator' });
+    await holdGroup(seeded.agentId, seeded.entityId, spreadsheetEditingSkill);
+
+    const [first] = (await run(seeded.jobId, [])) as [Body];
+
+    expect(offered(first)).toEqual(ORCHESTRATOR_EAGER);
   });
 });
 
@@ -333,8 +377,9 @@ describe('the mirror and the runner compute the same list @cap:assigner-outils/m
         await run(seeded.jobId, []);
         const runner = (await jobRow(seeded.jobId)).systemPromptTools ?? [];
 
+        // As is: `load_tools` included, since the runner adds it too.
         const mirror = await resolveAgentToolNames(db, seeded.agentId);
-        expect([...mirror, 'load_tools'].sort()).toEqual(runner);
+        expect([...mirror].sort()).toEqual(runner);
         // The built-in half the roster reads is the same rule.
         const builtins = await resolveBuiltinToolNames(db, seeded.agentId);
         for (const n of builtins.names) expect(runner).toContain(n);
@@ -343,6 +388,23 @@ describe('the mirror and the runner compute the same list @cap:assigner-outils/m
       });
     }
   }
+});
+
+describe('the routine lint reads the same list @cap:assigner-outils/moteur', () => {
+  it("a routine naming load_tools and a group's tool of an orchestrator is not flagged", async () => {
+    const seeded = await seedJob(db, { model: MODEL, role: 'orchestrator' });
+    await holdGroup(seeded.agentId, seeded.entityId, spreadsheetEditingSkill);
+
+    const available = await resolveAgentToolNames(db, seeded.agentId);
+    const clean = lintRoutineTask(
+      'Every morning, call `load_tools` for `xlsx_create`, then write the report.',
+      available,
+    );
+    expect(clean.warnings).toEqual([]);
+    // A tool it does not hold is still flagged.
+    const flagged = lintRoutineTask('Every morning, call `docx_create`.', available);
+    expect(flagged.warnings.join(' ')).toContain('docx_create');
+  });
 });
 
 describe('a delegated orchestrator delivers nothing itself @cap:assigner-outils/moteur', () => {
