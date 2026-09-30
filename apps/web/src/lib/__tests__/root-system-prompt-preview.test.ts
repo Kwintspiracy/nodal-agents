@@ -84,7 +84,7 @@ beforeAll(async () => {
   }
 });
 
-describe('aperçu du prompt du root @cap:assigner-skill/ecran', () => {
+describe('aperçu du prompt du root (Réglages → Root context) @cap:configurer-agent/ecran', () => {
   it('annonce la skill dont le job du root tient les outils, pas celle qu’aucun job ne tient', async () => {
     const { getRootSystemPromptAction } = await import('../actions.ts');
     const res = await getRootSystemPromptAction();
