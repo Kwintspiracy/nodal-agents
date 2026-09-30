@@ -79,7 +79,9 @@ export function bareToolName(name: string): string {
  * Les outils qui RAMÈNENT du web : chercher, puis lire une page. Les noms sont
  * ceux que les lignes `tool_calls` portent réellement — builtin `web_search`,
  * connecteur Tavily, serveur MCP fetch (`fetch_html`, `fetch_txt`…), et les
- * outils internes d'une CLI (`cli:WebSearch`, `cli:WebFetch`).
+ * outils internes d'une CLI (`cli:WebSearch`, `cli:WebFetch`). Reconnaître un
+ * outil ne suffit pas : son succès doit être établi (`succeeded`), ce que les
+ * lignes `cli:*` ne permettent pas aujourd'hui.
  */
 const WEB_SEARCH = /^(web_?search|tavily_search)$/i;
 const PAGE_READER =
@@ -95,15 +97,37 @@ export function isPageReader(c: ToolCallFact): boolean {
 }
 
 /**
- * L'appel a-t-il rendu quelque chose ? Une sortie vide n'a rien rendu ; une
- * sortie qui dit l'échec — `{ outcome: 'error' }` (le chemin d'erreur de
- * `executeTool`), `ok: false`, `isError`, ou un champ `error` — non plus.
- * Une ligne `cli:*` ne porte aucun drapeau d'échec : sa sortie est lue telle
- * quelle.
+ * Le succès de l'appel est-il ÉTABLI ? Fermé par défaut : une sortie dont on ne
+ * peut pas établir le succès n'est jamais une preuve (invariant #4).
+ *
+ * Il ne s'établit que sur une ligne écrite par `executeTool`. Celui-ci écrit
+ * TOUJOURS du JSON (`JSON.stringify` du retour de l'outil), et toute exception
+ * (un résultat MCP `isError` en est une, voir l'adaptateur MCP) devient
+ * `{ outcome: 'error' }`. Sur une telle ligne, un JSON qui ne dit pas l'échec
+ * (ni `outcome: 'error'`, ni `ok: false`, ni `isError`, ni champ `error`) est un
+ * retour réussi.
+ *
+ * Ne s'établit PAS :
+ *   - une sortie vide ;
+ *   - une ligne `cli:*` : le runner y écrit le texte du `tool_result` de la CLI
+ *     et laisse tomber son `is_error` (cli-runtime/claude-turn.ts). « Failed to
+ *     fetch https://… » y est indiscernable d'une page lue, et aucune sortie
+ *     réelle n'est enregistrée dans le dépôt pour fonder une forme positive.
+ *     Conséquence voulue : des sources lues seulement par une CLI donnent un
+ *     faux ROUGE, dit, jamais un faux vert. La forme générale est côté runner :
+ *     écrire l'`is_error` de la CLI sur la ligne d'audit ;
+ *   - une sortie qui n'est pas du JSON : elle n'a pas été écrite par
+ *     `executeTool`, sa provenance est inconnue.
  */
 export function succeeded(c: ToolCallFact): boolean {
   if (c.output === null || c.output.trim() === '') return false;
-  const o = parseJson(c.output);
+  if (c.toolName.startsWith('cli:')) return false;
+  let o: unknown;
+  try {
+    o = JSON.parse(c.output) as unknown;
+  } catch {
+    return false;
+  }
   if (o === null || typeof o !== 'object' || Array.isArray(o)) return true;
   const r = o as Record<string, unknown>;
   if (r['outcome'] === 'error' || r['ok'] === false) return false;

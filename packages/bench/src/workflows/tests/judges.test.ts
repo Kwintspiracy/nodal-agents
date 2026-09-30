@@ -472,8 +472,76 @@ describe('a source is only what a successful web retrieval returned', () => {
     ]);
     const read = withImages({
       ...r.facts,
-      toolCalls: [...r.facts.toolCalls, reader(`<html><img src="${PHOTO}"></html>`)],
+      toolCalls: [
+        ...r.facts.toolCalls,
+        reader(JSON.stringify(`<html><img src="${PHOTO}"></html>`)),
+      ],
     });
     expect(judge(r, read)).toEqual([]);
+  });
+});
+
+// Passe 2 (Nodal Reviewer A), P1 : une sortie dont le succès ne peut pas être
+// établi n'est jamais une preuve. Une ligne `cli:*` ne porte aucun drapeau
+// d'échec (le runner écrit le texte du `tool_result`, pas son `is_error`) : un
+// « Failed to fetch https://… » y ressemble à une page lue.
+describe('a web result whose success cannot be established is never a source', () => {
+  const INVENTED = 'https://invented.example/cmb-discovery';
+  const f = fixture('research-green');
+  const root = f.facts.rootId;
+  const child = f.facts.jobs.find((j) => j.id !== root)!.id;
+  const citing = (extra: TreeFacts['toolCalls']): TreeFacts => ({
+    ...f.facts,
+    jobs: f.facts.jobs.map((j) =>
+      j.id === root ? { ...j, result: `Rapport. Source : ${INVENTED}` } : j,
+    ),
+    toolCalls: [...f.facts.toolCalls, ...extra],
+  });
+  const row = (toolName: string, input: unknown, output: string) => ({
+    jobId: child,
+    toolName,
+    input: JSON.stringify(input),
+    output,
+    createdMs: f.facts.jobs[0]!.createdMs + 1_000,
+  });
+  const NONE = 'none of the 1 source link(s) in the report was seen in a web result';
+
+  it.each([
+    ['cli:WebFetch', { url: INVENTED }, `Failed to fetch ${INVENTED} - status code 404`],
+    ['cli:WebFetch', { url: INVENTED }, `Request to ${INVENTED} timed out after 60000ms`],
+    ['cli:WebSearch', { query: 'cmb' }, `Error: search failed for ${INVENTED}`],
+    // Un `tool_result` dont le contenu est une liste de blocs : le runner le
+    // sérialise en JSON (`stringifyCapped`), l'échec reste un échec.
+    [
+      'cli:WebFetch',
+      { url: INVENTED },
+      JSON.stringify([{ type: 'text', text: `Failed to fetch ${INVENTED} - status code 404` }]),
+    ],
+  ])('%s answering a failure in plain text is not a source', (tool, input, output) => {
+    expect(judge(f, citing([row(tool, input, output)]))).toEqual([NONE]);
+  });
+
+  it('a CLI row that looks like a result is not a source either: the row carries no success flag', () => {
+    const listing = `Web search results for query: "cmb"\n\nLinks: [{"title":"CMB","url":"${INVENTED}"}]`;
+    expect(judge(f, citing([row('cli:WebSearch', { query: 'cmb' }, listing)]))).toEqual([NONE]);
+  });
+
+  it('a product row whose output is not the JSON the runner writes is not a source', () => {
+    expect(
+      judge(f, citing([row('web_search', { query: 'cmb' }, `Failed to fetch ${INVENTED}`)])),
+    ).toEqual([NONE]);
+  });
+
+  it('the real outputs of the real trial stay sources (JSON written by the runner, no failure in it)', () => {
+    const search = f.facts.toolCalls.find((c) => c.toolName === 'web_search')!;
+    const firstUrl = (JSON.parse(search.output!) as { results: Array<{ url: string }> }).results[0]!
+      .url;
+    const facts: TreeFacts = {
+      ...f.facts,
+      jobs: f.facts.jobs.map((j) =>
+        j.id === root ? { ...j, result: `Rapport. Source : ${firstUrl}` } : j,
+      ),
+    };
+    expect(judge(f, facts)).toEqual([]);
   });
 });

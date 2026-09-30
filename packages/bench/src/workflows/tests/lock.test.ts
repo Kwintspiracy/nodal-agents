@@ -12,7 +12,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { acquireBenchLock, claimStack, isProcessAlive } from '../lock';
+import { acquireBenchLock, claimStack, isProcessAlive, stopOwnTrials } from '../lock';
 
 const lockPath = (): string => join(mkdtempSync(join(tmpdir(), 'wf-lock-')), 'workflows.lock');
 
@@ -145,5 +145,41 @@ describe('claiming the stack before cleaning up', () => {
       }),
     ).rejects.toThrow('connection refused');
     expect(existsSync(path)).toBe(false);
+  });
+});
+
+// Passe 2 (Nodal Reviewer A), P2 : juste après le lancement, le banc ne
+// connaît pas encore l'espace du job (`run_task` ne rend que son id). Un
+// Ctrl+C dans cette fenêtre relâchait le verrou et sortait sans rien annuler.
+// À l'arrêt, le banc annule donc TOUS les essais du banc vivants, lus en base
+// avec leur espace : il tient le verrou, ils ne peuvent être qu'à lui.
+describe('stopping the bench', () => {
+  it('a trial just started, whose workspace the bench does not know yet, is cancelled on Ctrl+C', async () => {
+    const path = lockPath();
+    const lock = acquireBenchLock(path, { pid: process.pid });
+    // Ce que la base dit du job que run_task vient de créer.
+    const justStarted = { id: 'cccccccc-0000-4000-8000-000000000003', entityId: 'e1' };
+    const cancelled: Array<{ id: string; entityId: string }> = [];
+    await stopOwnTrials(lock, {
+      liveRoots: async () => [justStarted],
+      cancel: async (r) => {
+        cancelled.push(r);
+      },
+      log: () => undefined,
+    });
+    expect(cancelled).toEqual([justStarted]);
+    lock.release();
+  });
+
+  it('a bench stopped before it holds the lock cancels nothing: the live trials belong to another bench', async () => {
+    const cancelled: string[] = [];
+    await stopOwnTrials(null, {
+      liveRoots: async () => ROOTS,
+      cancel: async (r) => {
+        cancelled.push(r.id);
+      },
+      log: () => undefined,
+    });
+    expect(cancelled).toEqual([]);
   });
 });

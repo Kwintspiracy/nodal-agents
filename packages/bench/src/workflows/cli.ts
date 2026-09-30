@@ -19,7 +19,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { executeRows, readTreeFacts } from './facts';
-import { BENCH_LOCK_FILE, claimStack, type BenchLock } from './lock';
+import { BENCH_LOCK_FILE, claimStack, stopOwnTrials, type BenchLock } from './lock';
 import { startRunTask } from './mcp';
 import { redactHome } from './redact';
 import { SCENARIOS, scenarioById } from './scenarios';
@@ -161,14 +161,18 @@ async function main(): Promise<void> {
   const { db, close } = await openStackDb();
 
   let lock: BenchLock | null = null;
-  let current: { id: string; entityId: string | null } | null = null;
   const stopNow = async (signal: string): Promise<void> => {
     console.error(`\n${signal}: stopping the bench`);
-    if (current?.entityId) {
-      await cancelTree(db, current.entityId, current.id).catch((e: unknown) =>
-        console.error(String(e)),
+    try {
+      await stopOwnTrials(lock, {
+        liveRoots: () => readLiveBenchRoots(db),
+        cancel: (root) => cancelTree(db, root.entityId, root.id),
+        log: (l) => console.error(l),
+      });
+    } catch (e) {
+      console.error(
+        `could not cancel the bench trials still alive: ${String(e instanceof Error ? e.message : e)}. The next bench cancels them before it starts.`,
       );
-      console.error(`cancelled run ${current.id}`);
     }
     lock?.release();
     await close();
@@ -200,9 +204,6 @@ async function main(): Promise<void> {
         connectorTools: await connectorTools(db, entityId),
         startedMs,
       }),
-      track: (root) => {
-        current = root;
-      },
       log: (l) => console.log(l),
     };
     console.log(

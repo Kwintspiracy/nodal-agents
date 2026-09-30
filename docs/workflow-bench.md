@@ -42,11 +42,19 @@ Every scenario is also red when the root did not end `completed`, or when the
 run raised an approval or a question.
 
 A source is an address that a web retrieval RETURNED: the output of a search
-or page-read tool (`web_search`, Tavily, the MCP fetch server, `cli:WebSearch`,
-`cli:WebFetch`) that did not fail, without the part that lists failures
-(`failedResults`). Never the input of a tool, which the model writes, and never
-the output of another tool: reading back a note the run just wrote returns the
-links the model put there, not a source.
+or page-read tool (`web_search`, Tavily, the MCP fetch server) whose success is
+established, without the part that lists failures (`failedResults`). Never the
+input of a tool, which the model writes, and never the output of another tool:
+reading back a note the run just wrote returns the links the model put there,
+not a source.
+
+Success is established only on a row written by the runner's tool path, which
+always writes JSON and turns every failure into `{ "outcome": "error" }`. A
+`cli:*` row (a tool used inside a Claude Code or Codex session) is not: the
+runner stores the text of the CLI's `tool_result` and drops its `is_error`, so
+"Failed to fetch https://…" reads like a page. Such rows are never a source.
+Sources read only through a CLI therefore give a red, said, never a false
+green; recording `is_error` on the audit row would lift this.
 
 A scenario is frozen once merged. Changing its request or its judge means
 raising its `version`: the portal then starts a new series instead of
@@ -82,7 +90,11 @@ scenario is red with that reason, no job is started.
   Known limit: the runner pushes an approval card to Telegram the moment it is
   created; the cancel expires it, but the message itself stays in the chat.
 - Nothing stays alive: timeout, error, Ctrl+C and a bench killed mid-run (the
-  next run cancels any bench tree still live) all end in a cancel.
+  next run cancels any bench tree still live) all end in a cancel. On Ctrl+C
+  or SIGTERM the bench cancels every bench trial still alive, read from the
+  database with its workspace, not only the one it tracks: right after
+  `run_task` it knows the job id and not yet its workspace. It does so only
+  while it holds the lock.
 - Printing: through Nodal the HP connector cannot print without a human. Its
   confirmation token is stripped from what the model sees
   (`summarize()` in the connector), Nodal drops `_meta`, and the Print action

@@ -31,8 +31,6 @@ export interface TrialDeps {
   cancel(entityId: string, rootId: string): Promise<unknown>;
   foreign(): Promise<ForeignActivity>;
   env(startedMs: number): Promise<ScenarioEnv>;
-  /** Signale la tête en cours (pour l'annulation sur interruption), ou null. */
-  track(root: { id: string; entityId: string | null } | null): void;
   log(line: string): void;
 }
 
@@ -264,7 +262,6 @@ export async function runTrial(
   }
   const rootId = session.jobId;
   let entityId: string | null = null;
-  deps.track({ id: rootId, entityId: null });
 
   let cancelled = false;
   const benchReasons: string[] = [];
@@ -285,7 +282,6 @@ export async function runTrial(
     for (;;) {
       const facts = await deps.read(rootId);
       entityId = facts.entityId;
-      deps.track({ id: rootId, entityId });
       const asking = pendingApprovals(facts);
       if (asking.length > 0) {
         await cancel(`it asked: ${asking.map((a) => `${a.kind} ${a.toolName}`).join(', ')}`);
@@ -314,7 +310,6 @@ export async function runTrial(
         `could not verify the run was stopped: ${String(e instanceof Error ? e.message : e)}`,
       );
     }
-    deps.track(null);
     await session.close();
   }
 

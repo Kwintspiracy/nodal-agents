@@ -78,7 +78,6 @@ function world(opts: {
       return list[Math.min(foreignReads++, list.length - 1)]!;
     },
     env: async (startedMs) => ({ workspaceRoots: [], connectorTools: [], startedMs }),
-    track: () => undefined,
     log: () => undefined,
   };
   return { deps, started, cancelled, clock };

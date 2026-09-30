@@ -196,3 +196,22 @@ export async function claimStack(o: ClaimOptions): Promise<BenchLock> {
     throw e;
   }
 }
+
+export type TrialSweep = Pick<ClaimOptions, 'liveRoots' | 'cancel' | 'log'>;
+
+/**
+ * À l'arrêt (Ctrl+C, SIGTERM) : annule TOUS les essais du banc encore vivants,
+ * lus en base avec leur espace. Juste après le lancement, le banc ne connaît
+ * que l'id du job (`run_task` ne rend rien d'autre) ; attendre de connaître son
+ * espace laissait une fenêtre où l'arrêt sortait sans rien annuler. La base, elle,
+ * le connaît. Verrou tenu, ces essais ne peuvent être qu'à ce banc ; sans
+ * verrou (arrêté avant de l'avoir pris), aucun essai n'est à lui : il n'en
+ * annule aucun.
+ */
+export async function stopOwnTrials(lock: BenchLock | null, o: TrialSweep): Promise<void> {
+  if (lock === null) return;
+  for (const root of await o.liveRoots()) {
+    await o.cancel(root);
+    o.log(`cancelled run ${root.id}`);
+  }
+}
