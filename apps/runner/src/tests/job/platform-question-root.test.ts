@@ -225,8 +225,13 @@ describe('a root asked "what changed in 0.9.2" is told the question is its own (
     expect(rootCall.system).toContain('### A question about Nodal is yours');
     expect(rootCall.system).toContain('never delegate it to a teammate');
     expect(rootCall.tools.map((t) => t.name)).toContain('nodal_docs');
-    const assign = rootCall.tools.find((t) => t.name.startsWith('assign_'));
-    expect(assign?.description).toContain('Never widen the folders a teammate reads or writes');
+    // The delegation scope rule, once in the whole request: in the team
+    // block's delegation manual, in no tool description (lot 2, PR C2).
+    const rule = 'Never widen the folders a teammate reads or writes';
+    expect(rootCall.system.split(rule).length - 1).toBe(1);
+    expect(rootCall.tools.filter((t) => t.description?.includes(rule)).map((t) => t.name)).toEqual(
+      [],
+    );
 
     // Agent layer, not a runtime gate: the delegation the model chose happened.
     const [child] = await db
