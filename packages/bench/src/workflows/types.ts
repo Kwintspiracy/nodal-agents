@@ -72,16 +72,24 @@ export interface TrialLine {
   readonly reasons: string[];
   /** Création du job de tête → dernière mise à jour de l'arbre. */
   readonly durationMs: number | null;
-  /** Création du job de tête → premier appel de modèle enregistré (sa fin). */
+  /** Création du job de tête → premier appel de modèle ou tour de CLI enregistré (sa fin). */
   readonly firstModelReplyMs: number | null;
   readonly jobs: number;
   readonly agents: string[];
   readonly models: string[];
   readonly toolCalls: number;
+  /** Appels de modèle en API (`llm_calls`). */
   readonly llmCalls: number;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  readonly costUsd: number;
+  /** Tours d'une CLI de code, Claude Code ou Codex (`cli_runs`). */
+  readonly cliRuns: number;
+  /** Entrée cache compris, API et CLI confondues. null = un appel ne l'a pas rapportée. */
+  readonly inputTokens: number | null;
+  readonly outputTokens: number | null;
+  /**
+   * Dollars facturés à l'appel (API, CLI payée par clé). null = un appel facturé
+   * n'a pas rapporté son prix, ou l'arbre n'a tourné que sous abonnement.
+   */
+  readonly costUsd: number | null;
   /** Approbations et questions levées par l'essai (toutes, résolues ou non). */
   readonly approvals: number;
   readonly rootJobId: string | null;

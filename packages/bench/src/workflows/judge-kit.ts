@@ -2,8 +2,9 @@
 //
 // Fonctions pures sur la photo d'un essai (`TreeFacts`). Aucune n'interroge le
 // modèle ni ne croit ce qu'il affirme : une délégation est un job enfant, une
-// source est une adresse vue dans un résultat d'outil, un envoi est une sortie
-// d'outil qui dit `ok`.
+// source est une adresse RENDUE par un outil de recherche ou de lecture web qui
+// a réussi (jamais une adresse que le modèle a lui-même écrite), un envoi est
+// une sortie d'outil qui dit `ok`.
 
 import type { JobFact, ToolCallFact, TreeFacts } from './facts';
 
@@ -67,12 +68,76 @@ export function urlsIn(text: string | null): string[] {
   return [...out];
 }
 
-/** Toutes les adresses que les outils de l'arbre ont reçues ou rendues : ce que l'essai a réellement vu. */
-export function urlsSeenByTools(facts: TreeFacts): Set<string> {
+/** Le nom d'un outil sans son préfixe de connecteur (`x__`) ni celui des outils internes d'une CLI (`cli:`). */
+export function bareToolName(name: string): string {
+  const unprefixed = name.replace(/^cli:/, '');
+  const i = unprefixed.lastIndexOf('__');
+  return i === -1 ? unprefixed : unprefixed.slice(i + 2);
+}
+
+/**
+ * Les outils qui RAMÈNENT du web : chercher, puis lire une page. Les noms sont
+ * ceux que les lignes `tool_calls` portent réellement — builtin `web_search`,
+ * connecteur Tavily, serveur MCP fetch (`fetch_html`, `fetch_txt`…), et les
+ * outils internes d'une CLI (`cli:WebSearch`, `cli:WebFetch`).
+ */
+const WEB_SEARCH = /^(web_?search|tavily_search)$/i;
+const PAGE_READER =
+  /^(web_?fetch|fetch(_[a-z]+)?|tavily_extract|tavily_crawl|read_web_page|get_page_images|scrape[a-z_]*)$/i;
+
+export function isWebRetrieval(c: ToolCallFact): boolean {
+  const n = bareToolName(c.toolName);
+  return WEB_SEARCH.test(n) || PAGE_READER.test(n);
+}
+
+export function isPageReader(c: ToolCallFact): boolean {
+  return PAGE_READER.test(bareToolName(c.toolName));
+}
+
+/**
+ * L'appel a-t-il rendu quelque chose ? Une sortie vide n'a rien rendu ; une
+ * sortie qui dit l'échec — `{ outcome: 'error' }` (le chemin d'erreur de
+ * `executeTool`), `ok: false`, `isError`, ou un champ `error` — non plus.
+ * Une ligne `cli:*` ne porte aucun drapeau d'échec : sa sortie est lue telle
+ * quelle.
+ */
+export function succeeded(c: ToolCallFact): boolean {
+  if (c.output === null || c.output.trim() === '') return false;
+  const o = parseJson(c.output);
+  if (o === null || typeof o !== 'object' || Array.isArray(o)) return true;
+  const r = o as Record<string, unknown>;
+  if (r['outcome'] === 'error' || r['ok'] === false) return false;
+  if (r['isError'] === true || r['is_error'] === true) return false;
+  return !(typeof r['error'] === 'string' && r['error'] !== '');
+}
+
+/** Les parties d'une sortie qui disent ce qui a ÉCHOUÉ (`failedResults` de Tavily) : jamais une preuve. */
+const FAILURE_KEYS = new Set(['failedResults', 'failed_results', 'errors', 'error']);
+
+/** Les adresses qu'une sortie a rendues, hors des parties qui listent les échecs. */
+function urlsReturnedBy(c: ToolCallFact): string[] {
+  const o = parseJson(c.output);
+  if (o === null || typeof o !== 'object' || Array.isArray(o)) return urlsIn(c.output);
+  const kept = Object.fromEntries(
+    Object.entries(o as Record<string, unknown>).filter(([k]) => !FAILURE_KEYS.has(k)),
+  );
+  return urlsIn(JSON.stringify(kept));
+}
+
+/**
+ * Les adresses que l'essai a réellement VUES sur le web : celles que rendent
+ * les outils de récupération web qui ont réussi. Jamais l'entrée d'un outil
+ * (le modèle l'écrit), jamais la sortie d'un autre outil — relire une note
+ * qu'on vient d'écrire rend les liens qu'on y a mis, pas une source.
+ */
+export function retrievedUrls(
+  facts: TreeFacts,
+  keep: (c: ToolCallFact) => boolean = isWebRetrieval,
+): Set<string> {
   const seen = new Set<string>();
   for (const c of facts.toolCalls) {
-    for (const u of urlsIn(c.input)) seen.add(u);
-    for (const u of urlsIn(c.output)) seen.add(u);
+    if (!keep(c) || !succeeded(c)) continue;
+    for (const u of urlsReturnedBy(c)) seen.add(u);
   }
   return seen;
 }

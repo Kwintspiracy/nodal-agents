@@ -2,7 +2,7 @@
 //
 // Le juge d'un scénario ne lit jamais ce que le modèle dit de lui-même : il lit
 // les lignes que le runner a écrites (agent_jobs, tool_calls, llm_calls,
-// approval_requests) et, quand le scénario produit un fichier, le fichier sur
+// cli_runs, approval_requests) et, quand le scénario produit un fichier, le fichier sur
 // le disque. Ce module fait la première moitié : une photo de l'arbre d'un job,
 // sous une forme simple et sérialisable. C'est aussi la forme des fixtures des
 // tests — une photo prise sur un vrai essai, jamais une ligne inventée.
@@ -47,6 +47,30 @@ export const LlmCallFactSchema = z.object({
 });
 export type LlmCallFact = z.infer<typeof LlmCallFactSchema>;
 
+/**
+ * Un tour d'une CLI de code (Claude Code, Codex) qui a servi un job de l'arbre :
+ * un agent sous abonnement n'écrit AUCUN `llm_calls`, sa consommation est ici.
+ * Les jetons suivent la sémantique de `cli_runs` : `inputTokens` HORS cache,
+ * `cachedTokens` les lectures de cache, `cacheCreationTokens` les écritures
+ * (null = absent du flux). `costUsd` est le coût NOTIONNEL que la CLI rapporte
+ * (Claude le rapporte même sous abonnement, Codex jamais) ; `source` dit qui a
+ * payé : `subscription` (l'abonnement de la CLI) ou `api` (une clé injectée).
+ */
+export const CliRunFactSchema = z.object({
+  jobId: z.string().nullable(),
+  provider: z.string(),
+  source: z.string(),
+  /** Les modèles que la CLI dit avoir utilisés, sinon celui demandé ; vide = non rapporté. */
+  models: z.array(z.string()),
+  costUsd: z.number().nullable(),
+  inputTokens: z.number().nullable(),
+  outputTokens: z.number().nullable(),
+  cachedTokens: z.number().nullable(),
+  cacheCreationTokens: z.number().nullable(),
+  createdMs: z.number(),
+});
+export type CliRunFact = z.infer<typeof CliRunFactSchema>;
+
 export const ApprovalFactSchema = z.object({
   id: z.string(),
   jobId: z.string(),
@@ -65,6 +89,11 @@ export const TreeFactsSchema = z.object({
   jobs: z.array(JobFactSchema),
   toolCalls: z.array(ToolCallFactSchema),
   llmCalls: z.array(LlmCallFactSchema),
+  /**
+   * Absent des fixtures capturées avant que le banc ne lise `cli_runs` (toutes
+   * sur des agents en API, sans run de CLI). `readTreeFacts` le remplit toujours.
+   */
+  cliRuns: z.array(CliRunFactSchema).default([]),
   approvals: z.array(ApprovalFactSchema),
 });
 export type TreeFacts = z.infer<typeof TreeFactsSchema>;
@@ -134,6 +163,19 @@ const RawLlm = z.object({
   error: z.string().nullable(),
   created_ms: num,
 });
+const RawCli = z.object({
+  job_id: z.string().nullable(),
+  provider: z.string(),
+  source: z.string(),
+  model: z.string().nullable(),
+  model_usage: z.array(z.object({ model: z.string() })).nullable(),
+  cost_usd: numOrNull,
+  input_tokens: numOrNull,
+  output_tokens: numOrNull,
+  cached_tokens: numOrNull,
+  cache_creation_tokens: numOrNull,
+  created_ms: num,
+});
 const RawApproval = z.object({
   id: z.string(),
   job_id: z.string(),
@@ -146,7 +188,8 @@ const RawApproval = z.object({
 
 /**
  * Photographie l'arbre d'un job : la tête et ses descendants (`parent_job_id`),
- * leurs appels d'outils, leurs appels de modèle et leurs demandes à un humain.
+ * leurs appels d'outils, leurs appels de modèle (API et tours de CLI) et leurs
+ * demandes à un humain.
  * Lecture seule.
  */
 export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<TreeFacts> {
@@ -190,6 +233,16 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
         from llm_calls where job_id in (${tree}) order by created_at`,
     ),
   );
+  const cli = z.array(RawCli).parse(
+    await executeRows(
+      db,
+      sql`
+      select job_id::text, provider, source, model, model_usage, cost_usd::float8 as cost_usd,
+             input_tokens, output_tokens, cached_tokens, cache_creation_tokens,
+             (extract(epoch from created_at) * 1000)::float8 as created_ms
+        from cli_runs where job_id in (${tree}) order by created_at`,
+    ),
+  );
   const approvals = z.array(RawApproval).parse(
     await executeRows(
       db,
@@ -229,6 +282,22 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
       durationMs: l.duration_ms,
       error: l.error,
       createdMs: l.created_ms,
+    })),
+    cliRuns: cli.map((c) => ({
+      jobId: c.job_id,
+      provider: c.provider,
+      source: c.source,
+      models: c.model_usage
+        ? [...new Set(c.model_usage.map((m) => m.model))]
+        : c.model
+          ? [c.model]
+          : [],
+      costUsd: c.cost_usd,
+      inputTokens: c.input_tokens,
+      outputTokens: c.output_tokens,
+      cachedTokens: c.cached_tokens,
+      cacheCreationTokens: c.cache_creation_tokens,
+      createdMs: c.created_ms,
     })),
     approvals: approvals.map((a) => ({
       id: a.id,

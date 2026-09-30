@@ -152,7 +152,7 @@ describe('recipe and research judges on real trials', () => {
     ]);
   });
 
-  it('research: the real trial is green — delegated, the delegate read the web, a cited link was seen by a tool', () => {
+  it('research: the real trial is green — delegated, the delegate read the web, a cited link was returned by a web search', () => {
     const f = fixture('research-green');
     expect(f.facts.jobs.length).toBeGreaterThan(1);
     expect(judge(f)).toEqual([]);
@@ -172,7 +172,7 @@ describe('recipe and research judges on real trials', () => {
       ),
     };
     expect(judge(f, facts)).toEqual([
-      'none of the 2 source link(s) in the report was seen by a tool',
+      'none of the 2 source link(s) in the report was seen in a web result',
     ]);
   });
 
@@ -196,7 +196,7 @@ describe('deep research into the vault, on a real trial', () => {
   const obs = f.observed as VaultObs;
   const note = obs.notes[0]!;
 
-  it('the real trial is green: delegated, a marked note of 12 k characters with 8 links, links seen by tools', () => {
+  it('the real trial is green: delegated, a marked note of 12 k characters with 8 links, links returned by web retrievals', () => {
     expect(note.marked).toBe(true);
     expect(note.urls.length).toBe(8);
     expect(judge(f)).toEqual([]);
@@ -221,7 +221,7 @@ describe('deep research into the vault, on a real trial', () => {
     ).toEqual(['the note cites 2 source link(s), fewer than 3']);
     const invented = ['a.example/1', 'b.example/2', 'c.example/3'];
     expect(judge(f, f.facts, { ...obs, notes: [{ ...note, urls: invented }] })).toEqual([
-      'none of the 3 source links of the note was seen by a tool',
+      'none of the 3 source links of the note was seen in a web result',
     ]);
   });
 });
@@ -305,5 +305,175 @@ describe('what the judges read', () => {
       'example.org/a/b',
     ]);
     expect(urlsIn('{"url":"https:\\/\\/nasa.gov\\/cmb"}')).toEqual(['nasa.gov/cmb']);
+  });
+});
+
+// Revue Codex de la PR #634, constat 3 : une adresse qui n'apparaissait que dans
+// l'ENTRÉE d'un outil (dont `file_write`, que le modèle rédige) comptait comme
+// vue. Une source inventée devenait une preuve dès qu'elle était écrite dans la
+// note, et relire la note satisfaisait « le délégué a lu le web ». Une preuve ne
+// vient plus que de la SORTIE d'un outil de récupération web qui a réussi.
+describe('a source is only what a successful web retrieval returned', () => {
+  const INVENTED = 'https://invented.example/cmb-discovery';
+  const f = fixture('research-green');
+  const root = f.facts.rootId;
+  const child = f.facts.jobs.find((j) => j.id !== root)!.id;
+  const citing = (facts: TreeFacts): TreeFacts => ({
+    ...facts,
+    jobs: facts.jobs.map((j) =>
+      j.id === root ? { ...j, result: `Rapport. Source : ${INVENTED}` } : j,
+    ),
+  });
+  const call = (toolName: string, input: unknown, output: unknown) => ({
+    jobId: child,
+    toolName,
+    input: JSON.stringify(input),
+    output: typeof output === 'string' ? output : JSON.stringify(output),
+    createdMs: f.facts.jobs[0]!.createdMs + 1_000,
+  });
+  const SEEN_BY_NONE = 'none of the 1 source link(s) in the report was seen in a web result';
+
+  it('research: a link the model wrote into a note, then read back, is not a source', () => {
+    const facts = citing({
+      ...f.facts,
+      toolCalls: [
+        ...f.facts.toolCalls,
+        call(
+          'file_write',
+          { path: 'CMB.md', content: `# CMB\nSource : ${INVENTED}` },
+          { ok: true, written: true },
+        ),
+        call('file_read', { path: 'CMB.md' }, { ok: true, content: `# CMB\nSource : ${INVENTED}` }),
+      ],
+    });
+    expect(judge(f, facts)).toEqual([SEEN_BY_NONE]);
+  });
+
+  it('research: a link a retrieval FAILED on is not a source (error outcome, failedResults)', () => {
+    const facts = citing({
+      ...f.facts,
+      toolCalls: [
+        ...f.facts.toolCalls,
+        call(
+          'mcp_fetch__fetch_html',
+          { url: INVENTED },
+          { outcome: 'error', error: `fetch failed: ${INVENTED} answered 404` },
+        ),
+        call(
+          'tavily_extract',
+          { urls: [INVENTED] },
+          { results: [], failedResults: [{ url: INVENTED, error: 'not found' }] },
+        ),
+        // Un résultat d'erreur MCP qui cite l'adresse dans son texte, hors d'un champ `error`.
+        call(
+          'mcp_fetch__fetch_txt',
+          { url: INVENTED },
+          {
+            isError: true,
+            content: [{ type: 'text', text: `Failed to fetch ${INVENTED} - status code 404` }],
+          },
+        ),
+      ],
+    });
+    expect(judge(f, facts)).toEqual([SEEN_BY_NONE]);
+  });
+
+  it('research: the same link returned by a web search IS a source', () => {
+    const facts = citing({
+      ...f.facts,
+      toolCalls: [
+        ...f.facts.toolCalls,
+        call(
+          'web_search',
+          { query: 'cmb' },
+          { results: [{ title: 'CMB', url: INVENTED, snippet: 'x' }] },
+        ),
+      ],
+    });
+    expect(judge(f, facts)).toEqual([]);
+  });
+
+  it('research: a delegate that only read files holding links did not read the web', () => {
+    const facts: TreeFacts = {
+      ...f.facts,
+      toolCalls: [
+        ...f.facts.toolCalls.filter((c) => !/web_search|tavily/.test(c.toolName)),
+        call(
+          'file_read',
+          { path: 'Cosmologie.md' },
+          { ok: true, content: 'https://en.wikipedia.org/wiki/Cosmic_microwave_background' },
+        ),
+      ],
+    };
+    expect(judge(f, facts)).toContain('the delegate read no web source');
+  });
+
+  it('deep research: a note whose links only the note itself carries is red, even read back', () => {
+    const d = fixture('deep-research-obsidian-green');
+    const obs = d.observed as {
+      vaults: string[];
+      notes: Array<{ vault: string; rel: string; chars: number; urls: string[]; marked: boolean }>;
+      truncated: boolean;
+    };
+    const invented = ['a.example/1', 'b.example/2', 'c.example/3'];
+    const text = invented.map((u) => `https://${u}`).join('\n');
+    const kid = d.facts.jobs.find((j) => j.id !== d.facts.rootId)!.id;
+    const facts: TreeFacts = {
+      ...d.facts,
+      toolCalls: [
+        ...d.facts.toolCalls,
+        {
+          ...call('file_write', { path: 'Nodal Bench/x.md', content: text }, { ok: true }),
+          jobId: kid,
+        },
+        {
+          ...call('file_read', { path: 'Nodal Bench/x.md' }, { ok: true, content: text }),
+          jobId: kid,
+        },
+      ],
+    };
+    expect(judge(d, facts, { ...obs, notes: [{ ...obs.notes[0]!, urls: invented }] })).toEqual([
+      'none of the 3 source links of the note was seen in a web result',
+    ]);
+  });
+
+  it('recipe: a photo is from the recipe site only if a page of that site was READ, not just asked for', () => {
+    const r = fixture('recipe-red-file');
+    const PHOTO = 'https://assets.marmiton.org/recipe/caviar.jpg';
+    const withImages = (facts: TreeFacts): TreeFacts => ({
+      ...facts,
+      toolCalls: facts.toolCalls.map((c) =>
+        c.toolName.endsWith('__request_print')
+          ? {
+              ...c,
+              input: JSON.stringify({ text: 'Caviar' }),
+              output: JSON.stringify({
+                ...(JSON.parse(c.output!) as object),
+                images: { embedded: [{ origin: PHOTO }] },
+              }),
+            }
+          : c,
+      ),
+    });
+    const reader = (output: unknown) => ({
+      ...call(
+        'mcp_fetch__fetch_html',
+        { url: 'https://www.marmiton.org/recettes/caviar.aspx' },
+        output,
+      ),
+      jobId: r.facts.rootId,
+    });
+    const failed = withImages({
+      ...r.facts,
+      toolCalls: [...r.facts.toolCalls, reader({ outcome: 'error', error: 'fetch failed' })],
+    });
+    expect(judge(r, failed)).toEqual([
+      `the photo does not come from the recipe site (${PHOTO} vs no page read)`,
+    ]);
+    const read = withImages({
+      ...r.facts,
+      toolCalls: [...r.facts.toolCalls, reader(`<html><img src="${PHOTO}"></html>`)],
+    });
+    expect(judge(r, read)).toEqual([]);
   });
 });

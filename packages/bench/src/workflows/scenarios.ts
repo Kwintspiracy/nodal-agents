@@ -23,9 +23,11 @@ import {
   delegatedJobs,
   parseJson,
   rootJob,
+  isPageReader,
+  isWebRetrieval,
+  retrievedUrls,
   textHasNumber,
   urlsIn,
-  urlsSeenByTools,
 } from './judge-kit';
 import {
   findInRoots,
@@ -77,20 +79,26 @@ const question = defineScenario<null>({
 
 // ─── research ────────────────────────────────────────────────────────────────
 
-/** Le délégué a lu le web : une sortie d'outil d'un job enfant porte au moins une adresse. */
+/**
+ * Le délégué a lu le web : un job enfant a fait une recherche ou une lecture de
+ * page qui a réussi et rendu au moins une adresse. Relire un fichier qui porte
+ * des liens n'est pas lire le web.
+ */
 function delegateReadTheWeb(facts: TreeFacts): boolean {
   const kids = new Set(delegatedJobs(facts).map((j) => j.id));
-  return facts.toolCalls.some(
-    (c) => c.jobId !== null && kids.has(c.jobId) && urlsIn(c.output).length > 0,
+  return (
+    retrievedUrls(facts, (c) => c.jobId !== null && kids.has(c.jobId) && isWebRetrieval(c)).size > 0
   );
 }
 
 const research = defineScenario<null>({
   id: 'research',
-  version: 1,
+  // v2 (revue Codex #634) : une source doit avoir été RENDUE par une recherche
+  // ou une lecture web réussie ; v1 comptait aussi une adresse écrite par le modèle.
+  version: 2,
   title: 'A research request, handed to the research specialty',
   green:
-    'The root delegated, the delegate read web sources, the report came back with at least one source link that a tool really saw, and nobody was asked anything.',
+    'The root delegated, the delegate read web sources, the report came back with at least one source link that a successful web search or page read really returned, and nobody was asked anything.',
   set: 'nightly',
   instruction:
     'Fais une recherche sur la découverte du fond diffus cosmologique : qui, quand, comment. Donne tes sources.',
@@ -103,9 +111,9 @@ const research = defineScenario<null>({
     const cited = urlsIn(rootJob(facts)?.result ?? null);
     if (cited.length === 0) r.push('no source link in the report');
     else {
-      const seen = urlsSeenByTools(facts);
+      const seen = retrievedUrls(facts);
       if (!cited.some((u) => seen.has(u))) {
-        r.push(`none of the ${cited.length} source link(s) in the report was seen by a tool`);
+        r.push(`none of the ${cited.length} source link(s) in the report was seen in a web result`);
       }
     }
     return r;
@@ -142,6 +150,14 @@ export function obsidianVaults(roots: readonly string[]): string[] {
   return roots.filter((r) => existsSync(join(r, '.obsidian')));
 }
 
+const NO_VAULT =
+  'no Obsidian vault is configured: no workspace folder of this workspace holds a .obsidian folder';
+
+/** Sans coffre, l'essai n'a pas de sens : rouge AVANT de lancer trente minutes de recherche. */
+function needsVault(env: { workspaceRoots: readonly string[] }): string[] {
+  return obsidianVaults(env.workspaceRoots).length > 0 ? [] : [NO_VAULT];
+}
+
 function isMarkedNote(rel: string, text: string): boolean {
   const parts = rel.split(/[\\/]/);
   if (parts.includes(BENCH_NOTE_FOLDER)) return true;
@@ -150,9 +166,11 @@ function isMarkedNote(rel: string, text: string): boolean {
 
 const deepResearchObsidian = defineScenario<VaultObservation>({
   id: 'deep-research-obsidian',
-  version: 1,
+  // v2 (revue Codex #634) : sources rendues par le web seulement, et sans coffre
+  // l'essai est rouge AVANT de lancer quoi que ce soit.
+  version: 2,
   title: 'An in-depth research, written as a note in the Obsidian vault',
-  green: `The research was delegated, a note was written in the vault during the run (in the "${BENCH_NOTE_FOLDER}" folder or tagged #${BENCH_NOTE_TAG}), it holds at least ${NOTE_MIN_CHARS} characters and ${NOTE_MIN_SOURCES} source links, and nobody was asked anything.`,
+  green: `The research was delegated, a note was written in the vault during the run (in the "${BENCH_NOTE_FOLDER}" folder or tagged #${BENCH_NOTE_TAG}), it holds at least ${NOTE_MIN_CHARS} characters and ${NOTE_MIN_SOURCES} source links, at least one of them returned by a successful web search or page read, and nobody was asked anything.`,
   set: 'nightly',
   instruction:
     'Fais une recherche approfondie sur le déchiffrement des hiéroglyphes égyptiens par Champollion ' +
@@ -160,6 +178,7 @@ const deepResearchObsidian = defineScenario<VaultObservation>({
     `mon coffre Obsidian, dans le dossier « ${BENCH_NOTE_FOLDER} », avec le tag #${BENCH_NOTE_TAG}, ` +
     'et cite au moins trois sources avec leurs liens.',
   timeoutMs: 30 * MIN,
+  requires: needsVault,
   async observe(_facts, env) {
     const vaults = obsidianVaults(env.workspaceRoots);
     const notes: VaultNote[] = [];
@@ -184,9 +203,8 @@ const deepResearchObsidian = defineScenario<VaultObservation>({
     const r = commonReasons(facts);
     if (delegatedJobs(facts).length === 0) r.push('the research was not delegated');
     if (o.vaults.length === 0) {
-      r.push(
-        'no Obsidian vault is configured: no workspace folder of this workspace holds a .obsidian folder',
-      );
+      // Le coffre a pu disparaître pendant l'essai : le juge le dit encore.
+      r.push(NO_VAULT);
       return r;
     }
     if (o.notes.length === 0) {
@@ -208,10 +226,10 @@ const deepResearchObsidian = defineScenario<VaultObservation>({
     if (best.urls.length < NOTE_MIN_SOURCES) {
       r.push(`the note cites ${best.urls.length} source link(s), fewer than ${NOTE_MIN_SOURCES}`);
     } else {
-      const seen = urlsSeenByTools(facts);
+      const seen = retrievedUrls(facts);
       const grounded = best.urls.filter((u) => seen.has(u)).length;
       if (grounded === 0)
-        r.push(`none of the ${best.urls.length} source links of the note was seen by a tool`);
+        r.push(`none of the ${best.urls.length} source links of the note was seen in a web result`);
     }
     return r;
   },
@@ -486,7 +504,16 @@ const print = defineScenario<null>({
   },
 });
 
-const PAGE_READERS = /read_web_page|get_page_images|fetch|scrape|extract/i;
+/** L'hôte d'une origine d'image, qu'elle soit écrite en adresse ou en nom d'hôte, sans `www.`. */
+function hostOf(origin: string): string {
+  let h = origin;
+  try {
+    h = new URL(origin).hostname;
+  } catch {
+    // déjà un nom d'hôte
+  }
+  return h.toLowerCase().replace(/^www\./, '');
+}
 
 interface RecipeObservation {
   /** Les fichiers que les demandes d'impression imprimaient tels quels, et s'ils existaient avant l'essai. */
@@ -495,10 +522,12 @@ interface RecipeObservation {
 
 const recipe = defineScenario<RecipeObservation>({
   id: 'recipe',
-  version: 1,
+  // v2 (revue Codex #634) : le site « lu » est celui d'une page réellement
+  // RENDUE par un outil de lecture ; v1 prenait l'adresse demandée, même en échec.
+  version: 2,
   title: 'Print a recipe with its own photo (the request waits for the owner)',
   green:
-    'A pending print request of one page was created, with a photo that comes from the recipe site the agent read; nothing reached the printer and nobody was asked anything.',
+    'A pending print request of one page was created, with a photo that comes from the site of a page the agent really read (a page reader returned it); nothing reached the printer and nobody was asked anything.',
   set: 'nightly',
   instruction:
     "Imprime une recette de caviar d'aubergines, sur une seule page, style magazine, avec la photo de la recette elle-même.",
@@ -538,21 +567,12 @@ const recipe = defineScenario<RecipeObservation>({
       );
     } else if (last.images.length === 0) r.push('no photo in the printed page');
     else {
-      const hosts = facts.toolCalls
-        .filter((c) => PAGE_READERS.test(c.toolName))
-        .map((c) => (parseJson(c.input) as { url?: unknown } | null)?.url)
-        .filter((u): u is string => typeof u === 'string')
-        .map((u) => {
-          try {
-            return new URL(u).hostname.replace(/^www\./, '');
-          } catch {
-            return null;
-          }
-        })
-        .filter((h): h is string => h !== null);
+      // Les sites dont une page a été LUE : ce que les lectures réussies ont
+      // rendu (adresses normalisées `hôte/chemin`), jamais l'adresse demandée.
+      const hosts = [...retrievedUrls(facts, isPageReader)].map((u) => u.split('/')[0]!);
       const site = (h: string): string => h.split('.').slice(-2).join('.');
       const fromSource = last.images.some((i) => {
-        const o = i.origin.replace(/^www\./, '');
+        const o = hostOf(i.origin);
         return hosts.some((h) => site(h) === site(o));
       });
       if (!fromSource) {

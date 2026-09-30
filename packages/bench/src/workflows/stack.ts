@@ -109,7 +109,7 @@ export interface ForeignActivity {
     channel: string;
     agentSlug: string | null;
   }>;
-  /** Heure (ms) du dernier appel de modèle d'un tour de chat récent, sinon null. */
+  /** Heure (ms) de la dernière trace d'un tour de chat récent, sinon null. */
   readonly lastChatMs: number | null;
 }
 
@@ -124,8 +124,14 @@ const ActiveRow = z.object({
 /**
  * Ce que le propriétaire fait en ce moment, vu de la base : ses jobs vivants
  * (tout job non terminal dont la tête n'est pas un essai du banc) et un tour de
- * chat récent (un tour de chat n'est pas un job : il laisse des `llm_calls` de
- * source `chat`).
+ * chat récent. Un tour de chat n'est pas un job ; il laisse, selon le runtime
+ * de l'agent :
+ *   - en API : des `llm_calls` de source `chat` ;
+ *   - sous Claude Code ou Codex (`runCliRuntimeChatTurn`) : AUCUN `llm_calls`,
+ *     mais des `tool_calls` sans job écrits PENDANT le tour, puis une ligne
+ *     `cli_runs` sans job à sa fin.
+ * Les trois comptent. Un essai du banc passe toujours par un job : ses lignes
+ * ont un `job_id`, elles ne sont jamais prises pour du chat.
  */
 export async function readForeignActivity(
   db: AnyDrizzleDb,
@@ -153,13 +159,21 @@ export async function readForeignActivity(
        where up.parent is null`,
     ),
   );
+  const since = sql`now() - make_interval(secs => ${chatWindowMs / 1000})`;
   const chat = z.array(z.object({ last: numOrNull })).parse(
     await executeRows(
       db,
       sql`
-        select (extract(epoch from max(created_at)) * 1000)::float8 as last
-          from llm_calls
-         where source = 'chat' and created_at > now() - make_interval(secs => ${chatWindowMs / 1000})`,
+        select (extract(epoch from max(t)) * 1000)::float8 as last from (
+          select max(created_at) as t from llm_calls
+           where source = 'chat' and created_at > ${since}
+          union all
+          select max(created_at) from cli_runs
+           where job_id is null and created_at > ${since}
+          union all
+          select max(created_at) from tool_calls
+           where job_id is null and created_at > ${since}
+        ) chat_traces`,
     ),
   );
   return {

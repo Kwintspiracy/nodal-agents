@@ -19,6 +19,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { executeRows, readTreeFacts } from './facts';
+import { BENCH_LOCK_FILE, claimStack, type BenchLock } from './lock';
 import { startRunTask } from './mcp';
 import { redactHome } from './redact';
 import { SCENARIOS, scenarioById } from './scenarios';
@@ -159,6 +160,7 @@ async function main(): Promise<void> {
   const stackCommit = readStackCommit(stackDir)?.slice(0, 12) ?? null;
   const { db, close } = await openStackDb();
 
+  let lock: BenchLock | null = null;
   let current: { id: string; entityId: string | null } | null = null;
   const stopNow = async (signal: string): Promise<void> => {
     console.error(`\n${signal}: stopping the bench`);
@@ -168,6 +170,7 @@ async function main(): Promise<void> {
       );
       console.error(`cancelled run ${current.id}`);
     }
+    lock?.release();
     await close();
     process.exit(130);
   };
@@ -176,12 +179,14 @@ async function main(): Promise<void> {
 
   let failed = 0;
   try {
-    // Un banc interrompu (coupure, crash) a pu laisser un essai vivant : on le
-    // coupe avant tout, c'est le sien.
-    for (const orphan of await readLiveBenchRoots(db)) {
-      await cancelTree(db, orphan.entityId, orphan.id);
-      console.log(`cancelled a run left alive by an earlier bench: ${orphan.id}`);
-    }
+    // Un seul banc par stack : le verrou d'abord (un second banc refuse, en
+    // disant qui le tient), puis les essais qu'un banc mort a laissés vivants.
+    lock = await claimStack({
+      lockPath: BENCH_LOCK_FILE,
+      liveRoots: () => readLiveBenchRoots(db),
+      cancel: (orphan) => cancelTree(db, orphan.entityId, orphan.id),
+      log: (l) => console.log(l),
+    });
     const entityId = await rootEntity(db);
     const deps: TrialDeps = {
       now: () => Date.now(),
@@ -219,6 +224,7 @@ async function main(): Promise<void> {
       }
     }
   } finally {
+    lock?.release();
     await close();
   }
   console.log(

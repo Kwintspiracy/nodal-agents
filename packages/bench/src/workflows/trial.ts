@@ -103,6 +103,7 @@ function emptyLine(
     models: [],
     toolCalls: 0,
     llmCalls: 0,
+    cliRuns: 0,
     inputTokens: 0,
     outputTokens: 0,
     costUsd: 0,
@@ -112,7 +113,32 @@ function emptyLine(
   };
 }
 
-/** Les mesures d'un arbre : durée, jetons, coût, modèles. Pur. */
+/** Une somme dont un terme manque n'est pas une somme : null, jamais un total sous-estimé. */
+function sumOrNull(values: ReadonlyArray<number | null>): number | null {
+  let total = 0;
+  for (const v of values) {
+    if (v === null) return null;
+    total += v;
+  }
+  return total;
+}
+
+/**
+ * Les mesures d'un arbre : durée, jetons, coût, modèles. Pur.
+ *
+ * Deux sources de consommation, une seule sémantique :
+ *   - `llm_calls` (un agent en API) : l'entrée y est cache COMPRIS ;
+ *   - `cli_runs` (un agent sous Claude Code ou Codex) : l'entrée y est HORS
+ *     cache, les lectures et écritures de cache à part. Elles sont rajoutées,
+ *     pour que les deux se comparent.
+ * Un appel qui a échoué ne consomme rien de mesurable ; un appel qui a répondu
+ * sans rapporter ses jetons rend la mesure ABSENTE (null), jamais zéro.
+ *
+ * Le coût est ce qui est FACTURÉ à l'appel : les appels d'API, et les runs de
+ * CLI payés par une clé. Un run sous abonnement n'est pas facturé à l'appel ;
+ * son coût notionnel n'est pas une dépense, il n'entre pas ici (ses jetons, si).
+ * Un arbre qui n'a tourné que sous abonnement n'a donc pas de coût : null.
+ */
 export function measure(
   facts: TreeFacts,
 ): Pick<
@@ -124,6 +150,7 @@ export function measure(
   | 'models'
   | 'toolCalls'
   | 'llmCalls'
+  | 'cliRuns'
   | 'inputTokens'
   | 'outputTokens'
   | 'costUsd'
@@ -131,19 +158,48 @@ export function measure(
 > {
   const root = facts.jobs.find((j) => j.id === facts.rootId);
   const ends = facts.jobs.map((j) => j.updatedMs ?? j.createdMs);
-  const firstLlm =
-    facts.llmCalls.length > 0 ? Math.min(...facts.llmCalls.map((l) => l.createdMs)) : null;
+  const replies = [...facts.llmCalls, ...facts.cliRuns].map((c) => c.createdMs);
+  const firstReply = replies.length > 0 ? Math.min(...replies) : null;
+
+  const answered = facts.llmCalls.filter((l) => l.error === null);
+  const inputTokens = sumOrNull([
+    ...answered.map((l) => l.inputTokens),
+    ...facts.cliRuns.map((c) =>
+      c.inputTokens === null || c.cachedTokens === null
+        ? null
+        : c.inputTokens + c.cachedTokens + (c.cacheCreationTokens ?? 0),
+    ),
+  ]);
+  const outputTokens = sumOrNull([
+    ...answered.map((l) => l.outputTokens),
+    ...facts.cliRuns.map((c) => c.outputTokens),
+  ]);
+  const billed = [
+    ...answered.map((l) => l.costUsd),
+    ...facts.cliRuns.filter((c) => c.source !== 'subscription').map((c) => c.costUsd),
+  ];
+  const onlySubscription = billed.length === 0 && facts.cliRuns.length > 0;
+  const cost = onlySubscription ? null : sumOrNull(billed);
+
   return {
     durationMs: root ? Math.round(Math.max(...ends) - root.createdMs) : null,
-    firstModelReplyMs: root && firstLlm !== null ? Math.round(firstLlm - root.createdMs) : null,
+    firstModelReplyMs: root && firstReply !== null ? Math.round(firstReply - root.createdMs) : null,
     jobs: facts.jobs.length,
     agents: facts.jobs.map((j) => j.agentSlug ?? '?'),
-    models: [...new Set(facts.llmCalls.map((l) => l.model))],
+    models: [
+      ...new Set([
+        ...facts.llmCalls.map((l) => l.model),
+        ...facts.cliRuns.flatMap((c) =>
+          c.models.length > 0 ? c.models : [`${c.provider} CLI, model not reported`],
+        ),
+      ]),
+    ],
     toolCalls: facts.toolCalls.length,
     llmCalls: facts.llmCalls.length,
-    inputTokens: facts.llmCalls.reduce((s, l) => s + (l.inputTokens ?? 0), 0),
-    outputTokens: facts.llmCalls.reduce((s, l) => s + (l.outputTokens ?? 0), 0),
-    costUsd: Number(facts.llmCalls.reduce((s, l) => s + (l.costUsd ?? 0), 0).toFixed(4)),
+    cliRuns: facts.cliRuns.length,
+    inputTokens,
+    outputTokens,
+    costUsd: cost === null ? null : Number(cost.toFixed(4)),
     approvals: facts.approvals.length,
   };
 }
@@ -177,12 +233,23 @@ export async function runTrial(
     return { ...emptyLine(s, o, deps.now()), verdict: 'skipped', reasons: [busy] };
   }
 
-  const envBefore = await deps.env(deps.now());
-  const missing = s.requires?.(envBefore) ?? [];
-  if (missing.length > 0) {
-    return { ...emptyLine(s, o, deps.now()), verdict: 'red', reasons: missing };
+  // Lire l'espace, vérifier les prérequis, préparer : tout ce qui lève ici
+  // (un classeur ouvert dans Excel verrouille son fichier sous Windows) devient
+  // UNE ligne `error` avec sa raison. Un rejet emporterait les scénarios suivants.
+  try {
+    const envBefore = await deps.env(deps.now());
+    const missing = s.requires?.(envBefore) ?? [];
+    if (missing.length > 0) {
+      return { ...emptyLine(s, o, deps.now()), verdict: 'red', reasons: missing };
+    }
+    s.prepare?.(envBefore);
+  } catch (e) {
+    return {
+      ...emptyLine(s, o, deps.now()),
+      verdict: 'error',
+      reasons: [`the trial could not be prepared: ${String(e instanceof Error ? e.message : e)}`],
+    };
   }
-  s.prepare?.(envBefore);
 
   const startedMs = deps.now();
   let session: { jobId: string; close(): Promise<void> };
@@ -266,10 +333,9 @@ export async function runTrial(
       ],
     };
   }
-  const env = await deps.env(startedMs);
   let judged: string[];
   try {
-    judged = s.judge(facts, await s.observe(facts, env));
+    judged = s.judge(facts, await s.observe(facts, await deps.env(startedMs)));
   } catch (e) {
     judged = [`the judge failed: ${String(e instanceof Error ? e.message : e)}`];
   }

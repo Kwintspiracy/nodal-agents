@@ -11,8 +11,9 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { TreeFactsSchema, type TreeFacts } from '../facts';
 import { scenarioById } from '../scenarios';
-import { busyReason, runTrial, type TrialDeps, type TrialOptions } from '../trial';
+import { busyReason, measure, runTrial, type TrialDeps, type TrialOptions } from '../trial';
 import type { ForeignActivity } from '../stack';
+import type { AnyScenario } from '../types';
 
 const FIX = join(__dirname, 'fixtures');
 const load = (name: string): TreeFacts =>
@@ -237,5 +238,113 @@ describe('workflow trial safety rules', () => {
       nodalVersion: '0.9.3',
     });
     expect(line.durationMs).toBe(20952);
+  });
+});
+
+// Revue Codex de la PR #634, constats 5 et 6 : un prérequis qui manque ne doit
+// pas coûter trente minutes d'essai, et une préparation qui lève ne doit pas
+// emporter les scénarios suivants avec elle.
+describe('what happens before a trial starts', () => {
+  it('deep-research-obsidian without a vault is RED at once, with the reason, and no job is started', async () => {
+    const green = load('question-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    const line = await runTrial(scenarioById('deep-research-obsidian')!, w.deps, OPTS);
+    expect(w.started).toEqual([]);
+    expect(line.verdict).toBe('red');
+    expect(line.reasons).toEqual([
+      'no Obsidian vault is configured: no workspace folder of this workspace holds a .obsidian folder',
+    ]);
+    expect(line.rootJobId).toBeNull();
+  });
+
+  it('a preparation that throws (the workbook open in Excel) is an ERROR line with its reason, never a rejected trial', async () => {
+    const green = load('question-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    const locked: AnyScenario = {
+      ...scenarioById('file')!,
+      prepare() {
+        throw new Error(
+          "EBUSY: resource busy or locked, unlink '~/.nodalai/workspaces/x/shared/nodal-bench/ventes-bench.xlsx'",
+        );
+      },
+    };
+    const line = await runTrial(locked, w.deps, OPTS);
+    expect(w.started).toEqual([]);
+    expect(line.verdict).toBe('error');
+    expect(line.reasons).toEqual([
+      "the trial could not be prepared: EBUSY: resource busy or locked, unlink '~/.nodalai/workspaces/x/shared/nodal-bench/ventes-bench.xlsx'",
+    ]);
+    expect(line.scenario).toBe('file');
+  });
+
+  it('a prerequisite check that throws is an ERROR line too', async () => {
+    const green = load('question-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    const broken: AnyScenario = {
+      ...scenarioById('print')!,
+      requires() {
+        throw new Error('EACCES: permission denied, stat');
+      },
+    };
+    const line = await runTrial(broken, w.deps, OPTS);
+    expect(w.started).toEqual([]);
+    expect(line).toMatchObject({
+      verdict: 'error',
+      reasons: ['the trial could not be prepared: EACCES: permission denied, stat'],
+    });
+  });
+
+  it('the environment unreadable before the trial is an ERROR line too', async () => {
+    const green = load('question-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    w.deps.env = async () => {
+      throw new Error('connection terminated');
+    };
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(w.started).toEqual([]);
+    expect(line).toMatchObject({
+      verdict: 'error',
+      reasons: ['the trial could not be prepared: connection terminated'],
+    });
+  });
+});
+
+// Revue Codex de la PR #634, constat 4 : une grandeur qu'un runtime ne rapporte
+// pas est ABSENTE (null), jamais zéro.
+describe('measures that a runtime does not report', () => {
+  const green = load('question-green');
+  const cli = {
+    jobId: green.rootId,
+    provider: 'claude',
+    source: 'subscription',
+    models: ['claude-opus-4-1-20250805'],
+    costUsd: 0.52,
+    inputTokens: 10,
+    outputTokens: 300,
+    cachedTokens: 5000,
+    cacheCreationTokens: 200,
+    createdMs: green.jobs[0]!.createdMs + 4_000,
+  };
+
+  it('a tree run only under a subscription bills no dollar per call: its cost is absent, its tokens are counted', () => {
+    const m = measure({ ...green, llmCalls: [], cliRuns: [cli] });
+    expect(m.costUsd).toBeNull();
+    expect(m.inputTokens).toBe(5210);
+    expect(m.outputTokens).toBe(300);
+    expect(m.firstModelReplyMs).toBe(4_000);
+  });
+
+  it('a CLI run that did not report its input leaves the input tokens unmeasured, not zero', () => {
+    const m = measure({ ...green, cliRuns: [{ ...cli, inputTokens: null }] });
+    expect(m.inputTokens).toBeNull();
+    expect(m.outputTokens).toBe(370);
+  });
+
+  it('an API call that answered without a price leaves the cost unmeasured, not zero', () => {
+    const m = measure({
+      ...green,
+      llmCalls: green.llmCalls.map((l, i) => (i === 0 ? { ...l, costUsd: null } : l)),
+    });
+    expect(m.costUsd).toBeNull();
   });
 });
