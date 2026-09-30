@@ -39,6 +39,7 @@ import {
   SCRIPT_EN_VOL,
 } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
+import { lireWorkflows, htmlWorkflows, workflowsARegarder } from './workflows.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const DATA = join(ICI, 'data');
@@ -70,10 +71,11 @@ const RAIL = {
   ecarts: ['03', 'What is wrong'],
   parcours: ['04', 'Journeys'],
   memoire: ['05', 'Over time'],
-  vue: ['06', 'The code'],
-  banc: ['07', 'Measures'],
-  ci: ['08', 'What runs it'],
-  historique: ['09', 'The record'],
+  workflows: ['06', 'Real requests'],
+  vue: ['07', 'The code'],
+  banc: ['08', 'Measures'],
+  ci: ['09', 'What runs it'],
+  historique: ['10', 'The record'],
 };
 
 const entete = (id, titre) => {
@@ -506,6 +508,20 @@ function vueParcours() {
   }
   ${repere('parcours', 'cadence')}
   ${ORDRE.map(bloc).join('\n')}
+</section>`;
+}
+
+// Les vrais workflows (packages/bench/src/workflows) : le rendu vit dans workflows.mjs.
+const workflows = lireWorkflows(
+  existsSync(join(DATA, 'workflows.ndjson'))
+    ? readFileSync(join(DATA, 'workflows.ndjson'), 'utf8')
+    : '',
+);
+function vueWorkflows() {
+  return `
+<section id="workflows" class="vue">
+  ${entete('workflows', 'Workflows')}
+  ${htmlWorkflows(workflows)}
 </section>`;
 }
 
@@ -1788,6 +1804,7 @@ td.dette{color:var(--ko);font-weight:600}
       <a href="#ecarts">Gaps <b>${ecarts().length}</b></a>
       <a href="#parcours">Journeys <b>${s.resume.specsE2eJoueesParLaCi}/${s.resume.specsE2e}</b></a>
       <a href="#memoire">Test memory <b>${(s.memoire?.instables ?? 0) + (s.memoire?.casses ?? 0)}</b></a>
+      <a href="#workflows">Workflows <b>${workflowsARegarder(workflows)}</b></a>
       <p class="rubrique">How it runs</p>
       <a href="#vue" class="discret">Tests, overview</a>
       <a href="#banc" class="discret">Bench <b>${s.banc.sections.length}</b></a>
@@ -1815,6 +1832,7 @@ td.dette{color:var(--ko);font-weight:600}
     ${vueBanc()}
     ${vueCi()}
     ${vueMemoire()}
+    ${vueWorkflows()}
     ${vueHistorique()}
   </main>
 </div>

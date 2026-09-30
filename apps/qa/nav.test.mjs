@@ -22,13 +22,16 @@ const entrees = [...(bloc?.[1] ?? '').matchAll(/<(a|p)\s([^>]*)>([^<$]*)/g)]
   .filter((e) => e.libelle.length > 0);
 
 describe('la barre de gauche', () => {
-  it('sépare les cinq pages de pilotage de la plomberie, dans cet ordre', () => {
+  // Six depuis le 30/09 : « Workflows », les vraies demandes jouées la nuit, se
+  // pilote comme les parcours (elle dit ce qui casse), elle n'est pas de la plomberie.
+  it('sépare les six pages de pilotage de la plomberie, dans cet ordre', () => {
     expect(entrees).toEqual([
       { genre: 'lien', ancre: 'chantiers', libelle: 'Work in flight' },
       { genre: 'lien', ancre: 'capacites', libelle: 'Capabilities' },
       { genre: 'lien', ancre: 'ecarts', libelle: 'Gaps' },
       { genre: 'lien', ancre: 'parcours', libelle: 'Journeys' },
       { genre: 'lien', ancre: 'memoire', libelle: 'Test memory' },
+      { genre: 'lien', ancre: 'workflows', libelle: 'Workflows' },
       { genre: 'rubrique', ancre: null, libelle: 'How it runs' },
       { genre: 'lien', ancre: 'vue', libelle: 'Tests, overview' },
       { genre: 'lien', ancre: 'banc', libelle: 'Bench' },

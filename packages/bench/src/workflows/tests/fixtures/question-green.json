@@ -1,0 +1,46 @@
+{
+  "scenario": "question",
+  "version": 1,
+  "facts": {
+    "rootId": "7042900c-4c9e-4725-83a1-816a27d594ae",
+    "entityId": "00000000-0000-0000-0000-000000000002",
+    "jobs": [
+      {
+        "id": "7042900c-4c9e-4725-83a1-816a27d594ae",
+        "parentJobId": null,
+        "agentSlug": "alfred",
+        "status": "completed",
+        "channel": "mcp",
+        "result": "La capitale de l'Australie est **Canberra** (pas Sydney, confusion fréquente).",
+        "error": null,
+        "createdMs": 1790744556696.065,
+        "updatedMs": 1790744577648
+      }
+    ],
+    "toolCalls": [],
+    "llmCalls": [
+      {
+        "jobId": "7042900c-4c9e-4725-83a1-816a27d594ae",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 23403,
+        "outputTokens": 22,
+        "costUsd": 0.032861001789569855,
+        "durationMs": 2015,
+        "error": null,
+        "createdMs": 1790744559099.923
+      },
+      {
+        "jobId": "7042900c-4c9e-4725-83a1-816a27d594ae",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 10319,
+        "outputTokens": 48,
+        "costUsd": 0.0028914697468280792,
+        "durationMs": 18539,
+        "error": null,
+        "createdMs": 1790744577642.501
+      }
+    ],
+    "approvals": []
+  },
+  "observed": null
+}

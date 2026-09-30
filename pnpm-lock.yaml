@@ -755,6 +755,9 @@ importers:
 
   packages/bench:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.4.3)
       '@nodal-agents/db':
         specifier: workspace:*
         version: link:../db
@@ -767,6 +770,9 @@ importers:
       '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../tools
+      exceljs:
+        specifier: ^4.4.0
+        version: 4.4.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3
