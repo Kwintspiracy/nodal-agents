@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 import { TreeFactsSchema, type TreeFacts } from '../facts';
 import { fileName, scenarioById, totalIsRight, virginicaPetalSum, FILE_REL } from '../scenarios';
 import { readXlsxGrid, type SheetGrid } from '../disk';
-import { normalizeUrl, PAGE_MIN_CHARS, textHasNumber, urlsIn } from '../judge-kit';
+import { normalizeUrl, textHasNumber, urlsIn } from '../judge-kit';
 
 const FIX = join(__dirname, 'fixtures');
 
@@ -152,28 +152,47 @@ describe('recipe and research judges on real trials', () => {
     ]);
   });
 
-  it('research: the real trial is green — delegated, the delegate read the web, a cited link was returned by a web search', () => {
+  it('research: the real trial is green — delegated, the delegate called web tools, the report cites links', () => {
     const f = fixture('research-green');
     expect(f.facts.jobs.length).toBeGreaterThan(1);
     expect(judge(f)).toEqual([]);
   });
 
-  it('research: the same report with invented links only is red', () => {
+  it('research: a report without any source link is red', () => {
     const f = fixture('research-green');
     const facts: TreeFacts = {
       ...f.facts,
       jobs: f.facts.jobs.map((j) =>
-        j.id === f.facts.rootId
-          ? {
-              ...j,
-              result: 'Rapport. Sources : https://invented.example/a https://invented.example/b',
-            }
-          : j,
+        j.id === f.facts.rootId ? { ...j, result: 'Rapport, sans aucune source.' } : j,
       ),
     };
-    expect(judge(f, facts)).toEqual([
-      'none of the 2 source link(s) in the report was seen in a web result',
-    ]);
+    expect(judge(f, facts)).toEqual(['no source link in the report']);
+  });
+
+  it('research: a delegate that called no web tool is red, whatever files it read', () => {
+    const f = fixture('research-green');
+    const facts: TreeFacts = {
+      ...f.facts,
+      toolCalls: f.facts.toolCalls.filter((c) => !/web_search|tavily/.test(c.toolName)),
+    };
+    expect(judge(f, facts)).toEqual(['the delegate called no web tool']);
+  });
+
+  it.each([
+    'firecrawl_scrape',
+    'firecrawl_search',
+    'apify_web_browse',
+    'mcp_fetch__fetch_html',
+    'cli:WebFetch',
+  ])('research: a delegate that went on the web with %s did call a web tool', (name) => {
+    const f = fixture('research-green');
+    const facts: TreeFacts = {
+      ...f.facts,
+      toolCalls: f.facts.toolCalls.map((c) =>
+        /web_search|tavily/.test(c.toolName) ? { ...c, toolName: name } : c,
+      ),
+    };
+    expect(judge(f, facts)).toEqual([]);
   });
 
   it('research: an answer without delegation is red', () => {
@@ -196,7 +215,7 @@ describe('deep research into the vault, on a real trial', () => {
   const obs = f.observed as VaultObs;
   const note = obs.notes[0]!;
 
-  it('the real trial is green: delegated, a marked note of 12 k characters with 8 links, links returned by web retrievals', () => {
+  it('the real trial is green: delegated, a marked note of 12 k characters with 8 links', () => {
     expect(note.marked).toBe(true);
     expect(note.urls.length).toBe(8);
     expect(judge(f)).toEqual([]);
@@ -215,14 +234,10 @@ describe('deep research into the vault, on a real trial', () => {
     ]);
   });
 
-  it('a note with two links is red; with invented links only, red too', () => {
+  it('a note with two links is red', () => {
     expect(
       judge(f, f.facts, { ...obs, notes: [{ ...note, urls: note.urls.slice(0, 2) }] }),
     ).toEqual(['the note cites 2 source link(s), fewer than 3']);
-    const invented = ['a.example/1', 'b.example/2', 'c.example/3'];
-    expect(judge(f, f.facts, { ...obs, notes: [{ ...note, urls: invented }] })).toEqual([
-      'none of the 3 source links of the note was seen in a web result',
-    ]);
   });
 });
 
@@ -308,280 +323,70 @@ describe('what the judges read', () => {
   });
 });
 
-// Ce qu'est une source LUE (revue de la PR #634, passes 1 à 3).
+// « Une source citée a réellement été lue » : retiré des juges, et DIT.
 //
-// Trois fuites du même juge : une adresse prise dans l'ENTRÉE d'un outil (la
-// note que le modèle écrit), puis dans une sortie d'échec en texte (`cli:*`),
-// puis dans un échec sérialisé en chaîne ou en blocs par `executeTool`. Le
-// défaut commun : fonder « lu » sur un drapeau de succès que les outils ne
-// donnent pas de façon fiable. Le critère est donc devenu le CONTENU : une
-// adresse est lue quand une sortie d'outil web porte, pour CETTE adresse, du
-// contenu réel (un résultat de recherche avec son extrait, ou une page d'au
-// moins `PAGE_MIN_CHARS` caractères hors adresses et blancs).
-//
-// Les lignes sont écrites comme en production : `executeTool` écrit
-// `JSON.stringify(valeur rendue)`, le runtime CLI écrit le texte du
-// `tool_result` tel quel (ou sa liste de blocs en JSON).
-describe('a source is an address a web retrieval returned real content for', () => {
-  const INVENTED = 'https://invented.example/cmb-discovery';
-  const f = fixture('research-green');
-  const root = f.facts.rootId;
-  const child = f.facts.jobs.find((j) => j.id !== root)!.id;
-  const at = f.facts.jobs[0]!.createdMs + 1_000;
-  /** Une ligne écrite par `executeTool` : la valeur rendue, sérialisée. */
-  const tool = (toolName: string, input: unknown, value: unknown, jobId = child) => ({
-    jobId,
-    toolName,
-    input: JSON.stringify(input),
-    output: JSON.stringify(value),
-    createdMs: at,
-  });
-  /** Une ligne écrite par le runtime CLI : le texte du `tool_result`, tel quel. */
-  const cli = (toolName: string, input: unknown, text: string) => ({
-    jobId: child,
-    toolName,
-    input: JSON.stringify(input),
-    output: text,
-    createdMs: at,
-  });
-  const citing = (extra: TreeFacts['toolCalls'], url = INVENTED): TreeFacts => ({
-    ...f.facts,
-    jobs: f.facts.jobs.map((j) =>
-      j.id === root ? { ...j, result: `Rapport. Source : ${url}` } : j,
-    ),
-    toolCalls: [...f.facts.toolCalls, ...extra],
-  });
-  const NONE = 'none of the 1 source link(s) in the report was seen in a web result';
-  // Une vraie page, lue par un vrai essai (tavily_extract du 30/09, 2 941 caractères).
-  const REAL_PAGE = (() => {
-    const ex = f.facts.toolCalls.find((c) => c.toolName === 'tavily_extract')!;
-    const r = (JSON.parse(ex.output!) as { results: Array<{ rawContent: string }> }).results;
-    return r.map((x) => x.rawContent).sort((a, b) => a.length - b.length)[0]!;
-  })();
+// Quatre passes de revue (#634) ont trouvé quatre fuites dans le juge qui le
+// devinait à partir des sorties d'outils. Décision de Quentin (30/09) : le banc
+// ne le juge plus tant que la plateforme n'enregistre pas le fait (#648). Le
+// critère n'est pas pour autant tu : chaque scénario concerné porte un contrôle
+// « sources read » à l'état « not verified », et aucun juge ne rend un vert qui
+// l'affirmerait.
+describe('sources read: not verified, never judged, never silent', () => {
+  const CONCERNED = ['research', 'deep-research-obsidian', 'recipe'];
 
-  it('the real page of the fixture is well above the threshold, a failure message far below', () => {
-    expect(REAL_PAGE.length).toBeGreaterThan(2 * PAGE_MIN_CHARS);
-    expect(`Request to ${INVENTED} timed out after 60000ms`.length).toBeLessThan(
-      PAGE_MIN_CHARS / 5,
-    );
-  });
-
-  it('a link the model wrote into a note, then read back, is not a source', () => {
-    const note = `# CMB\nSource : ${INVENTED}\n${REAL_PAGE}`;
-    const facts = citing([
-      tool('file_write', { path: 'CMB.md', content: note }, { ok: true, written: true }),
-      tool('file_read', { path: 'CMB.md' }, { ok: true, content: note }),
-    ]);
-    expect(judge(f, facts)).toEqual([NONE]);
-  });
-
-  it.each([
-    [
-      'an MCP fetch that timed out (a string, as executeTool writes it)',
-      tool(
-        'mcp_fetch__fetch_txt',
-        { url: INVENTED },
-        `Request to ${INVENTED} timed out after 60000ms`,
-      ),
-    ],
-    [
-      'an MCP fetch that failed as a list of text blocks',
-      tool('mcp_fetch__fetch_html', { url: INVENTED }, [
-        { type: 'text', text: `Failed to fetch ${INVENTED} - status code 404` },
-      ]),
-    ],
-    [
-      'an error outcome written by executeTool',
-      tool(
-        'mcp_fetch__fetch_html',
-        { url: INVENTED },
+  it.each(CONCERNED)(
+    '%s carries the named check, not verified, with its reason and ticket',
+    (id) => {
+      const s = scenarioById(id)!;
+      expect(s.unverified).toEqual([
         {
-          outcome: 'error',
-          error: `fetch failed: ${INVENTED} answered 404`,
+          check: 'sources read',
+          state: 'not verified',
+          reason: expect.stringMatching(/\S/) as unknown as string,
+          ticket: '#648',
         },
-      ),
-    ],
-    [
-      'a Tavily extract that lists the address among its failures',
-      tool(
-        'tavily_extract',
-        { urls: [INVENTED] },
-        {
-          results: [],
-          failedResults: [{ url: INVENTED, error: 'not found' }],
-        },
-      ),
-    ],
-    [
-      'a Tavily extract result with no content',
-      tool(
-        'tavily_extract',
-        { urls: [INVENTED] },
-        {
-          results: [{ url: INVENTED, title: null, rawContent: '   ', truncated: false }],
-          failedResults: [],
-        },
-      ),
-    ],
-    [
-      'a search result with an empty snippet',
-      tool(
-        'web_search',
-        { query: 'cmb' },
-        { results: [{ title: 'CMB', url: INVENTED, snippet: '' }] },
-      ),
-    ],
-    [
-      'a CLI fetch answering 404 in text',
-      cli('cli:WebFetch', { url: INVENTED }, `Failed to fetch ${INVENTED} - status code 404`),
-    ],
-    [
-      'a CLI fetch failure serialized as blocks',
-      cli(
-        'cli:WebFetch',
-        { url: INVENTED },
-        JSON.stringify([{ type: 'text', text: `Request to ${INVENTED} timed out` }]),
-      ),
-    ],
-    [
-      'a CLI search listing (text, no structured result with its snippet)',
-      cli(
-        'cli:WebSearch',
-        { query: 'cmb' },
-        `Web search results for query: "cmb"\n\nLinks: [{"title":"CMB","url":"${INVENTED}"}]`,
-      ),
-    ],
-    [
-      // L'enveloppe d'échec du runtime CLI (Codex la pose sur un item `failed`),
-      // devant une sortie aussi longue qu'une page.
-      'a CLI call marked failed, however long its text',
-      cli('cli:WebFetch', { url: INVENTED }, `<tool_use_error>${REAL_PAGE}`),
-    ],
-    [
-      'a long page read under another address',
-      tool(
-        'mcp_fetch__fetch_txt',
-        { url: 'https://other.example/page' },
-        `${INVENTED}\n${REAL_PAGE}`,
-      ),
-    ],
-    [
-      'a page padded with addresses only',
-      tool('mcp_fetch__fetch_txt', { url: INVENTED }, Array(200).fill(INVENTED).join('\n')),
-    ],
-  ])('not a source: %s', (_what, row) => {
-    expect(judge(f, citing([row]))).toEqual([NONE]);
+      ]);
+      // Le vert promis le dit aussi : il ne prétend pas que les sources ont été lues.
+      expect(s.green).toMatch(/not verified yet \(#648\)/);
+    },
+  );
+
+  it('the other scenarios carry no unverified check', () => {
+    const others = ['question', 'file', 'code', 'print', 'comfyui-telegram'];
+    for (const id of others) expect(scenarioById(id)!.unverified ?? []).toEqual([]);
   });
 
-  it.each([
-    [
-      'a real search result carrying the address with its snippet',
-      tool(
-        'web_search',
-        { query: 'cmb' },
-        {
-          results: [{ title: 'CMB', url: INVENTED, snippet: 'The CMB was discovered in 1965.' }],
-        },
-      ),
-    ],
-    [
-      'a real page fetched by MCP (a string, as executeTool writes it)',
-      tool('mcp_fetch__fetch_txt', { url: INVENTED }, REAL_PAGE),
-    ],
-    [
-      'a real page returned by Tavily extract for that address',
-      tool(
-        'tavily_extract',
-        { urls: [INVENTED] },
-        {
-          results: [{ url: INVENTED, title: 'CMB', rawContent: REAL_PAGE, truncated: false }],
-          failedResults: [],
-        },
-      ),
-    ],
-    [
-      'a real page returned by a CLI fetch',
-      cli('cli:WebFetch', { url: INVENTED, prompt: 'x' }, REAL_PAGE),
-    ],
-  ])('a source: %s', (_what, row) => {
-    expect(judge(f, citing([row]))).toEqual([]);
-  });
-
-  it('the real trial stays green on its own real outputs', () => {
-    expect(judge(f)).toEqual([]);
-  });
-
-  it('a delegate that only read files holding links did not read the web', () => {
+  it('research: invented links are no longer judged — the judge is silent on them, the check says not verified', () => {
+    const f = fixture('research-green');
     const facts: TreeFacts = {
       ...f.facts,
-      toolCalls: [
-        ...f.facts.toolCalls.filter((c) => !/web_search|tavily/.test(c.toolName)),
-        tool(
-          'file_read',
-          { path: 'Cosmologie.md' },
-          { ok: true, content: `https://en.wikipedia.org/wiki/CMB\n${REAL_PAGE}` },
-        ),
-      ],
+      jobs: f.facts.jobs.map((j) =>
+        j.id === f.facts.rootId
+          ? { ...j, result: 'Rapport. Source : https://invented.example/cmb-discovery' }
+          : j,
+      ),
     };
-    expect(judge(f, facts)).toContain('the delegate read no web source');
+    expect(judge(f, facts)).toEqual([]);
+    expect(scenarioById('research')!.unverified?.[0]?.state).toBe('not verified');
   });
 
-  it('deep research: a note whose links only the note itself carries is red, even read back', () => {
-    const d = fixture('deep-research-obsidian-green');
-    const obs = d.observed as {
-      vaults: string[];
-      notes: Array<{ vault: string; rel: string; chars: number; urls: string[]; marked: boolean }>;
-      truncated: boolean;
-    };
-    const invented = ['a.example/1', 'b.example/2', 'c.example/3'];
-    const text = invented.map((u) => `https://${u}`).join('\n');
-    const kid = d.facts.jobs.find((j) => j.id !== d.facts.rootId)!.id;
-    const facts: TreeFacts = {
-      ...d.facts,
-      toolCalls: [
-        ...d.facts.toolCalls,
-        tool('file_write', { path: 'Nodal Bench/x.md', content: text }, { ok: true }, kid),
-        tool('file_read', { path: 'Nodal Bench/x.md' }, { ok: true, content: text }, kid),
-      ],
-    };
-    expect(judge(d, facts, { ...obs, notes: [{ ...obs.notes[0]!, urls: invented }] })).toEqual([
-      'none of the 3 source links of the note was seen in a web result',
-    ]);
-  });
-
-  it('recipe: a photo is from the recipe site only if a page of that site was READ, not just asked for', () => {
+  it('recipe: a printed page with a photo is not judged on where the photo comes from', () => {
     const r = fixture('recipe-red-file');
-    const PHOTO = 'https://assets.marmiton.org/recipe/caviar.jpg';
-    const PAGE = 'https://www.marmiton.org/recettes/caviar.aspx';
-    const withImages = (extra: TreeFacts['toolCalls']): TreeFacts => ({
+    const withPhoto = (embedded: Array<{ origin: string }>): TreeFacts => ({
       ...r.facts,
-      toolCalls: [
-        ...r.facts.toolCalls.map((c) =>
-          c.toolName.endsWith('__request_print')
-            ? {
-                ...c,
-                input: JSON.stringify({ text: 'Caviar' }),
-                output: JSON.stringify({
-                  ...(JSON.parse(c.output!) as object),
-                  images: { embedded: [{ origin: PHOTO }] },
-                }),
-              }
-            : c,
-        ),
-        ...extra,
-      ],
+      toolCalls: r.facts.toolCalls.map((c) =>
+        c.toolName.endsWith('__request_print')
+          ? {
+              ...c,
+              output: JSON.stringify({
+                ...(JSON.parse(c.output!) as object),
+                images: { embedded },
+              }),
+            }
+          : c,
+      ),
     });
-    const reader = (value: unknown) =>
-      tool('mcp_fetch__fetch_html', { url: PAGE }, value, r.facts.rootId);
-    const notRead = `the photo does not come from the recipe site (${PHOTO} vs no page read)`;
-    expect(judge(r, withImages([reader({ outcome: 'error', error: 'fetch failed' })]))).toEqual([
-      notRead,
-    ]);
-    expect(judge(r, withImages([reader(`Request to ${PAGE} timed out after 60000ms`)]))).toEqual([
-      notRead,
-    ]);
-    expect(judge(r, withImages([reader(`<html><img src="${PHOTO}">${REAL_PAGE}</html>`)]))).toEqual(
-      [],
-    );
+    expect(judge(r, withPhoto([{ origin: 'assets.somewhere-else.example' }]))).toEqual([]);
+    expect(judge(r, withPhoto([]))).toEqual(['no photo in the printed page']);
   });
 });

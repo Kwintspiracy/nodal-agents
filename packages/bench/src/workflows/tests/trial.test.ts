@@ -347,3 +347,48 @@ describe('measures that a runtime does not report', () => {
     expect(m.costUsd).toBeNull();
   });
 });
+
+// Décision de Quentin (30/09, #634) : « sources read » n'est plus jugé tant que
+// #648 n'est pas fait, mais chaque ligne le DIT. Une ligne verte n'affirme rien
+// sur les sources.
+describe('an unverified check travels on every line of its scenario', () => {
+  const SOURCES = {
+    check: 'sources read',
+    state: 'not verified',
+    ticket: '#648',
+  };
+
+  it('a green research trial is green on what IS judged, and its line says sources read: not verified', async () => {
+    const green = load('research-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
+    expect(line.verdict).toBe('green');
+    expect(line.unverified).toEqual([expect.objectContaining(SOURCES)]);
+  });
+
+  it('a skipped trial says it too: the check is a property of the scenario, not of a green run', async () => {
+    const busy: ForeignActivity = {
+      jobs: [
+        {
+          id: '5e3c1a90-0000-4000-8000-000000000000',
+          status: 'processing',
+          channel: 'telegram',
+          agentSlug: 'alfred',
+        },
+      ],
+      lastChatMs: null,
+    };
+    const green = load('research-green');
+    const w = world({ rootId: green.rootId, snapshots: [green], foreign: [busy] });
+    const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
+    expect(line.verdict).toBe('skipped');
+    expect(line.unverified).toEqual([expect.objectContaining(SOURCES)]);
+  });
+
+  it('a scenario that verifies everything carries no unverified check', async () => {
+    const green = load('question-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.unverified).toEqual([]);
+  });
+});

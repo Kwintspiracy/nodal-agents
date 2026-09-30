@@ -1,10 +1,9 @@
 // workflows/judge-kit.ts — les lectures que partagent les juges.
 //
 // Fonctions pures sur la photo d'un essai (`TreeFacts`). Aucune n'interroge le
-// modèle ni ne croit ce qu'il affirme : une délégation est un job enfant, une
-// source est une adresse RENDUE par un outil de recherche ou de lecture web qui
-// a réussi (jamais une adresse que le modèle a lui-même écrite), un envoi est
-// une sortie d'outil qui dit `ok`.
+// modèle ni ne croit ce qu'il affirme : une délégation est un job enfant, un
+// envoi est une sortie d'outil qui dit `ok`. Qu'une source citée ait été LUE
+// n'est pas jugé ici : aucune ligne de la base ne le dit de façon fiable (#648).
 
 import type { JobFact, ToolCallFact, TreeFacts } from './facts';
 
@@ -76,135 +75,18 @@ export function bareToolName(name: string): string {
 }
 
 /**
- * Les outils qui RAMÈNENT du web : chercher, puis lire une page. Les noms sont
- * ceux que les lignes `tool_calls` portent réellement — builtin `web_search`,
- * connecteur Tavily, serveur MCP fetch (`fetch_html`, `fetch_txt`…), et les
- * outils internes d'une CLI (`cli:WebSearch`, `cli:WebFetch`).
+ * Les outils qui vont sur le web : chercher, lire une page, parcourir un site.
+ * Les noms sont ceux que les lignes `tool_calls` portent réellement — builtin
+ * `web_search`, connecteurs Tavily, Firecrawl et Apify, serveur MCP fetch
+ * (`fetch_html`, `fetch_txt`…), outils internes d'une CLI (`cli:WebSearch`,
+ * `cli:WebFetch`). Un APPEL, rien de plus : ce qu'il a rendu n'est pas jugé
+ * (« sources read », non vérifié, #648).
  */
-const WEB_SEARCH = /^(web_?search|tavily_search)$/i;
-const PAGE_READER =
-  /^(web_?fetch|fetch(_[a-z]+)?|tavily_extract|tavily_crawl|read_web_page|get_page_images|scrape[a-z_]*)$/i;
+const WEB_TOOL =
+  /^(web_?search|web_?fetch|fetch(_[a-z]+)?|tavily_[a-z]+|firecrawl_[a-z_]+|apify_(web_browse|run_actor)|read_web_page|get_page_images|scrape[a-z_]*)$/i;
 
-export function isWebRetrieval(c: ToolCallFact): boolean {
-  const n = bareToolName(c.toolName);
-  return WEB_SEARCH.test(n) || PAGE_READER.test(n);
-}
-
-export function isPageReader(c: ToolCallFact): boolean {
-  return PAGE_READER.test(bareToolName(c.toolName));
-}
-
-/**
- * Le seuil d'une page LUE : 1 000 caractères de texte, hors adresses et blancs.
- * Mesuré sur les essais réels du 30/09 : la plus courte page lue fait 2 941
- * caractères (tavily_extract), un fichier récupéré par fetch 3 857, la plupart
- * 8 000 à 15 000. Un message d'échec (« Request to https://… timed out after
- * 60000ms », « Failed to fetch … - status code 404 ») en fait moins de 100. Le
- * seuil est placé loin des deux.
- */
-export const PAGE_MIN_CHARS = 1000;
-
-/** Les caractères d'un texte qui ne sont ni une adresse ni un blanc. */
-function contentChars(text: string): number {
-  return text.replace(URL_RE, '').replace(/\s+/g, '').length;
-}
-
-/**
- * La sortie dit-elle l'échec ? `{ outcome: 'error' }` (toute exception d'un
- * outil, via `executeTool`), `ok: false`, `isError`, un champ `error`, ou
- * l'enveloppe `<tool_use_error>` (runtime CLI).
- */
-function failureStated(output: string, parsed: unknown): boolean {
-  if (output.trimStart().startsWith('<tool_use_error>')) return true;
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
-  const r = parsed as Record<string, unknown>;
-  if (r['outcome'] === 'error' || r['ok'] === false) return true;
-  if (r['isError'] === true || r['is_error'] === true) return true;
-  return typeof r['error'] === 'string' && r['error'] !== '';
-}
-
-/** Le texte d'une sortie non structurée : une chaîne (JSON ou brute), ou les blocs texte d'une liste. */
-function plainText(output: string, parsed: unknown): string | null {
-  if (typeof parsed === 'string') return parsed;
-  if (Array.isArray(parsed)) {
-    return parsed
-      .map((b) =>
-        b && typeof b === 'object' && typeof (b as { text?: unknown }).text === 'string'
-          ? (b as { text: string }).text
-          : '',
-      )
-      .join('\n');
-  }
-  // Pas du JSON : le texte tel que le runtime CLI l'écrit.
-  return parsed === null ? output : null;
-}
-
-/** La seule adresse que l'appel demandait (`url`, ou `urls` d'un élément) ; sinon null. */
-function requestedUrl(c: ToolCallFact): string | null {
-  const i = parseJson(c.input) as { url?: unknown; urls?: unknown } | null;
-  const one =
-    typeof i?.url === 'string'
-      ? i.url
-      : Array.isArray(i?.urls) && i.urls.length === 1
-        ? i.urls[0]
-        : null;
-  return typeof one === 'string' ? normalizeUrl(one) : null;
-}
-
-/** Les adresses pour lesquelles CET appel a rendu du contenu réel. */
-function urlsReadBy(c: ToolCallFact): string[] {
-  const output = c.output ?? '';
-  if (output.trim() === '') return [];
-  const parsed = parseJson(output);
-  if (failureStated(output, parsed)) return [];
-  const search = WEB_SEARCH.test(bareToolName(c.toolName));
-  const min = search ? 1 : PAGE_MIN_CHARS;
-
-  // Un résultat structuré : chaque entrée porte son adresse et son texte.
-  const results = (parsed as { results?: unknown } | null)?.results;
-  if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    if (!Array.isArray(results)) return [];
-    const out: string[] = [];
-    for (const r of results as Array<Record<string, unknown>>) {
-      if (!r || typeof r['url'] !== 'string') continue;
-      const text = [r['snippet'], r['content'], r['rawContent'], r['raw_content'], r['text']].find(
-        (t): t is string => typeof t === 'string',
-      );
-      const u = normalizeUrl(r['url']);
-      if (u && text !== undefined && contentChars(text) >= min) out.push(u);
-    }
-    return out;
-  }
-
-  // Une page rendue en texte (fetch MCP, CLI) : elle vaut pour l'adresse demandée,
-  // et seulement pour une page (une recherche en texte n'attribue rien).
-  if (search) return [];
-  const text = plainText(output, parsed);
-  const u = requestedUrl(c);
-  return u && text !== null && contentChars(text) >= PAGE_MIN_CHARS ? [u] : [];
-}
-
-/**
- * Les adresses que l'essai a réellement LUES sur le web : celles pour
- * lesquelles un outil web a rendu du CONTENU — un résultat de recherche qui
- * porte l'adresse avec un extrait non vide, ou une page d'au moins
- * `PAGE_MIN_CHARS` caractères (hors adresses et blancs) rendue pour cette
- * adresse. Le critère ne dépend d'aucun drapeau de succès : les outils n'en
- * donnent pas de fiable (une erreur de fetch MCP arrive en simple chaîne, une
- * ligne CLI ne porte pas l'`is_error`, #643) ; un échec, lui, n'a pas de contenu.
- * Jamais l'entrée d'un outil, jamais la sortie d'un autre outil — relire une
- * note qu'on vient d'écrire rend les liens qu'on y a mis, pas une source.
- */
-export function readUrls(
-  facts: TreeFacts,
-  keep: (c: ToolCallFact) => boolean = isWebRetrieval,
-): Set<string> {
-  const read = new Set<string>();
-  for (const c of facts.toolCalls) {
-    if (!keep(c)) continue;
-    for (const u of urlsReadBy(c)) read.add(u);
-  }
-  return read;
+export function isWebTool(c: ToolCallFact): boolean {
+  return WEB_TOOL.test(bareToolName(c.toolName));
 }
 
 /**

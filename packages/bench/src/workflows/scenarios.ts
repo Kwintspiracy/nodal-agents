@@ -23,9 +23,7 @@ import {
   delegatedJobs,
   parseJson,
   rootJob,
-  isPageReader,
-  isWebRetrieval,
-  readUrls,
+  isWebTool,
   textHasNumber,
   urlsIn,
 } from './judge-kit';
@@ -38,7 +36,7 @@ import {
   type CellValue,
   type SheetGrid,
 } from './disk';
-import { defineScenario, type AnyScenario } from './types';
+import { defineScenario, type AnyScenario, type UnverifiedCheck } from './types';
 
 const MIN = 60_000;
 
@@ -77,45 +75,55 @@ const question = defineScenario<null>({
   },
 });
 
+// ─── sources read : non vérifié ──────────────────────────────────────────────
+
+/**
+ * « Une source citée a réellement été lue » n'est PAS jugé. Quatre passes de
+ * revue de #634 ont trouvé quatre fuites dans le juge qui le devinait à partir
+ * des sorties d'outils (une entrée prise pour une lecture, un échec CLI en
+ * texte, un échec MCP sérialisé en chaîne, puis Firecrawl/Apify invisibles et
+ * une page 404 prise pour du contenu). Décision de Quentin, 30/09 : le contrôle
+ * sort des juges jusqu'à ce que la plateforme enregistre chaque lecture web
+ * (#648), et il est dit sur chaque ligne, jamais tu.
+ */
+const SOURCES_READ: UnverifiedCheck = {
+  check: 'sources read',
+  state: 'not verified',
+  reason:
+    'Nothing in the database records which web addresses a run really read; guessing it from tool outputs leaked four times.',
+  ticket: '#648',
+};
+
 // ─── research ────────────────────────────────────────────────────────────────
 
 /**
- * Le délégué a lu le web : un job enfant a fait une recherche ou une lecture de
- * page qui a réussi et rendu au moins une adresse. Relire un fichier qui porte
- * des liens n'est pas lire le web.
+ * Le délégué a appelé un outil web (recherche ou lecture de page). Ce que cet
+ * appel a rendu n'est pas jugé : voir `SOURCES_READ`.
  */
-function delegateReadTheWeb(facts: TreeFacts): boolean {
+function delegateCalledTheWeb(facts: TreeFacts): boolean {
   const kids = new Set(delegatedJobs(facts).map((j) => j.id));
-  return (
-    readUrls(facts, (c) => c.jobId !== null && kids.has(c.jobId) && isWebRetrieval(c)).size > 0
-  );
+  return facts.toolCalls.some((c) => c.jobId !== null && kids.has(c.jobId) && isWebTool(c));
 }
 
 const research = defineScenario<null>({
   id: 'research',
-  // v2 (revue Codex #634) : une source doit avoir été RENDUE par une recherche
-  // ou une lecture web réussie ; v1 comptait aussi une adresse écrite par le modèle.
-  version: 2,
+  // v3 (#634, décision du 30/09) : « les sources citées ont été lues » n'est
+  // plus jugé (`SOURCES_READ`, #648) ; v2 le devinait à partir des sorties.
+  version: 3,
   title: 'A research request, handed to the research specialty',
   green:
-    'The root delegated, the delegate read web sources, the report came back with at least one source link that a successful web search or page read really returned, and nobody was asked anything.',
+    'The root delegated, the delegate called a web search or page-read tool, the report came back with at least one source link, and nobody was asked anything. Whether the cited sources were really read is not verified yet (#648).',
   set: 'nightly',
   instruction:
     'Fais une recherche sur la découverte du fond diffus cosmologique : qui, quand, comment. Donne tes sources.',
   timeoutMs: 20 * MIN,
+  unverified: [SOURCES_READ],
   observe: async () => null,
   judge(facts) {
     const r = commonReasons(facts);
     if (delegatedJobs(facts).length === 0) r.push('the research was not delegated');
-    else if (!delegateReadTheWeb(facts)) r.push('the delegate read no web source');
-    const cited = urlsIn(rootJob(facts)?.result ?? null);
-    if (cited.length === 0) r.push('no source link in the report');
-    else {
-      const seen = readUrls(facts);
-      if (!cited.some((u) => seen.has(u))) {
-        r.push(`none of the ${cited.length} source link(s) in the report was seen in a web result`);
-      }
-    }
+    else if (!delegateCalledTheWeb(facts)) r.push('the delegate called no web tool');
+    if (urlsIn(rootJob(facts)?.result ?? null).length === 0) r.push('no source link in the report');
     return r;
   },
 });
@@ -166,11 +174,11 @@ function isMarkedNote(rel: string, text: string): boolean {
 
 const deepResearchObsidian = defineScenario<VaultObservation>({
   id: 'deep-research-obsidian',
-  // v2 (revue Codex #634) : sources rendues par le web seulement, et sans coffre
-  // l'essai est rouge AVANT de lancer quoi que ce soit.
-  version: 2,
+  // v3 (#634) : sans coffre, l'essai est rouge AVANT de lancer quoi que ce
+  // soit ; « les liens de la note ont été lus » n'est plus jugé (`SOURCES_READ`).
+  version: 3,
   title: 'An in-depth research, written as a note in the Obsidian vault',
-  green: `The research was delegated, a note was written in the vault during the run (in the "${BENCH_NOTE_FOLDER}" folder or tagged #${BENCH_NOTE_TAG}), it holds at least ${NOTE_MIN_CHARS} characters and ${NOTE_MIN_SOURCES} source links, at least one of them returned by a successful web search or page read, and nobody was asked anything.`,
+  green: `The research was delegated, a note was written in the vault during the run (in the "${BENCH_NOTE_FOLDER}" folder or tagged #${BENCH_NOTE_TAG}), it holds at least ${NOTE_MIN_CHARS} characters and ${NOTE_MIN_SOURCES} source links, and nobody was asked anything. Whether those sources were really read is not verified yet (#648).`,
   set: 'nightly',
   instruction:
     'Fais une recherche approfondie sur le déchiffrement des hiéroglyphes égyptiens par Champollion ' +
@@ -179,6 +187,7 @@ const deepResearchObsidian = defineScenario<VaultObservation>({
     'et cite au moins trois sources avec leurs liens.',
   timeoutMs: 30 * MIN,
   requires: needsVault,
+  unverified: [SOURCES_READ],
   async observe(_facts, env) {
     const vaults = obsidianVaults(env.workspaceRoots);
     const notes: VaultNote[] = [];
@@ -223,14 +232,8 @@ const deepResearchObsidian = defineScenario<VaultObservation>({
       );
     if (best.chars < NOTE_MIN_CHARS)
       r.push(`the note holds ${best.chars} characters, fewer than ${NOTE_MIN_CHARS}`);
-    if (best.urls.length < NOTE_MIN_SOURCES) {
+    if (best.urls.length < NOTE_MIN_SOURCES)
       r.push(`the note cites ${best.urls.length} source link(s), fewer than ${NOTE_MIN_SOURCES}`);
-    } else {
-      const seen = readUrls(facts);
-      const grounded = best.urls.filter((u) => seen.has(u)).length;
-      if (grounded === 0)
-        r.push(`none of the ${best.urls.length} source links of the note was seen in a web result`);
-    }
     return r;
   },
 });
@@ -504,17 +507,6 @@ const print = defineScenario<null>({
   },
 });
 
-/** L'hôte d'une origine d'image, qu'elle soit écrite en adresse ou en nom d'hôte, sans `www.`. */
-function hostOf(origin: string): string {
-  let h = origin;
-  try {
-    h = new URL(origin).hostname;
-  } catch {
-    // déjà un nom d'hôte
-  }
-  return h.toLowerCase().replace(/^www\./, '');
-}
-
 interface RecipeObservation {
   /** Les fichiers que les demandes d'impression imprimaient tels quels, et s'ils existaient avant l'essai. */
   readonly printedFiles: Array<{ path: string; existedBefore: boolean | null }>;
@@ -522,17 +514,18 @@ interface RecipeObservation {
 
 const recipe = defineScenario<RecipeObservation>({
   id: 'recipe',
-  // v2 (revue Codex #634) : le site « lu » est celui d'une page réellement
-  // RENDUE par un outil de lecture ; v1 prenait l'adresse demandée, même en échec.
-  version: 2,
+  // v3 (#634) : « la photo vient de la page de recette lue » n'est plus jugé
+  // (`SOURCES_READ`, #648) ; v2 le devinait à partir des sorties de lecture.
+  version: 3,
   title: 'Print a recipe with its own photo (the request waits for the owner)',
   green:
-    'A pending print request of one page was created, with a photo that comes from the site of a page the agent really read (a page reader returned it); nothing reached the printer and nobody was asked anything.',
+    'A pending print request of one page was created, with a photo; nothing reached the printer and nobody was asked anything. Whether the photo comes from the recipe page the agent read is not verified yet (#648).',
   set: 'nightly',
   instruction:
     "Imprime une recette de caviar d'aubergines, sur une seule page, style magazine, avec la photo de la recette elle-même.",
   timeoutMs: 20 * MIN,
   requires: needsPrinter,
+  unverified: [SOURCES_READ],
   async observe(facts, env) {
     const printedFiles = callsOf(facts, 'request_print')
       .map((c) => (parseJson(c.input) as { filePath?: unknown } | null)?.filePath)
@@ -566,22 +559,6 @@ const recipe = defineScenario<RecipeObservation>({
           : 'the connector reports no pictures for this request: the photo cannot be checked',
       );
     } else if (last.images.length === 0) r.push('no photo in the printed page');
-    else {
-      // Les sites dont une page a été LUE : celles pour lesquelles un outil de
-      // lecture a rendu du contenu réel (`readUrls`), jamais une adresse
-      // seulement demandée.
-      const hosts = [...readUrls(facts, isPageReader)].map((u) => u.split('/')[0]!);
-      const site = (h: string): string => h.split('.').slice(-2).join('.');
-      const fromSource = last.images.some((i) => {
-        const o = hostOf(i.origin);
-        return hosts.some((h) => site(h) === site(o));
-      });
-      if (!fromSource) {
-        r.push(
-          `the photo does not come from the recipe site (${last.images.map((i) => i.origin).join(', ')} vs ${[...new Set(hosts)].join(', ') || 'no page read'})`,
-        );
-      }
-    }
     r.push(...neverPrinted(facts));
     return r;
   },

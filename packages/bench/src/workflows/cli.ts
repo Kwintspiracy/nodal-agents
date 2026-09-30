@@ -73,6 +73,9 @@ function list(): void {
     );
     console.log(`  ${s.title}`);
     console.log(`  Green: ${s.green}`);
+    for (const c of s.unverified ?? []) {
+      console.log(`  Not verified: ${c.check} (${c.ticket}): ${c.reason}`);
+    }
     console.log(`  Request: ${s.instruction}\n`);
   }
 }

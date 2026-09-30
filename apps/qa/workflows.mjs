@@ -184,13 +184,38 @@ export function nombreJetons(n) {
 
 const MOT_VERDICT = { green: 'Green', red: 'Red', skipped: 'Skipped', error: 'Bench error' };
 
+/**
+ * Les contrôles qu'un scénario promet mais que le banc ne vérifie pas encore
+ * (`unverified` de la ligne, packages/bench/src/workflows/types.ts). Ni verts
+ * ni rouges : dits en gris, avec leur raison et le ticket qui les rétablira.
+ * Une ligne plus ancienne qui n'en porte pas n'en affiche aucun.
+ */
+function nonVerifiesDe(l) {
+  return (Array.isArray(l.unverified) ? l.unverified : []).filter(
+    (c) => c && typeof c.check === 'string',
+  );
+}
+
+function controlesNonVerifies(l) {
+  const cs = nonVerifiesDe(l);
+  if (cs.length === 0) return '';
+  const items = cs.map(
+    (c) =>
+      `<li><span class="pastille pastille--inconnu">${esc(c.check)}: not verified</span> ${esc(c.reason ?? '')}${c.ticket ? ` <span class="mono">${esc(c.ticket)}</span>` : ''}</li>`,
+  );
+  return `<ul class="wf-controles">${items.join('')}</ul>`;
+}
+
 function pastille(l) {
   const v = MOT_VERDICT[l.verdict] ? l.verdict : 'error';
   const quand = String(l.startedAt ?? '')
     .replace('T', ' ')
     .slice(0, 16);
   const pourquoi = (l.reasons ?? []).join('; ');
-  const titre = `${MOT_VERDICT[v]} · ${quand} UTC · ${l.nodalVersion ?? '?'}${pourquoi ? ` · ${pourquoi}` : ''}`;
+  const nonVerifies = nonVerifiesDe(l)
+    .map((c) => `${c.check}: not verified`)
+    .join('; ');
+  const titre = `${MOT_VERDICT[v]} · ${quand} UTC · ${l.nodalVersion ?? '?'}${pourquoi ? ` · ${pourquoi}` : ''}${nonVerifies ? ` · ${nonVerifies}` : ''}`;
   return `<li class="wf-pastille wf-pastille--${v}" title="${esc(titre)}"><span class="wf-point"></span><span class="wf-pastille__mot">${MOT_VERDICT[v]}</span><span class="wf-pastille__quand">${esc(quand.slice(5))}</span></li>`;
 }
 
@@ -225,6 +250,7 @@ function carte(serie) {
     <span class="mono wf-id">${esc(serie.scenario)} · v${esc(serie.version ?? '?')}${serie.jeu === 'on-demand' ? ' · on demand' : ''}</span>
   </header>
   ${serie.vert ? `<p class="wf-vert"><b>Green means:</b> ${esc(serie.vert)}</p>` : ''}
+  ${controlesNonVerifies(dernier)}
   <p class="wf-sous">Last ${serie.derniers.length} run${serie.derniers.length > 1 ? 's' : ''}, oldest first</p>
   <ol class="wf-pastilles">${serie.derniers.map(pastille).join('')}</ol>
   ${
@@ -254,6 +280,8 @@ const STYLE = `<style>
 .wf-carte__tete h3{margin:0;font-size:16px;color:var(--encre)}
 .wf-id{font-size:12px;color:var(--encre3)}
 .wf-vert{margin:8px 0 0;font-size:13px;color:var(--encre2)}
+.wf-controles{list-style:none;margin:8px 0 0;padding:0;font-size:12px;color:var(--encre3)}
+.wf-controles li{margin:4px 0;overflow-wrap:anywhere}
 .wf-sous{margin:12px 0 6px;font-size:12px;color:var(--encre3)}
 .wf-pastilles{list-style:none;display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0}
 .wf-pastille{display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;background:var(--panneau2);font-size:12px;color:var(--encre2)}

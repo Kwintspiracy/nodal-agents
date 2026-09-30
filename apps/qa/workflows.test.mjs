@@ -224,3 +224,55 @@ describe('les calculs de la page', () => {
     expect(duree(null)).toBe('not measured');
   });
 });
+
+// Décision de Quentin (30/09, PR #634) : « sources read » n'est plus jugé par le
+// banc tant que la plateforme ne l'enregistre pas (#648). Chaque ligne des
+// scénarios concernés le porte ; la page le montre en GRIS, ni vert ni rouge.
+describe('un contrôle non vérifié', () => {
+  const SOURCES = {
+    check: 'sources read',
+    state: 'not verified',
+    reason:
+      'Nothing in the database records which web addresses a run really read; guessing it from tool outputs leaked four times.',
+    ticket: '#648',
+  };
+  const RECHERCHE_VERTE = {
+    ...QUESTION_VERTE,
+    scenario: 'research',
+    scenarioVersion: 3,
+    title: 'A research request, handed to the research specialty',
+    green:
+      'The root delegated, the delegate called a web search or page-read tool, the report came back with at least one source link, and nobody was asked anything. Whether the cited sources were really read is not verified yet (#648).',
+    unverified: [SOURCES],
+  };
+  const carteDe = (html, id) => {
+    const debut = html.indexOf(`id="wf-${id}"`);
+    return html.slice(debut, html.indexOf('</article>', debut));
+  };
+
+  it('se montre en gris sur la carte, avec sa raison et son ticket, même quand tout le reste est vert', () => {
+    const html = htmlWorkflows(lireWorkflows(ndjson([RECHERCHE_VERTE])));
+    const carte = carteDe(html, 'research');
+    expect(carte).toContain(
+      '<span class="pastille pastille--inconnu">sources read: not verified</span>',
+    );
+    expect(carte).toContain('#648');
+    expect(carte).toContain('guessing it from tool outputs leaked four times');
+    // Jamais présenté comme vérifié, jamais en vert.
+    expect(carte).not.toContain('sources verified');
+    expect(carte).not.toMatch(/pastille--ok[^>]*>sources/);
+  });
+
+  it('la pastille verte de l’essai dit elle-même que ce contrôle n’est pas vérifié', () => {
+    const html = htmlWorkflows(lireWorkflows(ndjson([RECHERCHE_VERTE])));
+    const pastille = carteDe(html, 'research').match(
+      /<li class="wf-pastille[^"]*" title="([^"]*)"/,
+    );
+    expect(pastille?.[1]).toContain('sources read: not verified');
+  });
+
+  it('une ligne sans contrôle non vérifié n’en affiche aucun', () => {
+    const html = htmlWorkflows(lireWorkflows(ndjson([QUESTION_VERTE])));
+    expect(carteDe(html, 'question')).not.toContain('not verified');
+  });
+});

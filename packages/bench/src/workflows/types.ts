@@ -25,6 +25,21 @@ export interface ScenarioEnv {
   readonly startedMs: number;
 }
 
+/**
+ * Un contrôle que le scénario promettait et que le banc ne sait pas vérifier
+ * aujourd'hui. Il n'est ni vert ni rouge : il est DIT, sur chaque ligne du
+ * scénario, avec sa raison et le ticket qui le rétablira. Aucun vert ne
+ * l'affirme.
+ */
+export interface UnverifiedCheck {
+  readonly check: string;
+  readonly state: 'not verified';
+  /** Pourquoi, en une phrase (anglais : rendu au portail). */
+  readonly reason: string;
+  /** Le ticket qui le rétablira, `#N`. */
+  readonly ticket: string;
+}
+
 export interface Scenario<O> {
   readonly id: string;
   /** Monte quand la demande ou le juge change : une nouvelle série commence. */
@@ -37,6 +52,8 @@ export interface Scenario<O> {
   /** La demande, telle que le propriétaire la taperait. */
   readonly instruction: string;
   readonly timeoutMs: number;
+  /** Les contrôles que ce scénario ne vérifie pas encore (voir `UnverifiedCheck`). */
+  readonly unverified?: readonly UnverifiedCheck[];
   /** Ce qui manque pour que l'essai ait un sens. Non vide : ROUGE, sans lancer de job. */
   requires?(env: ScenarioEnv): string[];
   /** Remet à zéro ce qu'un essai précédent du banc a laissé (ses propres fichiers seulement). */
@@ -70,6 +87,8 @@ export interface TrialLine {
   readonly startedAt: string;
   readonly verdict: TrialVerdict;
   readonly reasons: string[];
+  /** Les contrôles du scénario qui ne sont pas vérifiés : ni dans le verdict, ni tus. */
+  readonly unverified: UnverifiedCheck[];
   /** Création du job de tête → dernière mise à jour de l'arbre. */
   readonly durationMs: number | null;
   /** Création du job de tête → premier appel de modèle ou tour de CLI enregistré (sa fin). */

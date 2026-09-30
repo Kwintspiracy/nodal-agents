@@ -30,34 +30,33 @@ not green.
 | id | set | green means |
 |---|---|---|
 | `question` | nightly | the answer names Canberra, no delegation, nobody asked |
-| `research` | nightly | delegated, the delegate read web sources, at least one cited link was returned by a successful web search or page read |
-| `deep-research-obsidian` | nightly | delegated, a note written in the vault during the run (folder `Nodal Bench` or tag `#nodal-bench`), 1500+ characters, 3+ source links, at least one returned by a web retrieval |
+| `research` | nightly | delegated, the delegate called a web tool, the report cites at least one source link. Sources read: not verified (#648) |
+| `deep-research-obsidian` | nightly | delegated, a note written in the vault during the run (folder `Nodal Bench` or tag `#nodal-bench`), 1500+ characters, 3+ source links. Sources read: not verified (#648) |
 | `file` | nightly | `nodal-bench/ventes-bench.xlsx` written during the run, exact cells read back with exceljs |
 | `code` | nightly | pinned CSV downloaded into `nodal-bench/iris.csv`, a Python or Node run printed 277.6, zero approval |
 | `print` | nightly | a pending print request holding the note, nothing sent to the printer |
-| `recipe` | nightly | a pending one-page print request whose photo comes from a site a page reader really returned |
+| `recipe` | nightly | a pending one-page print request with a photo. Whether the photo comes from the recipe page read: not verified (#648) |
 | `comfyui-telegram` | on-demand | an image file written during the run, and a confirmed send of that image |
 
 Every scenario is also red when the root did not end `completed`, or when the
 run raised an approval or a question.
 
-A source is an address the run READ: a web tool (`web_search`, Tavily, the
-MCP fetch server, `cli:WebSearch`, `cli:WebFetch`) returned real content for
-THAT address. Either a search result that carries the address with a non-empty
-snippet, or a page returned for the address the call asked for, holding at
-least 1,000 characters once addresses and blanks are removed. On the real
-trials, the shortest page read holds 2,941 characters and a failure message
-("Request to https://… timed out after 60000ms") fewer than 100. An output
-that states a failure (`{ "outcome": "error" }`, `ok: false`, `isError`, an
-`error` field, `<tool_use_error>`, `failedResults`) carries no source.
+**Sources read: not verified.** Whether a cited source was really read is not
+judged. Four review passes of the bench (#634) found four leaks in the judge
+that guessed it from tool outputs: a link the model wrote counted as read; a
+failed CLI fetch in plain text counted; a failed MCP fetch serialized as a
+string counted; then Firecrawl and Apify reads were invisible and a long 404
+page counted as content. Nothing in the database records which addresses a run
+really read, and guessing it from N output shapes does not converge. Quentin
+decided on 30/09 to take the check out until the platform records every web
+read (#648).
 
-The criterion is content, not a success flag: the tools do not give a reliable
-one (an MCP fetch error reaches the row as a plain string, a `cli:*` row drops
-the CLI's `is_error`, #643), and a failure has no content. A CLI search listing
-is text, not a result with its snippet: it carries no source. Never the input
-of a tool, which the model writes, and never the output of another tool:
-reading back a note the run just wrote returns the links the model put there,
-not a source.
+The check is not silent. `research`, `deep-research-obsidian` and `recipe`
+declare it (`unverified` in `scenarios.ts`), every result line of theirs
+carries it as `{ check: "sources read", state: "not verified", reason, ticket }`,
+whatever the verdict, and the Workflows page shows it in grey on the card and
+in the tooltip of every run. Their "green means" sentence says it too: a green
+run is green on what is judged, never on this.
 
 A scenario is frozen once merged. Changing its request or its judge means
 raising its `version`: the portal then starts a new series instead of
@@ -138,7 +137,7 @@ were committed.
 `scenario`, `scenarioVersion`, `title`, `green`, `set`, `nodalVersion`
 (`apps/cli/package.json` of the stack), `stackCommit` (read from its `.git`, 12 characters),
 `trigger`, `startedAt`, `verdict` (`green` / `red` / `skipped` / `error`),
-`reasons`, `durationMs` (root job created to last update of the tree),
+`reasons`, `unverified` (the checks the scenario does not verify yet), `durationMs` (root job created to last update of the tree),
 `firstModelReplyMs` (root job created to the first model call or CLI turn recorded),
 `jobs`, `agents`, `models`, `toolCalls`, `llmCalls`, `cliRuns`, `inputTokens`,
 `outputTokens`, `costUsd`, `approvals`, `rootJobId`, `cancelled`.

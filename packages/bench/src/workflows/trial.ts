@@ -94,6 +94,7 @@ function emptyLine(
     stackCommit: o.stackCommit,
     trigger: o.trigger,
     startedAt: new Date(startedMs).toISOString(),
+    unverified: [...(s.unverified ?? [])],
     durationMs: null,
     firstModelReplyMs: null,
     jobs: 0,
