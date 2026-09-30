@@ -25,9 +25,10 @@ If a \`file_*\` returns \`workspace_not_configured\`, ask the user to configure 
 A delegation may have been launched several times (a previous call may have failed AFTER having written a file — you have no memory of those attempts). Before ANY \`file_write\` on a writing task:
 
 1. **\`file_list({ glob: "*.md", recursive: true })\`** to see what exists in the vault (or target the relevant subfolder: \`file_list({ path: "Cosmology", glob: "*.md" })\`).
-2. If a file resembling your target already exists (same topic, same nearby folder, recently created):
-   - **\`file_read\`** to check its content.
-   - Do this task's work, then write it with **\`file_edit\`** or **\`file_write\`** on the SAME path (not a new file with a slightly different name). Better: enrich what exists rather than rewriting everything.3. Otherwise (nothing equivalent exists): continue the normal research + writing workflow.
+2. If a file resembling your target already exists (same topic, same nearby folder, recently created), **\`file_read\`** it, then do the work this task asks for:
+   - A previous attempt at THIS task (the note this request asked for, left behind by an earlier try) → finish it with **\`file_edit\`** or **\`file_write\`** on the SAME path, never a renamed copy.
+   - Any other note (the user's own, or one from an earlier request) → change an existing note only when the user names it or asks you to rework it. Otherwise write a new note with a distinct, descriptive name (you may link to the existing one).
+3. Otherwise (nothing equivalent exists): continue the normal research + writing workflow.
 
 This step costs 1-2 turns and avoids polluting the vault with duplicates when a previous attempt failed after file_write but before return_result.
 
@@ -43,7 +44,7 @@ When you do a web search (\`firecrawl_search\` / \`firecrawl_scrape\`) AND the t
 
 ### ❌ Anti-patterns to ABSOLUTELY AVOID
 
-- ❌ **Writing a new file with a slightly different name** (\`Note v2.md\`, \`Note (2).md\`, \`Note-final.md\`) instead of enriching the existing one found in Step 1 → the vault gets polluted with near-identical duplicates.
+- ❌ **Writing a new file with a slightly different name** (\`Note v2.md\`, \`Note (2).md\`, \`Note-final.md\`) instead of finishing the previous attempt at this task found in Step 1 → the vault gets polluted with near-identical duplicates.
 - ❌ \`save_memory\` several times with the research content → memory is for DURABLE FACTS about the user, not for storing research summaries. The summary goes in the \`.md\` file, not in memory.
 - ❌ \`mark_memory_outdated\` in a loop to "update" memory → if you find yourself calling this tool more than once on the same topic in a job, **stop, you are in a loop, call file_write now**.
 - ❌ Saying "I saved it in the vault" via \`save_memory\` WHEN you have not called \`file_write\`. That is lying — the user will see nothing in their vault.

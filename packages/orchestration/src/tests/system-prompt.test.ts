@@ -1102,12 +1102,27 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
     const inventaire =
       'shared/\n  reports/ (2 files): q3-summary.html, q3-summary.pdf\n  scripts/ (1 file): export.py\n';
 
-    /** Chaque phrase du prompt qui ordonne de reprendre ce qui existe déjà. */
+    /**
+     * Chaque paragraphe du prompt qui dit quoi faire de ce qui existe déjà.
+     *
+     * Large exprès (revue de #640, passe 1) : une phrase qui porte un verbe de
+     * reprise ou d'adaptation ET un mot qui désigne ce qui est déjà là. Une
+     * reformulation de la règle ailleurs — « load the existing one and adapt
+     * it », « update what is already there » — doit tomber dedans, pas
+     * seulement les trois phrases d'origine. Le compte se fait par PARAGRAPHE :
+     * la règle tient en plusieurs phrases (ce qui se reprend, ce qui ne se
+     * reprend pas), et c'est un seul énoncé.
+     */
     function phrasesDeReprise(prompt: string): string[] {
+      const verbe =
+        /\b(reus(e|ing)|re-use|updat(e|ing)|adapt(ing)?|rework(ing)?|extend(ing)?|enrich(ing)?|rebuild(ing)?|recreat(e|ing))\b|\bload\b[^.]*\badapt/i;
+      const existant = /\b(existing|already|listed)\b/i;
       return prompt
-        .split(/(?<=[.:!?])\s+|\n/)
-        .filter((p) =>
-          /\breuse\b|already covers|rebuild(ing)? what already exists|before recreating/i.test(p),
+        .split('\n')
+        .filter((paragraphe) =>
+          paragraphe
+            .split(/(?<=[.:!?])\s+/)
+            .some((phrase) => verbe.test(phrase) && existant.test(phrase)),
         );
     }
 
