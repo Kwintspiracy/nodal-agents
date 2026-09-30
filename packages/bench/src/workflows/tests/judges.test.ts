@@ -186,6 +186,85 @@ describe('recipe and research judges on real trials', () => {
   });
 });
 
+describe('deep research into the vault, on a real trial', () => {
+  interface VaultObs {
+    vaults: string[];
+    notes: Array<{ vault: string; rel: string; chars: number; urls: string[]; marked: boolean }>;
+    truncated: boolean;
+  }
+  const f = fixture('deep-research-obsidian-green');
+  const obs = f.observed as VaultObs;
+  const note = obs.notes[0]!;
+
+  it('the real trial is green: delegated, a marked note of 12 k characters with 8 links, links seen by tools', () => {
+    expect(note.marked).toBe(true);
+    expect(note.urls.length).toBe(8);
+    expect(judge(f)).toEqual([]);
+  });
+
+  it('no vault among the workspace folders is RED with that reason, never skipped', () => {
+    expect(judge(f, f.facts, { vaults: [], notes: [], truncated: false })).toEqual([
+      'no Obsidian vault is configured: no workspace folder of this workspace holds a .obsidian folder',
+    ]);
+  });
+
+  it('a note outside the bench folder and without the tag is red: the bench could not find it to clean it', () => {
+    const o: VaultObs = { ...obs, notes: [{ ...note, rel: 'Research\\x.md', marked: false }] };
+    expect(judge(f, f.facts, o)).toEqual([
+      'the note Research\\x.md is neither in "Nodal Bench" nor tagged #nodal-bench',
+    ]);
+  });
+
+  it('a note with two links is red; with invented links only, red too', () => {
+    expect(
+      judge(f, f.facts, { ...obs, notes: [{ ...note, urls: note.urls.slice(0, 2) }] }),
+    ).toEqual(['the note cites 2 source link(s), fewer than 3']);
+    const invented = ['a.example/1', 'b.example/2', 'c.example/3'];
+    expect(judge(f, f.facts, { ...obs, notes: [{ ...note, urls: invented }] })).toEqual([
+      'none of the 3 source links of the note was seen by a tool',
+    ]);
+  });
+});
+
+describe('recipe: a refused call beside the request', () => {
+  it('names the file of the request that was created, not the empty one of a refused call', () => {
+    const f = fixture('recipe-red-file-2');
+    // Deux appels : une demande créée (le PDF), puis un appel refusé par le connecteur (filePath vide).
+    expect(f.facts.toolCalls.filter((c) => c.toolName.endsWith('__request_print'))).toHaveLength(2);
+    expect(judge(f)).toEqual([
+      'the request prints an existing file (caviar-aubergines.pdf, made before this run), whose pictures the connector does not report: the photo cannot be checked',
+    ]);
+  });
+});
+
+describe('comfyui-telegram on a real trial', () => {
+  const f = fixture('comfyui-telegram-green');
+
+  it('is green: an image written during the run, and that very image sent with ok', () => {
+    const send = f.facts.toolCalls.find((c) => c.toolName === 'send_image')!;
+    expect(JSON.parse(send.output!)).toEqual({ ok: true, bytes: 1575446 });
+    expect(judge(f)).toEqual([]);
+  });
+
+  it('a send that never returned ok is red, whatever the model says', () => {
+    const facts: TreeFacts = {
+      ...f.facts,
+      toolCalls: f.facts.toolCalls.map((c) =>
+        c.toolName === 'send_image'
+          ? { ...c, output: '{"outcome":"error","error":"telegram_timeout: AMBIGUOUS OUTCOME"}' }
+          : c,
+      ),
+    };
+    expect(judge(f, facts)).toEqual(['no send was confirmed (the tool never returned ok)']);
+  });
+
+  it('an image that is not fresh does not count as produced by the run', () => {
+    const o = f.observed as { images: Array<{ path: string; exists: boolean; fresh: boolean }> };
+    const stale = { images: o.images.map((i) => ({ ...i, fresh: false })) };
+    expect(judge(f, f.facts, stale)).toEqual(['no image file was written during the run']);
+  });
+});
+
 describe('what the judges read', () => {
   it('reads the real workbook of the trial with exceljs, the product library', async () => {
     const sheets = await readXlsxGrid(join(FIX, 'ventes-bench.xlsx'));

@@ -498,7 +498,7 @@ const recipe = defineScenario<RecipeObservation>({
   async observe(facts, env) {
     const printedFiles = callsOf(facts, 'request_print')
       .map((c) => (parseJson(c.input) as { filePath?: unknown } | null)?.filePath)
-      .filter((p): p is string => typeof p === 'string')
+      .filter((p): p is string => typeof p === 'string' && p.trim() !== '')
       .map((path) => ({
         path,
         existedBefore: existsSync(path) ? statSync(path).birthtimeMs < env.startedMs : null,
@@ -512,13 +512,16 @@ const recipe = defineScenario<RecipeObservation>({
       r.push('no print request was created');
       return [...r, ...neverPrinted(facts)];
     }
-    const last = reqs[reqs.length - 1]!.view;
+    const lastReq = reqs[reqs.length - 1]!;
+    const last = lastReq.view;
     if (last.status !== 'pending') r.push(`the print request is ${last.status}, not pending`);
     if (last.pages !== null && last.pages !== 1) r.push(`${last.pages} pages, not one`);
     if (last.images === null) {
       // Un fichier imprimé tel quel : le connecteur ne dit pas ce qu'il contient.
       // Le juge ne peut pas voir la photo, et le dit, plutôt qu'affirmer qu'elle manque.
-      const f = o.printedFiles[o.printedFiles.length - 1];
+      // Le fichier est celui de LA demande retenue, pas d'un appel refusé à côté.
+      const path = (parseJson(lastReq.input) as { filePath?: unknown } | null)?.filePath;
+      const f = o.printedFiles.find((x) => x.path === path);
       r.push(
         f
           ? `the request prints an existing file (${basename(f.path.replace(/\\/g, '/'))}${f.existedBefore ? ', made before this run' : ''}), whose pictures the connector does not report: the photo cannot be checked`

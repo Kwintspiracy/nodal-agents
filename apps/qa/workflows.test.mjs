@@ -27,7 +27,7 @@ const QUESTION_VERTE = {
     'The answer names Canberra, the root answered itself (no delegation), and nobody was asked anything.',
   set: 'nightly',
   nodalVersion: '0.9.3',
-  stackCommit: 'ebef7ed7e02beeb8996e947c9a14fdf719da5a9c',
+  stackCommit: 'ebef7ed7e02b',
   trigger: 'manual',
   startedAt: '2026-09-30T05:02:34.551Z',
   durationMs: 20952,

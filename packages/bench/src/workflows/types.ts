@@ -64,6 +64,7 @@ export interface TrialLine {
   readonly green: string;
   readonly set: ScenarioSet;
   readonly nodalVersion: string;
+  /** Le commit extrait dans le dossier de la stack, en 12 caractères. */
   readonly stackCommit: string | null;
   readonly trigger: 'manual' | 'scheduled';
   readonly startedAt: string;

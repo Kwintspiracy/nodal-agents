@@ -153,7 +153,10 @@ async function main(): Promise<void> {
     throw new Error('--trials must be an integer from 1 to 20');
   const stackDir = resolve(arg('stack') ?? REPO);
   const nodalVersion = readStackVersion(stackDir);
-  const stackCommit = readStackCommit(stackDir);
+  // Douze caractères : sans ambiguïté dans ce dépôt, et une ligne qui porte à
+  // la fois « …Tokens » et un sha complet de 40 caractères hexadécimaux est
+  // prise pour une clé par la garde anti-secrets (scripts/check-no-secrets.mjs).
+  const stackCommit = readStackCommit(stackDir)?.slice(0, 12) ?? null;
   const { db, close } = await openStackDb();
 
   let current: { id: string; entityId: string | null } | null = null;
