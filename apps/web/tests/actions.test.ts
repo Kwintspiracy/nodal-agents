@@ -3640,7 +3640,14 @@ describe('runScheduleNowAction', () => {
     const insertValues = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
     // notify_on_success is OFF → no delivery target, and resolveOwnerChatId is
     // never even called (short-circuited). The runner won't force a confirmation.
-    expect('chatId' in (insertValues ?? {})).toBe(false);
+    // No chat: designateChat writes both columns as NULL (#649).
+    expect({
+      chatId: insertValues?.['chatId'],
+      chatChannel: insertValues?.['chatChannel'],
+    }).toEqual({
+      chatId: null,
+      chatChannel: null,
+    });
     fetchSpy.mockRestore();
   });
 
@@ -4849,7 +4856,11 @@ describe('sendTaskAction — Telegram delivery channel', () => {
     expect(jobValues?.['task']).toBe('Plain prompt');
     expect(jobValues?.['task'] as string).not.toContain('## Delivery channels');
     // chatId not set (key absent or undefined — no spread)
-    expect(jobValues?.['chatId']).toBeUndefined();
+    // No chat: designateChat writes both columns as NULL (#649).
+    expect({ chatId: jobValues?.['chatId'], chatChannel: jobValues?.['chatChannel'] }).toEqual({
+      chatId: null,
+      chatChannel: null,
+    });
     expect(jobValues?.['channel']).toBe('dashboard');
   });
 

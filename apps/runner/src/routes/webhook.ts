@@ -14,7 +14,7 @@
 // warning so the agent's approval rules still gate anything it does in response.
 
 import type { Context } from 'hono';
-import { eq, sql, resolveOwnerConversation } from '@nodal-agents/db';
+import { eq, sql, resolveOwnerConversation, designateChat } from '@nodal-agents/db';
 import { webhookTriggers, agentJobs, decryptChannelSecret } from '@nodal-agents/db';
 import { resolveTransportChannel, listActiveChannelsForAgent } from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
@@ -329,9 +329,8 @@ export async function webhookRoute(
       channel: 'webhook',
       task,
       status: 'pending',
-      chatId: notifyChatId,
-      // The channel that chat was resolved on (#649).
-      chatChannel: notifyChatId ? notifyChannel : null,
+      // The owner conversation of the notify channel, with that channel (#649).
+      ...designateChat(notifyChatId, notifyChannel),
       messages: [{ role: 'user', content: task }],
       triggerContext: {
         type: 'webhook',

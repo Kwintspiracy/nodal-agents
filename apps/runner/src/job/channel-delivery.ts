@@ -5,7 +5,6 @@
 import { resolveTransportChannel, textDeliveryOf } from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import type { JobContext } from '@nodal-agents/orchestration';
-import type { JobTriggerContext } from '@nodal-agents/db';
 import { CHANNEL_SEND_TOOL } from './thread-history.ts';
 
 // Channels whose ONLY path to the user is a delivery tool call (telegram_send_message,
@@ -83,26 +82,20 @@ type ReplyJob = DeliveryJob & { parentJobId: string | null };
  * Le canal du chat que le DÉCLENCHEUR a désigné, tel qu'il a été enregistré —
  * jamais déduit des canaux actifs de l'agent (revue passe 2 de #657).
  *
- * `agent_jobs.chat_channel` le porte, posé là où le chat est résolu (tick de
- * routine, « Run now », route webhook, « Send via Telegram »). Une ligne de
- * routine ou de webhook antérieure à la colonne le porte dans
- * `triggerContext.notifyChannel`, contre lequel son `chat_id` a été résolu.
- * `undefined` : aucun chat désigné, une demande qui VIENT d'un chat (son canal
- * est `channel`), ou un chat dont personne n'a enregistré la plateforme — le
- * runner ne la devine pas.
+ * `agent_jobs.chat_channel` le porte, et lui seul : tout écrivain pose le chat
+ * par `designateChat` (packages/db, queries/designated-chat.ts), avec le canal
+ * sur lequel il l'a résolu, ou NULL ; la migration 0143 a rempli les lignes
+ * antérieures par la même règle. `undefined` : aucun chat désigné, une demande
+ * qui VIENT d'un chat (son canal est `channel`), ou un chat dont personne ne
+ * connaît la plateforme — le runner ne la devine pas.
  */
 export function designatedChatChannel(job: {
   channel: string | null;
   chatId: string | null;
   chatChannel: string | null;
-  triggerContext: unknown;
 }): ChannelKind | undefined {
   if (job.chatId == null || TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '')) return undefined;
-  if (job.chatChannel) return job.chatChannel as ChannelKind;
-  const trigger = job.triggerContext as JobTriggerContext | null;
-  return trigger?.type === 'cron' || trigger?.type === 'webhook'
-    ? (trigger.notifyChannel ?? undefined)
-    : undefined;
+  return (job.chatChannel as ChannelKind | null) ?? undefined;
 }
 
 interface ReplyInputs {

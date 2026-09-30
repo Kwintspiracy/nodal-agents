@@ -150,7 +150,8 @@ import {
   setSkillScriptsAuthorized,
   setSkillFilesWritable,
   resolveOwnerChatId,
-  resolveOwnerConversation,
+  designateChat,
+  resolveScheduleNotifyChat,
   channelBindings,
   channelAllowedConversations,
   listChannelBindings,
@@ -2160,10 +2161,9 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
         status: 'pending',
         channel: 'dashboard',
         task: parsed.data.prompt,
-        // resolveOwnerChatId is Telegram's owner chat: the chat carries its
-        // channel, so the runner never infers it from the agent's active
-        // channels (#649).
-        ...(resolvedChatId ? { chatId: resolvedChatId, chatChannel: 'telegram' } : {}),
+        // The owner's Telegram chat, resolved as such: it carries its channel,
+        // so the runner never infers it from the agent's active channels (#649).
+        ...designateChat(resolvedChatId, 'telegram'),
       })
       .returning({ id: agentJobs.id });
     if (!job) return fail('db_error', 'Failed to create job');
@@ -11318,12 +11318,10 @@ export async function runScheduleNowAction(
     // failure here is surfaced to the user directly (this action returns
     // ActionResult synchronously) rather than via lastStatus — there is no
     // schedule-row status transition to attach it to for a one-off manual run.
-    const resolvedChatId = schedule.notifyOnSuccess
-      ? schedule.notifyChannel
-        ? (schedule.chatId ??
-          (await resolveOwnerConversation(db, schedule.agentId, schedule.notifyChannel)))
-        : (schedule.chatId ?? (await resolveOwnerChatId(db, schedule.agentId)) ?? null)
-      : null;
+    //
+    // The SAME function as the tick and run_schedule (#649): the chat and the
+    // channel it was resolved on, or no channel when nothing says it.
+    const notifyChat = await resolveScheduleNotifyChat(db, schedule);
 
     const [job] = await db
       .insert(agentJobs)
@@ -11334,10 +11332,7 @@ export async function runScheduleNowAction(
         channel: 'cron',
         task: schedule.task,
         messages: [{ role: 'user', content: schedule.task }],
-        // The channel that chat was resolved on (#649), as the cron tick does.
-        ...(resolvedChatId
-          ? { chatId: resolvedChatId, chatChannel: schedule.notifyChannel ?? 'telegram' }
-          : {}),
+        ...notifyChat,
         scheduleId,
         triggerContext: {
           type: 'cron',

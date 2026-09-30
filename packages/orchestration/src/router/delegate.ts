@@ -1,7 +1,7 @@
 // router/delegate.ts — suspend parent job, create child job
 // Called by the runner when it catches DelegationPendingError from an assign_* tool.
 
-import { eq, and, notInArray, insertChildJob } from '@nodal-agents/db';
+import { eq, and, notInArray, insertChildJob, designateChat } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
 
@@ -103,7 +103,7 @@ export async function handleDelegation(
   // work. Read from the parent's ROW: the AgentJob shape the runner passes in
   // does not carry it, and a second source would be a second truth.
   const [parentFolderRow] = await db
-    .select({ jobFolder: agentJobs.jobFolder })
+    .select({ jobFolder: agentJobs.jobFolder, chatChannel: agentJobs.chatChannel })
     .from(agentJobs)
     .where(eq(agentJobs.id, parentJob.id as string))
     .limit(1);
@@ -117,7 +117,12 @@ export async function handleDelegation(
     agentId: childAgent.id,
     channel: 'internal',
     task: childTask,
-    chatId: taskInput.chatId ?? parentJob.chatId,
+    // The chat travels with its channel (#649): the parent's, as recorded;
+    // an id the orchestrator named itself has no known platform.
+    ...designateChat(
+      taskInput.chatId ?? parentJob.chatId,
+      taskInput.chatId ? null : (parentFolderRow?.chatChannel ?? null),
+    ),
     status: 'pending',
     parentJobId: parentJob.id as string,
     delegationDepth: childDepth,

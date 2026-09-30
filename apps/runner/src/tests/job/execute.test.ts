@@ -17,7 +17,8 @@ import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, and, sql } from '@nodal-agents/db';
-import type { JobTriggerContext } from '@nodal-agents/db';
+import type { AnyDrizzleDb, JobTriggerContext } from '@nodal-agents/db';
+import { resolveScheduleNotifyChat } from '@nodal-agents/db';
 import {
   agentJobs,
   jobDeliveries,
@@ -1804,7 +1805,7 @@ describe('executeJob', () => {
         values: {
           channel: string;
           chatId: string | null;
-          chatChannel?: string;
+          chatChannel?: string | null;
           triggerContext?: JobTriggerContext;
         },
         turns: Parameters<typeof makeMockLlmClient>[0],
@@ -1905,6 +1906,7 @@ describe('executeJob', () => {
         {
           channel: 'cron',
           chatId: '12345',
+          chatChannel: 'telegram',
           triggerContext: {
             type: 'cron',
             scheduleName: 'daily',
@@ -1953,6 +1955,54 @@ describe('executeJob', () => {
       expect(sendTelegramMessageMock).toHaveBeenCalledWith(
         expect.objectContaining({ chatId: '199791464', text: '277.6' }),
       );
+
+      // Review of #657, pass 3: a routine's chat comes from THE function every
+      // routine writer calls (tick, "Run now", run_schedule). On auto with the
+      // owner's Telegram chat, it carries Telegram and the confirmation goes
+      // out; with an explicit id on auto, nothing says its platform, so the
+      // reply is the result and nothing is sent anywhere.
+      await db.insert(telegramAllowedChats).values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        chatId: 'owner-649',
+        role: 'owner',
+        status: 'active',
+      });
+      try {
+        const routine = { agentId: seed.agentId, notifyOnSuccess: true, notifyChannel: null };
+        const ownerChat = await resolveScheduleNotifyChat(db as unknown as AnyDrizzleDb, {
+          ...routine,
+          chatId: null,
+        });
+        expect(ownerChat).toEqual({ chatId: 'owner-649', chatChannel: 'telegram' });
+        const confirmed = await run({ channel: 'cron', ...ownerChat }, [
+          { text: 'Done.' },
+          {
+            toolCalls: [
+              { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'Done.' } },
+              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ]);
+        expect({
+          status: confirmed.row?.status,
+          sent: sendTelegramMessageMock.mock.calls.map((c) => (c[0] as { chatId: string }).chatId),
+        }).toEqual({ status: 'completed', sent: ['owner-649'] });
+
+        const explicitChat = await resolveScheduleNotifyChat(db as unknown as AnyDrizzleDb, {
+          ...routine,
+          chatId: 'team-group-999',
+        });
+        expect(explicitChat).toEqual({ chatId: 'team-group-999', chatChannel: null });
+        const explicit = await run({ channel: 'cron', ...explicitChat }, [{ text: 'Done.' }]);
+        expect({
+          status: explicit.row?.status,
+          result: explicit.row?.result,
+          sends: sendTelegramMessageMock.mock.calls.length,
+        }).toEqual({ status: 'completed', result: 'Done.', sends: 0 });
+      } finally {
+        await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
+      }
 
       // The same task once the bot token is withdrawn: no send tool is armed,
       // so nothing can reach the named chat. The reply is the result, and the

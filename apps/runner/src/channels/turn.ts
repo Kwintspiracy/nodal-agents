@@ -35,7 +35,7 @@
 // qui a été arrêté, et l'appelant de chaque canal le dit par une réaction sur
 // le message `/stop` quand son SDK en offre une (`stopReaction`).
 
-import { startConversationTurn, stopConversationRuns } from '@nodal-agents/db';
+import { designateChat, startConversationTurn, stopConversationRuns } from '@nodal-agents/db';
 import type { StoppedRun } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import {
@@ -175,7 +175,8 @@ export async function takeChannelTurn(args: {
       agentId,
       channel,
       task: taskText,
-      chatId,
+      // The chat the request came from, on its own channel (#649).
+      ...designateChat(chatId, channel),
       conversationId: conversation.id,
       // Le projet courant du fil suit le travail : un job né dans une
       // conversation ancrée à un projet porte ce projet dès l'insert.

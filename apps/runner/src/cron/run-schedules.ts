@@ -15,7 +15,7 @@ import {
   agentSchedules,
   agentJobs,
   resolveOwnerChatId,
-  resolveOwnerConversation,
+  resolveScheduleNotifyChat,
   getBindingCredentials,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
@@ -270,23 +270,17 @@ export async function runScheduleTick(
     // fall back to another channel — the job still fires (chatId stays null,
     // so it runs silently), and the schedule's lastStatus becomes
     // 'notify_unreachable' below instead of masking the problem as 'success'.
-    let notifyChatId: string | null = null;
-    if (sched.notifyOnSuccess) {
-      if (sched.notifyChannel) {
-        const channel = sched.notifyChannel as ChannelKind;
-        notifyChatId = sched.chatId ?? (await resolveOwnerConversation(db, sched.agentId, channel));
-        if (!notifyChatId) {
-          notifyUnreachableScheduleIds.add(sched.id);
-          console.error(
-            `[runScheduleTick] schedule "${sched.name}" (${sched.id}) chose notify channel ` +
-              `'${channel}' but has no owner conversation there yet (never DMed on that ` +
-              `channel). Firing WITHOUT a delivery target — not falling back to another ` +
-              `channel. lastStatus will read 'notify_unreachable'.`,
-          );
-        }
-      } else {
-        notifyChatId = sched.chatId ?? (await resolveOwnerChatId(db, sched.agentId)) ?? null;
-      }
+    // ONE rule for the tick, "Run now" and run_schedule (#649): the chat and
+    // the channel it was resolved on, or no channel when nothing says it.
+    const notifyChat = await resolveScheduleNotifyChat(db, sched);
+    if (sched.notifyOnSuccess && sched.notifyChannel && !notifyChat.chatId) {
+      notifyUnreachableScheduleIds.add(sched.id);
+      console.error(
+        `[runScheduleTick] schedule "${sched.name}" (${sched.id}) chose notify channel ` +
+          `'${sched.notifyChannel}' but has no owner conversation there yet (never DMed on that ` +
+          `channel). Firing WITHOUT a delivery target — not falling back to another ` +
+          `channel. lastStatus will read 'notify_unreachable'.`,
+      );
     }
     const [job] = await db
       .insert(agentJobs)
@@ -294,10 +288,7 @@ export async function runScheduleTick(
         entityId: sched.entityId,
         agentId: sched.agentId,
         channel: 'cron',
-        chatId: notifyChatId,
-        // The channel that chat belongs to (#649): the one it was resolved
-        // on. On auto, resolveOwnerChatId above only knows Telegram.
-        chatChannel: notifyChatId ? (sched.notifyChannel ?? 'telegram') : null,
+        ...notifyChat,
         task: sched.task,
         status: 'pending',
         messages: [{ role: 'user', content: sched.task }],

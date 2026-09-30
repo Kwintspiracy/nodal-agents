@@ -271,7 +271,6 @@ describe('designatedChatChannel — the channel of a chat the trigger named, as 
         channel: 'dashboard',
         chatId: '1',
         chatChannel: 'telegram',
-        triggerContext: null,
       }),
     ).toBe('telegram');
     expect(
@@ -279,25 +278,8 @@ describe('designatedChatChannel — the channel of a chat the trigger named, as 
         channel: 'api',
         chatId: '1',
         chatChannel: 'slack',
-        triggerContext: null,
       }),
     ).toBe('slack');
-  });
-
-  it('a routine or webhook row written before the column: the notify channel its trigger recorded', () => {
-    expect(
-      designatedChatChannel({
-        channel: 'cron',
-        chatId: '1',
-        chatChannel: null,
-        triggerContext: {
-          type: 'cron',
-          scheduleName: 's',
-          prevRunAt: null,
-          notifyChannel: 'discord',
-        },
-      }),
-    ).toBe('discord');
   });
 
   it('nothing recorded, no chat, or a request that came FROM a chat: no designated channel', () => {
@@ -306,7 +288,6 @@ describe('designatedChatChannel — the channel of a chat the trigger named, as 
         channel: 'dashboard',
         chatId: '1',
         chatChannel: null,
-        triggerContext: null,
       }),
     ).toBeUndefined();
     expect(
@@ -314,7 +295,6 @@ describe('designatedChatChannel — the channel of a chat the trigger named, as 
         channel: 'cron',
         chatId: null,
         chatChannel: 'telegram',
-        triggerContext: null,
       }),
     ).toBeUndefined();
     expect(
@@ -322,7 +302,6 @@ describe('designatedChatChannel — the channel of a chat the trigger named, as 
         channel: 'telegram',
         chatId: '1',
         chatChannel: null,
-        triggerContext: null,
       }),
     ).toBeUndefined();
   });

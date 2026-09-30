@@ -310,10 +310,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
 
       premier := left_behind -> 0;
       INSERT INTO agent_jobs (
-        entity_id, agent_id, channel, chat_id, conversation_id, project_id,
+        entity_id, agent_id, channel, chat_id, chat_channel, conversation_id, project_id,
         status, task, messages, inbox, relaunched_from_job_id
       ) VALUES (
-        root.entity_id, root.agent_id, root.channel, root.chat_id, NEW.conversation_id,
+        root.entity_id, root.agent_id, root.channel, root.chat_id, root.chat_channel, NEW.conversation_id,
         (SELECT c.current_project_id FROM conversations c WHERE c.id = NEW.conversation_id),
         'pending',
         premier ->> 'task',

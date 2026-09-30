@@ -306,11 +306,18 @@ describe('runScheduleTick @cap:planifier-une-tache/moteur', () => {
     await runScheduleTick(db as RunnerDeps['db'], deps, 5);
 
     const cronJobs = await db
-      .select({ id: agentJobs.id, chatId: agentJobs.chatId, channel: agentJobs.channel })
+      .select({
+        id: agentJobs.id,
+        chatId: agentJobs.chatId,
+        chatChannel: agentJobs.chatChannel,
+        channel: agentJobs.channel,
+      })
       .from(agentJobs)
       .where(eq(agentJobs.agentId, seed.agentId));
     const justFired = cronJobs.filter((j) => j.channel === 'cron' && j.chatId === '7777');
     expect(justFired.length).toBeGreaterThanOrEqual(1);
+    // Resolved as the owner's Telegram chat: it carries that channel (#649).
+    expect(justFired.every((j) => j.chatChannel === 'telegram')).toBe(true);
 
     // Cleanup so subsequent tests aren't affected.
     await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
@@ -339,7 +346,12 @@ describe('runScheduleTick @cap:planifier-une-tache/moteur', () => {
     await runScheduleTick(db as RunnerDeps['db'], deps, 5);
 
     const cronJobs = await db
-      .select({ chatId: agentJobs.chatId, channel: agentJobs.channel, task: agentJobs.task })
+      .select({
+        chatId: agentJobs.chatId,
+        chatChannel: agentJobs.chatChannel,
+        channel: agentJobs.channel,
+        task: agentJobs.task,
+      })
       .from(agentJobs)
       .where(eq(agentJobs.agentId, seed.agentId));
     const fired = cronJobs.filter(
@@ -347,6 +359,8 @@ describe('runScheduleTick @cap:planifier-une-tache/moteur', () => {
     );
     expect(fired.length).toBeGreaterThanOrEqual(1);
     expect(fired.every((j) => j.chatId === '424242')).toBe(true);
+    // An explicit id on auto: nothing says its platform, so NO channel (#649).
+    expect(fired.every((j) => j.chatChannel === null)).toBe(true);
 
     await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
   });
