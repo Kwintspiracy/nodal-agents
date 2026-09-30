@@ -1441,7 +1441,8 @@ export async function buildSystemPrompt(
 
   // Live inventory of the shared workspace (JobContext.workspaceInventory —
   // computed by the runner). Volatile by nature: it reflects the disk NOW.
-  // Factual listing only; behavioral conventions belong to agent-layer skills.
+  // The listing is factual; the one rule that governs how to read it (what may
+  // be reused from it) is stated here, next to it, and nowhere else (#638).
   //
   // Le RÔLE du partagé dépend de l'agent (décision Quentin, 26/08), et cela se
   // LIT — ça ne se devine pas : a-t-il un dossier attaché, oui ou non ?
@@ -1477,7 +1478,23 @@ export async function buildSystemPrompt(
     ? '\n\n## Shared workspace\n\n' +
       'The `shared` workspace is the common hand-off area — every agent here can read and write it, ' +
       'which is how a file reaches a teammate. ' +
-      'Before creating a workflow, script, or document THERE, check whether one listed below already covers the need — reuse and update it instead of recreating it, and save new files into the existing folder that matches their kind:\n\n' +
+      // #638 — la seule règle de reprise du prompt : les MOYENS se réutilisent,
+      // un livrable se produit pour la demande en cours. Elle disait
+      // « workflow, script, or document », et le banc `recipe` a vu le root
+      // reprendre (donc écraser, donc soumettre à approbation) le PDF d'une
+      // demande passée au lieu de faire la nouvelle. Le socle workspace-hygiene
+      // la répétait : il ne la dit plus, elle vit à côté de la liste qu'elle
+      // gouverne. La skill obsidian avait la sienne (« une tentative
+      // précédente de CETTE tâche ») : l'agent n'a aucune mémoire de ses
+      // tentatives, le seul critère observable est ce qu'il a écrit pendant ce
+      // job — dit ici, pour tous les fichiers (revue de #640, passe 2). Et
+      // c'est une REPRISE, pas un versionnement : « never copied under a new
+      // name » interdisait le `Name v2.html` que claude-html-design prescrit
+      // pour une révision demandée (passe 3).
+      'Reuse the workflows, scripts and templates listed below instead of recreating them. ' +
+      'A deliverable the user asks for is produced for this request: an existing file is the answer only when the user names it or asks to rework it. ' +
+      'Finishing a file you started earlier in this job (it is in your transcript) happens at the same path, not in a renamed copy; a new version the user asks for or a skill prescribes is not finishing. ' +
+      'Save new files into the existing folder that matches their kind:\n\n' +
       // INJECT-001. The listing is produced by the runner, but the NAMES in it
       // are written by whoever created the files — another agent, a download, a
       // channel attachment. A file called

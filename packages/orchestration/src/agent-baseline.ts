@@ -246,6 +246,9 @@ export function buildBaselineBlock(
   // (#559), d'où « may ship ready-made scripts ». Sa moitié portable —
   // vérifier avant de dire que c'est fait, ne jamais inventer une sortie
   // d'outil, être décisif — vaut sur les deux surfaces et reste sur les deux.
+  // Il disait aussi « or rebuilding what already exists » : une deuxième
+  // règle de reprise, sans dire QUOI, lue comme « reprends le livrable
+  // d'hier » (#638). La seule est dans le bloc `## Shared workspace`.
   const reinforcement =
     parts.length === 0 || !NEEDS_FIRMER_VERIFY.test(model)
       ? ''
@@ -262,7 +265,7 @@ export function buildBaselineBlock(
           'commands. Use the tools, scripts, and exact file paths you were given (a skill loaded ' +
           'with skill_view may ship ready-made scripts, workflows and templates) ' +
           'instead of writing ' +
-          'your own helper or conversion scripts, or rebuilding what already exists. Take the fewest ' +
+          'your own helper or conversion scripts. Take the fewest ' +
           'steps that finish the task, then deliver the result with its output path.';
   const catalogBlock =
     parts.length > 0 ? `## How you work (always)\n\n${parts.join('\n\n')}${reinforcement}` : '';

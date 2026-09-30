@@ -1078,12 +1078,229 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
       promptSans,
       'le bloc s’approprie le partagé alors qu’il ne sait pas si l’agent a le sien',
     ).not.toContain('This is your workspace');
-    expect(promptSans).toContain('save new files into the existing folder that matches their kind');
+    expect(promptSans).toMatch(/save new files into the existing folder that matches their kind/i);
 
     // 2. L'inventaire reste cadré comme une donnée externe, pas comme une
     //    instruction : les NOMS de fichiers viennent de qui les a créés.
     expect(promptSans).toContain('outputs/');
     expect(promptSans).toContain('Source: shared workspace listing');
+  });
+
+  describe('réutiliser les MOYENS, jamais le livrable d’une demande passée (#638)', () => {
+    // Banc `recipe`, 29-30/09 : pour « imprime une recette de … », le root
+    // voyait dans l'inventaire le dossier d'un run précédent (un .html et un
+    // .pdf) et DEUX ordres lui disaient de le reprendre — ce bloc (« workflow,
+    // script, or document … reuse and update it ») et la section « Reuse before
+    // recreating » du socle workspace-hygiene. La règle visait les moyens
+    // (audit du 20/07 : workflows et scripts réécrits chaque jour) ; le mot
+    // « document » l'étendait aux livrables. Reprendre, c'était écraser un
+    // fichier du partagé : approbation file_edit, et la demande jamais faite.
+    //
+    // La règle est dite UNE fois, à côté de la liste qu'elle gouverne. Prouvé
+    // sur les deux rôles, avec ou sans dossier propre, et avec un modèle qui
+    // reçoit le renforcement d'exécution (qui la répétait aussi).
+    const inventaire =
+      'shared/\n  reports/ (2 files): q3-summary.html, q3-summary.pdf\n  scripts/ (1 file): export.py\n';
+
+    /**
+     * Chaque paragraphe du prompt qui dit quoi faire de ce qui existe déjà.
+     *
+     * Large exprès (revue de #640, passe 1) : une phrase qui porte un verbe de
+     * reprise ou d'adaptation ET un mot qui désigne ce qui est déjà là. Une
+     * reformulation de la règle ailleurs — « load the existing one and adapt
+     * it », « update what is already there » — doit tomber dedans, pas
+     * seulement les trois phrases d'origine. Le compte se fait par PARAGRAPHE :
+     * la règle tient en plusieurs phrases (ce qui se reprend, ce qui ne se
+     * reprend pas), et c'est un seul énoncé.
+     *
+     * Les formes HISTORIQUES de la règle (« do not re-write », « referencing
+     * the existing file », « already answers the task » — la skill obsidian
+     * d'avant #638) sont comptées aussi, même sans verbe de la liste (revue de
+     * #640, passe 3).
+     *
+     * UNE exclusion, et c'est UNE phrase, citée : celle du bloc `## Skills`
+     * sur les bundles (revue de #640, passes 2 et 3). « NEVER rebuild or
+     * re-convert something the skill already provides » n'est pas une seconde
+     * énonciation de la règle, c'en est une autre :
+     *   - son objet est le bundle d'une skill — du code, jamais un lieu de
+     *     stockage (workspace-hygiene, « Skill bundles are code, not
+     *     storage »). Aucun livrable n'y vit, elle ne peut donc pas servir le
+     *     livrable d'hier, qui est le défaut de #638 ;
+     *   - elle vaut pour tout agent qui a une skill, avec ou sans partagé ; la
+     *     fondre dans le bloc `## Shared workspace` la ferait disparaître pour
+     *     un agent sans inventaire.
+     * Le cas « skill assignée » ci-dessous vérifie qu'elle est bien là, et le
+     * test du détecteur qu'une règle de reprise de FICHIER qui nomme une skill
+     * reste comptée : l'exclusion ne cache rien d'autre.
+     */
+    const PHRASE_DES_BUNDLES = 'NEVER rebuild or re-convert something the skill already provides';
+    function phrasesDeReprise(prompt: string): string[] {
+      const verbe =
+        /\b(reus(e|ing)|re-use|updat(e|ing)|adapt(ing)?|rework(ing)?|extend(ing)?|enrich(ing)?|rebuild(ing)?|recreat(e|ing))\b|\bload\b[^.]*\badapt/i;
+      const existant = /\b(existing|already|listed)\b/i;
+      const historique = /do not re-?write|referencing the existing file|already answers the task/i;
+      return prompt
+        .split('\n')
+        .filter((paragraphe) =>
+          paragraphe
+            .split(/(?<=[.:!?])\s+/)
+            .some(
+              (phrase) =>
+                !phrase.includes(PHRASE_DES_BUNDLES) &&
+                ((verbe.test(phrase) && existant.test(phrase)) || historique.test(phrase)),
+            ),
+        );
+    }
+
+    it('le détecteur compte les formes historiques, et une règle de fichier qui nomme une skill', () => {
+      for (const phrase of [
+        'If the content already answers the task, stop there.',
+        '**DO NOT RE-WRITE**.',
+        'Reply to the user referencing the existing file.',
+        // Nommer une skill ne met pas une règle de reprise de fichier à l'abri.
+        'Before writing, reuse the existing report a skill produced last time.',
+      ]) {
+        expect(phrasesDeReprise(phrase), phrase).toHaveLength(1);
+      }
+      // La seule phrase exclue, et elle seule.
+      expect(
+        phrasesDeReprise(`NEVER reimplement a skill's logic inline, and ${PHRASE_DES_BUNDLES}.`),
+      ).toEqual([]);
+    });
+
+    const cas: Array<{
+      titre: string;
+      role: 'agent' | 'orchestrator';
+      model: string;
+      dossier: boolean;
+      skill?: boolean;
+    }> = [
+      { titre: 'agent seul', role: 'agent', model: 'claude-sonnet-4-6-20260217', dossier: false },
+      { titre: 'orchestrateur', role: 'orchestrator', model: 'z-ai/glm-5.1', dossier: false },
+      { titre: 'agent avec son dossier', role: 'agent', model: 'z-ai/glm-5.1', dossier: true },
+      {
+        titre: 'agent avec une skill assignée',
+        role: 'agent',
+        model: 'z-ai/glm-5.1',
+        dossier: false,
+        skill: true,
+      },
+    ];
+
+    for (const c of cas) {
+      it(`la règle apparaît exactement une fois — ${c.titre}`, async () => {
+        const { entityId } = await seedContext(db);
+        const [row] = await db
+          .insert(agents)
+          .values({
+            entityId,
+            name: `Reprise-${c.role}`,
+            slug: `reprise-${c.role}-${c.dossier}-${Date.now()}`,
+            personality: 'p',
+            role: c.role,
+          })
+          .returning();
+        if (c.dossier) {
+          await db.insert(agentWorkspaces).values({
+            entityId,
+            agentId: row!.id,
+            label: 'Dev',
+            path: 'C:\\Users\\kwint\\Documents\\Dev',
+          });
+        }
+        // La VRAIE skill claude-html-design (revue de #640, passe 3) : elle
+        // prescrit, pour une révision importante, de garder `Name.html` et
+        // d'écrire `Name v2.html`. La règle du prompt ne doit pas le lui
+        // interdire.
+        const htmlDesign = systemSkills.find((s) => s.slug === 'claude-html-design')!;
+        if (c.skill) {
+          const [skill] = await db
+            .insert(agentSkills)
+            .values({
+              entityId,
+              name: htmlDesign.name,
+              slug: `${htmlDesign.slug}-${Date.now()}`,
+              description: htmlDesign.description,
+              content: htmlDesign.content,
+            })
+            .returning();
+          await db
+            .insert(agentSkillAssignments)
+            .values({ entityId, agentId: row!.id, skillId: skill!.id });
+        }
+        const agent = { ...makeAgent(row!.id, entityId, 'p', c.role), model: c.model };
+        const prompt = await buildSystemPrompt(agent, db, {
+          origin: 'api',
+          workspaceInventory: inventaire,
+        } as JobContext);
+        if (c.skill) {
+          // La phrase exclue du détecteur est bien celle-là, et elle est là.
+          expect(prompt).toContain('## Skills (load before acting)');
+          expect(prompt).toMatch(
+            /NEVER rebuild or re-convert something the skill already provides/,
+          );
+        }
+
+        // Le socle est bien là : sinon « une seule fois » ne prouverait rien.
+        expect(prompt).toContain('## Workspace hygiene');
+        expect(prompt, 'le socle répète la règle dans sa propre section').not.toMatch(/### Reuse/);
+
+        const reprises = phrasesDeReprise(prompt);
+        expect(reprises, `la règle de reprise est dite ${reprises.length} fois`).toHaveLength(1);
+        const regle = reprises[0]!;
+        // Ce qui se réutilise : les moyens, nommés.
+        expect(regle).toMatch(/workflows/i);
+        expect(regle).toMatch(/scripts/i);
+        expect(regle).toMatch(/templates/i);
+        expect(regle, 'un document redevient une chose à reprendre').not.toMatch(/document/i);
+
+        // Et ce qui ne se réutilise pas : le livrable, produit pour CETTE
+        // demande, sauf si l'utilisateur désigne le fichier.
+        const bloc = prompt.slice(prompt.indexOf('## Shared workspace'));
+        expect(bloc).toMatch(/deliverable[^.]*for this request/i);
+        expect(bloc).toMatch(/existing file is the answer only when the user names it/i);
+        // Le seul critère observable de reprise d'un fichier : l'avoir
+        // commencé soi-même pendant CE job. Dit ici, une fois, pour tous les
+        // fichiers — et c'est une REPRISE, pas un versionnement.
+        expect(regle).toMatch(/file you started earlier in this job[^.]*same path/i);
+        expect(regle).toMatch(/new version[^.]*skill prescribes[^.]*not finishing/i);
+
+        // Aucune contradiction avec une skill qui versionne : toute phrase du
+        // prompt qui refuse une copie renommée porte l'exception de la version
+        // demandée — et la skill prescrit bien ce versionnement (sinon ce test
+        // ne prouverait plus rien).
+        expect(htmlDesign.content).toMatch(/create Name v2\.html/);
+        const refusDeCopie = prompt
+          .split(/(?<=[.!?])\s+|\n/)
+          .filter((p) => /renamed copy|under a new name|slightly different name/i.test(p));
+        expect(refusDeCopie.length, 'la règle ne parle plus de copie renommée').toBeGreaterThan(0);
+        for (const p of refusDeCopie) {
+          expect(p, 'une copie renommée refusée sans l’exception du versionnement').toMatch(
+            /new version[^.]*skill prescribes/i,
+          );
+        }
+      });
+    }
+
+    it('le chat, qui n’a pas l’inventaire, ne reçoit pas la règle', async () => {
+      const { entityId } = await seedContext(db);
+      const [row] = await db
+        .insert(agents)
+        .values({
+          entityId,
+          name: 'RepriseChat',
+          slug: `reprise-chat-${Date.now()}`,
+          personality: 'p',
+          role: 'orchestrator',
+        })
+        .returning();
+      const agent = { ...makeAgent(row!.id, entityId, 'p', 'orchestrator'), model: 'z-ai/glm-5.1' };
+      const prompt = await buildSystemPrompt(agent, db, {
+        origin: 'dashboard',
+        surface: 'chat',
+      } as JobContext);
+      expect(phrasesDeReprise(prompt)).toEqual([]);
+    });
   });
 
   it('un partagé VIDE garde son bloc — l’agent doit savoir qu’il est vide', async () => {
