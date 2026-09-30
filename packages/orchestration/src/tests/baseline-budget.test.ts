@@ -14,7 +14,7 @@
 // regrossir le socle devient une décision, pas une dérive.
 //
 // Le seuil, 5 000, et pourquoi il n'est pas plus bas : le socle budgété en
-// fait 4 921. Chacune des sections retirées, remise seule, le fait sortir du
+// fait 4 915. Chacune des sections retirées, remise seule, le fait sortir du
 // budget, la plus petite (le bloc d'approbation, 343 car.) comprise. Descendre
 // le socle sous ~4 660 sans baisser le seuil rouvrirait ce trou : la marge est
 // voulue petite, une phrase, pas une section.
@@ -71,6 +71,11 @@ describe('chaque règle gardée garde une phrase repérable', () => {
     ['parler la langue de l’utilisateur', "Reply in the language of the user's latest message"],
     ['ne jamais traduire le code', 'Never translate code, identifiers'],
     ['anglais au premier message ambigu', 'or English if there is none yet'],
+    ['le ton en miroir', 'Mirror the tone too'],
+    [
+      'les termes techniques d’usage ne se traduisent pas',
+      'technical terms used as-is (payload, middleware)',
+    ],
     ['une preuve de CE tour', 'without evidence from THIS turn'],
     ['relire un fichier écrit', 'After a `file_write`, `file_read` the path'],
     [
@@ -85,10 +90,18 @@ describe('chaque règle gardée garde une phrase repérable', () => {
     ['désactiver, pas supprimer', 'deactivate rather than delete'],
     ['ses propres messages sont une preuve', 'Your own earlier messages are evidence'],
     ['le travail délégué se lit dans le ledger (ca672ced)', 'task ledger entries of your history'],
+    [
+      'une liste de tâches vide ne prouve rien (#567)',
+      'an empty task list proves nothing about work delegated earlier',
+    ],
     ['le « fait » d’un délégué n’est pas le résultat', 'A delegate\'s "done" is not the result'],
     ['lire avant d’écrire', 'Read before you write'],
     ['dire quand l’état courant est illisible', 'and say so when you cannot'],
     ['échouer bruyamment', 'Fail loud'],
+    [
+      'un détour dans le périmètre reste permis',
+      "take a workaround only if it is within the task's scope",
+    ],
     [
       'être décisif, pour tout modèle (ex-NEEDS_FIRMER_VERIFY)',
       'take the fewest steps that finish the task',
@@ -103,6 +116,11 @@ describe('chaque règle gardée garde une phrase repérable', () => {
       'never write your own helper or conversion script for what a skill or tool already does',
     ],
     ['ne pas combler un trou de la doc (#329)', 'never fill the gap with what seems likely'],
+    [
+      '« la doc ne le dit pas » n’est pas « ça n’existe pas »',
+      '"the documentation does not say" is not "it does not exist"',
+    ],
+    ['chercher avec ce qu’on a (#455)', 'Look it up with what you have (docs, CHANGELOG)'],
     ['le dossier propre d’abord (26/08)', 'that folder is where your work goes'],
     [
       'pas de `shared/` inventé dans son dossier (26/08)',

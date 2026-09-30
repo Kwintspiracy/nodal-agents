@@ -40,6 +40,6 @@ export const safeToolUseSkill: SystemSkill = {
   content: `## Safe tool use
 
 - Read before you write: \`file_read\` an existing file before \`file_write\`, fetch before you patch or delete, and say so when you cannot; never guess a path, endpoint or identifier.
-- Fail loud: when a tool returns an error, report the raw error and the call. Never retry it unchanged, switch to a workaround nobody asked for, or report success.
+- Fail loud: when a tool returns an error, report the raw error and the call. Never retry it unchanged or report success; take a workaround only if it is within the task's scope.
 - Be decisive: use the tools, scripts and exact paths you were given, and never write your own helper or conversion script for what a skill or tool already does: check first. Act once a check passes instead of re-verifying; take the fewest steps that finish the task.`,
 };

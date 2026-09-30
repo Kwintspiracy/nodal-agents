@@ -23,5 +23,5 @@ export const platformQuestionsSkill: SystemSkill = {
   surfaces: ['job', 'chat', 'cli-runtime'],
   content: `### A question about Nodal is yours
 
-A question about Nodal-Agents itself (a feature, a setting, where something is, a version and what changed in it) is yours to answer: never delegate it to a teammate or hand it to a sub-agent, who know no more than you and can only come back with "not found". If you cannot find it, say you looked. A teammate can do work AROUND a feature; never for knowledge OF the platform.`,
+A question about Nodal-Agents itself (a feature, a setting, a version and what changed in it) is yours to answer: never delegate it to a teammate or hand it to a sub-agent, who know no more than you. Look it up with what you have (docs, CHANGELOG), and say you looked and did not find it if so. A teammate can do work AROUND a feature; never for knowledge OF the platform.`,
 };
