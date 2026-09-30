@@ -164,6 +164,7 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
         completedAt: agentJobs.completedAt,
         channel: agentJobs.channel,
         chatId: agentJobs.chatId,
+        chatChannel: agentJobs.chatChannel,
         agentId: agentJobs.agentId,
         entityId: agentJobs.entityId,
         task: agentJobs.task,
@@ -247,6 +248,7 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
         chatId: rootJob.chatId,
         agentId: rootJob.agentId,
         channel: rootJob.channel,
+        chatChannel: rootJob.chatChannel,
         triggerContext: rootJob.triggerContext,
       });
       if (isDeliveryRefusal(target)) {

@@ -112,6 +112,17 @@ export const agentJobs = pgTable(
     originalTask: text('original_task'),
     chatId: text('chat_id'),
     /**
+     * Le canal du chat que le DÉCLENCHEUR a désigné (#649, migration 0143) :
+     * posé là où `chat_id` est résolu contre un canal — la routine (son canal
+     * de notification, ou Telegram en « auto » : `resolveOwnerChatId` ne
+     * connaît que lui), le webhook, « Send via Telegram » du dashboard. Un
+     * chat id ne dit pas à quelle plateforme il appartient : sans ce canal, le
+     * runner le devinait (premier canal actif de l'agent) et envoyait un chat
+     * Telegram sur Discord. NULL quand la demande VIENT d'un chat (le canal est
+     * `channel`) ou qu'aucun chat n'est désigné.
+     */
+    chatChannel: text('chat_channel'),
+    /**
      * La conversation dont ce job est un tour (migration 0059, redéfinie par
      * 0094 — P6). Ce n'est plus un uuid frappé à la volée : depuis P6, la
      * valeur RÉFÉRENCE une ligne `conversations`, et l'identité d'un fil est

@@ -152,6 +152,8 @@ export interface CliRuntimeAgentRow extends Agent {
 export interface CliRuntimeJobRow {
   entityId: string | null;
   chatId: string | null;
+  /** `agent_jobs.chat_channel` — le canal du chat que le déclencheur a désigné (#649). */
+  chatChannel?: string | null;
   channel: string | null;
   conversationId: string | null;
   task: string | null;
@@ -1025,6 +1027,7 @@ export async function runCliRuntimeJob(args: {
       chatId: job.chatId,
       agentId: agentRow.id,
       channel: job.channel,
+      chatChannel: job.chatChannel,
       triggerContext: job.triggerContext,
     });
     if (isDeliveryRefusal(target)) {

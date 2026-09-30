@@ -10,6 +10,7 @@ import { getAdapter, telegramAdapter, discordAdapter, slackAdapter } from '@noda
 import type { ChannelKind } from '@nodal-agents/delivery';
 import {
   channelDeliveryFacts,
+  designatedChatChannel,
   replyDestination,
   TOOL_ONLY_DELIVERY_CHANNELS,
 } from '../../job/channel-delivery.ts';
@@ -21,11 +22,11 @@ const HOLDS_SEND = new Set(['telegram_send_message']);
 
 const facts = (
   job: { channel: string | null; chatId: string | null; parentJobId?: string | null },
-  extra: { notifyChannelOverride?: ChannelKind; activeChannels?: ChannelKind[] } = {},
+  extra: { chatChannel?: ChannelKind; activeChannels?: ChannelKind[] } = {},
 ) =>
   channelDeliveryFacts({
     job: { parentJobId: null, ...job },
-    notifyChannelOverride: extra.notifyChannelOverride,
+    chatChannel: extra.chatChannel,
     activeChannels: extra.activeChannels ?? ALL_ACTIVE,
     heldTools: HOLDS_SEND,
   });
@@ -62,14 +63,14 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
 
   it('a routine that asked for a confirmation gets the facts of the channel the tool will reach', () => {
     // An explicit notify channel wins, as in delivery-guard's defaultChannelForJob.
-    expect(facts({ channel: 'cron', chatId: '1' }, { notifyChannelOverride: 'slack' })).toEqual({
+    expect(facts({ channel: 'cron', chatId: '1' }, { chatChannel: 'slack' })).toEqual({
       channel: 'slack',
       sendTool: 'telegram_send_message',
       renders: slackAdapter.text.renders,
       reply: 'channel',
     });
-    // Left on auto: the agent's first active channel, by the same rule.
-    expect(facts({ channel: 'webhook', chatId: '1' }, { activeChannels: ['discord'] })).toEqual({
+    // A webhook left on auto records the channel its route resolved.
+    expect(facts({ channel: 'webhook', chatId: '1' }, { chatChannel: 'discord' })).toEqual({
       channel: 'discord',
       sendTool: 'telegram_send_message',
       renders: discordAdapter.text.renders,
@@ -116,14 +117,14 @@ describe('replyDestination — the answer goes back where the request came from 
   const dest = (
     job: { channel: string | null; chatId: string | null; parentJobId?: string | null },
     extra: {
-      notifyChannelOverride?: ChannelKind;
+      chatChannel?: ChannelKind;
       activeChannels?: readonly ChannelKind[];
       heldTools?: ReadonlySet<string>;
     } = {},
   ) =>
     replyDestination({
       job: { parentJobId: null, ...job },
-      notifyChannelOverride: extra.notifyChannelOverride,
+      chatChannel: extra.chatChannel,
       activeChannels: extra.activeChannels ?? ALL_ACTIVE,
       heldTools: extra.heldTools ?? HOLDS_SEND,
     });
@@ -153,18 +154,46 @@ describe('replyDestination — the answer goes back where the request came from 
   });
 
   it('a request that named a chat to answer on is answered there: routine, webhook, dashboard "send via Telegram"', () => {
-    expect(dest({ channel: 'cron', chatId: '1' }, { notifyChannelOverride: 'slack' })).toEqual({
+    expect(dest({ channel: 'cron', chatId: '1' }, { chatChannel: 'slack' })).toEqual({
       to: 'channel',
       channel: 'slack',
     });
-    expect(dest({ channel: 'webhook', chatId: '1' }, { activeChannels: ['discord'] })).toEqual({
+    expect(dest({ channel: 'webhook', chatId: '1' }, { chatChannel: 'discord' })).toEqual({
       to: 'channel',
       channel: 'discord',
     });
-    expect(dest({ channel: 'dashboard', chatId: '199791464' })).toEqual({
-      to: 'channel',
-      channel: 'telegram',
-    });
+    expect(
+      dest({ channel: 'dashboard', chatId: '199791464' }, { chatChannel: 'telegram' }),
+    ).toEqual({ to: 'channel', channel: 'telegram' });
+  });
+
+  // Revue passe 2 de #657 (bloquant) : « armé » validait le canal de REPLI
+  // (premier canal actif), pas celui du chat désigné. « Send via Telegram »
+  // ou un cron auto, jeton Telegram retiré, Discord actif : la réponse partait
+  // sur Discord avec un chat id Telegram, et se perdait.
+  it('a named chat is reached on ITS channel only: a Telegram chat with the token withdrawn and Discord active is answered by the result', () => {
+    for (const channel of ['dashboard', 'cron', 'webhook', 'api']) {
+      for (const activeChannels of [
+        ['discord'],
+        ['slack'],
+        ['discord', 'slack'],
+      ] as ChannelKind[][]) {
+        expect({
+          channel,
+          activeChannels,
+          to: dest({ channel, chatId: '199791464' }, { chatChannel: 'telegram', activeChannels }),
+        }).toEqual({ channel, activeChannels, to: { to: 'result' } });
+      }
+    }
+  });
+
+  it('a named chat whose channel nobody recorded is never guessed: the origin reads the result', () => {
+    for (const channel of ['dashboard', 'api', 'cron']) {
+      expect({ channel, to: dest({ channel, chatId: '199791464' }) }).toEqual({
+        channel,
+        to: { to: 'result' },
+      });
+    }
   });
 
   it('a delegate answers its parent, even carrying the chat it inherited', () => {
@@ -188,17 +217,32 @@ describe('replyDestination — the answer goes back where the request came from 
       extra: Parameters<typeof dest>[1];
     }> = [
       // Credential withdrawn: no channel active at all.
-      { job: { channel: 'dashboard', chatId: '199791464' }, extra: { activeChannels: [] } },
-      { job: { channel: 'api', chatId: '199791464' }, extra: { activeChannels: [] } },
-      { job: { channel: 'cron', chatId: '1' }, extra: { activeChannels: [] } },
+      {
+        job: { channel: 'dashboard', chatId: '199791464' },
+        extra: { chatChannel: 'telegram', activeChannels: [] },
+      },
+      {
+        job: { channel: 'api', chatId: '199791464' },
+        extra: { chatChannel: 'telegram', activeChannels: [] },
+      },
+      {
+        job: { channel: 'cron', chatId: '1' },
+        extra: { chatChannel: 'telegram', activeChannels: [] },
+      },
       // The routine named Slack, the agent has no enabled Slack binding.
       {
         job: { channel: 'cron', chatId: '1' },
-        extra: { notifyChannelOverride: 'slack', activeChannels: ['telegram'] },
+        extra: { chatChannel: 'slack', activeChannels: ['telegram'] },
       },
       // The credential is there, the job does not hold the send tool.
-      { job: { channel: 'webhook', chatId: '1' }, extra: { heldTools: new Set<string>() } },
-      { job: { channel: 'dashboard', chatId: '1' }, extra: { heldTools: new Set<string>() } },
+      {
+        job: { channel: 'webhook', chatId: '1' },
+        extra: { chatChannel: 'telegram', heldTools: new Set<string>() },
+      },
+      {
+        job: { channel: 'dashboard', chatId: '1' },
+        extra: { chatChannel: 'telegram', heldTools: new Set<string>() },
+      },
     ];
     for (const { job, extra } of cases) {
       expect({ job, to: dest(job, extra) }).toEqual({ job, to: { to: 'result' } });
@@ -215,5 +259,71 @@ describe('replyDestination — the answer goes back where the request came from 
         to: { to: 'channel', channel: job.channel },
       });
     }
+  });
+});
+
+// Un chat désigné porte son canal, posé là où il est désigné (revue passe 2
+// de #657) : jamais déduit du premier canal actif de l'agent.
+describe('designatedChatChannel — the channel of a chat the trigger named, as recorded (#649) @cap:parler-par-canal-externe/moteur', () => {
+  it('reads the channel recorded with the chat', () => {
+    expect(
+      designatedChatChannel({
+        channel: 'dashboard',
+        chatId: '1',
+        chatChannel: 'telegram',
+        triggerContext: null,
+      }),
+    ).toBe('telegram');
+    expect(
+      designatedChatChannel({
+        channel: 'api',
+        chatId: '1',
+        chatChannel: 'slack',
+        triggerContext: null,
+      }),
+    ).toBe('slack');
+  });
+
+  it('a routine or webhook row written before the column: the notify channel its trigger recorded', () => {
+    expect(
+      designatedChatChannel({
+        channel: 'cron',
+        chatId: '1',
+        chatChannel: null,
+        triggerContext: {
+          type: 'cron',
+          scheduleName: 's',
+          prevRunAt: null,
+          notifyChannel: 'discord',
+        },
+      }),
+    ).toBe('discord');
+  });
+
+  it('nothing recorded, no chat, or a request that came FROM a chat: no designated channel', () => {
+    expect(
+      designatedChatChannel({
+        channel: 'dashboard',
+        chatId: '1',
+        chatChannel: null,
+        triggerContext: null,
+      }),
+    ).toBeUndefined();
+    expect(
+      designatedChatChannel({
+        channel: 'cron',
+        chatId: null,
+        chatChannel: 'telegram',
+        triggerContext: null,
+      }),
+    ).toBeUndefined();
+    expect(
+      designatedChatChannel({
+        channel: 'telegram',
+        chatId: '1',
+        chatChannel: null,
+        triggerContext: null,
+      }),
+    ).toBeUndefined();
   });
 });

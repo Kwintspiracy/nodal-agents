@@ -2160,7 +2160,10 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
         status: 'pending',
         channel: 'dashboard',
         task: parsed.data.prompt,
-        ...(resolvedChatId ? { chatId: resolvedChatId } : {}),
+        // resolveOwnerChatId is Telegram's owner chat: the chat carries its
+        // channel, so the runner never infers it from the agent's active
+        // channels (#649).
+        ...(resolvedChatId ? { chatId: resolvedChatId, chatChannel: 'telegram' } : {}),
       })
       .returning({ id: agentJobs.id });
     if (!job) return fail('db_error', 'Failed to create job');
@@ -11331,7 +11334,10 @@ export async function runScheduleNowAction(
         channel: 'cron',
         task: schedule.task,
         messages: [{ role: 'user', content: schedule.task }],
-        ...(resolvedChatId ? { chatId: resolvedChatId } : {}),
+        // The channel that chat was resolved on (#649), as the cron tick does.
+        ...(resolvedChatId
+          ? { chatId: resolvedChatId, chatChannel: schedule.notifyChannel ?? 'telegram' }
+          : {}),
         scheduleId,
         triggerContext: {
           type: 'cron',

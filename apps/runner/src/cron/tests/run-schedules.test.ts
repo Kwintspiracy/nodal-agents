@@ -879,6 +879,7 @@ describe('runScheduleTick @cap:planifier-une-tache/moteur', () => {
     const jobs = await db
       .select({
         chatId: agentJobs.chatId,
+        chatChannel: agentJobs.chatChannel,
         channel: agentJobs.channel,
         triggerContext: agentJobs.triggerContext,
       })
@@ -886,6 +887,8 @@ describe('runScheduleTick @cap:planifier-une-tache/moteur', () => {
       .where(and(eq(agentJobs.agentId, seed.agentId), eq(agentJobs.task, 'notify via discord')));
     expect(jobs.length).toBeGreaterThanOrEqual(1);
     expect(jobs[0]!.chatId).toBe('discord-owner-42');
+    // The chat carries the channel it was resolved on (#649).
+    expect(jobs[0]!.chatChannel).toBe('discord');
     expect(jobs[0]!.triggerContext).toEqual({
       type: 'cron',
       scheduleName: 'Test schedule',
@@ -964,11 +967,18 @@ describe('runScheduleTick @cap:planifier-une-tache/moteur', () => {
     await runScheduleTick(db as RunnerDeps['db'], deps, 5);
 
     const jobs = await db
-      .select({ chatId: agentJobs.chatId, triggerContext: agentJobs.triggerContext })
+      .select({
+        chatId: agentJobs.chatId,
+        chatChannel: agentJobs.chatChannel,
+        triggerContext: agentJobs.triggerContext,
+      })
       .from(agentJobs)
       .where(and(eq(agentJobs.agentId, seed.agentId), eq(agentJobs.task, 'notify via auto')));
     expect(jobs.length).toBeGreaterThanOrEqual(1);
     expect(jobs[0]!.chatId).toBe('auto-owner-1');
+    // On auto, resolveOwnerChatId resolved a Telegram chat: recorded as such
+    // (#649), never left for the runner to infer from the active channels.
+    expect(jobs[0]!.chatChannel).toBe('telegram');
     expect(jobs[0]!.triggerContext).toEqual({
       type: 'cron',
       scheduleName: 'Test schedule',

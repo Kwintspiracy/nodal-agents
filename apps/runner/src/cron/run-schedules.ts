@@ -295,6 +295,9 @@ export async function runScheduleTick(
         agentId: sched.agentId,
         channel: 'cron',
         chatId: notifyChatId,
+        // The channel that chat belongs to (#649): the one it was resolved
+        // on. On auto, resolveOwnerChatId above only knows Telegram.
+        chatChannel: notifyChatId ? (sched.notifyChannel ?? 'telegram') : null,
         task: sched.task,
         status: 'pending',
         messages: [{ role: 'user', content: sched.task }],

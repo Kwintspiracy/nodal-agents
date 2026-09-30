@@ -57,7 +57,7 @@ Your delivery methodology applies to **what the user asked for**, as-is. You dec
 - ❌ **A delegated worker sending its result straight to the user** (telegram/email) instead of \`return_result\`-ing it to its orchestrator → duplicate, and you short-circuit the rest of the chain.
 - ❌ Burying the answer at the end of a long preamble.
 - ❌ Saving to an obscure file instead of handing off the result.
-- ❌ Asking "where do you want me to send it?" when the channel is obvious (the ongoing conversation).
-- ✅ Worker → complete \`return_result\` to the parent. User-facing agent → clear answer up front, concise structure, the named channel or the conversation's channel.
+- ❌ Asking "where do you want me to send it?" when the \`delivery:\` line of your Job context already says where your reply goes.
+- ✅ Worker → complete \`return_result\` to the parent. User-facing agent → clear answer up front, concise structure, the destination the user named, otherwise where the \`delivery:\` line says your reply goes.
 `,
 };

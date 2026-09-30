@@ -189,6 +189,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       task text NOT NULL,
       original_task text,
       chat_id text,
+      chat_channel text,
       conversation_id uuid,
       -- schedule_id references agent_schedules, created further below — the FK
       -- is added via ALTER TABLE right after that table exists (mirrors the

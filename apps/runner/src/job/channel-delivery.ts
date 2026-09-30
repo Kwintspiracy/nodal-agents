@@ -5,6 +5,7 @@
 import { resolveTransportChannel, textDeliveryOf } from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import type { JobContext } from '@nodal-agents/orchestration';
+import type { JobTriggerContext } from '@nodal-agents/db';
 import { CHANNEL_SEND_TOOL } from './thread-history.ts';
 
 // Channels whose ONLY path to the user is a delivery tool call (telegram_send_message,
@@ -52,13 +53,15 @@ export function triggerWantsConfirmation(job: DeliveryJob): boolean {
  *      armé, la garde le dit fort (`telegram_not_delivered`) : réussir en
  *      silence serait perdre la réponse (#4) ;
  *   2. son déclencheur a DÉSIGNÉ un chat (`chat_id` posé par une routine qui
- *      veut sa confirmation, un webhook, « Send via Telegram » du dashboard,
- *      `/api/agent`) et l'outil d'envoi de ce canal est ARMÉ pour ce job (le
- *      job le tient, l'agent a la credential du canal).
+ *      veut sa confirmation, un webhook, « Send via Telegram » du dashboard),
+ *      son canal est enregistré (`designatedChatChannel`), et l'outil d'envoi
+ *      de CE canal est ARMÉ pour ce job (le job le tient, l'agent a la
+ *      credential de ce canal).
  * - `result` : sinon. La réponse est le résultat du job, rendu là d'où vient
  *   la demande — l'appelant MCP ou API le lit, le web l'affiche, les Runs le
- *   gardent. Un chat désigné qu'aucun outil armé n'atteint (jeton retiré,
- *   liaison désactivée, outil hors liste) tombe ici : l'origine lit le
+ *   gardent. Un chat désigné qu'aucun outil armé n'atteint sur son canal (jeton
+ *   retiré, liaison désactivée, outil hors liste), ou dont la plateforme n'est
+ *   pas enregistrée, tombe ici : l'origine lit le
  *   résultat, et exiger un envoi impossible ferait échouer un travail fait
  *   sans que personne ne reçoive rien de plus (revue de #657, passe 1).
  *
@@ -76,9 +79,36 @@ export type ReplyDestination =
 
 type ReplyJob = DeliveryJob & { parentJobId: string | null };
 
+/**
+ * Le canal du chat que le DÉCLENCHEUR a désigné, tel qu'il a été enregistré —
+ * jamais déduit des canaux actifs de l'agent (revue passe 2 de #657).
+ *
+ * `agent_jobs.chat_channel` le porte, posé là où le chat est résolu (tick de
+ * routine, « Run now », route webhook, « Send via Telegram »). Une ligne de
+ * routine ou de webhook antérieure à la colonne le porte dans
+ * `triggerContext.notifyChannel`, contre lequel son `chat_id` a été résolu.
+ * `undefined` : aucun chat désigné, une demande qui VIENT d'un chat (son canal
+ * est `channel`), ou un chat dont personne n'a enregistré la plateforme — le
+ * runner ne la devine pas.
+ */
+export function designatedChatChannel(job: {
+  channel: string | null;
+  chatId: string | null;
+  chatChannel: string | null;
+  triggerContext: unknown;
+}): ChannelKind | undefined {
+  if (job.chatId == null || TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '')) return undefined;
+  if (job.chatChannel) return job.chatChannel as ChannelKind;
+  const trigger = job.triggerContext as JobTriggerContext | null;
+  return trigger?.type === 'cron' || trigger?.type === 'webhook'
+    ? (trigger.notifyChannel ?? undefined)
+    : undefined;
+}
+
 interface ReplyInputs {
   job: ReplyJob;
-  notifyChannelOverride: ChannelKind | undefined;
+  /** `designatedChatChannel(job)` : le canal du chat que le déclencheur a désigné. */
+  chatChannel: ChannelKind | undefined;
   activeChannels: readonly ChannelKind[];
   /** Les outils que le job tient (sa liste finale) : un outil d'envoi hors liste n'est pas armé. */
   heldTools: ReadonlySet<string>;
@@ -86,27 +116,30 @@ interface ReplyInputs {
 
 /**
  * Le canal que l'outil d'envoi de ce job résout quand l'agent n'en nomme pas
- * (`defaultChannelForJob`, delivery-guard.ts) : la cible choisie par la
- * routine, sinon `resolveTransportChannel`.
+ * (`defaultChannelForJob`, delivery-guard.ts) : le canal du chat désigné,
+ * sinon `resolveTransportChannel`.
  */
 function sendToolChannel(opts: ReplyInputs): ChannelKind {
-  return (
-    opts.notifyChannelOverride ?? resolveTransportChannel(opts.job.channel, opts.activeChannels)
-  );
+  return opts.chatChannel ?? resolveTransportChannel(opts.job.channel, opts.activeChannels);
 }
 
 export function replyDestination(opts: ReplyInputs): ReplyDestination {
   const { job } = opts;
   if (job.parentJobId) return { to: 'parent' };
-  const channel = sendToolChannel(opts);
   // La demande vient de ce chat : son auteur n'a que lui.
-  if (TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '')) return { to: 'channel', channel };
+  if (TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '')) {
+    return { to: 'channel', channel: job.channel as ChannelKind };
+  }
+  // Un chat désigné par le déclencheur, atteint sur SON canal : l'outil qui
+  // envoie sur ce canal est tenu ET l'agent a la credential de CE canal. Un
+  // même nom d'outil sert telegram, discord et slack : le tenir ne dit rien du
+  // canal qu'il peut atteindre, la credential le dit.
+  const channel = opts.chatChannel;
+  if (job.chatId == null || channel === undefined) return { to: 'result' };
   const sendTool = CHANNEL_SEND_TOOL[channel];
   const armed =
     sendTool !== undefined && opts.heldTools.has(sendTool) && opts.activeChannels.includes(channel);
-  // Un chat désigné par le déclencheur, qu'un outil armé atteint.
-  if (job.chatId != null && armed) return { to: 'channel', channel };
-  return { to: 'result' };
+  return armed ? { to: 'channel', channel } : { to: 'result' };
 }
 
 /**

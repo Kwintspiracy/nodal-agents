@@ -28,7 +28,8 @@
 
 import { listActiveChannelsForAgent, resolveTransportChannel } from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
-import type { AnyDrizzleDb, JobTriggerContext } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { designatedChatChannel } from '../job/channel-delivery.ts';
 
 /** Les seuls champs d'`agent_jobs` dont la résolution de cible a besoin. Un
  *  objet, pas un id : les deux appelants ont déjà la ligne en main. */
@@ -39,6 +40,8 @@ export interface DeliveryTargetJob {
   /** `agent_jobs.channel` : une ORIGINE (cron, webhook, dashboard, api…), pas
    *  un transport — d'où `resolveTransportChannel`. */
   channel: string | null;
+  /** `agent_jobs.chat_channel` : le canal du chat que le déclencheur a désigné (#649). */
+  chatChannel?: string | null;
   triggerContext: unknown;
 }
 
@@ -101,11 +104,15 @@ export async function resolveDeliveryTarget(
 
   const activeChannels = await listActiveChannelsForAgent(db, job.agentId);
 
-  const triggerContext = job.triggerContext as JobTriggerContext | null;
-  const notifyChannelOverride: ChannelKind | undefined =
-    triggerContext?.type === 'cron' || triggerContext?.type === 'webhook'
-      ? (triggerContext.notifyChannel ?? undefined)
-      : undefined;
+  // Le canal du chat que le déclencheur a désigné, tel qu'enregistré (#649) :
+  // « Send via Telegram » ou une routine en auto, jeton Telegram retiré et
+  // Discord actif, ne part plus sur Discord avec un chat id Telegram.
+  const notifyChannelOverride: ChannelKind | undefined = designatedChatChannel({
+    channel: job.channel,
+    chatId,
+    chatChannel: job.chatChannel ?? null,
+    triggerContext: job.triggerContext,
+  });
 
   if (!notifyChannelOverride && activeChannels.length === 0) {
     return { refused: 'channel_inactive' };

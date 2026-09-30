@@ -35,7 +35,7 @@ import {
   readScheduleState,
   readAgentBudgetState,
 } from '@nodal-agents/db';
-import type { ApprovalRequestRow, JobTriggerContext } from '@nodal-agents/db';
+import type { ApprovalRequestRow } from '@nodal-agents/db';
 import {
   metaToolsForAgent,
   parseRootGrants,
@@ -206,6 +206,7 @@ import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import {
   channelDeliveryFacts,
+  designatedChatChannel,
   replyDestination,
   triggerWantsConfirmation as triggerWantsConfirmationOf,
 } from './channel-delivery.ts';
@@ -1956,6 +1957,7 @@ async function runJobTracked(
       job: {
         entityId: job.entityId ?? null,
         chatId: job.chatId ?? null,
+        chatChannel: job.chatChannel ?? null,
         channel: job.channel ?? null,
         conversationId: job.conversationId ?? null,
         task: job.task ?? null,
@@ -2100,19 +2102,15 @@ async function runJobTracked(
   // the agent so it ends with a confirmation, and engage the delivery guard
   // below so the send is actually enforced.
   const triggerWantsConfirmation = triggerWantsConfirmationOf(job);
-  // B1/B2 (notify-channel-choice): a cron or webhook fire whose trigger chose
-  // an EXPLICIT notify channel carries it in triggerContext (run-schedules.ts /
-  // routes/webhook.ts) — surfaced here as the ToolContext override so every
-  // delivery-guard call this job makes (the 6 send tools AND
-  // deliver-results.ts's own return-channel pick, via its own triggerContext
-  // read) defaults to the SAME channel the chatId above was resolved against,
-  // instead of resolveTransportChannel's priority order. Undefined for every
-  // other job, and for a cron/webhook fire left on auto.
-  const jobTriggerContext = job.triggerContext as JobTriggerContext | null;
-  const notifyChannelOverride: ChannelKind | undefined =
-    jobTriggerContext?.type === 'cron' || jobTriggerContext?.type === 'webhook'
-      ? (jobTriggerContext.notifyChannel ?? undefined)
-      : undefined;
+  // The channel of the chat the TRIGGER named (#649): recorded where the chat
+  // was resolved (`chat_channel`; a routine's or webhook's notify channel on
+  // older rows), never inferred from the agent's active channels. Surfaced as
+  // the ToolContext override so every delivery-guard call this job makes (the
+  // 6 send tools AND deliver-results.ts's return-channel pick, via
+  // resolveDeliveryTarget) defaults to the SAME channel the chatId belongs to,
+  // instead of resolveTransportChannel's priority order. Undefined for a job
+  // with no named chat, or one that came from a chat (its channel is `channel`).
+  const notifyChannelOverride: ChannelKind | undefined = designatedChatChannel(job);
   const deployment = await getDeploymentContext(db, job.entityId ?? undefined);
   // Shared-workspace inventory — gives the agent sight of what already exists
   // so it reuses artifacts instead of recreating them (see workspace-inventory.ts).
@@ -2705,7 +2703,7 @@ async function runJobTracked(
   // d'une origine sans chat.
   const replyInputs = {
     job: { channel: job.channel, chatId: job.chatId, parentJobId: job.parentJobId },
-    notifyChannelOverride,
+    chatChannel: notifyChannelOverride,
     activeChannels,
     heldTools: new Set(promptTools),
   };

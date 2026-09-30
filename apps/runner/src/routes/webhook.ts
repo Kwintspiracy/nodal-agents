@@ -330,6 +330,8 @@ export async function webhookRoute(
       task,
       status: 'pending',
       chatId: notifyChatId,
+      // The channel that chat was resolved on (#649).
+      chatChannel: notifyChatId ? notifyChannel : null,
       messages: [{ role: 'user', content: task }],
       triggerContext: {
         type: 'webhook',

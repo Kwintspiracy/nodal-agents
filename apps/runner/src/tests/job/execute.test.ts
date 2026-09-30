@@ -1700,6 +1700,8 @@ describe('executeJob', () => {
         agentId: seed.agentId,
         channel: 'cron',
         chatId: '12345',
+        // What the tick writes on auto: the owner's Telegram chat (#649).
+        chatChannel: 'telegram',
         task: 'Nettoyage quotidien',
         status: 'pending',
         messages: [{ role: 'user', content: 'Nettoyage quotidien' }],
@@ -1799,7 +1801,12 @@ describe('executeJob', () => {
       .where(eq(agents.id, seed.agentId));
     try {
       const run = async (
-        values: { channel: string; chatId: string | null; triggerContext?: JobTriggerContext },
+        values: {
+          channel: string;
+          chatId: string | null;
+          chatChannel?: string;
+          triggerContext?: JobTriggerContext;
+        },
         turns: Parameters<typeof makeMockLlmClient>[0],
       ) => {
         const [job] = await db
@@ -1926,15 +1933,18 @@ describe('executeJob', () => {
       // A dashboard task sent with "send via Telegram": the requester named the
       // chat, so the reply goes there, and the delivery guard holds it to it
       // (the same rule as a routine's confirmation).
-      const dash = await run({ channel: 'dashboard', chatId: '199791464' }, [
-        { text: '277.6' },
-        {
-          toolCalls: [
-            { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: '277.6' } },
-            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
-          ],
-        },
-      ]);
+      const dash = await run(
+        { channel: 'dashboard', chatId: '199791464', chatChannel: 'telegram' },
+        [
+          { text: '277.6' },
+          {
+            toolCalls: [
+              { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: '277.6' } },
+              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+      );
       expect(
         dash.deliveryLine.startsWith(
           '- delivery: `telegram_send_message` reaches the user on telegram, the only way your replies reach them. ',
@@ -1948,12 +1958,67 @@ describe('executeJob', () => {
       // so nothing can reach the named chat. The reply is the result, and the
       // job is not failed for a send it could not make (review of #657, pass 1).
       await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
-      const unarmed = await run({ channel: 'dashboard', chatId: '199791464' }, [{ text: '277.6' }]);
-      expect(unarmed.deliveryLine).toBe('');
-      expect({ status: unarmed.row?.status, result: unarmed.row?.result }).toEqual({
-        status: 'completed',
-        result: '277.6',
+      const unarmed = await run(
+        { channel: 'dashboard', chatId: '199791464', chatChannel: 'telegram' },
+        [{ text: '277.6' }],
+      );
+      expect({
+        status: unarmed.row?.status,
+        result: unarmed.row?.result,
+        sends: sendTelegramMessageMock.mock.calls.length,
+      }).toEqual({ status: 'completed', result: '277.6', sends: 0 });
+
+      // Review of #657, pass 2 (blocker): the same Telegram chat, token still
+      // withdrawn, but a Discord binding is active. The fallback channel is now
+      // Discord and the send tool is armed for it; the named chat is still a
+      // Telegram chat. Nothing may go to Discord with a Telegram chat id: the
+      // reply is the result. The fake adapter forwards every channel into
+      // sendTelegramMessageMock, so zero calls means zero sends anywhere.
+      await db.insert(channelBindings).values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'discord',
+        credentials: JSON.stringify({ botToken: 'discord-tok' }),
+        enabled: true,
       });
+      try {
+        for (const values of [
+          { channel: 'dashboard', chatId: '199791464', chatChannel: 'telegram' },
+          // A routine left on auto: its chat is the owner's Telegram 1:1.
+          {
+            channel: 'cron',
+            chatId: '199791464',
+            chatChannel: 'telegram',
+            triggerContext: {
+              type: 'cron',
+              scheduleName: 'daily',
+              prevRunAt: null,
+              notifyChannel: null,
+            } as JobTriggerContext,
+          },
+        ]) {
+          const other = await run(values, [{ text: '277.6' }]);
+          expect({
+            channel: values.channel,
+            status: other.row?.status,
+            result: other.row?.result,
+            sends: sendTelegramMessageMock.mock.calls.length,
+            line: other.deliveryLine.includes('reaches the user on'),
+          }).toEqual({
+            channel: values.channel,
+            status: 'completed',
+            result: '277.6',
+            sends: 0,
+            line: false,
+          });
+        }
+      } finally {
+        await db
+          .delete(channelBindings)
+          .where(
+            and(eq(channelBindings.agentId, seed.agentId), eq(channelBindings.channel, 'discord')),
+          );
+      }
     } finally {
       await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
     }

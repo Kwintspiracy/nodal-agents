@@ -3594,6 +3594,8 @@ describe('runScheduleNowAction', () => {
     // notify_on_success is ON → chatId carries the resolved owner chat
     // so the runner enforces a confirmation.
     expect(insertValues?.['chatId']).toBe('12345');
+    // Auto: the owner chat resolveOwnerChatId gives is Telegram's (#649).
+    expect(insertValues?.['chatChannel']).toBe('telegram');
     expect(insertValues?.['messages']).toEqual([{ role: 'user', content: 'Summarize the inbox' }]);
 
     // A manual run must NOT reschedule the cron — no UPDATE on agent_schedules.
@@ -4815,6 +4817,8 @@ describe('sendTaskAction — Telegram delivery channel', () => {
     expect(jobValues?.['task'] as string).not.toContain('## Delivery channels');
     // chatId is set on the job row (runner will build Job context block in system_prompt)
     expect(jobValues?.['chatId']).toBe('12345');
+    // The chat carries its channel (#649): the owner's Telegram chat.
+    expect(jobValues?.['chatChannel']).toBe('telegram');
     // 'dashboard' depuis le 18/09 : la boîte écrit l'endroit d'où la demande
     // part. Avec 'api', ses tâches se mêlaient aux runs venus de dehors.
     expect(jobValues?.['channel']).toBe('dashboard');
