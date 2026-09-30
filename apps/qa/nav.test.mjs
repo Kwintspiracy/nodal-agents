@@ -22,18 +22,20 @@ const entrees = [...(bloc?.[1] ?? '').matchAll(/<(a|p)\s([^>]*)>([^<$]*)/g)]
   .filter((e) => e.libelle.length > 0);
 
 describe('la barre de gauche', () => {
-  // Six depuis le 30/09 : « Workflows », les vraies demandes jouées la nuit, se
-  // pilote comme les parcours (elle dit ce qui casse), elle n'est pas de la plomberie.
   it('sépare les six pages de pilotage de la plomberie, dans cet ordre', () => {
+    // 30/09 : « What is tested » en tête — la question qu'on pose d'abord.
+    // « Test memory » y est fondue, « Tests, overview » devient « Code coverage ».
+    // « Workflows », les vraies demandes jouées la nuit, se pilote comme les
+    // parcours (elle dit ce qui casse), elle n'est pas de la plomberie.
     expect(entrees).toEqual([
+      { genre: 'lien', ancre: 'testes', libelle: 'What is tested' },
       { genre: 'lien', ancre: 'chantiers', libelle: 'Work in flight' },
       { genre: 'lien', ancre: 'capacites', libelle: 'Capabilities' },
       { genre: 'lien', ancre: 'ecarts', libelle: 'Gaps' },
       { genre: 'lien', ancre: 'parcours', libelle: 'Journeys' },
-      { genre: 'lien', ancre: 'memoire', libelle: 'Test memory' },
       { genre: 'lien', ancre: 'workflows', libelle: 'Workflows' },
       { genre: 'rubrique', ancre: null, libelle: 'How it runs' },
-      { genre: 'lien', ancre: 'vue', libelle: 'Tests, overview' },
+      { genre: 'lien', ancre: 'vue', libelle: 'Code coverage' },
       { genre: 'lien', ancre: 'banc', libelle: 'Bench' },
       { genre: 'lien', ancre: 'ci', libelle: 'Triggers' },
       { genre: 'lien', ancre: 'historique', libelle: 'History' },
