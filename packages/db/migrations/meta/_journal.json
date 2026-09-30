@@ -974,6 +974,13 @@
       "when": 1786003200000,
       "tag": "0140_approval_card_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "7",
+      "when": 1786003300000,
+      "tag": "0141_job_inbox",
+      "breakpoints": true
     }
   ]
 }

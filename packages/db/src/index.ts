@@ -94,6 +94,13 @@ export {
   stopConversationRuns,
 } from './repos/conversation-runs.ts';
 export {
+  startConversationTurn,
+  deliverToConversationJob,
+  drainJobInbox,
+  pendingHeadsOfConversation,
+} from './repos/conversation-inbox.ts';
+export type { ConversationTurn, ConversationJobDelivery } from './repos/conversation-inbox.ts';
+export {
   withinRunScope,
   recordClaim,
   heldClaim,

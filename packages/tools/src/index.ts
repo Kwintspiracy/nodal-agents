@@ -232,6 +232,7 @@ export {
   // L'arrêt depuis une conversation (#567) — exporté pour que le runner prouve
   // qu'il atteint aussi un job servi par une CLI.
   listConversationRunsTool,
+  messageConversationRunTool,
   stopConversationRunTool,
 } from './builtin/index';
 export type {

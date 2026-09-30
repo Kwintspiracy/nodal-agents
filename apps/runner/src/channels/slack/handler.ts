@@ -40,6 +40,13 @@ export interface SlackHandleResult {
    * the runner writes no text either (invariant #2).
    */
   stop?: ChannelStopResult;
+  /**
+   * The job is a REPLY TURN (#531): the message arrived while this head of the
+   * conversation was alive. The caller acknowledges it at once with a reaction
+   * where the channel offers one (`channelTurnReaction`) — never with text
+   * (invariant #2); the reply turn answers.
+   */
+  answersWhileJobId?: string;
   skipped?:
     | 'bot_author'
     | 'no_content'
@@ -193,7 +200,10 @@ export async function handleSlackMessage(args: {
   });
   if (turn.kind === 'stop') return { stop: turn.stop };
 
-  return { jobId: turn.jobId };
+  return {
+    jobId: turn.jobId,
+    ...(turn.answersWhileJobId ? { answersWhileJobId: turn.answersWhileJobId } : {}),
+  };
 }
 
 /**

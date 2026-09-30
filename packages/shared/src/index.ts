@@ -60,5 +60,6 @@ export * from './fragment-diff';
 export * from './failure-codes';
 export * from './job-result-kind';
 export * from './runner-record';
+export * from './conversation-inbox';
 export * from './mcp-server';
 export * from './running-version';

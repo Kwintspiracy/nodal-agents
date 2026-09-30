@@ -1,40 +1,33 @@
-// run-chat-turn-running-guard.test.ts — #453 : un second `run_task` pendant
+// run-chat-turn-running-guard.test.ts — #453, #531 : un `run_task` pendant
 // qu'un travail de la MÊME conversation court.
 //
 // Conversation e0ad53f8 (23/09) : la personne précise sa demande deux fois à
 // 2,4 s d'écart ; le premier tour lance un travail, le second répond « c'est
 // exactement ce que j'ai lancé » ET relance le même travail, reformulé. Trois
-// jobs, 725 306 jetons d'entrée, pour une question. L'historique montrait bien
-// le premier job en cours : c'est le modèle qui re-déclenche par-dessus.
+// jobs, 725 306 jetons d'entrée, pour une question. Le second job ne savait
+// rien du premier.
 //
-// LE CONTRAT, générique, sur `run_task` dans le chat : tant qu'un travail lancé
-// depuis CETTE conversation court, un nouveau `run_task` est REFUSÉ au modèle,
-// qui reçoit le travail en cours (id, tâche, état) et la règle : dire qu'il est
-// déjà dessus ; un travail différent se lance quand celui-ci est fini, ou depuis
-// une nouvelle conversation. Jamais un appel jeté en silence.
+// #453 refusait le `run_task` : plus de doublon, mais la précision n'atteignait
+// jamais le travail en cours. LE CONTRAT depuis #531 (spécification de Quentin,
+// 30/09) : le `run_task` passe par le point de décision de toutes les entrées
+// (`startConversationTurn`, @nodal-agents/db) et démarre, pendant qu'une tête
+// du fil vit, un TOUR DE RÉPONSE (`answers_while_job_id`) qui voit ce qui
+// tourne et décide : transmettre, arrêter, lancer autre chose. Le message n'est
+// jamais versé d'office dans la file du travail en cours : il n'est pas présumé
+// lié.
 //
-// Il n'y a PAS d'échappatoire « en parallèle » (revue Codex, passe 3). Le champ
-// `alongside` a existé : une reformulation (« the changelog of 0.9.2 » puis
-// « the 0.9.2 release notes ») passait sous la comparaison de textes, et ce
-// champ ne reposait que sur la parole du modèle. Il est retiré (invariant #11 :
-// retirer un mécanisme plutôt qu'ajouter une branche).
+// Il n'y a PAS d'échappatoire `alongside` (revue Codex de #453, passe 3) : un
+// champ inventé par le modèle ne change rien, c'est le tour de réponse qui juge.
 //
-// Les assertions portent sur les LIGNES `agent_jobs` et sur le CORPS du second
-// appel au modèle (le tool_result du refus), jamais sur un compte d'appels.
+// Les assertions portent sur les LIGNES `agent_jobs` et `chat_messages`,
+// jamais sur un compte d'appels.
 //
-// Mutation vérifiée : la garde retirée (`runningHeads` forcé à `[]`) → « un
-// run_task pendant qu'un travail court » rougit sur le nombre de jobs (2 au
-// lieu de 1).
-// Revue Codex (P1) : la garde n'est atomique avec l'insertion que parce que
-// chaque tour passe par la file de sa conversation (`runInLane`). Mutations :
-//   - la file neutralisée (`work()` lancé sans attendre le tour précédent) →
-//     « deux tours SIMULTANÉS » rougit (2 têtes) ;
-//   - `runInLane` retiré de `routes/chat.ts` → le scan des appelants rougit en
-//     nommant le fichier.
-// Revue Codex, passe 2 : la phrase du second appel refusé gardée → « ne
-// laisse pas sa phrase je lance » rougit.
-// Revue Codex, passe 3 : un `alongside: true` honoré de nouveau → « une
-// reformulation, même avec alongside » rougit (un second job est créé).
+// Mutations vérifiées : `startConversationTurn` qui ne lit plus la tête
+// vivante → « démarre un TOUR DE RÉPONSE » rougit (le job naît « au repos ») ;
+// la file de la conversation neutralisée (`work()` lancé sans attendre le tour
+// précédent) → « deux tours SIMULTANÉS » garde deux jobs mais le second n'est
+// plus un tour de réponse ; `runInLane` retiré de `routes/chat.ts` → le scan
+// des appelants rougit en nommant le fichier.
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
@@ -151,19 +144,6 @@ function modele(scenario: readonly Etape[], captured: ModelMessage[][]): RunnerD
   };
 }
 
-/** Le texte de tous les tool_result d'un appel. */
-function toolResults(messages: readonly ModelMessage[]): string {
-  const out: string[] = [];
-  for (const m of messages) {
-    if (m.role !== 'tool' || !Array.isArray(m.content)) continue;
-    for (const p of m.content) {
-      const value = (p as { output?: { value?: unknown } }).output?.value;
-      if (typeof value === 'string') out.push(value);
-    }
-  }
-  return out.join('\n');
-}
-
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string };
 let deps: RunnerDeps;
@@ -224,11 +204,27 @@ async function conversationAvecTravail(status: string | null): Promise<void> {
   ]);
 }
 
-async function travauxDuFil(): Promise<Array<{ id: string; task: string }>> {
+async function travauxDuFil(): Promise<
+  Array<{ id: string; task: string; answersWhileJobId: string | null }>
+> {
   return db
-    .select({ id: agentJobs.id, task: agentJobs.task })
+    .select({
+      id: agentJobs.id,
+      task: agentJobs.task,
+      answersWhileJobId: agentJobs.answersWhileJobId,
+    })
     .from(agentJobs)
-    .where(and(eq(agentJobs.conversationId, conversationId), isNull(agentJobs.parentJobId)));
+    .where(and(eq(agentJobs.conversationId, conversationId), isNull(agentJobs.parentJobId)))
+    .orderBy(agentJobs.createdAt);
+}
+
+/** Les messages qui attendent dans la file d'un job (#531) : rien n'y est versé d'office. */
+async function fileDe(jobId: string): Promise<string[]> {
+  const [row] = await db
+    .select({ inbox: agentJobs.inbox })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId));
+  return (row?.inbox ?? []).map((e) => e.task);
 }
 
 beforeEach(() => {
@@ -236,15 +232,17 @@ beforeEach(() => {
   premierJob = '';
 });
 
-describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un-agent/moteur', () => {
-  it('un run_task pendant qu’un travail court est REFUSÉ au modèle : un seul job, et le refus nomme le travail', async () => {
+describe('runChatTurn — un travail du fil court déjà (#453, #531) @cap:parler-a-un-agent/moteur', () => {
+  it('un run_task pendant qu’un travail court démarre un TOUR DE RÉPONSE lié à ce travail, sans rien verser dans sa file', async () => {
     await conversationAvecTravail('processing');
     const captured: ModelMessage[][] = [];
     setActiveLlmClient(
       modele(
         [
-          { runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' } },
-          { text: 'I am already on it, the research is still running.' },
+          {
+            text: 'Je regarde ce qui tourne.',
+            runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' },
+          },
         ],
         captured,
       ),
@@ -260,36 +258,29 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
 
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.spawnedJobId).toBeUndefined();
-    expect(r.reply).toBe('I am already on it, the research is still running.');
-    // UNE ligne : le travail d'origine, et lui seul.
-    expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
-
-    // Le second appel a reçu le refus, dans le résultat de SON appel d'outil :
-    // l'id, la tâche et l'état du travail qui court, et la règle.
-    const refus = toolResults(captured[1] ?? []);
-    expect(refus).toContain(premierJob);
-    expect(refus).toContain('Find the changelog of nodal-agents 0.9.2');
-    expect(refus).toContain('processing');
-    expect(refus).toContain('once it has finished, or from a new conversation');
-    expect(refus).not.toContain('alongside');
-
-    // La réponse du tour est écrite, sans job rattaché.
+    expect(r.spawnedJobId).toBeTruthy();
+    expect(await travauxDuFil()).toEqual([
+      { id: premierJob, task: 'Find the changelog of nodal-agents 0.9.2', answersWhileJobId: null },
+      {
+        id: r.spawnedJobId,
+        task: 'Find the nodal-agents 0.9.2 changelog',
+        answersWhileJobId: premierJob,
+      },
+    ]);
+    // Rien n'est versé d'office dans le travail en cours.
+    expect(await fileDe(premierJob)).toEqual([]);
+    // La réponse du tour est écrite, rattachée au tour de réponse.
     const [dernier] = await db
       .select({ content: chatMessages.content, jobId: chatMessages.jobId })
       .from(chatMessages)
       .where(eq(chatMessages.conversationId, conversationId))
       .orderBy(chatMessages.createdAt)
       .then((rows) => rows.slice(-1));
-    expect(dernier).toEqual({
-      content: 'I am already on it, the research is still running.',
-      jobId: null,
-    });
+    expect(dernier).toEqual({ content: 'Je regarde ce qui tourne.', jobId: r.spawnedJobId });
   });
 
-  it('une REFORMULATION, même avec un `alongside: true` inventé par le modèle, est refusée : un seul job (revue Codex, passe 3)', async () => {
-    await conversationAvecTravail('processing');
-    const captured: ModelMessage[][] = [];
+  it('un `alongside: true` inventé par le modèle ne change rien : c’est un tour de réponse (revue Codex, passe 3)', async () => {
+    await conversationAvecTravail('awaiting_delegation');
     setActiveLlmClient(
       modele(
         [
@@ -297,9 +288,8 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
             text: 'Launching it alongside.',
             runTask: { instruction: 'Find the nodal-agents 0.9.2 release notes', alongside: true },
           },
-          { text: 'Already on it.' },
         ],
-        captured,
+        [],
       ),
     );
 
@@ -313,73 +303,30 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
 
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.spawnedJobId).toBeUndefined();
-    expect(r.reply).toBe('Already on it.');
-    expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
-    expect(toolResults(captured[1] ?? [])).toContain(premierJob);
+    const [, tour] = await travauxDuFil();
+    expect(tour).toEqual({
+      id: r.spawnedJobId,
+      task: 'Find the nodal-agents 0.9.2 release notes',
+      answersWhileJobId: premierJob,
+    });
   });
 
-  it('`run_task` n’offre plus de champ `alongside`, ni dans son schéma ni dans sa description', () => {
+  it('`run_task` n’offre pas de champ `alongside`, et sa description dit le tour de réponse', () => {
     const schema = CHAT_TOOLS.run_task.inputSchema as unknown as { shape: Record<string, unknown> };
     expect(Object.keys(schema.shape)).toEqual(['instruction']);
     expect(CHAT_TOOLS.run_task.description).not.toContain('alongside');
-    expect(CHAT_TOOLS.run_task.description).toContain('once it has finished');
+    expect(CHAT_TOOLS.run_task.description).toContain('starts a reply turn');
+    expect(CHAT_TOOLS.run_task.description).toContain('never assumed to be about the running job');
   });
 
-  it('après le refus, un second run_task refusé ne laisse pas sa phrase « je lance » : le modèle répond sans outil, refus en mains (revue Codex, passe 2)', async () => {
-    await conversationAvecTravail('processing');
-    const captured: ModelMessage[][] = [];
-    setActiveLlmClient(
-      modele(
-        [
-          { runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' } },
-          { text: 'Je lance l’autre tâche.', runTask: { instruction: 'Summarise it' } },
-          { text: 'The research is still running; I will summarise once it is done.' },
-        ],
-        captured,
-      ),
-    );
-
-    const r = await runChatTurn({
-      deps,
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      conversationId,
-      message: 'and summarise it',
-    });
-
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.spawnedJobId).toBeUndefined();
-    // La phrase qui annonçait un lancement n'est PAS la réponse.
-    expect(r.reply).toBe('The research is still running; I will summarise once it is done.');
-    expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
-    // Le dernier appel a vu les DEUX refus, et c'était un appel sans outils.
-    const dernier = captured[2] ?? [];
-    expect(toolResults(dernier).split('run_task refused').length - 1).toBe(2);
-    const [ecrit] = await db
-      .select({ content: chatMessages.content })
-      .from(chatMessages)
-      .where(eq(chatMessages.conversationId, conversationId))
-      .orderBy(chatMessages.createdAt)
-      .then((rows) => rows.slice(-1));
-    expect(ecrit?.content).not.toContain('Je lance');
-  });
-
-  it('une tête au statut NULL retient aussi : `NULL NOT IN (…)` n’est pas « terminé » (revue Codex, passe 4)', async () => {
-    // L'historique affiche une tête sans statut comme « still running »
-    // (`buildDispatchOutput`) ; la garde la laissait passer, parce qu'en SQL
-    // `NULL NOT IN ('completed', …)` vaut « inconnu » et exclut la ligne.
+  it('une ligne SANS statut n’est vivante pour aucun chemin : run_task lance une tête au repos (revue de #642, passe 1)', async () => {
+    // Revue Codex de #453 (passe 4) : la garde lisait `NULL` comme « en cours ».
+    // Depuis #531, « vivant » a UNE définition, `LIVE_JOB_STATUSES`, celle des
+    // faucheurs et du déclencheur de relance. Aucun écrivain ne pose de statut
+    // NULL (défaut `pending`) : ce cas n'existe que construit à la main.
     await conversationAvecTravail(null);
-    const captured: ModelMessage[][] = [];
     setActiveLlmClient(
-      modele(
-        [
-          { runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' } },
-          { text: 'Already on it.' },
-        ],
-        captured,
-      ),
+      modele([{ runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' } }], []),
     );
 
     const r = await runChatTurn({
@@ -392,22 +339,13 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
 
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.spawnedJobId).toBeUndefined();
-    expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
-    const [tete] = await db
-      .select({ status: agentJobs.status })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, premierJob));
-    expect(tete!.status).toBeNull();
-    expect(toolResults(captured[1] ?? [])).toContain(premierJob);
+    const [, tour] = await travauxDuFil();
+    expect(tour?.answersWhileJobId).toBeNull();
   });
 
-  it('un travail TERMINÉ ne retient rien : run_task lance comme avant', async () => {
+  it('un travail TERMINÉ ne retient rien : run_task lance une tête au repos, comme avant', async () => {
     await conversationAvecTravail('completed');
-    const captured: ModelMessage[][] = [];
-    setActiveLlmClient(
-      modele([{ runTask: { instruction: 'Find the 0.9.3 changelog' } }], captured),
-    );
+    setActiveLlmClient(modele([{ runTask: { instruction: 'Find the 0.9.3 changelog' } }], []));
 
     const r = await runChatTurn({
       deps,
@@ -418,18 +356,16 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
     });
 
     expect(r.ok).toBe(true);
-    expect(await travauxDuFil()).toHaveLength(2);
+    const travaux = await travauxDuFil();
+    expect(travaux).toHaveLength(2);
+    expect(travaux[1]?.answersWhileJobId).toBeNull();
   });
 
-  it('deux tours SIMULTANÉS sur le même fil, par la file des routes : UNE seule tête (revue Codex, P1)', async () => {
+  it('deux tours SIMULTANÉS sur le même fil, par la file des routes : une tête, puis un tour de réponse PENDANT elle (revue Codex, P1)', async () => {
     // Les deux entrées du chat (`routes/chat.ts`, `routes/chat-stream.ts`)
-    // passent chaque tour par `runInLane(conversationId, …)`. C'est ce qui rend
-    // la garde atomique avec l'insertion : le second tour ne lit « une tête en
-    // cours ? » qu'une fois le premier fini, job inséré compris. La même file
-    // couvre les agents à runtime CLI : elle entoure `runChatTurn` en entier,
-    // avant sa sortie vers `runCliRuntimeChatTurn`.
+    // passent chaque tour par `runInLane(conversationId, …)` : le second tour
+    // voit la tête que le premier vient de lancer, et y répond.
     await conversationAvecTravail('completed');
-    const captured: ModelMessage[][] = [];
     setActiveLlmClient(
       modele(
         [
@@ -439,9 +375,8 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
               instruction: 'Find the changelog of nodal-agents 0.9.2, i mean nodal-agents',
             },
           },
-          { text: 'Already on it.' },
         ],
-        captured,
+        [],
       ),
     );
     const tour = (message: string) =>
@@ -459,8 +394,18 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
 
     expect(a.ok && b.ok).toBe(true);
     const nouvelles = (await travauxDuFil()).filter((j) => j.id !== premierJob);
-    expect(nouvelles).toHaveLength(1);
-    expect(nouvelles[0]!.task).toBe('Find the nodal-agents 0.9.2 changelog');
+    expect(nouvelles).toEqual([
+      {
+        id: expect.any(String) as string,
+        task: 'Find the nodal-agents 0.9.2 changelog',
+        answersWhileJobId: null,
+      },
+      {
+        id: expect.any(String) as string,
+        task: 'Find the changelog of nodal-agents 0.9.2, i mean nodal-agents',
+        answersWhileJobId: nouvelles[0]!.id,
+      },
+    ]);
   });
 });
 
@@ -502,50 +447,15 @@ const relectures = (captured: readonly ModelMessage[][]): ModelMessage[][] =>
 // passe par la relecture partagée, y compris celle qui suit un run_task refusé
 // et celle de la relance sans outils. Une seule fois par tour, jamais en boucle.
 describe('runChatTurn — every final prose reply is re-read, once per turn (#600) @cap:parler-a-un-agent/moteur', () => {
-  it('the reply written after a refused run_task is re-read', async () => {
-    await conversationAvecTravail('processing');
-    const captured: ModelMessage[][] = [];
-    setActiveLlmClient(
-      modele(
-        [
-          // The reply acts at once (no re-read: it called the tool)…
-          { runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' } },
-          // …is refused; the reply after the refusal is prose…
-          { text: 'I will look it up again.' },
-          // …and that prose is re-read, which calls nothing.
-          {},
-        ],
-        captured,
-      ),
-    );
-
-    const r = await runChatTurn({
-      deps,
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      conversationId,
-      message: 'i mean nodal-agents',
-    });
-
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.reply).toBe('I will look it up again.');
-    expect(relectures(captured)).toEqual([
-      actionRecheckMessages('i mean nodal-agents', 'I will look it up again.'),
-    ]);
-    expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
-  });
-
-  it('once per turn: the prose after a refusal is not re-read a second time', async () => {
+  it('while work runs, prose that the re-read escalates starts a reply turn, re-read once only (#531)', async () => {
     await conversationAvecTravail('processing');
     const captured: ModelMessage[][] = [];
     setActiveLlmClient(
       modele(
         [
           { text: 'Launching the search.' },
-          // The re-read escalates; the call is refused (a job is running)…
+          // The re-read escalates: the call starts a reply turn (a job runs)…
           { runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' } },
-          // …and the prose after the refusal stands, not re-read again.
-          { text: 'Still on it.' },
           { runTask: { instruction: 'never reached' } },
         ],
         captured,
@@ -561,11 +471,15 @@ describe('runChatTurn — every final prose reply is re-read, once per turn (#60
     });
 
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.reply).toBe('Still on it.');
+    if (r.ok) expect(r.reply).toBe('Launching the search.');
     expect(relectures(captured)).toEqual([
       actionRecheckMessages('status?', 'Launching the search.'),
     ]);
-    expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
+    const [, tour] = await travauxDuFil();
+    expect(tour).toMatchObject({
+      task: 'Find the nodal-agents 0.9.2 changelog',
+      answersWhileJobId: premierJob,
+    });
   });
 
   it('the tool-free retry’s reply is re-read, and may escalate', async () => {

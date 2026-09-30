@@ -24,10 +24,20 @@
 
 import { basename } from 'node:path/posix';
 import { eq, and, sql, desc, count, isNull, isNotNull, ne } from '@nodal-agents/db';
-import { agentJobs, conversations, chatMessages, codeProjects } from '@nodal-agents/db';
+import {
+  agentJobs,
+  conversations,
+  chatMessages,
+  codeProjects,
+  listConversationRuns,
+} from '@nodal-agents/db';
 import { stripGroupPrefix } from '@nodal-agents/shared';
-import { REGISTERED_PROJECTS_IN_PROMPT } from '@nodal-agents/orchestration';
-import type { ConversationContext } from '@nodal-agents/orchestration';
+import {
+  REGISTERED_PROJECTS_IN_PROMPT,
+  RUNNING_WORK_MAX_JOBS,
+  RUNNING_WORK_MAX_RUNS,
+} from '@nodal-agents/orchestration';
+import type { ConversationContext, RunningWork } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
 // Le masquage d'un dossier attaché se lit dans UNE fonction, partagée avec le
 // bloc `## Runtime` et le backfill du registre : trois lecteurs, une règle.
@@ -222,6 +232,11 @@ export async function loadConversationContext(
      * demande. Absent ⇒ `openedByCommand` reste false.
      */
     task?: string | null;
+    /**
+     * Ce tour est un tour de réponse (#531), né pendant cette tête : le bloc
+     * « Work running in this conversation » est chargé. Absent ou `null` : rien.
+     */
+    answersWhileJobId?: string | null;
   } = {},
 ): Promise<ConversationContext | null> {
   const [conv] = await db
@@ -272,12 +287,58 @@ export async function loadConversationContext(
   const registeredProjects =
     currentProject || !conv.entityId ? [] : await listRegisteredProjects(db, conv.entityId);
 
+  // #531 — un tour de réponse voit ce qui tourne : les runs VIVANTS de la
+  // conversation, lus comme `list_conversation_runs` les lit (une seule
+  // définition), le sien exclu. Des faits typés, bornés.
+  const runningWork =
+    opts.answersWhileJobId && conv.entityId
+      ? await loadRunningWork(db, conv.entityId, conversationId, opts.excludeJobId)
+      : null;
+
   return {
     id: conv.id,
     priorTurns,
     openedByCommand,
     currentProject,
     ...(registeredProjects.length > 0 ? { registeredProjects } : {}),
+    ...(runningWork ? { runningWork } : {}),
+  };
+}
+
+/**
+ * Le travail en cours d'une conversation, tel qu'un tour de réponse le voit
+ * (#531) : au plus `RUNNING_WORK_MAX_RUNS` runs (les plus récents), chacun
+ * avec au plus `RUNNING_WORK_MAX_JOBS` délégués vivants. Le reste est COMPTÉ,
+ * jamais tu : `list_conversation_runs` le donne en entier.
+ */
+async function loadRunningWork(
+  db: RunnerDeps['db'],
+  entityId: string,
+  conversationId: string,
+  ownJobId: string | undefined,
+): Promise<RunningWork> {
+  const runs = await listConversationRuns(db, {
+    entityId,
+    conversationId,
+    ...(ownJobId ? { excludeHeadJobId: ownJobId } : {}),
+  });
+  const shown = runs.slice(-RUNNING_WORK_MAX_RUNS);
+  const agentOf = (jobId: string) =>
+    runs.flatMap((r) => r.liveJobs).find((j) => j.id === jobId)?.agentSlug ?? null;
+  return {
+    runs: shown.map((r) => ({
+      runId: r.headJobId,
+      agent: agentOf(r.headJobId),
+      status: r.headStatus,
+      task: r.headTask,
+      startedAt: r.startedAt ? r.startedAt.toISOString() : null,
+      delegates: r.liveJobs
+        .filter((j) => j.parentJobId !== null)
+        .slice(0, RUNNING_WORK_MAX_JOBS)
+        .map((j) => ({ jobId: j.id, agent: j.agentSlug, status: j.status, task: j.task })),
+      pendingRequests: r.pendingRequests.length,
+    })),
+    moreRuns: runs.length - shown.length,
   };
 }
 

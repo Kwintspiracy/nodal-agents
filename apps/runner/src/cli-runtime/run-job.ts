@@ -157,6 +157,11 @@ export interface CliRuntimeJobRow {
   task: string | null;
   /** `agent_jobs.trigger_context` — un déclencheur cron/webhook peut imposer le canal de notification. */
   triggerContext: unknown;
+  /**
+   * La tête vivante pendant laquelle ce job est né : un tour de réponse (#531),
+   * qui voit ce qui tourne. Absent ou `null` : une tête d'un fil au repos.
+   */
+  answersWhileJobId?: string | null;
 }
 
 /**
@@ -688,6 +693,7 @@ export async function runCliRuntimeJob(args: {
       ? await loadConversationContext(db, job.conversationId, {
           excludeJobId: jobId,
           task: job.task,
+          answersWhileJobId: job.answersWhileJobId ?? null,
         })
       : null;
     systemPrompt = await buildSystemPrompt(
