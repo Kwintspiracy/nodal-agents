@@ -86,6 +86,7 @@ import { notifyApprovalCreated } from '../../approvals/notify.ts';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
 import {
   settleApprovalCards,
+  showApprovalCard,
   APPROVAL_CARD_MAX_ATTEMPTS,
 } from '../../approvals/card-settlement.ts';
 import { runCronTick } from '../../cron/tick.ts';
@@ -969,5 +970,29 @@ describe('every write of a card goes through the card protocol @cap:approuver-un
     });
 
     expect(completedTelegramEdits).toEqual([noButtons('❌ Rejected — run_command')]);
+  });
+
+  it('showApprovalCard on a request already closed never writes the asked view — only the settled text', async () => {
+    const { approvalId } = await telegramCard();
+    await db
+      .update(approvalRequests)
+      .set({ status: 'approved', resolvedAt: new Date(), resolvedBy: 'api' })
+      .where(eq(approvalRequests.id, approvalId));
+    completedTelegramEdits.length = 0;
+
+    const shown = await showApprovalCard(
+      deps.db,
+      {
+        approvalRequestId: approvalId,
+        channel: 'telegram',
+        agentId: seed.agentId,
+        conversationId: OWNER_CHAT,
+        messageId: String(TELEGRAM_CARD_MESSAGE_ID),
+      },
+      { text: 'Sure?', buttons: [[{ label: 'Yes', callbackData: `apr:${approvalId}:wc` }]] },
+    );
+
+    expect(shown).toEqual({ outcome: 'settled' });
+    expect(completedTelegramEdits).toEqual([noButtons('✅ Approved — run_command')]);
   });
 });
