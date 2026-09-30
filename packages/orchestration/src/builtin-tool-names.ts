@@ -15,12 +15,19 @@
 // omission — an orchestrator holding command-execution was said to have no
 // shell, and had none (#636).
 //
-// Computed for a fresh, top-level job: not delegated, not a routine run, not a
-// conversation turn — the fidelity notes of resolve-agent-tools.ts apply.
+// Computed for the job placement the caller names (a routine run for the
+// routine lint), a fresh top-level job by default — the fidelity notes of
+// resolve-agent-tools.ts apply.
 
 import { eq } from '@nodal-agents/db';
 import { agents, entities, agentSkillAssignments, agentSkills } from '@nodal-agents/db';
-import { createToolRegistry, registerBuiltins, agentBuiltinToolNames } from '@nodal-agents/tools';
+import {
+  createToolRegistry,
+  registerBuiltins,
+  agentBuiltinToolNames,
+  TOP_LEVEL_JOB,
+  type JobPlacement,
+} from '@nodal-agents/tools';
 import { metaToolsForAgent, parseRootGrants } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from './types';
 
@@ -31,12 +38,14 @@ export interface BuiltinToolNames {
 }
 
 /**
- * The built-in tools a job of `agentId` receives. Throws for an unknown agent
- * (fail loud — a caller asking about an agent that does not exist has a bug).
+ * The built-in tools a job of `agentId` receives, placed as `job` says. Throws
+ * for an unknown agent (fail loud — a caller asking about an agent that does
+ * not exist has a bug).
  */
 export async function resolveBuiltinToolNames(
   db: AnyDrizzleDb,
   agentId: string,
+  job: JobPlacement = TOP_LEVEL_JOB,
 ): Promise<BuiltinToolNames> {
   const registry = createToolRegistry();
   registerBuiltins(registry);
@@ -89,7 +98,7 @@ export async function resolveBuiltinToolNames(
         scriptsAuthorized: assignedSkillRows.some((r) => r.scriptsAuthorized === true),
         filesWritable: assignedSkillRows.some((r) => r.filesWritable === true),
         metaToolNames,
-        job: { delegated: false, routine: false, inConversation: false },
+        job,
       },
       registry,
     ),

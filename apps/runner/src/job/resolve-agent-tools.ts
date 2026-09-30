@@ -63,6 +63,8 @@ import {
   createToolRegistry,
   registerBuiltins,
   withToolLoader,
+  TOP_LEVEL_JOB,
+  type JobPlacement,
   type LoadableTool,
 } from '@nodal-agents/tools';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
@@ -81,8 +83,9 @@ import { isUsableMcpToolCache } from './mcp-tool-cache.ts';
 
 /**
  * Resolve the set of tool NAMES an agent can actually call — a read-only
- * reconstruction of the whitelist executeJob would build for a fresh,
- * non-delegated job. See module doc above for fidelity caveats.
+ * reconstruction of the whitelist executeJob would build for a job placed as
+ * `job` says (a fresh top-level job by default; the routine lint passes a
+ * routine run). See module doc above for fidelity caveats.
  *
  * Throws if the agent does not exist (fail loud — a caller asking about an
  * unknown agent has a bug, not an empty-tools agent).
@@ -90,6 +93,7 @@ import { isUsableMcpToolCache } from './mcp-tool-cache.ts';
 export async function resolveAgentToolNames(
   db: AnyDrizzleDb,
   agentId: string,
+  job: JobPlacement = TOP_LEVEL_JOB,
 ): Promise<Set<string>> {
   const [agentRow] = await db.select().from(agents).where(eq(agents.id, agentId)).limit(1);
   if (!agentRow) throw new Error(`resolveAgentToolNames: agent ${agentId} not found`);
@@ -100,7 +104,7 @@ export async function resolveAgentToolNames(
   // by orchestration's resolveBuiltinToolNames. What follows adds what only
   // the runner knows how to name: delivery, connectors, MCP servers,
   // delegation tools.
-  const builtins = await resolveBuiltinToolNames(db, agentRow.id);
+  const builtins = await resolveBuiltinToolNames(db, agentRow.id, job);
   // Their definitions, for what the runner reads off them: which are
   // deferred, hence whether the job gets `load_tools` (see the end).
   const registry = createToolRegistry();

@@ -5,6 +5,7 @@ import type { z } from 'zod';
 import type { ToolDefinition, ToolRegistry } from './types';
 import { WhitelistDriftError } from './errors';
 import { ALWAYS_ON_TOOLS } from './builtin/index';
+import type { JobPlacement } from './job-placement';
 
 /**
  * What decides an agent's BUILT-IN tools: its tool groups, its authorizations,
@@ -20,14 +21,7 @@ export interface AgentBuiltinInput {
   filesWritable: boolean;
   /** Root meta-tools its grants serve (empty for a non-root agent). */
   metaToolNames: readonly string[];
-  job: {
-    /** Delegated by another job (`agent_jobs.parent_job_id` set). */
-    delegated: boolean;
-    /** Run of a routine (`agent_jobs.schedule_id` set). */
-    routine: boolean;
-    /** Turn of a conversation (`agent_jobs.conversation_id` set). */
-    inConversation: boolean;
-  };
+  job: JobPlacement;
 }
 
 /**

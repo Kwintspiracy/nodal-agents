@@ -12,6 +12,7 @@ import { resolveTimezone } from '@nodal-agents/shared';
 import type { ToolDefinition, ToolContext } from '../../types';
 import { resolveAgentId } from './link-helpers';
 import { lintRoutineTask } from './routine-lint';
+import { ROUTINE_RUN } from '../../job-placement';
 
 /** Compute the next fire time for a cron expression in a timezone, or null if invalid. */
 function computeNextRun(expr: string, tz: string): Date | null {
@@ -120,7 +121,9 @@ async function routineLintSuffix(
 ): Promise<string> {
   if (!ctx.resolveAgentToolNames) return '';
   try {
-    const availableTools = await ctx.resolveAgentToolNames(agentId);
+    // The list of the job the lint judges: a routine run, save_routine_state
+    // included (Reviewer A on #641).
+    const availableTools = await ctx.resolveAgentToolNames(agentId, ROUTINE_RUN);
     const { warnings } = lintRoutineTask(task, availableTools);
     if (warnings.length === 0) return '';
     return ` ⚠️ Routine lint: ${warnings.join(' | ')}`;

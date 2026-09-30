@@ -159,6 +159,8 @@ export {
 // Whitelist computation
 export { computeToolWhitelist, agentBuiltinToolNames } from './whitelist';
 export type { WhitelistInput, AgentBuiltinInput } from './whitelist';
+export { TOP_LEVEL_JOB, ROUTINE_RUN } from './job-placement';
+export type { JobPlacement } from './job-placement';
 
 // Built-in tools
 export {

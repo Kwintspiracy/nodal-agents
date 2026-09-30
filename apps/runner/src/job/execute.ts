@@ -84,6 +84,7 @@ import {
   computeToolWhitelist,
   executeTool,
   agentBuiltinToolNames,
+  type JobPlacement,
   createTelegramSendMessageTool,
   createSendImageTool,
   createSendFileTool,
@@ -3038,8 +3039,8 @@ async function runJobTracked(
                   provisioning: TOOL_PROVISIONING,
                   searchBackend,
                   ...(speechGenerator ? { speechGenerator } : {}),
-                  resolveAgentToolNames: (targetAgentId: string) =>
-                    resolveAgentToolNames(db, targetAgentId),
+                  resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
+                    resolveAgentToolNames(db, targetAgentId, placement),
                 },
                 {
                   approvalRules: resumeApprovalRules,
@@ -5365,7 +5366,8 @@ async function runJobTracked(
         provisioning: TOOL_PROVISIONING,
         searchBackend,
         ...(speechGenerator ? { speechGenerator } : {}),
-        resolveAgentToolNames: (targetAgentId: string) => resolveAgentToolNames(db, targetAgentId),
+        resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
+          resolveAgentToolNames(db, targetAgentId, placement),
       };
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
@@ -5682,8 +5684,8 @@ async function runJobTracked(
                 provisioning: TOOL_PROVISIONING,
                 searchBackend,
                 ...(speechGenerator ? { speechGenerator } : {}),
-                resolveAgentToolNames: (targetAgentId: string) =>
-                  resolveAgentToolNames(db, targetAgentId),
+                resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
+                  resolveAgentToolNames(db, targetAgentId, placement),
               },
               {
                 approvalRules: approvalRuleList,

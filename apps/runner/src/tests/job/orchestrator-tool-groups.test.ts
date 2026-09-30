@@ -33,6 +33,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
   agentAssignments,
   agentJobs,
+  agentSchedules,
   agentSkillAssignments,
   agentSkills,
   agentWorkspaces,
@@ -405,6 +406,94 @@ describe('the routine lint reads the same list @cap:assigner-outils/moteur', () 
     const flagged = lintRoutineTask('Every morning, call `docx_create`.', available);
     expect(flagged.warnings.join(' ')).toContain('docx_create');
   });
+
+  // The lint judges a ROUTINE: the list is the one a routine run gets,
+  // save_routine_state included (Reviewer A on #641, pass 2). Real path: the
+  // root's create_schedule, through the ToolContext the runner builds.
+  it('create_schedule does not flag save_routine_state, which every routine run holds', async () => {
+    const seeded = await seedJob(db, { model: MODEL, role: 'orchestrator', root: true });
+    const bodies = await run(seeded.jobId, [
+      {
+        calls: [
+          {
+            name: 'create_schedule',
+            args: {
+              agentSlug: seeded.agentSlug,
+              name: 'Nightly check',
+              atTimes: ['02:00'],
+              task: 'Compare with the last run, then call `save_routine_state` with what you saw.',
+              purpose: 'The owner asked for a nightly check.',
+            },
+          },
+        ],
+      },
+    ]);
+    const result = toolResults(bodies[1]!).at(-1) ?? '';
+    expect(result).toContain('Nightly check');
+    expect(result).not.toContain('Routine lint');
+  });
+});
+
+describe('the mirror follows the job it describes @cap:assigner-outils/moteur', () => {
+  /** A routine run (as run-schedules.ts creates it) or a conversation turn. */
+  async function jobIn(
+    kind: 'routine' | 'conversation',
+    role: 'agent' | 'orchestrator',
+  ): Promise<{ agentId: string; jobId: string }> {
+    const seeded = await seedJob(db, { model: MODEL, role });
+    if (role === 'orchestrator') await addTeammate(seeded.agentId, seeded.entityId);
+    if (kind === 'routine') {
+      const [sched] = await db
+        .insert(agentSchedules)
+        .values({
+          entityId: seeded.entityId,
+          agentId: seeded.agentId,
+          name: `Routine ${randomUUID().slice(0, 6)}`,
+          cronExpr: '0 2 * * *',
+          task: 'Do the nightly thing.',
+        })
+        .returning();
+      if (!sched) throw new Error('failed to seed the schedule');
+      await db
+        .update(agentJobs)
+        .set({ scheduleId: sched.id, channel: 'cron' })
+        .where(eq(agentJobs.id, seeded.jobId));
+    } else {
+      await db
+        .update(agentJobs)
+        .set({ conversationId: randomUUID() })
+        .where(eq(agentJobs.id, seeded.jobId));
+    }
+    return { agentId: seeded.agentId, jobId: seeded.jobId };
+  }
+
+  for (const role of ['agent', 'orchestrator'] as const) {
+    it(`${role}, routine run: the mirror given the routine context equals the runner`, async () => {
+      const { agentId, jobId } = await jobIn('routine', role);
+      await run(jobId, []);
+      const runner = (await jobRow(jobId)).systemPromptTools ?? [];
+      expect(runner).toContain('save_routine_state');
+      const mirror = await resolveAgentToolNames(db, agentId, {
+        delegated: false,
+        routine: true,
+        inConversation: false,
+      });
+      expect([...mirror].sort()).toEqual(runner);
+    });
+
+    it(`${role}, conversation turn: the mirror given the conversation context equals the runner`, async () => {
+      const { agentId, jobId } = await jobIn('conversation', role);
+      await run(jobId, []);
+      const runner = (await jobRow(jobId)).systemPromptTools ?? [];
+      expect(runner).toContain('stop_conversation_run');
+      const mirror = await resolveAgentToolNames(db, agentId, {
+        delegated: false,
+        routine: false,
+        inConversation: true,
+      });
+      expect([...mirror].sort()).toEqual(runner);
+    });
+  }
 });
 
 describe('a delegated orchestrator delivers nothing itself @cap:assigner-outils/moteur', () => {
