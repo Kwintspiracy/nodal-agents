@@ -81,7 +81,6 @@ type Channel = 'telegram' | 'discord' | 'slack' | 'whatsapp';
 interface Outcome {
   jobId?: string;
   stop?: ChannelStopResult;
-  answersWhileJobId?: string;
   skipped?: string;
 }
 
@@ -343,8 +342,7 @@ describe('/stop from a channel ends every run of the conversation, without a mod
       expect(result.stop).toBeUndefined();
       // A message for the agent — a reply turn answering while the running
       // work (#531), which stops nothing by itself.
-      expect(result.jobId).toBeDefined();
-      expect(result.answersWhileJobId).toBe(busy.head);
+      expect(await answersWhileOf(result.jobId!)).toBe(busy.head);
       expect(await statusOf([busy.head, busy.child])).toEqual({
         [busy.head]: 'awaiting_delegation',
         [busy.child]: 'processing',
@@ -442,6 +440,15 @@ async function headsOf(conversationId: string) {
     .orderBy(agentJobs.createdAt);
 }
 
+/** La tête vivante pendant laquelle le job `jobId` est né, lue en base (#531). */
+async function answersWhileOf(jobId: string): Promise<string | null | undefined> {
+  const [row] = await db
+    .select({ answersWhileJobId: agentJobs.answersWhileJobId })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId));
+  return row?.answersWhileJobId;
+}
+
 /** La conversation courante du fil, lue en base. */
 async function conversationsOf(channel: Channel, chatId: string): Promise<string[]> {
   const rows = await db
@@ -465,7 +472,6 @@ describe('a message sent while the work runs starts a reply turn that sees it, a
         const result = await send(channel, chatId, 'et mets-le dans le dossier partagé');
 
         expect(result.stop).toBeUndefined();
-        expect(result.answersWhileJobId).toBe(busy.head);
         expect(await headsOf(busy.conversationId)).toEqual([
           expect.objectContaining({ id: busy.head, status, answersWhileJobId: null, inbox: [] }),
           {
@@ -488,7 +494,7 @@ describe('a message sent while the work runs starts a reply turn that sees it, a
 
       const result = await send(channel, chatId, 'Tu en es où ?');
 
-      expect(result.answersWhileJobId).toBe(busy.child);
+      expect(await answersWhileOf(result.jobId!)).toBe(busy.child);
     });
 
     it('nothing runs in the thread: the message starts a head at rest, as before', async () => {
@@ -497,7 +503,6 @@ describe('a message sent while the work runs starts a reply turn that sees it, a
 
       const result = await send(channel, chatId, 'Fais-moi un portrait');
 
-      expect(result.answersWhileJobId).toBeUndefined();
       const [conversationId] = await conversationsOf(channel, chatId);
       expect(await headsOf(conversationId!)).toEqual([
         {
@@ -516,9 +521,8 @@ describe('a message sent while the work runs starts a reply turn that sees it, a
       const first = await send(channel, chatId, 'Fais-moi un portrait');
       await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, first.jobId!));
 
-      const result = await send(channel, chatId, 'Et un autre, en couleur');
+      await send(channel, chatId, 'Et un autre, en couleur');
 
-      expect(result.answersWhileJobId).toBeUndefined();
       const [conversationId] = await conversationsOf(channel, chatId);
       expect(
         (await headsOf(conversationId!)).map((h) => [h.task, h.status, h.answersWhileJobId]),
@@ -553,7 +557,6 @@ describe('a message sent while the work runs starts a reply turn that sees it, a
 
       const result = await send(channel, chatId, '/new Autre chose');
 
-      expect(result.answersWhileJobId).toBeUndefined();
       const convs = await conversationsOf(channel, chatId);
       expect(convs).toHaveLength(2);
       expect(await headsOf(convs[1]!)).toEqual([

@@ -163,8 +163,9 @@ describe('runTelegramPoller', () => {
     expect(exit.finalOffset).toBe(102);
 
     // One job per update. 'second' arrived while 'first' was still alive
-    // (pending): its job is a REPLY TURN answering while it (#531), and the
-    // message is acknowledged at once by a reaction, never by text.
+    // (pending): its job is a REPLY TURN answering while it (#531). The agent
+    // answers it; the runner sends nothing to Telegram about it, not even a
+    // reaction (Quentin, 30/09: the 👀 said nothing the reply does not).
     const jobs = await db
       .select()
       .from(agentJobs)
@@ -172,12 +173,7 @@ describe('runTelegramPoller', () => {
       .orderBy(agentJobs.createdAt);
     expect(jobs.map((j) => j.task)).toEqual(['first', 'second']);
     expect(jobs.map((j) => j.answersWhileJobId)).toEqual([null, jobs[0]!.id]);
-    expect(botApiCalls).toEqual([
-      {
-        method: 'setMessageReaction',
-        body: { chat_id: 555, message_id: 101, reaction: [{ type: 'emoji', emoji: '👀' }] },
-      },
-    ]);
+    expect(botApiCalls).toEqual([]);
 
     const [agentRow] = await db
       .select({
