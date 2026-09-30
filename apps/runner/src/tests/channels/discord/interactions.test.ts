@@ -42,19 +42,28 @@ let db: TestDb;
 let deps: RunnerDeps;
 let seed: { entityId: string; agentId: string; jobId: string };
 
-function makeAck(): DiscordInteractionAck & { ephemeralCalls: string[]; resolveCalls: string[] } {
+function makeAck(): DiscordInteractionAck & {
+  ephemeralCalls: string[];
+  resolveCalls: string[];
+  acknowledgeCalls: number;
+} {
   const ephemeralCalls: string[] = [];
   const resolveCalls: string[] = [];
-  return {
+  const ack = {
     ephemeralCalls,
     resolveCalls,
+    acknowledgeCalls: 0,
     async ephemeralReply(text: string) {
       ephemeralCalls.push(text);
     },
     async resolveCard(text: string) {
       resolveCalls.push(text);
     },
+    async acknowledge() {
+      ack.acknowledgeCalls += 1;
+    },
   };
+  return ack;
 }
 
 beforeAll(async () => {
@@ -110,7 +119,7 @@ async function insertPendingApproval(toolName = 'run_command'): Promise<string> 
 }
 
 describe('routeDiscordInteraction — approval taps (apr:)', () => {
-  it('a tap from the owner conversation resolves the approval and rewrites the card', async () => {
+  it('a tap from the owner conversation resolves the approval and acknowledges it without writing the card', async () => {
     const approvalId = await insertPendingApproval();
     const ack = makeAck();
 
@@ -125,8 +134,10 @@ describe('routeDiscordInteraction — approval taps (apr:)', () => {
     });
 
     expect(result).toMatchObject({ handled: true, kind: 'approval', decision: 'approve' });
-    expect(ack.resolveCalls).toHaveLength(1);
-    expect(ack.resolveCalls[0]).toContain('Approved');
+    // #637 — la carte est réécrite par le point de mise à jour des cartes
+    // (prouvé dans approvals/card-settlement.test.ts), pas par le handler.
+    expect(ack.acknowledgeCalls).toBe(1);
+    expect(ack.resolveCalls).toEqual([]);
     expect(ack.ephemeralCalls).toHaveLength(0);
 
     const [approval] = await db

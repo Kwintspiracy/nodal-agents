@@ -153,10 +153,14 @@ export {
   buildSystemPrompt,
   buildRuntimeBlock,
   REGISTERED_PROJECTS_IN_PROMPT,
+  RUNNING_WORK_MAX_RUNS,
+  RUNNING_WORK_MAX_JOBS,
+  buildRunningWorkBlock,
 } from './system-prompt';
 export type {
   JobContext,
   DeploymentContext,
   CodeProjectSummary,
   ConversationContext,
+  RunningWork,
 } from './system-prompt';

@@ -14,7 +14,11 @@ import { randomUUID } from 'node:crypto';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agentJobs, agentTasks, agents, approvalRequests, eq, inArray } from '@nodal-agents/db';
-import { listConversationRunsTool, stopConversationRunTool } from '../builtin/conversation-runs';
+import {
+  listConversationRunsTool,
+  messageConversationRunTool,
+  stopConversationRunTool,
+} from '../builtin/conversation-runs';
 import type { ToolContext } from '../types';
 
 let db: TestDb;
@@ -411,5 +415,85 @@ describe('a later message sees and stops the runs of its conversation @cap:parle
     await expect(listConversationRunsTool.execute({}, ctxFor(cronJob))).rejects.toThrow(
       /not a turn of a conversation/,
     );
+  });
+});
+
+// #531 — le tour de réponse (ici `caller`, né pendant que le portrait tournait)
+// transmet au travail en cours. Les lignes relues : la file du job visé.
+describe('message_conversation_run: a reply turn passes the person’s words on to the running work (#531) @cap:parler-par-canal-externe/moteur', () => {
+  async function inboxOf(jobId: string) {
+    const [row] = await db
+      .select({ inbox: agentJobs.inbox })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    return row!.inbox.map((e) => ({ task: e.task, fromJobId: e.fromJobId }));
+  }
+
+  it.each(['telegram', 'dashboard'] as const)(
+    '%s: to the head of the run, and to its delegate still working — each reads it at its next step',
+    async (channel) => {
+      const conv = await seedConversation(channel);
+
+      const toHead = await messageConversationRunTool.execute(
+        { job_id: conv.head1, message: 'Range-le dans le dossier partagé à la fin.' },
+        ctxFor(conv.caller),
+      );
+      const toDelegate = await messageConversationRunTool.execute(
+        { job_id: conv.child1, message: 'Style : encre.' },
+        ctxFor(conv.caller),
+      );
+
+      expect(toHead).toEqual({
+        delivered: true,
+        job_id: conv.head1,
+        read_when:
+          'At its next step, and before it concludes: its answer takes the message into account.',
+      });
+      expect(toDelegate.job_id).toBe(conv.child1);
+      expect(await inboxOf(conv.head1)).toEqual([
+        { task: 'Range-le dans le dossier partagé à la fin.', fromJobId: conv.caller },
+      ]);
+      expect(await inboxOf(conv.child1)).toEqual([
+        { task: 'Style : encre.', fromJobId: conv.caller },
+      ]);
+    },
+  );
+
+  it('refuses the caller’s own run, a finished job and a job of another conversation — nothing is written', async () => {
+    const conv = await seedConversation('telegram');
+    const other = await seedConversation('slack');
+    await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, conv.head1));
+
+    await expect(
+      messageConversationRunTool.execute(
+        { job_id: conv.caller, message: 'x' },
+        ctxFor(conv.caller),
+      ),
+    ).rejects.toThrow(/your own current run/);
+    await expect(
+      messageConversationRunTool.execute({ job_id: conv.head1, message: 'x' }, ctxFor(conv.caller)),
+    ).rejects.toThrow(/has already finished \(completed\); nothing was passed on/);
+    await expect(
+      messageConversationRunTool.execute(
+        { job_id: other.head1, message: 'x' },
+        ctxFor(conv.caller),
+      ),
+    ).rejects.toThrow(/is not a job of this conversation/);
+
+    for (const id of [conv.caller, conv.head1, other.head1]) expect(await inboxOf(id)).toEqual([]);
+  });
+
+  it('says honestly when a CLI-served job reads it: after its current turn', async () => {
+    const conv = await seedConversation('telegram');
+    await db.update(agents).set({ runtime: 'codex' }).where(eq(agents.id, artistAgentId));
+    try {
+      const out = await messageConversationRunTool.execute(
+        { job_id: conv.child1, message: 'Style : encre.' },
+        ctxFor(conv.caller),
+      );
+      expect(out.read_when).toMatch(/^After its current Codex turn/);
+    } finally {
+      await db.update(agents).set({ runtime: 'nodal' }).where(eq(agents.id, artistAgentId));
+    }
   });
 });

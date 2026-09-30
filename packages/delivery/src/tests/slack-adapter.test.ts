@@ -282,22 +282,36 @@ describe('slackAdapter.sendApprovalCard', () => {
 });
 
 describe('slackAdapter.editMessageText', () => {
-  it('calls chat.update with channel + ts + new text', async () => {
+  it('calls chat.update with channel + ts + new text, blocks (buttons) removed', async () => {
     vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce(fakePostMessageResult('42.1'));
 
-    await slackAdapter.editMessageText!(CREDS, CHANNEL_ID, '42.1', 'Resolved ✅');
+    const result = await slackAdapter.editMessageText!(CREDS, CHANNEL_ID, '42.1', 'Resolved ✅');
 
+    expect(result).toEqual({ ok: true });
     const [method, options] = vi.mocked(WebClient.prototype.apiCall).mock.calls[0]!;
     expect(method).toBe('chat.update');
-    expect(options).toEqual({ channel: CHANNEL_ID, ts: '42.1', text: 'Resolved ✅' });
+    expect(options).toEqual({ channel: CHANNEL_ID, ts: '42.1', text: 'Resolved ✅', blocks: [] });
   });
 
-  it('never throws — a failed edit must not undo a decision that already happened', async () => {
+  it('never throws, and RETURNS the failure — a failed edit is not a success (#637)', async () => {
     vi.mocked(WebClient.prototype.apiCall).mockRejectedValueOnce(new Error('boom'));
 
     await expect(
       slackAdapter.editMessageText!(CREDS, CHANNEL_ID, '42.1', 'Resolved ✅'),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ ok: false, error: 'boom' });
+  });
+});
+
+describe('slackAdapter.editMessageText with buttons', () => {
+  it('refuses buttons on an edit instead of sending the text alone', async () => {
+    vi.mocked(WebClient.prototype.apiCall).mockClear();
+
+    const result = await slackAdapter.editMessageText!(CREDS, CHANNEL_ID, '42.1', 'Sure?', [
+      [{ label: 'Yes', callbackData: 'apr:x:wc' }],
+    ]);
+
+    expect(result).toEqual({ ok: false, error: 'slack cannot put buttons on an edited message' });
+    expect(vi.mocked(WebClient.prototype.apiCall).mock.calls).toEqual([]);
   });
 });
 

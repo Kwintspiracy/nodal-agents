@@ -120,11 +120,17 @@ describe('runTelegramPoller', () => {
     // test deterministic.
     const controller = new AbortController();
     let getUpdatesCalls = 0;
-    fetchSpy.mockImplementation((input) => {
+    const botApiCalls: Array<{ method: string; body: unknown }> = [];
+    fetchSpy.mockImplementation((input, init) => {
       const url = String(input);
       if (url.includes('/api/worker')) {
         // triggerWorker — ignore, runner isn't really up
         return Promise.resolve(new Response('ok'));
+      }
+      const method = url.slice(url.lastIndexOf('/') + 1);
+      if (method !== 'getUpdates') {
+        botApiCalls.push({ method, body: JSON.parse(String(init?.body ?? '{}')) });
+        return Promise.resolve(fakeResponse(200, { ok: true, result: true }));
       }
       // Telegram getUpdates
       getUpdatesCalls += 1;
@@ -156,9 +162,18 @@ describe('runTelegramPoller', () => {
     expect(exit.reason).toBe('aborted');
     expect(exit.finalOffset).toBe(102);
 
-    const jobs = await db.select().from(agentJobs).where(eq(agentJobs.channel, 'telegram'));
-    expect(jobs.length).toBe(2);
-    expect(jobs.map((j) => j.task).sort()).toEqual(['first', 'second']);
+    // One job per update. 'second' arrived while 'first' was still alive
+    // (pending): its job is a REPLY TURN answering while it (#531). The agent
+    // answers it; the runner sends nothing to Telegram about it, not even a
+    // reaction (Quentin, 30/09: the 👀 said nothing the reply does not).
+    const jobs = await db
+      .select()
+      .from(agentJobs)
+      .where(eq(agentJobs.channel, 'telegram'))
+      .orderBy(agentJobs.createdAt);
+    expect(jobs.map((j) => j.task)).toEqual(['first', 'second']);
+    expect(jobs.map((j) => j.answersWhileJobId)).toEqual([null, jobs[0]!.id]);
+    expect(botApiCalls).toEqual([]);
 
     const [agentRow] = await db
       .select({

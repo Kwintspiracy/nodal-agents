@@ -1,6 +1,7 @@
 // channels/telegram.ts — sendTelegramMessage + bot config helpers via fetch
 
 import { DeliveryError } from '../errors.ts';
+import type { EditResult } from '../channel-adapter.ts';
 
 /** Timeout for admin/read Telegram API calls (getMe, getUpdates, setMyCommands…). */
 const TELEGRAM_TIMEOUT_MS = 10_000;
@@ -820,7 +821,12 @@ export async function answerTelegramCallback(
 /**
  * Edit an existing message's text (and optionally its inline keyboard). Used to
  * turn an approval card into a resolved card ("✅ Approuvé") and strip its
- * buttons so it can't be tapped twice. Best-effort: never throws.
+ * buttons so it can't be tapped twice. Never throws, but RETURNS its outcome
+ * (#637): a failed edit used to vanish, and the card-settlement point declared
+ * a card updated that was not.
+ *
+ * "message is not modified" counts as success: the message already reads the
+ * requested text (an edit whose answer was lost, retried).
  */
 export async function editTelegramMessageText(opts: {
   botToken: string;
@@ -829,7 +835,7 @@ export async function editTelegramMessageText(opts: {
   text: string;
   parseMode?: 'Markdown' | 'MarkdownV2' | 'HTML';
   inlineKeyboard?: TelegramInlineKeyboard;
-}): Promise<void> {
+}): Promise<EditResult> {
   const body: Record<string, unknown> = {
     chat_id: opts.chatId,
     message_id: opts.messageId,
@@ -840,8 +846,11 @@ export async function editTelegramMessageText(opts: {
   body['reply_markup'] = { inline_keyboard: opts.inlineKeyboard ?? [] };
   try {
     await callBotApi<unknown>(opts.botToken, 'editMessageText', body);
-  } catch {
-    /* best-effort — the resolution already happened */
+    return { ok: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    if (error.includes('message is not modified')) return { ok: true };
+    return { ok: false, error };
   }
 }
 

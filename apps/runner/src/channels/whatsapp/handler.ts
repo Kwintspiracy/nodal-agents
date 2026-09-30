@@ -183,7 +183,9 @@ export async function handleWhatsAppMessage(args: {
   });
   if (turn.kind === 'stop') return { stop: turn.stop };
 
-  return { jobId: turn.jobId };
+  return {
+    jobId: turn.jobId,
+  };
 }
 
 /**

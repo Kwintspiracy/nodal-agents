@@ -24,6 +24,7 @@ import {
   getBindingCredentials,
   decryptChannelSecret,
   resolveOwnerConversation,
+  recordApprovalCardMessage,
 } from '@nodal-agents/db';
 import {
   redactSecretsForAudit,
@@ -39,6 +40,7 @@ import {
   type QuestionCard,
   type ChannelKind,
   type ChannelCredentials,
+  type SendResult,
 } from '@nodal-agents/delivery';
 import type { ApprovalGateRequest } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../deps.ts';
@@ -108,6 +110,47 @@ export function buildQuestionCardBody(args: {
       ? 'Tap an option below, or answer from the dashboard.'
       : 'Answer from the dashboard: Approvals page.')
   );
+}
+
+/**
+ * Le texte d'une carte dont la demande est tranchée (#637) — UNE source pour
+ * tous les chemins qui réécrivent une carte : le clic sur la carte elle-même
+ * (Telegram, Discord, Slack) et le point qui met à jour les cartes quand la
+ * demande est tranchée ailleurs (`approvals/card-settlement.ts`). Les deux
+ * doivent dire la même chose de la même demande.
+ */
+export function settledApprovalCardText(args: {
+  status: string;
+  kind: string;
+  toolName: string;
+  answer: string | null;
+  /**
+   * Une règle `auto_approve` couvre désormais cet outil pour cet agent (le
+   * « Toujours autoriser » de la carte ou du web) : la carte le dit, avec la
+   * réserve du frein d'urgence quand elle s'applique. null : pas de règle.
+   */
+  standing?: { agentName: string | null; brakeEngaged: boolean } | null;
+}): string {
+  if (args.status === 'approved' && args.kind === 'question' && args.answer !== null) {
+    return `✅ Answered: ${args.answer}`;
+  }
+  if (args.status === 'approved' && args.standing) {
+    // Le frein d'urgence rend une règle auto_approve d'outil de code dormante :
+    // promettre « ne demandera plus » serait faux (invariant #4).
+    const brakeNote = args.standing.brakeEngaged
+      ? ' The workspace auto-run brake is engaged, so it will keep asking until you release it in Settings.'
+      : '';
+    return (
+      `✅ Approved — ${args.toolName} will now run without asking for ` +
+      `${args.standing.agentName ?? 'this agent'}.${brakeNote}`
+    );
+  }
+  if (args.status === 'approved') return `✅ Approved — ${args.toolName}`;
+  if (args.status === 'rejected') return `❌ Rejected — ${args.toolName}`;
+  if (args.status === 'expired') return `⌛ Expired — ${args.toolName}`;
+  // Un statut que ce texte ne connaît pas : on le dit tel quel plutôt que de
+  // laisser croire à un des trois ci-dessus.
+  return `${args.toolName}: ${args.status}`;
 }
 
 export function approvalCallbackData(approvalRequestId: string, decision: 'a' | 'r'): string {
@@ -428,6 +471,29 @@ export async function notifyApprovalCreated(
     if (!target) return;
     const { channel, credentials, conversationId } = target;
 
+    // #637 — la carte envoyée est CONSIGNÉE (canal, binding, conversation,
+    // message) : c'est ce qui permet de la réécrire quand la demande est
+    // tranchée par un autre chemin que le clic sur elle-même. Consigner n'est
+    // pas facultatif, mais un échec ici ne doit pas faire croire que la carte
+    // n'est pas partie : il est dit, avec ce qu'il coûte.
+    const record = async (sent: SendResult): Promise<void> => {
+      try {
+        await recordApprovalCardMessage(deps.db, {
+          approvalRequestId: req.approvalRequestId,
+          channel,
+          agentId: target.agentId,
+          conversationId,
+          messageId: sent.messageId,
+        });
+      } catch (err) {
+        console.warn(
+          `[approval-notify] card for ${req.approvalRequestId} was sent on ${channel} ` +
+            `(message ${sent.messageId}) but could not be recorded — it will NOT be updated ` +
+            `when the request is settled elsewhere: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    };
+
     // The acting agent (whose action is gated) names the card — NOT the bot owner.
     const [agent] = await deps.db
       .select({ name: agents.name })
@@ -463,7 +529,7 @@ export async function notifyApprovalCreated(
           options: question.options,
           callbackId: `${APPROVAL_CALLBACK_PREFIX}:${req.approvalRequestId}`,
         };
-        await adapterForKind.sendQuestionCard(credentials, conversationId, card);
+        await record(await adapterForKind.sendQuestionCard(credentials, conversationId, card));
       } else {
         // LIMITE ASSUMÉE de P10a : un canal sans boutons (WhatsApp) ne permet
         // pas de répondre en ligne. Les options sont numérotées pour que la
@@ -471,7 +537,9 @@ export async function notifyApprovalCreated(
         // un message entrant supposerait de rattacher ce message à CETTE
         // question, ce qui est un autre problème — pas un repli qu'on improvise.
         const numbered = question.options.map((o, i) => `${i + 1}. ${o}`).join('\n');
-        await adapterForKind.sendText(credentials, conversationId, `${text}\n\n${numbered}`);
+        await record(
+          await adapterForKind.sendText(credentials, conversationId, `${text}\n\n${numbered}`),
+        );
       }
       return;
     }
@@ -525,10 +593,10 @@ export async function notifyApprovalCreated(
         alwaysLabel: APPROVAL_BUTTON_LABELS.always,
         callbackId: `${APPROVAL_CALLBACK_PREFIX}:${req.approvalRequestId}`,
       };
-      await adapter.sendApprovalCard(credentials, conversationId, card);
+      await record(await adapter.sendApprovalCard(credentials, conversationId, card));
     } else {
       const text = `${body}\n\nApprove or reject from the dashboard: Approvals page.`;
-      await adapter.sendText(credentials, conversationId, text);
+      await record(await adapter.sendText(credentials, conversationId, text));
     }
   } catch (err) {
     console.warn(

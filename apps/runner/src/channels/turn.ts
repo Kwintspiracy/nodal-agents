@@ -2,6 +2,17 @@
 // sa conversation (un job), ou la commande `/stop`, que la plateforme traite
 // elle-même (#602).
 //
+// UN MESSAGE PENDANT UN TRAVAIL (#531). Chaque message insérait un job qui ne
+// savait rien du travail en cours : une précision (« et mets-le dans le dossier
+// partagé ») relançait tout. Le job naît maintenant par `startConversationTurn`
+// (@nodal-agents/db), le point de décision que le chat web appelle aussi :
+// quand une tête du fil vit, c'est un TOUR DE RÉPONSE (`answers_while_job_id`)
+// qui voit ce qui tourne et décide — répondre, transmettre au travail en cours,
+// l'arrêter, lancer autre chose. Le message n'est jamais présumé lié au travail
+// en cours, et il n'est jamais sans réponse. C'est le tour de réponse qui
+// parle : le runner ne pose rien sur le message, pas même une réaction
+// (Quentin, 30/09 — un 👀 ne disait rien que la réponse ne dise mieux).
+//
 // UN endroit pour les quatre canaux. Telegram, Discord, Slack et WhatsApp
 // portaient chacun leur copie de la même fin de parcours (`/new`, préfixe de
 // groupe, conversation, insertion du job, titrage) ; une commande de plus
@@ -24,7 +35,7 @@
 // qui a été arrêté, et l'appelant de chaque canal le dit par une réaction sur
 // le message `/stop` quand son SDK en offre une (`stopReaction`).
 
-import { agentJobs, stopConversationRuns } from '@nodal-agents/db';
+import { startConversationTurn, stopConversationRuns } from '@nodal-agents/db';
 import type { StoppedRun } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import {
@@ -85,7 +96,11 @@ export interface ChannelStopResult {
 }
 
 export type ChannelTurn =
-  | { readonly kind: 'job'; readonly jobId: string; readonly taskText: string }
+  | {
+      readonly kind: 'job';
+      readonly jobId: string;
+      readonly taskText: string;
+    }
   | { readonly kind: 'stop'; readonly stop: ChannelStopResult };
 
 /**
@@ -150,9 +165,12 @@ export async function takeChannelTurn(args: {
     ? await openNewConversation(threadKey)
     : await resolveConversation(threadKey);
 
-  const [job] = await tx
-    .insert(agentJobs)
-    .values({
+  // Tour de réponse ou tête d'un fil au repos : la décision est celle de toute
+  // entrée qui démarre du travail dans une conversation (#531).
+  const turn = await startConversationTurn(tx, {
+    entityId,
+    conversationId: conversation.id,
+    start: {
       entityId,
       agentId,
       channel,
@@ -164,21 +182,19 @@ export async function takeChannelTurn(args: {
       projectId: conversation.currentProjectId,
       status: 'pending',
       // Texte seul à l'insert ; un média entrant est attaché ensuite par
-      // l'appelant du canal, hors transaction.
+      // l'appelant du canal, hors transaction, AVANT le réveil du worker.
       messages: [{ role: 'user', content: taskText }],
-    })
-    .returning({ id: agentJobs.id });
-
-  if (!job) {
-    // Un INSERT ... RETURNING vide : la transaction de l'appelant annule tout,
-    // et le canal redélivre le message (invariant #4 : échouer fort).
-    throw new Error(`${channel}_job_insert_failed`);
-  }
+    },
+  });
 
   // La conversation est vivante, et elle prend son nom sur le premier message.
   await touchConversation(tx, conversation.id, taskText);
 
-  return { kind: 'job', jobId: job.id, taskText };
+  return {
+    kind: 'job',
+    jobId: turn.jobId,
+    taskText,
+  };
 }
 
 /**

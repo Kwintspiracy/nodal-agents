@@ -193,7 +193,9 @@ export async function handleSlackMessage(args: {
   });
   if (turn.kind === 'stop') return { stop: turn.stop };
 
-  return { jobId: turn.jobId };
+  return {
+    jobId: turn.jobId,
+  };
 }
 
 /**

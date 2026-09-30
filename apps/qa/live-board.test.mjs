@@ -290,7 +290,14 @@ describe('la page montre les deux dates, en UTC', () => {
     const app = join(bac, 'apps', 'qa');
     const data = join(app, 'data');
     mkdirSync(data, { recursive: true });
-    for (const f of ['build.mjs', 'lib.mjs', 'capacites.mjs', 'explications.mjs', 'depot.mjs']) {
+    for (const f of [
+      'build.mjs',
+      'lib.mjs',
+      'capacites.mjs',
+      'explications.mjs',
+      'depot.mjs',
+      'workflows.mjs',
+    ]) {
       cpSync(new URL(`./${f}`, import.meta.url), join(app, f));
     }
     // La VRAIE mesure committée, avec les deux seules dates changées : `build.mjs`

@@ -500,21 +500,21 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
         triggerJobWorker(createdJobId, env);
       }
 
-      // `/stop` (#602): the runs are already stopped, in the transaction that
-      // just committed. Acknowledge it with a reaction on the message — the
+      // `/stop` (#602): acknowledge it with a reaction on the message — the
       // runner writes no text (invariant #2). Network I/O, so out of the txn;
-      // a failed reaction changes nothing that was stopped, and is logged.
-      const stopMessageId = update.message?.message_id;
-      const stopChatId = update.message?.chat?.id;
-      if (stopResult && stopMessageId !== undefined && stopChatId !== undefined) {
+      // a failed reaction changes nothing, and is logged.
+      const ackMessageId = update.message?.message_id;
+      const ackChatId = update.message?.chat?.id;
+      const ack = stopResult ? stopReaction(stopResult) : null;
+      if (ack && ackMessageId !== undefined && ackChatId !== undefined) {
         await setTelegramMessageReaction({
           botToken,
-          chatId: stopChatId,
-          messageId: stopMessageId,
-          emoji: stopReaction(stopResult),
+          chatId: ackChatId,
+          messageId: ackMessageId,
+          emoji: ack,
         }).catch((err) => {
           console.warn(
-            `[telegram-poller agent=${agentId}] /stop reaction failed for chat ${stopChatId}: ${
+            `[telegram-poller agent=${agentId}] ${ack} reaction failed for chat ${ackChatId}: ${
               err instanceof Error ? err.message : String(err)
             }`,
           );
