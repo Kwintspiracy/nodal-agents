@@ -309,10 +309,6 @@ const CONNECTOR_CAPABILITY: Record<string, { label: string; setup: string }> = {
 const labelForConnector = (slug: string, name: string): string =>
   CONNECTOR_CAPABILITY[slug]?.label ?? name;
 
-/** What a catalogue connector unlocks, in a few words, or undefined when the catalogue has no label for it. */
-export const connectorCapabilityLabel = (slug: string): string | undefined =>
-  CONNECTOR_CAPABILITY[slug]?.label;
-
 export interface DiscoverabilityInput {
   /** Capability skills already assigned to this agent. */
   assignedSkillSlugs: string[];

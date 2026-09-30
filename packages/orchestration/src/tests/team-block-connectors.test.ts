@@ -4,8 +4,8 @@
 // Job 465446e7 (2026-09-29): asked to print a recipe, the root never delegated
 // to the only teammate holding the printing MCP server — its roster line read
 // "Connectors: …, hp-connector", a bare slug. The entry now carries the
-// capability, from the data alone: the catalogue label of a connector held in
-// full, otherwise the names of the tools the teammate actually holds.
+// capability, from the data alone and in one form for every connector and MCP
+// server: one name per operation or tool the teammate actually holds.
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -108,7 +108,8 @@ async function attachConnector(
 ): Promise<void> {
   const [conn] = await db
     .insert(connectors)
-    .values({ entityId: t.entityId, slug, name: slug, active: true })
+    // One name per instance: the workspace may hold several of one connector.
+    .values({ entityId: t.entityId, slug, name: uniq(slug), active: true })
     .returning();
   await db.insert(agentConnectorAssignments).values({
     agentId: t.childId,
@@ -116,6 +117,13 @@ async function attachConnector(
     entityId: t.entityId,
     enabledOperations,
   });
+}
+
+/** The adapter's own name for one of its operations. */
+function opName(connector: string, op: string): string {
+  const found = ADAPTER_REGISTRY[connector]!.operations.find((o) => o.slug === op);
+  expect(found).toBeDefined();
+  return found!.name;
 }
 
 /** The single Connectors line of a one-teammate roster, without its label. */
@@ -177,30 +185,55 @@ describe('buildTeamBlock — a Connectors entry says what the teammate can do (#
     expect(await connectorsLine(t.orchId)).toBe('eight (t1, t2, t3, t4, t5, t6, t7, t8)');
   });
 
-  it('a catalogue connector held in full reads as its capability label', async () => {
+  it('a connector held in full lists its operations by their adapter names, bounded like an MCP server', async () => {
     const t = await seedTeam();
-    await attachConnector(t, 'tavily', null);
+    await attachConnector(t, 'gmail', null);
 
-    expect(await connectorsLine(t.orchId)).toBe('tavily (Web search & page extraction)');
+    const ops = ADAPTER_REGISTRY['gmail']!.operations;
+    expect(ops.length).toBeGreaterThan(8);
+    const line = await connectorsLine(t.orchId);
+    expect(line).toBe(
+      `gmail (${ops
+        .slice(0, 8)
+        .map((o) => o.name)
+        .join(', ')}, +${ops.length - 8} more)`,
+    );
+    // No label written for the roster (invariant #1, Codex review of #653, pass 1).
+    expect(line).not.toContain('Read and send email');
   });
 
-  it('a connector held in part lists its held operations: the label speaks for the whole connector', async () => {
+  it('a connector held in part lists only the operations it holds', async () => {
     const t = await seedTeam();
     await attachConnector(t, 'gmail', ['gmail_list_messages', 'gmail_get_message']);
 
     const line = await connectorsLine(t.orchId);
-    expect(line).toBe('gmail (gmail_list_messages, gmail_get_message)');
-    // "Read and send email" would promise a send this teammate cannot do.
-    expect(line).not.toContain('send');
+    expect(line).toBe(
+      `gmail (${opName('gmail', 'gmail_list_messages')}, ${opName('gmail', 'gmail_get_message')})`,
+    );
+    expect(line.toLowerCase()).not.toContain('send');
   });
 
-  it('a connector with no catalogue label lists its operations, like an MCP server', async () => {
+  it('two instances of one connector give the union of their operations, in the adapter order', async () => {
     const t = await seedTeam();
+    await attachConnector(t, 'gmail', ['gmail_send_email']);
+    await attachConnector(t, 'gmail', ['gmail_list_messages']);
+
+    expect(await connectorsLine(t.orchId)).toBe(
+      `gmail (${opName('gmail', 'gmail_list_messages')}, ${opName('gmail', 'gmail_send_email')})`,
+    );
+  });
+
+  it('a connector operation is never named by its tool id: the reader does not hold that tool (#559)', async () => {
+    const t = await seedTeam();
+    await attachConnector(t, 'tavily', null);
     await attachConnector(t, 'cloudflare', null);
 
-    const ops = ADAPTER_REGISTRY['cloudflare']!.operations.map((o) => o.slug);
-    expect(ops.length).toBeGreaterThan(0);
-    expect(await connectorsLine(t.orchId)).toBe(`cloudflare (${ops.join(', ')})`);
+    const line = await connectorsLine(t.orchId);
+    for (const slug of ['tavily', 'cloudflare']) {
+      for (const op of ADAPTER_REGISTRY[slug]!.operations) {
+        expect(line).not.toContain(op.slug);
+      }
+    }
   });
 
   it('several entries on one line, separated so a tool list never reads as another entry', async () => {
@@ -208,8 +241,9 @@ describe('buildTeamBlock — a Connectors entry says what the teammate can do (#
     await attachConnector(t, 'tavily', null);
     await attachMcp(t, 'hp-connector', ['list_printers', 'request_print'], null);
 
+    const tavily = ADAPTER_REGISTRY['tavily']!.operations.map((o) => o.name);
     expect(await connectorsLine(t.orchId)).toBe(
-      'tavily (Web search & page extraction); hp-connector (list_printers, request_print)',
+      `tavily (${tavily.join(', ')}); hp-connector (list_printers, request_print)`,
     );
   });
 
@@ -229,11 +263,16 @@ describe('buildTeamBlock — a Connectors entry says what the teammate can do (#
     expect(await connectorsLine(t.orchId)).toBe(`opaque-srv (${names.join(', ')})`);
   });
 
-  it('the roster code carries no text of its own about any MCP server (invariant #1)', () => {
+  it('the roster code carries no text of its own about any connector or MCP server (invariant #1)', () => {
     const source = readFileSync(join(__dirname, '..', 'team-block.ts'), 'utf8');
     // The server and tools of the incident, and of the other servers of the
     // team the ticket was measured on: none may be spelled in the roster code.
+    // Nor may it read the connector labels written in code (Codex review of
+    // #653, pass 1): the entry is what the database says the teammate holds.
     for (const word of [
+      'connector_capability',
+      'connectorcapability',
+      'agent-baseline',
       'hp-connector',
       'hp_connector',
       'request_print',

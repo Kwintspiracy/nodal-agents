@@ -22,7 +22,6 @@ import { cliShellPosture, modelCanSeeImages, RUNTIME_CLI } from '@nodal-agents/s
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
 import { summarizePurpose } from './router/assign-tools';
-import { connectorCapabilityLabel } from './agent-baseline';
 import { loadWorkspaceReach, describeOutsideAgent } from './reach';
 import type { ReachMeans } from './reach';
 
@@ -328,18 +327,24 @@ export async function buildTeamBlock(
   // not: job 465446e7 was asked to print, the only teammate that could showed
   // its printing server as a slug that says nothing of printing, and nothing
   // was printed.
-  // The words come from the data alone (invariant #1): the catalogue label of
-  // a connector held in full, otherwise the names of the tools held. A label
-  // speaks for the WHOLE connector, so a teammate holding part of it gets its
-  // operations instead ("Read and send email" for a read-only Gmail would
-  // promise a send it cannot do).
+  // One form for every connector and every MCP server, and the words come from
+  // the data alone (invariant #1): what this teammate holds, one name per
+  // operation or tool. No label written for the roster, which would also speak
+  // for a whole connector the teammate may hold only in part (Codex review of
+  // #653, pass 1).
+  // A connector operation is named by its adapter's own name for it ("Web
+  // search"), not its tool id (`tavily_search`): that id is a tool of the
+  // platform, and this prompt names only the tools its reader holds (#559).
+  // An MCP tool's stored name is not a tool id here: at run time it carries
+  // the `<slug>__` prefix.
   function formatConnectorsTag(subAgentId: string): string {
     const entries: string[] = [];
     for (const [slug, held] of connectorMap.get(subAgentId) ?? []) {
-      const all = ADAPTER_REGISTRY[slug]!.operations.map((o) => o.slug);
-      const names = all.filter((n) => held.has(n));
-      const label = names.length === all.length ? connectorCapabilityLabel(slug) : undefined;
-      entries.push(`${slug} (${label ?? listHeldTools(names)})`);
+      // In the adapter's order, whichever instance gave each operation.
+      const names = ADAPTER_REGISTRY[slug]!.operations.filter((o) => held.has(o.slug)).map(
+        (o) => o.name,
+      );
+      entries.push(`${slug} (${listHeldTools(names)})`);
     }
     for (const [slug, held] of mcpMap.get(subAgentId) ?? []) {
       entries.push(`${slug} (${listHeldTools([...held])})`);
