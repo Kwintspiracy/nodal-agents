@@ -98,7 +98,7 @@ were committed.
 ## Result line
 
 `scenario`, `scenarioVersion`, `title`, `green`, `set`, `nodalVersion`
-(`apps/cli/package.json` of the stack), `stackCommit` (read from its `.git`),
+(`apps/cli/package.json` of the stack), `stackCommit` (read from its `.git`, 12 characters),
 `trigger`, `startedAt`, `verdict` (`green` / `red` / `skipped` / `error`),
 `reasons`, `durationMs` (root job created to last update of the tree),
 `firstModelReplyMs` (root job created to the first model call recorded),
