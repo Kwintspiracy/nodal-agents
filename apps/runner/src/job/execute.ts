@@ -1323,6 +1323,9 @@ export async function executeJob(
   return result;
 }
 
+/** Entre deux relectures d'une file dont un média se télécharge encore (#531). */
+const INBOX_MEDIA_POLL_MS = 500;
+
 /**
  * Réveille tout de suite la tête que la fin de ce job a pu faire naître de sa
  * file (#531, déclencheur de la migration 0141) : les messages qui y restaient
@@ -4300,13 +4303,25 @@ async function runJobTracked(
   // Un message de la personne remet la livraison à faire : sur un canal à
   // outil, ce qu'elle vient d'écrire n'a encore reçu aucune réponse, quoi que
   // le run ait envoyé avant. Le budget de rappels repart avec lui.
+  //
+  // Un message dont le canal télécharge encore le média (`preparing`) n'est lu
+  // qu'une fois complet. En haut de tour, il attend le tour suivant ; avant de
+  // CONCLURE, le run l'attend — sinon il finirait sans lui, et l'image
+  // n'arriverait qu'à la tête relancée, texte seul. L'attente est bornée : le
+  // vidage lit une entrée telle qu'elle est passé `INBOX_MEDIA_WAIT_MS`, et un
+  // run qui perd son droit d'agir ne vide plus rien.
   const lireLaFile = async (moment: 'turn_start' | 'before_final_text'): Promise<boolean> => {
-    const arrives = await drainJobInbox(db, jobId as string);
-    if (arrives.length === 0) return false;
-    messages = [...messages, ...(arrives as unknown as ModelMessage[])];
+    let lu = await drainJobInbox(db, jobId as string);
+    while (moment === 'before_final_text' && lu.messages.length === 0 && lu.preparing > 0) {
+      trace('inbox_media_wait', { turn, preparing: lu.preparing });
+      await new Promise((r) => setTimeout(r, INBOX_MEDIA_POLL_MS));
+      lu = await drainJobInbox(db, jobId as string);
+    }
+    if (lu.messages.length === 0) return false;
+    messages = [...messages, ...(lu.messages as unknown as ModelMessage[])];
     toolDelivered = false;
     redeliveryNudges = 0;
-    trace('inbox_drained', { turn, count: arrives.length, at: moment });
+    trace('inbox_drained', { turn, count: lu.messages.length, at: moment });
     return true;
   };
 

@@ -23,6 +23,18 @@
 // vivante, la retrouve terminée à l'écriture, et échoue au lieu de démarrer
 // une tête) ; le déclencheur retiré de la migration → l'ordre 2 rougit (aucune
 // tête ne naît, le message reste dans la file d'un job terminé).
+//
+// Revue de #642, passe 1 — les courses où la file N'EST PAS vide (3 à 5) :
+//   3. la fin de la tête relance sa file PENDANT qu'un message arrive : une
+//      seule tête, la relancée, qui reçoit le message. Mutation : la relecture
+//      après la lecture verrouillée retirée → rougit (le message démarre une
+//      SECONDE tête à côté de la relancée) ;
+//   4. `/stop` PENDANT cette fin : rien ne reste vivant, le message relancé est
+//      rendu comme retiré. Mutation : la descente par `relaunched_from_job_id`
+//      retirée de `cancelJobTree` → rougit (la tête relancée tourne) ;
+//   5. deux messages qui démarrent en même temps une conversation au repos :
+//      une seule tête, le second message dans sa file. Mutation : le verrou
+//      consultatif rendu propre à chaque appel → rougit (deux têtes).
 
 import { describe, it, expect, afterAll } from 'vitest';
 import { startRealPostgres, type RealPostgres } from '@nodal-agents/test-kit';
@@ -38,6 +50,7 @@ import {
   entities,
   users,
   deliverOrStartTurn,
+  stopConversationRuns,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { runMigrations } from '@nodal-agents/db/migrate';
@@ -193,6 +206,141 @@ describe('a message arriving while its head finishes is never lost @cap:parler-p
         { status: 'completed', task: 'Fais-moi un portrait', inbox: [] },
         { status: 'pending', task: FOLLOW_UP, inbox: [] },
       ]);
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+});
+
+// Revue de #642, passe 1 (Nodal Reviewer A) : les courses où la file N'EST PAS
+// vide. La fin de la tête y fait naître une tête (déclencheur) pendant qu'un
+// autre écrivain décide de la conversation.
+describe('every writer that decides a head of the conversation serializes with the others (review of #642, pass 1) @cap:parler-par-canal-externe/moteur', () => {
+  /** Une tête en cours, avec un message déjà dans sa file. */
+  async function runningHeadWithInbox(db: AnyDrizzleDb) {
+    const running = await runningHead(db);
+    const first = await deliverOrStartTurn(db, {
+      entityId: seed.entityId,
+      conversationId: running.conversationId,
+      message: { task: 'en PNG', content: 'en PNG' },
+      start: {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        conversationId: running.conversationId,
+        task: 'en PNG',
+      },
+    });
+    expect(first).toMatchObject({ kind: 'delivered', headJobId: running.head });
+    return running;
+  }
+
+  async function liveHeads(db: AnyDrizzleDb, conversationId: string) {
+    const rows = await heads(db, conversationId);
+    return rows.filter((r) => r.status !== 'completed' && r.status !== 'cancelled');
+  }
+
+  it('3. a message arriving while the head finishes WITH a waiting message: ONE head, the relaunched one, which gets the message', async () => {
+    const a = createClient(harness().url, { max: 1 });
+    const b = createClient(harness().url, { max: 1 });
+    try {
+      const { conversationId, head } = await runningHeadWithInbox(a.db as unknown as AnyDrizzleDb);
+      // A : la fin du run, tenue HOLD_MS ; le déclencheur a fait naître N.
+      const finish = a.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`UPDATE agent_jobs SET status = 'completed', updated_at = now() WHERE id = ${head}`,
+        );
+        await sleep(HOLD_MS);
+      });
+      await sleep(150);
+      const turn = await deliver(b.db as unknown as AnyDrizzleDb, conversationId);
+      await finish;
+
+      const live = await liveHeads(a.db as unknown as AnyDrizzleDb, conversationId);
+      expect(live).toHaveLength(1);
+      expect(live[0]).toMatchObject({ status: 'pending', task: 'en PNG' });
+      expect(live[0]!.inbox.map((e) => e.task)).toEqual([FOLLOW_UP]);
+      expect(turn).toEqual({
+        kind: 'delivered',
+        headJobId: live[0]!.id,
+        entryId: expect.any(String) as string,
+      });
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+
+  it('4. /stop while the head finishes WITH a waiting message: nothing is left running, and the message is reported discarded', async () => {
+    const a = createClient(harness().url, { max: 1 });
+    const b = createClient(harness().url, { max: 1 });
+    try {
+      const { conversationId, head } = await runningHeadWithInbox(a.db as unknown as AnyDrizzleDb);
+      const finish = a.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`UPDATE agent_jobs SET status = 'completed', updated_at = now() WHERE id = ${head}`,
+        );
+        await sleep(HOLD_MS);
+      });
+      await sleep(150);
+      const stopped = await stopConversationRuns(b.db as unknown as AnyDrizzleDb, {
+        entityId: seed.entityId,
+        conversationId,
+      });
+      await finish;
+
+      expect(await liveHeads(a.db as unknown as AnyDrizzleDb, conversationId)).toEqual([]);
+      expect(stopped.stopped.flatMap((r) => r.discardedMessages.map((m) => m.task))).toEqual([
+        'en PNG',
+      ]);
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+
+  it('5. two messages starting work at the same time on an idle conversation: ONE head, the second message in its inbox', async () => {
+    const a = createClient(harness().url, { max: 1 });
+    const b = createClient(harness().url, { max: 1 });
+    try {
+      const [conv] = await a.db
+        .insert(conversations)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '7',
+        })
+        .returning({ id: conversations.id });
+      const conversationId = conv!.id;
+      // A : le premier message démarre une tête, commit retenu HOLD_MS.
+      let firstTurn: Awaited<ReturnType<typeof deliver>> | null = null;
+      const first = a.db.transaction(async (tx) => {
+        firstTurn = await deliverOrStartTurn(tx as unknown as AnyDrizzleDb, {
+          entityId: seed.entityId,
+          conversationId,
+          message: { task: 'Fais-moi un portrait', content: 'Fais-moi un portrait' },
+          start: {
+            entityId: seed.entityId,
+            agentId: seed.agentId,
+            channel: 'telegram',
+            conversationId,
+            status: 'pending',
+            task: 'Fais-moi un portrait',
+          },
+        });
+        await sleep(HOLD_MS);
+      });
+      await sleep(150);
+      const second = await deliver(b.db as unknown as AnyDrizzleDb, conversationId);
+      await first;
+
+      expect(firstTurn).toMatchObject({ kind: 'started' });
+      const live = await liveHeads(a.db as unknown as AnyDrizzleDb, conversationId);
+      expect(live.map((h) => h.task)).toEqual(['Fais-moi un portrait']);
+      expect(live[0]!.inbox.map((e) => e.task)).toEqual([FOLLOW_UP]);
+      expect(second).toMatchObject({ kind: 'delivered', headJobId: live[0]!.id });
     } finally {
       await a.close();
       await b.close();

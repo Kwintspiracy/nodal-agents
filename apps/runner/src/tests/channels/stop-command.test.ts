@@ -24,7 +24,9 @@
 // neutralisée) → « delivers it to the running work » rougit sur les quatre
 // canaux et les quatre états (un second job naît, la file reste vide) ; la
 // file non vidée par `cancelJobTree` → « `/stop` after a delivery » rougit
-// sur les quatre canaux (une tête naît de l'arrêt).
+// sur les quatre canaux (une tête naît de l'arrêt) ; `awaitsMedia` ignoré par
+// `takeChannelTurn` → « a message carrying an image » rougit (Telegram et
+// Discord : l'entrée serait lue avant son image).
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -543,6 +545,80 @@ describe('one head job per conversation: a message sent while its work runs goes
     });
   });
 });
+
+describe('a message carrying an image, sent while the work runs, waits in the inbox until its image is attached (review of #642, pass 1) @cap:parler-par-canal-externe/moteur', () => {
+  it('on telegram: the photo message is delivered as preparing, with the media target of its entry', async () => {
+    const chatId = chat('telegram');
+    await allow('telegram', chatId);
+    const busy = await busyThread('telegram', chatId);
+
+    const result = await handleTelegramUpdate({
+      update: {
+        update_id: 1,
+        message: {
+          message_id: 44,
+          chat: { id: Number(chatId), type: 'private' },
+          from: { id: 7, first_name: 'Alice', is_bot: false },
+          caption: 'dans ce style',
+          photo: [{ file_id: 'large', width: 1280, height: 1280 }],
+        },
+      } as TelegramUpdate,
+      receivingAgentId: agentId,
+      receivingAgentEntityId: entityId,
+      receivingAgentBotUsername: BOT,
+      tx: tx(),
+    });
+
+    expect(result.delivered?.headJobId).toBe(busy.head);
+    expect(result.photo?.target).toEqual({
+      kind: 'inbox',
+      entityId,
+      headJobId: busy.head,
+      entryId: result.delivered?.entryId,
+    });
+    expect(await inboxPreparing(busy.head)).toEqual([['dans ce style', true]]);
+  });
+
+  it('on discord: the image message is delivered as preparing, a text-only one is not', async () => {
+    const chatId = chat('discord');
+    await allow('discord', chatId);
+    const busy = await busyThread('discord', chatId);
+    const discordMessage = (content: string, withImage: boolean) =>
+      handleDiscordMessage({
+        message: {
+          channelId: chatId,
+          channelType: 'dm',
+          content,
+          author: { id: 'u1', bot: false, username: 'alice', globalName: 'Alice' },
+          mentionedUserIds: [],
+          attachments: withImage
+            ? [{ url: 'https://cdn.test/x.png', contentType: 'image/png', size: 10, name: 'x.png' }]
+            : [],
+        },
+        receivingAgentId: agentId,
+        receivingAgentEntityId: entityId,
+        receivingAgentBotUserId: 'bot-1',
+        tx: tx(),
+      });
+
+    const withImage = await discordMessage('dans ce style', true);
+    await discordMessage('et en couleur', false);
+
+    expect(withImage.attachment?.target).toMatchObject({ kind: 'inbox', headJobId: busy.head });
+    expect(await inboxPreparing(busy.head)).toEqual([
+      ['dans ce style', true],
+      ['et en couleur', undefined],
+    ]);
+  });
+});
+
+async function inboxPreparing(jobId: string): Promise<Array<[string, boolean | undefined]>> {
+  const [row] = await db
+    .select({ inbox: agentJobs.inbox })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId));
+  return (row?.inbox ?? []).map((e) => [e.task, e.preparing]);
+}
 
 describe('parseStopCommand', () => {
   it('is the command alone, optionally addressed to this bot', () => {

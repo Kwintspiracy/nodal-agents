@@ -21,11 +21,16 @@
 //   - la tête cherchée sans `notTerminal()` → « une tête TERMINÉE ne retient
 //     rien » rougit (le message part dans la file d'un job fini) ;
 //   - `inbox` non vidé par `cancelJobTree` → « l'arrêt vide la file » rougit
-//     (une tête naît de l'arrêt).
+//     (une tête naît de l'arrêt) ;
+//   - (revue de #642, passe 1) la descente par `relaunched_from_job_id`
+//     retirée → « stopping a head that has just finished » rougit ; le vidage
+//     qui lit aussi les entrées en préparation → « while the photo downloads »
+//     rougit ; une ligne NULL tenue pour vivante → « a row WITHOUT a status »
+//     rougit.
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { and, asc, eq, isNull } from 'drizzle-orm';
-import { isInboxMessage } from '@nodal-agents/shared';
+import { INBOX_MEDIA_WAIT_MS, isInboxMessage } from '@nodal-agents/shared';
 import { spinUpTestDb, seedMinimal } from './helpers.ts';
 import type { TestDb } from './helpers.ts';
 import { agentJobs, codeProjects, conversations } from '../schema/index.ts';
@@ -34,6 +39,7 @@ import {
   deliverOrStartTurn,
   drainJobInbox,
   pendingHeadsOfConversation,
+  releaseInboxEntry,
 } from '../repos/conversation-inbox.ts';
 import { cancelJobTree } from '../repos/conversation-runs.ts';
 import { recordClaim, withinRunScope } from '../repos/run-claim.ts';
@@ -146,7 +152,7 @@ describe('deliverOrStartTurn — one head job per conversation @cap:parler-par-c
     });
   });
 
-  it.each(['pending', 'processing', 'awaiting_approval', 'awaiting_delegation', null])(
+  it.each(['pending', 'processing', 'awaiting_approval', 'awaiting_delegation'])(
     'a head that is %s receives the message in its inbox: no second job',
     async (status) => {
       const running = await head(status);
@@ -185,6 +191,15 @@ describe('deliverOrStartTurn — one head job per conversation @cap:parler-par-c
       expect(heads.find((h) => h.id === done)!.inbox).toEqual([]);
     },
   );
+
+  it('a row WITHOUT a status is alive for no path (no writer sets one): the message starts a job (review of #642, pass 1)', async () => {
+    // La définition de « vivant » est celle des faucheurs et du déclencheur
+    // (`LIVE_JOB_STATUSES`) : une ligne NULL n'est ni fauchée, ni relancée —
+    // lui remettre un message l'y enfermerait.
+    await head(null);
+
+    expect((await send('Fais-moi un portrait')).kind).toBe('started');
+  });
 
   it('a live DELEGATE under a finished head is not a head: the message starts a job', async () => {
     const done = await head('failed');
@@ -289,27 +304,56 @@ describe('the stop the person asks for empties the inbox without relaunching it 
       { id: running, status: 'cancelled', inbox: [] },
     ]);
   });
+
+  it('stopping a head that has just finished also stops the head its inbox relaunched: the same work (review of #642, pass 1)', async () => {
+    const running = await head('processing');
+    await send('et mets-le dans le dossier partagé');
+    await send('en PNG');
+    await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, running));
+    const relaunched = (await headsOfConversation()).find((h) => h.id !== running)!;
+
+    const out = await cancelJobTree(any(), { entityId: seed.entityId, jobId: running });
+
+    expect(out.jobIds).toEqual([relaunched.id]);
+    expect(out.discardedMessages).toEqual([
+      { jobId: relaunched.id, task: 'et mets-le dans le dossier partagé' },
+      { jobId: relaunched.id, task: 'en PNG' },
+    ]);
+    expect((await headsOfConversation()).map((h) => [h.id, h.status, h.inbox])).toEqual([
+      [running, 'completed', []],
+      [relaunched.id, 'cancelled', []],
+    ]);
+  });
 });
+
+/** Le vidage, fait par le run qui tient la prise 0. */
+function drainAsRun(jobId: string) {
+  return withinRunScope(jobId, async () => {
+    recordClaim(jobId, 0);
+    return drainJobInbox(any(), jobId);
+  });
+}
 
 describe('drainJobInbox — only the run that holds the job reads its inbox @cap:parler-par-canal-externe/moteur', () => {
   it('under its claim: returns the messages marked as delivered, empties the inbox, appends them to the transcript', async () => {
     const running = await head('processing');
     await send('et mets-le dans le dossier partagé');
 
-    const drained = await withinRunScope(running, async () => {
-      recordClaim(running, 0);
-      return drainJobInbox(any(), running);
-    });
+    const drained = await drainAsRun(running);
 
-    expect(drained).toHaveLength(1);
-    expect(drained[0]).toMatchObject({
+    expect(drained.preparing).toBe(0);
+    expect(drained.messages).toHaveLength(1);
+    expect(drained.messages[0]).toMatchObject({
       role: 'user',
       content: 'et mets-le dans le dossier partagé',
     });
-    expect(isInboxMessage(drained[0])).toBe(true);
+    expect(isInboxMessage(drained.messages[0])).toBe(true);
     const [row] = await headsOfConversation();
     expect(row!.inbox).toEqual([]);
-    expect(row!.messages).toEqual([{ role: 'user', content: 'Fais-moi un portrait' }, drained[0]]);
+    expect(row!.messages).toEqual([
+      { role: 'user', content: 'Fais-moi un portrait' },
+      drained.messages[0],
+    ]);
   });
 
   it('under a claim another run has taken since: reads nothing, the inbox stays for the run that holds it', async () => {
@@ -322,34 +366,119 @@ describe('drainJobInbox — only the run that holds the job reads its inbox @cap
       return drainJobInbox(any(), running);
     });
 
-    expect(drained).toEqual([]);
+    expect(drained.messages).toEqual([]);
     const [row] = await headsOfConversation();
     expect(row!.inbox.map((e) => e.task)).toEqual(['et mets-le dans le dossier partagé']);
   });
 });
 
-describe('attachToInboxEntry — a photo downloaded after the message reaches its entry @cap:parler-par-canal-externe/moteur', () => {
-  it('upgrades the waiting entry, and says false once the entry is gone', async () => {
+/** Un message dont le canal télécharge encore la photo : remis « en préparation ». */
+function sendWithPhoto(text: string) {
+  return deliverOrStartTurn(any(), {
+    entityId: seed.entityId,
+    conversationId,
+    message: { task: text, content: text, preparing: true },
+    start: {
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      conversationId,
+      task: text,
+    },
+  });
+}
+
+const PHOTO = [
+  { type: 'text' as const, text: 'dans ce style' },
+  { type: 'image' as const, image: '/ws/shared/telegram/555/x.jpg' },
+];
+
+describe('a delivered message is never read before its media is attached (review of #642, pass 1) @cap:parler-par-canal-externe/moteur', () => {
+  it('while the photo downloads the entry stays in the inbox, counted; once attached it is read WITH the photo', async () => {
     const running = await head('processing');
-    const turn = await send('Image envoyée (sans légende).');
+    const turn = await sendWithPhoto('dans ce style');
     if (turn.kind !== 'delivered') throw new Error('expected a delivery');
-    const content = [
-      { type: 'text' as const, text: 'Image envoyée (sans légende).' },
-      { type: 'image' as const, image: '/ws/shared/telegram/555/x.jpg' },
-    ];
+    await send('et en couleur');
+
+    const before = await drainAsRun(running);
+    // Le message sans média passe ; celui dont la photo arrive attend.
+    expect(before.messages.map((m) => m.content)).toEqual(['et en couleur']);
+    expect(before.preparing).toBe(1);
+    expect((await headsOfConversation())[0]!.inbox.map((e) => e.task)).toEqual(['dans ce style']);
 
     expect(
-      await attachToInboxEntry(any(), { headJobId: running, entryId: turn.entryId, content }),
+      await attachToInboxEntry(any(), {
+        entityId: seed.entityId,
+        entryId: turn.entryId,
+        content: PHOTO,
+      }),
     ).toBe(true);
-    const [row] = await headsOfConversation();
-    expect(row!.inbox[0]!.content).toEqual(content);
+    const after = await drainAsRun(running);
 
-    await withinRunScope(running, async () => {
-      recordClaim(running, 0);
-      return drainJobInbox(any(), running);
+    expect(after).toEqual({
+      messages: [expect.objectContaining({ content: PHOTO })],
+      preparing: 0,
     });
+    // Une fois lue, l'entrée n'attend plus nulle part.
     expect(
-      await attachToInboxEntry(any(), { headJobId: running, entryId: turn.entryId, content }),
+      await attachToInboxEntry(any(), {
+        entityId: seed.entityId,
+        entryId: turn.entryId,
+        content: PHOTO,
+      }),
     ).toBe(false);
+  });
+
+  it('a failed download releases the entry: read text-only at once', async () => {
+    const running = await head('processing');
+    const turn = await sendWithPhoto('dans ce style');
+    if (turn.kind !== 'delivered') throw new Error('expected a delivery');
+
+    expect(await releaseInboxEntry(any(), { entityId: seed.entityId, entryId: turn.entryId })).toBe(
+      true,
+    );
+
+    expect(await drainAsRun(running)).toEqual({
+      messages: [expect.objectContaining({ content: 'dans ce style' })],
+      preparing: 0,
+    });
+  });
+
+  it('a download that never ends does not hold the message forever: past INBOX_MEDIA_WAIT_MS it is read as it is', async () => {
+    const running = await head('processing');
+    await db
+      .update(agentJobs)
+      .set({
+        inbox: [
+          {
+            id: crypto.randomUUID(),
+            task: 'dans ce style',
+            content: 'dans ce style',
+            receivedAt: new Date(Date.now() - INBOX_MEDIA_WAIT_MS - 1_000).toISOString(),
+            preparing: true,
+          },
+        ],
+      })
+      .where(eq(agentJobs.id, running));
+
+    expect((await drainAsRun(running)).messages.map((m) => m.content)).toEqual(['dans ce style']);
+  });
+
+  it('the photo reaches its entry even after the head finished and the trigger moved it to the relaunched head', async () => {
+    const running = await head('processing');
+    await send('et mets-le dans le dossier partagé');
+    const turn = await sendWithPhoto('dans ce style');
+    if (turn.kind !== 'delivered') throw new Error('expected a delivery');
+    await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, running));
+
+    expect(
+      await attachToInboxEntry(any(), {
+        entityId: seed.entityId,
+        entryId: turn.entryId,
+        content: PHOTO,
+      }),
+    ).toBe(true);
+    const relaunched = (await headsOfConversation()).find((h) => h.id !== running)!;
+    expect(relaunched.inbox.map((e) => [e.content, e.preparing])).toEqual([[PHOTO, undefined]]);
   });
 });

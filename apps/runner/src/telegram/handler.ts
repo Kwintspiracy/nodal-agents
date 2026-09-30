@@ -31,6 +31,7 @@ import { sanitizeSenderName, escapeRegex } from '../channels/shared.ts';
 import {
   attachTurnContent,
   channelTurnTarget,
+  downloadTurnMedia,
   isPlatformCommand,
   takeChannelTurn,
   turnMediaFileStem,
@@ -277,6 +278,7 @@ export async function handleTelegramUpdate(args: {
     text: taskText,
     groupPrefix,
     botHandle: receivingAgentBotUsername,
+    awaitsMedia: hasPhoto,
   });
   if (turn.kind === 'stop') return { stop: turn.stop };
 
@@ -291,7 +293,7 @@ export async function handleTelegramUpdate(args: {
       .where(eq(agents.id, receivingAgentId));
   }
 
-  const target = channelTurnTarget(turn);
+  const target = channelTurnTarget(turn, receivingAgentEntityId);
   return {
     ...(turn.kind === 'job' ? { jobId: turn.jobId } : {}),
     ...(turn.kind === 'delivered'
@@ -337,14 +339,19 @@ export async function attachInboundPhoto(args: {
 }): Promise<string> {
   const { entityId, botToken, photo, db } = args;
 
-  const download = await getTelegramFile(botToken, photo.fileId);
-  // Mirror execute.ts: the shared workspace lives at
-  // <workspacesRoot>/<entityId>/shared
-  const dir = join(workspacesRoot(), entityId, 'shared', 'telegram', photo.chatId);
-  await mkdir(dir, { recursive: true });
-  const ext = download.ext === 'bin' ? 'jpg' : download.ext;
-  const filePath = join(dir, `${turnMediaFileStem(photo.target)}.${ext}`);
-  await writeFile(filePath, download.bytes);
+  // A failed download releases a message waiting in a live job's inbox
+  // (#531): it is read text-only instead of being held back.
+  const { dir, filePath } = await downloadTurnMedia(db, photo.target, async () => {
+    const download = await getTelegramFile(botToken, photo.fileId);
+    // Mirror execute.ts: the shared workspace lives at
+    // <workspacesRoot>/<entityId>/shared
+    const dir = join(workspacesRoot(), entityId, 'shared', 'telegram', photo.chatId);
+    await mkdir(dir, { recursive: true });
+    const ext = download.ext === 'bin' ? 'jpg' : download.ext;
+    const filePath = join(dir, `${turnMediaFileStem(photo.target)}.${ext}`);
+    await writeFile(filePath, download.bytes);
+    return { dir, filePath };
+  });
 
   // Conditional on the message still WAITING (G1, audit followup): the job
   // still `pending`, or the entry still in the live job's inbox (#531). The

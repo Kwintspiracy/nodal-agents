@@ -187,6 +187,8 @@ export async function handleWhatsAppMessage(args: {
     text: taskText,
     groupPrefix,
     botHandle: null,
+    // Ce canal n'attache aucun média entrant.
+    awaitsMedia: false,
   });
   if (turn.kind === 'stop') return { stop: turn.stop };
 

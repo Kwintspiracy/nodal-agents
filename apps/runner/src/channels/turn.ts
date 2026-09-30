@@ -40,6 +40,7 @@ import {
   attachToInboxEntry,
   deliverOrStartTurn,
   eq,
+  releaseInboxEntry,
   stopConversationRuns,
 } from '@nodal-agents/db';
 import type { InboxContent } from '@nodal-agents/shared';
@@ -109,7 +110,12 @@ export interface ChannelStopResult {
  */
 export type ChannelTurnTarget =
   | { readonly kind: 'job'; readonly jobId: string }
-  | { readonly kind: 'inbox'; readonly headJobId: string; readonly entryId: string };
+  | {
+      readonly kind: 'inbox';
+      readonly entityId: string;
+      readonly headJobId: string;
+      readonly entryId: string;
+    };
 
 export type ChannelTurn =
   | { readonly kind: 'job'; readonly jobId: string; readonly taskText: string }
@@ -148,6 +154,12 @@ export async function takeChannelTurn(args: {
   groupPrefix: string | null;
   /** Le nom du bot sur ce canal, pour `/stop@nom_du_bot` ; `null` quand le canal n'en a pas. */
   botHandle: string | null;
+  /**
+   * Le message porte un média que l'appelant téléchargera après la
+   * transaction : remis à un travail en cours, il n'y sera lu qu'une fois ce
+   * média attaché (`attachTurnContent`) ou abandonné (`releaseTurnContent`).
+   */
+  awaitsMedia: boolean;
 }): Promise<ChannelTurn> {
   const { tx, entityId, agentId, channel, chatId, groupPrefix, botHandle } = args;
   const threadKey = { db: tx, entityId, agentId, channel, chatId };
@@ -196,7 +208,7 @@ export async function takeChannelTurn(args: {
     conversationId: conversation.id,
     // Texte seul ici ; un média entrant est attaché ensuite par l'appelant du
     // canal, hors transaction, à la cible que ce tour rend.
-    message: { task: taskText, content: taskText },
+    message: { task: taskText, content: taskText, preparing: args.awaitsMedia },
     start: {
       entityId,
       agentId,
@@ -227,10 +239,10 @@ export async function takeChannelTurn(args: {
 }
 
 /** La cible d'un média arrivé avec ce tour, ou `null` pour `/stop`. */
-export function channelTurnTarget(turn: ChannelTurn): ChannelTurnTarget | null {
+export function channelTurnTarget(turn: ChannelTurn, entityId: string): ChannelTurnTarget | null {
   if (turn.kind === 'job') return { kind: 'job', jobId: turn.jobId };
   if (turn.kind === 'delivered') {
-    return { kind: 'inbox', headJobId: turn.headJobId, entryId: turn.entryId };
+    return { kind: 'inbox', entityId, headJobId: turn.headJobId, entryId: turn.entryId };
   }
   return null;
 }
@@ -247,8 +259,11 @@ export async function attachTurnContent(
   content: InboxContent,
 ): Promise<boolean> {
   if (target.kind === 'inbox') {
+    // L'entrée est cherchée par son id, où qu'elle attende : si la tête a fini
+    // pendant le téléchargement, le déclencheur l'a portée dans la file de la
+    // tête relancée.
     return attachToInboxEntry(db, {
-      headJobId: target.headJobId,
+      entityId: target.entityId,
       entryId: target.entryId,
       content,
     });
@@ -259,6 +274,44 @@ export async function attachTurnContent(
     .where(and(eq(agentJobs.id, target.jobId), eq(agentJobs.status, 'pending')))
     .returning({ id: agentJobs.id });
   return attached.length > 0;
+}
+
+/**
+ * Le téléchargement du média a échoué : le message remis devient lisible tel
+ * qu'il est, texte seul, sans attendre `INBOX_MEDIA_WAIT_MS`. Rien à faire pour
+ * un job neuf : son worker n'est réveillé qu'après la tentative.
+ */
+export async function releaseTurnContent(
+  db: RunnerDeps['db'],
+  target: ChannelTurnTarget,
+): Promise<void> {
+  if (target.kind !== 'inbox') return;
+  await releaseInboxEntry(db, { entityId: target.entityId, entryId: target.entryId });
+}
+
+/**
+ * Télécharge le média d'un tour : si le téléchargement échoue, le message remis
+ * est libéré (`releaseTurnContent`) avant que l'erreur remonte — il ne reste
+ * pas retenu jusqu'à `INBOX_MEDIA_WAIT_MS`. Le seul chemin des canaux qui
+ * attachent un média (Telegram, Discord).
+ */
+export async function downloadTurnMedia<T>(
+  db: RunnerDeps['db'],
+  target: ChannelTurnTarget,
+  download: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await download();
+  } catch (err) {
+    await releaseTurnContent(db, target).catch((releaseErr: unknown) =>
+      console.warn(
+        `[channel] releasing the waiting message ${turnMediaFileStem(target)} failed: ${
+          releaseErr instanceof Error ? releaseErr.message : String(releaseErr)
+        }`,
+      ),
+    );
+    throw err;
+  }
 }
 
 /**

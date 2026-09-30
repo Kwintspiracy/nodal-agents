@@ -29,6 +29,7 @@ import { sanitizeSenderName, checkConversationAuthorization } from '../shared.ts
 import {
   attachTurnContent,
   channelTurnTarget,
+  downloadTurnMedia,
   isPlatformCommand,
   takeChannelTurn,
   turnMediaFileStem,
@@ -239,10 +240,11 @@ export async function handleDiscordMessage(args: {
     text: taskText,
     groupPrefix,
     botHandle: null,
+    awaitsMedia: imageAttachment !== undefined && imageAttachment.size <= MAX_IMAGE_BYTES,
   });
   if (turn.kind === 'stop') return { stop: turn.stop };
 
-  const target = channelTurnTarget(turn);
+  const target = channelTurnTarget(turn, receivingAgentEntityId);
   return {
     ...(turn.kind === 'job' ? { jobId: turn.jobId } : {}),
     ...(turn.kind === 'delivered'
@@ -296,23 +298,28 @@ export async function attachInboundImage(args: {
 }): Promise<string> {
   const { entityId, attachment, db } = args;
 
-  const res = await fetch(attachment.url);
-  if (!res.ok) {
-    throw new Error(`discord_image_fetch_failed: HTTP ${res.status} from ${attachment.url}`);
-  }
-  const buf = new Uint8Array(await res.arrayBuffer());
-  if (buf.byteLength > MAX_IMAGE_BYTES) {
-    throw new Error(
-      `discord_image_too_large: ${buf.byteLength} bytes exceeds cap of ${MAX_IMAGE_BYTES} bytes`,
-    );
-  }
+  // A failed download releases a message waiting in a live job's inbox
+  // (#531): it is read text-only instead of being held back.
+  const { dir, filePath } = await downloadTurnMedia(db, attachment.target, async () => {
+    const res = await fetch(attachment.url);
+    if (!res.ok) {
+      throw new Error(`discord_image_fetch_failed: HTTP ${res.status} from ${attachment.url}`);
+    }
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.byteLength > MAX_IMAGE_BYTES) {
+      throw new Error(
+        `discord_image_too_large: ${buf.byteLength} bytes exceeds cap of ${MAX_IMAGE_BYTES} bytes`,
+      );
+    }
 
-  // Mirrors telegram's shared workspace layout: <workspacesRoot>/<entityId>/shared/<channel>/<conversationId>/<stem>.<ext>
-  const dir = join(workspacesRoot(), entityId, 'shared', 'discord', attachment.channelId);
-  await mkdir(dir, { recursive: true });
-  const ext = extFromContentType(attachment.contentType);
-  const filePath = join(dir, `${turnMediaFileStem(attachment.target)}.${ext}`);
-  await writeFile(filePath, buf);
+    // Mirrors telegram's shared workspace layout: <workspacesRoot>/<entityId>/shared/<channel>/<conversationId>/<stem>.<ext>
+    const dir = join(workspacesRoot(), entityId, 'shared', 'discord', attachment.channelId);
+    await mkdir(dir, { recursive: true });
+    const ext = extFromContentType(attachment.contentType);
+    const filePath = join(dir, `${turnMediaFileStem(attachment.target)}.${ext}`);
+    await writeFile(filePath, buf);
+    return { dir, filePath };
+  });
 
   // Conditional on the message still WAITING (mirrors telegram's TOCTOU guard,
   // audit followup G1): the job still `pending`, or the entry still in the

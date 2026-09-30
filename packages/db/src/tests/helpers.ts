@@ -203,6 +203,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       messages jsonb DEFAULT '[]',
       -- mirrors migration 0141 (#531) : la file des messages arrivés pendant que la tête vivait.
       inbox jsonb NOT NULL DEFAULT '[]'::jsonb,
+      relaunched_from_job_id uuid,
       search_text text,
       search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', coalesce(search_text, ''))) STORED,
       tools_used text[] DEFAULT '{}',
@@ -263,14 +264,15 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
     BEGIN
       INSERT INTO agent_jobs (
         entity_id, agent_id, channel, chat_id, conversation_id, project_id,
-        status, task, messages, inbox
+        status, task, messages, inbox, relaunched_from_job_id
       ) VALUES (
         NEW.entity_id, NEW.agent_id, NEW.channel, NEW.chat_id, NEW.conversation_id,
         (SELECT c.current_project_id FROM conversations c WHERE c.id = NEW.conversation_id),
         'pending',
         premier ->> 'task',
         jsonb_build_array(jsonb_build_object('role', 'user', 'content', premier -> 'content')),
-        NEW.inbox - 0
+        NEW.inbox - 0,
+        NEW.id
       );
       NEW.inbox := '[]'::jsonb;
       RETURN NEW;
@@ -686,6 +688,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
     -- mirrors migration 0118 (#255)
     CREATE INDEX IF NOT EXISTS idx_agent_jobs_deliverable_check_due
       ON agent_jobs(entity_id) WHERE deliverable_check_due_at IS NOT NULL;
+
+    -- mirrors migration 0141 (#531)
+    CREATE INDEX IF NOT EXISTS idx_agent_jobs_relaunched_from
+      ON agent_jobs(relaunched_from_job_id) WHERE relaunched_from_job_id IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS agent_assignments (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

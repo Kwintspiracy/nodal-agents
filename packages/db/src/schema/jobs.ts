@@ -175,6 +175,12 @@ export const agentJobs = pgTable(
       .notNull()
       .default(sql`'[]'::jsonb`),
     /**
+     * La tête dont la file a fait naître celle-ci (#531, migration 0141) : la
+     * SUITE du même travail. `cancelJobTree` descend par ce lien comme par
+     * `parent_job_id`. NULL pour toute tête née d'un message.
+     */
+    relaunchedFromJobId: uuid('relaunched_from_job_id'),
+    /**
      * Flattened plain-text transcript (task + assistant text + tool outputs +
      * result) for full-text episodic search. Populated at job completion by
      * flattenTranscript(). A generated `search_tsv tsvector` column + GIN index
@@ -471,6 +477,11 @@ export const agentJobs = pgTable(
     // tableau de bord. PARTIEL : la colonne est NULL sur presque tous les
     // jobs, et elle le redevient dès que la personne a regardé — l'index reste
     // donc de la taille de ce qui attend, pas de celle de la table.
+    // 0141 (#531) : la descente de l'arrêt par la tête relancée — partiel, la
+    // colonne est NULL sur presque tous les jobs.
+    index('idx_agent_jobs_relaunched_from')
+      .on(table.relaunchedFromJobId)
+      .where(sql`${table.relaunchedFromJobId} IS NOT NULL`),
     index('idx_agent_jobs_deliverable_check_due')
       .on(table.entityId)
       .where(sql`${table.deliverableCheckDueAt} IS NOT NULL`),

@@ -25,7 +25,10 @@
 //   - la lecture en haut de tour retirée → « already waiting » rougit (le
 //     premier appel ne le porte pas) ;
 //   - `wakeRelaunchedHeads` retiré d'`executeJob` → « return_result » rougit
-//     (aucun réveil de la nouvelle tête).
+//     (aucun réveil de la nouvelle tête) ;
+//   - l'attente du média retirée de `lireLaFile` → « photo is still
+//     downloading » rougit (le run conclut sans la photo) ; le vidage qui lit
+//     aussi les entrées en préparation → le même test rougit (lue texte seul).
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -41,6 +44,7 @@ import {
   asc,
   eq,
   isNull,
+  attachToInboxEntry,
   deliverOrStartTurn,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
@@ -304,6 +308,52 @@ describe('the running work reads what the person adds while it runs (#531) @cap:
     const remis = (heads[0]!.messages as unknown[]).filter(isInboxMessage);
     expect(remis.map((m) => textOf((m as { content: unknown }).content))).toEqual([FOLLOW_UP]);
     expect(net.workerWakes).toEqual([]);
+  }, 30_000);
+
+  it('a message whose photo is still downloading is not read without it: the run waits for the photo before concluding (review of #642, pass 1)', async () => {
+    const { conversationId, jobId } = await headJob('Fais-moi un portrait');
+    const photo = [
+      { type: 'text' as const, text: 'dans ce style' },
+      { type: 'image' as const, image: '/ws/shared/telegram/555/style.jpg' },
+    ];
+    const net = network(
+      [{ text: 'Voilà ton portrait.' }, { text: 'Refait dans ce style.' }],
+      async (n) => {
+        if (n !== 0) return;
+        // Pendant le dernier appel : le message arrive, sa photo se télécharge.
+        const turn = await deliverOrStartTurn(db as unknown as AnyDrizzleDb, {
+          entityId: seed.entityId,
+          conversationId,
+          message: { task: 'dans ce style', content: 'dans ce style', preparing: true },
+          start: {
+            entityId: seed.entityId,
+            agentId,
+            channel: 'dashboard',
+            conversationId,
+            task: 'dans ce style',
+          },
+        });
+        if (turn.kind !== 'delivered') throw new Error('expected a delivery');
+        // …et arrive une seconde et demie plus tard, hors de tout appel.
+        setTimeout(() => {
+          void attachToInboxEntry(db as unknown as AnyDrizzleDb, {
+            entityId: seed.entityId,
+            entryId: turn.entryId,
+            content: photo,
+          });
+        }, 1_500);
+      },
+    );
+
+    await executeJob(jobId as JobId, makeDeps(), runnerEnv);
+
+    expect(net.turns).toHaveLength(2);
+    const heads = await headsOf(conversationId);
+    expect(heads).toHaveLength(1);
+    expect(heads[0]).toMatchObject({ status: 'completed', result: 'Refait dans ce style.' });
+    // La transcription porte le message AVEC sa photo.
+    const remis = (heads[0]!.messages as Array<{ content: unknown }>).filter(isInboxMessage);
+    expect(remis.map((m) => m.content)).toEqual([photo]);
   }, 30_000);
 
   it('a message that arrived during a last call ending with return_result becomes a new head, woken at once', async () => {

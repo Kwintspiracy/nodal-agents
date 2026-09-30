@@ -37,7 +37,23 @@ export interface InboxEntry {
   content: InboxContent;
   /** ISO 8601, posé par la plateforme à la réception. */
   receivedAt: string;
+  /**
+   * Le message porte un média que le canal télécharge encore, hors transaction
+   * (revue de #642, passe 1) : l'entrée n'est pas LUE avant que son contenu
+   * soit complet (`attachToInboxEntry`), ou que le téléchargement ait échoué
+   * (`releaseInboxEntry`), ou que `INBOX_MEDIA_WAIT_MS` soit passé depuis
+   * `receivedAt` — un canal mort en plein téléchargement ne retient pas le
+   * message pour toujours : il est lu tel qu'il est, texte seul.
+   */
+  preparing?: boolean;
 }
+
+/**
+ * Le plus longtemps qu'une entrée en préparation retient sa lecture. Au-delà
+ * des bornes de téléchargement des canaux (30 s pour Telegram) : le cas normal
+ * est toujours couvert, et un téléchargement pendu ne bloque pas le run.
+ */
+export const INBOX_MEDIA_WAIT_MS = 60_000;
 
 /** Le message qu'une entrée vidée devient dans la transcription. */
 export interface InboxMessage {

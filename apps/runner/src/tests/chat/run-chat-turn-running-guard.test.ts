@@ -384,20 +384,16 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
     expect(ecrit?.content).not.toContain('Je lance');
   });
 
-  it('une tête au statut NULL retient aussi : `NULL NOT IN (…)` n’est pas « terminé » (revue Codex, passe 4)', async () => {
-    // L'historique affiche une tête sans statut comme « still running »
-    // (`buildDispatchOutput`) ; la garde la laissait passer, parce qu'en SQL
-    // `NULL NOT IN ('completed', …)` vaut « inconnu » et exclut la ligne.
+  it('une ligne SANS statut n’est vivante pour aucun chemin : run_task lance (revue de #642, passe 1)', async () => {
+    // Revue Codex de #453 (passe 4) : la garde lisait `NULL` comme « en cours »,
+    // parce que l'historique l'affichait ainsi. Depuis #531, « vivant » a UNE
+    // définition, `LIVE_JOB_STATUSES`, celle des faucheurs et du déclencheur de
+    // relance : une ligne NULL n'est ni fauchée ni relancée, lui remettre le
+    // message l'y enfermerait. Aucun écrivain ne pose de statut NULL (défaut
+    // `pending`) : ce cas n'existe que construit à la main.
     await conversationAvecTravail(null);
-    const captured: ModelMessage[][] = [];
     setActiveLlmClient(
-      modele(
-        [
-          { runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' } },
-          { text: 'Already on it.' },
-        ],
-        captured,
-      ),
+      modele([{ runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' } }], []),
     );
 
     const r = await runChatTurn({
@@ -410,14 +406,9 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
 
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.spawnedJobId).toBeUndefined();
-    expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
-    const [tete] = await db
-      .select({ status: agentJobs.status })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, premierJob));
-    expect(tete!.status).toBeNull();
-    expect(toolResults(captured[1] ?? [])).toContain(premierJob);
+    expect(r.spawnedJobId).toBeTruthy();
+    expect(await fileDe(premierJob)).toEqual([]);
+    expect(await travauxDuFil()).toHaveLength(2);
   });
 
   it('un travail TERMINÉ ne retient rien : run_task lance comme avant', async () => {

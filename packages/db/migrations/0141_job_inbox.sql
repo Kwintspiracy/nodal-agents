@@ -13,6 +13,19 @@
 ALTER TABLE agent_jobs
   ADD COLUMN IF NOT EXISTS inbox jsonb NOT NULL DEFAULT '[]'::jsonb;
 --> statement-breakpoint
+-- La tête dont la file a fait naître celle-ci (déclencheur ci-dessous) : c'est
+-- la SUITE du même travail. L'arrêt (`cancelJobTree`) descend par ce lien
+-- comme par `parent_job_id` — un Stop qui croise la fin de la tête arrête
+-- aussi ce qu'elle vient de relancer (revue de #642, passe 1). Sans clé
+-- étrangère, comme `conversation_id` : l'élagage des vieux jobs ne doit rien
+-- réécrire.
+ALTER TABLE agent_jobs
+  ADD COLUMN IF NOT EXISTS relaunched_from_job_id uuid;
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS idx_agent_jobs_relaunched_from
+  ON agent_jobs (relaunched_from_job_id)
+  WHERE relaunched_from_job_id IS NOT NULL;
+--> statement-breakpoint
 -- CE QUI RESTE EN FILE QUAND LA TÊTE FINIT devient une nouvelle tête de la
 -- même conversation : la première entrée en est la tâche, les suivantes sa
 -- file (vidée à son premier tour). Aucune perte, par construction : le
@@ -30,14 +43,15 @@ DECLARE
 BEGIN
   INSERT INTO agent_jobs (
     entity_id, agent_id, channel, chat_id, conversation_id, project_id,
-    status, task, messages, inbox
+    status, task, messages, inbox, relaunched_from_job_id
   ) VALUES (
     NEW.entity_id, NEW.agent_id, NEW.channel, NEW.chat_id, NEW.conversation_id,
     (SELECT c.current_project_id FROM conversations c WHERE c.id = NEW.conversation_id),
     'pending',
     premier ->> 'task',
     jsonb_build_array(jsonb_build_object('role', 'user', 'content', premier -> 'content')),
-    NEW.inbox - 0
+    NEW.inbox - 0,
+    NEW.id
   );
   NEW.inbox := '[]'::jsonb;
   RETURN NEW;

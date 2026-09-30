@@ -80,9 +80,10 @@ export {
   deliverOrStartTurn,
   drainJobInbox,
   attachToInboxEntry,
+  releaseInboxEntry,
   pendingHeadsOfConversation,
 } from './repos/conversation-inbox.ts';
-export type { ConversationTurn } from './repos/conversation-inbox.ts';
+export type { ConversationTurn, DrainedInbox } from './repos/conversation-inbox.ts';
 export {
   withinRunScope,
   recordClaim,

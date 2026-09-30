@@ -18,7 +18,7 @@
 // son délégué ComfyArtist tournait encore deux heures : lire le statut de la
 // tête seule aurait répondu « rien ne tourne », exactement le faux de l'incident.
 
-import { and, asc, eq, inArray, isNull, notInArray, or, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, notInArray, or, sql } from 'drizzle-orm';
 import { TERMINAL_STATUSES } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agentJobs } from '../schema/jobs.ts';
@@ -96,11 +96,25 @@ export async function cancelJobTree(
     let frontier = [jobId];
     // Borné par la profondeur de délégation (invariant #8) ; `ids` garde la
     // boucle finie même sur un graphe corrompu.
+    //
+    // La descente suit AUSSI `relaunched_from_job_id` (#531, revue de #642
+    // passe 1) : la tête que la file d'un job a fait naître à sa fin est la
+    // suite du même travail. Un Stop qui croise cette fin attend le verrou de
+    // la cible, puis — chaque niveau est une instruction nouvelle — voit la
+    // tête relancée et l'arrête : le travail ne repart pas derrière l'accusé.
     while (frontier.length > 0) {
       const rows = await t
         .select({ id: agentJobs.id })
         .from(agentJobs)
-        .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.parentJobId, frontier)))
+        .where(
+          and(
+            eq(agentJobs.entityId, entityId),
+            or(
+              inArray(agentJobs.parentJobId, frontier),
+              inArray(agentJobs.relaunchedFromJobId, frontier),
+            ),
+          ),
+        )
         .for('update');
       frontier = rows.map((r) => r.id).filter((id) => !ids.has(id));
       for (const id of frontier) ids.add(id);
@@ -111,15 +125,22 @@ export async function cancelJobTree(
     // vidée dans la MÊME instruction que le statut : le déclencheur de relance
     // (migration 0141) la voit vide et ne fait naître aucune tête. Arrêter,
     // c'est arrêter aussi ce qui attendait ce travail (#531).
+    // Une tête relancée encore vivante porte, en tâche, un message qui
+    // attendait : il est retiré lui aussi, et rendu.
     const queued = await t
-      .select({ id: agentJobs.id, inbox: agentJobs.inbox })
+      .select({
+        id: agentJobs.id,
+        task: agentJobs.task,
+        relaunchedFromJobId: agentJobs.relaunchedFromJobId,
+        inbox: agentJobs.inbox,
+      })
       .from(agentJobs)
       .where(
         and(
           inArray(agentJobs.id, tree),
           eq(agentJobs.entityId, entityId),
           notTerminal(),
-          sql`${agentJobs.inbox} <> '[]'::jsonb`,
+          or(sql`${agentJobs.inbox} <> '[]'::jsonb`, isNotNull(agentJobs.relaunchedFromJobId)),
         ),
       );
     const now = new Date();
@@ -154,7 +175,10 @@ export async function cancelJobTree(
       jobIds: jobs.map((r) => r.id),
       taskIds: tasks.map((r) => r.id),
       requestIds: requests.map((r) => r.id),
-      discardedMessages: queued.flatMap((q) => q.inbox.map((e) => ({ jobId: q.id, task: e.task }))),
+      discardedMessages: queued.flatMap((q) => [
+        ...(q.relaunchedFromJobId !== null ? [{ jobId: q.id, task: q.task }] : []),
+        ...q.inbox.map((e) => ({ jobId: q.id, task: e.task })),
+      ]),
     };
   });
 }
