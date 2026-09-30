@@ -215,3 +215,58 @@ export async function stopOwnTrials(lock: BenchLock | null, o: TrialSweep): Prom
     o.log(`cancelled run ${root.id}`);
   }
 }
+
+/**
+ * L'arrêt du banc, partagé entre la boucle des essais et le gestionnaire de
+ * signal. Balayer UNE fois ne suffit pas : un `run_task` en vol au moment du
+ * signal crée son job juste après, et la boucle pourrait en lancer un autre
+ * (fin d'un essai, attente, préparation du suivant). Donc, dans cet ordre :
+ * plus aucun lancement ; le lancement en vol est attendu, dans une limite ;
+ * puis le balayage de tous les essais vivants (`stopOwnTrials`).
+ */
+export class BenchStop {
+  private stopping = false;
+  private inFlight: Promise<unknown> | null = null;
+
+  get stopped(): boolean {
+    return this.stopping;
+  }
+
+  /** Lance un essai (`run_task`), sauf si l'arrêt est demandé ; retient l'appel en vol. */
+  async start<T>(run: () => Promise<T>): Promise<T> {
+    if (this.stopping) {
+      throw new Error('workflow_stopped: the bench is stopping, no new trial starts');
+    }
+    const p = run();
+    this.inFlight = p;
+    try {
+      return await p;
+    } finally {
+      if (this.inFlight === p) this.inFlight = null;
+    }
+  }
+
+  async stop(lock: BenchLock | null, sweep: TrialSweep, o: { waitMs: number }): Promise<void> {
+    this.stopping = true;
+    const pending = this.inFlight;
+    if (pending) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const settled = await Promise.race([
+        pending.then(
+          () => true,
+          () => true,
+        ),
+        new Promise<boolean>((r) => {
+          timer = setTimeout(() => r(false), o.waitMs);
+        }),
+      ]);
+      clearTimeout(timer);
+      if (!settled) {
+        sweep.log(
+          `a run_task call was still in flight after ${o.waitMs} ms; if it created a job, the next bench cancels it before it starts`,
+        );
+      }
+    }
+    await stopOwnTrials(lock, sweep);
+  }
+}

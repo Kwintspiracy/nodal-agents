@@ -12,7 +12,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { acquireBenchLock, claimStack, isProcessAlive, stopOwnTrials } from '../lock';
+import { acquireBenchLock, BenchStop, claimStack, isProcessAlive, stopOwnTrials } from '../lock';
 
 const lockPath = (): string => join(mkdtempSync(join(tmpdir(), 'wf-lock-')), 'workflows.lock');
 
@@ -181,5 +181,79 @@ describe('stopping the bench', () => {
       log: () => undefined,
     });
     expect(cancelled).toEqual([]);
+  });
+});
+
+// Passe 3 (Reviewer A) : l'arrêt balayait UNE fois puis sortait. Un run_task en
+// vol, ou lancé juste après le balayage (fin d'un essai, attente, préparation du
+// suivant), laissait son job vivant. L'arrêt pose donc un drapeau partagé :
+// plus aucun lancement, le lancement en vol est attendu (borné), et le balayage
+// vient APRÈS.
+describe('stopping while a trial is being started', () => {
+  const JOB = { id: 'dddddddd-0000-4000-8000-000000000004', entityId: 'e1' };
+
+  /** La base du faux monde : le job n'y existe qu'une fois run_task revenu. */
+  function world() {
+    const live: Array<{ id: string; entityId: string }> = [];
+    const cancelled: string[] = [];
+    let finish: () => void = () => undefined;
+    const startCalled: string[] = [];
+    const runTask = () => {
+      startCalled.push('run_task');
+      return new Promise<{ jobId: string }>((resolve) => {
+        finish = () => {
+          live.push(JOB);
+          resolve({ jobId: JOB.id });
+        };
+      });
+    };
+    const sweep = {
+      liveRoots: async () => [...live],
+      cancel: async (r: { id: string }) => {
+        cancelled.push(r.id);
+      },
+      log: () => undefined,
+    };
+    return { live, cancelled, startCalled, runTask, sweep, finish: () => finish() };
+  }
+
+  it('a run_task in flight when the stop comes is awaited, then its job is cancelled', async () => {
+    const lock = acquireBenchLock(lockPath(), { pid: process.pid });
+    const w = world();
+    const stop = new BenchStop();
+    const started = stop.start(w.runTask);
+    const stopping = stop.stop(lock, w.sweep, { waitMs: 5_000 });
+    // run_task revient APRÈS la demande d'arrêt : le job naît à ce moment-là.
+    setTimeout(() => w.finish(), 20);
+    await stopping;
+    await started;
+    expect(w.cancelled).toEqual([JOB.id]);
+    lock.release();
+  });
+
+  it('once stopping, no new trial is started', async () => {
+    const lock = acquireBenchLock(lockPath(), { pid: process.pid });
+    const w = world();
+    const stop = new BenchStop();
+    await stop.stop(lock, w.sweep, { waitMs: 5_000 });
+    await expect(stop.start(w.runTask)).rejects.toThrow(/^workflow_stopped: /);
+    expect(w.startCalled).toEqual([]);
+    expect(stop.stopped).toBe(true);
+    lock.release();
+  });
+
+  it('a run_task that never returns does not hold the stop forever: it says so and still sweeps', async () => {
+    const lock = acquireBenchLock(lockPath(), { pid: process.pid });
+    const w = world();
+    w.live.push({ id: 'eeeeeeee-0000-4000-8000-000000000005', entityId: 'e1' });
+    const said: string[] = [];
+    const stop = new BenchStop();
+    void stop.start(w.runTask);
+    await stop.stop(lock, { ...w.sweep, log: (l) => said.push(l) }, { waitMs: 30 });
+    expect(said[0]).toBe(
+      'a run_task call was still in flight after 30 ms; if it created a job, the next bench cancels it before it starts',
+    );
+    expect(w.cancelled).toEqual(['eeeeeeee-0000-4000-8000-000000000005']);
+    lock.release();
   });
 });

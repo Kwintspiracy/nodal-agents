@@ -79,9 +79,7 @@ export function bareToolName(name: string): string {
  * Les outils qui RAMÈNENT du web : chercher, puis lire une page. Les noms sont
  * ceux que les lignes `tool_calls` portent réellement — builtin `web_search`,
  * connecteur Tavily, serveur MCP fetch (`fetch_html`, `fetch_txt`…), et les
- * outils internes d'une CLI (`cli:WebSearch`, `cli:WebFetch`). Reconnaître un
- * outil ne suffit pas : son succès doit être établi (`succeeded`), ce que les
- * lignes `cli:*` ne permettent pas aujourd'hui.
+ * outils internes d'une CLI (`cli:WebSearch`, `cli:WebFetch`).
  */
 const WEB_SEARCH = /^(web_?search|tavily_search)$/i;
 const PAGE_READER =
@@ -97,73 +95,116 @@ export function isPageReader(c: ToolCallFact): boolean {
 }
 
 /**
- * Le succès de l'appel est-il ÉTABLI ? Fermé par défaut : une sortie dont on ne
- * peut pas établir le succès n'est jamais une preuve (invariant #4).
- *
- * Il ne s'établit que sur une ligne écrite par `executeTool`. Celui-ci écrit
- * TOUJOURS du JSON (`JSON.stringify` du retour de l'outil), et toute exception
- * (un résultat MCP `isError` en est une, voir l'adaptateur MCP) devient
- * `{ outcome: 'error' }`. Sur une telle ligne, un JSON qui ne dit pas l'échec
- * (ni `outcome: 'error'`, ni `ok: false`, ni `isError`, ni champ `error`) est un
- * retour réussi.
- *
- * Ne s'établit PAS :
- *   - une sortie vide ;
- *   - une ligne `cli:*` : le runner y écrit le texte du `tool_result` de la CLI
- *     et laisse tomber son `is_error` (cli-runtime/claude-turn.ts). « Failed to
- *     fetch https://… » y est indiscernable d'une page lue, et aucune sortie
- *     réelle n'est enregistrée dans le dépôt pour fonder une forme positive.
- *     Conséquence voulue : des sources lues seulement par une CLI donnent un
- *     faux ROUGE, dit, jamais un faux vert. La forme générale est côté runner :
- *     écrire l'`is_error` de la CLI sur la ligne d'audit ;
- *   - une sortie qui n'est pas du JSON : elle n'a pas été écrite par
- *     `executeTool`, sa provenance est inconnue.
+ * Le seuil d'une page LUE : 1 000 caractères de texte, hors adresses et blancs.
+ * Mesuré sur les essais réels du 30/09 : la plus courte page lue fait 2 941
+ * caractères (tavily_extract), un fichier récupéré par fetch 3 857, la plupart
+ * 8 000 à 15 000. Un message d'échec (« Request to https://… timed out after
+ * 60000ms », « Failed to fetch … - status code 404 ») en fait moins de 100. Le
+ * seuil est placé loin des deux.
  */
-export function succeeded(c: ToolCallFact): boolean {
-  if (c.output === null || c.output.trim() === '') return false;
-  if (c.toolName.startsWith('cli:')) return false;
-  let o: unknown;
-  try {
-    o = JSON.parse(c.output) as unknown;
-  } catch {
-    return false;
-  }
-  if (o === null || typeof o !== 'object' || Array.isArray(o)) return true;
-  const r = o as Record<string, unknown>;
-  if (r['outcome'] === 'error' || r['ok'] === false) return false;
-  if (r['isError'] === true || r['is_error'] === true) return false;
-  return !(typeof r['error'] === 'string' && r['error'] !== '');
-}
+export const PAGE_MIN_CHARS = 1000;
 
-/** Les parties d'une sortie qui disent ce qui a ÉCHOUÉ (`failedResults` de Tavily) : jamais une preuve. */
-const FAILURE_KEYS = new Set(['failedResults', 'failed_results', 'errors', 'error']);
-
-/** Les adresses qu'une sortie a rendues, hors des parties qui listent les échecs. */
-function urlsReturnedBy(c: ToolCallFact): string[] {
-  const o = parseJson(c.output);
-  if (o === null || typeof o !== 'object' || Array.isArray(o)) return urlsIn(c.output);
-  const kept = Object.fromEntries(
-    Object.entries(o as Record<string, unknown>).filter(([k]) => !FAILURE_KEYS.has(k)),
-  );
-  return urlsIn(JSON.stringify(kept));
+/** Les caractères d'un texte qui ne sont ni une adresse ni un blanc. */
+function contentChars(text: string): number {
+  return text.replace(URL_RE, '').replace(/\s+/g, '').length;
 }
 
 /**
- * Les adresses que l'essai a réellement VUES sur le web : celles que rendent
- * les outils de récupération web qui ont réussi. Jamais l'entrée d'un outil
- * (le modèle l'écrit), jamais la sortie d'un autre outil — relire une note
- * qu'on vient d'écrire rend les liens qu'on y a mis, pas une source.
+ * La sortie dit-elle l'échec ? `{ outcome: 'error' }` (toute exception d'un
+ * outil, via `executeTool`), `ok: false`, `isError`, un champ `error`, ou
+ * l'enveloppe `<tool_use_error>` (runtime CLI).
  */
-export function retrievedUrls(
+function failureStated(output: string, parsed: unknown): boolean {
+  if (output.trimStart().startsWith('<tool_use_error>')) return true;
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+  const r = parsed as Record<string, unknown>;
+  if (r['outcome'] === 'error' || r['ok'] === false) return true;
+  if (r['isError'] === true || r['is_error'] === true) return true;
+  return typeof r['error'] === 'string' && r['error'] !== '';
+}
+
+/** Le texte d'une sortie non structurée : une chaîne (JSON ou brute), ou les blocs texte d'une liste. */
+function plainText(output: string, parsed: unknown): string | null {
+  if (typeof parsed === 'string') return parsed;
+  if (Array.isArray(parsed)) {
+    return parsed
+      .map((b) =>
+        b && typeof b === 'object' && typeof (b as { text?: unknown }).text === 'string'
+          ? (b as { text: string }).text
+          : '',
+      )
+      .join('\n');
+  }
+  // Pas du JSON : le texte tel que le runtime CLI l'écrit.
+  return parsed === null ? output : null;
+}
+
+/** La seule adresse que l'appel demandait (`url`, ou `urls` d'un élément) ; sinon null. */
+function requestedUrl(c: ToolCallFact): string | null {
+  const i = parseJson(c.input) as { url?: unknown; urls?: unknown } | null;
+  const one =
+    typeof i?.url === 'string'
+      ? i.url
+      : Array.isArray(i?.urls) && i.urls.length === 1
+        ? i.urls[0]
+        : null;
+  return typeof one === 'string' ? normalizeUrl(one) : null;
+}
+
+/** Les adresses pour lesquelles CET appel a rendu du contenu réel. */
+function urlsReadBy(c: ToolCallFact): string[] {
+  const output = c.output ?? '';
+  if (output.trim() === '') return [];
+  const parsed = parseJson(output);
+  if (failureStated(output, parsed)) return [];
+  const search = WEB_SEARCH.test(bareToolName(c.toolName));
+  const min = search ? 1 : PAGE_MIN_CHARS;
+
+  // Un résultat structuré : chaque entrée porte son adresse et son texte.
+  const results = (parsed as { results?: unknown } | null)?.results;
+  if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    if (!Array.isArray(results)) return [];
+    const out: string[] = [];
+    for (const r of results as Array<Record<string, unknown>>) {
+      if (!r || typeof r['url'] !== 'string') continue;
+      const text = [r['snippet'], r['content'], r['rawContent'], r['raw_content'], r['text']].find(
+        (t): t is string => typeof t === 'string',
+      );
+      const u = normalizeUrl(r['url']);
+      if (u && text !== undefined && contentChars(text) >= min) out.push(u);
+    }
+    return out;
+  }
+
+  // Une page rendue en texte (fetch MCP, CLI) : elle vaut pour l'adresse demandée,
+  // et seulement pour une page (une recherche en texte n'attribue rien).
+  if (search) return [];
+  const text = plainText(output, parsed);
+  const u = requestedUrl(c);
+  return u && text !== null && contentChars(text) >= PAGE_MIN_CHARS ? [u] : [];
+}
+
+/**
+ * Les adresses que l'essai a réellement LUES sur le web : celles pour
+ * lesquelles un outil web a rendu du CONTENU — un résultat de recherche qui
+ * porte l'adresse avec un extrait non vide, ou une page d'au moins
+ * `PAGE_MIN_CHARS` caractères (hors adresses et blancs) rendue pour cette
+ * adresse. Le critère ne dépend d'aucun drapeau de succès : les outils n'en
+ * donnent pas de fiable (une erreur de fetch MCP arrive en simple chaîne, une
+ * ligne CLI ne porte pas l'`is_error`, #643) ; un échec, lui, n'a pas de contenu.
+ * Jamais l'entrée d'un outil, jamais la sortie d'un autre outil — relire une
+ * note qu'on vient d'écrire rend les liens qu'on y a mis, pas une source.
+ */
+export function readUrls(
   facts: TreeFacts,
   keep: (c: ToolCallFact) => boolean = isWebRetrieval,
 ): Set<string> {
-  const seen = new Set<string>();
+  const read = new Set<string>();
   for (const c of facts.toolCalls) {
-    if (!keep(c) || !succeeded(c)) continue;
-    for (const u of urlsReturnedBy(c)) seen.add(u);
+    if (!keep(c)) continue;
+    for (const u of urlsReadBy(c)) read.add(u);
   }
-  return seen;
+  return read;
 }
 
 /**

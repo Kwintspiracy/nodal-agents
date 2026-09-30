@@ -41,20 +41,23 @@ not green.
 Every scenario is also red when the root did not end `completed`, or when the
 run raised an approval or a question.
 
-A source is an address that a web retrieval RETURNED: the output of a search
-or page-read tool (`web_search`, Tavily, the MCP fetch server) whose success is
-established, without the part that lists failures (`failedResults`). Never the
-input of a tool, which the model writes, and never the output of another tool:
+A source is an address the run READ: a web tool (`web_search`, Tavily, the
+MCP fetch server, `cli:WebSearch`, `cli:WebFetch`) returned real content for
+THAT address. Either a search result that carries the address with a non-empty
+snippet, or a page returned for the address the call asked for, holding at
+least 1,000 characters once addresses and blanks are removed. On the real
+trials, the shortest page read holds 2,941 characters and a failure message
+("Request to https://… timed out after 60000ms") fewer than 100. An output
+that states a failure (`{ "outcome": "error" }`, `ok: false`, `isError`, an
+`error` field, `<tool_use_error>`, `failedResults`) carries no source.
+
+The criterion is content, not a success flag: the tools do not give a reliable
+one (an MCP fetch error reaches the row as a plain string, a `cli:*` row drops
+the CLI's `is_error`, #643), and a failure has no content. A CLI search listing
+is text, not a result with its snippet: it carries no source. Never the input
+of a tool, which the model writes, and never the output of another tool:
 reading back a note the run just wrote returns the links the model put there,
 not a source.
-
-Success is established only on a row written by the runner's tool path, which
-always writes JSON and turns every failure into `{ "outcome": "error" }`. A
-`cli:*` row (a tool used inside a Claude Code or Codex session) is not: the
-runner stores the text of the CLI's `tool_result` and drops its `is_error`, so
-"Failed to fetch https://…" reads like a page. Such rows are never a source.
-Sources read only through a CLI therefore give a red, said, never a false
-green; recording `is_error` on the audit row would lift this.
 
 A scenario is frozen once merged. Changing its request or its judge means
 raising its `version`: the portal then starts a new series instead of
@@ -94,7 +97,9 @@ scenario is red with that reason, no job is started.
   or SIGTERM the bench cancels every bench trial still alive, read from the
   database with its workspace, not only the one it tracks: right after
   `run_task` it knows the job id and not yet its workspace. It does so only
-  while it holds the lock.
+  while it holds the lock. Stopping is shared with the trial loop: once asked,
+  no new trial starts, a `run_task` call in flight is awaited (30 s at most),
+  and only then are the live trials swept.
 - Printing: through Nodal the HP connector cannot print without a human. Its
   confirmation token is stripped from what the model sees
   (`summarize()` in the connector), Nodal drops `_meta`, and the Print action

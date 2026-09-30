@@ -25,7 +25,7 @@ import {
   rootJob,
   isPageReader,
   isWebRetrieval,
-  retrievedUrls,
+  readUrls,
   textHasNumber,
   urlsIn,
 } from './judge-kit';
@@ -87,7 +87,7 @@ const question = defineScenario<null>({
 function delegateReadTheWeb(facts: TreeFacts): boolean {
   const kids = new Set(delegatedJobs(facts).map((j) => j.id));
   return (
-    retrievedUrls(facts, (c) => c.jobId !== null && kids.has(c.jobId) && isWebRetrieval(c)).size > 0
+    readUrls(facts, (c) => c.jobId !== null && kids.has(c.jobId) && isWebRetrieval(c)).size > 0
   );
 }
 
@@ -111,7 +111,7 @@ const research = defineScenario<null>({
     const cited = urlsIn(rootJob(facts)?.result ?? null);
     if (cited.length === 0) r.push('no source link in the report');
     else {
-      const seen = retrievedUrls(facts);
+      const seen = readUrls(facts);
       if (!cited.some((u) => seen.has(u))) {
         r.push(`none of the ${cited.length} source link(s) in the report was seen in a web result`);
       }
@@ -226,7 +226,7 @@ const deepResearchObsidian = defineScenario<VaultObservation>({
     if (best.urls.length < NOTE_MIN_SOURCES) {
       r.push(`the note cites ${best.urls.length} source link(s), fewer than ${NOTE_MIN_SOURCES}`);
     } else {
-      const seen = retrievedUrls(facts);
+      const seen = readUrls(facts);
       const grounded = best.urls.filter((u) => seen.has(u)).length;
       if (grounded === 0)
         r.push(`none of the ${best.urls.length} source links of the note was seen in a web result`);
@@ -567,9 +567,10 @@ const recipe = defineScenario<RecipeObservation>({
       );
     } else if (last.images.length === 0) r.push('no photo in the printed page');
     else {
-      // Les sites dont une page a été LUE : ce que les lectures réussies ont
-      // rendu (adresses normalisées `hôte/chemin`), jamais l'adresse demandée.
-      const hosts = [...retrievedUrls(facts, isPageReader)].map((u) => u.split('/')[0]!);
+      // Les sites dont une page a été LUE : celles pour lesquelles un outil de
+      // lecture a rendu du contenu réel (`readUrls`), jamais une adresse
+      // seulement demandée.
+      const hosts = [...readUrls(facts, isPageReader)].map((u) => u.split('/')[0]!);
       const site = (h: string): string => h.split('.').slice(-2).join('.');
       const fromSource = last.images.some((i) => {
         const o = hostOf(i.origin);

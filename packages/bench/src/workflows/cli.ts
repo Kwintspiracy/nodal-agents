@@ -19,7 +19,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { executeRows, readTreeFacts } from './facts';
-import { BENCH_LOCK_FILE, claimStack, stopOwnTrials, type BenchLock } from './lock';
+import { BENCH_LOCK_FILE, BenchStop, claimStack, type BenchLock } from './lock';
 import { startRunTask } from './mcp';
 import { redactHome } from './redact';
 import { SCENARIOS, scenarioById } from './scenarios';
@@ -161,14 +161,21 @@ async function main(): Promise<void> {
   const { db, close } = await openStackDb();
 
   let lock: BenchLock | null = null;
+  // L'arrêt est partagé avec la boucle : plus aucun lancement une fois demandé,
+  // le run_task en vol attendu (30 s au plus), PUIS le balayage des essais vivants.
+  const stop = new BenchStop();
   const stopNow = async (signal: string): Promise<void> => {
     console.error(`\n${signal}: stopping the bench`);
     try {
-      await stopOwnTrials(lock, {
-        liveRoots: () => readLiveBenchRoots(db),
-        cancel: (root) => cancelTree(db, root.entityId, root.id),
-        log: (l) => console.error(l),
-      });
+      await stop.stop(
+        lock,
+        {
+          liveRoots: () => readLiveBenchRoots(db),
+          cancel: (root) => cancelTree(db, root.entityId, root.id),
+          log: (l) => console.error(l),
+        },
+        { waitMs: 30_000 },
+      );
     } catch (e) {
       console.error(
         `could not cancel the bench trials still alive: ${String(e instanceof Error ? e.message : e)}. The next bench cancels them before it starts.`,
@@ -195,7 +202,7 @@ async function main(): Promise<void> {
     const deps: TrialDeps = {
       now: () => Date.now(),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-      start: (instruction, caller) => startRunTask(stackDir, instruction, caller),
+      start: (instruction, caller) => stop.start(() => startRunTask(stackDir, instruction, caller)),
       read: (rootId) => readTreeFacts(db, rootId),
       cancel: (ent, rootId) => cancelTree(db, ent, rootId),
       foreign: () => readForeignActivity(db, DEFAULT_TRIAL_OPTIONS.chatQuietMs),
@@ -212,6 +219,7 @@ async function main(): Promise<void> {
     mkdirSync(dirname(RESULTS_FILE), { recursive: true });
     for (const s of scenarios) {
       for (let i = 1; i <= trials; i++) {
+        if (stop.stopped) break;
         console.log(`\n▶ ${s.id} v${s.version} (${i}/${trials})`);
         const line: TrialLine = await runTrial(s, deps, {
           ...DEFAULT_TRIAL_OPTIONS,
@@ -219,6 +227,8 @@ async function main(): Promise<void> {
           nodalVersion,
           stackCommit,
         });
+        // Un essai coupé par l'arrêt ne mesure rien : pas de ligne.
+        if (stop.stopped) break;
         appendFileSync(RESULTS_FILE, `${JSON.stringify(line)}\n`, 'utf8');
         console.log(JSON.stringify(line));
         if (line.verdict !== 'green') failed++;

@@ -15,7 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { seedMinimal, spinUpTestDb } from '@nodal-agents/db/test-utils';
 import { readTreeFacts } from '../facts';
-import { readForeignActivity } from '../stack';
+import { readForeignActivity, readLiveBenchRoots } from '../stack';
 import { busyReason, measure } from '../trial';
 
 // Le type vient du helper : @electric-sql/pglite n'est pas une dépendance du banc.
@@ -160,5 +160,45 @@ describe('the measures of a trial run by a coding CLI', () => {
       'claude-opus-4-1-20250805',
       'codex CLI, model not reported',
     ]);
+  });
+});
+
+// Passe 3 (Reviewer A) : le filtre qui décide quels essais le banc annule
+// (au démarrage et à l'arrêt) n'était prouvé nulle part. Il ne doit JAMAIS
+// rendre un job du propriétaire.
+describe('the live bench trials, and only them', () => {
+  async function root(caller: string | null, status: string): Promise<string> {
+    const r = await pg.query<{ id: string }>(
+      `insert into agent_jobs (entity_id, agent_id, status, channel, task, trigger_context)
+       values ($1, $2, $3, 'mcp', 'x', $4::jsonb) returning id::text`,
+      [entityId, agentId, status, caller === null ? null : JSON.stringify({ caller })],
+    );
+    return r.rows[0]!.id;
+  }
+
+  it('returns the bench roots still alive, never a job of the owner', async () => {
+    await pg.exec('delete from approval_requests; delete from agent_jobs;');
+    const benchLive = await root('nodal-bench/research/v2', 'processing');
+    const benchDone = await root('nodal-bench/question/v1', 'completed');
+    const benchWithLiveChild = await root('nodal-bench/file/v1', 'completed');
+    await job({ parent: benchWithLiveChild, status: 'processing' });
+    const benchAsking = await root('nodal-bench/code/v1', 'completed');
+    await pg.query(
+      `insert into approval_requests (entity_id, job_id, tool_name, tool_input, status)
+       values ($1, $2, 'run_command', '{}'::jsonb, 'pending')`,
+      [entityId, benchAsking],
+    );
+    // Le propriétaire : un client MCP à lui, un job sans étiquette, un enfant vivant.
+    await root('claude-desktop', 'processing');
+    await root('my-nodal-bench/x', 'processing');
+    const ownerParent = await root(null, 'awaiting_delegation');
+    await job({ parent: ownerParent, status: 'processing' });
+
+    const rows = await readLiveBenchRoots(db);
+    expect(rows.map((r) => r.id).sort()).toEqual(
+      [benchLive, benchWithLiveChild, benchAsking].sort(),
+    );
+    expect(rows.every((r) => r.entityId === entityId)).toBe(true);
+    expect(rows.map((r) => r.id)).not.toContain(benchDone);
   });
 });
