@@ -321,6 +321,9 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
         async resolveCard(text: string): Promise<void> {
           await interaction.update({ content: text, components: [] }).catch(() => {});
         },
+        async acknowledge(): Promise<void> {
+          await interaction.deferUpdate().catch(() => {});
+        },
       },
     });
     if (!result.handled && result.reason === 'unknown_custom_id') {

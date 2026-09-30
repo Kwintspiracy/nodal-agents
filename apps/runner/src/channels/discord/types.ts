@@ -56,4 +56,11 @@ export interface DiscordInteractionAck {
    * `answerTelegramCallback` + `editTelegramMessageText` pair.
    */
   resolveCard(text: string): Promise<void>;
+  /**
+   * Acknowledge the tap WITHOUT touching the card (Discord `deferUpdate`).
+   * An approval tap uses this: the card is rewritten by the card-settlement
+   * point (approvals/card-settlement.ts), the one writer of a settled card
+   * whatever settled it (#637).
+   */
+  acknowledge(): Promise<void>;
 }

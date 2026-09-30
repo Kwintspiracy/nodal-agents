@@ -382,7 +382,11 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       conversation_id text NOT NULL,
       message_id text NOT NULL,
       sent_at timestamptz NOT NULL DEFAULT now(),
-      settled_at timestamptz
+      claimed_at timestamptz,
+      attempts integer NOT NULL DEFAULT 0,
+      last_error text,
+      settled_at timestamptz,
+      outcome text CHECK (outcome IS NULL OR outcome IN ('edited','cannot_edit','gave_up'))
     );
 
     CREATE TABLE IF NOT EXISTS approval_rules (

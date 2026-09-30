@@ -31,7 +31,7 @@ import { unblockReadyTasks } from './unblock-ready.ts';
 import { executeReadyTasks } from './execute-ready.ts';
 import { runScheduleTick } from './run-schedules.ts';
 import { deliverCompletedRoots } from './deliver-results.ts';
-import { settleApprovalCards } from '../approvals/card-settlement.ts';
+import { settleApprovalCards, countCardSettlement } from '../approvals/card-settlement.ts';
 import { drainDeliveries, sweepExhaustedDeliveries } from '../delivery/outbox.ts';
 import { runCuratorTick } from './run-curator.ts';
 import { runSkillUpdateCheckTick, type SkillUpdateCheckTickEnv } from './run-skill-update-check.ts';
@@ -62,8 +62,12 @@ export interface CronTickResult {
   stalePendingFailed: number;
   /** Demandes d'approbation échues fermées par le balayage TTL (#349). */
   approvalsExpired: number;
-  /** Cartes d'approbation mises à jour parce que leur demande est tranchée (#637). */
-  approvalCardsSettled: number;
+  /** Cartes d'approbation RÉÉCRITES parce que leur demande est tranchée (#637). */
+  approvalCardsEdited: number;
+  /** Éditions de carte ratées ce tick (reprises au suivant, ou abandonnées). */
+  approvalCardsFailed: number;
+  /** Cartes sur un canal qui ne sait pas éditer (WhatsApp) : laissées telles quelles, et dit. */
+  approvalCardsNotEditable: number;
   orphansReset: number;
   tasksUnblocked: number;
   tasksExecuted: number;
@@ -287,10 +291,10 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   // leur carte mise à jour dans ce même tick ; et sans filtre, pour rattraper
   // toute demande close ailleurs (l'annulation d'un arbre depuis le web, qui
   // ne passe pas par le runner).
-  const approvalCardsSettled = await guardPhase(
+  const approvalCards = await guardPhase(
     'settleApprovalCards',
-    async () => (await settleApprovalCards(deps.db)).length,
-    0,
+    async () => countCardSettlement(await settleApprovalCards(deps.db)),
+    { edited: 0, failed: 0, cannotEdit: 0 },
   );
 
   const orphansReset = await guardPhase('resetOrphanedTasks', () => resetOrphanedTasks(deps.db), 0);
@@ -509,7 +513,9 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     pendingRecovered,
     stalePendingFailed,
     approvalsExpired,
-    approvalCardsSettled,
+    approvalCardsEdited: approvalCards.edited,
+    approvalCardsFailed: approvalCards.failed,
+    approvalCardsNotEditable: approvalCards.cannotEdit,
     orphansReset,
     tasksUnblocked,
     tasksExecuted,

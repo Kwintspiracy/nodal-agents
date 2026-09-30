@@ -45,10 +45,14 @@ describe('migration 0140_approval_card_messages @cap:approuver-une-action/moteur
       expect(rows).toEqual([
         { column_name: 'agent_id', data_type: 'uuid', is_nullable: 'NO' },
         { column_name: 'approval_request_id', data_type: 'uuid', is_nullable: 'NO' },
+        { column_name: 'attempts', data_type: 'integer', is_nullable: 'NO' },
         { column_name: 'channel', data_type: 'text', is_nullable: 'NO' },
+        { column_name: 'claimed_at', data_type: 'timestamp with time zone', is_nullable: 'YES' },
         { column_name: 'conversation_id', data_type: 'text', is_nullable: 'NO' },
         { column_name: 'id', data_type: 'uuid', is_nullable: 'NO' },
+        { column_name: 'last_error', data_type: 'text', is_nullable: 'YES' },
         { column_name: 'message_id', data_type: 'text', is_nullable: 'NO' },
+        { column_name: 'outcome', data_type: 'text', is_nullable: 'YES' },
         { column_name: 'sent_at', data_type: 'timestamp with time zone', is_nullable: 'NO' },
         { column_name: 'settled_at', data_type: 'timestamp with time zone', is_nullable: 'YES' },
       ]);

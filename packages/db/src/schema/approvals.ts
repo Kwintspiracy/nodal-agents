@@ -116,9 +116,16 @@ export type ApprovalRequestInsert = typeof approvalRequests.$inferInsert;
  * expirée par le balayage ou close par l'annulation de son job laissait une
  * carte morte, boutons actifs, dans la conversation du propriétaire.
  *
- * `settled_at` : posé, une seule fois, par le point qui réécrit la carte
- * (`approvals/card-settlement.ts` du runner) quand la demande a quitté
- * `pending`. NULL : la carte n'a pas encore été mise à jour.
+ * La mise à jour (`approvals/card-settlement.ts` du runner) :
+ * - `claimed_at` : un appelant a pris la carte et l'édite en ce moment. Un
+ *   bail, pas un verrou : passé `APPROVAL_CARD_CLAIM_LEASE_MS`, un autre la
+ *   reprend (le processus qui la tenait est mort).
+ * - `attempts` / `last_error` : combien d'éditions ont été tentées, et pourquoi
+ *   la dernière a échoué. Un échec est repris au tick suivant, un nombre borné
+ *   de fois.
+ * - `settled_at` + `outcome` : posés UNE fois, quand c'est fini — `edited`
+ *   (l'édition a réussi), `cannot_edit` (le canal ne sait pas éditer) ou
+ *   `gave_up` (échecs répétés, abandon dit dans les logs). NULL : pas fini.
  */
 export const approvalCardMessages = pgTable(
   'approval_card_messages',
@@ -134,13 +141,21 @@ export const approvalCardMessages = pgTable(
     conversationId: text('conversation_id').notNull(),
     messageId: text('message_id').notNull(),
     sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
     settledAt: timestamp('settled_at', { withTimezone: true }),
+    outcome: text('outcome'),
   },
   (table) => [
     index('idx_approval_card_messages_request').on(table.approvalRequestId),
     check(
       'approval_card_messages_channel_check',
       sql`${table.channel} IN ('telegram','discord','slack','whatsapp')`,
+    ),
+    check(
+      'approval_card_messages_outcome_check',
+      sql`${table.outcome} IS NULL OR ${table.outcome} IN ('edited','cannot_edit','gave_up')`,
     ),
   ],
 );

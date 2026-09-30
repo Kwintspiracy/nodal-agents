@@ -91,6 +91,15 @@ export interface SendResult {
   messageId: string;
 }
 
+/**
+ * L'issue d'une réécriture de message (#637). Rendue, jamais avalée : un
+ * appelant qui doit savoir si la carte a vraiment changé (la mise à jour des
+ * cartes d'approbation, qui reprend un échec au tick suivant) le peut ; un
+ * appelant que l'issue n'intéresse pas l'ignore. Jamais levée : une édition
+ * ratée ne doit pas défaire la décision qu'elle raconte.
+ */
+export type EditResult = { ok: true } | { ok: false; error: string };
+
 /** Result of validating a channel's credentials (Telegram: getMe). */
 export interface BotIdentity {
   id: string;
@@ -202,7 +211,7 @@ export interface ChannelAdapter {
     conversationId: string,
     messageId: string,
     text: string,
-  ): Promise<void>;
+  ): Promise<EditResult>;
 
   /** Optional: only channels whose platform can enumerate what a bot/session
    *  could send into implement this (Telegram's Bot API has no such

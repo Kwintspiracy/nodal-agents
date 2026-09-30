@@ -48,6 +48,7 @@ import type {
   ApprovalCard,
   QuestionCard,
   SendResult,
+  EditResult,
   BotIdentity,
   TextFormat,
   SendTextOpts,
@@ -379,17 +380,17 @@ async function sendQuestionCard(
 }
 
 /**
- * Edit a previously-sent message's text. Best-effort like Telegram's
+ * Edit a previously-sent message's text. Like Telegram's
  * editTelegramMessageText: this is used to turn a resolved approval card into
  * its resolved state, and a failed edit must not undo a decision that already
- * happened — so, deliberately, this never throws.
+ * happened — so it never throws, but it RETURNS its outcome (#637).
  */
 async function editMessageText(
   creds: ChannelCredentials,
   conversationId: string,
   messageId: string,
   text: string,
-): Promise<void> {
+): Promise<EditResult> {
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
   const rest = makeRestClient(botToken);
@@ -402,8 +403,9 @@ async function editMessageText(
   };
   try {
     await rest.patch(Routes.channelMessage(channelId, messageId), { body });
-  } catch {
-    /* best-effort — the resolution already happened */
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 

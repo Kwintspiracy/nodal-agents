@@ -243,8 +243,9 @@ describe('discordAdapter.editMessageText', () => {
   it('PATCHes the channel message route with new content + allowed_mentions, buttons removed', async () => {
     vi.mocked(REST.prototype.patch).mockResolvedValueOnce(fakeMessage('42'));
 
-    await discordAdapter.editMessageText!(CREDS, CHANNEL_ID, '42', 'Resolved ✅');
+    const result = await discordAdapter.editMessageText!(CREDS, CHANNEL_ID, '42', 'Resolved ✅');
 
+    expect(result).toEqual({ ok: true });
     expect(vi.mocked(REST.prototype.patch).mock.calls[0]?.[0]).toBe(
       Routes.channelMessage(CHANNEL_ID, '42'),
     );
@@ -256,12 +257,12 @@ describe('discordAdapter.editMessageText', () => {
     });
   });
 
-  it('never throws — a failed edit must not undo a decision that already happened', async () => {
+  it('never throws, and RETURNS the failure — a failed edit is not a success (#637)', async () => {
     vi.mocked(REST.prototype.patch).mockRejectedValueOnce(new Error('boom'));
 
     await expect(
       discordAdapter.editMessageText!(CREDS, CHANNEL_ID, '42', 'Resolved ✅'),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ ok: false, error: 'boom' });
   });
 });
 

@@ -27,6 +27,7 @@ import type {
   ApprovalCard,
   QuestionCard,
   SendResult,
+  EditResult,
   BotIdentity,
   TextFormat,
   SendTextOpts,
@@ -182,10 +183,10 @@ async function editMessageText(
   conversationId: string,
   messageId: string,
   text: string,
-): Promise<void> {
+): Promise<EditResult> {
   const botToken = requireBotToken(creds);
   const chatId = requireChatId(conversationId);
-  await editTelegramMessageText({ botToken, chatId, messageId: Number(messageId), text });
+  return editTelegramMessageText({ botToken, chatId, messageId: Number(messageId), text });
 }
 
 async function validateCredentials(creds: ChannelCredentials): Promise<BotIdentity> {

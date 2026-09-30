@@ -28,15 +28,9 @@ import {
   APPROVAL_BUTTON_LABELS,
   buildApprovalCardBody,
   resolveApprovalDeliveryTarget,
-  settledApprovalCardText,
 } from '../approvals/notify.ts';
-import {
-  upsertAutoApproveRule,
-  getApprovalRule,
-  restoreApprovalRule,
-  isAutoRunPaused,
-} from '../approvals/rules.ts';
-import { isCodeExecutionTool } from '@nodal-agents/tools';
+import { renderSettledCardTextFor } from '../approvals/card-settlement.ts';
+import { upsertAutoApproveRule, getApprovalRule, restoreApprovalRule } from '../approvals/rules.ts';
 import { readQuestionToolInput } from '@nodal-agents/shared';
 
 export interface HandleApprovalCallbackArgs {
@@ -201,21 +195,31 @@ export async function handleApprovalCallback(
 
   // SECURITY: the tap must come from the same chat the card was delivered to.
   const jobChatId = target.chatId;
+
+  /**
+   * Réécrit CETTE carte avec le texte de la demande tranchée — le même que
+   * celui du point de mise à jour des cartes (#637). false : la demande est
+   * encore pending, rien à réécrire.
+   */
+  const rewriteAsSettled = async (mid: number): Promise<boolean> => {
+    const text = await renderSettledCardTextFor(deps.db, approval.id);
+    if (text === null) return false;
+    await editTelegramMessageText({ botToken, chatId: jobChatId, messageId: mid, text });
+    return true;
+  };
   if (tappedChatId === undefined || String(tappedChatId) !== jobChatId) {
     await answerTelegramCallback(botToken, cb.id, 'Not authorized.', true);
     return { handled: false, reason: 'chat_mismatch' };
   }
 
-  // Already resolved (e.g. the dashboard won the race) — tell the user, refresh card.
+  // Already resolved (e.g. the dashboard won the race) — tell the user, and
+  // make THIS card say what the request became (#637). It still had buttons,
+  // so the card-settlement point could not update it (a card sent before its
+  // record existed, or one whose edits gave up): the text is the settlement's.
   if (approval.status !== 'pending') {
     await answerTelegramCallback(botToken, cb.id, `Already ${approval.status}.`);
     if (messageId !== undefined) {
-      await editTelegramMessageText({
-        botToken,
-        chatId: jobChatId,
-        messageId,
-        text: `This request was already ${approval.status}.`,
-      });
+      await rewriteAsSettled(messageId);
     }
     return { handled: false, reason: 'already_resolved' };
   }
@@ -253,23 +257,9 @@ export async function handleApprovalCallback(
       await answerTelegramCallback(botToken, cb.id, 'Could not apply — try the dashboard.', true);
       return { handled: false, reason: answered.code };
     }
+    // La carte (réponse, boutons retirés) est réécrite par
+    // resolveApprovalDecision → settleApprovalCards : un seul écrivain (#637).
     await answerTelegramCallback(botToken, cb.id, `✅ ${chosen}`);
-    if (messageId !== undefined) {
-      // Les boutons disparaissent avec l'édition (aucun `inlineKeyboard`) : la
-      // question est tranchée, et une seconde option cliquable sur une carte
-      // déjà résolue ne mènerait qu'à un « Already approved ».
-      await editTelegramMessageText({
-        botToken,
-        chatId: jobChatId,
-        messageId,
-        text: settledApprovalCardText({
-          status: 'approved',
-          kind: 'question',
-          toolName: approval.toolName,
-          answer: chosen,
-        }),
-      });
-    }
     return { handled: true, decision: 'answer', jobId: answered.jobId, answer: chosen };
   }
 
@@ -324,6 +314,12 @@ export async function handleApprovalCallback(
           ],
         ],
       });
+      // #637 — la demande a pu être tranchée (expirée, répondue ailleurs) entre
+      // la lecture `pending` plus haut et cette édition, et sa carte déjà
+      // réécrite par le point de mise à jour : cette édition vient alors de
+      // reposer des boutons actifs sur une demande close. Relire et, si c'est
+      // le cas, rendre à la carte le texte de la demande tranchée.
+      await rewriteAsSettled(messageId);
     }
     await answerTelegramCallback(botToken, cb.id, 'One more tap to confirm.');
     return { handled: true, decision: 'always_confirm_shown', jobId: approval.jobId };
@@ -373,6 +369,9 @@ export async function handleApprovalCallback(
         text: `${body}\n\nTap a button below to decide — or resolve it from the dashboard.`,
         inlineKeyboard,
       });
+      // #637 — même fenêtre que pour la question de confirmation : ne pas
+      // laisser des boutons restaurés sur une demande tranchée entre-temps.
+      await rewriteAsSettled(messageId);
     }
     await answerTelegramCallback(botToken, cb.id);
     return { handled: true, decision: 'card_restored', jobId: approval.jobId };
@@ -458,40 +457,11 @@ export async function handleApprovalCallback(
       return { handled: false, reason: confirmed.code };
     }
 
-    // Le frein d'urgence rend TOUTE règle auto_approve d'outil de code
-    // dormante : promettre « ne demandera plus » alors que le prochain appel
-    // redemandera serait un no-op silencieux (invariant #4).
-    //
-    // Ici, et ICI SEULEMENT, une erreur de lecture est rattrapée : ce site ne
-    // décide rien, il rédige une note. Le frein qui compte est appliqué
-    // ailleurs (étape 8b du loop, et run-job côté runtime CLI), où l'erreur
-    // remonte et fait échouer le job. Faire tomber le traitement du clic pour
-    // une phrase d'information ferait rejouer l'update par le poller.
-    let brakeEngaged = false;
-    try {
-      brakeEngaged = await isAutoRunPaused(deps.db, approval.entityId);
-    } catch (err) {
-      console.warn(
-        '[approvals] brake state unreadable, card note omitted:',
-        err instanceof Error ? err.message : err,
-      );
-    }
-    const brakeNote =
-      brakeEngaged && isCodeExecutionTool(approval.toolName)
-        ? ' The workspace auto-run brake is engaged, so it will keep asking until you release it in Settings.'
-        : '';
-
+    // La carte (« will now run without asking », avec la réserve du frein
+    // quand elle s'applique) est réécrite par resolveApprovalDecision →
+    // settleApprovalCards, qui lit la règle posée ci-dessus : un seul écrivain,
+    // un seul texte, le même que pour un « Toujours » donné depuis le web (#637).
     await answerTelegramCallback(botToken, cb.id, '✅ Always allowed');
-    if (messageId !== undefined) {
-      await editTelegramMessageText({
-        botToken,
-        chatId: jobChatId,
-        messageId,
-        text:
-          `✅ Approved — ${approval.toolName} will now run without asking for ` +
-          `${agentNameForCard ?? 'this agent'}.${brakeNote}`,
-      });
-    }
     return { handled: true, decision: 'approve', jobId: confirmed.jobId };
   }
 
@@ -507,25 +477,12 @@ export async function handleApprovalCallback(
     return { handled: false, reason: result.code };
   }
 
-  const settledText = settledApprovalCardText({
-    status: parsed.decision === 'approve' ? 'approved' : 'rejected',
-    kind: 'approval',
-    toolName: approval.toolName,
-    answer: null,
-  });
+  // La carte est réécrite par resolveApprovalDecision → settleApprovalCards (#637).
   await answerTelegramCallback(
     botToken,
     cb.id,
     parsed.decision === 'approve' ? '✅ Approved' : '❌ Rejected',
   );
-  if (messageId !== undefined) {
-    await editTelegramMessageText({
-      botToken,
-      chatId: jobChatId,
-      messageId,
-      text: settledText,
-    });
-  }
 
   return { handled: true, decision: parsed.decision, jobId: result.jobId };
 }

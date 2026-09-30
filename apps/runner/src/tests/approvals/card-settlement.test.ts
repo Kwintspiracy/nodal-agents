@@ -6,13 +6,15 @@
 // expire parce que le run a été annulé — la carte reste, boutons actifs.
 //
 // Ce qui est prouvé ici, sur le contenu RÉELLEMENT envoyé au canal (texte +
-// clavier), jamais sur un nombre d'appels :
+// clavier) et sur la ligne de la carte en base, jamais sur un nombre d'appels :
 //   - réponse ailleurs (dashboard)       → la carte Telegram dit la décision, boutons retirés
 //   - expiration par le balayage (tick)  → la carte Discord dit « expirée »
 //   - annulation de l'arbre              → la carte Telegram du job MCP dit « expirée »
 //   - question répondue ailleurs         → la carte dit la réponse
 //   - canal qui ne sait pas éditer       → rien n'est envoyé, et c'est DIT
-//   - une carte n'est réécrite qu'une fois, même quand deux chemins passent
+//   - une édition ratée n'est pas un succès : reprise au tick suivant, bornée, abandon dit
+//   - le clic sur la carte : UNE écriture, par le même point, avec le même texte
+//   - la course du « Toujours autoriser » ne laisse pas de boutons sur une demande close
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -27,6 +29,7 @@ import {
   channelBindings,
   channelAllowedConversations,
   cancelJobTree,
+  entities,
 } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -36,7 +39,14 @@ import type { RunnerEnv } from '../../env.ts';
 // remplacé plus bas) : c'est le corps HTTP réel qui est vérifié.
 const { discordSendApprovalCardMock, discordEditMock, whatsappSendTextMock } = vi.hoisted(() => ({
   discordSendApprovalCardMock: vi.fn(async () => ({ messageId: 'discord-msg-77' })),
-  discordEditMock: vi.fn(async () => {}),
+  discordEditMock: vi.fn(
+    async (
+      _creds: unknown,
+      _conversationId: string,
+      _messageId: string,
+      _text: string,
+    ): Promise<{ ok: true } | { ok: false; error: string }> => ({ ok: true }),
+  ),
   whatsappSendTextMock: vi.fn(async () => ({ messageId: 'wa-msg-9' })),
 }));
 
@@ -74,14 +84,38 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
 
 import { notifyApprovalCreated } from '../../approvals/notify.ts';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
-import { settleApprovalCards } from '../../approvals/card-settlement.ts';
+import {
+  settleApprovalCards,
+  APPROVAL_CARD_MAX_ATTEMPTS,
+} from '../../approvals/card-settlement.ts';
 import { runCronTick } from '../../cron/tick.ts';
+import { handleApprovalCallback } from '../../telegram/approval-callback.ts';
+import { handleDiscordApprovalInteraction } from '../../channels/discord/approval-callback.ts';
+import type { TelegramUpdate } from '@nodal-agents/delivery';
 
 const OWNER_CHAT = '199791464';
 const TELEGRAM_CARD_MESSAGE_ID = 4242;
+const DISCORD_OWNER_CHANNEL = 'discord-owner-chan-1';
 
-const fetchMock = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
+/** Un crochet appelé UNE fois sur la prochaine édition Telegram (simule ce qui se passe pendant). */
+let onNextTelegramEdit: ((body: Record<string, unknown>) => Promise<void>) | null = null;
+/**
+ * Les éditions Telegram dans l'ordre où elles ABOUTISSENT — l'état final de la
+ * carte chez Telegram est celui de la dernière. (`mock.calls` suit l'ordre des
+ * appels, pas des réponses : faux dès qu'une édition en chevauche une autre.)
+ */
+const completedTelegramEdits: Array<Record<string, unknown>> = [];
+
+const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
   const u = String(url);
+  if (u.includes('/editMessageText') && onNextTelegramEdit) {
+    const hook = onNextTelegramEdit;
+    onNextTelegramEdit = null;
+    await hook(JSON.parse(init?.body as string) as Record<string, unknown>);
+  }
+  if (u.includes('/editMessageText')) {
+    completedTelegramEdits.push(JSON.parse(init?.body as string) as Record<string, unknown>);
+  }
   const result = u.includes('/sendMessage') ? { message_id: TELEGRAM_CARD_MESSAGE_ID } : true;
   return new Response(JSON.stringify({ ok: true, result }), {
     status: 200,
@@ -100,16 +134,35 @@ let db: TestDb;
 let deps: RunnerDeps;
 let seed: { entityId: string; agentId: string };
 
-/** Les appels Telegram `editMessageText`, avec leur corps décodé. */
-function telegramEdits(): Array<{
+interface TelegramEditBody {
   chat_id: string;
   message_id: number;
   text: string;
-  reply_markup: { inline_keyboard: unknown[] };
-}> {
+  reply_markup: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
+}
+
+/** Les appels Telegram `editMessageText`, avec leur corps décodé. */
+function telegramEdits(): TelegramEditBody[] {
   return fetchMock.mock.calls
     .filter(([url]) => String(url).includes('/editMessageText'))
-    .map(([, init]) => JSON.parse((init as unknown as RequestInit).body as string));
+    .map(([, init]) => JSON.parse((init as RequestInit).body as string) as TelegramEditBody);
+}
+
+function noButtons(text: string): TelegramEditBody {
+  return {
+    chat_id: OWNER_CHAT,
+    message_id: TELEGRAM_CARD_MESSAGE_ID,
+    text,
+    reply_markup: { inline_keyboard: [] },
+  };
+}
+
+async function cardRow(approvalId: string) {
+  const [row] = await db
+    .select()
+    .from(approvalCardMessages)
+    .where(eq(approvalCardMessages.approvalRequestId, approvalId));
+  return row!;
 }
 
 /** Un job + sa demande en attente, puis la carte envoyée par le vrai notify. */
@@ -158,6 +211,30 @@ async function gatedJob(opts: {
   return { jobId: job!.id, approvalId: approval!.id };
 }
 
+const telegramCard = () => gatedJob({ channel: 'telegram', chatId: OWNER_CHAT });
+const discordCard = (expiresAt?: Date) =>
+  gatedJob({
+    channel: 'discord',
+    chatId: DISCORD_OWNER_CHANNEL,
+    ...(expiresAt ? { expiresAt } : {}),
+  });
+
+/** Le clic Telegram sur la carte, tel que le poller le reçoit. */
+function tap(data: string): TelegramUpdate {
+  return {
+    update_id: 1,
+    callback_query: {
+      id: 'cb-1',
+      from: { id: Number(OWNER_CHAT), is_bot: false, first_name: 'Owner' },
+      data,
+      message: {
+        message_id: TELEGRAM_CARD_MESSAGE_ID,
+        chat: { id: Number(OWNER_CHAT), type: 'private' },
+      },
+    },
+  } as unknown as TelegramUpdate;
+}
+
 beforeAll(async () => {
   const result = await spinUpTestDb();
   db = result.db;
@@ -183,7 +260,7 @@ beforeAll(async () => {
     status: 'active',
   });
   for (const [channel, credentials, conversationId] of [
-    ['discord', { botToken: 'discord-tok-1' }, 'discord-owner-chan-1'],
+    ['discord', { botToken: 'discord-tok-1' }, DISCORD_OWNER_CHANNEL],
     ['whatsapp', { sessionDir: '/sessions/card-test' }, '15550000000@s.whatsapp.net'],
   ] as const) {
     await db.insert(channelBindings).values({
@@ -207,30 +284,30 @@ beforeAll(async () => {
 
 beforeEach(() => {
   fetchMock.mockClear();
-  discordEditMock.mockClear();
+  discordEditMock.mockReset();
+  discordEditMock.mockImplementation(async () => ({ ok: true }));
   whatsappSendTextMock.mockClear();
+  onNextTelegramEdit = null;
+  completedTelegramEdits.length = 0;
 });
 
 describe('approval cards follow their request @cap:approuver-une-action/moteur', () => {
   it('records where the card went: channel, delivering agent, conversation, message id', async () => {
-    const { approvalId } = await gatedJob({ channel: 'telegram', chatId: OWNER_CHAT });
+    const { approvalId } = await telegramCard();
 
-    const rows = await db
-      .select()
-      .from(approvalCardMessages)
-      .where(eq(approvalCardMessages.approvalRequestId, approvalId));
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
+    expect(await cardRow(approvalId)).toMatchObject({
       channel: 'telegram',
       agentId: seed.agentId,
       conversationId: OWNER_CHAT,
       messageId: String(TELEGRAM_CARD_MESSAGE_ID),
+      attempts: 0,
       settledAt: null,
+      outcome: null,
     });
   });
 
   it('answered elsewhere (dashboard): the Telegram card states the decision and loses its buttons', async () => {
-    const { approvalId } = await gatedJob({ channel: 'telegram', chatId: OWNER_CHAT });
+    const { approvalId } = await telegramCard();
     fetchMock.mockClear();
 
     const res = await resolveApprovalDecision(deps, testEnv, {
@@ -240,23 +317,12 @@ describe('approval cards follow their request @cap:approuver-une-action/moteur',
     });
     expect(res.ok).toBe(true);
 
-    expect(telegramEdits()).toEqual([
-      {
-        chat_id: OWNER_CHAT,
-        message_id: TELEGRAM_CARD_MESSAGE_ID,
-        text: '❌ Rejected — run_command',
-        reply_markup: { inline_keyboard: [] },
-      },
-    ]);
+    expect(telegramEdits()).toEqual([noButtons('❌ Rejected — run_command')]);
+    expect(await cardRow(approvalId)).toMatchObject({ outcome: 'edited', attempts: 1 });
   });
 
-  it('expired by the TTL sweep: the cron tick rewrites the Discord card as expired', async () => {
-    const { approvalId } = await gatedJob({
-      channel: 'discord',
-      chatId: 'discord-owner-chan-1',
-      expiresAt: new Date(Date.now() - 60_000),
-    });
-    expect(discordSendApprovalCardMock).toHaveBeenCalled();
+  it('expired by the TTL sweep: the cron tick rewrites the Discord card as expired, and counts exactly it', async () => {
+    const { approvalId } = await discordCard(new Date(Date.now() - 60_000));
 
     const tick = await runCronTick(deps);
 
@@ -265,11 +331,15 @@ describe('approval cards follow their request @cap:approuver-une-action/moteur',
       .from(approvalRequests)
       .where(eq(approvalRequests.id, approvalId));
     expect(row?.status).toBe('expired');
-    expect(tick.approvalCardsSettled).toBeGreaterThanOrEqual(1);
+    expect({
+      edited: tick.approvalCardsEdited,
+      failed: tick.approvalCardsFailed,
+      notEditable: tick.approvalCardsNotEditable,
+    }).toEqual({ edited: 1, failed: 0, notEditable: 0 });
     expect(discordEditMock.mock.calls).toEqual([
       [
         { botToken: 'discord-tok-1' },
-        'discord-owner-chan-1',
+        DISCORD_OWNER_CHANNEL,
         'discord-msg-77',
         '⌛ Expired — run_command',
       ],
@@ -279,7 +349,6 @@ describe('approval cards follow their request @cap:approuver-une-action/moteur',
   it('expired because its run was cancelled (cancelJobTree): the Telegram card of the MCP job says so', async () => {
     // Le scénario du ticket : job racine `mcp`, approbation levée par son
     // ENFANT délégué, puis l'arbre annulé (bouton Stop du web / `/stop`).
-    fetchMock.mockClear();
     const [root] = await db
       .insert(agentJobs)
       .values({
@@ -334,16 +403,9 @@ describe('approval cards follow their request @cap:approuver-une-action/moteur',
     expect(cancelled?.requestIds).toEqual([approval!.id]);
     // L'annulation vit dans @nodal-agents/db et part aussi du web : le point de
     // mise à jour la rattrape sans que `cancelJobTree` sache qu'une carte existe.
-    await settleApprovalCards(db);
+    await settleApprovalCards(deps.db);
 
-    expect(telegramEdits()).toEqual([
-      {
-        chat_id: OWNER_CHAT,
-        message_id: TELEGRAM_CARD_MESSAGE_ID,
-        text: '⌛ Expired — run_command',
-        reply_markup: { inline_keyboard: [] },
-      },
-    ]);
+    expect(telegramEdits()).toEqual([noButtons('⌛ Expired — run_command')]);
   });
 
   it('a question answered elsewhere: its Telegram card shows the chosen option, buttons gone', async () => {
@@ -364,17 +426,10 @@ describe('approval cards follow their request @cap:approuver-une-action/moteur',
     });
     expect(res.ok).toBe(true);
 
-    expect(telegramEdits()).toEqual([
-      {
-        chat_id: OWNER_CHAT,
-        message_id: TELEGRAM_CARD_MESSAGE_ID,
-        text: '✅ Answered: Large',
-        reply_markup: { inline_keyboard: [] },
-      },
-    ]);
+    expect(telegramEdits()).toEqual([noButtons('✅ Answered: Large')]);
   });
 
-  it('a channel that cannot edit (WhatsApp): nothing is sent, and the outcome SAYS the card is left as sent', async () => {
+  it('a channel that cannot edit (WhatsApp): nothing is sent, the card is closed as cannot_edit, and it is SAID', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const { approvalId } = await gatedJob({
@@ -388,7 +443,7 @@ describe('approval cards follow their request @cap:approuver-une-action/moteur',
         .set({ status: 'approved', resolvedAt: new Date(), resolvedBy: 'api' })
         .where(eq(approvalRequests.id, approvalId));
 
-      const outcomes = await settleApprovalCards(db, { approvalRequestIds: [approvalId] });
+      const outcomes = await settleApprovalCards(deps.db, { approvalRequestIds: [approvalId] });
 
       expect(outcomes).toEqual([
         expect.objectContaining({
@@ -402,6 +457,10 @@ describe('approval cards follow their request @cap:approuver-une-action/moteur',
       expect(detail).toContain('wa-msg-9');
       expect(detail).toContain('approved');
       expect(warn.mock.calls.map((c) => String(c[0]))).toContain(`[approval-card] ${detail}`);
+      expect(await cardRow(approvalId)).toMatchObject({
+        outcome: 'cannot_edit',
+        lastError: detail,
+      });
       // Aucun nouveau message pour « compenser » : le canal ne l'a pas demandé.
       expect(whatsappSendTextMock.mock.calls).toEqual([]);
     } finally {
@@ -410,7 +469,7 @@ describe('approval cards follow their request @cap:approuver-une-action/moteur',
   });
 
   it('a card is rewritten once: the sweep after an answer finds nothing left to do', async () => {
-    const { approvalId } = await gatedJob({ channel: 'telegram', chatId: OWNER_CHAT });
+    const { approvalId } = await telegramCard();
     await resolveApprovalDecision(deps, testEnv, {
       approvalRequestId: approvalId,
       decision: 'approve',
@@ -418,24 +477,305 @@ describe('approval cards follow their request @cap:approuver-une-action/moteur',
     });
     fetchMock.mockClear();
 
-    const again = await settleApprovalCards(db);
+    const again = await settleApprovalCards(deps.db);
 
     expect(again.filter((o) => o.approvalRequestId === approvalId)).toEqual([]);
     expect(telegramEdits()).toEqual([]);
-    const [row] = await db
-      .select({ settledAt: approvalCardMessages.settledAt })
-      .from(approvalCardMessages)
-      .where(eq(approvalCardMessages.approvalRequestId, approvalId));
-    expect(row?.settledAt).toBeInstanceOf(Date);
+    expect(await cardRow(approvalId)).toMatchObject({ outcome: 'edited' });
   });
 
   it('a card whose request is still pending is left alone', async () => {
-    const { approvalId } = await gatedJob({ channel: 'telegram', chatId: OWNER_CHAT });
+    const { approvalId } = await telegramCard();
     fetchMock.mockClear();
 
-    const outcomes = await settleApprovalCards(db, { approvalRequestIds: [approvalId] });
+    const outcomes = await settleApprovalCards(deps.db, { approvalRequestIds: [approvalId] });
 
     expect(outcomes).toEqual([]);
     expect(telegramEdits()).toEqual([]);
+    expect(await cardRow(approvalId)).toMatchObject({ attempts: 0, settledAt: null });
+  });
+});
+
+describe('a failed edit is not a success @cap:approuver-une-action/moteur', () => {
+  it('an edit that fails is retried on the next tick, and succeeds there', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { approvalId } = await discordCard();
+      discordEditMock.mockImplementationOnce(async () => ({ ok: false, error: 'HTTP 500' }));
+
+      await resolveApprovalDecision(deps, testEnv, {
+        approvalRequestId: approvalId,
+        decision: 'approve',
+        resolvedBy: 'api',
+      });
+
+      // Pas finie : la raison est gardée, la carte reste à reprendre.
+      expect(await cardRow(approvalId)).toMatchObject({
+        attempts: 1,
+        lastError: 'HTTP 500',
+        settledAt: null,
+        outcome: null,
+        claimedAt: null,
+      });
+
+      const tick = await runCronTick(deps);
+
+      expect({ edited: tick.approvalCardsEdited, failed: tick.approvalCardsFailed }).toEqual({
+        edited: 1,
+        failed: 0,
+      });
+      expect(discordEditMock.mock.calls.map((c) => c[3])).toEqual([
+        '✅ Approved — run_command',
+        '✅ Approved — run_command',
+      ]);
+      expect(await cardRow(approvalId)).toMatchObject({ attempts: 2, outcome: 'edited' });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('a tick whose edit fails counts it as failed, never as updated', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { approvalId } = await discordCard(new Date(Date.now() - 60_000));
+      discordEditMock.mockImplementation(async () => ({ ok: false, error: 'HTTP 502' }));
+
+      const tick = await runCronTick(deps);
+
+      expect({ edited: tick.approvalCardsEdited, failed: tick.approvalCardsFailed }).toEqual({
+        edited: 0,
+        failed: 1,
+      });
+      expect(await cardRow(approvalId)).toMatchObject({ settledAt: null, lastError: 'HTTP 502' });
+
+      // Le canal revient : le tick suivant la met à jour.
+      discordEditMock.mockImplementation(async () => ({ ok: true }));
+      await runCronTick(deps);
+      expect(await cardRow(approvalId)).toMatchObject({ outcome: 'edited', attempts: 2 });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it(`gives up after ${APPROVAL_CARD_MAX_ATTEMPTS} failed edits, SAYS so, and never takes the card again`, async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { approvalId } = await discordCard();
+      discordEditMock.mockImplementation(async () => ({ ok: false, error: 'Unknown Message' }));
+      await resolveApprovalDecision(deps, testEnv, {
+        approvalRequestId: approvalId,
+        decision: 'reject',
+        resolvedBy: 'api',
+      });
+
+      const outcomes: string[] = [];
+      for (let i = 0; i < APPROVAL_CARD_MAX_ATTEMPTS; i += 1) {
+        const o = await settleApprovalCards(deps.db, { approvalRequestIds: [approvalId] });
+        outcomes.push(o.map((x) => x.outcome).join(',') || 'nothing');
+      }
+
+      // L'appel dans resolve a fait la 1re tentative ; 2..4 reprennent, la 5e
+      // abandonne, la suivante ne prend plus rien.
+      expect(outcomes).toEqual([
+        ...Array.from({ length: APPROVAL_CARD_MAX_ATTEMPTS - 2 }, () => 'will_retry'),
+        'gave_up',
+        'nothing',
+      ]);
+      expect(await cardRow(approvalId)).toMatchObject({
+        attempts: APPROVAL_CARD_MAX_ATTEMPTS,
+        outcome: 'gave_up',
+        lastError: 'Unknown Message',
+      });
+      expect(error.mock.calls.map((c) => String(c[0]))).toContainEqual(
+        expect.stringContaining(
+          `gave up updating the discord card for approval ${approvalId} (message discord-msg-77) ` +
+            `after ${APPROVAL_CARD_MAX_ATTEMPTS} failed attempts`,
+        ),
+      );
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it('missing credentials are a transient failure: the card is updated once they are back', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { approvalId } = await telegramCard();
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+      fetchMock.mockClear();
+
+      await resolveApprovalDecision(deps, testEnv, {
+        approvalRequestId: approvalId,
+        decision: 'approve',
+        resolvedBy: 'api',
+      });
+
+      expect(telegramEdits()).toEqual([]);
+      expect(await cardRow(approvalId)).toMatchObject({
+        settledAt: null,
+        lastError: `no usable telegram credentials for agent ${seed.agentId}`,
+      });
+
+      await db
+        .update(agents)
+        .set({ telegramBotToken: '123:fake' })
+        .where(eq(agents.id, seed.agentId));
+      await settleApprovalCards(deps.db);
+
+      expect(telegramEdits()).toEqual([noButtons('✅ Approved — run_command')]);
+      expect(await cardRow(approvalId)).toMatchObject({ outcome: 'edited', attempts: 2 });
+    } finally {
+      await db
+        .update(agents)
+        .set({ telegramBotToken: '123:fake' })
+        .where(eq(agents.id, seed.agentId));
+      warn.mockRestore();
+    }
+  });
+
+  it('an error reading the cards reaches the caller (the tick reports it) instead of looking like "nothing to do"', async () => {
+    const broken = {
+      select: deps.db.select.bind(deps.db),
+      update: () => {
+        throw new Error('db down');
+      },
+    } as unknown as RunnerDeps['db'];
+
+    await expect(settleApprovalCards(broken)).rejects.toThrow('db down');
+  });
+});
+
+describe('a tap on the card: one write, the same text @cap:approuver-une-action/moteur', () => {
+  it('Telegram ✅: the card is rewritten ONCE, by the settlement point', async () => {
+    const { approvalId } = await telegramCard();
+    fetchMock.mockClear();
+
+    const r = await handleApprovalCallback({
+      update: tap(`apr:${approvalId}:a`),
+      receivingAgentId: seed.agentId,
+      botToken: '123:fake',
+      deps,
+      env: testEnv,
+    });
+
+    expect(r).toMatchObject({ handled: true, decision: 'approve' });
+    expect(telegramEdits()).toEqual([noButtons('✅ Approved — run_command')]);
+  });
+
+  it('Telegram « Always allow » confirmed: ONE write, and it says the tool will now run without asking', async () => {
+    // Un outil à lui : la règle posée ici couvre CET outil pour cet agent, et
+    // les autres tests de ce fichier ne doivent pas en hériter.
+    const { approvalId } = await gatedJob({
+      channel: 'telegram',
+      chatId: OWNER_CHAT,
+      toolName: 'skill_file_write',
+      toolInput: { skill: 'notes', path: 'SKILL.md' },
+    });
+    fetchMock.mockClear();
+
+    const r = await handleApprovalCallback({
+      update: tap(`apr:${approvalId}:wc`),
+      receivingAgentId: seed.agentId,
+      botToken: '123:fake',
+      deps,
+      env: testEnv,
+    });
+
+    expect(r).toMatchObject({ handled: true, decision: 'approve' });
+    expect(telegramEdits()).toEqual([
+      noButtons('✅ Approved — skill_file_write will now run without asking for Test Agent.'),
+    ]);
+  });
+
+  it('« Always allow » under the auto-run brake: the card says it will keep asking (same text, from the same point)', async () => {
+    const { approvalId } = await gatedJob({
+      channel: 'telegram',
+      chatId: OWNER_CHAT,
+      toolName: 'run_skill_script',
+      toolInput: { skill: 'notes', script: 'build.sh' },
+    });
+    await db.update(entities).set({ autoRunPaused: true }).where(eq(entities.id, seed.entityId));
+    fetchMock.mockClear();
+    try {
+      await handleApprovalCallback({
+        update: tap(`apr:${approvalId}:wc`),
+        receivingAgentId: seed.agentId,
+        botToken: '123:fake',
+        deps,
+        env: testEnv,
+      });
+
+      expect(telegramEdits()).toEqual([
+        noButtons(
+          '✅ Approved — run_skill_script will now run without asking for Test Agent. ' +
+            'The workspace auto-run brake is engaged, so it will keep asking until you release it in Settings.',
+        ),
+      ]);
+    } finally {
+      await db.update(entities).set({ autoRunPaused: false }).where(eq(entities.id, seed.entityId));
+    }
+  });
+
+  it('Discord ✅: the tap is acknowledged without a write, and the card is rewritten ONCE by the settlement point', async () => {
+    const { approvalId } = await discordCard();
+    const acks = { acknowledge: 0, resolveCard: [] as string[], ephemeral: [] as string[] };
+
+    const r = await handleDiscordApprovalInteraction({
+      parsed: { approvalRequestId: approvalId, decision: 'approve' },
+      channelId: DISCORD_OWNER_CHANNEL,
+      channelType: 'dm',
+      receivingAgentId: seed.agentId,
+      ack: {
+        async ephemeralReply(text: string) {
+          acks.ephemeral.push(text);
+        },
+        async resolveCard(text: string) {
+          acks.resolveCard.push(text);
+        },
+        async acknowledge() {
+          acks.acknowledge += 1;
+        },
+      },
+      deps,
+      env: testEnv,
+    });
+
+    expect(r).toMatchObject({ handled: true, decision: 'approve' });
+    expect(acks).toEqual({ acknowledge: 1, resolveCard: [], ephemeral: [] });
+    expect(discordEditMock.mock.calls).toEqual([
+      [
+        { botToken: 'discord-tok-1' },
+        DISCORD_OWNER_CHANNEL,
+        'discord-msg-77',
+        '✅ Approved — run_command',
+      ],
+    ]);
+  });
+
+  it('race: the request expires while « Always allow? » is being shown — the card ends without buttons, saying expired', async () => {
+    const { approvalId } = await telegramCard();
+    fetchMock.mockClear();
+    // Pendant l'édition en question de confirmation, le balayage expire la
+    // demande et le point de mise à jour réécrit la carte « Expired » — AVANT
+    // que l'édition de confirmation (boutons wc/wb) n'arrive chez Telegram.
+    onNextTelegramEdit = async () => {
+      await db
+        .update(approvalRequests)
+        .set({ status: 'expired', resolvedAt: new Date(), resolvedBy: 'system:ttl_expired' })
+        .where(eq(approvalRequests.id, approvalId));
+      await settleApprovalCards(deps.db, { approvalRequestIds: [approvalId] });
+    };
+
+    await handleApprovalCallback({
+      update: tap(`apr:${approvalId}:w`),
+      receivingAgentId: seed.agentId,
+      botToken: '123:fake',
+      deps,
+      env: testEnv,
+    });
+
+    expect(completedTelegramEdits.at(-1)).toEqual(noButtons('⌛ Expired — run_command'));
   });
 });

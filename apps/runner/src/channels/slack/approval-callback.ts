@@ -28,7 +28,6 @@ import {
   type ParsedApprovalCallback,
 } from '../../telegram/approval-callback.ts';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
-import { settledApprovalCardText } from '../../approvals/notify.ts';
 import { readQuestionToolInput } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -223,14 +222,8 @@ export async function handleSlackApprovalInteraction(args: {
       await ack.ephemeralReply('Could not apply — try the dashboard.');
       return { handled: false, reason: answered.code };
     }
-    await ack.resolveCard(
-      settledApprovalCardText({
-        status: 'approved',
-        kind: 'question',
-        toolName: approval.toolName,
-        answer: chosen,
-      }),
-    );
+    // La carte est réécrite par resolveApprovalDecision → settleApprovalCards
+    // (#637, un seul écrivain). Slack a déjà reçu son `ack()` (socket.ts).
     return { handled: true, decision: 'answer', jobId: answered.jobId, answer: chosen };
   }
 
@@ -255,13 +248,8 @@ export async function handleSlackApprovalInteraction(args: {
     return { handled: false, reason: result.code };
   }
 
-  const settledText = settledApprovalCardText({
-    status: parsed.decision === 'approve' ? 'approved' : 'rejected',
-    kind: 'approval',
-    toolName: approval.toolName,
-    answer: null,
-  });
-  await ack.resolveCard(settledText);
+  // La carte est réécrite par resolveApprovalDecision → settleApprovalCards
+  // (#637, un seul écrivain). Slack a déjà reçu son `ack()` (socket.ts).
 
   return { handled: true, decision: parsed.decision, jobId: result.jobId };
 }

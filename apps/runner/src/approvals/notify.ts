@@ -124,9 +124,26 @@ export function settledApprovalCardText(args: {
   kind: string;
   toolName: string;
   answer: string | null;
+  /**
+   * Une règle `auto_approve` couvre désormais cet outil pour cet agent (le
+   * « Toujours autoriser » de la carte ou du web) : la carte le dit, avec la
+   * réserve du frein d'urgence quand elle s'applique. null : pas de règle.
+   */
+  standing?: { agentName: string | null; brakeEngaged: boolean } | null;
 }): string {
   if (args.status === 'approved' && args.kind === 'question' && args.answer !== null) {
     return `✅ Answered: ${args.answer}`;
+  }
+  if (args.status === 'approved' && args.standing) {
+    // Le frein d'urgence rend une règle auto_approve d'outil de code dormante :
+    // promettre « ne demandera plus » serait faux (invariant #4).
+    const brakeNote = args.standing.brakeEngaged
+      ? ' The workspace auto-run brake is engaged, so it will keep asking until you release it in Settings.'
+      : '';
+    return (
+      `✅ Approved — ${args.toolName} will now run without asking for ` +
+      `${args.standing.agentName ?? 'this agent'}.${brakeNote}`
+    );
   }
   if (args.status === 'approved') return `✅ Approved — ${args.toolName}`;
   if (args.status === 'rejected') return `❌ Rejected — ${args.toolName}`;
