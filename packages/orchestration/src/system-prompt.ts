@@ -36,7 +36,12 @@ import {
 import type { ToolIndexEntry } from '@nodal-agents/tools';
 import { skillKindOfSlug } from '@nodal-agents/catalog';
 import { buildTeamBlock } from './team-block';
-import { buildBaselineBlock, buildDiscoverabilityBlock } from './agent-baseline';
+import {
+  buildBaselineBlock,
+  buildDiscoverabilityBlock,
+  hasRequiredBuiltins,
+} from './agent-baseline';
+import { resolveBuiltinToolNames, registeredBuiltinNames } from './builtin-tool-names';
 import type { Agent, AnyDrizzleDb } from './types';
 
 // ─── JobContext ────────────────────────────────────────────────────────────────
@@ -1096,6 +1101,8 @@ export async function buildSystemPrompt(
         // is a capability it can never reach. Inlining costs prompt size; the
         // alternative costs the skill entirely.
         skillContent: agentSkills.content,
+        // L'index n'annonce que les skills dont le job tient les outils.
+        requiredBuiltins: agentSkills.requiredBuiltins,
       })
       .from(agentSkillAssignments)
       .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
@@ -1164,10 +1171,35 @@ export async function buildSystemPrompt(
   // channel skills are injected by their dedicated layers (agent-baseline.ts);
   // agent-internal load via skill_view — so a stray legacy assignment of one of
   // those never double-injects here.
-  const assignedSkillRows = skillRows.filter((r) => {
+  const capabilitySkillRows = skillRows.filter((r) => {
     const k = skillKindOfSlug(r.skillSlug);
     return k === null || k === 'capability';
   });
+  // Une skill n'est annoncée qu'au lecteur dont le job tient ses
+  // `requiredBuiltins` — la règle du socle (`hasRequiredBuiltins`), appliquée
+  // à l'index au lieu d'une asymétrie. Sinon `skill_view` rend ensuite une
+  // procédure dont chaque étape rate (carte du prompt §1.4, famille #559).
+  //
+  // Contre quoi : les BUILTINS que tient le job qui chargera la skill — le
+  // champ ne nomme que des builtins, et un nom qui n'en est pas un n'est
+  // jamais accordé par la skill (`agentBuiltinToolNames`). Une seule règle,
+  // donc un seul rendu sur les trois surfaces (revue de #658, passe 1) :
+  //   · un job : ses outils, réduits aux builtins enregistrés — un outil MCP
+  //     ou de connecteur de sa liste ne fait pas tenir une skill qui le
+  //     nommerait, puisque le chat et l'aperçu ne le verraient pas ;
+  //   · le chat ne tient que `run_task` et passe la main à un job : les
+  //     builtins de CE job, par la règle unique du runner
+  //     (`resolveBuiltinToolNames`, #636). Lue seulement si une skill en
+  //     exige un. L'aperçu du dashboard passe ces mêmes builtins.
+  const skillToolsHeld: readonly string[] =
+    jobContext?.surface === 'chat'
+      ? capabilitySkillRows.some((r) => (r.requiredBuiltins ?? []).length > 0)
+        ? (await resolveBuiltinToolNames(db, agent.id as string)).names
+        : []
+      : availableTools.filter((n) => registeredBuiltinNames().has(n));
+  const assignedSkillRows = capabilitySkillRows.filter((r) =>
+    hasRequiredBuiltins({ requiredBuiltins: r.requiredBuiltins ?? [] }, skillToolsHeld),
+  );
   // Progressive disclosure (the open "Agent Skills" design): the prompt carries
   // only a COMPACT INDEX (slug + one-line description) — not each skill's full
   // SKILL.md body. The agent loads the full instructions on demand with
@@ -1517,32 +1549,45 @@ export async function buildSystemPrompt(
   // le dossier ATTACHÉ plutôt que sur le partagé, un agent qui a les deux ne
   // saurait pas duquel on parle. Le `root:` ci-dessous le dit — la phrase y
   // renvoie explicitement.
-  const gitBlock = jobContext?.workspaceGit
-    ? '\n\n## Git\n\n' +
-      'The workspace rooted at the path below is a git repository. Snapshot taken at job start — branch and ' +
-      'working-tree state change as work proceeds, so re-check with `git status` / ' +
-      '`git branch --show-current` before acting on any of it:\n\n' +
-      // The branch name comes from the repository, i.e. from whoever created
-      // it — same untrusted-data argument as the inventory listing above. A
-      // branch called `ignore-previous-instructions` would otherwise land
-      // unmarked in the most trusted position of the request.
-      wrapUntrusted(
-        'git snapshot',
-        [
-          `root: ${jobContext.workspaceGit.root}`,
-          `branch: ${jobContext.workspaceGit.branch ?? '(detached HEAD)'}`,
-          `head: ${jobContext.workspaceGit.head ?? '(no commit yet)'}`,
-          // null = the status probe failed. Saying "clean" there would be a
-          // silent smart fallback on the one line the agent trusts before it
-          // writes; saying "unknown" costs nothing and is true.
-          jobContext.workspaceGit.dirtyCount === null
-            ? 'working tree: UNKNOWN (git status did not answer — do not assume it is clean)'
-            : jobContext.workspaceGit.dirtyCount === 0
-              ? 'working tree: clean'
-              : `working tree: ${jobContext.workspaceGit.dirtyCount} modified entr${jobContext.workspaceGit.dirtyCount === 1 ? 'y' : 'ies'}`,
-        ].join('\n'),
-      )
-    : '';
+  //
+  // Il ORDONNE `git status` : il se rend donc à la condition de tout bloc qui
+  // prescrit un outil (`namesOnlyHeldTools`, agent-baseline.ts) — à qui peut
+  // lancer une commande. Un job la lance par `run_command`, ou la confie à
+  // `code_task` ; une session CLI de code a son propre shell, que la liste des
+  // outils Nodal ne contient pas. Le root du job 04c3d763 (30/09) recevait
+  // 600 caractères sur le dossier personnel de son propriétaire (« detached
+  // HEAD, 65 modified entries ») sans aucun des deux outils (lot 2, voie H).
+  const canRunGit =
+    jobContext?.surface === 'cli-runtime' ||
+    availableTools.includes('run_command') ||
+    availableTools.includes('code_task');
+  const gitBlock =
+    jobContext?.workspaceGit && canRunGit
+      ? '\n\n## Git\n\n' +
+        'The workspace rooted at the path below is a git repository. Snapshot taken at job start — branch and ' +
+        'working-tree state change as work proceeds, so re-check with `git status` / ' +
+        '`git branch --show-current` before acting on any of it:\n\n' +
+        // The branch name comes from the repository, i.e. from whoever created
+        // it — same untrusted-data argument as the inventory listing above. A
+        // branch called `ignore-previous-instructions` would otherwise land
+        // unmarked in the most trusted position of the request.
+        wrapUntrusted(
+          'git snapshot',
+          [
+            `root: ${jobContext.workspaceGit.root}`,
+            `branch: ${jobContext.workspaceGit.branch ?? '(detached HEAD)'}`,
+            `head: ${jobContext.workspaceGit.head ?? '(no commit yet)'}`,
+            // null = the status probe failed. Saying "clean" there would be a
+            // silent smart fallback on the one line the agent trusts before it
+            // writes; saying "unknown" costs nothing and is true.
+            jobContext.workspaceGit.dirtyCount === null
+              ? 'working tree: UNKNOWN (git status did not answer — do not assume it is clean)'
+              : jobContext.workspaceGit.dirtyCount === 0
+                ? 'working tree: clean'
+                : `working tree: ${jobContext.workspaceGit.dirtyCount} modified entr${jobContext.workspaceGit.dirtyCount === 1 ? 'y' : 'ies'}`,
+          ].join('\n'),
+        )
+      : '';
 
   const volatile =
     runtimeBlock +
