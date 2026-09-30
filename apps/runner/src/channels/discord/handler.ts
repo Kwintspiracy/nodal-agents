@@ -39,13 +39,6 @@ export interface DiscordHandleResult {
    */
   stop?: ChannelStopResult;
   /**
-   * The job is a REPLY TURN (#531): the message arrived while this head of the
-   * conversation was alive. The caller acknowledges it at once with a reaction
-   * where the channel offers one (`channelTurnReaction`) — never with text
-   * (invariant #2); the reply turn answers.
-   */
-  answersWhileJobId?: string;
-  /**
    * Present when the message carried an eligible image attachment. Download is
    * network I/O and so happens OUTSIDE the DB transaction — see
    * attachInboundImage below, called by the gateway after the job is created.
@@ -229,7 +222,6 @@ export async function handleDiscordMessage(args: {
 
   return {
     jobId: turn.jobId,
-    ...(turn.answersWhileJobId ? { answersWhileJobId: turn.answersWhileJobId } : {}),
     attachment:
       imageAttachment && imageAttachment.size <= MAX_IMAGE_BYTES
         ? {

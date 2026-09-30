@@ -9,8 +9,9 @@
 // quand une tête du fil vit, c'est un TOUR DE RÉPONSE (`answers_while_job_id`)
 // qui voit ce qui tourne et décide — répondre, transmettre au travail en cours,
 // l'arrêter, lancer autre chose. Le message n'est jamais présumé lié au travail
-// en cours, et il n'est jamais sans réponse. Le canal l'accuse tout de suite
-// par une réaction (`channelTurnReaction`).
+// en cours, et il n'est jamais sans réponse. C'est le tour de réponse qui
+// parle : le runner ne pose rien sur le message, pas même une réaction
+// (Quentin, 30/09 — un 👀 ne disait rien que la réponse ne dise mieux).
 //
 // UN endroit pour les quatre canaux. Telegram, Discord, Slack et WhatsApp
 // portaient chacun leur copie de la même fin de parcours (`/new`, préfixe de
@@ -99,11 +100,6 @@ export type ChannelTurn =
       readonly kind: 'job';
       readonly jobId: string;
       readonly taskText: string;
-      /**
-       * La tête vivante pendant laquelle ce job est né : c'est un tour de
-       * réponse (#531). `null` : la conversation était au repos.
-       */
-      readonly answersWhileJobId: string | null;
     }
   | { readonly kind: 'stop'; readonly stop: ChannelStopResult };
 
@@ -198,7 +194,6 @@ export async function takeChannelTurn(args: {
     kind: 'job',
     jobId: turn.jobId,
     taskText,
-    answersWhileJobId: turn.answersWhileJobId,
   };
 }
 
@@ -213,22 +208,4 @@ export async function takeChannelTurn(args: {
  */
 export function stopReaction(stop: ChannelStopResult): '👌' | '🤷' {
   return stop.stopped.length > 0 ? '👌' : '🤷';
-}
-
-/**
- * La réaction qui accuse réception d'un message arrivé pendant un travail
- * (#531) : il est reçu, et un tour de réponse est parti — c'est l'agent qui
- * répondra. Aucun texte du runner (invariant #2). Dans la liste restreinte de
- * Telegram.
- */
-export const WHILE_RUNNING_REACTION = '👀';
-
-/** La réaction d'un tour de canal, quand il en appelle une. */
-export function channelTurnReaction(result: {
-  stop?: ChannelStopResult;
-  answersWhileJobId?: string;
-}): '👌' | '🤷' | typeof WHILE_RUNNING_REACTION | null {
-  if (result.stop) return stopReaction(result.stop);
-  if (result.answersWhileJobId) return WHILE_RUNNING_REACTION;
-  return null;
 }

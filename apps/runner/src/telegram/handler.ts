@@ -40,13 +40,6 @@ export interface HandleResult {
    */
   stop?: ChannelStopResult;
   /**
-   * The job is a REPLY TURN (#531): the message arrived while this head of the
-   * conversation was alive. The caller acknowledges it at once with a reaction
-   * where the channel offers one (`channelTurnReaction`) — never with text
-   * (invariant #2); the reply turn answers.
-   */
-  answersWhileJobId?: string;
-  /**
    * Present when the message carried a photo. The DOWNLOAD is network I/O, so it
    * must happen OUTSIDE this DB transaction: the poller takes this, downloads the
    * file, saves it to the shared workspace (telegram/<chatId>/<jobId>.<ext>), and
@@ -284,7 +277,6 @@ export async function handleTelegramUpdate(args: {
 
   return {
     jobId: turn.jobId,
-    ...(turn.answersWhileJobId ? { answersWhileJobId: turn.answersWhileJobId } : {}),
     photo: largestPhoto
       ? { fileId: largestPhoto.file_id, chatId: String(chatId), text: turn.taskText }
       : undefined,

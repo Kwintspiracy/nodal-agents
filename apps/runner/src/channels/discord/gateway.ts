@@ -46,7 +46,7 @@ import {
 import { routeDiscordInteraction } from './interactions.ts';
 import { makeDiscordInteractionAck } from './interaction-ack.ts';
 import { DISCORD_AUTH_CALLBACK_PREFIX } from './auth-callback.ts';
-import { channelTurnReaction } from '../turn.ts';
+import { stopReaction } from '../turn.ts';
 import type { DiscordInboundMessage } from './types.ts';
 
 export interface DiscordGatewayOpts {
@@ -204,12 +204,10 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
       triggerJobWorker(result.jobId, env);
     }
 
-    // `/stop` (#602), or a message that arrived while the conversation's work
-    // runs and started a reply turn (#531): acknowledge it with a reaction on
-    // the message — the runner writes no text (invariant #2). A failed
-    // reaction (no Add Reactions permission in a guild channel) changes
-    // nothing, and is logged.
-    const ack = channelTurnReaction(result);
+    // `/stop` (#602): acknowledge it with a reaction on the message — the
+    // runner writes no text (invariant #2). A failed reaction (no Add
+    // Reactions permission in a guild channel) changes nothing, and is logged.
+    const ack = result.stop ? stopReaction(result.stop) : null;
     if (ack) {
       await message.react(ack).catch((err: unknown) => {
         console.warn(
