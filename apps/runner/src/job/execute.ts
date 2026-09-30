@@ -2172,7 +2172,8 @@ async function runJobTracked(
     workspaces: agentWorkspacesList,
     ...(job.task ? { task: job.task } : {}),
     ...(job.chatId ? { telegramChatId: job.chatId } : {}),
-    ...(triggerWantsConfirmation ? { notifyOnSuccess: true } : {}),
+    // `notifyOnSuccess` joins at the prompt build below, once `replyTo` says
+    // whether a send tool can carry the confirmation (#649).
     ...(job.parentJobId ? { isDelegated: true } : {}),
     ...(job.triggerContext ? { triggerContext: job.triggerContext } : {}),
     // La règle et son pourquoi vivent dans `inventoryForContext`.
@@ -2262,15 +2263,6 @@ async function runJobTracked(
     ...(hasDiscordBinding ? (['discord'] as const) : []),
     ...(hasSlackBinding ? (['slack'] as const) : []),
   ];
-
-  // Où va la réponse de ce job (#649) — calculé une fois, lu par la ligne
-  // `delivery:` du prompt, par la garde de livraison et par la cible des
-  // notices du harnais. Jamais le canal de repli d'une origine sans chat.
-  const replyTo = replyDestination({
-    job: { channel: job.channel, chatId: job.chatId, parentJobId: job.parentJobId },
-    notifyChannelOverride,
-    activeChannels,
-  });
 
   // Close callbacks for per-job MCP transports — invoked in the LLM loop's
   // finally so the Streamable HTTP connections never leak.
@@ -2707,22 +2699,27 @@ async function runJobTracked(
   const deferredNames = deferredToolNames(jobTools);
   let loadedTools: string[] = (job.loadedTools ?? []).filter((n) => deferredNames.has(n));
   const promptTools = [...new Set(jobTools.map((t) => t.name))].sort();
+  // Où va la réponse de ce job (#649) — calculé une fois, sur la liste FINALE
+  // de ses outils, et lu par la ligne `delivery:` du prompt, la garde de
+  // livraison et la cible des notices du harnais. Jamais le canal de repli
+  // d'une origine sans chat.
+  const replyInputs = {
+    job: { channel: job.channel, chatId: job.chatId, parentJobId: job.parentJobId },
+    notifyChannelOverride,
+    activeChannels,
+    heldTools: new Set(promptTools),
+  };
+  const replyTo = replyDestination(replyInputs);
   let systemPrompt = job.systemPrompt;
   if (!systemPrompt || !sameToolList(job.systemPromptTools, promptTools)) {
     // The channel's facts (#613): the channel the send tool will resolve —
     // `activeChannels` is known only from §6 — and what its adapter does
     // with a text.
-    const channelDelivery = channelDeliveryFacts(
-      {
-        job: { channel: job.channel, chatId: job.chatId, parentJobId: job.parentJobId },
-        notifyChannelOverride,
-        activeChannels,
-      },
-      replyTo,
-    );
+    const channelDelivery = channelDeliveryFacts(replyInputs, replyTo);
     systemPrompt = await buildSystemPrompt(agent, db, {
       ...jobContext,
       ...(channelDelivery ? { channelDelivery } : {}),
+      ...(triggerWantsConfirmation && replyTo.to === 'channel' ? { notifyOnSuccess: true } : {}),
       availableToolNames: promptTools,
       toolIndex,
     });

@@ -1,7 +1,7 @@
 // Built-in: return_result
 // Pure state-machine signal: tells the runner the task is complete or blocked.
-// Content delivery is handled by dedicated delivery tools (dashboard_publish,
-// telegram_send_message, etc.) — NOT by return_result.
+// It carries no content: the answer is the agent's written reply, or a send
+// tool's message when the job's reply goes to a chat (#649) — never return_result.
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
@@ -48,8 +48,8 @@ export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, Re
     'the user. On a DELEGATED sub-task you have no delivery tool: your written reply is the delivery, so ' +
     'write your deliverable as your reply text in the same turn. Signalling success with no ' +
     'reply and no delivery hands back an empty result and the run is failed, not accepted. ' +
-    'Whenever your task involves delivering an answer, emit `return_result` and the delivery ' +
-    'tool(s) **in the same assistant turn** (parallel tool calls). The runner handles delivery ' +
+    'When a send tool carries your reply (the `delivery:` line says so), emit it and ' +
+    '`return_result` **in the same assistant turn** (parallel tool calls). The runner handles delivery ' +
     'failures automatically (defers finalization if a sibling tool errors), so there is no need ' +
     'to wait for tool results before signaling completion — splitting into separate turns ' +
     'doubles input token cost (the full conversation replays) for no benefit. ' +

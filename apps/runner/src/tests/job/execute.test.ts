@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { offeredToolNames } from '../offered-tools.ts';
+import { unconditionalSendOrders } from '../send-orders.ts';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -203,6 +204,8 @@ function makeMockLlmClient(
   recheckResponses?: Array<{
     toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
   }>,
+  /** The description of every tool handed to the model each turn, by name. */
+  capturedToolDescriptions?: Array<Record<string, string>>,
 ): RunnerDeps['llmClient'] {
   let callIndex = 0;
 
@@ -327,6 +330,12 @@ function makeMockLlmClient(
       const msgs = (args as { messages?: Array<{ content?: unknown }> }).messages ?? [];
       if (capturedToolKeysPerCall && msgs[msgs.length - 1]?.content !== ACTION_RECHECK) {
         capturedToolKeysPerCall.push(offeredToolNames(args));
+      }
+      if (capturedToolDescriptions && msgs[msgs.length - 1]?.content !== ACTION_RECHECK) {
+        const tools = (args as { tools?: Record<string, { description?: string }> }).tools ?? {};
+        capturedToolDescriptions.push(
+          Object.fromEntries(Object.entries(tools).map(([n, t]) => [n, t.description ?? ''])),
+        );
       }
       return generateText({ ...args, model: mockModel } as Parameters<
         typeof generateText
@@ -1806,8 +1815,15 @@ describe('executeJob', () => {
           })
           .returning();
         const prompts: unknown[] = [];
+        const toolDescriptions: Array<Record<string, string>> = [];
         sendTelegramMessageMock.mockClear();
-        await executeJob(job!.id as JobId, makeDeps(makeMockLlmClient(turns, prompts)), testEnv);
+        await executeJob(
+          job!.id as JobId,
+          makeDeps(
+            makeMockLlmClient(turns, prompts, undefined, undefined, undefined, toolDescriptions),
+          ),
+          testEnv,
+        );
         const [row] = await db
           .select({
             systemPrompt: agentJobs.systemPrompt,
@@ -1818,7 +1834,12 @@ describe('executeJob', () => {
           .where(eq(agentJobs.id, job!.id));
         const deliveryLine =
           (row?.systemPrompt ?? '').split('\n').find((l) => l.startsWith('- delivery:')) ?? '';
-        return { row, deliveryLine, firstRequest: JSON.stringify(prompts[0]) };
+        return {
+          row,
+          deliveryLine,
+          firstRequest: JSON.stringify(prompts[0]),
+          firstTools: toolDescriptions[0] ?? {},
+        };
       };
 
       // MCP: the reply is the result the caller reads; the send tool is not its path.
@@ -1840,6 +1861,17 @@ describe('executeJob', () => {
       // What the model was actually sent, not only what was stored.
       expect(mcp.firstRequest).toContain("your reply is this job's result");
       expect(mcp.firstRequest).not.toContain('reaches the user on telegram');
+      // Nothing the model received orders the answer through a send tool: not
+      // the prompt, not one of the tool definitions it was handed (review of
+      // #657, pass 1). The send tool is there, its description is read.
+      expect(Object.keys(mcp.firstTools)).toContain('telegram_send_message');
+      expect(Object.keys(mcp.firstTools)).toContain('return_result');
+      expect({
+        prompt: unconditionalSendOrders(mcp.row?.systemPrompt ?? ''),
+        tools: Object.entries(mcp.firstTools)
+          .map(([tool, d]) => ({ tool, orders: unconditionalSendOrders(d) }))
+          .filter((t) => t.orders.length > 0),
+      }).toEqual({ prompt: [], tools: [] });
       expect({ status: mcp.row?.status, result: mcp.row?.result }).toEqual({
         status: 'completed',
         result: '277.6',
@@ -1911,6 +1943,17 @@ describe('executeJob', () => {
       expect(sendTelegramMessageMock).toHaveBeenCalledWith(
         expect.objectContaining({ chatId: '199791464', text: '277.6' }),
       );
+
+      // The same task once the bot token is withdrawn: no send tool is armed,
+      // so nothing can reach the named chat. The reply is the result, and the
+      // job is not failed for a send it could not make (review of #657, pass 1).
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+      const unarmed = await run({ channel: 'dashboard', chatId: '199791464' }, [{ text: '277.6' }]);
+      expect(unarmed.deliveryLine).toBe('');
+      expect({ status: unarmed.row?.status, result: unarmed.row?.result }).toEqual({
+        status: 'completed',
+        result: '277.6',
+      });
     } finally {
       await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
     }

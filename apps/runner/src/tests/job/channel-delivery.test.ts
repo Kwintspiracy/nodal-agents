@@ -14,6 +14,11 @@ import {
   TOOL_ONLY_DELIVERY_CHANNELS,
 } from '../../job/channel-delivery.ts';
 
+// An agent that holds every channel's credential and the send tool, unless a
+// case says otherwise.
+const ALL_ACTIVE: ChannelKind[] = ['telegram', 'discord', 'slack'];
+const HOLDS_SEND = new Set(['telegram_send_message']);
+
 const facts = (
   job: { channel: string | null; chatId: string | null; parentJobId?: string | null },
   extra: { notifyChannelOverride?: ChannelKind; activeChannels?: ChannelKind[] } = {},
@@ -21,7 +26,8 @@ const facts = (
   channelDeliveryFacts({
     job: { parentJobId: null, ...job },
     notifyChannelOverride: extra.notifyChannelOverride,
-    activeChannels: extra.activeChannels ?? [],
+    activeChannels: extra.activeChannels ?? ALL_ACTIVE,
+    heldTools: HOLDS_SEND,
   });
 
 describe('channelDeliveryFacts — the channel line comes from the adapter (#613) @cap:parler-par-canal-externe/moteur', () => {
@@ -109,12 +115,17 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
 describe('replyDestination — the answer goes back where the request came from (#649) @cap:parler-par-canal-externe/moteur', () => {
   const dest = (
     job: { channel: string | null; chatId: string | null; parentJobId?: string | null },
-    extra: { notifyChannelOverride?: ChannelKind; activeChannels?: ChannelKind[] } = {},
+    extra: {
+      notifyChannelOverride?: ChannelKind;
+      activeChannels?: readonly ChannelKind[];
+      heldTools?: ReadonlySet<string>;
+    } = {},
   ) =>
     replyDestination({
       job: { parentJobId: null, ...job },
       notifyChannelOverride: extra.notifyChannelOverride,
-      activeChannels: extra.activeChannels ?? ['telegram'],
+      activeChannels: extra.activeChannels ?? ALL_ACTIVE,
+      heldTools: extra.heldTools ?? HOLDS_SEND,
     });
 
   it('a request without a chat is answered by its result, whatever channels the agent has', () => {
@@ -164,5 +175,45 @@ describe('replyDestination — the answer goes back where the request came from 
 
   it('a chat on a channel with no send tool is not a tool destination (WhatsApp today)', () => {
     expect(dest({ channel: 'whatsapp', chatId: '111@s.whatsapp.net' })).toEqual({ to: 'result' });
+  });
+
+  // Revue passe 1 de #657 : une tâche dashboard « Send via Telegram » dont
+  // l'agent n'a plus de jeton retombait sur 'telegram' par défaut, donc
+  // 'channel', alors qu'aucun outil d'envoi n'était armé : la garde faisait
+  // échouer un travail fait. Un chat qu'aucun outil armé n'atteint n'est pas
+  // une destination.
+  it('a chat named by the trigger that no armed send tool can reach: the origin reads the result', () => {
+    const cases: Array<{
+      job: { channel: string; chatId: string };
+      extra: Parameters<typeof dest>[1];
+    }> = [
+      // Credential withdrawn: no channel active at all.
+      { job: { channel: 'dashboard', chatId: '199791464' }, extra: { activeChannels: [] } },
+      { job: { channel: 'api', chatId: '199791464' }, extra: { activeChannels: [] } },
+      { job: { channel: 'cron', chatId: '1' }, extra: { activeChannels: [] } },
+      // The routine named Slack, the agent has no enabled Slack binding.
+      {
+        job: { channel: 'cron', chatId: '1' },
+        extra: { notifyChannelOverride: 'slack', activeChannels: ['telegram'] },
+      },
+      // The credential is there, the job does not hold the send tool.
+      { job: { channel: 'webhook', chatId: '1' }, extra: { heldTools: new Set<string>() } },
+      { job: { channel: 'dashboard', chatId: '1' }, extra: { heldTools: new Set<string>() } },
+    ];
+    for (const { job, extra } of cases) {
+      expect({ job, to: dest(job, extra) }).toEqual({ job, to: { to: 'result' } });
+    }
+  });
+
+  it('a request that came FROM a chat stays answered there even with no armed tool: its author reads nothing else, the guard fails loud', () => {
+    for (const [job, extra] of [
+      [{ channel: 'telegram', chatId: '199791464' }, { activeChannels: [] }],
+      [{ channel: 'discord', chatId: '1' }, { heldTools: new Set<string>() }],
+    ] as const) {
+      expect({ job, to: dest(job, extra) }).toEqual({
+        job,
+        to: { to: 'channel', channel: job.channel },
+      });
+    }
   });
 });

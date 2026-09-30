@@ -45,14 +45,22 @@ export function triggerWantsConfirmation(job: DeliveryJob): boolean {
  *
  * - `parent` : un délégué répond à son parent ; le `chat_id` qu'il hérite ne
  *   fait pas de lui un interlocuteur (#559).
- * - `channel` : la demande porte un chat où répondre — elle en vient
- *   (telegram, discord, slack) ou son déclencheur l'a désigné (`chat_id` posé
- *   par une routine qui veut sa confirmation, un webhook, « Send via
- *   Telegram » du dashboard) —, et ce canal a un outil d'envoi : l'outil est
- *   le seul chemin de la réponse.
+ * - `channel` : la réponse part dans un chat, par l'outil d'envoi, seul
+ *   chemin vers ce chat. Deux façons d'y arriver :
+ *   1. la demande VIENT d'un chat (telegram, discord, slack) : son auteur n'a
+ *      que ce chat, il ne lit jamais le résultat du job. Si aucun outil n'est
+ *      armé, la garde le dit fort (`telegram_not_delivered`) : réussir en
+ *      silence serait perdre la réponse (#4) ;
+ *   2. son déclencheur a DÉSIGNÉ un chat (`chat_id` posé par une routine qui
+ *      veut sa confirmation, un webhook, « Send via Telegram » du dashboard,
+ *      `/api/agent`) et l'outil d'envoi de ce canal est ARMÉ pour ce job (le
+ *      job le tient, l'agent a la credential du canal).
  * - `result` : sinon. La réponse est le résultat du job, rendu là d'où vient
  *   la demande — l'appelant MCP ou API le lit, le web l'affiche, les Runs le
- *   gardent.
+ *   gardent. Un chat désigné qu'aucun outil armé n'atteint (jeton retiré,
+ *   liaison désactivée, outil hors liste) tombe ici : l'origine lit le
+ *   résultat, et exiger un envoi impossible ferait échouer un travail fait
+ *   sans que personne ne reçoive rien de plus (revue de #657, passe 1).
  *
  * Le canal de REPLI (`resolveTransportChannel` d'une origine sans transport)
  * ne décide jamais de la destination : il sert aux messages que le
@@ -72,6 +80,8 @@ interface ReplyInputs {
   job: ReplyJob;
   notifyChannelOverride: ChannelKind | undefined;
   activeChannels: readonly ChannelKind[];
+  /** Les outils que le job tient (sa liste finale) : un outil d'envoi hors liste n'est pas armé. */
+  heldTools: ReadonlySet<string>;
 }
 
 /**
@@ -88,9 +98,14 @@ function sendToolChannel(opts: ReplyInputs): ChannelKind {
 export function replyDestination(opts: ReplyInputs): ReplyDestination {
   const { job } = opts;
   if (job.parentJobId) return { to: 'parent' };
-  const hasChat = TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '') || job.chatId != null;
   const channel = sendToolChannel(opts);
-  if (hasChat && TOOL_ONLY_DELIVERY_CHANNELS.has(channel)) return { to: 'channel', channel };
+  // La demande vient de ce chat : son auteur n'a que lui.
+  if (TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '')) return { to: 'channel', channel };
+  const sendTool = CHANNEL_SEND_TOOL[channel];
+  const armed =
+    sendTool !== undefined && opts.heldTools.has(sendTool) && opts.activeChannels.includes(channel);
+  // Un chat désigné par le déclencheur, qu'un outil armé atteint.
+  if (job.chatId != null && armed) return { to: 'channel', channel };
   return { to: 'result' };
 }
 

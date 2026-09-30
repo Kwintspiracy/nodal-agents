@@ -81,8 +81,7 @@ export function failedDelegationGuidance(
     'what the task needs (its Folders, Shell commands, connectors); a task that merely looks ' +
     'like its field is not enough';
   const yourself = 'do the work yourself ONLY if your own tools and folders cover it';
-  const truth =
-    'otherwise tell the user the truth: what failed and what is missing, via your delivery tool';
+  const truth = 'otherwise tell the user the truth in your reply: what failed and what is missing';
   if (state.slug !== null && state.streak >= SAME_AGENT_FAILURE_CAP) {
     // Worded to hold in BOTH places that read it: the payload of the failure
     // that reaches the cap, and the gate that refuses the next call.
