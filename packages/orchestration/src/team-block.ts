@@ -22,6 +22,7 @@ import { cliShellPosture, modelCanSeeImages, RUNTIME_CLI } from '@nodal-agents/s
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
 import { summarizePurpose } from './router/assign-tools';
+import { connectorCapabilityLabel } from './agent-baseline';
 import { loadWorkspaceReach, describeOutsideAgent } from './reach';
 import type { ReachMeans } from './reach';
 
@@ -31,6 +32,32 @@ import type { ReachMeans } from './reach';
 // pass 2): the roster is declared COMPLETE, and a "+N more" made the
 // orchestrator treat the Nth folder as nobody's. The prompt cost of a long
 // list was a P3; a false "cannot" is worse.
+//
+// The tool names after a connector or MCP server ARE bounded (#611): what the
+// roster declares is the server, always named in full; its tools only say
+// what kind of work it does, and a few say it as well as thirty. The "+N more"
+// keeps the count honest.
+const MAX_TOOL_NAMES_PER_ENTRY = 8;
+
+function listHeldTools(names: readonly string[]): string {
+  const shown = names.slice(0, MAX_TOOL_NAMES_PER_ENTRY);
+  const more = names.length - shown.length;
+  return more > 0 ? `${shown.join(', ')}, +${more} more` : shown.join(', ');
+}
+
+/** Record that `agentId` holds `names` through `slug`, merged with any earlier instance. */
+function addHeld(
+  map: Map<string, Map<string, Set<string>>>,
+  agentId: string,
+  slug: string,
+  names: readonly string[],
+): void {
+  const bySlug = map.get(agentId) ?? new Map<string, Set<string>>();
+  const held = bySlug.get(slug) ?? new Set<string>();
+  for (const n of names) held.add(n);
+  bySlug.set(slug, held);
+  map.set(agentId, bySlug);
+}
 
 /**
  * Build the `## Your team` section for an orchestrator's system prompt.
@@ -236,8 +263,9 @@ export async function buildTeamBlock(
     ),
   );
 
-  // For each child: list of (slug, tool names enabled)
-  const connectorMap = new Map<string, { slug: string; toolNames: string[] }[]>();
+  // For each child: connector slug → the operations it holds. Two instances of
+  // one connector give the union of what they enable.
+  const connectorMap = new Map<string, Map<string, Set<string>>>();
   for (const batch of connectorRows) {
     for (const r of batch) {
       const entry = ADAPTER_REGISTRY[r.slug];
@@ -248,9 +276,7 @@ export async function buildTeamBlock(
           ? allToolNames
           : allToolNames.filter((n) => r.enabledOperations!.includes(n));
       if (toolNames.length === 0) continue;
-      const existing = connectorMap.get(r.agentId) ?? [];
-      existing.push({ slug: r.slug, toolNames });
-      connectorMap.set(r.agentId, existing);
+      addHeld(connectorMap, r.agentId, r.slug, toolNames);
     }
   }
 
@@ -276,15 +302,13 @@ export async function buildTeamBlock(
     ),
   );
 
-  // For each child: list of (server-slug, namespaced tool names enabled).
-  // Tool names match the runtime convention `<sanitized-slug>__<original-name>`
-  // (see packages/adapters/mcp/src/tools.ts) so the orchestrator sees the
-  // exact tool identifier the child agent has at runtime.
-  const mcpMap = new Map<string, { slug: string; toolNames: string[] }[]>();
+  // For each child: server slug → the tools it holds (enabled ∩ available), by
+  // the name the server gives them. The runtime prefix `<slug>__` would repeat
+  // the server slug the entry already starts with.
+  const mcpMap = new Map<string, Map<string, Set<string>>>();
   for (const batch of mcpRows) {
     for (const r of batch) {
       if (r.serverActive === false) continue;
-      const prefix = r.serverSlug.replace(/-/g, '_');
       const available = Array.isArray(r.availableTools)
         ? (r.availableTools as Array<{ name?: unknown }>)
             .map((t) => (t && typeof t.name === 'string' ? t.name : null))
@@ -296,25 +320,32 @@ export async function buildTeamBlock(
         : null;
       const kept = enabled === null ? available : available.filter((n) => enabled.has(n));
       if (kept.length === 0) continue;
-      const toolNames = kept.map((n) => `${prefix}__${n}`);
-      const existing = mcpMap.get(r.agentId) ?? [];
-      existing.push({ slug: r.serverSlug, toolNames });
-      mcpMap.set(r.agentId, existing);
+      addHeld(mcpMap, r.agentId, r.serverSlug, kept);
     }
   }
 
-  // Capability hint = the connector/MCP NAMES the child can use (not the full
-  // per-operation list, which was noise the orchestrator couldn't route on). The
-  // name conveys the capability so the orchestrator won't think the child lacks
-  // an integration.
+  // Each entry says what the teammate can DO with it (#611). A bare slug does
+  // not: job 465446e7 was asked to print, the only teammate that could showed
+  // its printing server as a slug that says nothing of printing, and nothing
+  // was printed.
+  // The words come from the data alone (invariant #1): the catalogue label of
+  // a connector held in full, otherwise the names of the tools held. A label
+  // speaks for the WHOLE connector, so a teammate holding part of it gets its
+  // operations instead ("Read and send email" for a read-only Gmail would
+  // promise a send it cannot do).
   function formatConnectorsTag(subAgentId: string): string {
-    const conn = connectorMap.get(subAgentId);
-    const mcp = mcpMap.get(subAgentId);
-    const names: string[] = [];
-    if (conn) names.push(...conn.map((c) => c.slug));
-    if (mcp) names.push(...mcp.map((c) => c.slug));
-    if (names.length === 0) return '';
-    return `\n  Connectors: ${[...new Set(names)].join(', ')}`;
+    const entries: string[] = [];
+    for (const [slug, held] of connectorMap.get(subAgentId) ?? []) {
+      const all = ADAPTER_REGISTRY[slug]!.operations.map((o) => o.slug);
+      const names = all.filter((n) => held.has(n));
+      const label = names.length === all.length ? connectorCapabilityLabel(slug) : undefined;
+      entries.push(`${slug} (${label ?? listHeldTools(names)})`);
+    }
+    for (const [slug, held] of mcpMap.get(subAgentId) ?? []) {
+      entries.push(`${slug} (${listHeldTools([...held])})`);
+    }
+    if (entries.length === 0) return '';
+    return `\n  Connectors: ${entries.join('; ')}`;
   }
 
   // Whether the agent can run a shell command (#506), from the database and
