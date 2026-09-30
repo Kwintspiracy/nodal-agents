@@ -251,6 +251,7 @@ describe('agentBuiltinToolNames @cap:assigner-outils/moteur', () => {
       'save_routine_state',
       'list_conversation_runs',
       'stop_conversation_run',
+      'message_conversation_run',
     ]);
   });
 
@@ -274,6 +275,7 @@ describe('agentBuiltinToolNames @cap:assigner-outils/moteur', () => {
     );
     expect(names).not.toContain('dashboard_publish');
     expect(names).not.toContain('list_conversation_runs');
+    expect(names).not.toContain('message_conversation_run');
     expect(names).toContain('xlsx_create');
     expect(names).toEqual([
       ...ALWAYS_ON_TOOLS.filter((n) => n !== 'dashboard_publish'),

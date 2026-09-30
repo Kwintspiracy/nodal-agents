@@ -15,6 +15,8 @@ import {
   recordClaim,
   heldClaim,
   ownJobRow,
+  drainJobInbox,
+  pendingHeadsOfConversation,
 } from '@nodal-agents/db';
 import {
   agentJobs,
@@ -1317,8 +1319,37 @@ export async function executeJob(
     (result.status === 'completed' || result.status === 'failed' || result.status === 'cancelled')
   ) {
     await maybeResumeParent(jobId, result, deps, runnerEnv);
+    await wakeRelaunchedHeads(jobId, deps, runnerEnv);
   }
   return result;
+}
+
+/**
+ * Réveille tout de suite la tête que la fin de ce job a pu faire naître de sa
+ * file (#531, déclencheur de la migration 0141) : les messages qui y restaient
+ * n'attendent pas le prochain passage du cron. Toute tête `pending` de la
+ * conversation est réveillée — la prise (`claimJob`) est atomique, un réveil
+ * de trop ne lance rien deux fois. Sans `runnerEnv` (chemins du cron), la
+ * reprise des jobs en attente du cron la prend (`findPendingJobsToRecover`).
+ * Un échec de lecture ne change rien à l'issue de CE job : il est dit.
+ */
+async function wakeRelaunchedHeads(
+  jobId: JobId,
+  deps: Pick<RunnerDeps, 'db'>,
+  runnerEnv?: RunnerEnv,
+): Promise<void> {
+  if (!runnerEnv) return;
+  try {
+    for (const id of await pendingHeadsOfConversation(deps.db, jobId as string)) {
+      void triggerWorker(id, runnerEnv);
+    }
+  } catch (err) {
+    console.error(
+      `[exec ${jobId}] RELAUNCHED_HEADS_WAKE_FAILED — the cron will pick them up: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
 }
 
 /**
@@ -1930,6 +1961,7 @@ async function runJobTracked(
         conversationId: job.conversationId ?? null,
         task: job.task ?? null,
         triggerContext: job.triggerContext ?? null,
+        answersWhileJobId: job.answersWhileJobId ?? null,
       },
       // Spread the `agent` already normalised above (line ~856) rather than
       // re-deriving fields here — a second conversion is a second thing to
@@ -2109,6 +2141,8 @@ async function runJobTracked(
         excludeJobId: jobId as string,
         // La tâche sert à reconnaître un `/new` nu — voir openedByCommand.
         task: job.task,
+        // Un tour de réponse voit ce qui tourne (#531).
+        answersWhileJobId: job.answersWhileJobId,
       })
     : null;
   // L'état de la routine dont ce job est une exécution — relu tel quel, jamais
@@ -2802,6 +2836,8 @@ async function runJobTracked(
         conversationId: job.conversationId ?? null,
         channel: job.channel,
         excludeJobId: jobId as string,
+        // Le fuseau où le prompt dit « maintenant » : chaque tour rejoué y est daté (#650).
+        timezone: deployment.timezone,
       });
       if (history.length > 0) {
         trace('thread_history_loaded', { messages: history.length });
@@ -4148,6 +4184,29 @@ async function runJobTracked(
   let reprisesCeTour = 0;
   let partielCeTour = '';
 
+  // #531 — la FILE de ce job : ce qu'un tour de réponse lui a transmis pendant
+  // qu'il vivait (`message_conversation_run`), et ce qui restait dans la file
+  // de ses délégués finis. Elle entre ici dans la transcription, telle quelle
+  // et marquée (`isInboxMessage`), et c'est le modèle qui juge. Lue en haut de
+  // chaque tour, et avant de conclure sur une réponse en texte : un message
+  // arrivé pendant le dernier appel est lu par ce run au lieu d'attendre la
+  // suite. Ce qui arrive après la dernière lecture d'une tête devient une
+  // nouvelle tête à la transition terminale (déclencheur de la migration
+  // 0141) : jamais perdu.
+  //
+  // Un message remet la livraison à faire : sur un canal à outil, ce qui vient
+  // d'arriver n'a encore reçu aucune réponse, quoi que le run ait envoyé avant.
+  // Le budget de rappels repart avec lui.
+  const lireLaFile = async (moment: 'turn_start' | 'before_final_text'): Promise<boolean> => {
+    const arrives = await drainJobInbox(db, jobId as string);
+    if (arrives.length === 0) return false;
+    messages = [...messages, ...(arrives as unknown as ModelMessage[])];
+    toolDelivered = false;
+    redeliveryNudges = 0;
+    trace('inbox_drained', { turn, count: arrives.length, at: moment });
+    return true;
+  };
+
   try {
     while (true) {
       turn += 1;
@@ -4169,6 +4228,7 @@ async function runJobTracked(
         }
         return await lacherLeJob(perteEnTete, 'turn_start');
       }
+      await lireLaFile('turn_start');
 
       // Invariant 8: hard turn cap. `turn` is cumulative across resumes (it's
       // seeded from job.turn), so a job that loops — or resumes — without ever
@@ -5046,6 +5106,10 @@ async function runJobTracked(
           // job fini sans ligne d'outbox, donc une notice perdue pour toujours
           // (passe ciblée sur la livraison, constat 2). Le point d'extension
           // existait et n'était branché nulle part.
+          // Un message arrivé pendant le dernier appel (#531) : la réponse en
+          // texte ne l'a pas lu. Il entre dans la transcription, et le tour
+          // suivant y répond — le run ne conclut pas par-dessus.
+          if (await lireLaFile('before_final_text')) continue;
           // La finalisation est un effet : elle livre et pose `completed` (#566).
           const perteAvantFin = await droitPerdu();
           if (perteAvantFin) return await lacherLeJob(perteAvantFin, 'finalize');

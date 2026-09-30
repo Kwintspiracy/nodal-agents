@@ -40,7 +40,14 @@ const lireSource = (nom) => readFileSync(new URL(`./${nom}`, import.meta.url), '
  * constaté le 16/09 en extrayant `depot.mjs` du collecteur. Le premier test
  * ci-dessous suit les imports de `build.mjs` EN PROFONDEUR et compare.
  */
-const MODULES_DU_BAC = ['build.mjs', 'lib.mjs', 'explications.mjs', 'capacites.mjs', 'porte.mjs'];
+const MODULES_DU_BAC = [
+  'build.mjs',
+  'lib.mjs',
+  'explications.mjs',
+  'capacites.mjs',
+  'porte.mjs',
+  'workflows.mjs',
+];
 
 /** Les modules locaux qu'un fichier importe, et ceux que ceux-là importent. */
 function modulesAtteints(depuis) {

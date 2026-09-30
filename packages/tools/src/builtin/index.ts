@@ -29,7 +29,11 @@ import { codeTaskTool } from './code-task';
 import { reviewVerdictTool } from './review-verdict';
 import { runSkillScriptTool } from './run-skill-script';
 import { saveRoutineStateTool } from './save-routine-state';
-import { listConversationRunsTool, stopConversationRunTool } from './conversation-runs';
+import {
+  listConversationRunsTool,
+  messageConversationRunTool,
+  stopConversationRunTool,
+} from './conversation-runs';
 import { declareVerificationTool } from './declare-verification';
 import { skillViewTool } from './skill-view';
 import { listModelsTool } from './list-models';
@@ -127,7 +131,11 @@ export { reviewVerdictTool } from './review-verdict';
 export type { ReviewVerdictInput, ReviewVerdictOutput } from './review-verdict';
 export { runSkillScriptTool } from './run-skill-script';
 export { saveRoutineStateTool } from './save-routine-state';
-export { listConversationRunsTool, stopConversationRunTool } from './conversation-runs';
+export {
+  listConversationRunsTool,
+  messageConversationRunTool,
+  stopConversationRunTool,
+} from './conversation-runs';
 export type {
   ListConversationRunsOutput,
   StopConversationRunInput,
@@ -235,6 +243,7 @@ export function registerBuiltins(registry: ToolRegistry): void {
   // le runner, comme `save_routine_state`.
   registry.register(listConversationRunsTool);
   registry.register(stopConversationRunTool);
+  registry.register(messageConversationRunTool);
   // declare_verification — offert avec les outils d'écriture de fichiers : un
   // agent qui produit doit pouvoir dire comment on vérifie ce qu'il a produit.
   registry.register(declareVerificationTool);

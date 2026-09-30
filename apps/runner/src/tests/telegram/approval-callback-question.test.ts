@@ -13,7 +13,13 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { approvalRequests, agentJobs, agents, telegramAllowedChats } from '@nodal-agents/db';
+import {
+  approvalRequests,
+  approvalCardMessages,
+  agentJobs,
+  agents,
+  telegramAllowedChats,
+} from '@nodal-agents/db';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -180,6 +186,15 @@ describe('parseApprovalCallbackData — le suffixe des options', () => {
 describe('handleApprovalCallback — une question', () => {
   it('le tap sur `o1` écrit la 2e option sur la ligne et réécrit la carte', async () => {
     const id = await insertQuestion();
+    // La carte telle que notify l'a consignée à l'envoi (#637) : c'est le
+    // point de mise à jour des cartes qui la réécrit, plus le handler.
+    await db.insert(approvalCardMessages).values({
+      approvalRequestId: id,
+      channel: 'telegram',
+      agentId: seed.agentId,
+      conversationId: CHAT_ID,
+      messageId: '555',
+    });
     calls.length = 0;
 
     const result = await handleApprovalCallback({

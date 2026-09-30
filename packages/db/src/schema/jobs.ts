@@ -13,7 +13,7 @@ import {
   check,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import type { JobResultKind } from '@nodal-agents/shared';
+import type { InboxEntry, JobResultKind } from '@nodal-agents/shared';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
 import { agentSchedules } from './schedules.ts';
@@ -161,6 +161,32 @@ export const agentJobs = pgTable(
      */
     loadedTools: text('loaded_tools').array(),
     messages: jsonb('messages').default(sql`'[]'::jsonb`),
+    /**
+     * Les messages transmis à ce job pendant qu'il vit (#531, migration 0141),
+     * par un tour de réponse (`message_conversation_run`). La boucle les vide
+     * en haut de chaque tour et avant de conclure sur une réponse en texte :
+     * ils entrent alors dans `messages`, marqués (`isInboxMessage`). Ce qui
+     * reste à la fin d'une TÊTE devient une nouvelle tête de la conversation
+     * (déclencheur `agent_jobs_inbox_relaunch`, sur la transition elle-même) ;
+     * ce qui reste à la fin d'un délégué est lu par son parent.
+     */
+    inbox: jsonb('inbox')
+      .$type<InboxEntry[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    /**
+     * La tête dont la file a fait naître celle-ci (#531, migration 0141) : la
+     * SUITE du même travail. `cancelJobTree` descend par ce lien comme par
+     * `parent_job_id`. NULL pour toute tête née d'un message.
+     */
+    relaunchedFromJobId: uuid('relaunched_from_job_id'),
+    /**
+     * Le travail pendant lequel ce job est né (#531, migration 0141) : un TOUR
+     * DE RÉPONSE, lancé par un message arrivé pendant que cette tête vivait. Il
+     * voit ce qui tourne et répond toujours. NULL pour une tête née dans une
+     * conversation au repos.
+     */
+    answersWhileJobId: uuid('answers_while_job_id'),
     /**
      * Flattened plain-text transcript (task + assistant text + tool outputs +
      * result) for full-text episodic search. Populated at job completion by
@@ -458,6 +484,11 @@ export const agentJobs = pgTable(
     // tableau de bord. PARTIEL : la colonne est NULL sur presque tous les
     // jobs, et elle le redevient dès que la personne a regardé — l'index reste
     // donc de la taille de ce qui attend, pas de celle de la table.
+    // 0141 (#531) : la descente de l'arrêt par la tête relancée — partiel, la
+    // colonne est NULL sur presque tous les jobs.
+    index('idx_agent_jobs_relaunched_from')
+      .on(table.relaunchedFromJobId)
+      .where(sql`${table.relaunchedFromJobId} IS NOT NULL`),
     index('idx_agent_jobs_deliverable_check_due')
       .on(table.entityId)
       .where(sql`${table.deliverableCheckDueAt} IS NOT NULL`),

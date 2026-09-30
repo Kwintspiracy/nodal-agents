@@ -435,9 +435,13 @@ describe('the routine lint reads the same list @cap:assigner-outils/moteur', () 
 });
 
 describe('the mirror follows the job it describes @cap:assigner-outils/moteur', () => {
-  /** A routine run (as run-schedules.ts creates it) or a conversation turn. */
+  /**
+   * A routine run (as run-schedules.ts creates it), a conversation turn, a
+   * reply turn (#531: a message that arrives while an earlier head of the
+   * conversation still works), or a job delegated inside a conversation.
+   */
   async function jobIn(
-    kind: 'routine' | 'conversation',
+    kind: 'routine' | 'conversation' | 'reply' | 'delegated-conversation',
     role: 'agent' | 'orchestrator',
   ): Promise<{ agentId: string; jobId: string }> {
     const seeded = await seedJob(db, { model: MODEL, role });
@@ -458,14 +462,46 @@ describe('the mirror follows the job it describes @cap:assigner-outils/moteur', 
         .update(agentJobs)
         .set({ scheduleId: sched.id, channel: 'cron' })
         .where(eq(agentJobs.id, seeded.jobId));
-    } else {
-      await db
-        .update(agentJobs)
-        .set({ conversationId: randomUUID() })
-        .where(eq(agentJobs.id, seeded.jobId));
+      return { agentId: seeded.agentId, jobId: seeded.jobId };
     }
+    const conversationId = randomUUID();
+    if (kind === 'delegated-conversation') {
+      await db.update(agentJobs).set({ conversationId }).where(eq(agentJobs.id, seeded.jobId));
+      const childJobId = await delegatedJobFor(seeded.agentId, seeded.entityId, seeded.jobId);
+      await db.update(agentJobs).set({ conversationId }).where(eq(agentJobs.id, childJobId));
+      return { agentId: seeded.agentId, jobId: childJobId };
+    }
+    let answersWhileJobId: string | null = null;
+    if (kind === 'reply') {
+      // The work still running when the person wrote again.
+      const [working] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seeded.entityId,
+          agentId: seeded.agentId,
+          channel: 'dashboard',
+          conversationId,
+          task: 'Build the report.',
+          status: 'processing',
+          messages: [],
+          createdAt: new Date(Date.now() - 60_000),
+        })
+        .returning({ id: agentJobs.id });
+      if (!working) throw new Error('failed to seed the running work');
+      answersWhileJobId = working.id;
+    }
+    await db
+      .update(agentJobs)
+      .set({ conversationId, answersWhileJobId })
+      .where(eq(agentJobs.id, seeded.jobId));
     return { agentId: seeded.agentId, jobId: seeded.jobId };
   }
+
+  const CONVERSATION_TOOLS = [
+    'list_conversation_runs',
+    'stop_conversation_run',
+    'message_conversation_run',
+  ];
 
   for (const role of ['agent', 'orchestrator'] as const) {
     it(`${role}, routine run: the mirror given the routine context equals the runner`, async () => {
@@ -481,13 +517,32 @@ describe('the mirror follows the job it describes @cap:assigner-outils/moteur', 
       expect([...mirror].sort()).toEqual(runner);
     });
 
-    it(`${role}, conversation turn: the mirror given the conversation context equals the runner`, async () => {
-      const { agentId, jobId } = await jobIn('conversation', role);
+    // A conversation head and a reply turn (#531) are the same placement: the
+    // job that speaks to the person. Both hold the three conversation tools,
+    // message_conversation_run included, whatever the role.
+    for (const kind of ['conversation', 'reply'] as const) {
+      it(`${role}, ${kind} turn: the mirror given the conversation context equals the runner`, async () => {
+        const { agentId, jobId } = await jobIn(kind, role);
+        await run(jobId, []);
+        const runner = (await jobRow(jobId)).systemPromptTools ?? [];
+        expect(runner).toEqual(expect.arrayContaining(CONVERSATION_TOOLS));
+        const mirror = await resolveAgentToolNames(db, agentId, {
+          delegated: false,
+          routine: false,
+          inConversation: true,
+        });
+        expect([...mirror].sort()).toEqual(runner);
+      });
+    }
+
+    it(`${role}, delegated inside a conversation: no conversation tool, and the mirror equals the runner`, async () => {
+      const { agentId, jobId } = await jobIn('delegated-conversation', role);
       await run(jobId, []);
       const runner = (await jobRow(jobId)).systemPromptTools ?? [];
-      expect(runner).toContain('stop_conversation_run');
+      for (const name of CONVERSATION_TOOLS) expect(runner).not.toContain(name);
+      expect(runner).not.toContain('dashboard_publish');
       const mirror = await resolveAgentToolNames(db, agentId, {
-        delegated: false,
+        delegated: true,
         routine: false,
         inConversation: true,
       });

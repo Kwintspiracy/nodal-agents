@@ -409,7 +409,7 @@ describe('cancelJobAction', () => {
     if (!r.ok) expect(r.code).toBe('not_found');
   });
 
-  const NOTHING = { jobIds: [], taskIds: [], requestIds: [] };
+  const NOTHING = { jobIds: [], taskIds: [], requestIds: [], discardedMessages: [] };
 
   it.each(['completed', 'failed', 'cancelled'])(
     'refuses a %s job when nothing under it is still alive',
@@ -430,6 +430,7 @@ describe('cancelJobAction', () => {
         jobIds: ['aaaaaaaa-0000-0000-0000-000000000001'],
         taskIds: [],
         requestIds: [],
+        discardedMessages: [],
       });
       const { cancelJobAction } = await import('../src/lib/actions.ts');
       const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
@@ -452,6 +453,7 @@ describe('cancelJobAction', () => {
       jobIds: ['bbbbbbbb-0000-0000-0000-000000000002'],
       taskIds: [],
       requestIds: ['cccccccc-0000-0000-0000-000000000003'],
+      discardedMessages: [],
     });
     const { cancelJobAction } = await import('../src/lib/actions.ts');
     const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');

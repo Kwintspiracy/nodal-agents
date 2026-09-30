@@ -59,10 +59,12 @@ export function agentBuiltinToolNames(input: AgentBuiltinInput, registry: ToolRe
       ...(input.filesWritable ? ['skill_file_write'] : []),
       // save_routine_state — the other half of the prompt's `## Routine state`.
       ...(job.routine ? ['save_routine_state'] : []),
-      // list/stop_conversation_run (#567) — for the job that speaks to the
-      // person; stopping the person's other runs is not a delegate's work.
+      // list/stop_conversation_run (#567) and message_conversation_run (#531)
+      // — for the job that speaks to the person: a message arriving while a
+      // run works starts a reply turn that must see that run, reach it and
+      // stop it. Acting on the person's other runs is not a delegate's work.
       ...(job.inConversation && !job.delegated
-        ? ['list_conversation_runs', 'stop_conversation_run']
+        ? ['list_conversation_runs', 'stop_conversation_run', 'message_conversation_run']
         : []),
     ]),
   ];

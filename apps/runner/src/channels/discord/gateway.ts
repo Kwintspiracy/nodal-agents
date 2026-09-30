@@ -28,7 +28,6 @@ import {
   GatewayIntentBits,
   Partials,
   ChannelType,
-  MessageFlags,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -45,6 +44,7 @@ import {
   type DiscordHandleResult,
 } from './handler.ts';
 import { routeDiscordInteraction } from './interactions.ts';
+import { makeDiscordInteractionAck } from './interaction-ack.ts';
 import { DISCORD_AUTH_CALLBACK_PREFIX } from './auth-callback.ts';
 import { stopReaction } from '../turn.ts';
 import type { DiscordInboundMessage } from './types.ts';
@@ -204,15 +204,14 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
       triggerJobWorker(result.jobId, env);
     }
 
-    // `/stop` (#602): the runs are already stopped, in the transaction that
-    // just committed. Acknowledge it with a reaction on the message — the
-    // runner writes no text (invariant #2). A failed reaction (no Add Reactions
-    // permission in a guild channel) changes nothing that was stopped, and is
-    // logged.
-    if (result.stop) {
-      await message.react(stopReaction(result.stop)).catch((err: unknown) => {
+    // `/stop` (#602): acknowledge it with a reaction on the message — the
+    // runner writes no text (invariant #2). A failed reaction (no Add
+    // Reactions permission in a guild channel) changes nothing, and is logged.
+    const ack = result.stop ? stopReaction(result.stop) : null;
+    if (ack) {
+      await message.react(ack).catch((err: unknown) => {
         console.warn(
-          `[discord-gateway agent=${agentId}] /stop reaction failed (channel=${message.channelId}): ${
+          `[discord-gateway agent=${agentId}] ${ack} reaction failed (channel=${message.channelId}): ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -314,14 +313,7 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
       receivingAgentId: agentId,
       deps,
       env,
-      ack: {
-        async ephemeralReply(text: string): Promise<void> {
-          await interaction.reply({ content: text, flags: MessageFlags.Ephemeral }).catch(() => {});
-        },
-        async resolveCard(text: string): Promise<void> {
-          await interaction.update({ content: text, components: [] }).catch(() => {});
-        },
-      },
+      ack: makeDiscordInteractionAck(interaction),
     });
     if (!result.handled && result.reason === 'unknown_custom_id') {
       // Not one of ours — ack so the client's spinner stops, never react to malformed/foreign taps otherwise.

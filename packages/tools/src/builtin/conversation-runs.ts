@@ -1,4 +1,5 @@
 // Built-in: list_conversation_runs + stop_conversation_run (#567)
+//          + message_conversation_run (#531)
 //
 // Sur un canal, chaque message lance un NOUVEAU job de tête. Le 28/09, le
 // propriétaire a écrit « Arrête !!! » trois fois pendant qu'un ComfyArtist
@@ -25,6 +26,7 @@ import {
   agentJobs,
   agents,
   and,
+  deliverToConversationJob,
   eq,
   inArray,
   listConversationRuns,
@@ -314,6 +316,120 @@ export const stopConversationRunTool: ToolDefinition<
         stopped.flatMap((r) => r.cancelled_job_ids),
       ),
       for_every_job: FOR_EVERY_JOB,
+    };
+  },
+};
+
+// ─── message_conversation_run (#531) ─────────────────────────────────────────
+//
+// Un message qui arrive pendant qu'un travail tourne démarre un TOUR DE RÉPONSE
+// (voir @nodal-agents/db, conversation-inbox.ts). C'est par cet outil que ce
+// tour fait prendre en compte le message par le travail en cours, s'il le
+// juge lié : il l'écrit dans la FILE du job visé — la tête du run, ou un
+// délégué encore vivant —, que ce job lit à son prochain pas et avant de
+// conclure. « Je te donne suite à la fin » n'est donc pas une promesse en
+// l'air : c'est une note dans la file de la tête, lue avant sa conclusion.
+
+export const MessageConversationRunInputSchema = z.object({
+  job_id: z
+    .string()
+    .uuid()
+    .describe(
+      'The job to pass the message to: a `run_id` (the head of a run), or the `job_id` of one ' +
+        'of its delegated jobs still running, as `list_conversation_runs` or the "Work running ' +
+        'in this conversation" block gives them.',
+    ),
+  message: z
+    .string()
+    .min(1)
+    .max(8000)
+    .describe(
+      "What that job should take into account, written for it: the person's words, and what " +
+        'they change for its work.',
+    ),
+});
+
+export type MessageConversationRunInput = z.infer<typeof MessageConversationRunInputSchema>;
+
+export type MessageConversationRunOutput = {
+  delivered: true;
+  job_id: string;
+  /** Quand le job visé lit le message — vrai pour SON runtime. */
+  read_when: string;
+};
+
+/** Quand un job lit sa file, par runtime (le même principe que `HOW_A_RUNTIME_STOPS`). */
+const WHEN_A_RUNTIME_READS: Readonly<Record<string, string>> = {
+  // apps/runner/src/job/execute.ts, `lireLaFile` : en haut de chaque tour, et
+  // avant de conclure sur une réponse en texte.
+  nodal: 'At its next step, and before it concludes: its answer takes the message into account.',
+  // Un tour de CLI n'a pas de frontière de tour : la file est lue quand il finit
+  // (une tête la relance, un délégué la laisse à son parent).
+  'claude-code':
+    'After its current Claude Code turn: a CLI turn cannot read messages while it runs, so ' +
+    'the message is picked up when that turn ends.',
+  codex:
+    'After its current Codex turn: a CLI turn cannot read messages while it runs, so the ' +
+    'message is picked up when that turn ends.',
+};
+
+export const messageConversationRunTool: ToolDefinition<
+  typeof MessageConversationRunInputSchema,
+  MessageConversationRunOutput
+> = {
+  name: 'message_conversation_run',
+  label: 'Pass a message to running work',
+  summary:
+    'Pass a message to a run of this conversation, or to one of its delegated jobs, while it is still running. It reads it at its next step and before it concludes.',
+  description:
+    'Pass a message to work STILL RUNNING in this conversation: the head of a run (its ' +
+    '`run_id`) or one of its delegated jobs (its `job_id`). The job reads it at its next step ' +
+    'and before it concludes, so this is how the running work takes an update into account, ' +
+    "or how a follow-up is handled when that work finishes. Use it when the person's message " +
+    'concerns that work; for something else, start other work instead. Refused for a job that ' +
+    'has already finished, or that is not in this conversation.',
+  inputSchema: MessageConversationRunInputSchema,
+  riskLevel: 'write',
+  card: 'text',
+  execute: async (input, ctx) => {
+    const { conversationId, ownHeadJobId } = await callerScope(ctx.db, ctx.entityId, ctx.jobId);
+    if (input.job_id === ownHeadJobId || input.job_id === ctx.jobId) {
+      throw new Error(
+        'conversation_runs_error: that job is your own current run. Take the message into ' +
+          'account yourself.',
+      );
+    }
+    const result = await deliverToConversationJob(ctx.db, {
+      entityId: ctx.entityId,
+      conversationId,
+      jobId: input.job_id,
+      text: input.message,
+      fromJobId: ctx.jobId,
+    });
+    if (!result.delivered) {
+      throw new Error(
+        result.reason === 'not_live'
+          ? `conversation_runs_error: job ${input.job_id} has already finished ` +
+              `(${result.status ?? 'unknown'}); nothing was passed on. Its result is in this ` +
+              'conversation; start new work if something is still to do.'
+          : `conversation_runs_error: ${input.job_id} is not a job of this conversation. Use a ` +
+              '`run_id` or `job_id` returned by list_conversation_runs.',
+      );
+    }
+    const [row] = await ctx.db
+      .select({ runtime: agents.runtime })
+      .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+      .where(eq(agentJobs.id, input.job_id))
+      .limit(1);
+    const runtime = row?.runtime ?? 'nodal';
+    return {
+      delivered: true,
+      job_id: input.job_id,
+      // Un runtime que cet outil ne décrit pas est DIT tel quel (invariant #4).
+      read_when:
+        WHEN_A_RUNTIME_READS[runtime] ??
+        `Written to its inbox; when the runtime '${runtime}' reads it is not known to this tool.`,
     };
   },
 };

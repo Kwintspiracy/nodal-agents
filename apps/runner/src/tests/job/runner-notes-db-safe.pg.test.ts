@@ -153,6 +153,7 @@ describe('runner_notes is written DB-safe by every producer @cap:reprendre-conve
         conversationId: conv!.id,
         channel: 'whatsapp',
         excludeJobId: '00000000-0000-0000-0000-000000000000',
+        timezone: 'UTC',
       });
       const spoken = history
         .filter((m) => m.role === 'assistant')

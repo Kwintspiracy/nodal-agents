@@ -110,7 +110,7 @@ async function insertPendingApproval(toolName = 'run_command'): Promise<string> 
 }
 
 describe('routeSlackInteraction — approval taps (apr:)', () => {
-  it('a tap from the owner conversation resolves the approval and rewrites the card', async () => {
+  it('a tap from the owner conversation resolves the approval without writing the card itself', async () => {
     const approvalId = await insertPendingApproval();
     const ack = makeAck();
 
@@ -125,8 +125,9 @@ describe('routeSlackInteraction — approval taps (apr:)', () => {
     });
 
     expect(result).toMatchObject({ handled: true, kind: 'approval', decision: 'approve' });
-    expect(ack.resolveCalls).toHaveLength(1);
-    expect(ack.resolveCalls[0]).toContain('Approved');
+    // #637 — la carte est réécrite par le point de mise à jour des cartes
+    // (prouvé dans approvals/card-settlement.test.ts), pas par le handler.
+    expect(ack.resolveCalls).toEqual([]);
     expect(ack.ephemeralCalls).toHaveLength(0);
 
     const [approval] = await db

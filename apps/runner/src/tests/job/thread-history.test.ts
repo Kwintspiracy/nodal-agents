@@ -21,13 +21,18 @@ import { loadThreadHistory } from '../../job/thread-history.ts';
  * tool-result messages contribute nothing. Lets tests assert intent
  * (who said what) regardless of whether the helper chose the 2-message
  * text shape or the 3-message tool-call shape.
+ *
+ * A message of the person is replayed with its date in front (#650,
+ * `datedTurn`); the date itself is proven by thread-history-dated.test.ts.
+ * Here it is REQUIRED on every message of the person, then set aside so these
+ * tests keep asserting who said what.
  */
 function summarize(messages: ModelMessage[]): Array<{ role: string; text: string }> {
   const out: Array<{ role: string; text: string }> = [];
   for (const m of messages) {
     const c = m.content;
     if (typeof c === 'string') {
-      out.push({ role: m.role, text: c });
+      out.push({ role: m.role, text: m.role === 'user' ? withoutDate(c) : c });
       continue;
     }
     if (!Array.isArray(c)) continue;
@@ -44,6 +49,16 @@ function summarize(messages: ModelMessage[]): Array<{ role: string; text: string
     }
   }
   return out;
+}
+
+const DATE_STAMP = /^\[[A-Z][a-z]{2}, \d{2} [A-Z][a-z]+ \d{4}, \d{2}:\d{2}\] /;
+
+/** The words of a replayed message of the person, its date stamp removed — it must have one. */
+function withoutDate(text: string): string {
+  if (text.startsWith('[système]')) return text;
+  if (!DATE_STAMP.test(text))
+    throw new Error(`replayed message of the person without its date: ${text}`);
+  return text.replace(DATE_STAMP, '');
 }
 
 let db: TestDb;
@@ -215,6 +230,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
     expect(history).toEqual([]);
   });
@@ -227,6 +243,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'api',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
     expect(history).toEqual([]);
   });
@@ -252,6 +269,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('777', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
     const flat = summarize(history);
     expect(flat.some((m) => m.role === 'user' && m.text.includes('redhead'))).toBe(true);
@@ -274,6 +292,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('888', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
     expect(history).toEqual([]);
   });
@@ -303,6 +322,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     expect(summarize(history)).toEqual([
@@ -341,6 +361,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     // The failed job is filtered out by the status='completed' clause AND
@@ -371,6 +392,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: currentId,
+      timezone: 'UTC',
     });
 
     // Only the `otherId` job should appear — never the current one.
@@ -397,6 +419,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     const s = summarize(history);
@@ -432,6 +455,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     // 3 blocks survive (3×4800 = 14400 ≤ 16000; a 4th would be 19200 > 16000).
@@ -458,6 +482,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     expect(summarize(history)).toEqual([
@@ -480,6 +505,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     const s = summarize(history);
@@ -507,6 +533,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     expect(summarize(history)).toEqual([
@@ -531,6 +558,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     const s = summarize(history);
@@ -557,6 +585,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('chat-A', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     const s = summarize(history);
@@ -582,6 +611,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('wa-1', 'whatsapp'),
       channel: 'whatsapp',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     expect(summarize(history)).toEqual([
@@ -612,6 +642,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('fil-long', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     expect(summarize(history)).toEqual([
@@ -655,6 +686,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: nouvelle.id,
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     expect(summarize(history)).toEqual([
@@ -686,6 +718,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('avec-enfant', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     const s = summarize(history);
@@ -716,6 +749,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('neuf-tours', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     const s = summarize(history);
@@ -744,6 +778,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     // Raw shape — 3 messages: user TEXT, assistant tool-call, tool tool-result.
@@ -834,6 +869,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     const s = summarize(history);
@@ -871,6 +907,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     expect(recordLines(history)).toContain(
@@ -894,6 +931,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     const s = summarize(history);
@@ -914,6 +952,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     const s = summarize(history);
@@ -946,6 +985,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     expect(recordLines(history)).toContain(
@@ -974,6 +1014,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     const s = summarize(history);
@@ -1002,6 +1043,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     const taskLines = recordLines(history).filter((l) => l.startsWith('[Task'));
@@ -1033,6 +1075,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     const lines = recordLines(history);
@@ -1134,6 +1177,7 @@ describe('loadThreadHistory — runner-written lines are attributed to the runne
         conversationId: await convFor(chatId, channel),
         channel,
         excludeJobId: '00000000-0000-0000-0000-000000000000',
+        timezone: 'UTC',
       });
 
       const spoken = assistantTexts(history).join('\n');
@@ -1174,6 +1218,7 @@ describe('loadThreadHistory — runner-written lines are attributed to the runne
       conversationId: await convFor('relay-chat', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
 
     const spoken = assistantTexts(history);
@@ -1199,6 +1244,7 @@ describe('loadThreadHistory — runner-written lines are attributed to the runne
       conversationId: await convFor('prose-chat', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
     expect(assistantTexts(history)).toEqual(['Bonjour !']);
     expect(runnerRecords(history)).toEqual([]);
@@ -1211,6 +1257,7 @@ describe('loadThreadHistory — runner-written lines are attributed to the runne
       conversationId: await convFor('minimal-chat', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
     const records = recordMessages(history);
     expect(records).toHaveLength(1);
@@ -1236,6 +1283,7 @@ describe('loadThreadHistory — runner-written lines are attributed to the runne
       conversationId: await convFor('failed-null-kind', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
     expect(assistantTexts(history)).toEqual(['ComfyUI ne tourne pas, lance-le et dis-moi.']);
     expect(runnerRecords(history).join('\n')).toContain('could not be completed (turn_limit)');
@@ -1257,6 +1305,7 @@ describe('loadThreadHistory — runner-written lines are attributed to the runne
       conversationId: await convFor('pre-0117', 'telegram'),
       channel: 'telegram',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
+      timezone: 'UTC',
     });
     expect(assistantTexts(history)).toEqual(['Il est 14 h.']);
     expect(runnerRecords(history)).toEqual([]);
