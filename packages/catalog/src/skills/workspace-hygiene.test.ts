@@ -14,7 +14,7 @@
 // décider ce qui doit y atterrir.
 
 import { describe, it, expect } from 'vitest';
-import { workspaceHygieneSkill } from './workspace-hygiene';
+import { SHARED_WORKSPACE_FOLDERS, workspaceHygieneSkill } from './workspace-hygiene';
 
 describe('workspace-hygiene', () => {
   it('borne « one folder per kind » au workspace PARTAGÉ', () => {
@@ -57,7 +57,7 @@ describe('workspace-hygiene', () => {
     // La liste des dossiers est ce que les OUTILS peuvent atteindre : c'est
     // elle qui fait foi. L'inventaire ne dit que ce qu'il y a dedans.
     const c = workspaceHygieneSkill.content;
-    const consigne = c.slice(0, c.indexOf('### One folder per kind'));
+    const consigne = c.slice(0, c.indexOf('One folder per kind'));
     expect(consigne, 'la présence du partagé se déduit du bloc Workspaces').toContain(
       '`## Workspaces` block lists a folder labelled `shared`',
     );
@@ -75,18 +75,20 @@ describe('workspace-hygiene', () => {
     // Elles sont vraies dans leur contexte, et se lisaient comme une consigne
     // générale.
     const c = workspaceHygieneSkill.content;
-    const ouverture = c.slice(0, c.indexOf('### '));
+    // Depuis le régime du 01/10/2026, l'ouverture est le paragraphe avant la
+    // liste des règles.
+    const ouverture = c.slice(0, c.indexOf('\n- '));
     expect(
       ouverture,
       'l’ouverture ne dit pas que le skill parle du PARTAGÉ, pas de l’endroit où va ton travail',
     ).toMatch(/shared/i);
     expect(ouverture).toMatch(/## Shared workspace/);
 
-    const bundles = c.slice(c.indexOf('### Skill bundles'));
+    const bundles = c.slice(c.indexOf("into a skill's folder"));
     expect(
       bundles,
       'la section des bundles envoie encore les artefacts au partagé sans condition',
-    ).toMatch(/your own if you have one/i);
+    ).toMatch(/your own (folder )?if you have one/i);
   });
 
   it('garde sa discipline interne intacte', () => {
@@ -95,6 +97,18 @@ describe('workspace-hygiene', () => {
     for (const dossier of ['`workflows/`', '`outputs/`', '`scripts/`', '`documents/`']) {
       expect(c, `${dossier} a disparu de la disposition canonique`).toContain(dossier);
     }
+  });
+
+  it('annonce exactement les dossiers de SHARED_WORKSPACE_FOLDERS, la liste que lit l’inventaire', () => {
+    // Une seule source pour les dossiers canoniques : la skill les annonce,
+    // l'inventaire du runner décide d'après elle ce qu'il nomme et ce qu'il
+    // compte. Deux listes écrites à la main finissent par diverger.
+    const ligne = workspaceHygieneSkill.content
+      .split('\n')
+      .find((l) => l.includes('One folder per kind'));
+    expect(ligne, 'la règle des dossiers a disparu').toBeDefined();
+    const annonces = [...ligne!.matchAll(/`([^`/]+)\/`/g)].map((m) => m[1]);
+    expect(annonces).toEqual(SHARED_WORKSPACE_FOLDERS.map((f) => f.name));
   });
 
   it('ne dit pas la règle de reprise — le bloc `## Shared workspace` la dit, une fois (#638)', () => {

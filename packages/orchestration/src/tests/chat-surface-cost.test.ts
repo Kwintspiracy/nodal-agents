@@ -130,9 +130,9 @@ describe('la surface chat ne reçoit que ce qu’elle peut obéir', () => {
       expect(c, `${titre} ne dit plus rien sur le chat`).toContain(titre);
     }
     for (const phraseDeJob of [
-      'after every `file_write` or equivalent',
-      '`file_read` before `file_write`',
-      '### Anti-loop limits',
+      'After a `file_write`, `file_read` the path',
+      '`file_read` an existing file before `file_write`',
+      'Grounded assertions about platform state',
     ]) {
       expect(j, `« ${phraseDeJob} » manque sur un job`).toContain(phraseDeJob);
       expect(c, `« ${phraseDeJob} » injectée sur le chat`).not.toContain(phraseDeJob);
@@ -168,10 +168,21 @@ describe('la surface chat ne reçoit que ce qu’elle peut obéir', () => {
   // ne prouve, et le rapport en caractères garde la propriété qui compte — le
   // chat reçoit nettement moins de texte. Ce qui change ici : personne ne peut
   // plus lire ce vert comme la vérification du chiffre en jetons.
-  it('le prompt du chat pèse au moins 40 % de caractères de moins qu’un job', async () => {
+  //
+  // Un PLAFOND sur le chat, plus un rapport au job, depuis le 01/10/2026. Le
+  // rapport (« 40 % de moins qu'un job ») mesurait le chat contre un job qui
+  // portait des pages de redites : le régime du socle en a retiré ~14 000
+  // caractères au job (baseline-budget.test.ts) et ~2 100 au chat, et le
+  // rapport a rougi alors que le chat avait MAIGRI (fixture : chat 14 711 →
+  // 12 963, job 31 559 → 17 362). Chaque régime du job l'aurait refait
+  // rougir. Ce que ce cas protège, c'est le coût du chat : il est borné
+  // directement. Ce que le chat ne reçoit pas du job, les cas ci-dessus le
+  // prouvent par le contenu.
+  it('le prompt du chat reste sous son plafond, et sous celui d’un job', async () => {
     const c = (await chat()).length;
     const j = (await job()).length;
-    expect(c, `chat ${c} car. vs job ${j} car.`).toBeLessThan(j * 0.6);
+    expect(c, `chat ${c} car. (14 711 avant le régime du socle)`).toBeLessThanOrEqual(13_500);
+    expect(c, `chat ${c} car. vs job ${j} car.`).toBeLessThan(j);
   });
 });
 
@@ -229,21 +240,13 @@ describe('la promesse « rien que d’exécutable » se vérifie sur le TEXTE, p
   });
 
   // Le prompt assemblé ci-dessus ne passe que par UNE combinaison : un
-  // orchestrateur sur `test-model`. Les deux blocs que la revue a trouvés
-  // vivent dans les autres — le rôle `agent`, et un modèle non frontière. Ils
-  // se prennent à la source.
+  // orchestrateur. Le bloc du rôle `agent` se prend à la source. (Le second
+  // bloc trouvé par la revue, le renfort des modèles non frontières, n'existe
+  // plus : le socle ne dépend plus du modèle, lot 2 du 01/10/2026.)
   it('un agent SIMPLE sur le chat ne reçoit pas non plus d’ordre `save_memory`', () => {
-    const bloc = buildBaselineBlock('test-model', { role: 'agent', surface: 'chat' });
+    const bloc = buildBaselineBlock({ role: 'agent', surface: 'chat' });
     expect(outilsPrescrits(bloc), 'le bloc du rôle worker prescrit encore un outil').toEqual([]);
     // Et sur un job, il le prescrit : la règle n'a pas disparu du produit.
-    expect(buildBaselineBlock('test-model', { role: 'agent' })).toContain('save_memory');
-  });
-
-  it('un modèle non frontière sur le chat non plus', () => {
-    const bloc = buildBaselineBlock('minimax-m3', { role: 'agent', surface: 'chat' });
-    expect(outilsPrescrits(bloc), 'le renforcement prescrit encore un outil').toEqual([]);
-    // Le renforcement lui-même reste, sur un job, avec ses outils.
-    const surJob = buildBaselineBlock('minimax-m3', { role: 'agent' });
-    expect(surJob).toContain('skill_view');
+    expect(buildBaselineBlock({ role: 'agent' })).toContain('save_memory');
   });
 });
