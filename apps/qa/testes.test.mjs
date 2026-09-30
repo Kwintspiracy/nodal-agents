@@ -240,6 +240,16 @@ describe('les cinq derniers tours', () => {
     expect(etatDesDerniersTours('')).toBe('jamais');
   });
 
+  // Revue Codex de #633 : « vert » voulait dire « aucun échec », et un test
+  // sauté sur un seul de ses cinq tours passait pour vert. Vert veut dire que
+  // CHAQUE tour montré a passé.
+  it('un seul tour sauté parmi les cinq suffit à ne plus dire vert', () => {
+    expect(etatDesDerniersTours('vvvvi')).toBe('ignore');
+    expect(etatDesDerniersTours('iivvv')).toBe('ignore');
+    expect(etatDesDerniersTours('viiii')).toBe('ignore');
+    expect(etatDesDerniersTours('vv')).toBe('vert');
+  });
+
   it('le niveau d’un test se lit sur son chemin', () => {
     expect(niveauDuTest('apps/web/tests/e2e/chat-stop.spec.ts')).toBe('e2e');
     expect(niveauDuTest('apps/web/src/lib/__tests__/chat-list.test.ts')).toBe('ecran');
@@ -333,6 +343,66 @@ describe('testsParDomaine : les comptes d’une partie', () => {
         ['handler old', 'vv', 0, 2, 0, null],
       ],
     ]);
+  });
+});
+
+// Revue Codex de #633 : « Install, start & update » portait onze tests `iiiii`
+// et affichait « all green on their last 5 runs ». Aucun échec n'est pas tous
+// passés : une partie n'est toute verte que si chacun de ses tests a passé à
+// chacun des tours montrés.
+describe('testsParDomaine : « tout vert » veut dire tous passés, pas aucun échec', () => {
+  const LE = '2026-09-29T10:00:00.000Z';
+  const t = (fichier, titre, recents) => ({
+    cle: `${fichier}::${titre}`,
+    fichier,
+    titre,
+    recents,
+    tours: recents.length,
+    echecs: 0,
+    dernierTourLe: LE,
+  });
+  const range = (domaine) => ({ domaine, raison: 'r', absent: false });
+  const r = testsParDomaine({
+    tests: [
+      t('install/a.test.ts', 'skipped', 'iiiii'),
+      t('install/a.test.ts', 'skipped too', 'iiiii'),
+      t('install/a.test.ts', 'passed', 'vvvvv'),
+      t('memory/b.test.ts', 'passed', 'vvvvv'),
+      t('memory/b.test.ts', 'passed, fewer runs', 'vv'),
+      t('chat/c.test.ts', 'passed', 'vvvvv'),
+      t('chat/c.test.ts', 'last run skipped', 'vvvvi'),
+      t('runs/d.test.ts', 'never run', ''),
+    ],
+    rangement: {
+      'install/a.test.ts': range('install'),
+      'memory/b.test.ts': range('memory'),
+      'chat/c.test.ts': range('chat'),
+      'runs/d.test.ts': range('runs'),
+    },
+    mesureLe: LE,
+  });
+  const partie = (id) => r.parties.find((p) => p.id === id);
+
+  it('des tests sautés et aucun rouge : PAS tout vert, et les sautés sont comptés', () => {
+    expect(partie('install')).toMatchObject({
+      rouges: 0,
+      instables: 0,
+      ignores: 2,
+      jamais: 0,
+      toutVert: false,
+    });
+  });
+
+  it('un seul tour sauté sur un seul test suffit', () => {
+    expect(partie('chat')).toMatchObject({ rouges: 0, instables: 0, ignores: 1, toutVert: false });
+  });
+
+  it('un test jamais joué n’est pas vert non plus', () => {
+    expect(partie('runs')).toMatchObject({ ignores: 0, jamais: 1, toutVert: false });
+  });
+
+  it('tous les tests passés à chaque tour montré : tout vert', () => {
+    expect(partie('memory')).toMatchObject({ ignores: 0, jamais: 0, toutVert: true });
   });
 });
 

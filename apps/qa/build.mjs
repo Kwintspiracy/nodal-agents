@@ -938,8 +938,14 @@ function vueTestes() {
     const alertes = [
       p.rouges > 0 ? `<span class="pastille pastille--ko">${p.rouges} red</span>` : '',
       p.instables > 0 ? `<span class="pastille pastille--moyen">${p.instables} flaky</span>` : '',
-      p.rouges === 0 && p.instables === 0 && p.total > 0
-        ? '<span class="pastille pastille--ok">all green on their last 5 runs</span>'
+      p.ignores > 0
+        ? `<span class="pastille pastille--inconnu">${n(p.ignores)} skipped in their last ${TOURS_MONTRES} runs</span>`
+        : '',
+      p.jamais > 0
+        ? `<span class="pastille pastille--inconnu">${n(p.jamais)} never run</span>`
+        : '',
+      p.toutVert
+        ? `<span class="pastille pastille--ok">all green on their last ${TOURS_MONTRES} runs</span>`
         : '',
     ].join(' ');
     return `<summary class="partie__tete">

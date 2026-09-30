@@ -1359,6 +1359,42 @@ describe('« What is tested », sur la page', () => {
     }
   });
 
+  // Revue Codex de #633 : onze tests `iiiii` et aucun rouge affichaient la
+  // pastille verte. La page lit `toutVert` de lib.mjs ; ce cas prouve qu'elle
+  // le lit, et qu'elle dit les sautés au lieu de les taire.
+  it('une partie aux tests sautés n’est PAS dite verte, et dit combien sont sautés', () => {
+    const range = (domaine) => ({ domaine, raison: 'r', absent: false });
+    const p = rendre(
+      {
+        ...INSTANTANE,
+        genereLe: LE,
+        rangement: {
+          le: LE,
+          fichiers: {
+            'packages/cli/src/tests/install.test.ts': range('install'),
+            'packages/db/src/tests/memory.test.ts': range('memory'),
+          },
+        },
+      },
+      {},
+      [
+        test('packages/cli/src/tests/install.test.ts', 'installs', 'iiiii'),
+        test('packages/cli/src/tests/install.test.ts', 'updates', 'iiiii'),
+        test('packages/cli/src/tests/install.test.ts', 'starts', 'vvvvv'),
+        test('packages/db/src/tests/memory.test.ts', 'remembers', 'vvvvv'),
+      ],
+    );
+    const entete = (id) => {
+      const i = p.indexOf(`data-partie="${id}"`);
+      expect(i, `partie ${id} absente`).toBeGreaterThan(-1);
+      return p.slice(i, p.indexOf('</summary>', i));
+    };
+    expect(entete('install')).not.toContain('all green');
+    expect(entete('install')).toContain('2 skipped in their last 5 runs');
+    expect(entete('memory')).toContain('all green on their last 5 runs');
+    expect(entete('memory')).not.toContain('skipped');
+  });
+
   it('une collecte d’avant le rangement le DIT, et range tout dans Unclassified', () => {
     const p = rendre({ ...INSTANTANE, genereLe: LE, rangement: undefined }, {}, TESTS);
     expect(p).toContain('This collection predates the sorting by part.');

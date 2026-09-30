@@ -3933,8 +3933,10 @@ export function derniersTours(recents, n = TOURS_MONTRES) {
  *   - `rouge` : son DERNIER tour a échoué ;
  *   - `instable` : un échec, ou un vert obtenu au second essai, parmi les
  *     cinq, sans que le dernier soit rouge ;
- *   - `ignore` : les cinq ont été sautés ;
- *   - `vert` : le reste ;
+ *   - `vert` : CHAQUE tour montré a passé du premier coup ;
+ *   - `ignore` : le reste, c'est-à-dire au moins un tour sauté (ou d'une lettre
+ *     inconnue) et aucun échec. Ni vert ni rouge : « aucun échec » n'est pas
+ *     « tous passés » (revue Codex de #633) ;
  *   - `jamais` : aucun tour connu.
  */
 export function etatDesDerniersTours(recents) {
@@ -3942,8 +3944,8 @@ export function etatDesDerniersTours(recents) {
   if (!d) return 'jamais';
   if (d.at(-1) === 'r') return 'rouge';
   if (/[rf]/.test(d)) return 'instable';
-  if (/^i+$/.test(d)) return 'ignore';
-  return 'vert';
+  if (/^v+$/.test(d)) return 'vert';
+  return 'ignore';
 }
 
 /** Le ruban : un carré par tour, les cinq derniers, du plus ancien au plus récent. */
@@ -4019,6 +4021,9 @@ export function testsParDomaine({ tests = [], rangement = {}, mesureLe = null } 
         moteur: 0,
         rouges: 0,
         instables: 0,
+        ignores: 0,
+        jamais: 0,
+        verts: 0,
         nonJoues: 0,
         dernierTourLe: null,
         fichiers: new Map(),
@@ -4045,6 +4050,9 @@ export function testsParDomaine({ tests = [], rangement = {}, mesureLe = null } 
     if (niveau === 'e2e') p.e2e += 1;
     if (etat === 'rouge') p.rouges += 1;
     if (etat === 'instable') p.instables += 1;
+    if (etat === 'ignore') p.ignores += 1;
+    if (etat === 'jamais') p.jamais += 1;
+    if (etat === 'vert') p.verts += 1;
     if (!joue) p.nonJoues += 1;
     if (t.dernierTourLe && (!p.dernierTourLe || t.dernierTourLe > p.dernierTourLe)) {
       p.dernierTourLe = t.dernierTourLe;
@@ -4089,6 +4097,9 @@ export function testsParDomaine({ tests = [], rangement = {}, mesureLe = null } 
       .sort((a, b) => rang(a.id) - rang(b.id))
       .map((p) => ({
         ...p,
+        // Toute verte : chacun de ses tests a passé à chacun des tours montrés.
+        // Jamais « aucun rouge ni instable » : des tests sautés passeraient.
+        toutVert: p.total > 0 && p.verts === p.total,
         fichiers: [...p.fichiers.values()].sort((a, b) => a.fichier.localeCompare(b.fichier)),
       })),
   };
