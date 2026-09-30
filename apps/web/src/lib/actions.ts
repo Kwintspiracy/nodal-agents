@@ -180,7 +180,13 @@ import { selectVerificationRuns } from './verification-runs-query.ts';
 import { lastReviewVerdict } from './review-state.ts';
 import { readJobRoots } from './job-lineage.ts';
 import { chatFailureText } from './chat-failure.ts';
-import type { JobTriggerContext, AnyDrizzleDb, JobLiveProgress } from '@nodal-agents/db';
+import type {
+  JobTriggerContext,
+  AnyDrizzleDb,
+  JobLiveProgress,
+  SkillUpdateDetail as DbSkillUpdateDetail,
+  SkillSourceProblem as DbSkillSourceProblem,
+} from '@nodal-agents/db';
 import {
   DeliveryError,
   getTelegramBotInfo,
@@ -8852,21 +8858,13 @@ export type InstalledScript = { path: string; language: string };
 
 /**
  * Result of the runner's periodic diff between an installed community skill
- * and its source (content hash + bundled-script listing). Only meaningful
- * when `isCommunity` — system/custom skills never carry a detail.
+ * and its source (content hash + bundled-script listing), or the reason it
+ * could not compare (`sourceProblem`: the source is gone, or now serves
+ * another skill). Only meaningful when `isCommunity` — system/custom skills
+ * never carry a detail. One definition, the column's own (packages/db).
  */
-export type SkillUpdateDetail = {
-  contentChanged: boolean;
-  scriptsChanged: boolean;
-  /**
-   * Three-way script state from the runner's checker: 'conflict' = upstream
-   * moved AND the local files were patched (applying overwrites the patches);
-   * 'local-only' = only local patched, nothing new upstream (no badge).
-   * Absent on checks run before the three-way checker shipped.
-   */
-  scriptsState?: 'clean' | 'update' | 'conflict' | 'local-only';
-  checkedAt: string;
-};
+export type SkillUpdateDetail = DbSkillUpdateDetail;
+export type SkillSourceProblem = DbSkillSourceProblem;
 
 export type SkillRow = {
   id: string;
@@ -9419,12 +9417,15 @@ export async function acknowledgeSkillUpdateAction(
   }
 }
 
-export type SkillUpdateNotice = { slug: string; name: string };
+/** `problem` is null for a pending update, the code when the source no longer holds the skill. */
+export type SkillUpdateNotice = { slug: string; name: string; problem: SkillSourceProblem | null };
 
 /**
- * Light read for the notifications bell: just the slug + name of every
- * community skill in the active workspace with a pending update. Kept
- * separate from listSkillsAction (which pays joins the bell doesn't need)
+ * Light read for the notifications bell: the slug + name of every community
+ * skill in the active workspace with a pending update OR a source problem
+ * (the last check could not read its source as this skill). A problem is the
+ * owner's to see: a badge that turned into a problem must not just vanish.
+ * Kept separate from listSkillsAction (which pays joins the bell doesn't need)
  * so polling it every 15s stays cheap.
  */
 export async function listSkillUpdatesAction(): Promise<ActionResult<SkillUpdateNotice[]>> {
@@ -9432,17 +9433,30 @@ export async function listSkillUpdatesAction(): Promise<ActionResult<SkillUpdate
     const session = await getSession();
     const db = getDb();
     const rows = await db
-      .select({ slug: agentSkills.slug, name: agentSkills.name })
+      .select({
+        slug: agentSkills.slug,
+        name: agentSkills.name,
+        updateDetail: agentSkills.updateDetail,
+      })
       .from(agentSkills)
       .where(
         and(
           eq(agentSkills.entityId, session.entityId),
           eq(agentSkills.isCommunity, true),
-          eq(agentSkills.updateAvailable, true),
+          or(
+            eq(agentSkills.updateAvailable, true),
+            sql`${agentSkills.updateDetail}->>'sourceProblem' IS NOT NULL`,
+          ),
         ),
       )
       .orderBy(agentSkills.name);
-    return ok(rows);
+    return ok(
+      rows.map((r) => ({
+        slug: r.slug,
+        name: r.name,
+        problem: r.updateDetail?.sourceProblem ?? null,
+      })),
+    );
   } catch (err) {
     console.error('[listSkillUpdatesAction]', err);
     return fail('db_error', 'Failed to load skill updates');

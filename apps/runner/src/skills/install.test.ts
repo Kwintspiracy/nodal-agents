@@ -25,7 +25,11 @@ import {
   buildContent,
   MAX_SKILL_CONTENT_BYTES,
   installCommunitySkill,
+  previewSkillUpdate,
+  applySkillUpdate,
+  acknowledgeSkillUpdate,
 } from './install';
+import { checkSkillUpdate } from './check-updates';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import { eq, and, agentSkills } from '@nodal-agents/db';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
@@ -267,6 +271,16 @@ describe('detectScripts', () => {
   });
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
+  });
+
+  it('an empty file is not a script, whatever its extension (a package __init__.py)', async () => {
+    await writeFile(join(dir, '__init__.py'), '', 'utf8');
+    await writeFile(join(dir, 'scripts', '__init__.py'), '', 'utf8');
+    const paths = (await detectScripts(dir)).map((s) => s.path);
+    expect(paths).not.toContain('__init__.py');
+    expect(paths).not.toContain('scripts/__init__.py');
+    // A non-empty file with the same extension still is.
+    expect(paths).toContain('scripts/extract.py');
   });
 
   it('detects script files by extension and shebang, ignoring docs/assets', async () => {
@@ -1205,5 +1219,240 @@ describe('installCommunitySkill — system-skill squat closure (P2b, F-6 follow-
     } finally {
       await rm(store, { recursive: true, force: true });
     }
+  });
+});
+
+// ── installCommunitySkill — a curated catalog card keeps its name ────────────
+//
+// Real pglite DB + mocked GitHub Contents API: the source of the catalog's
+// "Comfy (official)" card, whose folder also ships an EMPTY __init__.py.
+
+describe('installCommunitySkill — a skill installed from a catalog card', () => {
+  const origFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = origFetch;
+  });
+
+  function mockComfyFolder(manifestName = 'comfy', body = 'You have access to comfy.') {
+    global.fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/repos/Comfy-Org/comfy-cli/contents/comfy_cli/skills/comfy?ref=')) {
+        const ref = new URL(url).searchParams.get('ref');
+        return new Response(
+          JSON.stringify([
+            {
+              name: 'SKILL.md',
+              path: 'comfy_cli/skills/comfy/SKILL.md',
+              type: 'file',
+              size: 60,
+              download_url: `https://raw.githubusercontent.com/Comfy-Org/comfy-cli/${ref}/comfy_cli/skills/comfy/SKILL.md`,
+            },
+            {
+              name: '__init__.py',
+              path: 'comfy_cli/skills/comfy/__init__.py',
+              type: 'file',
+              size: 0,
+              download_url: `https://raw.githubusercontent.com/Comfy-Org/comfy-cli/${ref}/comfy_cli/skills/comfy/__init__.py`,
+            },
+          ]),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.includes('raw.githubusercontent.com') && url.endsWith('/SKILL.md')) {
+        return new Response(
+          `---\nname: ${manifestName}\ndescription: Generate images via ComfyUI.\n---\n${body}`,
+          { status: 200 },
+        );
+      }
+      if (url.includes('raw.githubusercontent.com') && url.endsWith('/__init__.py')) {
+        return new Response('', { status: 200 });
+      }
+      return new Response('', { status: 404 });
+    }) as typeof fetch;
+  }
+
+  it('keeps the card name ("Comfy (official)"), and the empty __init__.py is no script to consent to', async () => {
+    const { db } = await spinUpTestDb();
+    const seed = await seedMinimal(db);
+    mockComfyFolder();
+    const store = await mkdtemp(join(tmpdir(), 'nodal-catalog-name-'));
+    try {
+      await installCommunitySkill({
+        db: db as never,
+        source: 'Comfy-Org/comfy-cli/comfy_cli/skills/comfy',
+        skillStoreDir: store,
+        entityId: seed.entityId,
+      });
+      const [row] = await db
+        .select({
+          name: agentSkills.name,
+          slug: agentSkills.slug,
+          source: agentSkills.source,
+          installedScripts: agentSkills.installedScripts,
+        })
+        .from(agentSkills)
+        .where(and(eq(agentSkills.entityId, seed.entityId), eq(agentSkills.slug, 'comfy')));
+      expect(row?.name).toBe('Comfy (official)');
+      expect(row?.source).toBe('Comfy-Org/comfy-cli/comfy_cli/skills/comfy');
+      expect(row?.installedScripts).toBeNull();
+    } finally {
+      await rm(store, { recursive: true, force: true });
+    }
+  });
+
+  it('a catalog source that now serves ANOTHER skill is refused: the card name is never lent to it', async () => {
+    const { db } = await spinUpTestDb();
+    const seed = await seedMinimal(db);
+    mockComfyFolder('other-skill');
+    const store = await mkdtemp(join(tmpdir(), 'nodal-catalog-name-3-'));
+    try {
+      await expect(
+        installCommunitySkill({
+          db: db as never,
+          source: 'Comfy-Org/comfy-cli/comfy_cli/skills/comfy',
+          skillStoreDir: store,
+          entityId: seed.entityId,
+        }),
+      ).rejects.toThrow(
+        /installs the skill "comfy", but its source now serves a skill named "other-skill"/,
+      );
+      const rows = await db
+        .select({ slug: agentSkills.slug, name: agentSkills.name })
+        .from(agentSkills)
+        .where(eq(agentSkills.entityId, seed.entityId));
+      expect(rows.filter((r) => r.slug === 'other-skill' || r.name.includes('(official)'))).toEqual(
+        [],
+      );
+    } finally {
+      await rm(store, { recursive: true, force: true });
+    }
+  });
+
+  it('a source that is not a catalog card keeps the name its SKILL.md declares', async () => {
+    const { db } = await spinUpTestDb();
+    const seed = await seedMinimal(db);
+    mockComfyFolder();
+    const store = await mkdtemp(join(tmpdir(), 'nodal-catalog-name-2-'));
+    try {
+      // Same folder, spelled as a full URL: not the catalog's source string.
+      await installCommunitySkill({
+        db: db as never,
+        source: 'https://github.com/Comfy-Org/comfy-cli/tree/main/comfy_cli/skills/comfy',
+        skillStoreDir: store,
+        entityId: seed.entityId,
+      });
+      const [row] = await db
+        .select({ name: agentSkills.name })
+        .from(agentSkills)
+        .where(and(eq(agentSkills.entityId, seed.entityId), eq(agentSkills.slug, 'comfy')));
+      expect(row?.name).toBe('comfy');
+    } finally {
+      await rm(store, { recursive: true, force: true });
+    }
+  });
+
+  // The update paths re-read the SAME moving source. Whether it came from a
+  // catalog card or not, a SKILL.md that now declares another slug is another
+  // skill, never an update of the installed one: the check records it as a
+  // source problem (never as a badge, never as "unchanged"), and preview, apply and « keep my version » must refuse it without
+  // touching the row or the stored files.
+  describe.each([
+    ['the catalog card source', 'Comfy-Org/comfy-cli/comfy_cli/skills/comfy'],
+    [
+      'a source that is not a catalog card',
+      'https://github.com/Comfy-Org/comfy-cli/tree/main/comfy_cli/skills/comfy',
+    ],
+  ])('an installed skill whose source now serves ANOTHER skill (%s)', (_label, source) => {
+    it('check says it is no longer at its source; preview, apply and keep-my-version refuse it; row and files untouched', async () => {
+      const { db } = await spinUpTestDb();
+      const seed = await seedMinimal(db);
+      mockComfyFolder();
+      const store = await mkdtemp(join(tmpdir(), 'nodal-upstream-identity-'));
+      try {
+        await installCommunitySkill({
+          db: db as never,
+          source,
+          skillStoreDir: store,
+          entityId: seed.entityId,
+        });
+        const readRow = async () => {
+          const [row] = await db
+            .select()
+            .from(agentSkills)
+            .where(and(eq(agentSkills.entityId, seed.entityId), eq(agentSkills.slug, 'comfy')));
+          if (!row) throw new Error('fixture not installed');
+          return row;
+        };
+        const before = await readRow();
+        const skillMdBefore = await readFile(join(store, 'comfy', 'SKILL.md'), 'utf8');
+        expect(skillMdBefore).toContain('name: comfy');
+
+        // Upstream now serves another skill, with another body.
+        mockComfyFolder('other-skill', 'You are some other skill entirely.');
+        const identityRefusal =
+          /The installed skill "comfy" is not at its source any more: the source now serves a skill named "other-skill"/;
+
+        const outcome = await checkSkillUpdate({
+          db: db as never,
+          skill: {
+            id: before.id,
+            slug: before.slug,
+            source: before.source!,
+            defaultContent: before.defaultContent,
+            installedScripts: before.installedScripts,
+          },
+          skillStoreDir: store,
+        });
+        expect(outcome).toEqual({
+          kind: 'source_problem',
+          problem: 'identity_changed',
+          reason: expect.stringMatching(identityRefusal),
+        });
+        // The row says what happened: another skill at the source. It claims
+        // no diff at all (the old shape, false "unchanged" flags, read as a
+        // healthy install).
+        const afterCheck = await readRow();
+        expect(afterCheck.updateAvailable).toBe(false);
+        expect(afterCheck.updateDetail).toEqual({
+          sourceProblem: 'identity_changed',
+          upstreamSlug: 'other-skill',
+          checkedAt: expect.any(String),
+        });
+
+        const updateOpts = {
+          db: db as never,
+          slug: 'comfy',
+          skillStoreDir: store,
+          entityId: seed.entityId,
+        };
+        await expect(previewSkillUpdate(updateOpts)).rejects.toThrow(identityRefusal);
+        await expect(applySkillUpdate(updateOpts)).rejects.toThrow(identityRefusal);
+        await expect(acknowledgeSkillUpdate(updateOpts)).rejects.toThrow(identityRefusal);
+
+        const after = await readRow();
+        expect({
+          slug: after.slug,
+          name: after.name,
+          description: after.description,
+          content: after.content,
+          defaultContent: after.defaultContent,
+          installedScripts: after.installedScripts,
+          source: after.source,
+        }).toEqual({
+          slug: before.slug,
+          name: before.name,
+          description: before.description,
+          content: before.content,
+          defaultContent: before.defaultContent,
+          installedScripts: before.installedScripts,
+          source: before.source,
+        });
+        expect(after.content).toContain('You have access to comfy.');
+        expect(await readFile(join(store, 'comfy', 'SKILL.md'), 'utf8')).toBe(skillMdBefore);
+        expect((await readdir(join(store, 'comfy'))).sort()).toEqual(['SKILL.md', '__init__.py']);
+      } finally {
+        await rm(store, { recursive: true, force: true });
+      }
+    });
   });
 });

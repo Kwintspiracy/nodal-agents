@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { useLayer } from '@/lib/layers.ts';
 import Link from 'next/link';
-import { Bell, ArrowClockwise } from '@phosphor-icons/react';
+import { Bell, ArrowClockwise, Warning } from '@phosphor-icons/react';
 import { toast } from 'sonner';
 import { resolveApprovalAction } from '@/lib/actions';
 import IconButton from '@/components/ui/IconButton';
@@ -11,6 +11,7 @@ import RowActionButton from '@/components/ui/RowActionButton';
 import { useApprovals, type PendingApproval } from './ApprovalsProvider';
 import { useSkillUpdates, type SkillUpdateNotice } from './SkillUpdatesProvider';
 import { relativeTime } from '@/lib/format-time';
+import { sourceProblemLabel } from '@/lib/skill-source-problem.ts';
 import { openRunHref, questionHref } from '@/lib/run-page.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -175,9 +176,15 @@ function ApprovalsDropdown({
                   onClick={onClose}
                   className="flex items-center gap-2.5 px-4 py-3 transition-colors hover:bg-hover"
                 >
-                  <ArrowClockwise size={14} className="shrink-0 text-warn" />
+                  {u.problem ? (
+                    <Warning size={14} className="shrink-0 text-warn" />
+                  ) : (
+                    <ArrowClockwise size={14} className="shrink-0 text-warn" />
+                  )}
                   <span className="min-w-0 flex-1 truncate text-medium-13 text-ink">
-                    {u.name} has an update
+                    {u.problem
+                      ? `${u.name}: ${sourceProblemLabel(u.problem).toLowerCase()}`
+                      : `${u.name} has an update`}
                   </span>
                 </Link>
               </li>

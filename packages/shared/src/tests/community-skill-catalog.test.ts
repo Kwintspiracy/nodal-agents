@@ -2,11 +2,17 @@ import { describe, it, expect } from 'vitest';
 import { COMMUNITY_SKILL_CATALOG } from '../community-skill-catalog';
 
 describe('COMMUNITY_SKILL_CATALOG', () => {
-  it('ships the ComfyUI entry pointing at the complete Hermes skill', () => {
-    const comfy = COMMUNITY_SKILL_CATALOG.find((e) => e.slug === 'comfyui');
-    expect(comfy).toBeDefined();
-    expect(comfy?.source).toBe('NousResearch/hermes-agent/skills/creative/comfyui');
-    expect(comfy?.sourceHost).toBe('github');
+  it("ships Comfy's official skills from the comfy-cli repository, named official, instead of the Hermes port", () => {
+    const bySlug = new Map(COMMUNITY_SKILL_CATALOG.map((e) => [e.slug, e]));
+    for (const slug of ['comfy', 'comfy-debug', 'comfy-director']) {
+      const e = bySlug.get(slug);
+      expect(e?.source).toBe(`Comfy-Org/comfy-cli/comfy_cli/skills/${slug}`);
+      expect(e?.sourceHost).toBe('github');
+      expect(e?.name).toContain('(official)');
+      expect(e?.description).toContain('comfy-cli');
+    }
+    // One ComfyUI path offered, not two that would contradict each other.
+    expect(bySlug.has('comfyui')).toBe(false);
   });
 
   it('every entry has a complete, install-ready shape', () => {
@@ -35,7 +41,7 @@ describe('COMMUNITY_SKILL_CATALOG', () => {
   it('seeds the curated high-demand starter set', () => {
     const slugs = new Set(COMMUNITY_SKILL_CATALOG.map((e) => e.slug));
     for (const expected of [
-      'comfyui',
+      'comfy',
       'excel-author',
       'pptx-author',
       'ocr-and-documents',

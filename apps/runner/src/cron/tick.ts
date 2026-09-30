@@ -437,7 +437,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   const skillUpdateResult = await guardPhase(
     'runSkillUpdateCheckTick',
     () => runSkillUpdateCheckTick(deps.db, resolveSkillUpdateCheckEnv()),
-    { checked: 0, updatesFound: 0, notFound: 0, errored: 0, rateLimited: false },
+    { checked: 0, updatesFound: 0, sourceProblems: 0, errored: 0, rateLimited: false },
   );
 
   // ─── Retention phase (OFF by default, opt-in via RETENTION_DAYS > 0) ─────────

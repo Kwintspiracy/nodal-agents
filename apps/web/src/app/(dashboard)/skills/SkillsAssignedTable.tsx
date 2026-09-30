@@ -32,6 +32,7 @@ import Modal from '@/components/ui/Modal.tsx';
 import AssignSkillModal from './AssignSkillModal.tsx';
 import SkillForm from './SkillForm.tsx';
 import SkillUpdateAction, { SkillKeepLocalAction } from './SkillUpdateAction.tsx';
+import SkillSourceProblemPill from './SkillSourceProblemPill.tsx';
 
 type Props = {
   /** Ordered provenance segments (lib/skill-provenance.ts) — the Workspace
@@ -114,7 +115,9 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
             recette `meta`. */}
         <CellTitle
           badge={
-            skill.isCommunity && skill.updateAvailable ? (
+            skill.isCommunity && skill.updateDetail?.sourceProblem ? (
+              <SkillSourceProblemPill detail={skill.updateDetail} />
+            ) : skill.isCommunity && skill.updateAvailable ? (
               <StatusPill variant="warn" label="Update available" />
             ) : undefined
           }
