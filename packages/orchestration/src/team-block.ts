@@ -200,9 +200,10 @@ export async function buildTeamBlock(
   // `agent_workspaces` alone and said "Folders: none" of an agent that reads
   // and writes the shared folder (Codex review of #506, P1).
   const folderMap = new Map<string, string[]>();
-  // Whether each agent's job whitelist carries `run_command` — the very
-  // computation the runner makes (`resolveBuiltinToolNames`), orchestrators
-  // included: their branch never adds skill-required builtins (Codex, P1).
+  // Whether each agent's job whitelist carries `run_command` — the very rule
+  // the runner's whitelist applies (`agentBuiltinToolNames`, read here through
+  // `resolveBuiltinToolNames`), the same for an orchestrator teammate as for a
+  // worker (#636).
   const runCommandMap = new Map<string, boolean>();
   await Promise.all(
     childRows.map(async (r) => {

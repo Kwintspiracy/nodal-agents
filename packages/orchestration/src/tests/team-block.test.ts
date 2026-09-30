@@ -526,10 +526,16 @@ describe('buildTeamBlock — ce que chaque agent peut réellement faire (#506) @
     const nodalEmptyList = await seedAgent(db, entityId, `test-nodal-empty-${Date.now()}`, 'agent');
     const claudeCode = await seedAgent(db, entityId, `test-cc-${Date.now()}`, 'agent');
     const codex = await seedAgent(db, entityId, `test-codex-${Date.now()}`, 'agent');
-    // Un sous-orchestrateur qui porte la skill : la branche orchestrateur de la
-    // whitelist n'ajoute jamais les builtins requis par les skills, il n'a donc
-    // PAS `run_command` (revue Codex de #506, P1).
+    // Deux sous-orchestrateurs : la règle est celle d'un agent (#636). Celui
+    // qui porte la skill a `run_command`, l'autre non — le rôle ajoute la
+    // délégation, il ne retire ni n'ajoute de shell.
     const subOrch = await seedAgent(db, entityId, `test-suborch-${Date.now()}`, 'orchestrator');
+    const subOrchNone = await seedAgent(
+      db,
+      entityId,
+      `test-suborch-none-${Date.now()}`,
+      'orchestrator',
+    );
 
     for (const a of [
       nodalShell,
@@ -539,6 +545,7 @@ describe('buildTeamBlock — ce que chaque agent peut réellement faire (#506) @
       claudeCode,
       codex,
       subOrch,
+      subOrchNone,
     ]) {
       await assignChild(db, orch.id, a.id, entityId);
     }
@@ -576,7 +583,8 @@ describe('buildTeamBlock — ce que chaque agent peut réellement faire (#506) @
     expect(entryOf(block, claudeCode.name)).toContain('Shell commands: no');
     expect(entryOf(block, codex.name)).toContain('Runtime: codex');
     expect(entryOf(block, codex.name)).toContain('Shell commands: yes');
-    expect(entryOf(block, subOrch.name)).toContain('Shell commands: no');
+    expect(entryOf(block, subOrch.name)).toContain('Shell commands: yes');
+    expect(entryOf(block, subOrchNone.name)).toContain('Shell commands: no');
   });
 
   // #494 : un agent en runtime CLI a le shell que SON réglage lui donne, et le

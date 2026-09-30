@@ -274,10 +274,10 @@ export const ALWAYS_ON_TOOLS = [
   // un agent qui ne peut pas consulter le manuel de la plateforme dans laquelle
   // il tourne invente ce qu'elle sait faire. Le 21/09, le root agent a répondu
   // que Telegram n'était pas supporté et a proposé de construire un serveur MCP.
-  // Le gating par skill (`requiredBuiltins`) n'est PAS une option ici : la
-  // branche orchestrateur d'`executeJob` ne lit pas `requiredBuiltins`, donc
-  // l'outil n'aurait jamais atteint l'agent ROOT, qui est précisément celui à
-  // qui l'on parle.
+  // Un groupe d'outils (`requiredBuiltins`) le rendrait optionnel, donc absent
+  // par simple oubli de configuration — même raisonnement qu'`ask_user`. (Le
+  // premier motif, « la branche orchestrateur ne lit pas `requiredBuiltins` »,
+  // a disparu avec #636 : tout agent tient désormais ses groupes.)
   'nodal_docs',
   'search_history',
   'mark_memory_helpful',

@@ -35,18 +35,12 @@
 //     server's tools (safe direction for a lint — it will never claim a tool
 //     exists that hasn't been discovered yet, only possibly under-warn about
 //     one that has).
-//   - The worker branch always includes the FULL `ALWAYS_ON_TOOLS` set.
-//     execute.ts strips `dashboard_publish` only for a DELEGATED worker
-//     (job.parentJobId set) — this helper has no specific job/delegation
-//     context, and a schedule always creates a fresh top-level (non-delegated)
-//     job, so the full set is the correct approximation for that caller.
-//   - The `configuredTools` derived from skill assignments mirrors
-//     execute.ts's OWN (pre-existing) behavior verbatim, including its use of
-//     `agentSkillAssignments.skillId` (a UUID FK, not a tool name) as the
-//     candidate list — those never match a registered tool name in practice
-//     and are filtered out by the registry-membership check, exactly as they
-//     are in execute.ts. Not "fixed" here to stay byte-faithful to the
-//     production assembly this helper mirrors.
+//   - The built-in half always includes the FULL `ALWAYS_ON_TOOLS` set.
+//     execute.ts strips `dashboard_publish` for a DELEGATED job, whatever the
+//     agent's role (job.parentJobId set) — this helper has no specific job/
+//     delegation context, and a schedule always creates a fresh top-level
+//     (non-delegated) job, so the full set is the correct approximation for
+//     that caller.
 
 import { eq } from '@nodal-agents/db';
 import {
@@ -96,11 +90,12 @@ export async function resolveAgentToolNames(
   const [agentRow] = await db.select().from(agents).where(eq(agents.id, agentId)).limit(1);
   if (!agentRow) throw new Error(`resolveAgentToolNames: agent ${agentId} not found`);
 
-  // ── Built-in tools: ONE rule, shared with the team block (#506) ─────────
-  // Skill-required builtins, scripts, skill files, root meta-tools, and the
-  // orchestrator/worker split all live in orchestration's
-  // resolveBuiltinToolNames. What follows adds what only the runner knows
-  // how to name: delivery, connectors, MCP servers, delegation tools.
+  // ── Built-in tools: ONE rule, shared with the job and the team block ────
+  // Tool groups' builtins, scripts, skill files and root meta-tools: the
+  // runner's own rule (`agentBuiltinToolNames`, #636), read from the database
+  // by orchestration's resolveBuiltinToolNames. What follows adds what only
+  // the runner knows how to name: delivery, connectors, MCP servers,
+  // delegation tools.
   const builtins = await resolveBuiltinToolNames(db, agentRow.id);
 
   // ── Delivery tools (mirrors execute.ts:1112-1153) ───────────────────────
@@ -174,7 +169,8 @@ export async function resolveAgentToolNames(
 
   const capabilityToolNames = [...connectorToolNames, ...mcpToolNames, ...deliveryToolNames];
 
-  // ── Orchestrator vs worker assembly (mirrors execute.ts:1453-1542) ──────
+  // ── Delegation: what the orchestrator role ADDS (mirrors execute.ts §6) ─
+  // The rest of the list is the same for every role (#636).
   const names = new Set<string>([...builtins.names, ...capabilityToolNames]);
   if (builtins.isOrchestrator) {
     const assignTools = await generateAssignTools(agentRow.id as AgentId, db);

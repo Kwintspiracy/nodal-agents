@@ -157,8 +157,8 @@ export {
 } from '@nodal-agents/shared';
 
 // Whitelist computation
-export { computeToolWhitelist } from './whitelist';
-export type { WhitelistInput } from './whitelist';
+export { computeToolWhitelist, agentBuiltinToolNames } from './whitelist';
+export type { WhitelistInput, AgentBuiltinInput } from './whitelist';
 
 // Built-in tools
 export {

@@ -4,6 +4,75 @@
 import type { z } from 'zod';
 import type { ToolDefinition, ToolRegistry } from './types';
 import { WhitelistDriftError } from './errors';
+import { ALWAYS_ON_TOOLS } from './builtin/index';
+
+/**
+ * What decides an agent's BUILT-IN tools: its tool groups, its authorizations,
+ * its root grants, and where the job sits. Read from the database by each
+ * caller; the rule applied to it lives in `agentBuiltinToolNames`, once.
+ */
+export interface AgentBuiltinInput {
+  /** `required_builtins` of every tool group the agent holds (agent_skills). */
+  requiredBuiltins: readonly string[];
+  /** At least one of its skills has owner-authorized scripts. */
+  scriptsAuthorized: boolean;
+  /** At least one of its skills has owner-authorized writable files. */
+  filesWritable: boolean;
+  /** Root meta-tools its grants serve (empty for a non-root agent). */
+  metaToolNames: readonly string[];
+  job: {
+    /** Delegated by another job (`agent_jobs.parent_job_id` set). */
+    delegated: boolean;
+    /** Run of a routine (`agent_jobs.schedule_id` set). */
+    routine: boolean;
+    /** Turn of a conversation (`agent_jobs.conversation_id` set). */
+    inConversation: boolean;
+  };
+}
+
+/**
+ * The built-in tool names of a job, in whitelist order — the SAME list for
+ * every agent, whatever its role (#636). The orchestrator role ADDS its
+ * delegation tools on top (execute.ts); it never takes anything away.
+ *
+ * Before, the orchestrator branch of the job whitelist skipped the tool
+ * groups: the Tools tab showed "Spreadsheet editing" ON for the root, and the
+ * runner gave it no `xlsx_*`, in silence.
+ *
+ * Order is part of the prompt cache (#612): always-on first, then the groups'
+ * builtins, then the gated ones. A name the registry does not hold is dropped
+ * for the groups (a group may name a builtin this build does not register);
+ * everything else must be registered — `computeToolWhitelist` fails loud.
+ */
+export function agentBuiltinToolNames(input: AgentBuiltinInput, registry: ToolRegistry): string[] {
+  const { job } = input;
+  // P5 (causality study, 2026-07-22): a delegated job delivers NOTHING to the
+  // user directly — the agent that owns the channel binding is the sole
+  // delivery path. Its channel sends are already absent (no inherited token);
+  // dashboard_publish is always-on and is removed here, for a delegated worker
+  // and a delegated orchestrator alike.
+  const alwaysOn: string[] = job.delegated
+    ? ALWAYS_ON_TOOLS.filter((n) => n !== 'dashboard_publish')
+    : [...ALWAYS_ON_TOOLS];
+  return [
+    ...new Set([
+      ...alwaysOn,
+      ...input.requiredBuiltins.filter((n) => registry.get(n) !== undefined),
+      ...input.metaToolNames,
+      // run_skill_script / skill_file_write — only with an owner authorization;
+      // the builtin checks it again at execution.
+      ...(input.scriptsAuthorized ? ['run_skill_script'] : []),
+      ...(input.filesWritable ? ['skill_file_write'] : []),
+      // save_routine_state — the other half of the prompt's `## Routine state`.
+      ...(job.routine ? ['save_routine_state'] : []),
+      // list/stop_conversation_run (#567) — for the job that speaks to the
+      // person; stopping the person's other runs is not a delegate's work.
+      ...(job.inConversation && !job.delegated
+        ? ['list_conversation_runs', 'stop_conversation_run']
+        : []),
+    ]),
+  ];
+}
 
 export interface WhitelistInput {
   agentId: string;
