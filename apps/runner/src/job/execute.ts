@@ -85,7 +85,8 @@ import { loadApprovalRules } from './approval-rules.ts';
 import {
   computeToolWhitelist,
   executeTool,
-  ALWAYS_ON_TOOLS,
+  agentBuiltinToolNames,
+  type JobPlacement,
   createTelegramSendMessageTool,
   createSendImageTool,
   createSendFileTool,
@@ -1981,16 +1982,15 @@ async function runJobTracked(
   // skill_file_* builtins can read an installed (community) skill's bundled
   // files — and only the bundles of skills this agent actually holds.
   //
-  // This ONE query also serves the worker tool-whitelist branch below (was a
-  // separate `agent_skill_assignments ⨝ agent_skills` query on the exact same
+  // This ONE query also serves the tool whitelist below (was a separate
+  // `agent_skill_assignments ⨝ agent_skills` query on the exact same
   // join/where, re-run per job — perf audit N+1 fix). Columns are the union
   // needed by both call sites: slug/scriptsAuthorized/filesWritable feed the
-  // skill-file context here; skillId/requiredBuiltins feed the worker
-  // whitelist further down. name/description are included for the audit's
-  // specified column union but are not consumed in this file.
+  // skill-file context here; requiredBuiltins feed the whitelist of every
+  // agent, whatever its role (#636). name/description are included for the
+  // audit's specified column union but are not consumed in this file.
   const assignedSkillRows = await db
     .select({
-      skillId: agentSkillAssignments.skillId,
       slug: agentSkills.slug,
       name: agentSkills.name,
       description: agentSkills.description,
@@ -2194,60 +2194,6 @@ async function runJobTracked(
   // ── 6. Build tool set ─────────────────────────────────────────────────────────
   let toolDefs: AnyToolDef[];
 
-  // Always-on built-ins (excluding return_result, which is handled per-branch
-  // because orchestrators add it after their orchestration tools and workers
-  // pull it via computeToolWhitelist's alwaysOn). The system prompt advertises
-  // these to every agent — they MUST be in the runtime toolset too, otherwise
-  // the LLM sees them in its prompt and trips AI_NoSuchToolError.
-  const memoryBuiltins = ALWAYS_ON_TOOLS.filter((n) => n !== 'return_result')
-    .map((n) => registry.get(n))
-    .filter((t): t is AnyToolDef => t !== undefined);
-
-  // run_skill_script — offered ONLY to agents with ≥1 owner-authorized
-  // script-skill (agent_skill_assignments.scripts_authorized). Gated here at the
-  // whitelist (availability) AND in the builtin via scriptAuthorizedSkillSlugs
-  // (execution). Name for the worker whitelist, def for the orchestrator branch.
-  const scriptToolNames: string[] =
-    scriptAuthorizedSkillSlugs.length > 0 ? ['run_skill_script'] : [];
-  const scriptToolDefs: AnyToolDef[] = scriptToolNames
-    .map((n) => registry.get(n))
-    .filter((t): t is AnyToolDef => t !== undefined);
-
-  // skill_file_write — offered ONLY to agents with ≥1 owner-authorized
-  // file-writable skill (agent_skill_assignments.files_writable). Gated here at
-  // the whitelist (availability) AND in the builtin via fileWritableSkillSlugs
-  // (execution). Mirrors scriptToolNames/scriptToolDefs.
-  const fileWriteToolNames: string[] =
-    fileWritableSkillSlugs.length > 0 ? ['skill_file_write'] : [];
-  const fileWriteToolDefs: AnyToolDef[] = fileWriteToolNames
-    .map((n) => registry.get(n))
-    .filter((t): t is AnyToolDef => t !== undefined);
-
-  // save_routine_state — offert UNIQUEMENT quand ce job vient d'une routine.
-  // C'est la contrepartie du bloc `## Routine state` du prompt : la routine
-  // relit son état au début du run et le repose à la fin, sans passer par la
-  // mémoire (voir packages/db/src/schema/schedule-state.ts pour le doublon
-  // Discord qui a rendu cette table nécessaire).
-  const routineStateToolNames: string[] = job.scheduleId ? ['save_routine_state'] : [];
-  const routineStateToolDefs: AnyToolDef[] = routineStateToolNames
-    .map((n) => registry.get(n))
-    .filter((t): t is AnyToolDef => t !== undefined);
-
-  // list_conversation_runs / stop_conversation_run (#567) et
-  // message_conversation_run (#531) — offerts au job de TÊTE d'une
-  // conversation, quel que soit son canal et son agent : c'est lui qui parle à
-  // la personne, et un message qui arrive pendant un travail démarre un tour de
-  // réponse qui doit voir ce travail, l'atteindre et pouvoir l'arrêter. Un
-  // délégué ne les a pas : ce n'est pas à lui d'agir sur les autres runs de la
-  // personne.
-  const conversationRunToolNames: string[] =
-    job.conversationId && !job.parentJobId
-      ? ['list_conversation_runs', 'stop_conversation_run', 'message_conversation_run']
-      : [];
-  const conversationRunToolDefs: AnyToolDef[] = conversationRunToolNames
-    .map((n) => registry.get(n))
-    .filter((t): t is AnyToolDef => t !== undefined);
-
   // Capability tools: computed from agent's configured integrations.
   // These are instantiated per-job and merged directly into toolDefs/toolMap.
   // CRITICAL: do NOT register into the shared registry — the registry is
@@ -2323,12 +2269,13 @@ async function runJobTracked(
   const mcpClosers: Array<() => Promise<void>> = [];
 
   try {
-    // ── Root-agent meta-tool gating (applies to BOTH branches) ────────────────
-    // The ROOT is always an orchestrator, so this MUST be computed before the
-    // orchestrator/worker split — otherwise the ROOT (orchestrator branch) would
-    // never receive its meta-tools. Approval-gate (autonomy level) is handled by
-    // the existing approval_rules mechanism in executeTool; here we only make the
-    // tools AVAILABLE to the designated ROOT, per its enabled grants.
+    // ── Root-agent meta-tool gating (every role) ─────────────────────────────
+    // Fed to the one whitelist rule below, whatever the agent's role: when an
+    // orchestrator branch rebuilt its own list, the ROOT (always an
+    // orchestrator) once received no meta-tools at all. Approval-gate
+    // (autonomy level) is handled by the existing approval_rules mechanism in
+    // executeTool; here we only make the tools AVAILABLE to the designated
+    // ROOT, per its enabled grants.
     const [rootEntityRow] = await db
       .select({
         rootAgentId: entitiesTable.rootAgentId,
@@ -2369,18 +2316,12 @@ async function runJobTracked(
             mayChangeTeam: agentRow.mayChangeTeam,
           }).filter((name) => registry.get(name) !== undefined)
         : [];
-    const metaToolDefs: AnyToolDef[] = metaToolNames
-      .map((name) => registry.get(name))
-      .filter((t): t is AnyToolDef => t !== undefined);
 
-    // Capability tools (connector adapters + MCP servers) are resolved here —
-    // BEFORE the orchestrator/worker split below — so an explicit user
-    // assignment materializes for EITHER role. Orchestrators stay lean when
-    // nothing is assigned (capabilityTools stays empty; merged in via
-    // `...capabilityTools` in the orchestrator branch below), but an assigned
-    // connector/MCP now reaches an orchestrator's toolset exactly as it does a
-    // worker's — it used to only populate inside the worker branch, so an
-    // orchestrator with an assigned MCP server silently never saw its tools.
+    // Capability tools (connector adapters + MCP servers) are resolved here,
+    // for EITHER role: an assigned connector/MCP reaches an orchestrator's
+    // toolset exactly as it does a worker's — it used to only populate inside
+    // the worker branch, so an orchestrator with an assigned MCP server
+    // silently never saw its tools.
     // ── Connector adapter tools ──────────────────────────────────────────────
     // Fetch agent's connector assignments (with per-operation whitelist).
     // Each assignment instantiates its adapter's tools using a bearer token
@@ -2641,107 +2582,57 @@ async function runJobTracked(
     }
     // ────────────────────────────────────────────────────────────────────────
 
-    if (isOrchestrator) {
-      // Unified orchestrator: expose BOTH delegation styles and let the model
-      // pick per request. assign_* (router) for a SINGLE or reactive/dependent
-      // delegation where it needs a result before deciding the next step;
-      // create_task (planner) for INDEPENDENT parallel fan-out (the task board
-      // runs them concurrently and compiles). A job commits to its first style
-      // — once it has created tasks, the assign_ block below defers, so the two
-      // completion models never run on the same job. `orchestratorMode` is now a
-      // soft preference surfaced in the prompt, not a hard XOR on the toolset.
-      // At the maximum delegation depth, no delegation tool at all: the same
-      // rule (remainingDelegationHops) decides the whitelist, the refusal
-      // below and the team block, so the model is never offered a route that
-      // is refused (Codex review of #473, pass 3).
-      const delegationTools: AnyToolDef[] =
-        remainingDelegationHops(job.delegationDepth ?? 0) > 0
-          ? [
-              ...((await generateAssignTools(agent.id, db)) as unknown as AnyToolDef[]),
-              ...(generateTaskTools(agent.id, db) as unknown as AnyToolDef[]),
-            ]
-          : [];
-      const returnResult = registry.get('return_result');
-      toolDefs = [
-        ...delegationTools,
-        ...memoryBuiltins,
-        ...(returnResult ? [returnResult] : []),
-        ...metaToolDefs,
-        ...scriptToolDefs,
-        ...fileWriteToolDefs,
-        ...routineStateToolDefs,
-        ...conversationRunToolDefs,
-        ...capabilityTools,
-      ];
-    } else {
-      // Worker: whitelist from skill assignments + always-on tools + capability tools
-      // requiredBuiltins for each assigned skill are unioned into the alwaysOn
-      // list so that office tools (and any future gated builtins) are unlocked
-      // only for agents holding the relevant skill — not globally. This is the
-      // gating mechanism for invariant #9. Reuses `assignedSkillRows` fetched
-      // above (§3.6) instead of re-running the same
-      // `agent_skill_assignments ⨝ agent_skills` query (perf audit N+1 fix).
+    // ONE list for every agent (#636): always-on, the builtins of the tool
+    // groups it holds (the Tools tab switches, invariant #9), its root
+    // meta-tools, the gated builtins, then its connectors / MCP servers /
+    // delivery tools. The rule lives in `agentBuiltinToolNames` (tools), which
+    // the roster and resolveAgentToolNames read too. The orchestrator branch
+    // used to rebuild the list by hand and skipped the groups: a root with
+    // "Spreadsheet editing" ON held no xlsx_* tool, in silence.
+    const builtinToolDefs = computeToolWhitelist(
+      {
+        agentId: agentRow.id,
+        configuredTools: [],
+        alwaysOn: agentBuiltinToolNames(
+          {
+            requiredBuiltins: assignedSkillRows.flatMap((r) => r.requiredBuiltins ?? []),
+            scriptsAuthorized: scriptAuthorizedSkillSlugs.length > 0,
+            filesWritable: fileWritableSkillSlugs.length > 0,
+            metaToolNames,
+            job: {
+              delegated: job.parentJobId != null,
+              routine: job.scheduleId != null,
+              inConversation: job.conversationId != null,
+            },
+          },
+          registry,
+        ),
+      },
+      registry,
+      capabilityTools,
+    );
 
-      // Collect all requiredBuiltins from assigned skills (deduplicated).
-      const skillRequiredBuiltins: string[] = Array.from(
-        new Set(assignedSkillRows.flatMap((r) => r.requiredBuiltins ?? [])),
-      );
-
-      // For workers without adapter registrations, only always-on tools are available.
-      // Adapters will be registered in the registry when adapter packages are loaded.
-      const configuredToolNames = assignedSkillRows
-        .map((r) => r.skillId)
-        .filter((name): name is string => name !== null);
-
-      // Filter configured tools to only those that exist in the registry
-      // (avoids WhitelistDriftError for unregistered adapter tools)
-      const registeredConfigured = configuredToolNames.filter(
-        (name) => registry.get(name) !== undefined,
-      );
-
-      // skillRequiredBuiltins: union of requiredBuiltins from all assigned skills.
-      // Only add builtins that actually exist in the registry to avoid WhitelistDriftError
-      // if a skill references a tool name that hasn't been registered yet.
-      const registeredSkillBuiltins = skillRequiredBuiltins.filter(
-        (name) => registry.get(name) !== undefined,
-      );
-
-      // P5 (causality study, 2026-07-22): a delegated worker (job.parentJobId
-      // set) delivers NOTHING to the user directly — the orchestrator that
-      // owns the channel binding is the sole delivery path. B3 removal
-      // (above, 2026-07-21) already keeps the channel-send tools off a
-      // worker's whitelist by not inheriting the root's token, but
-      // dashboard_publish is unconditionally ALWAYS_ON and slipped through
-      // that gate — ComfyArtist (a delegated worker) called it to self-
-      // publish a status card the orchestrator should have delivered.
-      // Stripped here, at the same branch that decides a worker's tool
-      // whitelist, so the rule reads coherently: channel sends AND
-      // dashboard_publish are both the orchestrator's job. A non-delegated
-      // agent (job.parentJobId null — always true for the root/orchestrator,
-      // which never reaches this branch, but also true for a standalone
-      // single-agent workspace) keeps the full always-on set.
-      const workerAlwaysOnTools = job.parentJobId
-        ? ALWAYS_ON_TOOLS.filter((n) => n !== 'dashboard_publish')
-        : ALWAYS_ON_TOOLS;
-
-      toolDefs = computeToolWhitelist(
-        {
-          agentId: agentRow.id,
-          configuredTools: registeredConfigured,
-          alwaysOn: [
-            ...workerAlwaysOnTools,
-            ...registeredSkillBuiltins,
-            ...metaToolNames,
-            ...scriptToolNames,
-            ...fileWriteToolNames,
-            ...routineStateToolNames,
-            ...conversationRunToolNames,
-          ],
-        },
-        registry,
-        capabilityTools,
-      );
-    }
+    // The orchestrator role ADDS delegation; it never removes anything.
+    // Both delegation styles, and the model picks per request: assign_*
+    // (router) for a SINGLE or reactive/dependent delegation where it needs a
+    // result before deciding the next step; create_task (planner) for
+    // INDEPENDENT parallel fan-out (the task board runs them concurrently and
+    // compiles). A job commits to its first style — once it has created tasks,
+    // the assign_ block below defers, so the two completion models never run
+    // on the same job. `orchestratorMode` is a soft preference surfaced in the
+    // prompt, not a hard XOR on the toolset. At the maximum delegation depth,
+    // no delegation tool at all: the same rule (remainingDelegationHops)
+    // decides the whitelist, the refusal below and the team block, so the
+    // model is never offered a route that is refused (Codex review of #473,
+    // pass 3).
+    const delegationTools: AnyToolDef[] =
+      isOrchestrator && remainingDelegationHops(job.delegationDepth ?? 0) > 0
+        ? [
+            ...((await generateAssignTools(agent.id, db)) as unknown as AnyToolDef[]),
+            ...(generateTaskTools(agent.id, db) as unknown as AnyToolDef[]),
+          ]
+        : [];
+    toolDefs = [...delegationTools, ...builtinToolDefs];
   } catch (err) {
     const errorCode = err instanceof Error ? err.message : 'whitelist_computation_failed';
     await failJob(db, jobId as string, errorCode, runStats(), messages);
@@ -3184,8 +3075,8 @@ async function runJobTracked(
                   provisioning: TOOL_PROVISIONING,
                   searchBackend,
                   ...(speechGenerator ? { speechGenerator } : {}),
-                  resolveAgentToolNames: (targetAgentId: string) =>
-                    resolveAgentToolNames(db, targetAgentId),
+                  resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
+                    resolveAgentToolNames(db, targetAgentId, placement),
                 },
                 {
                   approvalRules: resumeApprovalRules,
@@ -5539,7 +5430,8 @@ async function runJobTracked(
         provisioning: TOOL_PROVISIONING,
         searchBackend,
         ...(speechGenerator ? { speechGenerator } : {}),
-        resolveAgentToolNames: (targetAgentId: string) => resolveAgentToolNames(db, targetAgentId),
+        resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
+          resolveAgentToolNames(db, targetAgentId, placement),
       };
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
@@ -5856,8 +5748,8 @@ async function runJobTracked(
                 provisioning: TOOL_PROVISIONING,
                 searchBackend,
                 ...(speechGenerator ? { speechGenerator } : {}),
-                resolveAgentToolNames: (targetAgentId: string) =>
-                  resolveAgentToolNames(db, targetAgentId),
+                resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
+                  resolveAgentToolNames(db, targetAgentId, placement),
               },
               {
                 approvalRules: approvalRuleList,

@@ -13,6 +13,7 @@ import type {
   ToolCardPayload,
 } from '@nodal-agents/shared';
 import type { ChannelKind } from '@nodal-agents/delivery';
+import type { JobPlacement } from './job-placement';
 
 // RiskLevel is OperationRiskLevel — single source of truth from @nodal-agents/shared
 export type RiskLevel = OperationRiskLevel;
@@ -215,7 +216,7 @@ export interface ToolContext {
    * lint is advisory (warn, never block), so a missing capability here must
    * never break schedule creation.
    */
-  resolveAgentToolNames?: (agentId: string) => Promise<Set<string>>;
+  resolveAgentToolNames?: (agentId: string, job?: JobPlacement) => Promise<Set<string>>;
   /**
    * Les cibles que le hook `resolveMutationTargets` de CET APPEL a déclarées,
    * posées par le seam (`executeTool`) sur un contexte DÉRIVÉ, juste avant

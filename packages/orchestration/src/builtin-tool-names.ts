@@ -3,27 +3,30 @@
 // One rule, read from the database, for every caller that needs to know what
 // an agent can actually call without running a job:
 //   - the runner's `resolveAgentToolNames` (apps/runner/src/job/resolve-agent-
-//     tools.ts), which adds connectors, MCP servers and delivery tools on top;
+//     tools.ts), which adds connectors, MCP servers, delivery and delegation
+//     tools on top;
 //   - the team block (team-block.ts), which tells an orchestrator whether a
 //     teammate can run a shell command (#506).
 //
-// Before it was factored out, the team block recomputed "run_command is
-// unlocked by a skill" on its own, and got orchestrators wrong: the
-// orchestrator branch of the job whitelist (apps/runner/src/job/execute.ts,
-// "Unified orchestrator") never adds the builtins a skill requires, so an
-// orchestrator holding the command-execution skill still has no
-// `run_command` — and the roster said it had one (Codex review of #506, P1).
+// The rule itself is `agentBuiltinToolNames` (tools), the very function the
+// runner's job whitelist calls (apps/runner/src/job/execute.ts §6): this file
+// only reads its inputs from the database. It used to mirror an orchestrator
+// branch of the whitelist that skipped the tool groups, and copied that
+// omission — an orchestrator holding command-execution was said to have no
+// shell, and had none (#636).
 //
-// Mirrors execute.ts's per-job assembly for a fresh, non-delegated job; the
-// fidelity notes of resolve-agent-tools.ts apply.
+// Computed for the job placement the caller names (a routine run for the
+// routine lint), a fresh top-level job by default — the fidelity notes of
+// resolve-agent-tools.ts apply.
 
 import { eq } from '@nodal-agents/db';
 import { agents, entities, agentSkillAssignments, agentSkills } from '@nodal-agents/db';
 import {
   createToolRegistry,
   registerBuiltins,
-  computeToolWhitelist,
-  ALWAYS_ON_TOOLS,
+  agentBuiltinToolNames,
+  TOP_LEVEL_JOB,
+  type JobPlacement,
 } from '@nodal-agents/tools';
 import { metaToolsForAgent, parseRootGrants } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from './types';
@@ -35,12 +38,14 @@ export interface BuiltinToolNames {
 }
 
 /**
- * The built-in tools a job of `agentId` receives. Throws for an unknown agent
- * (fail loud — a caller asking about an agent that does not exist has a bug).
+ * The built-in tools a job of `agentId` receives, placed as `job` says. Throws
+ * for an unknown agent (fail loud — a caller asking about an agent that does
+ * not exist has a bug).
  */
 export async function resolveBuiltinToolNames(
   db: AnyDrizzleDb,
   agentId: string,
+  job: JobPlacement = TOP_LEVEL_JOB,
 ): Promise<BuiltinToolNames> {
   const registry = createToolRegistry();
   registerBuiltins(registry);
@@ -70,13 +75,6 @@ export async function resolveBuiltinToolNames(
     .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
     .where(eq(agentSkillAssignments.agentId, agentRow.id));
 
-  const scriptToolNames = assignedSkillRows.some((r) => r.scriptsAuthorized === true)
-    ? ['run_skill_script']
-    : [];
-  const fileWriteToolNames = assignedSkillRows.some((r) => r.filesWritable === true)
-    ? ['skill_file_write']
-    : [];
-
   // ── Root meta-tool gating (mirrors execute.ts) ───────────────────────────
   const [entityRow] = await db
     .select({ rootAgentId: entities.rootAgentId, rootGrants: entities.rootGrants })
@@ -92,40 +90,17 @@ export async function resolveBuiltinToolNames(
       }).filter((name) => registry.get(name) !== undefined)
     : [];
 
-  // ── Orchestrator vs worker (mirrors execute.ts "Unified orchestrator") ───
-  // The orchestrator branch takes the always-on set as is: the builtins a
-  // skill requires are NOT added there, in execute.ts as here.
-  if (isOrchestrator) {
-    return {
-      isOrchestrator,
-      names: [
-        ...new Set([
-          ...ALWAYS_ON_TOOLS,
-          ...metaToolNames,
-          ...scriptToolNames,
-          ...fileWriteToolNames,
-        ]),
-      ],
-    };
-  }
-
-  const skillRequiredBuiltins = Array.from(
-    new Set(assignedSkillRows.flatMap((r) => r.requiredBuiltins ?? [])),
-  ).filter((name) => registry.get(name) !== undefined);
-
-  const defs = computeToolWhitelist(
-    {
-      agentId: agentRow.id,
-      configuredTools: [],
-      alwaysOn: [
-        ...ALWAYS_ON_TOOLS,
-        ...skillRequiredBuiltins,
-        ...metaToolNames,
-        ...scriptToolNames,
-        ...fileWriteToolNames,
-      ],
-    },
-    registry,
-  );
-  return { isOrchestrator, names: [...new Set(defs.map((d) => d.name))] };
+  return {
+    isOrchestrator,
+    names: agentBuiltinToolNames(
+      {
+        requiredBuiltins: assignedSkillRows.flatMap((r) => r.requiredBuiltins ?? []),
+        scriptsAuthorized: assignedSkillRows.some((r) => r.scriptsAuthorized === true),
+        filesWritable: assignedSkillRows.some((r) => r.filesWritable === true),
+        metaToolNames,
+        job,
+      },
+      registry,
+    ),
+  };
 }

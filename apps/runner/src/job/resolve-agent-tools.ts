@@ -35,18 +35,12 @@
 //     server's tools (safe direction for a lint — it will never claim a tool
 //     exists that hasn't been discovered yet, only possibly under-warn about
 //     one that has).
-//   - The worker branch always includes the FULL `ALWAYS_ON_TOOLS` set.
-//     execute.ts strips `dashboard_publish` only for a DELEGATED worker
-//     (job.parentJobId set) — this helper has no specific job/delegation
-//     context, and a schedule always creates a fresh top-level (non-delegated)
-//     job, so the full set is the correct approximation for that caller.
-//   - The `configuredTools` derived from skill assignments mirrors
-//     execute.ts's OWN (pre-existing) behavior verbatim, including its use of
-//     `agentSkillAssignments.skillId` (a UUID FK, not a tool name) as the
-//     candidate list — those never match a registered tool name in practice
-//     and are filtered out by the registry-membership check, exactly as they
-//     are in execute.ts. Not "fixed" here to stay byte-faithful to the
-//     production assembly this helper mirrors.
+//   - The built-in half always includes the FULL `ALWAYS_ON_TOOLS` set.
+//     execute.ts strips `dashboard_publish` for a DELEGATED job, whatever the
+//     agent's role (job.parentJobId set) — this helper has no specific job/
+//     delegation context, and a schedule always creates a fresh top-level
+//     (non-delegated) job, so the full set is the correct approximation for
+//     that caller.
 
 import { eq } from '@nodal-agents/db';
 import {
@@ -66,6 +60,12 @@ import {
   createSendAudioTool,
   createSendVoiceTool,
   createListConversationsTool,
+  createToolRegistry,
+  registerBuiltins,
+  withToolLoader,
+  TOP_LEVEL_JOB,
+  type JobPlacement,
+  type LoadableTool,
 } from '@nodal-agents/tools';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
@@ -83,8 +83,9 @@ import { isUsableMcpToolCache } from './mcp-tool-cache.ts';
 
 /**
  * Resolve the set of tool NAMES an agent can actually call — a read-only
- * reconstruction of the whitelist executeJob would build for a fresh,
- * non-delegated job. See module doc above for fidelity caveats.
+ * reconstruction of the whitelist executeJob would build for a job placed as
+ * `job` says (a fresh top-level job by default; the routine lint passes a
+ * routine run). See module doc above for fidelity caveats.
  *
  * Throws if the agent does not exist (fail loud — a caller asking about an
  * unknown agent has a bug, not an empty-tools agent).
@@ -92,16 +93,27 @@ import { isUsableMcpToolCache } from './mcp-tool-cache.ts';
 export async function resolveAgentToolNames(
   db: AnyDrizzleDb,
   agentId: string,
+  job: JobPlacement = TOP_LEVEL_JOB,
 ): Promise<Set<string>> {
   const [agentRow] = await db.select().from(agents).where(eq(agents.id, agentId)).limit(1);
   if (!agentRow) throw new Error(`resolveAgentToolNames: agent ${agentId} not found`);
 
-  // ── Built-in tools: ONE rule, shared with the team block (#506) ─────────
-  // Skill-required builtins, scripts, skill files, root meta-tools, and the
-  // orchestrator/worker split all live in orchestration's
-  // resolveBuiltinToolNames. What follows adds what only the runner knows
-  // how to name: delivery, connectors, MCP servers, delegation tools.
-  const builtins = await resolveBuiltinToolNames(db, agentRow.id);
+  // ── Built-in tools: ONE rule, shared with the job and the team block ────
+  // Tool groups' builtins, scripts, skill files and root meta-tools: the
+  // runner's own rule (`agentBuiltinToolNames`, #636), read from the database
+  // by orchestration's resolveBuiltinToolNames. What follows adds what only
+  // the runner knows how to name: delivery, connectors, MCP servers,
+  // delegation tools.
+  const builtins = await resolveBuiltinToolNames(db, agentRow.id, job);
+  // Their definitions, for what the runner reads off them: which are
+  // deferred, hence whether the job gets `load_tools` (see the end).
+  const registry = createToolRegistry();
+  registerBuiltins(registry);
+  const builtinTools: LoadableTool[] = builtins.names.map((name) => {
+    const def = registry.get(name);
+    if (!def) throw new Error(`resolveAgentToolNames: builtin ${name} is not registered`);
+    return def;
+  });
 
   // ── Delivery tools (mirrors execute.ts:1112-1153) ───────────────────────
   const deliveryBotToken = agentRow.telegramBotToken;
@@ -109,22 +121,22 @@ export async function resolveAgentToolNames(
   const hasDiscordBinding = discordBinding?.enabled === true;
   const slackBinding = await getChannelBinding(db, agentRow.id, 'slack');
   const hasSlackBinding = slackBinding?.enabled === true;
-  const deliveryToolNames: string[] = [];
+  const deliveryTools: LoadableTool[] = [];
   if (deliveryBotToken || hasDiscordBinding || hasSlackBinding) {
-    deliveryToolNames.push(
-      createTelegramSendMessageTool().name,
-      createSendImageTool().name,
-      createSendFileTool().name,
-      createSendVideoTool().name,
-      createSendAudioTool().name,
-      createSendVoiceTool().name,
-      createListConversationsTool().name,
+    deliveryTools.push(
+      createTelegramSendMessageTool(),
+      createSendImageTool(),
+      createSendFileTool(),
+      createSendVideoTool(),
+      createSendAudioTool(),
+      createSendVoiceTool(),
+      createListConversationsTool(),
     );
   }
 
   // ── Connector adapter tool names (mirrors execute.ts:1193-1277) ─────────
   // No credential decryption — a placeholder token drives the SAME static
-  // toolFactory() execute.ts calls with a real one; only NAMES are needed.
+  // toolFactory() execute.ts calls with a real one; never executed.
   const connectorAssignments = await db
     .select({
       slug: connectorsTable.slug,
@@ -134,14 +146,14 @@ export async function resolveAgentToolNames(
     .innerJoin(connectorsTable, eq(connectorsTable.id, agentConnectorAssignments.connectorId))
     .where(eq(agentConnectorAssignments.agentId, agentRow.id));
 
-  const connectorToolNames: string[] = [];
+  const connectorTools: LoadableTool[] = [];
   for (const ca of connectorAssignments) {
     const entry = ADAPTER_REGISTRY[ca.slug];
     if (!entry) continue; // no adapter for this catalog slug — skip silently (matches execute.ts)
     const allTools = entry.toolFactory('__resolve_agent_tool_names_placeholder__');
     const enabled = ca.enabledOperations;
     const filtered = enabled === null ? allTools : allTools.filter((t) => enabled.includes(t.name));
-    connectorToolNames.push(...filtered.map((t) => t.name));
+    connectorTools.push(...filtered);
   }
 
   // ── MCP server tool names (mirrors execute.ts:1305-1450, lazy/cache-only) ─
@@ -155,7 +167,7 @@ export async function resolveAgentToolNames(
     .innerJoin(mcpServersTable, eq(mcpServersTable.id, agentMcpServersTable.mcpServerId))
     .where(eq(agentMcpServersTable.agentId, agentRow.id));
 
-  const mcpToolNames: string[] = [];
+  const mcpTools: LoadableTool[] = [];
   for (const ms of mcpAssignments) {
     const availableTools = ms.availableTools as McpToolDescriptor[] | null;
     if (!isUsableMcpToolCache(availableTools)) continue; // no live connect — see module doc
@@ -169,19 +181,27 @@ export async function resolveAgentToolNames(
       enabled === null
         ? toolset.tools
         : toolset.tools.filter((t) => enabled.includes(t.name.slice(prefixLen)));
-    mcpToolNames.push(...filtered.map((t) => t.name));
+    mcpTools.push(...filtered);
   }
 
-  const capabilityToolNames = [...connectorToolNames, ...mcpToolNames, ...deliveryToolNames];
+  // ── Delegation: what the orchestrator role ADDS (mirrors execute.ts §6) ─
+  // The rest of the list is the same for every role (#636).
+  const delegationTools: LoadableTool[] = builtins.isOrchestrator
+    ? [
+        ...(await generateAssignTools(agentRow.id as AgentId, db)),
+        ...generateTaskTools(agentRow.id as AgentId, db),
+      ]
+    : [];
 
-  // ── Orchestrator vs worker assembly (mirrors execute.ts:1453-1542) ──────
-  const names = new Set<string>([...builtins.names, ...capabilityToolNames]);
-  if (builtins.isOrchestrator) {
-    const assignTools = await generateAssignTools(agentRow.id as AgentId, db);
-    const [createTaskTool, listTasksTool] = generateTaskTools(agentRow.id as AgentId, db);
-    for (const t of assignTools) names.add(t.name);
-    names.add(createTaskTool.name);
-    names.add(listTasksTool.name);
-  }
-  return names;
+  // `load_tools` exactly when the job gets it: the runner's own
+  // `withToolLoader`, over the same list — a routine naming load_tools is not
+  // flagged as naming a missing tool.
+  const tools = withToolLoader([
+    ...delegationTools,
+    ...builtinTools,
+    ...connectorTools,
+    ...mcpTools,
+    ...deliveryTools,
+  ]);
+  return new Set(tools.map((t) => t.name));
 }
