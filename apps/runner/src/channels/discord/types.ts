@@ -45,7 +45,7 @@ export interface DiscordInboundMessage {
 export interface DiscordInteractionAck {
   /**
    * Ephemeral reply visible only to the tapper — does NOT touch the original
-   * card message. Used for security-gate denials and "already resolved" info,
+   * card message. Works before or after `acknowledge()` (a follow-up then). Used for security-gate denials and "already resolved" info,
    * mirroring telegram/approval-callback.ts's `answerTelegramCallback(...,
    * showAlert=true)` popup.
    */
@@ -56,4 +56,11 @@ export interface DiscordInteractionAck {
    * `answerTelegramCallback` + `editTelegramMessageText` pair.
    */
   resolveCard(text: string): Promise<void>;
+  /**
+   * Acknowledge the tap WITHOUT touching the card (Discord `deferUpdate`).
+   * An approval tap uses this: the card is rewritten by the card-settlement
+   * point (approvals/card-settlement.ts), the one writer of a settled card
+   * whatever settled it (#637).
+   */
+  acknowledge(): Promise<void>;
 }

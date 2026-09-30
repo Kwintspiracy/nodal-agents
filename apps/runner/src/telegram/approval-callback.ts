@@ -14,12 +14,7 @@
 
 import { eq } from '@nodal-agents/db';
 import { approvalRequests, agents } from '@nodal-agents/db';
-import {
-  answerTelegramCallback,
-  editTelegramMessageText,
-  type TelegramInlineKeyboard,
-  type TelegramUpdate,
-} from '@nodal-agents/delivery';
+import { answerTelegramCallback, type TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resolveApprovalDecision } from '../approvals/resolve.ts';
@@ -29,13 +24,8 @@ import {
   buildApprovalCardBody,
   resolveApprovalDeliveryTarget,
 } from '../approvals/notify.ts';
-import {
-  upsertAutoApproveRule,
-  getApprovalRule,
-  restoreApprovalRule,
-  isAutoRunPaused,
-} from '../approvals/rules.ts';
-import { isCodeExecutionTool } from '@nodal-agents/tools';
+import { showApprovalCard, requeueApprovalCard } from '../approvals/card-settlement.ts';
+import { upsertAutoApproveRule, getApprovalRule, restoreApprovalRule } from '../approvals/rules.ts';
 import { readQuestionToolInput } from '@nodal-agents/shared';
 
 export interface HandleApprovalCallbackArgs {
@@ -200,22 +190,35 @@ export async function handleApprovalCallback(
 
   // SECURITY: the tap must come from the same chat the card was delivered to.
   const jobChatId = target.chatId;
+
   if (tappedChatId === undefined || String(tappedChatId) !== jobChatId) {
     await answerTelegramCallback(botToken, cb.id, 'Not authorized.', true);
     return { handled: false, reason: 'chat_mismatch' };
   }
 
-  // Already resolved (e.g. the dashboard won the race) — tell the user, refresh card.
+  /**
+   * CETTE carte, telle que le protocole des cartes la connaît (#637). Le
+   * handler n'écrit jamais la carte lui-même : il passe par `showApprovalCard`
+   * (vue d'une demande ouverte) ou la remet au règlement.
+   */
+  const thisCard =
+    messageId === undefined
+      ? null
+      : {
+          approvalRequestId: approval.id,
+          channel: 'telegram',
+          agentId: target.agentId,
+          conversationId: jobChatId,
+          messageId: String(messageId),
+        };
+
+  // Already resolved (e.g. the dashboard won the race) — tell the user. The
+  // card still had buttons, so whatever happened to it (edits that gave up, a
+  // card never recorded, an edit that did not hold), it goes back to the
+  // settlement queue, attempts reset, and is settled now (#637).
   if (approval.status !== 'pending') {
     await answerTelegramCallback(botToken, cb.id, `Already ${approval.status}.`);
-    if (messageId !== undefined) {
-      await editTelegramMessageText({
-        botToken,
-        chatId: jobChatId,
-        messageId,
-        text: `This request was already ${approval.status}.`,
-      });
-    }
+    if (thisCard) await requeueApprovalCard(deps.db, thisCard);
     return { handled: false, reason: 'already_resolved' };
   }
 
@@ -252,18 +255,9 @@ export async function handleApprovalCallback(
       await answerTelegramCallback(botToken, cb.id, 'Could not apply — try the dashboard.', true);
       return { handled: false, reason: answered.code };
     }
+    // La carte (réponse, boutons retirés) est réécrite par
+    // resolveApprovalDecision → settleApprovalCards : un seul écrivain (#637).
     await answerTelegramCallback(botToken, cb.id, `✅ ${chosen}`);
-    if (messageId !== undefined) {
-      // Les boutons disparaissent avec l'édition (aucun `inlineKeyboard`) : la
-      // question est tranchée, et une seconde option cliquable sur une carte
-      // déjà résolue ne mènerait qu'à un « Already approved ».
-      await editTelegramMessageText({
-        botToken,
-        chatId: jobChatId,
-        messageId,
-        text: `✅ Answered: ${chosen}`,
-      });
-    }
     return { handled: true, decision: 'answer', jobId: answered.jobId, answer: chosen };
   }
 
@@ -299,22 +293,22 @@ export async function handleApprovalCallback(
   }
 
   if (parsed.decision === 'always_ask') {
-    if (messageId !== undefined) {
-      await editTelegramMessageText({
-        botToken,
-        chatId: jobChatId,
-        messageId,
+    // Par `showApprovalCard` (#637) : sous le bail des cartes, statut relu au
+    // moment d'écrire — une demande tranchée entre la lecture `pending` plus
+    // haut et cette édition reçoit son texte final, jamais des boutons actifs.
+    if (thisCard) {
+      await showApprovalCard(deps.db, thisCard, {
         text:
           `⚠️ Always allow ${approval.toolName} for ${agentNameForCard ?? 'this agent'}?\n\n` +
           `It will run without asking, whatever its arguments. ` +
           `Revocable anytime from the agent's Autonomy tab.`,
-        inlineKeyboard: [
+        buttons: [
           [
             {
-              text: '✅ Yes, always',
-              callback_data: `${APPROVAL_CALLBACK_PREFIX}:${approval.id}:wc`,
+              label: '✅ Yes, always',
+              callbackData: `${APPROVAL_CALLBACK_PREFIX}:${approval.id}:wc`,
             },
-            { text: '↩ Back', callback_data: `${APPROVAL_CALLBACK_PREFIX}:${approval.id}:wb` },
+            { label: '↩ Back', callbackData: `${APPROVAL_CALLBACK_PREFIX}:${approval.id}:wb` },
           ],
         ],
       });
@@ -325,20 +319,28 @@ export async function handleApprovalCallback(
 
   if (parsed.decision === 'always_back') {
     // entityId nullable au schema (legacy) : sans lui, impossible de
-    // reconstruire l'explication (contexte MCP) — on retire juste la question.
+    // reconstruire l'explication (contexte MCP) — on retire la question, mais
+    // une carte ouverte garde ses boutons tant que la demande est pending
+    // (#637) : approuver ou refuser ne demande pas d'entité. « Always allow »
+    // seul en demande une (la règle s'y lie, always_confirm la refuse sans) :
+    // il n'est pas reproposé.
     if (!approval.entityId) {
-      if (messageId !== undefined) {
-        await editTelegramMessageText({
-          botToken,
-          chatId: jobChatId,
-          messageId,
-          text: `⏳ Still pending — ${approval.toolName}. Resolve it from the dashboard.`,
+      if (thisCard) {
+        const cbId = `${APPROVAL_CALLBACK_PREFIX}:${approval.id}`;
+        await showApprovalCard(deps.db, thisCard, {
+          text: `⏳ Still pending — ${approval.toolName}. Tap a button below to decide — or resolve it from the dashboard.`,
+          buttons: [
+            [
+              { label: APPROVAL_BUTTON_LABELS.approve, callbackData: `${cbId}:a` },
+              { label: APPROVAL_BUTTON_LABELS.reject, callbackData: `${cbId}:r` },
+            ],
+          ],
         });
       }
       await answerTelegramCallback(botToken, cb.id);
       return { handled: true, decision: 'card_restored', jobId: approval.jobId };
     }
-    if (messageId !== undefined) {
+    if (thisCard) {
       const [agentRow] = approval.agentId
         ? await deps.db
             .select({ name: agents.name })
@@ -353,19 +355,16 @@ export async function handleApprovalCallback(
         who: agentRow?.name ?? 'An agent',
       });
       const cbId = `${APPROVAL_CALLBACK_PREFIX}:${approval.id}`;
-      const inlineKeyboard: TelegramInlineKeyboard = [
-        [
-          { text: APPROVAL_BUTTON_LABELS.approve, callback_data: `${cbId}:a` },
-          { text: APPROVAL_BUTTON_LABELS.reject, callback_data: `${cbId}:r` },
-        ],
-        [{ text: APPROVAL_BUTTON_LABELS.always, callback_data: `${cbId}:w` }],
-      ];
-      await editTelegramMessageText({
-        botToken,
-        chatId: jobChatId,
-        messageId,
+      // Par `showApprovalCard`, comme la question de confirmation (#637).
+      await showApprovalCard(deps.db, thisCard, {
         text: `${body}\n\nTap a button below to decide — or resolve it from the dashboard.`,
-        inlineKeyboard,
+        buttons: [
+          [
+            { label: APPROVAL_BUTTON_LABELS.approve, callbackData: `${cbId}:a` },
+            { label: APPROVAL_BUTTON_LABELS.reject, callbackData: `${cbId}:r` },
+          ],
+          [{ label: APPROVAL_BUTTON_LABELS.always, callbackData: `${cbId}:w` }],
+        ],
       });
     }
     await answerTelegramCallback(botToken, cb.id);
@@ -452,40 +451,11 @@ export async function handleApprovalCallback(
       return { handled: false, reason: confirmed.code };
     }
 
-    // Le frein d'urgence rend TOUTE règle auto_approve d'outil de code
-    // dormante : promettre « ne demandera plus » alors que le prochain appel
-    // redemandera serait un no-op silencieux (invariant #4).
-    //
-    // Ici, et ICI SEULEMENT, une erreur de lecture est rattrapée : ce site ne
-    // décide rien, il rédige une note. Le frein qui compte est appliqué
-    // ailleurs (étape 8b du loop, et run-job côté runtime CLI), où l'erreur
-    // remonte et fait échouer le job. Faire tomber le traitement du clic pour
-    // une phrase d'information ferait rejouer l'update par le poller.
-    let brakeEngaged = false;
-    try {
-      brakeEngaged = await isAutoRunPaused(deps.db, approval.entityId);
-    } catch (err) {
-      console.warn(
-        '[approvals] brake state unreadable, card note omitted:',
-        err instanceof Error ? err.message : err,
-      );
-    }
-    const brakeNote =
-      brakeEngaged && isCodeExecutionTool(approval.toolName)
-        ? ' The workspace auto-run brake is engaged, so it will keep asking until you release it in Settings.'
-        : '';
-
+    // La carte (« will now run without asking », avec la réserve du frein
+    // quand elle s'applique) est réécrite par resolveApprovalDecision →
+    // settleApprovalCards, qui lit la règle posée ci-dessus : un seul écrivain,
+    // un seul texte, le même que pour un « Toujours » donné depuis le web (#637).
     await answerTelegramCallback(botToken, cb.id, '✅ Always allowed');
-    if (messageId !== undefined) {
-      await editTelegramMessageText({
-        botToken,
-        chatId: jobChatId,
-        messageId,
-        text:
-          `✅ Approved — ${approval.toolName} will now run without asking for ` +
-          `${agentNameForCard ?? 'this agent'}.${brakeNote}`,
-      });
-    }
     return { handled: true, decision: 'approve', jobId: confirmed.jobId };
   }
 
@@ -501,17 +471,12 @@ export async function handleApprovalCallback(
     return { handled: false, reason: result.code };
   }
 
-  const verb = parsed.decision === 'approve' ? 'Approved' : 'Rejected';
-  const mark = parsed.decision === 'approve' ? '✅' : '❌';
-  await answerTelegramCallback(botToken, cb.id, `${mark} ${verb}`);
-  if (messageId !== undefined) {
-    await editTelegramMessageText({
-      botToken,
-      chatId: jobChatId,
-      messageId,
-      text: `${mark} ${verb} — ${approval.toolName}`,
-    });
-  }
+  // La carte est réécrite par resolveApprovalDecision → settleApprovalCards (#637).
+  await answerTelegramCallback(
+    botToken,
+    cb.id,
+    parsed.decision === 'approve' ? '✅ Approved' : '❌ Rejected',
+  );
 
   return { handled: true, decision: parsed.decision, jobId: result.jobId };
 }

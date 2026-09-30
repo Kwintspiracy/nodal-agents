@@ -13,6 +13,7 @@ import { FREE_ANSWER_MAX } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resumeJobAfterApprovalResolution } from './resume.ts';
+import { settleApprovalCards } from './card-settlement.ts';
 
 export type ApprovalDecision = 'approve' | 'reject';
 
@@ -201,6 +202,24 @@ export async function resolveApprovalDecision(
       .where(eq(approvalRequests.id, input.approvalRequestId))
       .limit(1);
     return { ok: false, code: 'already_resolved', status: current?.status ?? null };
+  }
+
+  // #637 — la décision est écrite : chaque carte livrée pour cette demande,
+  // sur quelque canal que ce soit, la dit maintenant (texte final, boutons
+  // retirés). La réponse peut venir du dashboard ou d'un autre canal que celui
+  // de la carte : sans ceci, la carte restait cliquable. C'est aussi ce qui
+  // réécrit la carte sur laquelle on vient de cliquer : les handlers de canal
+  // n'éditent plus rien eux-mêmes.
+  //
+  // Une erreur ici ne défait pas la décision déjà écrite : elle est dite, et
+  // le tick suivant reprend la carte (elle n'est pas marquée finie).
+  try {
+    await settleApprovalCards(deps.db, { approvalRequestIds: [input.approvalRequestId] });
+  } catch (err) {
+    console.error(
+      `[approval-card] could not update the cards of approval ${input.approvalRequestId} ` +
+        `after its decision; the next cron tick retries: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   // Back to pending so executeJob picks it up — but ONLY if the job is still

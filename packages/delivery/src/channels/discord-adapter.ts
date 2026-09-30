@@ -48,6 +48,8 @@ import type {
   ApprovalCard,
   QuestionCard,
   SendResult,
+  EditResult,
+  CardButton,
   BotIdentity,
   TextFormat,
   SendTextOpts,
@@ -379,28 +381,39 @@ async function sendQuestionCard(
 }
 
 /**
- * Edit a previously-sent message's text. Best-effort like Telegram's
+ * Edit a previously-sent message's text. Like Telegram's
  * editTelegramMessageText: this is used to turn a resolved approval card into
  * its resolved state, and a failed edit must not undo a decision that already
- * happened — so, deliberately, this never throws.
+ * happened — so it never throws, but it RETURNS its outcome (#637).
  */
 async function editMessageText(
   creds: ChannelCredentials,
   conversationId: string,
   messageId: string,
   text: string,
-): Promise<void> {
+  buttons?: readonly (readonly CardButton[])[],
+): Promise<EditResult> {
+  // Aucune carte de ce canal n'offre d'affichage interactif réécrit (le flux
+  // « Always allow? » est propre à Telegram) : le dire plutôt que d'envoyer le
+  // texte seul en prétendant avoir posé les boutons.
+  if (buttons && buttons.some((row) => row.length > 0)) {
+    return { ok: false, error: 'discord cannot put buttons on an edited message' };
+  }
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
   const rest = makeRestClient(botToken);
+  // `components: []` retire les boutons, comme l'édition Telegram (#637) : une
+  // carte réécrite est une carte tranchée, rien n'y reste cliquable.
   const body: RESTPatchAPIChannelMessageJSONBody = {
     content: text,
     allowed_mentions: SAFE_ALLOWED_MENTIONS,
+    components: [],
   };
   try {
     await rest.patch(Routes.channelMessage(channelId, messageId), { body });
-  } catch {
-    /* best-effort — the resolution already happened */
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 

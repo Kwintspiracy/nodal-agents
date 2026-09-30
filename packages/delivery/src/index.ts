@@ -45,6 +45,8 @@ export type {
   ApprovalCard,
   QuestionCard,
   SendResult,
+  EditResult,
+  CardButton,
   BotIdentity,
   ChannelCapabilities,
   ChannelAdapter,

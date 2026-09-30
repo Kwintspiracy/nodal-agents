@@ -240,11 +240,12 @@ describe('discordAdapter.sendApprovalCard', () => {
 });
 
 describe('discordAdapter.editMessageText', () => {
-  it('PATCHes the channel message route with new content + allowed_mentions', async () => {
+  it('PATCHes the channel message route with new content + allowed_mentions, buttons removed', async () => {
     vi.mocked(REST.prototype.patch).mockResolvedValueOnce(fakeMessage('42'));
 
-    await discordAdapter.editMessageText!(CREDS, CHANNEL_ID, '42', 'Resolved ✅');
+    const result = await discordAdapter.editMessageText!(CREDS, CHANNEL_ID, '42', 'Resolved ✅');
 
+    expect(result).toEqual({ ok: true });
     expect(vi.mocked(REST.prototype.patch).mock.calls[0]?.[0]).toBe(
       Routes.channelMessage(CHANNEL_ID, '42'),
     );
@@ -252,15 +253,29 @@ describe('discordAdapter.editMessageText', () => {
     expect(options?.body).toEqual({
       content: 'Resolved ✅',
       allowed_mentions: { parse: ['users'] },
+      components: [],
     });
   });
 
-  it('never throws — a failed edit must not undo a decision that already happened', async () => {
+  it('never throws, and RETURNS the failure — a failed edit is not a success (#637)', async () => {
     vi.mocked(REST.prototype.patch).mockRejectedValueOnce(new Error('boom'));
 
     await expect(
       discordAdapter.editMessageText!(CREDS, CHANNEL_ID, '42', 'Resolved ✅'),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ ok: false, error: 'boom' });
+  });
+});
+
+describe('discordAdapter.editMessageText with buttons', () => {
+  it('refuses buttons on an edit instead of sending the text alone', async () => {
+    vi.mocked(REST.prototype.patch).mockClear();
+
+    const result = await discordAdapter.editMessageText!(CREDS, CHANNEL_ID, '42', 'Sure?', [
+      [{ label: 'Yes', callbackData: 'apr:x:wc' }],
+    ]);
+
+    expect(result).toEqual({ ok: false, error: 'discord cannot put buttons on an edited message' });
+    expect(vi.mocked(REST.prototype.patch).mock.calls).toEqual([]);
   });
 });
 

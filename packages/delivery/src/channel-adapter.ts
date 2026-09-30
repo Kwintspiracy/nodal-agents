@@ -91,6 +91,26 @@ export interface SendResult {
   messageId: string;
 }
 
+/**
+ * L'issue d'une réécriture de message (#637). Rendue, jamais avalée : un
+ * appelant qui doit savoir si la carte a vraiment changé (la mise à jour des
+ * cartes d'approbation, qui reprend un échec au tick suivant) le peut ; un
+ * appelant que l'issue n'intéresse pas l'ignore. Jamais levée : une édition
+ * ratée ne doit pas défaire la décision qu'elle raconte.
+ */
+export type EditResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Un bouton d'une carte réécrite (#637) — la forme neutre, par rangées. Seul
+ * l'affichage interactif d'une carte encore ouverte en porte (la question
+ * « Always allow? » de Telegram et son retour) ; une carte tranchée n'en a
+ * aucun.
+ */
+export interface CardButton {
+  label: string;
+  callbackData: string;
+}
+
 /** Result of validating a channel's credentials (Telegram: getMe). */
 export interface BotIdentity {
   id: string;
@@ -192,13 +212,21 @@ export interface ChannelAdapter {
     card: QuestionCard,
   ): Promise<SendResult>;
 
-  /** Optional: only channels with `capabilities.editMessage` implement this. */
+  /**
+   * Optional: only channels with `capabilities.editMessage` implement this.
+   * Rewrites the message's text and REPLACES its buttons with `buttons` — none
+   * when absent or empty (a settled card). The only caller is the one function
+   * that owns an approval card's display (runner approvals/card-settlement.ts,
+   * #637). A channel that cannot put buttons on an edited message returns a
+   * failure for a non-empty `buttons`, never a silent text-only edit.
+   */
   editMessageText?(
     creds: ChannelCredentials,
     conversationId: string,
     messageId: string,
     text: string,
-  ): Promise<void>;
+    buttons?: readonly (readonly CardButton[])[],
+  ): Promise<EditResult>;
 
   /** Optional: only channels whose platform can enumerate what a bot/session
    *  could send into implement this (Telegram's Bot API has no such

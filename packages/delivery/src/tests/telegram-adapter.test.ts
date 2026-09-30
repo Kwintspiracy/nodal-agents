@@ -207,16 +207,71 @@ describe('telegramAdapter.sendApprovalCard', () => {
 
 describe('telegramAdapter.editMessageText', () => {
   it('calls editMessageText with a numeric message_id and the new text', async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValueOnce(makeFetchResponse(200, { ok: true }));
+    // Telegram answers an edit with the edited Message (or `true` for an
+    // inline message) in `result` — a reply without it is a failure.
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(200, { ok: true, result: true }),
+    );
 
-    await telegramAdapter.editMessageText!(CREDS, FAKE_CHAT_ID, '42', 'Resolved ✅');
+    const result = await telegramAdapter.editMessageText!(CREDS, FAKE_CHAT_ID, '42', 'Resolved ✅');
 
+    expect(result).toEqual({ ok: true });
     const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
     expect(String(url)).toBe(`https://api.telegram.org/bot${FAKE_TOKEN}/editMessageText`);
     const body = JSON.parse(init?.body as string) as Record<string, unknown>;
     expect(body['message_id']).toBe(42);
     expect(body['text']).toBe('Resolved ✅');
     expect(body['reply_markup']).toEqual({ inline_keyboard: [] });
+  });
+
+  it('never throws, and RETURNS the failure — a failed edit is not a success (#637)', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(500, { ok: false, description: 'Internal Server Error' }),
+    );
+
+    await expect(
+      telegramAdapter.editMessageText!(CREDS, FAKE_CHAT_ID, '42', 'Resolved ✅'),
+    ).resolves.toEqual({
+      ok: false,
+      error: 'telegram_request_failed: Internal Server Error',
+    });
+  });
+
+  it('puts the given buttons on the edited message, as an inline keyboard', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(200, { ok: true, result: true }),
+    );
+
+    await telegramAdapter.editMessageText!(CREDS, FAKE_CHAT_ID, '42', 'Sure?', [
+      [
+        { label: 'Yes', callbackData: 'apr:x:wc' },
+        { label: 'Back', callbackData: 'apr:x:wb' },
+      ],
+    ]);
+
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body['reply_markup']).toEqual({
+      inline_keyboard: [
+        [
+          { text: 'Yes', callback_data: 'apr:x:wc' },
+          { text: 'Back', callback_data: 'apr:x:wb' },
+        ],
+      ],
+    });
+  });
+
+  it('"message is not modified" is a success: the message already reads that text', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(400, {
+        ok: false,
+        description: 'Bad Request: message is not modified: specified new message content',
+      }),
+    );
+
+    await expect(
+      telegramAdapter.editMessageText!(CREDS, FAKE_CHAT_ID, '42', 'Resolved ✅'),
+    ).resolves.toEqual({ ok: true });
   });
 });
 

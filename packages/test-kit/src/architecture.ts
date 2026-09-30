@@ -386,6 +386,23 @@ export function scanForCompleteJobCallers(opts: ScanOptions): Violation[] {
  * rappel de cron, le poller) sont passés en `skipFiles` par l'appelant :
  * une allowlist EXPLICITE et courte, dont la longueur est ce qu'on surveille.
  */
+/**
+ * L'allowlist des envois NON terminaux du runner (chemins relatifs à
+ * `apps/runner/src`) — UNE liste, lue par le test d'architecture du runner ET
+ * par le banc d'essai (#637 : chacun en portait une copie, et un ajout
+ * légitime dans l'une faisait rougir l'autre).
+ */
+export const RUNNER_NON_TERMINAL_SENDERS = [
+  'delivery/outbox.ts',
+  'approvals/notify.ts',
+  // #637 — réécrit une carte d'approbation quand sa demande est tranchée.
+  'approvals/card-settlement.ts',
+  'notify/code-transitions.ts',
+  'cron/run-schedules.ts',
+  'cron/reset-orphans.ts',
+  'telegram/poller.ts',
+] as const;
+
 export const TERMINAL_SEND_PATTERN =
   /\.sendText\(|\.sendMedia\(|getAdapter\(|sendTelegramMessage\(/;
 
