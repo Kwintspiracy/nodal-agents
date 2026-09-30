@@ -37,6 +37,11 @@ import {
   htmlCarteEnVol,
   urlsDesRunsEnVol,
   SCRIPT_EN_VOL,
+  testsParDomaine,
+  chargeDesTests,
+  htmlRuban,
+  TOURS_MONTRES,
+  SCRIPT_TESTES,
 } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 
@@ -59,17 +64,43 @@ const historique = existsSync(join(DATA, 'history.ndjson'))
       .filter(Boolean)
   : [];
 
+// La mémoire test par test, une ligne par test. `null` quand elle manque : la
+// page « What is tested » le DIT, elle ne rend pas zéro test.
+const memoireDesTests = existsSync(join(DATA, 'tests.ndjson'))
+  ? readFileSync(join(DATA, 'tests.ndjson'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+  : null;
+
+/** Les tests rangés par partie du produit, calculés une fois pour la vue et sa charge. */
+const testesRanges =
+  memoireDesTests && memoireDesTests.length > 0
+    ? testsParDomaine({
+        tests: memoireDesTests,
+        rangement: s.rangement?.fichiers ?? {},
+        mesureLe: s.genereLe ?? null,
+      })
+    : null;
+
 /**
  * L'en-tête d'une page : son titre, deux phrases qui disent pourquoi elle
  * existe, et le bouton qui ouvre l'explication complète. Quentin, 12/09 :
  * « je ne sais pas ce que je regarde ». Un titre seul ne suffit à personne.
  */
 const RAIL = {
-  chantiers: ['01', 'The board'],
-  capacites: ['02', 'The product'],
-  ecarts: ['03', 'What is wrong'],
-  parcours: ['04', 'Journeys'],
-  memoire: ['05', 'Over time'],
+  testes: ['01', 'Every test'],
+  chantiers: ['02', 'The board'],
+  capacites: ['03', 'The product'],
+  ecarts: ['04', 'What is wrong'],
+  parcours: ['05', 'Journeys'],
   vue: ['06', 'The code'],
   banc: ['07', 'Measures'],
   ci: ['08', 'What runs it'],
@@ -337,7 +368,7 @@ function vueEnsemble() {
 
   return `
 <section id="vue" class="vue">
-  ${entete('vue', 'Tests, overview')}
+  ${entete('vue', 'Code coverage')}
 
   ${repere('vue', 'cartes')}
   <div class="cartes">
@@ -349,12 +380,6 @@ function vueEnsemble() {
       ${barre(r.couvertureLignes, 'line coverage')}
       <p class="tendance tendance--${tCouv.direction ?? 'seule'}">${esc(phraseCouv)}</p>
       <p class="avertissement">${phraseHorsMesure}</p>
-    </article>
-
-    <article class="carte">
-      <h3>Test cases</h3>
-      <p class="chiffre">${n(r.casDeTest)}</p>
-      <p class="sous">in ${n(r.fichiersDeTest)} files, end-to-end aside</p>
     </article>
 
     <article class="carte ${jamaisJoues > 0 ? 'carte--alerte' : ''}">
@@ -820,70 +845,179 @@ function vueCapacites() {
 </section>`;
 }
 
-// Ce que le portail ne savait pas dire : « ce test a tourné 47 fois, échoué 3
-// fois ». Une photo ne le sait jamais. L'instabilité, surtout, est indétectable
-// dans une seule exécution — un test qui tombe un jour sur trois passe pour vert
-// à chaque fois qu'il passe.
-function ruban(recents) {
-  const CLASSE = { v: 'ok', r: 'ko', i: 'inconnu', f: 'moyen' };
-  return [...String(recents ?? '')]
-    .map((c) => `<i class="grain grain--${CLASSE[c] ?? 'inconnu'}"></i>`)
-    .join('');
+// ─── « What is tested » : TOUS les tests, par partie du produit ──────────────
+//
+// Quentin, 30/09 : « on a soi-disant 11 000 tests, je ne les vois pas ; je ne
+// comprends pas le site QA, il ne me dit pas clairement tout ce qui est testé ».
+// La page « Test memory » ne rendait que les pires (une cinquantaine de lignes).
+// Celle-ci rend les 11 508, rangés par la règle de `domaineDuTest`, et elle
+// absorbe la mémoire : les rouges et les instables y sont comptés sur les CINQ
+// derniers tours, la médiane de réparation y est reprise telle que la collecte
+// l'a écrite.
+//
+// Le poids : les lignes ne sont PAS rendues ici. La page embarque leurs données
+// en tableaux courts (`chargeDesTests`) et une partie ne se dessine qu'à son
+// ouverture, par `htmlDuneCharge` — la fonction que les tests éprouvent.
+
+/** La liste des pages et la question à laquelle chacune répond. */
+const GUIDE = [
+  [
+    '#testes',
+    'What is tested',
+    'this page: every test, by the part of the product it exercises, with its last five runs.',
+  ],
+  [
+    '#chantiers',
+    'Work in flight',
+    'the work board: every issue and pull request, and what each one waits on.',
+  ],
+  [
+    '#capacites',
+    'Capabilities',
+    'for each thing a user can do, whether a screen test and an engine test prove it, and whether they passed.',
+  ],
+  [
+    '#ecarts',
+    'Gaps',
+    'what the portal finds wrong with itself and with the tests, most serious first.',
+  ],
+  [
+    '#parcours',
+    'Journeys',
+    'the browser journeys (Playwright) and which of them the CI actually plays.',
+  ],
+  [
+    '#vue',
+    'Code coverage',
+    'which lines of code at least one test goes through, package by package.',
+  ],
+  ['#banc', 'Bench', 'measures (speed, size, cost), not verdicts.'],
+  ['#ci', 'Triggers', 'what starts each GitHub workflow, and what it runs.'],
+  ['#historique', 'History', 'one line per measurement, and the curves over thirty days.'],
+];
+
+function guideDeLecture() {
+  return `<div class="guide">
+    <div class="guide__bloc">
+      <h3>What each page answers</h3>
+      <dl class="guide__pages">${GUIDE.map(
+        ([ancre, nom, quoi]) =>
+          `<div><dt><a href="${ancre}">${esc(nom)}</a></dt><dd>${esc(quoi)}</dd></div>`,
+      ).join('')}</dl>
+    </div>
+    <div class="guide__bloc guide__bloc--limite">
+      <h3>What the tests do NOT cover</h3>
+      <p><b>No test sends a real request to a real model.</b> The browser journeys talk to no model at all, and the engine tests answer with fake models written inside the test. A green page therefore says that the platform does the right thing with the answers it is given. It does not say that a real agent, on a real model, finishes a real task, and that is where most of what broke in the last days lives.</p>
+      <p class="guide__attente" id="banc-de-parcours"><b>Real requests on a real model: not measured yet.</b> A bench that replays real requests end to end is being built. When it runs, its results will appear here, next to the tests, and not inside their counts.</p>
+      <h3>How to read a ribbon</h3>
+      <p>${htmlRuban('vvfrv')} Each square is one run, the last ${TOURS_MONTRES} only, oldest on the left: green passed, red failed, amber passed on a retry, grey skipped. The numbers next to it (failed / runs) count every run the memory has seen.</p>
+    </div>
+  </div>`;
 }
 
-function vueMemoire() {
-  const m = s.memoire;
-  if (!m || m.total === 0) {
-    return `<section id="memoire" class="vue">${entete('memoire', 'Test memory')}
-      <p class="chapo">No test tracked so far. The memory fills up at every measurement; it needs several runs before it can say anything useful.</p></section>`;
+function vueTestes() {
+  const titre = 'What is tested';
+  if (!memoireDesTests || memoireDesTests.length === 0) {
+    return `<section id="testes" class="vue">${entete('testes', titre)}${guideDeLecture()}
+      <div class="alerte"><b>No test memory in this collection.</b> The file <code>apps/qa/data/tests.ndjson</code> is missing or empty, so no test can be listed. It is written by the nightly measurement.</div></section>`;
   }
+  const rangement = s.rangement?.fichiers ?? null;
+  const t = testesRanges;
+  const rep = s.memoire?.reparations ?? { durees: [], mediane: null };
+  const nonRange = t.parties.find((p) => p.id === 'non-range');
 
-  // `colonneJours` n'est posée que sur les cassés : l'âge d'un rouge ne veut
-  // rien dire pour un test instable, qui est vert une fois sur deux.
-  const lignes = (liste, colonneAge, colonneJours = false) =>
-    liste
-      .map((e) => {
-        const jours = joursDepuis(e.rougeDepuis);
-        return `<tr>
-      <td><span class="intention">${esc(e.fichier ?? '')}</span><br><b>${esc(e.titre ?? e.cle)}</b>
-        ${lienRun(e.dernierRougeExecution)}</td>
-      <td class="mono">${ruban(e.recents)}</td>
-      <td class="num">${e.echecs}/${e.tours}</td>
-      <td class="num">${e.tauxEchec != null ? e.tauxEchec + ' %' : '·'}</td>
-      <td>${esc(dateFr(colonneAge ? e.rougeDepuis : e.dernierTourLe))}</td>
-      ${colonneJours ? `<td class="num ${jours != null && jours > 14 ? 'dette' : ''}">${jours != null ? `${jours} d` : '<span class="dim">flip never seen</span>'}</td>` : ''}
+  const entetePartie = (p) => {
+    const niveaux = [
+      p.ecran > 0
+        ? `${n(p.ecran)} on screens${p.e2e > 0 ? ` (${n(p.e2e)} in browser journeys)` : ''}`
+        : null,
+      p.moteur > 0 ? `${n(p.moteur)} in the engine` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    const alertes = [
+      p.rouges > 0 ? `<span class="pastille pastille--ko">${p.rouges} red</span>` : '',
+      p.instables > 0 ? `<span class="pastille pastille--moyen">${p.instables} flaky</span>` : '',
+      p.ignores > 0
+        ? `<span class="pastille pastille--inconnu">${n(p.ignores)} skipped in their last ${TOURS_MONTRES} runs</span>`
+        : '',
+      p.jamais > 0
+        ? `<span class="pastille pastille--inconnu">${n(p.jamais)} never run</span>`
+        : '',
+      p.toutVert
+        ? `<span class="pastille pastille--ok">all green on their last ${TOURS_MONTRES} runs</span>`
+        : '',
+    ].join(' ');
+    return `<summary class="partie__tete">
+      <span class="partie__nom">${esc(p.nom)}</span>
+      <span class="partie__total">${n(p.total)} test${p.total === 1 ? '' : 's'}</span>
+      <span class="partie__trouves"></span>
+      <span class="partie__alertes">${alertes}</span>
+      <span class="partie__detail">${esc(niveaux || 'no test')}${
+        p.dernierTourLe ? ` · last run ${esc(dateFr(p.dernierTourLe))}` : ''
+      }${p.nonJoues > 0 ? ` · <b>${n(p.nonJoues)} not run at the last measurement</b>` : ''}</span>
+      <span class="partie__quoi">${esc(p.quoi)}</span>
+    </summary>`;
+  };
+
+  // Les tests rouges ou instables sur leurs cinq derniers tours, toutes parties
+  // confondues : ce que « Test memory » appelait les pires et les cassés.
+  const aVoir = t.parties
+    .flatMap((p) =>
+      p.fichiers.flatMap((f) =>
+        f.tests
+          .filter((x) => x.etat === 'rouge' || x.etat === 'instable')
+          .map((x) => ({ ...x, partie: p.nom, fichier: f.fichier })),
+      ),
+    )
+    .sort(
+      (a, b) =>
+        (a.etat === 'rouge' ? 0 : 1) - (b.etat === 'rouge' ? 0 : 1) ||
+        b.echecs / Math.max(b.tours, 1) - a.echecs / Math.max(a.tours, 1),
+    );
+  const ligneAVoir = (x) => {
+    const jours = joursDepuis(x.rougeDepuis);
+    return `<tr>
+      <td><span class="intention">${esc(x.partie)} · ${esc(x.fichier)}</span><br><b>${esc(x.titre)}</b> ${lienRun(x.lien)}</td>
+      <td class="mono">${htmlRuban(x.recents)}</td>
+      <td class="num">${x.echecs}/${x.tours}</td>
+      <td>${x.etat === 'rouge' ? '<span class="pastille pastille--ko">red</span>' : '<span class="pastille pastille--moyen">flaky</span>'}</td>
+      <td>${x.etat === 'rouge' ? esc(dateFr(x.rougeDepuis)) : '·'}</td>
+      <td class="num ${jours != null && jours > 14 ? 'dette' : ''}">${x.etat !== 'rouge' ? '·' : jours != null ? `${jours} d` : '<span class="dim">flip never seen</span>'}</td>
     </tr>`;
-      })
-      .join('');
-
-  const casses = (m.casses ?? 0) > 0 ? (m.listeCasses ?? []) : [];
-  // Écrit par la collecte, pas recalculé ici : le portail ne juge rien, il rend.
-  const rep = m.reparations ?? { durees: [], mediane: null };
+  };
 
   return `
-<section id="memoire" class="vue">
-  ${entete('memoire', 'Test memory')}
+<section id="testes" class="vue">
+  ${entete('testes', titre)}
+  ${guideDeLecture()}
 
+  ${repere('testes', 'cartes')}
   <div class="cartes">
-    <article class="carte carte--phare ${m.instables > 0 ? 'carte--alerte' : ''}">
-      <h3>Flaky tests</h3>
-      <p class="chiffre">${m.instables}</p>
-      <p class="sous">green AND red within their window</p>
-      <p class="avertissement">A broken test gets repaired. A flaky test gets endured: no isolated run gives it away, it passes for green every time it passes.</p>
+    <article class="carte carte--phare">
+      <h3>Tests tracked</h3>
+      <p class="chiffre">${n(t.total)}</p>
+      <p class="sous">${n(t.joues)} run at the last measurement, ${esc(dateFr(s.genereLe))}</p>
+      <p class="avertissement">${
+        t.nonJoues > 0
+          ? `${n(t.nonJoues)} were not run that time: renamed or removed since, or skipped by that run.${
+              t.disparus > 0
+                ? ` ${n(t.disparus)} of them sit in files that are no longer in the repository.`
+                : ''
+            } They stay listed, marked, until the memory drops them.`
+          : 'Every tracked test ran at the last measurement.'
+      }</p>
     </article>
-
-    <article class="carte ${m.casses > 0 ? 'carte--alerte' : ''}">
-      <h3>Broken tests</h3>
-      <p class="chiffre">${m.casses}</p>
-      <p class="sous">red at every known run</p>
+    <article class="carte ${t.rouges > 0 ? 'carte--alerte' : ''}">
+      <h3>Red at their last run</h3>
+      <p class="chiffre">${n(t.rouges)}</p>
+      <p class="sous">the last of their ${TOURS_MONTRES} runs failed</p>
     </article>
-
-    <article class="carte">
-      <h3>Tracked tests</h3>
-      <p class="chiffre">${n(m.total)}</p>
-      <p class="sous">${n(m.joues)} played at the last measurement</p>
+    <article class="carte ${t.instables > 0 ? 'carte--alerte' : ''}">
+      <h3>Flaky</h3>
+      <p class="chiffre">${n(t.instables)}</p>
+      <p class="sous">a failure or a retry within their last ${TOURS_MONTRES} runs, the last one passed</p>
     </article>
-
     <article class="carte">
       <h3>Repaired in (median)</h3>
       <p class="chiffre">${rep.mediane != null ? `${rep.mediane} <span class="sur">d</span>` : '·'}</p>
@@ -892,27 +1026,55 @@ function vueMemoire() {
           ? `over ${rep.durees.length} repair(s) observed end to end`
           : 'no repair observed so far'
       }</p>
-      ${
-        rep.mediane == null
-          ? `<p class="avertissement">A test has to be seen falling AND THEN turning green again for a duration to exist. None of the ${n(m.total)} tracked tests has made that trip under our eyes yet.</p>`
-          : ''
-      }
     </article>
   </div>
 
+  <h3 class="sous-titre">By part of the product <span class="compte">${t.parties.length} parts</span></h3>
+  ${repere('testes', 'parties')}
   ${
-    (m.pires ?? []).length > 0
-      ? `<h3 class="sous-titre">The most harmful <span class="compte">${m.pires.length}</span></h3>
-  ${repere('memoire', 'nuisibles')}
-  <p class="note-section">Sorted by failure rate. The ribbon reads left to right, oldest to newest.</p>
-  <table class="tableau">
-    <thead><tr><th>Test</th><th>Last runs</th><th>Failures</th><th>Rate</th><th>Red since</th></tr></thead>
-    <tbody>${lignes(m.pires, true)}</tbody>
-  </table>`
-      : `<p class="note-section">No flaky test detected. That may be true, or the memory is still too short to see it: flakiness needs several runs before it shows, and it counts ${(m.pires ?? []).length === 0 && m.total > 0 ? 'few' : 'none'} so far.</p>`
+    rangement
+      ? ''
+      : `<div class="alerte"><b>This collection predates the sorting by part.</b> Every test is listed under Unclassified until the next collection writes the sorting.</div>`
   }
-  ${casses.length > 0 ? `<h3 class="sous-titre">Broken</h3>${repere('memoire', 'casses')}<table class="tableau"><thead><tr><th>Test</th><th>Last runs</th><th>Failures</th><th>Rate</th><th>Red since</th><th class="num">Age</th></tr></thead><tbody>${lignes(casses, true, true)}</tbody></table>` : ''}
+  <div class="outils-testes">
+    <label class="recherche"><span>Find a test</span>
+      <input id="recherche-tests" type="search" placeholder="a word of its title or its file, e.g. telegram" autocomplete="off"></label>
+    <button type="button" class="btn-comprendre" data-parties="ouvrir">Open all</button>
+    <button type="button" class="btn-comprendre" data-parties="fermer">Close all</button>
+  </div>
+  <p class="note-section">${
+    nonRange && nonRange.total > 0
+      ? `The rule placed ${n(t.total - nonRange.total)} of the ${n(t.total)} tests. ${n(nonRange.total)} it could not place ${nonRange.total === 1 ? 'is' : 'are'} in Unclassified, last in the list, with the reason for each file.`
+      : `The rule placed all ${n(t.total)} tests.`
+  } Each file says why it sits where it does.</p>
+  <div class="parties">
+    ${t.parties
+      .map(
+        (p) => `<details class="partie" data-partie="${esc(p.id)}">
+      ${entetePartie(p)}
+      <div class="partie__corps"></div>
+    </details>`,
+      )
+      .join('\n')}
+  </div>
+
+  <h3 class="sous-titre">Red or flaky now <span class="compte">${aVoir.length}</span></h3>
+  ${repere('testes', 'avoir')}
+  ${
+    aVoir.length > 0
+      ? `<div class="tableau"><table>
+    <thead><tr><th>Test</th><th>Last ${TOURS_MONTRES} runs</th><th class="num">Failed / runs</th><th>State</th><th>Red since</th><th class="num">Age</th></tr></thead>
+    <tbody>${aVoir.map(ligneAVoir).join('')}</tbody>
+  </table></div>`
+      : `<p class="note-section">No test is red or flaky over its last ${TOURS_MONTRES} runs.</p>`
+  }
 </section>`;
+}
+
+/** Les données des lignes, embarquées : la page ne dessine une partie qu'à son ouverture. */
+function chargeTestes() {
+  if (!testesRanges) return 'null';
+  return JSON.stringify({ parties: chargeDesTests(testesRanges.parties) }).replace(/</g, '\\u003c');
 }
 
 function vueEcarts() {
@@ -1686,6 +1848,50 @@ tr:last-child td{border-bottom:0}
 .filtre-release__choix.actif{background:var(--accent);color:#fff;border-color:var(--accent)}
 .filtre-release__choix.actif b{color:#fff}
 
+/* ── What is tested ── */
+.guide{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:clamp(20px,3vw,44px);
+  border-top:2px solid var(--encre);padding:18px 0 26px;margin:0 0 30px}
+.guide h3{font-size:11px;text-transform:uppercase;letter-spacing:.11em;color:var(--encre3);font-weight:500;margin:0 0 10px}
+.guide h3:not(:first-child){margin-top:20px}
+.guide p{margin:0 0 10px;font-size:14px;max-width:70ch}
+.guide__pages{margin:0;display:grid;gap:7px}
+.guide__pages div{display:grid;grid-template-columns:128px minmax(0,1fr);gap:12px;font-size:14px}
+.guide__pages dt a{font-weight:600;text-decoration:none}
+.guide__pages dd{margin:0}
+.guide__bloc--limite p b{color:var(--encre)}
+.guide__attente{border:1px dashed var(--regle);border-radius:6px;padding:10px 12px;color:var(--encre2)}
+.ruban{display:inline-flex;align-items:center;white-space:nowrap}
+.outils-testes{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:0 0 12px}
+.recherche{display:flex;flex-direction:column;gap:4px;flex:1 1 260px;font-size:12px;color:var(--encre3)}
+.recherche input{font:inherit;font-size:15px;color:var(--encre);background:var(--panneau);
+  border:1px solid var(--regle);border-radius:3px;padding:8px 10px;min-width:0}
+.parties{border-top:2px solid var(--encre)}
+.partie{border-bottom:1px solid var(--regle)}
+.partie--sans{opacity:.45}
+.partie__tete{cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 14px;
+  padding:14px 4px 14px 22px;position:relative;list-style:none}
+.partie__tete::-webkit-details-marker{display:none}
+.partie__tete::before{content:'+';position:absolute;left:2px;top:13px;font-family:"JetBrains Mono",monospace;color:var(--encre3)}
+.partie[open]>.partie__tete::before{content:'−'}
+.partie__tete:hover{background:var(--panneau2)}
+.partie__nom{font-family:Archivo,sans-serif;font-size:18px;font-weight:700;color:var(--encre)}
+.partie__total{font-family:"JetBrains Mono",monospace;font-size:14px;color:var(--encre);text-align:right}
+.partie__trouves{grid-column:2;font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--accent);text-align:right}
+.partie__trouves:empty{display:none}
+.partie__alertes{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:5px}
+.partie__detail{grid-column:1/-1;font-size:13px;color:var(--encre2)}
+.partie__detail b{color:var(--encre)}
+.partie__quoi{grid-column:1/-1;font-size:13px;color:var(--encre3);max-width:90ch}
+.partie__corps{padding:0 0 14px 22px}
+.fichier-tests{border-top:1px solid var(--regle)}
+.fichier-tests summary{cursor:pointer;padding:9px 0;font-size:13px;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;overflow-wrap:anywhere}
+.fichier-tests summary .mono{color:var(--encre)}
+.raison{flex-basis:100%;font-size:12px;color:var(--encre3)}
+.tests-du-fichier{margin:0 0 12px}
+.tests-du-fichier td{padding:8px 12px 8px 0;font-size:13px;overflow-wrap:anywhere}
+.tests-du-fichier th{padding:8px 12px 8px 0}
+.tests-du-fichier td:nth-child(2){white-space:nowrap}
+
 /* ── Divers ── */
 .alerte{border-left:3px solid var(--ko);padding:2px 0 2px 18px;color:var(--encre2);
   font-size:16px;margin:0 0 26px;max-width:80ch}
@@ -1774,12 +1980,13 @@ td.dette{color:var(--ko);font-weight:600}
 <body>
 <div class="app">
   <aside class="rail">
-    <a class="marque" href="#chantiers">
+    <a class="marque" href="#testes">
       <b>Quality</b>
       <span>NODAL-AGENTS</span>
     </a>
     <nav id="nav">
-      <a href="#chantiers" class="actif">Work in flight <b>${(s.chantiers?.cartes ?? []).filter((c) => c.colonne !== 'Done').length}</b></a>
+      <a href="#testes" class="actif">What is tested <b>${testesRanges ? n(testesRanges.total) : '·'}</b></a>
+      <a href="#chantiers">Work in flight <b>${(s.chantiers?.cartes ?? []).filter((c) => c.colonne !== 'Done').length}</b></a>
       <a href="#capacites">Capabilities <b>${
         (s.capacites?.registre ?? []).filter(
           (c) => c.ecran?.etat === 'echouee' || c.moteur?.etat === 'echouee',
@@ -1787,9 +1994,8 @@ td.dette{color:var(--ko);font-weight:600}
       }</b></a>
       <a href="#ecarts">Gaps <b>${ecarts().length}</b></a>
       <a href="#parcours">Journeys <b>${s.resume.specsE2eJoueesParLaCi}/${s.resume.specsE2e}</b></a>
-      <a href="#memoire">Test memory <b>${(s.memoire?.instables ?? 0) + (s.memoire?.casses ?? 0)}</b></a>
       <p class="rubrique">How it runs</p>
-      <a href="#vue" class="discret">Tests, overview</a>
+      <a href="#vue" class="discret">Code coverage</a>
       <a href="#banc" class="discret">Bench <b>${s.banc.sections.length}</b></a>
       <a href="#ci" class="discret">Triggers <b>${s.ci.length}</b></a>
       <a href="#historique" class="discret">History <b>${historique.length}</b></a>
@@ -1807,6 +2013,7 @@ td.dette{color:var(--ko);font-weight:600}
     </footer>
   </aside>
   <main class="contenu">
+    ${vueTestes()}
     ${vueChantiers()}
     ${vueCapacites()}
     ${vueEnsemble()}
@@ -1814,13 +2021,71 @@ td.dette{color:var(--ko);font-weight:600}
     ${vueParcours()}
     ${vueBanc()}
     ${vueCi()}
-    ${vueMemoire()}
     ${vueHistorique()}
   </main>
 </div>
 ${modaleExplications()}
 <script>
   window.__EN_VOL = ${chargeEnVol()};
+</script>
+<script>
+  window.__TESTES = ${chargeTestes()};
+</script>
+<script>
+// « What is tested » : une partie ne se dessine qu'à son ouverture. Les
+// fonctions sont INSCRITES depuis lib.mjs (SCRIPT_TESTES) : la page exécute
+// celles que les tests éprouvent.
+(function(){
+  ${SCRIPT_TESTES}
+  var charge = window.__TESTES || { parties: [] };
+  var parId = {};
+  charge.parties.forEach(function(p){ parId[p.id] = p; });
+  var champ = document.getElementById('recherche-tests');
+  var parties = document.querySelectorAll('details.partie');
+  // Au-delà, une recherche trop large dessinerait des milliers de lignes d'un
+  // coup ; la partie DIT combien elle en tait.
+  var PLAFOND_RECHERCHE = 300;
+  function requete(){ return champ ? champ.value.trim() : ''; }
+  function remplir(d){
+    var q = requete();
+    if (d.getAttribute('data-rempli') === q) return;
+    var p = parId[d.getAttribute('data-partie')] || { fichiers: [] };
+    var r = htmlDuneCharge(p, q, q ? PLAFOND_RECHERCHE : 0);
+    d.querySelector('.partie__corps').innerHTML = r.html;
+    d.setAttribute('data-rempli', q);
+  }
+  parties.forEach(function(d){
+    d.addEventListener('toggle', function(){ if (d.open) remplir(d); });
+  });
+  document.querySelectorAll('[data-parties]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var ouvrir = b.getAttribute('data-parties') === 'ouvrir';
+      parties.forEach(function(d){ d.open = ouvrir; });
+    });
+  });
+  var minuterie = null;
+  function chercher(){
+    var q = requete();
+    parties.forEach(function(d){
+      var badge = d.querySelector('.partie__trouves');
+      var p = parId[d.getAttribute('data-partie')] || { fichiers: [] };
+      if (!q) {
+        badge.textContent = '';
+        d.classList.remove('partie--sans');
+        if (d.open) remplir(d);
+        return;
+      }
+      var n = trouvesDansCharge(p, q);
+      badge.textContent = n > 0 ? n + (n > 1 ? ' matches' : ' match') : 'no match';
+      d.classList.toggle('partie--sans', n === 0);
+      if (n > 0) { d.open = true; remplir(d); } else { d.open = false; }
+    });
+  }
+  if (champ) champ.addEventListener('input', function(){
+    clearTimeout(minuterie);
+    minuterie = setTimeout(chercher, 180);
+  });
+})();
 </script>
 <script>
 (function(){
@@ -1871,7 +2136,7 @@ ${modaleExplications()}
       appliquerFiltre();
     });
   });
-  montrer(vueDuHash() || '#chantiers');
+  montrer(vueDuHash() || '#testes');
   appliquerFiltre();
 
   // « Comprendre cette page » : une seule modale, remplie depuis les
