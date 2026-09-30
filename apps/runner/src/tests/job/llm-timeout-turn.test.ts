@@ -20,7 +20,14 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agentJobs, agents, agentWorkspaces } from '@nodal-agents/db';
+import {
+  eq,
+  agentJobs,
+  agents,
+  agentWorkspaces,
+  agentSkills,
+  agentSkillAssignments,
+} from '@nodal-agents/db';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1130,6 +1137,21 @@ describe('la sonde git regarde le dossier du job (#507) @cap:organiser-equipe/mo
       .insert(agentWorkspaces)
       .values({ agentId: seed.agentId, label: 'Agent', path: dossierAgent, position: 0 })
       .returning({ id: agentWorkspaces.id });
+    // Le bloc git ne se rend qu'à un job qui peut lancer git : l'agent tient
+    // `run_command` par son groupe d'outils, comme dans la vraie vie.
+    const [shell] = await db
+      .insert(agentSkills)
+      .values({
+        entityId: seed.entityId,
+        name: 'Command execution',
+        slug: `git-probe-shell-${Date.now()}`,
+        content: 'Run commands.',
+        requiredBuiltins: ['run_command'],
+      })
+      .returning({ id: agentSkills.id });
+    await db
+      .insert(agentSkillAssignments)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, skillId: shell!.id });
     try {
       const jobId = await insertJob({ jobFolder: dossierJob });
       const argsBruts: Array<Parameters<RunnerDeps['llmClient']['generateText']>[0]> = [];
@@ -1158,6 +1180,8 @@ describe('la sonde git regarde le dossier du job (#507) @cap:organiser-equipe/mo
       expect(systeme).not.toContain('branch: branche-de-l-agent');
     } finally {
       await db.delete(agentWorkspaces).where(eq(agentWorkspaces.id, ws!.id));
+      await db.delete(agentSkillAssignments).where(eq(agentSkillAssignments.skillId, shell!.id));
+      await db.delete(agentSkills).where(eq(agentSkills.id, shell!.id));
     }
   }, 30_000);
 });

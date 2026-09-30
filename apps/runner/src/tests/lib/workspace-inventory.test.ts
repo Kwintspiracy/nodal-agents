@@ -33,22 +33,60 @@ describe('buildSharedWorkspaceInventory', () => {
     ).toBeNull();
   });
 
-  it('lists directories first with recursive file counts and child names, then root files', async () => {
+  it('lists folders first with their recursive file count, never the names inside; root files are counted', async () => {
+    // #638 : les NOMS de fichiers sont des livrables d'hier. Le banc `recipe`
+    // a vu `caviar-aubergines.html` dans cette liste et le root l'a rouvert au
+    // lieu de faire la demande du jour. Le dossier et son compte disent où
+    // ranger et qu'il y a quelque chose ; le contenu se lit à la demande.
     await mkdir(join(root, 'workflows'));
     await writeFile(join(root, 'workflows', 'sauna.json'), '{}');
     await writeFile(join(root, 'workflows', 'zimage.json'), '{}');
     await mkdir(join(root, 'outputs', 'v3'), { recursive: true });
     await writeFile(join(root, 'outputs', 'v3', 'img.png'), 'x');
     await writeFile(join(root, 'note.md'), 'hello');
+    await writeFile(join(root, 'budget.xlsx'), 'x');
 
     const text = await buildSharedWorkspaceInventory(root);
 
-    // Recursive count includes nested files; children show the first level.
-    expect(text).toContain('- workflows/ (2 files): sauna.json, zimage.json');
-    expect(text).toContain('- outputs/ (1 file): v3/');
-    expect(text).toContain('- note.md');
-    // Directories listed before files.
-    expect(text!.indexOf('workflows/')).toBeLessThan(text!.indexOf('note.md'));
+    expect(text).toBe(
+      ['- outputs/ (1 file)', '- workflows/ (2 files)', '- 2 files at the root'].join('\n'),
+    );
+    for (const name of ['sauna.json', 'zimage.json', 'v3', 'img.png', 'note.md', 'budget.xlsx']) {
+      expect(text, `le nom « ${name} » est listé`).not.toContain(name);
+    }
+  });
+
+  it('reconstitue le cas caviar du 01/10 : le livrable d’hier n’est plus nommé', async () => {
+    // L'espace partagé réel du job a22e173f (01/10), en modèle réduit : un
+    // dossier au nom du plat, ses trois fichiers, et les dossiers de moyens.
+    await mkdir(join(root, 'caviar-aubergines'));
+    for (const f of ['caviar-aubergines.html', 'caviar-aubergines.pdf', 'photo.jpg']) {
+      await writeFile(join(root, 'caviar-aubergines', f), 'x');
+    }
+    await mkdir(join(root, 'scripts'));
+    await writeFile(join(root, 'scripts', '_gen_redhead.py'), 'x');
+    await mkdir(join(root, 'workflows'));
+    await writeFile(join(root, 'budget-septembre.xlsx'), 'x');
+
+    const text = await buildSharedWorkspaceInventory(root);
+
+    expect(text).toBe(
+      [
+        '- caviar-aubergines/ (3 files)',
+        '- scripts/ (1 file)',
+        '- workflows/ (0 files)',
+        '- 1 file at the root',
+      ].join('\n'),
+    );
+    for (const name of [
+      'caviar-aubergines.html',
+      'caviar-aubergines.pdf',
+      'photo.jpg',
+      '_gen_redhead.py',
+      'budget-septembre.xlsx',
+    ]) {
+      expect(text, `le nom « ${name} » est listé`).not.toContain(name);
+    }
   });
 
   it('ignores node_modules and dot-entries entirely', async () => {
@@ -60,32 +98,24 @@ describe('buildSharedWorkspaceInventory', () => {
 
     const text = await buildSharedWorkspaceInventory(root);
 
-    expect(text).toBe('- real.txt');
+    expect(text).toBe('- 1 file at the root');
   });
 
-  it('elides root entries beyond the cap instead of growing unbounded', async () => {
+  it('elides folders beyond the cap instead of growing unbounded; root files stay one line', async () => {
     for (let i = 0; i < 35; i++) {
+      await mkdir(join(root, `dir-${String(i).padStart(2, '0')}`));
+    }
+    for (let i = 0; i < 40; i++) {
       await writeFile(join(root, `file-${String(i).padStart(2, '0')}.txt`), 'x');
     }
 
     const text = await buildSharedWorkspaceInventory(root);
 
-    expect(text).toContain('- file-00.txt');
-    expect(text).toContain('5 more root entries elided');
-    // 30 shown + 1 elision line.
-    expect(text!.split('\n')).toHaveLength(31);
-  });
-
-  it('caps child names per directory with an ellipsis', async () => {
-    await mkdir(join(root, 'big'));
-    for (let i = 0; i < 12; i++) {
-      await writeFile(join(root, 'big', `f${String(i).padStart(2, '0')}.txt`), 'x');
-    }
-
-    const text = await buildSharedWorkspaceInventory(root);
-
-    expect(text).toContain('- big/ (12 files): f00.txt');
-    expect(text).toContain('f07.txt, …');
-    expect(text).not.toContain('f08.txt');
+    expect(text).toContain('- dir-00/ (0 files)');
+    expect(text).not.toContain('dir-30/');
+    expect(text).toContain('- … 5 more folders elided');
+    expect(text).toContain('- 40 files at the root');
+    // 30 folders + 1 elision line + 1 root-files line.
+    expect(text!.split('\n')).toHaveLength(32);
   });
 });

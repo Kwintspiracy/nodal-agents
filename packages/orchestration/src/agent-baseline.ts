@@ -83,7 +83,7 @@ const namesOnlyHeldTools = (text: string, availableTools?: readonly string[]): b
  * ont déjà payé une fois. Une skill sans `requiredBuiltins` n'est jamais
  * concernée, donc rien de ce qui existait ne change.
  */
-const hasRequiredBuiltins = (
+export const hasRequiredBuiltins = (
   skill: { requiredBuiltins?: string[] },
   availableTools?: readonly string[],
 ): boolean => {
