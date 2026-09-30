@@ -30,6 +30,17 @@
 // refait). La règle corrigée — les moyens se réutilisent, un livrable se
 // produit pour la demande — est dite une fois, dans le bloc `## Shared
 // workspace` du prompt, à côté de l'inventaire qu'elle gouverne.
+//
+// RÉGIME du 01/10/2026 (lot 2 de la 0.9.5) : 2 813 caractères ramenés à une
+// règle par sujet, sans perdre les corrections du 26/08 (portée PARTAGÉE, le
+// dossier propre d'abord, pas de `shared/` inventé dedans). Ce qui est parti :
+//  - « One workflow = one graph » et « Scripts must be reusable » tiennent en
+//    une ligne, vraie pour tout fichier réutilisable : les valeurs d'un run
+//    sont des arguments ;
+//  - « Skill bundles are code » garde sa phrase ; le détail (la variable
+//    NODAL_SHARED_WORKSPACE, déplacer les fichiers) est dit par l'outil qui
+//    en a besoin, au moment où il sert : description de `run_skill_script` et
+//    son avertissement `bundle_pollution` (tools/builtin/run-skill-script.ts).
 
 import type { SystemSkill } from '../types';
 
@@ -44,33 +55,10 @@ export const workspaceHygieneSkill: SystemSkill = {
   surfaces: ['job'],
   content: `## Workspace hygiene
 
-This is how you keep the SHARED workspace usable. It is a durable, common asset — not a scratch pad — and everything below applies to what you put THERE.
+This applies to the SHARED workspace, which you have when your \`## Workspaces\` block lists a folder labelled \`shared\` (no \`## Shared workspace\` listing means it was not built this turn, never that the folder is missing). If your \`## Workspace\` block names a folder of your own, that folder is where your work goes: do not invent a \`shared/\` path inside it.
 
-You have one when your \`## Workspaces\` block lists a folder labelled \`shared\` — that block is what your tools can actually reach, so it is the only thing to check. When a \`## Shared workspace\` block is also present, it lists what is already in there; its absence means the listing was not built for this turn, never that the folder is missing. If no \`shared\` folder is listed at all, work in the folder your \`## Workspaces\` block names and ignore this skill's folder layout.
-
-### One folder per kind — inside the shared workspace
-
-These are the canonical folders **of the shared workspace**. When you save there, use them and never invent parallel ones (no \`outputs_v2/\`, \`my_workflows/\`, files dumped at the root):
-- \`workflows/\` — workflow definitions (JSON)
-- \`outputs/\` — generated artifacts (images, exports)
-- \`scripts/\` — reusable scripts
-- \`documents/\` — reports, notes, deliverables
-
-This layout applies to the shared workspace ONLY. If your \`## Workspace\` block names a folder of your own, that folder is where your work goes — do not invent a \`shared/\` path inside it, and do not reach for the folders above.
-
-### One workflow = one graph
-
-A saved workflow file is a reusable GRAPH (models, samplers, node wiring) — not a snapshot of one run. FORBIDDEN: saving a workflow file whose only difference from an existing one is the prompt, seed, or other run values — that is clutter, never value. Pass those as execution arguments instead (e.g. \`run_workflow.py --args {"prompt": …, "seed": …}\`) against the EXISTING file. The only reason to save a new workflow file is a change to the graph itself (different model, different node chain) — and it is named after the graph, not the scene.
-
-### Scripts must be reusable
-
-A script you write takes its variable values (ids, paths, prompts) as ARGUMENTS — never hardcoded in the file. If you find yourself editing a script only to change a value, parametrize it instead. Before writing a helper, check whether an installed skill already ships one (\`skill_view\` lists its scripts).
-
-### Skill bundles are code, not storage
-
-Never write generated artifacts into an installed skill's folder. Point a skill script's output argument at a real workspace instead — your own if you have one, otherwise the shared workspace, whose absolute path is in the \`NODAL_SHARED_WORKSPACE\` environment variable of every script/command you run. If a \`warning\` reports bundle writes, move those files out before finishing.
-
-### Leave it clean
-
-Temporary diagnostic files (probe scripts, dumps, logs) are deleted before you finish the task — or not written to the workspace at all when \`stdout\` suffices.`,
+- One folder per kind in the shared workspace: \`workflows/\`, \`outputs/\`, \`scripts/\`, \`documents/\`; never parallel ones or files at its root.
+- A workflow or script takes its run values (prompt, seed, ids, paths) as arguments: save a new file only when the graph or the logic changes.
+- Never write generated files into a skill's folder: point a script's output at your own folder if you have one, otherwise the shared workspace.
+- Delete temporary diagnostic files before you finish.`,
 };

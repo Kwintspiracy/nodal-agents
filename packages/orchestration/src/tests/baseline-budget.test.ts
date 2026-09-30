@@ -13,23 +13,20 @@
 // Le budget est un test, sur le modèle de chat-surface-cost.test.ts : faire
 // regrossir le socle devient une décision, pas une dérive.
 //
-// Le seuil, 4 500 : le socle budgété en fait 4 165. La cible annoncée du lot
-// était 5 000, mais à 5 000 la section « Anti-loop limits » (718 car.) pouvait
-// revenir sans que rien ne rougisse ; à 4 500, chacune des sections retirées,
-// remise seule, fait sortir du budget, la plus petite (le bloc d'approbation,
-// 343 car.) comprise. 335 caractères de marge : une phrase, pas une section.
+// Le seuil, 5 000, et pourquoi il n'est pas plus bas : le socle budgété en
+// fait 4 843. Chacune des sections retirées, remise seule, le fait sortir du
+// budget, la plus petite (le bloc d'approbation, 343 car.) comprise. Descendre
+// le socle sous ~4 660 sans baisser le seuil rouvrirait ce trou : la marge est
+// voulue petite, une phrase, pas une section.
 //
-// Ce que le budget NE compte PAS, et pourquoi : deux blocs du socle
-// appartiennent à d'autres chantiers du même lot. `## Workspace hygiene` porte
-// la règle de reprise corrigée par #640 ; le bloc de rôle (`## Delegation
-// discipline` / `## Capitalize what you learn`) est refondu avec le mode
-// d'emploi de l'équipe. Ils restent tenus par le plafond du socle ENTIER,
+// Ce que le budget NE compte PAS : le bloc de rôle (`## Delegation discipline`
+// / `## Capitalize what you learn`), refondu avec le mode d'emploi de l'équipe
+// par un autre chantier du lot. Il reste tenu par le plafond du socle ENTIER,
 // plus bas.
 
 import { describe, it, expect } from 'vitest';
 import { buildBaselineBlock } from '../agent-baseline';
 import { KNOWN_TOOL_NAME_UNIVERSE } from '../router/tool-availability';
-import { skillContentOn, systemSkills } from '@nodal-agents/catalog';
 
 /** Le job le plus large : tous les outils connus, donc toutes les skills de socle. */
 const ALL_TOOLS = [...KNOWN_TOOL_NAME_UNIVERSE];
@@ -39,34 +36,30 @@ const socle = (role: 'orchestrator' | 'agent'): string =>
 /** Les sections `## ` d'un bloc, titre compris. */
 const sections = (block: string): string[] => block.split(/\n\n(?=## )/);
 
-/**
- * Ce que tiennent d'autres chantiers du lot (voir l'en-tête) : le TEXTE exact
- * de la skill d'hygiène, lu dans le catalogue — pas sa section entière, pour
- * qu'un paragraphe accolé derrière elle reste compté —, et le bloc de rôle.
- */
-const HYGIENE = skillContentOn(systemSkills.find((s) => s.slug === 'workspace-hygiene')!, 'job')!;
+/** Le bloc de rôle, tenu par un autre chantier (voir l'en-tête). */
 const ROLE_SECTIONS = ['## Delegation discipline', '## Capitalize what you learn'];
 const budgeted = (block: string): string =>
-  sections(block.replace(HYGIENE, ''))
+  sections(block)
     .filter((s) => !ROLE_SECTIONS.some((h) => s.startsWith(h)))
     .join('\n\n');
 
 describe('le socle d’un job tient dans son budget', () => {
   for (const role of ['orchestrator', 'agent'] as const) {
-    it(`${role} : le socle hors hygiène et bloc de rôle ≤ 4 500 caractères`, () => {
+    it(`${role} : le socle hors bloc de rôle ≤ 5 000 caractères`, () => {
       const block = socle(role);
-      // Le filtre retire bien ce qu'il dit, et seulement ça : sans ces
-      // sections, le test mesurerait un bloc vidé.
-      expect(block).toContain(HYGIENE);
-      expect(budgeted(block)).not.toContain('## Workspace hygiene');
-      expect(budgeted(block)).toContain('## Verify before done');
+      // Le filtre retire le bloc de rôle et seulement lui : sans ces
+      // assertions, le test pourrait mesurer un bloc vidé.
+      expect(sections(block).some((s) => ROLE_SECTIONS.some((h) => s.startsWith(h)))).toBe(true);
+      expect(budgeted(block)).not.toMatch(/## (Delegation discipline|Capitalize what you learn)/);
+      for (const kept of ['## Verify before done', '## Workspace hygiene', '## Memory discipline'])
+        expect(budgeted(block)).toContain(kept);
       const n = budgeted(block).length;
-      expect(n, `socle budgété : ${n} car.`).toBeLessThanOrEqual(4_500);
+      expect(n, `socle budgété : ${n} car. (19 651 avant le régime)`).toBeLessThanOrEqual(5_000);
     });
 
-    it(`${role} : le socle entier, hygiène et rôle compris, ≤ 8 000 caractères`, () => {
+    it(`${role} : le socle entier, bloc de rôle compris, ≤ 6 000 caractères`, () => {
       const n = socle(role).length;
-      expect(n, `socle entier : ${n} car. (20 304 avant le régime)`).toBeLessThanOrEqual(8_000);
+      expect(n, `socle entier : ${n} car. (20 304 avant le régime)`).toBeLessThanOrEqual(6_000);
     });
   }
 });
@@ -98,6 +91,14 @@ describe('chaque règle gardée garde une phrase repérable', () => {
     ['une question sur Nodal est à toi (#455)', 'never delegate it to a teammate'],
     ['corriger un souvenir faux', 'mark_memory_outdated'],
     ['pas d’interdiction de chercher', 'discovery ban'],
+    ['le dossier propre d’abord (26/08)', 'that folder is where your work goes'],
+    [
+      'pas de `shared/` inventé dans son dossier (26/08)',
+      'do not invent a `shared/` path inside it',
+    ],
+    ['un dossier par genre, dans le partagé', 'One folder per kind in the shared workspace'],
+    ['les valeurs d’un run sont des arguments (ec21edb5)', 'takes its run values'],
+    ['rien dans le dossier d’une skill', "Never write generated files into a skill's folder"],
   ])('%s', (_rule, phrase) => {
     for (const role of ['orchestrator', 'agent'] as const) {
       expect(socle(role), `${role} a perdu « ${phrase} »`).toContain(phrase);
@@ -114,7 +115,10 @@ describe('les sections retirées ne reviennent pas', () => {
   //  - When a call has to be approved : PURPOSE_DESCRIPTION dans le schéma et
   //    missingPurposeInstruction au refus (tools/src/purpose.ts) ;
   //  - Especially you : la ligne « Be decisive » de safe-tool-use, pour tous ;
-  //  - Signals, Excuses, Anti-patterns : redites du cœur de Verify gardé.
+  //  - Signals, Excuses, Anti-patterns : redites du cœur de Verify gardé ;
+  //  - One workflow = one graph, Skill bundles are code : une ligne chacune
+  //    dans l'hygiène ; le détail des bundles est dans `run_skill_script` (sa
+  //    description et l'avertissement `bundle_pollution`).
   const GONE = [
     'Anti-loop limits',
     'Max 50 tool calls',
@@ -125,6 +129,8 @@ describe('les sections retirées ne reviennent pas', () => {
     'When a call has to be approved',
     'Especially you',
     'Detection rules',
+    'One workflow = one graph',
+    'Skill bundles are code, not storage',
   ];
   for (const surface of ['job', 'chat'] as const) {
     for (const role of ['orchestrator', 'agent'] as const) {

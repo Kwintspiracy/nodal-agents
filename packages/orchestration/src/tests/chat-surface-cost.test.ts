@@ -169,16 +169,20 @@ describe('la surface chat ne reçoit que ce qu’elle peut obéir', () => {
   // chat reçoit nettement moins de texte. Ce qui change ici : personne ne peut
   // plus lire ce vert comme la vérification du chiffre en jetons.
   //
-  // 40 % → 30 % le 01/10/2026, et c'est le JOB qui a bougé : le régime du
-  // socle lui a retiré ~12 000 caractères de redites (baseline-budget.test.ts),
-  // au chat ~1 700. Sur cette fixture, chat 14 711 → 12 963, job 31 559 →
-  // 19 498 (−53 % → −34 %) : l'écart relatif baisse parce que le job a
-  // maigri, pas parce que le chat a regrossi. Le socle du job a désormais son
-  // propre budget.
-  it('le prompt du chat pèse au moins 30 % de caractères de moins qu’un job', async () => {
+  // Un PLAFOND sur le chat, plus un rapport au job, depuis le 01/10/2026. Le
+  // rapport (« 40 % de moins qu'un job ») mesurait le chat contre un job qui
+  // portait des pages de redites : le régime du socle en a retiré ~14 000
+  // caractères au job (baseline-budget.test.ts) et ~2 100 au chat, et le
+  // rapport a rougi alors que le chat avait MAIGRI (fixture : chat 14 711 →
+  // 12 963, job 31 559 → 17 362). Chaque régime du job l'aurait refait
+  // rougir. Ce que ce cas protège, c'est le coût du chat : il est borné
+  // directement. Ce que le chat ne reçoit pas du job, les cas ci-dessus le
+  // prouvent par le contenu.
+  it('le prompt du chat reste sous son plafond, et sous celui d’un job', async () => {
     const c = (await chat()).length;
     const j = (await job()).length;
-    expect(c, `chat ${c} car. vs job ${j} car.`).toBeLessThan(j * 0.7);
+    expect(c, `chat ${c} car. (14 711 avant le régime du socle)`).toBeLessThanOrEqual(13_500);
+    expect(c, `chat ${c} car. vs job ${j} car.`).toBeLessThan(j);
   });
 });
 

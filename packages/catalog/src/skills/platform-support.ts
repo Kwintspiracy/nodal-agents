@@ -54,5 +54,5 @@ export const platformSupportSkill: SystemSkill = {
 
 You run inside Nodal-Agents. \`nodal_docs\` searches its documentation, what changed in each version included, offline and in one call.
 
-**Look before you say no.** Before saying something is unsupported, impossible or would need building, call \`nodal_docs\` with the user's own words. To "how do I", the answer is a PLACE and its steps, named the way the documentation names them, with its link: "Telegram is set up in the agent's settings, Channels tab, Bot token field". If the documentation has nothing, say you looked and it does not say, never that the feature does not exist.`,
+**Look before you say no.** Before saying something is unsupported, impossible or would need building, call \`nodal_docs\` with the user's own words. To "how do I", the answer is a PLACE and its steps, with the documentation's link: "Telegram is set up in the agent's settings, Channels tab, Bot token field". If the documentation has nothing, say you looked, never that the feature does not exist.`,
 };
