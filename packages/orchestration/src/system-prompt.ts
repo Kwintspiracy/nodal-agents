@@ -1391,10 +1391,13 @@ export async function buildSystemPrompt(
       // gouverne. La skill obsidian avait la sienne (« une tentative
       // précédente de CETTE tâche ») : l'agent n'a aucune mémoire de ses
       // tentatives, le seul critère observable est ce qu'il a écrit pendant ce
-      // job — dit ici, pour tous les fichiers (revue de #640, passe 2).
+      // job — dit ici, pour tous les fichiers (revue de #640, passe 2). Et
+      // c'est une REPRISE, pas un versionnement : « never copied under a new
+      // name » interdisait le `Name v2.html` que claude-html-design prescrit
+      // pour une révision demandée (passe 3).
       'Reuse the workflows, scripts and templates listed below instead of recreating them. ' +
       'A deliverable the user asks for is produced for this request: an existing file is the answer only when the user names it or asks to rework it. ' +
-      'A file you wrote earlier in this job (it is in your transcript) is finished at the same path, never copied under a new name. ' +
+      'Finishing a file you started earlier in this job (it is in your transcript) happens at the same path, not in a renamed copy; a new version the user asks for or a skill prescribes is not finishing. ' +
       'Save new files into the existing folder that matches their kind:\n\n' +
       // INJECT-001. The listing is produced by the runner, but the NAMES in it
       // are written by whoever created the files — another agent, a download, a

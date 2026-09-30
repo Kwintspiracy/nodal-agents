@@ -1113,10 +1113,15 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
      * la règle tient en plusieurs phrases (ce qui se reprend, ce qui ne se
      * reprend pas), et c'est un seul énoncé.
      *
-     * UNE exclusion, et elle est nommée : une phrase dont l'objet est une
-     * SKILL (revue de #640, passe 2, constat 3). Le bloc `## Skills` dit « NEVER
-     * rebuild or re-convert something the skill already provides ». Ce n'est
-     * pas une seconde énonciation de la règle, c'en est une autre :
+     * Les formes HISTORIQUES de la règle (« do not re-write », « referencing
+     * the existing file », « already answers the task » — la skill obsidian
+     * d'avant #638) sont comptées aussi, même sans verbe de la liste (revue de
+     * #640, passe 3).
+     *
+     * UNE exclusion, et c'est UNE phrase, citée : celle du bloc `## Skills`
+     * sur les bundles (revue de #640, passes 2 et 3). « NEVER rebuild or
+     * re-convert something the skill already provides » n'est pas une seconde
+     * énonciation de la règle, c'en est une autre :
      *   - son objet est le bundle d'une skill — du code, jamais un lieu de
      *     stockage (workspace-hygiene, « Skill bundles are code, not
      *     storage »). Aucun livrable n'y vit, elle ne peut donc pas servir le
@@ -1124,14 +1129,16 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
      *   - elle vaut pour tout agent qui a une skill, avec ou sans partagé ; la
      *     fondre dans le bloc `## Shared workspace` la ferait disparaître pour
      *     un agent sans inventaire.
-     * Le cas « skill assignée » ci-dessous vérifie qu'elle est bien là, pour
-     * que l'exclusion ne cache rien d'autre.
+     * Le cas « skill assignée » ci-dessous vérifie qu'elle est bien là, et le
+     * test du détecteur qu'une règle de reprise de FICHIER qui nomme une skill
+     * reste comptée : l'exclusion ne cache rien d'autre.
      */
-    const portesurUneSkill = /\bskills?\b|\bskill's\b/i;
+    const PHRASE_DES_BUNDLES = 'NEVER rebuild or re-convert something the skill already provides';
     function phrasesDeReprise(prompt: string): string[] {
       const verbe =
         /\b(reus(e|ing)|re-use|updat(e|ing)|adapt(ing)?|rework(ing)?|extend(ing)?|enrich(ing)?|rebuild(ing)?|recreat(e|ing))\b|\bload\b[^.]*\badapt/i;
       const existant = /\b(existing|already|listed)\b/i;
+      const historique = /do not re-?write|referencing the existing file|already answers the task/i;
       return prompt
         .split('\n')
         .filter((paragraphe) =>
@@ -1139,10 +1146,27 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
             .split(/(?<=[.:!?])\s+/)
             .some(
               (phrase) =>
-                verbe.test(phrase) && existant.test(phrase) && !portesurUneSkill.test(phrase),
+                !phrase.includes(PHRASE_DES_BUNDLES) &&
+                ((verbe.test(phrase) && existant.test(phrase)) || historique.test(phrase)),
             ),
         );
     }
+
+    it('le détecteur compte les formes historiques, et une règle de fichier qui nomme une skill', () => {
+      for (const phrase of [
+        'If the content already answers the task, stop there.',
+        '**DO NOT RE-WRITE**.',
+        'Reply to the user referencing the existing file.',
+        // Nommer une skill ne met pas une règle de reprise de fichier à l'abri.
+        'Before writing, reuse the existing report a skill produced last time.',
+      ]) {
+        expect(phrasesDeReprise(phrase), phrase).toHaveLength(1);
+      }
+      // La seule phrase exclue, et elle seule.
+      expect(
+        phrasesDeReprise(`NEVER reimplement a skill's logic inline, and ${PHRASE_DES_BUNDLES}.`),
+      ).toEqual([]);
+    });
 
     const cas: Array<{
       titre: string;
@@ -1184,15 +1208,20 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
             path: 'C:\\Users\\kwint\\Documents\\Dev',
           });
         }
+        // La VRAIE skill claude-html-design (revue de #640, passe 3) : elle
+        // prescrit, pour une révision importante, de garder `Name.html` et
+        // d'écrire `Name v2.html`. La règle du prompt ne doit pas le lui
+        // interdire.
+        const htmlDesign = systemSkills.find((s) => s.slug === 'claude-html-design')!;
         if (c.skill) {
           const [skill] = await db
             .insert(agentSkills)
             .values({
               entityId,
-              name: 'Report export',
-              slug: `report-export-${Date.now()}`,
-              description: 'Export a report with the bundled script.',
-              content: 'Run the bundled export script.',
+              name: htmlDesign.name,
+              slug: `${htmlDesign.slug}-${Date.now()}`,
+              description: htmlDesign.description,
+              content: htmlDesign.content,
             })
             .returning();
           await db
@@ -1230,9 +1259,26 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
         const bloc = prompt.slice(prompt.indexOf('## Shared workspace'));
         expect(bloc).toMatch(/deliverable[^.]*for this request/i);
         expect(bloc).toMatch(/existing file is the answer only when the user names it/i);
-        // Le seul critère observable de reprise d'un fichier : l'avoir écrit
-        // soi-même pendant CE job. Dit ici, une fois, pour tous les fichiers.
-        expect(regle).toMatch(/file you wrote earlier in this job[^.]*same path/i);
+        // Le seul critère observable de reprise d'un fichier : l'avoir
+        // commencé soi-même pendant CE job. Dit ici, une fois, pour tous les
+        // fichiers — et c'est une REPRISE, pas un versionnement.
+        expect(regle).toMatch(/file you started earlier in this job[^.]*same path/i);
+        expect(regle).toMatch(/new version[^.]*skill prescribes[^.]*not finishing/i);
+
+        // Aucune contradiction avec une skill qui versionne : toute phrase du
+        // prompt qui refuse une copie renommée porte l'exception de la version
+        // demandée — et la skill prescrit bien ce versionnement (sinon ce test
+        // ne prouverait plus rien).
+        expect(htmlDesign.content).toMatch(/create Name v2\.html/);
+        const refusDeCopie = prompt
+          .split(/(?<=[.!?])\s+|\n/)
+          .filter((p) => /renamed copy|under a new name|slightly different name/i.test(p));
+        expect(refusDeCopie.length, 'la règle ne parle plus de copie renommée').toBeGreaterThan(0);
+        for (const p of refusDeCopie) {
+          expect(p, 'une copie renommée refusée sans l’exception du versionnement').toMatch(
+            /new version[^.]*skill prescribes/i,
+          );
+        }
       });
     }
 

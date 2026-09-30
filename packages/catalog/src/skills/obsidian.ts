@@ -67,7 +67,7 @@ Auto-skip of \`.git\` / \`.obsidian\` / \`node_modules\`.
 
 Atomic write (tempfile + rename). \`create_dirs: true\` creates the missing parent folders. **This is the tool that materializes the result of your work in the vault** — without this call, your work shows up nowhere.
 
-Before writing, \`file_list\` the target folder to place the note next to related ones. If the name you picked is already taken by a note you did not write in this job, pick a distinct, descriptive name: \`file_write\` would replace that note.
+Before writing, \`file_list\` the target folder to place the note next to related ones. If the name you picked is already taken by a note you did not write in this job, and the user did not name that file, pick a distinct, descriptive name: \`file_write\` would replace that note.
 
 ### Edit a note (targeted change)
 

@@ -24,16 +24,18 @@ const c = obsidianSkill.content;
 
 /**
  * Même détecteur que `system-prompt.test.ts` (#638) : une phrase qui porte un
- * verbe de reprise ou d'adaptation ET un mot qui désigne ce qui est déjà là.
+ * verbe de reprise ou d'adaptation ET un mot qui désigne ce qui est déjà là,
+ * ou l'une des formes historiques de la règle.
  */
 function phrasesDeReprise(texte: string): string[] {
   const verbe =
     /\b(reus(e|ing)|re-use|updat(e|ing)|adapt(ing)?|rework(ing)?|extend(ing)?|enrich(ing)?|rebuild(ing)?|recreat(e|ing))\b|\bload\b[^.]*\badapt/i;
   const existant = /\b(existing|already|listed)\b/i;
+  const historique = /do not re-?write|referencing the existing file|already answers the task/i;
   return texte
     .split('\n')
     .flatMap((p) => p.split(/(?<=[.:!?])\s+/))
-    .filter((phrase) => verbe.test(phrase) && existant.test(phrase));
+    .filter((phrase) => (verbe.test(phrase) && existant.test(phrase)) || historique.test(phrase));
 }
 
 describe('obsidian', () => {
@@ -60,5 +62,13 @@ describe('obsidian', () => {
     expect(c).toMatch(
       /already taken by a note you did not write in this job[^\n]*distinct, descriptive name/i,
     );
+  });
+
+  it('écrit au nom que l’utilisateur a donné, même s’il est pris (revue de #640, passe 3)', () => {
+    // « Écris-la dans Recipes/Pain.md » : sans l'exception, la skill ferait un
+    // `Recipes/Pain (2).md` à côté. C'est la même condition que le prompt : un
+    // fichier que l'utilisateur désigne est la cible.
+    const ligne = c.split('\n').find((l) => l.includes('already taken by a note')) ?? '';
+    expect(ligne).toMatch(/the user did not name that file/i);
   });
 });
