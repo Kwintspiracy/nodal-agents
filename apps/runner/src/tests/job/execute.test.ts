@@ -1598,6 +1598,33 @@ describe('executeJob', () => {
         want[c.label] = { kept: c.kept, version: '9.9.1' };
         if (!c.kept) expect(after.prompt).toContain('9.9.1');
       }
+      // A runner that does not know its version (revue de #655, passe 2) :
+      // l'inconnu ne décide rien et n'écrit rien. Le prompt stocké sous 0.9.4
+      // est gardé, et sa version n'est pas écrasée par NULL — sinon la reprise
+      // suivante sous 0.9.4 le réécrirait encore.
+      delete process.env['NODAL_VERSION'];
+      await pendWith(SENTINEL, '0.9.4');
+      const sentUnknown = await run();
+      const afterUnknown = await stored();
+      seen['runner without a known version'] = {
+        kept: sentUnknown.includes(SENTINEL) && afterUnknown.prompt === SENTINEL,
+        version: afterUnknown.version,
+      };
+      want['runner without a known version'] = { kept: true, version: '0.9.4' };
+      // Its tool list changed: the prompt is rewritten (the tools decide), and
+      // the known version stored is still not overwritten by NULL.
+      await pendWith(SENTINEL, '0.9.4');
+      await db
+        .update(agentJobs)
+        .set({ systemPromptTools: ['a_tool_withdrawn_meanwhile'] })
+        .where(eq(agentJobs.id, job!.id));
+      const sentTools = await run();
+      const afterTools = await stored();
+      seen['runner without a known version, tools changed'] = {
+        kept: sentTools.includes(SENTINEL),
+        version: afterTools.version,
+      };
+      want['runner without a known version, tools changed'] = { kept: false, version: '0.9.4' };
       expect(seen).toEqual(want);
     } finally {
       if (previous === undefined) delete process.env['NODAL_VERSION'];

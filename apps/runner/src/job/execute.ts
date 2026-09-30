@@ -2683,6 +2683,10 @@ async function runJobTracked(
   // the one the launcher reads from the installed package, the one the
   // prompt's own Runtime block states: every change of the code reaches an
   // install through a new version, with no constant to remember to bump.
+  // A runner that does not know its version (started without the launcher)
+  // decides nothing with it and writes nothing over a known one (review of
+  // #655, pass 2): it would rewrite a prompt for nothing, then store NULL and
+  // make the next resume under the real version rewrite it again.
   //
   // #612 — the whitelist stays whole; only the SCHEMAS the model reads are
   // chosen per turn (./tool-loading.ts). A job that holds deferred tools gets
@@ -2705,12 +2709,12 @@ async function runJobTracked(
   const deferredNames = deferredToolNames(jobTools);
   let loadedTools: string[] = (job.loadedTools ?? []).filter((n) => deferredNames.has(n));
   const promptTools = [...new Set(jobTools.map((t) => t.name))].sort();
-  const promptVersion = deployment.version ?? null;
+  const promptVersion = deployment.version;
   let systemPrompt = job.systemPrompt;
   if (
     !systemPrompt ||
     !sameToolList(job.systemPromptTools, promptTools) ||
-    job.systemPromptVersion !== promptVersion
+    (promptVersion !== undefined && job.systemPromptVersion !== promptVersion)
   ) {
     // The channel's facts (#613): the channel the send tool will resolve —
     // `activeChannels` is known only from §6 — and what its adapter does
@@ -2731,7 +2735,7 @@ async function runJobTracked(
       .set({
         systemPrompt,
         systemPromptTools: promptTools,
-        systemPromptVersion: promptVersion,
+        systemPromptVersion: promptVersion ?? job.systemPromptVersion,
         updatedAt: new Date(),
       })
       // Sous la prise du run (#566) : un run repris ailleurs pendant sa
