@@ -15,7 +15,7 @@
 // FIGÉS une fois fusionnés. Changer une demande ou un juge = monter `version`.
 
 import { existsSync, statSync } from 'node:fs';
-import { basename, extname, join } from 'node:path';
+import { extname, join } from 'node:path';
 import type { TreeFacts } from './facts';
 import {
   callsOf,
@@ -39,6 +39,15 @@ import {
 import { defineScenario, type AnyScenario } from './types';
 
 const MIN = 60_000;
+
+/**
+ * Le nom d'un fichier, quel que soit le séparateur : les chemins jugés viennent
+ * de Windows (`C:\…`) et le juge tourne aussi sous Linux (la CI), où
+ * `path.basename` ne coupe pas sur l'antislash.
+ */
+export function fileName(p: string): string {
+  return p.split(/[\\/]/).pop() ?? p;
+}
 
 // ─── question ────────────────────────────────────────────────────────────────
 
@@ -524,7 +533,7 @@ const recipe = defineScenario<RecipeObservation>({
       const f = o.printedFiles.find((x) => x.path === path);
       r.push(
         f
-          ? `the request prints an existing file (${basename(f.path.replace(/\\/g, '/'))}${f.existedBefore ? ', made before this run' : ''}), whose pictures the connector does not report: the photo cannot be checked`
+          ? `the request prints an existing file (${fileName(f.path)}${f.existedBefore ? ', made before this run' : ''}), whose pictures the connector does not report: the photo cannot be checked`
           : 'the connector reports no pictures for this request: the photo cannot be checked',
       );
     } else if (last.images.length === 0) r.push('no photo in the printed page');
@@ -608,10 +617,10 @@ const comfyTelegram = defineScenario<ImageObservation>({
           : 'no send was confirmed (the tool never returned ok)',
       );
     } else if (fresh.length > 0) {
-      const names = new Set(fresh.map((i) => basename(i.path).toLowerCase()));
+      const names = new Set(fresh.map((i) => fileName(i.path).toLowerCase()));
       const sentFresh = ok.some((c) => {
         const src = String((parseJson(c.input) as { source?: unknown } | null)?.source ?? '');
-        const name = basename(src.split('?filename=').pop()?.split('&')[0] ?? src).toLowerCase();
+        const name = fileName(src.split('?filename=').pop()?.split('&')[0] ?? src).toLowerCase();
         return names.has(name);
       });
       if (!sentFresh) r.push('the image sent is not one written during the run');

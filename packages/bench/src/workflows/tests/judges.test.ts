@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { TreeFactsSchema, type TreeFacts } from '../facts';
-import { scenarioById, totalIsRight, virginicaPetalSum, FILE_REL } from '../scenarios';
+import { fileName, scenarioById, totalIsRight, virginicaPetalSum, FILE_REL } from '../scenarios';
 import { readXlsxGrid, type SheetGrid } from '../disk';
 import { normalizeUrl, textHasNumber, urlsIn } from '../judge-kit';
 
@@ -276,6 +276,14 @@ describe('what the judges read', () => {
     // Aucun résultat en cache (écrit par openpyxl) : le total est recalculé sur les cellules lues.
     expect(totalIsRight(c)).toBe(true);
     expect(totalIsRight({ ...c, B4: { kind: 'number', value: 57 } })).toBe(false);
+  });
+
+  it('names a file the same way on Windows and on Linux (the CI judges Windows paths)', () => {
+    expect(fileName('~\\.nodalai\\workspaces\\x\\shared\\outputs\\8e113b94_000.png')).toBe(
+      '8e113b94_000.png',
+    );
+    expect(fileName('C:/a/b/c.pdf')).toBe('c.pdf');
+    expect(fileName('c.pdf')).toBe('c.pdf');
   });
 
   it('recomputes the expected value on the pinned CSV', () => {
