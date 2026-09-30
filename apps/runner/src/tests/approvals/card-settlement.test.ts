@@ -933,7 +933,9 @@ describe('every write of a card goes through the card protocol @cap:approuver-un
       .set({ entityId: null })
       .where(eq(approvalRequests.id, approvalId));
     onNextTelegramEdit = async (body) => {
-      expect(body['text']).toBe('⏳ Still pending — run_command. Resolve it from the dashboard.');
+      expect(body['text']).toBe(
+        '⏳ Still pending — run_command. Tap a button below to decide — or resolve it from the dashboard.',
+      );
       await resolveApprovalDecision(deps, testEnv, {
         approvalRequestId: approvalId,
         decision: 'reject',
@@ -994,5 +996,93 @@ describe('every write of a card goes through the card protocol @cap:approuver-un
 
     expect(shown).toEqual({ outcome: 'settled' });
     expect(completedTelegramEdits).toEqual([noButtons('✅ Approved — run_command')]);
+  });
+
+  it('« Back » on a request without entity keeps Approve / Reject while it is pending, and a tap on them decides it', async () => {
+    const { approvalId } = await telegramCard();
+    await db
+      .update(approvalRequests)
+      .set({ entityId: null })
+      .where(eq(approvalRequests.id, approvalId));
+
+    await handleApprovalCallback({
+      update: tap(`apr:${approvalId}:wb`),
+      receivingAgentId: seed.agentId,
+      botToken: '123:fake',
+      deps,
+      env: testEnv,
+    });
+
+    // Pas de « Always allow » : une règle permanente se lie à une entité, et
+    // cette demande n'en a pas (always_confirm la refuse). Approuver ou
+    // refuser, si.
+    expect(completedTelegramEdits.at(-1)).toEqual({
+      chat_id: OWNER_CHAT,
+      message_id: TELEGRAM_CARD_MESSAGE_ID,
+      text: '⏳ Still pending — run_command. Tap a button below to decide — or resolve it from the dashboard.',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Approve', callback_data: `apr:${approvalId}:a` },
+            { text: '❌ Reject', callback_data: `apr:${approvalId}:r` },
+          ],
+        ],
+      },
+    });
+
+    const r = await handleApprovalCallback({
+      update: tap(`apr:${approvalId}:a`),
+      receivingAgentId: seed.agentId,
+      botToken: '123:fake',
+      deps,
+      env: testEnv,
+    });
+
+    expect(r).toMatchObject({ handled: true, decision: 'approve' });
+    expect(completedTelegramEdits.at(-1)).toEqual(noButtons('✅ Approved — run_command'));
+  });
+
+  it('showApprovalCard: a failing final settlement is logged, never thrown at the handler — the tick takes it over', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { approvalId } = await telegramCard();
+      // La 3e écriture de showApprovalCard est la prise du règlement final
+      // (1 : prise pour affichage, 2 : bail rendu) : la base tombe là.
+      let updates = 0;
+      const flaky = new Proxy(deps.db, {
+        get(target, prop, receiver) {
+          if (prop === 'update') {
+            return (...args: unknown[]) => {
+              updates += 1;
+              if (updates === 3) throw new Error('db down');
+              return (target.update as (...a: unknown[]) => unknown).apply(target, args);
+            };
+          }
+          const v = Reflect.get(target, prop, receiver) as unknown;
+          return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+        },
+      });
+
+      const shown = await showApprovalCard(
+        flaky,
+        {
+          approvalRequestId: approvalId,
+          channel: 'telegram',
+          agentId: seed.agentId,
+          conversationId: OWNER_CHAT,
+          messageId: String(TELEGRAM_CARD_MESSAGE_ID),
+        },
+        { text: 'Sure?' },
+      );
+
+      expect(shown).toEqual({ outcome: 'shown' });
+      expect(error.mock.calls.map((c) => String(c[0]))).toContainEqual(
+        expect.stringContaining(
+          `[approval-card] could not replay the settlement of approval ${approvalId} after showing its card; the next cron tick retries: db down`,
+        ),
+      );
+    } finally {
+      error.mockRestore();
+    }
   });
 });

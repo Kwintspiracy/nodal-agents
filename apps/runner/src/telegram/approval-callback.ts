@@ -319,11 +319,22 @@ export async function handleApprovalCallback(
 
   if (parsed.decision === 'always_back') {
     // entityId nullable au schema (legacy) : sans lui, impossible de
-    // reconstruire l'explication (contexte MCP) — on retire juste la question.
+    // reconstruire l'explication (contexte MCP) — on retire la question, mais
+    // une carte ouverte garde ses boutons tant que la demande est pending
+    // (#637) : approuver ou refuser ne demande pas d'entité. « Always allow »
+    // seul en demande une (la règle s'y lie, always_confirm la refuse sans) :
+    // il n'est pas reproposé.
     if (!approval.entityId) {
       if (thisCard) {
+        const cbId = `${APPROVAL_CALLBACK_PREFIX}:${approval.id}`;
         await showApprovalCard(deps.db, thisCard, {
-          text: `⏳ Still pending — ${approval.toolName}. Resolve it from the dashboard.`,
+          text: `⏳ Still pending — ${approval.toolName}. Tap a button below to decide — or resolve it from the dashboard.`,
+          buttons: [
+            [
+              { label: APPROVAL_BUTTON_LABELS.approve, callbackData: `${cbId}:a` },
+              { label: APPROVAL_BUTTON_LABELS.reject, callbackData: `${cbId}:r` },
+            ],
+          ],
         });
       }
       await answerTelegramCallback(botToken, cb.id);

@@ -282,7 +282,17 @@ export async function showApprovalCard(
         `${card.approvalRequestId} (message ${card.messageId}): ${result.error}`,
     );
   }
-  await settleApprovalCards(db, { approvalRequestIds: [card.approvalRequestId] });
+  // Même traitement que dans resolveApprovalDecision : ce rattrapage ne décide
+  // rien, et la carte non finie reste dans la file — le tick la reprend. Une
+  // base indisponible ici ne doit pas faire tomber le traitement du clic.
+  try {
+    await settleApprovalCards(db, { approvalRequestIds: [card.approvalRequestId] });
+  } catch (err) {
+    console.error(
+      `[approval-card] could not replay the settlement of approval ${card.approvalRequestId} ` +
+        `after showing its card; the next cron tick retries: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   return result;
 }
 
