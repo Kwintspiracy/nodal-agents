@@ -10,6 +10,137 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.9.4 — Sep 30, 2026
+
+A release about runs that finish, and finish when you say so. It closes the
+incident of 28/09, where a Telegram request was relaunched thirty times and
+Stop did nothing: a job now acts only while its row authorizes it, `/stop` from
+any channel ends every run of the conversation without asking a model, and the
+model is never forced to call a tool. LLM calls no longer share one HTTP/2
+connection, the cause of calls that took minutes inside the runner and seconds
+outside it. A job's prompt is lighter: it names only the tools the job holds
+and reads their full schemas when it needs them. An autonomous agent downloads
+into its workspace and runs code without asking. Sixty-eight pull requests, ten
+migrations (`0129` to `0138`).
+
+**Upgrading: what changes for you**
+
+- **Agents with no shell checklist of their own now download and run inline
+  code without asking**: downloading into their workspace and running code
+  written in the command or in a script. Deleting files, installing software,
+  stopping programs, system settings and downloading outside the workspace
+  still ask. An agent whose checklist you set keeps it unchanged. The reading
+  of a command is a net, not a wall (see the Shell commands doc).
+- **"Start with this machine"** (Settings) replaces the scheduled task of
+  earlier installs on Windows: the task is removed when you turn the setting on
+  or off. If Windows refuses (a task created as administrator), the message
+  gives the exact command.
+- **A provider call that brings no deadline of its own** stops after 300 s of
+  waiting for its headers or of silence in its body, never on a total. Override
+  with `NODAL_PROVIDER_CALL_TIMEOUT_MS`.
+
+**Runs that stop**
+
+- **A job acts, on every runtime, only while its row authorizes it**: no zombie
+  after a reap, a stop or a re-claim, and a stop from the conversation reaches
+  every run. (#575)
+- **`/stop` from any channel ends every run of the conversation**, without
+  asking a model. (#605)
+- **A job held by a live runner beats from its claim until it lets go**: no
+  reaper fails it mid-run. (#569)
+- **A job survives a runner restart** and resumes at its last saved turn, when
+  nothing but reads ran since. (#547)
+- **The run page shows the call in progress**, and Stop keeps the partial as the
+  result. A streamed call says what it is producing while it produces it.
+  (#624, #623)
+
+**Turns that behave**
+
+- **The model decides whether to call a tool on every turn, for every model.**
+  The forced first-turn tool call is gone; it was what made some models loop
+  through hundreds of calls. A turn that ends in prose announcing an action is
+  re-read once. (#604)
+- **A turn with more tool calls than the per-turn budget is refused whole**, and
+  a turn cut on the output-token cap is refused: none of their calls runs.
+  (#568, #555)
+- **Every tool_use leaves with its tool_result**, whatever the exit; the
+  unavailable-tool budget counts turns, not calls. (#577, #573)
+- **Replayed history never puts runner-written lines in the agent's mouth.**
+  (#576)
+- **LLM calls never share a connection**, and an abandoned call releases its
+  response. (#609)
+- **A hosted model waits the hidden-thinking floor for its first token**, at any
+  effort. (#585)
+
+**Lighter prompts**
+
+- **A job reads the schemas it needs** and keeps its whole whitelist callable:
+  common tools are sent in full, the others are listed and loaded on demand.
+  (#616)
+- **A job's prompt names only the tools that job holds.** (#570)
+- **A channel job's prompt states its channel's facts** from the adapter, and no
+  rule the runner contradicts. (#615)
+
+**Delegation**
+
+- **An explicit request for a teammate's specialty goes to that teammate**; a
+  question that only wants an answer stays with the agent asked. (#603)
+- **A question about Nodal is answered by the agent it was asked of**, on every
+  surface and runtime. (#455, #544)
+- **A failed delegation gets one targeted retry of the same agent**, another
+  agent only when its roster shows the means. (#543)
+- **A working folder attached to a request travels down the whole delegation
+  tree.** (#546)
+- **assign_* and create_task hand work to the same agents**, within the
+  delegation depth left. (#545)
+- **A stopped child hands its parent what it wrote**, and a file a delegate wrote
+  is its root's to deliver. (#535, #589)
+- **Each agent's entry in the team block shows its folders, runtime and shell**
+  as its run gets them. (#536)
+- **While this conversation's work is still running, run_task is refused** and
+  the model is shown that work. (#541)
+
+**Shell, files and proof**
+
+- **A command is filed by what it does**: fetching files is a download, not a
+  software install. (#582, #552)
+- **The Claude Code runtime's shell follows one owner setting and the brake**, on
+  every CLI path. (#551)
+- **A file the agent declares as delivered is proven before the run can
+  succeed.** (#523)
+- **A shell write is constated** in a workspace no git repo covers, against its
+  checkpoint snapshot. (#591)
+- **A file this run wrote in a shared folder is re-written without asking**;
+  anything else still asks. (#533)
+- **A call the owner rejected in this run is answered from that decision** while
+  nothing has changed. (#530)
+- **Every tool that starts a process says how it addresses files.** (#593, #595)
+
+**Screens**
+
+- **Questions are answered inline**, and "Something else" sends the typed text as
+  the answer. (#622)
+- **A run opens in the section it belongs to.** (#621)
+- **The Delivered card's cost is the cost of the whole tree.** (#620)
+- **MCP server: Settings sets up Claude Code and Claude Desktop at once**, with
+  the command of this install. (#625, #520, #521)
+- **Settings: Start Nodal when this machine starts**, without admin rights on
+  Windows. (#627)
+- **Skills catalog: Comfy's official skills replace the ComfyUI port** and keep
+  their official name once installed; a skill whose name is in the workspace
+  shows as installed. (#548)
+- **Every Copy button works over http on a LAN IP.** (#550)
+- **Every agent is told which Nodal-Agents version it runs.** (#539, #542)
+
+**Quality**
+
+- `release:check` names what failed and keeps the full output. CI steps are
+  bounded from their measured duration. Tables share one cell vocabulary.
+  Timing-sensitive tests no longer depend on the machine's load. (#519, #557,
+  #526, #525, #599, #598, #597, #587)
+
+---
+
 ## v0.9.3 — Sep 25, 2026
 
 A release about long runs and about who decides. A turn no longer dies on a
