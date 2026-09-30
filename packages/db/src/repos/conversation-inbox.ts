@@ -29,7 +29,7 @@
 //     relancer, et le rend.
 
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { LIVE_JOB_STATUSES, inboxMessage } from '@nodal-agents/shared';
+import { LIVE_JOB_STATUSES, TERMINAL_STATUSES, inboxMessage } from '@nodal-agents/shared';
 import type { InboxEntry, InboxMessage } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agentJobs } from '../schema/jobs.ts';
@@ -207,13 +207,19 @@ export async function drainJobInbox(db: AnyDrizzleDb, jobId: string): Promise<In
   // Les descendants FINIS de ce job, à toute profondeur, en ne traversant que
   // des jobs finis : un descendant encore vivant lit lui-même sa file et celle
   // des siens.
+  // Les statuts terminaux viennent de `TERMINAL_STATUSES`, jamais d'une copie :
+  // un statut ajouté à l'énumération vaut ici sans y penser.
+  const terminal = sql.join(
+    TERMINAL_STATUSES.map((s) => sql`${s}`),
+    sql`, `,
+  );
   const finishedDescendants = sql`(
     WITH RECURSIVE finished AS (
       SELECT c.id FROM agent_jobs c
-      WHERE c.parent_job_id = ${jobId} AND c.status IN ('completed', 'failed', 'cancelled')
+      WHERE c.parent_job_id = ${jobId} AND c.status IN (${terminal})
       UNION ALL
       SELECT c.id FROM agent_jobs c JOIN finished f ON c.parent_job_id = f.id
-      WHERE c.status IN ('completed', 'failed', 'cancelled')
+      WHERE c.status IN (${terminal})
     )
     SELECT id FROM finished
   )`;
