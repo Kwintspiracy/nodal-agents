@@ -22,6 +22,7 @@ import {
   scanForDirectTerminalCompleted,
   scanForCompleteJobCallers,
   scanForTerminalSendOutsideOutbox,
+  RUNNER_NON_TERMINAL_SENDERS,
   scanFilesForDeliverableTypeLiterals,
   formatViolations,
 } from '@nodal-agents/test-kit';
@@ -88,16 +89,7 @@ const TERMINAL_WRITERS = ['job/finalize.ts', 'job/state.ts'] as const;
  * de l'onglet Code, le rappel d'un cron, le reset des orphelins, le poller.
  * Le résultat terminal d'un job, lui, ne part que par l'outbox.
  */
-const NON_TERMINAL_SENDERS = [
-  'delivery/outbox.ts',
-  'approvals/notify.ts',
-  // #637 — réécrit une carte d'approbation quand sa demande est tranchée.
-  'approvals/card-settlement.ts',
-  'notify/code-transitions.ts',
-  'cron/run-schedules.ts',
-  'cron/reset-orphans.ts',
-  'telegram/poller.ts',
-] as const;
+const NON_TERMINAL_SENDERS = RUNNER_NON_TERMINAL_SENDERS;
 
 describe('architecture — une seule porte terminale de succès (V&C T13)', () => {
   it('src/ ne pose status=completed sur agent_jobs que dans la primitive et son écriture interne', () => {
