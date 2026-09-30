@@ -11,68 +11,35 @@ export const safeToolUseSkill: SystemSkill = {
   slug: 'safe-tool-use',
   name: 'Safe tool use',
   description:
-    'Read before writing. Confirm destructive actions. Respect anti-loop limits. Fail loud with a clear error rather than silently guessing.',
+    'Read before writing. Fail loud with a clear error rather than silently guessing. Take the fewest steps that finish the task.',
   requiredBuiltins: [],
   kind: 'baseline',
   // Ce texte prescrit des outils de fichiers et de shell : seul un job les a.
   surfaces: ['job'],
   // Ce qui en reste vrai sans aucun outil — même raison que pour
   // « Verify before done » (revue Codex de la dette de la PR #73, constat 1).
+  //
+  // Régime du 01/10/2026 (lot 2 de la 0.9.5). Retirés,
+  // parce que le runner les applique déjà et que les dire doublait le geste :
+  //  - « Confirm destructive actions » : la porte d'approbation garde le
+  //    destructif (posture `destructive_gate`, tools/src/execute.ts) et pose
+  //    la carte ; l'agent qui demandait aussi « Confirmer ? » dans la
+  //    conversation faisait confirmer deux fois (root agent, 30/09) ;
+  //  - « Anti-loop limits » : chain-counters.ts (DEFAULT_LIMITS : 15 chaînes,
+  //    50 appels par tour, profondeur 3) et le détecteur de non-progrès du
+  //    runner (execute.ts, Guard 1b) les imposent, invariant #8 ;
+  //  - les Anti-patterns, redite des trois règles gardées.
+  // Le renfort « Especially you » réservé à une liste de modèles
+  // (NEEDS_FIRMER_VERIFY, agent-baseline.ts) devient la dernière ligne, pour
+  // tout agent : une règle, pas une branche par fournisseur (règle #11).
   contentOnChat: `## Safe tool use
 
-Everything you hand off has side effects, even though you trigger none of them yourself.
-
-- Before asking for something destructive or irreversible — deleting, overwriting, sending, publishing — say what will be affected and get a clear yes.
 - Pass what you were given, not what you remember: the user's own words, the exact paths, the real values.
-- If a job comes back with a failure, report the failure. Do not retry the same thing unchanged, and do not describe it as done.`,
+- If a job comes back with a failure, report the failure. Do not retry the same thing unchanged, and do not describe it as done.
+- Be decisive: once you know what the user asks for, hand it over as one job instead of re-asking, re-listing or narrating what you are about to do.`,
   content: `## Safe tool use
 
-Tools have side effects. Apply them with intent: read first, confirm before destroying, stop and report on failure.
-
-### Read before you write
-
-Before modifying any resource (file, database row, external service), read its current state:
-- \`file_read\` before \`file_write\` on an existing file — understand what is there before overwriting.
-- Fetch or query before patch/put/delete on an API or database.
-- If you cannot read the current state, state that explicitly before proceeding.
-
-### Confirm destructive actions
-
-Destructive = irreversible or high-impact: deletes, overwrites, bulk updates, sends, publishes.
-
-Before a destructive tool call, output a one-line summary of what will be destroyed/changed and wait for a confirmation signal in the job context or from the user. If no confirmation mechanism is available and the action is irreversible, describe what you were about to do and ask before proceeding.
-
-**Never guess at a destructive path.** A wrong \`file_delete\` or \`db_delete\` cannot be undone.
-
-### Anti-loop limits
-
-Stop and report when you hit a limit — do not silently retry in a loop:
-- **Max 5 consecutive tool calls** of the same type on the same target without a different result. If retrying the same call does not change the outcome, the problem is structural — diagnose it, do not loop.
-- **Max 50 tool calls per turn** across all tools. If you approach this, stop, report what you have accomplished, and return the partial result with a clear description of what remains.
-- **Max 3 levels of delegation depth.** Do not spawn a sub-agent that spawns a sub-agent that spawns a sub-agent.
-
-If you hit any of these limits, emit a clear error: what the limit is, where you hit it, what the last state was.
-
-### Fail loud, not silent
-
-When a tool fails or returns an unexpected result:
-- Surface the raw error message and the tool call that triggered it.
-- Do not guess a workaround (e.g. trying a different path, a fallback API, a softer version of the operation) unless the workaround is explicitly in scope.
-- Do not report success when a tool returned an error — even if the task result looks plausible.
-
-Pattern: if \`tool_result\` contains an error, stop execution and return:
-> "Tool \`<name>\` failed: \`<error message>\`. The task cannot be completed as described. Next steps: [specific actionable suggestion]."
-
-### Scope of a tool call
-
-Only call tools that are necessary for the stated task. Do not read files, query databases, or call APIs "just in case" they might be relevant. Each tool call should have a clear, stated reason.
-
-### Anti-patterns
-
-- ❌ Writing a file without reading it first when the file already exists.
-- ❌ Retrying the same failing tool call 10 times hoping the result changes.
-- ❌ Swallowing an error and returning a plausible-but-unverified result.
-- ❌ Calling a destructive tool as a shortcut because the non-destructive path is slower.
-- ❌ Guessing a file path, endpoint, or identifier instead of reading it from context.
-`,
+- Read before you write: \`file_read\` an existing file before \`file_write\`, fetch before you patch or delete, and never guess a path, endpoint or identifier: read it from context.
+- Fail loud: when a tool returns an error, report the raw error and the call. Do not retry it unchanged, do not switch to a workaround nobody asked for, and never report success.
+- Be decisive: use the tools, scripts and exact paths you were given, act once a check passes instead of re-verifying, and take the fewest steps that finish the task.`,
 };

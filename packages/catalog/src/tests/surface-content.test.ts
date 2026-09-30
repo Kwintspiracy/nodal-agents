@@ -34,7 +34,9 @@ describe('le texte d’une skill par surface @cap:parler-a-un-agent/moteur', () 
       expect(surChat, `${slug} ne dit plus rien sur le chat`).not.toBeNull();
       expect(surChat, `${slug} envoie son texte de job sur le chat`).not.toBe(surJob);
       // Plus court, forcément : c'est ce qui reste quand on retire les gestes.
-      expect(surChat!.length).toBeLessThan(surJob!.length / 2);
+      // (« moins de la moitié » tant que le texte de job portait ses redites ;
+      // depuis le régime du socle, 01/10/2026, le job est court lui aussi.)
+      expect(surChat!.length).toBeLessThan(surJob!.length);
     }
   });
 
