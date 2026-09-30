@@ -58,6 +58,17 @@
 // run b7ecc59a forged a delegation outcome that way. Same for a `relay`
 // result (children recompiled by the runner): it is the runner's, not the
 // agent's reply.
+//
+// WHEN each turn happened (#650, 30/09): every replayed message the person
+// sent carries the time they sent it, `[Wed, 30 Sept 2026, 23:07] …`, in the
+// user's timezone and with the formatter the system prompt uses for "now"
+// (`formatLocalTime`). Replayed undated, a root agent's reply of 29/09 14:21
+// ("that sub-agent is down") was read on 30/09 at 23:07 as a present fact. The date
+// is a fact about the turn, not a rule: the prompt adds nothing. It sits on
+// the person's messages only — a stamp in an assistant part is a pattern the
+// model would continue in its own replies — and it never changes once the turn
+// is past, so the replayed prefix stays byte-identical from one turn to the
+// next. `datedTurn` is the one form, shared with the web chat (run-chat-turn.ts).
 
 import { eq, and, ne, desc, inArray, isNull } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
@@ -69,7 +80,12 @@ import {
   loadInlineDelegationLedger,
   formatInlineDelegationLines,
 } from './task-ledger.ts';
-import { isInboxMessage, runnerRecordMessage } from '@nodal-agents/shared';
+import {
+  formatLocalTime,
+  inboxMessageReceivedAt,
+  isInboxMessage,
+  runnerRecordMessage,
+} from '@nodal-agents/shared';
 import { messageText } from './state.ts';
 
 /**
@@ -168,6 +184,12 @@ export interface LoadThreadHistoryOptions {
   channel: string;
   /** Current job's id — excluded from the prior-history query. */
   excludeJobId: string;
+  /**
+   * The user's IANA timezone, the one the system prompt states "now" in
+   * (`DeploymentContext.timezone`). Each replayed message of the person is
+   * dated in it (#650).
+   */
+  timezone: string;
 }
 
 /**
@@ -285,12 +307,23 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
     // Ce que la personne a écrit PENDANT ce tour, remis au travail en cours
     // (#531) : rejoué juste après sa demande, pour que la précision ne
     // disparaisse pas des tours suivants. Lu à sa marque structurelle.
+    // Chacun porte l'heure où il est ARRIVÉ (`receivedAt`), pas celle de la demande.
     const followUps: ModelMessage[] = (Array.isArray(row.messages) ? row.messages : [])
       .filter(isInboxMessage)
-      .map((m) => messageText((m as { content?: unknown }).content).trim())
-      .filter((text) => text !== '')
-      .map((text) => ({ role: 'user', content: truncate(text) }));
-    const asked: ModelMessage[] = [{ role: 'user', content: truncate(row.task) }, ...followUps];
+      .map((m) => ({
+        text: messageText((m as { content?: unknown }).content).trim(),
+        at: inboxReceivedAt(m, row.id),
+      }))
+      .filter(({ text }) => text !== '')
+      .map(({ text, at }) => ({
+        role: 'user',
+        content: datedTurn(truncate(text), at, opts.timezone),
+      }));
+    if (!row.createdAt) throw new Error(`thread history: agent_jobs ${row.id} has no created_at`);
+    const asked: ModelMessage[] = [
+      { role: 'user', content: datedTurn(truncate(row.task), row.createdAt, opts.timezone) },
+      ...followUps,
+    ];
     if (
       assistant === null &&
       runnerResult === '' &&
@@ -386,6 +419,27 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   }
 
   return blocks.flatMap((b) => b);
+}
+
+/**
+ * A message of the person as it is replayed: the time they sent it, then their
+ * words (#650). `[Wed, 30 Sept 2026, 23:07] Fais-moi une recherche…` — the same
+ * wall-clock form as the prompt's "now", so the model compares like with like,
+ * and the same for every turn, today's included. A past turn's stamp never
+ * changes: the replayed prefix stays stable for prompt caching.
+ */
+export function datedTurn(text: string, at: Date, timezone: string): string {
+  return `[${formatLocalTime(timezone, at)}] ${text}`;
+}
+
+/** L'heure d'arrivée d'un message remis (#531) ; la plateforme la pose à chaque remise. */
+function inboxReceivedAt(message: unknown, jobId: string): Date {
+  const receivedAt = inboxMessageReceivedAt(message);
+  const at = receivedAt === null ? null : new Date(receivedAt);
+  if (!at || Number.isNaN(at.getTime())) {
+    throw new Error(`thread history: an inbox message of agent_jobs ${jobId} has no receivedAt`);
+  }
+  return at;
 }
 
 /**
