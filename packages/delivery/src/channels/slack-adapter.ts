@@ -22,6 +22,7 @@ import type {
   OutboundMedia,
   ApprovalCard,
   QuestionCard,
+  ButtonCard,
   SendResult,
   EditResult,
   CardButton,
@@ -383,6 +384,83 @@ async function sendQuestionCard(
 }
 
 /**
+ * What a Slack message carries: 50 blocks, the text taking one, and 25
+ * elements per actions block.
+ */
+const SLACK_BUTTON_LIMITS = { maxRows: 49, maxPerRow: 25 } as const;
+/** Slack refuses a button text longer than 75 characters. */
+const SLACK_LABEL_MAX = 75;
+
+/**
+ * The text as a section block, then one actions block per row of buttons —
+ * or the reason they do not fit (`SLACK_BUTTON_LIMITS`). Never cut.
+ */
+function toSlackBlocks(
+  text: string,
+  buttons: readonly (readonly CardButton[])[],
+): Array<SectionBlock | ActionsBlock> | string {
+  const rows = buttons.filter((row) => row.length > 0);
+  if (rows.length > SLACK_BUTTON_LIMITS.maxRows) {
+    return (
+      `the card needs ${rows.length} rows of buttons and Slack shows at most ` +
+      `${SLACK_BUTTON_LIMITS.maxRows}`
+    );
+  }
+  if (rows.some((row) => row.length > SLACK_BUTTON_LIMITS.maxPerRow)) {
+    return `a row of the card has more than ${SLACK_BUTTON_LIMITS.maxPerRow} buttons`;
+  }
+  const section: SectionBlock = { type: 'section', text: { type: 'mrkdwn', text } };
+  return [
+    section,
+    ...rows.map(
+      (row): ActionsBlock => ({
+        type: 'actions',
+        elements: row.map(
+          (b): Button => ({
+            type: 'button',
+            text: {
+              type: 'plain_text',
+              text:
+                b.label.length > SLACK_LABEL_MAX
+                  ? `${b.label.slice(0, SLACK_LABEL_MAX - 1)}…`
+                  : b.label,
+            },
+            action_id: b.callbackData,
+          }),
+        ),
+      }),
+    ),
+  ];
+}
+
+/** ButtonCard → a section block plus one actions block per row of buttons. */
+async function sendCard(
+  creds: ChannelCredentials,
+  conversationId: string,
+  card: ButtonCard,
+): Promise<SendResult> {
+  const botToken = requireBotToken(creds);
+  const channelId = requireChannelId(conversationId);
+  const blocks = toSlackBlocks(card.text, card.buttons);
+  if (typeof blocks === 'string') throw new DeliveryError('card_too_large', blocks);
+  const client = makeClient(botToken);
+  let ts: string | undefined;
+  try {
+    const result = await client.chat.postMessage({ channel: channelId, text: card.text, blocks });
+    ts = result.ts;
+  } catch (err) {
+    throw toDeliveryError(err, botToken);
+  }
+  if (!ts) {
+    throw new DeliveryError(
+      'send_failed',
+      'send_failed: chat.postMessage returned no ts to identify the sent card',
+    );
+  }
+  return { messageId: ts };
+}
+
+/**
  * Edit a previously-sent message's text. Best-effort like Telegram's and
  * Discord's edit: this is used to turn a resolved approval card into its
  * resolved state, and a failed edit must not undo a decision that already
@@ -395,19 +473,18 @@ async function editMessageText(
   text: string,
   buttons?: readonly (readonly CardButton[])[],
 ): Promise<EditResult> {
-  // Aucune carte de ce canal n'offre d'affichage interactif réécrit (le flux
-  // « Always allow? » est propre à Telegram) : le dire plutôt que d'envoyer le
-  // texte seul en prétendant avoir posé les boutons.
-  if (buttons && buttons.some((row) => row.length > 0)) {
-    return { ok: false, error: 'slack cannot put buttons on an edited message' };
-  }
+  // Avec des boutons : la carte est réécrite avec eux (un formulaire rempli
+  // geste par geste). Sans : `blocks: []` les retire, comme l'édition
+  // Telegram (#637) — sans lui, Slack GARDE les blocs d'origine et la carte
+  // reste cliquable.
+  const withButtons = buttons !== undefined && buttons.some((row) => row.length > 0);
+  const blocks = withButtons ? toSlackBlocks(text, buttons) : [];
+  if (typeof blocks === 'string') return { ok: false, error: blocks };
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
   const client = makeClient(botToken);
   try {
-    // `blocks: []` retire les boutons, comme l'édition Telegram (#637) : sans
-    // lui, Slack GARDE les blocs d'origine et la carte reste cliquable.
-    await client.chat.update({ channel: channelId, ts: messageId, text, blocks: [] });
+    await client.chat.update({ channel: channelId, ts: messageId, text, blocks });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -499,7 +576,13 @@ async function validateCredentials(creds: ChannelCredentials): Promise<BotIdenti
 
 export const slackAdapter: ChannelAdapter = {
   channel: 'slack',
-  capabilities: { buttons: true, threads: true, media: true, editMessage: true },
+  capabilities: {
+    buttons: true,
+    threads: true,
+    media: true,
+    editMessage: true,
+    buttonLimits: SLACK_BUTTON_LIMITS,
+  },
   // Sans `format`, aucune conversion, et chat.postMessage part sans
   // `mrkdwn: false` : Slack rend son propre mrkdwn, pas le markdown — titres,
   // tableaux, `**gras**` et `[lien](url)` s'y affichent tels quels.
@@ -519,6 +602,7 @@ export const slackAdapter: ChannelAdapter = {
   sendMedia,
   sendApprovalCard,
   sendQuestionCard,
+  sendCard,
   editMessageText,
   listConversations,
   validateCredentials,

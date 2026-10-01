@@ -26,6 +26,7 @@ import type {
   OutboundMedia,
   ApprovalCard,
   QuestionCard,
+  ButtonCard,
   SendResult,
   EditResult,
   CardButton,
@@ -179,6 +180,25 @@ async function sendQuestionCard(
   return { messageId: String(messageId) };
 }
 
+/** ButtonCard → l'inline keyboard tel quel, rangée par rangée. */
+async function sendCard(
+  creds: ChannelCredentials,
+  conversationId: string,
+  card: ButtonCard,
+): Promise<SendResult> {
+  const botToken = requireBotToken(creds);
+  const chatId = requireChatId(conversationId);
+  const { messageId } = await sendTelegramMessage({
+    chatId,
+    botToken,
+    text: card.text,
+    inlineKeyboard: card.buttons.map((row) =>
+      row.map((b) => ({ text: b.label, callback_data: b.callbackData })),
+    ),
+  });
+  return { messageId: String(messageId) };
+}
+
 async function editMessageText(
   creds: ChannelCredentials,
   conversationId: string,
@@ -219,6 +239,7 @@ export const telegramAdapter: ChannelAdapter = {
   sendMedia,
   sendApprovalCard,
   sendQuestionCard,
+  sendCard,
   editMessageText,
   // listConversations: intentionally NOT implemented — the Bot API has no enumeration whatsoever (no "list my chats" endpoint); callers fall back to the allowlist.
   validateCredentials,

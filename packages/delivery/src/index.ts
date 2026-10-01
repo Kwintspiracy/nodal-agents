@@ -47,6 +47,7 @@ export type {
   SendResult,
   EditResult,
   CardButton,
+  ButtonCard,
   BotIdentity,
   ChannelCapabilities,
   ChannelAdapter,

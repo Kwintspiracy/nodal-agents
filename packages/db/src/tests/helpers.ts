@@ -445,6 +445,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       answer text,
       -- mirrors migration 0145 : la réponse à une élicitation
       response jsonb,
+      -- mirrors migration 0146 : le brouillon d'une élicitation remplie depuis un canal
+      draft jsonb,
       status text DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','expired')),
       requested_at timestamptz DEFAULT now(),
       resolved_at timestamptz,
