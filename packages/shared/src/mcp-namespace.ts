@@ -19,8 +19,8 @@
  *     overlap (every attach path) — strict, because what a server exposes
  *     moves on its own (it publishes a new tool, a whitelist widens);
  *   - a tool name is attributed to the server that EXPOSES it — namespace AND
- *     the server's own list (`mcpServerExposesTool`) — by every reader: the
- *     runner, the approval card. A job is refused only when one name is
+ *     the server's own list — by every reader: the runner (what each server
+ *     actually put in the job), the approval card (`attributeMcpTool`). A job is refused only when one name is
  *     exposed by two servers (`findMcpToolNameCollision`), which is the only
  *     case no reader can resolve. An attachment written before the rule whose
  *     namespaces overlap but whose exposed tools do not keeps working.
@@ -115,17 +115,29 @@ export function mcpExposedToolNames(
 }
 
 /**
- * Does this server lend `toolName`? In its namespace, AND in its list when the
- * list is known. The namespace alone is not enough: `guide-srv` and a
- * pre-#661 `guide--srv` share `guide_srv__`, and only the list says which one
- * lends `guide_srv__ping`.
+ * Which of an agent's servers lends `toolName`, and whether that is certain.
+ *
+ * In its namespace AND in its own list: `guide-srv` and a pre-#661
+ * `guide--srv` share `guide_srv__`, and only the lists say which one lends
+ * `guide_srv__ping`. A list read from the database can be stale or unknown
+ * (`null`), so the answer is certain only when the server is alone in its
+ * namespace, or when exactly one known list names the tool and no list beside
+ * it is unknown. Otherwise one server is still named — a lender first — but
+ * flagged `ambiguous`: never the wrong server without the flag.
  */
-export function mcpServerExposesTool(
-  server: { slug: string; exposed: readonly string[] | null },
+export function attributeMcpTool<T extends { slug: string; exposed: readonly string[] | null }>(
+  servers: readonly T[],
   toolName: string,
-): boolean {
-  if (!isToolOfMcpServer(server.slug, toolName)) return false;
-  return server.exposed === null || server.exposed.includes(toolName);
+): { server: T; ambiguous: boolean } | null {
+  const inNamespace = servers.filter((s) => isToolOfMcpServer(s.slug, toolName));
+  if (inNamespace.length === 0) return null;
+  if (inNamespace.length === 1) return { server: inNamespace[0]!, ambiguous: false };
+  const lenders = inNamespace.filter((s) => s.exposed !== null && s.exposed.includes(toolName));
+  const unknown = inNamespace.filter((s) => s.exposed === null);
+  if (lenders.length === 1 && unknown.length === 0) {
+    return { server: lenders[0]!, ambiguous: false };
+  }
+  return { server: [...lenders, ...unknown, ...inNamespace][0]!, ambiguous: true };
 }
 
 /** The first tool name two of `servers` both lend, with the two servers; or null. */
@@ -151,7 +163,8 @@ export function mcpToolNameCollisionMessage(
 ): string {
   return (
     `The MCP servers "${a.name}" (${a.slug}) and "${b.name}" (${b.slug}) both lend this ` +
-    `agent a tool named "${toolName}", so a call could not tell them apart. Detach one, ` +
-    `or give the other to a different agent.`
+    `agent a tool named "${toolName}", so a call could not tell them apart. Untick it on ` +
+    `one of them in the agent's Connectors tab, detach one, or give the other to a ` +
+    `different agent.`
   );
 }

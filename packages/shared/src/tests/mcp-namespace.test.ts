@@ -8,7 +8,7 @@ import {
   findMcpToolNameCollision,
   isToolOfMcpServer,
   mcpExposedToolNames,
-  mcpServerExposesTool,
+  attributeMcpTool,
   mcpToolNameCollisionMessage,
   mcpNamespaceOverlapMessage,
   mcpToolNamespacesOverlap,
@@ -116,17 +116,53 @@ describe('a tool name is attributed to the server that LENDS it @cap:connecter-u
     expect(mcpExposedToolNames('a-', null, null)).toBeNull();
   });
 
-  it('mcpServerExposesTool: namespace AND list — the namespace alone cannot tell guide-srv from guide--srv', () => {
+  it('attributeMcpTool: namespace AND list — the namespace alone cannot tell guide-srv from guide--srv', () => {
     const lends = { slug: 'guide-srv', exposed: ['guide_srv__ping'] };
     const lendsNothing = { slug: 'guide--srv', exposed: [] as string[] };
-    expect(mcpServerExposesTool(lends, 'guide_srv__ping')).toBe(true);
-    expect(mcpServerExposesTool(lendsNothing, 'guide_srv__ping')).toBe(false);
+    expect(attributeMcpTool([lendsNothing, lends], 'guide_srv__ping')).toEqual({
+      server: lends,
+      ambiguous: false,
+    });
     // `a___ping` starts with `a__`, but `a` lends only `a__ping`.
-    expect(mcpServerExposesTool({ slug: 'a', exposed: ['a__ping'] }, 'a___ping')).toBe(false);
-    expect(mcpServerExposesTool({ slug: 'a-', exposed: ['a___ping'] }, 'a___ping')).toBe(true);
-    // An unknown list: the namespace decides.
-    expect(mcpServerExposesTool({ slug: 'a-', exposed: null }, 'a___ping')).toBe(true);
-    expect(mcpServerExposesTool({ slug: 'b', exposed: null }, 'a___ping')).toBe(false);
+    const a = { slug: 'a', exposed: ['a__ping'] };
+    const aDash = { slug: 'a-', exposed: ['a___ping'] };
+    expect(attributeMcpTool([a, aDash], 'a___ping')).toEqual({ server: aDash, ambiguous: false });
+    expect(attributeMcpTool([a, aDash], 'a__ping')).toEqual({ server: a, ambiguous: false });
+    // Alone in its namespace, a server is the one, whatever its list says.
+    expect(attributeMcpTool([{ slug: 'a-', exposed: null }], 'a___ping')).toEqual({
+      server: { slug: 'a-', exposed: null },
+      ambiguous: false,
+    });
+    expect(attributeMcpTool([{ slug: 'b', exposed: null }], 'a___ping')).toBeNull();
+  });
+
+  it('attributeMcpTool: an unknown list next to another server is never a certainty (review pass 2)', () => {
+    // `a`'s known list may be stale (it does not name the tool), `a-`'s is
+    // unknown: either could lend it. Named, but flagged — never the wrong
+    // server without the flag.
+    const stale = { slug: 'a', exposed: ['a__other'] };
+    const unknown = { slug: 'a-', exposed: null };
+    expect(attributeMcpTool([stale, unknown], 'a___ping')?.ambiguous).toBe(true);
+    // Two known lists that both lend it: flagged too.
+    expect(
+      attributeMcpTool(
+        [
+          { slug: 'x', exposed: ['x__ping'] },
+          { slug: 'x', exposed: ['x__ping'] },
+        ],
+        'x__ping',
+      )?.ambiguous,
+    ).toBe(true);
+    // No list names it, two servers share the namespace: flagged.
+    expect(
+      attributeMcpTool(
+        [
+          { slug: 'g-s', exposed: [] },
+          { slug: 'g--s', exposed: [] },
+        ],
+        'g_s__ping',
+      )?.ambiguous,
+    ).toBe(true);
   });
 
   it('findMcpToolNameCollision: only a name lent by two servers', () => {

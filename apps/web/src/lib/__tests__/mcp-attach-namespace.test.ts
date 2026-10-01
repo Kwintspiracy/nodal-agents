@@ -142,6 +142,48 @@ describe('setAgentMcpServerAssignmentAction — one tool name, one server @cap:c
   });
 });
 
+describe('a pair attached before #661 can be narrowed, never widened into a collision (review pass 2) @cap:connecter-un-service/moteur', () => {
+  it('unticking the shared tool on one of them is allowed; ticking it back is refused, naming the tool', async () => {
+    const { setAgentMcpServerAssignmentAction } = await import('../actions.ts');
+    const a = await agent();
+    const lent = async (slug: string, name: string) => {
+      const [row] = await testDb
+        .insert(mcpServers)
+        .values({
+          entityId: session.entityId,
+          name,
+          slug,
+          transport: 'stdio',
+          command: 'node',
+          availableTools: [{ name: 'ping' }, { name: 'pong' }],
+        })
+        .returning({ id: mcpServers.id });
+      return row!.id;
+    };
+    // Both lend `legacy_srv__ping`: the runner refuses this agent's jobs.
+    const first = await lent('legacy-srv', 'Legacy');
+    const second = await lent('legacy--srv', 'Legacy bis');
+    await testDb.insert(agentMcpServers).values([
+      { entityId: session.entityId, agentId: a, mcpServerId: first, enabledTools: null },
+      { entityId: session.entityId, agentId: a, mcpServerId: second, enabledTools: null },
+    ]);
+
+    // The way out that keeps both: the second one stops lending what the first lends.
+    const narrowed = await setAgentMcpServerAssignmentAction(a, second, true, []);
+    expect(narrowed.ok, narrowed.ok ? '' : narrowed.message).toBe(true);
+    const held = await heldBy(a);
+    expect(held.find((h) => h.mcpServerId === second)?.enabledTools).toEqual([]);
+
+    // Widening it back into a collision is refused, naming the tool.
+    const widened = await setAgentMcpServerAssignmentAction(a, second, true, ['ping']);
+    expect(widened.ok).toBe(false);
+    if (widened.ok) return;
+    expect(widened.code).toBe('mcp_namespace_overlap');
+    expect(widened.message).toContain('"legacy_srv__ping"');
+    expect((await heldBy(a)).find((h) => h.mcpServerId === second)?.enabledTools).toEqual([]);
+  });
+});
+
 describe('createMcpServerFromCatalogAction — the canonical slug grammar @cap:connecter-un-service/moteur', () => {
   it('refuses a custom slug with a doubled, leading or trailing hyphen, before anything connects', async () => {
     const { createMcpServerFromCatalogAction } = await import('../actions.ts');

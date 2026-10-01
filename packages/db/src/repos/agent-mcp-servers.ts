@@ -10,15 +10,27 @@
 // Several instances of a server in a workspace stay allowed; each goes to a
 // different agent.
 //
-// Strict on purpose, stricter than the runner: what a server lends moves on
-// its own (it publishes a new tool, a whitelist widens), so two overlapping
-// namespaces on one agent are a collision waiting to happen. The runner, for
-// attachments written before this rule, refuses a job only when one tool name
-// is actually lent by two servers (`findMcpToolNameCollision`). Such a legacy
-// pair cannot be re-saved here either: the way out is to detach one.
+// A NEW attachment is held to the namespace rule, strict on purpose, stricter
+// than the runner: what a server lends moves on its own (it publishes a new
+// tool, a whitelist widens), so two overlapping namespaces on one agent are a
+// collision waiting to happen.
+//
+// An EXISTING attachment — a pair written before this rule — is judged by the
+// names it lends, the rule the runner refuses a job by
+// (`findMcpToolNameCollision`): its whitelist may change as long as it lends
+// no name another server of the agent lends. That is the way out of a refused
+// job besides detaching one: untick the shared tool on one of them. A list the
+// database does not know (`null`) proves nothing, and counts as the whole
+// namespace.
 
 import { and, eq, ne } from 'drizzle-orm';
-import { mcpNamespaceOverlapMessage, mcpToolNamespacesOverlap } from '@nodal-agents/shared';
+import {
+  mcpExposedToolNames,
+  mcpNamespaceOverlapMessage,
+  mcpToolNameCollisionMessage,
+  mcpToolNamespacesOverlap,
+  isToolOfMcpServer,
+} from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agentMcpServers, mcpServers } from '../schema/mcp.ts';
 
@@ -52,26 +64,78 @@ export async function attachMcpServerToAgent(
   const { entityId, agentId, mcpServerId, enabledTools } = input;
 
   const [server] = await db
-    .select({ id: mcpServers.id, slug: mcpServers.slug, name: mcpServers.name })
+    .select({
+      id: mcpServers.id,
+      slug: mcpServers.slug,
+      name: mcpServers.name,
+      availableTools: mcpServers.availableTools,
+    })
     .from(mcpServers)
     .where(and(eq(mcpServers.id, mcpServerId), eq(mcpServers.entityId, entityId)));
   if (!server) {
     return { ok: false, reason: 'not_found', message: 'MCP server not found in this workspace.' };
   }
 
-  const held = await db
-    .select({ id: mcpServers.id, slug: mcpServers.slug, name: mcpServers.name })
+  const [existing] = await db
+    .select({ enabledTools: agentMcpServers.enabledTools })
     .from(agentMcpServers)
-    .innerJoin(mcpServers, eq(mcpServers.id, agentMcpServers.mcpServerId))
-    .where(and(eq(agentMcpServers.agentId, agentId), ne(mcpServers.id, mcpServerId)));
-  const clash = held.find((h) => mcpToolNamespacesOverlap(h.slug, server.slug));
-  if (clash) {
-    return {
-      ok: false,
-      reason: 'namespace_overlap',
-      message: mcpNamespaceOverlapMessage(clash, server),
-      held: clash,
-    };
+    .where(and(eq(agentMcpServers.agentId, agentId), eq(agentMcpServers.mcpServerId, mcpServerId)));
+  // Already held, list kept: nothing changes, nothing to judge.
+  if (existing && enabledTools === undefined) return { ok: true };
+
+  const held = (
+    await db
+      .select({
+        id: mcpServers.id,
+        slug: mcpServers.slug,
+        name: mcpServers.name,
+        availableTools: mcpServers.availableTools,
+        enabledTools: agentMcpServers.enabledTools,
+      })
+      .from(agentMcpServers)
+      .innerJoin(mcpServers, eq(mcpServers.id, agentMcpServers.mcpServerId))
+      .where(and(eq(agentMcpServers.agentId, agentId), ne(mcpServers.id, mcpServerId)))
+  ).filter((h) => mcpToolNamespacesOverlap(h.slug, server.slug));
+
+  if (!existing) {
+    const clash = held[0];
+    if (clash) {
+      return {
+        ok: false,
+        reason: 'namespace_overlap',
+        message: mcpNamespaceOverlapMessage(clash, server),
+        held: { id: clash.id, slug: clash.slug, name: clash.name },
+      };
+    }
+  } else {
+    // An existing attachment changes its list: judged by the names it lends.
+    const lends = mcpExposedToolNames(server.slug, server.availableTools, enabledTools ?? null);
+    for (const h of held) {
+      const theirs = mcpExposedToolNames(
+        h.slug,
+        h.availableTools,
+        (h.enabledTools as string[] | null) ?? null,
+      );
+      const shared =
+        lends === null
+          ? (theirs ?? []).find((n) => isToolOfMcpServer(server.slug, n))
+          : lends.find((n) =>
+              theirs === null ? isToolOfMcpServer(h.slug, n) : theirs.includes(n),
+            );
+      const unknownBoth = lends === null && theirs === null;
+      if (shared !== undefined || unknownBoth) {
+        const clash = { id: h.id, slug: h.slug, name: h.name };
+        return {
+          ok: false,
+          reason: 'namespace_overlap',
+          message:
+            shared !== undefined
+              ? mcpToolNameCollisionMessage(shared, clash, server)
+              : mcpNamespaceOverlapMessage(clash, server),
+          held: clash,
+        };
+      }
+    }
   }
 
   const row = { entityId, agentId, mcpServerId, enabledTools: enabledTools ?? null };

@@ -8,7 +8,7 @@
 // exactly the kind of thing that silently diverges between surfaces.
 
 import { and, eq } from 'drizzle-orm';
-import { mcpExposedToolNames, mcpServerExposesTool, mcpToolNamespace } from '@nodal-agents/shared';
+import { attributeMcpTool, mcpExposedToolNames, mcpToolNamespace } from '@nodal-agents/shared';
 import { agentMcpServers, mcpServers } from '../schema/mcp';
 import type { AnyDrizzleDb } from '../client';
 
@@ -75,21 +75,19 @@ export async function getMcpApprovalContext(
     .innerJoin(mcpServers, eq(mcpServers.id, agentMcpServers.mcpServerId))
     .where(and(eq(agentMcpServers.agentId, agentId), eq(mcpServers.entityId, entityId)));
 
-  const matches = rows.filter((r) =>
-    mcpServerExposesTool(
-      {
-        slug: r.slug,
-        exposed: mcpExposedToolNames(
-          r.slug,
-          r.availableTools,
-          (r.enabledTools as string[] | null) ?? null,
-        ),
-      },
-      toolName,
-    ),
+  const attributed = attributeMcpTool(
+    rows.map((r) => ({
+      ...r,
+      exposed: mcpExposedToolNames(
+        r.slug,
+        r.availableTools,
+        (r.enabledTools as string[] | null) ?? null,
+      ),
+    })),
+    toolName,
   );
-  const row = matches[0];
-  if (!row) return null;
+  if (!attributed) return null;
+  const row = attributed.server;
   const namespace = mcpToolNamespace(row.slug);
   const tool = toolName.slice(namespace.length);
 
@@ -116,7 +114,7 @@ export async function getMcpApprovalContext(
     endpoint,
     ...(toolDescription ? { toolDescription } : {}),
     ...(readOnlyHint !== undefined ? { readOnlyHint } : {}),
-    ambiguous: matches.length > 1,
+    ambiguous: attributed.ambiguous,
     rulePattern: `${namespace}*`,
   };
 }

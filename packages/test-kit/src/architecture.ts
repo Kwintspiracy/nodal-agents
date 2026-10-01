@@ -45,6 +45,12 @@ export interface ScanOptions {
    * one — behind noise nobody reads twice.
    */
   skipFiles?: readonly string[];
+  /**
+   * File extensions to read (default `.ts`, `.tsx`). A rule that must also
+   * see plain JavaScript — scripts, `.mjs` portals — widens it. Honoured by
+   * `scanForPattern`.
+   */
+  extensions?: readonly string[];
 }
 
 /** Normalised suffix match, so a caller can pass a posix or win32 path. */
@@ -53,13 +59,20 @@ function isSkipped(file: string, skipFiles: readonly string[]): boolean {
   return skipFiles.some((s) => norm.endsWith(s.split('\\').join('/')));
 }
 
-function collectTsFiles(dir: string, skip: readonly string[], acc: string[] = []): string[] {
+const TS_EXTENSIONS = ['.ts', '.tsx'] as const;
+
+function collectTsFiles(
+  dir: string,
+  skip: readonly string[],
+  acc: string[] = [],
+  extensions: readonly string[] = TS_EXTENSIONS,
+): string[] {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
       if (skip.includes(entry)) continue;
-      collectTsFiles(full, skip, acc);
-    } else if (entry.endsWith('.ts') || entry.endsWith('.tsx')) {
+      collectTsFiles(full, skip, acc, extensions);
+    } else if (extensions.some((x) => entry.endsWith(x))) {
       acc.push(full);
     }
   }
@@ -235,9 +248,12 @@ export function scanForPattern(
     allowMatch?: (match: string) => boolean;
   },
 ): Violation[] {
-  const files = collectTsFiles(opts.srcDir, opts.skipDirs ?? DEFAULT_SKIP).filter(
-    (f) => !isSkipped(f, opts.skipFiles ?? []),
-  );
+  const files = collectTsFiles(
+    opts.srcDir,
+    opts.skipDirs ?? DEFAULT_SKIP,
+    [],
+    opts.extensions ?? TS_EXTENSIONS,
+  ).filter((f) => !isSkipped(f, opts.skipFiles ?? []));
   const flags = spec.pattern.flags.includes('g') ? spec.pattern.flags : `${spec.pattern.flags}g`;
   const out: Violation[] = [];
   for (const file of files) {
@@ -288,16 +304,36 @@ export function scanForProjectKeyCopies(opts: ScanOptions): Violation[] {
  * copies that disagree route a call to one server and name another on the
  * approval card, with nothing failing.
  *
- * The fingerprint is a regex literal that replaces a run of non-alphanumerics
- * (a negated `a-z0-9` class, any case, any flags) by an underscore. A
- * hyphen-only replacement, used for agent `assign_*` names, is a different
- * rule and is not matched.
+ * Three fingerprints, each a regex literal turning characters into `_`, read
+ * in `.ts`, `.tsx`, `.js`, `.mjs` and `.cjs`:
+ *   - a negated alphanumeric class (`a-z0-9`, any case, any flags);
+ *   - a non-word class (`\W`, or a negated `\w`);
+ *   - a hyphen-only replacement on a line that names an MCP server (`mcp`,
+ *     `server`) — the form a copy took in `tool-availability.ts`. Without the
+ *     line condition it would flag the agents' `assign_*` names, a different
+ *     rule.
+ * Not caught: a pattern built with `new RegExp(...)` from a string, and a
+ * hyphen-only copy on a line that names no server.
  */
 export function scanForMcpToolPrefixCopies(opts: ScanOptions): Violation[] {
-  return scanForPattern(opts, {
-    pattern: /\/\[\^[A-Za-z0-9-]+\]\+?\/[gimsuy]*,\s*['"`]_['"`]/,
-    rule: 'mcp-tool-prefix-copy',
-  });
+  const scan: ScanOptions = {
+    ...opts,
+    extensions: opts.extensions ?? ['.ts', '.tsx', '.js', '.mjs', '.cjs'],
+  };
+  const rule = 'mcp-tool-prefix-copy';
+  const seen = new Set<string>();
+  return [
+    /\/\[\^[A-Za-z0-9-]+\]\+?\/[gimsuy]*,\s*['"`]_['"`]/,
+    /\/(?:\\W|\[\^\\w\])\+?\/[gimsuy]*,\s*['"`]_['"`]/,
+    /(?:mcp|server)[^\n]*\/-\+?\/g[imsuy]*,\s*['"`]_['"`]/i,
+  ]
+    .flatMap((pattern) => scanForPattern(scan, { pattern, rule }))
+    .filter((v) => {
+      const key = `${v.file}:${v.line}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 /**

@@ -195,7 +195,8 @@ describe('one tool name, one MCP server, inside a job @cap:connecter-un-service/
       const error = String(row.error ?? '');
       for (const [slug, name] of c.servers) expect(error).toContain(`"${name}" (${slug})`);
       expect(error).toContain(`a tool named "${c.tool}"`);
-      expect(error).toContain('Detach one');
+      // The ways out, the one that keeps both servers first.
+      expect(error).toContain('Untick it on one of them');
       // Refused before the model was asked anything: no call reached a server.
       expect(bodies).toHaveLength(0);
     }, 60_000);
