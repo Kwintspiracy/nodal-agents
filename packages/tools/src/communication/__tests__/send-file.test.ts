@@ -112,6 +112,7 @@ vi.mock('@nodal-agents/db', () => {
 function makeCtx(
   overrides: {
     jobChatId?: string | null;
+    jobChatChannel?: ToolContext['jobChatChannel'];
     db?: unknown;
     workspaces?: ToolContext['workspaces'];
   } = {},
@@ -121,6 +122,7 @@ function makeCtx(
     agentId: 'agent-abc',
     entityId: 'entity-xyz',
     jobChatId: overrides.jobChatId ?? null,
+    jobChatChannel: overrides.jobChatChannel ?? null,
     db: (overrides.db ?? makeDb('bot:TEST_TOKEN')) as unknown as ToolContext['db'],
     workspaces: overrides.workspaces,
   };
@@ -148,7 +150,7 @@ describe('createSendFileTool', () => {
 
   it('(a) resolves chatId from ctx.jobChatId and returns { ok, bytes, filename }', async () => {
     const tool = createSendFileTool();
-    const ctx = makeCtx({ jobChatId: '99887766' });
+    const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
     const result = await tool.execute({ source: SRC_REPORT }, ctx);
 
@@ -163,7 +165,7 @@ describe('createSendFileTool', () => {
 
   it('(b) returns a tiny result with no file data', async () => {
     const tool = createSendFileTool();
-    const ctx = makeCtx({ jobChatId: '12345' });
+    const ctx = makeCtx({ jobChatId: '12345', jobChatChannel: 'telegram' });
 
     const result = await tool.execute({ source: SRC_REPORT }, ctx);
 
@@ -184,7 +186,7 @@ describe('createSendFileTool', () => {
 
   it('(d) throws no_bot_token when agent has no telegramBotToken in DB', async () => {
     const tool = createSendFileTool();
-    const ctx = makeCtx({ jobChatId: '12345', db: makeDb(null) });
+    const ctx = makeCtx({ jobChatId: '12345', jobChatChannel: 'telegram', db: makeDb(null) });
 
     await expect(tool.execute({ source: SRC_REPORT }, ctx)).rejects.toMatchObject({
       name: 'no_bot_token',
@@ -194,7 +196,7 @@ describe('createSendFileTool', () => {
 
   it('(e) throws file_too_large when file exceeds 50 MB', async () => {
     const tool = createSendFileTool();
-    const ctx = makeCtx({ jobChatId: '12345' });
+    const ctx = makeCtx({ jobChatId: '12345', jobChatChannel: 'telegram' });
 
     const bigBuf = Buffer.alloc(50 * 1024 * 1024 + 1, 0x00);
     readFileMock.mockResolvedValueOnce(bigBuf);
@@ -207,7 +209,7 @@ describe('createSendFileTool', () => {
 
   it('(f) throws fetch_failed on non-2xx URL response', async () => {
     const tool = createSendFileTool();
-    const ctx = makeCtx({ jobChatId: '12345' });
+    const ctx = makeCtx({ jobChatId: '12345', jobChatChannel: 'telegram' });
 
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
 
@@ -220,7 +222,7 @@ describe('createSendFileTool', () => {
 
   it('(g) explicit filename overrides the derived one', async () => {
     const tool = createSendFileTool();
-    const ctx = makeCtx({ jobChatId: '12345' });
+    const ctx = makeCtx({ jobChatId: '12345', jobChatChannel: 'telegram' });
 
     const result = await tool.execute({ source: SRC_TMP_XYZ, filename: 'Q3-report.pdf' }, ctx);
 
@@ -235,7 +237,7 @@ describe('createSendFileTool', () => {
   it('(h) throws telegram_chat_not_allowed for an explicit chatId not on the allow-list', async () => {
     isChatAllowedMock.mockResolvedValueOnce(false);
     const tool = createSendFileTool();
-    const ctx = makeCtx({ jobChatId: '99887766' });
+    const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
     await expect(
       tool.execute({ source: SRC_REPORT, chatId: '00000000' }, ctx),
@@ -245,7 +247,7 @@ describe('createSendFileTool', () => {
 
   it('(h) skips the allow-list lookup when the explicit chatId equals ctx.jobChatId', async () => {
     const tool = createSendFileTool();
-    const ctx = makeCtx({ jobChatId: '99887766' });
+    const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
     await tool.execute({ source: SRC_REPORT, chatId: '99887766' }, ctx);
 
@@ -255,7 +257,7 @@ describe('createSendFileTool', () => {
 
   it('(i) throws source_path_not_allowed for a local path outside workspaces/skill store/temp dir', async () => {
     const tool = createSendFileTool();
-    const ctx = makeCtx({ jobChatId: '12345' });
+    const ctx = makeCtx({ jobChatId: '12345', jobChatChannel: 'telegram' });
 
     await expect(
       tool.execute({ source: syntheticOutsideSource('outside.md') }, ctx),

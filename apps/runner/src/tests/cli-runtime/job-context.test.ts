@@ -51,9 +51,26 @@ describe('buildCliRuntimeJobContext', () => {
       origin: 'telegram',
       task: 'analyse le repo',
       chatId: '4242',
+      chatChannel: 'telegram',
     });
     expect(complet?.task).toBe('analyse le repo');
     expect(complet?.telegramChatId).toBe('4242');
+
+    // #649 (revue passe 4 de #657) : un id n'est « telegram_chat_id » que s'il
+    // a été résolu sur Telegram. Un chat Discord, ou un chat dont personne ne
+    // connaît la plateforme, n'est jamais présenté comme un chat Telegram.
+    for (const chatChannel of ['discord', 'slack', null]) {
+      const autre = buildCliRuntimeJobContext({
+        deployment: DEPLOY,
+        origin: 'cron',
+        chatId: '555',
+        chatChannel,
+      });
+      expect({ chatChannel, has: autre !== undefined && 'telegramChatId' in autre }).toEqual({
+        chatChannel,
+        has: false,
+      });
+    }
 
     const nu = buildCliRuntimeJobContext({
       origin: 'api',

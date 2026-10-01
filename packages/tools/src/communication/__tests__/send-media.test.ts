@@ -94,6 +94,7 @@ function makeDb(telegramBotToken: string | null | undefined) {
 function makeCtx(
   overrides: {
     jobChatId?: string | null;
+    jobChatChannel?: ToolContext['jobChatChannel'];
     db?: unknown;
     workspaces?: ToolContext['workspaces'];
   } = {},
@@ -103,6 +104,7 @@ function makeCtx(
     agentId: 'agent-1',
     entityId: 'entity-1',
     jobChatId: overrides.jobChatId ?? null,
+    jobChatChannel: overrides.jobChatChannel ?? null,
     db: (overrides.db ?? makeDb('bot:TOKEN')) as unknown as ToolContext['db'],
     workspaces: overrides.workspaces,
   };
@@ -135,7 +137,7 @@ describe('send media tools', () => {
   });
 
   it('send_video uploads via the adapter with kind "video" and returns { ok, bytes, filename }', async () => {
-    const ctx = makeCtx({ jobChatId: '4242' });
+    const ctx = makeCtx({ jobChatId: '4242', jobChatChannel: 'telegram' });
     const result = await createSendVideoTool().execute({ source: SRC_CLIP }, ctx);
 
     expect(sendMediaMock).toHaveBeenCalledWith(
@@ -147,7 +149,7 @@ describe('send media tools', () => {
   });
 
   it('send_audio uploads with kind "audio"; send_voice uploads with kind "voice"', async () => {
-    const ctx = makeCtx({ jobChatId: '4242' });
+    const ctx = makeCtx({ jobChatId: '4242', jobChatChannel: 'telegram' });
     await createSendAudioTool().execute({ source: SRC_SONG }, ctx);
     await createSendVoiceTool().execute({ source: SRC_NOTE }, ctx);
 
@@ -172,7 +174,7 @@ describe('send media tools', () => {
   });
 
   it('throws no_bot_token when the agent has no token', async () => {
-    const ctx = makeCtx({ jobChatId: '4242', db: makeDb(null) });
+    const ctx = makeCtx({ jobChatId: '4242', jobChatChannel: 'telegram', db: makeDb(null) });
     await expect(createSendAudioTool().execute({ source: SRC_SONG }, ctx)).rejects.toMatchObject({
       name: 'no_bot_token',
     });
@@ -180,7 +182,7 @@ describe('send media tools', () => {
   });
 
   it('throws video_too_large past the 50 MB cap', async () => {
-    const ctx = makeCtx({ jobChatId: '4242' });
+    const ctx = makeCtx({ jobChatId: '4242', jobChatChannel: 'telegram' });
     readFileMock.mockResolvedValueOnce(Buffer.alloc(50 * 1024 * 1024 + 1, 0));
     await expect(createSendVideoTool().execute({ source: SRC_HUGE }, ctx)).rejects.toMatchObject({
       name: 'video_too_large',
@@ -189,7 +191,7 @@ describe('send media tools', () => {
   });
 
   it('explicit filename overrides the derived name', async () => {
-    const ctx = makeCtx({ jobChatId: '4242' });
+    const ctx = makeCtx({ jobChatId: '4242', jobChatChannel: 'telegram' });
     await createSendVideoTool().execute({ source: SRC_TMP_BIN, filename: 'final-cut.mp4' }, ctx);
     expect(sendMediaMock).toHaveBeenCalledWith(
       expect.anything(),
@@ -200,7 +202,7 @@ describe('send media tools', () => {
 
   it('throws telegram_chat_not_allowed for an explicit chatId not on the allow-list', async () => {
     isChatAllowedMock.mockResolvedValueOnce(false);
-    const ctx = makeCtx({ jobChatId: '4242' });
+    const ctx = makeCtx({ jobChatId: '4242', jobChatChannel: 'telegram' });
 
     await expect(
       createSendVideoTool().execute({ source: SRC_CLIP, chatId: '00000000' }, ctx),
@@ -209,7 +211,7 @@ describe('send media tools', () => {
   });
 
   it('skips the allow-list lookup when the explicit chatId equals ctx.jobChatId', async () => {
-    const ctx = makeCtx({ jobChatId: '4242' });
+    const ctx = makeCtx({ jobChatId: '4242', jobChatChannel: 'telegram' });
 
     await createSendVideoTool().execute({ source: SRC_CLIP, chatId: '4242' }, ctx);
 
@@ -218,7 +220,7 @@ describe('send media tools', () => {
   });
 
   it('throws source_path_not_allowed for a local path outside workspaces/skill store/temp dir', async () => {
-    const ctx = makeCtx({ jobChatId: '4242' });
+    const ctx = makeCtx({ jobChatId: '4242', jobChatChannel: 'telegram' });
 
     await expect(
       createSendVideoTool().execute({ source: syntheticOutsideSource('outside.mp4') }, ctx),

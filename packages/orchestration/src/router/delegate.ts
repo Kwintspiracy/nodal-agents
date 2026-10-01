@@ -1,7 +1,7 @@
 // router/delegate.ts — suspend parent job, create child job
 // Called by the runner when it catches DelegationPendingError from an assign_* tool.
 
-import { eq, and, notInArray, insertChildJob } from '@nodal-agents/db';
+import { eq, and, notInArray, insertChildJob, designateChat } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
 
@@ -35,7 +35,7 @@ import type {
  * @param parentJob        The parent job being suspended
  * @param childSlug        Slug of the child agent to delegate to
  * @param toolUseId        The tool_use block ID from the LLM response
- * @param taskInput        Task + optional data/chatId to pass to the child
+ * @param taskInput        Task + optional data to pass to the child
  * @param sideToolResults  Deferred tool_results for other tool_use blocks in same response
  * @param db               Drizzle DB handle
  */
@@ -43,7 +43,7 @@ export async function handleDelegation(
   parentJob: AgentJob,
   childSlug: string,
   toolUseId: string,
-  taskInput: { task: string; chatId?: string | null; data?: string },
+  taskInput: { task: string; data?: string },
   sideToolResults: SideToolResult[],
   db: AnyDrizzleDb,
   /**
@@ -103,7 +103,7 @@ export async function handleDelegation(
   // work. Read from the parent's ROW: the AgentJob shape the runner passes in
   // does not carry it, and a second source would be a second truth.
   const [parentFolderRow] = await db
-    .select({ jobFolder: agentJobs.jobFolder })
+    .select({ jobFolder: agentJobs.jobFolder, chatChannel: agentJobs.chatChannel })
     .from(agentJobs)
     .where(eq(agentJobs.id, parentJob.id as string))
     .limit(1);
@@ -117,7 +117,11 @@ export async function handleDelegation(
     agentId: childAgent.id,
     channel: 'internal',
     task: childTask,
-    chatId: taskInput.chatId ?? parentJob.chatId,
+    // The parent's chat travels with the channel it was recorded on (#649).
+    // Nothing else names a delegate's chat: the runner used to pass the
+    // parent's id as if the orchestrator had named it, and the child was born
+    // with a chat and no channel (review of #657, pass 4).
+    ...designateChat(parentJob.chatId, parentFolderRow?.chatChannel ?? null),
     status: 'pending',
     parentJobId: parentJob.id as string,
     delegationDepth: childDepth,

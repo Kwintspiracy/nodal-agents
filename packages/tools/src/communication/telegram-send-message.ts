@@ -117,11 +117,11 @@ export function createTelegramSendMessageTool(): ToolDefinition<
     label: 'Send a Telegram message',
     summary:
       'Send a message through the connected Telegram bot. A sent message cannot be taken back.',
-    description: `Send a text message to the user on the job's messaging channel (Telegram, Discord or Slack).
+    description: `Send a text message on a messaging channel (Telegram, Discord or Slack).
 
 - **chatId**: optional. Provide it only when sending to a chat other than the one
-  that triggered this job. If you omit it, the platform uses the chat that sent the
-  original request (the job's origin chat). An explicit chatId must already be an
+  this job answers. If you omit it, the platform uses the job's chat, or your
+  owner's conversation when the job has none. An explicit chatId must already be an
   APPROVED chat for this agent (the owner, or a member the owner confirmed) —
   you cannot message an arbitrary chat id.
 - **text**: the whole reply. Which marks render (none, markdown, the platform's own) is
@@ -132,15 +132,16 @@ export function createTelegramSendMessageTool(): ToolDefinition<
   slack, whatsapp) instead of the current conversation's — the agent must have
   an ENABLED binding for it. Omit to reply on the current conversation's channel.
 
-**Stop when you're done**: send your reply and call \`return_result\` in the same
+**Stop when you're done**: send your message and call \`return_result\` in the same
 response. Do NOT keep sending standalone acknowledgements, follow-ups, or
 emoji-only messages turn after turn — the user did not ask for them and the
 platform will cut you off for spamming if you send on several turns in a row
 without finishing.
 
 Fail conditions:
-- If no chatId is provided and the current job has no origin chat, the tool throws
-  \`telegram_no_recipient\`. This is intentional — do not guess a chat ID.
+- If no chatId is provided, the job has no chat and no owner conversation is on
+  record, the tool throws \`telegram_no_recipient\`. This is intentional — do not
+  guess a chat ID.
 - If the agent has no configured Telegram bot token, the tool throws
   \`telegram_no_bot_token\`. Fix: configure the bot token in agent settings.
 - If an explicit chatId is not an approved chat for this agent, the tool throws

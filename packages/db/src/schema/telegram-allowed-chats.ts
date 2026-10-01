@@ -53,7 +53,7 @@ export const telegramAllowedChats = pgTable(
     // F1 (audit #2 remediation follow-up, migration 0060): concurrent
     // first-contact claims could each pass the "no owner yet" check before
     // either row committed, creating two role='owner' rows for one agent —
-    // every owner-resolution query (resolveOwnerChatId,
+    // every owner-resolution query (resolveOwnerConversation,
     // resolveApprovalDeliveryTarget) does LIMIT 1 assuming uniqueness. A
     // partial unique index (owner rows only; 'member' rows are unrestricted)
     // closes the race at the DB level.
