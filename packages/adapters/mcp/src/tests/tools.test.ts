@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { mcpToolToToolDefinition, slugToPrefix } from '../tools.ts';
+import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 import type { McpToolDescriptor } from '../client.ts';
 
 function clientWithCallTool(impl: () => unknown): Client {
@@ -116,7 +117,10 @@ describe('mcpToolToToolDefinition', () => {
       undefined,
       expect.objectContaining({ timeout: expect.any(Number), resetTimeoutOnProgress: true }),
     );
-    expect(out).toEqual({ content: [{ type: 'text', text: 'hi' }] });
+    expect(out).toEqual({
+      format: MCP_TOOL_OUTPUT_FORMAT,
+      content: [{ type: 'text', text: 'hi' }],
+    });
     // The model reads the text itself, not a block wrapper.
     expect(read(def, out)).toBe('hi');
   });
@@ -132,7 +136,11 @@ describe('mcpToolToToolDefinition', () => {
 
     const out = await def.execute({ baseId: 'app1', tableId: 'JobList' }, {} as never);
 
-    expect(out).toEqual({ content: [], structuredContent: { records } });
+    expect(out).toEqual({
+      format: MCP_TOOL_OUTPUT_FORMAT,
+      content: [],
+      structuredContent: { records },
+    });
     expect(read(def, out)).toBe(JSON.stringify({ records }));
   });
 
@@ -145,7 +153,10 @@ describe('mcpToolToToolDefinition', () => {
 
     const out = await def.execute({}, {} as never);
 
-    expect(out).toEqual({ content: [{ type: 'image', mimeType: 'image/png', bytes: 3 }] });
+    expect(out).toEqual({
+      format: MCP_TOOL_OUTPUT_FORMAT,
+      content: [{ type: 'image', mimeType: 'image/png', bytes: 3 }],
+    });
     expect(read(def, out)).toBe(
       "[Image returned by the tool (image/png, 3 B): not passed to you. Nodal does not give a tool's image to the model.]",
     );
@@ -230,7 +241,11 @@ describe('mcpToolToToolDefinition', () => {
 
     const out = await def.execute({}, {} as never);
 
-    expect(out).toEqual({ content: [], structuredContent: { records } });
+    expect(out).toEqual({
+      format: MCP_TOOL_OUTPUT_FORMAT,
+      content: [],
+      structuredContent: { records },
+    });
   });
 
   it('many image blocks are recorded as their sizes, never their bytes (F6)', async () => {
@@ -249,6 +264,27 @@ describe('mcpToolToToolDefinition', () => {
     expect(out.content).toHaveLength(200);
     expect(JSON.stringify(out)).not.toContain('iVBOR');
     expect(read(def, out).split('\n')).toHaveLength(200);
+  });
+
+  it('a block cut by what is LEFT of the budget says the length it was cut at', async () => {
+    const client = {
+      callTool: vi.fn(async () => ({
+        content: [
+          { type: 'text', text: 'a'.repeat(30_000) },
+          { type: 'text', text: 'b'.repeat(30_000) },
+        ],
+      })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'c');
+
+    const out = (await def.execute({}, {} as never)) as { content: Array<{ text: string }> };
+    const second = out.content[1]!.text;
+    const kept = second.match(/^b*/)![0].length;
+
+    expect(kept).toBeGreaterThan(0);
+    expect(kept).toBeLessThan(30_000);
+    // The marker names the cut that was applied, not the overall cap.
+    expect(second).toContain(`[...truncated at ${kept} chars`);
   });
 
   it('many text blocks under the per-block cap are bounded as a whole on the row, and the cut is said (F6)', async () => {
@@ -289,7 +325,11 @@ describe('mcpToolToToolDefinition', () => {
 
     const out = await def.execute({}, {} as never);
 
-    expect(out).toEqual({ content: [], toolResult: { temperature: 21 } });
+    expect(out).toEqual({
+      format: MCP_TOOL_OUTPUT_FORMAT,
+      content: [],
+      toolResult: { temperature: 21 },
+    });
     expect(read(def, out)).toBe('{"temperature":21}');
   });
 });

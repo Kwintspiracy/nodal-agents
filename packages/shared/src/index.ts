@@ -39,6 +39,7 @@ export * from './approval-rules-chain';
 export * from './approval-tool-default';
 export * from './question-answer';
 export * from './untrusted';
+export * from './mcp-tool-result';
 export * from './redact-transcript';
 export * from './agent-slug';
 export * from './catastrophic-command';

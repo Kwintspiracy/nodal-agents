@@ -5,6 +5,7 @@
 // envoi est une sortie d'outil qui dit `ok`. Qu'une source citée ait été LUE
 // n'est pas jugé ici : aucune ligne de la base ne le dit de façon fiable (#648).
 
+import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 import type { JobFact, ToolCallFact, TreeFacts } from './facts';
 
 /** Le job de tête de l'essai. */
@@ -38,30 +39,47 @@ export function parseJson(s: string | null): unknown {
 /**
  * Le résultat structuré d'un outil MCP, tel que sa ligne `tool_calls` le garde.
  *
- * Depuis que l'adaptateur garde le résultat ENTIER (`packages/adapters/mcp/src/
- * result.ts`), la sortie est `{ content: [...blocs], structuredContent? }` et
- * la forme machine du serveur est sous `structuredContent`. Les lignes écrites
- * avant gardaient ce `structuredContent` seul, à la racine : les essais réels
- * enregistrés (fixtures) et toute base existante en portent. Les deux formes
- * sont des données déjà écrites, chacune lue telle qu'elle a été écrite.
+ * Deux formes de ligne, distinguées par une MARQUE et non par une forme :
+ *  - l'enveloppe de l'adaptateur (`packages/adapters/mcp/src/result.ts`), dont
+ *    `format` vaut `MCP_TOOL_OUTPUT_FORMAT` : la forme machine du serveur est
+ *    sous `structuredContent`, sinon sous `toolResult` (protocole 2024-10-07),
+ *    sinon écrite en JSON dans un bloc texte (ce que la spec recommande aux
+ *    serveurs pour les clients qui ne lisent que `content`) ;
+ *  - toute ligne SANS cette marque, écrite avant elle : la charge du serveur à
+ *    la racine — même quand elle porte elle-même un tableau `content` (une page
+ *    Notion, une liste CRM). Les essais réels enregistrés (fixtures) et toute
+ *    base existante en portent.
  *
- * Un serveur peut aussi ne rien mettre dans `structuredContent` et écrire sa
- * forme machine en JSON dans un bloc texte — ce que la spec recommande pour les
- * clients qui ne lisent que `content` (et une ligne de l'ancien adaptateur, qui
- * gardait ce texte seul). Elle est lue aussi : le premier bloc texte qui est un
- * objet JSON. Sinon le juge dirait « aucune demande » sur un essai juste.
+ * Un bloc texte se lit par `jsonInText` : la règle y est dite.
  */
 export function mcpStructured(s: string | null): Record<string, unknown> | null {
   const record = jsonObject(parseJson(s));
   if (!record) return null;
-  if (!Array.isArray(record['content'])) return record;
-  const structured = jsonObject(record['structuredContent']);
-  if (structured) return structured;
-  for (const block of record['content'] as unknown[]) {
+  if (record['format'] !== MCP_TOOL_OUTPUT_FORMAT) return record;
+  const payload = jsonObject(record['structuredContent']) ?? jsonObject(record['toolResult']);
+  if (payload) return payload;
+  const content = Array.isArray(record['content']) ? (record['content'] as unknown[]) : [];
+  for (const block of content) {
     const b = block as { type?: unknown; text?: unknown } | null;
-    if (b?.type !== 'text') continue;
-    const fromText = jsonObject(b.text);
+    if (b?.type !== 'text' || typeof b.text !== 'string') continue;
+    const fromText = jsonInText(b.text);
     if (fromText) return fromText;
+  }
+  return null;
+}
+
+/**
+ * L'objet JSON qu'un bloc texte porte, selon UNE règle : le bloc entier est un
+ * objet JSON, ou il se TERMINE par un objet JSON qui commence en début de ligne
+ * (« phrase.\n{ … } »). Une accolade au milieu d'une phrase n'ouvre jamais
+ * rien, et ce qui suit l'objet doit être vide : un texte qui cite du JSON en
+ * passant n'est pas pris pour une charge.
+ */
+function jsonInText(text: string): Record<string, unknown> | null {
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== '{' || (i > 0 && text[i - 1] !== '\n')) continue;
+    const found = jsonObject(text.slice(i).trim());
+    if (found) return found;
   }
   return null;
 }

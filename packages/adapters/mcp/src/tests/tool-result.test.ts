@@ -17,6 +17,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { createMcpTools, type McpToolset } from '../index.ts';
 import type { McpToolOutput } from '../result.ts';
+import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 
 const FIXTURE = fileURLToPath(new URL('./fixtures/mcp-result-server.mjs', import.meta.url));
 const SHAPES = ['mixed', 'structured', 'resources', 'echoed', 'blank', 'error', 'empty'] as const;
@@ -72,6 +73,7 @@ describe('an MCP tool result, kept whole and read by the model @cap:connecter-un
     );
     // The record keeps it where the server put it, next to every block.
     expect(record).toEqual({
+      format: MCP_TOOL_OUTPUT_FORMAT,
       content: [
         {
           type: 'text',
@@ -89,6 +91,7 @@ describe('an MCP tool result, kept whole and read by the model @cap:connecter-un
 
     expect(model).toBe('{"records":[{"id":"rec1","fields":{"Name":"Alpha"}}]}');
     expect(record).toEqual({
+      format: MCP_TOOL_OUTPUT_FORMAT,
       content: [],
       structuredContent: { records: [{ id: 'rec1', fields: { Name: 'Alpha' } }] },
     });
@@ -157,7 +160,7 @@ describe('an MCP tool result, kept whole and read by the model @cap:connecter-un
   it('an empty result is said as empty', async () => {
     const { record, model } = await call('empty');
 
-    expect(record).toEqual({ content: [] });
+    expect(record).toEqual({ format: MCP_TOOL_OUTPUT_FORMAT, content: [] });
     expect(model).toBe('[The MCP tool returned an empty result.]');
   });
 });

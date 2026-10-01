@@ -22,6 +22,7 @@
 // as their type and size, never their bytes: the row is an audit, not a store.
 
 import { isDeepStrictEqual } from 'node:util';
+import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 
 // audit#2026-07-07 F6: nothing capped the size of a returned MCP tool result.
 // A third-party MCP server — buggy or actively malicious — can return several
@@ -33,14 +34,18 @@ import { isDeepStrictEqual } from 'node:util';
 //
 // It bounds each channel as a whole: the content blocks share ONE budget (200
 // blocks of 49k each would otherwise all pass a per-block cap), the structured
-// payload has its own, and the model's text is capped once more after joining.
+// payload has its own, and the model's text caps the joined blocks once more.
 const MCP_RESULT_CHAR_CAP = Number(process.env.MCP_RESULT_CHAR_CAP) || 50_000;
 
-const TRUNCATED = `\n\n[...truncated at ${MCP_RESULT_CHAR_CAP} chars — MCP tool result was larger]`;
-
-/** A string cut to `limit` characters, the cut said. */
+/**
+ * A string cut to `limit` characters, the cut said with the length it was
+ * actually cut at — a block cut by what is LEFT of the budget is not cut at
+ * the overall cap.
+ */
 function capText(value: string, limit: number): string {
-  return value.length <= limit ? value : value.slice(0, Math.max(0, limit)) + TRUNCATED;
+  if (value.length <= limit) return value;
+  const kept = Math.max(0, limit);
+  return `${value.slice(0, kept)}\n\n[...truncated at ${kept} chars — MCP tool result was larger]`;
 }
 
 /**
@@ -84,6 +89,11 @@ export type McpRecordedBlock =
 
 /** What an MCP tool's `execute()` returns, and what `tool_calls.tool_output` holds. */
 export interface McpToolOutput {
+  /**
+   * Says this row holds the whole recorded result, not a server payload stored
+   * at the root as rows written before did (`@nodal-agents/shared`).
+   */
+  format: typeof MCP_TOOL_OUTPUT_FORMAT;
   /** Every block of `content`, in the server's order, within the content budget. */
   content: McpRecordedBlock[];
   /** The server's `structuredContent`, capped; absent when it sent none. */
@@ -170,7 +180,7 @@ export function recordMcpResult(raw: object): McpToolOutput {
     budget -= JSON.stringify(recorded).length;
   }
   if (omitted > 0) content.push({ type: 'omitted', count: omitted });
-  const out: McpToolOutput = { content };
+  const out: McpToolOutput = { format: MCP_TOOL_OUTPUT_FORMAT, content };
   if (result.structuredContent != null)
     out.structuredContent = capPayload(result.structuredContent);
   if (result.toolResult !== undefined) out.toolResult = capPayload(result.toolResult);
