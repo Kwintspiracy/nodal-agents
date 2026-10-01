@@ -16,7 +16,8 @@ export {
 export type { DecryptedCredential, OauthPayload, Db } from './queries/credentials.ts';
 export { assertMasterKeyRestorable } from './queries/master-key-guard.ts';
 export type { AssertMasterKeyRestorableOptions } from './queries/master-key-guard.ts';
-export { resolveOwnerChatId } from './queries/telegram-owner.ts';
+export { designateChat, resolveScheduleNotifyChat } from './queries/designated-chat.ts';
+export type { DesignatedChat } from './queries/designated-chat.ts';
 export { isChatAllowed } from './queries/telegram-allowed.ts';
 export { dropApprovalRulesForDetachedSkill } from './queries/skill-approval-rules.ts';
 export { getMcpApprovalContext } from './queries/mcp-approval-context.ts';

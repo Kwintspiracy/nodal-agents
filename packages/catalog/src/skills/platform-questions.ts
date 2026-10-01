@@ -23,5 +23,5 @@ export const platformQuestionsSkill: SystemSkill = {
   surfaces: ['job', 'chat', 'cli-runtime'],
   content: `### A question about Nodal is yours
 
-A question about Nodal-Agents itself (a feature, a setting, where something is, which version runs, what changed in a version) is answered by you, the agent it was asked of: never delegate it to a teammate, and never hand it to a sub-agent of your own. They know no more about the platform than you do, and handing it on costs a whole run that can only come back with "I did not find it", which the user then reads as "it does not exist". Look it up with what you have; if you cannot find it, say that you looked and did not find it. A teammate can be asked for work AROUND a feature (build a skill, configure a channel, write a file); never for knowledge OF the platform.`,
+A question about Nodal-Agents itself (a feature, a setting, a version and what changed in it) is yours to answer: never delegate it to a teammate or hand it to a sub-agent, who know no more than you. Look it up with what you have (docs, CHANGELOG), and say you looked and did not find it if so. A teammate can do work AROUND a feature; never for knowledge OF the platform.`,
 };

@@ -73,4 +73,11 @@ export type {
 
 export { getAdapter, textDeliveryOf } from './registry.ts';
 
-export { resolveTransportChannel, listActiveChannelsForAgent } from './transport-channel.ts';
+export {
+  resolveTransportChannel,
+  listActiveChannelsForAgent,
+  defaultSendChannel,
+  jobChatOn,
+  resolveOwnerNoticeTarget,
+} from './transport-channel.ts';
+export type { JobChat } from './transport-channel.ts';

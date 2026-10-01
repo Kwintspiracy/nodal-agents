@@ -33,8 +33,7 @@ export const dashboardPublishTool: ToolDefinition<
     'final delivery. So for a task whose output another step (a synthesis) or the user will consume, ' +
     'put the FULL content here — not a stub like "see below". (If you write your answer as your final ' +
     'message text, it is captured automatically; this tool makes it explicit and is required when the ' +
-    'dashboard is an intended destination.) For other surfaces, use the corresponding tool ' +
-    '(telegram_send_message, etc.).' +
+    'dashboard is an intended destination.)' +
     '\n\n**Same-response with return_result (CRITICAL for cost & latency)**: ' +
     'Always emit dashboard_publish IN THE SAME response.content array as return_result. ' +
     'Splitting them across consecutive responses re-prompts the LLM unnecessarily and adds latency. ' +
