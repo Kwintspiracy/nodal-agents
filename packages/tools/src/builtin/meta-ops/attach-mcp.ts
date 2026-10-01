@@ -55,7 +55,8 @@ export const attachMcpTool: ToolDefinition<typeof AttachMcpInput, AttachMcpOutpu
     if (!agentId) {
       return { ok: false, error: `Agent "${input.agentSlug}" not found in this workspace.` };
     }
-    await linkMcpToAgent(ctx.db, ctx.entityId, agentId, mcpId);
+    const linked = await linkMcpToAgent(ctx.db, ctx.entityId, agentId, mcpId);
+    if (!linked.ok) return { ok: false, error: linked.error };
     return {
       ok: true,
       message: `Attached MCP "${input.mcpSlug}" to agent "${input.agentSlug}" — its tools are now available to that agent.`,

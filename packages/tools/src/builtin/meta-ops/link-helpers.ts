@@ -14,7 +14,7 @@ import {
   agentSkills,
   mcpServers,
   connectors,
-  agentMcpServers,
+  attachMcpServerToAgent,
   agentConnectorAssignments,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
@@ -132,17 +132,19 @@ export async function resolveConnectorId(
   return row?.id ?? null;
 }
 
-/** Link an MCP server to an agent (idempotent). */
+/**
+ * Link an MCP server to an agent (idempotent: an existing link keeps its tool
+ * list). Refused when the server's tool names would collide with a server the
+ * agent already holds (#661) — the error says which, and what to do.
+ */
 export async function linkMcpToAgent(
   db: AnyDrizzleDb,
   entityId: string,
   agentId: string,
   mcpServerId: string,
-): Promise<void> {
-  await db
-    .insert(agentMcpServers)
-    .values({ entityId, agentId, mcpServerId, enabledTools: null })
-    .onConflictDoNothing();
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const attached = await attachMcpServerToAgent(db, { entityId, agentId, mcpServerId });
+  return attached.ok ? { ok: true } : { ok: false, error: attached.message };
 }
 
 /** Link a connector to an agent (idempotent). */

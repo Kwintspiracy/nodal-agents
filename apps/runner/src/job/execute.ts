@@ -48,6 +48,8 @@ import {
   wrapUntrusted,
   PROVIDER_REJECTED,
   PROVIDER_REJECTED_PREFIX,
+  findMcpNamespaceOverlap,
+  mcpNamespaceOverlapMessage,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
@@ -2437,6 +2439,7 @@ async function runJobTracked(
       .select({
         id: mcpServersTable.id,
         slug: mcpServersTable.slug,
+        name: mcpServersTable.name,
         transport: mcpServersTable.transport,
         url: mcpServersTable.url,
         apiKey: mcpServersTable.apiKey,
@@ -2472,6 +2475,15 @@ async function runJobTracked(
         );
       }
     };
+
+    // One tool name, one server (#661). Every attach path refuses a server
+    // whose tool names would collide with one the agent holds; an attachment
+    // written before that rule is refused HERE, loud, naming both — never
+    // routed to whichever server happens to come last.
+    const namespaceOverlap = findMcpNamespaceOverlap(mcpAssignments);
+    if (namespaceOverlap) {
+      throw new Error(mcpNamespaceOverlapMessage(...namespaceOverlap));
+    }
 
     for (const ms of mcpAssignments) {
       try {

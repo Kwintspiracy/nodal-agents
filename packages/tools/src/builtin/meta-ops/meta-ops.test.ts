@@ -636,6 +636,59 @@ describe('create_mcp', () => {
     ]);
   });
 
+  it('refuses a slug outside the canonical grammar: no doubled, leading or trailing hyphen (#661) @cap:connecter-un-service/moteur', () => {
+    const base = { name: 'X', transport: 'stdio' as const, command: 'npx' };
+    for (const slug of ['guide--srv', '-a', 'a-', 'A', 'a_b']) {
+      expect(createMcpTool.inputSchema.safeParse({ ...base, slug }).success, slug).toBe(false);
+    }
+    expect(createMcpTool.inputSchema.safeParse({ ...base, slug: 'guide-srv' }).success).toBe(true);
+  });
+
+  it('attachToAgentSlug onto an agent holding a colliding server: created, NOT attached, and said (#661)', async () => {
+    const [agentRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, seed.agentId));
+    const [held] = await db
+      .insert(mcpServers)
+      .values({
+        entityId: seed.entityId,
+        name: 'Old one',
+        slug: 'collide-srv-',
+        transport: 'stdio',
+        command: 'npx',
+      })
+      .returning({ id: mcpServers.id });
+    await db
+      .insert(agentMcpServers)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, mcpServerId: held!.id });
+
+    const result = await createMcpTool.execute(
+      {
+        name: 'New one',
+        slug: 'collide-srv',
+        transport: 'stdio',
+        command: 'npx',
+        attachToAgentSlug: agentRow!.slug,
+      },
+      makeCtxWith(fakeProvisioning()),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(`expected ok: ${result.error}`);
+    expect(result.message).toContain('NOT attached');
+    expect(result.message).toContain('"Old one" (collide-srv-)');
+    const [created] = await db
+      .select({ id: mcpServers.id })
+      .from(mcpServers)
+      .where(and(eq(mcpServers.entityId, seed.entityId), eq(mcpServers.slug, 'collide-srv')));
+    const links = await db
+      .select()
+      .from(agentMcpServers)
+      .where(eq(agentMcpServers.mcpServerId, created!.id));
+    expect(links).toHaveLength(0);
+  });
+
   it('stdio: encrypts each env value and stores command + args', async () => {
     const result = await createMcpTool.execute(
       {
@@ -1055,6 +1108,90 @@ describe('attach_mcp', () => {
     expect(result.error).toContain('Available');
     // The real slug must be named verbatim so the LLM can self-correct.
     expect(result.error).toContain('mcp-fetch');
+  });
+
+  it('refuses a server whose tool names would collide with one the agent holds (#661) @cap:connecter-un-service/moteur', async () => {
+    const ctx = makeCtx();
+    const [agentRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, seed.agentId));
+    const [held] = await db
+      .insert(mcpServers)
+      .values({
+        entityId: seed.entityId,
+        name: 'Held',
+        slug: 'ns-held',
+        transport: 'stdio',
+        command: 'npx',
+      })
+      .returning({ id: mcpServers.id });
+    await db
+      .insert(agentMcpServers)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, mcpServerId: held!.id });
+    // A row written before the canonical grammar: `ns-held-` lends `ns_held___x`,
+    // which also starts with `ns_held__`.
+    const [shadow] = await db
+      .insert(mcpServers)
+      .values({
+        entityId: seed.entityId,
+        name: 'Shadow',
+        slug: 'ns-held-',
+        transport: 'stdio',
+        command: 'npx',
+      })
+      .returning({ id: mcpServers.id });
+
+    const result = await attachMcpTool.execute(
+      { mcpSlug: 'ns-held-', agentSlug: agentRow!.slug },
+      ctx,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected ok:false');
+    expect(result.error).toContain('"Held" (ns-held)');
+    expect(result.error).toContain('"Shadow" (ns-held-)');
+    const links = await db
+      .select()
+      .from(agentMcpServers)
+      .where(eq(agentMcpServers.mcpServerId, shadow!.id));
+    expect(links).toHaveLength(0);
+  });
+
+  it('re-attaching a server the agent holds keeps its tool list, and is no collision with itself', async () => {
+    const ctx = makeCtx();
+    const [agentRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, seed.agentId));
+    const [srv] = await db
+      .insert(mcpServers)
+      .values({
+        entityId: seed.entityId,
+        name: 'Narrowed',
+        slug: 'narrowed-srv',
+        transport: 'stdio',
+        command: 'npx',
+      })
+      .returning({ id: mcpServers.id });
+    await db.insert(agentMcpServers).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      mcpServerId: srv!.id,
+      enabledTools: ['only_this'],
+    });
+
+    const result = await attachMcpTool.execute(
+      { mcpSlug: 'narrowed-srv', agentSlug: agentRow!.slug },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    const [link] = await db
+      .select({ enabledTools: agentMcpServers.enabledTools })
+      .from(agentMcpServers)
+      .where(eq(agentMcpServers.mcpServerId, srv!.id));
+    expect(link!.enabledTools).toEqual(['only_this']);
   });
 
   it('no MCP servers in the workspace: error says so instead of an empty "Available:" list', async () => {

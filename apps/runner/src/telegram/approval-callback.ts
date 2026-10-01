@@ -350,6 +350,7 @@ export async function handleApprovalCallback(
         : [];
       const body = await buildApprovalCardBody(deps.db, {
         entityId: approval.entityId,
+        agentId: approval.agentId,
         toolName: approval.toolName,
         toolInput: approval.toolInput,
         who: agentRow?.name ?? 'An agent',
