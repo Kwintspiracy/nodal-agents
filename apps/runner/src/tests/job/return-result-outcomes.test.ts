@@ -191,12 +191,15 @@ const OUTCOME_DEFINITION = [
   'status="success" means you did everything that was yours to do',
   // L'attente est un fait rendu par un outil, jamais un état que le modèle
   // fabrique lui-même.
-  'When a TOOL RETURNED a state waiting on a person',
+  'When a TOOL RETURNED a state waiting on a person in its output',
+  'a card to click, whatever it is called), the result is DELIVERED',
   'the result is DELIVERED, not blocked',
   'write in your reply what waits, who decides and where',
   'on a delegated task, that reply is what your orchestrator reads',
   // La porte d'approbation de Nodal suspend seule : rien à déclarer.
-  'An approval Nodal itself asks before a call suspends the run on its own',
+  // Deux côtés sans ambiguïté : l'attente DANS la sortie d'un outil se déclare,
+  // seule la porte posée AVANT l'appel se tait.
+  'Only the approval gate Nodal itself puts BEFORE calling a tool suspends the run on its own',
   'status="blocked" means YOUR part could not be done',
   'the requested action itself failed or could not be called',
 ];

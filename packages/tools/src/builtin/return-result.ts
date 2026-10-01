@@ -58,10 +58,11 @@ export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, Re
     'export). Nodal checks each listed file before the run can end as a success: a missing ' +
     'or broken file is reported, never accepted, and the run does not end as a success. ' +
     'status="success" means you did everything that was yours to do. When a TOOL RETURNED a ' +
-    'state waiting on a person (a pending confirmation, an approval request, a card to click), ' +
-    'the result is DELIVERED, not blocked: write in your reply what waits, who decides and ' +
-    'where (on a delegated task, that reply is what your orchestrator reads). An approval ' +
-    'Nodal itself asks before a call suspends the run on its own: do not declare it. ' +
+    'state waiting on a person in its output (a pending confirmation, an approval request, a ' +
+    'card to click, whatever it is called), the result is DELIVERED, not blocked: write in ' +
+    'your reply what waits, who decides and where (on a delegated task, that reply is what ' +
+    'your orchestrator reads). Only the approval gate Nodal itself puts BEFORE calling a tool ' +
+    'suspends the run on its own: do not declare that one. ' +
     'status="blocked" means YOUR part could not be done after 2 attempts: the requested ' +
     'action itself failed or could not be called (even if you prepared something in its ' +
     'place), or an input or an access is missing. When you set status="blocked" ' +
