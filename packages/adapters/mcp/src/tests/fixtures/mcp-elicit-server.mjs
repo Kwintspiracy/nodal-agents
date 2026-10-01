@@ -18,6 +18,8 @@
 //                                       answer before withdrawing its question
 //                                       (SDK `timeout` → `notifications/cancelled`)
 //                     afterMs           work the tool does AFTER the answer
+//                     actions           labels for the two buttons, sent as
+//                                       `_meta["nodal/actions"]` as given
 //   - `capabilities` returns the client capabilities the server received at
 //                   initialize, as JSON text.
 //   - `ask_later`   returns at once, then asks a question OUTSIDE any tool
@@ -51,24 +53,27 @@ server.registerTool(
     description: 'Ask the person how to print, then report what they answered.',
     inputSchema: {
       attach: z.boolean().optional(),
+      actions: z.record(z.string(), z.unknown()).optional(),
       serverTimeoutMs: z.number().optional(),
       afterMs: z.number().optional(),
     },
   },
-  async ({ attach, serverTimeoutMs, afterMs }) => {
+  async ({ attach, actions, serverTimeoutMs, afterMs }) => {
+    const meta = {
+      ...(attach
+        ? {
+            'nodal/attachments': [
+              { mimeType: 'image/png', data: PNG_1PX, caption: 'Page 1 preview' },
+              { mimeType: 'text/html', data: 'PGI+aGk8L2I+' },
+            ],
+          }
+        : {}),
+      ...(actions ? { 'nodal/actions': actions } : {}),
+    };
     const params = {
       message: 'How should "report.pdf" be printed?',
       requestedSchema: ORDER_FORM,
-      ...(attach
-        ? {
-            _meta: {
-              'nodal/attachments': [
-                { mimeType: 'image/png', data: PNG_1PX, caption: 'Page 1 preview' },
-                { mimeType: 'text/html', data: 'PGI+aGk8L2I+' },
-              ],
-            },
-          }
-        : {}),
+      ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
     };
     let reply;
     try {

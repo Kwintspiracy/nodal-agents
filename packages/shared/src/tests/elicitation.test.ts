@@ -9,6 +9,10 @@ import {
   validateElicitationContent,
   readElicitationAttachments,
   ELICITATION_ATTACHMENT_MAX_BYTES,
+  readElicitationActions,
+  readElicitationToolInput,
+  elicitationActionLabels,
+  ELICITATION_ACTION_LABEL_MAX,
 } from '../elicitation';
 
 const FORM = {
@@ -135,5 +139,55 @@ describe('readElicitationAttachments @cap:approuver-une-action/moteur', () => {
     expect(readElicitationAttachments(meta('x')).rejected).toEqual([
       { index: -1, reason: 'nodal/attachments is not an array' },
     ]);
+  });
+});
+
+describe('readElicitationActions — les libellés que le serveur donne à ses boutons @cap:approuver-une-action/moteur', () => {
+  const meta = (actions: unknown) => ({ 'nodal/actions': actions });
+
+  it('lit les deux libellés, nettoyés de tout ce qui n’est pas du texte affichable', () => {
+    expect(readElicitationActions(meta({ accept: '  Print\n', decline: 'Not\u202Enow' }))).toEqual({
+      actions: { accept: 'Print', decline: 'Notnow' },
+      rejected: [],
+    });
+  });
+
+  it('sans clé, aucun libellé : les boutons gardent les leurs', () => {
+    expect(readElicitationActions(undefined)).toEqual({
+      actions: { accept: null, decline: null },
+      rejected: [],
+    });
+    expect(elicitationActionLabels(null)).toEqual({ accept: '✅ Confirm', decline: 'Decline' });
+  });
+
+  it('un libellé invalide est écarté AVEC sa raison, l’autre est gardé', () => {
+    const r = readElicitationActions(
+      meta({ accept: 'P'.repeat(ELICITATION_ACTION_LABEL_MAX + 1), decline: 42 }),
+    );
+    expect(r.actions).toEqual({ accept: null, decline: null });
+    expect(r.rejected).toEqual([
+      { action: 'accept', reason: `is longer than ${ELICITATION_ACTION_LABEL_MAX} characters` },
+      { action: 'decline', reason: 'is not text' },
+    ]);
+    expect(readElicitationActions(meta('Print')).rejected).toEqual([
+      { action: null, reason: 'nodal/actions is not an object' },
+    ]);
+    expect(readElicitationActions(meta({ accept: ' \u0000 ' })).rejected).toEqual([
+      { action: 'accept', reason: 'is empty' },
+    ]);
+  });
+
+  it('la ligne garde les libellés ; relus, ils repassent la même règle', () => {
+    const input = readElicitationToolInput({
+      server: 'printer',
+      message: 'Print?',
+      requestedSchema: { type: 'object', properties: {} },
+      actions: { accept: 'Print', decline: 'x'.repeat(99) },
+    });
+    expect(input?.actions).toEqual({ accept: 'Print', decline: null });
+    expect(elicitationActionLabels(input?.actions)).toEqual({
+      accept: 'Print',
+      decline: 'Decline',
+    });
   });
 });

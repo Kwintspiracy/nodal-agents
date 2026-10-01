@@ -167,7 +167,7 @@ describe('notifyApprovalCreated — la question d’un serveur MCP @cap:approuve
     expect(sent.forms[0]!.conversationId).toBe('conv-requester');
     expect(sent.forms[0]!.text).toContain('The MCP server "printer" asks:');
     expect(sent.forms[0]!.text).toContain(`« ${MESSAGE} »`);
-    expect(sent.forms[0]!.labels).toEqual(['print: Yes', '✓ print: No', '✅ Send', '❌ Decline']);
+    expect(sent.forms[0]!.labels).toEqual(['✅ Confirm', 'Decline', 'print: Yes', '✓ print: No']);
   });
 
   it('une demande faite sur le web garde sa question sur le dashboard', async () => {

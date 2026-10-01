@@ -19,7 +19,7 @@
 //   - le délai d'un appel ne compte pas l'attente humaine, mais compte encore
 //     le travail du serveur.
 
-import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import type { ToolContext, UserInputRequest, UserInputResponse } from '@nodal-agents/tools';
 import { createMcpTools, createLazyMcpTools, type McpToolset } from '../index.ts';
@@ -180,6 +180,40 @@ describe('élicitation MCP, contre un vrai serveur stdio @cap:approuver-une-acti
         });
       });
   }
+
+  it('les libellés que le serveur donne à ses boutons arrivent avec la question', async () => {
+    const t = await connect();
+    const asked: UserInputRequest[] = [];
+    await tool(t, 'order').execute(
+      { purpose: 'print', actions: { accept: 'Print', decline: 'Not now' } },
+      ctxWith(async (req) => {
+        asked.push(req);
+        return { action: 'decline' };
+      }),
+    );
+    expect(asked[0]!.actions).toEqual({ accept: 'Print', decline: 'Not now' });
+  });
+
+  it('un libellé invalide est écarté et dit ; la question est posée quand même', async () => {
+    const t = await connect();
+    const asked: UserInputRequest[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await tool(t, 'order').execute(
+        { purpose: 'print', actions: { accept: 'P'.repeat(80), decline: 'Cancel' } },
+        ctxWith(async (req) => {
+          asked.push(req);
+          return { action: 'decline' };
+        }),
+      );
+      expect(asked[0]!.actions).toEqual({ accept: null, decline: 'Cancel' });
+      expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+        '[adapter-mcp] printer: the accept label of its question is ignored: is longer than 32 characters',
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
 
   it('un serveur qui retire sa question interrompt le signal de la demande', async () => {
     const t = await connect();

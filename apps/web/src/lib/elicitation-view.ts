@@ -9,6 +9,7 @@
 
 import {
   readElicitationToolInput,
+  type ElicitationActions,
   type ElicitationField,
   type ElicitationValue,
 } from '@nodal-agents/shared';
@@ -30,6 +31,8 @@ export type ElicitationView = {
   message: string;
   /** Le formulaire demandé, brut (`tool_input.requestedSchema`). */
   requestedSchema: unknown;
+  /** Les libellés que le serveur donne à ses boutons (`nodal/actions`) ; null : le défaut. */
+  actions: ElicitationActions;
   /** Ce qui a été envoyé, sur une question répondue. */
   response: Record<string, unknown> | null;
   resolvedBy: string | null;
@@ -59,6 +62,7 @@ export function toElicitationView(row: {
     server: input.server,
     message: input.message,
     requestedSchema: input.requestedSchema,
+    actions: input.actions,
     response:
       typeof row.response === 'object' && row.response !== null && !Array.isArray(row.response)
         ? (row.response as Record<string, unknown>)

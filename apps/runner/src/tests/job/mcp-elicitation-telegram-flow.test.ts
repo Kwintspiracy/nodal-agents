@@ -374,7 +374,8 @@ describe('une question de serveur MCP, demandée sur Telegram, répondue sur Tel
             {
               toolCallId: 'tc-print-1',
               toolName: 'printer__order',
-              args: { purpose: 'Print the report', attach: true },
+              // Le serveur nomme son bouton d'accord (`nodal/actions`).
+              args: { purpose: 'Print the report', attach: true, actions: { accept: 'Print' } },
             },
           ],
         },
@@ -408,12 +409,14 @@ describe('une question de serveur MCP, demandée sur Telegram, répondue sur Tel
     ]);
     expect(outbound[0]!.body['caption']).toBe('Page 1 preview');
     expect(String(outbound[1]!.body['text'])).toContain('« How should "report.pdf" be printed? »');
+    // Le bouton d'accord porte le mot du serveur, en tête de la carte.
+    expect(keyboard()[0]!.map((b) => b.text)).toEqual(['Print', 'Decline']);
 
     expect(await tapOn('Color: grayscale', deps)).toBeNull();
     expect(await tapOn('Two-sided: Yes', deps)).toBeNull();
     expect(await tapOn('✏️ Copies', deps)).toBe('Reply to the card with Copies.');
     await typeReply('2', deps);
-    expect(await tapOn('✅ Send', deps)).toBe('Sent.');
+    expect(await tapOn('Print', deps)).toBe('Answer sent.');
 
     const result = await run;
     expect(result.status).toBe('completed');
