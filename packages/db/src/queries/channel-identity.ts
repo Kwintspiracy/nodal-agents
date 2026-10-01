@@ -1,7 +1,7 @@
 // queries/channel-identity.ts — channel-neutral identity & authorization (S2).
 //
-// Generalizes the Telegram H-1 security model (resolveOwnerChatId,
-// isChatAllowed — queries/telegram-owner.ts, queries/telegram-allowed.ts) to
+// Generalizes the Telegram H-1 security model (the owner chat, isChatAllowed —
+// queries/telegram-allowed.ts) to
 // any channel via channel_bindings / channel_allowed_conversations (migration
 // 0064) — WITHOUT changing Telegram's current behavior yet.
 //

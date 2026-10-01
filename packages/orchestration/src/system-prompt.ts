@@ -99,17 +99,26 @@ export interface JobContext {
    * Posé par le runner (`channelDeliveryFacts`) avec le canal que l'outil
    * résoudra. `renders` vient de `ChannelAdapter.text` : les marques que la
    * plateforme rend, telles qu'on les tape. Ce n'est pas une phrase par canal,
-   * c'est ce que l'adaptateur déclare, et ses tests prouvent qu'il le fait. `onlyPath` : la garde de livraison exige un envoi
-   * par cet outil (canal à livraison par outil, ou routine qui a demandé sa
-   * confirmation). Rendu en une ligne de `## Job context`, et seulement si le
-   * job détient `sendTool` (#559) — un délégué qui hérite du `chat_id` sans
-   * l'outil n'en lit rien.
+   * c'est ce que l'adaptateur déclare, et ses tests prouvent qu'il le fait.
+   * `reply` : où va la RÉPONSE de ce job (#649), calculé une fois par le
+   * runner (`replyDestination`). `channel` : la demande porte un chat, l'outil
+   * est le seul chemin de la réponse, et la garde de livraison l'exige.
+   * `result` : la réponse est le résultat du job, rendu là d'où vient la
+   * demande (appelant MCP ou API, web) ; l'outil n'envoie qu'un message séparé
+   * au propriétaire. `parent` : un délégué, dont le bloc « Delegated sub-task »
+   * dit tout. Rendu en une ligne de `## Job context`, et seulement si le job
+   * détient `sendTool` (#559) — un délégué qui hérite du `chat_id` sans
+   * l'outil n'en lit rien. `target` : qui l'outil atteint quand l'agent ne
+   * nomme pas de chat, par la règle même de l'outil (`jobChatOn`,
+   * @nodal-agents/delivery) — le chat du job s'il a été résolu sur `channel`,
+   * sinon la conversation propriétaire de `channel` (revue passe 4 de #657).
    */
   channelDelivery?: {
     channel: string;
     sendTool: string;
     renders: readonly string[];
-    onlyPath: boolean;
+    reply: 'channel' | 'result' | 'parent';
+    target: 'chat' | 'owner';
   };
   /**
    * The user asked to be notified when this job succeeds (per-schedule opt-in).
@@ -523,13 +532,23 @@ export function buildRuntimeBlock(
  * FAITS, tirés de l'adaptateur : par où la réponse passe, sous quelle forme
  * elle arrive, et qu'elle est découpée sans l'agent. Aucune limite chiffrée :
  * le modèle n'a rien à en faire.
+ *
+ * Par où la réponse passe se lit sur `reply` (#649), jamais sur le canal que
+ * l'outil résout : pour une demande sans chat (MCP, API, le web), ce canal est
+ * celui du propriétaire, et le présenter comme « reaches the user » faisait
+ * partir la réponse d'une demande MCP sur son Telegram.
  */
 function channelDeliveryLine(
   d: NonNullable<JobContext['channelDelivery']>,
   availableTools: readonly string[],
 ): string | null {
-  if (!availableTools.includes(d.sendTool)) return null;
-  const reach = d.onlyPath ? ', the only way your replies reach them' : '';
+  if (d.reply === 'parent' || !availableTools.includes(d.sendTool)) return null;
+  const path =
+    d.reply === 'channel'
+      ? `\`${d.sendTool}\` reaches the user on ${d.channel}, the only way your replies reach them.`
+      : "your reply is this job's result, returned to where the request came from. " +
+        `\`${d.sendTool}\` sends a separate message to ` +
+        `${d.target === 'chat' ? 'the chat named for this job,' : 'your owner'} on ${d.channel}.`;
   // Les marques que le canal rend, telles qu'il les attend : Slack et
   // WhatsApp rendent `*gras*`, pas `**gras**` (revue de #615).
   const arrives =
@@ -539,8 +558,9 @@ function channelDeliveryLine(
       : `Text arrives as typed, and these marks render: ${d.renders.join(', ')}. ` +
         'Any other markup shows literally.';
   return (
-    `- delivery: \`${d.sendTool}\` reaches the user on ${d.channel}${reach}. ${arrives} ` +
-    'A long text is split into several messages automatically, so send each reply once, whole.'
+    `- delivery: ${path} ${arrives} ` +
+    'A long text is split into several messages automatically, so send each ' +
+    `${d.reply === 'channel' ? 'reply' : 'message'} once, whole.`
   );
 }
 

@@ -35,7 +35,7 @@ import {
   readScheduleState,
   readAgentBudgetState,
 } from '@nodal-agents/db';
-import type { ApprovalRequestRow, JobTriggerContext } from '@nodal-agents/db';
+import type { ApprovalRequestRow } from '@nodal-agents/db';
 import {
   metaToolsForAgent,
   parseRootGrants,
@@ -205,9 +205,9 @@ import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import {
   channelDeliveryFacts,
-  requiresToolDelivery as requiresToolDeliveryOf,
+  telegramChatOf,
+  replyDestination,
   triggerWantsConfirmation as triggerWantsConfirmationOf,
-  TOOL_ONLY_DELIVERY_CHANNELS,
 } from './channel-delivery.ts';
 import { loadConversationContext } from './conversation-id.ts';
 import { triggerWorker } from '../routes/agent.ts';
@@ -1956,6 +1956,7 @@ async function runJobTracked(
       job: {
         entityId: job.entityId ?? null,
         chatId: job.chatId ?? null,
+        chatChannel: job.chatChannel ?? null,
         channel: job.channel ?? null,
         conversationId: job.conversationId ?? null,
         task: job.task ?? null,
@@ -2100,19 +2101,10 @@ async function runJobTracked(
   // the agent so it ends with a confirmation, and engage the delivery guard
   // below so the send is actually enforced.
   const triggerWantsConfirmation = triggerWantsConfirmationOf(job);
-  // B1/B2 (notify-channel-choice): a cron or webhook fire whose trigger chose
-  // an EXPLICIT notify channel carries it in triggerContext (run-schedules.ts /
-  // routes/webhook.ts) — surfaced here as the ToolContext override so every
-  // delivery-guard call this job makes (the 6 send tools AND
-  // deliver-results.ts's own return-channel pick, via its own triggerContext
-  // read) defaults to the SAME channel the chatId above was resolved against,
-  // instead of resolveTransportChannel's priority order. Undefined for every
-  // other job, and for a cron/webhook fire left on auto.
-  const jobTriggerContext = job.triggerContext as JobTriggerContext | null;
-  const notifyChannelOverride: ChannelKind | undefined =
-    jobTriggerContext?.type === 'cron' || jobTriggerContext?.type === 'webhook'
-      ? (jobTriggerContext.notifyChannel ?? undefined)
-      : undefined;
+  // The job's chat travels with the channel it was recorded on (#649, review
+  // of #657 pass 4): every send tool reads `jobChatId` ON `jobChatChannel`
+  // only (`jobChatOn`, @nodal-agents/delivery), never on another channel.
+  const jobChatChannel = (job.chatChannel as ChannelKind | null) ?? null;
   const deployment = await getDeploymentContext(db, job.entityId ?? undefined);
   // Shared-workspace inventory — gives the agent sight of what already exists
   // so it reuses artifacts instead of recreating them (see workspace-inventory.ts).
@@ -2171,8 +2163,9 @@ async function runJobTracked(
     // contient pas : il annonçait un dossier là où l'agent en avait deux.
     workspaces: agentWorkspacesList,
     ...(job.task ? { task: job.task } : {}),
-    ...(job.chatId ? { telegramChatId: job.chatId } : {}),
-    ...(triggerWantsConfirmation ? { notifyOnSuccess: true } : {}),
+    ...telegramChatOf({ id: job.chatId, channel: job.chatChannel ?? null }),
+    // `notifyOnSuccess` joins at the prompt build below, once `replyTo` says
+    // whether a send tool can carry the confirmation (#649).
     ...(job.parentJobId ? { isDelegated: true } : {}),
     ...(job.triggerContext ? { triggerContext: job.triggerContext } : {}),
     // La règle et son pourquoi vivent dans `inventoryForContext`.
@@ -2709,6 +2702,21 @@ async function runJobTracked(
   const deferredNames = deferredToolNames(jobTools);
   let loadedTools: string[] = (job.loadedTools ?? []).filter((n) => deferredNames.has(n));
   const promptTools = [...new Set(jobTools.map((t) => t.name))].sort();
+  // Où va la réponse de ce job (#649) — calculé une fois, sur la liste FINALE
+  // de ses outils, et lu par la ligne `delivery:` du prompt, la garde de
+  // livraison et la cible des notices du harnais. Jamais le canal de repli
+  // d'une origine sans chat.
+  const replyInputs = {
+    job: {
+      channel: job.channel,
+      chatId: job.chatId,
+      chatChannel: job.chatChannel ?? null,
+      parentJobId: job.parentJobId,
+    },
+    activeChannels,
+    heldTools: new Set(promptTools),
+  };
+  const replyTo = replyDestination(replyInputs);
   const promptVersion = deployment.version;
   let systemPrompt = job.systemPrompt;
   if (
@@ -2719,14 +2727,11 @@ async function runJobTracked(
     // The channel's facts (#613): the channel the send tool will resolve —
     // `activeChannels` is known only from §6 — and what its adapter does
     // with a text.
-    const channelDelivery = channelDeliveryFacts({
-      job,
-      notifyChannelOverride: notifyChannelOverride,
-      activeChannels,
-    });
+    const channelDelivery = channelDeliveryFacts(replyInputs, replyTo);
     systemPrompt = await buildSystemPrompt(agent, db, {
       ...jobContext,
       ...(channelDelivery ? { channelDelivery } : {}),
+      ...(triggerWantsConfirmation && replyTo.to === 'channel' ? { notifyOnSuccess: true } : {}),
       availableToolNames: promptTools,
       toolIndex,
     });
@@ -3078,12 +3083,12 @@ async function runJobTracked(
                   turn,
                   toolCallId: req.toolCallId ?? undefined,
                   jobChatId: job.chatId ?? null,
+                  jobChatChannel,
                   // P6 : la conversation du fil, pour que le registre des projets y pose
                   // le projet courant.
                   conversationId: job.conversationId ?? null,
                   jobChannel: job.channel,
                   activeChannels,
-                  notifyChannelOverride,
                   embeddingClient: deps.embeddingClient,
                   workspaces: agentWorkspacesList,
                   commandAllowlist: agentRow.commandAllowlist ?? null,
@@ -3349,25 +3354,22 @@ async function runJobTracked(
   // is reached while still false, we re-prompt the agent (bounded) before letting
   // it finish. In-memory/intra-run: in the router/delegation case the parent makes
   // its final send in the same run it finalizes, so the flag is evaluated correctly.
-  // Tool-only channels (Telegram) always require a tool delivery. A cron or
-  // webhook job that opted into a success confirmation (chat_id set by the
-  // tick / route) is held to the same bar: the agent must deliver before
-  // completing, otherwise the user never gets the "done" message they asked
-  // for.
-  const requiresToolDelivery = requiresToolDeliveryOf(job);
-  // Human-readable capitalization for the nudges below. `job.channel` is one of
-  // TOOL_ONLY_DELIVERY_CHANNELS (telegram/discord/slack) here, OR 'cron'/'webhook'
-  // via triggerWantsConfirmation — B1/B2 made both multi-channel (see
-  // notifyChannelOverride above the comment over triggerWantsConfirmation), but
-  // this display name is only used for an in-agent nudge (never user-facing,
-  // invariant #2), so an unrecognized channel falls back to 'Telegram' rather
-  // than guessing.
+  // The bar is the reply's destination (#649, `replyTo`): a request that
+  // carries a chat to answer on — it came from one, or its trigger named one
+  // (a routine's confirmation, a webhook, the dashboard's "send via
+  // Telegram") — must be answered there before completing, otherwise the
+  // user never gets the answer they asked for. A request with no chat (MCP,
+  // API, the web) is answered by its result: no send is required.
+  const requiresToolDelivery = replyTo.to === 'channel';
+  // Human-readable capitalization for the nudges below: the channel the reply
+  // goes to. Only used for an in-agent nudge (never user-facing, invariant #2).
   const CHANNEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
     telegram: 'Telegram',
     discord: 'Discord',
     slack: 'Slack',
   };
-  const channelDisplayName = CHANNEL_DISPLAY_NAMES[job.channel ?? ''] ?? 'Telegram';
+  const channelDisplayName =
+    CHANNEL_DISPLAY_NAMES[replyTo.to === 'channel' ? replyTo.channel : ''] ?? 'Telegram';
   const MAX_REDELIVERY_NUDGES = 2;
   let redeliveryNudges = 0;
   let toolDelivered = false;
@@ -3446,14 +3448,11 @@ async function runJobTracked(
    * Le descripteur de livraison à poser DANS la transaction terminale, ou
    * `null` quand il n'y a rien à dire ou aucun canal à outil pour le dire.
    */
-  // Où part une notice du harnais : le canal à outil du job, ou celui que la
-  // routine a choisi pour sa confirmation. `null` : aucun canal à outil.
+  // Où part une notice du harnais : là où va la réponse (#649), quand c'est un
+  // chat. `null` : la réponse est le résultat du job, ou celui d'un parent.
   const harnessNoticeTarget = (): { channel: string; chatId: string } | null => {
-    const canal = TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '')
-      ? (job.channel ?? '')
-      : (notifyChannelOverride ?? '');
-    if (!TOOL_ONLY_DELIVERY_CHANNELS.has(canal) || !job.chatId) return null;
-    return { channel: canal, chatId: job.chatId };
+    if (replyTo.to !== 'channel' || !job.chatId) return null;
+    return { channel: replyTo.channel, chatId: job.chatId };
   };
   const harnessNoticeDelivery = (
     payload: string,
@@ -3474,8 +3473,8 @@ async function runJobTracked(
    * C'est exactement la couture que `finalizeJobSuccess` tient du côté succès
    * depuis #108 ; elle tient les deux côtés maintenant.
    *
-   * Le canal est celui des gardes de livraison : le canal du job, ou celui que
-   * la routine a choisi pour sa confirmation (`notifyChannelOverride`). Rien à
+   * Le canal est celui où va la réponse (`replyDestination`) : le canal du
+   * job, ou celui sur lequel le chat désigné a été résolu. Rien à
    * dire, pas de canal à outil, pas de destinataire ⇒ l'échec s'écrit seul.
    */
   const failJobWithHarnessNotice = async (
@@ -5433,12 +5432,12 @@ async function runJobTracked(
         // number; the per-call toolCallId is spread at each executeTool site.
         turn,
         jobChatId: job.chatId ?? null,
+        jobChatChannel,
         // P6 : la conversation du fil, pour que le registre des projets y pose
         // le projet courant.
         conversationId: job.conversationId ?? null,
         jobChannel: job.channel,
         activeChannels,
-        notifyChannelOverride,
         embeddingClient: deps.embeddingClient,
         workspaces: agentWorkspacesList,
         commandAllowlist: agentRow.commandAllowlist ?? null,
@@ -5751,12 +5750,12 @@ async function runJobTracked(
                 turn,
                 toolCallId: call.id,
                 jobChatId: job.chatId ?? null,
+                jobChatChannel,
                 // P6 : la conversation du fil, pour que le registre des projets y pose
                 // le projet courant.
                 conversationId: job.conversationId ?? null,
                 jobChannel: job.channel,
                 activeChannels,
-                notifyChannelOverride,
                 embeddingClient: deps.embeddingClient,
                 workspaces: agentWorkspacesList,
                 commandAllowlist: agentRow.commandAllowlist ?? null,
@@ -5849,7 +5848,6 @@ async function runJobTracked(
                 {
                   task: (call.input['task'] as string) ?? '',
                   data: call.input['data'] as string | undefined,
-                  chatId: job.chatId,
                 },
                 preAssignSideResults,
                 db,
