@@ -14,9 +14,9 @@
 // regrossir le socle devient une décision, pas une dérive.
 //
 // Le seuil, 5 000, et pourquoi il n'est pas plus bas : le socle budgété en
-// fait 4 979 (4 915, puis +64 net : la demi-phrase « waits on a person's
-// decision… delivered, not blocked », revenue du banc `print`, moins un
-// raccourci de la phrase d'ouverture de Verify). Chacune des sections retirées, remise seule, le fait sortir du
+// fait 4 973 (4 915, puis +58 net : la demi-phrase « a state a tool returned
+// as waiting on a person is delivered, not blocked », revenue du banc `print`,
+// moins un raccourci de la phrase d'ouverture de Verify). Chacune des sections retirées, remise seule, le fait sortir du
 // budget, la plus petite (le bloc d'approbation, 343 car.) comprise. Descendre
 // le socle sous ~4 660 sans baisser le seuil rouvrirait ce trou : la marge est
 // voulue petite, une phrase, pas une section.
@@ -99,7 +99,7 @@ describe('chaque règle gardée garde une phrase repérable', () => {
     ['le « fait » d’un délégué n’est pas le résultat', 'A delegate\'s "done" is not the result'],
     [
       'attendre la décision d’une personne est livré, pas bloqué (banc print, fe14218d)',
-      "a result that waits on a person's decision by design is delivered, not blocked",
+      'a state a tool returned as waiting on a person is delivered, not blocked',
     ],
     ['lire avant d’écrire', 'Read before you write'],
     ['dire quand l’état courant est illisible', 'and say so when you cannot'],
