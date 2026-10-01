@@ -22,6 +22,7 @@ import { cliShellPosture, modelCanSeeImages, RUNTIME_CLI } from '@nodal-agents/s
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
 import { summarizePurpose } from './router/assign-tools';
+import { DELEGATION_SCOPE_RULE } from './router/delegation-scope';
 import { loadWorkspaceReach, describeOutsideAgent } from './reach';
 import type { ReachMeans } from './reach';
 
@@ -477,6 +478,10 @@ export async function buildTeamBlock(
     lines.push(
       'Pick ONE style per request — do not mix them in the same job. ' + defaultLean + '\n',
     );
+    // What a brief may ask of a teammate, whichever route carries it: said
+    // once, here, where every job holding a delegation tool reads it (this
+    // branch follows the whitelist's own rule). See delegation-scope.ts.
+    lines.push(DELEGATION_SCOPE_RULE + '\n');
     // Une règle « ne dicte pas de chemin en déléguant » a vécu ici quelques
     // heures le 26/08. Retirée : c'est une INSTRUCTION D'AGENT, pas une loi du
     // harnais (invariant #3 — « fix at agent layer, never patch the runtime »).

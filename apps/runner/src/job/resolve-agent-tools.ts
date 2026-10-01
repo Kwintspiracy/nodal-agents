@@ -3,8 +3,8 @@
 //
 // This factors out the SAME whitelist-assembly logic executeJob (execute.ts
 // §6-7) uses to build a job's runtime toolset, reusing the exact production
-// building blocks (createToolRegistry/registerBuiltins, generateAssignTools/
-// generateTaskTools, enabledMetaTools/parseRootGrants, createLazyMcpTools/
+// building blocks (createToolRegistry/registerBuiltins, generateDelegationTools,
+// enabledMetaTools/parseRootGrants, createLazyMcpTools/
 // slugToPrefix, getChannelBinding, delivery-tool factories, connector/MCP
 // assembly) — nothing here is reimplemented from scratch. It exists so a
 // caller that only needs to know WHICH TOOL NAMES an agent has (e.g. a
@@ -73,11 +73,7 @@ import {
   slugToPrefix,
   type McpToolDescriptor,
 } from '@nodal-agents/adapter-mcp';
-import {
-  generateAssignTools,
-  generateTaskTools,
-  resolveBuiltinToolNames,
-} from '@nodal-agents/orchestration';
+import { generateDelegationTools, resolveBuiltinToolNames } from '@nodal-agents/orchestration';
 import type { AgentId } from '@nodal-agents/orchestration';
 import { isUsableMcpToolCache } from './mcp-tool-cache.ts';
 
@@ -184,14 +180,14 @@ export async function resolveAgentToolNames(
     mcpTools.push(...filtered);
   }
 
-  // ── Delegation: what the orchestrator role ADDS (mirrors execute.ts §6) ─
-  // The rest of the list is the same for every role (#636).
-  const delegationTools: LoadableTool[] = builtins.isOrchestrator
-    ? [
-        ...(await generateAssignTools(agentRow.id as AgentId, db)),
-        ...generateTaskTools(agentRow.id as AgentId, db),
-      ]
-    : [];
+  // ── Delegation: what the orchestrator role ADDS (the function execute.ts §6
+  // calls, at the depth of a top-level job) ─ The rest of the list is the same
+  // for every role (#636).
+  const delegationTools: LoadableTool[] = await generateDelegationTools(
+    agentRow.id as AgentId,
+    db,
+    { isOrchestrator: builtins.isOrchestrator, delegationDepth: 0 },
+  );
 
   // `load_tools` exactly when the job gets it: the runner's own
   // `withToolLoader`, over the same list — a routine naming load_tools is not

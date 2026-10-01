@@ -1,7 +1,6 @@
 // planner/task-tools.ts — create_task and list_tasks tools for planner orchestrators
 // These are dynamically generated per agent. Never hardcoded agent names.
 
-import { DELEGATION_SCOPE_RULE } from '../router/delegation-scope';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { eq, and, inArray } from '@nodal-agents/db';
@@ -98,8 +97,7 @@ export function generateTaskTools(
       'result back to the user (e.g. "Synthèse … → Telegram", "summarize and reply"): the ' +
       'user automatically receives a short summary of the whole run on their channel once ' +
       'the work tasks finish — a summary/deliver task is a duplicate and is forbidden. Only ' +
-      'create tasks that do REAL work (research, write a file, send an email, build HTML, …). ' +
-      DELEGATION_SCOPE_RULE,
+      'create tasks that do REAL work (research, write a file, send an email, build HTML, …).',
     inputSchema: createTaskSchema,
     riskLevel: 'write',
     loading: 'eager',

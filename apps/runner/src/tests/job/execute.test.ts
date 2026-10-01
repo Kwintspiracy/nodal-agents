@@ -1531,6 +1531,107 @@ describe('executeJob', () => {
     }
   });
 
+  // Revue de #655 — un job en attente pendant une mise à jour reprenait avec
+  // le prompt écrit par l'ANCIENNE version et les outils de la nouvelle : ce
+  // que la mise à jour avait déplacé entre les deux n'était plus dit nulle
+  // part. Le prompt stocké porte la version qui l'a écrit ; même version et
+  // mêmes outils, il est gardé mot pour mot (cache de préfixe) ; écrit par une
+  // autre version, ou avant que la version soit notée, il est réécrit.
+  it('a resumed job keeps its stored prompt under the same version, and rewrites one written by another version @cap:configurer-agent/moteur', async () => {
+    const previous = process.env['NODAL_VERSION'];
+    process.env['NODAL_VERSION'] = '9.9.1';
+    try {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'api',
+          task: 'Say hi',
+          status: 'pending',
+          messages: [],
+          chainCount: 0,
+        })
+        .returning();
+      const run = async (): Promise<string> => {
+        const prompts: unknown[] = [];
+        await executeJob(
+          job!.id as JobId,
+          makeDeps(makeMockLlmClient([{ text: 'Done.' }], prompts)),
+          testEnv,
+        );
+        return JSON.stringify(prompts[0]);
+      };
+      const stored = async () =>
+        (
+          await db
+            .select({
+              prompt: agentJobs.systemPrompt,
+              version: agentJobs.systemPromptVersion,
+            })
+            .from(agentJobs)
+            .where(eq(agentJobs.id, job!.id))
+        )[0]!;
+      const pendWith = (systemPrompt: string, systemPromptVersion: string | null) =>
+        db
+          .update(agentJobs)
+          .set({ systemPrompt, systemPromptVersion, status: 'pending' })
+          .where(eq(agentJobs.id, job!.id));
+
+      await run();
+      expect((await stored()).version).toBe('9.9.1');
+
+      // A sentinel stands in for the stored prompt, so a rebuild cannot pass unnoticed.
+      const SENTINEL = 'STORED PROMPT OF THIS JOB';
+      const cases: Array<{ label: string; version: string | null; kept: boolean }> = [
+        { label: 'same version, same tools', version: '9.9.1', kept: true },
+        { label: 'written by the previous version', version: '9.9.0', kept: false },
+        { label: 'written before the version was recorded', version: null, kept: false },
+      ];
+      const seen: Record<string, { kept: boolean; version: string | null }> = {};
+      const want: Record<string, { kept: boolean; version: string | null }> = {};
+      for (const c of cases) {
+        await pendWith(SENTINEL, c.version);
+        const sent = await run();
+        const after = await stored();
+        seen[c.label] = { kept: sent.includes(SENTINEL), version: after.version };
+        want[c.label] = { kept: c.kept, version: '9.9.1' };
+        if (!c.kept) expect(after.prompt).toContain('9.9.1');
+      }
+      // A runner that does not know its version (revue de #655, passe 2) :
+      // l'inconnu ne décide rien et n'écrit rien. Le prompt stocké sous 0.9.4
+      // est gardé, et sa version n'est pas écrasée par NULL — sinon la reprise
+      // suivante sous 0.9.4 le réécrirait encore.
+      delete process.env['NODAL_VERSION'];
+      await pendWith(SENTINEL, '0.9.4');
+      const sentUnknown = await run();
+      const afterUnknown = await stored();
+      seen['runner without a known version'] = {
+        kept: sentUnknown.includes(SENTINEL) && afterUnknown.prompt === SENTINEL,
+        version: afterUnknown.version,
+      };
+      want['runner without a known version'] = { kept: true, version: '0.9.4' };
+      // Its tool list changed: the prompt is rewritten (the tools decide), and
+      // the known version stored is still not overwritten by NULL.
+      await pendWith(SENTINEL, '0.9.4');
+      await db
+        .update(agentJobs)
+        .set({ systemPromptTools: ['a_tool_withdrawn_meanwhile'] })
+        .where(eq(agentJobs.id, job!.id));
+      const sentTools = await run();
+      const afterTools = await stored();
+      seen['runner without a known version, tools changed'] = {
+        kept: sentTools.includes(SENTINEL),
+        version: afterTools.version,
+      };
+      want['runner without a known version, tools changed'] = { kept: false, version: '0.9.4' };
+      expect(seen).toEqual(want);
+    } finally {
+      if (previous === undefined) delete process.env['NODAL_VERSION'];
+      else process.env['NODAL_VERSION'] = previous;
+    }
+  });
+
   // ─── Anti-spam guard: consecutive delivery-only turns ─────────────────────
 
   it('anti-spam: caps consecutive delivery-only turns at maxConsecutiveDeliveryTurns and fails loud', async () => {
