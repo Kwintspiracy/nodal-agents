@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { PlugsConnected } from '@phosphor-icons/react';
 import {
+  elicitationActionLabels,
   parseElicitationSchema,
   validateElicitationContent,
   type ElicitationField,
@@ -62,6 +63,10 @@ export default function ElicitationCard({ elicitation, onResolved }: Elicitation
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const waiting = e.status === 'pending';
+  // Ce que les boutons FONT, aux mots du serveur (« Print ») ; sinon
+  // « ✅ Confirm » / « Decline ». Jamais « Send » : il ne disait pas ce qui
+  // allait se passer (retour du propriétaire, 01/10).
+  const labels = elicitationActionLabels(e.actions);
 
   function set(key: string, value: ElicitationFormValue) {
     setState((prev) => ({ ...prev, [key]: value }));
@@ -205,7 +210,7 @@ export default function ElicitationCard({ elicitation, onResolved }: Elicitation
               disabled={isPending}
               data-testid="elicitation-decline"
             >
-              Decline
+              {labels.decline}
             </PrimaryButton>
             <PrimaryButton
               variant="ink"
@@ -214,7 +219,7 @@ export default function ElicitationCard({ elicitation, onResolved }: Elicitation
               disabled={isPending}
               data-testid="elicitation-send"
             >
-              Send
+              {labels.accept}
             </PrimaryButton>
           </div>
         </>

@@ -8,6 +8,7 @@ import type {
   ApprovalRuleCondition,
   ShellPolicy,
   ElicitationAttachment,
+  ElicitationActions,
   ElicitationValue,
   MutationTarget,
   OperationRiskLevel,
@@ -288,6 +289,8 @@ export interface UserInputRequest {
   requestedSchema: unknown;
   /** Les images jointes, déjà validées (`readElicitationAttachments`). */
   attachments: ElicitationAttachment[];
+  /** Les libellés de ses deux boutons (`nodal/actions`), déjà validés ; null : le défaut. */
+  actions: ElicitationActions;
   /** S'interrompt quand le serveur abandonne sa question, ou que la connexion se ferme. */
   signal: AbortSignal;
 }

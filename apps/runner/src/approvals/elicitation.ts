@@ -109,6 +109,9 @@ async function askDuringCall(
     server: req.serverSlug,
     message: req.message,
     requestedSchema: req.requestedSchema,
+    // Les libellés des boutons, gardés avec la question : chaque surface
+    // (web, canaux) les relit de la ligne.
+    actions: req.actions,
   };
   const now = new Date();
   const expiresAt = new Date(now.getTime() + wait.timeoutMs);

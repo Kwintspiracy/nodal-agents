@@ -131,8 +131,9 @@ and puts the question in front of a person:
   schedule keeps its question on the dashboard only.
 - The form is drawn from the server's `requestedSchema`: choices, numbers with
   their bounds, switches, text. The answer is checked against it before it
-  leaves. **Send** returns `accept` with the values, **Decline** returns
-  `decline`. The server reads `cancel` when nobody answers in time (10 minutes,
+  leaves. The accept button returns `accept` with the values, the decline
+  button returns `decline` (their labels: see below). The server reads
+  `cancel` when nobody answers in time (10 minutes,
   `NODALAI_ELICITATION_TIMEOUT_MS`), when the run stops, or when the server
   withdraws its question.
 - The server's own wait must be at least as long. The MCP SDK gives up after
@@ -141,6 +142,25 @@ and puts the question in front of a person:
 
 A tool that needs approval (the default for MCP tools) and then asks its own
 question asks twice. **Always allow** on that tool removes the first one.
+
+#### Button labels
+
+A button should say what it does. A server names its two buttons in
+`params._meta` under the key `nodal/actions`:
+
+```json
+{
+  "message": "Print 1 page on A4?",
+  "requestedSchema": { "type": "object", "properties": {} },
+  "_meta": { "nodal/actions": { "accept": "Print", "decline": "Cancel" } }
+}
+```
+
+- Both keys are optional. Without a label the buttons read **✅ Confirm** and
+  **Decline**.
+- A label is plain text, at most 32 characters once line breaks and invisible
+  formatting characters are removed. A label that breaks the rule is ignored
+  and logged; its button keeps the default, and the question is still asked.
 
 #### Images with a question
 

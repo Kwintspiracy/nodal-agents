@@ -63,6 +63,7 @@ function view(over: Partial<ElicitationView> = {}): ElicitationView {
     server: 'printer',
     message: 'Print 1 page of <b>report.pdf</b>?',
     requestedSchema: SCHEMA,
+    actions: { accept: null, decline: null },
     response: null,
     resolvedBy: null,
     expiresAt: null,
@@ -158,8 +159,19 @@ describe('la question d’un serveur MCP, sur l’écran @cap:approuver-une-acti
     expect(copies.min).toBe('1');
     expect(copies.max).toBe('5');
     expect(parTestId('elicitation-field-print')!.querySelector('[role="switch"]')).not.toBeNull();
-    expect(boutons()).toEqual(expect.arrayContaining(['Send', 'Decline']));
+    // Sans libellé du serveur : « ✅ Confirm » / « Decline ». Jamais « Send ».
+    expect(boutons()).toEqual(expect.arrayContaining(['✅ Confirm', 'Decline']));
+    expect(boutons()).not.toContain('Send');
     expect(boutons().some((b) => /approve|always|never/i.test(b))).toBe(false);
+  });
+
+  it('le bouton d’accord porte le libellé que le serveur lui donne', async () => {
+    await monter(
+      <ElicitationCard elicitation={view({ actions: { accept: 'Print', decline: 'Not now' } })} />,
+    );
+    expect(parTestId('elicitation-send')!.textContent).toBe('Print');
+    expect(parTestId('elicitation-decline')!.textContent).toBe('Not now');
+    expect(boutons()).not.toContain('Send');
   });
 
   it('Envoyer part avec exactement ce qui a été rempli', async () => {
