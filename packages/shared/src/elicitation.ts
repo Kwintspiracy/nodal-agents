@@ -16,6 +16,20 @@
 /** La clé de `params._meta` sous laquelle un serveur joint des images à sa question. */
 export const ELICITATION_ATTACHMENTS_META_KEY = 'nodal/attachments';
 
+/**
+ * La clé de `params._meta` sous laquelle un serveur nomme les deux boutons de
+ * sa question : `{ accept?: string, decline?: string }`. « Print » dit ce que
+ * le bouton FAIT ; « Send » ne disait rien (retour du propriétaire, 01/10).
+ */
+export const ELICITATION_ACTIONS_META_KEY = 'nodal/actions';
+
+/** Caractères au plus d'un libellé de bouton : au-delà il est refusé, jamais coupé. */
+export const ELICITATION_ACTION_LABEL_MAX = 32;
+
+/** Les libellés quand le serveur n'en donne pas. Jamais « Send ». */
+export const ELICITATION_DEFAULT_ACCEPT_LABEL = '✅ Confirm';
+export const ELICITATION_DEFAULT_DECLINE_LABEL = 'Decline';
+
 /** Types d'image acceptés en pièce jointe : ceux que le web et les canaux affichent tels quels. */
 export const ELICITATION_ATTACHMENT_MIME_TYPES = [
   'image/png',
@@ -391,6 +405,78 @@ export function describeElicitationErrors(errors: readonly ElicitationContentErr
   return errors.map((e) => (e.field ? `${e.field}: ${e.reason}` : e.reason)).join('; ');
 }
 
+// ─── Les libellés des boutons ─────────────────────────────────────────────────
+
+/** Les libellés que le serveur donne à ses deux boutons ; null : le libellé par défaut. */
+export interface ElicitationActions {
+  accept: string | null;
+  decline: string | null;
+}
+
+export interface RejectedElicitationAction {
+  /** Le bouton visé ; null quand c'est la clé entière qui ne se lit pas. */
+  action: 'accept' | 'decline' | null;
+  reason: string;
+}
+
+/**
+ * Un libellé tiers, rendu affichable : les caractères de contrôle et de mise
+ * en forme invisibles (retours à la ligne, inversions bidirectionnelles,
+ * caractères de largeur nulle) sont retirés, les espaces resserrés. Un
+ * libellé vide ensuite, ou trop long, est REFUSÉ avec la raison — jamais
+ * coupé ni deviné.
+ */
+function neutralizeActionLabel(raw: unknown): { label: string } | { reason: string } {
+  if (typeof raw !== 'string') return { reason: 'is not text' };
+  const label = raw
+    .replace(/[\p{Cc}\p{Cf}]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (label === '') return { reason: 'is empty' };
+  if ([...label].length > ELICITATION_ACTION_LABEL_MAX) {
+    return { reason: `is longer than ${ELICITATION_ACTION_LABEL_MAX} characters` };
+  }
+  return { label };
+}
+
+/**
+ * Les libellés de `params._meta["nodal/actions"]`, chacun vérifié à part : un
+ * libellé refusé est rendu dans `rejected` avec sa raison (l'appelant le
+ * journalise) et son bouton garde le libellé par défaut ; l'autre est gardé.
+ */
+export function readElicitationActions(meta: unknown): {
+  actions: ElicitationActions;
+  rejected: RejectedElicitationAction[];
+} {
+  const actions: ElicitationActions = { accept: null, decline: null };
+  const rejected: RejectedElicitationAction[] = [];
+  if (!isRecord(meta)) return { actions, rejected };
+  const raw = meta[ELICITATION_ACTIONS_META_KEY];
+  if (raw === undefined) return { actions, rejected };
+  if (!isRecord(raw)) {
+    rejected.push({ action: null, reason: `${ELICITATION_ACTIONS_META_KEY} is not an object` });
+    return { actions, rejected };
+  }
+  for (const action of ['accept', 'decline'] as const) {
+    if (raw[action] === undefined) continue;
+    const read = neutralizeActionLabel(raw[action]);
+    if ('label' in read) actions[action] = read.label;
+    else rejected.push({ action, reason: read.reason });
+  }
+  return { actions, rejected };
+}
+
+/** Les deux libellés à afficher : ceux du serveur, sinon « ✅ Confirm » / « Decline ». */
+export function elicitationActionLabels(actions: ElicitationActions | null | undefined): {
+  accept: string;
+  decline: string;
+} {
+  return {
+    accept: actions?.accept ?? ELICITATION_DEFAULT_ACCEPT_LABEL,
+    decline: actions?.decline ?? ELICITATION_DEFAULT_DECLINE_LABEL,
+  };
+}
+
 // ─── La ligne ─────────────────────────────────────────────────────────────────
 
 /** Ce qu'une ligne `kind = 'elicitation'` porte dans `tool_input`. */
@@ -401,6 +487,8 @@ export interface ElicitationToolInput {
   message: string;
   /** Le formulaire demandé, brut. */
   requestedSchema: unknown;
+  /** Les libellés de ses boutons (`nodal/actions`), relus par la même règle. */
+  actions: ElicitationActions;
 }
 
 /** Lit `tool_input` d'une élicitation ; null quand la ligne ne se lit pas. */
@@ -410,7 +498,12 @@ export function readElicitationToolInput(toolInput: unknown): ElicitationToolInp
   if (typeof server !== 'string' || server === '') return null;
   if (typeof message !== 'string') return null;
   if (!isRecord(requestedSchema)) return null;
-  return { server, message, requestedSchema };
+  // Relus par la règle de la lecture : une ligne écrite à la main, ou avant
+  // un resserrement de la règle, n'affiche pas plus que ce qu'elle permet.
+  const { actions } = readElicitationActions({
+    [ELICITATION_ACTIONS_META_KEY]: toolInput['actions'] ?? {},
+  });
+  return { server, message, requestedSchema, actions };
 }
 
 // ─── Les images jointes ───────────────────────────────────────────────────────

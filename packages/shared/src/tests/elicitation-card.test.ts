@@ -163,18 +163,37 @@ describe('la carte @cap:approuver-une-action/moteur', () => {
     expect(card.text).toContain('Copies: — (required)');
     expect(card.text).toContain('Two-sided: No');
     const labels = card.buttons.map((row) => row.map((b) => b.label));
+    // Le bouton d'accord EN TÊTE, visible sans défilement ; les réglages
+    // dessous. Sans libellé du serveur : « ✅ Confirm » / « Decline ».
     expect(labels).toEqual([
+      ['✅ Confirm', 'Decline'],
       ['Color: Full color', '✓ Color: Grayscale'],
       ['Two-sided: Yes', '✓ Two-sided: No'],
       ['☐ Pages: 1', '☐ Pages: 2'],
       ['✏️ Copies', '✏️ Note'],
-      ['✅ Send', '❌ Decline'],
     ]);
-    const send = card.buttons.at(-1)![0]!;
+    expect(labels.flat()).not.toContain('✅ Send');
+    expect(card.text).toContain('then tap ✅ Confirm.');
+    const send = card.buttons[0]![0]!;
     expect(parseElicitationCallbackData(send.callbackData)).toEqual({
       approvalRequestId: ID,
       op: { op: 'send', revision: elicitationDraftRevision(draft.values) },
     });
+  });
+
+  it('les boutons portent les libellés que le serveur leur donne', () => {
+    const card = renderElicitationCard({
+      approvalRequestId: ID,
+      server: 'printer',
+      message: 'Print it?',
+      fields: fields(),
+      draft: { values: {}, awaiting: null },
+      imageCount: 0,
+      actions: { accept: 'Print', decline: null },
+    });
+    if (!card.ok) throw new Error(card.reason);
+    expect(card.buttons[0]!.map((b) => b.label)).toEqual(['Print', 'Decline']);
+    expect(card.text).toContain('then tap Print.');
   });
 
   it('dit quel champ attend une réponse tapée, et comment la donner', () => {

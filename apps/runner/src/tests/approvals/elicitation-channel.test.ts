@@ -240,14 +240,12 @@ describe('la question part là où la demande est née @cap:approuver-une-action
     const card = wire.sent[1] as Extract<Sent, { kind: 'card' }>;
     expect(card.text).toContain('« How should it be printed? »');
     expect(card.text).toContain('The image above comes with the question.');
-    expect(card.buttons.flat().map((b) => b.split('|')[0])).toEqual([
-      'Color: color',
-      'Color: grayscale',
-      'Two-sided: Yes',
-      '✓ Two-sided: No',
-      '✏️ Copies',
-      '✅ Send',
-      '❌ Decline',
+    // Le bouton d'accord en tête (aucun libellé du serveur ici : le défaut).
+    expect(card.buttons.map((row) => row.map((b) => b.split('|')[0]))).toEqual([
+      ['✅ Confirm', 'Decline'],
+      ['Color: color', 'Color: grayscale'],
+      ['Two-sided: Yes', '✓ Two-sided: No'],
+      ['✏️ Copies'],
     ]);
     const [recorded] = await db
       .select()
@@ -407,7 +405,12 @@ describe('remplir la carte depuis le canal @cap:approuver-une-action/moteur', ()
   it('Send : un formulaire incomplet n’est pas envoyé, et le dit', async () => {
     const id = await question();
     await deliver(id);
-    const r = await handleElicitationTap({ deps, env, origin: origin(), data: button('✅ Send') });
+    const r = await handleElicitationTap({
+      deps,
+      env,
+      origin: origin(),
+      data: button('✅ Confirm'),
+    });
     expect(r).toEqual({
       handled: false,
       reason: 'content_invalid',
@@ -419,7 +422,7 @@ describe('remplir la carte depuis le canal @cap:approuver-une-action/moteur', ()
   it('Send d’une carte périmée n’envoie rien et redessine la carte', async () => {
     const id = await question();
     await deliver(id);
-    const staleSend = button('✅ Send');
+    const staleSend = button('✅ Confirm');
     await handleElicitationTap({ deps, env, origin: origin(), data: button('Color: color') });
     const r = await handleElicitationTap({ deps, env, origin: origin(), data: staleSend });
     expect(r).toMatchObject({ handled: false, reason: 'stale_card' });
@@ -442,8 +445,13 @@ describe('remplir la carte depuis le canal @cap:approuver-une-action/moteur', ()
       replyToMessageId: card!.messageId,
       text: '2',
     });
-    const r = await handleElicitationTap({ deps, env, origin: origin(), data: button('✅ Send') });
-    expect(r).toEqual({ handled: true, notice: 'Sent.' });
+    const r = await handleElicitationTap({
+      deps,
+      env,
+      origin: origin(),
+      data: button('✅ Confirm'),
+    });
+    expect(r).toEqual({ handled: true, notice: 'Answer sent.' });
     const row = await readRow(id);
     expect(row.status).toBe('approved');
     expect(row.resolvedBy).toBe('telegram');
@@ -455,7 +463,7 @@ describe('remplir la carte depuis le canal @cap:approuver-une-action/moteur', ()
   it('Decline : la demande est refusée ; un geste sur la carte tranchée le dit', async () => {
     const id = await question();
     await deliver(id);
-    const decline = button('❌ Decline');
+    const decline = button('Decline');
     expect(await handleElicitationTap({ deps, env, origin: origin(), data: decline })).toEqual({
       handled: true,
       notice: 'Declined.',
@@ -485,7 +493,7 @@ describe('remplir la carte depuis le canal @cap:approuver-une-action/moteur', ()
       reason: 'stale_button',
       notice: 'Not applied: this choice no longer exists.',
     });
-    expect(parseElicitationCallbackData(button('✅ Send'))).not.toBeNull();
+    expect(parseElicitationCallbackData(button('✅ Confirm'))).not.toBeNull();
     expect(
       await db
         .select()

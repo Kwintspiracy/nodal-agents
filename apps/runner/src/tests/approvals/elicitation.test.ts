@@ -62,6 +62,7 @@ function request(over: Partial<UserInputRequest> = {}): UserInputRequest {
     message: 'How should "report.pdf" be printed?',
     requestedSchema: ORDER_FORM,
     attachments: [],
+    actions: { accept: null, decline: null },
     signal: new AbortController().signal,
     ...over,
   };
@@ -153,6 +154,7 @@ describe('la question d’un serveur MCP, posée et attendue sans suspendre @cap
         attachments: [
           { mimeType: 'image/png', data: PNG_1PX, byteSize: 70, caption: 'Page 1 preview' },
         ],
+        actions: { accept: 'Print', decline: null },
       }),
     );
     const row = await pendingElicitation();
@@ -163,6 +165,8 @@ describe('la question d’un serveur MCP, posée et attendue sans suspendre @cap
       server: 'printer',
       message: 'How should "report.pdf" be printed?',
       requestedSchema: ORDER_FORM,
+      // Les libellés des boutons, gardés avec la question.
+      actions: { accept: 'Print', decline: null },
     });
     // L'appel auquel elle appartient est EN COURS : jamais un appel à rejouer.
     expect(row.executedAt).toBeInstanceOf(Date);

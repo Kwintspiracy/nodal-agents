@@ -13,7 +13,9 @@
 // que ce que la personne a lu.
 
 import {
+  elicitationActionLabels,
   validateElicitationContent,
+  type ElicitationActions,
   type ElicitationField,
   type ElicitationValue,
 } from './elicitation';
@@ -317,10 +319,12 @@ export type RenderedElicitationCard =
   | { ok: false; reason: string };
 
 /**
- * La carte : la question citée (texte tiers, telle quelle), les valeurs du
- * brouillon, puis une rangée de boutons par champ — chaque bouton nommé par
- * son champ, pour qu'aucun « Yes » ne soit ambigu —, les « ✏️ » des champs à
- * taper sur une rangée, et Send / Decline.
+ * La carte : la question citée (texte tiers, telle quelle) et les valeurs du
+ * brouillon dans le texte ; sous lui, le bouton d'accord et le refus EN TÊTE
+ * — visibles sans défilement, aux mots du serveur (`nodal/actions` :
+ * « Print »), sinon « ✅ Confirm » / « Decline », jamais « Send » —, puis une
+ * rangée de boutons par champ — chaque bouton nommé par son champ, pour
+ * qu'aucun « Yes » ne soit ambigu — et les « ✏️ » des champs à taper.
  *
  * Refusée avec la raison quand le canal ne peut pas la porter (`limits`) :
  * l'appelant le dit et renvoie au dashboard, il ne coupe jamais des champs.
@@ -333,6 +337,8 @@ export function renderElicitationCard(args: {
   draft: ElicitationDraft;
   imageCount: number;
   limits?: ElicitationCardLimits;
+  /** Les libellés que le serveur donne aux deux boutons (la ligne les porte). */
+  actions?: ElicitationActions | null;
 }): RenderedElicitationCard {
   const { approvalRequestId: id, fields, draft } = args;
   if (fields.length > 99) return { ok: false, reason: 'the form has more than 99 fields' };
@@ -342,7 +348,13 @@ export function renderElicitationCard(args: {
     callbackData: elicitationCallbackData(id, op),
   });
 
-  const rows: ElicitationCardButton[][] = [];
+  const labels = elicitationActionLabels(args.actions);
+  const rows: ElicitationCardButton[][] = [
+    [
+      btn(labels.accept, { op: 'send', revision: elicitationDraftRevision(draft.values) }),
+      btn(labels.decline, { op: 'decline' }),
+    ],
+  ];
   const typed: ElicitationCardButton[] = [];
   fields.forEach((f, i) => {
     const value = draft.values[f.key];
@@ -400,10 +412,6 @@ export function renderElicitationCard(args: {
     }
   });
   rows.push(...chunk(typed, perRow));
-  rows.push([
-    btn('✅ Send', { op: 'send', revision: elicitationDraftRevision(draft.values) }),
-    btn('❌ Decline', { op: 'decline' }),
-  ]);
 
   if (fields.some((f) => (f.kind === 'choice' || f.kind === 'multi') && f.options.length > 99)) {
     return { ok: false, reason: 'a field offers more than 99 choices' };
@@ -428,6 +436,7 @@ export function renderElicitationCard(args: {
     '\n\n' +
     (waiting
       ? `✏️ Reply to this message with ${waiting.label}: ${typedHint(waiting)}.`
-      : 'Set the values with the buttons, then Send. You can also answer from the dashboard.');
+      : `Set the values with the buttons, then tap ${labels.accept}. ` +
+        'You can also answer from the dashboard.');
   return { ok: true, text, buttons: rows };
 }

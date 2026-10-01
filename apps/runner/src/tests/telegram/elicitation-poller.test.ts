@@ -191,7 +191,7 @@ describe('la question d’un serveur MCP remplie depuis Telegram @cap:approuver-
     const bubbles = botApi
       .filter((c) => c.method === 'answerCallbackQuery')
       .map((c) => c.body['text'] ?? null);
-    expect(bubbles).toEqual([null, 'Reply to the card with Copies.', 'Sent.']);
+    expect(bubbles).toEqual([null, 'Reply to the card with Copies.', 'Answer sent.']);
   });
 
   it('une réponse à un AUTRE message reste un message : un tour de conversation', async () => {

@@ -5,6 +5,7 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { ToolContext, ToolDefinition } from '@nodal-agents/tools';
 import {
   mcpToolPrefix,
+  readElicitationActions,
   readElicitationAttachments,
   type OperationRiskLevel,
 } from '@nodal-agents/shared';
@@ -107,6 +108,17 @@ function responderFor(scope: CallScope, clock: CallClock): McpElicitationRespond
         `[adapter-mcp] ${scope.slug}: image ${r.index} of its question ignored: ${r.reason}`,
       );
     }
+    // Les libellés de ses boutons : un libellé refusé est dit, son bouton
+    // garde le libellé par défaut, la question est posée.
+    const labels = readElicitationActions(params._meta);
+    for (const r of labels.rejected) {
+      console.warn(
+        `[adapter-mcp] ${scope.slug}: ` +
+          (r.action === null
+            ? `the button labels of its question are ignored: ${r.reason}`
+            : `the ${r.action} label of its question is ignored: ${r.reason}`),
+      );
+    }
     const ask = scope.ctx?.requestUserInput;
     if (!ask) {
       console.warn(
@@ -124,6 +136,7 @@ function responderFor(scope: CallScope, clock: CallClock): McpElicitationRespond
         message: params.message,
         requestedSchema: params.requestedSchema,
         attachments,
+        actions: labels.actions,
         signal: AbortSignal.any([signal, clock.ended.signal]),
       });
     } finally {

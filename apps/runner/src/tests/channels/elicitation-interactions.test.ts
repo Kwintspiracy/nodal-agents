@@ -143,7 +143,7 @@ describe('Discord : un appui sur la carte d’une question de serveur MCP @cap:a
       {
         channel: 'discord',
         messageId: 'discord-card',
-        buttons: ['✓ Two-sided: Yes', 'Two-sided: No', '✅ Send', '❌ Decline'],
+        buttons: ['✅ Confirm', 'Decline', '✓ Two-sided: Yes', 'Two-sided: No'],
       },
     ]);
   });

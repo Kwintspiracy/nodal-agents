@@ -97,6 +97,7 @@ export function renderElicitationCardFor(
     fields: state.fields,
     draft,
     imageCount: state.imageCount,
+    actions: state.asked.actions,
     ...(limits ? { limits } : {}),
   });
 }
