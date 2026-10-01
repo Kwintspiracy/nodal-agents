@@ -47,6 +47,7 @@ import { toolAttachConnectorSkill } from './skills/tool-attach-connector';
 import { toolSchedulesSkill } from './skills/tool-schedules';
 
 export { officeEditingSkill } from './skills/office-editing';
+export { SHARED_WORKSPACE_FOLDERS } from './skills/workspace-hygiene';
 export { spreadsheetEditingSkill } from './skills/spreadsheet-editing';
 export { documentEditingSkill } from './skills/document-editing';
 export { presentationEditingSkill } from './skills/presentation-editing';

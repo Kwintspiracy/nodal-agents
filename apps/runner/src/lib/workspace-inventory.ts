@@ -4,10 +4,23 @@
 // Why: without a live inventory the agent starts every job blind to what
 // already exists — so it recreates workflows/scripts it built the day before
 // and invents a new folder layout each time (audited 2026-07-20: 3 competing
-// workflow dirs, 4 output dirs, ~40 one-shot scripts at the root). A cheap
-// depth-2 listing gives the model the one thing it can't guess: what's already
-// there. Factual data only — behavioral conventions live at the agent layer
-// (skills), never here.
+// workflow dirs, 4 output dirs, ~40 one-shot scripts at the root). The listing
+// gives the model what it cannot guess: which folders are there, and that they
+// hold something. Factual data only — behavioral conventions live at the agent
+// layer (skills), never here.
+//
+// MEANS ARE NAMED, DELIVERABLES ARE COUNTED (#638, 01/10). The listing showed
+// up to eight names in every folder, and most of them are yesterday's
+// deliverables: asked to "print a recipe of caviar d'aubergines", the root read
+// `caviar-aubergines/ (3 files): caviar-aubergines.html, …` in its own prompt,
+// opened that file and edited it instead of doing the request (job a22e173f).
+// A workflow template or a script is the opposite: "reuse the Krea 2 Turbo
+// template" must find `Krea2_Turbo_NSFW.json` without a search (review of
+// #658, pass 1). Which folder holds which is platform data, not a guess from a
+// name: `SHARED_WORKSPACE_FOLDERS` (catalog), the same list the
+// workspace-hygiene skill announces. A folder it does not mark as `means` —
+// the canonical deliverable folders and every folder an agent made up — is
+// counted, never listed.
 //
 // Cost/cache: computed once per job (the built prompt is persisted on the job
 // row) and rendered in the VOLATILE half of the system prompt, after
@@ -16,10 +29,16 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-/** Root entries beyond this count are elided (keeps pathological dirs bounded). */
-const MAX_ROOT_ENTRIES = 30;
-/** Child names shown per directory line. */
-const MAX_CHILDREN_SHOWN = 8;
+import { SHARED_WORKSPACE_FOLDERS } from '@nodal-agents/catalog';
+
+/** Root folders beyond this count are elided (keeps pathological dirs bounded). */
+const MAX_ROOT_FOLDERS = 30;
+/** File names shown per means folder. */
+const MAX_MEANS_SHOWN = 20;
+/** Root folders whose files are named: the canonical means folders. */
+const MEANS_FOLDERS = new Set(
+  SHARED_WORKSPACE_FOLDERS.filter((f) => f.holds === 'means').map((f) => f.name.toLowerCase()),
+);
 /** Hard cap on the rendered block (chars) — safety net, not a target. */
 const MAX_CHARS = 3500;
 /** Never descended into nor counted: tooling noise, not agent artifacts. */
@@ -81,14 +100,17 @@ export function inventoryForContext(
 }
 
 /**
- * Render a depth-2 inventory of `root` (the shared workspace).
+ * Render the inventory of `root` (the shared workspace): its folders, each with
+ * its recursive file count — and, for a means folder, the names inside — then
+ * how many files sit at the root.
  *
  * `''` when the directory is empty, `null` when it could NOT be read — les deux
  * ne se confondent pas : le second se dit à l'agent, le premier est un fait.
- * Plain factual text, one line per root entry:
+ * Plain factual text, one line per folder:
  *
- *   - workflows/ (19 files): a.json, b.json, …
- *   - note.md
+ *   - outputs/ (126 files)
+ *   - workflows/ (2 files): krea.json, zimage.json
+ *   - 2 files at the root
  */
 export async function buildSharedWorkspaceInventory(root: string): Promise<string | null> {
   let rootEntries;
@@ -101,37 +123,37 @@ export async function buildSharedWorkspaceInventory(root: string): Promise<strin
     return null;
   }
 
-  const entries = rootEntries
-    .filter((e) => !IGNORED.has(e.name) && !e.name.startsWith('.'))
-    .sort((a, b) => {
-      // Directories first, then files — both alphabetical.
-      if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+  const entries = rootEntries.filter((e) => !IGNORED.has(e.name) && !e.name.startsWith('.'));
+  const folders = entries
+    .filter((e) => e.isDirectory())
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const rootFiles = entries.length - folders.length;
   if (entries.length === 0) return '';
 
   const lines: string[] = [];
-  for (const e of entries.slice(0, MAX_ROOT_ENTRIES)) {
-    if (e.isDirectory()) {
-      const dirPath = join(root, e.name);
-      const total = await countFiles(dirPath, { n: 2000 });
-      const children = (await safeReaddir(dirPath))
-        .filter((c) => !IGNORED.has(c.name) && !c.name.startsWith('.'))
-        .sort((a, b) => a.name.localeCompare(b.name));
-      const shown = children
-        .slice(0, MAX_CHILDREN_SHOWN)
-        .map((c) => (c.isDirectory() ? `${c.name}/` : c.name))
-        .join(', ');
-      const more = children.length > MAX_CHILDREN_SHOWN ? ', …' : '';
-      lines.push(
-        `- ${e.name}/ (${total} file${total === 1 ? '' : 's'})${shown ? `: ${shown}${more}` : ''}`,
-      );
-    } else {
-      lines.push(`- ${e.name}`);
+  for (const e of folders.slice(0, MAX_ROOT_FOLDERS)) {
+    const dirPath = join(root, e.name);
+    const total = await countFiles(dirPath, { n: 2000 });
+    const head = `- ${e.name}/ (${total} file${total === 1 ? '' : 's'})`;
+    if (!MEANS_FOLDERS.has(e.name.toLowerCase())) {
+      lines.push(head);
+      continue;
     }
+    const children = (await safeReaddir(dirPath))
+      .filter((c) => !IGNORED.has(c.name) && !c.name.startsWith('.'))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const shown = children
+      .slice(0, MAX_MEANS_SHOWN)
+      .map((c) => (c.isDirectory() ? `${c.name}/` : c.name))
+      .join(', ');
+    const more = children.length > MAX_MEANS_SHOWN ? ', …' : '';
+    lines.push(shown ? `${head}: ${shown}${more}` : head);
   }
-  if (entries.length > MAX_ROOT_ENTRIES) {
-    lines.push(`- … ${entries.length - MAX_ROOT_ENTRIES} more root entries elided`);
+  if (folders.length > MAX_ROOT_FOLDERS) {
+    lines.push(`- … ${folders.length - MAX_ROOT_FOLDERS} more folders elided`);
+  }
+  if (rootFiles > 0) {
+    lines.push(`- ${rootFiles} file${rootFiles === 1 ? '' : 's'} at the root`);
   }
 
   const text = lines.join('\n');
