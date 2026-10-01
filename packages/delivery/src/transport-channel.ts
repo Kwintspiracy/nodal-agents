@@ -20,7 +20,7 @@
 // exact same default rule, and drifting it between them would silently split
 // where a job's outbound replies land.
 
-import { agents, eq, listChannelBindings } from '@nodal-agents/db';
+import { agents, eq, listChannelBindings, resolveOwnerConversation } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { ChannelKind } from './channel-adapter.ts';
 
@@ -65,6 +65,59 @@ export function resolveTransportChannel(
     if (preferred) return preferred;
   }
   return 'telegram';
+}
+
+/**
+ * A job's chat (#649): `agent_jobs.chat_id` and the channel it was RESOLVED
+ * on (`agent_jobs.chat_channel`, set by `designateChat` in @nodal-agents/db),
+ * `null` when nobody knows that platform. A chat id does not say which
+ * platform it belongs to: the two travel together, and an id is never read
+ * without its channel (designated-chat-readers.test.ts in packages/db).
+ */
+export interface JobChat {
+  id: string | null;
+  channel: string | null;
+}
+
+/**
+ * The channel a send tool writes on when the agent names none: the channel
+ * the job's chat was recorded on, otherwise `resolveTransportChannel`. ONE
+ * rule for the send tools (delivery-guard.ts) and for what the prompt says of
+ * them (channel-delivery.ts in the runner).
+ */
+export function defaultSendChannel(
+  chat: JobChat,
+  jobChannel: string | null | undefined,
+  activeChannels?: readonly ChannelKind[],
+): ChannelKind {
+  const recorded = chat.id ? chat.channel : null;
+  return (recorded as ChannelKind | null) ?? resolveTransportChannel(jobChannel, activeChannels);
+}
+
+/**
+ * The job's chat ON `channel`: its id when it was recorded on that very
+ * channel, `null` otherwise. Never an id carried to another platform: a
+ * Telegram chat id sent through Discord reaches nobody, or somebody else.
+ */
+export function jobChatOn(chat: JobChat, channel: ChannelKind): string | null {
+  return chat.id && chat.channel === channel ? chat.id : null;
+}
+
+/**
+ * Where a notice nobody asked for in a chat reaches the agent's owner (a
+ * schedule's budget notice, an outbox alert): the CHANNEL first — the agent's
+ * first active one (`resolveTransportChannel`) — then the owner's
+ * conversation ON THAT channel. `chatId` is null when the owner has none
+ * there: the caller says so and sends nothing. Never an owner chat resolved on
+ * one channel and sent on another (#649, review of #657 pass 5: the budget
+ * notice sent the owner's Telegram chat id through the Discord adapter).
+ */
+export async function resolveOwnerNoticeTarget(
+  db: AnyDrizzleDb,
+  agentId: string,
+): Promise<{ channel: ChannelKind; chatId: string | null }> {
+  const channel = resolveTransportChannel(null, await listActiveChannelsForAgent(db, agentId));
+  return { channel, chatId: await resolveOwnerConversation(db, agentId, channel) };
 }
 
 /**

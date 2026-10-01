@@ -360,6 +360,7 @@ describe('une question de serveur MCP, demandée sur Telegram, répondue sur Tel
         agentId: seed.agentId,
         channel: 'telegram',
         chatId: REQUEST_CHAT,
+        chatChannel: 'telegram',
         task: 'print the report',
         status: 'pending',
         messages: [],

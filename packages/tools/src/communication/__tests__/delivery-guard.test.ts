@@ -255,11 +255,12 @@ describe('resolveBotToken', () => {
     });
   });
 
-  // B1 (notify-channel-choice): ctx.notifyChannelOverride — a cron fire whose
-  // schedule chose an explicit notify channel (run-schedules.ts). Wins over the
-  // resolveTransportChannel(jobChannel, activeChannels) default, but a send
-  // tool's OWN explicit `channel` argument still wins over the override.
-  describe('notifyChannelOverride (B1)', () => {
+  // ctx.jobChatChannel — the channel the job's chat was recorded on (a cron
+  // fire whose schedule chose a notify channel, a webhook, a delegate holding
+  // its parent's chat; #649). Wins over the resolveTransportChannel(jobChannel,
+  // activeChannels) default, but a send tool's OWN explicit `channel` argument
+  // still wins over it. Replaces notifyChannelOverride (B1).
+  describe("the job chat's recorded channel (B1, #649)", () => {
     beforeEach(() => {
       getChannelBindingMock.mockReset();
       getBindingCredentialsMock.mockReset();
@@ -269,8 +270,8 @@ describe('resolveBotToken', () => {
     it('wins over the resolveTransportChannel default when no explicit channel arg is given', async () => {
       getBindingCredentialsMock.mockResolvedValueOnce({ botToken: 'discord-token' });
       // jobChannel/activeChannels absent — the historical default would be
-      // 'telegram'; notifyChannelOverride redirects it to 'discord'.
-      const ctx = makeCtx({ notifyChannelOverride: 'discord' });
+      // 'telegram'; the chat recorded on discord redirects it to 'discord'.
+      const ctx = makeCtx({ jobChatId: '777', jobChatChannel: 'discord' });
 
       await expect(resolveBotToken(ctx)).resolves.toBe('discord-token');
       expect(getBindingCredentialsMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'discord');
@@ -281,7 +282,7 @@ describe('resolveBotToken', () => {
     it("does NOT override a send tool's own explicit channel argument", async () => {
       getChannelBindingMock.mockResolvedValueOnce({ enabled: true });
       getBindingCredentialsMock.mockResolvedValueOnce({ botToken: 'slack-token' });
-      const ctx = makeCtx({ notifyChannelOverride: 'discord' });
+      const ctx = makeCtx({ jobChatId: '777', jobChatChannel: 'discord' });
 
       await expect(resolveBotToken(ctx, 'slack')).resolves.toBe('slack-token');
       expect(getChannelBindingMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'slack');
@@ -344,7 +345,7 @@ describe('resolveRecipientChatId', () => {
 
   it('falls back to ctx.jobChatId without an allow-list lookup, and never calls the owner lookup', async () => {
     isChatAllowedMock.mockClear();
-    const ctx = makeCtx({ jobChatId: '111' });
+    const ctx = makeCtx({ jobChatId: '111', jobChatChannel: 'telegram' });
 
     await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe('111');
     expect(isChatAllowedMock).not.toHaveBeenCalled();
@@ -353,7 +354,7 @@ describe('resolveRecipientChatId', () => {
 
   it('allows an explicit chatId equal to ctx.jobChatId without a lookup', async () => {
     isChatAllowedMock.mockClear();
-    const ctx = makeCtx({ jobChatId: '111' });
+    const ctx = makeCtx({ jobChatId: '111', jobChatChannel: 'telegram' });
 
     await expect(resolveRecipientChatId('111', ctx, 'no_recipient')).resolves.toBe('111');
     expect(isChatAllowedMock).not.toHaveBeenCalled();
@@ -362,7 +363,12 @@ describe('resolveRecipientChatId', () => {
   it('queries isConversationAllowed for a divergent explicit chatId and returns it when allowed', async () => {
     isChatAllowedMock.mockClear();
     isChatAllowedMock.mockResolvedValueOnce(true);
-    const ctx = makeCtx({ jobChatId: '111', entityId: 'entity-xyz', agentId: 'agent-abc' });
+    const ctx = makeCtx({
+      jobChatId: '111',
+      jobChatChannel: 'telegram',
+      entityId: 'entity-xyz',
+      agentId: 'agent-abc',
+    });
 
     await expect(resolveRecipientChatId('222', ctx, 'no_recipient')).resolves.toBe('222');
     expect(isChatAllowedMock).toHaveBeenCalledWith(ctx.db, {
@@ -376,7 +382,7 @@ describe('resolveRecipientChatId', () => {
   it('throws telegram_chat_not_allowed when isConversationAllowed resolves false', async () => {
     isChatAllowedMock.mockClear();
     isChatAllowedMock.mockResolvedValueOnce(false);
-    const ctx = makeCtx({ jobChatId: '111' });
+    const ctx = makeCtx({ jobChatId: '111', jobChatChannel: 'telegram' });
 
     await expect(resolveRecipientChatId('222', ctx, 'no_recipient')).rejects.toMatchObject({
       name: 'telegram_chat_not_allowed',
@@ -396,7 +402,12 @@ describe('resolveRecipientChatId — explicit cross-channel target', () => {
 
   it('is ALWAYS allowlist-checked against the TARGET channel, even when the id equals ctx.jobChatId (exemption bypass)', async () => {
     isChatAllowedMock.mockResolvedValueOnce(true);
-    const ctx = makeCtx({ jobChatId: '111', entityId: 'entity-xyz', agentId: 'agent-abc' });
+    const ctx = makeCtx({
+      jobChatId: '111',
+      jobChatChannel: 'telegram',
+      entityId: 'entity-xyz',
+      agentId: 'agent-abc',
+    });
 
     await expect(resolveRecipientChatId('111', ctx, 'no_recipient', 'discord')).resolves.toBe(
       '111',
@@ -411,7 +422,7 @@ describe('resolveRecipientChatId — explicit cross-channel target', () => {
 
   it('throws telegram_chat_not_allowed for a cross-channel id === ctx.jobChatId that is NOT approved on the target channel', async () => {
     isChatAllowedMock.mockResolvedValueOnce(false);
-    const ctx = makeCtx({ jobChatId: '111' });
+    const ctx = makeCtx({ jobChatId: '111', jobChatChannel: 'telegram' });
 
     await expect(
       resolveRecipientChatId('111', ctx, 'no_recipient', 'discord'),
@@ -420,7 +431,7 @@ describe('resolveRecipientChatId — explicit cross-channel target', () => {
 
   it('never falls back to ctx.jobChatId (a different channel’s id) — omitted chatId goes straight to the TARGET channel’s owner', async () => {
     resolveOwnerChatIdMock.mockResolvedValueOnce('discord-owner-chat');
-    const ctx = makeCtx({ jobChatId: '111' });
+    const ctx = makeCtx({ jobChatId: '111', jobChatChannel: 'telegram' });
 
     await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient', 'discord')).resolves.toBe(
       'discord-owner-chat',
@@ -430,7 +441,7 @@ describe('resolveRecipientChatId — explicit cross-channel target', () => {
   });
 
   it('an explicit channel matching the job channel keeps the same-channel exemption (regression)', async () => {
-    const ctx = makeCtx({ jobChatId: '111', jobChannel: 'discord' });
+    const ctx = makeCtx({ jobChatId: '111', jobChatChannel: 'discord', jobChannel: 'discord' });
 
     await expect(resolveRecipientChatId('111', ctx, 'no_recipient', 'discord')).resolves.toBe(
       '111',
@@ -439,17 +450,111 @@ describe('resolveRecipientChatId — explicit cross-channel target', () => {
   });
 });
 
-// ─── resolveRecipientChatId — notifyChannelOverride (B1) ───────────────────
+// ─── resolveRecipientChatId — a job's chat travels only with its channel ───
+// #649, review of #657 pass 4: a send tool called WITHOUT a chatId used to
+// target ctx.jobChatId on whatever channel the tool resolved — the first active
+// channel for a chat whose platform nobody recorded. A routine left on auto
+// with an explicit Telegram chat id, Discord the only active channel: the id
+// went to Discord. The job's chat is used on the channel it was recorded on,
+// and only there; any other channel reaches its OWN owner conversation.
 
-describe('resolveRecipientChatId — notifyChannelOverride (B1)', () => {
+describe("resolveRecipientChatId — the job's chat only on its recorded channel (#649)", () => {
+  beforeEach(() => {
+    resolveOwnerChatIdMock.mockReset();
+    isChatAllowedMock.mockReset();
+    getBindingCredentialsMock.mockReset();
+    getChannelBindingMock.mockReset();
+  });
+
+  it('a chat with no recorded channel is never sent to: the owner conversation of the channel the tool resolves', async () => {
+    resolveOwnerChatIdMock.mockResolvedValueOnce('discord-owner-chat');
+    const ctx = makeCtx({
+      jobChannel: 'cron',
+      jobChatId: '555',
+      jobChatChannel: null,
+      activeChannels: ['discord'],
+    });
+
+    await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe(
+      'discord-owner-chat',
+    );
+    expect(resolveOwnerChatIdMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'discord');
+  });
+
+  it('the same id named explicitly is allowlist-checked on that channel, and refused when not approved there', async () => {
+    isChatAllowedMock.mockResolvedValueOnce(false);
+    const ctx = makeCtx({
+      jobChannel: 'cron',
+      jobChatId: '555',
+      jobChatChannel: null,
+      activeChannels: ['discord'],
+    });
+
+    await expect(resolveRecipientChatId('555', ctx, 'no_recipient')).rejects.toMatchObject({
+      name: 'telegram_chat_not_allowed',
+    });
+    expect(isChatAllowedMock).toHaveBeenCalledWith(ctx.db, {
+      entityId: ctx.entityId,
+      agentId: ctx.agentId,
+      channel: 'discord',
+      conversationId: '555',
+    });
+  });
+
+  it('a chat recorded on a channel is the default target on THAT channel, whatever the priority order says', async () => {
+    getBindingCredentialsMock.mockResolvedValueOnce({ botToken: 'discord-token' });
+    const ctx = makeCtx({
+      jobChannel: 'cron',
+      jobChatId: '555',
+      jobChatChannel: 'discord',
+      activeChannels: ['telegram', 'discord'],
+    });
+
+    await expect(resolveBotToken(ctx)).resolves.toBe('discord-token');
+    expect(getBindingCredentialsMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'discord');
+    await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe('555');
+    await expect(resolveRecipientChatId('555', ctx, 'no_recipient')).resolves.toBe('555');
+    expect(isChatAllowedMock).not.toHaveBeenCalled();
+    expect(resolveOwnerChatIdMock).not.toHaveBeenCalled();
+  });
+
+  it('a request that came from a chat answers that chat on its own channel', async () => {
+    const ctx = makeCtx({
+      jobChannel: 'slack',
+      jobChatId: 'C42',
+      jobChatChannel: 'slack',
+      activeChannels: ['telegram', 'slack'],
+    });
+
+    await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe('C42');
+    expect(resolveOwnerChatIdMock).not.toHaveBeenCalled();
+    expect(isChatAllowedMock).not.toHaveBeenCalled();
+  });
+
+  it('a delegate holding its parent’s chat recorded on telegram, on a job channel that is no transport, sends to that chat', async () => {
+    const ctx = makeCtx({
+      jobChannel: 'internal',
+      jobChatId: '4242',
+      jobChatChannel: 'telegram',
+      activeChannels: ['discord', 'telegram'],
+    });
+
+    await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe('4242');
+    expect(resolveOwnerChatIdMock).not.toHaveBeenCalled();
+  });
+});
+
+// ─── resolveRecipientChatId — a job with no chat (B1) ──────────────────────
+
+describe('resolveRecipientChatId — a job with no chat (B1)', () => {
   beforeEach(() => {
     resolveOwnerChatIdMock.mockReset();
     isChatAllowedMock.mockReset();
   });
 
-  it('resolves the owner conversation on the OVERRIDE channel, not ctx.jobChatId or telegram', async () => {
+  it("resolves the owner conversation on the channel the tool resolves, the agent's only active one, not telegram", async () => {
     resolveOwnerChatIdMock.mockResolvedValueOnce('discord-owner-chat');
-    const ctx = makeCtx({ jobChatId: null, notifyChannelOverride: 'discord' });
+    const ctx = makeCtx({ jobChatId: null, jobChannel: 'cron', activeChannels: ['discord'] });
 
     await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe(
       'discord-owner-chat',
@@ -471,7 +576,7 @@ describe('resolveRecipientChatId — per-job delivery ceiling (L4)', () => {
   });
 
   it('allows 30 resolutions on one jobId, then rate-limits the 31st without an isChatAllowed lookup', async () => {
-    const ctx = makeCtx({ jobId: 'ceiling-job-1', jobChatId: '111' });
+    const ctx = makeCtx({ jobId: 'ceiling-job-1', jobChatId: '111', jobChatChannel: 'telegram' });
 
     for (let i = 0; i < 30; i++) {
       await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe('111');
@@ -485,8 +590,8 @@ describe('resolveRecipientChatId — per-job delivery ceiling (L4)', () => {
   });
 
   it('tracks two different jobIds independently', async () => {
-    const ctxA = makeCtx({ jobId: 'ceiling-job-a', jobChatId: '111' });
-    const ctxB = makeCtx({ jobId: 'ceiling-job-b', jobChatId: '222' });
+    const ctxA = makeCtx({ jobId: 'ceiling-job-a', jobChatId: '111', jobChatChannel: 'telegram' });
+    const ctxB = makeCtx({ jobId: 'ceiling-job-b', jobChatId: '222', jobChatChannel: 'telegram' });
 
     for (let i = 0; i < 30; i++) {
       await resolveRecipientChatId(undefined, ctxA, 'no_recipient');
@@ -500,7 +605,7 @@ describe('resolveRecipientChatId — per-job delivery ceiling (L4)', () => {
   });
 
   it('never rate-limits an empty jobId (regression for minimal test contexts)', async () => {
-    const ctx = makeCtx({ jobId: '', jobChatId: '111' });
+    const ctx = makeCtx({ jobId: '', jobChatId: '111', jobChatChannel: 'telegram' });
 
     for (let i = 0; i < 40; i++) {
       await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe('111');
@@ -530,7 +635,11 @@ describe('resolveRecipientChatId — per-job delivery ceiling (L4)', () => {
     // Insert 1001 distinct jobIds (one resolution each) — one past the
     // MAX_TRACKED_JOBS cap — which must evict the very first one inserted.
     for (let i = 0; i < 1001; i++) {
-      const ctx = makeCtx({ jobId: `evict-job-${i}`, jobChatId: '111' });
+      const ctx = makeCtx({
+        jobId: `evict-job-${i}`,
+        jobChatId: '111',
+        jobChatChannel: 'telegram',
+      });
       await resolveRecipientChatId(undefined, ctx, 'no_recipient');
     }
 
@@ -539,7 +648,7 @@ describe('resolveRecipientChatId — per-job delivery ceiling (L4)', () => {
     // instead assert eviction behaviorally: run it past the ceiling on its
     // own and confirm it gets the FULL 30, proving its counter restarted
     // from zero rather than continuing from before.
-    const ctx0 = makeCtx({ jobId: 'evict-job-0', jobChatId: '111' });
+    const ctx0 = makeCtx({ jobId: 'evict-job-0', jobChatId: '111', jobChatChannel: 'telegram' });
     for (let i = 0; i < 30; i++) {
       await expect(resolveRecipientChatId(undefined, ctx0, 'no_recipient')).resolves.toBe('111');
     }

@@ -38,6 +38,7 @@ import {
   resolveTransportChannel,
   listActiveChannelsForAgent,
   isTransportChannel,
+  jobChatOn,
   type ApprovalCard,
   type QuestionCard,
   type ChannelKind,
@@ -346,8 +347,18 @@ const DELIVERY_CHAIN_MAX_HOPS = 8;
 export async function walkJobChainToRoot(
   db: RunnerDeps['db'],
   jobId: string,
-): Promise<Array<{ agentId: string; channel: string | null; chatId: string | null }> | null> {
-  const chain: Array<{ agentId: string; channel: string | null; chatId: string | null }> = [];
+): Promise<Array<{
+  agentId: string;
+  channel: string | null;
+  chatId: string | null;
+  chatChannel: string | null;
+}> | null> {
+  const chain: Array<{
+    agentId: string;
+    channel: string | null;
+    chatId: string | null;
+    chatChannel: string | null;
+  }> = [];
   let current: string | null = jobId;
   let startEntityId: string | null | undefined;
   for (let hops = 0; current && hops < DELIVERY_CHAIN_MAX_HOPS; hops += 1) {
@@ -356,6 +367,7 @@ export async function walkJobChainToRoot(
         agentId: agentJobs.agentId,
         channel: agentJobs.channel,
         chatId: agentJobs.chatId,
+        chatChannel: agentJobs.chatChannel,
         parentJobId: agentJobs.parentJobId,
         entityId: agentJobs.entityId,
       })
@@ -375,7 +387,7 @@ export async function walkJobChainToRoot(
       );
       return null;
     }
-    chain.push({ agentId, channel: row.channel, chatId: row.chatId });
+    chain.push({ agentId, channel: row.channel, chatId: row.chatId, chatChannel: row.chatChannel });
     current = row.parentJobId;
   }
   return chain.length > 0 ? chain : null;
@@ -667,7 +679,12 @@ export async function resolveElicitationOriginTarget(
   const chain = await walkJobChainToRoot(db, jobId);
   if (!chain) return null;
   const root = chain[chain.length - 1]!;
-  if (!isTransportChannel(root.channel) || !root.chatId) return null;
+  if (!isTransportChannel(root.channel)) return null;
+  // Le chat de la demande, sur SON canal seulement (#657, `jobChatOn`) : un id
+  // de chat porté vers une autre plateforme n'atteint personne, ou quelqu'un
+  // d'autre.
+  const chatId = jobChatOn({ id: root.chatId, channel: root.chatChannel }, root.channel);
+  if (!chatId) return null;
   if (root.channel === 'telegram') {
     const target = await resolveTelegramDeliveryTarget(db, jobId);
     if (!target) return null;
@@ -675,7 +692,7 @@ export async function resolveElicitationOriginTarget(
       channel: 'telegram',
       agentId: target.agentId,
       credentials: { botToken: target.botToken },
-      conversationId: root.chatId,
+      conversationId: chatId,
     };
   }
   for (const hop of chain) {
@@ -687,7 +704,7 @@ export async function resolveElicitationOriginTarget(
       channel: root.channel,
       agentId: hop.agentId,
       credentials,
-      conversationId: root.chatId,
+      conversationId: chatId,
     };
   }
   return null;

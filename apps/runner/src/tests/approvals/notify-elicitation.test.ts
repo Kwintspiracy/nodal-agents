@@ -141,7 +141,7 @@ describe('notifyApprovalCreated — la question d’un serveur MCP @cap:approuve
     // (où une approbation du même job irait) : la question y retourne.
     await db
       .update(agentJobs)
-      .set({ channel: 'discord', chatId: 'conv-requester' })
+      .set({ channel: 'discord', chatId: 'conv-requester', chatChannel: 'discord' })
       .where(eq(agentJobs.id, seed.jobId));
     const [row] = await db
       .insert(approvalRequests)

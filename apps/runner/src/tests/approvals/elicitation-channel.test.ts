@@ -214,7 +214,7 @@ beforeEach(async () => {
   // La demande est née dans la conversation d'un INVITÉ, sur Telegram.
   await db
     .update(agentJobs)
-    .set({ channel: 'telegram', chatId: GUEST_CHAT, status: 'processing' })
+    .set({ channel: 'telegram', chatId: GUEST_CHAT, chatChannel: 'telegram', status: 'processing' })
     .where(eq(agentJobs.id, seed.jobId));
 });
 
@@ -259,7 +259,18 @@ describe('la question part là où la demande est née @cap:approuver-une-action
   it('une demande faite sur le web ne reçoit rien sur Telegram', async () => {
     await db
       .update(agentJobs)
-      .set({ channel: 'dashboard', chatId: null })
+      .set({ channel: 'dashboard', chatId: null, chatChannel: null })
+      .where(eq(agentJobs.id, seed.jobId));
+    await deliver(await question());
+    expect(wire.sent).toEqual([]);
+  });
+
+  it('un chat enregistré sur un AUTRE canal n’est jamais utilisé : la question reste sur le dashboard', async () => {
+    // Un id de chat Discord porté vers Telegram n'atteint personne, ou
+    // quelqu'un d'autre (#657, `jobChatOn`).
+    await db
+      .update(agentJobs)
+      .set({ channel: 'telegram', chatId: GUEST_CHAT, chatChannel: 'discord' })
       .where(eq(agentJobs.id, seed.jobId));
     await deliver(await question());
     expect(wire.sent).toEqual([]);
@@ -268,7 +279,7 @@ describe('la question part là où la demande est née @cap:approuver-une-action
   it('un canal sans boutons reçoit la question et le renvoi au dashboard, avec la raison', async () => {
     await db
       .update(agentJobs)
-      .set({ channel: 'whatsapp', chatId: 'wa-1' })
+      .set({ channel: 'whatsapp', chatId: 'wa-1', chatChannel: 'whatsapp' })
       .where(eq(agentJobs.id, seed.jobId));
     await db.insert(channelBindings).values({
       entityId: seed.entityId,

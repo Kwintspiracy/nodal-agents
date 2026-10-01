@@ -335,6 +335,7 @@ describe('POST /webhooks/:slug/:secret — notify (B2)', () => {
 
     const [row] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
     expect(row!.chatId).toBe('discord-owner-42');
+    expect(row!.chatChannel).toBe('discord'); // the chat carries its channel (#649)
     expect(row!.triggerContext).toMatchObject({ type: 'webhook', notifyChannel: 'discord' });
   });
 
@@ -384,6 +385,7 @@ describe('POST /webhooks/:slug/:secret — notify (B2)', () => {
 
     const [row] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
     expect(row!.chatId).toBe('discord-owner-auto');
+    expect(row!.chatChannel).toBe('discord'); // the chat carries its channel (#649)
     expect(row!.triggerContext).toMatchObject({ type: 'webhook', notifyChannel: 'discord' });
   });
 

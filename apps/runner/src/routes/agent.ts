@@ -9,7 +9,8 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { projectKey } from '@nodal-agents/shared';
 import { isExistingDirectory } from '@nodal-agents/tools';
-import { eq, and } from '@nodal-agents/db';
+import { eq, and, designateChat } from '@nodal-agents/db';
+import { resolveTransportChannel } from '@nodal-agents/delivery';
 import { agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
@@ -220,7 +221,11 @@ export async function agentRoute(
       agentId: agentId ?? undefined,
       channel,
       task,
-      chatId: chatId ?? undefined,
+      // The chat of a request that came FROM a transport carries that
+      // transport; an id sent with any other channel has no known platform
+      // and carries none (#649) — never guessed.
+      // (A channel is a transport when resolveTransportChannel keeps it as is.)
+      ...designateChat(chatId, resolveTransportChannel(channel) === channel ? channel : null),
       parentJobId: parentJobId ?? undefined,
       conversationId: conversationId ?? undefined,
       jobFolder: dossierDuJob ?? undefined,
