@@ -35,6 +35,7 @@ import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { handleSlackMessage, triggerJobWorker, type SlackHandleResult } from './handler.ts';
 import { routeSlackInteraction } from './interactions.ts';
+import { handleElicitationReply } from '../../approvals/elicitation-channel.ts';
 import { SLACK_AUTH_CALLBACK_PREFIX } from './auth-callback.ts';
 import type { SlackInboundMessage, SlackInteractionAck } from './types.ts';
 
@@ -113,6 +114,8 @@ interface SlackMessageEventLike {
   user?: string;
   bot_id?: string;
   text?: string;
+  ts?: string;
+  thread_ts?: string;
 }
 
 /** Minimal shape this module reads off a `block_actions` payload. */
@@ -203,6 +206,24 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
     // Anti ack-loop hard rule — never react to ANY bot, including ourselves.
     // Also drops every non-plain subtype (edits, joins, bot_message, …).
     if (msg.subtype !== undefined || msg.bot_id) return;
+    // 0145 — a reply in the THREAD of the card of an MCP server's question
+    // fills the field that waits for it, in a DM or in a channel (no mention
+    // needed: the thread names the card). Any other message goes on below.
+    if (msg.user && msg.thread_ts && msg.thread_ts !== msg.ts) {
+      const answered = await handleElicitationReply({
+        deps,
+        origin: { channel: 'slack', receivingAgentId: agentId, conversationId: msg.channel },
+        replyToMessageId: msg.thread_ts,
+        text: msg.text ?? '',
+      }).catch((err: unknown) => {
+        console.error(
+          `[slack-socket agent=${agentId}] reply could not be read as an answer to a question ` +
+            `card, handled as a message: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return null;
+      });
+      if (answered?.handled) return;
+    }
     // Channel-kind messages are handled ONLY via app_mention below — acting
     // on both would create two jobs for the same human message.
     if (msg.channel_type !== 'im') return;

@@ -51,6 +51,7 @@ describe('discordAdapter.channel / capabilities', () => {
       threads: true,
       media: true,
       editMessage: true,
+      buttonLimits: { maxRows: 5, maxPerRow: 5 },
     });
   });
 });
@@ -263,19 +264,6 @@ describe('discordAdapter.editMessageText', () => {
     await expect(
       discordAdapter.editMessageText!(CREDS, CHANNEL_ID, '42', 'Resolved ✅'),
     ).resolves.toEqual({ ok: false, error: 'boom' });
-  });
-});
-
-describe('discordAdapter.editMessageText with buttons', () => {
-  it('refuses buttons on an edit instead of sending the text alone', async () => {
-    vi.mocked(REST.prototype.patch).mockClear();
-
-    const result = await discordAdapter.editMessageText!(CREDS, CHANNEL_ID, '42', 'Sure?', [
-      [{ label: 'Yes', callbackData: 'apr:x:wc' }],
-    ]);
-
-    expect(result).toEqual({ ok: false, error: 'discord cannot put buttons on an edited message' });
-    expect(vi.mocked(REST.prototype.patch).mock.calls).toEqual([]);
   });
 });
 

@@ -454,6 +454,11 @@ export const RUNNER_NON_TERMINAL_SENDERS = [
   'approvals/notify.ts',
   // #637 — réécrit une carte d'approbation quand sa demande est tranchée.
   'approvals/card-settlement.ts',
+  // 0145 — la question d'un serveur MCP remplie depuis un canal : lit ce que
+  // le canal peut porter (boutons), et dit dans la conversation pourquoi une
+  // valeur tapée n'est pas prise. Aucun résultat de job n'y passe.
+  'approvals/elicitation-card-view.ts',
+  'approvals/elicitation-channel.ts',
   'notify/code-transitions.ts',
   'cron/run-schedules.ts',
   'cron/reset-orphans.ts',
