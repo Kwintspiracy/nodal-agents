@@ -722,8 +722,14 @@ export type ToolExecutionResult =
    * have reached the user. The runner's delivery guard treats this as a
    * delivery (no re-send nudge) and the error text tells the LLM not to
    * resend — a blind retry is exactly what duplicates messages.
+   *
+   * `raisedByTool` — the error came out of the tool's own `execute()`, so its
+   * text is the tool's, not the gate's: for a third-party tool it may carry a
+   * third party's words, and the runner frames it as external data like the
+   * tool's success (INJECT-001). Absent on every error the gate writes itself
+   * (invalid input, a `block` rule, a refused approval).
    */
-  | { outcome: 'error'; error: string; mayHaveDelivered?: boolean }
+  | { outcome: 'error'; error: string; mayHaveDelivered?: boolean; raisedByTool?: true }
   | { outcome: 'awaiting_approval'; approvalRequestId: string };
 
 // ─── Constants ────────────────────────────────────────────────────────────────

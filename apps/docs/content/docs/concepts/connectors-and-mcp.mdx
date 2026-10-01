@@ -118,19 +118,23 @@ The runner maps MCP tool annotations to its own risk model:
 ### What the agent reads of a tool result
 
 A `tools/call` result has two channels: `content` (blocks meant for the model)
-and `structuredContent` (the machine form). Nodal follows the MCP spec:
+and `structuredContent` (the machine form). The agent reads both:
 
-- the agent reads every `text` block, in the order the server wrote them;
-- `structuredContent` reaches the agent only when the result has no `text`
-  block. A server that wants the agent to read its structured data writes it in
-  a text block too, as the spec recommends;
+- every `text` block, in the order the server wrote them;
+- then `structuredContent`, serialized, so the agent keeps what its next call
+  needs (an id, a status). It is not repeated when a text block already is its
+  serialization (compared as JSON: indentation and key order do not matter);
+- a server on the 2024-10-07 protocol (`toolResult`) is read the same way;
 - images, audio, embedded binary resources and resource links are each named in
   one line (type, size, link) — the agent is told they exist, it does not
   receive their bytes;
-- `isError: true` reaches the agent as a failed call, with the server's text;
+- `isError: true` reaches the agent as a failed call, with the server's text
+  framed as external data, like a successful result;
 - the tool call's log keeps the whole result, `structuredContent` included.
 
-Results are capped at 50,000 characters (`MCP_RESULT_CHAR_CAP`).
+Each channel is capped at 50,000 characters (`MCP_RESULT_CHAR_CAP`): all the
+content blocks together, then the structured payload. Blocks past the cap are
+counted, never dropped in silence.
 
 ### Adding an MCP server
 

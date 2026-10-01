@@ -15,6 +15,9 @@
 //     structured  structuredContent only, `content` empty
 //     resources   a resource_link, an embedded text resource, an embedded
 //                 binary resource and an audio block
+//     echoed      a text block that IS the structuredContent, serialized
+//                 differently (indented, keys in another order), next to it
+//     blank       an empty text block and structuredContent
 //     error       isError, with a text block and structuredContent
 //     empty       nothing at all
 //
@@ -62,6 +65,19 @@ const SHAPES = {
       },
       { type: 'audio', data: BYTES_3KB, mimeType: 'audio/wav' },
     ],
+  },
+  echoed: {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({ preview: { pages: 2 }, status: 'pending', id: 'pr-7' }, null, 2),
+      },
+    ],
+    structuredContent: { id: 'pr-7', status: 'pending', preview: { pages: 2 } },
+  },
+  blank: {
+    content: [{ type: 'text', text: '' }],
+    structuredContent: { id: 'pr-7', status: 'pending' },
   },
   error: {
     isError: true,

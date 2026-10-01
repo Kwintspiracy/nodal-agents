@@ -250,6 +250,48 @@ describe('mcpToolToToolDefinition', () => {
     expect(JSON.stringify(out)).not.toContain('iVBOR');
     expect(read(def, out).split('\n')).toHaveLength(200);
   });
+
+  it('many text blocks under the per-block cap are bounded as a whole on the row, and the cut is said (F6)', async () => {
+    // 200 blocks of 49k: each passes a per-block cap, together ~10 MB.
+    const blocks = Array.from({ length: 200 }, (_, i) => ({
+      type: 'text',
+      text: `${i}:`.padEnd(49_000, 'y'),
+    }));
+    const client = {
+      callTool: vi.fn(async () => ({ content: blocks })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'c');
+
+    const out = (await def.execute({}, {} as never)) as {
+      content: Array<{ type: string; count?: number; text?: string }>;
+    };
+
+    // The row stays within the cap (plus the markers that say so).
+    expect(JSON.stringify(out).length).toBeLessThan(51_000);
+    // The first block survives; the rest is counted, not lost in silence.
+    expect(out.content[0]?.text?.startsWith('0:')).toBe(true);
+    const omitted = out.content.at(-1)!;
+    expect(omitted.type).toBe('omitted');
+    expect(omitted.count).toBe(200 - (out.content.length - 1));
+    expect(read(def, out)).toContain(
+      `[${omitted.count} more content blocks not kept: the result exceeded 50000 chars.]`,
+    );
+  });
+
+  it('the 2024-10-07 result shape (`toolResult`) is read, never reported as empty', async () => {
+    // CompatibilityCallToolResultSchema in the SDK: a pre-2025 server answers
+    // `{ toolResult }`; the SDK's loose result schema keeps the key and
+    // defaults `content` to [].
+    const client = {
+      callTool: vi.fn(async () => ({ content: [], toolResult: { temperature: 21 } })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'legacy');
+
+    const out = await def.execute({}, {} as never);
+
+    expect(out).toEqual({ content: [], toolResult: { temperature: 21 } });
+    expect(read(def, out)).toBe('{"temperature":21}');
+  });
 });
 
 // ─── Stated purpose ──────────────────────────────────────────────────────────

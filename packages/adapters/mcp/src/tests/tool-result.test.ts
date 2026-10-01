@@ -8,8 +8,9 @@
 //  - the record (`execute()`, what `tool_calls.tool_output` keeps) holds every
 //    content block in order AND `structuredContent`, binaries as their size;
 //  - the model (`toModelOutput`) reads the text blocks in order, the other
-//    blocks said one per line, `structuredContent` only when no text block
-//    exists;
+//    blocks said one per line, then `structuredContent` serialized — unless a
+//    text block already IS that serialization (compared as JSON, not as text);
+//    nothing the server sent is dropped in silence;
 //  - `isError` stays a failure, and carries the server's text.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -18,7 +19,7 @@ import { createMcpTools, type McpToolset } from '../index.ts';
 import type { McpToolOutput } from '../result.ts';
 
 const FIXTURE = fileURLToPath(new URL('./fixtures/mcp-result-server.mjs', import.meta.url));
-const SHAPES = ['mixed', 'structured', 'resources', 'error', 'empty'] as const;
+const SHAPES = ['mixed', 'structured', 'resources', 'echoed', 'blank', 'error', 'empty'] as const;
 type Shape = (typeof SHAPES)[number];
 
 const servers = new Map<Shape, McpToolset>();
@@ -58,18 +59,18 @@ async function call(shape: Shape): Promise<{ record: McpToolOutput; model: strin
 }
 
 describe('an MCP tool result, kept whole and read by the model @cap:connecter-un-service/moteur', () => {
-  it('text + image + structuredContent: the model reads every text block in order and is told of the image', async () => {
+  it('text + image + structuredContent: the model reads every text block in order, is told of the image, and reads the structured result', async () => {
     const { record, model } = await call('mixed');
 
     expect(model).toBe(
       'Request pr-7 for 2 pages. Confirmation not possible: nobody answered in time, nothing was printed.\n' +
         '[Image returned by the tool (image/jpeg, 3 KB): not passed to you. ' +
         "Nodal does not give a tool's image to the model.]\n" +
-        'Ask the user before calling request_print again.',
+        'Ask the user before calling request_print again.\n' +
+        // The machine form too: the id is what the next call needs.
+        '{"id":"pr-7","status":"pending","preview":{"pages":2}}',
     );
-    // structuredContent is not repeated to the model next to the server's text…
-    expect(model).not.toContain('"status"');
-    // …but the record keeps it where the server put it, next to every block.
+    // The record keeps it where the server put it, next to every block.
     expect(record).toEqual({
       content: [
         {
@@ -91,6 +92,26 @@ describe('an MCP tool result, kept whole and read by the model @cap:connecter-un
       content: [],
       structuredContent: { records: [{ id: 'rec1', fields: { Name: 'Alpha' } }] },
     });
+  });
+
+  it('a text block that already IS the structuredContent is not repeated (compared as JSON, not as text)', async () => {
+    const { record, model } = await call('echoed');
+
+    // Indented, keys in another order: textually different, the same JSON.
+    expect(model).toBe(
+      JSON.stringify({ preview: { pages: 2 }, status: 'pending', id: 'pr-7' }, null, 2),
+    );
+    expect(record.structuredContent).toEqual({
+      id: 'pr-7',
+      status: 'pending',
+      preview: { pages: 2 },
+    });
+  });
+
+  it('an empty text block next to structuredContent: the model reads the structured result, never an empty string', async () => {
+    const { model } = await call('blank');
+
+    expect(model).toBe('{"id":"pr-7","status":"pending"}');
   });
 
   it('resource links, embedded resources and audio are each said, never dropped', async () => {

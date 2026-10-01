@@ -62,7 +62,9 @@ const MIXED_FOR_MODEL =
   'Request pr-7 for 2 pages. Confirmation not possible: nobody answered in time, nothing was printed.\n' +
   '[Image returned by the tool (image/jpeg, 3 KB): not passed to you. ' +
   "Nodal does not give a tool's image to the model.]\n" +
-  'Ask the user before calling request_print again.';
+  'Ask the user before calling request_print again.\n' +
+  // …and the machine form: its id is what the next call needs.
+  '{"id":"pr-7","status":"pending","preview":{"pages":2}}';
 const MIXED_STRUCTURED = { id: 'pr-7', status: 'pending', preview: { pages: 2 } };
 const RECORDS = { records: [{ id: 'rec1', fields: { Name: 'Alpha' } }] };
 
@@ -154,8 +156,6 @@ describe('an MCP tool result reaches the model as the server wrote it @cap:conne
     expect(printer).toContain(MIXED_FOR_MODEL);
     // Framed as third-party data, like every MCP result (INJECT-001).
     expect(printer).toContain('<untrusted_tool_result>');
-    // structuredContent is not repeated next to the server's own text.
-    expect(printer).not.toContain('"status"');
     // A server that wrote no text block: the model reads its structuredContent.
     expect(records).toContain(JSON.stringify(RECORDS));
 
@@ -208,9 +208,78 @@ describe('an MCP tool result reaches the model as the server wrote it @cap:conne
     const printer = results.find((r) => r.includes('Request pr-7'));
     expect(printer, `no result of the approved call in ${JSON.stringify(results)}`).toBeDefined();
     expect(printer).toContain(MIXED_FOR_MODEL);
-    expect(printer).not.toContain('"status"');
     expect(await recordedOutput(jobId, 'printer_gated__report')).toMatchObject({
       structuredContent: MIXED_STRUCTURED,
     });
+  }, 60_000);
+});
+
+describe('a third-party tool error is framed like its success; the gate own errors are not @cap:connecter-un-service/moteur', () => {
+  const FRAME = '<untrusted_tool_result>';
+  const SERVER_ERROR = 'Printer offline: the request was not queued.';
+
+  it('inline: the server isError text reaches the model framed; an invalid call refused by the gate stays bare', async () => {
+    const { jobId, entityId, agentId } = await seedJob(db, { model: MODEL, role: 'agent' });
+    await seedServer(entityId, agentId, 'failing', 'error');
+    await db
+      .insert(approvalRules)
+      .values({ entityId, agentId: null, toolName: 'failing__report', action: 'auto_approve' });
+
+    const { bodies } = await run(jobId, [
+      {
+        calls: [
+          { name: 'failing__report', args: { purpose: 'Print the page.' } },
+          // Finishing in the same turn as the failure, and nothing else
+          // failing: the framed failure alone must still be SEEN as one by the
+          // turn's own guard, which defers this.
+          { name: 'return_result', args: { status: 'success' } },
+        ],
+      },
+      // No `purpose`: refused by the gate's input validation, never run.
+      { calls: [{ name: 'failing__report', args: {} }] },
+      { text: 'Done.' },
+    ]);
+
+    expect(bodies[1], 'the turn finished over a failed call').toBeDefined();
+    const [raised, finish] = toolResults(bodies[1]!);
+    expect(raised).toContain(FRAME);
+    expect(raised).toContain(SERVER_ERROR);
+    expect(raised).toContain('[Source: failing__report.');
+    expect(finish).toContain('deferred: sibling tool error must be addressed first');
+
+    expect(bodies[2], 'the second turn never reached the model').toBeDefined();
+    const refused = toolResults(bodies[2]!).at(-1);
+    expect(refused).toContain('invalid_input');
+    expect(refused).not.toContain(FRAME);
+  }, 60_000);
+
+  it('on resume after approval: the approved call that fails reaches the model framed', async () => {
+    const { jobId, entityId, agentId } = await seedJob(db, { model: MODEL, role: 'agent' });
+    await seedServer(entityId, agentId, 'failing-gated', 'error');
+
+    const first = await run(jobId, [
+      { calls: [{ name: 'failing_gated__report', args: { purpose: 'Print the page.' } }] },
+    ]);
+    expect(first.result.status).toBe('awaiting_approval');
+    const [request] = await db
+      .select({ id: approvalRequests.id })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, jobId));
+    if (!request) throw new Error('no approval request was written');
+    await db
+      .update(approvalRequests)
+      .set({ status: 'approved', resolvedAt: new Date(), resolvedBy: 'test' })
+      .where(eq(approvalRequests.id, request.id));
+    await db
+      .update(agentJobs)
+      .set({ status: 'pending', updatedAt: new Date() })
+      .where(eq(agentJobs.id, jobId));
+
+    const resumed = await run(jobId, [{ text: 'Done.' }]);
+
+    const results = toolResults(resumed.bodies[0]!);
+    const failed = results.find((r) => r.includes(SERVER_ERROR));
+    expect(failed, `no result of the approved call in ${JSON.stringify(results)}`).toBeDefined();
+    expect(failed).toContain(FRAME);
   }, 60_000);
 });

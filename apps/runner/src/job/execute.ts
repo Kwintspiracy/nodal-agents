@@ -2906,6 +2906,29 @@ async function runJobTracked(
     return { type: 'text', value: truncateForContext(serialized) };
   };
 
+  // INJECT-001 for failures. An error the TOOL raised (`raisedByTool`) is the
+  // tool's own text — for a third-party tool, a third party's words (an MCP
+  // server's `isError` result, an API's error body) — and is framed like the
+  // tool's success. Errors the gate writes (invalid input, a rule, a refusal)
+  // are the product's own words and stay bare.
+  //
+  // The frame goes INSIDE the `{ error }` object, never around it: the readers
+  // of a turn's blocks (`isToolErrorBlock`, the delegation outcome) recognise a
+  // failed call by that shape, and a frame around the block would hide the
+  // failure from them. The text is capped BEFORE it is framed, so the closing
+  // delimiter is never cut, and the block stays `json` whatever its size.
+  const toErrorOutput = (
+    error: string,
+    opts: { raisedBy?: string | undefined; mayHaveDelivered?: boolean } = {},
+  ): ToolResultOutput => {
+    const value = { error, ...(opts.mayHaveDelivered ? { mayHaveDelivered: true } : {}) };
+    if (!isUntrustedTool(opts.raisedBy)) return toResultOutput(value);
+    return {
+      type: 'json',
+      value: { ...value, error: wrapUntrusted(opts.raisedBy as string, truncateForContext(error)) },
+    };
+  };
+
   // ── 11.6.5 Shared: execute already-resolved approval requests in-process ─────
   // Runs an approved tool (bypassing its gate — a human already reviewed this
   // exact call) or replaces a rejected tool's marker with a [REJECTED]
@@ -3120,7 +3143,10 @@ async function runJobTracked(
                   req.toolName,
                 );
               } else if (execResult.outcome === 'error') {
-                replacementOutput = toResultOutput({ error: execResult.error });
+                // Same framing as the first call's failure (toErrorOutput).
+                replacementOutput = toErrorOutput(execResult.error, {
+                  raisedBy: execResult.raisedByTool ? req.toolName : undefined,
+                });
               } else {
                 // outcome === 'awaiting_approval' should never occur here — we
                 // passed a synthetic auto_approve rule that overrides any
@@ -6039,25 +6065,26 @@ async function runJobTracked(
           type: 'tool-result',
           toolCallId: call.id,
           toolName: call.name,
-          output: toResultOutput(
+          output:
             toolResult.outcome === 'success'
-              ? // What the model reads, when the tool says it differs from the
-                // record it returned (`ToolDefinition.toModelOutput`).
-                toolOutputForModel(toolDef, toolResult.output)
-              : toolResult.mayHaveDelivered === true
-                ? // Keep the flag in the block so the sibling-error guard below
-                  // can recognize this as "probably delivered" and let a
+              ? toResultOutput(
+                  // What the model reads, when the tool says it differs from
+                  // the record it returned (`ToolDefinition.toModelOutput`).
+                  toolOutputForModel(toolDef, toolResult.output),
+                  // INJECT-001: a third-party tool's result is framed.
+                  call.name,
+                )
+              : // INJECT-001: framed only when the TOOL raised it — the gate's
+                // own errors are the product's text (toErrorOutput).
+                toErrorOutput(toolResult.error, {
+                  raisedBy: toolResult.raisedByTool ? call.name : undefined,
+                  // Kept in the block so the sibling-error guard below can
+                  // recognize this as "probably delivered" and let a
                   // same-turn return_result through instead of deferring it
                   // (deferral invites the duplicate re-send this flag exists
                   // to prevent).
-                  { error: toolResult.error, mayHaveDelivered: true }
-                : { error: toolResult.error },
-            // INJECT-001. The name is passed ONLY on the success path: an
-            // error string is the product's own text, and framing it as
-            // untrusted third-party data would be a lie the model has to
-            // reason about.
-            toolResult.outcome === 'success' ? call.name : undefined,
-          ),
+                  mayHaveDelivered: toolResult.mayHaveDelivered === true,
+                }),
         });
 
         // Guard 1f (S2) — error streak, across the whole job. Checked once this
