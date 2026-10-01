@@ -33,15 +33,17 @@ import type { RunnerDeps } from '../deps.ts';
 export async function explainApprovalRequest(
   db: RunnerDeps['db'],
   entityId: string,
+  /** The agent that asked: its own attachments say which server the tool is. */
+  agentId: string | null,
   toolName: string,
   toolInput: unknown,
 ): Promise<ApprovalExplanation> {
-  const ctx = await getMcpApprovalContext(db, entityId, toolName).catch(() => null);
+  const ctx = await getMcpApprovalContext(db, entityId, agentId, toolName).catch(() => null);
   const mcp: McpServerContext | null = ctx
     ? {
         slug: ctx.slug,
-        // Several slugs collapsing onto one prefix is possible — say so on the
-        // card instead of silently showing the first one's name.
+        // An agent attached to two overlapping servers before #661 — say so on
+        // the card instead of silently showing the first one's name.
         name: ctx.ambiguous
           ? `${ctx.name} (attention : plusieurs serveurs partagent ce préfixe)`
           : ctx.name,
