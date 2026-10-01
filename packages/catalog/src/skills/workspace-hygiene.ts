@@ -44,6 +44,31 @@
 
 import type { SystemSkill } from '../types';
 
+/**
+ * Les dossiers canoniques de l'espace PARTAGÉ — UNE source, lue par cette skill
+ * (la liste qu'elle annonce aux agents) et par l'inventaire que le runner met
+ * dans le prompt (apps/runner/src/lib/workspace-inventory.ts).
+ *
+ * `holds` dit ce qu'un dossier contient, et c'est ce qui décide de ce que
+ * l'inventaire en montre (revue de #658, passe 1) :
+ *   · `means` — des MOYENS réutilisables (gabarits de workflow, scripts). Ils
+ *     sont nommés, pour qu'« utilise le gabarit Krea 2 Turbo » trouve son
+ *     fichier sans fouiller ;
+ *   · `deliverables` — ce qu'une demande a produit. Seulement compté : le nom
+ *     d'un livrable d'hier faisait reprendre ce fichier au lieu de faire la
+ *     demande du jour (#638, banc `recipe`).
+ * Tout dossier absent de cette liste est traité en `deliverables`.
+ */
+export const SHARED_WORKSPACE_FOLDERS: ReadonlyArray<{
+  name: string;
+  holds: 'means' | 'deliverables';
+}> = [
+  { name: 'workflows', holds: 'means' },
+  { name: 'outputs', holds: 'deliverables' },
+  { name: 'scripts', holds: 'means' },
+  { name: 'documents', holds: 'deliverables' },
+];
+
 export const workspaceHygieneSkill: SystemSkill = {
   slug: 'workspace-hygiene',
   name: 'Workspace hygiene',
@@ -57,7 +82,7 @@ export const workspaceHygieneSkill: SystemSkill = {
 
 This applies to the SHARED workspace, which you have when your \`## Workspaces\` block lists a folder labelled \`shared\` (a missing \`## Shared workspace\` listing means it was not built, never that the folder is missing). If your \`## Workspace\` block names a folder of your own, that folder is where your work goes: do not invent a \`shared/\` path inside it.
 
-- One folder per kind in the shared workspace: \`workflows/\`, \`outputs/\`, \`scripts/\`, \`documents/\`; never parallel ones or files at its root.
+- One folder per kind in the shared workspace: ${SHARED_WORKSPACE_FOLDERS.map((f) => `\`${f.name}/\``).join(', ')}; never parallel ones or files at its root.
 - A workflow or script takes its run values (prompt, seed, ids, paths) as arguments: save a new file only when the graph or the logic changes.
 - Never write generated files into a skill's folder: point a script's output at your own folder if you have one, otherwise the shared workspace.
 - Delete temporary diagnostic files before you finish.`,
