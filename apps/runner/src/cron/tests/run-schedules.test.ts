@@ -349,36 +349,39 @@ describe('runScheduleTick @cap:planifier-une-tache/moteur', () => {
 
     const deps = makeDeps(db, [{ text: 'cron ran' }]);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
-    // The confirmation was asked for and its chat has no known platform: no
-    // send tool reaches it, the reply is the run's result. Said on the
-    // dashboard, never a green 'success' (#649, review of #657 pass 4).
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('notify_unreachable'));
-    errorSpy.mockRestore();
-    const [afterExplicit] = await db
-      .select({ lastStatus: agentSchedules.lastStatus })
-      .from(agentSchedules)
-      .where(eq(agentSchedules.task, 'cron with explicit target'));
-    expect(afterExplicit?.lastStatus).toBe('notify_unreachable');
+    try {
+      await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+      // The confirmation was asked for and its chat has no known platform: no
+      // send tool reaches it, the reply is the run's result. Said on the
+      // dashboard, never a green 'success' (#649, review of #657 pass 4).
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('notify_unreachable'));
+      const [afterExplicit] = await db
+        .select({ lastStatus: agentSchedules.lastStatus })
+        .from(agentSchedules)
+        .where(eq(agentSchedules.task, 'cron with explicit target'));
+      expect(afterExplicit?.lastStatus).toBe('notify_unreachable');
 
-    const cronJobs = await db
-      .select({
-        chatId: agentJobs.chatId,
-        chatChannel: agentJobs.chatChannel,
-        channel: agentJobs.channel,
-        task: agentJobs.task,
-      })
-      .from(agentJobs)
-      .where(eq(agentJobs.agentId, seed.agentId));
-    const fired = cronJobs.filter(
-      (j) => j.channel === 'cron' && j.task === 'cron with explicit target',
-    );
-    expect(fired.length).toBeGreaterThanOrEqual(1);
-    expect(fired.every((j) => j.chatId === '424242')).toBe(true);
-    // An explicit id on auto: nothing says its platform, so NO channel (#649).
-    expect(fired.every((j) => j.chatChannel === null)).toBe(true);
-
-    await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
+      const cronJobs = await db
+        .select({
+          chatId: agentJobs.chatId,
+          chatChannel: agentJobs.chatChannel,
+          channel: agentJobs.channel,
+          task: agentJobs.task,
+        })
+        .from(agentJobs)
+        .where(eq(agentJobs.agentId, seed.agentId));
+      const fired = cronJobs.filter(
+        (j) => j.channel === 'cron' && j.task === 'cron with explicit target',
+      );
+      expect(fired.length).toBeGreaterThanOrEqual(1);
+      expect(fired.every((j) => j.chatId === '424242')).toBe(true);
+      // An explicit id on auto: nothing says its platform, so NO channel (#649).
+      expect(fired.every((j) => j.chatChannel === null)).toBe(true);
+    } finally {
+      // Even when an assertion fails: the next tests register their own owner.
+      errorSpy.mockRestore();
+      await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
+    }
   });
 
   it('leaves chat_id NULL on a cron job when notify_on_success is off, even with a registered owner', async () => {
@@ -427,33 +430,35 @@ describe('runScheduleTick @cap:planifier-une-tache/moteur', () => {
     });
 
     const deps = makeDeps(db, [{ text: 'cron ran' }]);
-    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+    try {
+      await runScheduleTick(db as RunnerDeps['db'], deps, 5);
 
-    const cronJobs = await db
-      .select({
-        id: agentJobs.id,
-        chatId: agentJobs.chatId,
-        channel: agentJobs.channel,
-        task: agentJobs.task,
-      })
-      .from(agentJobs)
-      .where(eq(agentJobs.agentId, seed.agentId));
-    const justFired = cronJobs.filter(
-      (j) => j.channel === 'cron' && j.task === 'cron without registered owner',
-    );
-    expect(justFired.length).toBeGreaterThanOrEqual(1);
-    expect(justFired[0]!.chatId).toBeNull();
-    // Asked for a confirmation, nowhere to send it: said, not green (#649).
-    const [afterNoOwner] = await db
-      .select({ lastStatus: agentSchedules.lastStatus })
-      .from(agentSchedules)
-      .where(eq(agentSchedules.task, 'cron without registered owner'));
-    expect(afterNoOwner?.lastStatus).toBe('notify_unreachable');
-
-    await db
-      .update(agents)
-      .set({ lastSeenChatIdTelegram: null })
-      .where(eq(agents.id, seed.agentId));
+      const cronJobs = await db
+        .select({
+          id: agentJobs.id,
+          chatId: agentJobs.chatId,
+          channel: agentJobs.channel,
+          task: agentJobs.task,
+        })
+        .from(agentJobs)
+        .where(eq(agentJobs.agentId, seed.agentId));
+      const justFired = cronJobs.filter(
+        (j) => j.channel === 'cron' && j.task === 'cron without registered owner',
+      );
+      expect(justFired.length).toBeGreaterThanOrEqual(1);
+      expect(justFired[0]!.chatId).toBeNull();
+      // Asked for a confirmation, nowhere to send it: said, not green (#649).
+      const [afterNoOwner] = await db
+        .select({ lastStatus: agentSchedules.lastStatus })
+        .from(agentSchedules)
+        .where(eq(agentSchedules.task, 'cron without registered owner'));
+      expect(afterNoOwner?.lastStatus).toBe('notify_unreachable');
+    } finally {
+      await db
+        .update(agents)
+        .set({ lastSeenChatIdTelegram: null })
+        .where(eq(agents.id, seed.agentId));
+    }
   });
 
   it('skips a paused schedule even if next_run is past', async () => {
@@ -1015,6 +1020,13 @@ describe('runScheduleTick @cap:planifier-une-tache/moteur', () => {
     // On auto, resolveOwnerChatId resolved a Telegram chat: recorded as such
     // (#649), never left for the runner to infer from the active channels.
     expect(jobs[0]!.chatChannel).toBe('telegram');
+    // The confirmation has a channel to go on: nothing to flag (#649) —
+    // 'notify_unreachable' says a missing channel, never a present one.
+    const [afterAuto] = await db
+      .select({ lastStatus: agentSchedules.lastStatus })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.task, 'notify via auto'));
+    expect(afterAuto?.lastStatus).toBe('success');
     expect(jobs[0]!.triggerContext).toEqual({
       type: 'cron',
       scheduleName: 'Test schedule',
