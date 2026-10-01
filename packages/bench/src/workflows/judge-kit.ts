@@ -69,16 +69,17 @@ export function mcpStructured(s: string | null): Record<string, unknown> | null 
 }
 
 /**
- * L'objet JSON qu'un bloc texte porte, selon UNE règle : le bloc entier est un
- * objet JSON, ou il se TERMINE par un objet JSON qui commence en début de ligne
- * (« phrase.\n{ … } »). Une accolade au milieu d'une phrase n'ouvre jamais
- * rien, et ce qui suit l'objet doit être vide : un texte qui cite du JSON en
- * passant n'est pas pris pour une charge.
+ * L'objet JSON qu'un bloc texte porte, selon UNE règle : le bloc SE TERMINE
+ * (blancs de fin ignorés) par un objet JSON dont l'accolade ouvre une ligne —
+ * seuls des blancs la précèdent sur sa ligne. Le bloc entier qui est un objet
+ * JSON, blancs de tête compris, en est le premier cas ; « phrase.\n{ … } » le
+ * second. Une accolade au milieu d'une phrase n'ouvre jamais rien, et rien ne
+ * doit suivre l'objet : un texte qui cite du JSON en passant n'est pas une
+ * charge.
  */
 function jsonInText(text: string): Record<string, unknown> | null {
-  for (let i = 0; i < text.length; i += 1) {
-    if (text[i] !== '{' || (i > 0 && text[i - 1] !== '\n')) continue;
-    const found = jsonObject(text.slice(i).trim());
+  for (const line of text.matchAll(/^[ \t]*\{/gm)) {
+    const found = jsonObject(text.slice((line.index ?? 0) + line[0].length - 1).trim());
     if (found) return found;
   }
   return null;

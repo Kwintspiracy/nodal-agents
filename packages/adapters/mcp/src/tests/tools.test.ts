@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { mcpToolToToolDefinition, slugToPrefix } from '../tools.ts';
-import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
+import { MCP_TOOL_OUTPUT_FORMAT, toolResultRoom } from '@nodal-agents/shared';
 import type { McpToolDescriptor } from '../client.ts';
 
 function clientWithCallTool(impl: () => unknown): Client {
@@ -189,11 +189,13 @@ describe('mcpToolToToolDefinition', () => {
     const out = await def.execute({}, {} as never);
     const model = read(def, out);
 
-    // Capped, not the full 60k, and clearly marked as truncated (not silently cut).
-    expect(model.length).toBeLessThan(60_000);
-    expect(model).toContain('[...truncated at 50000 chars');
-    expect(model.startsWith('x'.repeat(1000))).toBe(true);
+    // The row keeps up to its own cap, said…
+    expect(JSON.stringify(out)).toContain('[...truncated at 50000 chars');
     expect(JSON.stringify(out).length).toBeLessThan(60_000);
+    // …the model reads what fits the runner's budget for one result, said too.
+    expect(model.length).toBeLessThanOrEqual(toolResultRoom(def.name));
+    expect(model).toMatch(/\[\.\.\.truncated at \d+ chars — MCP tool result was larger\]$/);
+    expect(model.startsWith('x'.repeat(1000))).toBe(true);
   });
 
   it('a text result under the cap is not truncated', async () => {
@@ -264,6 +266,43 @@ describe('mcpToolToToolDefinition', () => {
     expect(out.content).toHaveLength(200);
     expect(JSON.stringify(out)).not.toContain('iVBOR');
     expect(read(def, out).split('\n')).toHaveLength(200);
+  });
+
+  it('more text than the model budget: the machine form survives whole, the text is cut and says so', async () => {
+    const client = {
+      callTool: vi.fn(async () => ({
+        content: [{ type: 'text', text: 'A long page. '.repeat(2_400) }],
+        structuredContent: { id: 'pr-9', status: 'pending' },
+      })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'printer');
+
+    const model = read(def, await def.execute({}, {} as never));
+
+    // Within what the runner leaves once it has framed the result: its own
+    // cut never runs, so it never takes the machine form at the tail.
+    expect(model.length).toBeLessThanOrEqual(toolResultRoom(def.name));
+    expect(model.endsWith('{"id":"pr-9","status":"pending"}')).toBe(true);
+    expect(model).toMatch(/\[\.\.\.truncated at \d+ chars — MCP tool result was larger\]/);
+  });
+
+  it('a machine form larger than the budget is cut and says so; the text it pushed out is named', async () => {
+    const client = {
+      callTool: vi.fn(async () => ({
+        content: [{ type: 'text', text: 'A short sentence.' }],
+        structuredContent: { id: 'pr-9', blob: 'z'.repeat(40_000) },
+      })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'printer');
+
+    const model = read(def, await def.execute({}, {} as never));
+
+    expect(model.length).toBeLessThanOrEqual(toolResultRoom(def.name));
+    expect(model).toContain(
+      '[17 chars of text not passed to you: the structured result fills the budget of',
+    );
+    expect(model).toContain('{"id":"pr-9"');
+    expect(model).toMatch(/\[\.\.\.truncated at \d+ chars — MCP tool result was larger\]$/);
   });
 
   it('a block cut by what is LEFT of the budget says the length it was cut at', async () => {

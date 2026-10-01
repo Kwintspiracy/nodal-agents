@@ -33,7 +33,7 @@ import {
   toolCalls,
 } from '@nodal-agents/db';
 import type { JobId } from '@nodal-agents/orchestration';
-import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
+import { MCP_TOOL_OUTPUT_FORMAT, TOOL_RESULT_MODEL_CHARS } from '@nodal-agents/shared';
 import { executeJob } from '../../job/execute.ts';
 import {
   makeDeps,
@@ -214,6 +214,29 @@ describe('an MCP tool result reaches the model as the server wrote it @cap:conne
     expect(await recordedOutput(jobId, 'printer_gated__report')).toMatchObject({
       structuredContent: MIXED_STRUCTURED,
     });
+  }, 60_000);
+
+  it('more text than the budget: the text is cut and says so, the machine form survives whole', async () => {
+    const { jobId, entityId, agentId } = await seedJob(db, { model: MODEL, role: 'agent' });
+    await seedServer(entityId, agentId, 'verbose', 'long');
+    await db
+      .insert(approvalRules)
+      .values({ entityId, agentId: null, toolName: 'verbose__report', action: 'auto_approve' });
+
+    const { bodies } = await run(jobId, [
+      { calls: [{ name: 'verbose__report', args: { purpose: 'Print the page.' } }] },
+      { text: 'Done.' },
+    ]);
+
+    const [result] = toolResults(bodies[1]!);
+    // What the next call needs, whole, at the end of what the model reads.
+    expect(result).toContain('{"id":"pr-9","status":"pending"}');
+    expect(result).toContain('</untrusted_tool_result>');
+    // The 30k of text were cut by the adapter, which said so — never by the
+    // runner's cut, which would have taken the machine form with it.
+    expect(result).toMatch(/\[\.\.\.truncated at \d+ chars — MCP tool result was larger\]/);
+    expect(result).not.toContain('[... truncated:');
+    expect(result!.length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
   }, 60_000);
 });
 

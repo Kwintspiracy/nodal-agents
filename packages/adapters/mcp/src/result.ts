@@ -34,7 +34,8 @@ import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 //
 // It bounds each channel as a whole: the content blocks share ONE budget (200
 // blocks of 49k each would otherwise all pass a per-block cap), the structured
-// payload has its own, and the model's text caps the joined blocks once more.
+// payload has its own. This cap is the ROW's; what the model reads fits the
+// runner's budget instead (`mcpResultForModel`, `toolResultRoom`).
 const MCP_RESULT_CHAR_CAP = Number(process.env.MCP_RESULT_CHAR_CAP) || 50_000;
 
 /**
@@ -247,21 +248,49 @@ function serializes(text: string, payload: unknown): boolean {
  *    does not get it); an empty text block says nothing and is skipped;
  *  - then the structured payload (`structuredContent`, or a 2024-10-07
  *    `toolResult`), serialized — unless a text block already IS it;
- *  - each channel capped on its own (the blocks here, the payload when it was
- *    recorded), so a long text never silently pushes out the payload or the
- *    line that counts the blocks not kept.
+ *  - within `maxChars`, the room the runner leaves for this result
+ *    (`toolResultRoom`, one budget for both sides). The machine form and the
+ *    line counting the blocks not kept are placed FIRST in the budget, and the
+ *    blocks get what is left: a long text is cut, and says so, so that the
+ *    id the next call needs is never what a cut removes. A machine form that
+ *    alone exceeds the budget is cut itself, and the text it pushed out is
+ *    named.
  */
-export function mcpResultForModel(output: McpToolOutput): string {
+export function mcpResultForModel(output: McpToolOutput, maxChars: number): string {
   const texts = output.content.flatMap((b) => (b.type === 'text' ? [b.text] : []));
-  const blocks = output.content
+  const head = output.content
     .filter((b) => b.type !== 'omitted' && !(b.type === 'text' && b.text.trim() === ''))
-    .map(describeBlock);
-  const parts = blocks.length > 0 ? [capText(blocks.join('\n'), MCP_RESULT_CHAR_CAP)] : [];
-  for (const b of output.content) if (b.type === 'omitted') parts.push(describeBlock(b));
+    .map(describeBlock)
+    .join('\n');
+  const tailParts = output.content.filter((b) => b.type === 'omitted').map(describeBlock);
   for (const payload of [output.structuredContent, output.toolResult]) {
     if (payload === undefined || texts.some((t) => serializes(t, payload))) continue;
-    parts.push(typeof payload === 'string' ? payload : JSON.stringify(payload));
+    tailParts.push(typeof payload === 'string' ? payload : JSON.stringify(payload));
   }
-  if (parts.length === 0) return '[The MCP tool returned an empty result.]';
-  return parts.join('\n');
+  const tail = tailParts.join('\n');
+  if (head === '' && tail === '') return '[The MCP tool returned an empty result.]';
+  if (tail === '') return fitWithin(head, maxChars);
+  if (head === '') return fitWithin(tail, maxChars);
+  if (tail.length + 1 + MIN_HEAD_CHARS > maxChars) {
+    const note =
+      `[${head.length} chars of text not passed to you: the structured result fills ` +
+      `the budget of ${maxChars} chars.]`;
+    return `${note}\n${fitWithin(tail, maxChars - note.length - 1)}`;
+  }
+  return `${fitWithin(head, maxChars - tail.length - 1)}\n${tail}`;
+}
+
+/**
+ * Below this, the text left beside the machine form is too short to say
+ * anything but its own truncation marker: the text is then named, not cut.
+ */
+const MIN_HEAD_CHARS = 200;
+
+/** `value` within `total` characters, the truncation marker included and said. */
+function fitWithin(value: string, total: number): string {
+  if (value.length <= total) return value;
+  const marker = (kept: number): string =>
+    `\n\n[...truncated at ${kept} chars — MCP tool result was larger]`;
+  const kept = Math.max(0, total - marker(total).length);
+  return value.slice(0, kept) + marker(kept);
 }

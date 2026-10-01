@@ -3,7 +3,11 @@
 import { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { ToolDefinition } from '@nodal-agents/tools';
-import type { OperationRiskLevel } from '@nodal-agents/shared';
+import {
+  TOOL_RESULT_MODEL_CHARS,
+  toolResultRoom,
+  type OperationRiskLevel,
+} from '@nodal-agents/shared';
 import type { McpToolDescriptor } from './client.ts';
 import { jsonSchemaToZod } from './json-schema-to-zod.ts';
 import { mcpResultForModel, recordMcpResult, type McpToolOutput } from './result.ts';
@@ -108,7 +112,10 @@ async function callMcpTool(
   // model can correct are reported IN the result). It stays an error: the
   // model reads the same rendering, every block included, as the failure.
   if (result.isError === true) {
-    throw new Error(`MCP tool ${originalName} failed: ${mcpResultForModel(record)}`);
+    // The runner caps an error's text at the model budget before framing it
+    // (`toErrorOutput`): rendered to fit, so the machine form survives that cut.
+    const prefix = `MCP tool ${originalName} failed: `;
+    throw new Error(prefix + mcpResultForModel(record, TOOL_RESULT_MODEL_CHARS - prefix.length));
   }
   return record;
 }
@@ -200,8 +207,9 @@ function buildMcpToolDefinition(
     injected: purposeInjected,
     serverOwnsPurpose,
   } = attachPurpose(jsonSchemaToZod(mcpTool.inputSchema));
+  const name = `${slugToPrefix(slug)}__${originalName}`;
   return {
-    name: `${slugToPrefix(slug)}__${originalName}`,
+    name,
     description: frameMcpDescription(mcpTool.description, slug, originalName),
     inputSchema,
     riskLevel: riskFromAnnotations(mcpTool.annotations),
@@ -227,7 +235,9 @@ function buildMcpToolDefinition(
     // The row keeps the whole result (`McpToolOutput`); the model reads the
     // server's text blocks in order, the rest said, `structuredContent` only
     // when no text block exists (`result.ts`).
-    toModelOutput: (output) => mcpResultForModel(output as McpToolOutput),
+    // Rendered to fit the room the runner leaves once it has framed the result
+    // (one budget, `@nodal-agents/shared`): the runner's own cut never runs.
+    toModelOutput: (output) => mcpResultForModel(output as McpToolOutput, toolResultRoom(name)),
     async execute(input) {
       const client = await getClient();
       const args = { ...((input ?? {}) as Record<string, unknown>) };

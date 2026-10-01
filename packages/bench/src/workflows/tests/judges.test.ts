@@ -155,6 +155,10 @@ describe('print judge on a real trial', () => {
         { type: 'text', text: JSON.stringify(p, null, 2) },
       ],
     }),
+    'a text block that is the JSON, after leading blanks': (p) => ({
+      format: MCP_TOOL_OUTPUT_FORMAT,
+      content: [{ type: 'text', text: `  \n  ${JSON.stringify(p)}  ` }],
+    }),
     'a sentence, then the JSON on its own lines, in ONE text block': (p) => ({
       format: MCP_TOOL_OUTPUT_FORMAT,
       content: [

@@ -46,6 +46,7 @@ import {
   estimateCallCostUsd,
   isUntrustedTool,
   wrapUntrusted,
+  TOOL_RESULT_MODEL_CHARS,
   PROVIDER_REJECTED,
   PROVIDER_REJECTED_PREFIX,
 } from '@nodal-agents/shared';
@@ -113,6 +114,7 @@ import type {
   ApprovalRule,
   ToolProvisioning,
   ApprovalGateRequest,
+  ToolExecutionResult,
 } from '@nodal-agents/tools';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import {
@@ -229,16 +231,13 @@ import { skillStoreDir } from '../skills/index.ts';
 import { maybeRunReflection } from '../reflection/index.ts';
 import { getDeploymentContext } from './deployment.ts';
 
-// Per-result char budget for tool outputs entering the conversation. A single
-// tool (e.g. firecrawl_scrape returning a full web page) can otherwise inject
-// 100K+ tokens into `messages`, which every subsequent turn re-sends to the
-// LLM — the cost multiplier behind runaway jobs. We truncate to a fixed budget
-// with an explicit marker so the model knows content was cut and can re-scrape
-// a narrower target. 25K chars ≈ ~6.5K tokens — lowered from 50K (perf/tokens
-// audit): several parallel tool calls in one turn (e.g. 6 tool-calls × 50K)
-// were injecting ~78K tokens into a single message. Not env-overridable —
-// hardcoded like the other truncation constants in this file.
-const MAX_TOOL_RESULT_CHARS = 25_000;
+// Per-result char budget for tool outputs entering the conversation: the
+// model reads at most this much of one result, and we truncate to it with an
+// explicit marker so the model knows content was cut and can re-scrape a
+// narrower target. ONE source (`@nodal-agents/shared`, tool-result-budget.ts),
+// so a tool that shapes its own model text (`toModelOutput`) fits it exactly
+// and keeps what must survive, instead of this cut taking its tail.
+const MAX_TOOL_RESULT_CHARS = TOOL_RESULT_MODEL_CHARS;
 
 // Capabilities injected into ROOT meta-tools (create_mcp) via ToolContext.
 // Verify-then-write: connectMcp throws on any connect/auth/spawn failure, so the
@@ -2929,6 +2928,27 @@ async function runJobTracked(
     };
   };
 
+  // ONE conversion of a call that ran into what the model reads, for every path
+  // that runs a tool — inline in the loop, and on resume after a human approved
+  // it — so the two can never frame, flag or render differently:
+  //   - a success: what the tool says the model reads (`toModelOutput`),
+  //     framed when the tool is a third party's (INJECT-001);
+  //   - a failure: framed only when the TOOL raised it (`raisedByTool`), with
+  //     `mayHaveDelivered` kept in the block — the sibling-error guard reads
+  //     it to let a same-turn return_result through instead of deferring it
+  //     (deferral invites the duplicate re-send that flag exists to prevent).
+  const executedCallOutput = (
+    tool: ToolDefinition<z.ZodTypeAny, unknown>,
+    toolName: string,
+    result: Exclude<ToolExecutionResult, { outcome: 'awaiting_approval' }>,
+  ): ToolResultOutput =>
+    result.outcome === 'success'
+      ? toResultOutput(toolOutputForModel(tool, result.output), toolName)
+      : toErrorOutput(result.error, {
+          raisedBy: result.raisedByTool ? toolName : undefined,
+          mayHaveDelivered: result.mayHaveDelivered === true,
+        });
+
   // ── 11.6.5 Shared: execute already-resolved approval requests in-process ─────
   // Runs an approved tool (bypassing its gate — a human already reviewed this
   // exact call) or replaces a rejected tool's marker with a [REJECTED]
@@ -3133,20 +3153,13 @@ async function runJobTracked(
                   onApprovalRequired: (r: ApprovalGateRequest) => notifyApprovalCreated(deps, r),
                 },
               );
-              if (execResult.outcome === 'success') {
+              if (execResult.outcome === 'success' || execResult.outcome === 'error') {
                 // INJECT-001: the resume path executes the SAME tool the gate
-                // suspended, so it needs the same framing. A boundary that is
-                // framed on first call and bare after a human approval would be
-                // framed exactly when nobody is looking at it.
-                replacementOutput = toResultOutput(
-                  toolOutputForModel(toolDef, execResult.output),
-                  req.toolName,
-                );
-              } else if (execResult.outcome === 'error') {
-                // Same framing as the first call's failure (toErrorOutput).
-                replacementOutput = toErrorOutput(execResult.error, {
-                  raisedBy: execResult.raisedByTool ? req.toolName : undefined,
-                });
+                // suspended, so it goes through the SAME conversion as the
+                // first call (`executedCallOutput`). A boundary that is framed
+                // on first call and bare after a human approval would be framed
+                // exactly when nobody is looking at it.
+                replacementOutput = executedCallOutput(toolDef, req.toolName, execResult);
               } else {
                 // outcome === 'awaiting_approval' should never occur here — we
                 // passed a synthetic auto_approve rule that overrides any
@@ -6065,26 +6078,8 @@ async function runJobTracked(
           type: 'tool-result',
           toolCallId: call.id,
           toolName: call.name,
-          output:
-            toolResult.outcome === 'success'
-              ? toResultOutput(
-                  // What the model reads, when the tool says it differs from
-                  // the record it returned (`ToolDefinition.toModelOutput`).
-                  toolOutputForModel(toolDef, toolResult.output),
-                  // INJECT-001: a third-party tool's result is framed.
-                  call.name,
-                )
-              : // INJECT-001: framed only when the TOOL raised it — the gate's
-                // own errors are the product's text (toErrorOutput).
-                toErrorOutput(toolResult.error, {
-                  raisedBy: toolResult.raisedByTool ? call.name : undefined,
-                  // Kept in the block so the sibling-error guard below can
-                  // recognize this as "probably delivered" and let a
-                  // same-turn return_result through instead of deferring it
-                  // (deferral invites the duplicate re-send this flag exists
-                  // to prevent).
-                  mayHaveDelivered: toolResult.mayHaveDelivered === true,
-                }),
+          // The same conversion as the resume path (`executedCallOutput`).
+          output: executedCallOutput(toolDef, call.name, toolResult),
         });
 
         // Guard 1f (S2) — error streak, across the whole job. Checked once this

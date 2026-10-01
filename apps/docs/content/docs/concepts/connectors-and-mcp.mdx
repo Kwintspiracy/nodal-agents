@@ -132,9 +132,14 @@ and `structuredContent` (the machine form). The agent reads both:
   framed as external data, like a successful result;
 - the tool call's log keeps the whole result, `structuredContent` included.
 
-Each channel is capped at 50,000 characters (`MCP_RESULT_CHAR_CAP`): all the
-content blocks together, then the structured payload. Blocks past the cap are
-counted, never dropped in silence.
+The agent reads at most 25,000 characters of one tool result, the same budget
+for every tool. Within it, the structured payload has priority and is kept
+whole: a long text is cut to the room left, and the cut is said. A structured payload that
+alone exceeds the budget is cut itself, and the text it pushed out is named.
+
+The tool call's log keeps more: up to 50,000 characters (`MCP_RESULT_CHAR_CAP`)
+for all the content blocks together, and as much again for the structured
+payload. Blocks past that are counted, never dropped in silence.
 
 ### Adding an MCP server
 

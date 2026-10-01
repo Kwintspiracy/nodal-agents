@@ -18,6 +18,8 @@
 //     echoed      a text block that IS the structuredContent, serialized
 //                 differently (indented, keys in another order), next to it
 //     blank       an empty text block and structuredContent
+//     long        30,000 characters of text, then structuredContent: more text
+//                 than the model's budget for one tool result
 //     error       isError, with a text block and structuredContent
 //     empty       nothing at all
 //
@@ -78,6 +80,10 @@ const SHAPES = {
   blank: {
     content: [{ type: 'text', text: '' }],
     structuredContent: { id: 'pr-7', status: 'pending' },
+  },
+  long: {
+    content: [{ type: 'text', text: 'A long page. '.repeat(2_400) }],
+    structuredContent: { id: 'pr-9', status: 'pending' },
   },
   error: {
     isError: true,
