@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { ToolDefinition } from '@nodal-agents/tools';
-import type { OperationRiskLevel } from '@nodal-agents/shared';
+import { mcpToolPrefix, type OperationRiskLevel } from '@nodal-agents/shared';
 import type { McpToolDescriptor } from './client.ts';
 import { jsonSchemaToZod } from './json-schema-to-zod.ts';
 
@@ -61,7 +61,7 @@ function capMcpResult(value: unknown): unknown {
 
 /** Sanitise a server slug into a tool-name-safe prefix (`my-server` → `my_server`). */
 export function slugToPrefix(slug: string): string {
-  return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+  return mcpToolPrefix(slug);
 }
 
 /**

@@ -126,6 +126,7 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
 
       // Verify by connecting + listing tools — throws on any failure (no write).
       let tools: ProvisionedMcpTool[] = [];
+      let instructions: string | null = null;
       let conn: Awaited<ReturnType<typeof provisioning.connectMcp>> | null = null;
       try {
         conn = await provisioning.connectMcp({
@@ -136,6 +137,7 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
           authParamName,
         });
         tools = conn.tools;
+        instructions = conn.instructions;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { ok: false, error: `Could not connect to MCP server at ${url}: ${msg}` };
@@ -156,6 +158,7 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
           authScheme,
           authParamName,
           availableTools: tools,
+          instructions,
           active: true,
         })
         .returning({ id: mcpServers.id });
@@ -173,10 +176,12 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
     const env = input.env ?? {};
 
     let tools: ProvisionedMcpTool[] = [];
+    let instructions: string | null = null;
     let conn: Awaited<ReturnType<typeof provisioning.connectMcp>> | null = null;
     try {
       conn = await provisioning.connectMcp({ transport: 'stdio', command, args, env });
       tools = conn.tools;
+      instructions = conn.instructions;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { ok: false, error: `Could not start MCP subprocess "${command}": ${msg}` };
@@ -199,6 +204,7 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
         args,
         envVars: encEnv,
         availableTools: tools,
+        instructions,
         active: true,
       })
       .returning({ id: mcpServers.id });

@@ -644,6 +644,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       auth_param_name text,
       active boolean DEFAULT true,
       available_tools jsonb,
+      instructions text,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
       -- Multi-instance brique (migration 0017): the (entity_id, slug) UNIQUE

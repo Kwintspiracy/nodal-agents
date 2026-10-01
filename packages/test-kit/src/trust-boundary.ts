@@ -57,6 +57,9 @@ const FRAME_SIGNALS: readonly RegExp[] = [
   /treat (it|them|the .* above) (strictly )?as data/i,
   /non fiable/i,
   /texte tiers/i,
+  // Third-party text meant to be FOLLOWED within the owner's rules (an MCP
+  // server's own instructions): framed as such, not as data.
+  /third-party text/i,
   /jamais comme des instructions/i,
   /external (webhook|content|data|input)/i,
   /données? externes?/i,

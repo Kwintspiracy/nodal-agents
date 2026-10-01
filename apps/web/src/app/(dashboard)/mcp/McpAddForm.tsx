@@ -25,6 +25,7 @@
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import { Trash } from '@phosphor-icons/react';
+import { mcpToolPrefix } from '@nodal-agents/shared';
 import { createMcpServerFromCatalogAction, type McpCatalogItem } from '@/lib/actions.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
@@ -242,10 +243,10 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
     setEnvRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
   }
 
-  // Tool-prefix preview shown under the slug input. Mirrors
-  // `slugToPrefix` in packages/adapters/mcp/src/tools.ts (hyphens → underscores).
+  // Tool-prefix preview shown under the slug input: the very prefix the
+  // adapter gives the server's tools.
   const slugPreview = customSlug.trim()
-    ? `${customSlug.trim().replace(/-/g, '_')}__list_things`
+    ? `${mcpToolPrefix(customSlug.trim())}__list_things`
     : 'my_slug__list_things';
 
   return (

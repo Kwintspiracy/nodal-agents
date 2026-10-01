@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const h = vi.hoisted(() => ({
   connect: vi.fn(async () => {}),
   listTools: vi.fn(),
+  getInstructions: vi.fn((): string | undefined => undefined),
   close: vi.fn(async () => {}),
   transportClose: vi.fn(async () => {}),
   agentClose: vi.fn(async () => {}),
@@ -12,6 +13,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   Client: class {
     connect = h.connect;
     listTools = h.listTools;
+    getInstructions = h.getInstructions;
     close = h.close;
   },
 }));

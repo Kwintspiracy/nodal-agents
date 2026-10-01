@@ -8,13 +8,9 @@
 // exactly the kind of thing that silently diverges between surfaces.
 
 import { and, eq } from 'drizzle-orm';
+import { mcpToolPrefix } from '@nodal-agents/shared';
 import { mcpServers } from '../schema/mcp';
 import type { AnyDrizzleDb } from '../client';
-
-/** `my-server-name` → `my_server_name`. Mirrors slugToPrefix in adapter-mcp. */
-function slugToPrefix(slug: string): string {
-  return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
-}
 
 /** Split `<prefix>__<tool>`; null for a built-in (builtins carry no `__`). */
 export function splitMcpToolName(toolName: string): { prefix: string; tool: string } | null {
@@ -49,7 +45,7 @@ interface DiscoveredTool {
 /**
  * The MCP server behind `toolName`, or null when it is a built-in or unknown.
  *
- * Matching is on the DERIVED prefix, not the slug: `slugToPrefix` is lossy —
+ * Matching is on the DERIVED prefix, not the slug: `mcpToolPrefix` is lossy —
  * every non-alphanumeric run collapses to `_` — so `a-b` and `a.b` produce the
  * same prefix. When that happens the result is flagged `ambiguous` so the card
  * can say so, rather than silently naming one of them.
@@ -74,7 +70,7 @@ export async function getMcpApprovalContext(
     .from(mcpServers)
     .where(and(eq(mcpServers.entityId, entityId), eq(mcpServers.active, true)));
 
-  const matches = rows.filter((r) => slugToPrefix(r.slug) === parsed.prefix);
+  const matches = rows.filter((r) => mcpToolPrefix(r.slug) === parsed.prefix);
   const row = matches[0];
   if (!row) return null;
 
