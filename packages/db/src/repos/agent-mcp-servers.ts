@@ -8,8 +8,14 @@
 // call goes to whichever came last and the approval card names another.
 //
 // Several instances of a server in a workspace stay allowed; each goes to a
-// different agent. The runner refuses a job whose agent already holds two
-// overlapping servers (rows written before this rule).
+// different agent.
+//
+// Strict on purpose, stricter than the runner: what a server lends moves on
+// its own (it publishes a new tool, a whitelist widens), so two overlapping
+// namespaces on one agent are a collision waiting to happen. The runner, for
+// attachments written before this rule, refuses a job only when one tool name
+// is actually lent by two servers (`findMcpToolNameCollision`). Such a legacy
+// pair cannot be re-saved here either: the way out is to detach one.
 
 import { and, eq, ne } from 'drizzle-orm';
 import { mcpNamespaceOverlapMessage, mcpToolNamespacesOverlap } from '@nodal-agents/shared';

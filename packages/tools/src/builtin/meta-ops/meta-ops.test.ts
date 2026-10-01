@@ -26,6 +26,7 @@ import { attachAgentTool } from './attach-agent';
 import { createMcpTool } from './create-mcp';
 import { createConnectorTool } from './create-connector';
 import { attachMcpTool } from './attach-mcp';
+import { detachMcpTool } from './detach-mcp';
 import { createAgentRepo } from '@nodal-agents/db';
 
 let db: TestDb;
@@ -1192,6 +1193,63 @@ describe('attach_mcp', () => {
       .from(agentMcpServers)
       .where(eq(agentMcpServers.mcpServerId, srv!.id));
     expect(link!.enabledTools).toEqual(['only_this']);
+  });
+
+  it('two instances answer one slug: attach_mcp and detach_mcp list them and pick none; a name picks one (#661) @cap:connecter-un-service/moteur', async () => {
+    const ctx = makeCtx();
+    const [agentRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, seed.agentId));
+    const [perso] = await db
+      .insert(mcpServers)
+      .values({
+        entityId: seed.entityId,
+        name: 'Twin perso',
+        slug: 'twin-srv',
+        transport: 'http',
+        url: 'https://perso.example/mcp',
+      })
+      .returning({ id: mcpServers.id });
+    const [boulot] = await db
+      .insert(mcpServers)
+      .values({
+        entityId: seed.entityId,
+        name: 'Twin boulot',
+        slug: 'twin-srv',
+        transport: 'http',
+        url: 'https://boulot.example/mcp',
+      })
+      .returning({ id: mcpServers.id });
+    const linksOf = async (id: string) =>
+      db.select().from(agentMcpServers).where(eq(agentMcpServers.mcpServerId, id));
+
+    const bySlug = await attachMcpTool.execute(
+      { mcpSlug: 'twin-srv', agentSlug: agentRow!.slug },
+      ctx,
+    );
+    expect(bySlug.ok).toBe(false);
+    if (bySlug.ok) throw new Error('expected ok:false');
+    expect(bySlug.error).toContain('matches 2 MCP servers');
+    expect(bySlug.error).toContain('"Twin perso" (slug twin-srv, https://perso.example/mcp)');
+    expect(bySlug.error).toContain('"Twin boulot" (slug twin-srv, https://boulot.example/mcp)');
+    expect(await linksOf(perso!.id)).toHaveLength(0);
+    expect(await linksOf(boulot!.id)).toHaveLength(0);
+
+    const byName = await attachMcpTool.execute(
+      { mcpSlug: 'Twin boulot', agentSlug: agentRow!.slug },
+      ctx,
+    );
+    expect(byName.ok).toBe(true);
+    expect(await linksOf(boulot!.id)).toHaveLength(1);
+    expect(await linksOf(perso!.id)).toHaveLength(0);
+
+    const detach = await detachMcpTool.execute(
+      { mcpSlug: 'twin-srv', agentSlug: agentRow!.slug },
+      ctx,
+    );
+    expect(detach.ok).toBe(false);
+    expect(await linksOf(boulot!.id)).toHaveLength(1);
   });
 
   it('no MCP servers in the workspace: error says so instead of an empty "Available:" list', async () => {

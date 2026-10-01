@@ -227,6 +227,10 @@ export default function AgentForm(props: Props) {
             }
             if (applied.readOnlyApplied) parts.push('read-only');
             toast.success(`Agent created — ${parts.join(', ')}`);
+            for (const missed of applied.connectorsNotAttached) {
+              // Present in the workspace, not attached: the reason says why.
+              toast.warning(`${missed.slug} not attached: ${missed.reason}`);
+            }
             if (applied.connectorsToSetUp.length > 0) {
               // A recommendation, not a failure: the panel said this was the
               // user's move. Repeated here so it is not forgotten.

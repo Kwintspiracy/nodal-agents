@@ -5,7 +5,11 @@ import {
   MCP_SERVER_SLUG_HTML_PATTERN,
   MCP_SERVER_SLUG_PATTERN,
   findMcpNamespaceOverlap,
+  findMcpToolNameCollision,
   isToolOfMcpServer,
+  mcpExposedToolNames,
+  mcpServerExposesTool,
+  mcpToolNameCollisionMessage,
   mcpNamespaceOverlapMessage,
   mcpToolNamespacesOverlap,
 } from '../mcp-namespace';
@@ -94,5 +98,55 @@ describe('findMcpNamespaceOverlap @cap:connecter-un-service/moteur', () => {
     expect(msg).toContain('"Cortex boulot" (cogni-cortex)');
     expect(msg).toContain('cogni_cortex__');
     expect(msg).toContain('detach one');
+  });
+});
+
+describe('a tool name is attributed to the server that LENDS it @cap:connecter-un-service/moteur', () => {
+  const tools = [{ name: 'ping' }, { name: 'pong' }];
+
+  it('mcpExposedToolNames: discovered tools narrowed by the whitelist, prefixed', () => {
+    expect(mcpExposedToolNames('guide-srv', tools, null)).toEqual([
+      'guide_srv__ping',
+      'guide_srv__pong',
+    ]);
+    expect(mcpExposedToolNames('guide-srv', tools, ['pong', 'gone'])).toEqual(['guide_srv__pong']);
+    expect(mcpExposedToolNames('guide--srv', tools, [])).toEqual([]);
+    // Unknown discovery: the whitelist alone says what is lent; neither known: null.
+    expect(mcpExposedToolNames('a-', null, ['ping'])).toEqual(['a___ping']);
+    expect(mcpExposedToolNames('a-', null, null)).toBeNull();
+  });
+
+  it('mcpServerExposesTool: namespace AND list — the namespace alone cannot tell guide-srv from guide--srv', () => {
+    const lends = { slug: 'guide-srv', exposed: ['guide_srv__ping'] };
+    const lendsNothing = { slug: 'guide--srv', exposed: [] as string[] };
+    expect(mcpServerExposesTool(lends, 'guide_srv__ping')).toBe(true);
+    expect(mcpServerExposesTool(lendsNothing, 'guide_srv__ping')).toBe(false);
+    // `a___ping` starts with `a__`, but `a` lends only `a__ping`.
+    expect(mcpServerExposesTool({ slug: 'a', exposed: ['a__ping'] }, 'a___ping')).toBe(false);
+    expect(mcpServerExposesTool({ slug: 'a-', exposed: ['a___ping'] }, 'a___ping')).toBe(true);
+    // An unknown list: the namespace decides.
+    expect(mcpServerExposesTool({ slug: 'a-', exposed: null }, 'a___ping')).toBe(true);
+    expect(mcpServerExposesTool({ slug: 'b', exposed: null }, 'a___ping')).toBe(false);
+  });
+
+  it('findMcpToolNameCollision: only a name lent by two servers', () => {
+    const s = (slug: string, name: string, exposed: string[]) => ({ slug, name, exposed });
+    expect(
+      findMcpToolNameCollision([
+        s('guide-srv', 'Guide', ['guide_srv__ping']),
+        s('guide--srv', 'Guide bis', []),
+        s('a', 'A', ['a__ping']),
+        s('a-', 'A dash', ['a___ping']),
+      ]),
+    ).toBeNull();
+    const hit = findMcpToolNameCollision([
+      s('cogni-cortex', 'Perso', ['cogni_cortex__get_home', 'cogni_cortex__search']),
+      s('cogni-cortex', 'Boulot', ['cogni_cortex__search']),
+    ]);
+    expect(hit?.toolName).toBe('cogni_cortex__search');
+    expect(hit?.servers.map((x) => x.name)).toEqual(['Perso', 'Boulot']);
+    expect(mcpToolNameCollisionMessage(hit!.toolName, ...hit!.servers)).toContain(
+      '"Perso" (cogni-cortex) and "Boulot" (cogni-cortex) both lend this agent a tool named "cogni_cortex__search"',
+    );
   });
 });

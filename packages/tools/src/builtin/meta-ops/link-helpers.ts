@@ -52,14 +52,33 @@ export async function resolveAgentId(
   return row?.id ?? null;
 }
 
-/** Resolve an MCP server by slug OR name within an entity. */
+export type ResolveMcpServerResult =
+  | { ok: true; id: string }
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'ambiguous'; error: string };
+
+/**
+ * Resolve an MCP server by slug OR name within an entity.
+ *
+ * Several rows can answer one word: instances of one catalog server share
+ * their slug (allowed since migration 0017), and a name can equal another
+ * server's slug. Picking one would attach — or detach — a server nobody chose
+ * (#661): the answer is then `ambiguous`, listing each candidate by name and
+ * endpoint, so the caller names the one it means.
+ */
 export async function resolveMcpServerId(
   db: AnyDrizzleDb,
   entityId: string,
   slugOrName: string,
-): Promise<string | null> {
-  const [row] = await db
-    .select({ id: mcpServers.id })
+): Promise<ResolveMcpServerResult> {
+  const rows = await db
+    .select({
+      id: mcpServers.id,
+      slug: mcpServers.slug,
+      name: mcpServers.name,
+      url: mcpServers.url,
+      command: mcpServers.command,
+    })
     .from(mcpServers)
     .where(
       and(
@@ -67,8 +86,22 @@ export async function resolveMcpServerId(
         or(eq(mcpServers.slug, slugOrName), ilike(mcpServers.name, escapeLikePattern(slugOrName))),
       ),
     )
-    .limit(1);
-  return row?.id ?? null;
+    .orderBy(mcpServers.createdAt, mcpServers.id);
+  if (rows.length === 0) return { ok: false, reason: 'not_found' };
+  if (rows.length === 1) return { ok: true, id: rows[0]!.id };
+  const listed = rows
+    .map((r) => `"${r.name}" (slug ${r.slug}, ${r.url ?? r.command ?? 'no endpoint'})`)
+    .join('; ');
+  const sameName = new Set(rows.map((r) => r.name.toLowerCase())).size < rows.length;
+  return {
+    ok: false,
+    reason: 'ambiguous',
+    error:
+      `"${slugOrName}" matches ${rows.length} MCP servers in this workspace: ${listed}. ` +
+      (sameName
+        ? 'Some share their name too: rename one in the dashboard, then call again with its name.'
+        : 'Call again with the name of the one you mean.'),
+  };
 }
 
 /**

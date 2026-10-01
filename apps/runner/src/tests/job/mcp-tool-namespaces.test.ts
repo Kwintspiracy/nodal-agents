@@ -9,12 +9,16 @@
 //     call ran on the first, the card was ambiguous;
 //   - `a` + `a-` (`a_`, so `a___ping` also starts with `a__`): the card named
 //     `a` without saying it might be wrong.
-// Each is now refused, loud, naming both servers, before any server runs.
+// A job is now refused, loud, naming both servers and the tool, when one tool
+// name is LENT by two servers — the only case no reader can resolve.
 //
-// What must keep working: a non-canonical server ON ITS OWN (it overlaps
-// nothing), and several instances of one server in a workspace, each given
-// to a different agent — each agent's call reaches its own instance, and the
-// approval context names that instance.
+// What must keep working (review pass 1 of #663): rows written before #661
+// whose namespaces overlap but whose lent tools do not — `guide-srv` with
+// `guide--srv` narrowed to no tool, `a` with `a-`. Every call reaches the
+// server that lends the name, and the approval names THAT server: a name is
+// attributed by namespace AND list, never by namespace alone. And a
+// non-canonical server on its own, and several instances of one server in a
+// workspace given to different agents.
 //
 // The REAL path: executeJob, a real test database, Nodal's real MCP client
 // spawning real stdio servers (the SDK-built fixture), the provider request
@@ -152,6 +156,8 @@ async function secondAgent(entityId: string, keyId: string, slug: string) {
 describe('one tool name, one MCP server, inside a job @cap:connecter-un-service/moteur', () => {
   // Each case: the servers the agent holds (slug, name, reply, enabledTools),
   // the tool the model calls. Every pair overlaps; none may run.
+  // Each case: the servers the agent holds (slug, name, reply, enabledTools),
+  // the tool the model calls. Both servers lend that very name; none may run.
   const refused: Array<{
     label: string;
     servers: Array<[string, string, string, string[] | null]>;
@@ -166,20 +172,12 @@ describe('one tool name, one MCP server, inside a job @cap:connecter-un-service/
       tool: 'guide_srv__ping',
     },
     {
-      label: 'slugs folding onto one prefix (guide-srv / guide--srv)',
+      label: 'slugs folding onto one prefix, both lending ping (guide-srv / guide--srv)',
       servers: [
         ['guide-srv', 'Guide', 'A', null],
-        ['guide--srv', 'Guide bis', 'B', []],
+        ['guide--srv', 'Guide bis', 'B', ['ping']],
       ],
       tool: 'guide_srv__ping',
-    },
-    {
-      label: 'one namespace extending the other (a / a-)',
-      servers: [
-        ['a', 'Server a', 'A', []],
-        ['a-', 'Server a-dash', 'B', null],
-      ],
-      tool: 'a___ping',
     },
   ];
 
@@ -196,9 +194,73 @@ describe('one tool name, one MCP server, inside a job @cap:connecter-un-service/
       expect(row.status).toBe('failed');
       const error = String(row.error ?? '');
       for (const [slug, name] of c.servers) expect(error).toContain(`"${name}" (${slug})`);
-      expect(error).toContain('detach one');
-      // Refused before the model was asked anything: no server answered.
+      expect(error).toContain(`a tool named "${c.tool}"`);
+      expect(error).toContain('Detach one');
+      // Refused before the model was asked anything: no call reached a server.
       expect(bodies).toHaveLength(0);
+    }, 60_000);
+  }
+
+  // Overlapping namespaces, distinct lent names: the job runs, each call
+  // reaches the server that lends it, the approval names that server.
+  const tolerated: Array<{
+    label: string;
+    servers: Array<[string, string, string, string[] | null]>;
+    calls: Array<{ tool: string; reply: string; approvalNames: string; slug: string }>;
+  }> = [
+    {
+      label: 'guide-srv lends ping, guide--srv lends nothing',
+      servers: [
+        ['guide-srv', 'Guide', 'A', null],
+        ['guide--srv', 'Guide bis', 'B', []],
+      ],
+      calls: [{ tool: 'guide_srv__ping', reply: 'A', approvalNames: 'Guide', slug: 'guide-srv' }],
+    },
+    {
+      label: 'a lends nothing, a- lends a___ping',
+      servers: [
+        ['a', 'Server a', 'A', []],
+        ['a-', 'Server a-dash', 'B', null],
+      ],
+      calls: [{ tool: 'a___ping', reply: 'B', approvalNames: 'Server a-dash', slug: 'a-' }],
+    },
+    {
+      label: 'a lends a__ping, a- lends a___ping — a___ping also starts with a__',
+      servers: [
+        ['a', 'Server a', 'A', null],
+        ['a-', 'Server a-dash', 'B', null],
+      ],
+      calls: [
+        { tool: 'a___ping', reply: 'B', approvalNames: 'Server a-dash', slug: 'a-' },
+        { tool: 'a__ping', reply: 'A', approvalNames: 'Server a', slug: 'a' },
+      ],
+    },
+  ];
+
+  for (const c of tolerated) {
+    it(`runs a pre-#661 attachment whose lent names do not collide: ${c.label}`, async () => {
+      const { jobId, entityId, agentId } = await seedJob(db, { model: MODEL, role: 'agent' });
+      for (const [slug, name, reply, enabled] of c.servers) {
+        await attach(entityId, agentId, await server(entityId, slug, name, reply), enabled);
+      }
+      for (const k of c.calls) await autoApprove(entityId, k.tool);
+
+      const { bodies, row } = await run(jobId, [
+        { calls: c.calls.map((k) => ({ name: k.tool, args: { purpose: 'Check the server.' } })) },
+        { text: 'Done.' },
+      ]);
+
+      expect(row.status, String(row.error ?? '')).toBe('completed');
+      const results = toolResults(bodies[1]!);
+      c.calls.forEach((k, i) => expect(results[i], k.tool).toContain(k.reply));
+      for (const k of c.calls) {
+        const ctx = await getMcpApprovalContext(db as never, entityId, agentId, k.tool);
+        expect(ctx, k.tool).toMatchObject({
+          slug: k.slug,
+          name: k.approvalNames,
+          ambiguous: false,
+        });
+      }
     }, 60_000);
   }
 

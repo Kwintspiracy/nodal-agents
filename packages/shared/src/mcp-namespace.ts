@@ -13,9 +13,17 @@
  * card named another, and the prompt carried guidance of a server the agent
  * did not hold.
  *
- * The rules: a slug is written in the canonical grammar below (every creation
- * path), and an agent never holds two servers whose namespaces overlap (every
- * attach path, and the runner for rows that predate the rule).
+ * The rules:
+ *   - a slug is written in the canonical grammar below (every creation path);
+ *   - a NEW attachment never gives an agent two servers whose namespaces
+ *     overlap (every attach path) — strict, because what a server exposes
+ *     moves on its own (it publishes a new tool, a whitelist widens);
+ *   - a tool name is attributed to the server that EXPOSES it — namespace AND
+ *     the server's own list (`mcpServerExposesTool`) — by every reader: the
+ *     runner, the approval card. A job is refused only when one name is
+ *     exposed by two servers (`findMcpToolNameCollision`), which is the only
+ *     case no reader can resolve. An attachment written before the rule whose
+ *     namespaces overlap but whose exposed tools do not keeps working.
  */
 import { mcpToolPrefix } from './mcp-tool-prefix';
 
@@ -77,5 +85,73 @@ export function mcpNamespaceOverlapMessage(
     `tools under the same names (${mcpToolNamespace(a.slug)}…), so a call could not ` +
     `tell them apart. An agent holds only one of them: detach one, or give the other ` +
     `to a different agent.`
+  );
+}
+
+/**
+ * The full tool names a server lends an agent, from what the database knows:
+ * its discovered tools (`mcp_servers.available_tools`) narrowed by the agent's
+ * whitelist (`agent_mcp_servers.enabled_tools`, null = all). Null when neither
+ * is known — the server may lend anything in its namespace.
+ */
+export function mcpExposedToolNames(
+  slug: string,
+  availableTools: unknown,
+  enabledTools: readonly string[] | null,
+): string[] | null {
+  const ns = mcpToolNamespace(slug);
+  const discovered = Array.isArray(availableTools)
+    ? availableTools
+        .map((t) => (t && typeof t === 'object' ? (t as { name?: unknown }).name : undefined))
+        .filter((n): n is string => typeof n === 'string')
+    : null;
+  const names =
+    enabledTools === null
+      ? discovered
+      : discovered === null
+        ? [...enabledTools]
+        : discovered.filter((n) => enabledTools.includes(n));
+  return names === null ? null : names.map((n) => ns + n);
+}
+
+/**
+ * Does this server lend `toolName`? In its namespace, AND in its list when the
+ * list is known. The namespace alone is not enough: `guide-srv` and a
+ * pre-#661 `guide--srv` share `guide_srv__`, and only the list says which one
+ * lends `guide_srv__ping`.
+ */
+export function mcpServerExposesTool(
+  server: { slug: string; exposed: readonly string[] | null },
+  toolName: string,
+): boolean {
+  if (!isToolOfMcpServer(server.slug, toolName)) return false;
+  return server.exposed === null || server.exposed.includes(toolName);
+}
+
+/** The first tool name two of `servers` both lend, with the two servers; or null. */
+export function findMcpToolNameCollision<T extends { slug: string; exposed: readonly string[] }>(
+  servers: readonly T[],
+): { toolName: string; servers: [T, T] } | null {
+  const lentBy = new Map<string, T>();
+  for (const server of servers) {
+    for (const toolName of server.exposed) {
+      const first = lentBy.get(toolName);
+      if (first && first !== server) return { toolName, servers: [first, server] };
+      lentBy.set(toolName, server);
+    }
+  }
+  return null;
+}
+
+/** The refusal of a job whose agent is lent one tool name by two servers. */
+export function mcpToolNameCollisionMessage(
+  toolName: string,
+  a: { slug: string; name: string },
+  b: { slug: string; name: string },
+): string {
+  return (
+    `The MCP servers "${a.name}" (${a.slug}) and "${b.name}" (${b.slug}) both lend this ` +
+    `agent a tool named "${toolName}", so a call could not tell them apart. Detach one, ` +
+    `or give the other to a different agent.`
   );
 }

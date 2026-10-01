@@ -8,7 +8,7 @@
 // exactly the kind of thing that silently diverges between surfaces.
 
 import { and, eq } from 'drizzle-orm';
-import { isToolOfMcpServer, mcpToolNamespace } from '@nodal-agents/shared';
+import { mcpExposedToolNames, mcpServerExposesTool, mcpToolNamespace } from '@nodal-agents/shared';
 import { agentMcpServers, mcpServers } from '../schema/mcp';
 import type { AnyDrizzleDb } from '../client';
 
@@ -43,11 +43,14 @@ interface DiscoveredTool {
  *
  * Within the agent, not the workspace (#661): a workspace may hold several
  * instances of one catalog server (same slug, same tool names) for different
- * agents, and only the agent's own attachment says which one it called. An
- * agent never holds two servers whose namespaces overlap (attach paths and
- * runner refuse it), so one server matches; a row written before that rule
- * can still match two, and the result says so (`ambiguous`) instead of
- * silently naming one.
+ * agents, and only the agent's own attachment says which one it called.
+ *
+ * By what each server LENDS the agent, not by namespace alone: a pre-#661
+ * attachment can hold `guide-srv` and `guide--srv` (one namespace), and only
+ * their lists say which one lends `guide_srv__ping` — the very rule the runner
+ * routes by. A job in which two servers lend one name is refused by the
+ * runner; should such a request exist anyway, the result says so
+ * (`ambiguous`) instead of silently naming one.
  */
 export async function getMcpApprovalContext(
   db: AnyDrizzleDb,
@@ -66,12 +69,25 @@ export async function getMcpApprovalContext(
       command: mcpServers.command,
       transport: mcpServers.transport,
       availableTools: mcpServers.availableTools,
+      enabledTools: agentMcpServers.enabledTools,
     })
     .from(agentMcpServers)
     .innerJoin(mcpServers, eq(mcpServers.id, agentMcpServers.mcpServerId))
     .where(and(eq(agentMcpServers.agentId, agentId), eq(mcpServers.entityId, entityId)));
 
-  const matches = rows.filter((r) => isToolOfMcpServer(r.slug, toolName));
+  const matches = rows.filter((r) =>
+    mcpServerExposesTool(
+      {
+        slug: r.slug,
+        exposed: mcpExposedToolNames(
+          r.slug,
+          r.availableTools,
+          (r.enabledTools as string[] | null) ?? null,
+        ),
+      },
+      toolName,
+    ),
+  );
   const row = matches[0];
   if (!row) return null;
   const namespace = mcpToolNamespace(row.slug);

@@ -280,6 +280,27 @@ export function scanForProjectKeyCopies(opts: ScanOptions): Violation[] {
 }
 
 /**
+ * The MCP tool prefix (`my-server` → `my_server`) lives in ONE place:
+ * `packages/shared/src/mcp-tool-prefix.ts` (#661).
+ *
+ * It had six hand-written copies (adapter, approval card, skill linter, two
+ * agent tabs, the add-form preview — the last one already diverging). Two
+ * copies that disagree route a call to one server and name another on the
+ * approval card, with nothing failing.
+ *
+ * The fingerprint is a regex literal that replaces a run of non-alphanumerics
+ * (a negated `a-z0-9` class, any case, any flags) by an underscore. A
+ * hyphen-only replacement, used for agent `assign_*` names, is a different
+ * rule and is not matched.
+ */
+export function scanForMcpToolPrefixCopies(opts: ScanOptions): Violation[] {
+  return scanForPattern(opts, {
+    pattern: /\/\[\^[A-Za-z0-9-]+\]\+?\/[gimsuy]*,\s*['"`]_['"`]/,
+    rule: 'mcp-tool-prefix-copy',
+  });
+}
+
+/**
  * Une surface qui MUTE le disque doit passer par le seam d'intention.
  *
  * Le plan « Vérifier & Corriger » tient sur une promesse : au moment où un

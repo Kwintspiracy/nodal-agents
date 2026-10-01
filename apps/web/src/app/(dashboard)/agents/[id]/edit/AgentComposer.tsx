@@ -91,6 +91,7 @@ import {
   modelOptionLabel,
   modelToolsSupport,
   cliShellPosture,
+  mcpToolPrefix,
 } from '@nodal-agents/shared';
 import {
   reasoningOptionValues,
@@ -1675,11 +1676,6 @@ function ownerTextFor(op: OperationDescriptor): { label: string; summary: string
 
 type ApprovalAction = 'auto_approve' | 'require_approval' | 'block';
 
-/** `cogni-cortex` → `cogni_cortex`. Mirrors slugToPrefix in adapter-mcp. */
-function mcpSlugToPrefix(slug: string): string {
-  return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
-}
-
 export function AutonomyTab({
   agentId,
   connectors,
@@ -2030,7 +2026,7 @@ export function AutonomyTab({
             data-testid="autonomy-mcp-list"
           >
             {attachedMcpServers.map((s) => {
-              const prefix = mcpSlugToPrefix(s.slug);
+              const prefix = mcpToolPrefix(s.slug);
               const pattern = `${prefix}__*`;
               // Ce que l'AGENT détient, pas ce que le serveur expose (revue
               // Reviewer C, passe 2, Q2) : le runner ne lui donnera jamais que

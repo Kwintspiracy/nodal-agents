@@ -12,6 +12,7 @@ import {
   scanForDbDriverImports,
   formatViolations,
   scanForProjectKeyCopies,
+  scanForMcpToolPrefixCopies,
   scanForMutatingSpawnOutsideIntent,
   scanForDirectTerminalCompleted,
   scanForCompleteJobCallers,
@@ -269,6 +270,47 @@ describe('scanForProjectKeyCopies', () => {
 
   it('épargne le fichier qui héberge la règle quand il est passé en skipFiles', () => {
     const v = scanForProjectKeyCopies({ srcDir: dir, skipFiles: ['nested/key-copy.ts'] });
+    expect(v).toEqual([]);
+  });
+});
+
+describe('scanForMcpToolPrefixCopies (#661)', () => {
+  let own: string;
+  beforeAll(() => {
+    own = mkdtempSync(join(tmpdir(), 'archi-prefix-'));
+    mkdirSync(join(own, 'ui'), { recursive: true });
+    writeFileSync(
+      join(own, 'prefix.ts'),
+      "export const p = (s: string) => s.replace(/[^a-z0-9]+/gi, '_').toLowerCase();\n",
+    );
+    writeFileSync(
+      join(own, 'ui', 'mirror.tsx'),
+      'const m = (s: string) => s.toLowerCase().replace(/[^A-Za-z0-9]/g, "_");\n',
+    );
+    // An agent's assign_* name replaces hyphens only: another rule, not a copy.
+    writeFileSync(
+      join(own, 'assign.ts'),
+      "export const t = (slug: string) => `assign_${slug.replace(/-/g, '_')}`;\n",
+    );
+    // A kebab slug is not a tool prefix either.
+    writeFileSync(
+      join(own, 'kebab.ts'),
+      "export const k = (s: string) => s.replace(/[^a-z0-9]+/g, '-');\n",
+    );
+  });
+  afterAll(() => rmSync(own, { recursive: true, force: true }));
+
+  it('finds every copy, whatever the case of the class or the flags', () => {
+    const v = scanForMcpToolPrefixCopies({ srcDir: own });
+    expect(v.map((x) => x.file.split(/[\\/]/).pop()).sort()).toEqual(['mirror.tsx', 'prefix.ts']);
+    expect(v.every((x) => x.rule === 'mcp-tool-prefix-copy')).toBe(true);
+  });
+
+  it('spares the file that hosts the rule when passed in skipFiles', () => {
+    const v = scanForMcpToolPrefixCopies({
+      srcDir: own,
+      skipFiles: ['prefix.ts', 'ui/mirror.tsx'],
+    });
     expect(v).toEqual([]);
   });
 });

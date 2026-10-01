@@ -237,6 +237,43 @@ describe('recommended connectors', () => {
   });
 });
 
+describe('recommended MCP servers the workspace holds SEVERAL of (#661) @cap:connecter-un-service/moteur', () => {
+  it('attaches none of them and says why, naming each instance', async () => {
+    session = { userId: other.userId, entityId: other.entityId };
+    for (const name of ['Playwright one', 'Playwright two']) {
+      await testDb.insert(mcpServers).values({
+        entityId: other.entityId,
+        name,
+        slug: 'mcp-playwright',
+        transport: 'stdio',
+        command: 'npx',
+        active: true,
+      });
+    }
+    try {
+      const { createAgentAction } = await import('../actions.ts');
+      const res = await createAgentAction(payload(`rev-twins-${Date.now()}`, 'code-reviewer'));
+
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.data.recipe?.connectorsAttached).toEqual([]);
+      expect(res.data.recipe?.connectorsToSetUp).toEqual([]);
+      const missed = res.data.recipe?.connectorsNotAttached ?? [];
+      expect(missed.map((m) => m.slug)).toEqual(['mcp-playwright']);
+      expect(missed[0]!.reason).toContain('Playwright one, Playwright two');
+      const links = await testDb
+        .select()
+        .from(agentMcpServers)
+        .where(eq(agentMcpServers.agentId, res.data.id));
+      expect(links).toHaveLength(0);
+    } finally {
+      await testDb
+        .delete(mcpServers)
+        .where(and(eq(mcpServers.slug, 'mcp-playwright'), eq(mcpServers.entityId, other.entityId)));
+    }
+  });
+});
+
 describe('createAgentAction with a profile — one gesture, nothing half-done', () => {
   // Codex, PR #45 second pass: with the profile applied in a SECOND action, a
   // non-owner picking Code reviewer got a created agent, then a refused

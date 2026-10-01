@@ -7558,6 +7558,12 @@ export type ApplyAgentRecipeResult = {
   connectorsAttached: string[];
   /** Recommended connectors the workspace does not have — the user's move. */
   connectorsToSetUp: string[];
+  /**
+   * Recommended connectors the workspace HAS but that were not attached, each
+   * with why: several instances (picking one would be a guess, #661), or a
+   * refusal of the attach rule. Said to the user, never dropped.
+   */
+  connectorsNotAttached: Array<{ slug: string; reason: string }>;
 };
 
 /**
@@ -7659,10 +7665,11 @@ async function applyRecipeToAgent(
     // user's move, and the result repeats it.
     const connectorsAttached: string[] = [];
     const connectorsToSetUp: string[] = [];
+    const connectorsNotAttached: Array<{ slug: string; reason: string }> = [];
     const wantedMcp = (recipe.connectors ?? []).filter((c) => c.kind === 'mcp').map((c) => c.slug);
     if (wantedMcp.length > 0) {
       const rows = await db
-        .select({ id: mcpServers.id, slug: mcpServers.slug })
+        .select({ id: mcpServers.id, slug: mcpServers.slug, name: mcpServers.name })
         .from(mcpServers)
         .where(
           and(
@@ -7671,23 +7678,30 @@ async function applyRecipeToAgent(
             eq(mcpServers.active, true),
           ),
         );
-      const bySlug = new Map<string, string>();
-      for (const r of rows) if (!bySlug.has(r.slug)) bySlug.set(r.slug, r.id);
       for (const slug of wantedMcp) {
-        const mcpServerId = bySlug.get(slug);
-        if (!mcpServerId) {
+        const instances = rows.filter((r) => r.slug === slug);
+        if (instances.length === 0) {
           connectorsToSetUp.push(slug);
           continue;
         }
-        // Distinct catalog slugs never share tool names, and the agent is new:
-        // a refusal here is a broken recipe, said loud (#661).
+        // Several instances of the server: which one the agent should hold is
+        // the user's call, never a guess (#661).
+        if (instances.length > 1) {
+          connectorsNotAttached.push({
+            slug,
+            reason:
+              `${instances.length} servers are "${slug}" here ` +
+              `(${instances.map((i) => i.name).join(', ')}). Attach the one you want from the agent's Connectors tab.`,
+          });
+          continue;
+        }
         const attached = await attachMcpServerToAgent(db, {
           entityId: session.entityId,
           agentId: agent.id,
-          mcpServerId,
+          mcpServerId: instances[0]!.id,
         });
-        if (!attached.ok) throw new Error(attached.message);
-        connectorsAttached.push(slug);
+        if (attached.ok) connectorsAttached.push(slug);
+        else connectorsNotAttached.push({ slug, reason: attached.message });
       }
     }
 
@@ -7697,6 +7711,7 @@ async function applyRecipeToAgent(
       readOnlyApplied,
       connectorsAttached,
       connectorsToSetUp,
+      connectorsNotAttached,
     };
   }
 }
