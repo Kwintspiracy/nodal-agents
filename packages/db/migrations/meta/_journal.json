@@ -995,6 +995,13 @@
       "when": 1786003500000,
       "tag": "0143_job_chat_channel",
       "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "7",
+      "when": 1786003600000,
+      "tag": "0144_mcp_server_instructions",
+      "breakpoints": true
     }
   ]
 }
