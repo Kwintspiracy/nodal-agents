@@ -1384,7 +1384,7 @@ export async function buildSystemPrompt(
   // the worker's discipline, never the orchestrator's "when you delegate"
   // (Codex review of #473, pass 4).
   const canHandOn = remainingDelegationHops(jobContext?.delegationDepth ?? 0) > 0;
-  const baselineBlock = buildBaselineBlock(agent.model, {
+  const baselineBlock = buildBaselineBlock({
     role: agent.role === 'orchestrator' && !canHandOn ? 'agent' : agent.role,
     nodalTools: jobContext?.surface !== 'cli-runtime',
     surface: jobContext?.surface ?? 'job',
