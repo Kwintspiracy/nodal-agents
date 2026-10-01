@@ -11,7 +11,7 @@ export const printRequestSkill: SystemSkill = {
   slug: 'print-request',
   name: 'Print requests',
   description:
-    'Use whenever the person asks to print anything: the only valid answer to a print request is a print preview they can approve.',
+    'Use whenever the person asks to print anything. The only valid answer to a print request is a print preview they can approve: get the content and lay it out YOURSELF with your own tools, then call the print tool. Do not delegate it, do not ask questions on the way.',
   requiredBuiltins: [],
   content: `# Print requests
 
