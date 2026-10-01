@@ -199,6 +199,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       system_prompt text,
       -- mirrors migration 0136 (#559) : les outils pour lesquels le prompt a été écrit.
       system_prompt_tools text[],
+      -- mirrors migration 0142 : la version de Nodal qui a écrit le prompt.
+      system_prompt_version text,
       -- mirrors migration 0138 (#612) : les outils différés que le job a chargés.
       loaded_tools text[],
       messages jsonb DEFAULT '[]',

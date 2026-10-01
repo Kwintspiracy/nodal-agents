@@ -165,6 +165,13 @@ export const agentJobs = pgTable(
      */
     systemPromptTools: text('system_prompt_tools').array(),
     /**
+     * La version de Nodal qui a écrit `systemPrompt` (migration 0142), celle
+     * que le lanceur passe au runner (NODAL_VERSION). Une reprise sous une autre
+     * version réécrit le prompt : il a été construit par un autre code. NULL :
+     * prompt écrit avant cette colonne, ou version inconnue du runner.
+     */
+    systemPromptVersion: text('system_prompt_version'),
+    /**
      * Les outils différés que ce job a chargés, dans l'ordre (#612, migration
      * 0138) : par `load_tools` ou par un appel direct. Le tour envoie les schémas
      * `eager` puis ceux-ci. Hors de la transcription parce que la compaction en

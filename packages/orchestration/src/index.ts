@@ -74,6 +74,7 @@ export { detectOrchestratorMode } from './orchestrator-mode';
 // ─── Router: assign tools ─────────────────────────────────────────────────────
 export { generateAssignTools, getChildAgents } from './router/assign-tools';
 export type { AssignInput } from './router/assign-tools';
+export { generateDelegationTools } from './delegation-tools';
 
 // ─── Router: tool availability (B2 brief validation) ─────────────────────────
 export {
