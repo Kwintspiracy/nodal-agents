@@ -309,3 +309,50 @@ describe('a third-party tool error is framed like its success; the gate own erro
     expect(failed).toContain(FRAME);
   }, 60_000);
 });
+
+describe('one budget for what the model reads of a tool result, the frame included, on every path @cap:connecter-un-service/moteur', () => {
+  const CLOSE = '</untrusted_tool_result>';
+
+  /** The model's view of one call to `<slug>__report` answering with `shape`. */
+  async function readOf(slug: string, shape: string): Promise<string> {
+    const { jobId, entityId, agentId } = await seedJob(db, { model: MODEL, role: 'agent' });
+    await seedServer(entityId, agentId, slug, shape);
+    const toolName = `${slug.replace(/-/g, '_')}__report`;
+    await db
+      .insert(approvalRules)
+      .values({ entityId, agentId: null, toolName, action: 'auto_approve' });
+    const { bodies } = await run(jobId, [
+      { calls: [{ name: toolName, args: { purpose: 'Print the page.' } }] },
+      { text: 'Done.' },
+    ]);
+    expect(bodies[1], 'the model was never called after the tool ran').toBeDefined();
+    const [result] = toolResults(bodies[1]!);
+    return result!;
+  }
+
+  it('a text block that IS the machine form, larger than the budget: the id and status survive', async () => {
+    const result = await readOf('echo-long', 'echoed-long');
+
+    expect(result).toContain('"id":"pr-11"');
+    expect(result).toContain('"status":"pending"');
+    expect(result.endsWith(CLOSE)).toBe(true);
+    expect(result.length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
+  }, 60_000);
+
+  it('content full of the token the frame neutralizes: the frame still closes, within the budget', async () => {
+    const result = await readOf('tokenish', 'tokens');
+
+    expect(result.endsWith(CLOSE)).toBe(true);
+    expect(result.length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
+  }, 60_000);
+
+  it('a long failure the server raised: framed, the machine form kept, the whole block within the budget', async () => {
+    const result = await readOf('fail-long', 'error-long');
+
+    // The `{ error }` block as the provider receives it, frame and escaping included.
+    expect(result.length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
+    expect(result).toContain(CLOSE);
+    expect(result).toContain('pr-12');
+    expect(JSON.parse(result)).toHaveProperty('error');
+  }, 60_000);
+});

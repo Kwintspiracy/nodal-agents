@@ -35,7 +35,7 @@ import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 // It bounds each channel as a whole: the content blocks share ONE budget (200
 // blocks of 49k each would otherwise all pass a per-block cap), the structured
 // payload has its own. This cap is the ROW's; what the model reads fits the
-// runner's budget instead (`mcpResultForModel`, `toolResultRoom`).
+// runner's budget instead (`mcpResultForModel`, `fitToolResult`).
 const MCP_RESULT_CHAR_CAP = Number(process.env.MCP_RESULT_CHAR_CAP) || 50_000;
 
 /**
@@ -50,18 +50,23 @@ function capText(value: string, limit: number): string {
 }
 
 /**
- * Cap a structured payload.
+ * Cap a structured payload for the row.
  *
  * Non-string values are NOT byte-sliced: slicing serialized JSON would hand the
  * agent a syntactically broken payload, which is worse than the oversized-payload
- * problem it's meant to fix. Instead they are wrapped with an explicit
- * `truncated: true` flag and a JSON preview, so the caller can tell exactly what
- * happened instead of silently receiving cut-off/corrupt data (invariant #4).
+ * problem it's meant to fix. They are REDUCED (`reduceToFit`, the same rule the
+ * model's text follows): still valid JSON with every key, the longest strings
+ * and lists cut where it happened, each cut said — so the short fields (an id,
+ * a status) survive the cap. Only a payload with nothing long enough to reduce
+ * is wrapped with an explicit `truncated: true` flag and a JSON preview, so the
+ * caller can tell exactly what happened (invariant #4).
  */
 function capPayload(value: unknown): unknown {
   if (typeof value === 'string') return capText(value, MCP_RESULT_CHAR_CAP);
   const serialized = JSON.stringify(value) ?? '';
   if (serialized.length <= MCP_RESULT_CHAR_CAP) return value;
+  const reduced = reducedJson(value, MCP_RESULT_CHAR_CAP);
+  if (reduced !== null) return JSON.parse(reduced) as unknown;
   return {
     truncated: true,
     originalLength: serialized.length,
@@ -246,38 +251,165 @@ function serializes(text: string, payload: unknown): boolean {
  *  - every content block, in the server's order: text as written, every other
  *    block said in one bracketed line (what it is, how big, that the model
  *    does not get it); an empty text block says nothing and is skipped;
- *  - then the structured payload (`structuredContent`, or a 2024-10-07
- *    `toolResult`), serialized — unless a text block already IS it;
- *  - within `maxChars`, the room the runner leaves for this result
- *    (`toolResultRoom`, one budget for both sides). The machine form and the
- *    line counting the blocks not kept are placed FIRST in the budget, and the
- *    blocks get what is left: a long text is cut, and says so, so that the
- *    id the next call needs is never what a cut removes. A machine form that
- *    alone exceeds the budget is cut itself, and the text it pushed out is
- *    named.
+ *  - then the machine form — `structuredContent`, or a 2024-10-07
+ *    `toolResult` — once: a text block that already IS its serialization is
+ *    that machine form (kept as the server wrote it), not text;
+ *  - within `maxChars`, the room left for this result's own text
+ *    (`fitToolResult`, one budget for the runner and the tool). The machine
+ *    form and the line counting the blocks not kept take their room FIRST,
+ *    the other blocks get what is left: a long text is cut, and says so. A
+ *    machine form that alone exceeds the budget is REDUCED, not cut at its
+ *    tail (`reduceToFit`: its longest strings and lists give way first), so
+ *    its short fields — the id, the status the next call needs — always
+ *    survive; the text it pushed out is named.
  */
 export function mcpResultForModel(output: McpToolOutput, maxChars: number): string {
-  const texts = output.content.flatMap((b) => (b.type === 'text' ? [b.text] : []));
+  const payloads = [output.structuredContent, output.toolResult].filter((p) => p !== undefined);
+  const machine = payloads.map((payload) => {
+    const asWritten = output.content.find(
+      (b): b is { type: 'text'; text: string } => b.type === 'text' && serializes(b.text, payload),
+    );
+    return { payload, text: asWritten?.text ?? serialize(payload) };
+  });
   const head = output.content
-    .filter((b) => b.type !== 'omitted' && !(b.type === 'text' && b.text.trim() === ''))
+    .filter(
+      (b) =>
+        b.type !== 'omitted' &&
+        !(b.type === 'text' && (b.text.trim() === '' || machine.some((m) => m.text === b.text))),
+    )
     .map(describeBlock)
     .join('\n');
-  const tailParts = output.content.filter((b) => b.type === 'omitted').map(describeBlock);
-  for (const payload of [output.structuredContent, output.toolResult]) {
-    if (payload === undefined || texts.some((t) => serializes(t, payload))) continue;
-    tailParts.push(typeof payload === 'string' ? payload : JSON.stringify(payload));
-  }
-  const tail = tailParts.join('\n');
+  const omitted = output.content.filter((b) => b.type === 'omitted').map(describeBlock);
+  const tail = [...omitted, ...machine.map((m) => m.text)].join('\n');
+
   if (head === '' && tail === '') return '[The MCP tool returned an empty result.]';
   if (tail === '') return fitWithin(head, maxChars);
-  if (head === '') return fitWithin(tail, maxChars);
-  if (tail.length + 1 + MIN_HEAD_CHARS > maxChars) {
-    const note =
-      `[${head.length} chars of text not passed to you: the structured result fills ` +
-      `the budget of ${maxChars} chars.]`;
-    return `${note}\n${fitWithin(tail, maxChars - note.length - 1)}`;
+  if (head === '' && tail.length <= maxChars) return tail;
+  if (head !== '' && tail.length + 1 + MIN_HEAD_CHARS <= maxChars) {
+    return `${fitWithin(head, maxChars - tail.length - 1)}\n${tail}`;
   }
-  return `${fitWithin(head, maxChars - tail.length - 1)}\n${tail}`;
+  // The machine form leaves no room for the text: reduce it to fit, and name
+  // the text it pushed out.
+  const note =
+    head === ''
+      ? ''
+      : `[${head.length} chars of text not passed to you: the structured result fills ` +
+        `the budget of ${maxChars} chars.]\n`;
+  const fixed = omitted.join('\n');
+  let room = maxChars - note.length - (fixed === '' ? 0 : fixed.length + 1);
+  const reduced: string[] = [];
+  machine.forEach((m, i) => {
+    const share = Math.floor(room / (machine.length - i)) - (i < machine.length - 1 ? 1 : 0);
+    const text = reduceToFit(m.payload, share);
+    reduced.push(text);
+    room -= text.length + 1;
+  });
+  return note + [fixed, ...reduced].filter((p) => p !== '').join('\n');
+}
+
+function serialize(payload: unknown): string {
+  return typeof payload === 'string' ? payload : JSON.stringify(payload);
+}
+
+/** A cut list says how many items it lost, in its own last item. */
+const CUT_ITEMS = /^\[(\d+) more items cut by Nodal\]$/;
+
+/**
+ * A machine form serialized within `max` characters, still valid JSON with
+ * every key it had: the longest string or list gives way first — a string is
+ * cut, a list loses its last items — each cut said where it happened, until it
+ * fits. Short values (an id, a status) are the last things to go, and only if
+ * nothing longer is left. A string payload, or one that cannot be reduced
+ * further, is cut at its tail with the cut said.
+ */
+function reduceToFit(payload: unknown, max: number): string {
+  return reducedJson(payload, max) ?? fitWithin(serialize(payload), max);
+}
+
+/**
+ * At most this many fields give way. Each one costs a pass over the payload;
+ * a machine form made of thousands of medium strings is not reduced field by
+ * field: past this bound it is cut at its tail instead, and the cut is said.
+ */
+const MAX_REDUCTIONS = 200;
+
+/**
+ * The reduction of `reduceToFit` alone: valid JSON within `max`, or null when
+ * the payload is not an object or list, has nothing long enough left to
+ * reduce, or needs more than `MAX_REDUCTIONS` cuts.
+ */
+function reducedJson(payload: unknown, max: number): string | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const copy = structuredClone(payload) as Container;
+  for (let cuts = 0; cuts <= MAX_REDUCTIONS; cuts += 1) {
+    const json = JSON.stringify(copy);
+    const excess = json.length - max;
+    if (excess <= 0) return json;
+    const leaf = longestLeaf(copy);
+    if (!leaf) return null;
+    const value = leafValue(leaf);
+    if (typeof value === 'string') {
+      const keep = Math.max(0, value.length - excess - 48);
+      setLeaf(leaf, `${value.slice(0, keep)}…[${value.length - keep} chars cut by Nodal]`);
+    } else {
+      const list = value as unknown[];
+      const last = list.at(-1);
+      const already = typeof last === 'string' ? CUT_ITEMS.exec(last) : null;
+      const items = already ? list.slice(0, -1) : list;
+      const before = already ? Number(already[1]) : 0;
+      const keep = Math.floor(items.length / 2);
+      setLeaf(leaf, [
+        ...items.slice(0, keep),
+        `[${before + items.length - keep} more items cut by Nodal]`,
+      ]);
+    }
+  }
+  return null;
+}
+
+/** The longest string (over 64 chars) or list (over one item) inside `root`, by serialized size. */
+function longestLeaf(root: Container): Leaf | null {
+  const found: { leaf: Leaf | null; size: number } = { leaf: null, size: 0 };
+  const visit = (parent: Container): void => {
+    const entries: Array<[string | number, unknown]> = Array.isArray(parent)
+      ? parent.map((v, i): [number, unknown] => [i, v])
+      : Object.entries(parent);
+    for (const [key, v] of entries) {
+      if (typeof v === 'string') {
+        if (v.length > 64 && v.length > found.size) {
+          found.leaf = { parent, key };
+          found.size = v.length;
+        }
+      } else if (Array.isArray(v)) {
+        const last = v.at(-1);
+        const items = typeof last === 'string' && CUT_ITEMS.test(last) ? v.length - 1 : v.length;
+        const size = JSON.stringify(v).length;
+        if (items > 1 && size > found.size) {
+          found.leaf = { parent, key };
+          found.size = size;
+        }
+        visit(v);
+      } else if (v !== null && typeof v === 'object') {
+        visit(v as Record<string, unknown>);
+      }
+    }
+  };
+  visit(root);
+  return found.leaf;
+}
+
+type Container = Record<string, unknown> | unknown[];
+interface Leaf {
+  parent: Container;
+  key: string | number;
+}
+
+/** Read or write `leaf` in place, object or list alike. */
+function leafValue(leaf: Leaf): unknown {
+  return (leaf.parent as Record<string | number, unknown>)[leaf.key];
+}
+function setLeaf(leaf: Leaf, value: unknown): void {
+  (leaf.parent as Record<string | number, unknown>)[leaf.key] = value;
 }
 
 /**

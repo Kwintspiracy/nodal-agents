@@ -45,8 +45,10 @@ import {
   modelCanSeeImages,
   estimateCallCostUsd,
   isUntrustedTool,
-  wrapUntrusted,
   TOOL_RESULT_MODEL_CHARS,
+  framedForModel,
+  fitToolResult,
+  raisedErrorBlockLength,
   PROVIDER_REJECTED,
   PROVIDER_REJECTED_PREFIX,
 } from '@nodal-agents/shared';
@@ -458,23 +460,74 @@ export function sameToolList(
   return a.length === current.length && a.every((name, i) => name === current[i]);
 }
 
-/** Truncate an oversized tool-result string with an explicit, model-readable marker. */
-export function truncateForContext(value: string): string {
-  // Elide long base64/binary runs FIRST. They're useless to the model as text,
-  // and they're the dominant re-sent-every-turn bloat: a generated image comes
-  // back as ~50K of base64, and the runner re-sends the whole history each turn,
-  // so over ~10 turns one job burns ~700K input tokens (observed live, 7c78bf2c,
-  // $2.14). Files belong on disk — reference them by path/URL, not inline bytes.
-  const v = value.replace(
+/**
+ * Elide long base64/binary runs. They're useless to the model as text, and
+ * they're the dominant re-sent-every-turn bloat: a generated image comes back
+ * as ~50K of base64, and the runner re-sends the whole history each turn, so
+ * over ~10 turns one job burns ~700K input tokens (observed live, 7c78bf2c,
+ * $2.14). Files belong on disk — reference them by path/URL, not inline bytes.
+ */
+function elideBinary(value: string): string {
+  return value.replace(
     /[A-Za-z0-9+/]{256,}={0,2}/g,
     (m) => `[binary elided: ${m.length} chars — reference the file by path/URL, not inline]`,
   );
-  if (v.length <= MAX_TOOL_RESULT_CHARS) return v;
-  const dropped = v.length - MAX_TOOL_RESULT_CHARS;
+}
+
+/** `value` cut to `room` characters, with an explicit, model-readable marker. */
+function cutForContext(value: string, room: number): string {
+  if (value.length <= room) return value;
+  const dropped = value.length - room;
   return (
-    v.slice(0, MAX_TOOL_RESULT_CHARS) +
-    `\n\n[... truncated: ${dropped} chars dropped (total ${v.length}) ...]`
+    value.slice(0, room) +
+    `\n\n[... truncated: ${dropped} chars dropped (total ${value.length}) ...]`
   );
+}
+
+/** Truncate an oversized tool-result string with an explicit, model-readable marker. */
+export function truncateForContext(value: string): string {
+  // Binary runs are elided FIRST (elideBinary), then the rest is cut.
+  return cutForContext(elideBinary(value), MAX_TOOL_RESULT_CHARS);
+}
+
+/**
+ * The framed text the model reads of a third party's result (INJECT-001),
+ * within the one budget.
+ *
+ * The content is cut to fit, THEN framed — never framed then cut: a cut after
+ * the frame could remove the closing delimiter, and a payload framed with an
+ * opening tag and no closing one is worse than an unframed one, because
+ * everything after it reads as inside the boundary. The budget is measured on
+ * the framed block (`fitToolResult`), so the frame's own length and the
+ * neutralization of delimiter tokens inside the content are counted.
+ */
+export function framedToolResult(toolName: string, text: string): string {
+  const content = elideBinary(text);
+  return framedForModel(
+    toolName,
+    fitToolResult(
+      (room) => cutForContext(content, room),
+      (t) => framedForModel(toolName, t).length,
+    ),
+  );
+}
+
+/**
+ * The `{ error }` block of a failure a third party's tool raised: its text cut,
+ * THEN framed inside the object, the whole block — frame and JSON escaping
+ * included — within the one budget.
+ */
+export function raisedErrorBlock(
+  toolName: string,
+  error: string,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const content = elideBinary(error);
+  const fitted = fitToolResult(
+    (room) => cutForContext(content, room),
+    (t) => raisedErrorBlockLength(toolName, t, extra),
+  );
+  return { error: framedForModel(toolName, fitted), ...extra };
 }
 
 const EVICTED_TOOL_RESULT_MARKER =
@@ -2886,19 +2939,21 @@ async function runJobTracked(
   // `[DEFERRED]`, `[REJECTED]`, whitelist refusals — which are not third-party
   // content and must not be framed as if they were. Safe by omission.
   //
-  // Framing happens BEFORE truncation so the closing delimiter cannot be cut
-  // off: a payload framed with an opening tag and no closing one is worse than
-  // an unframed one, because everything after it reads as inside the boundary.
+  // A third party's result is cut to fit, THEN framed (`framedToolResult`).
   const toResultOutput = (raw: unknown, toolName?: string): ToolResultOutput => {
-    const frame = (text: string): string =>
-      isUntrustedTool(toolName) ? wrapUntrusted(toolName as string, text) : text;
-
-    if (typeof raw === 'string') return { type: 'text', value: truncateForContext(frame(raw)) };
+    if (typeof raw === 'string') {
+      return {
+        type: 'text',
+        value: isUntrustedTool(toolName)
+          ? framedToolResult(toolName as string, raw)
+          : truncateForContext(raw),
+      };
+    }
     const json: unknown = JSON.parse(JSON.stringify(raw ?? null));
     // A framed result is text by necessity — the frame is prose around the
     // payload, and there is no way to express it in the `json` variant.
     if (isUntrustedTool(toolName)) {
-      return { type: 'text', value: truncateForContext(frame(JSON.stringify(json))) };
+      return { type: 'text', value: framedToolResult(toolName as string, JSON.stringify(json)) };
     }
     const serialized = JSON.stringify(json);
     if (serialized.length <= MAX_TOOL_RESULT_CHARS) return { type: 'json', value: json };
@@ -2914,18 +2969,15 @@ async function runJobTracked(
   // The frame goes INSIDE the `{ error }` object, never around it: the readers
   // of a turn's blocks (`isToolErrorBlock`, the delegation outcome) recognise a
   // failed call by that shape, and a frame around the block would hide the
-  // failure from them. The text is capped BEFORE it is framed, so the closing
-  // delimiter is never cut, and the block stays `json` whatever its size.
+  // failure from them. The text is cut BEFORE it is framed, and the whole
+  // `{ error }` block fits the same budget as a success (`raisedErrorBlock`).
   const toErrorOutput = (
     error: string,
     opts: { raisedBy?: string | undefined; mayHaveDelivered?: boolean } = {},
   ): ToolResultOutput => {
-    const value = { error, ...(opts.mayHaveDelivered ? { mayHaveDelivered: true } : {}) };
-    if (!isUntrustedTool(opts.raisedBy)) return toResultOutput(value);
-    return {
-      type: 'json',
-      value: { ...value, error: wrapUntrusted(opts.raisedBy as string, truncateForContext(error)) },
-    };
+    const extra = opts.mayHaveDelivered ? { mayHaveDelivered: true } : {};
+    if (!isUntrustedTool(opts.raisedBy)) return toResultOutput({ error, ...extra });
+    return { type: 'json', value: raisedErrorBlock(opts.raisedBy as string, error, extra) };
   };
 
   // ONE conversion of a call that ran into what the model reads, for every path

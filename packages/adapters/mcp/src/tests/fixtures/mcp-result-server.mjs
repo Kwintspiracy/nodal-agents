@@ -20,7 +20,13 @@
 //     blank       an empty text block and structuredContent
 //     long        30,000 characters of text, then structuredContent: more text
 //                 than the model's budget for one tool result
+//     echoed-long the spec's recommended form, larger than the budget: a text
+//                 block that IS the structuredContent (30k of notes first,
+//                 the id and status last), next to it
+//     tokens      text close to the budget, full of the untrusted-frame token
+//                 that the frame neutralizes (and lengthens)
 //     error       isError, with a text block and structuredContent
+//     error-long  isError, 30,000 characters of text and structuredContent
 //     empty       nothing at all
 //
 // One tool, `report`.
@@ -30,6 +36,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 /** 3 KB of bytes, base64: a payload whose size is easy to read back. */
 const BYTES_3KB = Buffer.alloc(3072, 7).toString('base64');
+
+/** A machine form whose id and status come AFTER 30k of notes. */
+const LONG_STRUCTURED = { notes: 'A long note. '.repeat(2_400), id: 'pr-11', status: 'pending' };
 
 const SHAPES = {
   mixed: {
@@ -89,6 +98,18 @@ const SHAPES = {
     isError: true,
     content: [{ type: 'text', text: 'Printer offline: the request was not queued.' }],
     structuredContent: { status: 'refused' },
+  },
+  'echoed-long': {
+    content: [{ type: 'text', text: JSON.stringify(LONG_STRUCTURED) }],
+    structuredContent: LONG_STRUCTURED,
+  },
+  tokens: {
+    content: [{ type: 'text', text: 'untrusted_tool_result '.repeat(1_130) }],
+  },
+  'error-long': {
+    isError: true,
+    content: [{ type: 'text', text: 'The printer said: '.repeat(1_700) }],
+    structuredContent: { id: 'pr-12', status: 'refused' },
   },
   empty: { content: [] },
 };

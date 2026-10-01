@@ -2,7 +2,11 @@ import { describe, it, expect, vi } from 'vitest';
 import type { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { mcpToolToToolDefinition, slugToPrefix } from '../tools.ts';
-import { MCP_TOOL_OUTPUT_FORMAT, toolResultRoom } from '@nodal-agents/shared';
+import {
+  MCP_TOOL_OUTPUT_FORMAT,
+  TOOL_RESULT_MODEL_CHARS,
+  framedForModel,
+} from '@nodal-agents/shared';
 import type { McpToolDescriptor } from '../client.ts';
 
 function clientWithCallTool(impl: () => unknown): Client {
@@ -193,7 +197,7 @@ describe('mcpToolToToolDefinition', () => {
     expect(JSON.stringify(out)).toContain('[...truncated at 50000 chars');
     expect(JSON.stringify(out).length).toBeLessThan(60_000);
     // …the model reads what fits the runner's budget for one result, said too.
-    expect(model.length).toBeLessThanOrEqual(toolResultRoom(def.name));
+    expect(framedForModel(def.name, model).length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
     expect(model).toMatch(/\[\.\.\.truncated at \d+ chars — MCP tool result was larger\]$/);
     expect(model.startsWith('x'.repeat(1000))).toBe(true);
   });
@@ -210,15 +214,38 @@ describe('mcpToolToToolDefinition', () => {
     expect(read(def, out)).toBe(small);
   });
 
-  it('an oversized structuredContent is wrapped with truncated:true instead of corrupting the JSON (F6)', async () => {
+  it('an oversized structuredContent is REDUCED on the row instead of corrupting the JSON (F6)', async () => {
     const records = Array.from({ length: 5000 }, (_, i) => ({
       id: `rec${i}`,
       fields: { Name: `Record number ${i}`, Notes: 'padding '.repeat(10) },
     }));
     const client = {
-      callTool: vi.fn(async () => ({ content: [], structuredContent: { records } })),
+      callTool: vi.fn(async () => ({
+        content: [],
+        structuredContent: { records, nextCursor: 'cur-9' },
+      })),
     } as unknown as Client;
     const def = mcpToolToToolDefinition(client, descriptor, 'airtable');
+
+    const out = (await def.execute({}, {} as never)) as {
+      structuredContent: { records: unknown[]; nextCursor: string };
+    };
+
+    // Still an object with every key, within the row's cap, the cut said in
+    // the list it hit — never fabricated content: the first records are real.
+    expect(JSON.stringify(out.structuredContent).length).toBeLessThanOrEqual(50_000);
+    expect(out.structuredContent.nextCursor).toBe('cur-9');
+    expect(out.structuredContent.records[0]).toEqual(records[0]);
+    expect(out.structuredContent.records.at(-1)).toMatch(/^\[\d+ more items cut by Nodal\]$/);
+  });
+
+  it('a structuredContent with nothing long enough to reduce is wrapped with truncated:true (F6)', async () => {
+    // 6,000 short keys: no string or list to give way.
+    const flat = Object.fromEntries(Array.from({ length: 6_000 }, (_, i) => [`k${i}`, i]));
+    const client = {
+      callTool: vi.fn(async () => ({ content: [], structuredContent: flat })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'c');
 
     const out = (await def.execute({}, {} as never)) as {
       structuredContent: { truncated: boolean; originalLength: number; preview: string };
@@ -226,12 +253,8 @@ describe('mcpToolToToolDefinition', () => {
 
     expect(out.structuredContent.truncated).toBe(true);
     expect(out.structuredContent.originalLength).toBeGreaterThan(50_000);
-    expect(out.structuredContent.preview.length).toBe(50_000);
-    // The preview must still be a prefix of the real serialized JSON — never
-    // fabricated content — even though it is not parseable on its own.
-    expect(JSON.stringify({ records }).startsWith(out.structuredContent.preview)).toBe(true);
-    // The model reads the wrapper, which says it was truncated.
-    expect(read(def, out)).toContain('"truncated":true');
+    // The preview is a prefix of the real serialized JSON — never fabricated.
+    expect(JSON.stringify(flat).startsWith(out.structuredContent.preview)).toBe(true);
   });
 
   it('a structuredContent under the cap is kept as is', async () => {
@@ -281,28 +304,95 @@ describe('mcpToolToToolDefinition', () => {
 
     // Within what the runner leaves once it has framed the result: its own
     // cut never runs, so it never takes the machine form at the tail.
-    expect(model.length).toBeLessThanOrEqual(toolResultRoom(def.name));
+    expect(framedForModel(def.name, model).length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
     expect(model.endsWith('{"id":"pr-9","status":"pending"}')).toBe(true);
     expect(model).toMatch(/\[\.\.\.truncated at \d+ chars — MCP tool result was larger\]/);
   });
 
-  it('a machine form larger than the budget is cut and says so; the text it pushed out is named', async () => {
+  it('a machine form larger than the budget is REDUCED, its short fields kept; the text it pushed out is named', async () => {
     const client = {
       callTool: vi.fn(async () => ({
         content: [{ type: 'text', text: 'A short sentence.' }],
-        structuredContent: { id: 'pr-9', blob: 'z'.repeat(40_000) },
+        // The long field FIRST: a cut at the tail would take the id and status.
+        structuredContent: { blob: 'z'.repeat(40_000), id: 'pr-9', status: 'pending' },
       })),
     } as unknown as Client;
     const def = mcpToolToToolDefinition(client, descriptor, 'printer');
 
     const model = read(def, await def.execute({}, {} as never));
 
-    expect(model.length).toBeLessThanOrEqual(toolResultRoom(def.name));
+    expect(framedForModel(def.name, model).length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
     expect(model).toContain(
       '[17 chars of text not passed to you: the structured result fills the budget of',
     );
-    expect(model).toContain('{"id":"pr-9"');
-    expect(model).toMatch(/\[\.\.\.truncated at \d+ chars — MCP tool result was larger\]$/);
+    // Still valid JSON, every key there, the cut said inside the field it hit.
+    const json = JSON.parse(model.slice(model.indexOf('\n') + 1)) as Record<string, string>;
+    expect(json.id).toBe('pr-9');
+    expect(json.status).toBe('pending');
+    expect(json.blob).toMatch(/…\[\d+ chars cut by Nodal\]$/);
+  });
+
+  it('a text block that IS the machine form, larger than the budget: reduced like it, the id kept', async () => {
+    const payload = { notes: 'A long note. '.repeat(2_400), id: 'pr-11', status: 'pending' };
+    const client = {
+      callTool: vi.fn(async () => ({
+        content: [{ type: 'text', text: JSON.stringify(payload) }],
+        structuredContent: payload,
+      })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'printer');
+
+    const model = read(def, await def.execute({}, {} as never));
+
+    expect(framedForModel(def.name, model).length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
+    const json = JSON.parse(model) as Record<string, string>;
+    expect(json.id).toBe('pr-11');
+    expect(json.status).toBe('pending');
+  });
+
+  it('a machine form of a thousand medium strings is not reduced field by field: cut at its tail, said', async () => {
+    // 1,000 strings of 100 chars: reducible, but only by ~670 cuts, one pass each.
+    const many = Object.fromEntries(
+      Array.from({ length: 1_000 }, (_, i) => [`f${i}`, `${i}:`.padEnd(100, 'm')]),
+    );
+    const client = {
+      callTool: vi.fn(async () => ({ content: [], structuredContent: many })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'c');
+
+    const out = (await def.execute({}, {} as never)) as {
+      structuredContent: { truncated: boolean; preview: string };
+    };
+    const model = read(def, out);
+
+    // The row says it was cut (an explicit wrapper with a real prefix)…
+    expect(out.structuredContent.truncated).toBe(true);
+    expect(JSON.stringify(many).startsWith(out.structuredContent.preview)).toBe(true);
+    // …and so does what the model reads, within the budget.
+    expect(framedForModel(def.name, model).length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
+    expect(JSON.parse(model)).toMatchObject({ truncated: true });
+  });
+
+  it('a list too long for the budget loses its last items, and says how many', async () => {
+    const records = Array.from({ length: 3_000 }, (_, i) => ({
+      id: `rec${i}`,
+      name: `Record ${i}`,
+    }));
+    const client = {
+      callTool: vi.fn(async () => ({
+        content: [],
+        structuredContent: { records, nextCursor: 'cur-42' },
+      })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'crm');
+
+    const model = read(def, await def.execute({}, {} as never));
+
+    expect(framedForModel(def.name, model).length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
+    const json = JSON.parse(model) as { records: unknown[]; nextCursor: string };
+    expect(json.nextCursor).toBe('cur-42');
+    expect(json.records[0]).toEqual({ id: 'rec0', name: 'Record 0' });
+    expect(json.records.at(-1)).toMatch(/^\[\d+ more items cut by Nodal\]$/);
   });
 
   it('a block cut by what is LEFT of the budget says the length it was cut at', async () => {

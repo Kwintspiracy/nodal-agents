@@ -4,8 +4,9 @@ import { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { ToolDefinition } from '@nodal-agents/tools';
 import {
-  TOOL_RESULT_MODEL_CHARS,
-  toolResultRoom,
+  fitToolResult,
+  framedForModel,
+  raisedErrorBlockLength,
   type OperationRiskLevel,
 } from '@nodal-agents/shared';
 import type { McpToolDescriptor } from './client.ts';
@@ -96,6 +97,8 @@ async function callMcpTool(
   client: Client,
   originalName: string,
   input: Record<string, unknown>,
+  /** The tool as the agent holds it (`printer__request_print`): what the runner frames. */
+  toolName: string,
 ): Promise<McpToolOutput> {
   const result = await client.callTool(
     { name: originalName, arguments: input },
@@ -112,10 +115,17 @@ async function callMcpTool(
   // model can correct are reported IN the result). It stays an error: the
   // model reads the same rendering, every block included, as the failure.
   if (result.isError === true) {
-    // The runner caps an error's text at the model budget before framing it
-    // (`toErrorOutput`): rendered to fit, so the machine form survives that cut.
+    // The runner fits a failure the tool raised into the model's budget as a
+    // framed `{ error }` block (`toErrorOutput`): rendered here to fit that very
+    // block, so the runner never has to cut it — nor the machine form with it.
     const prefix = `MCP tool ${originalName} failed: `;
-    throw new Error(prefix + mcpResultForModel(record, TOOL_RESULT_MODEL_CHARS - prefix.length));
+    throw new Error(
+      prefix +
+        fitToolResult(
+          (room) => mcpResultForModel(record, room),
+          (text) => raisedErrorBlockLength(toolName, prefix + text),
+        ),
+    );
   }
   return record;
 }
@@ -233,11 +243,15 @@ function buildMcpToolDefinition(
     defaultApproval: 'require_approval',
     ...(serverOwnsPurpose ? { purposeIsArgument: true } : {}),
     // The row keeps the whole result (`McpToolOutput`); the model reads the
-    // server's text blocks in order, the rest said, `structuredContent` only
-    // when no text block exists (`result.ts`).
-    // Rendered to fit the room the runner leaves once it has framed the result
-    // (one budget, `@nodal-agents/shared`): the runner's own cut never runs.
-    toModelOutput: (output) => mcpResultForModel(output as McpToolOutput, toolResultRoom(name)),
+    // server's blocks in order, the rest said, then the machine form once
+    // (`result.ts`) — rendered so the FRAMED block the model reads (frame and
+    // neutralized tokens included) fits the one budget: the runner never has
+    // to cut it.
+    toModelOutput: (output) =>
+      fitToolResult(
+        (room) => mcpResultForModel(output as McpToolOutput, room),
+        (text) => framedForModel(name, text).length,
+      ),
     async execute(input) {
       const client = await getClient();
       const args = { ...((input ?? {}) as Record<string, unknown>) };
@@ -245,7 +259,7 @@ function buildMcpToolDefinition(
       // argument outside its own schema. Stripped only when WE added it, so a
       // server that legitimately takes a `purpose` still receives its value.
       if (purposeInjected) delete args[PURPOSE_KEY];
-      return callMcpTool(client, originalName, args);
+      return callMcpTool(client, originalName, args, name);
     },
   };
 }
