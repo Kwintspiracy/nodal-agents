@@ -9,7 +9,7 @@ import {
   validateElicitationContent,
   readElicitationAttachments,
   ELICITATION_ATTACHMENT_MAX_BYTES,
-} from '../elicitation.ts';
+} from '../elicitation';
 
 const FORM = {
   type: 'object',
