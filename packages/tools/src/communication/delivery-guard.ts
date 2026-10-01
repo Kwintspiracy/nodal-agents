@@ -200,8 +200,7 @@ export function resetDeliveryCounterForTests(jobId?: string): void {
  * `resolveOwnerConversation`/`isConversationAllowed` (@nodal-agents/db). For
  * channel='telegram' with no `explicitChannel` — every job before cross-
  * channel sends existed — these are byte-identical to the pre-S3
- * `resolveOwnerChatId`/`isChatAllowed` calls they replace (both are thin
- * wrappers pinned to channel='telegram').
+ * Telegram-pinned owner and allowlist lookups they replace.
  *
  * A cross-channel target (`explicitChannel` naming a channel other than
  * the one the job's chat was recorded on) is no special case: the job has no

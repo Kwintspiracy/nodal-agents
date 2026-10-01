@@ -22,6 +22,7 @@ import {
   agents,
   telegramAllowedChats,
   channelAllowedConversations,
+  channelBindings,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -35,23 +36,34 @@ import type { RunnerDeps } from '../../deps.ts';
 // sendTelegramMessageMock so the existing assertions keep working unchanged.
 type SendOpts = { chatId: string; text: string; botToken: string };
 const sendTelegramMessageMock = vi.fn(async (_opts: SendOpts) => ({ messageId: 1 }));
+// Which adapter carried which conversation id: an id is only meaningful on the
+// channel it belongs to (#649).
+const adapterSendMock = vi.fn((_channel: string, _conversationId: string) => {});
 vi.mock('@nodal-agents/delivery', async (importOriginal) => ({
-  // The job-chat rule (#649) is pure: the real one, never a stand-in.
+  // The channel rules (#649) are the real ones, never a stand-in: which
+  // channels an agent has, which one a notice goes on, whose chat it reaches.
   ...(await importOriginal<{
     defaultSendChannel: unknown;
     jobChatOn: unknown;
-  }>().then(({ defaultSendChannel, jobChatOn }) => ({ defaultSendChannel, jobChatOn }))),
+    resolveTransportChannel: unknown;
+    listActiveChannelsForAgent: unknown;
+    resolveOwnerNoticeTarget: unknown;
+  }>().then((real) => ({
+    defaultSendChannel: real.defaultSendChannel,
+    jobChatOn: real.jobChatOn,
+    resolveTransportChannel: real.resolveTransportChannel,
+    listActiveChannelsForAgent: real.listActiveChannelsForAgent,
+    resolveOwnerNoticeTarget: real.resolveOwnerNoticeTarget,
+  }))),
   sendTelegramMessage: (opts: SendOpts) => sendTelegramMessageMock(opts),
-  resolveTransportChannel: () => 'telegram',
-  // No test here binds an agent to a non-telegram channel — an empty active
-  // list preserves the pre-existing 'telegram' default.
-  listActiveChannelsForAgent: async (..._args: unknown[]) => [] as string[],
   // Read by the prompt's channel line (#613); Telegram's declaration.
   textDeliveryOf: () => ({ renders: [], maxMessageChars: 3900 }),
   getAdapter: (channel: string) => ({
     channel,
-    sendText: (creds: { botToken: string }, conversationId: string, text: string) =>
-      sendTelegramMessageMock({ chatId: conversationId, text, botToken: creds.botToken }),
+    sendText: (creds: { botToken: string }, conversationId: string, text: string) => {
+      adapterSendMock(channel, conversationId);
+      return sendTelegramMessageMock({ chatId: conversationId, text, botToken: creds.botToken });
+    },
   }),
 }));
 
@@ -554,6 +566,33 @@ describe('runScheduleTick @cap:planifier-une-tache/moteur', () => {
     expect(after[0]?.lastStatus).toBe('failed');
   });
 
+  // Review of #657, pass 5: 'notify_unreachable' replaces a 'success' that
+  // would hide a confirmation nobody received. It never replaces 'failed': a
+  // run that failed says so, whatever its confirmation would have been.
+  it('a run that fails stays failed even when its confirmation had no channel to go on (#649)', async () => {
+    const sched = await createSchedule({
+      nextRun: null,
+      task: 'failing run, explicit chat on auto',
+      notifyOnSuccess: true,
+      chatId: '424243',
+    });
+
+    // Empty response → no_tool_calls_no_text → job fails
+    const deps = makeDeps(db, [{ text: '', toolCalls: [] }]);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    const [after] = await db
+      .select({ lastStatus: agentSchedules.lastStatus })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, sched.id));
+    expect(after?.lastStatus).toBe('failed');
+  });
+
   // ─── Event Triggers, Brique 1: schedule_id + trigger_context ────────────────
 
   it('stamps the fired job with schedule_id and trigger_context.prevRunAt = the PREVIOUS last_run', async () => {
@@ -706,6 +745,85 @@ describe('runScheduleTick @cap:planifier-une-tache/moteur', () => {
       await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
     },
   );
+
+  // Review of #657, pass 5: the budget notice resolved the owner's TELEGRAM
+  // chat, then sent it on the agent's first active channel. Telegram token
+  // withdrawn, Discord active: a Telegram chat id went through the Discord
+  // adapter. The notice now resolves the channel first, then the owner's
+  // conversation ON that channel — never an id from one channel on another.
+  it('the budget notice reaches the owner on the channel it is sent on, never a Telegram id through Discord (#649)', async () => {
+    // A Telegram owner on record, but no Telegram token: Discord is the only
+    // active channel.
+    await db.insert(telegramAllowedChats).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      chatId: 'budget-tg-owner',
+      role: 'owner',
+      status: 'active',
+    });
+    await db.insert(channelBindings).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      credentials: JSON.stringify({ botToken: 'discord-bot-token' }),
+      enabled: true,
+    });
+    const held: string[] = [];
+    try {
+      // No Discord owner conversation yet: nobody to tell on Discord, so
+      // nothing is sent — least of all the Telegram id.
+      const first = await createSchedule({
+        nextRun: new Date(Date.now() - 60_000),
+        task: 'budget notice, no discord owner',
+      });
+      held.push(first.id);
+      await insertScheduleJob(first.id, { totalCostUsd: 5.01 });
+      adapterSendMock.mockClear();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        await runScheduleTick(db as RunnerDeps['db'], makeDeps(db, [{ text: 'never' }]), 5);
+      } finally {
+        warnSpy.mockRestore();
+      }
+      const [afterFirst] = await db
+        .select({ lastStatus: agentSchedules.lastStatus })
+        .from(agentSchedules)
+        .where(eq(agentSchedules.id, first.id));
+      expect(afterFirst?.lastStatus).toBe('budget_exhausted');
+      expect(adapterSendMock.mock.calls).toEqual([]);
+
+      // The owner's Discord conversation exists: the notice goes there, on
+      // Discord.
+      await db.insert(channelAllowedConversations).values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'discord',
+        conversationId: 'budget-discord-owner',
+        role: 'owner',
+        status: 'active',
+      });
+      const second = await createSchedule({
+        nextRun: new Date(Date.now() - 60_000),
+        task: 'budget notice, discord owner',
+      });
+      held.push(second.id);
+      await insertScheduleJob(second.id, { totalCostUsd: 5.01 });
+      adapterSendMock.mockClear();
+      await runScheduleTick(db as RunnerDeps['db'], makeDeps(db, [{ text: 'never' }]), 5);
+      expect(adapterSendMock.mock.calls).toEqual([['discord', 'budget-discord-owner']]);
+    } finally {
+      await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
+      await db
+        .delete(channelAllowedConversations)
+        .where(eq(channelAllowedConversations.agentId, seed.agentId));
+      await db.delete(channelBindings).where(eq(channelBindings.agentId, seed.agentId));
+      // A held schedule stays due: paused, it leaves the tick's slots to the
+      // tests that follow.
+      for (const id of held) {
+        await db.update(agentSchedules).set({ active: false }).where(eq(agentSchedules.id, id));
+      }
+    }
+  });
 
   it('does not count cost from a previous day toward the budget', async () => {
     const sched = await createSchedule({

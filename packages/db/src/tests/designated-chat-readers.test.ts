@@ -15,6 +15,18 @@
 // packages/*/src. "Next to" means within WINDOW lines, comments excluded.
 // What it cannot see, and says: an id copied into a variable of another name
 // and read further away.
+//
+// Second form (review of #657, pass 5): an OWNER chat is resolved on a channel
+// and must go out on that channel. The budget notice of a routine resolved the
+// owner's Telegram chat and sent it through the agent's first active channel —
+// Discord. The Telegram-pinned `resolveOwnerChatId` is gone: every owner
+// lookup is `resolveOwnerConversation(db, agentId, <channel>)`, and that same
+// <channel> must be what the chat is sent or designated on, within
+// OWNER_WINDOW lines (`designateChat(…, <channel>)`,
+// `getBindingCredentials(…, <channel>)`, `channel: <channel>`, or a returned
+// `{ channel, … }` when it is named `channel`), or the call is listed with why.
+// What it cannot see: a channel copied into a variable of another name between
+// the lookup and the send.
 
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -190,6 +202,113 @@ describe("a job's chat id is never read without its channel (#649) @cap:parler-p
       '// a comment naming job.chatId is no read',
     ]) {
       expect({ fine, caught: chatIdReadAlone(fine) }).toEqual({ fine, caught: [] });
+    }
+  });
+});
+
+// ─── An owner chat goes out on the channel it was resolved on ──────────────
+
+/** How far (in lines) the send or designation may sit from the lookup. */
+const OWNER_WINDOW = 25;
+
+const OWNER_LOOKUP = /\bresolveOwnerConversation\(/;
+const OWNER_LOOKUP_ARGS = /\bresolveOwnerConversation\(\s*[^,()]+,\s*[^,()]+,\s*([^,()]+?)\s*\)/;
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The owner lookups of `source` whose channel is not the one the chat goes out
+ * on: no send or designation names that same channel within OWNER_WINDOW
+ * lines. A lookup whose arguments cannot be read on its line is reported too:
+ * the scan says what it cannot judge.
+ */
+export function ownerChatOffChannel(source: string): string[] {
+  const lines = stripComments(source).split('\n');
+  const off: string[] = [];
+  lines.forEach((line, i) => {
+    if (!OWNER_LOOKUP.test(line) || /function\s+resolveOwnerConversation\b/.test(line)) return;
+    const args = OWNER_LOOKUP_ARGS.exec(line);
+    if (!args) {
+      off.push(line.trim());
+      return;
+    }
+    const ch = escapeRegExp(args[1]!);
+    const near = lines.slice(Math.max(0, i - 3), i + OWNER_WINDOW + 1).join('\n');
+    const paired = [
+      new RegExp(`designateChat\\([\\s\\S]*?,\\s*${ch}\\s*,?\\s*\\)`),
+      new RegExp(`getBindingCredentials\\([^;]*?,\\s*${ch}\\s*\\)`),
+      new RegExp(`\\bchannel:\\s*${ch}(?!\\w)`),
+      ...(args[1] === 'channel' ? [/\{\s*channel\s*,/] : []),
+    ].some((re) => re.test(near));
+    if (!paired) off.push(line.trim());
+  });
+  return off;
+}
+
+/** Owner lookups whose chat goes out by another path, each with why. */
+const OWNER_CHAT_ELSEWHERE: ReadonlyArray<{ file: string; line: string; why: string }> = [
+  {
+    file: 'packages/tools/src/communication/delivery-guard.ts',
+    line: 'chatId = await resolveOwnerConversation(ctx.db, ctx.agentId, channel);',
+    why:
+      'resolveRecipientChatId returns the chat; the send tools take their token from ' +
+      'resolveBotToken, which resolves the same channel by the same resolveChannelForJob',
+  },
+];
+
+describe('an owner chat goes out on the channel it was resolved on (#649) @cap:parler-par-canal-externe/moteur', () => {
+  const found: Array<{ file: string; line: string }> = [];
+  for (const root of srcRoots()) {
+    for (const file of sourceFiles(root)) {
+      for (const line of ownerChatOffChannel(readFileSync(file, 'utf8'))) {
+        found.push({ file: relative(repoRoot, file).split(sep).join('/'), line });
+      }
+    }
+  }
+  const listed = (r: { file: string; line: string }) =>
+    OWNER_CHAT_ELSEWHERE.some((a) => a.file === r.file && a.line === r.line);
+
+  it('every owner lookup is paired with the send or designation on its channel, or listed', () => {
+    expect(found.filter((r) => !listed(r))).toEqual([]);
+  });
+
+  it('the list holds no stale entry', () => {
+    const stale = OWNER_CHAT_ELSEWHERE.filter(
+      (a) => !found.some((r) => r.file === a.file && r.line === a.line),
+    ).map(({ file, line }) => ({ file, line }));
+    expect(stale).toEqual([]);
+  });
+
+  it('the scan catches the shape of pass 5, and lets a paired lookup through', () => {
+    // The budget notice before pass 5: the owner's Telegram chat, sent on the
+    // first active channel.
+    const bad = [
+      "const ownerChatId = await resolveOwnerConversation(db, agentId, 'telegram');",
+      "const channel = resolveTransportChannel('cron', activeChannels);",
+      'const creds = await getBindingCredentials(db, agentId, channel);',
+      'await adapter.sendText(creds, ownerChatId, text);',
+    ].join('\n');
+    expect(ownerChatOffChannel(bad)).toHaveLength(1);
+    // A lookup spread over lines cannot be judged: reported, never passed.
+    expect(
+      ownerChatOffChannel('x = resolveOwnerConversation(\n  db,\n  a,\n  c,\n);'),
+    ).toHaveLength(1);
+    for (const fine of [
+      [
+        'const chatId = await resolveOwnerConversation(db, agentId, rootChannel);',
+        'const creds = await getBindingCredentials(db, agentId, rootChannel);',
+      ].join('\n'),
+      'return { channel, chatId: await resolveOwnerConversation(db, agentId, channel) };',
+      [
+        'return designateChat(',
+        "  await resolveOwnerConversation(db, schedule.agentId, 'telegram'),",
+        "  'telegram',",
+        ');',
+      ].join('\n'),
+    ]) {
+      expect({ fine, off: ownerChatOffChannel(fine) }).toEqual({ fine, off: [] });
     }
   });
 });

@@ -20,7 +20,7 @@
 // exact same default rule, and drifting it between them would silently split
 // where a job's outbound replies land.
 
-import { agents, eq, listChannelBindings } from '@nodal-agents/db';
+import { agents, eq, listChannelBindings, resolveOwnerConversation } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { ChannelKind } from './channel-adapter.ts';
 
@@ -91,6 +91,23 @@ export function defaultSendChannel(
  */
 export function jobChatOn(chat: JobChat, channel: ChannelKind): string | null {
   return chat.id && chat.channel === channel ? chat.id : null;
+}
+
+/**
+ * Where a notice nobody asked for in a chat reaches the agent's owner (a
+ * schedule's budget notice, an outbox alert): the CHANNEL first — the agent's
+ * first active one (`resolveTransportChannel`) — then the owner's
+ * conversation ON THAT channel. `chatId` is null when the owner has none
+ * there: the caller says so and sends nothing. Never an owner chat resolved on
+ * one channel and sent on another (#649, review of #657 pass 5: the budget
+ * notice sent the owner's Telegram chat id through the Discord adapter).
+ */
+export async function resolveOwnerNoticeTarget(
+  db: AnyDrizzleDb,
+  agentId: string,
+): Promise<{ channel: ChannelKind; chatId: string | null }> {
+  const channel = resolveTransportChannel(null, await listActiveChannelsForAgent(db, agentId));
+  return { channel, chatId: await resolveOwnerConversation(db, agentId, channel) };
 }
 
 /**

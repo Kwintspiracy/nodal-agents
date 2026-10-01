@@ -149,7 +149,7 @@ import {
   setInstallNotes,
   setSkillScriptsAuthorized,
   setSkillFilesWritable,
-  resolveOwnerChatId,
+  resolveOwnerConversation,
   designateChat,
   resolveScheduleNotifyChat,
   channelBindings,
@@ -2135,13 +2135,13 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
     // Resolve chatId for Telegram delivery.
     // A dashboard send is the OWNER acting, so it must reach the owner's 1:1 —
     // never `agents.lastSeenChatIdTelegram`, which a group message silently
-    // overwrites (see resolveOwnerChatId). The runner reads chatId to populate
+    // overwrites. The runner reads chatId to populate
     // the Job context block in the system_prompt; the agent's personality
     // decides how to use it. task field stays pristine (= exact user input,
     // no suffix injection).
     let resolvedChatId: string | null = null;
     if (parsed.data.sendViaTelegram) {
-      resolvedChatId = await resolveOwnerChatId(db, parsed.data.agentId);
+      resolvedChatId = await resolveOwnerConversation(db, parsed.data.agentId, 'telegram');
       if (!resolvedChatId) {
         return fail(
           'no_telegram_recipient_known',
@@ -11309,11 +11309,10 @@ export async function runScheduleNowAction(
     // one (and stays silent when the schedule is silent). An explicit schedule
     // target wins; otherwise fall back to the bot owner's 1:1 — never the
     // agent's lastSeenChatIdTelegram, which a group message can silently
-    // overwrite (see resolveOwnerChatId).
+    // overwrite.
     //
     // B1: an explicit notifyChannel resolves the owner conversation ON THAT
-    // CHANNEL (channel-parametric resolveOwnerConversation) instead of the
-    // telegram-only wrapper — same rule run-schedules.ts's runScheduleTick
+    // CHANNEL (channel-parametric resolveOwnerConversation) — same rule run-schedules.ts's runScheduleTick
     // applies, so "Run now" behaves identically to a real fire. A resolution
     // failure here is surfaced to the user directly (this action returns
     // ActionResult synchronously) rather than via lastStatus — there is no

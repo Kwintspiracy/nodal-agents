@@ -14,17 +14,12 @@ import { and, eq, isNull, lte, or, sql, desc, inArray } from '@nodal-agents/db';
 import {
   agentSchedules,
   agentJobs,
-  resolveOwnerChatId,
   resolveScheduleNotifyChat,
   getBindingCredentials,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { resolveTimezone, LIVE_JOB_STATUSES } from '@nodal-agents/shared';
-import {
-  getAdapter,
-  resolveTransportChannel,
-  listActiveChannelsForAgent,
-} from '@nodal-agents/delivery';
+import { getAdapter, resolveOwnerNoticeTarget } from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import { CronExpressionParser } from 'cron-parser';
 import { executeJob, type ExecuteJobResult } from '../job/execute.ts';
@@ -42,8 +37,14 @@ const STUCK_LIVE_JOB_MS = 2 * 60 * 60 * 1000; // 2h
 /**
  * Best-effort: tell the bot OWNER a schedule's daily budget just tripped.
  * Failures are logged and swallowed — a notification failure must never block
- * the (already-persisted) budget hold. No-ops silently when the agent has no
- * registered owner or no bot token (dashboard-only schedule).
+ * the (already-persisted) budget hold. Sends nothing, and says so in the log,
+ * when the agent has no owner conversation or no credential on the channel
+ * the notice goes on (dashboard-only schedule).
+ *
+ * The channel first, then the owner's conversation ON that channel
+ * (`resolveOwnerNoticeTarget`, the rule the outbox alerts share): the owner's
+ * Telegram chat id used to go through whichever channel was active first —
+ * Discord, once the Telegram token was withdrawn (#649, review of #657 pass 5).
  */
 async function notifyBudgetExhausted(
   db: AnyDrizzleDb,
@@ -52,15 +53,22 @@ async function notifyBudgetExhausted(
   dailyBudgetUsd: number,
 ): Promise<void> {
   try {
-    const ownerChatId = await resolveOwnerChatId(db, agentId);
-    if (!ownerChatId) return;
-    // S3: a cron trigger isn't itself a transport — resolveTransportChannel
-    // defaults it to this agent's own active channel, falling back to
-    // 'telegram' only when the agent has no active channel at all.
-    const activeChannels = await listActiveChannelsForAgent(db, agentId);
-    const channel = resolveTransportChannel('cron', activeChannels);
+    const { channel, chatId: ownerChatId } = await resolveOwnerNoticeTarget(db, agentId);
+    if (!ownerChatId) {
+      console.warn(
+        `[runScheduleTick] budget_exhausted notice for agent ${agentId} not sent: ` +
+          `no owner conversation on ${channel}`,
+      );
+      return;
+    }
     const creds = await getBindingCredentials(db, agentId, channel);
-    if (!creds) return;
+    if (!creds) {
+      console.warn(
+        `[runScheduleTick] budget_exhausted notice for agent ${agentId} not sent: ` +
+          `no credential on ${channel}`,
+      );
+      return;
+    }
     const adapter = getAdapter(channel);
     await adapter.sendText(
       creds,
@@ -262,7 +270,7 @@ export async function runScheduleTick(
     //
     // B1 (notify-channel-choice): when the schedule chose an EXPLICIT channel,
     // the owner conversation is resolved ON THAT CHANNEL (resolveOwnerConversation,
-    // channel-parametric) instead of the telegram-only resolveOwnerChatId wrapper
+    // channel-parametric), never a Telegram owner chat sent elsewhere
     // — choosing a channel LINKS chatId resolution to it, closing the structural
     // gap where the chatId and the delivery channel used to be resolved
     // independently. notifyChannel=null (auto) keeps the exact historical path.
@@ -355,13 +363,14 @@ export async function runScheduleTick(
     if (settled.status === 'rejected') continue;
     const { fire, result } = settled.value;
     let lastStatus: 'success' | 'failed' | 'no_action' | 'notify_unreachable';
-    if (notifyUnreachableScheduleIds.has(fire.scheduleId)) {
-      // The run's own outcome is secondary here — the actionable signal for
-      // the user is that their chosen notify channel couldn't be reached, so
-      // this overrides an otherwise-'success' status rather than hiding it.
-      lastStatus = 'notify_unreachable';
-    } else if (result.status === 'completed') lastStatus = 'success';
-    else if (result.status === 'failed') lastStatus = 'failed';
+    if (result.status === 'completed') {
+      // A confirmation nobody could receive replaces 'success' only: it is
+      // what a green status would hide. A run that failed, or waits, says so
+      // first (review of #657, pass 5).
+      lastStatus = notifyUnreachableScheduleIds.has(fire.scheduleId)
+        ? 'notify_unreachable'
+        : 'success';
+    } else if (result.status === 'failed') lastStatus = 'failed';
     else if (result.status === 'cancelled') lastStatus = 'failed';
     else lastStatus = 'no_action'; // awaiting_approval / awaiting_delegation
 
