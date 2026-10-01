@@ -1,20 +1,9 @@
 // router/assign-tools.ts — generate assign_* tools from DB
 // Reads children from agent_assignments table. Never hardcodes agent slugs.
 
-import { DELEGATION_SCOPE_RULE } from './delegation-scope';
 import { z } from 'zod';
 import { eq, and } from '@nodal-agents/db';
-import {
-  agents,
-  agentAssignments,
-  agentSkillAssignments,
-  agentSkills,
-  agentConnectorAssignments,
-  connectors as connectorsTable,
-  agentMcpServers,
-  mcpServers,
-} from '@nodal-agents/db';
-import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
+import { agents, agentAssignments } from '@nodal-agents/db';
 import { DelegationPendingError } from '../errors';
 import { delegationCard } from '@nodal-agents/tools';
 import type { AgentId, AnyDrizzleDb, ToolDefinition, ChildAgent } from '../types';
@@ -55,10 +44,11 @@ export type AssignInput = z.infer<typeof assignInputSchema>;
  */
 /**
  * Distil an agent's personality into a one-line "what it's for" so the
- * orchestrator can route by specialization. Takes the first 1–2 sentences of the
- * personality (which conventionally open with "You are X, a <role>…"), stripped
- * of markdown and capped — enough to convey the agent's vocation without dumping
- * the whole prompt into every assign_ tool description.
+ * orchestrator can route by specialization — the `Purpose` of a roster entry
+ * (team-block.ts). Takes the first 1–2 sentences of the personality (which
+ * conventionally open with "You are X, a <role>…"), stripped of markdown and
+ * capped — enough to convey the agent's vocation without dumping the whole
+ * prompt into the roster.
  */
 export function summarizePurpose(personality: string | null | undefined, maxLen = 240): string {
   if (!personality) return '';
@@ -81,167 +71,33 @@ export async function generateAssignTools(
   parentAgentId: AgentId,
   db: AnyDrizzleDb,
 ): Promise<ToolDefinition<typeof assignInputSchema, never>[]> {
-  // Load children via agent_assignments JOIN agents
   const rows = await db
-    .select({
-      subAgentId: agentAssignments.subAgentId,
-      instructions: agentAssignments.instructions,
-      agentName: agents.name,
-      agentSlug: agents.slug,
-      agentRole: agents.role,
-      agentActive: agents.active,
-      agentPersonality: agents.personality,
-    })
+    .select({ agentName: agents.name, agentSlug: agents.slug })
     .from(agentAssignments)
     .innerJoin(agents, eq(agentAssignments.subAgentId, agents.id))
     .where(
       and(eq(agentAssignments.orchestratorId, parentAgentId as string), eq(agents.active, true)),
     );
 
-  if (rows.length === 0) return [];
-
-  // Fetch skill names per agent for richer tool descriptions
-  const childIds = rows.map((r) => r.subAgentId);
-  const allSkillRows = await Promise.all(
-    childIds.map((id) =>
-      db
-        .select({
-          agentId: agentSkillAssignments.agentId,
-          skillName: agentSkills.name,
-          skillSlug: agentSkills.slug,
-        })
-        .from(agentSkillAssignments)
-        .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
-        .where(eq(agentSkillAssignments.agentId, id as string)),
-    ),
-  );
-
-  const skillMap = new Map<string, string[]>();
-  for (const skillBatch of allSkillRows) {
-    for (const r of skillBatch) {
-      const existing = skillMap.get(r.agentId) ?? [];
-      existing.push(r.skillName);
-      skillMap.set(r.agentId, existing);
-    }
-  }
-
-  // Load connector tool inventories per child — symmetric with the
-  // ## Your team block (see team-block.ts). Without this, the orchestrator's
-  // `assign_<child>` tool description omits capabilities the child actually
-  // has and the LLM refuses to delegate ("I don't have Airtable access").
-  const connectorRows = await Promise.all(
-    childIds.map((id) =>
-      db
-        .select({
-          agentId: agentConnectorAssignments.agentId,
-          slug: connectorsTable.slug,
-          enabledOperations: agentConnectorAssignments.enabledOperations,
-        })
-        .from(agentConnectorAssignments)
-        .innerJoin(connectorsTable, eq(connectorsTable.id, agentConnectorAssignments.connectorId))
-        .where(eq(agentConnectorAssignments.agentId, id as string)),
-    ),
-  );
-
-  const connectorMap = new Map<string, { slug: string; toolNames: string[] }[]>();
-  for (const batch of connectorRows) {
-    for (const r of batch) {
-      const entry = ADAPTER_REGISTRY[r.slug];
-      if (!entry) continue;
-      const allToolNames = entry.operations.map((o) => o.slug);
-      const toolNames =
-        r.enabledOperations === null
-          ? allToolNames
-          : allToolNames.filter((n) => r.enabledOperations!.includes(n));
-      if (toolNames.length === 0) continue;
-      const existing = connectorMap.get(r.agentId) ?? [];
-      existing.push({ slug: r.slug, toolNames });
-      connectorMap.set(r.agentId, existing);
-    }
-  }
-
-  // Load MCP server inventories per child — same rationale. A router
-  // orchestrator refused 6× in a row to delegate work the child could
-  // actually do (2026-05-26) because this tool description omitted the
-  // child's MCP capabilities.
-  const mcpRows = await Promise.all(
-    childIds.map((id) =>
-      db
-        .select({
-          agentId: agentMcpServers.agentId,
-          serverSlug: mcpServers.slug,
-          enabledTools: agentMcpServers.enabledTools,
-          availableTools: mcpServers.availableTools,
-          serverActive: mcpServers.active,
-        })
-        .from(agentMcpServers)
-        .innerJoin(mcpServers, eq(mcpServers.id, agentMcpServers.mcpServerId))
-        .where(eq(agentMcpServers.agentId, id as string)),
-    ),
-  );
-
-  const mcpMap = new Map<string, { slug: string; toolNames: string[] }[]>();
-  for (const batch of mcpRows) {
-    for (const r of batch) {
-      if (r.serverActive === false) continue;
-      const prefix = r.serverSlug.replace(/-/g, '_');
-      const available = Array.isArray(r.availableTools)
-        ? (r.availableTools as Array<{ name?: unknown }>)
-            .map((t) => (t && typeof t.name === 'string' ? t.name : null))
-            .filter((n): n is string => n !== null)
-        : [];
-      if (available.length === 0) continue;
-      const enabled = Array.isArray(r.enabledTools)
-        ? new Set((r.enabledTools as unknown[]).filter((n): n is string => typeof n === 'string'))
-        : null;
-      const kept = enabled === null ? available : available.filter((n) => enabled.has(n));
-      if (kept.length === 0) continue;
-      const toolNames = kept.map((n) => `${prefix}__${n}`);
-      const existing = mcpMap.get(r.agentId) ?? [];
-      existing.push({ slug: r.serverSlug, toolNames });
-      mcpMap.set(r.agentId, existing);
-    }
-  }
-
-  // Capability hint for the orchestrator: the NAMES of the connectors/MCP
-  // servers the child can use — NOT the full per-operation tool list (that was
-  // noise the orchestrator couldn't act on without each tool's description).
-  // The connector/MCP name conveys the capability ("has tavily", "has gmail")
-  // so the orchestrator won't wrongly think the child lacks an integration.
-  function formatToolsTag(subAgentId: string): string {
-    const conn = connectorMap.get(subAgentId);
-    const mcp = mcpMap.get(subAgentId);
-    const names: string[] = [];
-    if (conn) names.push(...conn.map((c) => c.slug));
-    if (mcp) names.push(...mcp.map((c) => c.slug));
-    if (names.length === 0) return '';
-    return ` Connectors: ${[...new Set(names)].join(', ')}.`;
-  }
-
-  // Build one tool per child
   const tools: ToolDefinition<typeof assignInputSchema, never>[] = [];
 
   for (const row of rows) {
-    const { subAgentId, instructions, agentName, agentSlug, agentRole, agentPersonality } = row;
+    const { agentName, agentSlug } = row;
 
     // Normalize slug: hyphens → underscores for valid tool names
     const toolSlug = agentSlug.replace(/-/g, '_');
     const toolName = `assign_${toolSlug}`;
 
-    // Build description from live DB data (never hardcoded). Lead with WHAT THE
-    // AGENT IS FOR (a summary of its personality) so the orchestrator routes by
-    // specialization — without it, it sees interchangeable names and misroutes
-    // (e.g. handing a writing task to a social-network-only agent).
-    const purpose = summarizePurpose(agentPersonality);
-    const purposeDesc = purpose ? ` ${purpose}` : '';
-    const skills = skillMap.get(subAgentId) ?? [];
-    const skillsDesc = skills.length > 0 ? ` Skills: ${skills.join(', ')}.` : '';
-    const toolsDesc = formatToolsTag(subAgentId);
-    const roleNote = agentRole === 'orchestrator' ? ' (orchestrator — manages their own team)' : '';
-    const instrNote = instructions ? ` Instructions: ${instructions}` : '';
-
-    const description =
-      `Assign a task to ${agentName}${roleNote}.${purposeDesc}${skillsDesc}${toolsDesc}${instrNote} ${DELEGATION_SCOPE_RULE}`.trim();
+    // The tool is the HANDLE, the roster is the DESCRIPTION. `## Your team`
+    // (team-block.ts) describes each teammate — purpose, skills, connectors,
+    // folders, shell, the owner's instructions — and names this very tool on
+    // its entry, so the description says who it reaches and nothing more. It
+    // used to recopy part of the roster (purpose, skills, connectors,
+    // instructions) and the delegation scope rule, in every assign_* tool:
+    // ~11k characters of eager schemas per turn on a root with ten teammates,
+    // half of them said twice (lot 2, PR C2). The name comes from the base
+    // (invariant #1).
+    const description = `Assign a task to ${agentName}.`;
 
     // Capture in closure
     const capturedSlug = agentSlug;

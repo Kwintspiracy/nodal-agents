@@ -29,8 +29,8 @@
 // tool guidance: how to look, with `nodal_docs`.
 //
 // The companion rule of run 06a949cb ("a delegation never widens a teammate's
-// folders") does NOT live here: it is a rule of delegation, carried by the
-// delegation tools themselves (orchestration/router/delegation-scope.ts).
+// folders") does NOT live here: it is a rule of delegation, said once in the
+// delegation manual of `## Your team` (orchestration/router/delegation-scope.ts).
 
 import type { SystemSkill } from '../types';
 
