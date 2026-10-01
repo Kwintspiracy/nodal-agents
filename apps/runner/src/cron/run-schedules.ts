@@ -272,14 +272,24 @@ export async function runScheduleTick(
     // 'notify_unreachable' below instead of masking the problem as 'success'.
     // ONE rule for the tick, "Run now" and run_schedule (#649): the chat and
     // the channel it was resolved on, or no channel when nothing says it.
+    //
+    // A confirmation asked for reaches a chat only when that chat carries its
+    // channel (#649, review of #657 pass 4): no send tool writes to a chat
+    // whose platform nobody knows, and none writes to a chat that does not
+    // exist. Both — a chosen channel with no owner conversation yet, an
+    // explicit chat on auto, auto with no Telegram owner — are the SAME fact,
+    // said once: 'notify_unreachable', never a green 'success'.
     const notifyChat = await resolveScheduleNotifyChat(db, sched);
-    if (sched.notifyOnSuccess && sched.notifyChannel && !notifyChat.chatId) {
+    if (sched.notifyOnSuccess && !notifyChat.chatChannel) {
       notifyUnreachableScheduleIds.add(sched.id);
       console.error(
-        `[runScheduleTick] schedule "${sched.name}" (${sched.id}) chose notify channel ` +
-          `'${sched.notifyChannel}' but has no owner conversation there yet (never DMed on that ` +
-          `channel). Firing WITHOUT a delivery target — not falling back to another ` +
-          `channel. lastStatus will read 'notify_unreachable'.`,
+        `[runScheduleTick] schedule "${sched.name}" (${sched.id}) asked for a success ` +
+          `confirmation that no channel can carry: ` +
+          (notifyChat.chatId
+            ? `its chat ${notifyChat.chatId} has no known platform (notify channel left on auto)`
+            : `no owner conversation on ${sched.notifyChannel ?? 'telegram'} yet`) +
+          `. Firing — the run's result holds its answer — not falling back to another ` +
+          `chat or channel. lastStatus will read 'notify_unreachable'.`,
       );
     }
     const [job] = await db

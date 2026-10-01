@@ -108,13 +108,17 @@ export interface JobContext {
    * au propriétaire. `parent` : un délégué, dont le bloc « Delegated sub-task »
    * dit tout. Rendu en une ligne de `## Job context`, et seulement si le job
    * détient `sendTool` (#559) — un délégué qui hérite du `chat_id` sans
-   * l'outil n'en lit rien.
+   * l'outil n'en lit rien. `target` : qui l'outil atteint quand l'agent ne
+   * nomme pas de chat, par la règle même de l'outil (`jobChatOn`,
+   * @nodal-agents/delivery) — le chat du job s'il a été résolu sur `channel`,
+   * sinon la conversation propriétaire de `channel` (revue passe 4 de #657).
    */
   channelDelivery?: {
     channel: string;
     sendTool: string;
     renders: readonly string[];
     reply: 'channel' | 'result' | 'parent';
+    target: 'chat' | 'owner';
   };
   /**
    * The user asked to be notified when this job succeeds (per-schedule opt-in).
@@ -543,7 +547,8 @@ function channelDeliveryLine(
     d.reply === 'channel'
       ? `\`${d.sendTool}\` reaches the user on ${d.channel}, the only way your replies reach them.`
       : "your reply is this job's result, returned to where the request came from. " +
-        `\`${d.sendTool}\` sends a separate message to your owner on ${d.channel}.`;
+        `\`${d.sendTool}\` sends a separate message to ` +
+        `${d.target === 'chat' ? 'the chat named for this job,' : 'your owner'} on ${d.channel}.`;
   // Les marques que le canal rend, telles qu'il les attend : Slack et
   // WhatsApp rendent `*gras*`, pas `**gras**` (revue de #615).
   const arrives =

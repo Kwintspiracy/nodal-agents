@@ -66,6 +66,33 @@ describe('migration 0143_job_chat_channel @cap:parler-par-canal-externe/moteur',
     await runMigrations(pg.url, { patchVectorAsText: true });
   }, 120_000);
 
+  it('0142 then 0143 both ran: the journal orders them, and the migrator skips none', async () => {
+    // drizzle applies an entry only if its `when` is later than the last one
+    // applied: 0143 merged after 0142 must carry the later `when`, or a base
+    // that already ran 0142 never gets `chat_channel`.
+    const { db, close } = createClient(harness().url, { max: 1 });
+    try {
+      const cols = await rows<{ column_name: string }>(
+        db,
+        sql`SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'agent_jobs'
+              AND column_name IN ('system_prompt_version', 'chat_channel')
+            ORDER BY column_name`,
+      );
+      expect(cols.map((c) => c.column_name)).toEqual(['chat_channel', 'system_prompt_version']);
+    } finally {
+      await close();
+    }
+    const journal = JSON.parse(
+      readFileSync(
+        fileURLToPath(new URL('../../migrations/meta/_journal.json', import.meta.url)),
+        'utf8',
+      ),
+    ) as { entries: Array<{ tag: string; when: number }> };
+    const when = (tag: string) => journal.entries.find((e) => e.tag === tag)?.when ?? 0;
+    expect(when('0143_job_chat_channel')).toBeGreaterThan(when('0142_system_prompt_version'));
+  });
+
   it('the backfill gives a chat the channel it was resolved on, and NULL when nothing says it', async () => {
     const { db, close } = createClient(harness().url, { max: 1 });
     try {

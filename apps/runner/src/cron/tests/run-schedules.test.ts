@@ -35,7 +35,12 @@ import type { RunnerDeps } from '../../deps.ts';
 // sendTelegramMessageMock so the existing assertions keep working unchanged.
 type SendOpts = { chatId: string; text: string; botToken: string };
 const sendTelegramMessageMock = vi.fn(async (_opts: SendOpts) => ({ messageId: 1 }));
-vi.mock('@nodal-agents/delivery', () => ({
+vi.mock('@nodal-agents/delivery', async (importOriginal) => ({
+  // The job-chat rule (#649) is pure: the real one, never a stand-in.
+  ...(await importOriginal<{
+    defaultSendChannel: unknown;
+    jobChatOn: unknown;
+  }>().then(({ defaultSendChannel, jobChatOn }) => ({ defaultSendChannel, jobChatOn }))),
   sendTelegramMessage: (opts: SendOpts) => sendTelegramMessageMock(opts),
   resolveTransportChannel: () => 'telegram',
   // No test here binds an agent to a non-telegram channel — an empty active
@@ -343,7 +348,18 @@ describe('runScheduleTick @cap:planifier-une-tache/moteur', () => {
     });
 
     const deps = makeDeps(db, [{ text: 'cron ran' }]);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+    // The confirmation was asked for and its chat has no known platform: no
+    // send tool reaches it, the reply is the run's result. Said on the
+    // dashboard, never a green 'success' (#649, review of #657 pass 4).
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('notify_unreachable'));
+    errorSpy.mockRestore();
+    const [afterExplicit] = await db
+      .select({ lastStatus: agentSchedules.lastStatus })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.task, 'cron with explicit target'));
+    expect(afterExplicit?.lastStatus).toBe('notify_unreachable');
 
     const cronJobs = await db
       .select({
@@ -427,6 +443,12 @@ describe('runScheduleTick @cap:planifier-une-tache/moteur', () => {
     );
     expect(justFired.length).toBeGreaterThanOrEqual(1);
     expect(justFired[0]!.chatId).toBeNull();
+    // Asked for a confirmation, nowhere to send it: said, not green (#649).
+    const [afterNoOwner] = await db
+      .select({ lastStatus: agentSchedules.lastStatus })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.task, 'cron without registered owner'));
+    expect(afterNoOwner?.lastStatus).toBe('notify_unreachable');
 
     await db
       .update(agents)

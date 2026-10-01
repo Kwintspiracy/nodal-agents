@@ -1735,12 +1735,14 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     sendTool: 'telegram_send_message',
     renders: [],
     reply: 'channel',
+    target: 'chat',
   } as const;
   const DISCORD_FACTS = {
     channel: 'discord',
     sendTool: 'telegram_send_message',
     renders: ['**bold**', '*italic*', '`code`'],
     reply: 'channel',
+    target: 'chat',
   } as const;
   // Slack renders its own mrkdwn, not markdown: `*x*` is bold there (#615).
   const SLACK_FACTS = {
@@ -1748,6 +1750,7 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     sendTool: 'telegram_send_message',
     renders: ['*bold*', '_italic_', '<url|text>'],
     reply: 'channel',
+    target: 'chat',
   } as const;
   const withSend = [...ALWAYS_ON_TOOLS, ...DELIVERY_TOOL_NAMES];
   const deliveryLines = (prompt: string): string[] =>
@@ -1836,10 +1839,10 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     const { entityId, root } = await seedTeam();
     const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
     for (const [origin, facts] of [
-      ['mcp', { ...TELEGRAM_FACTS, reply: 'result' }],
-      ['api', { ...TELEGRAM_FACTS, reply: 'result' }],
-      ['dashboard', { ...TELEGRAM_FACTS, reply: 'result' }],
-      ['cron', { ...DISCORD_FACTS, reply: 'result' }],
+      ['mcp', { ...TELEGRAM_FACTS, reply: 'result', target: 'owner' }],
+      ['api', { ...TELEGRAM_FACTS, reply: 'result', target: 'owner' }],
+      ['dashboard', { ...TELEGRAM_FACTS, reply: 'result', target: 'owner' }],
+      ['cron', { ...DISCORD_FACTS, reply: 'result', target: 'owner' }],
     ] as const) {
       const prompt = await buildSystemPrompt(rootAgent, db, {
         origin,
@@ -1862,6 +1865,27 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
       });
       expect({ origin, found: line.includes('the only way') }).toEqual({ origin, found: false });
     }
+  });
+
+  // Revue passe 4 de #657 : la ligne annonçait « your owner » quand l'outil
+  // visait le chat du job (un chat désigné que l'outil armé n'atteint pas).
+  // Elle nomme maintenant la cible que l'outil calcule.
+  it('the line names the target the send tool computes: the chat named for this job, never "your owner" when it is not (#649) @cap:parler-par-canal-externe/moteur', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const prompt = await buildSystemPrompt(rootAgent, db, {
+      origin: 'dashboard',
+      channelDelivery: { ...TELEGRAM_FACTS, reply: 'result', target: 'chat' },
+      availableToolNames: withSend,
+    });
+    const line = deliveryLines(prompt)[0] ?? '';
+    expect(
+      line.startsWith(
+        "- delivery: your reply is this job's result, returned to where the request came from. " +
+          '`telegram_send_message` sends a separate message to the chat named for this job, on telegram. ',
+      ),
+    ).toBe(true);
+    expect(line).not.toContain('your owner');
   });
 
   it('a delegate that inherits the chat_id gets no channel text at all (#559, #613)', async () => {

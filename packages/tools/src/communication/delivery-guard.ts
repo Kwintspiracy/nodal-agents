@@ -21,7 +21,12 @@ import {
   getBindingCredentials,
   getChannelBinding,
 } from '@nodal-agents/db';
-import { resolveTransportChannel, type ChannelKind } from '@nodal-agents/delivery';
+import {
+  defaultSendChannel,
+  jobChatOn,
+  type ChannelKind,
+  type JobChat,
+} from '@nodal-agents/delivery';
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -31,16 +36,19 @@ import type { ToolContext } from '../types';
 
 // ─── Transport channel ──────────────────────────────────────────────────────
 
+/** The job's chat as the runner recorded it: the id WITH its channel (#649). */
+function jobChat(ctx: ToolContext): JobChat {
+  return { id: ctx.jobChatId, channel: ctx.jobChatChannel ?? null };
+}
+
 /**
  * The channel a job delivers on BEFORE considering a send tool's own explicit
- * `channel` argument. `ctx.notifyChannelOverride` (B1: a cron fire whose
- * schedule chose an explicit notify channel) wins when present — it must
- * agree with the channel the job's chatId was resolved against
- * (run-schedules.ts). Otherwise falls through to the historical
- * `resolveTransportChannel(jobChannel, activeChannels)` default.
+ * `channel` argument: the channel its chat was recorded on, otherwise the
+ * historical `resolveTransportChannel(jobChannel, activeChannels)` default —
+ * `defaultSendChannel`, the rule the prompt's `delivery:` line reads too.
  */
 function defaultChannelForJob(ctx: ToolContext): ChannelKind {
-  return ctx.notifyChannelOverride ?? resolveTransportChannel(ctx.jobChannel, ctx.activeChannels);
+  return defaultSendChannel(jobChat(ctx), ctx.jobChannel, ctx.activeChannels);
 }
 
 /**
@@ -166,17 +174,21 @@ export function resetDeliveryCounterForTests(jobId?: string): void {
 // ─── Recipient chatId + authorization (F1) ─────────────────────────────────
 
 /**
- * Resolve the target chatId and authorize it:
- *   - no explicit chatId → falls back to ctx.jobChatId; still null → falls
- *     back to the agent's OWNER conversation on THIS job's transport channel
- *     (see below); no owner either → throws `noRecipientErrorName` (each tool
- *     keeps its historical name).
- *   - explicit chatId === ctx.jobChatId → allowed without a DB lookup (the
- *     job's origin chat is authorized by construction).
- *   - explicit chatId that diverges from ctx.jobChatId → must be an ACTIVE
- *     row for this agent or its entity on the job's transport channel, else
- *     throws `telegram_chat_not_allowed`. No fallback, no silent redirect —
- *     an agent can never message an arbitrary chat id it wasn't approved for.
+ * Resolve the target chatId and authorize it. "The job's chat" below is
+ * `jobChatOn(ctx's chat, channel)`: ctx.jobChatId ONLY when it was recorded on
+ * the channel this call sends through (#649, review of #657 pass 4) — a chat
+ * id does not say its platform, and the first active channel is not its
+ * platform.
+ *   - no explicit chatId → the job's chat; none on this channel → the
+ *     agent's OWNER conversation on this channel (see below); no owner
+ *     either → throws `noRecipientErrorName` (each tool keeps its
+ *     historical name).
+ *   - explicit chatId === the job's chat → allowed without a DB lookup (the
+ *     job's chat is authorized by construction, on its own channel).
+ *   - any other explicit chatId → must be an ACTIVE row for this agent or
+ *     its entity on this channel, else throws `telegram_chat_not_allowed`.
+ *     No fallback, no silent redirect — an agent can never message an
+ *     arbitrary chat id it wasn't approved for.
  *   - hard per-job delivery ceiling (L4): a real jobId that has already hit
  *     MAX_DELIVERIES_PER_JOB successful resolutions throws
  *     `telegram_send_rate_limited` before any lookup runs. An empty/absent
@@ -191,20 +203,12 @@ export function resetDeliveryCounterForTests(jobId?: string): void {
  * `resolveOwnerChatId`/`isChatAllowed` calls they replace (both are thin
  * wrappers pinned to channel='telegram').
  *
- * When `explicitChannel` names a channel OTHER than the job's own transport
- * channel (a cross-channel target), two things change from the same-channel
- * path above:
- *   - `ctx.jobChatId` is never used as a chatId fallback — it belongs to the
- *     JOB's channel, not the target one, so reusing it here would silently
- *     address the wrong platform's id space. Omitting `chatId` on a
- *     cross-channel call always goes through the owner fallback (see below),
- *     resolved on the TARGET channel via the `channel` this function computes.
- *   - the `explicitChatId === ctx.jobChatId` exemption (skips the allowlist
- *     check because "the job's origin chat is authorized by construction")
- *     NEVER applies — that exemption is meaningless once the destination
- *     platform differs, so a cross-channel target is ALWAYS allowlist-checked
- *     against the TARGET channel, even if the raw id string happens to
- *     coincide with `ctx.jobChatId` by coincidence.
+ * A cross-channel target (`explicitChannel` naming a channel other than
+ * the one the job's chat was recorded on) is no special case: the job has no
+ * chat on that channel, so an omitted chatId goes to the TARGET channel's
+ * owner, and an explicit one is ALWAYS allowlist-checked there, even when the
+ * raw id string coincides with ctx.jobChatId. The same holds for a chat whose
+ * channel nobody recorded: it has no chat on any channel.
  */
 export async function resolveRecipientChatId(
   explicitChatId: string | undefined,
@@ -223,13 +227,12 @@ export async function resolveRecipientChatId(
   }
 
   const channel = await resolveChannelForJob(ctx, explicitChannel);
-  const crossChannel =
-    explicitChannel !== undefined && explicitChannel !== defaultChannelForJob(ctx);
-  let chatId = explicitChatId ?? (crossChannel ? null : ctx.jobChatId);
+  const chatOfJob = jobChatOn(jobChat(ctx), channel);
+  let chatId = explicitChatId ?? chatOfJob;
 
   // Owner fallback: an unsolicited run (cron watcher, notify_on_success=false,
-  // any job with no originating chat — or a cross-channel target with no
-  // explicit chatId, see above) that decides on its own initiative to speak
+  // any job with no chat on this channel — a cross-channel target, a chat
+  // whose platform nobody recorded, see above) that decides on its own initiative to speak
   // must reach the OWNER — the same canonical target as every other
   // unsolicited delivery since commit 77c40b8 (`schedule.chatId ??
   // resolveOwnerChatId()`), never a guessed or last-seen chat. Only applies
@@ -251,10 +254,9 @@ export async function resolveRecipientChatId(
     throw err;
   }
 
-  // Same-channel exemption (chatId === ctx.jobChatId skips the allowlist
-  // lookup) NEVER applies cross-channel — see doc comment above.
-  const needsAllowlistCheck =
-    explicitChatId !== undefined && (crossChannel || explicitChatId !== ctx.jobChatId);
+  // The job's own chat on this channel skips the allowlist lookup; nothing
+  // else does — see doc comment above.
+  const needsAllowlistCheck = explicitChatId !== undefined && explicitChatId !== chatOfJob;
 
   if (needsAllowlistCheck) {
     const allowed = await isConversationAllowed(ctx.db, {

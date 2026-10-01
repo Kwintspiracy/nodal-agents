@@ -20,13 +20,22 @@ import {
 const ALL_ACTIVE: ChannelKind[] = ['telegram', 'discord', 'slack'];
 const HOLDS_SEND = new Set(['telegram_send_message']);
 
+// The chat column as the writers set it (`designateChat`): a request that came
+// FROM a chat records that chat's channel (channels/turn.ts); a trigger's chat
+// records the channel it was resolved on, given here as `chatChannel`.
+const recordedChannel = (
+  job: { channel: string | null; chatId: string | null },
+  chatChannel: ChannelKind | undefined,
+): string | null =>
+  chatChannel ??
+  (job.chatId && TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '') ? job.channel : null);
+
 const facts = (
   job: { channel: string | null; chatId: string | null; parentJobId?: string | null },
   extra: { chatChannel?: ChannelKind; activeChannels?: ChannelKind[] } = {},
 ) =>
   channelDeliveryFacts({
-    job: { parentJobId: null, ...job },
-    chatChannel: extra.chatChannel,
+    job: { parentJobId: null, ...job, chatChannel: recordedChannel(job, extra.chatChannel) },
     activeChannels: extra.activeChannels ?? ALL_ACTIVE,
     heldTools: HOLDS_SEND,
   });
@@ -38,6 +47,7 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
       sendTool: 'telegram_send_message',
       renders: telegramAdapter.text.renders,
       reply: 'channel',
+      target: 'chat',
     });
   });
 
@@ -47,6 +57,7 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
       sendTool: 'telegram_send_message',
       renders: discordAdapter.text.renders,
       reply: 'channel',
+      target: 'chat',
     });
   });
 
@@ -68,6 +79,7 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
       sendTool: 'telegram_send_message',
       renders: slackAdapter.text.renders,
       reply: 'channel',
+      target: 'chat',
     });
     // A webhook left on auto records the channel its route resolved.
     expect(facts({ channel: 'webhook', chatId: '1' }, { chatChannel: 'discord' })).toEqual({
@@ -75,6 +87,7 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
       sendTool: 'telegram_send_message',
       renders: discordAdapter.text.renders,
       reply: 'channel',
+      target: 'chat',
     });
   });
 
@@ -88,6 +101,7 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
         sendTool: 'telegram_send_message',
         renders: telegramAdapter.text.renders,
         reply: 'result',
+        target: 'owner',
       },
     );
     // A delegate inherits its parent's chat_id; its reply goes to the parent.
@@ -99,6 +113,46 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
     expect(facts({ channel: 'cron', chatId: null }, { activeChannels: ['slack'] })?.reply).toBe(
       'result',
     );
+  });
+
+  // Revue passe 4 de #657 : la ligne disait « sends a separate message to your
+  // owner on <repli> » alors que l'outil visait le chat du job. Elle dit
+  // maintenant la cible que l'outil calcule, par la MÊME règle
+  // (defaultSendChannel + jobChatOn, @nodal-agents/delivery).
+  it('the facts name the target the send tool computes: the chat on its recorded channel, else the owner of the channel the tool resolves', () => {
+    // A routine on auto with an explicit chat: no channel recorded, Discord
+    // the only active channel. The tool writes on Discord, to the owner.
+    expect(facts({ channel: 'cron', chatId: '555' }, { activeChannels: ['discord'] })).toEqual({
+      channel: 'discord',
+      sendTool: 'telegram_send_message',
+      renders: discordAdapter.text.renders,
+      reply: 'result',
+      target: 'owner',
+    });
+    // A chat recorded on Telegram whose token was withdrawn: the reply is the
+    // result, and the tool still targets THAT chat on Telegram, never the
+    // owner of another channel.
+    expect(
+      facts(
+        { channel: 'dashboard', chatId: '555' },
+        {
+          chatChannel: 'telegram',
+          activeChannels: ['discord'],
+        },
+      ),
+    ).toEqual({
+      channel: 'telegram',
+      sendTool: 'telegram_send_message',
+      renders: telegramAdapter.text.renders,
+      reply: 'result',
+      target: 'chat',
+    });
+    // No chat at all: the owner, on the channel the tool resolves.
+    expect(facts({ channel: 'api', chatId: null }, { activeChannels: ['slack'] })).toMatchObject({
+      channel: 'slack',
+      reply: 'result',
+      target: 'owner',
+    });
   });
 
   it('no facts for a channel that has no send tool (WhatsApp today)', () => {
@@ -123,8 +177,7 @@ describe('replyDestination — the answer goes back where the request came from 
     } = {},
   ) =>
     replyDestination({
-      job: { parentJobId: null, ...job },
-      chatChannel: extra.chatChannel,
+      job: { parentJobId: null, ...job, chatChannel: recordedChannel(job, extra.chatChannel) },
       activeChannels: extra.activeChannels ?? ALL_ACTIVE,
       heldTools: extra.heldTools ?? HOLDS_SEND,
     });

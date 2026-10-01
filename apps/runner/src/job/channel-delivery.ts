@@ -2,8 +2,8 @@
 // reaches the user only by a tool, and the facts the prompt states about them
 // (#613).
 
-import { resolveTransportChannel, textDeliveryOf } from '@nodal-agents/delivery';
-import type { ChannelKind } from '@nodal-agents/delivery';
+import { defaultSendChannel, jobChatOn, textDeliveryOf } from '@nodal-agents/delivery';
+import type { ChannelKind, JobChat } from '@nodal-agents/delivery';
 import type { JobContext } from '@nodal-agents/orchestration';
 import { CHANNEL_SEND_TOOL } from './thread-history.ts';
 
@@ -76,7 +76,11 @@ export type ReplyDestination =
   | { to: 'channel'; channel: ChannelKind }
   | { to: 'result' };
 
-type ReplyJob = DeliveryJob & { parentJobId: string | null };
+type ReplyJob = DeliveryJob & {
+  parentJobId: string | null;
+  /** `agent_jobs.chat_channel` : le canal sur lequel `chatId` a été résolu, ou null. */
+  chatChannel: string | null;
+};
 
 /**
  * Le canal du chat que le DÉCLENCHEUR a désigné, tel qu'il a été enregistré —
@@ -100,20 +104,27 @@ export function designatedChatChannel(job: {
 
 interface ReplyInputs {
   job: ReplyJob;
-  /** `designatedChatChannel(job)` : le canal du chat que le déclencheur a désigné. */
-  chatChannel: ChannelKind | undefined;
   activeChannels: readonly ChannelKind[];
   /** Les outils que le job tient (sa liste finale) : un outil d'envoi hors liste n'est pas armé. */
   heldTools: ReadonlySet<string>;
 }
 
 /**
- * Le canal que l'outil d'envoi de ce job résout quand l'agent n'en nomme pas
- * (`defaultChannelForJob`, delivery-guard.ts) : le canal du chat désigné,
- * sinon `resolveTransportChannel`.
+ * Le `telegram_chat_id` du bloc Job context : le chat du job S'IL a été résolu
+ * sur Telegram (`jobChatOn`), rien sinon. Le champ porte le nom d'une
+ * plateforme ; un chat Discord, ou un chat dont personne ne connaît la
+ * plateforme, n'y est jamais présenté comme un chat Telegram (#649, revue
+ * passe 4 de #657). Lu par les deux constructeurs du prompt (execute.ts,
+ * cli-runtime/run-job.ts).
  */
-function sendToolChannel(opts: ReplyInputs): ChannelKind {
-  return opts.chatChannel ?? resolveTransportChannel(opts.job.channel, opts.activeChannels);
+export function telegramChatOf(chat: JobChat): { telegramChatId?: string } {
+  const id = jobChatOn(chat, 'telegram');
+  return id ? { telegramChatId: id } : {};
+}
+
+/** Le chat du job, avec le canal sur lequel il a été résolu — jamais l'un sans l'autre. */
+function chatOf(job: ReplyJob): JobChat {
+  return { id: job.chatId, channel: job.chatChannel };
 }
 
 export function replyDestination(opts: ReplyInputs): ReplyDestination {
@@ -127,7 +138,7 @@ export function replyDestination(opts: ReplyInputs): ReplyDestination {
   // envoie sur ce canal est tenu ET l'agent a la credential de CE canal. Un
   // même nom d'outil sert telegram, discord et slack : le tenir ne dit rien du
   // canal qu'il peut atteindre, la credential le dit.
-  const channel = opts.chatChannel;
+  const channel = designatedChatChannel(job);
   if (job.chatId == null || channel === undefined) return { to: 'result' };
   const sendTool = CHANNEL_SEND_TOOL[channel];
   const armed =
@@ -139,9 +150,12 @@ export function replyDestination(opts: ReplyInputs): ReplyDestination {
  * Ce que le prompt dit du canal où l'outil d'envoi de ce job écrit — ou
  * `undefined` quand aucun outil d'envoi n'existe pour ce canal.
  *
- * Le canal est celui que l'outil résoudra (`defaultChannelForJob`,
- * delivery-guard.ts) : la cible choisie par la routine, sinon
- * `resolveTransportChannel`. `renders` est ce que l'adaptateur de CE canal
+ * Le canal et la cible sont ceux que l'outil calculera, par la MÊME règle
+ * (`defaultSendChannel` puis `jobChatOn`, @nodal-agents/delivery — ce que
+ * lit `resolveRecipientChatId`, delivery-guard.ts) : le canal du chat du job,
+ * sinon `resolveTransportChannel` ; la cible, ce chat s'il a été résolu sur ce
+ * canal, sinon la conversation propriétaire de ce canal (revue passe 4 de
+ * #657 : la ligne annonçait le propriétaire quand l'outil visait le chat). `renders` est ce que l'adaptateur de CE canal
  * déclare — pas une phrase par canal (invariants #1 et #2) : Telegram ne rend
  * aucune marque, Discord rend le markdown, Slack et WhatsApp leur balisage.
  * `reply` est la destination de la réponse (`replyDestination`, #649) : sur
@@ -162,7 +176,8 @@ export function channelDeliveryFacts(
   opts: ReplyInputs,
   reply: ReplyDestination = replyDestination(opts),
 ): JobContext['channelDelivery'] {
-  const channel = sendToolChannel(opts);
+  const chat = chatOf(opts.job);
+  const channel = defaultSendChannel(chat, opts.job.channel, opts.activeChannels);
   const sendTool = CHANNEL_SEND_TOOL[channel];
   if (sendTool === undefined) return undefined;
   return {
@@ -170,5 +185,6 @@ export function channelDeliveryFacts(
     sendTool,
     renders: textDeliveryOf(channel).renders,
     reply: reply.to,
+    target: jobChatOn(chat, channel) !== null ? 'chat' : 'owner',
   };
 }

@@ -35,7 +35,7 @@ import type {
  * @param parentJob        The parent job being suspended
  * @param childSlug        Slug of the child agent to delegate to
  * @param toolUseId        The tool_use block ID from the LLM response
- * @param taskInput        Task + optional data/chatId to pass to the child
+ * @param taskInput        Task + optional data to pass to the child
  * @param sideToolResults  Deferred tool_results for other tool_use blocks in same response
  * @param db               Drizzle DB handle
  */
@@ -43,7 +43,7 @@ export async function handleDelegation(
   parentJob: AgentJob,
   childSlug: string,
   toolUseId: string,
-  taskInput: { task: string; chatId?: string | null; data?: string },
+  taskInput: { task: string; data?: string },
   sideToolResults: SideToolResult[],
   db: AnyDrizzleDb,
   /**
@@ -117,12 +117,11 @@ export async function handleDelegation(
     agentId: childAgent.id,
     channel: 'internal',
     task: childTask,
-    // The chat travels with its channel (#649): the parent's, as recorded;
-    // an id the orchestrator named itself has no known platform.
-    ...designateChat(
-      taskInput.chatId ?? parentJob.chatId,
-      taskInput.chatId ? null : (parentFolderRow?.chatChannel ?? null),
-    ),
+    // The parent's chat travels with the channel it was recorded on (#649).
+    // Nothing else names a delegate's chat: the runner used to pass the
+    // parent's id as if the orchestrator had named it, and the child was born
+    // with a chat and no channel (review of #657, pass 4).
+    ...designateChat(parentJob.chatId, parentFolderRow?.chatChannel ?? null),
     status: 'pending',
     parentJobId: parentJob.id as string,
     delegationDepth: childDepth,

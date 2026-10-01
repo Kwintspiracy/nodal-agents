@@ -58,6 +58,42 @@ export function resolveTransportChannel(
 }
 
 /**
+ * A job's chat (#649): `agent_jobs.chat_id` and the channel it was RESOLVED
+ * on (`agent_jobs.chat_channel`, set by `designateChat` in @nodal-agents/db),
+ * `null` when nobody knows that platform. A chat id does not say which
+ * platform it belongs to: the two travel together, and an id is never read
+ * without its channel (designated-chat-readers.test.ts in packages/db).
+ */
+export interface JobChat {
+  id: string | null;
+  channel: string | null;
+}
+
+/**
+ * The channel a send tool writes on when the agent names none: the channel
+ * the job's chat was recorded on, otherwise `resolveTransportChannel`. ONE
+ * rule for the send tools (delivery-guard.ts) and for what the prompt says of
+ * them (channel-delivery.ts in the runner).
+ */
+export function defaultSendChannel(
+  chat: JobChat,
+  jobChannel: string | null | undefined,
+  activeChannels?: readonly ChannelKind[],
+): ChannelKind {
+  const recorded = chat.id ? chat.channel : null;
+  return (recorded as ChannelKind | null) ?? resolveTransportChannel(jobChannel, activeChannels);
+}
+
+/**
+ * The job's chat ON `channel`: its id when it was recorded on that very
+ * channel, `null` otherwise. Never an id carried to another platform: a
+ * Telegram chat id sent through Discord reaches nobody, or somebody else.
+ */
+export function jobChatOn(chat: JobChat, channel: ChannelKind): string | null {
+  return chat.id && chat.channel === channel ? chat.id : null;
+}
+
+/**
  * Every transport channel this agent has a live credential for, in
  * CHANNEL_PRIORITY order — telegram via `agents.telegram_bot_token` (the
  * transitional path every other Telegram read in @nodal-agents/db still
