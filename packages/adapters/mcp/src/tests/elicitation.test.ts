@@ -22,7 +22,12 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import type { ToolContext, UserInputRequest, UserInputResponse } from '@nodal-agents/tools';
-import { createMcpTools, createLazyMcpTools, type McpToolset } from '../index.ts';
+import {
+  createMcpTools,
+  createLazyMcpTools,
+  type McpToolOutput,
+  type McpToolset,
+} from '../index.ts';
 
 const FIXTURE = fileURLToPath(new URL('./fixtures/mcp-elicit-server.mjs', import.meta.url));
 
@@ -69,9 +74,15 @@ function ctxWith(
   } as unknown as ToolContext;
 }
 
-/** Le texte JSON que l'outil de la fixture rend : ce que le SERVEUR a reçu. */
+/**
+ * Le texte JSON que l'outil de la fixture rend : ce que le SERVEUR a reçu.
+ * Un appel MCP rend l'enregistrement complet du résultat (`McpToolOutput`,
+ * #665) ; la fixture y écrit un seul bloc texte.
+ */
 function received(output: unknown): unknown {
-  return JSON.parse(String(output));
+  const texts = (output as McpToolOutput).content.filter((b) => b.type === 'text');
+  expect(texts).toHaveLength(1);
+  return JSON.parse((texts[0] as { text: string }).text);
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
