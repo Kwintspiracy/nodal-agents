@@ -57,7 +57,15 @@ export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, Re
     'whatever tool or command produced it (a file you wrote, a render, a build output, an ' +
     'export). Nodal checks each listed file before the run can end as a success: a missing ' +
     'or broken file is reported, never accepted, and the run does not end as a success. ' +
-    'Use status="blocked" if you cannot proceed after 2 attempts. When you set status="blocked" ' +
+    'status="success" means you did everything that was yours to do. When a TOOL RETURNED a ' +
+    'state waiting on a person in its output (a pending confirmation, an approval request, a ' +
+    'card to click, whatever it is called), the result is DELIVERED, not blocked: write in ' +
+    'your reply what waits, who decides and where (on a delegated task, that reply is what ' +
+    'your orchestrator reads). Only the approval gate Nodal itself puts BEFORE calling a tool ' +
+    'suspends the run on its own: do not declare that one. ' +
+    'status="blocked" means YOUR part could not be done after 2 attempts: the requested ' +
+    'action itself failed or could not be called (even if you prepared something in its ' +
+    'place), or an input or an access is missing. When you set status="blocked" ' +
     'you MUST also set `reason` to a clear, user-facing explanation: name the SPECIFIC thing that ' +
     'blocked YOU on THIS task — the exact tool, credential, or input that failed and its actual ' +
     'error — and the concrete next step the user can take. Write it from scratch for this ' +

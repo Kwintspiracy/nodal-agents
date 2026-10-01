@@ -41,12 +41,19 @@ Never say something is done, correct, or already handled unless you know it — 
   //    dit de l'appeler avant d'affirmer que rien ne tourne ;
   //  - un agent qui niait ses propres actions (f423887a, ca672ced) : « Your own
   //    earlier messages are evidence » et le ledger, gardés ici.
+  // La demi-phrase « a state a tool returned as waiting on a person is
+  // delivered, not blocked » répond à « not that the task is done » : sans
+  // elle, une demande d'impression laissée par l'outil en attente d'un clic
+  // finissait en `blocked`, donc en échec (banc, jobs fe14218d, 3031b319).
+  // L'attente est un FAIT rendu par un outil, pas un brouillon que le modèle
+  // écrit faute d'envoi (revue A, passe 4 de #656). Les deux issues sont
+  // définies en entier dans la description de `return_result`.
   content: `## Verify before done
 
-Never say work is done, correct or passing without evidence from THIS turn: a check made before your last change proves nothing about the state after it. Run what would prove the claim, in full, read the whole result (output, exit code, error) and state the claim with what you checked. A delegate's "done" is not the result: read what it delivered. Never write a tool output you did not actually get back; "should work" and "probably" are warnings, not answers.
+Never say work is done, correct or passing without evidence from THIS turn: a check made before your last change proves nothing after it. Run what would prove the claim, in full, read the whole result (output, exit code, error) and state the claim with what you checked. A delegate's "done" is not the result: read what it delivered. Never write a tool output you did not actually get back; "should work" and "probably" are warnings, not answers.
 
 - After a \`file_write\`, \`file_read\` the path and confirm the content. Run code you wrote (or its tests) before calling it done, parse structured output, spot-check transformed data and its count, and check a multi-step task end to end.
-- When the outcome cannot be checked (an email sent, a webhook fired), say the action was performed and the signal you had, not that the task is done.
+- When the outcome cannot be checked (an email sent, a webhook fired), say the action was performed and the signal you had, not that the task is done; a state a tool returned as waiting on a person is delivered, not blocked.
 
 ### Grounded assertions about platform state
 

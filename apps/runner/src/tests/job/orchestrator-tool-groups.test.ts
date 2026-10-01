@@ -247,8 +247,13 @@ const WORKER_EAGER = [
   'load_tools',
 ];
 
-/** An orchestrator (no team): the delegation tools, then a worker's list (#636). */
+/**
+ * An orchestrator with one teammate: the delegation tools, then a worker's
+ * list (#636). Without a teammate it has no delegation tool at all (review of
+ * #655): its list is a worker's.
+ */
 const ORCHESTRATOR_EAGER = [
+  'assign_<mate>',
   'create_task',
   'list_tasks',
   'return_result',
@@ -320,10 +325,13 @@ describe("an orchestrator's turn-1 order is pinned @cap:assigner-outils/moteur",
   it('delegation tools, then the same eager tools as a worker, in the same order', async () => {
     const seeded = await seedJob(db, { model: MODEL, role: 'orchestrator' });
     await holdGroup(seeded.agentId, seeded.entityId, spreadsheetEditingSkill);
+    await addTeammate(seeded.agentId, seeded.entityId);
 
     const [first] = (await run(seeded.jobId, [])) as [Body];
 
-    expect(offered(first)).toEqual(ORCHESTRATOR_EAGER);
+    expect(offered(first).map((n) => (n.startsWith('assign_') ? 'assign_<mate>' : n))).toEqual(
+      ORCHESTRATOR_EAGER,
+    );
   });
 });
 
