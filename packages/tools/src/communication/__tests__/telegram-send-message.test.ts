@@ -88,6 +88,7 @@ vi.mock('@nodal-agents/db', () => {
 function makeCtx(
   overrides: {
     jobChatId?: string | null;
+    jobChatChannel?: ToolContext['jobChatChannel'];
     db?: unknown;
     entityId?: string;
     agentId?: string;
@@ -98,6 +99,7 @@ function makeCtx(
     agentId: overrides.agentId ?? 'agent-abc',
     entityId: overrides.entityId ?? 'entity-xyz',
     jobChatId: overrides.jobChatId ?? null,
+    jobChatChannel: overrides.jobChatChannel ?? null,
     db: (overrides.db ?? makeDb('bot:TEST_TOKEN')) as unknown as ToolContext['db'],
   };
 }
@@ -135,7 +137,7 @@ describe('createTelegramSendMessageTool', () => {
   // Un accusé de réception ne doit rien contenir qui ressemble à un message.
   it('rend « envoyé » et RIEN qui ressemble à un message', async () => {
     const tool = createTelegramSendMessageTool();
-    const ctx = makeCtx({ jobChatId: '99887766' });
+    const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
     const result = await tool.execute({ text: 'Voilà ma réponse.' }, ctx);
 
@@ -155,7 +157,7 @@ describe('createTelegramSendMessageTool', () => {
 
   it('sends message using ctx.jobChatId when no chatId arg provided', async () => {
     const tool = createTelegramSendMessageTool();
-    const ctx = makeCtx({ jobChatId: '99887766' });
+    const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
     const result = await tool.execute({ text: 'Hello from cron!' }, ctx);
 
@@ -174,7 +176,12 @@ describe('createTelegramSendMessageTool', () => {
 
   it('sends message using explicit chatId arg when provided (overrides ctx.jobChatId, allowed)', async () => {
     const tool = createTelegramSendMessageTool();
-    const ctx = makeCtx({ jobChatId: '99887766', entityId: 'entity-xyz', agentId: 'agent-abc' });
+    const ctx = makeCtx({
+      jobChatId: '99887766',
+      jobChatChannel: 'telegram',
+      entityId: 'entity-xyz',
+      agentId: 'agent-abc',
+    });
 
     await tool.execute({ chatId: '11223344', text: 'Direct message' }, ctx);
 
@@ -206,6 +213,7 @@ describe('createTelegramSendMessageTool', () => {
     const tool = createTelegramSendMessageTool();
     const ctx = makeCtx({
       jobChatId: '12345',
+      jobChatChannel: 'telegram',
       db: makeDb(null),
     });
 
@@ -220,7 +228,7 @@ describe('createTelegramSendMessageTool', () => {
     sendTextMock.mockRejectedValueOnce(new DeliveryError('telegram_rate_limited', 'Rate limited'));
 
     const tool = createTelegramSendMessageTool();
-    const ctx = makeCtx({ jobChatId: '12345' });
+    const ctx = makeCtx({ jobChatId: '12345', jobChatChannel: 'telegram' });
 
     await expect(tool.execute({ text: 'rate limited?' }, ctx)).rejects.toBeInstanceOf(
       DeliveryError,
@@ -234,7 +242,7 @@ describe('createTelegramSendMessageTool', () => {
   it('F1: throws telegram_chat_not_allowed for an explicit chatId not on the allow-list', async () => {
     isChatAllowedMock.mockResolvedValueOnce(false);
     const tool = createTelegramSendMessageTool();
-    const ctx = makeCtx({ jobChatId: '99887766' });
+    const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
     await expect(tool.execute({ chatId: '00000000', text: 'sneaky' }, ctx)).rejects.toMatchObject({
       name: 'telegram_chat_not_allowed',
@@ -245,7 +253,7 @@ describe('createTelegramSendMessageTool', () => {
 
   it('F1: skips the allow-list lookup when the explicit chatId equals ctx.jobChatId', async () => {
     const tool = createTelegramSendMessageTool();
-    const ctx = makeCtx({ jobChatId: '99887766' });
+    const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
     await tool.execute({ chatId: '99887766', text: 'same chat' }, ctx);
 
@@ -316,7 +324,7 @@ describe('createTelegramSendMessageTool', () => {
 
     it("omitted channel stays byte-identical: no binding check, sends via the job's own (telegram) adapter", async () => {
       const tool = createTelegramSendMessageTool();
-      const ctx = makeCtx({ jobChatId: '99887766' });
+      const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
       await tool.execute({ text: 'plain' }, ctx);
 
@@ -338,7 +346,7 @@ describe('createTelegramSendMessageTool', () => {
       isChatAllowedMock.mockResolvedValueOnce(true);
 
       const tool = createTelegramSendMessageTool();
-      const ctx = makeCtx({ jobChatId: '99887766' });
+      const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
       await tool.execute({ chatId: '55556666', text: 'cross-channel', channel: 'discord' }, ctx);
 
@@ -362,7 +370,7 @@ describe('createTelegramSendMessageTool', () => {
       getChannelBindingMock.mockResolvedValueOnce(null);
 
       const tool = createTelegramSendMessageTool();
-      const ctx = makeCtx({ jobChatId: '99887766' });
+      const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
       await expect(
         tool.execute({ chatId: '55556666', text: 'nope', channel: 'discord' }, ctx),
@@ -378,7 +386,7 @@ describe('createTelegramSendMessageTool', () => {
       isChatAllowedMock.mockResolvedValueOnce(false);
 
       const tool = createTelegramSendMessageTool();
-      const ctx = makeCtx({ jobChatId: '99887766' });
+      const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
       await expect(
         tool.execute({ chatId: '99887766', text: 'sneaky', channel: 'discord' }, ctx),
@@ -413,7 +421,10 @@ describe('telegram_send_message — one call per reply, the adapter splits (#613
 
     const parsed = tool.inputSchema.safeParse({ text });
     expect(parsed.success).toBe(true);
-    await tool.execute(parsed.data as { text: string }, makeCtx({ jobChatId: '99887766' }));
+    await tool.execute(
+      parsed.data as { text: string },
+      makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' }),
+    );
 
     expect(sendTextMock.mock.calls.map((c) => c[2])).toEqual([text]);
   });
@@ -465,7 +476,10 @@ describe('telegram_send_message — a send that failed partway is resumed, never
     });
     try {
       const tool = createTelegramSendMessageTool();
-      const ctx = { ...makeCtx({ jobChatId: '99887766' }), jobId: 'job-partial-615' };
+      const ctx = {
+        ...makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' }),
+        jobId: 'job-partial-615',
+      };
 
       const err = await tool.execute({ text }, ctx).catch((e: unknown) => e as Error);
       expect(err).toBeInstanceOf(Error);
@@ -491,7 +505,10 @@ describe('telegram_send_message — a send that failed partway is resumed, never
 
   it('a different text after a partial failure is sent whole: only the same reply resumes', async () => {
     const tool = createTelegramSendMessageTool();
-    const ctx = { ...makeCtx({ jobChatId: '99887766' }), jobId: 'job-partial-615-b' };
+    const ctx = {
+      ...makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' }),
+      jobId: 'job-partial-615-b',
+    };
     const { DeliveryError: DE } =
       await vi.importActual<typeof import('@nodal-agents/delivery')>('@nodal-agents/delivery');
     const partial = new DE('telegram_request_failed', 'boom');

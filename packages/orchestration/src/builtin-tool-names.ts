@@ -31,6 +31,22 @@ import {
 import { metaToolsForAgent, parseRootGrants } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from './types';
 
+let registered: ReadonlySet<string> | null = null;
+
+/**
+ * Every built-in tool name this build registers, gated ones included. A name
+ * outside it is not a builtin: `agentBuiltinToolNames` never grants it through
+ * a tool group, whatever `required_builtins` says.
+ */
+export function registeredBuiltinNames(): ReadonlySet<string> {
+  if (!registered) {
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    registered = new Set(registry.list().map((t) => t.name));
+  }
+  return registered;
+}
+
 export interface BuiltinToolNames {
   isOrchestrator: boolean;
   /** Built-in tool names only: no assign_*, connector, MCP or delivery tool. */

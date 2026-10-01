@@ -36,7 +36,12 @@ import {
 import type { ToolIndexEntry } from '@nodal-agents/tools';
 import { skillKindOfSlug } from '@nodal-agents/catalog';
 import { buildTeamBlock } from './team-block';
-import { buildBaselineBlock, buildDiscoverabilityBlock } from './agent-baseline';
+import {
+  buildBaselineBlock,
+  buildDiscoverabilityBlock,
+  hasRequiredBuiltins,
+} from './agent-baseline';
+import { resolveBuiltinToolNames, registeredBuiltinNames } from './builtin-tool-names';
 import type { Agent, AnyDrizzleDb } from './types';
 
 // ─── JobContext ────────────────────────────────────────────────────────────────
@@ -99,17 +104,26 @@ export interface JobContext {
    * Posé par le runner (`channelDeliveryFacts`) avec le canal que l'outil
    * résoudra. `renders` vient de `ChannelAdapter.text` : les marques que la
    * plateforme rend, telles qu'on les tape. Ce n'est pas une phrase par canal,
-   * c'est ce que l'adaptateur déclare, et ses tests prouvent qu'il le fait. `onlyPath` : la garde de livraison exige un envoi
-   * par cet outil (canal à livraison par outil, ou routine qui a demandé sa
-   * confirmation). Rendu en une ligne de `## Job context`, et seulement si le
-   * job détient `sendTool` (#559) — un délégué qui hérite du `chat_id` sans
-   * l'outil n'en lit rien.
+   * c'est ce que l'adaptateur déclare, et ses tests prouvent qu'il le fait.
+   * `reply` : où va la RÉPONSE de ce job (#649), calculé une fois par le
+   * runner (`replyDestination`). `channel` : la demande porte un chat, l'outil
+   * est le seul chemin de la réponse, et la garde de livraison l'exige.
+   * `result` : la réponse est le résultat du job, rendu là d'où vient la
+   * demande (appelant MCP ou API, web) ; l'outil n'envoie qu'un message séparé
+   * au propriétaire. `parent` : un délégué, dont le bloc « Delegated sub-task »
+   * dit tout. Rendu en une ligne de `## Job context`, et seulement si le job
+   * détient `sendTool` (#559) — un délégué qui hérite du `chat_id` sans
+   * l'outil n'en lit rien. `target` : qui l'outil atteint quand l'agent ne
+   * nomme pas de chat, par la règle même de l'outil (`jobChatOn`,
+   * @nodal-agents/delivery) — le chat du job s'il a été résolu sur `channel`,
+   * sinon la conversation propriétaire de `channel` (revue passe 4 de #657).
    */
   channelDelivery?: {
     channel: string;
     sendTool: string;
     renders: readonly string[];
-    onlyPath: boolean;
+    reply: 'channel' | 'result' | 'parent';
+    target: 'chat' | 'owner';
   };
   /**
    * The user asked to be notified when this job succeeds (per-schedule opt-in).
@@ -523,13 +537,23 @@ export function buildRuntimeBlock(
  * FAITS, tirés de l'adaptateur : par où la réponse passe, sous quelle forme
  * elle arrive, et qu'elle est découpée sans l'agent. Aucune limite chiffrée :
  * le modèle n'a rien à en faire.
+ *
+ * Par où la réponse passe se lit sur `reply` (#649), jamais sur le canal que
+ * l'outil résout : pour une demande sans chat (MCP, API, le web), ce canal est
+ * celui du propriétaire, et le présenter comme « reaches the user » faisait
+ * partir la réponse d'une demande MCP sur son Telegram.
  */
 function channelDeliveryLine(
   d: NonNullable<JobContext['channelDelivery']>,
   availableTools: readonly string[],
 ): string | null {
-  if (!availableTools.includes(d.sendTool)) return null;
-  const reach = d.onlyPath ? ', the only way your replies reach them' : '';
+  if (d.reply === 'parent' || !availableTools.includes(d.sendTool)) return null;
+  const path =
+    d.reply === 'channel'
+      ? `\`${d.sendTool}\` reaches the user on ${d.channel}, the only way your replies reach them.`
+      : "your reply is this job's result, returned to where the request came from. " +
+        `\`${d.sendTool}\` sends a separate message to ` +
+        `${d.target === 'chat' ? 'the chat named for this job,' : 'your owner'} on ${d.channel}.`;
   // Les marques que le canal rend, telles qu'il les attend : Slack et
   // WhatsApp rendent `*gras*`, pas `**gras**` (revue de #615).
   const arrives =
@@ -539,8 +563,9 @@ function channelDeliveryLine(
       : `Text arrives as typed, and these marks render: ${d.renders.join(', ')}. ` +
         'Any other markup shows literally.';
   return (
-    `- delivery: \`${d.sendTool}\` reaches the user on ${d.channel}${reach}. ${arrives} ` +
-    'A long text is split into several messages automatically, so send each reply once, whole.'
+    `- delivery: ${path} ${arrives} ` +
+    'A long text is split into several messages automatically, so send each ' +
+    `${d.reply === 'channel' ? 'reply' : 'message'} once, whole.`
   );
 }
 
@@ -1096,6 +1121,8 @@ export async function buildSystemPrompt(
         // is a capability it can never reach. Inlining costs prompt size; the
         // alternative costs the skill entirely.
         skillContent: agentSkills.content,
+        // L'index n'annonce que les skills dont le job tient les outils.
+        requiredBuiltins: agentSkills.requiredBuiltins,
       })
       .from(agentSkillAssignments)
       .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
@@ -1164,10 +1191,35 @@ export async function buildSystemPrompt(
   // channel skills are injected by their dedicated layers (agent-baseline.ts);
   // agent-internal load via skill_view — so a stray legacy assignment of one of
   // those never double-injects here.
-  const assignedSkillRows = skillRows.filter((r) => {
+  const capabilitySkillRows = skillRows.filter((r) => {
     const k = skillKindOfSlug(r.skillSlug);
     return k === null || k === 'capability';
   });
+  // Une skill n'est annoncée qu'au lecteur dont le job tient ses
+  // `requiredBuiltins` — la règle du socle (`hasRequiredBuiltins`), appliquée
+  // à l'index au lieu d'une asymétrie. Sinon `skill_view` rend ensuite une
+  // procédure dont chaque étape rate (carte du prompt §1.4, famille #559).
+  //
+  // Contre quoi : les BUILTINS que tient le job qui chargera la skill — le
+  // champ ne nomme que des builtins, et un nom qui n'en est pas un n'est
+  // jamais accordé par la skill (`agentBuiltinToolNames`). Une seule règle,
+  // donc un seul rendu sur les trois surfaces (revue de #658, passe 1) :
+  //   · un job : ses outils, réduits aux builtins enregistrés — un outil MCP
+  //     ou de connecteur de sa liste ne fait pas tenir une skill qui le
+  //     nommerait, puisque le chat et l'aperçu ne le verraient pas ;
+  //   · le chat ne tient que `run_task` et passe la main à un job : les
+  //     builtins de CE job, par la règle unique du runner
+  //     (`resolveBuiltinToolNames`, #636). Lue seulement si une skill en
+  //     exige un. L'aperçu du dashboard passe ces mêmes builtins.
+  const skillToolsHeld: readonly string[] =
+    jobContext?.surface === 'chat'
+      ? capabilitySkillRows.some((r) => (r.requiredBuiltins ?? []).length > 0)
+        ? (await resolveBuiltinToolNames(db, agent.id as string)).names
+        : []
+      : availableTools.filter((n) => registeredBuiltinNames().has(n));
+  const assignedSkillRows = capabilitySkillRows.filter((r) =>
+    hasRequiredBuiltins({ requiredBuiltins: r.requiredBuiltins ?? [] }, skillToolsHeld),
+  );
   // Progressive disclosure (the open "Agent Skills" design): the prompt carries
   // only a COMPACT INDEX (slug + one-line description) — not each skill's full
   // SKILL.md body. The agent loads the full instructions on demand with
@@ -1364,7 +1416,7 @@ export async function buildSystemPrompt(
   // the worker's discipline, never the orchestrator's "when you delegate"
   // (Codex review of #473, pass 4).
   const canHandOn = remainingDelegationHops(jobContext?.delegationDepth ?? 0) > 0;
-  const baselineBlock = buildBaselineBlock(agent.model, {
+  const baselineBlock = buildBaselineBlock({
     role: agent.role === 'orchestrator' && !canHandOn ? 'agent' : agent.role,
     nodalTools: jobContext?.surface !== 'cli-runtime',
     surface: jobContext?.surface ?? 'job',
@@ -1517,32 +1569,45 @@ export async function buildSystemPrompt(
   // le dossier ATTACHÉ plutôt que sur le partagé, un agent qui a les deux ne
   // saurait pas duquel on parle. Le `root:` ci-dessous le dit — la phrase y
   // renvoie explicitement.
-  const gitBlock = jobContext?.workspaceGit
-    ? '\n\n## Git\n\n' +
-      'The workspace rooted at the path below is a git repository. Snapshot taken at job start — branch and ' +
-      'working-tree state change as work proceeds, so re-check with `git status` / ' +
-      '`git branch --show-current` before acting on any of it:\n\n' +
-      // The branch name comes from the repository, i.e. from whoever created
-      // it — same untrusted-data argument as the inventory listing above. A
-      // branch called `ignore-previous-instructions` would otherwise land
-      // unmarked in the most trusted position of the request.
-      wrapUntrusted(
-        'git snapshot',
-        [
-          `root: ${jobContext.workspaceGit.root}`,
-          `branch: ${jobContext.workspaceGit.branch ?? '(detached HEAD)'}`,
-          `head: ${jobContext.workspaceGit.head ?? '(no commit yet)'}`,
-          // null = the status probe failed. Saying "clean" there would be a
-          // silent smart fallback on the one line the agent trusts before it
-          // writes; saying "unknown" costs nothing and is true.
-          jobContext.workspaceGit.dirtyCount === null
-            ? 'working tree: UNKNOWN (git status did not answer — do not assume it is clean)'
-            : jobContext.workspaceGit.dirtyCount === 0
-              ? 'working tree: clean'
-              : `working tree: ${jobContext.workspaceGit.dirtyCount} modified entr${jobContext.workspaceGit.dirtyCount === 1 ? 'y' : 'ies'}`,
-        ].join('\n'),
-      )
-    : '';
+  //
+  // Il ORDONNE `git status` : il se rend donc à la condition de tout bloc qui
+  // prescrit un outil (`namesOnlyHeldTools`, agent-baseline.ts) — à qui peut
+  // lancer une commande. Un job la lance par `run_command`, ou la confie à
+  // `code_task` ; une session CLI de code a son propre shell, que la liste des
+  // outils Nodal ne contient pas. Le root du job 04c3d763 (30/09) recevait
+  // 600 caractères sur le dossier personnel de son propriétaire (« detached
+  // HEAD, 65 modified entries ») sans aucun des deux outils (lot 2, voie H).
+  const canRunGit =
+    jobContext?.surface === 'cli-runtime' ||
+    availableTools.includes('run_command') ||
+    availableTools.includes('code_task');
+  const gitBlock =
+    jobContext?.workspaceGit && canRunGit
+      ? '\n\n## Git\n\n' +
+        'The workspace rooted at the path below is a git repository. Snapshot taken at job start — branch and ' +
+        'working-tree state change as work proceeds, so re-check with `git status` / ' +
+        '`git branch --show-current` before acting on any of it:\n\n' +
+        // The branch name comes from the repository, i.e. from whoever created
+        // it — same untrusted-data argument as the inventory listing above. A
+        // branch called `ignore-previous-instructions` would otherwise land
+        // unmarked in the most trusted position of the request.
+        wrapUntrusted(
+          'git snapshot',
+          [
+            `root: ${jobContext.workspaceGit.root}`,
+            `branch: ${jobContext.workspaceGit.branch ?? '(detached HEAD)'}`,
+            `head: ${jobContext.workspaceGit.head ?? '(no commit yet)'}`,
+            // null = the status probe failed. Saying "clean" there would be a
+            // silent smart fallback on the one line the agent trusts before it
+            // writes; saying "unknown" costs nothing and is true.
+            jobContext.workspaceGit.dirtyCount === null
+              ? 'working tree: UNKNOWN (git status did not answer — do not assume it is clean)'
+              : jobContext.workspaceGit.dirtyCount === 0
+                ? 'working tree: clean'
+                : `working tree: ${jobContext.workspaceGit.dirtyCount} modified entr${jobContext.workspaceGit.dirtyCount === 1 ? 'y' : 'ies'}`,
+          ].join('\n'),
+        )
+      : '';
 
   const volatile =
     runtimeBlock +

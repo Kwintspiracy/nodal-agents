@@ -77,4 +77,8 @@ export {
   resolveTransportChannel,
   listActiveChannelsForAgent,
   isTransportChannel,
+  defaultSendChannel,
+  jobChatOn,
+  resolveOwnerNoticeTarget,
 } from './transport-channel.ts';
+export type { JobChat } from './transport-channel.ts';

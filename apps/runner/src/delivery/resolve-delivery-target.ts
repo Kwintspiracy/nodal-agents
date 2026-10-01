@@ -28,7 +28,8 @@
 
 import { listActiveChannelsForAgent, resolveTransportChannel } from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
-import type { AnyDrizzleDb, JobTriggerContext } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { designatedChatChannel } from '../job/channel-delivery.ts';
 
 /** Les seuls champs d'`agent_jobs` dont la résolution de cible a besoin. Un
  *  objet, pas un id : les deux appelants ont déjà la ligne en main. */
@@ -39,6 +40,8 @@ export interface DeliveryTargetJob {
   /** `agent_jobs.channel` : une ORIGINE (cron, webhook, dashboard, api…), pas
    *  un transport — d'où `resolveTransportChannel`. */
   channel: string | null;
+  /** `agent_jobs.chat_channel` : le canal du chat que le déclencheur a désigné (#649). */
+  chatChannel?: string | null;
   triggerContext: unknown;
 }
 
@@ -54,8 +57,10 @@ export type DeliveryTargetRefusal = {
    * `channel_inactive` : l'agent existe mais n'a AUCUN canal de transport
    * actif (ni token Telegram ni binding activé), donc aucun transport ne peut
    * porter ce résultat.
+   * `channel_unknown` : le chat a été désigné sans que personne n'enregistre
+   * sa plateforme (#649) ; le runner ne la devine pas.
    */
-  refused: 'no_chat' | 'channel_inactive';
+  refused: 'no_chat' | 'channel_inactive' | 'channel_unknown';
 };
 
 export type DeliveryTargetOutcome = DeliveryTarget | DeliveryTargetRefusal;
@@ -75,13 +80,13 @@ export function isDeliveryRefusal(
  * Règle, identique à celle des deux appelants d'aujourd'hui :
  *   1. pas de `chatId` ou pas d'`agentId` ⇒ refus `no_chat` (le garde
  *      `rootJob.chatId && rootJob.agentId` de deliver-results.ts) ;
- *   2. un job d'origine cron/webhook dont le déclencheur a choisi un canal de
- *      notification EXPLICITE (`triggerContext.notifyChannel`) l'emporte sur
- *      l'ordre de priorité — c'est le canal contre lequel `chat_id` a été
- *      résolu (B1/B2 notify-channel-choice) ;
- *   3. sinon `resolveTransportChannel(job.channel, activeChannels)` : le
- *      canal du job s'il est déjà un transport, sinon le premier canal ACTIF
- *      de l'agent par ordre de priorité.
+ *   2. une demande VENUE d'un chat (telegram, discord, slack, whatsapp) part
+ *      sur son canal ;
+ *   3. sinon le chat a été DÉSIGNÉ par le déclencheur : il part sur le canal
+ *      enregistré avec lui (`chat_channel`, posé par `designateChat`, #649).
+ *      Un chat dont personne n'a enregistré la plateforme est refusé par son
+ *      nom (`channel_unknown`) : le deviner envoyait un chat id Telegram sur
+ *      Discord.
  *
  * Divergence assumée avec le code d'aujourd'hui, et la seule : quand l'agent
  * n'a aucun canal actif, `resolveTransportChannel` rend `'telegram'` par
@@ -101,16 +106,23 @@ export async function resolveDeliveryTarget(
 
   const activeChannels = await listActiveChannelsForAgent(db, job.agentId);
 
-  const triggerContext = job.triggerContext as JobTriggerContext | null;
-  const notifyChannelOverride: ChannelKind | undefined =
-    triggerContext?.type === 'cron' || triggerContext?.type === 'webhook'
-      ? (triggerContext.notifyChannel ?? undefined)
-      : undefined;
+  // Le canal du chat que le déclencheur a désigné, tel qu'enregistré (#649) :
+  // « Send via Telegram » ou une routine en auto, jeton Telegram retiré et
+  // Discord actif, ne part plus sur Discord avec un chat id Telegram.
+  const notifyChannelOverride: ChannelKind | undefined = designatedChatChannel({
+    channel: job.channel,
+    chatId,
+    chatChannel: job.chatChannel ?? null,
+  });
+
+  // A request that came FROM a chat: the transport keeps its own name.
+  const cameFromChat = job.channel !== null && resolveTransportChannel(job.channel) === job.channel;
+  if (!cameFromChat && !notifyChannelOverride) return { refused: 'channel_unknown' };
 
   if (!notifyChannelOverride && activeChannels.length === 0) {
     return { refused: 'channel_inactive' };
   }
 
-  const channel = notifyChannelOverride ?? resolveTransportChannel(job.channel, activeChannels);
+  const channel = notifyChannelOverride ?? (job.channel as ChannelKind);
   return { channel, chatId };
 }

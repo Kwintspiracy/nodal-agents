@@ -380,7 +380,7 @@ describe('approval cards follow their request @cap:approuver-une-action/moteur',
         agentId: seed.agentId,
         channel: 'internal',
         // Le job MCP n'a pas de conversation ; son délégué en porte une
-        // (`delegate.ts` : `taskInput.chatId ?? parent.chatId`) — c'est ainsi
+        // (`delegate.ts` : le chat du parent, avec son canal) — c'est ainsi
         // que la carte du job 75bbf3d0 a trouvé le chat du propriétaire.
         chatId: OWNER_CHAT,
         parentJobId: root!.id,

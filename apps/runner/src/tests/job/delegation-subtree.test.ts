@@ -454,7 +454,9 @@ describe('le SUCCÈS pose sa livraison dans la transaction terminale @cap:organi
     const jobId = await insertJob({
       agentId: agentQuiLivre,
       channel: 'telegram',
+      // As channels/turn.ts writes it: the chat with the channel it came from.
       chatId: '4242',
+      chatChannel: 'telegram',
     });
     const deps = makeDeps(
       makeMockLlmClient([
@@ -497,5 +499,16 @@ describe('le SUCCÈS pose sa livraison dans la transaction terminale @cap:organi
     // Et elle PART : le drain qui suit le commit l'a remise à l'adaptateur.
     expect(envois.map((e) => e.text).join('\n')).toContain('no deliverable');
     expect(envois.every((e) => e.chatId === '4242')).toBe(true);
+
+    // The delegate holds its parent's chat WITH the channel it was recorded on
+    // (#649, review of #657 pass 4): the runner used to hand the parent's chat
+    // id to the delegation as an id "the orchestrator named itself", and the
+    // child was born with a chat and no channel.
+    const enfants = await db
+      .select({ chatId: agentJobs.chatId, chatChannel: agentJobs.chatChannel })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, jobId));
+    expect(enfants.length).toBeGreaterThan(0);
+    expect(enfants).toEqual(enfants.map(() => ({ chatId: '4242', chatChannel: 'telegram' })));
   });
 });

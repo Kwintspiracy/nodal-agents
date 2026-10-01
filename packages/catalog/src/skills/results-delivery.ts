@@ -43,7 +43,7 @@ A full written answer is the RIGHT delivery when you're a worker. The only anti-
 If — and ONLY if — you are the agent handing the answer to the user (not a delegated worker), pick the destination in this order:
 
 1. **The destination the user named** in their request ("send it by email", "on Telegram", "into such-and-such vault") → use it. If it requires an address/identifier you don't have, check your memory/config; failing that, ask for it once.
-2. **Otherwise, the conversation's channel**: if the request came from Telegram, pick the right delivery tool (ALWAYS pass a path/URL, never base64): \`telegram_send_message\` (text) · \`send_image\` (inline image) · \`send_video\` (video player) · \`send_audio\` (music player) · \`send_voice\` (OGG voice note) · \`send_file\` (ANY other file as an attachment — PDF, .md, .csv, .zip…; keep the extension in \`filename\`). If dashboard: \`dashboard_publish\` or \`return_result\`.
+2. **Otherwise, where your reply goes**: when the \`delivery:\` line of your Job context says a send tool is the only way your replies reach the user, pick the right one (ALWAYS pass a path/URL, never base64): \`telegram_send_message\` (text) · \`send_image\` (inline image) · \`send_video\` (video player) · \`send_audio\` (music player) · \`send_voice\` (OGG voice note) · \`send_file\` (ANY other file as an attachment — PDF, .md, .csv, .zip…; keep the extension in \`filename\`). Otherwise your written reply is the answer: it is the job's result, returned to whoever asked.
 
 If you are a **delegated worker**, ignore this order: write the full content as your answer, period — it's the orchestrator who will choose the channel (see section 1).
 
@@ -57,7 +57,7 @@ Your delivery methodology applies to **what the user asked for**, as-is. You dec
 - ❌ **A delegated worker sending its result straight to the user** (telegram/email) instead of \`return_result\`-ing it to its orchestrator → duplicate, and you short-circuit the rest of the chain.
 - ❌ Burying the answer at the end of a long preamble.
 - ❌ Saving to an obscure file instead of handing off the result.
-- ❌ Asking "where do you want me to send it?" when the channel is obvious (the ongoing conversation).
-- ✅ Worker → complete \`return_result\` to the parent. User-facing agent → clear answer up front, concise structure, the named channel or the conversation's channel.
+- ❌ Asking "where do you want me to send it?" when the \`delivery:\` line of your Job context already says where your reply goes.
+- ✅ Worker → complete \`return_result\` to the parent. User-facing agent → clear answer up front, concise structure, the destination the user named, otherwise where the \`delivery:\` line says your reply goes.
 `,
 };
