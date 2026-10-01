@@ -25,6 +25,7 @@ import DisclosureButton from '@/components/ui/DisclosureButton';
 import { useApprovals } from '@/components/ApprovalsProvider';
 import { SHELL_CATEGORY_COPY } from '@/lib/shell-checklist-copy.ts';
 import { conversationOf, openRunHref, questionHref } from '@/lib/run-page.ts';
+import ElicitationCard from '@/app/(dashboard)/spaces/ElicitationCard.tsx';
 
 type RuleAction = 'auto_approve' | 'require_approval' | 'block';
 
@@ -77,11 +78,7 @@ const STATUS_TO_VARIANT: Record<string, StatusVariant> = {
  * Défauts : en attente → Open (elle appelle une réponse) ; tranchée → Close
  * (c'est une archive) ; `defaultOpen` → Open, ce que `?show=` demande.
  */
-export default function ApprovalRequestCard({
-  approval,
-  onResolved,
-  defaultOpen = false,
-}: {
+type ApprovalRequestCardProps = {
   approval: ApprovalRow;
   /** Called after a successful answer, so a list can drop the card. */
   onResolved?: () => void;
@@ -92,7 +89,31 @@ export default function ApprovalRequestCard({
    * la carte ne lit jamais l'URL elle-même.
    */
   defaultOpen?: boolean;
-}) {
+};
+
+/**
+ * La carte d'une ligne `approval_requests`, quelle qu'elle soit.
+ *
+ * Une ÉLICITATION (0145) — la question d'un serveur MCP pendant un appel — n'a
+ * RIEN d'une approbation : pas d'« Approve », pas de règle à poser, pas de
+ * « Never ». Elle se dessine avec sa propre carte, et c'est décidé ICI, au seul
+ * point d'entrée que partagent /approvals, l'onglet Code et le fil d'une
+ * conversation : un appelant de plus ne peut pas l'oublier.
+ */
+export default function ApprovalRequestCard(props: ApprovalRequestCardProps) {
+  if (props.approval.elicitation) {
+    return (
+      <ElicitationCard elicitation={props.approval.elicitation} onResolved={props.onResolved} />
+    );
+  }
+  return <ApprovalDecisionCard {...props} />;
+}
+
+function ApprovalDecisionCard({
+  approval,
+  onResolved,
+  defaultOpen = false,
+}: ApprovalRequestCardProps) {
   const [isPending, startTransition] = useTransition();
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [neverOpen, setNeverOpen] = useState(false);

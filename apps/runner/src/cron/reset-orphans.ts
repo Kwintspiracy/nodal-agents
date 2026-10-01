@@ -7,7 +7,7 @@
 //                         no recent activity → marked `failed`
 
 import { and, eq, gte, inArray, isNull, lt, or } from '@nodal-agents/db';
-import { agentJobs, agentTasks, approvalRequests } from '@nodal-agents/db';
+import { agentJobs, agentTasks, approvalRequests, CALL_GATE_KINDS } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { sendTelegramMessage } from '@nodal-agents/delivery';
 import { failJob } from '../job/state.ts';
@@ -399,12 +399,18 @@ export async function expireStaleApprovals(
     .update(approvalRequests)
     .set({ status: 'expired', resolvedAt: now, resolvedBy: 'system:ttl_expired' })
     .where(and(eq(approvalRequests.status, 'pending'), lt(approvalRequests.expiresAt, now)))
-    .returning({ jobId: approvalRequests.jobId });
+    .returning({ jobId: approvalRequests.jobId, kind: approvalRequests.kind });
 
   // Une demande par job suffit à le réveiller : le job relit TOUTES ses lignes
   // ouvertes à la reprise (execute.ts, 11.7). Deux demandes échues sur le même
   // job ne le reprennent donc qu'une fois.
-  for (const jobId of new Set(expired.map((r) => r.jobId))) {
+  //
+  // Une ÉLICITATION échue (0145) ne réveille rien : le job n'a jamais été
+  // suspendu pour elle — son run la sonde lui-même et rend `cancel` au serveur
+  // MCP. La reprendre ferait repartir un job suspendu pour une AUTRE raison
+  // sur une décision qui n'est pas la sienne.
+  const toResume = expired.filter((r) => (CALL_GATE_KINDS as readonly string[]).includes(r.kind));
+  for (const jobId of new Set(toResume.map((r) => r.jobId))) {
     // A job that already moved on (approved elsewhere, cancelled, completed)
     // is left alone: the conditional flip inside the shared resume is what
     // decides, and it reports rather than forcing.

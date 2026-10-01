@@ -217,8 +217,11 @@ function sentences(cost: SpaceCostView): string[] {
   // #442 — le plafond que le runner oppose à ce run, là où l'on lit ce qu'il a coûté.
   if (cost.runBudget) out.push(runBudgetLine(cost.runBudget));
   if (t.humanWaitMs > 0) {
+    // Toute ligne `approval_requests` tranchée compte ici : une approbation,
+    // une question d'agent, ou la question d'un serveur MCP (0145). « approve
+    // something » n'en disait qu'une sur trois.
     out.push(
-      `${formatMs(t.humanWaitMs)} of it was spent waiting for you to approve something, not working.`,
+      `${formatMs(t.humanWaitMs)} of it was spent waiting for your answer or approval, not working.`,
     );
   }
   if (t.proofMs > 0) {

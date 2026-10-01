@@ -9,7 +9,13 @@
 import { eq, and } from '@nodal-agents/db';
 import { approvalRequests, agentJobs } from '@nodal-agents/db';
 import { z } from 'zod';
-import { FREE_ANSWER_MAX } from '@nodal-agents/shared';
+import {
+  FREE_ANSWER_MAX,
+  readElicitationToolInput,
+  validateElicitationContent,
+  type ElicitationContentError,
+  type ElicitationValue,
+} from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resumeJobAfterApprovalResolution } from './resume.ts';
@@ -53,6 +59,16 @@ export interface ResolveApprovalInput {
    */
   free?: boolean;
   /**
+   * Ce que la personne a rempli, pour une ligne `kind = 'elicitation'` (0145) :
+   * le formulaire qu'un serveur MCP a demandé pendant un de ses appels.
+   *
+   * OBLIGATOIRE pour l'envoyer (approuver), INTERDIT partout ailleurs — même
+   * règle que `answer`. Validé ici contre le formulaire LU SUR LA LIGNE
+   * (`tool_input.requestedSchema`), jamais contre ce que l'appelant affirme :
+   * c'est ce que le serveur recevra.
+   */
+  content?: Record<string, unknown>;
+  /**
    * Set by an UNTRUSTED caller (session bearer-token via /api/approve —
    * finding #4/#5): the approval must belong to this entity, closing the
    * runner-direct IDOR where an approval could be resolved by GUID alone
@@ -93,8 +109,15 @@ export type ResolveApprovalResult =
         | 'question_options_unreadable'
         // #465 — une réponse libre vide ou trop longue.
         | 'answer_empty'
-        | 'answer_too_long';
+        | 'answer_too_long'
+        // 0145 — les refus propres aux élicitations.
+        | 'content_required'
+        | 'content_invalid'
+        | 'content_not_expected'
+        | 'form_unreadable';
       status?: string | null;
+      /** Pour `content_invalid` : ce qui ne va pas, champ par champ. */
+      errors?: ElicitationContentError[];
     };
 
 /**
@@ -139,11 +162,43 @@ export async function resolveApprovalDecision(
   // Le refus, lui, reste un refus ordinaire : décliner une question est permis,
   // le job reprend sur le marqueur `[REJECTED]` habituel et l'agent fait
   // autrement. Une réponse n'y a rien à faire.
-  const kind = approval.kind === 'question' ? 'question' : 'approval';
+  const kind =
+    approval.kind === 'question'
+      ? 'question'
+      : approval.kind === 'elicitation'
+        ? 'elicitation'
+        : 'approval';
   const rawAnswer = typeof input.answer === 'string' ? input.answer.trim() : null;
   let answerToStore: string | null = null;
+  let responseToStore: Record<string, ElicitationValue> | null = null;
 
-  if (kind === 'question' && input.decision === 'approve' && input.free === true) {
+  // ── 0145 — une ÉLICITATION ne se résout ni comme une approbation ni comme
+  // une question ────────────────────────────────────────────────────────────
+  //
+  // L'envoyer, c'est envoyer un FORMULAIRE rempli au serveur MCP qui l'a
+  // demandé. Le refuser, c'est lui dire non. Un contenu sur toute autre ligne,
+  // ou une option / réponse libre sur celle-ci, est un geste mal adressé :
+  // refusé, jamais traduit ni jeté (invariant #4).
+  if (kind === 'elicitation') {
+    if (rawAnswer !== null || input.free === true)
+      return { ok: false, code: 'answer_not_expected' };
+    if (input.decision === 'approve') {
+      if (input.content === undefined) return { ok: false, code: 'content_required' };
+      const form = readElicitationToolInput(approval.toolInput);
+      if (!form) return { ok: false, code: 'form_unreadable' };
+      const checked = validateElicitationContent(form.requestedSchema, input.content);
+      if (!checked.ok) return { ok: false, code: 'content_invalid', errors: checked.errors };
+      responseToStore = checked.content;
+    } else if (input.content !== undefined) {
+      return { ok: false, code: 'content_not_expected' };
+    }
+  } else if (input.content !== undefined) {
+    return { ok: false, code: 'content_not_expected' };
+  }
+
+  if (kind === 'elicitation') {
+    // Rien à lire d'une option : traité au-dessus.
+  } else if (kind === 'question' && input.decision === 'approve' && input.free === true) {
     // #465 — la réponse de la personne, dans ses mots. L'agent la relira comme
     // le résultat de son outil, avec `option_index: null` (ask-user.ts).
     if (rawAnswer === null || rawAnswer === '') return { ok: false, code: 'answer_empty' };
@@ -188,6 +243,7 @@ export async function resolveApprovalDecision(
       resolvedBy: input.resolvedBy,
       notes: input.notes ?? null,
       answer: answerToStore,
+      response: responseToStore,
     })
     .where(
       and(eq(approvalRequests.id, input.approvalRequestId), eq(approvalRequests.status, 'pending')),
@@ -220,6 +276,22 @@ export async function resolveApprovalDecision(
       `[approval-card] could not update the cards of approval ${input.approvalRequestId} ` +
         `after its decision; the next cron tick retries: ${err instanceof Error ? err.message : String(err)}`,
     );
+  }
+
+  // ── 0145 — une élicitation ne RELANCE rien ─────────────────────────────────
+  // Le run qui l'a posée est vivant, au milieu de l'appel MCP qui attend la
+  // réponse : il sonde la ligne et rend la réponse au serveur lui-même. Le
+  // job n'a jamais été suspendu pour elle ; le faire repartir réveillerait un
+  // run sur une décision qui ne lui est pas destinée.
+  if (kind === 'elicitation') {
+    return {
+      ok: true,
+      jobId,
+      decision: input.decision,
+      answer: null,
+      chatId: (job as { chatId?: string | null }).chatId ?? null,
+      resumed: 'in_process',
+    };
   }
 
   // Back to pending so executeJob picks it up — but ONLY if the job is still

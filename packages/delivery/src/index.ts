@@ -76,6 +76,7 @@ export { getAdapter, textDeliveryOf } from './registry.ts';
 export {
   resolveTransportChannel,
   listActiveChannelsForAgent,
+  isTransportChannel,
   defaultSendChannel,
   jobChatOn,
   resolveOwnerNoticeTarget,

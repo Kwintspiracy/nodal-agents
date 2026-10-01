@@ -21,6 +21,7 @@ import { truncate } from '@/lib/format-time';
 import type { ProjectActivityConversation, ProjectActivitySession } from '@/lib/project-actions.ts';
 import {
   conversationTimeLabel,
+  strongestWaiting,
   type ConversationRowModel,
   type RowWaiting,
 } from '@/app/(dashboard)/chat/conversation-rows.ts';
@@ -45,16 +46,8 @@ export type ActivityRowsInput = {
   now?: Date;
 };
 
-/**
- * Une QUESTION passe avant une APPROBATION : elle est adressée à la personne,
- * l'approbation est une porte qu'elle peut laisser fermée. Un `kind` que le
- * produit ne connaît pas ne devient PAS une pastille au hasard.
- */
-function strongestWaiting(kinds: readonly string[]): RowWaiting {
-  if (kinds.includes('question')) return 'question';
-  if (kinds.includes('approval')) return 'approval';
-  return null;
-}
+// Une QUESTION passe avant une APPROBATION : `strongestWaiting`, la règle des
+// lignes de conversation, une seule copie pour les trois listes.
 
 /**
  * `awaiting_approval` est le seul statut vivant que le point vert exclut : il

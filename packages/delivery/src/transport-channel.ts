@@ -31,6 +31,16 @@ const CHANNEL_PRIORITY: readonly ChannelKind[] = ['telegram', 'discord', 'slack'
 const TRANSPORT_CHANNELS: ReadonlySet<string> = new Set<ChannelKind>(CHANNEL_PRIORITY);
 
 /**
+ * Does this `agent_jobs.channel` value name a place a person is reached ON —
+ * a message transport — rather than how a job was triggered ('dashboard',
+ * 'cron', 'api', 'mcp', …)? What a request made on that channel is answered
+ * on: a question asked during it goes back there.
+ */
+export function isTransportChannel(channel: string | null | undefined): channel is ChannelKind {
+  return typeof channel === 'string' && TRANSPORT_CHANNELS.has(channel);
+}
+
+/**
  * Resolve the transport channel to deliver on for a given job `channel`
  * value. Returns `channel` itself when it already names a registered
  * transport. Otherwise:

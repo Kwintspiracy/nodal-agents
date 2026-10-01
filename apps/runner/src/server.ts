@@ -45,6 +45,7 @@ import { backfillRegisteredProjects } from './bootstrap/backfill-registered-proj
 import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
 import { AuthError, checkRequestOrigin } from '@nodal-agents/auth';
 import { isValidWorkerSecret } from './lib/worker-secret.ts';
+import { expireOrphanedElicitations } from './approvals/elicitation.ts';
 import './lib/runner-auth-context.ts';
 import type { RunnerDeps } from './deps.ts';
 
@@ -385,6 +386,16 @@ async function main(): Promise<void> {
   // une reprise, et une panne ici se DIT sans empêcher le boot.
   // Un job REPRIS à son dernier tour (#443) repart tout de suite, sans
   // attendre la récupération des `pending` du premier tour de cron.
+  // 0145 — les questions des serveurs MCP posées sous le processus PRÉCÉDENT :
+  // leur connexion est morte avec lui, plus personne n'attend la réponse.
+  // Fermées tout de suite, avec leur raison, plutôt qu'à leur délai.
+  void expireOrphanedElicitations(deps.db)
+    .then((n) => {
+      if (n > 0) console.warn(`[runner] ${n} MCP server question(s) of the previous runner closed`);
+    })
+    .catch((e: unknown) => {
+      console.error('[runner] startup close of orphaned MCP server questions failed:', e);
+    });
   void reclaimJobsOfDeadRunners(deps.db)
     .then((r) => {
       for (const id of r.resumedJobIds) void triggerWorker(id, runnerEnv);

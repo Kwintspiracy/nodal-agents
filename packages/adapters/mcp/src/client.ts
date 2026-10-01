@@ -12,6 +12,11 @@ import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import {
+  ElicitRequestSchema,
+  type ElicitRequest,
+  type ElicitResult,
+} from '@modelcontextprotocol/sdk/types.js';
 import { buildChildEnv } from '@nodal-agents/tools';
 import { Agent as UndiciAgent, fetch as undiciFetch } from 'undici';
 
@@ -235,12 +240,106 @@ export function buildMcpRequest(
   return { url, headers };
 }
 
+// ─── Questions from the server (elicitation) ─────────────────────────────────
+
+/**
+ * What answers a server's question (`elicitation/create`) for the tool call in
+ * flight. `signal` aborts when the server withdraws its question
+ * (`notifications/cancelled`) or the connection closes.
+ */
+export type McpElicitationResponder = (
+  params: ElicitRequest['params'],
+  signal: AbortSignal,
+) => Promise<ElicitResult>;
+
+export interface McpConnectHooks {
+  /**
+   * Announce form elicitation (`{ elicitation: { form: {} } }`) and answer a
+   * server's questions through the responder of the call in flight
+   * (`runMcpCall`). An empty `{}` is not enough: the server SDK refuses a form
+   * question unless `form` is declared.
+   *
+   * Only for connections a person can answer through — a job's toolset. A
+   * configuration connection (the web's "test"/"discover", `create_mcp`) has
+   * nobody behind it and announces nothing.
+   */
+  answersElicitation?: boolean;
+}
+
+/**
+ * One lane of `tools/call` per connection. Over stdio nothing in the protocol
+ * ties a server's question to the call that caused it, so the call in flight
+ * is the one the question belongs to — which holds only if calls on a
+ * connection run one at a time. Within a job MCP calls already do (they are
+ * never reads, so never in the parallel pre-pass); the lane makes it a
+ * property of the connection rather than of its caller.
+ */
+class McpCallLane {
+  private tail: Promise<void> = Promise.resolve();
+  /** The responder of the call in flight, null between calls. */
+  current: McpElicitationResponder | null = null;
+
+  run<T>(responder: McpElicitationResponder | null, fn: () => Promise<T>): Promise<T> {
+    const turn = this.tail.then(async () => {
+      this.current = responder;
+      try {
+        return await fn();
+      } finally {
+        this.current = null;
+      }
+    });
+    this.tail = turn.then(
+      () => undefined,
+      () => undefined,
+    );
+    return turn;
+  }
+}
+
+const lanes = new WeakMap<Client, McpCallLane>();
+
+/**
+ * Run one call on `client` with `responder` answering any question the server
+ * asks meanwhile. A client connected without `answersElicitation` has no lane:
+ * the call simply runs.
+ */
+export function runMcpCall<T>(
+  client: Client,
+  responder: McpElicitationResponder | null,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const lane = lanes.get(client);
+  return lane ? lane.run(responder, fn) : fn();
+}
+
 /**
  * Connect to an MCP server and list its tools. Throws on connection failure,
  * auth rejection (HTTP), or subprocess spawn failure (stdio).
  */
-export async function connectMcp(opts: McpConnectOptions): Promise<McpConnection> {
-  const client = new Client({ name: 'nodal-agents', version: '0.1.0' }, { capabilities: {} });
+export async function connectMcp(
+  opts: McpConnectOptions,
+  hooks: McpConnectHooks = {},
+): Promise<McpConnection> {
+  const client = new Client(
+    { name: 'nodal-agents', version: '0.1.0' },
+    { capabilities: hooks.answersElicitation ? { elicitation: { form: {} } } : {} },
+  );
+  if (hooks.answersElicitation) {
+    const lane = new McpCallLane();
+    lanes.set(client, lane);
+    const server = opts.transport === 'http' ? new URL(opts.url).hostname : opts.command;
+    client.setRequestHandler(ElicitRequestSchema, async (request, extra) => {
+      const responder = lane.current;
+      if (!responder) {
+        // Said, never silent: the server learns nobody answered, the log says why.
+        console.warn(
+          `[adapter-mcp] ${server} asked a question with no tool call in flight; answered cancel`,
+        );
+        return { action: 'cancel' };
+      }
+      return responder(request.params, extra.signal);
+    });
+  }
   const connectTimeoutMs = resolveConnectTimeoutMs();
   // P0-H7 (causality study): the http branch gets its own dedicated undici
   // Agent, closed alongside the client in McpConnection.close. Set only when

@@ -34,6 +34,7 @@ import {
   getChannelBinding,
   readScheduleState,
   readAgentBudgetState,
+  gatesACall,
 } from '@nodal-agents/db';
 import type { ApprovalRequestRow } from '@nodal-agents/db';
 import {
@@ -220,6 +221,7 @@ import { checkpointsRoot } from '@nodal-agents/checkpoints';
 import { readFile } from 'node:fs/promises';
 import type { RunnerDeps } from '../deps.ts';
 import { notifyApprovalCreated } from '../approvals/notify.ts';
+import { createRequestUserInput, elicitationTimeoutMs } from '../approvals/elicitation.ts';
 import { notifyCodeTransition } from '../notify/code-transitions.ts';
 import {
   recordReviewerVerificationRuns,
@@ -1517,7 +1519,11 @@ export async function reviveJobIfApprovalResolvedDuringSuspend(
   const openRows = await db
     .select({ status: approvalRequests.status })
     .from(approvalRequests)
-    .where(and(eq(approvalRequests.jobId, jobId), isNull(approvalRequests.executedAt)));
+    // Une élicitation tranchée n'est pas un appel qui attend (0145) : elle ne
+    // réveille rien.
+    .where(
+      and(eq(approvalRequests.jobId, jobId), isNull(approvalRequests.executedAt), gatesACall()),
+    );
   const hasResolved = openRows.some(
     (r) => r.status === 'approved' || r.status === 'rejected' || r.status === 'expired',
   );
@@ -2959,6 +2965,22 @@ async function runJobTracked(
   // when a resolved approval turned out to be a machine-wide-destructive
   // command (Fix #29) — the caller must fail the job loud with that message
   // instead of feeding the marker to the LLM.
+  // 0145 — la QUESTION qu'un serveur MCP pose pendant un de ses appels
+  // (élicitation) : écrite, livrée par le notifieur des approbations et
+  // attendue SANS suspendre le job (le serveur garde son appel ouvert). Donnée
+  // à chaque appel d'outil de ce run, appels approuvés rejoués compris : c'est
+  // souvent là qu'un outil gaté pose sa question.
+  const requestUserInput = createRequestUserInput(
+    deps,
+    { jobId: jobId as string, agentId: agentRow.id, entityId: job.entityId ?? '' },
+    {
+      isLost: async () => (await droitPerdu()) !== null,
+      timeoutMs: elicitationTimeoutMs(
+        runnerEnv?.NODALAI_ELICITATION_TIMEOUT_MS ?? process.env['NODALAI_ELICITATION_TIMEOUT_MS'],
+      ),
+    },
+  );
+
   const executeResolvedApprovals = async (
     resolvedRows: ApprovalRequestRow[],
     msgsIn: ModelMessage[],
@@ -3139,6 +3161,7 @@ async function runJobTracked(
                   ...(speechGenerator ? { speechGenerator } : {}),
                   resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
                     resolveAgentToolNames(db, targetAgentId, placement),
+                  requestUserInput,
                 },
                 {
                   approvalRules: resumeApprovalRules,
@@ -3271,10 +3294,19 @@ async function runJobTracked(
   // Gate: only runs when there are resolved-but-not-yet-executed requests.
   // Idempotent: executed_at IS NULL guards against double-execution.
   {
+    // Seules les lignes qui RETIENNENT un appel (0145, `gatesACall`) : une
+    // élicitation acceptée relue ici serait prise pour un appel approuvé, et
+    // l'outil MCP qui l'a posée serait réexécuté.
     const pendingExecRows = await db
       .select()
       .from(approvalRequests)
-      .where(and(eq(approvalRequests.jobId, jobId as string), isNull(approvalRequests.executedAt)))
+      .where(
+        and(
+          eq(approvalRequests.jobId, jobId as string),
+          isNull(approvalRequests.executedAt),
+          gatesACall(),
+        ),
+      )
       .orderBy(approvalRequests.requestedAt);
 
     // A request an EARLIER run of this job closed — it ran the call and
@@ -3300,6 +3332,7 @@ async function runJobTracked(
                   eq(approvalRequests.jobId, jobId as string),
                   isNotNull(approvalRequests.executedAt),
                   isNotNull(approvalRequests.executionOutput),
+                  gatesACall(),
                 ),
               )
               .orderBy(approvalRequests.requestedAt)
@@ -3713,7 +3746,11 @@ async function runJobTracked(
           .select()
           .from(approvalRequests)
           .where(
-            and(eq(approvalRequests.jobId, jobId as string), isNull(approvalRequests.executedAt)),
+            and(
+              eq(approvalRequests.jobId, jobId as string),
+              isNull(approvalRequests.executedAt),
+              gatesACall(),
+            ),
           )
           .orderBy(approvalRequests.requestedAt);
         if (openRows.length === 0 || openRows.some((r) => r.status === 'pending')) {
@@ -5488,6 +5525,7 @@ async function runJobTracked(
         ...(speechGenerator ? { speechGenerator } : {}),
         resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
           resolveAgentToolNames(db, targetAgentId, placement),
+        requestUserInput,
       };
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
