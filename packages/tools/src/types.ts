@@ -49,14 +49,24 @@ export interface ToolContext {
    */
   toolCallId?: string;
   /**
-   * The conversationId that originated this job (set by the Telegram inbound
-   * handler today — the name predates multichannel and stays `jobChatId` for
-   * now; renaming it is cleanup-phase work, not S3).
-   * null for jobs started from the dashboard, cron, or API.
-   * Used by the delivery tools as the default reply target when the caller
-   * does not explicitly provide a chatId argument.
+   * The job's chat (`agent_jobs.chat_id`): the conversation a request came
+   * from, or the one its trigger named. null when the job has none (dashboard,
+   * API, a routine that runs silently). Never read alone: a chat id does not
+   * say its platform, so it is a send tool's default target only on
+   * `jobChatChannel` (`jobChatOn`, @nodal-agents/delivery — #649).
    */
   jobChatId: string | null;
+  /**
+   * The channel `jobChatId` was RESOLVED on (`agent_jobs.chat_channel`, set by
+   * `designateChat`). null/absent when nobody knows that platform (an explicit
+   * chat id on a routine left on auto): the send tools then never use
+   * `jobChatId` without an explicit chatId, and an explicit one is
+   * allowlist-checked like any other. It is also the channel they write on
+   * when the agent names none (`defaultSendChannel`); an explicit `channel`
+   * argument still wins. Replaces `notifyChannelOverride` (B1), which carried
+   * the same channel for routines and webhooks only.
+   */
+  jobChatChannel?: ChannelKind | null;
   /**
    * La CONVERSATION dont ce travail est un tour (P6, `conversations.id`).
    * Distinct de `jobChatId`, qui est l'identifiant du fil SUR le canal : une
@@ -94,20 +104,6 @@ export interface ToolContext {
    * resolveTransportChannel falls back to its historical 'telegram' default.
    */
   activeChannels?: readonly ChannelKind[];
-  /**
-   * Explicit notify-channel override (B1, notify-channel-choice plan): set by
-   * the runner from a fired cron job's `triggerContext.notifyChannel` when the
-   * schedule EXPLICITLY chose a delivery channel (agent_schedules.notify_channel
-   * non-null). When present, it wins over the `resolveTransportChannel(jobChannel,
-   * activeChannels)` default that delivery-guard's resolveChannelForJob would
-   * otherwise compute — the schedule's choice is what the job's chatId was
-   * ALSO resolved against (run-schedules.ts), so both must agree. It does NOT
-   * override an EXPLICIT `channel` argument a send tool call itself provides —
-   * that caller-specified target still wins; this only changes the DEFAULT.
-   * Absent for every job that isn't a cron fire with an explicit notify
-   * channel — behavior is unchanged (falls through to the historical default).
-   */
-  notifyChannelOverride?: ChannelKind;
   /**
    * Embedding client for tools that persist or search semantic memory
    * (save_memory generates an embedding at write time). Optional: the runner

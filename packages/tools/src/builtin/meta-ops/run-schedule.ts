@@ -10,8 +10,7 @@ import {
   inArray,
   agentSchedules,
   agentJobs,
-  resolveOwnerChatId,
-  resolveOwnerConversation,
+  resolveScheduleNotifyChat,
 } from '@nodal-agents/db';
 import { LIVE_JOB_STATUSES } from '@nodal-agents/shared';
 import type { ChannelKind } from '@nodal-agents/delivery';
@@ -78,19 +77,11 @@ export const runScheduleTool: ToolDefinition<typeof RunScheduleInput, RunSchedul
       };
     }
 
-    // Mirror the cron tick: carry a delivery target only if the schedule opted
-    // into a success confirmation (else it runs silently, like a normal fire).
-    // An explicit schedule.chatId wins; otherwise fall back to the bot owner's
-    // 1:1 — never the agent's last-seen chat, which a group message silently
-    // overwrites (see resolveOwnerChatId). A notify_channel choice resolves the
-    // owner conversation ON THAT CHANNEL (channel-parametric resolveOwnerConversation)
-    // instead — same rule run-schedules.ts's runScheduleTick applies.
-    const resolvedChatId = sched.notifyOnSuccess
-      ? sched.notifyChannel
-        ? (sched.chatId ??
-          (await resolveOwnerConversation(ctx.db, sched.agentId, sched.notifyChannel)))
-        : (sched.chatId ?? (await resolveOwnerChatId(ctx.db, sched.agentId)) ?? null)
-      : null;
+    // Mirror the cron tick, by the SAME function (#649): a delivery target
+    // only if the schedule opted into a success confirmation, with the channel
+    // it was resolved on — or no channel when nothing says it (an explicit
+    // chat on a schedule left on auto). Never the agent's last-seen chat.
+    const notifyChat = await resolveScheduleNotifyChat(ctx.db, sched);
 
     const [job] = await ctx.db
       .insert(agentJobs)
@@ -101,7 +92,7 @@ export const runScheduleTool: ToolDefinition<typeof RunScheduleInput, RunSchedul
         channel: 'cron',
         task: sched.task,
         messages: [{ role: 'user', content: sched.task }],
-        ...(resolvedChatId ? { chatId: resolvedChatId } : {}),
+        ...notifyChat,
         scheduleId: sched.id,
         triggerContext: {
           type: 'cron',

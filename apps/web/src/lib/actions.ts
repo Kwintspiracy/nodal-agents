@@ -149,8 +149,9 @@ import {
   setInstallNotes,
   setSkillScriptsAuthorized,
   setSkillFilesWritable,
-  resolveOwnerChatId,
   resolveOwnerConversation,
+  designateChat,
+  resolveScheduleNotifyChat,
   channelBindings,
   channelAllowedConversations,
   listChannelBindings,
@@ -209,6 +210,7 @@ import {
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
 import {
   buildSystemPrompt,
+  resolveBuiltinToolNames,
   DEFAULT_LIMITS,
   UNBLOCKABLE_TOOLS,
   INTERNAL_TOOL_DESCRIPTORS,
@@ -2134,13 +2136,13 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
     // Resolve chatId for Telegram delivery.
     // A dashboard send is the OWNER acting, so it must reach the owner's 1:1 —
     // never `agents.lastSeenChatIdTelegram`, which a group message silently
-    // overwrites (see resolveOwnerChatId). The runner reads chatId to populate
+    // overwrites. The runner reads chatId to populate
     // the Job context block in the system_prompt; the agent's personality
     // decides how to use it. task field stays pristine (= exact user input,
     // no suffix injection).
     let resolvedChatId: string | null = null;
     if (parsed.data.sendViaTelegram) {
-      resolvedChatId = await resolveOwnerChatId(db, parsed.data.agentId);
+      resolvedChatId = await resolveOwnerConversation(db, parsed.data.agentId, 'telegram');
       if (!resolvedChatId) {
         return fail(
           'no_telegram_recipient_known',
@@ -2160,7 +2162,9 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
         status: 'pending',
         channel: 'dashboard',
         task: parsed.data.prompt,
-        ...(resolvedChatId ? { chatId: resolvedChatId } : {}),
+        // The owner's Telegram chat, resolved as such: it carries its channel,
+        // so the runner never infers it from the agent's active channels (#649).
+        ...designateChat(resolvedChatId, 'telegram'),
       })
       .returning({ id: agentJobs.id });
     if (!job) return fail('db_error', 'Failed to create job');
@@ -11321,21 +11325,18 @@ export async function runScheduleNowAction(
     // one (and stays silent when the schedule is silent). An explicit schedule
     // target wins; otherwise fall back to the bot owner's 1:1 — never the
     // agent's lastSeenChatIdTelegram, which a group message can silently
-    // overwrite (see resolveOwnerChatId).
+    // overwrite.
     //
     // B1: an explicit notifyChannel resolves the owner conversation ON THAT
-    // CHANNEL (channel-parametric resolveOwnerConversation) instead of the
-    // telegram-only wrapper — same rule run-schedules.ts's runScheduleTick
+    // CHANNEL (channel-parametric resolveOwnerConversation) — same rule run-schedules.ts's runScheduleTick
     // applies, so "Run now" behaves identically to a real fire. A resolution
     // failure here is surfaced to the user directly (this action returns
     // ActionResult synchronously) rather than via lastStatus — there is no
     // schedule-row status transition to attach it to for a one-off manual run.
-    const resolvedChatId = schedule.notifyOnSuccess
-      ? schedule.notifyChannel
-        ? (schedule.chatId ??
-          (await resolveOwnerConversation(db, schedule.agentId, schedule.notifyChannel)))
-        : (schedule.chatId ?? (await resolveOwnerChatId(db, schedule.agentId)) ?? null)
-      : null;
+    //
+    // The SAME function as the tick and run_schedule (#649): the chat and the
+    // channel it was resolved on, or no channel when nothing says it.
+    const notifyChat = await resolveScheduleNotifyChat(db, schedule);
 
     const [job] = await db
       .insert(agentJobs)
@@ -11346,7 +11347,7 @@ export async function runScheduleNowAction(
         channel: 'cron',
         task: schedule.task,
         messages: [{ role: 'user', content: schedule.task }],
-        ...(resolvedChatId ? { chatId: resolvedChatId } : {}),
+        ...notifyChat,
         scheduleId,
         triggerContext: {
           type: 'cron',
@@ -13190,7 +13191,16 @@ export async function getRootSystemPromptAction(): Promise<ActionResult<string>>
       version: runningNodalVersion(),
     };
 
-    const prompt = await buildSystemPrompt(agent, db, { origin: 'dashboard', deployment });
+    // Les outils intégrés que le job du root tient, par la règle unique du
+    // runner (#636) : sans eux l'aperçu retombait sur les seuls outils
+    // toujours actifs, et cachait chaque bloc qui suit la liste — l'index des
+    // skills d'abord (lot 2, voie H). Connecteurs et MCP n'y sont pas.
+    const { names: availableToolNames } = await resolveBuiltinToolNames(db, rootAgentId);
+    const prompt = await buildSystemPrompt(agent, db, {
+      origin: 'dashboard',
+      deployment,
+      availableToolNames,
+    });
     return ok(prompt);
   } catch (err) {
     console.error('[getRootSystemPromptAction]', err);

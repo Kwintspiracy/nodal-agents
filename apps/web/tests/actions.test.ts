@@ -3594,6 +3594,8 @@ describe('runScheduleNowAction', () => {
     // notify_on_success is ON → chatId carries the resolved owner chat
     // so the runner enforces a confirmation.
     expect(insertValues?.['chatId']).toBe('12345');
+    // Auto: the owner chat resolveOwnerChatId gives is Telegram's (#649).
+    expect(insertValues?.['chatChannel']).toBe('telegram');
     expect(insertValues?.['messages']).toEqual([{ role: 'user', content: 'Summarize the inbox' }]);
 
     // A manual run must NOT reschedule the cron — no UPDATE on agent_schedules.
@@ -3638,7 +3640,14 @@ describe('runScheduleNowAction', () => {
     const insertValues = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
     // notify_on_success is OFF → no delivery target, and resolveOwnerChatId is
     // never even called (short-circuited). The runner won't force a confirmation.
-    expect('chatId' in (insertValues ?? {})).toBe(false);
+    // No chat: designateChat writes both columns as NULL (#649).
+    expect({
+      chatId: insertValues?.['chatId'],
+      chatChannel: insertValues?.['chatChannel'],
+    }).toEqual({
+      chatId: null,
+      chatChannel: null,
+    });
     fetchSpy.mockRestore();
   });
 
@@ -4815,6 +4824,8 @@ describe('sendTaskAction — Telegram delivery channel', () => {
     expect(jobValues?.['task'] as string).not.toContain('## Delivery channels');
     // chatId is set on the job row (runner will build Job context block in system_prompt)
     expect(jobValues?.['chatId']).toBe('12345');
+    // The chat carries its channel (#649): the owner's Telegram chat.
+    expect(jobValues?.['chatChannel']).toBe('telegram');
     // 'dashboard' depuis le 18/09 : la boîte écrit l'endroit d'où la demande
     // part. Avec 'api', ses tâches se mêlaient aux runs venus de dehors.
     expect(jobValues?.['channel']).toBe('dashboard');
@@ -4845,7 +4856,11 @@ describe('sendTaskAction — Telegram delivery channel', () => {
     expect(jobValues?.['task']).toBe('Plain prompt');
     expect(jobValues?.['task'] as string).not.toContain('## Delivery channels');
     // chatId not set (key absent or undefined — no spread)
-    expect(jobValues?.['chatId']).toBeUndefined();
+    // No chat: designateChat writes both columns as NULL (#649).
+    expect({ chatId: jobValues?.['chatId'], chatChannel: jobValues?.['chatChannel'] }).toEqual({
+      chatId: null,
+      chatChannel: null,
+    });
     expect(jobValues?.['channel']).toBe('dashboard');
   });
 

@@ -42,6 +42,7 @@ import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './w
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
 import { getDeploymentContext } from '../job/deployment.ts';
+import { telegramChatOf } from '../job/channel-delivery.ts';
 import { buildCliAuditRow } from './audit.ts';
 import {
   failJob,
@@ -152,6 +153,8 @@ export interface CliRuntimeAgentRow extends Agent {
 export interface CliRuntimeJobRow {
   entityId: string | null;
   chatId: string | null;
+  /** `agent_jobs.chat_channel` — le canal du chat que le déclencheur a désigné (#649). */
+  chatChannel?: string | null;
   channel: string | null;
   conversationId: string | null;
   task: string | null;
@@ -190,6 +193,8 @@ export function buildCliRuntimeJobContext(args: {
   deployment: DeploymentContext;
   task?: string | null;
   chatId?: string | null;
+  /** Le canal sur lequel `chatId` a été résolu (`agent_jobs.chat_channel`), ou null (#649). */
+  chatChannel?: string | null;
   workspaceGit?: Awaited<ReturnType<typeof probeWorkspaceGit>>;
   /**
    * Les dossiers que la CLI a RÉELLEMENT — le partagé compris.
@@ -214,7 +219,7 @@ export function buildCliRuntimeJobContext(args: {
     surface: 'cli-runtime',
     deployment: args.deployment,
     ...(args.task ? { task: args.task } : {}),
-    ...(args.chatId ? { telegramChatId: args.chatId } : {}),
+    ...telegramChatOf({ id: args.chatId ?? null, channel: args.chatChannel ?? null }),
     ...(args.workspaceGit ? { workspaceGit: args.workspaceGit } : {}),
     ...(args.workspaces && args.workspaces.length > 0 ? { workspaces: args.workspaces } : {}),
     ...(args.conversation ? { conversation: args.conversation } : {}),
@@ -704,6 +709,7 @@ export async function runCliRuntimeJob(args: {
         deployment: await getDeploymentContext(db, job.entityId ?? undefined),
         task: job.task,
         chatId: job.chatId,
+        chatChannel: job.chatChannel ?? null,
         workspaceGit,
         workspaces: args.workspaces,
         ...(conversation ? { conversation } : {}),
@@ -1025,6 +1031,7 @@ export async function runCliRuntimeJob(args: {
       chatId: job.chatId,
       agentId: agentRow.id,
       channel: job.channel,
+      chatChannel: job.chatChannel,
       triggerContext: job.triggerContext,
     });
     if (isDeliveryRefusal(target)) {

@@ -23,7 +23,16 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { and, eq, agents, agentJobs, jobDeliveries, telegramAllowedChats } from '@nodal-agents/db';
+import {
+  and,
+  eq,
+  agents,
+  agentJobs,
+  jobDeliveries,
+  telegramAllowedChats,
+  channelBindings,
+  channelAllowedConversations,
+} from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { DeliveryError } from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
@@ -429,6 +438,56 @@ describe('drainDeliveries — les issues d’envoi', () => {
     expect(logged).toContain('cause=no_owner');
     // Aucune alerte n'a pu partir — et surtout, aucune n'est partie ailleurs.
     expect(adapters.sent.filter((m) => m.chatId !== chatId)).toHaveLength(0);
+  });
+
+  // Revue passe 5 de #657 : l'alerte suit la règle de l'avis de budget
+  // (`resolveOwnerNoticeTarget`) — le canal d'abord, puis le propriétaire SUR
+  // ce canal. Token Telegram retiré, Discord actif : jamais le chat Telegram du
+  // propriétaire posté par l'adaptateur Discord.
+  it('token Telegram retiré, Discord actif ⇒ l’alerte part sur Discord, au propriétaire Discord (#649)', async () => {
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    await db.insert(channelBindings).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      credentials: JSON.stringify({ botToken: 'discord-bot-token' }),
+      enabled: true,
+    });
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      conversationId: 'discord-owner-1',
+      role: 'owner',
+      status: 'active',
+    });
+    try {
+      const { jobId, chatId } = await newDeliverableJob();
+      const id = await prepare(jobId, chatId);
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      adapters.behave(async (m) => {
+        if (m.chatId === chatId) {
+          throw new DeliveryError('telegram_unauthorized', 'telegram_unauthorized: revoked');
+        }
+        return { messageId: '7' };
+      });
+
+      await drainDeliveries(db as unknown as AnyDrizzleDb, { jobId, adapters: adapters.resolve });
+
+      expect((await readDelivery(id)).outcome).toBe('rejected');
+      expect(
+        adapters.sent.filter((m) => m.chatId !== chatId).map((m) => [m.channel, m.chatId]),
+      ).toEqual([['discord', 'discord-owner-1']]);
+    } finally {
+      await db
+        .delete(channelAllowedConversations)
+        .where(eq(channelAllowedConversations.agentId, seed.agentId));
+      await db.delete(channelBindings).where(eq(channelBindings.agentId, seed.agentId));
+      await db
+        .update(agents)
+        .set({ telegramBotToken: BOT_TOKEN })
+        .where(eq(agents.id, seed.agentId));
+    }
   });
 });
 

@@ -1,7 +1,7 @@
 // Built-in: return_result
 // Pure state-machine signal: tells the runner the task is complete or blocked.
-// Content delivery is handled by dedicated delivery tools (dashboard_publish,
-// telegram_send_message, etc.) — NOT by return_result.
+// It carries no content: the answer is the agent's written reply, or a send
+// tool's message when the job's reply goes to a chat (#649) — never return_result.
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
@@ -43,13 +43,13 @@ export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, Re
     'Report that a task succeeded or is blocked. It sends no answer by itself: the agent delivers its answer in the same step, through the right channel.',
   description:
     'Signal that the task is complete (status="success") or blocked (status="blocked"). ' +
-    'For content delivery to the user, use the appropriate delivery tool ' +
-    '(`telegram_send_message`, `dashboard_publish`, etc.) — return_result carries no content. ' +
-    'On a DELEGATED sub-task you have no delivery tool: your written reply is the delivery, so ' +
+    'return_result carries no content: your answer is your written reply, unless the ' +
+    '`delivery:` line of your Job context says a send tool is the only way your replies reach ' +
+    'the user. On a DELEGATED sub-task you have no delivery tool: your written reply is the delivery, so ' +
     'write your deliverable as your reply text in the same turn. Signalling success with no ' +
     'reply and no delivery hands back an empty result and the run is failed, not accepted. ' +
-    'Whenever your task involves delivering an answer, emit `return_result` and the delivery ' +
-    'tool(s) **in the same assistant turn** (parallel tool calls). The runner handles delivery ' +
+    'When a send tool carries your reply (the `delivery:` line says so), emit it and ' +
+    '`return_result` **in the same assistant turn** (parallel tool calls). The runner handles delivery ' +
     'failures automatically (defers finalization if a sibling tool errors), so there is no need ' +
     'to wait for tool results before signaling completion — splitting into separate turns ' +
     'doubles input token cost (the full conversation replays) for no benefit. ' +
@@ -57,7 +57,15 @@ export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, Re
     'whatever tool or command produced it (a file you wrote, a render, a build output, an ' +
     'export). Nodal checks each listed file before the run can end as a success: a missing ' +
     'or broken file is reported, never accepted, and the run does not end as a success. ' +
-    'Use status="blocked" if you cannot proceed after 2 attempts. When you set status="blocked" ' +
+    'status="success" means you did everything that was yours to do. When a TOOL RETURNED a ' +
+    'state waiting on a person in its output (a pending confirmation, an approval request, a ' +
+    'card to click, whatever it is called), the result is DELIVERED, not blocked: write in ' +
+    'your reply what waits, who decides and where (on a delegated task, that reply is what ' +
+    'your orchestrator reads). Only the approval gate Nodal itself puts BEFORE calling a tool ' +
+    'suspends the run on its own: do not declare that one. ' +
+    'status="blocked" means YOUR part could not be done after 2 attempts: the requested ' +
+    'action itself failed or could not be called (even if you prepared something in its ' +
+    'place), or an input or an access is missing. When you set status="blocked" ' +
     'you MUST also set `reason` to a clear, user-facing explanation: name the SPECIFIC thing that ' +
     'blocked YOU on THIS task — the exact tool, credential, or input that failed and its actual ' +
     'error — and the concrete next step the user can take. Write it from scratch for this ' +
