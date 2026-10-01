@@ -572,7 +572,37 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
     input: z.infer<TInput>,
     ctx: ToolContext,
   ) => Promise<'require_approval' | undefined>;
+  /**
+   * What the model reads of a successful result, when that is not the result
+   * itself.
+   *
+   * `execute()` returns the RECORD: what `tool_calls.tool_output` keeps and
+   * what every other reader (the conversation screen, the audit, the bench,
+   * `present()`) sees. Most tools hand the model that same value and declare
+   * nothing. A tool whose result carries a form meant for the model next to a
+   * form meant for machines declares this: an MCP tool keeps both channels of
+   * its server's answer on the row, and gives the model the text blocks the
+   * server wrote for it (`packages/adapters/mcp/src/result.ts`).
+   *
+   * Applied by the runner on every path where a success becomes a tool result
+   * (`toolOutputForModel`); the untrusted framing and the context cap still
+   * apply to what this returns.
+   */
+  // Method syntax, like `present`: TOutput sits in a parameter, and a property
+  // arrow would make every ToolDefinition<_, X> unassignable to <_, unknown>.
+  toModelOutput?(output: TOutput): string;
   execute: (input: z.infer<TInput>, ctx: ToolContext) => Promise<TOutput>;
+}
+
+/**
+ * The value the model reads for a successful call of `tool`: its declared
+ * `toModelOutput` rendering, or the output itself.
+ */
+export function toolOutputForModel<TOutput>(
+  tool: { toModelOutput?: (output: TOutput) => string },
+  output: TOutput,
+): unknown {
+  return tool.toModelOutput ? tool.toModelOutput(output) : output;
 }
 
 // ─── ToolRegistry ─────────────────────────────────────────────────────────────

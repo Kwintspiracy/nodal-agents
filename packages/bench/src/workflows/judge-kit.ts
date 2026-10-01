@@ -35,6 +35,27 @@ export function parseJson(s: string | null): unknown {
   }
 }
 
+/**
+ * Le résultat structuré d'un outil MCP, tel que sa ligne `tool_calls` le garde.
+ *
+ * Depuis que l'adaptateur garde le résultat ENTIER (`packages/adapters/mcp/src/
+ * result.ts`), la sortie est `{ content: [...blocs], structuredContent? }` et
+ * la forme machine du serveur est sous `structuredContent`. Les lignes écrites
+ * avant gardaient ce `structuredContent` seul, à la racine : les essais réels
+ * enregistrés (fixtures) et toute base existante en portent. Les deux formes
+ * sont des données déjà écrites, chacune lue telle qu'elle a été écrite.
+ */
+export function mcpStructured(s: string | null): Record<string, unknown> | null {
+  const o = parseJson(s);
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+  const record = o as Record<string, unknown>;
+  if (!Array.isArray(record['content'])) return record;
+  const structured = record['structuredContent'];
+  return structured && typeof structured === 'object' && !Array.isArray(structured)
+    ? (structured as Record<string, unknown>)
+    : null;
+}
+
 const URL_RE = /https?:\/\/[^\s<>"'`\])}|\\]+/gi;
 
 /**

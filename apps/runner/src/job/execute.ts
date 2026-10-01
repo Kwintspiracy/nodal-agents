@@ -106,6 +106,7 @@ import {
   isExistingDirectory,
   deferredToolIndex,
   withToolLoader,
+  toolOutputForModel,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -3114,7 +3115,10 @@ async function runJobTracked(
                 // suspended, so it needs the same framing. A boundary that is
                 // framed on first call and bare after a human approval would be
                 // framed exactly when nobody is looking at it.
-                replacementOutput = toResultOutput(execResult.output, req.toolName);
+                replacementOutput = toResultOutput(
+                  toolOutputForModel(toolDef, execResult.output),
+                  req.toolName,
+                );
               } else if (execResult.outcome === 'error') {
                 replacementOutput = toResultOutput({ error: execResult.error });
               } else {
@@ -6037,7 +6041,9 @@ async function runJobTracked(
           toolName: call.name,
           output: toResultOutput(
             toolResult.outcome === 'success'
-              ? toolResult.output
+              ? // What the model reads, when the tool says it differs from the
+                // record it returned (`ToolDefinition.toModelOutput`).
+                toolOutputForModel(toolDef, toolResult.output)
               : toolResult.mayHaveDelivered === true
                 ? // Keep the flag in the block so the sibling-error guard below
                   // can recognize this as "probably delivered" and let a
