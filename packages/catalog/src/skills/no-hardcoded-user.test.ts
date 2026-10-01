@@ -15,3 +15,23 @@ describe('system skill catalog — no hardcoded per-user values (I-5)', () => {
     }
   });
 });
+
+describe('print-request skill', () => {
+  const skill = systemSkills.find((s) => s.slug === 'print-request');
+
+  it('is registered in the catalog as a capability skill with no builtin requirement', () => {
+    expect(skill).toBeDefined();
+    expect(skill?.name).toBe('Print requests');
+    expect(skill?.requiredBuiltins).toEqual([]);
+    expect(skill?.kind ?? 'capability').toBe('capability');
+    expect(skill?.content).toContain('the only valid answer is a print preview');
+  });
+
+  it('names no user, e-mail, printer model or server', () => {
+    const text = `${skill?.description}\n${skill?.content}`;
+    expect(text).not.toMatch(/quentin/i);
+    expect(text).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.]+/);
+    expect(text).not.toMatch(/\b(hp|smart[- ]?tank|deskjet|laserjet|epson|canon|brother)\b/i);
+    expect(text).not.toMatch(/https?:\/\/(?!URL)/);
+  });
+});

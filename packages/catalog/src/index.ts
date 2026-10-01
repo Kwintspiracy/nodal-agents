@@ -17,6 +17,7 @@ import type { SystemSkill, SkillKind, PromptSurface } from './types';
 
 import { obsidianSkill } from './skills/obsidian';
 import { researchScopeDisciplineSkill } from './skills/research-scope-discipline';
+import { printRequestSkill } from './skills/print-request';
 import { resultsDeliverySkill } from './skills/results-delivery';
 import { telegramResponderSkill } from './skills/telegram-responder';
 import { claudeHtmlDesignSkill } from './skills/claude-html-design';
@@ -61,6 +62,7 @@ export { requestReviewSkill } from './skills/request-review';
 export const systemSkills: SystemSkill[] = [
   obsidianSkill,
   researchScopeDisciplineSkill,
+  printRequestSkill,
   resultsDeliverySkill,
   telegramResponderSkill,
   claudeHtmlDesignSkill,
