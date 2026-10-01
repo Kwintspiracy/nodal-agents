@@ -1129,6 +1129,11 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     // that matters to the LLM: do NOT resend.
     const mayHaveDelivered =
       err instanceof Error && (err as { mayHaveDelivered?: boolean }).mayHaveDelivered === true;
+    // `raisedByTool`: this text came out of the tool's own execute(), so for a
+    // third-party tool it may carry a third party's words (an MCP server's
+    // `isError` result, an API's error body). The runner frames it like the
+    // tool's success (INJECT-001). Every other error of this function is the
+    // gate's own wording and carries no flag.
     const result: ToolExecutionResult = mayHaveDelivered
       ? {
           outcome: 'error',
@@ -1138,8 +1143,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
             'content (resending duplicates messages). Continue as if delivered and mention ' +
             'the uncertainty in your final result.',
           mayHaveDelivered: true,
+          raisedByTool: true,
         }
-      : { outcome: 'error', error: errorMsg };
+      : { outcome: 'error', error: errorMsg, raisedByTool: true };
     await _writeToolCall(
       ctx,
       auditTool,

@@ -619,7 +619,37 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
     input: z.infer<TInput>,
     ctx: ToolContext,
   ) => Promise<'require_approval' | undefined>;
+  /**
+   * What the model reads of a successful result, when that is not the result
+   * itself.
+   *
+   * `execute()` returns the RECORD: what `tool_calls.tool_output` keeps and
+   * what every other reader (the conversation screen, the audit, the bench,
+   * `present()`) sees. Most tools hand the model that same value and declare
+   * nothing. A tool whose result carries a form meant for the model next to a
+   * form meant for machines declares this: an MCP tool keeps both channels of
+   * its server's answer on the row, and gives the model the text blocks the
+   * server wrote for it (`packages/adapters/mcp/src/result.ts`).
+   *
+   * Applied by the runner on every path where a success becomes a tool result
+   * (`toolOutputForModel`); the untrusted framing and the context cap still
+   * apply to what this returns.
+   */
+  // Method syntax, like `present`: TOutput sits in a parameter, and a property
+  // arrow would make every ToolDefinition<_, X> unassignable to <_, unknown>.
+  toModelOutput?(output: TOutput): string;
   execute: (input: z.infer<TInput>, ctx: ToolContext) => Promise<TOutput>;
+}
+
+/**
+ * The value the model reads for a successful call of `tool`: its declared
+ * `toModelOutput` rendering, or the output itself.
+ */
+export function toolOutputForModel<TOutput>(
+  tool: { toModelOutput?: (output: TOutput) => string },
+  output: TOutput,
+): unknown {
+  return tool.toModelOutput ? tool.toModelOutput(output) : output;
 }
 
 // ─── ToolRegistry ─────────────────────────────────────────────────────────────
@@ -742,8 +772,14 @@ export type ToolExecutionResult =
    * have reached the user. The runner's delivery guard treats this as a
    * delivery (no re-send nudge) and the error text tells the LLM not to
    * resend — a blind retry is exactly what duplicates messages.
+   *
+   * `raisedByTool` — the error came out of the tool's own `execute()`, so its
+   * text is the tool's, not the gate's: for a third-party tool it may carry a
+   * third party's words, and the runner frames it as external data like the
+   * tool's success (INJECT-001). Absent on every error the gate writes itself
+   * (invalid input, a `block` rule, a refused approval).
    */
-  | { outcome: 'error'; error: string; mayHaveDelivered?: boolean }
+  | { outcome: 'error'; error: string; mayHaveDelivered?: boolean; raisedByTool?: true }
   | { outcome: 'awaiting_approval'; approvalRequestId: string };
 
 // ─── Constants ────────────────────────────────────────────────────────────────

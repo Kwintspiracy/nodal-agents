@@ -35,6 +35,43 @@ export function parseJson(s: string | null): unknown {
   }
 }
 
+/**
+ * Le résultat structuré d'un outil MCP, tel que sa ligne `tool_calls` le garde.
+ *
+ * Depuis que l'adaptateur garde le résultat ENTIER (`packages/adapters/mcp/src/
+ * result.ts`), la sortie est `{ content: [...blocs], structuredContent? }` et
+ * la forme machine du serveur est sous `structuredContent`. Les lignes écrites
+ * avant gardaient ce `structuredContent` seul, à la racine : les essais réels
+ * enregistrés (fixtures) et toute base existante en portent. Les deux formes
+ * sont des données déjà écrites, chacune lue telle qu'elle a été écrite.
+ *
+ * Un serveur peut aussi ne rien mettre dans `structuredContent` et écrire sa
+ * forme machine en JSON dans un bloc texte — ce que la spec recommande pour les
+ * clients qui ne lisent que `content` (et une ligne de l'ancien adaptateur, qui
+ * gardait ce texte seul). Elle est lue aussi : le premier bloc texte qui est un
+ * objet JSON. Sinon le juge dirait « aucune demande » sur un essai juste.
+ */
+export function mcpStructured(s: string | null): Record<string, unknown> | null {
+  const record = jsonObject(parseJson(s));
+  if (!record) return null;
+  if (!Array.isArray(record['content'])) return record;
+  const structured = jsonObject(record['structuredContent']);
+  if (structured) return structured;
+  for (const block of record['content'] as unknown[]) {
+    const b = block as { type?: unknown; text?: unknown } | null;
+    if (b?.type !== 'text') continue;
+    const fromText = jsonObject(b.text);
+    if (fromText) return fromText;
+  }
+  return null;
+}
+
+/** An object, or a string that is the JSON of one; null for anything else. */
+function jsonObject(v: unknown): Record<string, unknown> | null {
+  const o = typeof v === 'string' ? parseJson(v) : v;
+  return o && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, unknown>) : null;
+}
+
 const URL_RE = /https?:\/\/[^\s<>"'`\])}|\\]+/gi;
 
 /**

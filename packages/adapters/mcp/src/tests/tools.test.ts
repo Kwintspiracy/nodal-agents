@@ -93,7 +93,15 @@ describe('mcpToolToToolDefinition', () => {
     expect(def.riskLevel).toBe('write');
   });
 
-  it('execute() dispatches with the original un-prefixed name and joins text-only content', async () => {
+  // execute() returns the RECORD (what tool_calls keeps); toModelOutput() is
+  // what the model reads (result.ts). Both are asserted: a result is right only
+  // when the row keeps it AND the model reads it.
+  const read = (def: { toModelOutput?: (o: unknown) => string }, out: unknown): string => {
+    if (!def.toModelOutput) throw new Error('an MCP tool declares no toModelOutput');
+    return def.toModelOutput(out);
+  };
+
+  it('execute() dispatches with the original un-prefixed name; the model reads the text block', async () => {
     const callTool = vi.fn(async () => ({
       content: [{ type: 'text', text: 'hi' }],
       isError: false,
@@ -114,12 +122,12 @@ describe('mcpToolToToolDefinition', () => {
         onprogress: expect.any(Function),
       }),
     );
-    // Text-only content blocks are joined into their text (often serialized JSON),
-    // not surfaced as the raw block wrapper.
-    expect(out).toBe('hi');
+    expect(out).toEqual({ content: [{ type: 'text', text: 'hi' }] });
+    // The model reads the text itself, not a block wrapper.
+    expect(read(def, out)).toBe('hi');
   });
 
-  it('execute() prefers structuredContent over (empty) content blocks', async () => {
+  it('structuredContent with no text block: kept, and read by the model serialized', async () => {
     // Airtable & other structured-output servers return data here while the SDK
     // defaults `content` to []. Regression for live job c66f1db0 (empty results).
     const records = [{ id: 'rec1', fields: { Name: 'A' } }];
@@ -130,10 +138,11 @@ describe('mcpToolToToolDefinition', () => {
 
     const out = await def.execute({ baseId: 'app1', tableId: 'JobList' }, {} as never);
 
-    expect(out).toEqual({ records });
+    expect(out).toEqual({ content: [], structuredContent: { records } });
+    expect(read(def, out)).toBe(JSON.stringify({ records }));
   });
 
-  it('execute() returns the raw blocks when content has non-text blocks', async () => {
+  it('an image block is recorded as its type and size, and said to the model', async () => {
     const blocks = [{ type: 'image', data: 'iVBOR', mimeType: 'image/png' }];
     const client = {
       callTool: vi.fn(async () => ({ content: blocks })),
@@ -142,7 +151,10 @@ describe('mcpToolToToolDefinition', () => {
 
     const out = await def.execute({}, {} as never);
 
-    expect(out).toEqual(blocks);
+    expect(out).toEqual({ content: [{ type: 'image', mimeType: 'image/png', bytes: 3 }] });
+    expect(read(def, out)).toBe(
+      "[Image returned by the tool (image/png, 3 B): not passed to you. Nodal does not give a tool's image to the model.]",
+    );
   });
 
   it('execute() throws when the MCP tool returns isError', async () => {
@@ -159,7 +171,7 @@ describe('mcpToolToToolDefinition', () => {
 
   // ── audit#2026-07-07 F6: cap unbounded MCP tool results ──────────────────
 
-  it('execute() truncates an oversized text result with a trailing marker (F6)', async () => {
+  it('an oversized text result is truncated with a trailing marker, on the row and for the model (F6)', async () => {
     const huge = 'x'.repeat(60_000);
     const client = {
       callTool: vi.fn(async () => ({
@@ -169,16 +181,17 @@ describe('mcpToolToToolDefinition', () => {
     } as unknown as Client;
     const def = mcpToolToToolDefinition(client, descriptor, 'c');
 
-    const out = (await def.execute({}, {} as never)) as string;
+    const out = await def.execute({}, {} as never);
+    const model = read(def, out);
 
-    expect(typeof out).toBe('string');
     // Capped, not the full 60k, and clearly marked as truncated (not silently cut).
-    expect(out.length).toBeLessThan(60_000);
-    expect(out).toContain('[...truncated at 50000 chars');
-    expect(out.startsWith('x'.repeat(1000))).toBe(true);
+    expect(model.length).toBeLessThan(60_000);
+    expect(model).toContain('[...truncated at 50000 chars');
+    expect(model.startsWith('x'.repeat(1000))).toBe(true);
+    expect(JSON.stringify(out).length).toBeLessThan(60_000);
   });
 
-  it('execute() does NOT truncate a text result under the cap', async () => {
+  it('a text result under the cap is not truncated', async () => {
     const small = 'hello world';
     const client = {
       callTool: vi.fn(async () => ({ content: [{ type: 'text', text: small }], isError: false })),
@@ -187,10 +200,10 @@ describe('mcpToolToToolDefinition', () => {
 
     const out = await def.execute({}, {} as never);
 
-    expect(out).toBe(small);
+    expect(read(def, out)).toBe(small);
   });
 
-  it('execute() wraps an oversized structuredContent with truncated:true instead of corrupting the JSON (F6)', async () => {
+  it('an oversized structuredContent is wrapped with truncated:true instead of corrupting the JSON (F6)', async () => {
     const records = Array.from({ length: 5000 }, (_, i) => ({
       id: `rec${i}`,
       fields: { Name: `Record number ${i}`, Notes: 'padding '.repeat(10) },
@@ -201,20 +214,20 @@ describe('mcpToolToToolDefinition', () => {
     const def = mcpToolToToolDefinition(client, descriptor, 'airtable');
 
     const out = (await def.execute({}, {} as never)) as {
-      truncated: boolean;
-      originalLength: number;
-      preview: string;
+      structuredContent: { truncated: boolean; originalLength: number; preview: string };
     };
 
-    expect(out.truncated).toBe(true);
-    expect(out.originalLength).toBeGreaterThan(50_000);
-    expect(out.preview.length).toBe(50_000);
+    expect(out.structuredContent.truncated).toBe(true);
+    expect(out.structuredContent.originalLength).toBeGreaterThan(50_000);
+    expect(out.structuredContent.preview.length).toBe(50_000);
     // The preview must still be a prefix of the real serialized JSON — never
     // fabricated content — even though it is not parseable on its own.
-    expect(JSON.stringify({ records }).startsWith(out.preview)).toBe(true);
+    expect(JSON.stringify({ records }).startsWith(out.structuredContent.preview)).toBe(true);
+    // The model reads the wrapper, which says it was truncated.
+    expect(read(def, out)).toContain('"truncated":true');
   });
 
-  it('execute() does NOT wrap structuredContent under the cap', async () => {
+  it('a structuredContent under the cap is kept as is', async () => {
     const records = [{ id: 'rec1', fields: { Name: 'A' } }];
     const client = {
       callTool: vi.fn(async () => ({ content: [], structuredContent: { records } })),
@@ -223,10 +236,10 @@ describe('mcpToolToToolDefinition', () => {
 
     const out = await def.execute({}, {} as never);
 
-    expect(out).toEqual({ records });
+    expect(out).toEqual({ content: [], structuredContent: { records } });
   });
 
-  it('execute() wraps oversized raw content blocks (e.g. many images) with truncated:true (F6)', async () => {
+  it('many image blocks are recorded as their sizes, never their bytes (F6)', async () => {
     const blocks = Array.from({ length: 200 }, () => ({
       type: 'image',
       data: 'iVBOR'.repeat(200),
@@ -237,9 +250,53 @@ describe('mcpToolToToolDefinition', () => {
     } as unknown as Client;
     const def = mcpToolToToolDefinition(client, descriptor, 'c');
 
-    const out = (await def.execute({}, {} as never)) as { truncated: boolean };
+    const out = (await def.execute({}, {} as never)) as { content: unknown[] };
 
-    expect(out.truncated).toBe(true);
+    expect(out.content).toHaveLength(200);
+    expect(JSON.stringify(out)).not.toContain('iVBOR');
+    expect(read(def, out).split('\n')).toHaveLength(200);
+  });
+
+  it('many text blocks under the per-block cap are bounded as a whole on the row, and the cut is said (F6)', async () => {
+    // 200 blocks of 49k: each passes a per-block cap, together ~10 MB.
+    const blocks = Array.from({ length: 200 }, (_, i) => ({
+      type: 'text',
+      text: `${i}:`.padEnd(49_000, 'y'),
+    }));
+    const client = {
+      callTool: vi.fn(async () => ({ content: blocks })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'c');
+
+    const out = (await def.execute({}, {} as never)) as {
+      content: Array<{ type: string; count?: number; text?: string }>;
+    };
+
+    // The row stays within the cap (plus the markers that say so).
+    expect(JSON.stringify(out).length).toBeLessThan(51_000);
+    // The first block survives; the rest is counted, not lost in silence.
+    expect(out.content[0]?.text?.startsWith('0:')).toBe(true);
+    const omitted = out.content.at(-1)!;
+    expect(omitted.type).toBe('omitted');
+    expect(omitted.count).toBe(200 - (out.content.length - 1));
+    expect(read(def, out)).toContain(
+      `[${omitted.count} more content blocks not kept: the result exceeded 50000 chars.]`,
+    );
+  });
+
+  it('the 2024-10-07 result shape (`toolResult`) is read, never reported as empty', async () => {
+    // CompatibilityCallToolResultSchema in the SDK: a pre-2025 server answers
+    // `{ toolResult }`; the SDK's loose result schema keeps the key and
+    // defaults `content` to [].
+    const client = {
+      callTool: vi.fn(async () => ({ content: [], toolResult: { temperature: 21 } })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'legacy');
+
+    const out = await def.execute({}, {} as never);
+
+    expect(out).toEqual({ content: [], toolResult: { temperature: 21 } });
+    expect(read(def, out)).toBe('{"temperature":21}');
   });
 });
 
