@@ -283,8 +283,9 @@ describe('buildTeamBlock @cap:organiser-equipe/moteur', () => {
     });
 
     const block = await buildTeamBlock(orch.id as AgentId, db);
-    // Block must surface the connector slug so the orchestrator's LLM knows the
-    // worker can do this work (the connector NAME conveys the capability).
+    // Block must surface the connector slug, followed by every operation the
+    // worker holds, with no bound (#611): the slug alone does not say what the
+    // connector can do. The exact entry is asserted in team-block-connectors.test.ts.
     expect(block).toContain('Connectors:');
     expect(block).toContain('notion-oauth');
   });
@@ -336,8 +337,9 @@ describe('buildTeamBlock @cap:organiser-equipe/moteur', () => {
     });
 
     const block = await buildTeamBlock(orch.id as AgentId, db);
-    // Block must surface the MCP server slug so the orchestrator knows the
-    // worker has this capability (the connector/MCP NAME, not every operation).
+    // Block must surface the MCP server slug, followed by every tool the worker
+    // holds (enabled ∩ available), with no bound (#611). The exact entry is
+    // asserted in team-block-connectors.test.ts.
     expect(block).toContain('Connectors:');
     expect(block).toContain('stripe');
   });
