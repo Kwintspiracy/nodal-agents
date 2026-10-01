@@ -10,8 +10,10 @@
 //   FIXTURE_MCP_NAME          the server's name (default `fixture`)
 //   FIXTURE_MCP_INSTRUCTIONS  the `instructions` it publishes at initialize;
 //                             absent or empty = it publishes none
+//   FIXTURE_MCP_REPLY         what `ping` answers (default `pong`), so a test
+//                             can tell two running servers apart
 //
-// One tool, `ping`, answers `pong`.
+// One tool, `ping`.
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -23,8 +25,10 @@ const server = new McpServer(
   instructions ? { instructions } : {},
 );
 
+const reply = process.env.FIXTURE_MCP_REPLY || 'pong';
+
 server.registerTool('ping', { description: 'Answer pong.' }, async () => ({
-  content: [{ type: 'text', text: 'pong' }],
+  content: [{ type: 'text', text: reply }],
 }));
 
 await server.connect(new StdioServerTransport());
