@@ -441,8 +441,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       tool_name text NOT NULL,
       tool_input jsonb NOT NULL,
       tool_call_id text,
-      kind text NOT NULL DEFAULT 'approval' CHECK (kind IN ('approval','question')),
+      kind text NOT NULL DEFAULT 'approval' CHECK (kind IN ('approval','question','elicitation')),
       answer text,
+      -- mirrors migration 0145 : la réponse à une élicitation
+      response jsonb,
       status text DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','expired')),
       requested_at timestamptz DEFAULT now(),
       resolved_at timestamptz,
@@ -473,6 +475,20 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       outcome text CHECK (outcome IS NULL OR outcome IN ('edited','cannot_edit','gave_up')),
       CONSTRAINT approval_card_messages_message_unique
         UNIQUE (approval_request_id, channel, conversation_id, message_id)
+    );
+
+    -- mirrors migration 0145 : les images jointes à une élicitation
+    CREATE TABLE IF NOT EXISTS approval_request_attachments (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      approval_request_id uuid NOT NULL REFERENCES approval_requests(id) ON DELETE CASCADE,
+      position integer NOT NULL,
+      mime_type text NOT NULL CHECK (mime_type IN ('image/png','image/jpeg','image/webp','image/gif')),
+      data text NOT NULL,
+      byte_size integer NOT NULL,
+      caption text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT approval_request_attachments_position_unique
+        UNIQUE (approval_request_id, position)
     );
 
     CREATE TABLE IF NOT EXISTS approval_rules (

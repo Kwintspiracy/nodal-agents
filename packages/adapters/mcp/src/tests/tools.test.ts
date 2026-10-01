@@ -106,7 +106,13 @@ describe('mcpToolToToolDefinition', () => {
     expect(callTool).toHaveBeenCalledWith(
       { name: 'get_home', arguments: { detail: true } },
       undefined,
-      expect.objectContaining({ timeout: expect.any(Number), resetTimeoutOnProgress: true }),
+      // The call's bound is the adapter's own clock (signal, restarted on
+      // progress, paused while a person answers a question): proven against a
+      // real server in elicitation.test.ts.
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        onprogress: expect.any(Function),
+      }),
     );
     // Text-only content blocks are joined into their text (often serialized JSON),
     // not surfaced as the raw block wrapper.

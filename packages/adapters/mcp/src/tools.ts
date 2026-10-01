@@ -2,17 +2,130 @@
 
 import { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { ToolDefinition } from '@nodal-agents/tools';
-import type { OperationRiskLevel } from '@nodal-agents/shared';
-import type { McpToolDescriptor } from './client.ts';
+import type { ToolContext, ToolDefinition } from '@nodal-agents/tools';
+import { readElicitationAttachments, type OperationRiskLevel } from '@nodal-agents/shared';
+import { runMcpCall, type McpElicitationResponder, type McpToolDescriptor } from './client.ts';
 import { jsonSchemaToZod } from './json-schema-to-zod.ts';
 
 // Per-request MCP tool-call timeout (ms). The SDK default (60s) is too short for
 // heavy tools — a Blender/KeyShot render, a long browser scrape — which otherwise
 // fail with "MCP error -32001: Request timed out" mid-operation. Default 3 min,
-// overridable via MCP_CALL_TIMEOUT_MS; paired with resetTimeoutOnProgress so a
-// server that streams progress can run longer still.
-const MCP_CALL_TIMEOUT_MS = Number(process.env.MCP_CALL_TIMEOUT_MS) || 180_000;
+// overridable via MCP_CALL_TIMEOUT_MS; restarted on every progress notification
+// so a server that streams progress can run longer still. Read per call.
+function mcpCallTimeoutMs(): number {
+  return Number(process.env.MCP_CALL_TIMEOUT_MS) || 180_000;
+}
+
+// The SDK's own per-request timer is set as high as `setTimeout` allows: the
+// call's real bound is `CallClock` below, which the SDK timer cannot pause
+// while a person answers a question the server asked.
+const SDK_TIMEOUT_MAX_MS = 2 ** 31 - 1;
+
+/**
+ * The bound of ONE tool call: `ms` of the server's work, restarted on progress,
+ * and PAUSED while a person answers a question the server asked
+ * (elicitation) — a human thinking for two minutes is not a hung server.
+ * Expiry aborts the call's signal; the SDK then rejects the call with that
+ * reason and tells the server (`notifications/cancelled`).
+ */
+class CallClock {
+  readonly controller = new AbortController();
+  /**
+   * Aborts when the call is over, whatever ended it. A question still open
+   * then is moot: the server already has its result. Not left to the server's
+   * own `notifications/cancelled` — a server may return without sending it,
+   * and SDK 1.29.0 drops it for the request of id 0 (`_oncancel`,
+   * `if (!notification.params.requestId) return`), i.e. the very first
+   * question a server process asks.
+   */
+  readonly ended = new AbortController();
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private paused = 0;
+
+  constructor(
+    private readonly ms: number,
+    private readonly toolName: string,
+  ) {
+    this.arm();
+  }
+
+  private arm(): void {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.controller.abort(
+        new Error(`MCP tool ${this.toolName} timed out after ${this.ms}ms of server work`),
+      );
+    }, this.ms);
+  }
+
+  restart(): void {
+    if (this.paused === 0 && !this.controller.signal.aborted) this.arm();
+  }
+
+  pause(): void {
+    this.paused += 1;
+    clearTimeout(this.timer);
+  }
+
+  resume(): void {
+    this.paused -= 1;
+    if (this.paused === 0 && !this.controller.signal.aborted) this.arm();
+  }
+
+  stop(): void {
+    clearTimeout(this.timer);
+    this.ended.abort(new Error(`MCP tool ${this.toolName} call is over`));
+  }
+}
+
+/** Who is calling, for a question the server may ask during the call. */
+interface CallScope {
+  slug: string;
+  /** The tool as the agent holds it (`printer__request_print`). */
+  toolName: string;
+  ctx: ToolContext | undefined;
+}
+
+/**
+ * Answer the server's question through the person behind this call
+ * (`ctx.requestUserInput`, injected by the runner). Images the server joined
+ * are validated here; an invalid one is dropped and logged, never the question.
+ * With nobody to ask (no runner capability), the server reads `cancel`.
+ */
+function responderFor(scope: CallScope, clock: CallClock): McpElicitationResponder {
+  return async (params, signal) => {
+    // URL mode is never announced, and the SDK refuses it before this point.
+    if (params.mode === 'url') return { action: 'cancel' };
+    const { attachments, rejected } = readElicitationAttachments(params._meta);
+    for (const r of rejected) {
+      console.warn(
+        `[adapter-mcp] ${scope.slug}: image ${r.index} of its question ignored: ${r.reason}`,
+      );
+    }
+    const ask = scope.ctx?.requestUserInput;
+    if (!ask) {
+      console.warn(
+        `[adapter-mcp] ${scope.slug} asked a question during ${scope.toolName}, ` +
+          'but nobody can answer in this context; answered cancel',
+      );
+      return { action: 'cancel' };
+    }
+    clock.pause();
+    try {
+      return await ask({
+        serverSlug: scope.slug,
+        toolName: scope.toolName,
+        toolCallId: scope.ctx?.toolCallId ?? null,
+        message: params.message,
+        requestedSchema: params.requestedSchema,
+        attachments,
+        signal: AbortSignal.any([signal, clock.ended.signal]),
+      });
+    } finally {
+      clock.resume();
+    }
+  };
+}
 
 // audit#2026-07-07 F6: nothing capped the size of a returned MCP tool result.
 // A third-party MCP server — buggy or actively malicious — can return several
@@ -144,16 +257,34 @@ async function callMcpTool(
   client: Client,
   originalName: string,
   input: Record<string, unknown>,
+  scope: CallScope,
 ): Promise<unknown> {
-  const result = await client.callTool(
-    { name: originalName, arguments: input },
-    // Default result schema (CallToolResultSchema).
-    undefined,
-    // The MCP SDK's default per-request timeout is 60s — too short for heavy
-    // tools (a Blender/KeyShot render, a long scrape). Raise it and reset the
-    // clock whenever the server reports progress, so progress-streaming
-    // servers can run even longer. Overridable via MCP_CALL_TIMEOUT_MS.
-    { timeout: MCP_CALL_TIMEOUT_MS, resetTimeoutOnProgress: true },
+  let clock: CallClock | null = null;
+  const result = await runMcpCall(
+    client,
+    // The responder needs the clock, which starts with the call itself (not
+    // while the call waits for the lane): resolved lazily.
+    (params, signal) => responderFor(scope, clock!)(params, signal),
+    async () => {
+      const own = new CallClock(mcpCallTimeoutMs(), originalName);
+      clock = own;
+      try {
+        return await client.callTool(
+          { name: originalName, arguments: input },
+          // Default result schema (CallToolResultSchema).
+          undefined,
+          // The bound is ours (`CallClock`): restarted on progress, paused
+          // while a person answers. Overridable via MCP_CALL_TIMEOUT_MS.
+          {
+            signal: own.controller.signal,
+            timeout: SDK_TIMEOUT_MAX_MS,
+            onprogress: () => own.restart(),
+          },
+        );
+      } finally {
+        own.stop();
+      }
+    },
   );
   if (result.isError === true) {
     const detail = extractText(result.content);
@@ -266,8 +397,9 @@ function buildMcpToolDefinition(
     injected: purposeInjected,
     serverOwnsPurpose,
   } = attachPurpose(jsonSchemaToZod(mcpTool.inputSchema));
+  const name = `${slugToPrefix(slug)}__${originalName}`;
   return {
-    name: `${slugToPrefix(slug)}__${originalName}`,
+    name,
     description: frameMcpDescription(mcpTool.description, slug, originalName),
     inputSchema,
     riskLevel: riskFromAnnotations(mcpTool.annotations),
@@ -290,14 +422,14 @@ function buildMcpToolDefinition(
     // mechanism, unchanged.
     defaultApproval: 'require_approval',
     ...(serverOwnsPurpose ? { purposeIsArgument: true } : {}),
-    async execute(input) {
+    async execute(input, ctx) {
       const client = await getClient();
       const args = { ...((input ?? {}) as Record<string, unknown>) };
       // `purpose` is ours: the server never declared it and would see an
       // argument outside its own schema. Stripped only when WE added it, so a
       // server that legitimately takes a `purpose` still receives its value.
       if (purposeInjected) delete args[PURPOSE_KEY];
-      return callMcpTool(client, originalName, args);
+      return callMcpTool(client, originalName, args, { slug, toolName: name, ctx });
     },
   };
 }

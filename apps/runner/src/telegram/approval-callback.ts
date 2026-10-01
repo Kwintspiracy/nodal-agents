@@ -222,6 +222,16 @@ export async function handleApprovalCallback(
     return { handled: false, reason: 'already_resolved' };
   }
 
+  // ── 0145 — la question d'un SERVEUR MCP (élicitation) ─────────────────────
+  // Elle se répond par un FORMULAIRE, que cette carte ne porte pas : ni ✅
+  // (envoyer sans contenu), ni « Toujours » (une règle sur l'outil MCP qui l'a
+  // posée), ni une option n'y ont de sens. Refusé, la demande reste ouverte et
+  // se répond sur le dashboard.
+  if (approval.kind === 'elicitation') {
+    await answerTelegramCallback(botToken, cb.id, 'Answer this one from the dashboard.', true);
+    return { handled: false, reason: 'elicitation_answered_on_dashboard' };
+  }
+
   // ── P10a — répondre à une QUESTION ────────────────────────────────────────
   //
   // Placé APRÈS toutes les gardes de sécurité (chat privé, propriétaire, même

@@ -43,7 +43,8 @@ export interface McpToolset {
  * fail loud or skip the server).
  */
 export async function createMcpTools(opts: CreateMcpToolsOptions): Promise<McpToolset> {
-  const conn = await connectMcp(opts);
+  // A job's toolset: a person can answer the server's questions (elicitation).
+  const conn = await connectMcp(opts, { answersElicitation: true });
   const tools = conn.tools.map((t) => mcpToolToToolDefinition(conn.client, t, opts.slug));
   return { tools, descriptors: conn.tools, close: conn.close };
 }
@@ -81,7 +82,7 @@ export function createLazyMcpTools(
 
   function ensureConnected() {
     if (!connectPromise) {
-      connectPromise = connectMcp(opts)
+      connectPromise = connectMcp(opts, { answersElicitation: true })
         .then((conn) => {
           if (lazyOpts.onConnected) {
             Promise.resolve(lazyOpts.onConnected(conn.tools)).catch((err: unknown) => {
@@ -125,6 +126,8 @@ export function createLazyMcpTools(
 
 export { connectMcp, buildMcpRequest } from './client.ts';
 export type {
+  McpConnectHooks,
+  McpElicitationResponder,
   McpConnectOptions,
   McpConnection,
   McpToolDescriptor,

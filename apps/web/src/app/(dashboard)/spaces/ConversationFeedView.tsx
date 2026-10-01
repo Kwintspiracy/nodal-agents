@@ -34,6 +34,7 @@ import FoldableBlock, { FoldableBody } from './FoldableBlock.tsx';
 import ModelCallBlock from './ModelCallBlock.tsx';
 import DeliveryBlock from './DeliveryBlock.tsx';
 import QuestionCard from './QuestionCard.tsx';
+import ElicitationCard from './ElicitationCard.tsx';
 import FileDiff, { FileName, LineDelta } from './FileDiff.tsx';
 // Les couleurs des pastilles viennent d'un module SANS directive (#240) : ce
 // fichier est rendu côté serveur, qui ne reçoit d'un module `'use client'`
@@ -247,6 +248,14 @@ function FeedItemView({
       // P7 — la consigne passée au travail. Repliée dans le style des notes :
       // la demande de l'utilisateur est juste au-dessus, écrite de sa main.
       return <Handoff text={item.text} />;
+    case 'elicitation':
+      // 0145 — la question d'un serveur MCP, à sa place dans le fil et HORS du
+      // groupe replié du run : c'est la seule surface du fil qui y répond.
+      return (
+        <div className="mt-4">
+          <ElicitationCard elicitation={item.elicitation} />
+        </div>
+      );
     case 'failure':
       return (
         <div className="mt-6">
