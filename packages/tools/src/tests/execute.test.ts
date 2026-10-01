@@ -298,6 +298,9 @@ describe('executeTool', () => {
       expect(result.error).toContain('Do NOT call this tool again');
       expect(result.error).toContain('telegram_timeout');
     }
+    // The text is the platform's instruction around the tool's message: never
+    // framed as a third party's words.
+    expect(result).not.toHaveProperty('raisedByTool');
   });
 
   it('does NOT set mayHaveDelivered for ordinary errors', async () => {

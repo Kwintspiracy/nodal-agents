@@ -33,6 +33,7 @@ import {
   toolCalls,
 } from '@nodal-agents/db';
 import type { JobId } from '@nodal-agents/orchestration';
+import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 import { executeJob } from '../../job/execute.ts';
 import {
   makeDeps,
@@ -161,6 +162,7 @@ describe('an MCP tool result reaches the model as the server wrote it @cap:conne
 
     // The rows keep the whole result: every block, and structuredContent.
     expect(await recordedOutput(jobId, 'printer_like__report')).toEqual({
+      format: MCP_TOOL_OUTPUT_FORMAT,
       content: [
         {
           type: 'text',
@@ -172,6 +174,7 @@ describe('an MCP tool result reaches the model as the server wrote it @cap:conne
       structuredContent: MIXED_STRUCTURED,
     });
     expect(await recordedOutput(jobId, 'records__report')).toEqual({
+      format: MCP_TOOL_OUTPUT_FORMAT,
       content: [],
       structuredContent: RECORDS,
     });

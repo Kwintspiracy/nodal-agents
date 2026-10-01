@@ -26,7 +26,7 @@ const cachedDescriptors: McpToolDescriptor[] = [
 ];
 
 /** What execute() returns for the server's `ok`: the recorded result (result.ts). */
-const OK = { content: [{ type: 'text', text: 'ok' }] };
+const OK = { format: 'mcp-tool-result/1', content: [{ type: 'text', text: 'ok' }] };
 
 function fakeConnection(overrides?: Partial<McpConnection>): McpConnection {
   return {
