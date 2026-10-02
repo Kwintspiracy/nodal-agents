@@ -27,6 +27,12 @@ describe('print-request skill', () => {
     expect(skill?.content).toContain('the only valid answer is a print preview');
   });
 
+  it('lays out inside the printable area the print tool reports, full-bleed only on request', () => {
+    expect(skill?.content).toContain(
+      "Before laying out, read what the print tool reports about the paper loaded and the printable area of the chosen printer, and keep every page's content inside it: page margins at least the printable area (when the tool states none, keep its default margins). Full-bleed only when the person asks for it.",
+    );
+  });
+
   it('names no user, e-mail, printer model or server', () => {
     const text = `${skill?.description}\n${skill?.content}`;
     expect(text).not.toMatch(/quentin/i);
