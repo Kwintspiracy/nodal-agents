@@ -231,6 +231,7 @@ describe('a job at the maximum delegation depth cannot delegate, and is told so 
       /reach it through/i,
       /goes only to an agent/i,
       /hand (?:it|the work) to (?:a|an|another) (?:agent|teammate|specialist)/i,
+      /when to hand work to a teammate/i,
     ];
     const orders = ORDERS.filter((re) => re.test(call.system)).map(String);
     expect(orders, orders.join(' | ')).toEqual([]);
@@ -248,5 +249,19 @@ describe('a job at the maximum delegation depth cannot delegate, and is told so 
     // The patterns above do match a prompt that orders delegation: not vacuous.
     expect(call.system).toMatch(/delegate to it/);
     expect(call.system).toMatch(/when you delegate/i);
+    expect(call.system).toMatch(/when to hand work to a teammate/i);
+  });
+
+  // 02/10/2026 (Hermes study): the request an orchestrator actually sends says
+  // when NOT to delegate, and no longer pushes towards it.
+  it('below the limit, the request says when to hand work on and when to do it yourself', async () => {
+    const call = await runAt(DEFAULT_LIMITS.maxDelegationDepth - 1);
+    const rule = call.system.slice(call.system.indexOf('When to hand work to a teammate:'));
+    expect(rule).toMatch(/^When to hand work to a teammate: only when \(a\)/);
+    expect(rule).toContain('Otherwise do it yourself: never hand on what your own tools do');
+    expect(rule).toContain('never pass the whole request unchanged to one teammate');
+    for (const push of ['thin version', 'usually the right call', 'You orchestrate the agents']) {
+      expect(call.system, `"${push}" is still in the request`).not.toContain(push);
+    }
   });
 });

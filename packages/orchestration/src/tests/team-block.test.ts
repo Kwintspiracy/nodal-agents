@@ -801,9 +801,41 @@ describe('buildTeamBlock — à la profondeur maximale, aucune délégation anno
 // question qui attend une réponse immédiate, l'orchestrateur peut y répondre.
 // La règle est UNE phrase du pied de bloc, la même pour toute équipe : elle ne
 // nomme aucun agent ni aucun domaine, la spécialité vient de l'entrée du roster.
+//
+// Depuis le 02/10/2026 (étude Hermes), c'est le cas (c) d'une règle plus
+// large, « quand passer la main » : l'orchestrateur fait lui-même ce que ses
+// outils font, et ne passe la main que pour (a) des moyens qu'il n'a pas,
+// (b) un travail qui saturerait son contexte, (c) un coéquipier nommé ou sa
+// spécialité explicitement demandée. L'ancienne phrase poussait dans l'autre
+// sens (« even when one of your own tools could do a thin version of it »).
 // The rule runs up to the footer's last sentence.
 const SPECIALTY_RULE =
-  /When the user asks you to DO a kind of work[^]*?(?= If genuinely none match)/;
+  /When to (?:hand work to a teammate|name a teammate in the `run_task` instruction):[^]*?(?= If genuinely none match)/;
+
+// What the rule says about WHETHER to hand work on, on every route that has
+// one: the three reasons, then "otherwise do it yourself" and what never goes.
+function expectRuleSaysWhenToHandOn(rule: string): void {
+  const a = rule.indexOf(
+    '(a) the work needs a tool, connector, folder or Shell commands you do not hold',
+  );
+  const b = rule.indexOf('(b) the work would flood your own context');
+  const c = rule.indexOf('(c) the user names that teammate, or asks you to DO a kind of work');
+  const otherwise = rule.indexOf('Otherwise do it yourself');
+  expect(
+    [a, b, c, otherwise].every((i) => i > -1),
+    'a reason or the default is missing',
+  ).toBe(true);
+  // The three reasons come first; "do it yourself" is what is left.
+  expect(a < b && b < c && c < otherwise).toBe(true);
+  const after = rule.slice(otherwise);
+  expect(after).toContain('never hand on what your own tools do in a few calls');
+  expect(after).toContain('never pass the whole request unchanged to one teammate');
+  expect(after).toContain('Ask the user first what only they can answer');
+  // #601: an explicit request for work is never answered from memory.
+  expect(rule).toContain('Work the user asks for is done as work, even when you believe');
+  // The old push towards delegation is gone.
+  expect(rule).not.toContain('thin version');
+}
 
 // What the rule itself must settle, on every surface that carries it (revue
 // Reviewer A de #603). Passe 1, P2 : la FORME départage — une demande polie du
@@ -875,8 +907,8 @@ describe('buildTeamBlock — une demande explicite de la spécialité d’un co�
       expect(entryOf(block, specialist.name)).toContain(`Purpose: ${team.purpose}`);
       const rule = RULE.exec(block)?.[0] ?? '';
       expect(rule, 'the specialty rule is missing from the team block').not.toBe('');
-      expect(rule).toContain('even when one of your own tools could do a thin version');
-      expect(rule).toContain('even when you believe you already know the answer');
+      expect(rule.startsWith('When to hand work to a teammate:')).toBe(true);
+      expectRuleSaysWhenToHandOn(rule);
       expectRuleSettlesBothAxes(rule);
       // The rule follows the delegation route of this surface.
       const footer = block.slice(block.indexOf('⚠️ The roster above'));
@@ -901,6 +933,8 @@ describe('buildTeamBlock — une demande explicite de la spécialité d’un co�
       expect(entryOf(chat, specialist.name)).toContain(`Purpose: ${team.purpose}`);
       const rule = RULE.exec(chat)?.[0] ?? '';
       expect(rule, 'the specialty rule is missing from the chat team block').not.toBe('');
+      expect(rule.startsWith('When to name a teammate in the `run_task` instruction:')).toBe(true);
+      expectRuleSaysWhenToHandOn(rule);
       expectRuleSettlesBothAxes(rule);
       const footer = chat.slice(chat.indexOf('⚠️ The roster above'));
       expect(footer).toContain('name that agent in the instruction');
@@ -929,8 +963,36 @@ describe('buildTeamBlock — une demande explicite de la spécialité d’un co�
       // The rule is bound to the means, in the text the model reads.
       const rule = SPECIALTY_RULE.exec(block)?.[0] ?? '';
       expect(rule).toMatch(
-        /announces as its specialty \(its Purpose or Skills\) and whose entry shows the means that work needs, do the same with that agent/,
+        /\(c\) the user names that teammate, or asks you to DO a kind of work its entry announces as its specialty \(its Purpose or Skills\) and whose entry shows the means that work needs\./,
       );
+    }
+  });
+
+  // 02/10/2026 (étude Hermes) : rien dans le bloc ne pousse plus à déléguer,
+  // quel que soit le mode de l'équipe. L'ouverture dit « fais toi-même ce que
+  // tes outils font » ; le « Default lean … usually the right call » ne choisit
+  // plus qu'entre les deux styles.
+  it('in both modes, the block opens on "do it yourself" and no line pushes delegation', async () => {
+    for (const childRole of ['agent', 'orchestrator'] as const) {
+      const { entityId } = await seedContext(db);
+      const t = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const orch = await seedAgent(db, entityId, `test-root-lean-${t}`, 'orchestrator');
+      const child = await seedAgent(db, entityId, `test-child-lean-${t}`, childRole);
+      await assignChild(db, orch.id, child.id, entityId);
+      const block = await buildTeamBlock(orch.id as AgentId, db);
+      expect(block).toContain(
+        'What your own tools do, you do yourself; hand work on only as the rule at the end of this section says.',
+      );
+      expect(block).toContain('ways to delegate');
+      expect(block).toMatch(/Pick ONE style per job — do not mix them\. Which style: this team/);
+      for (const push of [
+        'You orchestrate the agents below',
+        'Default lean',
+        'usually the right call',
+        'thin version',
+      ]) {
+        expect(block, `"${push}" still in the ${childRole} team block`).not.toContain(push);
+      }
     }
   });
 

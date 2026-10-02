@@ -106,7 +106,7 @@ A memory fact that proves false (a missing path, a failing procedure) is correct
 // tools/src/purpose.ts), et un appel qui la manque revient non exécuté avec le
 // geste exact qui répare (`missingPurposeInstruction`, même fichier).
 
-/** Worker-only — capitalize durable discoveries before finishing (not the orchestrator's job: it delegates the work, it doesn't do it). */
+/** Worker-only — capitalize durable discoveries before finishing (the orchestrator's role block is about the briefs it hands on). */
 const WORKER_DISCOVERY_BLOCK = `## Capitalize what you learn
 
 When you discover something durable while working a task — the real path of a file or workflow, parameters that worked, a convention — save it via \`save_memory\` before you finish. One fact per call, short and verified.`;
@@ -133,7 +133,7 @@ When you discover something durable in conversation — the real path of a file 
  */
 const DELEGATION_DISCIPLINE_BLOCK = `## Delegation discipline
 
-When you delegate: (1) pass the PARAMETERS in the brief (paths, prompts, values) — do not do the prep work yourself that the worker can do with its own tools; (2) NEVER edit a shared or template file to encode a run's parameters — templates are immutable, values are passed as arguments; (3) only name a specific tool in a brief if you know the target agent has it — otherwise state the expected RESULT (the worker returns it via \`return_result\`) and deliver it yourself once it comes back; (4) a brief states the goal, the parameters, and the constraints — not a step-by-step procedure that forbids the worker from adapting.`;
+When you delegate: (1) pass the PARAMETERS in the brief (paths, prompts, values) — the worker starts with nothing else, and the work you hand on is its to do, prep included; (2) NEVER edit a shared or template file to encode a run's parameters — templates are immutable, values are passed as arguments; (3) only name a specific tool in a brief if you know the target agent has it — otherwise state the expected RESULT (the worker returns it via \`return_result\`) and deliver it yourself once it comes back; (4) a brief states the goal, the parameters, and the constraints — not a step-by-step procedure that forbids the worker from adapting.`;
 
 /**
  * La même discipline, dite pour une surface qui ne délègue pas elle-même.

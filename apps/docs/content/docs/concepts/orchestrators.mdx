@@ -3,9 +3,25 @@ title: Orchestrators
 description: How orchestrators delegate work to child agents and compile results.
 ---
 
-An orchestrator is an agent whose `role` is set to `orchestrator`. It doesn't
-do the work itself — it breaks a request down and hands pieces to specialist
-child agents, then compiles the result.
+An orchestrator is an agent whose `role` is set to `orchestrator`. It has a
+team of child agents it can hand work to, and it compiles what they return.
+
+## When it hands work on
+
+What its own tools do, an orchestrator does itself. It hands work to a child
+agent only when:
+
+- the work needs a tool, connector, folder or shell access it does not hold and
+  a child's entry shows them;
+- the work is heavy enough to flood its own context (a long research, a large
+  piece of work);
+- you name the child, or explicitly ask for the work a child's entry announces
+  as its specialty.
+
+It never hands on what its own tools do in a few calls, and never passes your
+whole request unchanged to one child: a relay adds a step, not value. A
+question that only wants an answer stays with the orchestrator, and so does a
+question about Nodal itself.
 
 ## Two delegation styles
 
@@ -43,16 +59,17 @@ on the next job.
 
 ## Soft mode lean
 
-An orchestrator's `orchestratorMode` column (`router` or `planner`) is a soft
-default preference surfaced in the prompt, not a hard restriction on the
-toolset:
+Once a hand-off is decided, an orchestrator's `orchestratorMode` column
+(`router` or `planner`) is a soft preference between the two styles, surfaced
+in the prompt, not a hard restriction on the toolset:
 
 - **Router lean** — the team includes sub-orchestrators; inline `assign_*`
-  delegation is usually the right call.
-- **Planner lean** — the team is independent workers; `create_task` parallel
-  fan-out is usually the right call for multi-part work.
+  usually fits.
+- **Planner lean** — the team is independent workers; `create_task` usually
+  fits work in several independent pieces.
 
-The model chooses freely; the lean is guidance, not enforcement.
+The model chooses freely; the lean is guidance, not enforcement. It never
+decides whether to hand work on at all.
 
 ## Delegation limits
 

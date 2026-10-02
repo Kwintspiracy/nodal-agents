@@ -397,14 +397,18 @@ export async function buildTeamBlock(
   // instruction. The runtime enforces "one style per job": once create_task has
   // run, the assign_* path defers (execute.ts commit guard), so the two completion
   // models never collide on the same job.
+  //
+  // The lean chooses between the two STYLES, once a hand-off is decided. It
+  // used to read "delegation is usually the right call", which a model read as
+  // "delegate" (02/10/2026, the Hermes study): whether to hand work on at all
+  // is the footer's rule below, said once for every route.
   const defaultLean =
     mode === 'router'
-      ? 'Default lean: this team includes sub-orchestrators, so in-line `assign_*` ' +
-        'delegation is usually the right call — reach for `create_task` only when you ' +
-        'have genuinely independent work to run in parallel.'
-      : 'Default lean: this team is independent workers, so `create_task` parallel ' +
-        'fan-out is usually the right call for multi-part work — use `assign_*` when a ' +
-        'single agent can handle the whole request or when steps depend on each other.';
+      ? 'Which style: this team includes sub-orchestrators, so `assign_*` usually fits; ' +
+        '`create_task` only for genuinely independent pieces to run in parallel.'
+      : 'Which style: this team is independent workers, so `create_task` usually fits ' +
+        'work in several independent pieces; `assign_*` for a single hand-off or for steps ' +
+        'that depend on each other.';
 
   // Build lines array (all data from DB — no hardcoded names)
   const lines: string[] = [];
@@ -436,8 +440,9 @@ export async function buildTeamBlock(
     );
   } else {
     lines.push(
-      'You orchestrate the agents below. You have TWO ways to delegate — choose the one ' +
-        'that fits the request:\n',
+      'These agents are your team. What your own tools do, you do yourself; hand work on ' +
+        'only as the rule at the end of this section says. To hand work on you have TWO ways ' +
+        'to delegate — choose the one that fits the request:\n',
     );
     lines.push(
       '- **`assign_<agent>` — one delegation, in-line.** Hand the request (or a single ' +
@@ -475,9 +480,7 @@ export async function buildTeamBlock(
         '(a file, an Obsidian note, an email, an HTML page), make a work task that PRODUCES that ' +
         'artifact — but the chat reply itself is never a task.\n',
     );
-    lines.push(
-      'Pick ONE style per request — do not mix them in the same job. ' + defaultLean + '\n',
-    );
+    lines.push('Pick ONE style per job — do not mix them. ' + defaultLean + '\n');
     // What a brief may ask of a teammate, whichever route carries it: said
     // once, here, where every job holding a delegation tool reads it (this
     // branch follows the whitelist's own rule). See delegation-scope.ts.
@@ -575,16 +578,22 @@ export async function buildTeamBlock(
   // exists; through the run_task job on chat; otherwise do what your own tools
   // cover, and name the agent that would have the means in a blocked result.
   //
-  // Wherever a hand-off exists, the same two triggers lead to it (#601): a
-  // request this agent cannot serve, and an EXPLICIT request for the work a
-  // teammate's entry announces as its specialty — which goes to that teammate
-  // even when one of this agent's own tools could do a thin version of it. Run
-  // 4ca78b68 answered "do a research …" from memory, ace9212a ran one
-  // web_search itself, with a research agent on the team. The rule names no
-  // agent and no domain: the specialty is whatever the roster above says. A
-  // Purpose alone is not enough: the entry must show the means (a teammate
-  // announcing test runs with "Shell commands: no" is not one), the wording
-  // the failed-delegation fallback above already uses (#603, pass 4).
+  // Whether to hand work on at all (02/10/2026, the Hermes study: Hermes 0.21.4
+  // tools/delegate_tool.py, "USE FOR / DO NOT USE FOR"). What the agent's own
+  // tools do, it does itself; a hand-off is for (a) means it does not hold,
+  // (b) work heavy enough to flood its own context, (c) a teammate the user
+  // names or whose specialty the user explicitly asks for. Never a relay of the
+  // whole request to one teammate. The rule used to push the other way ("even
+  // when one of your own tools could do a thin version of it"), and products
+  // grew their own "do not delegate" lines to compensate (print-request): one
+  // rule, said once here for every orchestrator, replaces them.
+  //
+  // (c) keeps #601: run 4ca78b68 answered "do a research …" from memory,
+  // ace9212a ran one web_search itself, with a research agent on the team. The
+  // rule names no agent and no domain: the specialty is whatever the roster
+  // above says. A Purpose alone is not enough: the entry must show the means (a
+  // teammate announcing test runs with "Shell commands: no" is not one), the
+  // wording the failed-delegation fallback above already uses (#603, pass 4).
   //
   // What decides is whether the user asks for the WORK, not the politeness of
   // the form: "can you do a … on X?" asks for the work, "what is …?" only for
@@ -603,21 +612,31 @@ export async function buildTeamBlock(
       : 'Before saying you cannot do something, scan the list: if any agent’s ' +
         'skills/connectors match the request, start the work with `run_task` and name that ' +
         'agent in the instruction; the job it starts is the one that hands it on.';
+  // The same rule on both routes; only the gesture of a hand-off differs.
+  const handOn =
+    reachMeans === 'delegate'
+      ? 'hand work to a teammate'
+      : 'name a teammate in the `run_task` instruction';
   const footerRoute =
     reachMeans === 'none'
       ? 'You cannot hand work to these agents from here. Do yourself what your own tools ' +
         'cover; for the rest, call return_result with a blocked status that names the agent ' +
         'whose skills, connectors, folders or Shell commands would have the means.'
       : routeToMatch +
-        ' When the user asks you to DO a kind of work that an agent’s entry above announces ' +
-        'as its specialty (its Purpose or Skills) and whose entry shows the means that work ' +
-        'needs, do the same with that agent, even when one ' +
-        'of your own tools could do a thin version of it and even when you believe you already ' +
-        'know the answer. The words decide, not the politeness: “do a … on X” or “can you do a ' +
-        '… on X?” asks for the work; a question that only wants an answer (“what is …?”) stays ' +
-        'yours. A teammate can be asked for work AROUND Nodal like any other work (reviewing ' +
-        'its code, for one), never for knowledge OF the platform, even asked for as work (a ' +
-        'research on its changelog, for one): that stays yours.';
+        ` When to ${handOn}: only when (a) the work needs a tool, connector, folder or ` +
+        'Shell commands you do not hold and a teammate’s entry shows them; (b) the work would ' +
+        'flood your own context (a long research, a large build); or (c) the user names that ' +
+        'teammate, or asks you to DO a kind of work its entry announces as its specialty (its ' +
+        'Purpose or Skills) and whose entry shows the means that work needs. Otherwise do it ' +
+        'yourself: never hand on what your own tools do in a few calls, never pass the whole ' +
+        'request unchanged to one teammate (a relay adds a step, not value). Ask the user ' +
+        'first what only they can answer; the answers go in the brief. Work the user asks ' +
+        'for is done as work, even when you believe you ' +
+        'already know the answer. The words decide, not the politeness: “do a … on X” or ' +
+        '“can you do a … on X?” asks for the work; a question that only wants an answer ' +
+        '(“what is …?”) stays yours. A teammate can be asked for work AROUND Nodal like any ' +
+        'other work (reviewing its code, for one), never for knowledge OF the platform, even ' +
+        'asked for as work (a research on its changelog, for one): that stays yours.';
   lines.push(
     '\n⚠️ The roster above is the COMPLETE, GROUND-TRUTH list of your team and their ' +
       'capabilities. ONLY ever reference agents, skills, connectors, tools, or folders that ' +

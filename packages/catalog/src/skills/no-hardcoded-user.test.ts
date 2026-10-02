@@ -27,6 +27,18 @@ describe('print-request skill', () => {
     expect(skill?.content).toContain('the only valid answer is a print preview');
   });
 
+  // 02/10/2026 (étude Hermes) : « Do not delegate it » était une règle propre à
+  // l'impression, contre un manuel d'équipe qui poussait à déléguer. Le manuel
+  // dit maintenant, pour tout travail, quand passer la main (team-block.ts) :
+  // le skill ne dit plus rien de la délégation, et garde sa promesse.
+  it('says nothing of delegation: the team manual decides that for every kind of work', () => {
+    expect(skill?.description).toContain(
+      'The only valid answer to a print request is a print preview they can approve',
+    );
+    expect(skill?.description).toContain('with no questions on the way');
+    expect(`${skill?.description}\n${skill?.content}`).not.toMatch(/delegat/i);
+  });
+
   it('names no user, e-mail, printer model or server', () => {
     const text = `${skill?.description}\n${skill?.content}`;
     expect(text).not.toMatch(/quentin/i);

@@ -178,10 +178,16 @@ describe('la surface chat ne reçoit que ce qu’elle peut obéir', () => {
   // rougir. Ce que ce cas protège, c'est le coût du chat : il est borné
   // directement. Ce que le chat ne reçoit pas du job, les cas ci-dessus le
   // prouvent par le contenu.
+  //
+  // 13 500 → 14 000 le 02/10/2026 (étude Hermes) : la règle « quand passer la
+  // main » du bloc d'équipe (team-block.ts) remplace la phrase de spécialité,
+  // et dit en plus quand NE PAS passer la main. Fixture : 13 235 → 13 686
+  // (+451). C'est la règle qui laisse l'orchestrateur faire lui-même ce que
+  // ses outils font ; la marge reste d'une phrase, pas d'une section.
   it('le prompt du chat reste sous son plafond, et sous celui d’un job', async () => {
     const c = (await chat()).length;
     const j = (await job()).length;
-    expect(c, `chat ${c} car. (14 711 avant le régime du socle)`).toBeLessThanOrEqual(13_500);
+    expect(c, `chat ${c} car. (14 711 avant le régime du socle)`).toBeLessThanOrEqual(14_000);
     expect(c, `chat ${c} car. vs job ${j} car.`).toBeLessThan(j);
   });
 });
