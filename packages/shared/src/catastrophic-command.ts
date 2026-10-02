@@ -549,11 +549,12 @@ export function downloadWrites(cmd: string): DownloadWrites {
       continue;
     }
     for (const t of pipeWriterTargets(program, args))
-      piped.push({ path: readablePath(t), after: out.dirs.length });
+      if (!isNowhere(t)) piped.push({ path: readablePath(t), after: out.dirs.length });
     if (!unitCategories(unit).includes('download')) continue;
     downloads = true;
     for (const t of fetcherTargets(program, args))
-      out.targets.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
+      if (t === null || !isNowhere(t))
+        out.targets.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
   }
   // `curl URL > file`: the bytes land where the shell sends them. Read on a
   // line that downloads (or reads a URL into a redirection, which
@@ -561,7 +562,7 @@ export function downloadWrites(cmd: string): DownloadWrites {
   if (downloads || staticShellCategories(cmd).includes('download')) {
     out.targets.push(...piped);
     for (const t of redirectionTargets(cmd))
-      out.targets.push({ path: readablePath(t), after: null });
+      if (!isNowhere(t)) out.targets.push({ path: readablePath(t), after: null });
   }
   return out;
 }
@@ -592,6 +593,22 @@ function changeDirArg(program: string, args: readonly string[]): string | null {
   const value = args.find((a) => !/^(-[LP]|\/d)$/i.test(a));
   if (value === undefined || value === '-') return null;
   return value;
+}
+
+/**
+ * A null device or a standard stream: what is written there lands in no place
+ * (#669, approbation 0330a0fc du 02/10 : `curl -o /dev/null` lu comme un
+ * fichier hors de l'espace interrogeait la personne). `/dev/null`,
+ * `/dev/stdout`, `/dev/stderr`, PowerShell's `$null`, and Windows' `NUL` in
+ * any case, with or without an extension (`nul.json` is the device too). Read
+ * the same on every OS: the text is judged, not the machine it runs on. Only
+ * the bare name: `nul/a.json` or `/tmp/dev/null` are places. A tool's own `-`
+ * for its standard output is read where the tool is (`curl -o -`, `wget -O -`):
+ * for a shell redirection or `tee`, `-` is a file. What KIND of action the
+ * line is does not change: only where it writes.
+ */
+function isNowhere(p: string): boolean {
+  return /^\/dev\/(null|stdout|stderr)$/.test(p) || /^(\$null|nul(\.[^\\/]*)?)$/i.test(p);
 }
 
 /** A path as written, or null when the shell decides it at run time. */
@@ -795,7 +812,7 @@ function redirectionTargets(cmd: string): string[] {
   const targets: string[] = [];
   for (const m of cmd.matchAll(/(^|[^\d&>])1?>>?\s*("[^"]*"|'[^']*'|[^\s;&|()<>]+)/g)) {
     const t = stripQuotes(m[2] ?? '');
-    if (t.startsWith('&') || /^(\/dev\/null|nul|\$null)$/i.test(t)) continue;
+    if (t.startsWith('&')) continue;
     targets.push(t);
   }
   return targets;
