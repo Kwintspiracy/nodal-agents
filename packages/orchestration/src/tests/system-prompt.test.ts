@@ -1047,6 +1047,11 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
       origin: 'dashboard',
     } as JobContext);
     expect(prompt).toContain('Your workspace label is **Dev**');
+    // Quentin, 02/10/2026 : l'agent a un dossier, il ne demande jamais où ranger.
+    expect(prompt).toContain(
+      'New files you create go in **Dev** unless the user names another place: ' +
+        'never ask where to save, and say where you put it.',
+    );
   });
 
   it('le bloc du partagé le décrit pour ce qu’il est, sans décider où va le travail', async () => {
