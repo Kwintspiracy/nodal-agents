@@ -286,8 +286,13 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
   // the card would otherwise state a confinement promise this run cannot keep —
   // so it has to happen while there is still no card. Putting it in `execute`
   // (the first version of this fix) refused only AFTER a human had approved.
-  preflight: (input) => {
+  //
+  // Le dossier de départ aussi, pour la même raison (#669, comme run_command) :
+  // un `cwd` qui ne se résout pas fait échouer `execute` quoi que la personne
+  // réponde, donc l'agent l'apprend avant qu'aucune carte n'existe.
+  preflight: async (input, ctx) => {
     assertSandboxEnforced(input.provider, input.mode);
+    await resolveAndCheckPath(ctx, input.cwd ?? '.');
   },
   execute: async (input, ctx) => {
     // Same workspace contract as run_command: no workspace → fail loud.
