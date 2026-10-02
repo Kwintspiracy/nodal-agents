@@ -473,6 +473,18 @@ describe('describeUnavailableTool', () => {
     expect(msg).not.toContain('Did you mean');
     expect(msg).toContain('get_feed, return_result');
   });
+
+  it.each(['', '   '])(
+    'a call without a name (%j) is told so, with the real names and no arbitrary hint',
+    (bad) => {
+      const msg = describeUnavailableTool(bad, ['get_feed', 'return_result']);
+      expect(msg).toContain('The tool call had no tool name: call a tool by its exact name.');
+      // Every name "includes" the empty string: no tool may be suggested for it.
+      expect(msg).not.toContain('Did you mean');
+      expect(msg).not.toContain('The tool ""');
+      expect(msg).toContain('get_feed, return_result');
+    },
+  );
 });
 
 describe('shortBlockReason', () => {
