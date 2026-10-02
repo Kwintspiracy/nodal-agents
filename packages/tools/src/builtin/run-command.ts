@@ -149,6 +149,16 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
     }),
   mutatesWorkspace: true,
   defaultApproval: 'require_approval',
+  // Le dossier de départ se résout AVANT toute approbation (#669) : un `cwd`
+  // absent quand l'agent a plusieurs espaces, ou hors de tout espace, fait
+  // échouer `execute` quoi que la personne réponde. La demander n'est alors
+  // qu'une question sans réponse utile (vécu le 01/10 : approuvée, puis
+  // l'échec), et la carte jugeait faussement « hors espace » chaque chemin
+  // relatif de la commande. L'erreur d'adressage revient à l'agent tout de
+  // suite, comme une entrée invalide, pour qu'il la corrige.
+  preflight: async (input, ctx) => {
+    await resolveAndCheckPath(ctx, input.cwd ?? '.');
+  },
   // Le cwd résolu ET tous les dossiers attachés. Un shell n'est pas un
   // écrivain adressé : `cd ..`, un chemin absolu, un script appelé par le
   // script — la commande écrit où elle veut. Se limiter au cwd rendrait

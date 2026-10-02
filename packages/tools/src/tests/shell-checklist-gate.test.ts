@@ -15,6 +15,8 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { approvalRequests } from '@nodal-agents/db';
 import { DEFAULT_SHELL_POLICY, type ShellPolicy } from '@nodal-agents/shared';
 import { executeTool } from '../execute';
+import { runCommandTool } from '../builtin/run-command';
+import { codeTaskTool } from '../builtin/code-task';
 import type { ApprovalRule, ExecuteOptions, ToolContext, ToolDefinition } from '../types';
 
 let db: TestDb;
@@ -433,5 +435,131 @@ describe('an allowed download asks when it writes outside the workspace (#614, r
     expect(res.outcome).toBe('error');
     if (res.outcome !== 'error') throw new Error('unreachable');
     expect(res.error).toContain('blocked: the owner does not allow this agent to download');
+  });
+});
+
+// #669 (approbation 0330a0fc, 02/10) : un téléchargement qui n'écrivait que
+// dans l'espace a interrogé la personne. Deux causes : `-o /dev/null` lu comme
+// un emplacement, et un dossier de départ irrésolu (l'agent a plusieurs
+// espaces, `cwd` absent) qui rendait tout chemin relatif « hors espace » — pour
+// une commande qui, approuvée, échoue de toute façon sur ce même dossier.
+describe('nowhere is not a place, and an unaddressed start never reaches a person (#669) @cap:executer-une-commande/moteur', () => {
+  const commons =
+    'curl -s "https://commons.wikimedia.org/w/api.php?action=query&format=json" -o commons.json && ' +
+    'curl -s -o /dev/null -w "%{http_code}" -L "https://commons.wikimedia.org/wiki/File:x.jpg"';
+  let other: string;
+
+  beforeAll(async () => {
+    other = await realpath(await mkdtemp(join(tmpdir(), 'nodal-gate-other-')));
+  });
+  afterAll(async () => {
+    await rm(other, { recursive: true, force: true });
+  });
+
+  /** The Researcher of 02/10: two workspaces of its own. */
+  const twoWorkspaces = (): ToolContext => ({
+    ...ctx(),
+    workspaces: [
+      { label: 'ws', path: workspace },
+      { label: 'other', path: other },
+    ],
+  });
+  const approvalCount = async () =>
+    (await db.select({ id: approvalRequests.id }).from(approvalRequests)).length;
+
+  it('the exact command of 02/10, from a resolved folder, runs with no approval row', async () => {
+    for (const opts of [gate(DEFAULT_SHELL_POLICY), gate(DEFAULT_SHELL_POLICY, [yolo()])]) {
+      const before = await approvalCount();
+      const res = await executeTool(
+        runCommand,
+        { command: commons, purpose: 'Check the image.', cwd: 'ws' },
+        twoWorkspaces(),
+        opts,
+      );
+      expect(res).toMatchObject({ outcome: 'success', output: `ran:${commons}` });
+      expect(await approvalCount()).toBe(before);
+    }
+  });
+
+  it('a download sent to the null device or a standard stream asks no one', async () => {
+    for (const command of [
+      'curl -s -o /dev/null -w "%{http_code}" https://x/a',
+      'curl -s https://x/a > NUL',
+      'curl -s -o nul.json https://x/a',
+      'wget -O /dev/stdout https://x/a',
+    ]) {
+      const before = await approvalCount();
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res, command).toMatchObject({ outcome: 'success', output: `ran:${command}` });
+      expect(await approvalCount(), command).toBe(before);
+    }
+  });
+
+  it('a download really outside the workspace still asks, naming the place', async () => {
+    const system = process.platform === 'win32' ? 'C:\\Windows\\x' : '/etc/x';
+    const command = `curl -s -o ${system} https://x/a && curl -s -o /dev/null https://x/b`;
+
+    const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+
+    expect(res.outcome).toBe('awaiting_approval');
+    if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+    expect(await reasonsOf(res.approvalRequestId)).toEqual([
+      {
+        category: 'download',
+        state: 'ask',
+        details: [command],
+        outside: [{ command, places: [system] }],
+      },
+    ]);
+  });
+
+  it('run_command with no cwd and several workspaces: the agent is told, no one is asked', async () => {
+    // The SHIPPED tool: its own refusal, not a fake's. Every posture that
+    // would otherwise reach a person — the checklist (a "relative" download
+    // outside), the safe-by-default approval of a plain command.
+    for (const [command, opts] of [
+      [commons, gate(DEFAULT_SHELL_POLICY)],
+      [commons, gate(DEFAULT_SHELL_POLICY, [yolo()])],
+      ['git status', { ...gate(undefined), autonomy: 'propose_confirm' as const }],
+    ] as const) {
+      const before = await approvalCount();
+      const res = await executeTool(
+        runCommandTool,
+        { command, purpose: 'Check the image.' },
+        twoWorkspaces(),
+        opts,
+      );
+      expect(res.outcome, command).toBe('error');
+      if (res.outcome !== 'error') throw new Error('unreachable');
+      expect(res.error).toContain('This agent has multiple workspaces');
+      expect(res.error).toContain('Valid labels: ws, other');
+      expect(await approvalCount(), command).toBe(before);
+    }
+    // A cwd outside every workspace is just as impossible, whoever approves it.
+    const before = await approvalCount();
+    const outside = await executeTool(
+      runCommandTool,
+      { command: 'git status', purpose: 'Look.', cwd: elsewhere },
+      ctx(),
+      { ...gate(undefined), autonomy: 'propose_confirm' },
+    );
+    expect(outside).toMatchObject({ outcome: 'error' });
+    if (outside.outcome === 'error') expect(outside.error).toContain('does not reside in any');
+    expect(await approvalCount()).toBe(before);
+  });
+
+  it('code_task, the other tool with a starting folder, refuses the same way', async () => {
+    const before = await approvalCount();
+    const res = await executeTool(
+      codeTaskTool,
+      { purpose: 'Read the code.', provider: 'claude', task: 'Summarise.', mode: 'read' },
+      twoWorkspaces(),
+      { ...gate(undefined), autonomy: 'propose_confirm' },
+    );
+
+    expect(res.outcome).toBe('error');
+    if (res.outcome !== 'error') throw new Error('unreachable');
+    expect(res.error).toContain('This agent has multiple workspaces');
+    expect(await approvalCount()).toBe(before);
   });
 });
