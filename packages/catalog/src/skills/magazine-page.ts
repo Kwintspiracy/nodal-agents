@@ -8,9 +8,11 @@
 // The template below was validated by rendering it (headless Chromium
 // print-to-PDF, then rasterised) in its one-page and several-page forms:
 // margins on every page, nothing within 4 mm of an edge, the one-page form on
-// one page. Its margins live in @page and nothing in it has a fixed page
-// height: a page layout that pads a block instead (with `@page { margin: 0 }`)
-// leaves every page after the first without a margin.
+// one page, at the 15 mm default page margin a print tool reports. Its margins
+// live in @page, filled with what the print tool reports for the printer (never
+// a value of the template's own), and nothing in it has a fixed page height: a
+// page layout that pads a block instead (`@page { margin: 0 }`) leaves every
+// page after the first without a margin.
 
 import type { SystemSkill } from '../types';
 
@@ -27,10 +29,12 @@ export const MAGAZINE_PAGE_TEMPLATE = `<!DOCTYPE html>
   --hero-height: 108mm; /* photo height. One page: 70-90mm. Several pages: 100-110mm */
   --body-size: 9.5pt;   /* column text. One page: 8.5-9.5pt. Several pages: 9.5-10pt */
 }
-/* Page margins live HERE, so every page gets them, not only the first.
-   At least the printable area the print tool reports; 10mm when it reports none.
-   0 only when the person asks for full-bleed. */
-@page { size: A4 portrait; margin: 10mm 12mm; }
+/* Page margins live HERE, so every page gets them, not only the first: a white
+   gutter around every page, the photo included.
+   PAGE_MARGIN = the default page margin the print tool reports for the chosen
+   printer, never less than its printable area. When the tool reports none,
+   delete the whole margin declaration: the tool's own default margin applies. */
+@page { size: A4 portrait; margin: {{PAGE_MARGIN}}; }
 
 /* ---- Base: no width, height or overflow on the page, the text flows --------- */
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -58,7 +62,7 @@ h1 { font-size: 25pt; line-height: 1.05; font-weight: normal; letter-spacing: -0
 .figures span { display: block; font-family: Arial, Helvetica, sans-serif; font-size: 7pt; line-height: 1.3; text-transform: uppercase; letter-spacing: 1px; color: #555; }
 
 /* ---- Article: two justified columns that continue from page to page ------------ */
-.cols { column-count: 2; column-gap: 7mm; font-size: var(--body-size); line-height: 1.45; text-align: justify; hyphens: auto; }
+.cols { column-count: 2; column-gap: 7mm; column-rule: 0.5pt solid #d0d0d0; font-size: var(--body-size); line-height: 1.45; text-align: justify; hyphens: auto; }
 .cols p { margin-bottom: 2.5mm; orphans: 2; widows: 2; }
 .cols p.first::first-letter { font-size: 26pt; float: left; line-height: 0.85; padding-right: 1.5mm; font-weight: bold; color: var(--accent); }
 .pull { border-top: 1.5pt solid var(--accent); border-bottom: 1.5pt solid var(--accent); padding: 2.5mm 0; margin: 2mm 0 3mm; font-size: 10pt; line-height: 1.35; font-style: italic; color: var(--accent); text-align: left; break-inside: avoid; }
@@ -129,13 +133,13 @@ A proven magazine layout: a large photo at the top with a red kicker and a capti
    - SOURCE, DATE, AUTHOR: as the source gives them; drop one you do not have, with its separator.
    - TITLE, STANDFIRST (one or two sentences), the paragraphs, SUBHEAD (2 to 5 words), PULLQUOTE (a sentence from the text, quoted exactly), FIGURE and FIGURE_LABEL (numbers from the text, never invented), FOOTER_SOURCE (the source name and its address).
    - LANG: the language of the text (en, fr, …), for hyphenation.
-2. **Margins** live in \`@page\`, so every page gets them. Set them to at least the printable area the print tool reports; keep 10 mm when it reports none. Never \`@page { margin: 0 }\` with the margin moved into a padded block: only the first page would get it. Full-bleed only when the person asks for it.
+2. **Margins: read first what the print tool reports** for the chosen printer: its printable area and its default page margin. PAGE_MARGIN is that default page margin, never less than the printable area. When the tool reports none, or nothing prints the page, delete the \`margin\` declaration from \`@page\`: the tool's own default margin applies. Never write a margin of your own choosing. The margin lives in \`@page\`, so every page gets a white gutter all around, the photo and its kicker included. Never \`@page { margin: 0 }\` with the margin moved into a padded block: only the first page would get it. Full-bleed only when the person explicitly asks for it.
 3. **Picture**: \`<img src="URL">\` with the URL EXACTLY as the source gave it. It takes the width of the text area and is cropped to \`--hero-height\`. No picture: delete the hero block and use the inline kicker.
 4. **Accent colour**: change \`--accent\` only. **Fonts**: keep Georgia and Arial with their fallbacks (installed fonts only, no web fonts).
 5. Never give the page a fixed height, never hide an overflow, never position the footer: the text flows, and what does not fit goes to the next page, where you can see it.
 
 ## One page
-Set \`--hero-height\` to 70-90mm and \`--body-size\` to 8.5-9.5pt. With 10 mm and 12 mm margins, a 75 mm photo, 9 pt text, a pull quote and three subheads, about 500 words of article fit on one A4 page. When the text is longer, shorten it: summarise, merge or drop whole paragraphs, keep the ending. Drop the figures band before cutting text. Never go below 8.5pt, never let the article run onto a second page, never hide what overflows. Then check the page count the print tool reports: 1.
+Set \`--hero-height\` to 70-90mm and \`--body-size\` to 8.5-9.5pt. With 15 mm margins, a 70 mm photo, 9 pt text, a two-line headline, a pull quote and three subheads, about 380 words of article fit on one A4 page; fewer with wider margins. When the text is longer, shorten it: summarise, merge or drop whole paragraphs, keep the ending. Drop the figures band before cutting text. Never go below 8.5pt, never let the article run onto a second page, never hide what overflows. Then check the page count the print tool reports: 1.
 
 ## Several pages
 Keep \`--hero-height\` at 100-110mm (the photo is on page 1 only) and \`--body-size\` at 9.5-10pt. The two columns continue from page to page by themselves: add no page breaks and no per-page blocks. A subhead every 3 to 5 paragraphs, at most one pull quote per page, the footer once, at the end of the article. When the person asks for a number of pages, fit the text to it (shorten or keep more of the source), never the font below 9pt.
