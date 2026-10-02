@@ -830,16 +830,7 @@ export function buildRunningWorkBlock(work: RunningWork, nodalTools: boolean): s
  * garde sa porte de sortie (`unless the user names another place`) : c'est une
  * directive au modèle, pas une garde — la garde est l'intention de mutation.
  */
-function buildConversationBlock(
-  conv: ConversationContext,
-  /**
-   * False sur une surface sans les builtins : la règle de rangement « rien ne
-   * se crée en silence » y reste vraie, mais ses GESTES (`ask_user`,
-   * `register_project`) n'existent pas — sur le chat, c'est le job qui les
-   * posera (revue Codex de la dette de la PR #73, passe 2, constat 1).
-   */
-  nodalTools = true,
-): string {
+function buildConversationBlock(conv: ConversationContext): string {
   const lines: string[] = [
     conv.priorTurns === 0
       ? '- This is the first turn of this conversation: nothing was said before it.'
@@ -864,52 +855,11 @@ function buildConversationBlock(
         'Files, documents and code for this conversation belong under this folder ' +
         'unless the user names another place.',
     );
-  } else {
-    // P10b — « rien ne se crée en silence ». Texte de PLATEFORME, pas la voix
-    // de l'agent (invariant #2) : c'est une règle de rangement, au même titre
-    // que la phrase du projet courant juste au-dessus. Elle ne dit pas quoi
-    // répondre à l'utilisateur, elle dit dans quel ordre poser les gestes.
-    lines.push(
-      nodalTools
-        ? '- Current project: none yet. Nothing produced in this conversation has landed ' +
-            'in a registered project. Before writing a DOCUMENT (a report, a note, a ' +
-            'spreadsheet, anything that is not code in a repository), ask where it goes with ' +
-            '`ask_user`: offer up to five relevant registered projects by name, plus one option ' +
-            'for the new project you propose, then call `register_project` for a new one (the ' +
-            'owner confirms the folder once), then write. Code that ' +
-            'lands in a folder with a manifest (package.json, .git, pyproject.toml, …) declares ' +
-            'its own project: never ask for it.'
-        : // La même règle, sans ses gestes : ici, on ne range rien soi-même.
-          '- Current project: none yet. Nothing produced in this conversation has landed ' +
-            'in a registered project. A document has to go somewhere before it is written, so ' +
-            'settle that in the conversation — which of the projects below, or a new one, and ' +
-            'under what name — and pass the answer on with the task. Code that lands in a ' +
-            'folder with a manifest (package.json, .git, pyproject.toml, …) declares its own ' +
-            'project: never ask for it.',
-    );
-    const registered = conv.registeredProjects ?? [];
-    if (registered.length > 0) {
-      // L'INVENTAIRE dans lequel l'agent puise ses options, plafonné à 12 :
-      // au-delà, la liste coûte plus de contexte qu'elle n'aide.
-      //
-      // Ce n'est PAS la question. `ask_user` n'accepte que six options, et la
-      // consigne ci-dessus en demande cinq au plus, plus « New project » : sans
-      // cette distinction, un espace à douze projets faisait construire au
-      // modèle un appel que le schéma refuse (revue Codex, passe 39, P2).
-      //
-      // Neutralisation identique aux projets du bloc Runtime : ces noms
-      // viennent de la base et du disque, et un saut de ligne dans l'un d'eux
-      // forgerait une fausse section du prompt.
-      const shown = registered.slice(0, REGISTERED_PROJECTS_IN_PROMPT);
-      lines.push('- Registered projects you can offer as options:');
-      for (const p of shown) {
-        lines.push(
-          `  - **${sanitizePromptField(p.name, 80)}** — ` +
-            `\`${sanitizePromptField(p.path, 256)}\` (${p.kind})`,
-        );
-      }
-    }
   }
+  // Pas de projet courant : rien à dire. La règle P10b (« avant d'écrire un
+  // document, demander où le ranger avec ask_user ») est retirée sur décision
+  // du propriétaire (02/10/2026) : tout agent a déjà ses dossiers, la question
+  // n'avait aucune raison d'être (5/5 essais bloqués sur elle).
   return `\n\n## Conversation\n${lines.join('\n')}`;
 }
 
@@ -1552,7 +1502,7 @@ export async function buildSystemPrompt(
   //       courant (P6). Volatile par nature : le compte de tours et le projet
   //       changent d'un tour à l'autre.
   const conversationBlock = jobContext?.conversation
-    ? buildConversationBlock(jobContext.conversation, hasNodalTools)
+    ? buildConversationBlock(jobContext.conversation)
     : '';
   // 7ter. Le travail en cours d'un tour de réponse (#531) — volatile, comme le
   //       bloc de conversation.
