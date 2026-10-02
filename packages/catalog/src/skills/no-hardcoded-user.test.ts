@@ -5,6 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { systemSkills } from '../index';
+import { MAGAZINE_PAGE_TEMPLATE } from './magazine-page';
 
 describe('system skill catalog — no hardcoded per-user values (I-5)', () => {
   it('no skill content mentions "Quentin"', () => {
@@ -52,5 +53,78 @@ describe('print-request skill', () => {
     expect(text).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.]+/);
     expect(text).not.toMatch(/\b(hp|smart[- ]?tank|deskjet|laserjet|epson|canon|brother)\b/i);
     expect(text).not.toMatch(/https?:\/\/(?!URL)/);
+  });
+});
+
+describe('magazine-page skill', () => {
+  const skill = systemSkills.find((s) => s.slug === 'magazine-page');
+  const content = skill?.content ?? '';
+  const css = /<style>([\s\S]*?)<\/style>/.exec(content)?.[1] ?? '';
+
+  it('is registered in the catalog as a capability skill with no builtin requirement', () => {
+    expect(skill).toBeDefined();
+    expect(skill?.name).toBe('Magazine page');
+    expect(skill?.requiredBuiltins).toEqual([]);
+    expect(skill?.kind ?? 'capability').toBe('capability');
+    expect(skill?.description).toBe(
+      'Use when the person asks for a magazine style or magazine layout (print or document): a proven page template to fill, one page or several.',
+    );
+  });
+
+  it('carries the whole template, its named slots and both variants', () => {
+    expect(content).toContain(MAGAZINE_PAGE_TEMPLATE);
+    for (const slot of [
+      'KICKER',
+      'HERO_URL',
+      'HERO_CAPTION',
+      'SOURCE',
+      'DATE',
+      'AUTHOR',
+      'TITLE',
+      'STANDFIRST',
+      'PARAGRAPH_1',
+      'SUBHEAD_1',
+      'PULLQUOTE',
+      'FIGURE_1',
+      'FOOTER_SOURCE',
+    ]) {
+      expect(MAGAZINE_PAGE_TEMPLATE).toContain(`{{${slot}}}`);
+    }
+    expect(content).toContain('## One page');
+    expect(content).toContain('## Several pages');
+    expect(content).toContain('<img src="URL">` with the URL EXACTLY as the source gave it');
+  });
+
+  it('puts the page margins in @page, so every page gets them, and never a zero margin', () => {
+    const page = /@page\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    const margin = /margin\s*:\s*([^;]+)/.exec(page)?.[1] ?? '';
+    const values = margin
+      .trim()
+      .split(/\s+/)
+      .map((v) => Number.parseFloat(v));
+    expect(values.length).toBeGreaterThan(0);
+    for (const v of values) expect(v).toBeGreaterThanOrEqual(10);
+    expect(css).not.toMatch(/@page\s*\{[^}]*margin\s*:\s*0\s*[;}]/);
+  });
+
+  it('has no fixed page height, no hidden overflow and no positioned footer: the text flows onto the next page', () => {
+    expect(css).not.toMatch(/overflow\s*:\s*hidden/);
+    expect(css).not.toMatch(/297\s*mm/);
+    expect(css).not.toMatch(/body\s*\{[^}]*\b(height|width)\s*:/);
+    const footer = /\.footer\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(footer).not.toMatch(/position\s*:/);
+    expect(css).toMatch(/\.pull\s*\{[^}]*break-inside:\s*avoid/);
+    expect(css).toMatch(/\.subhead\s*\{[^}]*break-after:\s*avoid/);
+    expect(css).toMatch(/\.figures\s*\{[^}]*break-inside:\s*avoid/);
+  });
+
+  it('names no user, e-mail, printer model, server or web address', () => {
+    const text = `${skill?.description}\n${content}`;
+    expect(text).not.toMatch(/quentin/i);
+    expect(text).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.]+/);
+    expect(text).not.toMatch(
+      /\b(hp|smart[- ]?tank|deskjet|laserjet|epson|canon|brother|officejet|envy)\b/i,
+    );
+    expect(text).not.toMatch(/https?:\/\//);
   });
 });
