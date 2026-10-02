@@ -924,7 +924,8 @@ describe('runChatTurn — le projet courant de la conversation (P6)', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, spawnedJobId!));
     expect(job?.projectId).toBeNull();
-    expect(capturedSystem[0]).toContain('- Current project: none yet.');
+    // P10b retirée (02/10/2026) : sans projet, le prompt ne dit plus rien du rangement.
+    expect(capturedSystem[0]).not.toContain('Current project: none yet');
     // Premier message du fil : le modèle doit le savoir.
     expect(capturedSystem[0]).toContain('This is the first turn of this conversation');
   });
