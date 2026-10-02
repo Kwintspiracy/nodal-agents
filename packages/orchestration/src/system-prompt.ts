@@ -996,6 +996,14 @@ function buildWorkspacesBlock(
     );
   }
 
+  // Où va un fichier quand personne n'a dit où (Quentin, 02/10/2026 : « tous les
+  // agents ont des dossiers, cette question n'a aucune raison d'être ») : le
+  // dossier du job s'il y en a un, sinon le premier dossier de l'agent.
+  const home = workspaceList.find((ws) => ws.jobFolder) ?? workspaceList[0]!;
+  const whereFilesGo =
+    `New files you create go in **${home.label}** unless the user names another place: ` +
+    `never ask where to save, and say where you put it.`;
+
   if (workspaceList.length === 1) {
     const ws = workspaceList[0]!;
     return (
@@ -1003,7 +1011,7 @@ function buildWorkspacesBlock(
       `Your workspace label is **${ws.label}** (path: \`${ws.path}\`)${note(ws)}. ` +
       `When using file_read / file_write / file_edit / file_list / file_search, ` +
       `you may use bare relative paths (e.g. \`notes.md\`) or prefix with the label ` +
-      `(e.g. \`${ws.label}/notes.md\`). Both resolve to the same root.`
+      `(e.g. \`${ws.label}/notes.md\`). Both resolve to the same root. ${whereFilesGo}`
     );
   }
 
@@ -1014,7 +1022,7 @@ function buildWorkspacesBlock(
     `This agent has multiple workspaces. Always prefix paths with the workspace label:\n\n` +
     `${lines}\n\n` +
     `Example: \`${example.label}/notes.md\` to access \`notes.md\` in the **${example.label}** workspace. ` +
-    `Use \`file_list\` with no path to see all workspace labels.`
+    `Use \`file_list\` with no path to see all workspace labels. ${whereFilesGo}`
   );
 }
 
