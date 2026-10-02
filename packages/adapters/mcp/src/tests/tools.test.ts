@@ -66,19 +66,27 @@ describe('mcpToolToToolDefinition', () => {
     expect(def.description).toContain('untrusted');
   });
 
-  it('caps an oversized description instead of passing it through verbatim', () => {
-    // Measured during the audit: a 371-char injection payload in a description
-    // reached the ToolDefinition byte-for-byte, with no cap of any kind — while
-    // tool RESULTS were already capped at 50k.
-    const long = 'x'.repeat(2_000);
-    const def = mcpToolToToolDefinition(
-      clientWithCallTool(() => ({ content: [] })),
-      { ...descriptor, description: long },
-      'c',
-    );
-    expect(def.description).toContain('truncated');
-    expect(def.description.length).toBeLessThan(long.length);
-  });
+  // The 500-char cap is gone (owner's decision, 02/10/2026): it cut legitimate
+  // descriptions — hp-connector `request_print` (3 059 chars, its A4 / 15 mm page
+  // rule at char 1 575), Blender (up to 970), Supabase `search_docs` (1 809). The
+  // SKILL-001 mitigation that stays is the provenance frame, as for webhook
+  // payloads; Hermes does not cut descriptions either (tools/mcp_tool_schema.py:191).
+  it.each([970, 1_809, 3_059])(
+    'passes a %i-char description whole, still framed as untrusted',
+    (size) => {
+      const head = 'HEAD-MARKER ';
+      const tail = ' TAIL-MARKER';
+      const long = head + 'x'.repeat(size - head.length - tail.length) + tail;
+      const def = mcpToolToToolDefinition(
+        clientWithCallTool(() => ({ content: [] })),
+        { ...descriptor, description: long },
+        'c',
+      );
+      expect(def.description).toContain(long);
+      expect(def.description).not.toContain('truncated');
+      expect(def.description).toContain('untrusted');
+    },
+  );
 
   it('maps destructiveHint → riskLevel destructive', () => {
     const def = mcpToolToToolDefinition(
