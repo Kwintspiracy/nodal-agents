@@ -33,6 +33,19 @@ describe('print-request skill', () => {
     );
   });
 
+  it('tells the model to check the report, fix and replace the pending request', () => {
+    const c = skill?.content ?? '';
+    expect(c).toContain('EXACTLY as the source or the reading tool gave it');
+    expect(c).toContain('Never add, remove or change a parameter');
+    expect(c).toContain('printed in colour when the print tool allows it');
+    expect(c).toContain('exactly the number of pages asked');
+    expect(c).toContain('REPLACING the pending request');
+    expect(c).toContain('at most 2 corrections');
+    expect(c).not.toContain('Then stop');
+    expect(c).not.toContain('natural length');
+    expect(skill?.description).toContain('Check the print tool report and fix the page');
+  });
+
   it('names no user, e-mail, printer model or server', () => {
     const text = `${skill?.description}\n${skill?.content}`;
     expect(text).not.toMatch(/quentin/i);
