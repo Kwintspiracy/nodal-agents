@@ -69,8 +69,13 @@ h1 { font-size: 25pt; line-height: 1.05; font-weight: normal; letter-spacing: -0
 .subhead { font-family: Arial, Helvetica, sans-serif; font-size: 9.5pt; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; margin: 1mm 0 1.5mm; color: #111; text-align: left; break-inside: avoid; break-after: avoid; }
 .subhead + p { break-before: avoid; }
 
-/* ---- Footer: in the flow, at the end of the article ---------------------------- */
-.footer { margin-top: 4mm; border-top: 0.5pt solid #999; padding-top: 1.5mm; font-family: Arial, Helvetica, sans-serif; font-size: 6.5pt; color: #777; break-inside: avoid; }
+/* ---- Footer: in the page margin, on every page, never in the flow --------------- */
+/* Margin boxes sit INSIDE the margin the printer reports: they take no room in the
+   text area, so the footer can never push a line, or a page, of its own. */
+@page {
+  @bottom-left { content: "{{FOOTER_SOURCE}}"; font-family: Arial, Helvetica, sans-serif; font-size: 6.5pt; color: #777; vertical-align: middle; }
+  @bottom-right { content: "Page " counter(page) " / " counter(pages); font-family: Arial, Helvetica, sans-serif; font-size: 6.5pt; color: #777; vertical-align: middle; }
+}
 </style>
 </head>
 <body>
@@ -105,8 +110,6 @@ h1 { font-size: 25pt; line-height: 1.05; font-weight: normal; letter-spacing: -0
 <!-- … as many paragraphs and subheads as the text needs -->
 </div>
 
-<div class="footer">{{FOOTER_SOURCE}}</div>
-
 </body>
 </html>
 `;
@@ -121,7 +124,7 @@ export const magazinePageSkill: SystemSkill = {
   requiredBuiltins: [],
   content: `# Magazine page
 
-A proven magazine layout: a large photo at the top with a red kicker and a caption over it, a meta line (source · date · author), a serif headline, an italic standfirst, the article in two justified columns with a drop cap, a pull quote between two rules, spaced capital subheads, the source at the end. Fill the template below; do not redesign it.
+A proven magazine layout: a large photo at the top with a red kicker and a caption over it, a meta line (source · date · author), a serif headline, an italic standfirst, the article in two justified columns with a drop cap, a pull quote between two rules, spaced capital subheads, the source and page number in the bottom margin of every page. Fill the template below; do not redesign it.
 
 ## When to use
 - The person asks for a magazine style, a magazine layout, "like a magazine page", for a print or for a document.
@@ -131,18 +134,18 @@ A proven magazine layout: a large photo at the top with a red kicker and a capti
 1. Copy the whole template. Replace every {{SLOT}}; delete an optional block you do not use (figures band, pull quote, hero) instead of leaving it empty. Leave no {{…}} in the result.
    - KICKER: 2 to 4 words, the topic. HERO_URL: the picture, HERO_ALT: what it shows, HERO_CAPTION: one line.
    - SOURCE, DATE, AUTHOR: as the source gives them; drop one you do not have, with its separator.
-   - TITLE, STANDFIRST (one or two sentences), the paragraphs, SUBHEAD (2 to 5 words), PULLQUOTE (a sentence from the text, quoted exactly), FIGURE and FIGURE_LABEL (numbers from the text, never invented), FOOTER_SOURCE (the source name and its address).
+   - TITLE, STANDFIRST (one or two sentences), the paragraphs, SUBHEAD (2 to 5 words), PULLQUOTE (a sentence from the text, quoted exactly), FIGURE and FIGURE_LABEL (numbers from the text, never invented), FOOTER_SOURCE (the source name and its address, one short line, no double quote: it goes in a CSS string in the page margin).
    - LANG: the language of the text (en, fr, …), for hyphenation.
 2. **Margins: read first what the print tool reports** for the chosen printer: its printable area and its default page margin. PAGE_MARGIN is that default page margin, never less than the printable area. When the tool reports none, or nothing prints the page, delete the \`margin\` declaration from \`@page\`: the tool's own default margin applies. Never write a margin of your own choosing. The margin lives in \`@page\`, so every page gets a white gutter all around, the photo and its kicker included. Never \`@page { margin: 0 }\` with the margin moved into a padded block: only the first page would get it. Full-bleed only when the person explicitly asks for it.
 3. **Picture**: \`<img src="URL">\` with the URL EXACTLY as the source gave it. It takes the width of the text area and is cropped to \`--hero-height\`. No picture: delete the hero block and use the inline kicker.
 4. **Accent colour**: change \`--accent\` only. **Fonts**: keep Georgia and Arial with their fallbacks (installed fonts only, no web fonts).
-5. Never give the page a fixed height, never hide an overflow, never position the footer: the text flows, and what does not fit goes to the next page, where you can see it.
+5. Never give the page a fixed height, never hide an overflow, never put the footer in the text (it is in the page margin, with the page number): the text flows, and what does not fit goes to the next page, where you can see it.
 
 ## One page
 Set \`--hero-height\` to 70-90mm and \`--body-size\` to 8.5-9.5pt. With 15 mm margins, a 70 mm photo, 9 pt text, a two-line headline, a pull quote and three subheads, about 380 words of article fit on one A4 page; fewer with wider margins. When the text is longer, shorten it: summarise, merge or drop whole paragraphs, keep the ending. Drop the figures band before cutting text. Never go below 8.5pt, never let the article run onto a second page, never hide what overflows. Then check the page count the print tool reports: 1.
 
 ## Several pages
-Keep \`--hero-height\` at 100-110mm (the photo is on page 1 only) and \`--body-size\` at 9.5-10pt. The two columns continue from page to page by themselves: add no page breaks and no per-page blocks. A subhead every 3 to 5 paragraphs, at most one pull quote per page, the footer once, at the end of the article. When the person asks for a number of pages, fit the text to it (shorten or keep more of the source), never the font below 9pt.
+Keep \`--hero-height\` at 100-110mm (the photo is on page 1 only) and \`--body-size\` at 9.5-10pt. The two columns continue from page to page by themselves: add no page breaks and no per-page blocks. A subhead every 3 to 5 paragraphs, at most one pull quote per page, the footer and page number come from the margin, on every page. When the person asks for a number of pages, fit the text to it (shorten or keep more of the source), never the font below 9pt.
 
 ## Template
 ${FENCE}html

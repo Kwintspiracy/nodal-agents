@@ -28,6 +28,7 @@ Style, language and pictures as asked. **Pages: keep exactly the number of pages
 - **Pictures:** use each image URL EXACTLY as the source or the reading tool gave it. Never add, remove or change a parameter (no resizing, quality or format query). When the content comes from a source with a main picture, put it under the title unless told otherwise.
 - **Colour:** a page with photos or a coloured layout is printed in colour when the print tool allows it, unless the person asks for black and white.
 - **Margins.** Before laying out, read what the print tool reports about the paper loaded and the printable area of the chosen printer, and keep every page's content inside it: page margins at least the printable area (when the tool states none, keep its default margins). Full-bleed only when the person asks for it.
+- **Footer.** A footer (source, page number) goes in the page margin with @page margin boxes (@bottom-left / @bottom-right), never at the end of the text: it must never add a page.
 
 ## 3. No questions on the way
 There is nothing for the person to choose before the preview: you choose (source, picture, layout). The preview is where they decide, change the settings and print.
