@@ -74,6 +74,7 @@ describe('magazine-page skill', () => {
   it('carries the whole template, its named slots and both variants', () => {
     expect(content).toContain(MAGAZINE_PAGE_TEMPLATE);
     for (const slot of [
+      'PAGE_MARGIN',
       'KICKER',
       'HERO_URL',
       'HERO_CAPTION',
@@ -95,16 +96,20 @@ describe('magazine-page skill', () => {
     expect(content).toContain('<img src="URL">` with the URL EXACTLY as the source gave it');
   });
 
-  it('puts the page margins in @page, so every page gets them, and never a zero margin', () => {
-    const page = /@page\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
-    const margin = /margin\s*:\s*([^;]+)/.exec(page)?.[1] ?? '';
-    const values = margin
-      .trim()
-      .split(/\s+/)
-      .map((v) => Number.parseFloat(v));
-    expect(values.length).toBeGreaterThan(0);
-    for (const v of values) expect(v).toBeGreaterThanOrEqual(10);
+  it('takes the page margin from what the print tool reports, in @page, never a value of its own', () => {
+    // The @page block, its {{SLOT}} braces included.
+    const page = /@page\s*\{((?:[^{}]|\{\{[A-Z_]+\}\})*)\}/.exec(css)?.[1] ?? '';
+    expect(page.match(/margin\s*:\s*([^;]+)/)?.[1]?.trim()).toBe('{{PAGE_MARGIN}}');
+    // No length anywhere in @page: the margin is the printer's, not the template's.
+    expect(page).not.toMatch(/\d+(\.\d+)?\s*(mm|cm|in|pt|px)/);
     expect(css).not.toMatch(/@page\s*\{[^}]*margin\s*:\s*0\s*[;}]/);
+    expect(content).toContain(
+      '**Margins: read first what the print tool reports** for the chosen printer: its printable area and its default page margin. PAGE_MARGIN is that default page margin, never less than the printable area.',
+    );
+    expect(content).toContain(
+      "When the tool reports none, or nothing prints the page, delete the `margin` declaration from `@page`: the tool's own default margin applies.",
+    );
+    expect(content).toContain('Full-bleed only when the person explicitly asks for it.');
   });
 
   it('has no fixed page height, no hidden overflow and no positioned footer: the text flows onto the next page', () => {
