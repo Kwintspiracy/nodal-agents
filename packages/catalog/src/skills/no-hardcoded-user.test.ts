@@ -112,6 +112,26 @@ describe('magazine-page skill', () => {
     expect(content).toContain('Full-bleed only when the person explicitly asks for it.');
   });
 
+  it('puts the footer (source, page number) in the @page margin boxes, never in the flow', () => {
+    // The page rule that carries the margin boxes (nested braces: not the plain @page block).
+    const boxes =
+      /@page\s*\{\s*@bottom-left\s*\{((?:[^{}]|\{\{[A-Z_]+\}\})*)\}\s*@bottom-right\s*\{([^{}]*)\}\s*\}/.exec(
+        css,
+      );
+    expect(boxes?.[1]).toContain('content: "{{FOOTER_SOURCE}}"');
+    expect(boxes?.[2]).toContain('content: "Page " counter(page) " / " counter(pages)');
+    expect(css).not.toMatch(/\.footer/);
+    expect(MAGAZINE_PAGE_TEMPLATE).not.toMatch(/<[^>]*class="footer"/);
+    expect(MAGAZINE_PAGE_TEMPLATE.match(/\{\{FOOTER_SOURCE\}\}/g)).toHaveLength(1);
+  });
+
+  it('tells every print request that a footer lives in the margin and never adds a page', () => {
+    const printRequest = systemSkills.find((s) => s.slug === 'print-request')?.content ?? '';
+    expect(printRequest).toContain(
+      'A footer (source, page number) goes in the page margin with @page margin boxes (@bottom-left / @bottom-right), never at the end of the text: it must never add a page.',
+    );
+  });
+
   it('has no fixed page height, no hidden overflow and no positioned footer: the text flows onto the next page', () => {
     expect(css).not.toMatch(/overflow\s*:\s*hidden/);
     expect(css).not.toMatch(/297\s*mm/);
