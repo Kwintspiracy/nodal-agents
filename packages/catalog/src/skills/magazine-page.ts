@@ -62,7 +62,7 @@ h1 { font-size: 25pt; line-height: 1.05; font-weight: normal; letter-spacing: -0
 .figures span { display: block; font-family: Arial, Helvetica, sans-serif; font-size: 7pt; line-height: 1.3; text-transform: uppercase; letter-spacing: 1px; color: #555; }
 
 /* ---- Article: two justified columns that continue from page to page ------------ */
-.cols { column-count: 2; column-gap: 7mm; column-rule: 0.5pt solid #d0d0d0; font-size: var(--body-size); line-height: 1.45; text-align: justify; hyphens: auto; }
+.cols { column-count: 2; column-fill: auto; column-gap: 7mm; column-rule: 0.5pt solid #d0d0d0; font-size: var(--body-size); line-height: 1.45; text-align: justify; hyphens: auto; }
 .cols p { margin-bottom: 2.5mm; orphans: 2; widows: 2; }
 .cols p.first::first-letter { font-size: 26pt; float: left; line-height: 0.85; padding-right: 1.5mm; font-weight: bold; color: var(--accent); }
 .pull { border-top: 1.5pt solid var(--accent); border-bottom: 1.5pt solid var(--accent); padding: 2.5mm 0; margin: 2mm 0 3mm; font-size: 10pt; line-height: 1.35; font-style: italic; color: var(--accent); text-align: left; break-inside: avoid; }
