@@ -31,7 +31,12 @@ import {
   registerBuiltins,
 } from '@nodal-agents/tools';
 import { TASK_TOOL_NAMES } from '../planner/task-tool-names';
-import { metaToolsForAgent, parseRootGrants, META_TOOL_NAMES } from '@nodal-agents/shared';
+import {
+  metaToolsForAgent,
+  parseRootGrants,
+  META_TOOL_NAMES,
+  mcpToolPrefix,
+} from '@nodal-agents/shared';
 import type { AgentId, AnyDrizzleDb, EntityId } from '../types';
 
 /**
@@ -165,7 +170,8 @@ export async function computeAgentToolNames(
     .innerJoin(mcpServers, eq(mcpServers.id, agentMcpServers.mcpServerId))
     .where(eq(agentMcpServers.agentId, agentId as string));
   for (const r of mcpRows) {
-    const prefix = r.serverSlug.replace(/-/g, '_');
+    // The ONE prefix the adapter names the tools with (#661).
+    const prefix = mcpToolPrefix(r.serverSlug);
     const available = Array.isArray(r.availableTools)
       ? (r.availableTools as Array<{ name?: unknown }>)
           .map((t) => (t && typeof t.name === 'string' ? t.name : null))

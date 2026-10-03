@@ -6,6 +6,7 @@ import type { ToolDefinition } from '@nodal-agents/tools';
 import {
   fitToolResult,
   framedForModel,
+  mcpToolPrefix,
   raisedErrorBlockLength,
   type OperationRiskLevel,
 } from '@nodal-agents/shared';
@@ -28,7 +29,7 @@ const MCP_DESCRIPTION_CHAR_CAP = Number(process.env.MCP_DESCRIPTION_CHAR_CAP) ||
 
 /** Sanitise a server slug into a tool-name-safe prefix (`my-server` → `my_server`). */
 export function slugToPrefix(slug: string): string {
-  return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+  return mcpToolPrefix(slug);
 }
 
 /**
