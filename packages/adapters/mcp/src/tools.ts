@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { ToolContext, ToolDefinition } from '@nodal-agents/tools';
 import {
+  mcpToolPrefix,
   readElicitationActions,
   readElicitationAttachments,
   type OperationRiskLevel,
@@ -190,7 +191,7 @@ function capMcpResult(value: unknown): unknown {
 
 /** Sanitise a server slug into a tool-name-safe prefix (`my-server` → `my_server`). */
 export function slugToPrefix(slug: string): string {
-  return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+  return mcpToolPrefix(slug);
 }
 
 /**

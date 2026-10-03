@@ -159,6 +159,7 @@ import {
   encryptChannelCredentials,
   encryptChannelSecret,
   getMcpApprovalContext,
+  attachMcpServerToAgent,
   cliRuns,
   verificationRuns,
   jobDeliverableVerificationState,
@@ -275,6 +276,8 @@ import {
   readElicitationToolInput,
   validateElicitationContent,
   describeElicitationErrors,
+  MCP_SERVER_SLUG_PATTERN,
+  MCP_SERVER_SLUG_RULE,
 } from '@nodal-agents/shared';
 import { toElicitationView, type ElicitationView } from './elicitation-view.ts';
 import { readAttachmentViews } from './elicitation-attachments.ts';
@@ -4915,7 +4918,9 @@ const CreateMcpServerSchema = z.object({
     .string()
     .min(2)
     .max(30)
-    .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase letters, digits, dashes')
+    // The canonical grammar (#661): two such slugs never lend tools under the
+    // same names.
+    .regex(MCP_SERVER_SLUG_PATTERN, MCP_SERVER_SLUG_RULE)
     .optional(),
   /** HTTP custom only — overrides the catalog placeholder. */
   customAuthScheme: z.enum(['header', 'query', 'bearer']).optional(),
@@ -5706,31 +5711,32 @@ export async function setAgentMcpServerAssignmentAction(
       .from(agents)
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
-    const [server] = await db
-      .select({ id: mcpServers.id })
-      .from(mcpServers)
-      .where(and(eq(mcpServers.id, mcpServerId), eq(mcpServers.entityId, session.entityId)));
-    if (!server) return fail('not_found', 'MCP connector not found');
 
     if (!assigned) {
+      const [server] = await db
+        .select({ id: mcpServers.id })
+        .from(mcpServers)
+        .where(and(eq(mcpServers.id, mcpServerId), eq(mcpServers.entityId, session.entityId)));
+      if (!server) return fail('not_found', 'MCP connector not found');
       await db
         .delete(agentMcpServers)
         .where(
           and(eq(agentMcpServers.agentId, agentId), eq(agentMcpServers.mcpServerId, mcpServerId)),
         );
     } else {
-      await db
-        .insert(agentMcpServers)
-        .values({
-          agentId,
-          mcpServerId,
-          entityId: session.entityId,
-          enabledTools: enabledTools ?? null,
-        })
-        .onConflictDoUpdate({
-          target: [agentMcpServers.agentId, agentMcpServers.mcpServerId],
-          set: { enabledTools: enabledTools ?? null, updatedAt: new Date() },
-        });
+      // The one attach path of every surface (#661): refuses a server whose
+      // tool names would collide with one this agent already holds.
+      const attached = await attachMcpServerToAgent(db, {
+        entityId: session.entityId,
+        agentId,
+        mcpServerId,
+        enabledTools: enabledTools ?? null,
+      });
+      if (!attached.ok) {
+        return attached.reason === 'not_found'
+          ? fail('not_found', 'MCP connector not found')
+          : fail('mcp_namespace_overlap', attached.message);
+      }
     }
 
     revalidatePath('/agents');
@@ -6272,14 +6278,18 @@ export async function listApprovalsAction(
     // computeApprovalImpactLine's catch-all branch — reported live as
     // "je ne comprends pas ce que j'approuve".
     //
-    // Deduplicated by tool name: a page of 100 approvals from one server would
-    // otherwise issue 100 identical queries.
+    // Resolved among the servers the requesting AGENT holds (#661): a
+    // workspace may hold two instances of one server for two agents, under the
+    // same tool names. Deduplicated by (agent, tool): a page of 100 approvals
+    // from one server would otherwise issue 100 identical queries.
+    const mcpKey = (agentId: string | null, toolName: string) => `${agentId ?? ''}|${toolName}`;
     const mcpByTool = new Map<string, Awaited<ReturnType<typeof getMcpApprovalContext>>>();
-    for (const name of new Set(rows.map((r) => r.toolName))) {
-      if (!name.includes('__')) continue;
+    for (const r of rows) {
+      const key = mcpKey(r.agentId, r.toolName);
+      if (!r.toolName.includes('__') || mcpByTool.has(key)) continue;
       mcpByTool.set(
-        name,
-        await getMcpApprovalContext(db, session.entityId, name).catch(() => null),
+        key,
+        await getMcpApprovalContext(db, session.entityId, r.agentId, r.toolName).catch(() => null),
       );
     }
 
@@ -6348,7 +6358,7 @@ export async function listApprovalsAction(
         // env values are masked here, the single loader feeding both the
         // approvals page and the sidebar/NotificationsBell provider.
         const safeInput = redactSecretsForAudit(r.toolInput) as typeof r.toolInput;
-        const ctx = mcpByTool.get(r.toolName) ?? null;
+        const ctx = mcpByTool.get(mcpKey(r.agentId, r.toolName)) ?? null;
         // `jobParentJobId` ne sort PAS de l'action : il n'a servi qu'à remonter
         // la chaîne, et les deux champs de tête disent déjà ce que l'écran en
         // fait.
@@ -7630,6 +7640,12 @@ export type ApplyAgentRecipeResult = {
   connectorsAttached: string[];
   /** Recommended connectors the workspace does not have — the user's move. */
   connectorsToSetUp: string[];
+  /**
+   * Recommended connectors the workspace HAS but that were not attached, each
+   * with why: several instances (picking one would be a guess, #661), or a
+   * refusal of the attach rule. Said to the user, never dropped.
+   */
+  connectorsNotAttached: Array<{ slug: string; reason: string }>;
 };
 
 /**
@@ -7731,10 +7747,11 @@ async function applyRecipeToAgent(
     // user's move, and the result repeats it.
     const connectorsAttached: string[] = [];
     const connectorsToSetUp: string[] = [];
+    const connectorsNotAttached: Array<{ slug: string; reason: string }> = [];
     const wantedMcp = (recipe.connectors ?? []).filter((c) => c.kind === 'mcp').map((c) => c.slug);
     if (wantedMcp.length > 0) {
       const rows = await db
-        .select({ id: mcpServers.id, slug: mcpServers.slug })
+        .select({ id: mcpServers.id, slug: mcpServers.slug, name: mcpServers.name })
         .from(mcpServers)
         .where(
           and(
@@ -7743,24 +7760,30 @@ async function applyRecipeToAgent(
             eq(mcpServers.active, true),
           ),
         );
-      const bySlug = new Map<string, string>();
-      for (const r of rows) if (!bySlug.has(r.slug)) bySlug.set(r.slug, r.id);
       for (const slug of wantedMcp) {
-        const mcpServerId = bySlug.get(slug);
-        if (!mcpServerId) {
+        const instances = rows.filter((r) => r.slug === slug);
+        if (instances.length === 0) {
           connectorsToSetUp.push(slug);
           continue;
         }
-        await db
-          .insert(agentMcpServers)
-          .values({
-            entityId: session.entityId,
-            agentId: agent.id,
-            mcpServerId,
-            enabledTools: null,
-          })
-          .onConflictDoNothing();
-        connectorsAttached.push(slug);
+        // Several instances of the server: which one the agent should hold is
+        // the user's call, never a guess (#661).
+        if (instances.length > 1) {
+          connectorsNotAttached.push({
+            slug,
+            reason:
+              `${instances.length} servers are "${slug}" here ` +
+              `(${instances.map((i) => i.name).join(', ')}). Attach the one you want from the agent's Connectors tab.`,
+          });
+          continue;
+        }
+        const attached = await attachMcpServerToAgent(db, {
+          entityId: session.entityId,
+          agentId: agent.id,
+          mcpServerId: instances[0]!.id,
+        });
+        if (attached.ok) connectorsAttached.push(slug);
+        else connectorsNotAttached.push({ slug, reason: attached.message });
       }
     }
 
@@ -7770,6 +7793,7 @@ async function applyRecipeToAgent(
       readOnlyApplied,
       connectorsAttached,
       connectorsToSetUp,
+      connectorsNotAttached,
     };
   }
 }

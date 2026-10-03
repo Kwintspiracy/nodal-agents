@@ -5622,22 +5622,10 @@ describe('setAgentMcpServerAssignmentAction', () => {
     if (!r.ok) expect(r.code).toBe('not_found');
   });
 
-  it('assigned=true upserts an agent_mcp_servers row with the enabledTools whitelist', async () => {
-    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-0000000003d1' }]) as typeof currentDb;
-    const { setAgentMcpServerAssignmentAction } = await import('../src/lib/actions.ts');
-    const r = await setAgentMcpServerAssignmentAction(
-      'aaaaaaaa-0000-0000-0000-0000000003d1',
-      'aaaaaaaa-0000-0000-0000-0000000003d2',
-      true,
-      ['get_home'],
-    );
-    expect(r.ok).toBe(true);
-    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
-    const valuesFn = (insertSpy.mock.results[0]?.value as { values?: ReturnType<typeof vi.fn> })
-      .values;
-    const values = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
-    expect(values?.['enabledTools']).toEqual(['get_home']);
-  });
+  // assigned=true goes through attachMcpServerToAgent (packages/db), which
+  // reads the servers the agent already holds: proven against real rows,
+  // whitelist included, in src/lib/__tests__/mcp-attach-namespace.test.ts
+  // (#661) — a mock answering every read with one row cannot express it.
 
   it('assigned=false deletes the assignment row', async () => {
     currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-0000000003e1' }]) as typeof currentDb;
