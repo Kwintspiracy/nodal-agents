@@ -36,8 +36,10 @@ export const attachMcpTool: ToolDefinition<typeof AttachMcpInput, AttachMcpOutpu
   card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
-    const mcpId = await resolveMcpServerId(ctx.db, ctx.entityId, input.mcpSlug);
-    if (!mcpId) {
+    const resolved = await resolveMcpServerId(ctx.db, ctx.entityId, input.mcpSlug);
+    if (!resolved.ok && resolved.reason === 'ambiguous')
+      return { ok: false, error: resolved.error };
+    if (!resolved.ok) {
       // List the real slugs so a guessed/hallucinated name (e.g. `mcp_fetch`
       // guessed from a tool-name prefix) can self-correct to the actual one
       // (`mcp-fetch`) instead of retrying the same wrong guess.
@@ -55,7 +57,8 @@ export const attachMcpTool: ToolDefinition<typeof AttachMcpInput, AttachMcpOutpu
     if (!agentId) {
       return { ok: false, error: `Agent "${input.agentSlug}" not found in this workspace.` };
     }
-    await linkMcpToAgent(ctx.db, ctx.entityId, agentId, mcpId);
+    const linked = await linkMcpToAgent(ctx.db, ctx.entityId, agentId, resolved.id);
+    if (!linked.ok) return { ok: false, error: linked.error };
     return {
       ok: true,
       message: `Attached MCP "${input.mcpSlug}" to agent "${input.agentSlug}" — its tools are now available to that agent.`,
