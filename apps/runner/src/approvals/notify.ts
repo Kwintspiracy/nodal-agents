@@ -71,11 +71,18 @@ export const APPROVAL_BUTTON_LABELS = {
  */
 export async function buildApprovalCardBody(
   db: RunnerDeps['db'],
-  args: { entityId: string; toolName: string; toolInput: unknown; who: string },
+  args: {
+    entityId: string;
+    agentId: string | null;
+    toolName: string;
+    toolInput: unknown;
+    who: string;
+  },
 ): Promise<string> {
   const explanation = await explainApprovalRequest(
     db,
     args.entityId,
+    args.agentId,
     args.toolName,
     args.toolInput,
   );
@@ -614,6 +621,7 @@ export async function notifyApprovalCreated(
     // redacted inside it — an approval card gets forwarded and screenshotted.
     const body = await buildApprovalCardBody(deps.db, {
       entityId: req.entityId,
+      agentId: req.agentId,
       toolName: req.toolName,
       toolInput: req.toolInput,
       who,

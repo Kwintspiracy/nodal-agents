@@ -171,6 +171,11 @@ function parseField(
     if (minimum !== null && maximum !== null && minimum > maximum) {
       return { error: `property "${key}" has minimum ${minimum} above maximum ${maximum}` };
     }
+    if (integer && minimum !== null && maximum !== null && Math.ceil(minimum) > maximum) {
+      return {
+        error: `property "${key}" admits no whole number between ${minimum} and ${maximum}`,
+      };
+    }
     const def = optNumber(raw['default']);
     return { ...base, kind: 'number', integer, minimum, maximum, default: def };
   }
@@ -200,11 +205,21 @@ function parseField(
     if (format !== undefined && !(typeof format === 'string' && TEXT_FORMATS.has(format))) {
       return { error: `property "${key}" has an unsupported string format "${String(format)}"` };
     }
+    const minLength = optNumber(raw['minLength']);
+    const maxLength = optNumber(raw['maxLength']);
+    if (minLength !== null && maxLength !== null && minLength > maxLength) {
+      return { error: `property "${key}" has minLength ${minLength} above maxLength ${maxLength}` };
+    }
+    if (minLength !== null && minLength > ELICITATION_TEXT_MAX) {
+      return {
+        error: `property "${key}" asks for at least ${minLength} characters, above the ${ELICITATION_TEXT_MAX} an answer may hold`,
+      };
+    }
     return {
       ...base,
       kind: 'text',
-      minLength: optNumber(raw['minLength']),
-      maxLength: optNumber(raw['maxLength']),
+      minLength,
+      maxLength,
       format: (format as 'email' | 'uri' | 'date' | 'date-time' | undefined) ?? null,
       default: typeof raw['default'] === 'string' ? raw['default'] : null,
     };
@@ -223,12 +238,22 @@ function parseField(
     if (!options) {
       return { error: `property "${key}" is an array whose items are not a list of choices` };
     }
+    const minItems = optNumber(raw['minItems']);
+    const maxItems = optNumber(raw['maxItems']);
+    if (minItems !== null && maxItems !== null && minItems > maxItems) {
+      return { error: `property "${key}" has minItems ${minItems} above maxItems ${maxItems}` };
+    }
+    if (minItems !== null && minItems > options.length) {
+      return {
+        error: `property "${key}" asks for at least ${minItems} choices out of ${options.length}`,
+      };
+    }
     return {
       ...base,
       kind: 'multi',
       options,
-      minItems: optNumber(raw['minItems']),
-      maxItems: optNumber(raw['maxItems']),
+      minItems,
+      maxItems,
       default: stringArray(raw['default']),
     };
   }
@@ -245,6 +270,9 @@ function parseField(
  * choix (`enum`, `enum`+`enumNames`, `oneOf` titré) ou un choix multiple
  * (`array` d'`enum` ou d'`anyOf` titré). Tout le reste est refusé avec la
  * raison : un champ qu'on ne sait pas dessiner ne se remplace pas par un autre.
+ * Un champ dont les bornes n'admettent aucune réponse que
+ * `validateElicitationContent` accepte l'est aussi : dessiné, il attendrait une
+ * personne qui ne pourrait jamais l'envoyer.
  */
 export function parseElicitationSchema(raw: unknown): ParsedElicitationSchema {
   if (!isRecord(raw)) return { ok: false, reason: 'requestedSchema is not an object' };

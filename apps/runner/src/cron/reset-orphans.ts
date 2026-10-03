@@ -12,6 +12,7 @@ import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { sendTelegramMessage } from '@nodal-agents/delivery';
 import { failJob } from '../job/state.ts';
 import { resumeJobAfterApprovalResolution } from '../approvals/resume.ts';
+import { closeElicitationsOfLostJobs } from '../approvals/elicitation.ts';
 import { resolveTelegramDeliveryTarget } from '../approvals/notify.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
@@ -256,6 +257,7 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
     );
     if (landed) {
       reset += 1;
+      await closeElicitationsOfLostJobs(db, [jobId]);
       await notifyJobFailure(db, jobId, ORPHAN_RESET_NOTICE);
     }
   }
