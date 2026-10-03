@@ -146,8 +146,10 @@ export function conversationTimeLabel(at: Date | null, now: Date = new Date()): 
  * qu'elle peut laisser fermée. Montrer l'une des deux, c'est montrer celle qui
  * la fait revenir.
  */
-function strongestWaiting(kinds: readonly string[]): RowWaiting {
-  if (kinds.includes('question')) return 'question';
+export function strongestWaiting(kinds: readonly string[]): RowWaiting {
+  // La question d'un serveur MCP (élicitation, 0145) est une QUESTION adressée
+  // à la personne, pas une porte : elle se dit « Question asked ».
+  if (kinds.includes('question') || kinds.includes('elicitation')) return 'question';
   if (kinds.includes('approval')) return 'approval';
   // Un `kind` que le produit ne connaît pas ne devient PAS une pastille au
   // hasard : la ligne se tait, et la demande reste entière sur /approvals.

@@ -37,7 +37,11 @@ export const approvalRequests = pgTable(
     /**
      * Ce que cette ligne DEMANDE (0098, P10a) : 'approval' — approuver ou
      * refuser une action — ou 'question' — choisir une option parmi celles que
-     * l'agent propose (`ask_user`).
+     * l'agent propose (`ask_user`) — ou 'elicitation' (0145) — remplir le
+     * formulaire qu'un serveur MCP demande PENDANT un de ses appels.
+     *
+     * Une élicitation n'est jamais un appel à rejouer : voir
+     * `CALL_GATE_KINDS`, le filtre de tout lecteur qui rejoue ou reprend.
      *
      * POSÉE par la porte à la création, depuis ce que l'outil déclare
      * (`ToolDefinition.asksUser`), jamais devinée après coup par le nom de
@@ -54,6 +58,23 @@ export const approvalRequests = pgTable(
      * personne n'a répondu, et sur un refus.
      */
     answer: text('answer'),
+    /**
+     * Ce qu'une personne a rempli en réponse à une ÉLICITATION (0145) : le
+     * formulaire qu'un serveur MCP a demandé pendant un de ses appels, validé
+     * contre `tool_input.requestedSchema` (`validateElicitationContent`,
+     * `@nodal-agents/shared`) avant d'être écrit. NULL tant que personne n'a
+     * répondu, sur un refus, et sur toute ligne qui n'est pas une élicitation.
+     */
+    response: jsonb('response'),
+    /**
+     * Le BROUILLON d'une élicitation remplie depuis un canal (0146) : ce que la
+     * personne a posé geste par geste sur la carte Telegram, Discord ou Slack,
+     * `{ values, awaiting }` (`readElicitationDraft`, `@nodal-agents/shared`).
+     * `awaiting` : le champ qui attend une valeur tapée en réponse à la carte.
+     * NULL tant que personne n'a touché la carte ; la réponse envoyée, elle,
+     * va dans `response`.
+     */
+    draft: jsonb('draft'),
     /**
      * Why the autonomy checklist held this command (#464): one entry per kind
      * of action — `{ category, state, details }`, the details being the
@@ -97,12 +118,73 @@ export const approvalRequests = pgTable(
       'approval_requests_status_check',
       sql`${table.status} IN ('pending','approved','rejected','expired')`,
     ),
-    check('approval_requests_kind_check', sql`${table.kind} IN ('approval','question')`),
+    check(
+      'approval_requests_kind_check',
+      sql`${table.kind} IN ('approval','question','elicitation')`,
+    ),
   ],
 );
 
 export type ApprovalRequestRow = typeof approvalRequests.$inferSelect;
 export type ApprovalRequestInsert = typeof approvalRequests.$inferInsert;
+
+/**
+ * Les sortes de lignes qui retiennent un APPEL d'outil (0145) : une approbation
+ * — l'appel attend son feu vert — et une question d'`ask_user` — l'appel EST la
+ * question, rejouée à la reprise pour lire la réponse.
+ *
+ * Une élicitation n'en fait pas partie : c'est un serveur MCP qui demande
+ * quelque chose PENDANT un appel déjà en cours. La relire comme un appel
+ * approuvé ferait RÉEXÉCUTER l'outil MCP (une impression en double). Tout
+ * lecteur qui rejoue, reprend ou réveille un job à partir de ces lignes filtre
+ * donc sur cette liste — positive, pour qu'une sorte future soit exclue tant
+ * que personne n'a décidé qu'elle retient un appel.
+ */
+export const CALL_GATE_KINDS = ['approval', 'question'] as const;
+
+/** Le filtre SQL de `CALL_GATE_KINDS` — la forme que lisent les requêtes. */
+export function gatesACall() {
+  return sql`${approvalRequests.kind} IN ('approval','question')`;
+}
+
+// ─── approval_request_attachments ─────────────────────────────────────────────
+
+/**
+ * Les images qu'un serveur MCP joint à sa question (0145), lues dans
+ * `_meta["nodal/attachments"]` de `elicitation/create` et validées avant
+ * l'écriture (`readElicitationAttachments`, `@nodal-agents/shared` : images
+ * seulement, taille et nombre plafonnés). `data` est le base64 reçu, tel quel.
+ *
+ * À part de `approval_requests` pour qu'aucune lecture de la demande (listes,
+ * cloche, reprise d'un job) ne charge des Mo qu'elle n'affiche pas.
+ */
+export const approvalRequestAttachments = pgTable(
+  'approval_request_attachments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    approvalRequestId: uuid('approval_request_id')
+      .notNull()
+      .references(() => approvalRequests.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    mimeType: text('mime_type').notNull(),
+    data: text('data').notNull(),
+    byteSize: integer('byte_size').notNull(),
+    caption: text('caption'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique('approval_request_attachments_position_unique').on(
+      table.approvalRequestId,
+      table.position,
+    ),
+    check(
+      'approval_request_attachments_mime_check',
+      sql`${table.mimeType} IN ('image/png','image/jpeg','image/webp','image/gif')`,
+    ),
+  ],
+);
+
+export type ApprovalRequestAttachmentRow = typeof approvalRequestAttachments.$inferSelect;
 
 // ─── approval_card_messages ───────────────────────────────────────────────────
 

@@ -41,7 +41,8 @@ import {
   webhookTriggers,
 } from '@nodal-agents/db';
 import { requireAuth } from '@nodal-agents/auth';
-import { explainApproval } from '@nodal-agents/shared';
+import { explainApproval, readElicitationToolInput } from '@nodal-agents/shared';
+import { truncate } from './format-time';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 
 export type ActionResult<T = void> =
@@ -228,6 +229,7 @@ export async function listSidebarRecentApprovalsAction(
         agentName: agents.name,
         toolName: approvalRequests.toolName,
         toolInput: approvalRequests.toolInput,
+        kind: approvalRequests.kind,
         status: approvalRequests.status,
         resolvedAt: approvalRequests.resolvedAt,
         answer: approvalRequests.answer,
@@ -249,10 +251,18 @@ export async function listSidebarRecentApprovalsAction(
         // La même phrase que la carte de la page des approbations, calculée
         // sans le contexte MCP (quatre lignes d'un menu ne résolvent pas un
         // serveur par outil) : l'outil et ses arguments suffisent à la dire.
-        const what = explainApproval({
-          toolName: r.toolName,
-          toolInput: (r.toolInput ?? {}) as Record<string, unknown>,
-        }).what;
+        //
+        // Une ÉLICITATION (0145) n'est pas l'appel de son outil : c'est la
+        // QUESTION d'un serveur MCP. La dire comme l'appel (« Request print
+        // via … ») ferait lire une approbation de l'outil là où la personne a
+        // répondu à un formulaire.
+        const elicitation = r.kind === 'elicitation' ? readElicitationToolInput(r.toolInput) : null;
+        const what = elicitation
+          ? `${elicitation.server} asked: ${truncate(elicitation.message, 80)}`
+          : explainApproval({
+              toolName: r.toolName,
+              toolInput: (r.toolInput ?? {}) as Record<string, unknown>,
+            }).what;
         return {
           id: r.id,
           // L'agent quand on le connaît, l'outil sinon. Jamais un nom inventé.

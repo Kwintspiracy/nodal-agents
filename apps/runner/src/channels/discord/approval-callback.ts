@@ -205,6 +205,16 @@ export async function handleDiscordApprovalInteraction(args: {
     return { handled: false, reason: 'already_resolved' };
   }
 
+  // ── 0145 — la question d'un SERVEUR MCP (élicitation) ─────────────────────
+  // Elle se répond par un FORMULAIRE, que cette carte ne porte pas : ni ✅
+  // (envoyer sans contenu), ni « Toujours » (une règle sur l'outil MCP qui l'a
+  // posée), ni une option n'y ont de sens. Refusé, la demande reste ouverte et
+  // se répond sur le dashboard.
+  if (approval.kind === 'elicitation') {
+    await ack.ephemeralReply('Answer this one from the dashboard.');
+    return { handled: false, reason: 'elicitation_answered_on_dashboard' };
+  }
+
   // ── P10a — repondre a une QUESTION ────────────────────────────────────────
   //
   // APRES toutes les gardes de securite : repondre reprend un job, exactement

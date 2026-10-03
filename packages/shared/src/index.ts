@@ -39,6 +39,8 @@ export * from './approval-explain';
 export * from './approval-rules-chain';
 export * from './approval-tool-default';
 export * from './question-answer';
+export * from './elicitation';
+export * from './elicitation-card';
 export * from './untrusted';
 export * from './mcp-tool-result';
 export * from './tool-result-budget';

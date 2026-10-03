@@ -44,6 +44,7 @@ import { lineCountsOfCall, type LineCounts } from './coding-changes.ts';
 import type { FileChangeGesture } from './file-change-groups.ts';
 import { knownHint, type FailureHint } from './failure-hint.ts';
 import type { ProductionVerdict } from './chat-or-work.ts';
+import type { ElicitationView } from './elicitation-view.ts';
 
 // ─── Entrées ──────────────────────────────────────────────────────────────────
 
@@ -294,6 +295,14 @@ export type FeedItem =
       from: { name: string | null; slug: string | null; avatarUrl: string | null };
     }
   | { kind: 'answer'; text: string }
+  /**
+   * La QUESTION qu'un serveur MCP a posée pendant un appel de ce travail
+   * (élicitation, 0145), en attente ou tranchée. Une carte à part, jamais une
+   * étape : pendant la question l'appel n'a pas encore de ligne `tool_calls`
+   * (elle s'écrit après l'exécution), et la personne doit la voir SANS rien
+   * déplier — `conversation-thread.ts` la laisse hors du groupe du run.
+   */
+  | { kind: 'elicitation'; jobId: string; elicitation: ElicitationView }
   /**
    * Un run qui s'est arrêté. `hint` nomme le GESTE que cet échec appelle,
    * quand il en appelle un (#184) — lu ici, dans le modèle, pour que les deux
@@ -838,6 +847,8 @@ export function buildConversationFeed(
   llmCalls: readonly FeedLlmCallRow[],
   /** Les questions de ce travail (P10a), rangées par `tool_call_id`. */
   questions: readonly FeedQuestionRow[] = [],
+  /** Les questions des serveurs MCP de ce travail (0145), dans l'ordre où elles sont arrivées. */
+  elicitations: readonly ElicitationView[] = [],
 ): ConversationFeed {
   const items: FeedItem[] = [];
   const origin: Origin = {
@@ -1066,16 +1077,32 @@ export function buildConversationFeed(
   const from = { name: job.agentName, slug: job.agentSlug, avatarUrl: job.agentAvatarUrl };
   for (const child of job.children) {
     const own = child.feed;
-    const lifted = own === undefined ? [] : own.items.filter((i) => i.kind === 'child');
+    // Une question d'un serveur MCP posée DANS le délégué remonte avec ses
+    // délégations : enfouie dans le bloc replié du délégué, elle attendrait une
+    // réponse que personne ne verrait.
+    const lifted =
+      own === undefined
+        ? []
+        : own.items.filter((i) => i.kind === 'child' || i.kind === 'elicitation');
     items.push({
       kind: 'child',
       job:
         own === undefined
           ? child
-          : { ...child, feed: { ...own, items: own.items.filter((i) => i.kind !== 'child') } },
+          : {
+              ...child,
+              feed: {
+                ...own,
+                items: own.items.filter((i) => i.kind !== 'child' && i.kind !== 'elicitation'),
+              },
+            },
       from,
     });
     for (const item of lifted) items.push(item);
+  }
+
+  for (const elicitation of elicitations) {
+    items.push({ kind: 'elicitation', jobId: job.id, elicitation });
   }
 
   if (job.status === 'completed' && job.result && job.result.trim() !== '') {

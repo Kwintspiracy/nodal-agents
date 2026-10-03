@@ -245,6 +245,75 @@ describe('POST /api/approve', () => {
 // web, which already pre-checks server-side) keeps the pre-existing unscoped
 // lookup.
 
+describe('POST /api/approve — la question d’un serveur MCP (0145) @cap:approuver-une-action/moteur', () => {
+  async function insertElicitation(): Promise<string> {
+    const [row] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: seed.jobId,
+        agentId: seed.agentId,
+        toolName: 'printer__request_print',
+        toolInput: {
+          server: 'printer',
+          message: 'How?',
+          requestedSchema: {
+            type: 'object',
+            properties: { copies: { type: 'integer', minimum: 1, maximum: 5 } },
+            required: ['copies'],
+          },
+        },
+        kind: 'elicitation',
+        status: 'pending',
+        executedAt: new Date(),
+      })
+      .returning();
+    return row!.id;
+  }
+
+  function post(body: Record<string, unknown>) {
+    return app.fetch(
+      new Request('http://localhost/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+
+  it('transporte le formulaire jusqu’à la ligne, sans relancer le job', async () => {
+    const id = await insertElicitation();
+    const res = await post({ approvalRequestId: id, decision: 'approve', content: { copies: 3 } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, status: 'processing' });
+    const [row] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
+    expect(row!.status).toBe('approved');
+    expect(row!.response).toEqual({ copies: 3 });
+    const [job] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, seed.jobId));
+    expect(job!.status).toBe('awaiting_approval');
+  });
+
+  it('un formulaire invalide rend ses erreurs champ par champ', async () => {
+    const id = await insertElicitation();
+    const res = await post({ approvalRequestId: id, decision: 'approve', content: { copies: 7 } });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'content_invalid',
+      errors: [{ field: 'copies', reason: 'must be at most 5' }],
+    });
+  });
+
+  it('envoyer sans contenu : 400 content_required', async () => {
+    const id = await insertElicitation();
+    const res = await post({ approvalRequestId: id, decision: 'approve' });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'content_required' });
+  });
+});
+
 describe('POST /api/approve — entity authorization (bearer-token mode)', () => {
   let dbZ: TestDb;
   let appBearer: ReturnType<typeof createApp>;

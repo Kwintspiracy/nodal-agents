@@ -56,8 +56,14 @@ export default function ConversationApprovals({ conversationId }: { conversation
         );
         return;
       }
-      // Everything but the questions, which are #465's own block.
-      setApprovals(result.data.filter((a) => a.kind !== 'question' && !answered.current.has(a.id)));
+      // Everything but the questions, which are #465's own block, and the
+      // questions of an MCP server (0145), whose card is in the thread itself:
+      // shown here too, the same form would be on screen twice.
+      setApprovals(
+        result.data.filter(
+          (a) => a.kind !== 'question' && a.kind !== 'elicitation' && !answered.current.has(a.id),
+        ),
+      );
     });
     return () => {
       current = false;

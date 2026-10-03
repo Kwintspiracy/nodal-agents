@@ -273,9 +273,14 @@ import {
   MCP_CATALOG,
   AgentSlugSchema,
   FREE_ANSWER_MAX,
+  readElicitationToolInput,
+  validateElicitationContent,
+  describeElicitationErrors,
   MCP_SERVER_SLUG_PATTERN,
   MCP_SERVER_SLUG_RULE,
 } from '@nodal-agents/shared';
+import { toElicitationView, type ElicitationView } from './elicitation-view.ts';
+import { readAttachmentViews } from './elicitation-attachments.ts';
 import { isRefusedEffort } from './model-choices.ts';
 import type { ConversationFeed, Step } from './conversation-feed.ts';
 import {
@@ -6132,6 +6137,15 @@ export type ApprovalRow = {
    * action it read in it. Empty when the checklist had nothing to do with it.
    */
   gateReasons: ShellGateReason[];
+  /**
+   * La question d'un serveur MCP, quand la ligne est une ÉLICITATION (0145) :
+   * le serveur, son message, le formulaire, la réponse donnée et les images
+   * jointes (sans leurs octets). `null` pour toute autre ligne, et pour une
+   * élicitation dont l'entrée ne se lit pas, que la carte montre alors brute.
+   * C'est ce champ, et non `kind` seul, qui fait dessiner `ElicitationCard` :
+   * une élicitation n'a ni « Approve » ni règle à proposer.
+   */
+  elicitation: ElicitationView | null;
 };
 
 /**
@@ -6220,6 +6234,7 @@ export async function listApprovalsAction(
         toolInput: approvalRequests.toolInput,
         kind: approvalRequests.kind,
         answer: approvalRequests.answer,
+        response: approvalRequests.response,
         status: approvalRequests.status,
         requestedAt: approvalRequests.requestedAt,
         resolvedAt: approvalRequests.resolvedAt,
@@ -6343,6 +6358,13 @@ export async function listApprovalsAction(
       workspacesByAgent.set(w.agentId, list);
     }
 
+    // Les images des élicitations de la page, en une requête et SANS leurs
+    // octets : la carte les lit par leur route.
+    const attachmentsByRequest = await readAttachmentViews(
+      db,
+      rows.filter((r) => r.kind === 'elicitation').map((r) => r.id),
+    );
+
     return ok(
       rows.map((r) => {
         // NOUVEAU-1: the stored approval row keeps the REAL toolInput (the
@@ -6355,10 +6377,25 @@ export async function listApprovalsAction(
         // `jobParentJobId` ne sort PAS de l'action : il n'a servi qu'à remonter
         // la chaîne, et les deux champs de tête disent déjà ce que l'écran en
         // fait.
-        const { jobParentJobId: _chaine, ...rest } = r;
+        const { jobParentJobId: _chaine, response: _reponse, ...rest } = r;
         const root = roots.get(r.jobId) ?? { rootJobId: null, rootChannel: null };
         return {
           ...rest,
+          elicitation:
+            r.kind === 'elicitation'
+              ? toElicitationView({
+                  id: r.id,
+                  status: r.status,
+                  // L'entrée STOCKÉE : une élicitation ne porte que le serveur,
+                  // sa question et son formulaire, rien que le masquage des
+                  // champs de connecteur viserait.
+                  toolInput: r.toolInput,
+                  response: r.response,
+                  resolvedBy: r.resolvedBy,
+                  expiresAt: r.expiresAt,
+                  attachments: attachmentsByRequest.get(r.id) ?? [],
+                })
+              : null,
           rootJobId: root.rootJobId,
           rootChannel: root.rootChannel,
           toolInput: safeInput,
@@ -6422,6 +6459,13 @@ const ResolveApprovalSchema = z.object({
    * « Something else ». Le runner ne la compare alors à aucune option.
    */
   free: z.boolean().optional(),
+  /**
+   * Ce que la personne a rempli, sur une ÉLICITATION (0145) : le formulaire
+   * qu'un serveur MCP a demandé. Obligatoire pour l'envoyer, refusé sur toute
+   * autre ligne. Validé ici contre le formulaire de la ligne pour dire l'erreur
+   * avant l'aller-retour ; le runner le revalide, et c'est lui qui décide.
+   */
+  content: z.record(z.string(), z.unknown()).optional(),
 });
 
 /**
@@ -6450,7 +6494,11 @@ export async function resolveApprovalAction(
     // identically — don't reveal cross-tenant existence.
     const db = getDb();
     const [approval] = await db
-      .select({ id: approvalRequests.id })
+      .select({
+        id: approvalRequests.id,
+        kind: approvalRequests.kind,
+        toolInput: approvalRequests.toolInput,
+      })
       .from(approvalRequests)
       .where(
         and(
@@ -6461,6 +6509,31 @@ export async function resolveApprovalAction(
       .limit(1);
     if (!approval) {
       return fail('not_found', 'Approval not found');
+    }
+
+    // ── Une élicitation n'est pas une approbation (0145) ────────────────────
+    // L'envoyer, c'est envoyer le FORMULAIRE au serveur MCP : sans contenu,
+    // « approuver » ne voudrait rien dire, et le runner le refuserait. Le
+    // contenu est vérifié ici contre le formulaire de la ligne pour que la
+    // personne lise l'erreur sous le champ ; un contenu sur une autre ligne est
+    // refusé plutôt que jeté (invariant #4).
+    const content = parsed.data.content;
+    if (approval.kind === 'elicitation') {
+      if (parsed.data.decision === 'approve') {
+        if (content === undefined) {
+          return fail('content_required', 'Fill in the form before sending it.');
+        }
+        const form = readElicitationToolInput(approval.toolInput);
+        if (!form) return fail('form_unreadable', 'This form cannot be read.');
+        const checked = validateElicitationContent(form.requestedSchema, content);
+        if (!checked.ok) {
+          return fail('content_invalid', describeElicitationErrors(checked.errors));
+        }
+      } else if (content !== undefined) {
+        return fail('content_not_expected', 'Declining sends no answer.');
+      }
+    } else if (content !== undefined) {
+      return fail('content_not_expected', 'This request does not take a form answer.');
     }
 
     if (!env.WORKER_SECRET) {
@@ -6485,8 +6558,16 @@ export async function resolveApprovalAction(
     }
 
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        errors?: Array<{ field: string | null; reason: string }>;
+      };
       const code = body.error ?? `runner_${res.status}`;
+      // Les erreurs de champ d'un formulaire refusé par le runner se lisent
+      // telles quelles : « copies: must be at most 5 » dit quoi corriger.
+      if (code === 'content_invalid' && Array.isArray(body.errors) && body.errors.length > 0) {
+        return fail(code, describeElicitationErrors(body.errors));
+      }
       return fail(code, `Runner rejected: ${code}`);
     }
 
