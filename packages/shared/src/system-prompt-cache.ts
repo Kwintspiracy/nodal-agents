@@ -8,5 +8,16 @@
 // across jobs within the cache window, while the volatile tail stays fresh
 // (E1, audit followup). Providers without caching strip the marker before send.
 //
-// Deliberately distinctive so it can never collide with real prompt text.
+// Deliberately distinctive, but the prompt also carries text Nodal did not
+// write (an agent's personality, a skill, an MCP server's guidance, memory, a
+// workspace listing): that text can contain it. defuseSystemCacheBoundary is
+// applied to each half before the marker is placed, so the only marker a
+// prompt carries is the one buildSystemPrompt put there.
 export const SYSTEM_PROMPT_CACHE_BOUNDARY = '\n\n[[[NODAL_SYSTEM_CACHE_BOUNDARY]]]\n\n';
+
+const BOUNDARY_TOKEN = /\[\[\[NODAL_SYSTEM_CACHE_BOUNDARY\]\]\]/g;
+
+/** Text that is not the builder's own loses the marker's brackets, and nothing else. */
+export function defuseSystemCacheBoundary(text: string): string {
+  return text.replace(BOUNDARY_TOKEN, '[NODAL_SYSTEM_CACHE_BOUNDARY]');
+}

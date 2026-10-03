@@ -171,9 +171,24 @@ export interface McpToolDescriptor {
   annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
 }
 
-export interface McpConnection {
-  client: Client;
+/**
+ * What a successful connection learns about a server: its tools and the
+ * `instructions` it publishes at initialize (null when it publishes none).
+ * Every connection writes BOTH back to its `mcp_servers` row
+ * (`available_tools`, `instructions`), so the two never describe different
+ * moments of the same server.
+ */
+export interface McpServerDiscovery {
   tools: McpToolDescriptor[];
+  /**
+   * Guidance the server gives the agent that uses it, verbatim. Third-party
+   * text: the prompt frames and caps it (packages/orchestration, system-prompt).
+   */
+  instructions: string | null;
+}
+
+export interface McpConnection extends McpServerDiscovery {
+  client: Client;
   /** Close the underlying transport. Always call this when done. For stdio,
    *  this also terminates the spawned subprocess. */
   close: () => Promise<void>;
@@ -310,9 +325,16 @@ export async function connectMcp(opts: McpConnectOptions): Promise<McpConnection
     annotations: t.annotations as McpToolDescriptor['annotations'],
   }));
 
+  // The SDK keeps the `instructions` of the initialize result, stored as the
+  // server wrote them (an indented first line is Markdown's code block);
+  // whitespace alone is no guidance.
+  const published = client.getInstructions();
+  const instructions = published !== undefined && published.trim() !== '' ? published : null;
+
   return {
     client,
     tools,
+    instructions,
     close: async () => {
       // client.close() tears down the transport, which for stdio means
       // closing stdin and waiting for the subprocess to exit. The MCP SDK
