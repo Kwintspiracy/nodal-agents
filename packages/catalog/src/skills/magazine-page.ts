@@ -142,10 +142,10 @@ A proven magazine layout: a large photo at the top with a red kicker and a capti
 5. Never give the page a fixed height, never hide an overflow, never put the footer in the text (it is in the page margin, with the page number): the text flows, and what does not fit goes to the next page, where you can see it.
 
 ## One page
-Set \`--hero-height\` to 70-90mm and \`--body-size\` to 8.5-9.5pt. With 15 mm margins, a 70 mm photo, 9 pt text, a two-line headline, a pull quote and three subheads, about 380 words of article fit on one A4 page; fewer with wider margins. When the text is longer, shorten it: summarise, merge or drop whole paragraphs, keep the ending. Drop the figures band before cutting text. Never go below 8.5pt, never let the article run onto a second page, never hide what overflows. Then check the page count the print tool reports: 1.
+Set \`--hero-height\` to 70-90mm and \`--body-size\` to 8.5-9.5pt. When the text is longer, shorten it: summarise, merge or drop whole paragraphs, keep the ending. Drop the figures band before cutting text. Never go below 8.5pt, never let the article run onto a second page, never hide what overflows. Then check the page count the print tool reports: 1.
 
 ## Several pages
-Keep \`--hero-height\` at 100-110mm (the photo is on page 1 only) and \`--body-size\` at 9.5-10pt. The two columns continue from page to page by themselves: add no page breaks and no per-page blocks. A subhead every 3 to 5 paragraphs, at most one pull quote per page, the footer and page number come from the margin, on every page. When the person asks for a number of pages, fit the text to it (shorten or keep more of the source), never the font below 9pt.
+Keep \`--hero-height\` at 100-110mm (the photo is on page 1 only) and \`--body-size\` at 9.5-10pt. The two columns continue from page to page by themselves: add no page breaks and no per-page blocks. A subhead every 3 to 5 paragraphs, at most one pull quote per page, the footer and page number come from the margin, on every page. When the person asks for a number of pages, the print tool measures the rendered pages and says when the text is too long or too short for them: shorten it or write more, never the font below 9pt.
 
 ## Template
 ${FENCE}html
