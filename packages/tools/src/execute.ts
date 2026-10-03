@@ -872,6 +872,8 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // PRIS JUSTE AVANT LE `try` dont le `finally` libère ses copies figées
   // d'index (#590) : rien ne peut lever entre les deux, donc aucune copie
   // n'est laissée derrière un marqueur qui lève ou un départ refusé.
+  // Did the error the catch below receives come out of `tool.execute()` itself?
+  let raisedByExecute = false;
   try {
     // ── L'ÉCRITURE MONTE L'ÉPOQUE, elle aussi (issue #101) ──────────────────
     //
@@ -888,9 +890,21 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     let output: TOutput;
     try {
       output = await tool.execute(validatedInput, execCtx);
+    } catch (err) {
+      // Only an exception out of the tool's OWN execute() is the tool's text
+      // (`raisedByTool`, read by the catch below). Everything after — the
+      // epoch bump, the audit row, the constat — is the platform.
+      raisedByExecute = true;
+      throw err;
     } finally {
       if (mutationDeliverables.length > 0) {
-        await bumpEpochsAfterWrite(ctx.db, ctx.entityId, mutationDeliverables);
+        try {
+          await bumpEpochsAfterWrite(ctx.db, ctx.entityId, mutationDeliverables);
+        } catch (bumpErr) {
+          // This failure replaces whatever the tool threw: it is the platform's.
+          raisedByExecute = false;
+          throw bumpErr;
+        }
       }
     }
     const durationMs = Date.now() - startMs;
@@ -1129,6 +1143,12 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     // that matters to the LLM: do NOT resend.
     const mayHaveDelivered =
       err instanceof Error && (err as { mayHaveDelivered?: boolean }).mayHaveDelivered === true;
+    // `raisedByTool`: the text came out of the tool's own execute() (and only
+    // then — `raisedByExecute`), so for a third-party tool it may carry a third
+    // party's words (an MCP server's `isError` result, an API's error body).
+    // The runner frames it like the tool's success (INJECT-001). A failure of
+    // the platform around the call, the gate's own errors, and the
+    // `mayHaveDelivered` instruction below are the product's text: no flag.
     const result: ToolExecutionResult = mayHaveDelivered
       ? {
           outcome: 'error',
@@ -1139,7 +1159,11 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
             'the uncertainty in your final result.',
           mayHaveDelivered: true,
         }
-      : { outcome: 'error', error: errorMsg };
+      : {
+          outcome: 'error',
+          error: errorMsg,
+          ...(raisedByExecute ? { raisedByTool: true as const } : {}),
+        };
     await _writeToolCall(
       ctx,
       auditTool,
