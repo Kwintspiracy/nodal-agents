@@ -207,7 +207,7 @@ export async function handleElicitationTap(args: {
       resolvedBy: origin.channel,
       content: state.draft.values,
     });
-    if (r.ok) return { handled: true, notice: 'Answer sent.' };
+    if (r.ok) return { handled: true, notice: 'Answered.' };
     if (r.code === 'content_invalid') {
       return {
         handled: false,

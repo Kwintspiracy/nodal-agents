@@ -187,11 +187,11 @@ describe('la question d’un serveur MCP remplie depuis Telegram @cap:approuver-
     expect(JSON.stringify(edits[0]!.body['reply_markup'])).toContain('✓ Two-sided: Yes');
     expect(String(edits[1]!.body['text'])).toContain('Reply to this message with Copies');
     expect(String(edits[2]!.body['text'])).toContain('Copies: 3');
-    expect(edits.at(-1)!.body['text']).toBe('✅ Answer sent');
+    expect(edits.at(-1)!.body['text']).toBe('✅ Answered');
     const bubbles = botApi
       .filter((c) => c.method === 'answerCallbackQuery')
       .map((c) => c.body['text'] ?? null);
-    expect(bubbles).toEqual([null, 'Reply to the card with Copies.', 'Answer sent.']);
+    expect(bubbles).toEqual([null, 'Reply to the card with Copies.', 'Answered.']);
   });
 
   it('une réponse à un AUTRE message reste un message : un tour de conversation', async () => {

@@ -451,13 +451,13 @@ describe('remplir la carte depuis le canal @cap:approuver-une-action/moteur', ()
       origin: origin(),
       data: button('✅ Confirm'),
     });
-    expect(r).toEqual({ handled: true, notice: 'Answer sent.' });
+    expect(r).toEqual({ handled: true, notice: 'Answered.' });
     const row = await readRow(id);
     expect(row.status).toBe('approved');
     expect(row.resolvedBy).toBe('telegram');
     expect(row.response).toEqual({ color: 'grayscale', copies: 2, duplex: true });
     // La carte est réglée : son dernier état ne porte plus de bouton.
-    expect(wire.sent.at(-1)).toMatchObject({ kind: 'edit', text: '✅ Answer sent', buttons: [] });
+    expect(wire.sent.at(-1)).toMatchObject({ kind: 'edit', text: '✅ Answered', buttons: [] });
   });
 
   it('Decline : la demande est refusée ; un geste sur la carte tranchée le dit', async () => {

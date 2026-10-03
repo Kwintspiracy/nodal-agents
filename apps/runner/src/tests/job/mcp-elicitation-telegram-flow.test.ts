@@ -416,7 +416,7 @@ describe('une question de serveur MCP, demandée sur Telegram, répondue sur Tel
     expect(await tapOn('Two-sided: Yes', deps)).toBeNull();
     expect(await tapOn('✏️ Copies', deps)).toBe('Reply to the card with Copies.');
     await typeReply('2', deps);
-    expect(await tapOn('Print', deps)).toBe('Answer sent.');
+    expect(await tapOn('Print', deps)).toBe('Answered.');
 
     const result = await run;
     expect(result.status).toBe('completed');
