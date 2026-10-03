@@ -13,6 +13,7 @@
 import { z } from 'zod';
 import { eq, and } from '@nodal-agents/db';
 import { mcpServers } from '@nodal-agents/db';
+import { MCP_SERVER_SLUG_PATTERN, MCP_SERVER_SLUG_RULE } from '@nodal-agents/shared';
 import type { ToolDefinition, ProvisionedMcpTool } from '../../types';
 import { resolveAgentId, linkMcpToAgent } from './link-helpers';
 
@@ -20,7 +21,9 @@ const CreateMcpInput = z.object({
   name: z.string().min(1).describe('Human-readable display name for the MCP server.'),
   slug: z
     .string()
-    .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens only.')
+    // The canonical grammar (#661): two such slugs never lend tools under the
+    // same names.
+    .regex(MCP_SERVER_SLUG_PATTERN, MCP_SERVER_SLUG_RULE)
     .min(1)
     .describe('URL-safe identifier; also the tool-name prefix. Must be unique in this workspace.'),
   transport: z
@@ -94,7 +97,9 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
       if (!agentId) {
         return ` (note: could not attach — no agent "${input.attachToAgentSlug}" found; attach it later with attach_mcp).`;
       }
-      await linkMcpToAgent(ctx.db, ctx.entityId, agentId, mcpServerId);
+      const linked = await linkMcpToAgent(ctx.db, ctx.entityId, agentId, mcpServerId);
+      if (!linked.ok)
+        return ` (note: NOT attached to "${input.attachToAgentSlug}": ${linked.error})`;
       return ` Attached to agent "${input.attachToAgentSlug}" — its tools are now available to that agent.`;
     };
 

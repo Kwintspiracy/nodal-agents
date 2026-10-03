@@ -20,7 +20,7 @@ export { designateChat, resolveScheduleNotifyChat } from './queries/designated-c
 export type { DesignatedChat } from './queries/designated-chat.ts';
 export { isChatAllowed } from './queries/telegram-allowed.ts';
 export { dropApprovalRulesForDetachedSkill } from './queries/skill-approval-rules.ts';
-export { getMcpApprovalContext, splitMcpToolName } from './queries/mcp-approval-context.ts';
+export { getMcpApprovalContext } from './queries/mcp-approval-context.ts';
 export type { McpApprovalContext } from './queries/mcp-approval-context.ts';
 export {
   resolveOwnerConversation,
@@ -39,6 +39,8 @@ export type { AllowedConversationSummary } from './queries/channel-identity.ts';
 
 // ─── Repos ─────────────────────────────────────────────────────────────────────
 export { createAgentRepo, attachAgentToOrchestrator } from './repos/agents.ts';
+export { attachMcpServerToAgent } from './repos/agent-mcp-servers.ts';
+export type { AttachMcpServerInput, AttachMcpServerResult } from './repos/agent-mcp-servers.ts';
 export type { CreateAgentInput, CreateAgentResult, AttachAgentResult } from './repos/agents.ts';
 export {
   createSkillRepo,

@@ -48,6 +48,8 @@ import {
   wrapUntrusted,
   PROVIDER_REJECTED,
   PROVIDER_REJECTED_PREFIX,
+  findMcpToolNameCollision,
+  mcpToolNameCollisionMessage,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
@@ -2431,6 +2433,7 @@ async function runJobTracked(
       .select({
         id: mcpServersTable.id,
         slug: mcpServersTable.slug,
+        name: mcpServersTable.name,
         transport: mcpServersTable.transport,
         url: mcpServersTable.url,
         apiKey: mcpServersTable.apiKey,
@@ -2473,6 +2476,9 @@ async function runJobTracked(
         );
       }
     };
+
+    // What each server lends THIS job, for the one-name-one-server check below.
+    const lentByServer: Array<{ slug: string; name: string; exposed: string[] }> = [];
 
     for (const ms of mcpAssignments) {
       try {
@@ -2575,6 +2581,7 @@ async function runJobTracked(
             ? toolset.tools
             : toolset.tools.filter((t) => enabled.includes(t.name.slice(prefixLen)));
         capabilityTools.push(...filtered);
+        lentByServer.push({ slug: ms.slug, name: ms.name, exposed: filtered.map((t) => t.name) });
       } catch (err) {
         // MCP server unreachable / auth failed / spawn failed — must not
         // fail an unrelated job, so we still `continue`. But swallowing
@@ -2587,6 +2594,20 @@ async function runJobTracked(
         );
         continue;
       }
+    }
+
+    // One tool name, one server (#661). Every attach path refuses a server
+    // whose namespace overlaps one the agent holds; an attachment written
+    // before that rule still runs while no name is lent twice — each name
+    // reaches, and is attributed to, the one server that lends it. When two
+    // servers lend the SAME name, no reader can tell them apart: the job is
+    // refused here, loud, naming both and the tool — never routed to
+    // whichever server happens to come last.
+    const nameCollision = findMcpToolNameCollision(lentByServer);
+    if (nameCollision) {
+      throw new Error(
+        mcpToolNameCollisionMessage(nameCollision.toolName, ...nameCollision.servers),
+      );
     }
     // ────────────────────────────────────────────────────────────────────────
 

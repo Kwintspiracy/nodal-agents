@@ -2,6 +2,7 @@
 
 export * from './enums';
 export * from './tool-cards';
+export * from './mcp-namespace';
 export * from './ids';
 export * from './entities/entity';
 export * from './entities/user';

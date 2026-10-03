@@ -8,15 +8,9 @@
 // exactly the kind of thing that silently diverges between surfaces.
 
 import { and, eq } from 'drizzle-orm';
-import { mcpToolPrefix } from '@nodal-agents/shared';
-import { mcpServers } from '../schema/mcp';
+import { attributeMcpTool, mcpExposedToolNames, mcpToolNamespace } from '@nodal-agents/shared';
+import { agentMcpServers, mcpServers } from '../schema/mcp';
 import type { AnyDrizzleDb } from '../client';
-
-/** Split `<prefix>__<tool>`; null for a built-in (builtins carry no `__`). */
-export function splitMcpToolName(toolName: string): { prefix: string; tool: string } | null {
-  const i = toolName.indexOf('__');
-  return i > 0 ? { prefix: toolName.slice(0, i), tool: toolName.slice(i + 2) } : null;
-}
 
 export interface McpApprovalContext {
   slug: string;
@@ -30,7 +24,7 @@ export interface McpApprovalContext {
    * softens the card's wording; the approval was required regardless.
    */
   readOnlyHint?: boolean;
-  /** True when several slugs collapse onto the same prefix (see below). */
+  /** True when the agent holds several servers this name could belong to (see below). */
   ambiguous: boolean;
   /** The rule pattern that would cover every tool of this server. */
   rulePattern: string;
@@ -43,20 +37,29 @@ interface DiscoveredTool {
 }
 
 /**
- * The MCP server behind `toolName`, or null when it is a built-in or unknown.
+ * The MCP server behind `toolName`, among those the requesting agent holds —
+ * null when it is a built-in, not a tool of any of them, or the request
+ * names no agent.
  *
- * Matching is on the DERIVED prefix, not the slug: `mcpToolPrefix` is lossy —
- * every non-alphanumeric run collapses to `_` — so `a-b` and `a.b` produce the
- * same prefix. When that happens the result is flagged `ambiguous` so the card
- * can say so, rather than silently naming one of them.
+ * Within the agent, not the workspace (#661): a workspace may hold several
+ * instances of one catalog server (same slug, same tool names) for different
+ * agents, and only the agent's own attachment says which one it called.
+ *
+ * By what each server LENDS the agent, not by namespace alone: a pre-#661
+ * attachment can hold `guide-srv` and `guide--srv` (one namespace), and only
+ * their lists say which one lends `guide_srv__ping` — the very rule the runner
+ * routes by. A job in which two servers lend one name is refused by the
+ * runner; should such a request exist anyway, the result says so
+ * (`ambiguous`) instead of silently naming one.
  */
 export async function getMcpApprovalContext(
   db: AnyDrizzleDb,
   entityId: string,
+  agentId: string | null,
   toolName: string,
 ): Promise<McpApprovalContext | null> {
-  const parsed = splitMcpToolName(toolName);
-  if (!parsed) return null;
+  // No agent, no attachment to read: the server is not identified.
+  if (!agentId || !toolName.includes('__')) return null;
 
   const rows = await db
     .select({
@@ -66,13 +69,27 @@ export async function getMcpApprovalContext(
       command: mcpServers.command,
       transport: mcpServers.transport,
       availableTools: mcpServers.availableTools,
+      enabledTools: agentMcpServers.enabledTools,
     })
-    .from(mcpServers)
-    .where(and(eq(mcpServers.entityId, entityId), eq(mcpServers.active, true)));
+    .from(agentMcpServers)
+    .innerJoin(mcpServers, eq(mcpServers.id, agentMcpServers.mcpServerId))
+    .where(and(eq(agentMcpServers.agentId, agentId), eq(mcpServers.entityId, entityId)));
 
-  const matches = rows.filter((r) => mcpToolPrefix(r.slug) === parsed.prefix);
-  const row = matches[0];
-  if (!row) return null;
+  const attributed = attributeMcpTool(
+    rows.map((r) => ({
+      ...r,
+      exposed: mcpExposedToolNames(
+        r.slug,
+        r.availableTools,
+        (r.enabledTools as string[] | null) ?? null,
+      ),
+    })),
+    toolName,
+  );
+  if (!attributed) return null;
+  const row = attributed.server;
+  const namespace = mcpToolNamespace(row.slug);
+  const tool = toolName.slice(namespace.length);
 
   const endpoint =
     row.transport === 'http'
@@ -83,7 +100,7 @@ export async function getMcpApprovalContext(
   let readOnlyHint: boolean | undefined;
   const tools = Array.isArray(row.availableTools) ? (row.availableTools as DiscoveredTool[]) : [];
   for (const t of tools) {
-    if (t && typeof t === 'object' && t.name === parsed.tool) {
+    if (t && typeof t === 'object' && t.name === tool) {
       if (typeof t.description === 'string') toolDescription = t.description;
       if (typeof t.annotations?.readOnlyHint === 'boolean')
         readOnlyHint = t.annotations.readOnlyHint;
@@ -97,7 +114,7 @@ export async function getMcpApprovalContext(
     endpoint,
     ...(toolDescription ? { toolDescription } : {}),
     ...(readOnlyHint !== undefined ? { readOnlyHint } : {}),
-    ambiguous: matches.length > 1,
-    rulePattern: `${parsed.prefix}__*`,
+    ambiguous: attributed.ambiguous,
+    rulePattern: `${namespace}*`,
   };
 }
