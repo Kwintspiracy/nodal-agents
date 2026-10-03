@@ -163,9 +163,12 @@ export function settledApprovalCardText(args: {
   standing?: { agentName: string | null; brakeEngaged: boolean } | null;
 }): string {
   // 0145 — une élicitation n'approuve pas l'outil qui l'a posée : elle a été
-  // répondue, refusée, ou fermée sans réponse.
+  // répondue, refusée, ou fermée sans réponse. « Répondue », jamais
+  // « envoyée » : la décision est écrite ici, le run la rend au serveur
+  // ensuite, et un runner qui meurt entre les deux ne l'a pas rendue (revue
+  // Codex passe 2 de #660). La carte dit ce qui est su.
   if (args.kind === 'elicitation') {
-    if (args.status === 'approved') return '✅ Answer sent';
+    if (args.status === 'approved') return '✅ Answered';
     if (args.status === 'rejected') return '❌ Declined';
     if (args.status === 'expired') return '⌛ Closed without an answer';
   }

@@ -47,6 +47,10 @@ export class CallClock {
   readonly ended = new AbortController();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private paused = 0;
+  /** When the armed bound runs out (epoch ms). */
+  private deadline = 0;
+  /** What was left of the bound when the outermost question paused it. */
+  private remaining = 0;
 
   constructor(
     private readonly ms: number,
@@ -55,30 +59,34 @@ export class CallClock {
     this.arm();
   }
 
-  private arm(): void {
+  private arm(ms: number = this.ms): void {
     clearTimeout(this.timer);
     // A call that is over is never bounded again: a question it interrupted
     // unwinds into resume() after stop(), and a late progress can still land.
     if (this.ended.signal.aborted) return;
+    this.deadline = Date.now() + ms;
     this.timer = setTimeout(() => {
       this.controller.abort(
         new Error(`MCP tool ${this.toolName} timed out after ${this.ms}ms of server work`),
       );
-    }, this.ms);
+    }, ms);
   }
 
   restart(): void {
     if (this.paused === 0 && !this.controller.signal.aborted) this.arm();
   }
 
+  // A question pauses the bound and gives back what was left of it, never a
+  // full one: otherwise every question would grant the server a fresh bound.
   pause(): void {
+    if (this.paused === 0) this.remaining = Math.max(0, this.deadline - Date.now());
     this.paused += 1;
     clearTimeout(this.timer);
   }
 
   resume(): void {
     this.paused -= 1;
-    if (this.paused === 0 && !this.controller.signal.aborted) this.arm();
+    if (this.paused === 0 && !this.controller.signal.aborted) this.arm(this.remaining);
   }
 
   stop(): void {

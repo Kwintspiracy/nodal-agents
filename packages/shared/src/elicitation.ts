@@ -314,7 +314,31 @@ export type ValidatedElicitationContent =
   | { ok: false; errors: ElicitationContentError[] };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// RFC 3339 (`full-date`, `date-time`), the formats JSON Schema names. Never
+// `Date.parse`: it moves 2024-02-30 to March and reads a time without an offset
+// as local time, so a server validating the format would refuse what we sent.
+const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const DATE_TIME_RE =
+  /^(\d{4}-\d{2}-\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(\.\d+)?([Zz]|[+-](\d{2}):(\d{2}))$/;
+
+/** A day that exists in the calendar. */
+function isCalendarDate(value: string): boolean {
+  const m = DATE_RE.exec(value);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(Date.UTC(y, mo - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === mo - 1 && date.getUTCDate() === d;
+}
+
+function isDateTime(value: string): boolean {
+  const m = DATE_TIME_RE.exec(value);
+  if (!m || !isCalendarDate(m[1]!)) return false;
+  const [h, mi, s] = [Number(m[2]), Number(m[3]), Number(m[4])];
+  // 60: the leap second RFC 3339 allows.
+  if (h > 23 || mi > 59 || s > 60) return false;
+  if (m[7] !== undefined && (Number(m[7]) > 23 || Number(m[8]) > 59)) return false;
+  return true;
+}
 
 function formatError(format: string, value: string): string | null {
   if (format === 'email' && !EMAIL_RE.test(value)) return 'is not an email address';
@@ -325,12 +349,8 @@ function formatError(format: string, value: string): string | null {
       return 'is not a URI';
     }
   }
-  if (format === 'date' && (!DATE_RE.test(value) || Number.isNaN(Date.parse(value)))) {
-    return 'is not a date (YYYY-MM-DD)';
-  }
-  if (format === 'date-time' && (!value.includes('T') || Number.isNaN(Date.parse(value)))) {
-    return 'is not a date-time';
-  }
+  if (format === 'date' && !isCalendarDate(value)) return 'is not a date (YYYY-MM-DD)';
+  if (format === 'date-time' && !isDateTime(value)) return 'is not a date-time';
   return null;
 }
 

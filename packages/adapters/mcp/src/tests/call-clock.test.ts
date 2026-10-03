@@ -37,4 +37,24 @@ describe('CallClock @cap:connecter-un-service/moteur', () => {
     vi.advanceTimersByTime(1_000);
     expect(clock.controller.signal.aborted).toBe(true);
   });
+
+  // Revue Codex passe 2 de #660 : la pause garde le temps RESTANT. Sans cela,
+  // chaque question rendait au serveur un délai complet.
+  it('a question pauses the bound, it never refills it', () => {
+    const clock = new CallClock(1_000, 'printer__request_print');
+    vi.advanceTimersByTime(900);
+    clock.pause();
+    vi.advanceTimersByTime(60_000);
+    clock.resume();
+    vi.advanceTimersByTime(150);
+    expect(clock.controller.signal.aborted).toBe(true);
+  });
+
+  it('progress from the server still restarts the full bound', () => {
+    const clock = new CallClock(1_000, 'printer__request_print');
+    vi.advanceTimersByTime(900);
+    clock.restart();
+    vi.advanceTimersByTime(900);
+    expect(clock.controller.signal.aborted).toBe(false);
+  });
 });
