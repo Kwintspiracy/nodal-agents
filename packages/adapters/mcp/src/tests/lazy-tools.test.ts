@@ -34,6 +34,7 @@ function fakeConnection(overrides?: Partial<McpConnection>): McpConnection {
       callTool: vi.fn(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
     } as unknown as Client,
     tools: cachedDescriptors,
+    instructions: null,
     close: vi.fn(async () => {}),
     ...overrides,
   };
@@ -65,7 +66,7 @@ describe('createLazyMcpTools', () => {
     const freshDescriptors: McpToolDescriptor[] = [
       { name: 'get_home', inputSchema: { type: 'object' }, description: 'fresh' },
     ];
-    const conn = fakeConnection({ tools: freshDescriptors });
+    const conn = fakeConnection({ tools: freshDescriptors, instructions: 'Fresh guidance.' });
     h.connectMcp.mockResolvedValue(conn);
     const onConnected = vi.fn();
 
@@ -81,7 +82,10 @@ describe('createLazyMcpTools', () => {
 
     // onConnected fires asynchronously off the connect chain — flush microtasks.
     await new Promise((r) => setTimeout(r, 0));
-    expect(onConnected).toHaveBeenCalledWith(freshDescriptors);
+    expect(onConnected).toHaveBeenCalledWith({
+      tools: freshDescriptors,
+      instructions: 'Fresh guidance.',
+    });
   });
 
   it('memoizes the connection across concurrent execute() calls — connectMcp is called exactly once', async () => {

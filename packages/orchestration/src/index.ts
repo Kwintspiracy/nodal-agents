@@ -152,6 +152,10 @@ export type { BuiltinToolNames } from './builtin-tool-names';
 // ─── System prompt assembly ───────────────────────────────────────────────────
 export {
   buildSystemPrompt,
+  buildMcpServerGuidanceBlock,
+  MCP_SERVER_INSTRUCTIONS_PROMPT_CAP,
+  MCP_GUIDANCE_PROMPT_TOTAL_CAP,
+  type McpGuidanceServer,
   buildRuntimeBlock,
   REGISTERED_PROJECTS_IN_PROMPT,
   RUNNING_WORK_MAX_RUNS,

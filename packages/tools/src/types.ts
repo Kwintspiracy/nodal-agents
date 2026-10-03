@@ -298,6 +298,8 @@ export interface ToolProvisioning {
    */
   connectMcp(opts: ProvisionMcpConnect): Promise<{
     tools: ProvisionedMcpTool[];
+    /** The `instructions` the server published at initialize (null: none). */
+    instructions: string | null;
     close: () => Promise<void>;
   }>;
   /** Encrypt a secret value for at-rest storage. */
