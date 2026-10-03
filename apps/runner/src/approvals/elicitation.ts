@@ -28,6 +28,7 @@
 import {
   and,
   eq,
+  inArray,
   approvalRequests,
   approvalRequestAttachments,
   type AnyDrizzleDb,
@@ -255,13 +256,23 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * Au démarrage du runner : toute question encore ouverte appartenait à un
- * appel tenu par le processus PRÉCÉDENT — la connexion au serveur est morte
- * avec lui, personne n'attend plus la réponse. Fermée tout de suite, avec sa
- * raison, au lieu d'attendre son délai sous un bouton « Send » qui n'enverrait
- * rien à personne.
+ * Les questions des jobs que plus aucun runner ne tient. Une question vit tant
+ * que l'appel qui l'a posée vit, et cet appel vit tant qu'un runner tient son
+ * job : la connexion au serveur est morte avec le runner, personne n'attend
+ * plus la réponse. Fermées avec leur raison, au lieu d'attendre leur délai
+ * sous un bouton qui n'enverrait rien à personne.
+ *
+ * Appelée par ceux qui PROUVENT qu'un job n'a plus de runner, pour les seuls
+ * jobs qu'ils reprennent : `reclaimJobsOfDeadRunners` (plus de battement,
+ * #186 — au démarrage et à chaque tour de cron) et `resetOrphanedJobs`.
+ * Jamais sur toutes les questions ouvertes : un autre runner vivant sur la même
+ * base attend peut-être la sienne (revue Codex passe 1 de #660).
  */
-export async function expireOrphanedElicitations(db: AnyDrizzleDb): Promise<number> {
+export async function closeElicitationsOfLostJobs(
+  db: AnyDrizzleDb,
+  jobIds: readonly string[],
+): Promise<number> {
+  if (jobIds.length === 0) return 0;
   const closed = await db
     .update(approvalRequests)
     .set({
@@ -269,7 +280,13 @@ export async function expireOrphanedElicitations(db: AnyDrizzleDb): Promise<numb
       resolvedAt: new Date(),
       resolvedBy: ELICITATION_CLOSED_BY.runnerRestarted,
     })
-    .where(and(eq(approvalRequests.kind, 'elicitation'), eq(approvalRequests.status, 'pending')))
+    .where(
+      and(
+        eq(approvalRequests.kind, 'elicitation'),
+        eq(approvalRequests.status, 'pending'),
+        inArray(approvalRequests.jobId, [...jobIds]),
+      ),
+    )
     .returning({ id: approvalRequests.id });
   if (closed.length > 0) {
     await settleApprovalCards(db, { approvalRequestIds: closed.map((r) => r.id) });

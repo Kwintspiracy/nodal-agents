@@ -16,8 +16,9 @@ import { and, eq } from '@nodal-agents/db';
 import { approvalRequests, approvalRequestAttachments, agentJobs } from '@nodal-agents/db';
 import type { UserInputRequest } from '@nodal-agents/tools';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
-import { createRequestUserInput, expireOrphanedElicitations } from '../../approvals/elicitation.ts';
-import { expireStaleApprovals } from '../../cron/reset-orphans.ts';
+import { createRequestUserInput } from '../../approvals/elicitation.ts';
+import { expireStaleApprovals, resetOrphanedJobs } from '../../cron/reset-orphans.ts';
+import { reclaimJobsOfDeadRunners, RUNNER_LIVENESS_WINDOW_MS } from '../../cron/reclaim-jobs.ts';
 import { reviveJobIfApprovalResolvedDuringSuspend } from '../../job/execute.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -388,14 +389,47 @@ describe('les lecteurs du runner : une élicitation n’est pas un appel qui att
     expect(stored.resolvedBy).toBe('system:ttl_expired');
     expect(await jobStatus()).toBe('awaiting_approval');
   });
+});
 
-  it('au démarrage, les questions du processus précédent sont fermées, pas les approbations', async () => {
-    const orphan = await insertElicitation();
+// Une question vit tant que l'appel qui l'a posée vit, et cet appel vit tant
+// qu'un runner tient son job. La seule preuve qu'un runner ne le tient plus
+// est celle de la reprise des jobs (#186) : plus de battement depuis
+// RUNNER_LIVENESS_WINDOW_MS. Revue Codex passe 1 de #660 : la fermeture au
+// démarrage visait TOUTES les questions ouvertes, celles qu'un autre runner
+// vivant attendait comprises.
+describe('une question vit tant que son appel vit @cap:approuver-une-action/moteur', () => {
+  async function jobOf(updatedAt: Date): Promise<string> {
+    const [row] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'Imprime le rapport',
+        status: 'processing',
+        messages: [],
+        chainCount: 0,
+        updatedAt,
+      } as never)
+      .returning({ id: agentJobs.id });
+    return row!.id;
+  }
+
+  it('le passage de démarrage ne ferme pas la question d’un appel qu’un runner vivant tient', async () => {
+    const live = await jobOf(new Date());
+    const question = await insertElicitation({ jobId: live });
+    await reclaimJobsOfDeadRunners(db as unknown as RunnerDeps['db']);
+    expect((await readRow(question.id)).status).toBe('pending');
+  });
+
+  it('la question d’un job que plus aucun runner ne tient est fermée avec lui, pas ses approbations', async () => {
+    const dead = await jobOf(new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000));
+    const question = await insertElicitation({ jobId: dead });
     const [gate] = await db
       .insert(approvalRequests)
       .values({
         entityId: seed.entityId,
-        jobId: seed.jobId,
+        jobId: dead,
         agentId: seed.agentId,
         toolName: 'run_command',
         toolInput: { command: 'ls' },
@@ -403,11 +437,19 @@ describe('les lecteurs du runner : une élicitation n’est pas un appel qui att
         status: 'pending',
       })
       .returning();
-    const closed = await expireOrphanedElicitations(db as unknown as RunnerDeps['db']);
-    expect(closed).toBe(1);
-    const stored = await readRow(orphan.id);
+    await reclaimJobsOfDeadRunners(db as unknown as RunnerDeps['db']);
+    const stored = await readRow(question.id);
     expect(stored.status).toBe('expired');
     expect(stored.resolvedBy).toBe('system:runner_restarted');
     expect((await readRow(gate!.id)).status).toBe('pending');
+  });
+
+  it('le faucheur à cinq minutes ferme aussi la question du job qu’il échoue', async () => {
+    const stale = await jobOf(new Date(Date.now() - 10 * 60_000));
+    const question = await insertElicitation({ jobId: stale });
+    await resetOrphanedJobs(db as unknown as RunnerDeps['db']);
+    const stored = await readRow(question.id);
+    expect(stored.status).toBe('expired');
+    expect(stored.resolvedBy).toBe('system:runner_restarted');
   });
 });

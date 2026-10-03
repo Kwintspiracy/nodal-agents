@@ -32,8 +32,9 @@ const SDK_TIMEOUT_MAX_MS = 2 ** 31 - 1;
  * (elicitation) — a human thinking for two minutes is not a hung server.
  * Expiry aborts the call's signal; the SDK then rejects the call with that
  * reason and tells the server (`notifications/cancelled`).
+ * Exported for its tests only.
  */
-class CallClock {
+export class CallClock {
   readonly controller = new AbortController();
   /**
    * Aborts when the call is over, whatever ended it. A question still open
@@ -56,6 +57,9 @@ class CallClock {
 
   private arm(): void {
     clearTimeout(this.timer);
+    // A call that is over is never bounded again: a question it interrupted
+    // unwinds into resume() after stop(), and a late progress can still land.
+    if (this.ended.signal.aborted) return;
     this.timer = setTimeout(() => {
       this.controller.abort(
         new Error(`MCP tool ${this.toolName} timed out after ${this.ms}ms of server work`),

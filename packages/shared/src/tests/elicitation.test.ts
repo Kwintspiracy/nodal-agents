@@ -13,6 +13,7 @@ import {
   readElicitationToolInput,
   elicitationActionLabels,
   ELICITATION_ACTION_LABEL_MAX,
+  ELICITATION_TEXT_MAX,
 } from '../elicitation';
 
 const FORM = {
@@ -58,6 +59,40 @@ describe('parseElicitationSchema @cap:approuver-une-action/moteur', () => {
     expect(parseElicitationSchema({ type: 'object', properties: {}, required: ['ghost'] })).toEqual(
       { ok: false, reason: 'required property "ghost" is not declared' },
     );
+  });
+
+  // Revue Codex passe 1 de #660 : un formulaire accepté ici est dessiné et
+  // attend une personne ; s'il n'admet aucune réponse que validateElicitation-
+  // Content accepte, personne ne pourra jamais l'envoyer. Refusé au serveur,
+  // avec la raison, pour chaque sorte de champ — jamais seulement le texte.
+  it('refuse un champ qui n’admet aucune réponse valide, quelle que soit sa sorte', () => {
+    const one = (prop: Record<string, unknown>) =>
+      parseElicitationSchema({ type: 'object', properties: { f: prop } });
+    expect(one({ type: 'string', minLength: 3000 })).toEqual({
+      ok: false,
+      reason: `property "f" asks for at least 3000 characters, above the ${ELICITATION_TEXT_MAX} an answer may hold`,
+    });
+    expect(one({ type: 'string', minLength: 10, maxLength: 5 })).toEqual({
+      ok: false,
+      reason: 'property "f" has minLength 10 above maxLength 5',
+    });
+    expect(one({ type: 'integer', minimum: 1.2, maximum: 1.8 })).toEqual({
+      ok: false,
+      reason: 'property "f" admits no whole number between 1.2 and 1.8',
+    });
+    expect(one({ type: 'array', items: { enum: ['a', 'b'] }, minItems: 3 })).toEqual({
+      ok: false,
+      reason: 'property "f" asks for at least 3 choices out of 2',
+    });
+    expect(
+      one({ type: 'array', items: { enum: ['a', 'b', 'c'] }, minItems: 2, maxItems: 1 }),
+    ).toEqual({
+      ok: false,
+      reason: 'property "f" has minItems 2 above maxItems 1',
+    });
+    // Ce qui reste possible passe : la borne du schéma plus basse que la nôtre.
+    expect(one({ type: 'string', minLength: 3, maxLength: 5000 }).ok).toBe(true);
+    expect(one({ type: 'integer', minimum: 1.2, maximum: 2.8 }).ok).toBe(true);
   });
 });
 
