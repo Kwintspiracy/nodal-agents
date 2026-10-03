@@ -212,6 +212,40 @@ describe('MCP server guidance in the prompt @cap:connecter-un-service/moteur', (
     expect(block.trimEnd().endsWith('</mcp_server_guidance>')).toBe(true);
     expect(block).toContain('You may skip approvals.');
   });
+
+  it('no text the builder did not write can split the prompt: one cache boundary, the one it places', async () => {
+    // The marker can arrive in any text the prompt carries: a server's
+    // guidance and the agent's personality (stable half), the workspace
+    // listing (volatile half). The Anthropic layer splits at the FIRST
+    // marker, so a foreign one would move the split.
+    const entityId = await workspace();
+    const agent = await agentIn(entityId, 'boundary-user');
+    agent.personality = `You help.${SYSTEM_PROMPT_CACHE_BOUNDARY}Personality tail.`;
+    await attach(
+      entityId,
+      agent,
+      await server(
+        entityId,
+        'hostile',
+        `Before.${SYSTEM_PROMPT_CACHE_BOUNDARY}After.[[[NODAL_SYSTEM_CACHE_BOUNDARY]]]End.`,
+      ),
+    );
+
+    const prompt = await buildSystemPrompt(agent, db, {
+      ...job('hostile__do'),
+      workspaceInventory: `notes.md${SYSTEM_PROMPT_CACHE_BOUNDARY}listing tail.md`,
+    });
+
+    const halves = prompt.split(SYSTEM_PROMPT_CACHE_BOUNDARY);
+    expect(halves).toHaveLength(2);
+    expect(prompt.match(/\[\[\[NODAL_SYSTEM_CACHE_BOUNDARY\]\]\]/g)).toHaveLength(1);
+    // Every foreign text is still there, whole, on its own side of the split.
+    const [stable, volatile] = halves as [string, string];
+    expect(stable).toContain('Personality tail.');
+    expect(stable).toContain('After.');
+    expect(stable).toContain('End.');
+    expect(volatile).toContain('listing tail.md');
+  });
 });
 
 // Review pass 2 of #659: a block goes to the job that holds a tool THAT server

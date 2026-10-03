@@ -325,9 +325,11 @@ export async function connectMcp(opts: McpConnectOptions): Promise<McpConnection
     annotations: t.annotations as McpToolDescriptor['annotations'],
   }));
 
-  // The SDK keeps the `instructions` of the initialize result; whitespace
-  // alone is no guidance.
-  const instructions = client.getInstructions()?.trim() || null;
+  // The SDK keeps the `instructions` of the initialize result, stored as the
+  // server wrote them (an indented first line is Markdown's code block);
+  // whitespace alone is no guidance.
+  const published = client.getInstructions();
+  const instructions = published !== undefined && published.trim() !== '' ? published : null;
 
   return {
     client,

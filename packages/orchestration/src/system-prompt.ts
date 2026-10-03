@@ -29,6 +29,7 @@ import type { AgentMemory } from '@nodal-agents/shared';
 import {
   SYSTEM_PROMPT_CACHE_BOUNDARY,
   attributeMcpTool,
+  defuseSystemCacheBoundary,
   isToolOfMcpServer,
   mcpExposedToolNames,
   wrapUntrusted,
@@ -1778,5 +1779,12 @@ export async function buildSystemPrompt(
     inventoryBlock +
     gitBlock;
 
-  return volatile.trim().length > 0 ? stable + SYSTEM_PROMPT_CACHE_BOUNDARY + volatile : stable;
+  // Both halves carry text Nodal did not write (personality, skills, MCP
+  // guidance, memory, listings): a marker in it is defused, so the prompt is
+  // split here and nowhere else.
+  return volatile.trim().length > 0
+    ? defuseSystemCacheBoundary(stable) +
+        SYSTEM_PROMPT_CACHE_BOUNDARY +
+        defuseSystemCacheBoundary(volatile)
+    : defuseSystemCacheBoundary(stable);
 }

@@ -30,6 +30,25 @@ describe('MCP server instructions @cap:connecter-un-service/moteur', () => {
     }
   }, 30_000);
 
+  it('keeps the whitespace of a published text: an indented code block stays a code block', async () => {
+    const indented = '    list_printers\n    request_print\n\nThen show the card.\n';
+    const conn = await connectMcp(stdio({ FIXTURE_MCP_INSTRUCTIONS: indented }));
+    try {
+      expect(conn.instructions).toBe(indented);
+    } finally {
+      await conn.close();
+    }
+  }, 30_000);
+
+  it('whitespace alone is no guidance: null', async () => {
+    const conn = await connectMcp(stdio({ FIXTURE_MCP_INSTRUCTIONS: ' \n\t ' }));
+    try {
+      expect(conn.instructions).toBeNull();
+    } finally {
+      await conn.close();
+    }
+  }, 30_000);
+
   it('a server that publishes none yields null, not an empty string', async () => {
     const conn = await connectMcp(stdio({}));
     try {
