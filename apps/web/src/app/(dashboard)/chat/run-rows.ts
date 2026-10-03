@@ -25,6 +25,7 @@ import { runIsRunning, runTitle } from '@/lib/external-runs.ts';
 import type { ExternalRunRow } from '@/lib/conversation-actions.ts';
 import {
   conversationTimeLabel,
+  strongestWaiting,
   type ConversationRowModel,
   type RowWaiting,
 } from './conversation-rows.ts';
@@ -52,17 +53,8 @@ export type RunRowsInput = {
   now?: Date;
 };
 
-/**
- * Ce qu'un run attend de la personne, quand plusieurs demandes s'y empilent.
- * Une QUESTION passe avant une APPROBATION, la même règle que les lignes de
- * conversation : elle est adressée à la personne, l'approbation est une porte
- * qu'elle peut laisser fermée.
- */
-function strongestWaiting(kinds: readonly string[]): RowWaiting {
-  if (kinds.includes('question')) return 'question';
-  if (kinds.includes('approval')) return 'approval';
-  return null;
-}
+// Ce qu'un run attend de la personne, quand plusieurs demandes s'y empilent :
+// `strongestWaiting`, LA règle des lignes de conversation, une seule copie.
 
 /**
  * Un run attend-il une réponse SANS qu'aucune demande ne le dise ?

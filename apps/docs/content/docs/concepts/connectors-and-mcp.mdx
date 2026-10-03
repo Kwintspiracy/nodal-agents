@@ -115,6 +115,75 @@ The runner maps MCP tool annotations to its own risk model:
 | `destructiveHint: true` | `destructive`                                                     |
 | no annotation           | `write` (conservative default — passes through the approval gate) |
 
+### When a server asks a question
+
+A server can ask a person something in the middle of one of its tool calls —
+"how many copies?", "print it now?" — with MCP **elicitation** in form mode.
+Nodal announces that it supports forms (`{ "elicitation": { "form": {} } }`)
+and puts the question in front of a person:
+
+- The run keeps going while it waits: the server keeps its call open, and the
+  call's own time limit is paused for as long as the person thinks.
+- The question shows on the run, in its conversation thread, on the
+  **Approvals** page and in the bell. A request made on a messaging channel
+  (Telegram, Discord, Slack, WhatsApp) also gets a message there that points to
+  the dashboard. A request made on the web, by an MCP client, the API or a
+  schedule keeps its question on the dashboard only.
+- The form is drawn from the server's `requestedSchema`: choices, numbers with
+  their bounds, switches, text. The answer is checked against it before it
+  leaves. The accept button returns `accept` with the values, the decline
+  button returns `decline` (their labels: see below). The server reads
+  `cancel` when nobody answers in time (10 minutes,
+  `NODALAI_ELICITATION_TIMEOUT_MS`), when the run stops, or when the server
+  withdraws its question.
+- The server's own wait must be at least as long. The MCP SDK gives up after
+  60 seconds unless told otherwise: `elicitInput(params, { timeout })`.
+- URL mode is not supported yet.
+
+A tool that needs approval (the default for MCP tools) and then asks its own
+question asks twice. **Always allow** on that tool removes the first one.
+
+#### Button labels
+
+A button should say what it does. A server names its two buttons in
+`params._meta` under the key `nodal/actions`:
+
+```json
+{
+  "message": "Print 1 page on A4?",
+  "requestedSchema": { "type": "object", "properties": {} },
+  "_meta": { "nodal/actions": { "accept": "Print", "decline": "Cancel" } }
+}
+```
+
+- Both keys are optional. Without a label the buttons read **✅ Confirm** and
+  **Decline**.
+- A label is plain text, at most 32 characters once line breaks and invisible
+  formatting characters are removed. A label that breaks the rule is ignored
+  and logged; its button keeps the default, and the question is still asked.
+
+#### Images with a question
+
+A server can show images with its question, a print preview for instance, by
+adding them to `params._meta` under the key `nodal/attachments`:
+
+```json
+{
+  "message": "Print 1 page on A4?",
+  "requestedSchema": { "type": "object", "properties": {} },
+  "_meta": {
+    "nodal/attachments": [{ "mimeType": "image/png", "data": "<base64>", "caption": "Page 1" }]
+  }
+}
+```
+
+- Accepted types: PNG, JPEG, WebP and GIF, and the bytes must start like the
+  declared type.
+- At most 4 images, 5 MB each once decoded. A caption longer than 300
+  characters is cut.
+- An image that breaks a rule is dropped and logged. The question is still
+  asked.
+
 ### Adding an MCP server
 
 **From the catalog:**

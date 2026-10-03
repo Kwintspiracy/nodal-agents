@@ -438,6 +438,10 @@ function jobThreadItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
   const lead: FeedItem[] = [];
   const notes: FeedItem[] = [];
   const work: FeedItem[] = [];
+  // Les questions des serveurs MCP (0145) restent HORS du groupe : une
+  // question en attente sous un run replié serait une question que personne
+  // ne voit, et le serveur garde son appel ouvert en l'attendant.
+  const asked: FeedItem[] = [];
   let answer: FeedItem | null = null;
   let failure: FeedItem | null = null;
   for (const item of own) {
@@ -445,6 +449,7 @@ function jobThreadItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
     else if (item.kind === 'note') notes.push(item);
     else if (item.kind === 'answer') answer = item;
     else if (item.kind === 'failure') failure = item;
+    else if (item.kind === 'elicitation') asked.push(item);
     else work.push(item);
   }
   // Un travail qui a ÉCHOUÉ ne se relit pas par sa dernière phrase : ce qu'il a
@@ -466,6 +471,7 @@ function jobThreadItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
       items: work,
     });
   }
+  out.push(...asked);
   if (failure !== null) out.push(failure);
   return out;
 }

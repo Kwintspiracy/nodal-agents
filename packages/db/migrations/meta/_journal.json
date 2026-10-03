@@ -995,6 +995,13 @@
       "when": 1786003500000,
       "tag": "0143_job_chat_channel",
       "breakpoints": true
+    },
+    {
+      "idx": 145,
+      "version": "7",
+      "when": 1786003700000,
+      "tag": "0145_mcp_elicitation",
+      "breakpoints": true
     }
   ]
 }

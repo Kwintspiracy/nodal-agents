@@ -32,6 +32,11 @@ export const ApproveRequestSchema = z.object({
   answer: z.string().optional(),
   /** #465 — `answer` est une réponse libre, écrite par la personne. */
   free: z.boolean().optional(),
+  /**
+   * 0145 — le formulaire rempli, pour une ligne `kind = 'elicitation'` (la
+   * question d'un serveur MCP). Validé par le cœur contre la ligne.
+   */
+  content: z.record(z.string(), z.unknown()).optional(),
 });
 
 // ─── approveRoute ─────────────────────────────────────────────────────────────
@@ -47,7 +52,7 @@ export async function approveRoute(
     return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
   }
 
-  const { approvalRequestId, decision, notes, answer, free } = parsed.data;
+  const { approvalRequestId, decision, notes, answer, free, content } = parsed.data;
 
   // Authorization (finding #4/#5): an untrusted session bearer-token caller
   // may only resolve an approval belonging to its own entity — trusted
@@ -63,6 +68,7 @@ export async function approveRoute(
     notes: notes ?? null,
     answer: answer ?? null,
     ...(free === true ? { free: true } : {}),
+    ...(content !== undefined ? { content } : {}),
     expectedEntityId,
   });
 
@@ -78,9 +84,16 @@ export async function approveRoute(
       result.code === 'answer_not_expected' ||
       result.code === 'question_options_unreadable' ||
       result.code === 'answer_empty' ||
-      result.code === 'answer_too_long'
+      result.code === 'answer_too_long' ||
+      result.code === 'content_required' ||
+      result.code === 'content_not_expected' ||
+      result.code === 'form_unreadable'
     ) {
       return c.json({ error: result.code }, 400);
+    }
+    // 0145 — un formulaire refusé dit QUOI corriger, champ par champ.
+    if (result.code === 'content_invalid') {
+      return c.json({ error: result.code, errors: result.errors ?? [] }, 400);
     }
     return c.json({ error: 'approval_already_resolved', status: result.status }, 400);
   }
