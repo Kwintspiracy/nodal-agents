@@ -40,6 +40,7 @@ export * from './approval-rules-chain';
 export * from './approval-tool-default';
 export * from './question-answer';
 export * from './elicitation';
+export * from './elicitation-card';
 export * from './untrusted';
 export * from './redact-transcript';
 export * from './agent-slug';

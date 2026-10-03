@@ -47,6 +47,7 @@ import type {
   OutboundMedia,
   ApprovalCard,
   QuestionCard,
+  ButtonCard,
   SendResult,
   EditResult,
   CardButton,
@@ -380,6 +381,74 @@ async function sendQuestionCard(
   return { messageId: message.id };
 }
 
+/** What a Discord message carries: five action rows of five buttons. */
+const DISCORD_BUTTON_LIMITS = { maxRows: 5, maxPerRow: 5 } as const;
+/** Discord refuses a button label longer than 80 characters. */
+const DISCORD_LABEL_MAX = 80;
+
+/**
+ * Free rows of buttons → Discord action rows, or the reason they do not fit
+ * (`DISCORD_BUTTON_LIMITS`). Never cut: a card that loses buttons would offer
+ * a form the person cannot complete.
+ */
+function toDiscordRows(
+  buttons: readonly (readonly CardButton[])[],
+): Array<APIActionRowComponent<APIComponentInMessageActionRow>> | string {
+  const rows = buttons.filter((row) => row.length > 0);
+  if (rows.length > DISCORD_BUTTON_LIMITS.maxRows) {
+    return (
+      `the card needs ${rows.length} rows of buttons and Discord shows at most ` +
+      `${DISCORD_BUTTON_LIMITS.maxRows}`
+    );
+  }
+  const wide = rows.find((row) => row.length > DISCORD_BUTTON_LIMITS.maxPerRow);
+  if (wide) {
+    return (
+      `a row of the card has ${wide.length} buttons and Discord shows at most ` +
+      `${DISCORD_BUTTON_LIMITS.maxPerRow} per row`
+    );
+  }
+  return rows.map((row) => ({
+    type: ComponentType.ActionRow,
+    components: row.map(
+      (b): APIButtonComponentWithCustomId => ({
+        type: ComponentType.Button,
+        style: ButtonStyle.Secondary,
+        label:
+          b.label.length > DISCORD_LABEL_MAX
+            ? `${b.label.slice(0, DISCORD_LABEL_MAX - 1)}…`
+            : b.label,
+        custom_id: b.callbackData,
+      }),
+    ),
+  }));
+}
+
+/** ButtonCard → a message with one action row per row of buttons. */
+async function sendCard(
+  creds: ChannelCredentials,
+  conversationId: string,
+  card: ButtonCard,
+): Promise<SendResult> {
+  const botToken = requireBotToken(creds);
+  const channelId = requireChannelId(conversationId);
+  const rows = toDiscordRows(card.buttons);
+  if (typeof rows === 'string') throw new DeliveryError('card_too_large', rows);
+  const rest = makeRestClient(botToken);
+  const body: RESTPostAPIChannelMessageJSONBody = {
+    content: card.text,
+    components: rows,
+    allowed_mentions: SAFE_ALLOWED_MENTIONS,
+  };
+  let message: APIMessage;
+  try {
+    message = (await rest.post(Routes.channelMessages(channelId), { body })) as APIMessage;
+  } catch (err) {
+    throw toDeliveryError(err, botToken);
+  }
+  return { messageId: message.id };
+}
+
 /**
  * Edit a previously-sent message's text. Like Telegram's
  * editTelegramMessageText: this is used to turn a resolved approval card into
@@ -393,21 +462,18 @@ async function editMessageText(
   text: string,
   buttons?: readonly (readonly CardButton[])[],
 ): Promise<EditResult> {
-  // Aucune carte de ce canal n'offre d'affichage interactif réécrit (le flux
-  // « Always allow? » est propre à Telegram) : le dire plutôt que d'envoyer le
-  // texte seul en prétendant avoir posé les boutons.
-  if (buttons && buttons.some((row) => row.length > 0)) {
-    return { ok: false, error: 'discord cannot put buttons on an edited message' };
-  }
+  // Les boutons sont REMPLACÉS par ceux donnés, et retirés sans eux (#637) :
+  // une carte tranchée n'a plus rien de cliquable ; une carte encore ouverte
+  // (un formulaire rempli geste par geste) garde ses rangées, réécrites.
+  const rows = toDiscordRows(buttons ?? []);
+  if (typeof rows === 'string') return { ok: false, error: rows };
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
   const rest = makeRestClient(botToken);
-  // `components: []` retire les boutons, comme l'édition Telegram (#637) : une
-  // carte réécrite est une carte tranchée, rien n'y reste cliquable.
   const body: RESTPatchAPIChannelMessageJSONBody = {
     content: text,
     allowed_mentions: SAFE_ALLOWED_MENTIONS,
-    components: [],
+    components: rows,
   };
   try {
     await rest.patch(Routes.channelMessage(channelId, messageId), { body });
@@ -499,7 +565,13 @@ async function validateCredentials(creds: ChannelCredentials): Promise<BotIdenti
 
 export const discordAdapter: ChannelAdapter = {
   channel: 'discord',
-  capabilities: { buttons: true, threads: true, media: true, editMessage: true },
+  capabilities: {
+    buttons: true,
+    threads: true,
+    media: true,
+    editMessage: true,
+    buttonLimits: DISCORD_BUTTON_LIMITS,
+  },
   // Discord rend le markdown nativement (voir assertFormatSupported), sauf
   // les tableaux ; sendText n'envoie que `content` et la garde des mentions.
   text: {
@@ -519,6 +591,7 @@ export const discordAdapter: ChannelAdapter = {
   sendMedia,
   sendApprovalCard,
   sendQuestionCard,
+  sendCard,
   editMessageText,
   listConversations,
   validateCredentials,

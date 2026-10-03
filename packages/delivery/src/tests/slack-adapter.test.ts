@@ -57,6 +57,7 @@ describe('slackAdapter.channel / capabilities', () => {
       threads: true,
       media: true,
       editMessage: true,
+      buttonLimits: { maxRows: 49, maxPerRow: 25 },
     });
   });
 });
@@ -299,19 +300,6 @@ describe('slackAdapter.editMessageText', () => {
     await expect(
       slackAdapter.editMessageText!(CREDS, CHANNEL_ID, '42.1', 'Resolved ✅'),
     ).resolves.toEqual({ ok: false, error: 'boom' });
-  });
-});
-
-describe('slackAdapter.editMessageText with buttons', () => {
-  it('refuses buttons on an edit instead of sending the text alone', async () => {
-    vi.mocked(WebClient.prototype.apiCall).mockClear();
-
-    const result = await slackAdapter.editMessageText!(CREDS, CHANNEL_ID, '42.1', 'Sure?', [
-      [{ label: 'Yes', callbackData: 'apr:x:wc' }],
-    ]);
-
-    expect(result).toEqual({ ok: false, error: 'slack cannot put buttons on an edited message' });
-    expect(vi.mocked(WebClient.prototype.apiCall).mock.calls).toEqual([]);
   });
 });
 
