@@ -152,7 +152,7 @@ describe('settledApprovalCardText — une élicitation tranchée @cap:approuver-
   // pas approuvé l'outil MCP, elle a répondu à sa question.
   const base = { kind: 'elicitation', toolName: 'printer__request_print', answer: null };
   it('répondue, refusée, fermée sans réponse', () => {
-    expect(settledApprovalCardText({ ...base, status: 'approved' })).toBe('✅ Answer sent');
+    expect(settledApprovalCardText({ ...base, status: 'approved' })).toBe('✅ Answered');
     expect(settledApprovalCardText({ ...base, status: 'rejected' })).toBe('❌ Declined');
     expect(settledApprovalCardText({ ...base, status: 'expired' })).toBe(
       '⌛ Closed without an answer',

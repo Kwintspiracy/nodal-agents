@@ -84,30 +84,36 @@ export function attachmentHref(approvalRequestId: string, position: number): str
  * La valeur d'un champ PENDANT la saisie. Un nombre reste du texte tant que la
  * personne tape : « 1. » ou « - » ne sont pas encore des nombres, et les
  * convertir à chaque frappe les effacerait.
+ *
+ * `null` : la personne n'a rien donné, et rien ne part. C'est un état à part,
+ * jamais une valeur du schéma : `""` est une réponse texte valide, une option
+ * peut valoir `""`, et `false` dit non (revue Codex passe 2 de #660).
  */
-export type ElicitationFormValue = string | boolean | string[];
+export type ElicitationFormValue = string | boolean | string[] | null;
 
 export type ElicitationFormState = Record<string, ElicitationFormValue>;
 
-/** L'état de départ : le `default` du serveur quand il en donne un, sinon vide. */
+/** L'état de départ : le `default` du serveur quand il en donne un, sinon rien. */
 export function initialFormState(fields: readonly ElicitationField[]): ElicitationFormState {
   const state: ElicitationFormState = {};
   for (const f of fields) {
     switch (f.kind) {
       case 'boolean':
-        // Un interrupteur a toujours un état visible : celui qu'on montre est
-        // celui qu'on envoie.
-        state[f.key] = f.default ?? false;
+        // Un interrupteur n'a que deux états visibles. Obligatoire, il part tel
+        // qu'il se montre ; facultatif, il ne part que si la personne y touche :
+        // l'absence laisse au serveur son propre défaut, qu'un `false` inventé
+        // changerait.
+        state[f.key] = f.default ?? (f.required ? false : null);
         break;
       case 'number':
-        state[f.key] = f.default === null ? '' : String(f.default);
+        state[f.key] = f.default === null ? null : String(f.default);
         break;
       case 'text':
-        state[f.key] = f.default ?? '';
+        state[f.key] = f.default;
         break;
       case 'choice':
         state[f.key] =
-          f.default !== null && f.options.some((o) => o.value === f.default) ? f.default : '';
+          f.default !== null && f.options.some((o) => o.value === f.default) ? f.default : null;
         break;
       case 'multi':
         state[f.key] = (f.default ?? []).filter((v) => f.options.some((o) => o.value === v));
@@ -118,10 +124,12 @@ export function initialFormState(fields: readonly ElicitationField[]): Elicitati
 }
 
 /**
- * La saisie, en réponse à envoyer. Un champ laissé vide n'est PAS envoyé : s'il
- * est obligatoire, la validation le dit (« is required ») au lieu qu'on invente
- * une valeur. Un nombre illisible part tel quel, pour que la validation dise
- * « must be a number » plutôt que de l'effacer.
+ * La saisie, en réponse à envoyer. Un champ sans valeur (`null`) n'est PAS
+ * envoyé : s'il est obligatoire, la validation le dit (« is required ») au lieu
+ * qu'on invente une valeur. Un texte part tel que la personne l'a laissé, vide
+ * compris. Un nombre vide n'en est pas un : il ne part pas. Un nombre
+ * illisible part tel quel, pour que la validation dise « must be a number »
+ * plutôt que de l'effacer.
  */
 export function formStateToContent(
   fields: readonly ElicitationField[],
@@ -130,7 +138,7 @@ export function formStateToContent(
   const content: Record<string, ElicitationValue> = {};
   for (const f of fields) {
     const v = state[f.key];
-    if (v === undefined) continue;
+    if (v === undefined || v === null) continue;
     if (f.kind === 'boolean') {
       if (typeof v === 'boolean') content[f.key] = v;
       continue;
@@ -139,8 +147,9 @@ export function formStateToContent(
       if (Array.isArray(v) && (v.length > 0 || f.required)) content[f.key] = v;
       continue;
     }
-    if (typeof v !== 'string' || v.trim() === '') continue;
+    if (typeof v !== 'string') continue;
     if (f.kind === 'number') {
+      if (v.trim() === '') continue;
       const n = Number(v.trim());
       content[f.key] = Number.isFinite(n) ? n : v;
       continue;

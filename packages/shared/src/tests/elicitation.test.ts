@@ -226,3 +226,36 @@ describe('readElicitationActions — les libellés que le serveur donne à ses b
     });
   });
 });
+
+// Revue Codex passe 2 de #660 : `Date.parse` corrige `2024-02-30` en mars et
+// lit `2024-01-01T12:00` en heure locale. Le serveur, lui, valide RFC 3339 :
+// une réponse acceptée ici puis refusée là-bas serait perdue après coup.
+describe('les dates d’un formulaire, au sens strict @cap:approuver-une-action/moteur', () => {
+  const DATES = {
+    type: 'object',
+    properties: {
+      day: { type: 'string', format: 'date' },
+      at: { type: 'string', format: 'date-time' },
+    },
+  };
+  const errorsOf = (content: Record<string, unknown>) => {
+    const r = validateElicitationContent(DATES, content);
+    return r.ok ? [] : r.errors.map((e) => `${e.field}: ${e.reason}`);
+  };
+
+  it('une date du calendrier, rien d’autre', () => {
+    expect(errorsOf({ day: '2024-02-29' })).toEqual([]);
+    expect(errorsOf({ day: '2024-02-30' })).toEqual(['day: is not a date (YYYY-MM-DD)']);
+    expect(errorsOf({ day: '2023-02-29' })).toEqual(['day: is not a date (YYYY-MM-DD)']);
+    expect(errorsOf({ day: '2024-13-01' })).toEqual(['day: is not a date (YYYY-MM-DD)']);
+  });
+
+  it('une date-heure RFC 3339, avec son fuseau', () => {
+    expect(errorsOf({ at: '2024-01-01T12:00:00Z' })).toEqual([]);
+    expect(errorsOf({ at: '2024-01-01t12:00:00.250+08:00' })).toEqual([]);
+    expect(errorsOf({ at: '2024-01-01T12:00' })).toEqual(['at: is not a date-time']);
+    expect(errorsOf({ at: '2024-01-01T12:00:00' })).toEqual(['at: is not a date-time']);
+    expect(errorsOf({ at: '2024-02-30T12:00:00Z' })).toEqual(['at: is not a date-time']);
+    expect(errorsOf({ at: '2024-01-01T24:00:00Z' })).toEqual(['at: is not a date-time']);
+  });
+});

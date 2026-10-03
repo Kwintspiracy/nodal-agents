@@ -113,7 +113,7 @@ export default function ElicitationCard({ elicitation, onResolved }: Elicitation
         toast.error(r.message);
         return;
       }
-      toast.success('Sent');
+      toast.success('Answered');
       await after();
     });
   }
@@ -240,7 +240,7 @@ function StatusTag({ status }: { status: string }) {
     );
   }
   if (status === 'approved')
-    return <span className="shrink-0 text-mono-11-caps text-ok">Sent</span>;
+    return <span className="shrink-0 text-mono-11-caps text-ok">Answered</span>;
   if (status === 'rejected') {
     return <span className="shrink-0 text-mono-11-caps text-ink-3">Declined</span>;
   }
@@ -258,7 +258,7 @@ function Settled({
   if (e.status === 'approved') {
     const entries = Object.entries(e.response ?? {});
     return entries.length === 0 ? (
-      <p className="mt-3 text-body-12 text-ink-3">Sent with no values.</p>
+      <p className="mt-3 text-body-12 text-ink-3">Answered with no values.</p>
     ) : (
       <dl className="mt-3 flex flex-col gap-1" data-testid="elicitation-answer">
         {entries.map(([key, value]) => {
@@ -364,19 +364,24 @@ function FieldInput({
           {help}
         </div>
       );
-    case 'choice':
+    case 'choice': {
+      // Options addressed by position: a server's option may be `""`, which
+      // must never read as the placeholder (no choice yet).
+      const at = typeof value === 'string' ? f.options.findIndex((o) => o.value === value) : -1;
       return (
         <div data-testid={`elicitation-field-${f.key}`}>
           <Select
             label={f.required ? `${f.label} *` : f.label}
-            value={typeof value === 'string' ? value : ''}
-            onChange={(ev) => onChange(ev.target.value)}
+            value={at === -1 ? '' : String(at)}
+            onChange={(ev) =>
+              onChange(ev.target.value === '' ? null : f.options[Number(ev.target.value)]!.value)
+            }
             disabled={disabled}
             error={error}
           >
             <option value="">Choose…</option>
-            {f.options.map((o) => (
-              <option key={o.value} value={o.value}>
+            {f.options.map((o, i) => (
+              <option key={i} value={String(i)}>
                 {o.label}
               </option>
             ))}
@@ -384,6 +389,7 @@ function FieldInput({
           {help}
         </div>
       );
+    }
     case 'multi': {
       const selected = Array.isArray(value) ? value : [];
       return (

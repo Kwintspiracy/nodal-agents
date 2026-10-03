@@ -119,6 +119,13 @@ async function saisir(el: HTMLInputElement | HTMLSelectElement, value: string): 
   });
 }
 
+/** Choisir l'option d'un menu par ce que la personne lit. */
+async function choisir(el: HTMLSelectElement, label: string): Promise<void> {
+  const option = [...el.options].find((o) => o.textContent === label);
+  if (!option) throw new Error(`option introuvable : ${label}`);
+  await saisir(el, option.value);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(resolveApprovalAction).mockResolvedValue({
@@ -176,7 +183,7 @@ describe('la question d’un serveur MCP, sur l’écran @cap:approuver-une-acti
 
   it('Envoyer part avec exactement ce qui a été rempli', async () => {
     await monter(<ElicitationCard elicitation={view()} />);
-    await saisir(parTestId('elicitation-field-paper')!.querySelector('select')!, 'Letter');
+    await choisir(parTestId('elicitation-field-paper')!.querySelector('select')!, 'US Letter');
     await saisir(parTestId('elicitation-field-copies')!.querySelector('input')!, '3');
     await cliquer(parTestId('elicitation-field-print')!.querySelector('[role="switch"]'));
     await cliquer(parTestId('elicitation-send'));
@@ -189,7 +196,7 @@ describe('la question d’un serveur MCP, sur l’écran @cap:approuver-une-acti
 
   it('une valeur hors bornes est dite sous son champ, et rien ne part', async () => {
     await monter(<ElicitationCard elicitation={view()} />);
-    await saisir(parTestId('elicitation-field-paper')!.querySelector('select')!, 'A4');
+    await choisir(parTestId('elicitation-field-paper')!.querySelector('select')!, 'A4');
     await saisir(parTestId('elicitation-field-copies')!.querySelector('input')!, '9');
     await cliquer(parTestId('elicitation-send'));
     expect(parTestId('elicitation-field-copies')!.textContent).toContain('must be at most 5');
@@ -241,5 +248,53 @@ describe('la question d’un serveur MCP, sur l’écran @cap:approuver-une-acti
     await monter(<ApprovalRequestCard approval={approval} />);
     expect(parTestId('elicitation-card')).not.toBeNull();
     expect(boutons().some((b) => /approve/i.test(b))).toBe(false);
+  });
+});
+
+// Revue Codex passe 2 de #660 : « pas de valeur » est un état à part, jamais
+// une valeur du schéma. Un booléen facultatif non touché, une chaîne vide, une
+// option `""` : chacun part tel que la personne l'a laissé.
+describe('ce qui part est ce que la personne a laissé @cap:approuver-une-action/ecran', () => {
+  const FORM = {
+    type: 'object',
+    properties: {
+      duplex: { type: 'boolean', title: 'Two-sided' },
+      staple: { type: 'boolean', title: 'Staple' },
+      note: { type: 'string', title: 'Note' },
+      tray: { type: 'string', title: 'Tray', enum: ['', 'upper'], enumNames: ['Default', 'Upper'] },
+    },
+    required: ['note', 'tray'],
+  };
+
+  it('un booléen facultatif non touché ne part pas ; touché, il part tel quel', async () => {
+    await monter(<ElicitationCard elicitation={view({ requestedSchema: FORM })} />);
+    await saisir(parTestId('elicitation-field-note')!.querySelector('input')!, 'x');
+    await saisir(parTestId('elicitation-field-note')!.querySelector('input')!, '');
+    await choisir(parTestId('elicitation-field-tray')!.querySelector('select')!, 'Default');
+    const staple = parTestId('elicitation-field-staple')!.querySelector('[role="switch"]');
+    await cliquer(staple);
+    await cliquer(staple);
+    await cliquer(parTestId('elicitation-send'));
+    expect(vi.mocked(resolveApprovalAction).mock.calls[0]?.[0]).toEqual({
+      approvalRequestId: 'el-1',
+      decision: 'approve',
+      content: { note: '', tray: '', staple: false },
+    });
+  });
+
+  it('un champ jamais rempli ne part pas, et un obligatoire le dit', async () => {
+    await monter(<ElicitationCard elicitation={view({ requestedSchema: FORM })} />);
+    await cliquer(parTestId('elicitation-send'));
+    expect(parTestId('elicitation-field-note')!.textContent).toContain('is required');
+    expect(parTestId('elicitation-field-tray')!.textContent).toContain('is required');
+    expect(vi.mocked(resolveApprovalAction)).not.toHaveBeenCalled();
+  });
+
+  it('répondue, la carte dit « Answered » : elle ne prétend pas que le serveur l’a reçue', async () => {
+    await monter(
+      <ElicitationCard elicitation={view({ status: 'approved', response: { paper: 'A4' } })} />,
+    );
+    expect(rendu().textContent).toContain('Answered');
+    expect(rendu().textContent).not.toContain('Sent');
   });
 });
