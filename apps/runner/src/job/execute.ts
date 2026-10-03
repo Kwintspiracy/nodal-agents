@@ -819,17 +819,26 @@ export const UNAVAILABLE_TOOL_MARK = '[système:outil-indisponible:\u0001]';
  * truncated/abbreviated form of a real one (the classic "dropped the MCP
  * prefix" slip), surfaces a "did you mean" hint so the model can self-correct.
  * Carries `UNAVAILABLE_TOOL_MARK`, which the budget counts on resume.
+ * A call without a name is told so: no tool is named "" and every name
+ * "includes" the empty string, so the hint would list arbitrary tools.
  * Pure — unit-tested in isolation.
  */
 export function describeUnavailableTool(badName: string, available: readonly string[]): string {
-  const lower = badName.toLowerCase();
-  const suggestions = available.filter((t) => {
-    const tl = t.toLowerCase();
-    return tl !== lower && (tl.endsWith(lower) || tl.includes(lower));
-  });
+  const lower = badName.trim().toLowerCase();
+  const suggestions =
+    lower === ''
+      ? []
+      : available.filter((t) => {
+          const tl = t.toLowerCase();
+          return tl !== lower && (tl.endsWith(lower) || tl.includes(lower));
+        });
   const hint = suggestions.length ? ` Did you mean: ${suggestions.slice(0, 3).join(' or ')}?` : '';
+  const mistake =
+    lower === ''
+      ? 'The tool call had no tool name: call a tool by its exact name.'
+      : `The tool "${badName}" is not available to you.`;
   return (
-    `${UNAVAILABLE_TOOL_MARK} The tool "${badName}" is not available to you.${hint} ` +
+    `${UNAVAILABLE_TOOL_MARK} ${mistake}${hint} ` +
     `Your available tools are: ${available.join(', ')}. ` +
     `Use one of those EXACT names — do not invent, abbreviate, or drop prefixes from tool names.`
   );
