@@ -142,8 +142,15 @@ describe('the embedded cluster keeps its own log @cap:installer-et-demarrer/mote
       );
       expect(named).toBe(true);
       // And the postmaster's own account of the aftermath, which is the
-      // sentence whose absence made the incident unattributable.
-      expect(logText()).toMatch(/terminating any other active server processes/);
+      // sentence whose absence made the incident unattributable. The
+      // postmaster writes it AFTER the line naming the pid: read right after
+      // that one, the log may not hold it yet (red once on CI, 04/10, the
+      // first line present and the second not). Waited for like the first.
+      const aftermath = await until(
+        () => /terminating any other active server processes/.test(logText()),
+        60_000,
+      );
+      expect(aftermath, logText()).toBe(true);
     },
     180_000,
   );
