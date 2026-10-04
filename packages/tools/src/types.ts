@@ -483,6 +483,12 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    */
   purposeIsArgument?: boolean;
   /**
+   * Who wrote `description` when the product did not — an external MCP
+   * server. Every place that shows a part of the description (the prompt's
+   * index of tools on demand) says so, whatever the part it keeps.
+   */
+  describedBy?: string;
+  /**
    * Optional check that runs BEFORE the approval gate — the only hook that can
    * refuse a call without a human ever being asked about it.
    *

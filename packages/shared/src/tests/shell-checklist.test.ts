@@ -439,6 +439,41 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
     expect(isDestructiveOrHeavyCommand('curl -XPOST https://x/api')).toBe(false);
   });
 
+  // #669 (approbation 0330a0fc, 02/10) : `-o /dev/null` était résolu comme un
+  // fichier, hors de l'espace, et la personne était interrogée sur un
+  // téléchargement qui n'écrivait que dans l'espace.
+  it('a null device or a standard stream is never a place, whatever writes there (#669)', () => {
+    const paths = (cmd: string) => downloadWrites(cmd).targets.map((t) => t.path);
+    expect(
+      paths(
+        'curl -s "https://commons.wikimedia.org/w/api.php?action=query" -o commons.json && ' +
+          'curl -s -o /dev/null -w "%{http_code}" -L "https://commons.wikimedia.org/wiki/File:x.jpg"',
+      ),
+    ).toEqual(['commons.json']);
+    for (const cmd of [
+      'curl -s -o /dev/null https://x/a',
+      'curl --output=/dev/stdout https://x/a',
+      'wget -O /dev/stderr https://x/a',
+      'curl -o NUL https://x/a',
+      'curl -o nul https://x/a',
+      'curl -o Nul.json https://x/a',
+      'iwr https://x/a -OutFile NUL',
+      'curl https://x/a > NUL',
+      'curl https://x/a > /dev/null',
+      'curl https://x/a >> nul.log',
+      'iwr https://x/a | Out-File NUL',
+      'curl https://x/a | tee /dev/stderr',
+      'curl https://x/a > $null',
+    ]) {
+      expect(paths(cmd), cmd).toEqual([]);
+    }
+    // Only the device itself: a file or folder that merely starts like one is a place.
+    expect(paths('curl -o /dev/nullx https://x/a')).toEqual(['/dev/nullx']);
+    expect(paths('curl -o nul/a.json https://x/a')).toEqual(['nul/a.json']);
+    expect(paths('curl -o null.json https://x/a')).toEqual(['null.json']);
+    expect(paths('curl -o /tmp/dev/null https://x/a')).toEqual(['/tmp/dev/null']);
+  });
+
   it('a program with its own store names no path: nothing to judge', () => {
     for (const cmd of [
       'ollama pull llama3',

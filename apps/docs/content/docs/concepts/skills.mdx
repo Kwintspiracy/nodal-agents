@@ -19,7 +19,7 @@ guidance, and you can't get the guidance without the assignment.
 
 | Kind          | Created by                        | Notes                                                                                                       |
 | ------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| **System**    | Ships with the product            | 30 skills seeded at boot from the catalog (e.g. `office-editing`, `command-execution`, `code-task`).        |
+| **System**    | Ships with the product            | 32 skills seeded at boot from the catalog (e.g. `office-editing`, `command-execution`, `code-task`).        |
 | **Custom**    | You, in the dashboard             | Freeform Markdown; you control the content and `requiredBuiltins`.                                          |
 | **Community** | Installed at runtime              | Fetched from any open `SKILL.md` on GitHub, skills.sh, or ClawHub. Stored under this workspace's file tree. |
 | **Learned**   | An agent, after a substantial job | Created by the opt-in reflection loop; `created_by = 'agent'` in the DB.                                    |
@@ -27,12 +27,12 @@ guidance, and you can't get the guidance without the assignment.
 ## System skills
 
 The system skills ship in `@nodal-agents/catalog` and are upserted into every
-install at boot: 30 skills (`packages/catalog/src/index.ts`). Each carries a
+install at boot: 32 skills (`packages/catalog/src/index.ts`). Each carries a
 `kind` field that decides where it's injected and whether you manage it:
 
 | Kind               | Count | In your library?   | Skills                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------------ | ----- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **capability**     | 16    | Yes, you assign it | `citation-discipline`, `claude-html-design`, `code-review`, `code-task`, `command-execution`, `dev`, `document-editing`, `obsidian`, `office-editing`, `presentation-editing`, `request-review`, `research-scope-discipline`, `results-delivery`, `speech-generation`, `spreadsheet-editing`, `task-planning`                                                                                                                        |
+| **capability**     | 18    | Yes, you assign it | `citation-discipline`, `claude-html-design`, `code-review`, `code-task`, `command-execution`, `dev`, `document-editing`, `magazine-page`, `obsidian`, `office-editing`, `presentation-editing`, `print-request`, `request-review`, `research-scope-discipline`, `results-delivery`, `speech-generation`, `spreadsheet-editing`, `task-planning`                                                                                      |
 | **baseline**       | 6     | No, auto-injected  | `language-mirror`, `platform-questions`, `platform-support`, `safe-tool-use`, `verify-before-done`, `workspace-hygiene`. The base discipline every agent gets, the same text for every model, kept short: rules the runner already enforces (loop limits, approvals) are not restated. Each skill declares the surfaces it applies to (job, chat, coding CLI), and `platform-support` only goes to an agent that holds `nodal_docs`. |
 | **agent-internal** | 8     | No, hidden         | `markdown-output`, `telegram-responder`, `tool-attach-connector`, `tool-attach-mcp`, `tool-create-agent`, `tool-create-mcp`, `tool-schedules`, `tool-update-agent`. Guides loaded on demand via `skill_view`.                                                                                                                                                                                                                        |
 

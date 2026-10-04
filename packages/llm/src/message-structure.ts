@@ -2,6 +2,7 @@
 // Ports the invariants from AgentOne/agent/resilience.py
 
 import type { ModelMessage } from 'ai';
+import { wrapUntrusted } from '@nodal-agents/shared';
 import { MessageStructureError } from './errors';
 
 /**
@@ -104,4 +105,106 @@ export function validateMessageStructure(messages: ModelMessage[]): void {
       }
     }
   }
+}
+
+/**
+ * A tool call whose name is missing or blank, the way a provider would read it.
+ * Every provider refuses such a call in a request's history (OpenAI-compatible:
+ * "tool_calls[0].function.name must be a non-empty string"; Gemini needs a
+ * name on the functionCall AND on its functionResponse), and refuses it whole:
+ * one such call in a transcript kills every later turn of the job.
+ */
+function hasNoToolName(part: { toolName?: unknown }): boolean {
+  return typeof part.toolName !== 'string' || part.toolName.trim() === '';
+}
+
+type ToolResultOutputOf = Extract<
+  Extract<ModelMessage, { role: 'tool' }>['content'][number],
+  { type: 'tool-result' }
+>['output'];
+
+/** A tool result's output, as the text a model can read. */
+function outputAsText(output: ToolResultOutputOf): string {
+  switch (output.type) {
+    case 'text':
+    case 'error-text':
+      return output.value;
+    case 'json':
+    case 'error-json':
+      return JSON.stringify(output.value);
+    case 'execution-denied':
+      return output.reason ?? 'execution denied';
+    case 'content':
+      return output.value.map((p) => (p.type === 'text' ? p.text : `[${p.type}]`)).join('\n');
+  }
+}
+
+/**
+ * The history as every provider accepts it: a tool call without a name, and
+ * its result, leave the request, and the result reaches the model as text.
+ *
+ * Why this form and not a placeholder name: a call can only be replayed under
+ * a name, and no invented name is known to be safe for every provider. It is
+ * not among the declared tools, which each backend behind OpenRouter may check
+ * in its own way; Gemini carries it on the result too (`functionResponse.name`);
+ * and the model would read itself calling a tool that does not exist. A user
+ * message carrying text after a tool message is the shape the runner's own
+ * nudges already send to every provider (execute.ts, step k-pré-bis). So the
+ * call is removed from its assistant message (the message itself when nothing
+ * else is left in it), its result is removed from the tool message (the
+ * message itself when it held nothing else), and the result follows as a user
+ * message.
+ *
+ * Applied to the request only, at the one place every request goes through
+ * (`createLlmClient`): the persisted transcript keeps the call and its result,
+ * which is what happened. A call whose result is missing stays where it is, so
+ * `validateMessageStructure` still refuses the broken history loudly.
+ */
+export function withoutNamelessToolCalls(messages: ModelMessage[]): ModelMessage[] {
+  const out: ModelMessage[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (!msg) continue;
+    const next = messages[i + 1];
+    if (msg.role !== 'assistant' || typeof msg.content === 'string' || next?.role !== 'tool') {
+      out.push(msg);
+      continue;
+    }
+    const results = new Map<string, ToolResultOutputOf>();
+    for (const r of next.content) {
+      if (r.type === 'tool-result') results.set(r.toolCallId, r.output);
+    }
+    // The nameless calls of this message that have a result, with it.
+    const dropped = new Map<string, ToolResultOutputOf>();
+    for (const p of msg.content) {
+      if (p.type !== 'tool-call' || !hasNoToolName(p)) continue;
+      const output = results.get(p.toolCallId);
+      if (output !== undefined) dropped.set(p.toolCallId, output);
+    }
+    if (dropped.size === 0) {
+      out.push(msg);
+      continue;
+    }
+    const kept = msg.content.filter((p) => !(p.type === 'tool-call' && dropped.has(p.toolCallId)));
+    // Reasoning alone is no turn: a provider replays it with the text or the
+    // calls it led to, and an assistant message needs one of them.
+    if (kept.some((p) => p.type !== 'reasoning' && (p.type !== 'text' || p.text.trim() !== ''))) {
+      out.push({ ...msg, content: kept });
+    }
+    const keptResults = next.content.filter(
+      (r) => !(r.type === 'tool-result' && dropped.has(r.toolCallId)),
+    );
+    if (keptResults.length > 0) out.push({ ...next, content: keptResults });
+    // The result goes in a `user` message: it carries the repo's provenance
+    // frame, like every text a third party may have written (a history read
+    // back can hold an MCP tool's result under a nameless call).
+    const told = [...dropped.values()].map(
+      (output) =>
+        '[A tool call you made had no tool name, so it was not run. Its result follows, as data:]\n' +
+        wrapUntrusted('the result of a tool call that had no tool name', outputAsText(output)),
+    );
+    out.push({ role: 'user', content: told.join('\n\n') });
+    i += 1;
+  }
+  return out;
 }
