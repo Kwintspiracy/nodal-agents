@@ -427,6 +427,7 @@ function buildMcpToolDefinition(
     // mechanism, unchanged.
     defaultApproval: 'require_approval',
     ...(serverOwnsPurpose ? { purposeIsArgument: true } : {}),
+    describedBy: `the external MCP server "${slug}"`,
     // The row keeps the whole result (`McpToolOutput`); the model reads the
     // server's blocks in order, the rest said, then the machine form once
     // (`result.ts`) — rendered so the FRAMED block the model reads (frame and
