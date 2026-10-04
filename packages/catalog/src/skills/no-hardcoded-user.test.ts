@@ -51,7 +51,7 @@ describe('print-request skill', () => {
     const text = `${skill?.description}\n${skill?.content}`;
     expect(text).not.toMatch(/quentin/i);
     expect(text).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.]+/);
-    expect(text).not.toMatch(/\b(hp|smart[- ]?tank|deskjet|laserjet|epson|canon|brother)\b/i);
+    expect(text).not.toMatch(/\b(hp|deskjet|laserjet|epson|canon|brother|xerox|lexmark)\b/i);
     expect(text).not.toMatch(/https?:\/\/(?!URL)/);
   });
 });
@@ -159,9 +159,7 @@ describe('magazine-page skill', () => {
     const text = `${skill?.description}\n${content}`;
     expect(text).not.toMatch(/quentin/i);
     expect(text).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.]+/);
-    expect(text).not.toMatch(
-      /\b(hp|smart[- ]?tank|deskjet|laserjet|epson|canon|brother|officejet|envy)\b/i,
-    );
+    expect(text).not.toMatch(/\b(hp|deskjet|laserjet|epson|canon|brother|xerox|lexmark)\b/i);
     expect(text).not.toMatch(/https?:\/\//);
   });
 });

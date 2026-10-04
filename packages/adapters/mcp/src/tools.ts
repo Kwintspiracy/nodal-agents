@@ -226,8 +226,8 @@ function riskFromAnnotations(a: McpToolDescriptor['annotations']): OperationRisk
  *
  * The description passes WHOLE. A 500-char cap added by the same audit was
  * removed on the owner's decision (02/10/2026): it cut legitimate descriptions —
- * hp-connector `request_print` 3 059 chars (its A4 / 15 mm page rule at char
- * 1 575 never reached the model), Blender up to 970, Supabase `search_docs`
+ * a print server's `request_print` 3 059 chars (its page rule at char 1 575
+ * never reached the model), Blender up to 970, Supabase `search_docs`
  * 1 809. A 371-char payload passed under that cap anyway. Hermes does not cut
  * descriptions either (hermes-agent tools/mcp_tool_schema.py:191).
  *

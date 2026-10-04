@@ -68,8 +68,8 @@ describe('mcpToolToToolDefinition', () => {
   });
 
   // The 500-char cap is gone (owner's decision, 02/10/2026): it cut legitimate
-  // descriptions — hp-connector `request_print` (3 059 chars, its A4 / 15 mm page
-  // rule at char 1 575), Blender (up to 970), Supabase `search_docs` (1 809). The
+  // descriptions — a print server's `request_print` (3 059 chars, its page rule
+  // at char 1 575), Blender (up to 970), Supabase `search_docs` (1 809). The
   // SKILL-001 mitigation that stays is the provenance frame, as for webhook
   // payloads; Hermes does not cut descriptions either (tools/mcp_tool_schema.py:191).
   it.each([970, 1_809, 3_059])(
