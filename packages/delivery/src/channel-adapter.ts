@@ -144,7 +144,7 @@ export interface ChannelCapabilities {
    * (Discord: 5 rows of 5). Absent: no bound the caller must plan for. A card
    * beyond it is refused by `sendCard` / `editMessageText`, never cut.
    */
-  buttonLimits?: { maxRows: number; maxPerRow: number };
+  buttonLimits?: { maxRows: number; maxPerRow: number; maxButtons?: number };
 }
 
 /** One conversation a bot/session can send into, as surfaced by a channel's

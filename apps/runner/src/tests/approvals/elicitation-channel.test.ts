@@ -34,6 +34,7 @@ const wire = vi.hoisted(() => ({
   limits: {} as Record<string, unknown>,
   maxChars: {} as Record<string, number>,
   failMedia: false,
+  failCard: false,
 }));
 
 vi.mock('@nodal-agents/delivery', async (importOriginal) => {
@@ -75,6 +76,7 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
             conversationId: string,
             card: { text: string; buttons: Array<Array<{ label: string; callbackData: string }>> },
           ) => {
+            if (wire.failCard && card.buttons.length > 0) throw new Error('rate limited');
             wire.sent.push({
               kind: 'card',
               channel,
@@ -217,6 +219,7 @@ beforeEach(async () => {
   wire.limits = {};
   wire.maxChars = {};
   wire.failMedia = false;
+  wire.failCard = false;
   await db.delete(approvalRequests).where(eq(approvalRequests.jobId, seed.jobId));
   // La demande est née dans la conversation d'un INVITÉ, sur Telegram.
   await db
@@ -245,7 +248,7 @@ describe('la question part là où la demande est née @cap:approuver-une-action
     );
     expect(wire.sent[0]).toMatchObject({ caption: 'Page 1 preview', bytes: 70 });
     const card = wire.sent[1] as Extract<Sent, { kind: 'card' }>;
-    expect(card.text).toContain('« How should it be printed? »');
+    expect(card.text).toContain('│ How should it be printed?');
     expect(card.text).toContain('The image above comes with the question.');
     // Le bouton d'accord en tête (aucun libellé du serveur ici : le défaut).
     expect(card.buttons.map((row) => row.map((b) => b.split('|')[0]))).toEqual([
@@ -309,7 +312,9 @@ describe('la question part là où la demande est née @cap:approuver-une-action
   it('un formulaire trop grand pour le canal n’est pas amputé : renvoi au dashboard, avec la raison', async () => {
     wire.limits = { telegram: { maxRows: 2, maxPerRow: 5 } };
     await deliver(await question());
-    expect(wire.sent.map((s) => s.kind)).toEqual(['text']);
+    // The pointer goes as a card with no button (its quoted text never formatted).
+    expect(wire.sent.map((s) => s.kind)).toEqual(['card']);
+    expect((wire.sent[0] as { buttons: string[][] }).buttons).toEqual([]);
     expect((wire.sent[0] as { text: string }).text).toContain(
       'this form does not fit on telegram: the form needs 4 rows of buttons and this channel shows at most 2',
     );
@@ -648,7 +653,9 @@ describe('ce que le canal reçoit est ce que la carte dit @cap:approuver-une-act
     wire.limits = { telegram: { maxRows: 2, maxPerRow: 5 } };
     const id = await question();
     await deliver(id);
-    expect(wire.sent.map((s) => s.kind)).toEqual(['text']);
+    // The pointer goes as a card with no button (its quoted text never formatted).
+    expect(wire.sent.map((s) => s.kind)).toEqual(['card']);
+    expect((wire.sent[0] as { buttons: string[][] }).buttons).toEqual([]);
     const cards = await db
       .select()
       .from(approvalCardMessages)
@@ -676,7 +683,9 @@ describe('ce que le canal reçoit est ce que la carte dit @cap:approuver-une-act
     });
     wire.failMedia = true;
     await deliver(id);
-    expect(wire.sent.map((s) => s.kind)).toEqual(['text']);
+    // The pointer goes as a card with no button (its quoted text never formatted).
+    expect(wire.sent.map((s) => s.kind)).toEqual(['card']);
+    expect((wire.sent[0] as { buttons: string[][] }).buttons).toEqual([]);
     expect((wire.sent[0] as { text: string }).text).toContain(
       '(1 image of this question could not be sent on telegram: see it on the dashboard.)',
     );
@@ -714,5 +723,48 @@ describe('ce que le canal reçoit est ce que la carte dit @cap:approuver-une-act
       .then((rows) => rows[0]!.id);
     await deliver(id);
     expect(lastCardText()).toContain('Tray: —\n  Upper holds A4, lower holds photo paper.');
+  });
+});
+
+// Revue de #664, passe 3.
+describe('une carte qui ne part pas, une carte déjà tranchée @cap:approuver-une-action/moteur', () => {
+  it('l’envoi de la carte échoue : le renvoi au dashboard part, avec la raison', async () => {
+    wire.failCard = true;
+    const id = await question();
+    await deliver(id);
+    expect(wire.sent).toHaveLength(1);
+    expect((wire.sent[0] as { text: string }).text).toContain(
+      '(the card could not be sent on telegram: rate limited.)',
+    );
+    expect(
+      await db
+        .select()
+        .from(approvalCardMessages)
+        .where(eq(approvalCardMessages.approvalRequestId, id)),
+    ).toEqual([]);
+  });
+
+  it('une réponse dans le fil d’une carte déjà tranchée suit son chemin habituel', async () => {
+    const id = await question();
+    await deliver(id);
+    const [card] = await db
+      .select({ messageId: approvalCardMessages.messageId })
+      .from(approvalCardMessages)
+      .where(eq(approvalCardMessages.approvalRequestId, id));
+    await db
+      .update(approvalRequests)
+      .set({ status: 'approved' })
+      .where(eq(approvalRequests.id, id));
+    wire.sent.length = 0;
+    expect(
+      await handleElicitationReply({
+        deps,
+        origin: origin(),
+        replyToMessageId: card!.messageId,
+        text: 'great, now ship it',
+      }),
+    ).toEqual({ handled: false, reason: 'already_resolved', notice: '' });
+    expect(wire.sent).toEqual([]);
+    expect(await isElicitationCardReply(deps, origin(), card!.messageId)).toBe(false);
   });
 });

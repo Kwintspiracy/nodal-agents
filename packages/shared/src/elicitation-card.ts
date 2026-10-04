@@ -214,7 +214,21 @@ export function applyTypedElicitationValue(
   fields: readonly ElicitationField[],
   draft: ElicitationDraft,
   text: string,
+  /**
+   * The field the reply was for, read when the reply arrived. A reply replayed
+   * on a draft another gesture changed meanwhile (✏️ on another field) is
+   * refused, never written into the field that waits NOW (review of #664,
+   * pass 3). Absent: the field waiting in `draft`.
+   */
+  forField: string | null = draft.awaiting,
 ): TypedValueResult {
+  if (draft.awaiting !== forField) {
+    return {
+      ok: false,
+      draft,
+      reason: 'the field waiting for your answer changed: check the card',
+    };
+  }
   const field = fields.find((f) => f.key === draft.awaiting);
   if (!field || (field.kind !== 'number' && field.kind !== 'text')) {
     return { ok: false, draft, reason: 'no field is waiting for a typed value' };
@@ -246,10 +260,25 @@ export function applyTypedElicitationValue(
 
 // ─── La carte ─────────────────────────────────────────────────────────────────
 
+/**
+ * Un texte tiers (la question d'un serveur) cité ligne par ligne : chaque ligne
+ * commence par « │ », aucune ne peut se faire passer pour une ligne de la carte
+ * ni fermer une citation (revue de #664, passe 3). Partagé avec le renvoi au
+ * dashboard (notify.ts), qui cite la même question.
+ */
+export function quoteThirdPartyText(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => `│ ${line}`)
+    .join('\n');
+}
+
 /** Ce qu'un canal peut porter. Absent : rien ne borne. */
 export interface ElicitationCardLimits {
   maxRows?: number;
   maxPerRow?: number;
+  /** Boutons au plus sur une carte (Telegram : 100). */
+  maxButtons?: number;
   /**
    * Le plus long texte d'un message sur ce canal. Une carte est UN message :
    * elle ne se découpe pas comme un texte.
@@ -412,6 +441,14 @@ export function renderElicitationCard(args: {
       reason: `the form needs ${rows.length} rows of buttons and this channel shows at most ${maxRows}`,
     };
   }
+  const buttonCount = rows.reduce((n, row) => n + row.length, 0);
+  const maxButtons = args.limits?.maxButtons;
+  if (maxButtons !== undefined && buttonCount > maxButtons) {
+    return {
+      ok: false,
+      reason: `the form needs ${buttonCount} buttons and this channel shows at most ${maxButtons}`,
+    };
+  }
 
   // Each field with its value, and its description under it: what the
   // dashboard shows next to the field, the card shows too.
@@ -423,7 +460,7 @@ export function renderElicitationCard(args: {
   const waiting = fields.find((f) => f.key === draft.awaiting);
   const text =
     `❓ The MCP server "${args.server}" asks:\n\n` +
-    `« ${args.message} »\n\n` +
+    `${quoteThirdPartyText(args.message)}\n\n` +
     (args.imageCount > 0
       ? `${args.imageCount === 1 ? 'The image above comes' : `The ${args.imageCount} images above come`} with the question.\n\n`
       : '') +

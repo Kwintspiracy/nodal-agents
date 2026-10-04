@@ -384,9 +384,15 @@ const SLACK_SECTION_MAX = 3000;
  * A card's text as `section` blocks of at most SLACK_SECTION_MAX characters,
  * split on line boundaries: one block alone would be refused past it.
  */
-function toSectionBlocks(text: string): SectionBlock[] {
+function toSectionBlocks(text: string, as: 'mrkdwn' | 'plain_text' = 'mrkdwn'): SectionBlock[] {
   return chunkForSlack(text, SLACK_SECTION_MAX).map(
-    (part): SectionBlock => ({ type: 'section', text: { type: 'mrkdwn', text: part } }),
+    (part): SectionBlock => ({
+      type: 'section',
+      text:
+        as === 'plain_text'
+          ? { type: 'plain_text', text: part, emoji: true }
+          : { type: 'mrkdwn', text: part },
+    }),
   );
 }
 
@@ -408,7 +414,10 @@ function toSlackBlocks(
   buttons: readonly (readonly CardButton[])[],
 ): Array<SectionBlock | ActionsBlock> | string {
   const rows = buttons.filter((row) => row.length > 0);
-  const sections = toSectionBlocks(text);
+  // A ButtonCard's text carries a third party's words (an MCP server's
+  // question): plain text, so no mrkdwn, no <!channel>, no <@user> takes
+  // effect (review of #664, pass 3).
+  const sections = toSectionBlocks(text, 'plain_text');
   // 50 blocks in all: what the text does not take, the rows may.
   const maxRows = 50 - sections.length;
   if (rows.length > maxRows) {

@@ -438,7 +438,9 @@ async function sendCard(
   const body: RESTPostAPIChannelMessageJSONBody = {
     content: card.text,
     components: rows,
-    allowed_mentions: SAFE_ALLOWED_MENTIONS,
+    // A ButtonCard's text carries a third party's words (an MCP server's
+    // question): it notifies nobody, users included (review of #664, pass 3).
+    allowed_mentions: { parse: [] },
   };
   let message: APIMessage;
   try {

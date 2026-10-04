@@ -231,7 +231,15 @@ async function validateCredentials(creds: ChannelCredentials): Promise<BotIdenti
 
 export const telegramAdapter: ChannelAdapter = {
   channel: 'telegram',
-  capabilities: { buttons: true, threads: false, media: true, editMessage: true },
+  // An inline keyboard carries at most 100 buttons, 8 per row (Bot API). Declared
+  // so a card past it is refused before sending, like on Discord and Slack.
+  capabilities: {
+    buttons: true,
+    threads: false,
+    media: true,
+    editMessage: true,
+    buttonLimits: { maxRows: 100, maxPerRow: 8, maxButtons: 100 },
+  },
   // Sans `format`, aucun `parse_mode` : Telegram affiche le texte tel quel,
   // aucune marque n'est rendue.
   text: { renders: [], maxMessageChars: TELEGRAM_MAX_CHARS },

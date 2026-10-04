@@ -127,7 +127,7 @@ describe('Slack : carte à boutons libres @cap:approuver-une-action/moteur', () 
       channel: 'D1',
       text: 'Q?',
       blocks: [
-        { type: 'section', text: { type: 'mrkdwn', text: 'Q?' } },
+        { type: 'section', text: { type: 'plain_text', text: 'Q?', emoji: true } },
         {
           type: 'actions',
           elements: [
@@ -171,5 +171,50 @@ describe('Slack : carte à boutons libres @cap:approuver-une-action/moteur', () 
     expect(method).toBe('chat.update');
     const blocks = (options as { blocks: Array<{ type: string }> }).blocks;
     expect(blocks.map((b) => b.type)).toEqual(['section', 'actions', 'actions']);
+  });
+});
+
+// Revue de #664, passe 3 : le texte d'une carte à boutons porte les mots d'un
+// tiers (la question d'un serveur MCP). Aucun canal ne le met en forme ni ne
+// le laisse notifier quelqu'un.
+describe('le texte d’une carte à boutons ne notifie personne @cap:approuver-une-action/moteur', () => {
+  it('Discord : aucune mention ne pinge, utilisateurs compris', async () => {
+    vi.mocked(REST.prototype.post).mockResolvedValueOnce({ id: '78' } as APIMessage);
+    await discordAdapter.sendCard!({ botToken: 'D' }, '123', {
+      text: 'Hi <@123456789012345678> @everyone',
+      buttons: ROWS,
+    });
+    const body = vi.mocked(REST.prototype.post).mock.calls[0]![1]?.body as {
+      allowed_mentions: unknown;
+    };
+    expect(body.allowed_mentions).toEqual({ parse: [] });
+  });
+
+  it('Slack : le texte part en plain_text, jamais en mrkdwn', async () => {
+    vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce({
+      ok: true,
+      ts: '1.6',
+    } as ChatPostMessageResponse);
+    await slackAdapter.sendCard!({ botToken: 'S' }, 'D1', {
+      text: '<!channel> *now*',
+      buttons: ROWS,
+    });
+    const blocks = (
+      vi.mocked(WebClient.prototype.apiCall).mock.calls[0]![1] as {
+        blocks: Array<{ type: string; text?: { type: string; text: string } }>;
+      }
+    ).blocks;
+    expect(blocks[0]).toEqual({
+      type: 'section',
+      text: { type: 'plain_text', text: '<!channel> *now*', emoji: true },
+    });
+  });
+
+  it('Telegram déclare ce que son clavier porte : 100 boutons, 8 par rangée', () => {
+    expect(telegramAdapter.capabilities.buttonLimits).toEqual({
+      maxRows: 100,
+      maxPerRow: 8,
+      maxButtons: 100,
+    });
   });
 });

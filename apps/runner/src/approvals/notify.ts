@@ -31,6 +31,7 @@ import {
   redactSecretsForAudit,
   renderExplanationText,
   readQuestionToolInput,
+  quoteThirdPartyText,
 } from '@nodal-agents/shared';
 import { explainApprovalRequest } from './explain-request.ts';
 import {
@@ -136,7 +137,7 @@ export function buildElicitationCardBody(args: { server: string; message: string
     `❓ The MCP server "${args.server}" asks:
 
 ` +
-    `« ${args.message} »
+    `${quoteThirdPartyText(args.message)}
 
 ` +
     'Answer from the dashboard: the question is on the run, and on the Approvals page.'
@@ -806,28 +807,43 @@ async function deliverElicitationToOrigin(
     }
   }
 
+  // A pointer to the dashboard, not a card: nothing on it answers, so it is
+  // not recorded as one (a reply to it is an ordinary message). It quotes the
+  // server's question: where the channel has cards, it goes as a card with no
+  // button, whose text is never formatted and notifies nobody.
+  const pointToDashboard = async (why: string): Promise<void> => {
+    console.warn(`[approval-notify] question ${req.approvalRequestId}: ${why}`);
+    const text = `${buildElicitationCardBody({ server: state.asked.server, message: state.asked.message })}\n(${why}.)`;
+    if (adapter.sendCard)
+      await adapter.sendCard(credentials, conversationId, { text, buttons: [] });
+    else await adapter.sendText(credentials, conversationId, text);
+  };
   const card = renderElicitationCardFor(state, channel);
   if (!card.ok || !adapter.sendCard || imagesNotSent > 0) {
-    const why = !adapter.sendCard
-      ? `${channel} has no buttons to fill a form with`
-      : imagesNotSent > 0
-        ? `${imagesNotSent} image${imagesNotSent === 1 ? '' : 's'} of this question could not be ` +
-          `sent on ${channel}: see ${imagesNotSent === 1 ? 'it' : 'them'} on the dashboard`
-        : `this form does not fit on ${channel}: ${card.ok ? '' : card.reason}`;
-    console.warn(`[approval-notify] question ${req.approvalRequestId}: ${why}`);
-    // A pointer to the dashboard, not a card: nothing on it answers, so it is
-    // not recorded as one (a reply to it is an ordinary message).
-    await adapter.sendText(
-      credentials,
-      conversationId,
-      `${buildElicitationCardBody({ server: state.asked.server, message: state.asked.message })}\n(${why}.)`,
+    await pointToDashboard(
+      !adapter.sendCard
+        ? `${channel} has no buttons to fill a form with`
+        : imagesNotSent > 0
+          ? `${imagesNotSent} image${imagesNotSent === 1 ? '' : 's'} of this question could not be ` +
+            `sent on ${channel}: see ${imagesNotSent === 1 ? 'it' : 'them'} on the dashboard`
+          : `this form does not fit on ${channel}: ${card.ok ? '' : card.reason}`,
     );
     return;
   }
-  const sent: SendResult = await adapter.sendCard(credentials, conversationId, {
-    text: card.text,
-    buttons: card.buttons,
-  });
+  let sent: SendResult;
+  try {
+    sent = await adapter.sendCard(credentials, conversationId, {
+      text: card.text,
+      buttons: card.buttons,
+    });
+  } catch (err) {
+    // The card did not leave (rate limit, revoked key, a keyboard the channel
+    // refused): the question still reaches the conversation, with the reason.
+    await pointToDashboard(
+      `the card could not be sent on ${channel}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return;
+  }
   try {
     await recordApprovalCardMessage(deps.db, {
       approvalRequestId: req.approvalRequestId,

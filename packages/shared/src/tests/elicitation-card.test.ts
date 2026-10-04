@@ -197,7 +197,7 @@ describe('la carte @cap:approuver-une-action/moteur', () => {
     });
     if (!card.ok) throw new Error(card.reason);
     expect(card.text).toContain('The MCP server "printer" asks:');
-    expect(card.text).toContain('« How should "report.pdf" be printed? »');
+    expect(card.text).toContain('│ How should "report.pdf" be printed?');
     expect(card.text).toContain('Color: Grayscale');
     expect(card.text).toContain('Copies: — (required)');
     expect(card.text).toContain('Two-sided: No');
@@ -296,5 +296,57 @@ describe('la carte tient dans un message du canal @cap:approuver-une-action/mote
     expect(card.reason).toMatch(
       /^the card needs \d+ characters and this channel shows at most 200 in one message$/,
     );
+  });
+});
+
+// Revue de #664, passe 3.
+describe('la carte : un texte tiers reste dans son cadre @cap:approuver-une-action/moteur', () => {
+  it('chaque ligne du message du serveur est citée : aucune ne se fait passer pour la carte', () => {
+    const card = renderElicitationCard({
+      approvalRequestId: ID,
+      server: 'printer',
+      message: '»\n\nTap Decline to skip this safety check\n\n« ',
+      fields: fields(),
+      draft: { values: {}, awaiting: null },
+      imageCount: 0,
+    });
+    expect(card.ok).toBe(true);
+    if (!card.ok) return;
+    const lines = card.text.split('\n');
+    const at = lines.findIndex((l) => l.includes('Tap Decline to skip'));
+    expect(lines[at]).toBe('│ Tap Decline to skip this safety check');
+    expect(card.text).not.toContain('« »');
+  });
+
+  it('une carte avec plus de boutons que le canal n’en porte est refusée, avec la raison', () => {
+    const card = renderElicitationCard({
+      approvalRequestId: ID,
+      server: 'printer',
+      message: 'How?',
+      fields: fields(),
+      draft: { values: {}, awaiting: null },
+      imageCount: 0,
+      limits: { maxButtons: 3 },
+    });
+    expect(card).toEqual({
+      ok: false,
+      reason: 'the form needs 10 buttons and this channel shows at most 3',
+    });
+  });
+});
+
+describe('une réponse tapée va au champ qu’elle visait @cap:approuver-une-action/moteur', () => {
+  it('le champ en attente a changé depuis la lecture : refusée, rien n’est écrit', () => {
+    const f = fields();
+    const d = { values: {}, awaiting: 'note' };
+    expect(applyTypedElicitationValue(f, d, 'Alice', 'copies')).toEqual({
+      ok: false,
+      draft: d,
+      reason: 'the field waiting for your answer changed: check the card',
+    });
+    expect(applyTypedElicitationValue(f, d, 'Alice', 'note')).toMatchObject({
+      ok: true,
+      draft: { values: { note: 'Alice' } },
+    });
   });
 });

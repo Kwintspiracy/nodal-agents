@@ -167,7 +167,7 @@ describe('notifyApprovalCreated — la question d’un serveur MCP @cap:approuve
     expect(sent.forms).toHaveLength(1);
     expect(sent.forms[0]!.conversationId).toBe('conv-requester');
     expect(sent.forms[0]!.text).toContain('The MCP server "printer" asks:');
-    expect(sent.forms[0]!.text).toContain(`« ${MESSAGE} »`);
+    expect(sent.forms[0]!.text).toContain(`│ ${MESSAGE}`);
     expect(sent.forms[0]!.labels).toEqual(['✅ Confirm', 'Decline', 'print: Yes', 'print: No']);
   });
 

@@ -229,7 +229,10 @@ export async function isElicitationCardReply(
   const db = deps.db as AnyDrizzleDb;
   const card = await findCard(db, origin, { messageId: replyToMessageId });
   if (!card) return false;
-  return (await loadElicitationCard(db, card.approvalRequestId)).ok;
+  // An OPEN question only, as handleElicitationReply: a reply to a settled
+  // card is an ordinary message.
+  const loaded = await loadElicitationCard(db, card.approvalRequestId);
+  return loaded.ok && loaded.state.status === 'pending';
 }
 
 /** Réécrit la carte avec ce brouillon, sous le bail des cartes (#637). */
@@ -390,13 +393,16 @@ export async function handleElicitationReply(args: {
       });
   };
 
+  // A reply to a card already settled is not an answer: it follows its usual
+  // path, a turn of the conversation (review of #664, pass 3).
   if (state.status !== 'pending') {
-    const notice = closedNotice(state.status);
-    await say(notice);
-    return { handled: true, notice };
+    return { handled: false, reason: 'already_resolved', notice: '' };
   }
+  // The field this reply is for, read now: a replay after another gesture
+  // moved the ✏️ is refused, never written into the other field.
+  const forField = state.draft.awaiting;
   const changed = await changeDraft(db, card, state, (s) => {
-    const typed = applyTypedElicitationValue(s.fields, s.draft, args.text);
+    const typed = applyTypedElicitationValue(s.fields, s.draft, args.text, forField);
     if (typed.ok) return { ok: true, draft: typed.draft };
     return {
       ok: false,
