@@ -6,9 +6,23 @@ import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import type { SlackInteractionAck } from './types.ts';
 import { parseApprovalCallbackData, handleSlackApprovalInteraction } from './approval-callback.ts';
-import { parseSlackAuthCallbackData, handleSlackAuthInteraction } from './auth-callback.ts';
-import { parseElicitationCallbackData } from '@nodal-agents/shared';
+import {
+  parseSlackAuthCallbackData,
+  handleSlackAuthInteraction,
+  SLACK_AUTH_CALLBACK_PREFIX,
+} from './auth-callback.ts';
+import { ELICITATION_CALLBACK_PREFIX, parseElicitationCallbackData } from '@nodal-agents/shared';
 import { handleElicitationTap } from '../../approvals/elicitation-channel.ts';
+import { APPROVAL_CALLBACK_PREFIX } from '../../approvals/notify.ts';
+
+/**
+ * Every action_id this router dispatches, by prefix. The socket registers
+ * exactly this pattern (`app.action`): one list, so a button the router knows
+ * can never be one Slack does not deliver to it.
+ */
+export const SLACK_ACTION_ID_PATTERN = new RegExp(
+  `^(${[APPROVAL_CALLBACK_PREFIX, ELICITATION_CALLBACK_PREFIX, SLACK_AUTH_CALLBACK_PREFIX].join('|')}):`,
+);
 
 export type SlackInteractionResult =
   | { handled: true; kind: 'approval'; decision: 'approve' | 'reject' | 'answer'; jobId: string }

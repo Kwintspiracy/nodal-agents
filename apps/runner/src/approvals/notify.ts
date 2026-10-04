@@ -765,8 +765,13 @@ async function deliverElicitationToOrigin(
   const { channel, credentials, conversationId } = target;
   const adapter = getAdapter(channel);
 
+  // The card says its images are "above": it is sent only when every one of
+  // them was. Otherwise the question goes with the dashboard pointer, and says
+  // how many images are only there (invariant #4).
+  let imagesNotSent = 0;
   if (state.imageCount > 0) {
     if (!adapter.capabilities.media) {
+      imagesNotSent = state.imageCount;
       console.warn(
         `[approval-notify] ${channel} cannot carry images: the ${state.imageCount} image(s) of ` +
           `question ${req.approvalRequestId} are on the dashboard only`,
@@ -791,6 +796,7 @@ async function deliverElicitationToOrigin(
             ...(image.caption ? { caption: image.caption } : {}),
           });
         } catch (err) {
+          imagesNotSent += 1;
           console.warn(
             `[approval-notify] image ${image.position} of question ${req.approvalRequestId} ` +
               `was not delivered on ${channel}: ${err instanceof Error ? err.message : String(err)}`,
@@ -801,23 +807,27 @@ async function deliverElicitationToOrigin(
   }
 
   const card = renderElicitationCardFor(state, channel);
-  let sent: SendResult;
-  if (card.ok && adapter.sendCard) {
-    sent = await adapter.sendCard(credentials, conversationId, {
-      text: card.text,
-      buttons: card.buttons,
-    });
-  } else {
+  if (!card.ok || !adapter.sendCard || imagesNotSent > 0) {
     const why = !adapter.sendCard
       ? `${channel} has no buttons to fill a form with`
-      : `this form does not fit on ${channel}: ${card.ok ? '' : card.reason}`;
+      : imagesNotSent > 0
+        ? `${imagesNotSent} image${imagesNotSent === 1 ? '' : 's'} of this question could not be ` +
+          `sent on ${channel}: see ${imagesNotSent === 1 ? 'it' : 'them'} on the dashboard`
+        : `this form does not fit on ${channel}: ${card.ok ? '' : card.reason}`;
     console.warn(`[approval-notify] question ${req.approvalRequestId}: ${why}`);
-    sent = await adapter.sendText(
+    // A pointer to the dashboard, not a card: nothing on it answers, so it is
+    // not recorded as one (a reply to it is an ordinary message).
+    await adapter.sendText(
       credentials,
       conversationId,
       `${buildElicitationCardBody({ server: state.asked.server, message: state.asked.message })}\n(${why}.)`,
     );
+    return;
   }
+  const sent: SendResult = await adapter.sendCard(credentials, conversationId, {
+    text: card.text,
+    buttons: card.buttons,
+  });
   try {
     await recordApprovalCardMessage(deps.db, {
       approvalRequestId: req.approvalRequestId,

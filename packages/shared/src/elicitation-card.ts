@@ -413,9 +413,12 @@ export function renderElicitationCard(args: {
     };
   }
 
+  // Each field with its value, and its description under it: what the
+  // dashboard shows next to the field, the card shows too.
   const lines = fields.map(
     (f) =>
-      `${f.label}: ${shown(f, Object.prototype.hasOwnProperty.call(draft.values, f.key) ? draft.values[f.key] : undefined)}`,
+      `${f.label}: ${shown(f, Object.prototype.hasOwnProperty.call(draft.values, f.key) ? draft.values[f.key] : undefined)}` +
+      (f.description ? `\n  ${f.description}` : ''),
   );
   const waiting = fields.find((f) => f.key === draft.awaiting);
   const text =

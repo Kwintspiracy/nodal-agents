@@ -33,6 +33,7 @@ const wire = vi.hoisted(() => ({
   next: 100,
   limits: {} as Record<string, unknown>,
   maxChars: {} as Record<string, number>,
+  failMedia: false,
 }));
 
 vi.mock('@nodal-agents/delivery', async (importOriginal) => {
@@ -56,6 +57,7 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
       conversationId: string,
       m: { caption?: string; bytes: Uint8Array },
     ) => {
+      if (wire.failMedia) throw new Error('upload refused');
       wire.sent.push({
         kind: 'media',
         channel,
@@ -214,6 +216,7 @@ beforeEach(async () => {
   wire.sent.length = 0;
   wire.limits = {};
   wire.maxChars = {};
+  wire.failMedia = false;
   await db.delete(approvalRequests).where(eq(approvalRequests.jobId, seed.jobId));
   // La demande est née dans la conversation d'un INVITÉ, sur Telegram.
   await db
@@ -430,7 +433,13 @@ describe('remplir la carte depuis le canal @cap:approuver-une-action/moteur', ()
     const staleSend = button('✅ Confirm');
     await handleElicitationTap({ deps, env, origin: origin(), data: button('Color: color') });
     const r = await handleElicitationTap({ deps, env, origin: origin(), data: staleSend });
-    expect(r).toMatchObject({ handled: false, reason: 'stale_card' });
+    // L'avis nomme le bouton que la carte porte (revue Codex passe 2 de #664).
+    expect(r).toMatchObject({
+      handled: false,
+      reason: 'stale_card',
+      notice:
+        'The values changed since this card was drawn. Check them, then tap ✅ Confirm again.',
+    });
     expect((await readRow(id)).status).toBe('pending');
   });
 
@@ -630,5 +639,80 @@ describe('une réponse dans le fil d’une carte n’est qu’une réponse @cap:
         card!.messageId,
       ),
     ).toBe(false);
+  });
+});
+
+// Revue Codex passe 2 de #664.
+describe('ce que le canal reçoit est ce que la carte dit @cap:approuver-une-action/moteur', () => {
+  it('un renvoi au dashboard n’est pas une carte : une réponse à ce message suit son chemin habituel', async () => {
+    wire.limits = { telegram: { maxRows: 2, maxPerRow: 5 } };
+    const id = await question();
+    await deliver(id);
+    expect(wire.sent.map((s) => s.kind)).toEqual(['text']);
+    const cards = await db
+      .select()
+      .from(approvalCardMessages)
+      .where(eq(approvalCardMessages.approvalRequestId, id));
+    expect(cards).toEqual([]);
+    expect(
+      await handleElicitationReply({
+        deps,
+        origin: origin(),
+        replyToMessageId: '100',
+        text: 'hello',
+      }),
+    ).toMatchObject({ handled: false, reason: 'not_a_card' });
+  });
+
+  it('une image qui n’a pas pu partir : pas de carte qui la dirait « au-dessus », le renvoi au dashboard le dit', async () => {
+    const id = await question();
+    await db.insert(approvalRequestAttachments).values({
+      approvalRequestId: id,
+      position: 0,
+      mimeType: 'image/png',
+      data: PNG,
+      byteSize: Buffer.from(PNG, 'base64').length,
+      caption: null,
+    });
+    wire.failMedia = true;
+    await deliver(id);
+    expect(wire.sent.map((s) => s.kind)).toEqual(['text']);
+    expect((wire.sent[0] as { text: string }).text).toContain(
+      '(1 image of this question could not be sent on telegram: see it on the dashboard.)',
+    );
+  });
+
+  it('la carte porte la description de chaque champ, comme le dashboard', async () => {
+    const id = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: seed.jobId,
+        agentId: seed.agentId,
+        toolName: 'printer__request_print',
+        toolInput: {
+          server: 'printer',
+          message: 'Which tray?',
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              tray: {
+                type: 'string',
+                title: 'Tray',
+                description: 'Upper holds A4, lower holds photo paper.',
+                enum: ['upper', 'lower'],
+              },
+            },
+          },
+        },
+        toolCallId: 'call-1',
+        kind: 'elicitation',
+        status: 'pending',
+        executedAt: new Date(),
+      })
+      .returning()
+      .then((rows) => rows[0]!.id);
+    await deliver(id);
+    expect(lastCardText()).toContain('Tray: —\n  Upper holds A4, lower holds photo paper.');
   });
 });

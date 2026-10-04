@@ -298,10 +298,7 @@ async function sendApprovalCard(
   const channelId = requireChannelId(conversationId);
   const client = makeClient(botToken);
 
-  const sectionBlock: SectionBlock = {
-    type: 'section',
-    text: { type: 'mrkdwn', text: card.text },
-  };
+  const sectionBlocks = toSectionBlocks(card.text);
   const approveButton: Button = {
     type: 'button',
     style: 'primary',
@@ -321,7 +318,7 @@ async function sendApprovalCard(
     const result = await client.chat.postMessage({
       channel: channelId,
       text: card.text,
-      blocks: [sectionBlock, actionsBlock],
+      blocks: [...sectionBlocks, actionsBlock],
     });
     ts = result.ts;
   } catch (err) {
@@ -351,10 +348,7 @@ async function sendQuestionCard(
   const channelId = requireChannelId(conversationId);
   const client = makeClient(botToken);
 
-  const sectionBlock: SectionBlock = {
-    type: 'section',
-    text: { type: 'mrkdwn', text: card.text },
-  };
+  const sectionBlocks = toSectionBlocks(card.text);
   const buttons: Button[] = card.options.map((label, i) => ({
     type: 'button',
     ...(i === 0 ? { style: 'primary' as const } : {}),
@@ -368,7 +362,7 @@ async function sendQuestionCard(
     const result = await client.chat.postMessage({
       channel: channelId,
       text: card.text,
-      blocks: [sectionBlock, actionsBlock],
+      blocks: [...sectionBlocks, actionsBlock],
     });
     ts = result.ts;
   } catch (err) {
@@ -383,11 +377,25 @@ async function sendQuestionCard(
   return { messageId: ts };
 }
 
+/** Slack refuses a `section` block whose text is longer than this. */
+const SLACK_SECTION_MAX = 3000;
+
 /**
- * What a Slack message carries: 50 blocks, the text taking one, and 25
- * elements per actions block.
+ * A card's text as `section` blocks of at most SLACK_SECTION_MAX characters,
+ * split on line boundaries: one block alone would be refused past it.
  */
-const SLACK_BUTTON_LIMITS = { maxRows: 49, maxPerRow: 25 } as const;
+function toSectionBlocks(text: string): SectionBlock[] {
+  return chunkForSlack(text, SLACK_SECTION_MAX).map(
+    (part): SectionBlock => ({ type: 'section', text: { type: 'mrkdwn', text: part } }),
+  );
+}
+
+/**
+ * What a Slack message carries: 50 blocks, and 25 elements per actions block.
+ * The text takes up to two of them: a card fits one message
+ * (SLACK_MAX_CHARS, 3,900), in sections of 3,000 at most.
+ */
+const SLACK_BUTTON_LIMITS = { maxRows: 48, maxPerRow: 25 } as const;
 /** Slack refuses a button text longer than 75 characters. */
 const SLACK_LABEL_MAX = 75;
 
@@ -400,18 +408,17 @@ function toSlackBlocks(
   buttons: readonly (readonly CardButton[])[],
 ): Array<SectionBlock | ActionsBlock> | string {
   const rows = buttons.filter((row) => row.length > 0);
-  if (rows.length > SLACK_BUTTON_LIMITS.maxRows) {
-    return (
-      `the card needs ${rows.length} rows of buttons and Slack shows at most ` +
-      `${SLACK_BUTTON_LIMITS.maxRows}`
-    );
+  const sections = toSectionBlocks(text);
+  // 50 blocks in all: what the text does not take, the rows may.
+  const maxRows = 50 - sections.length;
+  if (rows.length > maxRows) {
+    return `the card needs ${rows.length} rows of buttons and Slack shows at most ${maxRows}`;
   }
   if (rows.some((row) => row.length > SLACK_BUTTON_LIMITS.maxPerRow)) {
     return `a row of the card has more than ${SLACK_BUTTON_LIMITS.maxPerRow} buttons`;
   }
-  const section: SectionBlock = { type: 'section', text: { type: 'mrkdwn', text } };
   return [
-    section,
+    ...sections,
     ...rows.map(
       (row): ActionsBlock => ({
         type: 'actions',

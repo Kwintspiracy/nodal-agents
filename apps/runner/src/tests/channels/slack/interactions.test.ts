@@ -17,7 +17,11 @@ import {
 } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../../deps.ts';
 import type { RunnerEnv } from '../../../env.ts';
-import { routeSlackInteraction } from '../../../channels/slack/interactions.ts';
+import {
+  routeSlackInteraction,
+  SLACK_ACTION_ID_PATTERN,
+} from '../../../channels/slack/interactions.ts';
+import { elicitationCallbackData } from '@nodal-agents/shared';
 import type { SlackInteractionAck } from '../../../channels/slack/types.ts';
 
 // triggerWorker (resolveApprovalDecision's resume path) hits fetch — stub it
@@ -378,5 +382,18 @@ describe('routeSlackInteraction — la question d’un serveur MCP (0145) @cap:a
       .from(approvalRequests)
       .where(eq(approvalRequests.id, row!.id));
     expect(after?.status).toBe('pending');
+  });
+});
+
+// Revue Codex passe 2 de #664 : le socket n'enregistrait que `apr:` et
+// `sauth:`. Les boutons `eli:` n'arrivaient jamais au routeur, quoi que ses
+// tests disent. Le socket enregistre désormais la liste du routeur.
+describe('le socket Slack reçoit chaque bouton que le routeur sait router @cap:approuver-une-action/moteur', () => {
+  it('approbation, question de serveur, confirmation d’accès', () => {
+    const id = '0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b';
+    expect(SLACK_ACTION_ID_PATTERN.test(elicitationCallbackData(id, { op: 'decline' }))).toBe(true);
+    expect(SLACK_ACTION_ID_PATTERN.test(`apr:${id}:a`)).toBe(true);
+    expect(SLACK_ACTION_ID_PATTERN.test(`sauth:${id}:allow`)).toBe(true);
+    expect(SLACK_ACTION_ID_PATTERN.test('other:1')).toBe(false);
   });
 });

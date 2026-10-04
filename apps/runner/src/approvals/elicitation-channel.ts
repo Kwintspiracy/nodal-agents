@@ -34,6 +34,7 @@ import {
   applyTypedElicitationValue,
   elicitationDraftRevision,
   describeElicitationErrors,
+  elicitationActionLabels,
   parseElicitationCallbackData,
   type ElicitationDraft,
 } from '@nodal-agents/shared';
@@ -99,6 +100,12 @@ async function findCard(
     )
     .limit(1);
   return row ?? null;
+}
+
+/** Une carte périmée : l'avis nomme le bouton d'accord que la carte porte. */
+function staleNotice(state: ElicitationCardState): string {
+  const accept = elicitationActionLabels(state.asked.actions).accept;
+  return `The values changed since this card was drawn. Check them, then tap ${accept} again.`;
 }
 
 /** Ce qu'une demande tranchée est devenue, dit à qui touche encore sa carte. */
@@ -296,7 +303,7 @@ export async function handleElicitationTap(args: {
       return {
         handled: false,
         reason: 'stale_card',
-        notice: 'The values changed since this card was drawn. Check them, then tap Send again.',
+        notice: staleNotice(state),
       };
     }
     const r = await resolveApprovalDecision(deps, env, {
@@ -315,7 +322,7 @@ export async function handleElicitationTap(args: {
       return {
         handled: false,
         reason: 'stale_card',
-        notice: 'The values changed since this card was drawn. Check them, then tap Send again.',
+        notice: staleNotice(state),
       };
     }
     if (r.code === 'content_invalid') {

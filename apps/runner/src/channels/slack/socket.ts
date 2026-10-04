@@ -17,8 +17,8 @@
 //     member of. This IS Slack's own mention gate (see types.ts's file
 //     header) — there is no separate "was this a mention" check to run.
 //   - `block_actions` (app.action) — button taps, routed by action_id prefix
-//     (`apr:` / `sauth:`) to the approval or auth-confirmation flow
-//     (interactions.ts). Bolt requires `ack()` within 3s of receipt; it is
+//     (`apr:` / `eli:` / `sauth:`, SLACK_ACTION_ID_PATTERN) to the approval,
+//     server-question or auth-confirmation flow (interactions.ts). Bolt requires `ack()` within 3s of receipt; it is
 //     called FIRST, before any DB work, same discipline HTTPReceiver-based
 //     Bolt apps need — Socket Mode has no hard HTTP timeout but the 3s budget
 //     is still enforced platform-side.
@@ -34,7 +34,7 @@ import { channelAllowedConversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { handleSlackMessage, triggerJobWorker, type SlackHandleResult } from './handler.ts';
-import { routeSlackInteraction } from './interactions.ts';
+import { routeSlackInteraction, SLACK_ACTION_ID_PATTERN } from './interactions.ts';
 import {
   handleElicitationReply,
   isElicitationCardReply,
@@ -412,7 +412,7 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
       .catch(() => {});
   }
 
-  app.action(/^(apr|sauth):/, async ({ ack, body, client }) => {
+  app.action(SLACK_ACTION_ID_PATTERN, async ({ ack, body, client }) => {
     await ack();
     const b = body as unknown as SlackBlockActionBody;
     const actionId = b.actions[0]?.action_id;
