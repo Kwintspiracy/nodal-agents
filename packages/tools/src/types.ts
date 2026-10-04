@@ -7,6 +7,9 @@ import type { EmbeddingClient, SpeechGenerator } from '@nodal-agents/llm';
 import type {
   ApprovalRuleCondition,
   ShellPolicy,
+  ElicitationAttachment,
+  ElicitationActions,
+  ElicitationValue,
   MutationTarget,
   OperationRiskLevel,
   ToolCard,
@@ -251,7 +254,52 @@ export interface ToolContext {
    * propriété.
    */
   reportWrittenContent?: (absPath: string, sha256: string) => void;
+  /**
+   * Pose une question à une personne PENDANT l'appel en cours, et attend sa
+   * réponse — le chemin de l'élicitation MCP (`elicitation/create`, mode
+   * formulaire). Injecté par le runner, qui écrit la demande, l'envoie là où la
+   * requête est née et sonde la réponse ; l'adaptateur MCP l'appelle depuis le
+   * gestionnaire qu'il enregistre sur sa connexion.
+   *
+   * Le job ne se SUSPEND pas : le serveur garde son appel ouvert, une
+   * suspension tuerait la connexion. La capacité rend `cancel` quand personne
+   * ne répond à temps, quand le job est annulé ou perdu, ou quand `signal`
+   * s'interrompt (le serveur a abandonné sa question).
+   *
+   * Absent hors du runner : l'adaptateur répond alors `cancel` au serveur, et
+   * le journalise.
+   */
+  requestUserInput?: (req: UserInputRequest) => Promise<UserInputResponse>;
 }
+
+/** Une question posée par un serveur MCP pendant un de ses appels. */
+export interface UserInputRequest {
+  /** Le slug du serveur qui demande. */
+  serverSlug: string;
+  /** Le nom de l'outil MCP en cours, tel que l'agent le tient (`printer__request_print`). */
+  toolName: string;
+  /**
+   * L'id de l'appel en cours (`ToolContext.toolCallId`) : la question se range
+   * sous l'appel qui l'a fait naître. null hors d'un appel identifié.
+   */
+  toolCallId: string | null;
+  /** La question, telle quelle (texte tiers). */
+  message: string;
+  /** Le formulaire demandé (`requestedSchema`), brut. */
+  requestedSchema: unknown;
+  /** Les images jointes, déjà validées (`readElicitationAttachments`). */
+  attachments: ElicitationAttachment[];
+  /** Les libellés de ses deux boutons (`nodal/actions`), déjà validés ; null : le défaut. */
+  actions: ElicitationActions;
+  /** S'interrompt quand le serveur abandonne sa question, ou que la connexion se ferme. */
+  signal: AbortSignal;
+}
+
+/** La réponse renvoyée au serveur, aux mots du protocole. */
+export type UserInputResponse =
+  | { action: 'accept'; content: Record<string, ElicitationValue> }
+  | { action: 'decline' }
+  | { action: 'cancel' };
 
 // ─── ToolProvisioning ──────────────────────────────────────────────────────────
 
@@ -628,8 +676,11 @@ export interface ApprovalGateRequest {
    * que relue par le notifieur : celui-ci doit choisir entre une carte
    * d'approbation et une carte de question, et une seconde lecture de la ligne
    * pourrait diverger de ce qui a été posé.
+   *
+   * `elicitation` : un serveur MCP demande quelque chose PENDANT un appel en
+   * cours (0145). Jamais posée par la porte : par `ctx.requestUserInput`.
    */
-  kind: 'approval' | 'question';
+  kind: 'approval' | 'question' | 'elicitation';
 }
 
 export interface ExecuteOptions {

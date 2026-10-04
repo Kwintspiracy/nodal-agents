@@ -15,6 +15,8 @@ export type {
   ApprovalRule,
   ToolExecutionResult,
   MutationTarget,
+  UserInputRequest,
+  UserInputResponse,
 } from './types';
 
 // Intention de mutation (plan « Vérifier & Corriger ») — posée au seam

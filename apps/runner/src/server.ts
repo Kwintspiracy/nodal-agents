@@ -385,6 +385,9 @@ async function main(): Promise<void> {
   // une reprise, et une panne ici se DIT sans empêcher le boot.
   // Un job REPRIS à son dernier tour (#443) repart tout de suite, sans
   // attendre la récupération des `pending` du premier tour de cron.
+  // Les questions des serveurs MCP (0145) posées sous le processus précédent
+  // sont fermées par cette même passe, job par job (closeElicitationsOfLostJobs) :
+  // jamais toutes les questions ouvertes, qu'un autre runner peut attendre.
   void reclaimJobsOfDeadRunners(deps.db)
     .then((r) => {
       for (const id of r.resumedJobIds) void triggerWorker(id, runnerEnv);

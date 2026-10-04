@@ -535,3 +535,46 @@ describe('handleApprovalCallback — Toujours autoriser', () => {
     expect(ap!.status).toBe('pending');
   });
 });
+
+describe('handleApprovalCallback — la question d’un serveur MCP (0145) @cap:approuver-une-action/moteur', () => {
+  // Une élicitation se répond par un FORMULAIRE, sur le dashboard. Aucun
+  // bouton de carte ne la tranche : ✅ l'enverrait sans contenu, ❌ n'est pas
+  // offert ici, et « Toujours » écrirait une règle sur l'outil MCP qui l'a
+  // posée. Chaque geste est refusé, la ligne reste ouverte, aucune règle.
+  for (const suffix of ['a', 'r', 'wc']) {
+    it(`apr:<id>:${suffix} sur une élicitation : refusé, rien n'est écrit`, async () => {
+      const [row] = await db
+        .insert(approvalRequests)
+        .values({
+          entityId: seed.entityId,
+          jobId: seed.jobId,
+          agentId: seed.agentId,
+          toolName: 'printer__request_print',
+          toolInput: {
+            server: 'printer',
+            message: 'How should it be printed?',
+            requestedSchema: { type: 'object', properties: {} },
+          },
+          kind: 'elicitation',
+          status: 'pending',
+          executedAt: new Date(),
+        })
+        .returning();
+      const r = await handleApprovalCallback({
+        update: callbackUpdate(`apr:${row!.id}:${suffix}`, CHAT_ID),
+        receivingAgentId: seed.agentId,
+        botToken: 'fake-token',
+        deps,
+        env,
+      });
+      expect(r).toEqual({ handled: false, reason: 'elicitation_answered_on_dashboard' });
+      const [ap] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, row!.id));
+      expect(ap!.status).toBe('pending');
+      const rules = await db
+        .select()
+        .from(approvalRules)
+        .where(eq(approvalRules.toolName, 'printer__request_print'));
+      expect(rules).toEqual([]);
+    });
+  }
+});
