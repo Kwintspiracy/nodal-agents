@@ -997,6 +997,13 @@
       "breakpoints": true
     },
     {
+      "idx": 144,
+      "version": "7",
+      "when": 1786003600000,
+      "tag": "0144_mcp_server_instructions",
+      "breakpoints": true
+    },
+    {
       "idx": 145,
       "version": "7",
       "when": 1786003700000,

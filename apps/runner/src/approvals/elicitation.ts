@@ -34,6 +34,8 @@ import {
   type AnyDrizzleDb,
 } from '@nodal-agents/db';
 import {
+  ELICITATION_CLOSED_BY,
+  ELICITATION_MESSAGE_MAX,
   parseElicitationSchema,
   validateElicitationContent,
   describeElicitationErrors,
@@ -53,13 +55,8 @@ export function elicitationTimeoutMs(raw: unknown): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_ELICITATION_TIMEOUT_MS;
 }
 
-/** Pourquoi une question s'est fermée sans réponse — `approval_requests.resolved_by`. */
-export const ELICITATION_CLOSED_BY = {
-  timeout: 'system:timeout',
-  jobLost: 'system:job_cancelled',
-  serverWithdrew: 'system:server_cancelled',
-  runnerRestarted: 'system:runner_restarted',
-} as const;
+/** Pourquoi une question s'est fermée sans réponse : la liste partagée (shared). */
+export { ELICITATION_CLOSED_BY };
 
 export interface ElicitationScope {
   jobId: string;
@@ -97,6 +94,18 @@ async function askDuringCall(
   // Un formulaire hors du sous-ensemble du protocole ne se dessine pas à
   // moitié : le serveur reçoit une ERREUR qui dit pourquoi (invariant #4), et
   // aucune ligne n'attend une réponse que personne ne pourrait donner.
+  // La question elle-même a une borne, comme son formulaire (revue Codex
+  // passe 4 de #660) : refusée au serveur, avant toute ligne.
+  const messageLength = [...req.message].length;
+  if (messageLength > ELICITATION_MESSAGE_MAX) {
+    console.warn(
+      `[elicitation] ${req.serverSlug} asked during ${req.toolName} (job ${scope.jobId}) ` +
+        `a question of ${messageLength} characters; refused past ${ELICITATION_MESSAGE_MAX}`,
+    );
+    throw new Error(
+      `The question is ${messageLength} characters long, more than ${ELICITATION_MESSAGE_MAX}`,
+    );
+  }
   const form = parseElicitationSchema(req.requestedSchema);
   if (!form.ok) {
     console.warn(

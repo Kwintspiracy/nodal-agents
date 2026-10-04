@@ -414,3 +414,35 @@ describe('une question de serveur MCP, de bout en bout @cap:approuver-une-action
     expect(await elicitationsOf(jobId)).toHaveLength(1);
   }, 60_000);
 });
+
+// Revue Codex passe 4 de #660 : la personne qui réfléchit n'est pas du travail.
+// Le temps d'attente d'une réponse comptait dans la durée travaillée du job
+// (`total_duration_ms`, celle que `max_run_hours` borne) : un run au budget
+// presque épuisé s'arrêtait juste après la réponse.
+describe('l’attente d’une réponse n’est pas du temps travaillé @cap:approuver-une-action/moteur', () => {
+  it('le temps passé à attendre la personne ne compte pas dans la durée du job', async () => {
+    await setRule('auto_approve');
+    const jobId = await createJob('print the report');
+    const run = executeJob(
+      jobId as JobId,
+      makeDeps(makeMockLlmClient([{ toolCalls: [ORDER_CALL] }, FINISH])),
+      testEnv,
+    );
+    const questionId = await waitForQuestion(jobId);
+    const WAIT_MS = 3_000;
+    await new Promise((r) => setTimeout(r, WAIT_MS));
+    await resolveApprovalDecision(makeDeps(makeMockLlmClient([FINISH])), testEnv, {
+      approvalRequestId: questionId,
+      decision: 'approve',
+      resolvedBy: 'api',
+      content: { color: 'grayscale', copies: 2, duplex: true },
+    });
+    const result = await run;
+    expect(result.status).toBe('completed');
+    const [row] = await db
+      .select({ totalDurationMs: agentJobs.totalDurationMs })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(row!.totalDurationMs).toBeLessThan(WAIT_MS);
+  }, 60_000);
+});

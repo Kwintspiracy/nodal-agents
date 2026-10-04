@@ -52,6 +52,40 @@ export const ELICITATION_CAPTION_MAX = 300;
 /** Une réponse texte libre ne dépasse pas cette longueur, quoi que le schéma autorise. */
 export const ELICITATION_TEXT_MAX = 2000;
 
+/*
+ * La taille d'une question, bornée avant toute ligne (revue Codex passe 4 de
+ * #660) : sans borne, un serveur bogué ou hostile faisait enregistrer et
+ * dessiner un formulaire de n'importe quelle taille. Au-delà, le serveur
+ * reçoit une erreur qui dit laquelle, comme pour un champ indessinable.
+ */
+/** Caractères au plus du message d'une question. */
+export const ELICITATION_MESSAGE_MAX = 4000;
+/** Champs au plus d'un formulaire. */
+export const ELICITATION_FIELDS_MAX = 30;
+/** Options au plus d'un choix (simple ou multiple). */
+export const ELICITATION_OPTIONS_MAX = 100;
+/** Caractères au plus du formulaire sérialisé. */
+export const ELICITATION_SCHEMA_MAX_CHARS = 20000;
+
+/**
+ * Pourquoi le runner ferme une question sans réponse — `approval_requests.resolved_by`.
+ * Partagé : le runner les écrit, chaque écran les dit (aucune ne retombe sur
+ * un texte par défaut).
+ */
+export const ELICITATION_CLOSED_BY = {
+  timeout: 'system:timeout',
+  jobLost: 'system:job_cancelled',
+  serverWithdrew: 'system:server_cancelled',
+  runnerRestarted: 'system:runner_restarted',
+} as const;
+
+/** La longueur d'un texte comme JSON Schema la compte : en points de code. */
+function charLength(text: string): number {
+  let n = 0;
+  for (const _ of text) n += 1;
+  return n;
+}
+
 /**
  * Questions au plus qu'un serveur pose pendant UN appel d'outil (invariant #8,
  * comme les plafonds de chaînes et d'appels par tour). Chacune pose une ligne,
@@ -160,6 +194,10 @@ function enumOptions(values: string[], names: unknown): ElicitationOption[] {
   }));
 }
 
+function tooManyOptions(key: string, n: number): { error: string } {
+  return { error: `property "${key}" offers ${n} choices, more than ${ELICITATION_OPTIONS_MAX}` };
+}
+
 function parseField(
   key: string,
   raw: unknown,
@@ -204,6 +242,7 @@ function parseField(
       if (!values || values.length === 0) {
         return { error: `property "${key}" has an enum that is not a non-empty list of strings` };
       }
+      if (values.length > ELICITATION_OPTIONS_MAX) return tooManyOptions(key, values.length);
       const def = typeof raw['default'] === 'string' ? raw['default'] : null;
       return {
         ...base,
@@ -216,6 +255,7 @@ function parseField(
       const options = titledOptions(raw['oneOf']);
       if (!options)
         return { error: `property "${key}" has a oneOf that is not [{ const, title }]` };
+      if (options.length > ELICITATION_OPTIONS_MAX) return tooManyOptions(key, options.length);
       const def = typeof raw['default'] === 'string' ? raw['default'] : null;
       return { ...base, kind: 'choice', options, default: def };
     }
@@ -256,6 +296,7 @@ function parseField(
     if (!options) {
       return { error: `property "${key}" is an array whose items are not a list of choices` };
     }
+    if (options.length > ELICITATION_OPTIONS_MAX) return tooManyOptions(key, options.length);
     const minItems = optNumber(raw['minItems']);
     const maxItems = optNumber(raw['maxItems']);
     if (minItems !== null && maxItems !== null && minItems > maxItems) {
@@ -294,6 +335,13 @@ function parseField(
  */
 export function parseElicitationSchema(raw: unknown): ParsedElicitationSchema {
   if (!isRecord(raw)) return { ok: false, reason: 'requestedSchema is not an object' };
+  const size = JSON.stringify(raw).length;
+  if (size > ELICITATION_SCHEMA_MAX_CHARS) {
+    return {
+      ok: false,
+      reason: `the form takes ${size} characters, more than ${ELICITATION_SCHEMA_MAX_CHARS}`,
+    };
+  }
   if (raw['type'] !== 'object') {
     return { ok: false, reason: 'requestedSchema.type is not "object"' };
   }
@@ -309,6 +357,13 @@ export function parseElicitationSchema(raw: unknown): ParsedElicitationSchema {
     if (!Object.prototype.hasOwnProperty.call(properties, r)) {
       return { ok: false, reason: `required property "${r}" is not declared` };
     }
+  }
+  const count = Object.keys(properties).length;
+  if (count > ELICITATION_FIELDS_MAX) {
+    return {
+      ok: false,
+      reason: `the form has ${count} fields, more than the ${ELICITATION_FIELDS_MAX} a person is asked at once`,
+    };
   }
   const fields: ElicitationField[] = [];
   for (const [key, prop] of Object.entries(properties)) {
@@ -430,13 +485,15 @@ function checkValue(field: ElicitationField, value: unknown): string | null {
     }
     case 'text': {
       if (typeof value !== 'string') return 'must be text';
-      if (value.length > ELICITATION_TEXT_MAX) {
+      // Counted in characters (code points), as JSON Schema counts them.
+      const length = charLength(value);
+      if (length > ELICITATION_TEXT_MAX) {
         return `must be at most ${ELICITATION_TEXT_MAX} characters`;
       }
-      if (field.minLength !== null && value.length < field.minLength) {
+      if (field.minLength !== null && length < field.minLength) {
         return `must be at least ${field.minLength} characters`;
       }
-      if (field.maxLength !== null && value.length > field.maxLength) {
+      if (field.maxLength !== null && length > field.maxLength) {
         return `must be at most ${field.maxLength} characters`;
       }
       return field.format ? formatError(field.format, value) : null;

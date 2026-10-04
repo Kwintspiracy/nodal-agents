@@ -44,6 +44,12 @@ export const mcpServers = pgTable(
     authParamName: text('auth_param_name'),
     active: boolean('active').default(true),
     availableTools: jsonb('available_tools'),
+    // The `instructions` the server published at its last successful
+    // connection, verbatim (migration 0144). Written with available_tools at
+    // every connection, by every path that connects; NULL = it published none,
+    // or it has not been connected since 0144. The prompt of an agent holding
+    // one of its tools carries it, framed and capped (system-prompt.ts).
+    instructions: text('instructions'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
