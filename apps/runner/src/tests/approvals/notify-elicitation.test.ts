@@ -40,6 +40,7 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
       return {
         channel: 'discord',
         capabilities: { buttons: true, threads: true, media: true, editMessage: true },
+        text: { renders: [], maxMessageChars: 2000 },
         sendText: vi.fn(async (_c: unknown, conversationId: string, text: string) => {
           sent.text.push({ conversationId, text });
           return { messageId: 'discord-text-1' };
@@ -167,7 +168,7 @@ describe('notifyApprovalCreated — la question d’un serveur MCP @cap:approuve
     expect(sent.forms[0]!.conversationId).toBe('conv-requester');
     expect(sent.forms[0]!.text).toContain('The MCP server "printer" asks:');
     expect(sent.forms[0]!.text).toContain(`« ${MESSAGE} »`);
-    expect(sent.forms[0]!.labels).toEqual(['✅ Confirm', 'Decline', 'print: Yes', '✓ print: No']);
+    expect(sent.forms[0]!.labels).toEqual(['✅ Confirm', 'Decline', 'print: Yes', 'print: No']);
   });
 
   it('une demande faite sur le web garde sa question sur le dashboard', async () => {

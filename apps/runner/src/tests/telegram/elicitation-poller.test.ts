@@ -210,7 +210,7 @@ describe('la question d’un serveur MCP remplie depuis Telegram @cap:approuver-
     const said = botApi.filter((c) => c.method === 'sendMessage').map((c) => c.body['text']);
     expect(said).toEqual(['Not taken: Copies must be at most 5.']);
     const [row] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
-    expect(row!.draft).toEqual({ values: { duplex: false }, awaiting: 'copies' });
+    expect(row!.draft).toEqual({ values: {}, awaiting: 'copies' });
     expect((await db.select().from(agentJobs)).length).toBe(1);
   });
 });

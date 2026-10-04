@@ -69,11 +69,48 @@ describe('la grammaire des boutons @cap:approuver-une-action/moteur', () => {
 });
 
 describe('le brouillon @cap:approuver-une-action/moteur', () => {
-  it('part des défauts du serveur ; un interrupteur a toujours un état', () => {
-    expect(initialElicitationDraft(fields())).toEqual({
-      values: { duplex: false },
+  // Revue Codex passe 1 de #664 : un interrupteur FACULTATIF posé à `false`
+  // inventait une réponse. La règle est celle du web, et elle vit en un seul
+  // endroit (`initialElicitationValues`) : obligatoire, un champ qui montre
+  // toujours un état part tel qu'il se montre ; facultatif, il ne part que si
+  // on y touche.
+  it('part des défauts du serveur ; facultatif, un interrupteur ou une liste ne part que touché', () => {
+    expect(initialElicitationDraft(fields())).toEqual({ values: {}, awaiting: null });
+    const required = parseElicitationSchema({
+      type: 'object',
+      properties: {
+        ok: { type: 'boolean', title: 'OK' },
+        tags: { type: 'array', title: 'Tags', items: { enum: ['a', 'b'] } },
+      },
+      required: ['ok', 'tags'],
+    });
+    if (!required.ok) throw new Error(required.reason);
+    expect(initialElicitationDraft(required.fields)).toEqual({
+      values: { ok: false, tags: [] },
       awaiting: null,
     });
+  });
+
+  it('une liste vidée part vide : la personne a choisi « aucun »', () => {
+    const f = fields();
+    let d = initialElicitationDraft(f);
+    d = applyElicitationOp(f, d, { op: 'multi', field: 4, option: 1, value: true }).draft;
+    d = applyElicitationOp(f, d, { op: 'multi', field: 4, option: 1, value: false }).draft;
+    expect(d.values).toEqual({ pages: [] });
+  });
+
+  it('un champ nommé __proto__ est un champ du brouillon', () => {
+    const parsed = parseElicitationSchema(
+      JSON.parse('{"type":"object","properties":{"__proto__":{"type":"string","enum":["x","y"]}}}'),
+    );
+    if (!parsed.ok) throw new Error(parsed.reason);
+    const d = applyElicitationOp(parsed.fields, initialElicitationDraft(parsed.fields), {
+      op: 'choice',
+      field: 0,
+      option: 1,
+    }).draft;
+    expect(Object.prototype.hasOwnProperty.call(d.values, '__proto__')).toBe(true);
+    expect(JSON.stringify(d.values)).toBe('{"__proto__":"y"}');
   });
 
   it('un geste pose une valeur EXPLICITE (rejouer un vieux bouton ne bascule rien)', () => {
@@ -131,11 +168,13 @@ describe('la valeur tapée en réponse @cap:approuver-une-action/moteur', () => 
 
   it('un texte libre est gardé tel quel ; sans champ en attente, rien n’est lu', () => {
     const f = fields();
+    // Tel quel : ses espaces sont à lui, seul un nombre se lit sans eux
+    // (revue Codex passe 1 de #664).
     expect(
-      applyTypedElicitationValue(f, { values: {}, awaiting: 'note' }, 'Staple it'),
+      applyTypedElicitationValue(f, { values: {}, awaiting: 'note' }, '  Staple it  '),
     ).toMatchObject({
       ok: true,
-      draft: { values: { note: 'Staple it' } },
+      draft: { values: { note: '  Staple it  ' } },
     });
     expect(applyTypedElicitationValue(f, { values: {}, awaiting: null }, '3')).toMatchObject({
       ok: false,
@@ -234,5 +273,28 @@ describe('la carte @cap:approuver-une-action/moteur', () => {
     );
     expect(elicitationDraftRevision({ a: 1 })).not.toBe(elicitationDraftRevision({ a: 2 }));
     expect(elicitationDraftRevision({})).toMatch(/^[0-9a-f]{8}$/);
+  });
+});
+
+// Revue Codex passe 1 de #664 : une carte à boutons est UN message ; seules ses
+// rangées étaient bornées. Une valeur tapée de 2 000 caractères faisait une
+// carte plus longue que Discord n'en montre, et sa réécriture échouait.
+describe('la carte tient dans un message du canal @cap:approuver-une-action/moteur', () => {
+  it('une carte plus longue que le canal n’en montre est refusée, avec la raison', () => {
+    const f = fields();
+    const card = renderElicitationCard({
+      approvalRequestId: ID,
+      server: 'printer',
+      message: 'How should it be printed?',
+      fields: f,
+      draft: { values: { note: 'x'.repeat(300) }, awaiting: null },
+      imageCount: 0,
+      limits: { maxTextChars: 200 },
+    });
+    expect(card.ok).toBe(false);
+    if (card.ok) return;
+    expect(card.reason).toMatch(
+      /^the card needs \d+ characters and this channel shows at most 200 in one message$/,
+    );
   });
 });

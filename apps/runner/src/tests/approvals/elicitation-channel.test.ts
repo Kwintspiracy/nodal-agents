@@ -32,6 +32,7 @@ const wire = vi.hoisted(() => ({
   sent: [] as Sent[],
   next: 100,
   limits: {} as Record<string, unknown>,
+  maxChars: {} as Record<string, number>,
 }));
 
 vi.mock('@nodal-agents/delivery', async (importOriginal) => {
@@ -45,7 +46,7 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
       editMessage: withButtons,
       ...(wire.limits[channel] ? { buttonLimits: wire.limits[channel] } : {}),
     },
-    text: { renders: [], maxMessageChars: 4096 },
+    text: { renders: [], maxMessageChars: wire.maxChars[channel] ?? 4096 },
     sendText: async (_c: unknown, conversationId: string, text: string) => {
       wire.sent.push({ kind: 'text', channel, conversationId, text });
       return { messageId: String(wire.next++) };
@@ -110,8 +111,10 @@ import { notifyApprovalCreated } from '../../approvals/notify.ts';
 import {
   handleElicitationTap,
   handleElicitationReply,
+  isElicitationCardReply,
   saveElicitationDraft,
 } from '../../approvals/elicitation-channel.ts';
+import { resolveApprovalDecision } from '../../approvals/resolve.ts';
 
 const OWNER_CHAT = '111';
 const GUEST_CHAT = '222';
@@ -210,6 +213,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   wire.sent.length = 0;
   wire.limits = {};
+  wire.maxChars = {};
   await db.delete(approvalRequests).where(eq(approvalRequests.jobId, seed.jobId));
   // La demande est née dans la conversation d'un INVITÉ, sur Telegram.
   await db
@@ -244,7 +248,8 @@ describe('la question part là où la demande est née @cap:approuver-une-action
     expect(card.buttons.map((row) => row.map((b) => b.split('|')[0]))).toEqual([
       ['✅ Confirm', 'Decline'],
       ['Color: color', 'Color: grayscale'],
-      ['Two-sided: Yes', '✓ Two-sided: No'],
+      // Facultatif et sans défaut : ni Oui ni Non n'est coché, rien ne part.
+      ['Two-sided: Yes', 'Two-sided: No'],
       ['✏️ Copies'],
     ]);
     const [recorded] = await db
@@ -320,7 +325,7 @@ describe('remplir la carte depuis le canal @cap:approuver-une-action/moteur', ()
     });
     expect(r).toEqual({ handled: true, notice: null });
     expect((await readRow(id)).draft).toEqual({
-      values: { duplex: false, color: 'grayscale' },
+      values: { color: 'grayscale' },
       awaiting: null,
     });
     expect(wire.sent.at(-1)).toMatchObject({ kind: 'edit' });
@@ -382,7 +387,7 @@ describe('remplir la carte depuis le canal @cap:approuver-une-action/moteur', ()
     });
     expect(ok).toEqual({ handled: true, notice: null });
     expect((await readRow(id)).draft).toEqual({
-      values: { duplex: false, copies: 3 },
+      values: { copies: 3 },
       awaiting: null,
     });
     expect(lastCardText()).toContain('Copies: 3');
@@ -510,11 +515,120 @@ describe('le brouillon d’une question close @cap:approuver-une-action/moteur',
       .update(approvalRequests)
       .set({ status: 'approved', response: { color: 'color', copies: 1 } })
       .where(eq(approvalRequests.id, id));
-    const written = await saveElicitationDraft(db as never, id, {
+    const written = await saveElicitationDraft(db as never, id, null, {
       values: { color: 'grayscale' },
       awaiting: null,
     });
-    expect(written).toBe(false);
+    expect(written).toBe('closed');
     expect((await readRow(id)).draft).toBeNull();
+  });
+});
+
+// Revue Codex passe 1 de #664 : deux gestes simultanés (Discord, Slack)
+// lisaient le même brouillon et l'un écrasait l'autre ; un geste qui croisait
+// Send faisait envoyer d'anciennes valeurs. Le brouillon s'écrit désormais
+// SUR celui qui a été lu, et Send tranche sur celui qu'il a lu.
+describe('un brouillon s’écrit sur celui qui a été lu @cap:approuver-une-action/moteur', () => {
+  it('une écriture sur un brouillon qui a changé depuis sa lecture est refusée', async () => {
+    const id = await question();
+    const first = { values: { color: 'color' }, awaiting: null };
+    expect(await saveElicitationDraft(db as never, id, null, first)).toBe('saved');
+    expect(
+      await saveElicitationDraft(db as never, id, null, {
+        values: { duplex: true },
+        awaiting: null,
+      }),
+    ).toBe('changed');
+    expect((await readRow(id)).draft).toEqual(first);
+    expect(
+      await saveElicitationDraft(db as never, id, first, {
+        values: { color: 'color', duplex: true },
+        awaiting: null,
+      }),
+    ).toBe('saved');
+  });
+
+  it('Send ne tranche pas sur un brouillon qui a changé depuis sa lecture', async () => {
+    const id = await question();
+    await db
+      .update(approvalRequests)
+      .set({ draft: { values: { color: 'grayscale', copies: 2 }, awaiting: null } })
+      .where(eq(approvalRequests.id, id));
+    const r = await resolveApprovalDecision(deps, env, {
+      approvalRequestId: id,
+      decision: 'approve',
+      resolvedBy: 'telegram',
+      content: { color: 'color', copies: 1 },
+      expectedDraft: { values: { color: 'color', copies: 1 }, awaiting: null },
+    });
+    expect(r).toMatchObject({ ok: false, code: 'draft_changed' });
+    expect((await readRow(id)).status).toBe('pending');
+  });
+
+  it('une valeur qui rendrait la carte trop longue pour le canal n’est pas prise, et le dit', async () => {
+    const id = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: seed.jobId,
+        agentId: seed.agentId,
+        toolName: 'printer__request_print',
+        toolInput: {
+          server: 'printer',
+          message: 'Any note?',
+          requestedSchema: {
+            type: 'object',
+            properties: { note: { type: 'string', title: 'Note' } },
+          },
+        },
+        toolCallId: 'call-1',
+        kind: 'elicitation',
+        status: 'pending',
+        executedAt: new Date(),
+      })
+      .returning()
+      .then((rows) => rows[0]!.id);
+    wire.maxChars['telegram'] = 400;
+    await deliver(id);
+    await handleElicitationTap({ deps, env, origin: origin(), data: button('✏️ Note') });
+    const before = (await readRow(id)).draft;
+    const [card] = await db
+      .select({ messageId: approvalCardMessages.messageId })
+      .from(approvalCardMessages)
+      .where(eq(approvalCardMessages.approvalRequestId, id));
+    const r = await handleElicitationReply({
+      deps,
+      origin: origin(),
+      replyToMessageId: card!.messageId,
+      text: 'x'.repeat(500),
+    });
+    expect(r.handled).toBe(true);
+    expect(r.notice).toMatch(
+      /^Not taken: the card needs \d+ characters and this channel shows at most 400 in one message\. Answer from the dashboard\.$/,
+    );
+    expect((await readRow(id)).draft).toEqual(before);
+  });
+});
+
+// Revue Codex passe 1 de #664 : sur Slack, une réponse dans le fil d'une carte
+// qui mentionne le bot arrive deux fois (`message` et `app_mention`). Le
+// premier remplit le champ ; le second ne doit pas lancer un tour.
+describe('une réponse dans le fil d’une carte n’est qu’une réponse @cap:approuver-une-action/moteur', () => {
+  it('la réponse à la carte d’une question se reconnaît, une autre non', async () => {
+    const id = await question();
+    await deliver(id);
+    const [card] = await db
+      .select({ messageId: approvalCardMessages.messageId })
+      .from(approvalCardMessages)
+      .where(eq(approvalCardMessages.approvalRequestId, id));
+    expect(await isElicitationCardReply(deps, origin(), card!.messageId)).toBe(true);
+    expect(await isElicitationCardReply(deps, origin(), 'not-a-card')).toBe(false);
+    expect(
+      await isElicitationCardReply(
+        deps,
+        { channel: 'telegram', conversationId: OWNER_CHAT, receivingAgentId: seed.agentId },
+        card!.messageId,
+      ),
+    ).toBe(false);
   });
 });

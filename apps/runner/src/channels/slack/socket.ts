@@ -35,7 +35,10 @@ import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { handleSlackMessage, triggerJobWorker, type SlackHandleResult } from './handler.ts';
 import { routeSlackInteraction } from './interactions.ts';
-import { handleElicitationReply } from '../../approvals/elicitation-channel.ts';
+import {
+  handleElicitationReply,
+  isElicitationCardReply,
+} from '../../approvals/elicitation-channel.ts';
 import { SLACK_AUTH_CALLBACK_PREFIX } from './auth-callback.ts';
 import type { SlackInboundMessage, SlackInteractionAck } from './types.ts';
 
@@ -249,6 +252,26 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
 
   app.event('app_mention', async ({ event, client, context }) => {
     if (event.bot_id || !event.user) return;
+    // A reply in the THREAD of a question card that mentions the bot arrives
+    // twice: here and as a `message`, which fills the field (above). It is an
+    // answer, never also a turn.
+    if (
+      event.thread_ts &&
+      event.thread_ts !== event.ts &&
+      (await isElicitationCardReply(
+        deps,
+        { channel: 'slack', receivingAgentId: agentId, conversationId: event.channel },
+        event.thread_ts,
+      ).catch((err: unknown) => {
+        console.error(
+          `[slack-socket agent=${agentId}] could not tell whether a mention answers a question ` +
+            `card, handled as a message: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return false;
+      }))
+    ) {
+      return;
+    }
 
     await onMessage(
       {

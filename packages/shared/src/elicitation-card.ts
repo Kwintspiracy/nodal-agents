@@ -14,6 +14,8 @@
 
 import {
   elicitationActionLabels,
+  initialElicitationValues,
+  setOwnValue,
   validateElicitationContent,
   type ElicitationActions,
   type ElicitationField,
@@ -125,34 +127,11 @@ export function elicitationDraftRevision(values: Record<string, ElicitationValue
 }
 
 /**
- * Le brouillon de départ : les `default` du serveur quand ils sont valides. Un
- * interrupteur a toujours un état visible — celui qu'on montre est celui qu'on
- * envoie, comme sur le web.
+ * Le brouillon de départ : les valeurs de départ de toute surface
+ * (`initialElicitationValues`), la même règle que le formulaire du web.
  */
 export function initialElicitationDraft(fields: readonly ElicitationField[]): ElicitationDraft {
-  const values: Record<string, ElicitationValue> = {};
-  for (const f of fields) {
-    switch (f.kind) {
-      case 'boolean':
-        values[f.key] = f.default ?? false;
-        break;
-      case 'choice':
-        if (f.default !== null && f.options.some((o) => o.value === f.default)) {
-          values[f.key] = f.default;
-        }
-        break;
-      case 'multi': {
-        const kept = (f.default ?? []).filter((v) => f.options.some((o) => o.value === v));
-        if (kept.length > 0) values[f.key] = kept;
-        break;
-      }
-      case 'number':
-      case 'text':
-        if (f.default !== null) values[f.key] = f.default;
-        break;
-    }
-  }
-  return { values, awaiting: null };
+  return { values: initialElicitationValues(fields), awaiting: null };
 }
 
 /** Lit un brouillon stocké ; null quand la colonne ne porte pas cette forme. */
@@ -185,7 +164,7 @@ export function applyElicitationOp(
   const set = (key: string, value: ElicitationValue | undefined): ElicitationOpResult => {
     const values = { ...draft.values };
     if (value === undefined) delete values[key];
-    else values[key] = value;
+    else setOwnValue(values, key, value);
     return { ok: true, draft: { values, awaiting: null } };
   };
   switch (op.op) {
@@ -202,15 +181,17 @@ export function applyElicitationOp(
       if (!field || field.kind !== 'multi') return refuse('this button does not match the form');
       const option = field.options[op.option];
       if (!option) return refuse('this choice no longer exists');
-      const current = Array.isArray(draft.values[field.key])
-        ? (draft.values[field.key] as string[])
-        : [];
+      const held = Object.prototype.hasOwnProperty.call(draft.values, field.key)
+        ? draft.values[field.key]
+        : undefined;
+      const current = Array.isArray(held) ? held : [];
       const without = current.filter((v) => v !== option.value);
-      // Dans l'ordre des options, pas dans l'ordre des taps.
+      // Dans l'ordre des options, pas dans l'ordre des taps. Une liste vidée
+      // part vide : la personne a choisi « aucun », comme sur le web.
       const next = field.options
         .map((o) => o.value)
         .filter((v) => (v === option.value ? op.value : without.includes(v)));
-      return set(field.key, next.length > 0 ? next : undefined);
+      return set(field.key, next);
     }
     case 'type':
       if (!field || (field.kind !== 'number' && field.kind !== 'text')) {
@@ -238,15 +219,19 @@ export function applyTypedElicitationValue(
   if (!field || (field.kind !== 'number' && field.kind !== 'text')) {
     return { ok: false, draft, reason: 'no field is waiting for a typed value' };
   }
-  const trimmed = text.trim();
-  if (trimmed === '') return { ok: false, draft, reason: `${field.label} needs a value` };
-  let value: ElicitationValue = trimmed;
+  // Un texte est pris tel quel, ses espaces compris : la règle du formulaire
+  // (`validateElicitationContent`) décide seule s'il convient. Seul un nombre
+  // se lit sans eux.
+  let value: ElicitationValue = text;
   if (field.kind === 'number') {
-    const n = Number(trimmed.replace(',', '.'));
+    const trimmed = text.trim();
+    const n = trimmed === '' ? Number.NaN : Number(trimmed.replace(',', '.'));
     if (!Number.isFinite(n)) return { ok: false, draft, reason: `${field.label} must be a number` };
     value = n;
   }
-  const checked = validateElicitationContent([field], { [field.key]: value });
+  const one: Record<string, ElicitationValue> = {};
+  setOwnValue(one, field.key, value);
+  const checked = validateElicitationContent([field], one);
   if (!checked.ok) {
     return {
       ok: false,
@@ -254,11 +239,9 @@ export function applyTypedElicitationValue(
       reason: checked.errors.map((e) => `${field.label} ${e.reason}`).join('; '),
     };
   }
-  return {
-    ok: true,
-    draft: { values: { ...draft.values, [field.key]: value }, awaiting: null },
-    field: field.label,
-  };
+  const values = { ...draft.values };
+  setOwnValue(values, field.key, value);
+  return { ok: true, draft: { values, awaiting: null }, field: field.label };
 }
 
 // ─── La carte ─────────────────────────────────────────────────────────────────
@@ -267,15 +250,19 @@ export function applyTypedElicitationValue(
 export interface ElicitationCardLimits {
   maxRows?: number;
   maxPerRow?: number;
+  /**
+   * Le plus long texte d'un message sur ce canal. Une carte est UN message :
+   * elle ne se découpe pas comme un texte.
+   */
+  maxTextChars?: number;
 }
 
 /** Boutons par rangée, au plus : au-delà, Telegram tronque les libellés sur mobile. */
 const PER_ROW = 3;
 
 function shown(field: ElicitationField, value: ElicitationValue | undefined): string {
-  if (value === undefined || (Array.isArray(value) && value.length === 0)) {
-    return field.required ? '— (required)' : '—';
-  }
+  if (value === undefined) return field.required ? '— (required)' : '—';
+  if (Array.isArray(value) && value.length === 0) return 'none';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (field.kind === 'choice' || field.kind === 'multi') {
     const labels = (Array.isArray(value) ? value : [String(value)]).map(
@@ -357,7 +344,9 @@ export function renderElicitationCard(args: {
   ];
   const typed: ElicitationCardButton[] = [];
   fields.forEach((f, i) => {
-    const value = draft.values[f.key];
+    const value = Object.prototype.hasOwnProperty.call(draft.values, f.key)
+      ? draft.values[f.key]
+      : undefined;
     switch (f.kind) {
       case 'choice':
         rows.push(
@@ -424,7 +413,10 @@ export function renderElicitationCard(args: {
     };
   }
 
-  const lines = fields.map((f) => `${f.label}: ${shown(f, draft.values[f.key])}`);
+  const lines = fields.map(
+    (f) =>
+      `${f.label}: ${shown(f, Object.prototype.hasOwnProperty.call(draft.values, f.key) ? draft.values[f.key] : undefined)}`,
+  );
   const waiting = fields.find((f) => f.key === draft.awaiting);
   const text =
     `❓ The MCP server "${args.server}" asks:\n\n` +
@@ -438,5 +430,12 @@ export function renderElicitationCard(args: {
       ? `✏️ Reply to this message with ${waiting.label}: ${typedHint(waiting)}.`
       : `Set the values with the buttons, then tap ${labels.accept}. ` +
         'You can also answer from the dashboard.');
+  const maxText = args.limits?.maxTextChars;
+  if (maxText !== undefined && text.length > maxText) {
+    return {
+      ok: false,
+      reason: `the card needs ${text.length} characters and this channel shows at most ${maxText} in one message`,
+    };
+  }
   return { ok: true, text, buttons: rows };
 }

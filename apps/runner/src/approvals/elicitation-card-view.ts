@@ -32,6 +32,12 @@ export interface ElicitationCardState {
   asked: ElicitationToolInput;
   fields: ElicitationField[];
   draft: ElicitationDraft;
+  /**
+   * `approval_requests.draft` tel que lu (null : aucun geste encore). Toute
+   * écriture du brouillon, et Send, se font SUR cette valeur : un geste
+   * concurrent l'a changée, l'écriture est refusée et relue.
+   */
+  storedDraft: unknown;
   imageCount: number;
 }
 
@@ -78,6 +84,7 @@ export async function loadElicitationCard(
       asked,
       fields: form.fields,
       draft: readElicitationDraft(row.draft) ?? initialElicitationDraft(form.fields),
+      storedDraft: row.draft ?? null,
       imageCount: images.length,
     },
   };
@@ -89,7 +96,7 @@ export function renderElicitationCardFor(
   channel: ChannelKind,
   draft: ElicitationDraft = state.draft,
 ): RenderedElicitationCard {
-  const limits = getAdapter(channel).capabilities.buttonLimits;
+  const adapter = getAdapter(channel);
   return renderElicitationCard({
     approvalRequestId: state.approvalRequestId,
     server: state.asked.server,
@@ -98,6 +105,8 @@ export function renderElicitationCardFor(
     draft,
     imageCount: state.imageCount,
     actions: state.asked.actions,
-    ...(limits ? { limits } : {}),
+    // Une carte est UN message : la longueur d'un message du canal la borne
+    // autant que ses rangées de boutons.
+    limits: { ...adapter.capabilities.buttonLimits, maxTextChars: adapter.text.maxMessageChars },
   });
 }

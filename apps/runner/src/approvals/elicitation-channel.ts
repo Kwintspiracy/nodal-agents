@@ -40,7 +40,7 @@ import {
 import { getAdapter, type ChannelKind } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
-import { resolveApprovalDecision } from './resolve.ts';
+import { draftIs, resolveApprovalDecision } from './resolve.ts';
 import { showApprovalCard, requeueApprovalCard } from './card-settlement.ts';
 import {
   loadElicitationCard,
@@ -109,22 +109,120 @@ function closedNotice(status: string | null): string {
 }
 
 /**
- * Écrit le brouillon, sous condition que la demande soit encore ouverte. false
- * quand elle ne l'est plus — tranchée entre la lecture du geste et son
- * écriture (sur le web, sur un autre canal, par l'expiration) : un geste
- * tardif ne réécrit jamais le formulaire d'une question close.
+ * Écrit le brouillon SUR celui qui a été lu (`expected`, la colonne telle que
+ * lue ; null : aucun), et seulement si la demande est encore ouverte.
+ *
+ * - `closed` : tranchée entre la lecture du geste et son écriture (sur le
+ *   web, sur un autre canal, par l'expiration) ; un geste tardif ne réécrit
+ *   jamais le formulaire d'une question close.
+ * - `changed` : un autre geste a écrit entre-temps (Discord et Slack
+ *   traitent deux taps en même temps) ; l'appelant relit et rejoue le sien,
+ *   au lieu d'écraser celui-là.
  */
 export async function saveElicitationDraft(
   db: AnyDrizzleDb,
   approvalRequestId: string,
+  expected: unknown,
   draft: ElicitationDraft,
-): Promise<boolean> {
+): Promise<'saved' | 'closed' | 'changed'> {
   const rows = await db
     .update(approvalRequests)
     .set({ draft })
-    .where(and(eq(approvalRequests.id, approvalRequestId), eq(approvalRequests.status, 'pending')))
+    .where(
+      and(
+        eq(approvalRequests.id, approvalRequestId),
+        eq(approvalRequests.status, 'pending'),
+        draftIs(expected),
+      ),
+    )
     .returning({ id: approvalRequests.id });
-  return rows.length > 0;
+  if (rows.length > 0) return 'saved';
+  const [now] = await db
+    .select({ status: approvalRequests.status })
+    .from(approvalRequests)
+    .where(eq(approvalRequests.id, approvalRequestId))
+    .limit(1);
+  return now?.status === 'pending' ? 'changed' : 'closed';
+}
+
+/** Combien de fois un geste est rejoué sur un brouillon que d'autres gestes changent. */
+const DRAFT_WRITE_ATTEMPTS = 3;
+
+type DraftChange =
+  | { ok: true; draft: ElicitationDraft }
+  | { ok: false; reason: string; notice: string };
+
+/**
+ * Applique un geste au brouillon : relit la demande, calcule le brouillon
+ * suivant, vérifie que sa carte tient dans le canal, et l'écrit sur celui qui
+ * a été lu. Rejoué sur le nouveau brouillon quand un autre geste l'a changé
+ * entre-temps — chaque geste pose une valeur EXPLICITE, le rejouer est sûr.
+ */
+async function changeDraft(
+  db: AnyDrizzleDb,
+  card: CardRow,
+  first: ElicitationCardState,
+  next: (state: ElicitationCardState) => DraftChange,
+): Promise<
+  | { ok: true; state: ElicitationCardState; draft: ElicitationDraft }
+  | { ok: false; reason: string; notice: string }
+> {
+  let state = first;
+  for (let attempt = 1; ; attempt += 1) {
+    const change = next(state);
+    if (!change.ok) return change;
+    const view = renderElicitationCardFor(state, card.channel as ChannelKind, change.draft);
+    if (!view.ok) {
+      return {
+        ok: false,
+        reason: 'card_too_large',
+        notice: `Not taken: ${view.reason}. Answer from the dashboard.`,
+      };
+    }
+    const written = await saveElicitationDraft(
+      db,
+      state.approvalRequestId,
+      state.storedDraft,
+      change.draft,
+    );
+    if (written === 'saved') return { ok: true, state, draft: change.draft };
+    if (written === 'closed' || attempt >= DRAFT_WRITE_ATTEMPTS) {
+      await requeueApprovalCard(db, card);
+      return written === 'closed'
+        ? { ok: false, reason: 'already_resolved', notice: 'This question is closed.' }
+        : {
+            ok: false,
+            reason: 'draft_busy',
+            notice: 'The card is being changed from elsewhere. Try again.',
+          };
+    }
+    const reloaded = await loadElicitationCard(db, state.approvalRequestId);
+    if (!reloaded.ok) {
+      return {
+        ok: false,
+        reason: reloaded.reason,
+        notice: 'This question cannot be answered here.',
+      };
+    }
+    state = reloaded.state;
+  }
+}
+
+/**
+ * Une réponse tapée est-elle la réponse à la carte d'une question de serveur
+ * de cette conversation ? La même lecture que `handleElicitationReply`, sans
+ * rien écrire : un canal qui reçoit un même message par deux chemins (Slack :
+ * `message` et `app_mention`) ne le traite qu'une fois.
+ */
+export async function isElicitationCardReply(
+  deps: RunnerDeps,
+  origin: ElicitationOrigin,
+  replyToMessageId: string,
+): Promise<boolean> {
+  const db = deps.db as AnyDrizzleDb;
+  const card = await findCard(db, origin, { messageId: replyToMessageId });
+  if (!card) return false;
+  return (await loadElicitationCard(db, card.approvalRequestId)).ok;
 }
 
 /** Réécrit la carte avec ce brouillon, sous le bail des cartes (#637). */
@@ -206,8 +304,20 @@ export async function handleElicitationTap(args: {
       decision: 'approve',
       resolvedBy: origin.channel,
       content: state.draft.values,
+      // Tranchée sur les valeurs que Send a lues : un geste qui les change
+      // entre-temps fait refuser l'envoi, jamais envoyer les anciennes.
+      expectedDraft: state.storedDraft,
     });
     if (r.ok) return { handled: true, notice: 'Answered.' };
+    if (r.code === 'draft_changed') {
+      const fresh = await loadElicitationCard(db, state.approvalRequestId);
+      if (fresh.ok) await redraw(db, card, fresh.state, fresh.state.draft);
+      return {
+        handled: false,
+        reason: 'stale_card',
+        notice: 'The values changed since this card was drawn. Check them, then tap Send again.',
+      };
+    }
     if (r.code === 'content_invalid') {
       return {
         handled: false,
@@ -218,14 +328,14 @@ export async function handleElicitationTap(args: {
     return { handled: false, reason: r.code, notice: closedNotice(r.status ?? null) };
   }
 
-  const applied = applyElicitationOp(state.fields, state.draft, op);
-  if (!applied.ok)
-    return { handled: false, reason: 'stale_button', notice: `Not applied: ${applied.reason}.` };
-  if (!(await saveElicitationDraft(db, state.approvalRequestId, applied.draft))) {
-    await requeueApprovalCard(db, card);
-    return { handled: false, reason: 'already_resolved', notice: 'This question is closed.' };
-  }
-  await redraw(db, card, state, applied.draft);
+  const changed = await changeDraft(db, card, state, (s) => {
+    const applied = applyElicitationOp(s.fields, s.draft, op);
+    return applied.ok
+      ? { ok: true, draft: applied.draft }
+      : { ok: false, reason: 'stale_button', notice: `Not applied: ${applied.reason}.` };
+  });
+  if (!changed.ok) return { handled: false, reason: changed.reason, notice: changed.notice };
+  await redraw(db, card, changed.state, changed.draft);
   if (op.op === 'type') {
     const field = state.fields[op.field]!;
     return { handled: true, notice: `Reply to the card with ${field.label}.` };
@@ -278,20 +388,22 @@ export async function handleElicitationReply(args: {
     await say(notice);
     return { handled: true, notice };
   }
-  const typed = applyTypedElicitationValue(state.fields, state.draft, args.text);
-  if (!typed.ok) {
-    const notice =
-      state.draft.awaiting === null
-        ? 'Tap ✏️ next to a field on the card first, then reply with its value.'
-        : `Not taken: ${typed.reason}.`;
-    await say(notice);
-    return { handled: true, notice };
+  const changed = await changeDraft(db, card, state, (s) => {
+    const typed = applyTypedElicitationValue(s.fields, s.draft, args.text);
+    if (typed.ok) return { ok: true, draft: typed.draft };
+    return {
+      ok: false,
+      reason: 'value_refused',
+      notice:
+        s.draft.awaiting === null
+          ? 'Tap ✏️ next to a field on the card first, then reply with its value.'
+          : `Not taken: ${typed.reason}.`,
+    };
+  });
+  if (!changed.ok) {
+    await say(changed.notice);
+    return { handled: true, notice: changed.notice };
   }
-  if (!(await saveElicitationDraft(db, state.approvalRequestId, typed.draft))) {
-    const notice = 'This question is closed.';
-    await say(notice);
-    return { handled: true, notice };
-  }
-  await redraw(db, card, state, typed.draft);
+  await redraw(db, card, changed.state, changed.draft);
   return { handled: true, notice: null };
 }
