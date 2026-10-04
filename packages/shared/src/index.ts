@@ -41,6 +41,8 @@ export * from './approval-tool-default';
 export * from './question-answer';
 export * from './elicitation';
 export * from './untrusted';
+export * from './mcp-tool-result';
+export * from './tool-result-budget';
 export * from './redact-transcript';
 export * from './agent-slug';
 export * from './catastrophic-command';

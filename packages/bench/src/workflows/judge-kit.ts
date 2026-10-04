@@ -5,6 +5,7 @@
 // envoi est une sortie d'outil qui dit `ok`. Qu'une source citée ait été LUE
 // n'est pas jugé ici : aucune ligne de la base ne le dit de façon fiable (#648).
 
+import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 import type { JobFact, ToolCallFact, TreeFacts } from './facts';
 
 /** Le job de tête de l'essai. */
@@ -33,6 +34,61 @@ export function parseJson(s: string | null): unknown {
   } catch {
     return null;
   }
+}
+
+/**
+ * Le résultat structuré d'un outil MCP, tel que sa ligne `tool_calls` le garde.
+ *
+ * Deux formes de ligne, distinguées par une MARQUE et non par une forme :
+ *  - l'enveloppe de l'adaptateur (`packages/adapters/mcp/src/result.ts`), dont
+ *    `format` vaut `MCP_TOOL_OUTPUT_FORMAT` : la forme machine du serveur est
+ *    sous `structuredContent`, sinon sous `toolResult` (protocole 2024-10-07),
+ *    sinon écrite en JSON dans un bloc texte (ce que la spec recommande aux
+ *    serveurs pour les clients qui ne lisent que `content`) ;
+ *  - toute ligne SANS cette marque, écrite avant elle : la charge du serveur à
+ *    la racine — même quand elle porte elle-même un tableau `content` (une page
+ *    Notion, une liste CRM). Les essais réels enregistrés (fixtures) et toute
+ *    base existante en portent.
+ *
+ * Un bloc texte se lit par `jsonInText` : la règle y est dite.
+ */
+export function mcpStructured(s: string | null): Record<string, unknown> | null {
+  const record = jsonObject(parseJson(s));
+  if (!record) return null;
+  if (record['format'] !== MCP_TOOL_OUTPUT_FORMAT) return record;
+  const payload = jsonObject(record['structuredContent']) ?? jsonObject(record['toolResult']);
+  if (payload) return payload;
+  const content = Array.isArray(record['content']) ? (record['content'] as unknown[]) : [];
+  for (const block of content) {
+    const b = block as { type?: unknown; text?: unknown } | null;
+    if (b?.type !== 'text' || typeof b.text !== 'string') continue;
+    const fromText = jsonInText(b.text);
+    if (fromText) return fromText;
+  }
+  return null;
+}
+
+/**
+ * L'objet JSON qu'un bloc texte porte, selon UNE règle : le bloc SE TERMINE
+ * (blancs de fin ignorés) par un objet JSON dont l'accolade ouvre une ligne —
+ * seuls des blancs la précèdent sur sa ligne. Le bloc entier qui est un objet
+ * JSON, blancs de tête compris, en est le premier cas ; « phrase.\n{ … } » le
+ * second. Une accolade au milieu d'une phrase n'ouvre jamais rien, et rien ne
+ * doit suivre l'objet : un texte qui cite du JSON en passant n'est pas une
+ * charge.
+ */
+function jsonInText(text: string): Record<string, unknown> | null {
+  for (const line of text.matchAll(/^[ \t]*\{/gm)) {
+    const found = jsonObject(text.slice((line.index ?? 0) + line[0].length - 1).trim());
+    if (found) return found;
+  }
+  return null;
+}
+
+/** An object, or a string that is the JSON of one; null for anything else. */
+function jsonObject(v: unknown): Record<string, unknown> | null {
+  const o = typeof v === 'string' ? parseJson(v) : v;
+  return o && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, unknown>) : null;
 }
 
 const URL_RE = /https?:\/\/[^\s<>"'`\])}|\\]+/gi;
