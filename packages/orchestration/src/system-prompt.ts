@@ -732,7 +732,9 @@ export function buildMcpServerGuidanceBlock(
   const blocks: string[] = [];
   let total = 0;
   for (const s of speaking) {
-    const raw = (s.instructions ?? '').trim();
+    // Tel que publié : une indentation en tête ouvre un bloc de code Markdown
+    // (revue Codex passe 4 de #659). Un texte blanc ne parle pas (filtré plus haut).
+    const raw = s.instructions ?? '';
     const capped =
       raw.length > MCP_SERVER_INSTRUCTIONS_PROMPT_CAP
         ? `${raw.slice(0, MCP_SERVER_INSTRUCTIONS_PROMPT_CAP)}… [truncated at ${MCP_SERVER_INSTRUCTIONS_PROMPT_CAP} chars]`

@@ -212,6 +212,7 @@ import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
 import {
   buildSystemPrompt,
   resolveBuiltinToolNames,
+  resolveMcpToolNames,
   DEFAULT_LIMITS,
   UNBLOCKABLE_TOOLS,
   INTERNAL_TOOL_DESCRIPTORS,
@@ -13222,8 +13223,12 @@ export async function getRootSystemPromptAction(): Promise<ActionResult<string>>
     // Les outils intégrés que le job du root tient, par la règle unique du
     // runner (#636) : sans eux l'aperçu retombait sur les seuls outils
     // toujours actifs, et cachait chaque bloc qui suit la liste — l'index des
-    // skills d'abord (lot 2, voie H). Connecteurs et MCP n'y sont pas.
-    const { names: availableToolNames } = await resolveBuiltinToolNames(db, rootAgentId);
+    // skills d'abord (lot 2, voie H). Plus les outils que ses serveurs MCP lui
+    // prêtent, lus de leurs listes : sans eux, les consignes de ces serveurs,
+    // que le vrai job reçoit, manquaient à l'aperçu (revue Codex passe 4 de
+    // #659). Les connecteurs n'y sont pas.
+    const { names: builtinNames } = await resolveBuiltinToolNames(db, rootAgentId);
+    const availableToolNames = [...builtinNames, ...(await resolveMcpToolNames(db, rootAgentId))];
     const prompt = await buildSystemPrompt(agent, db, {
       origin: 'dashboard',
       deployment,

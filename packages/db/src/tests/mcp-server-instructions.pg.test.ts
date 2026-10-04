@@ -11,6 +11,8 @@
 // longue et multiligne, sans la toucher.
 
 import { describe, it, expect, afterAll } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { startRealPostgres, type RealPostgres } from '@nodal-agents/test-kit';
 import { createClient, sql, eq, mcpServers, entities, users } from '@nodal-agents/db';
 import { runMigrations } from '@nodal-agents/db/migrate';
@@ -104,6 +106,61 @@ describe('migration 0144_mcp_server_instructions @cap:connecter-un-service/moteu
 
       expect(await relire(avec!.id)).toBe(texte);
       expect(await relire(sans!.id), 'un serveur sans instructions en a reçu').toBeNull();
+    } finally {
+      await close();
+    }
+  });
+});
+
+// Revue Codex passe 4 de #659 : une installation mise à jour garde le cache
+// d'outils (v2) de chaque serveur, et ce cache fait choisir la connexion
+// PARESSEUSE : le serveur n'est connecté qu'au premier appel d'un de ses
+// outils, ses instructions jamais lues avant. Or elles disent justement quel
+// outil appeler. La migration invalide donc le cache des serveurs connus
+// AVANT elle : le job suivant les connecte une fois (le chemin v1 → v2), et
+// lit leurs instructions. Rejouée, elle ne touche plus rien.
+describe('0144 sur une installation d’avant @cap:connecter-un-service/moteur', () => {
+  const FILE = fileURLToPath(
+    new URL('../../migrations/0144_mcp_server_instructions.sql', import.meta.url),
+  );
+
+  it('un serveur au cache d’avant est reconnecté une fois ; rejouée, la migration ne touche plus rien', async () => {
+    const { db, close } = createClient(harness().url, { max: 1 });
+    try {
+      const [u] = await db
+        .insert(users)
+        .values({ email: 'mcp-before-0144@exemple.test' })
+        .returning({ id: users.id });
+      const [e] = await db
+        .insert(entities)
+        .values({ userId: u!.id, name: 'Before', slug: 'mcp-before-0144' })
+        .returning({ id: entities.id });
+      const cache = [{ name: 'ping', inputSchema: { type: 'object' } }];
+
+      // L'installation d'avant : pas de colonne, un serveur avec son cache.
+      await db.execute(sql`ALTER TABLE mcp_servers DROP COLUMN instructions`);
+      await db.execute(
+        sql`INSERT INTO mcp_servers (entity_id, name, slug, transport, command, available_tools)
+            VALUES (${e!.id}, 'Old', 'old-srv', 'stdio', 'node', ${JSON.stringify(cache)}::jsonb)`,
+      );
+      const migration = readFileSync(FILE, 'utf8');
+      await db.execute(sql.raw(migration));
+
+      const after = (await db.execute(
+        sql`SELECT available_tools, instructions FROM mcp_servers WHERE slug = 'old-srv'`,
+      )) as unknown as Array<{ available_tools: unknown; instructions: string | null }>;
+      expect(after[0]).toEqual({ available_tools: null, instructions: null });
+
+      // Découvert depuis : rejouer le fichier ne l'efface plus.
+      await db.execute(
+        sql`UPDATE mcp_servers SET available_tools = ${JSON.stringify(cache)}::jsonb
+            WHERE slug = 'old-srv'`,
+      );
+      await db.execute(sql.raw(migration));
+      const again = (await db.execute(
+        sql`SELECT available_tools FROM mcp_servers WHERE slug = 'old-srv'`,
+      )) as unknown as Array<{ available_tools: unknown }>;
+      expect(again[0]!.available_tools).toEqual(cache);
     } finally {
       await close();
     }

@@ -322,3 +322,16 @@ describe('the MCP guidance of one prompt is capped as a whole @cap:connecter-un-
     expect(withheld[0]!.reason).toContain(`${MCP_GUIDANCE_PROMPT_TOTAL_CAP}`);
   });
 });
+
+// Revue Codex passe 4 de #659 : le prompt rognait le texte publié, et
+// l'indentation qui ouvre un bloc de code Markdown disparaissait.
+describe('le texte publié arrive tel quel dans le prompt @cap:connecter-un-service/moteur', () => {
+  it('un bloc de code indenté en tête reste un bloc de code', () => {
+    const text = '    list_printers\n    request_print\n\nThen show the card.';
+    const { block } = buildMcpServerGuidanceBlock(
+      [{ slug: 'printer', instructions: text }],
+      ['printer__request_print'],
+    );
+    expect(block).toContain(`">\n${text}\n</`);
+  });
+});
