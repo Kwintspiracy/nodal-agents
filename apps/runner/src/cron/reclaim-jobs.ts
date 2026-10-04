@@ -37,7 +37,14 @@
 // ce que le job avait écrit (#491), et c'est le PARENT qui décide.
 
 import { and, asc, eq, gt, inArray, isNull, lt, or } from '@nodal-agents/db';
-import { agentJobs, agentTasks, agents, approvalRequests, toolCalls } from '@nodal-agents/db';
+import {
+  agentJobs,
+  agentTasks,
+  agents,
+  approvalRequests,
+  gatesACall,
+  toolCalls,
+} from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { resumeDelegated } from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
@@ -179,10 +186,15 @@ async function effectsAfterCheckpoint(
   // un job `processing` qui en porte une l'a posée pendant le tour interrompu
   // (une demande d'un tour précédent l'aurait suspendu). Rejouer ce tour
   // reposerait la question, et deux « oui » feraient deux exécutions.
+  // Seulement les demandes qui gardent un appel (`gatesACall`) : la question
+  // d'un serveur MCP (élicitation) n'est pas un effet, elle meurt avec son
+  // appel ; ce que l'appel a fait se lit à sa propre marque, plus haut.
   const demandes = await db
     .select({ toolName: approvalRequests.toolName })
     .from(approvalRequests)
-    .where(and(eq(approvalRequests.jobId, jobId), eq(approvalRequests.status, 'pending')));
+    .where(
+      and(eq(approvalRequests.jobId, jobId), eq(approvalRequests.status, 'pending'), gatesACall()),
+    );
   for (const d of demandes) if (!noms.includes(d.toolName)) noms.push(d.toolName);
   return noms;
 }

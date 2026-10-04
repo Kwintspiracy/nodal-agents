@@ -9,6 +9,7 @@
 
 import {
   readElicitationToolInput,
+  setOwnValue,
   type ElicitationActions,
   type ElicitationField,
   type ElicitationValue,
@@ -103,20 +104,35 @@ export function initialFormState(fields: readonly ElicitationField[]): Elicitati
         // qu'il se montre ; facultatif, il ne part que si la personne y touche :
         // l'absence laisse au serveur son propre défaut, qu'un `false` inventé
         // changerait.
-        state[f.key] = f.default ?? (f.required ? false : null);
+        setOwnValue(state, f.key, f.default ?? (f.required ? false : null));
         break;
       case 'number':
-        state[f.key] = f.default === null ? null : String(f.default);
+        setOwnValue(state, f.key, f.default === null ? null : String(f.default));
         break;
       case 'text':
-        state[f.key] = f.default;
+        setOwnValue(state, f.key, f.default);
         break;
       case 'choice':
-        state[f.key] =
-          f.default !== null && f.options.some((o) => o.value === f.default) ? f.default : null;
+        setOwnValue(
+          state,
+          f.key,
+          f.default !== null && f.options.some((o) => o.value === f.default) ? f.default : null,
+        );
         break;
       case 'multi':
-        state[f.key] = (f.default ?? []).filter((v) => f.options.some((o) => o.value === v));
+        // Comme l'interrupteur : une liste de cases a toujours un état visible.
+        // Obligatoire, elle part telle qu'elle se montre ; facultative, elle ne
+        // part que si le serveur en donne une par défaut ou si la personne y
+        // touche, et alors telle quelle, vide comprise.
+        setOwnValue(
+          state,
+          f.key,
+          f.default !== null
+            ? f.default.filter((v) => f.options.some((o) => o.value === v))
+            : f.required
+              ? []
+              : null,
+        );
         break;
     }
   }
@@ -137,24 +153,25 @@ export function formStateToContent(
 ): Record<string, ElicitationValue> {
   const content: Record<string, ElicitationValue> = {};
   for (const f of fields) {
-    const v = state[f.key];
+    // Propriétés PROPRES seulement : un champ s'appelle `__proto__` aussi bien.
+    const v = Object.prototype.hasOwnProperty.call(state, f.key) ? state[f.key] : undefined;
     if (v === undefined || v === null) continue;
     if (f.kind === 'boolean') {
-      if (typeof v === 'boolean') content[f.key] = v;
+      if (typeof v === 'boolean') setOwnValue(content, f.key, v);
       continue;
     }
     if (f.kind === 'multi') {
-      if (Array.isArray(v) && (v.length > 0 || f.required)) content[f.key] = v;
+      if (Array.isArray(v)) setOwnValue(content, f.key, v);
       continue;
     }
     if (typeof v !== 'string') continue;
     if (f.kind === 'number') {
       if (v.trim() === '') continue;
       const n = Number(v.trim());
-      content[f.key] = Number.isFinite(n) ? n : v;
+      setOwnValue(content, f.key, Number.isFinite(n) ? n : v);
       continue;
     }
-    content[f.key] = v;
+    setOwnValue(content, f.key, v);
   }
   return content;
 }

@@ -259,3 +259,22 @@ describe('les dates d’un formulaire, au sens strict @cap:approuver-une-action/
     expect(errorsOf({ at: '2024-01-01T24:00:00Z' })).toEqual(['at: is not a date-time']);
   });
 });
+
+// Revue Codex passe 3 de #660 : une propriété de formulaire est une chaîne
+// quelconque. `out["__proto__"] = v` appelle l'accesseur hérité au lieu de
+// créer le champ : la réponse le perdait, et un formulaire qui l'exige ne
+// pouvait plus être envoyé.
+describe('un champ nommé __proto__ est un champ @cap:approuver-une-action/moteur', () => {
+  it('validé, il est gardé comme propriété propre de la réponse', () => {
+    const form = JSON.parse(
+      '{"type":"object","properties":{"__proto__":{"type":"string"}},"required":["__proto__"]}',
+    );
+    const content = JSON.parse('{"__proto__":"keep me"}');
+    const r = validateElicitationContent(form, content);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(Object.prototype.hasOwnProperty.call(r.content, '__proto__')).toBe(true);
+    expect(JSON.stringify(r.content)).toBe('{"__proto__":"keep me"}');
+    expect(Object.getPrototypeOf(r.content)).toBe(Object.prototype);
+  });
+});

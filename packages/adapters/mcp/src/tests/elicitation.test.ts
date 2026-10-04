@@ -23,6 +23,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import type { ToolContext, UserInputRequest, UserInputResponse } from '@nodal-agents/tools';
 import { createMcpTools, createLazyMcpTools, type McpToolset } from '../index.ts';
+import { ELICITATIONS_PER_CALL_MAX } from '@nodal-agents/shared';
 
 const FIXTURE = fileURLToPath(new URL('./fixtures/mcp-elicit-server.mjs', import.meta.url));
 
@@ -271,4 +272,37 @@ describe('élicitation MCP, contre un vrai serveur stdio @cap:approuver-une-acti
       ),
     ).rejects.toThrow(/timed out after 400ms/);
   });
+});
+
+// Revue Codex passe 3 de #660 : rien ne bornait le nombre de questions qu'un
+// serveur pose pendant UN appel. Chacune pose une ligne, des images, une
+// notification : un serveur bogué ou hostile les multipliait sans fin, hors de
+// toute garde anti-boucle (invariant #8).
+describe('un appel pose au plus ELICITATIONS_PER_CALL_MAX questions @cap:approuver-une-action/moteur', () => {
+  it('les questions au-delà reçoivent une erreur qui dit pourquoi ; la personne n’en voit aucune', async () => {
+    const t = await connect();
+    const asked: UserInputRequest[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const out = await tool(t, 'order').execute(
+        { purpose: 'print', times: ELICITATIONS_PER_CALL_MAX + 2 },
+        ctxWith(async (req) => {
+          asked.push(req);
+          return { action: 'accept', content: { color: 'color', copies: 1 } };
+        }),
+      );
+      const replies = received(out) as Array<Record<string, unknown>>;
+      expect(asked).toHaveLength(ELICITATIONS_PER_CALL_MAX);
+      expect(
+        replies.slice(0, ELICITATIONS_PER_CALL_MAX).every((r) => r['action'] === 'accept'),
+      ).toBe(true);
+      for (const r of replies.slice(ELICITATIONS_PER_CALL_MAX)) {
+        expect(String(r['error'])).toContain(
+          `at most ${ELICITATIONS_PER_CALL_MAX} questions during one tool call`,
+        );
+      }
+    } finally {
+      warn.mockRestore();
+    }
+  }, 30_000);
 });
