@@ -2,7 +2,7 @@
 
 import { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import { ToolFailedWithOutput, type ToolDefinition } from '@nodal-agents/tools';
 import {
   fitToolResult,
   framedForModel,
@@ -119,13 +119,16 @@ async function callMcpTool(
     // The runner fits a failure the tool raised into the model's budget as a
     // framed `{ error }` block (`toErrorOutput`): rendered here to fit that very
     // block, so the runner never has to cut it — nor the machine form with it.
+    // The row keeps the whole result, as a success's row does
+    // (ToolFailedWithOutput); the model reads the fitted message.
     const prefix = `MCP tool ${originalName} failed: `;
-    throw new Error(
+    throw new ToolFailedWithOutput(
       prefix +
         fitToolResult(
           (room) => mcpResultForModel(record, room),
           (text) => raisedErrorBlockLength(toolName, prefix + text),
         ),
+      record,
     );
   }
   return record;

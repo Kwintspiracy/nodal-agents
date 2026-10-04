@@ -22,7 +22,7 @@ import type {
   ToolExecutionResult,
   ApprovalGateRequest,
 } from './types';
-import { InvalidInputError } from './errors';
+import { InvalidInputError, ToolFailedWithOutput } from './errors';
 import { refuseWithoutStatedPurpose } from './purpose';
 import { alreadyRejectedInstruction, priorRejectionOfSameCall } from './rejected-call';
 import { judgeShellChecklist, shellChecklistRefusal, type ShellPlace } from './shell-checklist';
@@ -1164,11 +1164,18 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
           error: errorMsg,
           ...(raisedByExecute ? { raisedByTool: true as const } : {}),
         };
+    // A failure that came with a result (ToolFailedWithOutput): the row keeps
+    // that result whole, as a success's row does; the model still reads the
+    // error alone.
+    const rowOutput =
+      raisedByExecute && err instanceof ToolFailedWithOutput
+        ? { ...result, output: err.output }
+        : result;
     await _writeToolCall(
       ctx,
       auditTool,
       validatedInput,
-      JSON.stringify(result),
+      JSON.stringify(rowOutput),
       Date.now() - startMs,
       undefined,
       marque,

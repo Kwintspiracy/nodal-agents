@@ -100,6 +100,7 @@ export {
   ToolNotFoundError,
   WhitelistDriftError,
   WebSearchNotConfiguredError,
+  ToolFailedWithOutput,
 } from './errors';
 
 // Registry

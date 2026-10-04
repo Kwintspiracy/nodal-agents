@@ -277,6 +277,23 @@ describe('a third-party tool error is framed like its success; the gate own erro
     const refused = toolResults(bodies[2]!).at(-1);
     expect(refused).toContain('invalid_input');
     expect(refused).not.toContain(FRAME);
+
+    // Pass 5 of #665 (Nodal Reviewer A): the row of a call the server failed
+    // keeps the whole result, like a success's row: every content block and
+    // structuredContent, never only the text the model reads.
+    const rows = await db
+      .select({ toolName: toolCalls.toolName, toolOutput: toolCalls.toolOutput })
+      .from(toolCalls)
+      .where(eq(toolCalls.jobId, jobId));
+    const failedRow = rows
+      .filter((r) => r.toolName === 'failing__report' && typeof r.toolOutput === 'string')
+      .map((r) => JSON.parse(r.toolOutput as string) as Record<string, unknown>)
+      .find((o) => o['outcome'] === 'error' && o['raisedByTool'] === true);
+    expect(failedRow?.['output']).toEqual({
+      format: 'mcp-tool-result/1',
+      content: [{ type: 'text', text: 'Printer offline: the request was not queued.' }],
+      structuredContent: { status: 'refused' },
+    });
   }, 60_000);
 
   it('on resume after approval: the approved call that fails reaches the model framed', async () => {

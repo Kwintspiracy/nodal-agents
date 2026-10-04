@@ -70,3 +70,21 @@ export class WebSearchNotConfiguredError extends Error {
     this.name = 'WebSearchNotConfiguredError';
   }
 }
+
+// ─── ToolFailedWithOutput ─────────────────────────────────────────────────────
+
+/**
+ * A tool's own failure that comes WITH a result: an MCP server's `isError`
+ * reply carries content blocks and structuredContent like a success. The
+ * message is what the model reads; `output` is what the tool_calls row keeps,
+ * whole, as it keeps a success's output (review pass 5 of #665).
+ */
+export class ToolFailedWithOutput extends Error {
+  constructor(
+    message: string,
+    public readonly output: unknown,
+  ) {
+    super(message);
+    this.name = 'ToolFailedWithOutput';
+  }
+}
