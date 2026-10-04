@@ -30,12 +30,14 @@ import {
   redactSecretsForAudit,
   renderExplanationText,
   readQuestionToolInput,
+  readElicitationToolInput,
 } from '@nodal-agents/shared';
 import { explainApprovalRequest } from './explain-request.ts';
 import {
   getAdapter,
   resolveTransportChannel,
   listActiveChannelsForAgent,
+  isTransportChannel,
   type ApprovalCard,
   type QuestionCard,
   type ChannelKind,
@@ -120,6 +122,26 @@ export function buildQuestionCardBody(args: {
 }
 
 /**
+ * La carte d'une question qu'un SERVEUR MCP pose pendant un de ses appels
+ * (élicitation, 0145), sur un canal. Le message est cité tel quel — texte
+ * tiers, montré comme une donnée ; le cadre est celui du produit.
+ *
+ * Sans boutons sur aucun canal pour l'instant : un formulaire ne se remplit
+ * pas d'un ✅, il se remplit sur le dashboard (la carte le dit).
+ */
+export function buildElicitationCardBody(args: { server: string; message: string }): string {
+  return (
+    `❓ The MCP server "${args.server}" asks:
+
+` +
+    `« ${args.message} »
+
+` +
+    'Answer from the dashboard: the question is on the run, and on the Approvals page.'
+  );
+}
+
+/**
  * Le texte d'une carte dont la demande est tranchée (#637) — UNE source pour
  * tous les chemins qui réécrivent une carte : le clic sur la carte elle-même
  * (Telegram, Discord, Slack) et le point qui met à jour les cartes quand la
@@ -138,6 +160,16 @@ export function settledApprovalCardText(args: {
    */
   standing?: { agentName: string | null; brakeEngaged: boolean } | null;
 }): string {
+  // 0145 — une élicitation n'approuve pas l'outil qui l'a posée : elle a été
+  // répondue, refusée, ou fermée sans réponse. « Répondue », jamais
+  // « envoyée » : la décision est écrite ici, le run la rend au serveur
+  // ensuite, et un runner qui meurt entre les deux ne l'a pas rendue (revue
+  // Codex passe 2 de #660). La carte dit ce qui est su.
+  if (args.kind === 'elicitation') {
+    if (args.status === 'approved') return '✅ Answered';
+    if (args.status === 'rejected') return '❌ Declined';
+    if (args.status === 'expired') return '⌛ Closed without an answer';
+  }
   if (args.status === 'approved' && args.kind === 'question' && args.answer !== null) {
     return `✅ Answered: ${args.answer}`;
   }
@@ -466,6 +498,24 @@ export async function notifyApprovalCreated(
   req: ApprovalGateRequest,
 ): Promise<void> {
   try {
+    // ── 0145 — la question d'un serveur MCP va là où la DEMANDE est née ──────
+    // Une demande faite sur un canal de messages (Telegram, Discord, Slack,
+    // WhatsApp) y reçoit la carte. Une demande faite sur le web, ou sans
+    // personne sur son canal (MCP, API, routine), garde sa question sur le
+    // dashboard — le fil du run, la page Approvals, la cloche — et nulle part
+    // ailleurs : jamais renvoyée sur le canal par défaut du propriétaire.
+    if (req.kind === 'elicitation') {
+      const chain = await walkJobChainToRoot(deps.db, req.jobId);
+      const origin = chain ? chain[chain.length - 1]!.channel : null;
+      if (!isTransportChannel(origin)) {
+        console.warn(
+          `[approval-notify] question ${req.approvalRequestId} stays on the dashboard: ` +
+            `its request came from "${origin ?? 'unknown'}", not a messaging channel`,
+        );
+        return;
+      }
+    }
+
     // Resolve the bot/gateway + conversation that must receive the approval
     // card. On a delegated chain the gated job's own agent may have no
     // binding — the orchestrator's delivers. And regardless of who triggered
@@ -520,6 +570,21 @@ export async function notifyApprovalCreated(
     // quelle entrée, et une question sans carte serait un job suspendu en
     // silence — exactement ce que ce module existe pour empêcher.
     const adapterForKind = getAdapter(channel);
+
+    if (req.kind === 'elicitation') {
+      const asked = readElicitationToolInput(req.toolInput);
+      if (!asked) {
+        console.warn(
+          `[approval-notify] question ${req.approvalRequestId} has an unreadable form; ` +
+            'no card sent, it stays on the dashboard',
+        );
+        return;
+      }
+      const text = buildElicitationCardBody({ server: asked.server, message: asked.message });
+      await record(await adapterForKind.sendText(credentials, conversationId, text));
+      return;
+    }
+
     const question = req.kind === 'question' ? readQuestionToolInput(req.toolInput) : null;
     if (question) {
       const hasButtons =

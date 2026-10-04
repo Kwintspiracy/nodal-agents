@@ -349,3 +349,44 @@ describe('routeDiscordInteraction — cross-agent defense in depth', () => {
     expect(approval?.status).toBe('pending');
   });
 });
+
+describe('routeDiscordInteraction — la question d’un serveur MCP (0145) @cap:approuver-une-action/moteur', () => {
+  // Elle se répond par un formulaire sur le dashboard : aucun bouton de carte
+  // ne la tranche, la ligne reste ouverte.
+  it('un tap ✅ sur une élicitation est refusé, la ligne reste ouverte', async () => {
+    const [row] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: seed.jobId,
+        agentId: seed.agentId,
+        toolName: 'printer__request_print',
+        toolInput: {
+          server: 'printer',
+          message: 'How should it be printed?',
+          requestedSchema: { type: 'object', properties: {} },
+        },
+        kind: 'elicitation',
+        status: 'pending',
+        executedAt: new Date(),
+      })
+      .returning();
+    const ack = makeAck();
+    const result = await routeDiscordInteraction({
+      customId: `apr:${row!.id}:a`,
+      channelId: OWNER_CHANNEL_ID,
+      channelType: 'dm',
+      receivingAgentId: seed.agentId,
+      ack,
+      deps,
+      env,
+    });
+    expect(result).toMatchObject({ handled: false, reason: 'elicitation_answered_on_dashboard' });
+    expect(ack.ephemeralCalls).toEqual(['Answer this one from the dashboard.']);
+    const [after] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, row!.id));
+    expect(after?.status).toBe('pending');
+  });
+});
