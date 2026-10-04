@@ -9,6 +9,7 @@
 
 import {
   ELICITATION_CLOSED_BY,
+  initialElicitationValues,
   readElicitationToolInput,
   setOwnValue,
   type ElicitationActions,
@@ -95,47 +96,17 @@ export type ElicitationFormValue = string | boolean | string[] | null;
 
 export type ElicitationFormState = Record<string, ElicitationFormValue>;
 
-/** L'état de départ : le `default` du serveur quand il en donne un, sinon rien. */
+/**
+ * L'état de départ : les valeurs de départ de toute surface
+ * (`initialElicitationValues`, la règle que les cartes des canaux suivent
+ * aussi), un nombre en texte pendant la saisie, `null` pour un champ non posé.
+ */
 export function initialFormState(fields: readonly ElicitationField[]): ElicitationFormState {
+  const values = initialElicitationValues(fields);
   const state: ElicitationFormState = {};
   for (const f of fields) {
-    switch (f.kind) {
-      case 'boolean':
-        // Un interrupteur n'a que deux états visibles. Obligatoire, il part tel
-        // qu'il se montre ; facultatif, il ne part que si la personne y touche :
-        // l'absence laisse au serveur son propre défaut, qu'un `false` inventé
-        // changerait.
-        setOwnValue(state, f.key, f.default ?? (f.required ? false : null));
-        break;
-      case 'number':
-        setOwnValue(state, f.key, f.default === null ? null : String(f.default));
-        break;
-      case 'text':
-        setOwnValue(state, f.key, f.default);
-        break;
-      case 'choice':
-        setOwnValue(
-          state,
-          f.key,
-          f.default !== null && f.options.some((o) => o.value === f.default) ? f.default : null,
-        );
-        break;
-      case 'multi':
-        // Comme l'interrupteur : une liste de cases a toujours un état visible.
-        // Obligatoire, elle part telle qu'elle se montre ; facultative, elle ne
-        // part que si le serveur en donne une par défaut ou si la personne y
-        // touche, et alors telle quelle, vide comprise.
-        setOwnValue(
-          state,
-          f.key,
-          f.default !== null
-            ? f.default.filter((v) => f.options.some((o) => o.value === v))
-            : f.required
-              ? []
-              : null,
-        );
-        break;
-    }
+    const v = Object.prototype.hasOwnProperty.call(values, f.key) ? values[f.key] : undefined;
+    setOwnValue(state, f.key, v === undefined ? null : typeof v === 'number' ? String(v) : v);
   }
   return state;
 }

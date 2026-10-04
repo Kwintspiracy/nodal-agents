@@ -33,6 +33,7 @@ describe('telegramAdapter.channel / capabilities', () => {
       threads: false,
       media: true,
       editMessage: true,
+      buttonLimits: { maxRows: 100, maxPerRow: 8, maxButtons: 100 },
     });
   });
 });

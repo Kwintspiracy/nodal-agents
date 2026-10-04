@@ -25,12 +25,13 @@ import {
   decryptChannelSecret,
   resolveOwnerConversation,
   recordApprovalCardMessage,
+  approvalRequestAttachments,
 } from '@nodal-agents/db';
 import {
   redactSecretsForAudit,
   renderExplanationText,
   readQuestionToolInput,
-  readElicitationToolInput,
+  quoteThirdPartyText,
 } from '@nodal-agents/shared';
 import { explainApprovalRequest } from './explain-request.ts';
 import {
@@ -38,6 +39,7 @@ import {
   resolveTransportChannel,
   listActiveChannelsForAgent,
   isTransportChannel,
+  jobChatOn,
   type ApprovalCard,
   type QuestionCard,
   type ChannelKind,
@@ -46,6 +48,7 @@ import {
 } from '@nodal-agents/delivery';
 import type { ApprovalGateRequest } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../deps.ts';
+import { loadElicitationCard, renderElicitationCardFor } from './elicitation-card-view.ts';
 
 /** callback_data carried by the buttons. Parsed by approval-callback.ts. Stays well under Telegram's 64-byte cap. */
 export const APPROVAL_CALLBACK_PREFIX = 'apr';
@@ -134,7 +137,7 @@ export function buildElicitationCardBody(args: { server: string; message: string
     `❓ The MCP server "${args.server}" asks:
 
 ` +
-    `« ${args.message} »
+    `${quoteThirdPartyText(args.message)}
 
 ` +
     'Answer from the dashboard: the question is on the run, and on the Approvals page.'
@@ -355,8 +358,18 @@ const DELIVERY_CHAIN_MAX_HOPS = 8;
 export async function walkJobChainToRoot(
   db: RunnerDeps['db'],
   jobId: string,
-): Promise<Array<{ agentId: string; channel: string | null }> | null> {
-  const chain: Array<{ agentId: string; channel: string | null }> = [];
+): Promise<Array<{
+  agentId: string;
+  channel: string | null;
+  chatId: string | null;
+  chatChannel: string | null;
+}> | null> {
+  const chain: Array<{
+    agentId: string;
+    channel: string | null;
+    chatId: string | null;
+    chatChannel: string | null;
+  }> = [];
   let current: string | null = jobId;
   let startEntityId: string | null | undefined;
   for (let hops = 0; current && hops < DELIVERY_CHAIN_MAX_HOPS; hops += 1) {
@@ -364,6 +377,8 @@ export async function walkJobChainToRoot(
       .select({
         agentId: agentJobs.agentId,
         channel: agentJobs.channel,
+        chatId: agentJobs.chatId,
+        chatChannel: agentJobs.chatChannel,
         parentJobId: agentJobs.parentJobId,
         entityId: agentJobs.entityId,
       })
@@ -383,7 +398,7 @@ export async function walkJobChainToRoot(
       );
       return null;
     }
-    chain.push({ agentId, channel: row.channel });
+    chain.push({ agentId, channel: row.channel, chatId: row.chatId, chatChannel: row.chatChannel });
     current = row.parentJobId;
   }
   return chain.length > 0 ? chain : null;
@@ -499,21 +514,11 @@ export async function notifyApprovalCreated(
 ): Promise<void> {
   try {
     // ── 0145 — la question d'un serveur MCP va là où la DEMANDE est née ──────
-    // Une demande faite sur un canal de messages (Telegram, Discord, Slack,
-    // WhatsApp) y reçoit la carte. Une demande faite sur le web, ou sans
-    // personne sur son canal (MCP, API, routine), garde sa question sur le
-    // dashboard — le fil du run, la page Approvals, la cloche — et nulle part
-    // ailleurs : jamais renvoyée sur le canal par défaut du propriétaire.
+    // Sa propre livraison : la conversation d'ORIGINE (pas celle du
+    // propriétaire), ses images, une carte qu'on remplit sur place.
     if (req.kind === 'elicitation') {
-      const chain = await walkJobChainToRoot(deps.db, req.jobId);
-      const origin = chain ? chain[chain.length - 1]!.channel : null;
-      if (!isTransportChannel(origin)) {
-        console.warn(
-          `[approval-notify] question ${req.approvalRequestId} stays on the dashboard: ` +
-            `its request came from "${origin ?? 'unknown'}", not a messaging channel`,
-        );
-        return;
-      }
+      await deliverElicitationToOrigin(deps, req);
+      return;
     }
 
     // Resolve the bot/gateway + conversation that must receive the approval
@@ -570,20 +575,6 @@ export async function notifyApprovalCreated(
     // quelle entrée, et une question sans carte serait un job suspendu en
     // silence — exactement ce que ce module existe pour empêcher.
     const adapterForKind = getAdapter(channel);
-
-    if (req.kind === 'elicitation') {
-      const asked = readElicitationToolInput(req.toolInput);
-      if (!asked) {
-        console.warn(
-          `[approval-notify] question ${req.approvalRequestId} has an unreadable form; ` +
-            'no card sent, it stays on the dashboard',
-        );
-        return;
-      }
-      const text = buildElicitationCardBody({ server: asked.server, message: asked.message });
-      await record(await adapterForKind.sendText(credentials, conversationId, text));
-      return;
-    }
 
     const question = req.kind === 'question' ? readQuestionToolInput(req.toolInput) : null;
     if (question) {
@@ -676,6 +667,196 @@ export async function notifyApprovalCreated(
       `[approval-notify] failed to send approval card for ${req.approvalRequestId}: ${
         err instanceof Error ? err.message : String(err)
       }`,
+    );
+  }
+}
+
+// ─── 0145 — la question d'un serveur MCP, sur le canal de la demande ──────────
+
+/**
+ * Où la DEMANDE d'un job est née : le canal et la conversation de son job
+ * racine, et le bot qui y livre déjà les réponses de l'agent (sur une chaîne
+ * déléguée, l'orchestrateur — la même règle que `resolveTelegramDeliveryTarget`).
+ *
+ * null quand la demande n'est pas née sur un canal de messages (web, MCP, API,
+ * routine) ou que plus rien ne permet d'y écrire : sa question reste alors sur
+ * le dashboard. Jamais la conversation du propriétaire à la place : une
+ * question posée ailleurs que là où l'on a demandé est une question perdue
+ * (règle du propriétaire, 01/10).
+ */
+export async function resolveElicitationOriginTarget(
+  db: RunnerDeps['db'],
+  jobId: string,
+): Promise<ChannelApprovalDeliveryTarget | null> {
+  const chain = await walkJobChainToRoot(db, jobId);
+  if (!chain) return null;
+  const root = chain[chain.length - 1]!;
+  if (!isTransportChannel(root.channel)) return null;
+  // Le chat de la demande, sur SON canal seulement (#657, `jobChatOn`) : un id
+  // de chat porté vers une autre plateforme n'atteint personne, ou quelqu'un
+  // d'autre.
+  const chatId = jobChatOn({ id: root.chatId, channel: root.chatChannel }, root.channel);
+  if (!chatId) return null;
+  if (root.channel === 'telegram') {
+    const target = await resolveTelegramDeliveryTarget(db, jobId);
+    if (!target) return null;
+    return {
+      channel: 'telegram',
+      agentId: target.agentId,
+      credentials: { botToken: target.botToken },
+      conversationId: chatId,
+    };
+  }
+  for (const hop of chain) {
+    const binding = await getChannelBinding(db, hop.agentId, root.channel);
+    if (!binding || !binding.enabled) continue;
+    const credentials = await getBindingCredentials(db, hop.agentId, root.channel);
+    if (!credentials) return null;
+    return {
+      channel: root.channel,
+      agentId: hop.agentId,
+      credentials,
+      conversationId: chatId,
+    };
+  }
+  return null;
+}
+
+/** L'extension de fichier d'une image jointe, pour le nom que le canal affiche. */
+const IMAGE_EXTENSION: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+};
+
+/**
+ * La question d'un serveur MCP, posée dans la conversation où la demande est
+ * née : ses images d'abord (`nodal/attachments`, chacune avec sa légende),
+ * puis UNE carte qu'on remplit sur place — un bouton par choix, Yes / No par
+ * interrupteur, ✏️ pour un nombre ou un texte à taper en réponse, Send /
+ * Decline. La carte est consignée (#637) : chaque geste la réécrit, et la
+ * décision, d'où qu'elle vienne, la règle.
+ *
+ * Un canal sans boutons (WhatsApp), ou dont les boutons ne suffisent pas au
+ * formulaire, reçoit la question et le renvoi au dashboard, avec la raison —
+ * jamais une carte amputée.
+ */
+async function deliverElicitationToOrigin(
+  deps: RunnerDeps,
+  req: ApprovalGateRequest,
+): Promise<void> {
+  const target = await resolveElicitationOriginTarget(deps.db, req.jobId);
+  if (!target) {
+    console.warn(
+      `[approval-notify] question ${req.approvalRequestId} stays on the dashboard: ` +
+        'its request was not made on a messaging channel this agent can still reach',
+    );
+    return;
+  }
+  const loaded = await loadElicitationCard(deps.db, req.approvalRequestId);
+  if (!loaded.ok) {
+    console.warn(
+      `[approval-notify] question ${req.approvalRequestId} has no card (${loaded.reason}); ` +
+        'it stays on the dashboard',
+    );
+    return;
+  }
+  const { state } = loaded;
+  const { channel, credentials, conversationId } = target;
+  const adapter = getAdapter(channel);
+
+  // The card says its images are "above": it is sent only when every one of
+  // them was. Otherwise the question goes with the dashboard pointer, and says
+  // how many images are only there (invariant #4).
+  let imagesNotSent = 0;
+  if (state.imageCount > 0) {
+    if (!adapter.capabilities.media) {
+      imagesNotSent = state.imageCount;
+      console.warn(
+        `[approval-notify] ${channel} cannot carry images: the ${state.imageCount} image(s) of ` +
+          `question ${req.approvalRequestId} are on the dashboard only`,
+      );
+    } else {
+      const images = await deps.db
+        .select({
+          position: approvalRequestAttachments.position,
+          mimeType: approvalRequestAttachments.mimeType,
+          data: approvalRequestAttachments.data,
+          caption: approvalRequestAttachments.caption,
+        })
+        .from(approvalRequestAttachments)
+        .where(eq(approvalRequestAttachments.approvalRequestId, req.approvalRequestId))
+        .orderBy(approvalRequestAttachments.position);
+      for (const image of images) {
+        try {
+          await adapter.sendMedia(credentials, conversationId, {
+            kind: 'photo',
+            bytes: Buffer.from(image.data, 'base64'),
+            filename: `image-${image.position + 1}.${IMAGE_EXTENSION[image.mimeType] ?? 'img'}`,
+            ...(image.caption ? { caption: image.caption } : {}),
+          });
+        } catch (err) {
+          imagesNotSent += 1;
+          console.warn(
+            `[approval-notify] image ${image.position} of question ${req.approvalRequestId} ` +
+              `was not delivered on ${channel}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    }
+  }
+
+  // A pointer to the dashboard, not a card: nothing on it answers, so it is
+  // not recorded as one (a reply to it is an ordinary message). It quotes the
+  // server's question: where the channel has cards, it goes as a card with no
+  // button, whose text is never formatted and notifies nobody.
+  const pointToDashboard = async (why: string): Promise<void> => {
+    console.warn(`[approval-notify] question ${req.approvalRequestId}: ${why}`);
+    const text = `${buildElicitationCardBody({ server: state.asked.server, message: state.asked.message })}\n(${why}.)`;
+    if (adapter.sendCard)
+      await adapter.sendCard(credentials, conversationId, { text, buttons: [] });
+    else await adapter.sendText(credentials, conversationId, text);
+  };
+  const card = renderElicitationCardFor(state, channel);
+  if (!card.ok || !adapter.sendCard || imagesNotSent > 0) {
+    await pointToDashboard(
+      !adapter.sendCard
+        ? `${channel} has no buttons to fill a form with`
+        : imagesNotSent > 0
+          ? `${imagesNotSent} image${imagesNotSent === 1 ? '' : 's'} of this question could not be ` +
+            `sent on ${channel}: see ${imagesNotSent === 1 ? 'it' : 'them'} on the dashboard`
+          : `this form does not fit on ${channel}: ${card.ok ? '' : card.reason}`,
+    );
+    return;
+  }
+  let sent: SendResult;
+  try {
+    sent = await adapter.sendCard(credentials, conversationId, {
+      text: card.text,
+      buttons: card.buttons,
+    });
+  } catch (err) {
+    // The card did not leave (rate limit, revoked key, a keyboard the channel
+    // refused): the question still reaches the conversation, with the reason.
+    await pointToDashboard(
+      `the card could not be sent on ${channel}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return;
+  }
+  try {
+    await recordApprovalCardMessage(deps.db, {
+      approvalRequestId: req.approvalRequestId,
+      channel,
+      agentId: target.agentId,
+      conversationId,
+      messageId: sent.messageId,
+    });
+  } catch (err) {
+    console.warn(
+      `[approval-notify] card for ${req.approvalRequestId} was sent on ${channel} ` +
+        `(message ${sent.messageId}) but could not be recorded — its buttons will not answer: ` +
+        (err instanceof Error ? err.message : String(err)),
     );
   }
 }

@@ -44,6 +44,7 @@ import {
   type DiscordHandleResult,
 } from './handler.ts';
 import { routeDiscordInteraction } from './interactions.ts';
+import { handleElicitationReply } from '../../approvals/elicitation-channel.ts';
 import { makeDiscordInteractionAck } from './interaction-ack.ts';
 import { DISCORD_AUTH_CALLBACK_PREFIX } from './auth-callback.ts';
 import { stopReaction } from '../turn.ts';
@@ -93,6 +94,7 @@ function toInboundMessage(message: Message, botUserId: string | null): DiscordIn
     mentionsSelf: userMentioned || managedRole !== undefined,
     selfMentionTokens,
     referencedMessageAuthorId: message.mentions.repliedUser?.id,
+    ...(message.reference?.messageId ? { referencedMessageId: message.reference.messageId } : {}),
     attachments: [...message.attachments.values()].map((a) => ({
       url: a.url,
       contentType: a.contentType,
@@ -161,6 +163,29 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
     if (message.author.bot) return;
 
     const inbound = toInboundMessage(message, client.user?.id ?? null);
+
+    // 0145 — a reply to the card of an MCP server's question fills the field
+    // that waits for it. Any other reply is an ordinary message, below.
+    if (inbound.referencedMessageId) {
+      const answered = await handleElicitationReply({
+        deps,
+        origin: {
+          channel: 'discord',
+          receivingAgentId: agentId,
+          conversationId: inbound.channelId,
+        },
+        replyToMessageId: inbound.referencedMessageId,
+        text: inbound.content,
+      }).catch((err: unknown) => {
+        console.error(
+          `[discord-gateway agent=${agentId}] reply could not be read as an answer to a question ` +
+            `card, handled as a message: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return null;
+      });
+      if (answered?.handled) return;
+    }
+
     let result: DiscordHandleResult;
     try {
       result = await deps.db.transaction((tx) =>

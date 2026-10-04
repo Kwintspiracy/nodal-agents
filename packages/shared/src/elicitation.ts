@@ -374,6 +374,49 @@ export function parseElicitationSchema(raw: unknown): ParsedElicitationSchema {
   return { ok: true, fields };
 }
 
+/**
+ * Les valeurs de départ d'un formulaire, pour TOUTE surface (le web, les cartes
+ * des canaux) : une règle, un endroit.
+ *
+ * Le `default` du serveur quand il est valide. Sinon, un champ qui montre
+ * toujours un état (un interrupteur, une liste de cases) part tel qu'il se
+ * montre s'il est obligatoire, et n'est pas posé s'il est facultatif : son
+ * absence laisse au serveur son propre défaut, qu'une valeur inventée
+ * changerait. Un champ non posé ne part pas.
+ */
+export function initialElicitationValues(
+  fields: readonly ElicitationField[],
+): Record<string, ElicitationValue> {
+  const values: Record<string, ElicitationValue> = {};
+  for (const f of fields) {
+    switch (f.kind) {
+      case 'boolean':
+        if (f.default !== null) setOwnValue(values, f.key, f.default);
+        else if (f.required) setOwnValue(values, f.key, false);
+        break;
+      case 'choice':
+        if (f.default !== null && f.options.some((o) => o.value === f.default)) {
+          setOwnValue(values, f.key, f.default);
+        }
+        break;
+      case 'multi':
+        if (f.default !== null) {
+          setOwnValue(
+            values,
+            f.key,
+            f.default.filter((v) => f.options.some((o) => o.value === v)),
+          );
+        } else if (f.required) setOwnValue(values, f.key, []);
+        break;
+      case 'number':
+      case 'text':
+        if (f.default !== null) setOwnValue(values, f.key, f.default);
+        break;
+    }
+  }
+  return values;
+}
+
 // ─── La réponse ───────────────────────────────────────────────────────────────
 
 export interface ElicitationContentError {
