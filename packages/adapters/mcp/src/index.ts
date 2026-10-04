@@ -6,7 +6,12 @@
 
 import type { z } from 'zod';
 import type { ToolDefinition } from '@nodal-agents/tools';
-import { connectMcp, type McpConnectOptions, type McpToolDescriptor } from './client.ts';
+import {
+  connectMcp,
+  type McpConnectOptions,
+  type McpServerDiscovery,
+  type McpToolDescriptor,
+} from './client.ts';
 import { mcpToolToToolDefinition, mcpToolToLazyToolDefinition } from './tools.ts';
 
 /**
@@ -34,6 +39,12 @@ export interface McpToolset {
   close: () => Promise<void>;
 }
 
+/** An eagerly connected toolset also knows what the server published at initialize. */
+export interface ConnectedMcpToolset extends McpToolset {
+  /** The server's `instructions`, fresh off this connection (null: it published none). */
+  instructions: string | null;
+}
+
 /**
  * Connect to an MCP server, discover its tools, and wrap each as a NodalAI
  * ToolDefinition. The caller MUST call `close()` when finished — typically in
@@ -42,22 +53,23 @@ export interface McpToolset {
  * Throws on connection failure or auth rejection (callers decide whether to
  * fail loud or skip the server).
  */
-export async function createMcpTools(opts: CreateMcpToolsOptions): Promise<McpToolset> {
+export async function createMcpTools(opts: CreateMcpToolsOptions): Promise<ConnectedMcpToolset> {
   // A job's toolset: a person can answer the server's questions (elicitation).
   const conn = await connectMcp(opts, { answersElicitation: true });
   const tools = conn.tools.map((t) => mcpToolToToolDefinition(conn.client, t, opts.slug));
-  return { tools, descriptors: conn.tools, close: conn.close };
+  return { tools, descriptors: conn.tools, instructions: conn.instructions, close: conn.close };
 }
 
 export interface CreateLazyMcpToolsOptions {
   /**
-   * Called once, right after a successful lazy connect, with the FRESH tool
-   * descriptors (not the cached ones the toolset was built from). Used to
-   * refresh `mcp_servers.available_tools` so the next job's cache stays
-   * accurate. Errors thrown by this hook are swallowed — a cache-refresh
-   * failure must never break the tool call that triggered the connection.
+   * Called once, right after a successful lazy connect, with what the live
+   * server says NOW — its tools (not the cached ones the toolset was built
+   * from) and its instructions. Used to refresh `mcp_servers.available_tools`
+   * and `mcp_servers.instructions` so the next job reads them. Errors thrown
+   * by this hook are swallowed — a cache-refresh failure must never break the
+   * tool call that triggered the connection.
    */
-  onConnected?: (liveTools: McpToolDescriptor[]) => void | Promise<void>;
+  onConnected?: (live: McpServerDiscovery) => void | Promise<void>;
 }
 
 /**
@@ -85,7 +97,8 @@ export function createLazyMcpTools(
       connectPromise = connectMcp(opts, { answersElicitation: true })
         .then((conn) => {
           if (lazyOpts.onConnected) {
-            Promise.resolve(lazyOpts.onConnected(conn.tools)).catch((err: unknown) => {
+            const live = { tools: conn.tools, instructions: conn.instructions };
+            Promise.resolve(lazyOpts.onConnected(live)).catch((err: unknown) => {
               console.error(
                 `[adapter-mcp] onConnected cache-refresh hook failed for '${opts.slug}':`,
                 err instanceof Error ? err.message : err,
@@ -130,6 +143,7 @@ export type {
   McpElicitationResponder,
   McpConnectOptions,
   McpConnection,
+  McpServerDiscovery,
   McpToolDescriptor,
   McpAuthScheme,
   McpRequestTarget,

@@ -187,3 +187,20 @@ describe('aperçu du prompt du root (Réglages → Root context) @cap:configurer
     expect(announced(res.data)).toEqual(announced(job));
   });
 });
+
+// Revue Codex passe 4 de #659 : l'aperçu ne passait que les outils intégrés
+// du root, jamais ceux de ses serveurs MCP : le bloc de consignes d'un
+// serveur, que le vrai job reçoit, n'y apparaissait pas.
+describe('aperçu du prompt du root : les consignes des serveurs MCP @cap:configurer-agent/ecran', () => {
+  it('montre les consignes du serveur dont le job du root tient un outil', async () => {
+    await testDb
+      .update(mcpServers)
+      .set({ instructions: 'Search before you write a new page.' })
+      .where(eq(mcpServers.slug, MCP_SERVER_SLUG));
+    const { getRootSystemPromptAction } = await import('../actions.ts');
+    const res = await getRootSystemPromptAction();
+    expect(res.ok, res.ok ? '' : res.message).toBe(true);
+    if (!res.ok) return;
+    expect(res.data).toContain('Search before you write a new page.');
+  });
+});

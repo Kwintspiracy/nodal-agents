@@ -575,6 +575,7 @@ describe('create_agent', () => {
 function fakeProvisioning(opts?: {
   fail?: boolean;
   tools?: ProvisionedMcpTool[];
+  instructions?: string;
 }): ToolProvisioning {
   return {
     async connectMcp() {
@@ -583,6 +584,7 @@ function fakeProvisioning(opts?: {
         tools: opts?.tools ?? [
           { name: 'search', description: 'a search tool', inputSchema: { type: 'object' } },
         ],
+        instructions: opts?.instructions ?? null,
         close: async () => {},
       };
     },
@@ -610,6 +612,7 @@ describe('create_mcp', () => {
           tools: [
             { name: 'do_thing', description: 'does a thing', inputSchema: { type: 'object' } },
           ],
+          instructions: 'Call do_thing once per request.',
         }),
       ),
     );
@@ -635,6 +638,8 @@ describe('create_mcp', () => {
     expect(row!.availableTools).toEqual([
       { name: 'do_thing', description: 'does a thing', inputSchema: { type: 'object' } },
     ]);
+    // …and the server's guidance, written by the same connection.
+    expect(row!.instructions).toBe('Call do_thing once per request.');
   });
 
   it('refuses a slug outside the canonical grammar: no doubled, leading or trailing hyphen (#661) @cap:connecter-un-service/moteur', () => {
@@ -714,6 +719,8 @@ describe('create_mcp', () => {
     expect(row!.command).toBe('npx');
     expect(row!.args).toEqual(['-y', 'some-mcp-server']);
     expect(row!.envVars).toEqual({ TOKEN: 'enc:ghp_abc', REGION: 'enc:eu' });
+    // A server that publishes no guidance stores none.
+    expect(row!.instructions).toBeNull();
   });
 
   it('fail-loud: a connection failure writes NO row and returns a clear error', async () => {

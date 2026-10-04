@@ -5086,12 +5086,14 @@ describe('resetSkillToDefaultAction', () => {
 
 function mockMcpConnection(
   tools: Array<{ name: string; description?: string; inputSchema?: unknown }>,
+  instructions: string | null = null,
 ) {
   return {
     client: {
       callTool: vi.fn().mockResolvedValue({ content: [], isError: false }),
     },
     tools,
+    instructions,
     close: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -5165,10 +5167,13 @@ describe('createMcpServerFromCatalogAction', () => {
   it('happy path — encrypts the key, caches discovered tools (full descriptor, inputSchema included), inserts the row', async () => {
     mcpAdapterMocks.connectMcp.mockReset();
     mcpAdapterMocks.connectMcp.mockResolvedValue(
-      mockMcpConnection([
-        { name: 'get_home', description: 'home view', inputSchema: { type: 'object' } },
-        { name: 'get_feed', inputSchema: { type: 'object' } },
-      ]),
+      mockMcpConnection(
+        [
+          { name: 'get_home', description: 'home view', inputSchema: { type: 'object' } },
+          { name: 'get_feed', inputSchema: { type: 'object' } },
+        ],
+        'Read get_home before get_feed.',
+      ),
     );
     currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-0000000003a1' }]) as typeof currentDb;
     const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
@@ -5197,6 +5202,9 @@ describe('createMcpServerFromCatalogAction', () => {
       { name: 'get_home', description: 'home view', inputSchema: { type: 'object' } },
       { name: 'get_feed', inputSchema: { type: 'object' } },
     ]);
+    // The server's guidance, from the same connection, for the prompt of the
+    // agents that will hold it.
+    expect(values?.['instructions']).toBe('Read get_home before get_feed.');
   });
 
   // ── Custom HTTP MCP ───────────────────────────────────────────────────────
@@ -5301,7 +5309,10 @@ describe('createMcpServerFromCatalogAction', () => {
   it('custom-stdio-mcp — spawns the subprocess, encrypts env values, persists transport=stdio', async () => {
     mcpAdapterMocks.connectMcp.mockReset();
     mcpAdapterMocks.connectMcp.mockResolvedValue(
-      mockMcpConnection([{ name: 'read_file', description: 'read a file' }]),
+      mockMcpConnection(
+        [{ name: 'read_file', description: 'read a file' }],
+        'Paths are relative to /tmp.',
+      ),
     );
     currentDb = makeDbMixed({
       // HIGH-2: owner-gate SELECT (entities) resolves to the owner, THEN the
@@ -5344,6 +5355,7 @@ describe('createMcpServerFromCatalogAction', () => {
     // Env value is encrypted, not plaintext.
     expect(isEncrypted(envVars['GITHUB_TOKEN']!)).toBe(true);
     expect(envVars['GITHUB_TOKEN']).not.toBe('ghp_secret_value');
+    expect(values?.['instructions']).toBe('Paths are relative to /tmp.');
   });
 
   it('custom-stdio-mcp — refuses a non-owner (HIGH-2 owner-gate, never spawns)', async () => {
@@ -5454,7 +5466,10 @@ describe('updateMcpServerConfigAction', () => {
     ]) as typeof currentDb;
     mcpAdapterMocks.connectMcp.mockReset();
     mcpAdapterMocks.connectMcp.mockResolvedValue(
-      mockMcpConnection([{ name: 'do_thing', inputSchema: { type: 'object' } }]),
+      mockMcpConnection(
+        [{ name: 'do_thing', inputSchema: { type: 'object' } }],
+        'do_thing is idempotent.',
+      ),
     );
 
     const { updateMcpServerConfigAction } = await import('../src/lib/actions.ts');
@@ -5481,6 +5496,7 @@ describe('updateMcpServerConfigAction', () => {
     expect(set?.['availableTools']).toEqual([
       { name: 'do_thing', inputSchema: { type: 'object' } },
     ]);
+    expect(set?.['instructions']).toBe('do_thing is idempotent.');
   });
 
   it('stdio: a new env value REPLACES with a fresh ciphertext and verifies with the plaintext', async () => {
@@ -5557,6 +5573,10 @@ describe('updateMcpServerConfigAction', () => {
     expect(set?.['url']).toBe('https://new.example.com/mcp');
     expect(set?.['name']).toBe('API v2');
     expect('apiKey' in (set ?? {})).toBe(false); // key untouched
+    // The server publishes no guidance on this connection: whatever an earlier
+    // one stored is cleared, never kept.
+    expect('instructions' in (set ?? {})).toBe(true);
+    expect(set?.['instructions']).toBeNull();
   });
 
   it('fails loud and writes nothing when the new config cannot connect', async () => {
@@ -5588,6 +5608,38 @@ describe('updateMcpServerConfigAction', () => {
     // No UPDATE was issued.
     const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
     expect(updateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateMcpServerApiKeyAction', () => {
+  it('the verifying connection refreshes the tools AND the guidance the server publishes', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-0000000005c1',
+        slug: 'my-api',
+        url: 'https://api.example.com/mcp',
+        authScheme: 'header',
+        authParamName: 'x-api-key',
+      },
+    ]) as typeof currentDb;
+    mcpAdapterMocks.connectMcp.mockReset();
+    mcpAdapterMocks.connectMcp.mockResolvedValue(
+      mockMcpConnection([{ name: 'ping', inputSchema: { type: 'object' } }], 'Ping first.'),
+    );
+
+    const { updateMcpServerApiKeyAction } = await import('../src/lib/actions.ts');
+    const r = await updateMcpServerApiKeyAction(
+      'aaaaaaaa-0000-0000-0000-0000000005c1',
+      'sk_live_rotated',
+    );
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setFn = (updateSpy.mock.results[0]?.value as { set?: ReturnType<typeof vi.fn> }).set;
+    const set = setFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(decrypt(set?.['apiKey'] as string)).toBe('sk_live_rotated');
+    expect(set?.['availableTools']).toEqual([{ name: 'ping', inputSchema: { type: 'object' } }]);
+    expect(set?.['instructions']).toBe('Ping first.');
   });
 });
 
