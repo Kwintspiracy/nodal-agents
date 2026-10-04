@@ -212,6 +212,7 @@ import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
 import {
   buildSystemPrompt,
   resolveBuiltinToolNames,
+  resolveMcpToolNames,
   DEFAULT_LIMITS,
   UNBLOCKABLE_TOOLS,
   INTERNAL_TOOL_DESCRIPTORS,
@@ -5056,6 +5057,7 @@ export async function createMcpServerFromCatalogAction(
       }
 
       let toolDescriptors: McpToolSummary[] = [];
+      let instructions: string | null = null;
       let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
       try {
         conn = await connectMcp({
@@ -5078,6 +5080,7 @@ export async function createMcpServerFromCatalogAction(
         // not just name/description — the runner's isUsableMcpToolCache
         // requires inputSchema on every entry to take the lazy-connect path.
         toolDescriptors = conn.tools;
+        instructions = conn.instructions;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return fail('mcp_connect_failed', `Could not connect to ${catalog.label}: ${msg}`);
@@ -5100,6 +5103,7 @@ export async function createMcpServerFromCatalogAction(
           authScheme: effectiveAuthScheme,
           authParamName: effectiveAuthParamName,
           availableTools: toolDescriptors,
+          instructions,
           active: true,
         })
         .returning({ id: mcpServers.id });
@@ -5124,6 +5128,7 @@ export async function createMcpServerFromCatalogAction(
     const userEnv = parsed.data.customEnv ?? {};
 
     let stdioToolDescriptors: McpToolSummary[] = [];
+    let stdioInstructions: string | null = null;
     let stdioConn: Awaited<ReturnType<typeof connectMcp>> | null = null;
     try {
       stdioConn = await connectMcp({
@@ -5135,6 +5140,7 @@ export async function createMcpServerFromCatalogAction(
       // Persist the FULL descriptor (inputSchema + annotations included) —
       // see the http path above for why.
       stdioToolDescriptors = stdioConn.tools;
+      stdioInstructions = stdioConn.instructions;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return fail(
@@ -5173,6 +5179,7 @@ export async function createMcpServerFromCatalogAction(
         args,
         envVars: encEnv,
         availableTools: stdioToolDescriptors,
+        instructions: stdioInstructions,
         active: true,
       })
       .returning({ id: mcpServers.id });
@@ -5255,6 +5262,7 @@ export async function updateMcpServerApiKeyAction(
     // is gated on existing.url / authScheme above so we're definitely HTTP
     // here.
     let toolDescriptors: McpToolSummary[] = [];
+    let instructions: string | null = null;
     let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
     try {
       conn = await connectMcp({
@@ -5269,6 +5277,7 @@ export async function updateMcpServerApiKeyAction(
       // second tools/list round-trip that used to strip it down to
       // name/description.
       toolDescriptors = conn.tools;
+      instructions = conn.instructions;
       if (catalog?.verifyToolName) {
         await conn.client.callTool({ name: catalog.verifyToolName, arguments: {} });
       }
@@ -5287,6 +5296,7 @@ export async function updateMcpServerApiKeyAction(
         apiKey: enc,
         apiKeyLast4: last4(apiKey),
         availableTools: toolDescriptors,
+        instructions,
         updatedAt: new Date(),
       })
       .where(eq(mcpServers.id, mcpServerId));
@@ -5464,6 +5474,7 @@ export async function updateMcpServerConfigAction(
       }
 
       let toolDescriptors: McpToolSummary[] = [];
+      let instructions: string | null = null;
       let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
       try {
         conn = await connectMcp({
@@ -5476,6 +5487,7 @@ export async function updateMcpServerConfigAction(
         // Persist the FULL descriptor (inputSchema + annotations included) —
         // see createMcpServerFromCatalogAction above for why.
         toolDescriptors = conn.tools;
+        instructions = conn.instructions;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return fail('mcp_connect_failed', `Could not connect with the new config: ${msg}`);
@@ -5491,6 +5503,7 @@ export async function updateMcpServerConfigAction(
           authScheme: effectiveScheme,
           authParamName: effectiveParam,
           availableTools: toolDescriptors,
+          instructions,
           ...(newKeyProvided
             ? { apiKey: encrypt(apiKeyPlain), apiKeyLast4: last4(apiKeyPlain) }
             : {}),
@@ -5546,6 +5559,7 @@ export async function updateMcpServerConfigAction(
     }
 
     let toolDescriptors: McpToolSummary[] = [];
+    let instructions: string | null = null;
     let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
     try {
       conn = await connectMcp({
@@ -5557,6 +5571,7 @@ export async function updateMcpServerConfigAction(
       // Persist the FULL descriptor (inputSchema + annotations included) —
       // see createMcpServerFromCatalogAction above for why.
       toolDescriptors = conn.tools;
+      instructions = conn.instructions;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return fail(
@@ -5575,6 +5590,7 @@ export async function updateMcpServerConfigAction(
         args: effectiveArgs,
         envVars: encEnv,
         availableTools: toolDescriptors,
+        instructions,
         updatedAt: new Date(),
       })
       .where(eq(mcpServers.id, mcpServerId));
@@ -13207,8 +13223,12 @@ export async function getRootSystemPromptAction(): Promise<ActionResult<string>>
     // Les outils intégrés que le job du root tient, par la règle unique du
     // runner (#636) : sans eux l'aperçu retombait sur les seuls outils
     // toujours actifs, et cachait chaque bloc qui suit la liste — l'index des
-    // skills d'abord (lot 2, voie H). Connecteurs et MCP n'y sont pas.
-    const { names: availableToolNames } = await resolveBuiltinToolNames(db, rootAgentId);
+    // skills d'abord (lot 2, voie H). Plus les outils que ses serveurs MCP lui
+    // prêtent, lus de leurs listes : sans eux, les consignes de ces serveurs,
+    // que le vrai job reçoit, manquaient à l'aperçu (revue Codex passe 4 de
+    // #659). Les connecteurs n'y sont pas.
+    const { names: builtinNames } = await resolveBuiltinToolNames(db, rootAgentId);
+    const availableToolNames = [...builtinNames, ...(await resolveMcpToolNames(db, rootAgentId))];
     const prompt = await buildSystemPrompt(agent, db, {
       origin: 'dashboard',
       deployment,
