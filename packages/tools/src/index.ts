@@ -93,7 +93,7 @@ export { hasMarker } from './projects/markers';
 
 // RiskLevel (re-exported from @nodal-agents/shared via types.ts) + runtime constant
 export type { RiskLevel } from './types';
-export { RISK_LEVELS } from './types';
+export { RISK_LEVELS, toolOutputForModel } from './types';
 
 // Errors
 export {
@@ -102,6 +102,7 @@ export {
   ToolNotFoundError,
   WhitelistDriftError,
   WebSearchNotConfiguredError,
+  ToolFailedWithOutput,
 } from './errors';
 
 // Registry
