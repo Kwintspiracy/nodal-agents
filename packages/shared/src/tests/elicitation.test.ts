@@ -14,6 +14,9 @@ import {
   elicitationActionLabels,
   ELICITATION_ACTION_LABEL_MAX,
   ELICITATION_TEXT_MAX,
+  ELICITATION_FIELDS_MAX,
+  ELICITATION_OPTIONS_MAX,
+  ELICITATION_SCHEMA_MAX_CHARS,
 } from '../elicitation';
 
 const FORM = {
@@ -276,5 +279,61 @@ describe('un champ nommé __proto__ est un champ @cap:approuver-une-action/moteu
     expect(Object.prototype.hasOwnProperty.call(r.content, '__proto__')).toBe(true);
     expect(JSON.stringify(r.content)).toBe('{"__proto__":"keep me"}');
     expect(Object.getPrototypeOf(r.content)).toBe(Object.prototype);
+  });
+});
+
+// Revue Codex passe 4 de #660 : un formulaire sans borne de taille se
+// dessinait et s'enregistrait en entier, quel que soit son nombre de champs ou
+// d'options. Il est refusé au serveur, avec la raison, avant toute ligne.
+describe('un formulaire a une taille bornée @cap:approuver-une-action/moteur', () => {
+  const props = (n: number) =>
+    Object.fromEntries(Array.from({ length: n }, (_, i) => [`f${i}`, { type: 'boolean' }]));
+
+  it('trop de champs, trop d’options, trop gros : refusé avec la raison', () => {
+    expect(
+      parseElicitationSchema({ type: 'object', properties: props(ELICITATION_FIELDS_MAX) }).ok,
+    ).toBe(true);
+    expect(
+      parseElicitationSchema({ type: 'object', properties: props(ELICITATION_FIELDS_MAX + 1) }),
+    ).toEqual({
+      ok: false,
+      reason: `the form has ${ELICITATION_FIELDS_MAX + 1} fields, more than the ${ELICITATION_FIELDS_MAX} a person is asked at once`,
+    });
+    const options = Array.from({ length: ELICITATION_OPTIONS_MAX + 1 }, (_, i) => `o${i}`);
+    expect(
+      parseElicitationSchema({
+        type: 'object',
+        properties: { pick: { type: 'string', enum: options } },
+      }),
+    ).toEqual({
+      ok: false,
+      reason: `property "pick" offers ${ELICITATION_OPTIONS_MAX + 1} choices, more than ${ELICITATION_OPTIONS_MAX}`,
+    });
+    const big = {
+      type: 'object',
+      properties: {
+        note: { type: 'string', description: 'x'.repeat(ELICITATION_SCHEMA_MAX_CHARS) },
+      },
+    };
+    const r = parseElicitationSchema(big);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/^the form takes \d+ characters, more than 20000$/);
+  });
+});
+
+// Revue Codex passe 4 de #660 : JSON Schema compte les longueurs en points de
+// code ; `value.length` compte des unités UTF-16, et refusait un emoji seul
+// sous `maxLength: 1`.
+describe('les longueurs se comptent en caractères @cap:approuver-une-action/moteur', () => {
+  it('un emoji est un caractère', () => {
+    const form = (bound: Record<string, number>) => ({
+      type: 'object',
+      properties: { mark: { type: 'string', ...bound } },
+    });
+    expect(validateElicitationContent(form({ maxLength: 1 }), { mark: '\u{1F600}' }).ok).toBe(true);
+    expect(validateElicitationContent(form({ minLength: 2 }), { mark: '\u{1F600}' })).toEqual({
+      ok: false,
+      errors: [{ field: 'mark', reason: 'must be at least 2 characters' }],
+    });
   });
 });

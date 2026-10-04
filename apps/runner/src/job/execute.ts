@@ -84,6 +84,7 @@ import { recheckNarratedAction } from '../llm/action-recheck.ts';
 import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
 import { deferredToolNames, toolsLoadedByCalls, toolsSentThisTurn } from './tool-loading.ts';
 import { resolveAgentToolNames } from './resolve-agent-tools.ts';
+import { createHumanWaitClock } from './human-wait.ts';
 import { loadApprovalRules } from './approval-rules.ts';
 import {
   computeToolWhitelist,
@@ -1829,7 +1830,11 @@ async function runJobTracked(
   // avant délégation) sont précisément ceux qui l'omettaient. Constat de la
   // revue Codex sur cette PR, fermé par un test qui suspend pour de vrai au
   // lieu de précharger la colonne.
-  const dureeCumuleeMs = (): number => dejaCompteMs + (Date.now() - startedAt);
+  // Sans le temps passé à attendre une personne SANS suspendre (fenêtre de
+  // grâce d'une approbation, question d'un serveur MCP) : human-wait.ts.
+  const attenteHumaine = createHumanWaitClock();
+  const dureeCumuleeMs = (): number =>
+    dejaCompteMs + (Date.now() - startedAt) - attenteHumaine.ms();
 
   const runStats = (): {
     inputTokens: number;
@@ -2970,7 +2975,7 @@ async function runJobTracked(
   // attendue SANS suspendre le job (le serveur garde son appel ouvert). Donnée
   // à chaque appel d'outil de ce run, appels approuvés rejoués compris : c'est
   // souvent là qu'un outil gaté pose sa question.
-  const requestUserInput = createRequestUserInput(
+  const askPerson = createRequestUserInput(
     deps,
     { jobId: jobId as string, agentId: agentRow.id, entityId: job.entityId ?? '' },
     {
@@ -2980,6 +2985,8 @@ async function runJobTracked(
       ),
     },
   );
+  // Le temps où la personne réfléchit n'est pas du temps travaillé.
+  const requestUserInput: typeof askPerson = (req) => attenteHumaine.during(() => askPerson(req));
 
   const executeResolvedApprovals = async (
     resolvedRows: ApprovalRequestRow[],
@@ -3735,7 +3742,10 @@ async function runJobTracked(
       // The wait on a human stays fresh to the reapers through the job's own
       // heartbeat (#565), held from the claim — nothing to start here.
       while (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        // Waiting for the person's decision: not worked time (human-wait.ts).
+        await attenteHumaine.during(
+          () => new Promise((resolve) => setTimeout(resolve, pollIntervalMs)),
+        );
 
         // A lost right to act wins even mid-window (#566): execute
         // nothing, touch no status — the top-of-turn check (Leg 2).

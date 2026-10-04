@@ -8,6 +8,7 @@
 // refait, et c'est lui qui décide.
 
 import {
+  ELICITATION_CLOSED_BY,
   readElicitationToolInput,
   setOwnValue,
   type ElicitationActions,
@@ -189,18 +190,20 @@ export function describeAnswerValue(field: ElicitationField | undefined, value: 
 }
 
 /**
- * Pourquoi une question n'a pas reçu de réponse. `expired` couvre trois
- * chemins du runner, et la personne doit savoir lequel : le temps a passé, le
- * run s'est arrêté, ou le serveur a retiré sa question.
+ * Pourquoi une question n'a pas reçu de réponse. `expired` couvre chaque
+ * chemin du runner (ELICITATION_CLOSED_BY, la liste partagée), et la personne
+ * doit savoir lequel : le temps a passé, le run s'est arrêté (annulé, ou son
+ * runner a redémarré), ou le serveur a retiré sa question.
  */
 export function expiredReason(resolvedBy: string | null): string {
   switch (resolvedBy) {
-    case 'system:job_cancelled':
+    case ELICITATION_CLOSED_BY.jobLost:
+    case ELICITATION_CLOSED_BY.runnerRestarted:
       return 'Closed: the run stopped before an answer';
-    case 'system:server_cancelled':
+    case ELICITATION_CLOSED_BY.serverWithdrew:
       return 'Withdrawn by the server';
     case 'system:ttl_expired':
-    case 'system:timeout':
+    case ELICITATION_CLOSED_BY.timeout:
       return 'Expired: no answer in time';
     default:
       return 'Expired: no answer was sent';

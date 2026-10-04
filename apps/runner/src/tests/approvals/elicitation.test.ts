@@ -17,6 +17,7 @@ import { approvalRequests, approvalRequestAttachments, agentJobs } from '@nodal-
 import type { UserInputRequest } from '@nodal-agents/tools';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
 import { createRequestUserInput } from '../../approvals/elicitation.ts';
+import { ELICITATION_MESSAGE_MAX } from '@nodal-agents/shared';
 import { expireStaleApprovals, resetOrphanedJobs } from '../../cron/reset-orphans.ts';
 import { reclaimJobsOfDeadRunners, RUNNER_LIVENESS_WINDOW_MS } from '../../cron/reclaim-jobs.ts';
 import { reviveJobIfApprovalResolvedDuringSuspend } from '../../job/execute.ts';
@@ -451,5 +452,26 @@ describe('une question vit tant que son appel vit @cap:approuver-une-action/mote
     const stored = await readRow(question.id);
     expect(stored.status).toBe('expired');
     expect(stored.resolvedBy).toBe('system:runner_restarted');
+  });
+});
+
+// Revue Codex passe 4 de #660 : la question elle-même a une borne.
+describe('une question trop longue est refusée avant toute ligne @cap:approuver-une-action/moteur', () => {
+  it('le serveur reçoit une erreur qui le dit ; aucune ligne n’attend', async () => {
+    const ask = createRequestUserInput(
+      makeDeps(),
+      { jobId: seed.jobId, agentId: seed.agentId, entityId: seed.entityId },
+      { isLost: async () => false, timeoutMs: 1_000 },
+    );
+    await expect(
+      ask(request({ message: 'x'.repeat(ELICITATION_MESSAGE_MAX + 1) })),
+    ).rejects.toThrow(
+      `The question is ${ELICITATION_MESSAGE_MAX + 1} characters long, more than ${ELICITATION_MESSAGE_MAX}`,
+    );
+    const rows = await db
+      .select()
+      .from(approvalRequests)
+      .where(and(eq(approvalRequests.jobId, seed.jobId), eq(approvalRequests.kind, 'elicitation')));
+    expect(rows).toEqual([]);
   });
 });

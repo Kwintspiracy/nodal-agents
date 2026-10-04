@@ -35,7 +35,8 @@ import ElicitationCard from '../ElicitationCard.tsx';
 import ApprovalRequestCard from '../../approvals/ApprovalRequestCard.tsx';
 import { resolveApprovalAction } from '@/lib/actions.ts';
 import type { ElicitationView } from '@/lib/elicitation-view.ts';
-import { formStateToContent, initialFormState } from '@/lib/elicitation-view.ts';
+import { expiredReason, formStateToContent, initialFormState } from '@/lib/elicitation-view.ts';
+import { ELICITATION_CLOSED_BY } from '@nodal-agents/shared';
 import { parseElicitationSchema } from '@nodal-agents/shared';
 
 // jsdom ne fournit pas `CSS.supports`, que le `Select` du design system lit.
@@ -337,6 +338,21 @@ describe('ce qui part d’un choix multiple, et d’un champ __proto__ @cap:appr
     });
     expect(JSON.stringify(formStateToContent(parsed.fields, state))).toBe(
       '{"__proto__":"keep me"}',
+    );
+  });
+});
+
+// Revue Codex passe 4 de #660 : `system:runner_restarted` n'était pas reconnu,
+// et la carte disait « Expired » d'une question fermée par un redémarrage. La
+// carte dit maintenant chaque raison que le runner écrit — la même liste,
+// partagée.
+describe('chaque raison de fermeture se dit @cap:approuver-une-action/ecran', () => {
+  it('aucune raison du runner ne retombe sur le texte par défaut', () => {
+    for (const closedBy of Object.values(ELICITATION_CLOSED_BY)) {
+      expect(expiredReason(closedBy), closedBy).not.toBe('Expired: no answer was sent');
+    }
+    expect(expiredReason(ELICITATION_CLOSED_BY.runnerRestarted)).toBe(
+      'Closed: the run stopped before an answer',
     );
   });
 });
