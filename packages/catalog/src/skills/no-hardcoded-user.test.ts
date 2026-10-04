@@ -112,6 +112,18 @@ describe('magazine-page skill', () => {
     expect(content).toContain('Full-bleed only when the person explicitly asks for it.');
   });
 
+  // Revue de #670, passe 1 : `size: A4 portrait` était en dur, alors que le
+  // papier, comme la marge, est celui de l'imprimante. Retiré plutôt que
+  // remplacé : sans `size`, le papier que l'outil d'impression applique est
+  // celui de la page.
+  it('declares no paper size: the paper is the one the print tool prints on', () => {
+    expect(css).not.toMatch(/@page\s*\{[^}]*\bsize\s*:/);
+    expect(MAGAZINE_PAGE_TEMPLATE).not.toMatch(/\bA4\b|\bLetter\b/);
+    expect(content).toContain(
+      '**Paper: the template declares none.** The page takes the paper the print tool prints on; never add a `size` to `@page`.',
+    );
+  });
+
   it('puts the footer (source, page number) in the @page margin boxes, never in the flow', () => {
     // The page rule that carries the margin boxes (nested braces: not the plain @page block).
     const boxes =

@@ -33,8 +33,9 @@ export const MAGAZINE_PAGE_TEMPLATE = `<!DOCTYPE html>
    gutter around every page, the photo included.
    PAGE_MARGIN = the default page margin the print tool reports for the chosen
    printer, never less than its printable area. When the tool reports none,
-   delete the whole margin declaration: the tool's own default margin applies. */
-@page { size: A4 portrait; margin: {{PAGE_MARGIN}}; }
+   delete the whole margin declaration: the tool's own default margin applies.
+   No page size here: the page takes the paper the print tool prints on. */
+@page { margin: {{PAGE_MARGIN}}; }
 
 /* ---- Base: no width, height or overflow on the page, the text flows --------- */
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -137,6 +138,7 @@ A proven magazine layout: a large photo at the top with a red kicker and a capti
    - TITLE, STANDFIRST (one or two sentences), the paragraphs, SUBHEAD (2 to 5 words), PULLQUOTE (a sentence from the text, quoted exactly), FIGURE and FIGURE_LABEL (numbers from the text, never invented), FOOTER_SOURCE (the source name and its address, one short line, no double quote: it goes in a CSS string in the page margin).
    - LANG: the language of the text (en, fr, …), for hyphenation.
 2. **Margins: read first what the print tool reports** for the chosen printer: its printable area and its default page margin. PAGE_MARGIN is that default page margin, never less than the printable area. When the tool reports none, or nothing prints the page, delete the \`margin\` declaration from \`@page\`: the tool's own default margin applies. Never write a margin of your own choosing. The margin lives in \`@page\`, so every page gets a white gutter all around, the photo and its kicker included. Never \`@page { margin: 0 }\` with the margin moved into a padded block: only the first page would get it. Full-bleed only when the person explicitly asks for it.
+   **Paper: the template declares none.** The page takes the paper the print tool prints on; never add a \`size\` to \`@page\`.
 3. **Picture**: \`<img src="URL">\` with the URL EXACTLY as the source gave it. It takes the width of the text area and is cropped to \`--hero-height\`. No picture: delete the hero block and use the inline kicker.
 4. **Accent colour**: change \`--accent\` only. **Fonts**: keep Georgia and Arial with their fallbacks (installed fonts only, no web fonts).
 5. Never give the page a fixed height, never hide an overflow, never put the footer in the text (it is in the page margin, with the page number): the text flows, and what does not fit goes to the next page, where you can see it.

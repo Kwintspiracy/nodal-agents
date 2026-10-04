@@ -36,7 +36,7 @@ import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 // blocks of 49k each would otherwise all pass a per-block cap), the structured
 // payload has its own. This cap is the ROW's; what the model reads fits the
 // runner's budget instead (`mcpResultForModel`, `fitToolResult`).
-const MCP_RESULT_CHAR_CAP = Number(process.env.MCP_RESULT_CHAR_CAP) || 50_000;
+export const MCP_RESULT_CHAR_CAP = Number(process.env.MCP_RESULT_CHAR_CAP) || 50_000;
 
 /**
  * A string cut to `limit` characters, the cut said with the length it was

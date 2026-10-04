@@ -35,6 +35,7 @@ import {
   wrapUntrusted,
 } from '@nodal-agents/shared';
 import {
+  SHARED_WORKSPACE_LABEL,
   ALWAYS_ON_TOOL_DOCS,
   ALWAYS_ON_TOOLS,
   LOAD_TOOLS_NAME,
@@ -962,7 +963,7 @@ function buildToolIndexBlock(entries: readonly ToolIndexEntry[]): string {
 // exactly which workspaces exist and how to address files in each.
 // Data-driven from DB (agent_workspaces) — no hardcoded agent text (invariant 2).
 function buildWorkspacesBlock(
-  workspaceList: ReadonlyArray<{ label: string; path: string; jobFolder?: boolean }>,
+  workspaces: ReadonlyArray<{ label: string; path: string; jobFolder?: boolean }>,
   /**
    * Quels outils de fichiers a la surface qui lit ce bloc.
    *
@@ -977,6 +978,12 @@ function buildWorkspacesBlock(
    */
   fileTools: 'nodal' | 'own' | 'none' = 'nodal',
 ): string {
+  // Every label this block writes comes from the database: neutralised once,
+  // here, it can never forge a section of the prompt (review pass 1 of #670).
+  const workspaceList = workspaces.map((ws) => ({
+    ...ws,
+    label: sanitizePromptField(ws.label, 80),
+  }));
   if (workspaceList.length === 0) return '';
 
   // The folder attached to this request (#507) is named as such: it is where
@@ -1015,11 +1022,16 @@ function buildWorkspacesBlock(
 
   // Où va un fichier quand personne n'a dit où (Quentin, 02/10/2026 : « tous les
   // agents ont des dossiers, cette question n'a aucune raison d'être ») : le
-  // dossier du job s'il y en a un, sinon le premier dossier de l'agent.
-  const home = workspaceList.find((ws) => ws.jobFolder) ?? workspaceList[0]!;
+  // dossier du job s'il y en a un, sinon le premier dossier qui n'est pas le
+  // partagé — la règle même de la résolution des chemins (workspace.ts : le
+  // partagé est additif, jamais le défaut), le partagé seulement s'il est seul.
+  const home =
+    workspaceList.find((ws) => ws.jobFolder) ??
+    workspaceList.find((ws) => ws.label !== SHARED_WORKSPACE_LABEL) ??
+    workspaceList[0]!;
   const whereFilesGo =
-    `New files you create go in **${home.label}** unless the user names another place: ` +
-    `never ask where to save, and say where you put it.`;
+    `New files you create go in **${home.label}** unless the user ` +
+    `names another place: never ask where to save, and say where you put it.`;
 
   if (workspaceList.length === 1) {
     const ws = workspaceList[0]!;

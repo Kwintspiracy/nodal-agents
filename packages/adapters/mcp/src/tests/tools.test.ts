@@ -88,6 +88,23 @@ describe('mcpToolToToolDefinition', () => {
     },
   );
 
+  // Revue de #670, passe 1 : sans aucune borne, une description de plusieurs
+  // centaines de ko partait à chaque tour. La borne est celle d'un résultat
+  // d'outil (50 000), loin au-dessus du besoin mesuré (3 059) ; la coupure se
+  // dit, et le cadre reste.
+  it('cuts a description past the tool-result cap, says so, and keeps the frame', () => {
+    const huge = 'y'.repeat(60_000);
+    const def = mcpToolToToolDefinition(
+      clientWithCallTool(() => ({ content: [] })),
+      { ...descriptor, description: huge },
+      'c',
+    );
+    expect(def.description).toContain('y'.repeat(50_000));
+    expect(def.description).not.toContain('y'.repeat(50_001));
+    expect(def.description).toContain('[description truncated at 50000 chars]');
+    expect(def.description).toContain('untrusted');
+  });
+
   it('maps destructiveHint → riskLevel destructive', () => {
     const def = mcpToolToToolDefinition(
       clientWithCallTool(() => ({ content: [] })),
