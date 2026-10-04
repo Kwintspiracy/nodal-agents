@@ -51,6 +51,8 @@ import {
   raisedErrorBlockLength,
   PROVIDER_REJECTED,
   PROVIDER_REJECTED_PREFIX,
+  findMcpToolNameCollision,
+  mcpToolNameCollisionMessage,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
@@ -58,7 +60,7 @@ import {
   createLazyMcpTools,
   slugToPrefix,
   connectMcp,
-  type McpToolDescriptor,
+  type McpServerDiscovery,
   type McpToolset,
 } from '@nodal-agents/adapter-mcp';
 import { isUsableMcpToolCache } from './mcp-tool-cache.ts';
@@ -262,6 +264,7 @@ const TOOL_PROVISIONING: ToolProvisioning = {
         inputSchema: t.inputSchema,
         annotations: t.annotations,
       })),
+      instructions: conn.instructions,
       close: conn.close,
     };
   },
@@ -2483,6 +2486,7 @@ async function runJobTracked(
       .select({
         id: mcpServersTable.id,
         slug: mcpServersTable.slug,
+        name: mcpServersTable.name,
         transport: mcpServersTable.transport,
         url: mcpServersTable.url,
         apiKey: mcpServersTable.apiKey,
@@ -2498,26 +2502,36 @@ async function runJobTracked(
       .innerJoin(mcpServersTable, eq(mcpServersTable.id, agentMcpServersTable.mcpServerId))
       .where(eq(agentMcpServersTable.agentId, agentRow.id));
 
-    // Best-effort write-back of freshly-discovered descriptors into
-    // mcp_servers.available_tools. Never let a refresh failure break the
-    // job (or the tool call, for the lazy onConnected hook) that
+    // Best-effort write-back of what a connection learned — the tool
+    // descriptors AND the server's instructions, together: both describe the
+    // server as it answered this connection, and a value the server stopped
+    // publishing is cleared, never kept. Never let a refresh failure break
+    // the job (or the tool call, for the lazy onConnected hook) that
     // triggered it — logged loud (invariant #4), always swallowed.
-    const refreshMcpToolCache = async (
+    //
+    // The eager write lands BEFORE the prompt is built (§7), so the first job
+    // reads the instructions; a lazy one lands at the first tool call, so the
+    // next job does — a job's prompt is only rebuilt when its tools or the
+    // Nodal version change.
+    const recordMcpDiscovery = async (
       mcpServerId: string,
-      liveTools: McpToolDescriptor[],
+      live: McpServerDiscovery,
     ): Promise<void> => {
       try {
         await db
           .update(mcpServersTable)
-          .set({ availableTools: liveTools })
+          .set({ availableTools: live.tools, instructions: live.instructions })
           .where(eq(mcpServersTable.id, mcpServerId));
       } catch (err) {
         console.error(
-          `[execute] failed to refresh available_tools cache for MCP server ` +
+          `[execute] failed to refresh available_tools / instructions for MCP server ` +
             `'${mcpServerId}': ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     };
+
+    // What each server lends THIS job, for the one-name-one-server check below.
+    const lentByServer: Array<{ slug: string; name: string; exposed: string[] }> = [];
 
     for (const ms of mcpAssignments) {
       try {
@@ -2552,15 +2566,19 @@ async function runJobTracked(
           };
           if (isUsableMcpToolCache(availableTools)) {
             toolset = createLazyMcpTools(connectOpts, availableTools, {
-              onConnected: (liveTools) => refreshMcpToolCache(ms.id, liveTools),
+              onConnected: (live) => recordMcpDiscovery(ms.id, live),
             });
           } else {
-            toolset = await createMcpTools(connectOpts);
+            const connected = await createMcpTools(connectOpts);
+            toolset = connected;
             // Auto-upgrade v1→v2: real descriptors are always non-empty
             // when createMcpTools succeeds (guarded here so a test double
             // that omits `descriptors` doesn't write a bogus cache).
-            if (toolset.descriptors?.length) {
-              await refreshMcpToolCache(ms.id, toolset.descriptors);
+            if (connected.descriptors?.length) {
+              await recordMcpDiscovery(ms.id, {
+                tools: connected.descriptors,
+                instructions: connected.instructions ?? null,
+              });
             }
           }
         } else {
@@ -2590,15 +2608,19 @@ async function runJobTracked(
           };
           if (isUsableMcpToolCache(availableTools)) {
             toolset = createLazyMcpTools(connectOpts, availableTools, {
-              onConnected: (liveTools) => refreshMcpToolCache(ms.id, liveTools),
+              onConnected: (live) => recordMcpDiscovery(ms.id, live),
             });
           } else {
-            toolset = await createMcpTools(connectOpts);
+            const connected = await createMcpTools(connectOpts);
+            toolset = connected;
             // Auto-upgrade v1→v2: real descriptors are always non-empty
             // when createMcpTools succeeds (guarded here so a test double
             // that omits `descriptors` doesn't write a bogus cache).
-            if (toolset.descriptors?.length) {
-              await refreshMcpToolCache(ms.id, toolset.descriptors);
+            if (connected.descriptors?.length) {
+              await recordMcpDiscovery(ms.id, {
+                tools: connected.descriptors,
+                instructions: connected.instructions ?? null,
+              });
             }
           }
         }
@@ -2612,6 +2634,7 @@ async function runJobTracked(
             ? toolset.tools
             : toolset.tools.filter((t) => enabled.includes(t.name.slice(prefixLen)));
         capabilityTools.push(...filtered);
+        lentByServer.push({ slug: ms.slug, name: ms.name, exposed: filtered.map((t) => t.name) });
       } catch (err) {
         // MCP server unreachable / auth failed / spawn failed — must not
         // fail an unrelated job, so we still `continue`. But swallowing
@@ -2624,6 +2647,20 @@ async function runJobTracked(
         );
         continue;
       }
+    }
+
+    // One tool name, one server (#661). Every attach path refuses a server
+    // whose namespace overlaps one the agent holds; an attachment written
+    // before that rule still runs while no name is lent twice — each name
+    // reaches, and is attributed to, the one server that lends it. When two
+    // servers lend the SAME name, no reader can tell them apart: the job is
+    // refused here, loud, naming both and the tool — never routed to
+    // whichever server happens to come last.
+    const nameCollision = findMcpToolNameCollision(lentByServer);
+    if (nameCollision) {
+      throw new Error(
+        mcpToolNameCollisionMessage(nameCollision.toolName, ...nameCollision.servers),
+      );
     }
     // ────────────────────────────────────────────────────────────────────────
 

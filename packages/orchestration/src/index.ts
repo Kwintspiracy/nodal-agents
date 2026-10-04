@@ -145,6 +145,7 @@ export { checkRootJobComplete, getPendingTasksForRoot } from './planner/completi
 // ─── Team block (auto-generated from DB) ─────────────────────────────────────
 export { buildTeamBlock } from './team-block';
 export { resolveBuiltinToolNames } from './builtin-tool-names';
+export { resolveMcpToolNames } from './mcp-tool-names';
 export { holdersOfPath } from './path-holders';
 export type { PathHolders, RosterFolders } from './path-holders';
 export type { BuiltinToolNames } from './builtin-tool-names';
@@ -152,6 +153,10 @@ export type { BuiltinToolNames } from './builtin-tool-names';
 // ─── System prompt assembly ───────────────────────────────────────────────────
 export {
   buildSystemPrompt,
+  buildMcpServerGuidanceBlock,
+  MCP_SERVER_INSTRUCTIONS_PROMPT_CAP,
+  MCP_GUIDANCE_PROMPT_TOTAL_CAP,
+  type McpGuidanceServer,
   buildRuntimeBlock,
   REGISTERED_PROJECTS_IN_PROMPT,
   RUNNING_WORK_MAX_RUNS,

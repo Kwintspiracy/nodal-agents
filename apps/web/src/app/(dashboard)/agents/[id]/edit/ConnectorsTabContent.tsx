@@ -10,7 +10,7 @@ import {
   type AgentConnectorRow,
   type AgentMcpServerRow,
 } from '@/lib/actions.ts';
-import type { OperationDescriptor } from '@nodal-agents/shared';
+import { mcpToolPrefix, type OperationDescriptor } from '@nodal-agents/shared';
 import EdRow, { IcBtn } from '@/components/ui/EdRow';
 import EdAddButton from '@/components/ui/EdAddButton';
 import Disc from '@/components/ui/Disc';
@@ -275,11 +275,6 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
     collapse(mcpServerId);
   }
 
-  /** `cogni-cortex` → `cogni_cortex`. Mirrors slugToPrefix in adapter-mcp. */
-  function slugToPrefix(slug: string): string {
-    return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
-  }
-
   function confirmTrust(trust: boolean) {
     const serverId = trustAsk;
     if (!serverId) return;
@@ -297,7 +292,7 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
     // dossier ? Alors la confiance la remplacerait par une permission valable
     // partout : le serveur refuse sans `confirmWidening`, et le refuser sans
     // rien montrer serait une impasse. On demande, en nommant le dossier.
-    const folder = folderByTool.get(`${slugToPrefix(server.slug)}__*`);
+    const folder = folderByTool.get(`${mcpToolPrefix(server.slug)}__*`);
     if (folder !== undefined) {
       setPendingWiden({ serverId, scope, folder });
       return;
@@ -313,7 +308,7 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
   function writeTrustRule(serverId: string, scope: 'agent' | 'entity', confirmWidening: boolean) {
     const server = mcpServers.find((s) => s.mcpServerId === serverId);
     if (!server) return;
-    const toolName = `${slugToPrefix(server.slug)}__*`;
+    const toolName = `${mcpToolPrefix(server.slug)}__*`;
     void setAgentApprovalRuleAction({
       agentId,
       toolName,

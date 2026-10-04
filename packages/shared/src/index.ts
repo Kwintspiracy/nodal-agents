@@ -2,6 +2,7 @@
 
 export * from './enums';
 export * from './tool-cards';
+export * from './mcp-namespace';
 export * from './ids';
 export * from './entities/entity';
 export * from './entities/user';
@@ -64,4 +65,5 @@ export * from './job-result-kind';
 export * from './runner-record';
 export * from './conversation-inbox';
 export * from './mcp-server';
+export * from './mcp-tool-prefix';
 export * from './running-version';
