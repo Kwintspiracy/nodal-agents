@@ -235,23 +235,30 @@ export async function isElicitationCardReply(
   return loaded.ok && loaded.state.status === 'pending';
 }
 
-/** Réécrit la carte avec ce brouillon, sous le bail des cartes (#637). */
-async function redraw(
-  db: AnyDrizzleDb,
-  card: CardRow,
-  state: ElicitationCardState,
-  draft: ElicitationDraft,
-): Promise<void> {
-  const view = renderElicitationCardFor(state, card.channel as ChannelKind, draft);
-  if (!view.ok) {
-    // La carte envoyée tenait dans le canal ; seul un formulaire changé depuis
-    // ne tiendrait plus. Dit, et la carte garde ce qu'elle montrait.
-    console.warn(
-      `[elicitation] card of ${state.approvalRequestId} cannot be redrawn on ${card.channel}: ${view.reason}`,
-    );
-    return;
-  }
-  await showApprovalCard(db, card, { text: view.text, buttons: view.buttons });
+/**
+ * Réécrit la carte, sous le bail des cartes (#637), avec le brouillon TEL QUE
+ * LA LIGNE LE PORTE au moment de l'écrire, jamais un instantané : deux gestes
+ * en course, la dernière écriture montre toujours le formulaire en base (revue
+ * de #664, passe 4).
+ */
+async function redraw(db: AnyDrizzleDb, card: CardRow, approvalRequestId: string): Promise<void> {
+  await showApprovalCard(db, card, async () => {
+    const fresh = await loadElicitationCard(db, approvalRequestId);
+    if (!fresh.ok) return null;
+    const view = renderElicitationCardFor(fresh.state, card.channel as ChannelKind);
+    if (!view.ok) {
+      // La carte envoyée tenait dans le canal ; seul un formulaire changé depuis
+      // ne tiendrait plus. Dit, et la carte garde ce qu'elle montrait.
+      console.warn(
+        `[elicitation] card of ${approvalRequestId} cannot be redrawn on ${card.channel}: ${view.reason}`,
+      );
+      return null;
+    }
+    return {
+      view: { text: view.text, buttons: view.buttons },
+      version: JSON.stringify(fresh.state.storedDraft ?? null),
+    };
+  });
 }
 
 /**
@@ -302,7 +309,7 @@ export async function handleElicitationTap(args: {
 
   if (op.op === 'send') {
     if (op.revision !== elicitationDraftRevision(state.draft.values)) {
-      await redraw(db, card, state, state.draft);
+      await redraw(db, card, state.approvalRequestId);
       return {
         handled: false,
         reason: 'stale_card',
@@ -321,7 +328,7 @@ export async function handleElicitationTap(args: {
     if (r.ok) return { handled: true, notice: 'Answered.' };
     if (r.code === 'draft_changed') {
       const fresh = await loadElicitationCard(db, state.approvalRequestId);
-      if (fresh.ok) await redraw(db, card, fresh.state, fresh.state.draft);
+      if (fresh.ok) await redraw(db, card, fresh.state.approvalRequestId);
       return {
         handled: false,
         reason: 'stale_card',
@@ -345,7 +352,7 @@ export async function handleElicitationTap(args: {
       : { ok: false, reason: 'stale_button', notice: `Not applied: ${applied.reason}.` };
   });
   if (!changed.ok) return { handled: false, reason: changed.reason, notice: changed.notice };
-  await redraw(db, card, changed.state, changed.draft);
+  await redraw(db, card, changed.state.approvalRequestId);
   if (op.op === 'type') {
     const field = state.fields[op.field]!;
     return { handled: true, notice: `Reply to the card with ${field.label}.` };
@@ -417,6 +424,6 @@ export async function handleElicitationReply(args: {
     await say(changed.notice);
     return { handled: true, notice: changed.notice };
   }
-  await redraw(db, card, changed.state, changed.draft);
+  await redraw(db, card, changed.state.approvalRequestId);
   return { handled: true, notice: null };
 }

@@ -218,3 +218,44 @@ describe('le texte d’une carte à boutons ne notifie personne @cap:approuver-u
     });
   });
 });
+
+// Review of #664, pass 4: every redraw of a card went out with
+// allowed_mentions parse [users]: a <@id> in the server's question pinged on
+// each gesture. An edit notifies nobody, like the card it rewrites.
+describe('Discord : une réécriture de carte ne notifie personne @cap:approuver-une-action/moteur', () => {
+  it('editMessageText : aucune mention ne pinge', async () => {
+    vi.mocked(REST.prototype.patch).mockResolvedValueOnce({} as APIMessage);
+    await discordAdapter.editMessageText!(
+      { botToken: 'D' },
+      '123',
+      '77',
+      'Hi <@123456789012345678>',
+      ROWS,
+    );
+    const body = vi.mocked(REST.prototype.patch).mock.calls[0]![1]?.body as {
+      allowed_mentions: unknown;
+    };
+    expect(body.allowed_mentions).toEqual({ parse: [] });
+  });
+});
+
+// Review of #664, pass 4: the plain_text test only read `blocks`. Slack also
+// sends `text` (notifications, fallback), where <!channel> and <@U…> are
+// live. A card's `text` is escaped, on send and on every redraw.
+describe('Slack : le texte de repli d’une carte est neutralisé @cap:approuver-une-action/moteur', () => {
+  it('sendCard et editMessageText échappent < > & dans `text`', async () => {
+    vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce({
+      ok: true,
+      ts: '1.7',
+    } as ChatPostMessageResponse);
+    await slackAdapter.sendCard!({ botToken: 'S' }, 'D1', {
+      text: '<!channel> <@U1> & co',
+      buttons: ROWS,
+    });
+    vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce({ ok: true });
+    await slackAdapter.editMessageText!({ botToken: 'S' }, 'D1', '1.7', '<!here> again', ROWS);
+    const [sent, edited] = vi.mocked(WebClient.prototype.apiCall).mock.calls;
+    expect((sent![1] as { text: string }).text).toBe('&lt;!channel&gt; &lt;@U1&gt; &amp; co');
+    expect((edited![1] as { text: string }).text).toBe('&lt;!here&gt; again');
+  });
+});

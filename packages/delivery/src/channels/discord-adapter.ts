@@ -474,7 +474,9 @@ async function editMessageText(
   const rest = makeRestClient(botToken);
   const body: RESTPatchAPIChannelMessageJSONBody = {
     content: text,
-    allowed_mentions: SAFE_ALLOWED_MENTIONS,
+    // A card's text may carry a third party's words (an MCP server's
+    // question): a rewrite notifies nobody, like the card it rewrites.
+    allowed_mentions: { parse: [] },
     components: rows,
   };
   try {

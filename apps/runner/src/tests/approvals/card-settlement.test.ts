@@ -1086,3 +1086,34 @@ describe('every write of a card goes through the card protocol @cap:approuver-un
     }
   });
 });
+
+// Review of #664, pass 4: a redraw edited a SNAPSHOT of the form. Two gestures
+// racing, the stale edit could land last: the card said "reply with A" while
+// the row waited for B. A card rendered from the row is now rendered UNDER the
+// lease, and rendered again before the lease is released: if the row changed
+// meanwhile, the card is edited again, so the last edit shows the row.
+describe('a card rendered from its row shows the row as it stands @cap:approuver-une-action/moteur', () => {
+  it('a change written while the card is being shown is shown before the lease is released', async () => {
+    const { approvalId } = await telegramCard();
+    completedTelegramEdits.length = 0;
+    const versions = ['v1', 'v2', 'v2'];
+    let calls = 0;
+    const shown = await showApprovalCard(
+      deps.db,
+      {
+        approvalRequestId: approvalId,
+        channel: 'telegram',
+        agentId: seed.agentId,
+        conversationId: OWNER_CHAT,
+        messageId: String(TELEGRAM_CARD_MESSAGE_ID),
+      },
+      async () => {
+        const version = versions[Math.min(calls, versions.length - 1)]!;
+        calls += 1;
+        return { view: { text: `Form ${version}` }, version };
+      },
+    );
+    expect(shown).toEqual({ outcome: 'shown' });
+    expect(completedTelegramEdits.map((e) => e['text'])).toEqual(['Form v1', 'Form v2']);
+  });
+});

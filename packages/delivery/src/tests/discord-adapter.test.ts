@@ -253,7 +253,8 @@ describe('discordAdapter.editMessageText', () => {
     const options = vi.mocked(REST.prototype.patch).mock.calls[0]?.[1];
     expect(options?.body).toEqual({
       content: 'Resolved ✅',
-      allowed_mentions: { parse: ['users'] },
+      // An edit notifies nobody: a card's text may carry a third party's words.
+      allowed_mentions: { parse: [] },
       components: [],
     });
   });

@@ -377,6 +377,16 @@ async function sendQuestionCard(
   return { messageId: ts };
 }
 
+/**
+ * A card's `text` (notifications, the fallback when blocks cannot show) is
+ * read as mrkdwn, where <!channel>, <@U…> and <#C…> are live. It carries a
+ * third party's words (an MCP server's question): the three characters Slack
+ * escapes are escaped (review of #664, pass 4).
+ */
+function escapeSlackText(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 /** Slack refuses a `section` block whose text is longer than this. */
 const SLACK_SECTION_MAX = 3000;
 
@@ -462,7 +472,11 @@ async function sendCard(
   const client = makeClient(botToken);
   let ts: string | undefined;
   try {
-    const result = await client.chat.postMessage({ channel: channelId, text: card.text, blocks });
+    const result = await client.chat.postMessage({
+      channel: channelId,
+      text: escapeSlackText(card.text),
+      blocks,
+    });
     ts = result.ts;
   } catch (err) {
     throw toDeliveryError(err, botToken);
@@ -500,7 +514,12 @@ async function editMessageText(
   const channelId = requireChannelId(conversationId);
   const client = makeClient(botToken);
   try {
-    await client.chat.update({ channel: channelId, ts: messageId, text, blocks });
+    await client.chat.update({
+      channel: channelId,
+      ts: messageId,
+      text: withButtons ? escapeSlackText(text) : text,
+      blocks,
+    });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
