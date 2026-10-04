@@ -31,6 +31,10 @@ to rediscover it):
 
 1. **No hardcoded agent metadata.** Skills, routing, team blocks, sub-agent descriptions: 100% from DB.
 2. **No hardcoded user-facing text in runner.** LLM speaks or runner stays silent.
+   The fixed frame of a platform card is allowed (Quentin's ruling, 2026-10-04):
+   its buttons, "❓ The MCP server "X" asks:", "Answer from the dashboard…",
+   "✅ Answered", like the approval and question cards. What an agent or a
+   server says never comes from the runner: it is quoted, as data.
 3. **No agent-specific band-aids in runner.** Fix at agent layer (DB), never patch the runtime.
 4. **No silent smart fallbacks.** Fail loud with clear error.
 5. **Tests assert real results** — body of LLM request, DB row, tool_result content. Never just call counts.
@@ -68,24 +72,29 @@ then forgotten by its own author, which is why the rule now lives here.
 - **The trigger is an OPEN PR, not the end of a session.** A review is due as
   soon as the PR exists, including mid-session and including a PR that is still
   being amended.
-- **Loop** review → fix → review. **Stop condition (changed 2026-09-15, Quentin's
-  decision):** the loop ends at the first pass that reports **no blocking and no
-  important finding** (no false green, no false red, no kill, no data loss). The
-  minor findings of that pass are fixed without another pass. **Budget: 4 passes
-  per PR.** If the 4th pass still reports a blocker, the shape of the PR is the
-  problem — stop and say so instead of iterating (Codex diagnosed exactly that
-  on #98 at pass 3; passes 9-15 then found wording only, at the cost of two
-  quota windows). Static portal pages (`apps/qa`) get **one pass**. A finding is
-  closed by a test that fails first, and the fix is verified BY MUTATION
-  (disable it, the test must go red).
-- **A quota drop never stops the queue.** The agent running the queue waits for
-  the reopening time Codex prints, by itself (a background sleep loop), and
-  resumes without being told. It reports only when the whole queue is empty or
-  on a real blocker — every intermediate report ends its turn and stalls the
-  queue.
-- **If `codex` is missing or fails: say so and stop.** Never fall back to a
-  Claude reviewer — that is a silent smart fallback (invariant #4), and it hides
-  the fact that no independent review happened.
+- **Loop** review → fix → review (changed 2026-10-04, Quentin's rule, replacing
+  the 4-pass budget of 2026-09-15):
+  - A **blocking or important** finding (P1/P2: false green, false red, kill,
+    data loss, wrong behaviour) is fixed, then the PR is reviewed **again**: to
+    check the fix, and because a fix can create another defect. A PR is not
+    merged while a pass reports one. There is no pass budget: the loop runs
+    until a pass reports none. If the same area keeps producing them, say so to
+    the owner with the details, but do not stop on your own.
+  - **Minor** findings (P3) are not fixed in the PR. They are listed in a
+    backlog issue (file:line and scenario for each, a `## Verified` section),
+    linked from the PR, and the PR merges.
+  - Static portal pages (`apps/qa`) get **one pass**. A finding is closed by a
+    test that fails first, and the fix is verified BY MUTATION (disable it, the
+    test must go red).
+- **A quota drop never stops the queue, and never makes it wait.** When Codex
+  has no quota, the pass goes through Nodal MCP: `run_task` to the root, no
+  target agent, asking for a review by Reviewer A, read-only, on a review
+  package in the shared workspace (the diff plus `git archive` of the head),
+  never the repository itself. Nodal's reviewers run on other models: they are
+  the outside eye when Codex is not there. The verdict is posted on the PR.
+- **If neither `codex` nor Nodal MCP can run a pass: say so and stop.** Never
+  fall back to a Claude reviewer — that is a silent smart fallback (invariant
+  #4), and it hides the fact that no independent review happened.
 
 Claude subagents remain fine for anything that is NOT reviewing a PR: searching
 the codebase, mapping an area, drafting, running suites.

@@ -17,6 +17,7 @@ This is the all-Node monorepo replacing the legacy KwintAgents (Python+Next dual
 
 1. **No hardcoded agent metadata.** Skills, routing, team blocks, sub-agent descriptions: 100% from DB.
 2. **No hardcoded user-facing text in runner.** LLM speaks or runner stays silent.
+   The fixed frame of a platform card is allowed (owner's ruling, 2026-10-04): its buttons, "❓ The MCP server "X" asks:", "Answer from the dashboard…", "✅ Answered", like the approval and question cards. What an agent or a server says never comes from the runner: it is quoted, as data. Do not report that frame as a violation.
 3. **No agent-specific band-aids in runner.** Fix at agent layer (DB), never patch the runtime.
 4. **No silent smart fallbacks.** Fail loud with clear error.
 5. **Tests assert real results** — body of LLM request, DB row, tool_result content. Never just call counts.
