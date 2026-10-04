@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { ToolContext, ToolDefinition } from '@nodal-agents/tools';
 import {
+  ELICITATIONS_PER_CALL_MAX,
   mcpToolPrefix,
   readElicitationActions,
   readElicitationAttachments,
@@ -109,8 +110,25 @@ interface CallScope {
  * are validated here; an invalid one is dropped and logged, never the question.
  * With nobody to ask (no runner capability), the server reads `cancel`.
  */
-function responderFor(scope: CallScope, clock: CallClock): McpElicitationResponder {
+function responderFor(
+  scope: CallScope,
+  clock: CallClock,
+  questions: { asked: number },
+): McpElicitationResponder {
   return async (params, signal) => {
+    // One call asks at most ELICITATIONS_PER_CALL_MAX questions, counted when
+    // they arrive (concurrent ones included). Past it the server reads an
+    // error that says why; nobody is asked.
+    questions.asked += 1;
+    if (questions.asked > ELICITATIONS_PER_CALL_MAX) {
+      console.warn(
+        `[adapter-mcp] ${scope.slug} asked question ${questions.asked} during ${scope.toolName}; ` +
+          `refused past ${ELICITATIONS_PER_CALL_MAX}`,
+      );
+      throw new Error(
+        `A server may ask at most ${ELICITATIONS_PER_CALL_MAX} questions during one tool call`,
+      );
+    }
     // URL mode is never announced, and the SDK refuses it before this point.
     if (params.mode === 'url') return { action: 'cancel' };
     const { attachments, rejected } = readElicitationAttachments(params._meta);
@@ -289,11 +307,12 @@ async function callMcpTool(
   scope: CallScope,
 ): Promise<unknown> {
   let clock: CallClock | null = null;
+  const questions = { asked: 0 };
   const result = await runMcpCall(
     client,
     // The responder needs the clock, which starts with the call itself (not
     // while the call waits for the lane): resolved lazily.
-    (params, signal) => responderFor(scope, clock!)(params, signal),
+    (params, signal) => responderFor(scope, clock!, questions)(params, signal),
     async () => {
       const own = new CallClock(mcpCallTimeoutMs(), originalName);
       clock = own;

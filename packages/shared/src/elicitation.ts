@@ -52,6 +52,24 @@ export const ELICITATION_CAPTION_MAX = 300;
 /** Une réponse texte libre ne dépasse pas cette longueur, quoi que le schéma autorise. */
 export const ELICITATION_TEXT_MAX = 2000;
 
+/**
+ * Questions au plus qu'un serveur pose pendant UN appel d'outil (invariant #8,
+ * comme les plafonds de chaînes et d'appels par tour). Chacune pose une ligne,
+ * ses images et une notification : sans borne, un serveur bogué ou hostile les
+ * multipliait sans fin. Au-delà, le serveur reçoit une erreur qui le dit, et la
+ * personne ne voit rien de plus.
+ */
+export const ELICITATIONS_PER_CALL_MAX = 5;
+
+/**
+ * Pose `value` sous `key` comme propriété PROPRE, quel que soit le nom : un
+ * nom de champ est une chaîne quelconque, et `obj["__proto__"] = v` appelle
+ * l'accesseur hérité au lieu de créer le champ.
+ */
+export function setOwnValue<T>(obj: Record<string, T>, key: string, value: NoInfer<T>): void {
+  Object.defineProperty(obj, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
 // ─── Le formulaire ────────────────────────────────────────────────────────────
 
 /** Une option d'un choix : la valeur renvoyée au serveur, et ce que la personne lit. */
@@ -443,7 +461,7 @@ export function validateElicitationContent(
     }
     const problem = checkValue(field, value);
     if (problem) errors.push({ field: field.key, reason: problem });
-    else out[field.key] = value as ElicitationValue;
+    else setOwnValue(out, field.key, value as ElicitationValue);
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, content: out };
 }

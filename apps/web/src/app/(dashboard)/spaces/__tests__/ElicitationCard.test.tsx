@@ -35,6 +35,8 @@ import ElicitationCard from '../ElicitationCard.tsx';
 import ApprovalRequestCard from '../../approvals/ApprovalRequestCard.tsx';
 import { resolveApprovalAction } from '@/lib/actions.ts';
 import type { ElicitationView } from '@/lib/elicitation-view.ts';
+import { formStateToContent, initialFormState } from '@/lib/elicitation-view.ts';
+import { parseElicitationSchema } from '@nodal-agents/shared';
 
 // jsdom ne fournit pas `CSS.supports`, que le `Select` du design system lit.
 if (typeof globalThis.CSS?.supports !== 'function') {
@@ -296,5 +298,45 @@ describe('ce qui part est ce que la personne a laissé @cap:approuver-une-action
     );
     expect(rendu().textContent).toContain('Answered');
     expect(rendu().textContent).not.toContain('Sent');
+  });
+});
+
+// Revue Codex passe 3 de #660.
+describe('ce qui part d’un choix multiple, et d’un champ __proto__ @cap:approuver-une-action/ecran', () => {
+  it('un choix multiple vidé par la personne part vide, au lieu de laisser le défaut du serveur', async () => {
+    const form = {
+      type: 'object',
+      properties: {
+        pages: { type: 'array', title: 'Pages', items: { enum: ['1', '2'] }, default: ['1'] },
+        extras: { type: 'array', title: 'Extras', items: { enum: ['a', 'b'] } },
+      },
+    };
+    await monter(<ElicitationCard elicitation={view({ requestedSchema: form })} />);
+    const pages = parTestId('elicitation-field-pages')!.querySelectorAll(
+      '[role="checkbox"], input[type="checkbox"]',
+    );
+    await cliquer(pages[0]!);
+    await cliquer(parTestId('elicitation-send'));
+    expect(vi.mocked(resolveApprovalAction).mock.calls[0]?.[0]).toEqual({
+      approvalRequestId: 'el-1',
+      decision: 'approve',
+      content: { pages: [] },
+    });
+  });
+
+  it('un champ nommé __proto__ part comme un champ', () => {
+    const form = JSON.parse('{"type":"object","properties":{"__proto__":{"type":"string"}}}');
+    const parsed = parseElicitationSchema(form);
+    if (!parsed.ok) throw new Error(parsed.reason);
+    const state = initialFormState(parsed.fields);
+    Object.defineProperty(state, '__proto__', {
+      value: 'keep me',
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    expect(JSON.stringify(formStateToContent(parsed.fields, state))).toBe(
+      '{"__proto__":"keep me"}',
+    );
   });
 });

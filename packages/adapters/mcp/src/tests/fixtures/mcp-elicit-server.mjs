@@ -20,6 +20,9 @@
 //                     afterMs           work the tool does AFTER the answer
 //                     actions           labels for the two buttons, sent as
 //                                       `_meta["nodal/actions"]` as given
+//                     times             ask that many questions, one after
+//                                       the other, and return the list of
+//                                       replies
 //   - `capabilities` returns the client capabilities the server received at
 //                   initialize, as JSON text.
 //   - `ask_later`   returns at once, then asks a question OUTSIDE any tool
@@ -56,9 +59,10 @@ server.registerTool(
       actions: z.record(z.string(), z.unknown()).optional(),
       serverTimeoutMs: z.number().optional(),
       afterMs: z.number().optional(),
+      times: z.number().optional(),
     },
   },
-  async ({ attach, actions, serverTimeoutMs, afterMs }) => {
+  async ({ attach, actions, serverTimeoutMs, afterMs, times }) => {
     const meta = {
       ...(attach
         ? {
@@ -75,15 +79,23 @@ server.registerTool(
       requestedSchema: ORDER_FORM,
       ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
     };
+    const ask = async () => {
+      try {
+        const answer = await server.server.elicitInput(
+          params,
+          serverTimeoutMs ? { timeout: serverTimeoutMs } : undefined,
+        );
+        return { action: answer.action, content: answer.content ?? null };
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : String(err) };
+      }
+    };
     let reply;
-    try {
-      const answer = await server.server.elicitInput(
-        params,
-        serverTimeoutMs ? { timeout: serverTimeoutMs } : undefined,
-      );
-      reply = { action: answer.action, content: answer.content ?? null };
-    } catch (err) {
-      reply = { error: err instanceof Error ? err.message : String(err) };
+    if (times) {
+      reply = [];
+      for (let i = 0; i < times; i++) reply.push(await ask());
+    } else {
+      reply = await ask();
     }
     if (afterMs) await sleep(afterMs);
     return { content: [{ type: 'text', text: JSON.stringify(reply) }] };
