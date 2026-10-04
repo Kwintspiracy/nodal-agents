@@ -30,7 +30,10 @@ export async function resolveMcpToolNames(db: AnyDrizzleDb, agentId: string): Pr
       mcpExposedToolNames(
         ms.slug,
         ms.availableTools,
-        (ms.enabledTools as string[] | null) ?? null,
+        // jsonb: not a list means no narrowing, as system-prompt.ts reads it.
+        Array.isArray(ms.enabledTools)
+          ? ms.enabledTools.filter((t): t is string => typeof t === 'string')
+          : null,
       ) ?? [],
   );
 }

@@ -21,6 +21,7 @@ import { agentMcpServers, agents, entities, mcpServers, users } from '@nodal-age
 import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '@nodal-agents/shared';
 import { ALWAYS_ON_TOOLS } from '@nodal-agents/tools';
 import { assertBoundaryFrames } from '@nodal-agents/test-kit';
+import { resolveMcpToolNames } from '../mcp-tool-names';
 import {
   buildMcpServerGuidanceBlock,
   buildSystemPrompt,
@@ -320,6 +321,54 @@ describe('the MCP guidance of one prompt is capped as a whole @cap:connecter-un-
     expect(block.match(/<\/mcp_server_guidance>/g)).toHaveLength(2);
     expect(withheld.map((w) => w.slug)).toEqual(['c', 'd', 'e']);
     expect(withheld[0]!.reason).toContain(`${MCP_GUIDANCE_PROMPT_TOTAL_CAP}`);
+  });
+
+  // Pass 5 of #659 (Nodal Reviewer A): the case above passed whether the loop
+  // skipped a block or stopped at it. Mixed sizes tell them apart: past the
+  // cap, every later server in slug order is left out, a small one included.
+  it('past the cap, every later server is left out, a small one included', () => {
+    const servers = [
+      { slug: 'a', instructions: 'A-START ' + 'x'.repeat(3_990) },
+      { slug: 'b', instructions: 'B-START ' + 'x'.repeat(3_990) },
+      { slug: 'c', instructions: 'C-START short.' },
+    ];
+    const { block, withheld } = buildMcpServerGuidanceBlock(
+      servers,
+      servers.map((s) => `${s.slug}__do`),
+    );
+    expect(block).toContain('A-START');
+    expect(block).not.toContain('B-START');
+    expect(block).not.toContain('C-START');
+    expect(withheld.map((w) => w.slug)).toEqual(['b', 'c']);
+  });
+
+  it('a text cut at its cap is cut between two characters, never inside one', () => {
+    const text = 'x'.repeat(MCP_SERVER_INSTRUCTIONS_PROMPT_CAP - 1) + '\u{1F600}' + 'TAIL';
+    const { block } = buildMcpServerGuidanceBlock(
+      [{ slug: 'emoji', instructions: text }],
+      ['emoji__do'],
+    );
+    expect(block).toContain('[truncated at');
+    expect(block).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    expect(block).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+  });
+});
+
+// Pass 5 of #659 (Nodal Reviewer A): `enabled_tools` is jsonb; a row that is
+// not a list broke the whole Root preview. It reads like system-prompt.ts
+// reads it: not a list, no narrowing.
+describe('resolveMcpToolNames @cap:connecter-un-service/moteur', () => {
+  it('an enabled_tools that is not a list does not break the names', async () => {
+    const entityId = await workspace();
+    const agent = await agentIn(entityId, 'odd-enabled');
+    const id = await server(entityId, 'odd-srv', null, ['ping']);
+    await db.insert(agentMcpServers).values({
+      entityId,
+      agentId: agent.id as string,
+      mcpServerId: id,
+      enabledTools: { not: 'a list' } as never,
+    });
+    expect(await resolveMcpToolNames(db, agent.id as string)).toEqual(['odd_srv__ping']);
   });
 });
 

@@ -638,7 +638,8 @@ export const MCP_SERVER_INSTRUCTIONS_PROMPT_CAP = 4_000;
  * per-server cap bounds one server; nothing bounded N of them. 8 000 — about
  * 2 000 tokens — holds two servers at their full cap, or four of a real
  * flow's size (a print server's block measures about 1 950 with its frame).
- * Past it, whole blocks are left out by slug order and named, never cut.
+ * Past it, the server that does not fit and every later one in slug order are
+ * left out whole and named, never cut.
  */
 export const MCP_GUIDANCE_PROMPT_TOTAL_CAP = 8_000;
 
@@ -653,6 +654,16 @@ export interface McpGuidanceServer {
   availableTools?: unknown;
   /** `agent_mcp_servers.enabled_tools`: the agent's whitelist (null = all). */
   enabledTools?: unknown;
+}
+
+/**
+ * At most `max` UTF-16 units of `text`, cut between two characters: a surrogate
+ * pair (an emoji) is never split into a lone half, which some providers refuse.
+ */
+function cutBetweenCharacters(text: string, max: number): string {
+  const head = text.slice(0, max);
+  const last = head.charCodeAt(head.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? head.slice(0, -1) : head;
 }
 
 /**
@@ -731,13 +742,13 @@ export function buildMcpServerGuidanceBlock(
 
   const blocks: string[] = [];
   let total = 0;
-  for (const s of speaking) {
+  for (const [n, s] of speaking.entries()) {
     // Tel que publié : une indentation en tête ouvre un bloc de code Markdown
     // (revue Codex passe 4 de #659). Un texte blanc ne parle pas (filtré plus haut).
     const raw = s.instructions ?? '';
     const capped =
       raw.length > MCP_SERVER_INSTRUCTIONS_PROMPT_CAP
-        ? `${raw.slice(0, MCP_SERVER_INSTRUCTIONS_PROMPT_CAP)}… [truncated at ${MCP_SERVER_INSTRUCTIONS_PROMPT_CAP} chars]`
+        ? `${cutBetweenCharacters(raw, MCP_SERVER_INSTRUCTIONS_PROMPT_CAP)}… [truncated at ${MCP_SERVER_INSTRUCTIONS_PROMPT_CAP} chars]`
         : raw;
     const block =
       `## MCP server "${s.slug}"\n\n` +
@@ -747,12 +758,16 @@ export function buildMcpServerGuidanceBlock(
       `${capped.replace(GUIDANCE_TOKEN, `${GUIDANCE_TAG}_`)}\n` +
       `</${GUIDANCE_TAG}>`;
     const added = (blocks.length > 0 ? 2 : 0) + block.length;
+    // Past the total cap, this server and every later one in slug order are
+    // left out whole and named: the slug order decides, never the sizes.
     if (total + added > MCP_GUIDANCE_PROMPT_TOTAL_CAP) {
-      withheld.push({
-        slug: s.slug,
-        reason: `the MCP guidance of one prompt is capped at ${MCP_GUIDANCE_PROMPT_TOTAL_CAP} chars`,
-      });
-      continue;
+      for (const left of speaking.slice(n)) {
+        withheld.push({
+          slug: left.slug,
+          reason: `the MCP guidance of one prompt is capped at ${MCP_GUIDANCE_PROMPT_TOTAL_CAP} chars`,
+        });
+      }
+      break;
     }
     blocks.push(block);
     total += added;
