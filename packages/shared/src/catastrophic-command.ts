@@ -69,7 +69,15 @@ function interpreterBasename(token: string): string {
   return base.replace(/\.(exe|com)$/i, '').toLowerCase();
 }
 
-type InterpreterKind = 'python' | 'node' | 'perl' | 'ruby' | 'php' | 'shell' | 'powershell';
+type InterpreterKind =
+  | 'python'
+  | 'node'
+  | 'perl'
+  | 'ruby'
+  | 'php'
+  | 'shell'
+  | 'powershell'
+  | 'expect';
 
 /** Classifies a bare interpreter name (already basename'd) into the kind of
  * inline-eval flag it accepts, or `null` if it isn't a recognized
@@ -82,6 +90,7 @@ function interpreterKind(name: string): InterpreterKind | null {
   if (/^php[0-9.]*$/.test(name)) return 'php';
   if (['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash'].includes(name)) return 'shell';
   if (name === 'powershell' || name === 'pwsh') return 'powershell';
+  if (name === 'expect') return 'expect';
   return null;
 }
 
@@ -102,6 +111,7 @@ function isInlineEvalFlag(kind: InterpreterKind, flag: string): boolean {
     case 'php':
       return flag === '-r';
     case 'shell':
+    case 'expect':
       return flag === '-c';
     case 'powershell':
       // PowerShell accepts any unambiguous prefix of a parameter name
@@ -400,6 +410,7 @@ const OUTWARD_PROGRAMS = new Set([
   // the OS's "open this" (macOS, Linux desktops, WSL, Windows)
   'open',
   'xdg-open',
+  'xdg-email',
   'gnome-open',
   'kde-open',
   'kde-open5',
@@ -435,34 +446,167 @@ const OUTWARD_SUBCOMMANDS: Record<string, ReadonlySet<string>> = {
   kioclient5: new Set(['exec']),
 };
 
-/** Desktop programs: they open a window, unless told to run headless. */
-const DESKTOP_PROGRAMS = new Set([
-  'notepad',
-  'mspaint',
-  'wordpad',
-  'write',
-  'winword',
-  'excel',
-  'powerpnt',
-  'acrord32',
-  'acrobat',
-  'soffice',
-  'libreoffice',
-  'msedge',
-  'chrome',
-  'google-chrome',
-  'chromium',
-  'chromium-browser',
-  'firefox',
-]);
+/**
+ * The flags that keep a desktop program windowless (its command-line uses).
+ * `x*` is a prefix, `x=` also matches `x=value`, `a b` is two words.
+ */
+const VSCODE_CLI = [
+  '--install-extension',
+  '--uninstall-extension',
+  '--list-extensions',
+  '--update-extensions',
+  '--locate-shell-integration-path',
+  'tunnel',
+  'serve-web',
+];
+const BROWSER_CLI = ['--headless*'];
+const LIBREOFFICE_CLI = ['--headless*', '--convert-to', '--print-to-file', '--cat'];
+
+/**
+ * Desktop programs of Windows, macOS and Linux: editors, viewers, office
+ * suites, browsers, mail clients, file managers, terminals (#667, #686). Run,
+ * they open a window on the person's screen, unless one of their command-line
+ * flags keeps them windowless. A desktop program not here is not seen: the
+ * OS launchers (`start`, `open`, `xdg-open`) are, whatever they open.
+ */
+const DESKTOP_PROGRAMS: ReadonlyMap<string, readonly string[]> = new Map<string, readonly string[]>(
+  [
+    // editors
+    ...['code', 'code-insiders', 'codium', 'vscodium', 'cursor', 'windsurf'].map(
+      (p) => [p, VSCODE_CLI] as const,
+    ),
+    ...[
+      'zed',
+      'subl',
+      'sublime_text',
+      'atom',
+      'notepad',
+      'notepad++',
+      'wordpad',
+      'write',
+      'gedit',
+      'gnome-text-editor',
+      'kate',
+      'kwrite',
+      'mousepad',
+      'pluma',
+      'xed',
+      'leafpad',
+      'featherpad',
+      'gvim',
+      'mvim',
+      'macvim',
+      'bbedit',
+      'mate',
+    ].map((p) => [p, []] as const),
+    ['emacs', ['--batch', '-batch', '--script', '-nw', '--no-window-system']],
+    // viewers, images, media
+    ...[
+      'mspaint',
+      'evince',
+      'okular',
+      'eog',
+      'eom',
+      'feh',
+      'gwenview',
+      'xreader',
+      'atril',
+      'zathura',
+      'mupdf',
+      'xpdf',
+      'sumatrapdf',
+      'acrord32',
+      'acrobat',
+      'foxitreader',
+      'foxitpdfreader',
+      'qpdfview',
+      'ristretto',
+      'shotwell',
+      'gthumb',
+      'totem',
+      'celluloid',
+      'wmplayer',
+      'mpv',
+    ].map((p) => [p, []] as const),
+    ['gimp', ['-i', '--no-interface']],
+    ['inkscape', ['--export-*', '--query-*', '-o']],
+    ['krita', ['--export', '--export-filename', '--export-pdf']],
+    ['vlc', ['-I dummy', '--intf=dummy']],
+    // office
+    ...['winword', 'excel', 'powerpnt', 'onenote', 'msaccess', 'mspub', 'visio', 'gnumeric'].map(
+      (p) => [p, []] as const,
+    ),
+    ...['soffice', 'libreoffice', 'lowriter', 'localc', 'loimpress'].map(
+      (p) => [p, LIBREOFFICE_CLI] as const,
+    ),
+    ['abiword', ['--to=', '-t']],
+    // browsers
+    ...[
+      'msedge',
+      'chrome',
+      'google-chrome',
+      'google-chrome-stable',
+      'chromium',
+      'chromium-browser',
+      'firefox',
+      'librewolf',
+      'brave',
+      'brave-browser',
+      'opera',
+      'vivaldi',
+      'iexplore',
+      'epiphany',
+      'falkon',
+      'konqueror',
+      'midori',
+    ].map((p) => [p, BROWSER_CLI] as const),
+    // mail, file managers, terminals, small tools
+    ...[
+      'thunderbird',
+      'outlook',
+      'evolution',
+      'kmail',
+      'geary',
+      'nautilus',
+      'dolphin',
+      'thunar',
+      'nemo',
+      'pcmanfm',
+      'caja',
+      'krusader',
+      'gnome-terminal',
+      'konsole',
+      'xterm',
+      'xfce4-terminal',
+      'terminator',
+      'alacritty',
+      'kitty',
+      'wezterm',
+      'tilix',
+      'wt',
+      'calc',
+      'gnome-calculator',
+      'kcalc',
+    ].map((p) => [p, []] as const),
+  ],
+);
 
 /** A desktop program's print flags (`notepad /p`, `AcroRd32 /t`, `soffice -p`): they print, window or not. */
 const PRINT_FLAGS = new Set(['/p', '/pt', '/t', '-p', '-pt', '--pt']);
 
-/** What makes a desktop program run without a window (LibreOffice's conversions imply it). */
-function isHeadlessFlag(word: string): boolean {
-  const w = word.toLowerCase();
-  return /^--headless(=|$)/.test(w) || ['--convert-to', '--print-to-file', '--cat'].includes(w);
+/** True when one of `flags` (a desktop program's command-line uses) is among `args`. */
+function keepsWindowless(args: readonly string[], flags: readonly string[]): boolean {
+  const lower = args.map((a) => a.toLowerCase());
+  return flags.some((flag) => {
+    const f = flag.toLowerCase();
+    if (f.includes(' ')) {
+      const [first, second] = f.split(' ');
+      return lower.some((a, i) => a === first && lower[i + 1] === second);
+    }
+    if (f.endsWith('*')) return lower.some((a) => a.startsWith(f.slice(0, -1)));
+    if (f.endsWith('=')) return lower.some((a) => a.startsWith(f) || a === f.slice(0, -1));
+    return lower.some((a) => a === f || a.startsWith(`${f}=`));
+  });
 }
 
 /** Files a desktop hands to their program when they are run or launched. */
@@ -574,8 +718,9 @@ function reachesOut(unit: readonly string[]): boolean {
   if (OUTWARD_PROGRAMS.has(program)) return true;
   if (OUTWARD_SUBCOMMANDS[program]?.has((args[0] ?? '').toLowerCase())) return true;
   if (LAUNCHERS.has(program)) return launchReachesOut(args);
-  if (DESKTOP_PROGRAMS.has(program)) {
-    return args.some((a) => PRINT_FLAGS.has(a.toLowerCase())) || !args.some(isHeadlessFlag);
+  const windowless = DESKTOP_PROGRAMS.get(program);
+  if (windowless !== undefined) {
+    return args.some((a) => PRINT_FLAGS.has(a.toLowerCase())) || !keepsWindowless(args, windowless);
   }
   // `.\report.txt`, `cmd /c report.pdf`: a document run by name opens in its program.
   return isDocumentOrAddress(program);
@@ -1088,6 +1233,38 @@ function afterOptions(args: readonly ShellWord[], valued: ReadonlySet<string>): 
 const argv = (words: readonly ShellWord[], shell: LineShell = 'exec'): Payload[] =>
   words.length > 0 ? [{ words: [...words], shell }] : [];
 
+/** One of `names` among a program's words. */
+const hasAny = (args: readonly ShellWord[], names: readonly string[]): boolean =>
+  args.some((a) => names.includes(a.text));
+
+/** The words after a leading number (`chrt 10 cmd`). */
+const afterNumber = (args: readonly ShellWord[]): ShellWord[] =>
+  /^\d+$/.test(args[0]?.text ?? '') ? args.slice(1) : [...args];
+
+/** `-c LINE` / `--command LINE`, read by a POSIX shell (`su -c`, `runuser -c`, `expect -c`). */
+function commandOption(args: readonly ShellWord[]): Payload[] {
+  const i = args.findIndex((a) => a.text === '-c' || a.text === '--command');
+  const line = i < 0 ? undefined : args[i + 1];
+  return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
+}
+
+/** strace/ltrace options that take a value. */
+const TRACE_VALUED = new Set([
+  '-o',
+  '-e',
+  '-p',
+  '-s',
+  '-u',
+  '-E',
+  '-I',
+  '-a',
+  '-P',
+  '-X',
+  '-O',
+  '-S',
+  '-b',
+]);
+
 /** `sh -c LINE`, `bash -lc LINE`, `zsh -o pipefail -c LINE`: a script file is not opened here. */
 function shellLine(args: readonly ShellWord[]): Payload[] {
   for (let i = 0; i < args.length; i++) {
@@ -1214,6 +1391,108 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
     if (!/^\d+(\.\d+)?[smhd]?$/.test(rest[0]?.text ?? '')) return [];
     return argv(rest.slice(1));
   },
+  // ── exec wrappers (review of PR #682, pass 5): each runs the command that
+  // follows its own options, as it is, in another process state.
+  setsid: (args) => argv(afterOptions(args, new Set())),
+  stdbuf: (args) =>
+    argv(afterOptions(args, new Set(['-i', '-o', '-e', '--input', '--output', '--error']))),
+  // With `-p PID` they act on a running process: the word left is a number.
+  ionice: (args) => argv(afterOptions(args, new Set(['-c', '-n', '--class', '--classdata']))),
+  // `chrt [options] PRIORITY cmd…`
+  chrt: (args) => argv(afterNumber(afterOptions(args, new Set()))),
+  // `taskset [options] MASK|LIST cmd…`
+  taskset: (args) => argv(afterOptions(args, new Set()).slice(1)),
+  unbuffer: (args) => argv(afterOptions(args, new Set())),
+  strace: (args) => argv(afterOptions(args, TRACE_VALUED)),
+  ltrace: (args) => argv(afterOptions(args, TRACE_VALUED)),
+  valgrind: (args) => argv(afterOptions(args, new Set())),
+  // `watch` hands its words to `sh -c` (`-x` executes them).
+  watch: (args) => {
+    const rest = afterOptions(args, new Set(['-n', '--interval', '-q', '--equexit']));
+    if (rest.length === 0) return [];
+    return hasAny(args, ['-x', '--exec'])
+      ? argv(rest)
+      : [{ line: rest.map((a) => a.text).join(' '), shell: 'sh' }];
+  },
+  // `flock [options] FILE cmd…` or `flock [options] FILE -c LINE`; `flock FD` runs nothing.
+  flock: (args) => {
+    const rest = afterOptions(args, new Set(['-w', '--timeout', '-E', '--conflict-exit-code']));
+    const after = rest.slice(1);
+    const c = after.findIndex((a) => a.text === '-c' || a.text === '--command');
+    if (c >= 0) {
+      const line = after[c + 1];
+      return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
+    }
+    return argv(after);
+  },
+  // `chroot [options] NEWROOT [cmd…]`
+  chroot: (args) => argv(afterOptions(args, new Set()).slice(1)),
+  unshare: (args) =>
+    argv(
+      afterOptions(
+        args,
+        new Set([
+          '-S',
+          '--setuid',
+          '-G',
+          '--setgid',
+          '--map-user',
+          '--map-group',
+          '-R',
+          '--root',
+          '-w',
+          '--wd',
+        ]),
+      ),
+    ),
+  nsenter: (args) =>
+    argv(afterOptions(args, new Set(['-t', '--target', '-S', '--setuid', '-G', '--setgid']))),
+  'systemd-run': (args) =>
+    argv(
+      afterOptions(
+        args,
+        new Set([
+          '-p',
+          '--property',
+          '-u',
+          '--unit',
+          '-E',
+          '--setenv',
+          '--uid',
+          '--gid',
+          '-M',
+          '--machine',
+          '-H',
+          '--host',
+          '--description',
+          '--slice',
+          '--working-directory',
+          '--on-calendar',
+          '--on-active',
+        ]),
+      ),
+    ),
+  firejail: (args) => argv(afterOptions(args, new Set())),
+  // macOS: `caffeinate [-disu] [-t seconds] [-w pid] [utility args]`
+  caffeinate: (args) => argv(afterOptions(args, new Set(['-t', '-w']))),
+  builtin: (args) => argv(args),
+  pkexec: (args) => argv(afterOptions(args, new Set(['--user']))),
+  // `su [user] -c LINE`, `runuser -u user -- cmd…` / `runuser -c LINE`
+  su: (args) => commandOption(args),
+  runuser: (args) => {
+    const line = commandOption(args);
+    return line.length > 0
+      ? line
+      : argv(afterOptions(args, new Set(['-u', '--user', '-g', '--group', '-G', '-s', '--shell'])));
+  },
+  proxychains: (args) => argv(afterOptions(args, new Set(['-f']))),
+  torsocks: (args) => argv(afterOptions(args, new Set(['-u', '-p', '-a', '-P']))),
+  eatmydata: (args) => argv(afterOptions(args, new Set())),
+  fakeroot: (args) => argv(afterOptions(args, new Set(['-l', '-s', '-i']))),
+  'dbus-launch': (args) => argv(afterOptions(args, new Set())),
+  // `expect -c "spawn cmd…"`: Tcl, whose `spawn` starts a program.
+  expect: (args) => commandOption(args),
+  spawn: (args) => argv(afterOptions(args, new Set())),
   exec: (args) => argv(afterOptions(args, new Set(['-a']))),
   // `command -v x` only looks x up.
   command: (args) =>
@@ -1276,6 +1555,8 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
 };
 RUNS_ANOTHER['pwsh'] = RUNS_ANOTHER['powershell'] as (typeof RUNS_ANOTHER)[string];
 RUNS_ANOTHER['invoke-expression'] = RUNS_ANOTHER['iex'] as (typeof RUNS_ANOTHER)[string];
+RUNS_ANOTHER['gtimeout'] = RUNS_ANOTHER['timeout'] as (typeof RUNS_ANOTHER)[string];
+RUNS_ANOTHER['proxychains4'] = RUNS_ANOTHER['proxychains'] as (typeof RUNS_ANOTHER)[string];
 
 /**
  * Words that name a shell's keyword, builtin, alias or cmdlet, not a file:
@@ -1317,7 +1598,9 @@ const SHELL_KEYWORDS = new Set([
  * cannot be read ahead (review of PR #682, pass 4).
  */
 function isDecidedAtRunTime(word: string): boolean {
-  return /[$`]|%[^%\s]+%|![^!\s]+!/.test(word);
+  // `$x`, backticks; cmd's `%X%`, `%f`, `%%f`, `%~dpnxf`, `%1`…`%9`, `%*`,
+  // `%~1`, `%~dp0`, and delayed `!X!` (review of PR #682, pass 5).
+  return /[$`]|%%?(~[a-z]*)?[a-z0-9*]|![^!\s]+!/i.test(word);
 }
 
 /**
