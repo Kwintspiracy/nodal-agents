@@ -203,7 +203,7 @@ list. Code written into the line (`python -c`, `node -e`) is read the same way.
 - What a line feeds a shell or an interpreter on its standard input is its
   source too: a here-document (`bash <<EOF`, `python - <<'PY'`), a
   here-string (`bash <<< "…"`, `@"…"@ | powershell -`), a file
-  (`cmd < setup.txt`). Fed to any other program (`cat <<EOF > notes.txt`), it
+  (`cmd < setup.txt`). Fed to any other program (`cat <<eof` writing a file), it
   is data. A cmd `if` is read without brackets too: `if exist x pip install y`.
 
 **What this list does not do.** It reads the text the agent asks to run, and
