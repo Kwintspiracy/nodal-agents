@@ -137,6 +137,28 @@ export function resolveWorkspaceList(
 }
 
 /**
+ * Le dossier PAR DÉFAUT d'un run : le premier de sa liste, `null` s'il n'en a
+ * aucun.
+ *
+ * Aucune règle neuve : c'est l'ordre que cette liste porte déjà — le dossier
+ * attaché à la demande en tête (`withJobFolder`), puis ceux de l'agent dans
+ * l'ordre du propriétaire (`position`, puis `label`), le partagé en dernier
+ * (`resolveWorkspaceList`). Une session de CLI démarre dans ce dossier
+ * (cli-runtime/run-job.ts), et le prompt y range un document quand la
+ * conversation n'a pas de projet (02/10, décision de Quentin : « cette
+ * question n'a aucune raison d'être ») — une seule lecture de l'ordre pour
+ * les deux, nommée ici.
+ *
+ * Le partagé n'est le défaut que d'un agent qui n'a que lui : c'est aussi ce
+ * que fait `resolveAndCheckPath` pour un chemin sans label.
+ */
+export function defaultWorkspace<W extends { label: string; path: string }>(
+  list: ReadonlyArray<W>,
+): W | null {
+  return list[0] ?? null;
+}
+
+/**
  * Les dossiers d'un run de `agentId` : ceux qui lui sont attachés, dans
  * l'ordre choisi par le propriétaire, PUIS le partagé de l'espace. La liste
  * que reçoivent les outils, le prompt, une session de CLI — et le bloc

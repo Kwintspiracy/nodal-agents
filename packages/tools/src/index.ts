@@ -286,6 +286,8 @@ export {
   resolveWorkspaceList,
   resolveRunWorkspaces,
   ensureSharedWorkspace,
+  // Le premier de la liste : où démarre une CLI, où va un document sans projet.
+  defaultWorkspace,
   // Le dossier attaché à la demande d'un run (#507).
   withJobFolder,
   isExistingDirectory,
