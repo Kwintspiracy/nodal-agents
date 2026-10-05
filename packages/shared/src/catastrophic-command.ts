@@ -533,9 +533,9 @@ export interface DownloadWrites {
 }
 
 /**
- * The kind of shell a command is judged for. A Windows device name (`nul`,
- * `con`) is a device only where Windows resolves it: on any other host
- * `curl -o nul` writes a real file named `nul` (#669).
+ * The kind of shell a command is judged for. The null sink is the host's own
+ * (`isNullSink`): `NUL` is a device only where Windows resolves it, and on any
+ * other host `curl -o nul` writes a real file named `nul` (#669).
  */
 export type ShellHost = 'windows' | 'posix';
 
@@ -543,10 +543,6 @@ export function downloadWrites(cmd: string, host: ShellHost): DownloadWrites {
   const out: DownloadWrites = { dirs: [], targets: [] };
   if (typeof cmd !== 'string' || cmd.trim() === '') return out;
   const units = commandUnits(withoutRedirections(cmd));
-  // The files the line feeds to its standard input (`< file`): what `/dev/stdin`
-  // leads to, and so a place that line writes when it names it.
-  const stdinFiles = inputRedirectionTargets(cmd);
-  const written = (name: string): Array<string | null> => writtenPlaces(name, host, stdinFiles);
   // `iwr URL | Set-Content file`: where the fetched bytes land, kept only if
   // the line downloads.
   const piped: DownloadTarget[] = [];
@@ -560,16 +556,12 @@ export function downloadWrites(cmd: string, host: ShellHost): DownloadWrites {
       continue;
     }
     for (const t of pipeWriterTargets(program, args))
-      for (const place of written(t))
-        piped.push({ path: place === null ? null : readablePath(place), after: out.dirs.length });
+      if (!isNullSink(t, host)) piped.push({ path: readablePath(t), after: out.dirs.length });
     if (!unitCategories(unit).includes('download')) continue;
     downloads = true;
     for (const t of fetcherTargets(program, args))
-      for (const place of t === null ? [null] : written(t))
-        out.targets.push({
-          path: place === null ? null : readablePath(place),
-          after: out.dirs.length,
-        });
+      if (t === null || !isNullSink(t, host))
+        out.targets.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
   }
   // `curl URL > file`: the bytes land where the shell sends them. Read on a
   // line that downloads (or reads a URL into a redirection, which
@@ -577,8 +569,7 @@ export function downloadWrites(cmd: string, host: ShellHost): DownloadWrites {
   if (downloads || staticShellCategories(cmd).includes('download')) {
     out.targets.push(...piped);
     for (const t of redirectionTargets(cmd))
-      for (const place of written(t))
-        out.targets.push({ path: place === null ? null : readablePath(place), after: null });
+      if (!isNullSink(t, host)) out.targets.push({ path: readablePath(t), after: null });
   }
   return out;
 }
@@ -612,53 +603,35 @@ function changeDirArg(program: string, args: readonly string[]): string | null {
 }
 
 /**
- * The places a written name stands for: none when it is a sink, the name
- * itself otherwise (#669, approbation 0330a0fc du 02/10 : `curl -o /dev/null`
- * lu comme un fichier hors de l'espace interrogeait la personne). THE one rule
- * every write goes through (a fetcher's output, a pipe writer, a redirection),
- * and a name is exempt only when nothing it leads to can be a file:
+ * The null sink of the host that runs the command, and nothing else (#669,
+ * approbation 0330a0fc du 02/10 : `curl -o /dev/null` lu comme un fichier hors
+ * de l'espace interrogeait la personne). THE one exemption every write goes
+ * through (a fetcher's output, a pipe writer, a redirection): what is written
+ * there lands in no place.
  *
- * - A SINK by definition, whatever the line does: the device nodes
- *   `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`, `/dev/urandom`,
- *   `/dev/tty` (never `/dev/sda` or `/dev/tty1`: a disk or a console of the
- *   machine is a place), PowerShell's `$null` (nothing, on any host), and, on
- *   a Windows host only, `NUL` and `CON` in any case with a `:` or an
- *   extension (`nul.json`, `NUL.tar.gz`: the device is what comes before the
- *   first dot), `CONIN$` / `CONOUT$`, and the same behind the DOS device prefix. The other
- *   reserved names (`PRN`, `AUX`, `COM1`, `LPT1`) reach hardware: a place.
- *   Elsewhere `nul` is an ordinary file.
- * - A descriptor ALIAS is no sink: it is whatever that descriptor points at.
- *   `/dev/stdout`, `/dev/stderr`, `/dev/fd/1`, `/dev/fd/2` are the line's own
- *   output streams; a file behind them is a redirection of the line, read and
- *   judged on its own. `/dev/stdin` and `/dev/fd/0` lead to the files the line
- *   reads with `< file` (`curl -o /dev/stdin URL < /tmp/x` overwrites
- *   `/tmp/x`): those are the places. `/dev/fd/N` for N of 3 and more was opened
- *   by something the text does not show: `null`, which asks (invariant #4).
+ * - POSIX host: `/dev/null`.
+ * - Windows host (the commands run in cmd.exe): `NUL` in any case, with a `:`
+ *   or an extension (`nul:`, `nul.json`, `NUL.tar.gz`: the device is what
+ *   comes before the first dot), and PowerShell's `$null`.
  *
- * Only the bare name: `nul/a.json` or `/tmp/dev/null` are places. A tool's own
- * `-` for its standard output is read where the tool is (`curl -o -`,
- * `wget -O -`): for a shell redirection or `tee`, `-` is a file. What KIND of
- * action the line is does not change: only where it writes.
+ * Every other name is an ordinary place, judged like any path and shown as
+ * written: `/dev/zero`, `/dev/tty`, `CON`, and the descriptor aliases
+ * (`/dev/stdin`, `/dev/stdout`, `/dev/fd/N`) whose target depends on
+ * redirections and descriptor copies the text may not show (`3<f 0<&3`).
+ * `/dev/null` on a Windows host is one too: cmd.exe reads it as `\dev\null` of
+ * the current drive. The price is a few harmless asks (`-o /dev/stdout`); the
+ * gain, an exemption that can never hide a write. Only the bare name: `nul/a.json`
+ * or `/tmp/dev/null` are places. A tool's own `-` for its standard output is
+ * read where the tool is (`curl -o -`, `wget -O -`): for a shell redirection or
+ * `tee`, `-` is a file. What KIND of action the line is does not change: only
+ * where it writes.
  */
-function writtenPlaces(
-  name: string,
-  host: ShellHost,
-  stdinFiles: readonly string[],
-): Array<string | null> {
-  if (POSIX_SINK.test(name) || POWERSHELL_NULL.test(name)) return [];
-  if (host === 'windows' && WINDOWS_DEVICE.test(name)) return [];
-  if (OWN_OUTPUT_STREAM.test(name)) return [];
-  if (OWN_INPUT_STREAM.test(name)) return [...stdinFiles];
-  if (OPEN_DESCRIPTOR.test(name)) return [null];
-  return [name];
+function isNullSink(p: string, host: ShellHost): boolean {
+  return host === 'windows' ? WINDOWS_NUL.test(p) || POWERSHELL_NULL.test(p) : p === '/dev/null';
 }
 
-const POSIX_SINK = /^\/dev\/(?:null|zero|full|random|urandom|tty)$/;
-const WINDOWS_DEVICE = /^(?:\\\\\.\\)?(?:(?:nul|con)(?::|\.[^\\/]*)?|conin\$|conout\$)$/i;
+const WINDOWS_NUL = /^nul(?::|\.[^\\/]*)?$/i;
 const POWERSHELL_NULL = /^\$null$/i;
-const OWN_OUTPUT_STREAM = /^\/dev\/(?:stdout|stderr|fd\/[12])$/;
-const OWN_INPUT_STREAM = /^\/dev\/(?:stdin|fd\/0)$/;
-const OPEN_DESCRIPTOR = /^\/dev\/fd\/\d+$/;
 
 /** A path as written, or null when the shell decides it at run time. */
 function readablePath(p: string): string | null {
@@ -868,14 +841,6 @@ function redirectionTargets(cmd: string): string[] {
     if (t.startsWith('&')) continue;
     targets.push(t);
   }
-  return targets;
-}
-
-/** The files the shell feeds to a line's standard input: `< file` (not a here-document, not `<(…)`). */
-function inputRedirectionTargets(cmd: string): string[] {
-  const targets: string[] = [];
-  for (const m of cmd.matchAll(/(?:^|[^<>\d])0?<(?![<(&])\s*("[^"]*"|'[^']*'|[^\s;&|()<>]+)/g))
-    targets.push(stripQuotes(m[1] ?? ''));
   return targets;
 }
 

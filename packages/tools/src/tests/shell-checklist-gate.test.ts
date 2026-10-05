@@ -445,9 +445,11 @@ describe('an allowed download asks when it writes outside the workspace (#614, r
 // espaces, `cwd` absent) qui rendait tout chemin relatif « hors espace » — pour
 // une commande qui, approuvée, échoue de toute façon sur ce même dossier.
 describe('nowhere is not a place, and an unaddressed start never reaches a person (#669) @cap:executer-une-commande/moteur', () => {
+  // The null sink of the host that runs the tests: the only name that is no place.
+  const NOWHERE = process.platform === 'win32' ? 'NUL' : '/dev/null';
   const commons =
     'curl -s "https://commons.wikimedia.org/w/api.php?action=query&format=json" -o commons.json && ' +
-    'curl -s -o /dev/null -w "%{http_code}" -L "https://commons.wikimedia.org/wiki/File:x.jpg"';
+    `curl -s -o ${NOWHERE} -w "%{http_code}" -L "https://commons.wikimedia.org/wiki/File:x.jpg"`;
   let other: string;
 
   beforeAll(async () => {
@@ -482,12 +484,13 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     }
   });
 
-  it('a download sent to the null device or a standard stream asks no one', async () => {
+  it('a download sent to the null sink of the host asks no one, in any form', async () => {
     for (const command of [
-      'curl -s -o /dev/null -w "%{http_code}" https://x/a',
-      'curl -s https://x/a > NUL',
-      'curl -s -o nul.json https://x/a',
-      'wget -O /dev/stdout https://x/a',
+      `curl -s -o ${NOWHERE} -w "%{http_code}" https://x/a`,
+      `curl -s https://x/a > ${NOWHERE}`,
+      `curl -s https://x/a 2>${NOWHERE}`,
+      `curl -s https://x/a &>${NOWHERE}`,
+      `curl -s -o commons.json https://x/a 2>${NOWHERE}`,
     ]) {
       const before = await approvalCount();
       const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
@@ -498,7 +501,7 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
 
   it('a download really outside the workspace still asks, naming the place', async () => {
     const system = process.platform === 'win32' ? 'C:\\Windows\\x' : '/etc/x';
-    const command = `curl -s -o ${system} https://x/a && curl -s -o /dev/null https://x/b`;
+    const command = `curl -s -o ${system} https://x/a && curl -s -o ${NOWHERE} https://x/b`;
 
     const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
 
@@ -523,7 +526,7 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
       '/dev/nodal-gate-void/a.jpg',
       '/c/nodal/x.jpg',
     ]) {
-      const command = `curl -s -o ${named} -w "%{http_code}" https://x/a 2>/dev/null`;
+      const command = `curl -s -o ${named} -w "%{http_code}" https://x/a 2>${NOWHERE}`;
       const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
       expect(res.outcome, named).toBe('awaiting_approval');
       if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
@@ -538,14 +541,13 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     }
   });
 
-  it('a device in the line never hides the real place, whatever shell wrote it (#669)', async () => {
+  it('the null sink in the line never hides the real place, in any form (#669)', async () => {
     const outside = join(elsewhere, 'x.bin');
     for (const command of [
-      `curl -s -o ${outside} https://x/a 2>/dev/null`,
-      `curl -s https://x/a 2>/dev/null > ${outside}`,
-      `curl -s https://x/a &>/dev/null > ${outside}`,
-      `curl -s https://x/a 2>nul > ${outside}`,
-      `curl -s -o NUL https://x/b && curl -s -o ${outside} https://x/a`,
+      `curl -s -o ${outside} https://x/a 2>${NOWHERE}`,
+      `curl -s https://x/a 2>${NOWHERE} > ${outside}`,
+      `curl -s https://x/a &>${NOWHERE} > ${outside}`,
+      `curl -s -o ${NOWHERE} https://x/b && curl -s -o ${outside} https://x/a`,
     ]) {
       const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
       expect(res.outcome, command).toBe('awaiting_approval');
@@ -561,52 +563,33 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     }
   });
 
-  it('every device of every shell, on any download, asks no one (#669)', async () => {
-    for (const command of [
-      'curl -sI -o /dev/null https://x/a',
-      'curl -s https://x/a > /dev/zero',
-      'curl -s https://x/a 2>/dev/null > /dev/fd/2',
-      'curl -s https://x/a &>/dev/null',
-      'curl -s https://x/a 2>nul > NUL',
-      'curl -s https://x/a > CON',
-      'iwr https://x/a -OutFile $null',
-      'iwr https://x/a | Out-Null',
-      'wget -qO /dev/tty https://x/a',
-    ]) {
-      const before = await approvalCount();
+  it('every name that is not the null sink is a place, and asks, shown as written (#669)', async () => {
+    // Codex, passes 1 and 2: devices and descriptor aliases lead where the line
+    // and the host decide (`3<f 0<&3`, cmd.exe reading `/dev/zero` as `\dev\zero`).
+    const commands: Array<[string, string]> = [
+      ['curl -s -o /dev/zero https://x/a', '/dev/zero'],
+      ['curl -s -o /dev/stdout https://x/a', '/dev/stdout'],
+      ['curl -s -o /dev/fd/7 https://x/a', '/dev/fd/7'],
+      ['curl -s https://x/a > /dev/tty', '/dev/tty'],
+      [`curl -s -o /dev/stdin https://x/a < ${join(elsewhere, 'in.txt')}`, '/dev/stdin'],
+      [`curl -s -o /dev/stdin https://x/a 3<${join(elsewhere, 'in.txt')} 0<&3`, '/dev/stdin'],
+      [
+        `exec < ${join(elsewhere, 'in.txt')}; cd sub && curl -s -o /dev/stdin https://x/a`,
+        '/dev/stdin',
+      ],
+    ];
+    for (const [command, place] of commands) {
       const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
-      expect(res, command).toMatchObject({ outcome: 'success', output: `ran:${command}` });
-      expect(await approvalCount(), command).toBe(before);
-    }
-  });
-
-  it('a descriptor alias never lets a real write through the gate (#669)', async () => {
-    // `/dev/stdin` is the file the line reads: this overwrites it, outside.
-    const outside = join(elsewhere, 'outside.txt');
-    const command = `curl -s -o /dev/stdin https://x/a < ${outside}`;
-    const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
-    expect(res.outcome).toBe('awaiting_approval');
-    if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
-    expect(await reasonsOf(res.approvalRequestId)).toEqual([
-      {
-        category: 'download',
-        state: 'ask',
-        details: [command],
-        outside: [{ command, places: [outside] }],
-      },
-    ]);
-    // A descriptor opened by something the command does not show asks too.
-    const open = 'curl -s -o /dev/fd/7 https://x/a';
-    const second = await run(open, gate(DEFAULT_SHELL_POLICY, [yolo()]));
-    expect(second.outcome).toBe('awaiting_approval');
-    // The line's own streams and a stdin that is a pipe write nothing anywhere.
-    for (const quiet of [
-      'curl -s -o /dev/stdout https://x/a',
-      'cat x | curl -s -o /dev/stdin https://x/a',
-    ]) {
-      expect(await run(quiet, gate(DEFAULT_SHELL_POLICY, [yolo()])), quiet).toMatchObject({
-        outcome: 'success',
-      });
+      expect(res.outcome, command).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      expect(await reasonsOf(res.approvalRequestId), command).toEqual([
+        {
+          category: 'download',
+          state: 'ask',
+          details: [command],
+          outside: [{ command, places: [place] }],
+        },
+      ]);
     }
   });
 

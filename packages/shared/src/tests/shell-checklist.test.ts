@@ -441,147 +441,67 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
 
   // #669 (approbation 0330a0fc, 02/10) : `-o /dev/null` était résolu comme un
   // fichier, hors de l'espace, et la personne était interrogée sur un
-  // téléchargement qui n'écrivait que dans l'espace.
-  it('a null device or a standard stream is never a place, whatever writes there (#669)', () => {
-    const paths = (cmd: string) => writesOf(cmd).targets.map((t) => t.path);
+  // téléchargement qui n'écrivait que dans l'espace. Passe 2 de la revue : on ne
+  // devine plus ce que vers quoi un alias pointe. Seul le puits nul de l'HÔTE
+  // qui exécute est « nulle part » ; tout le reste est un chemin ordinaire.
+  const wrapped = (d: string) => [
+    `curl -s -o ${d} https://x/a`,
+    `curl -s --output ${d} https://x/a`,
+    `curl https://x/a > ${d}`,
+    `curl https://x/a >> ${d}`,
+    `curl https://x/a 2> ${d}`,
+    `curl https://x/a 2>${d}`,
+    `curl https://x/a &> ${d}`,
+    `curl https://x/a &>>${d}`,
+    `curl https://x/a >${d} 2>&1`,
+    `iwr https://x/a -OutFile ${d}`,
+    `iwr https://x/a | Out-File ${d}`,
+    `iwr https://x/a | Set-Content ${d}`,
+    `iwr https://x/a | tee ${d}`,
+  ];
+  const paths = (cmd: string, host: ShellHost) => writesOf(cmd, host).targets.map((t) => t.path);
+
+  it('the null sink of the host is no place, for every form of write (#669)', () => {
+    const sinks = {
+      posix: ['/dev/null'],
+      windows: ['NUL', 'nul', 'Nul:', 'nul.txt', 'NUL.tar.gz', '$null', '$NULL'],
+    } as const;
+    for (const host of ['posix', 'windows'] as const)
+      for (const sink of sinks[host])
+        for (const cmd of wrapped(sink)) expect(paths(cmd, host), `${host}: ${cmd}`).toEqual([]);
     expect(
       paths(
         'curl -s "https://commons.wikimedia.org/w/api.php?action=query" -o commons.json && ' +
           'curl -s -o /dev/null -w "%{http_code}" -L "https://commons.wikimedia.org/wiki/File:x.jpg"',
+        'posix',
       ),
     ).toEqual(['commons.json']);
-    for (const cmd of [
-      'curl -s -o /dev/null https://x/a',
-      'curl --output=/dev/stdout https://x/a',
-      'wget -O /dev/stderr https://x/a',
-      'curl -o NUL https://x/a',
-      'curl -o nul https://x/a',
-      'curl -o Nul.json https://x/a',
-      'iwr https://x/a -OutFile NUL',
-      'curl https://x/a > NUL',
-      'curl https://x/a > /dev/null',
-      'curl https://x/a >> nul.log',
-      'iwr https://x/a | Out-File NUL',
-      'curl https://x/a | tee /dev/stderr',
-      'curl https://x/a > $null',
-    ]) {
-      expect(paths(cmd), cmd).toEqual([]);
-    }
-    // Only the device itself: a file or folder that merely starts like one is a place.
-    expect(paths('curl -o /dev/nullx https://x/a')).toEqual(['/dev/nullx']);
-    expect(paths('curl -o nul/a.json https://x/a')).toEqual(['nul/a.json']);
-    expect(paths('curl -o null.json https://x/a')).toEqual(['null.json']);
-    expect(paths('curl -o /tmp/dev/null https://x/a')).toEqual(['/tmp/dev/null']);
-  });
-
-  // #669, second pass: the rule is ONE function (`writtenPlaces`) that every kind
-  // of write goes through. A name is exempt only when nothing it leads to can be
-  // a file: a sink by definition, never a descriptor alias, and a Windows device
-  // name only for a Windows host.
-  const wrapped = (device: string) => [
-    `curl -s -o ${device} https://x/a`,
-    `curl -s --output ${device} https://x/a`,
-    `curl https://x/a > ${device}`,
-    `curl https://x/a >> ${device}`,
-    `curl https://x/a 2> ${device}`,
-    `curl https://x/a 2>${device}`,
-    `curl https://x/a &> ${device}`,
-    `curl https://x/a &>>${device}`,
-    `curl https://x/a >${device} 2>&1`,
-    `iwr https://x/a -OutFile ${device}`,
-    `iwr https://x/a | Out-File ${device}`,
-    `iwr https://x/a | Set-Content ${device}`,
-    `iwr https://x/a | tee ${device}`,
-  ];
-
-  it('a sink by definition is nowhere, for every form of write, on every host (#669)', () => {
-    const paths = (cmd: string, host: ShellHost) => writesOf(cmd, host).targets.map((t) => t.path);
-    for (const host of ['windows', 'posix'] as const) {
-      for (const device of [
-        '/dev/null',
-        '/dev/zero',
-        '/dev/full',
-        '/dev/random',
-        '/dev/urandom',
-        '/dev/tty',
-        '$null',
-        '$NULL',
-      ]) {
-        for (const cmd of wrapped(device)) expect(paths(cmd, host), `${host}: ${cmd}`).toEqual([]);
-      }
-    }
-    // Nothing is written by a pipe into Out-Null, whatever else the line does.
-    expect(paths('iwr https://x/a | Out-Null', 'posix')).toEqual([]);
+    // Nothing is written by a pipe into Out-Null.
+    expect(paths('iwr https://x/a | Out-Null', 'windows')).toEqual([]);
     expect(paths('curl -sI https://x/a 2>&1 >/dev/null', 'posix')).toEqual([]);
   });
 
-  it('a Windows device name is a device on a Windows host, and a file anywhere else (#669)', () => {
-    const paths = (cmd: string, host: ShellHost) => writesOf(cmd, host).targets.map((t) => t.path);
-    for (const device of [
-      'NUL',
-      'nul',
-      'Nul:',
-      'nul.txt',
-      'NUL.tar.gz',
+  it('every other name is an ordinary place, on every host, shown as written (#669)', () => {
+    const places = [
+      // devices and descriptor aliases: where they lead depends on the line and the host
+      '/dev/zero',
+      '/dev/full',
+      '/dev/random',
+      '/dev/urandom',
+      '/dev/tty',
+      '/dev/stdin',
+      '/dev/stdout',
+      '/dev/stderr',
+      '/dev/fd/0',
+      '/dev/fd/1',
+      '/dev/fd/7',
       'CON',
       'con:',
-      'CONOUT$',
-      '\\\\.\\NUL',
-      '\\\\.\\nul',
-      '\\\\.\\CONOUT$',
-    ]) {
-      for (const cmd of wrapped(device)) {
-        expect(paths(cmd, 'windows'), `windows: ${cmd}`).toEqual([]);
-        // Judged where it is written: a real file, so a real place to judge.
-        expect(paths(cmd, 'posix'), `posix: ${cmd}`).not.toEqual([]);
-      }
-    }
-    // The same file, written from a folder the line moved into.
-    expect(paths('cd /etc && curl -o nul https://x/a', 'posix')).toEqual(['nul']);
-    expect(writesOf('cd /etc && curl -o nul https://x/a', 'posix').dirs).toEqual(['/etc']);
-    expect(paths('cd /etc && curl -o nul https://x/a', 'windows')).toEqual([]);
-    expect(paths('curl https://x/a > nul', 'posix')).toEqual(['nul']);
-  });
-
-  it('a descriptor alias is whatever the descriptor points at, never a sink (#669)', () => {
-    const paths = (cmd: string, host: ShellHost) => writesOf(cmd, host).targets.map((t) => t.path);
-    for (const host of ['windows', 'posix'] as const) {
-      // Standard input: the file the line reads is the file it overwrites.
-      expect(paths('curl -o /dev/stdin https://x/data < /tmp/outside.txt', host)).toEqual([
-        '/tmp/outside.txt',
-      ]);
-      expect(paths('curl -o /dev/fd/0 https://x/data <../outside.txt', host)).toEqual([
-        '../outside.txt',
-      ]);
-      expect(paths('curl https://x/data > /dev/stdin 0< "/tmp/my file.txt"', host)).toEqual([
-        '/tmp/my file.txt',
-      ]);
-      // A descriptor opened by something the text does not show asks.
-      expect(paths('curl -o /dev/fd/3 https://x/data', host)).toEqual([null]);
-      expect(paths('curl https://x/data > /dev/fd/12', host)).toEqual([null]);
-      // The line's own output streams: a file behind them is a redirection of the
-      // line, judged on its own, and with none they are the runner's pipes.
-      expect(paths('curl -o /dev/stdout https://x/a > /tmp/out.bin', host)).toEqual([
-        '/tmp/out.bin',
-      ]);
-      expect(paths('curl -o /dev/stderr https://x/a 2>../err.log', host)).toEqual(['../err.log']);
-      for (const own of ['/dev/stdout', '/dev/stderr', '/dev/fd/1', '/dev/fd/2'])
-        for (const cmd of wrapped(own)) expect(paths(cmd, host), `${host}: ${cmd}`).toEqual([]);
-      // Standard input read from a pipe or a here-string names no file.
-      expect(paths('cat x | curl -o /dev/stdin https://x/a', host)).toEqual([]);
-    }
-  });
-
-  it('a name that only starts like a device, or a device beyond the bare name, is a place (#669)', () => {
-    const paths = (cmd: string) => writesOf(cmd).targets.map((t) => t.path);
-    for (const place of [
-      '/dev/sda', // a disk is a place
+      // the other host's null sink: a real file or folder here
+      '/dev/sda',
       '/dev/tty1',
-      '/dev/fd/',
-      '/dev/fd/x',
-      '/dev/fd/1/x',
-      '/dev/zeroes',
-      'dev/null', // relative: a folder named dev
+      '/dev/nullx',
+      'dev/null',
       './dev/null',
       '/tmp/dev/null',
       'null',
@@ -590,30 +510,70 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
       'nulled',
       'nul/a',
       '\\\\.\\C:\\x',
-    ]) {
-      expect(paths(`curl -s -o ${place} https://x/a`), place).toEqual([place]);
-      expect(paths(`curl https://x/a > ${place}`), place).toEqual([place]);
+    ];
+    for (const host of ['posix', 'windows'] as const)
+      for (const place of places) {
+        expect(paths(`curl -s -o ${place} https://x/a`, host), `${host}: ${place}`).toEqual([
+          place,
+        ]);
+        expect(paths(`curl https://x/a > ${place}`, host), `${host}: ${place}`).toEqual([place]);
+      }
+    // The null sink of ANOTHER host is a place here.
+    expect(paths('curl -o /dev/null https://x/a', 'windows')).toEqual(['/dev/null']);
+    for (const name of ['NUL', 'nul', 'nul:', 'nul.txt'])
+      expect(paths(`curl -o ${name} https://x/a`, 'posix')).toEqual([name]);
+    expect(paths('curl https://x/a > nul', 'posix')).toEqual(['nul']);
+    // `$null` and `CONOUT$` are read by a shell, not named: asks.
+    expect(paths('curl -o $null https://x/a', 'posix')).toEqual([null]);
+    expect(paths('curl -o CONOUT$ https://x/a', 'windows')).toEqual([null]);
+    // From the folder the line moved into (an `nul` of a POSIX host is a real file).
+    expect(paths('cd /etc && curl -o nul https://x/a', 'posix')).toEqual(['nul']);
+    expect(writesOf('cd /etc && curl -o nul https://x/a', 'posix').dirs).toEqual(['/etc']);
+    expect(paths('cd /etc && curl -o nul https://x/a', 'windows')).toEqual([]);
+  });
+
+  it('what a descriptor alias leads to is never guessed: each of these writes is reported (#669)', () => {
+    for (const host of ['posix', 'windows'] as const) {
+      // Codex, pass 2: cmd.exe reads these as rooted paths of the current drive.
+      expect(paths('curl -o /dev/zero https://x/a', host)).toEqual(['/dev/zero']);
+      // stdin copied from a descriptor that was opened on another file.
+      expect(paths('curl -o /dev/stdin https://x/a 3</tmp/outside.txt 0<&3', host)).toEqual([
+        '/dev/stdin',
+      ]);
+      // stdin redirected earlier in the line, the fetcher run from a later folder.
+      expect(
+        writesOf('exec < ../outside.txt; cd sub && curl -o /dev/stdin https://x/a', host),
+      ).toEqual({ dirs: ['sub'], targets: [{ path: '/dev/stdin', after: 1 }] });
+      // Codex, pass 1.
+      expect(paths('curl -o /dev/stdin https://x/data < /tmp/outside.txt', host)).toEqual([
+        '/dev/stdin',
+      ]);
     }
   });
 
-  it('a device in the same line never hides a real place, in any order and any form (#669)', () => {
-    const paths = (cmd: string) => writesOf(cmd).targets.map((t) => t.path);
-    expect(paths('curl -s -o /etc/x https://x/a 2>/dev/null')).toEqual(['/etc/x']);
-    expect(paths('curl https://x/a 2>/dev/null > ../outside.txt')).toEqual(['../outside.txt']);
-    expect(paths('curl https://x/a > ../outside.txt 2>/dev/null')).toEqual(['../outside.txt']);
-    expect(paths('curl https://x/a &>/dev/null > C:\\Windows\\x')).toEqual(['C:\\Windows\\x']);
-    expect(paths('curl -s -o /dev/null https://x/a && curl -o /etc/x https://x/b')).toEqual([
-      '/etc/x',
+  it('a null sink in the same line never hides a real place, in any order and any form (#669)', () => {
+    expect(paths('curl -s -o /etc/x https://x/a 2>/dev/null', 'posix')).toEqual(['/etc/x']);
+    expect(paths('curl https://x/a 2>/dev/null > ../outside.txt', 'posix')).toEqual([
+      '../outside.txt',
     ]);
-    expect(paths('curl https://x/a > NUL && curl https://x/b > C:\\Windows\\x')).toEqual([
+    expect(paths('curl https://x/a > ../outside.txt 2>/dev/null', 'posix')).toEqual([
+      '../outside.txt',
+    ]);
+    expect(paths('curl https://x/a &>/dev/null > C:\\Windows\\x', 'posix')).toEqual([
       'C:\\Windows\\x',
     ]);
+    expect(
+      paths('curl -s -o /dev/null https://x/a && curl -o /etc/x https://x/b', 'posix'),
+    ).toEqual(['/etc/x']);
+    expect(paths('curl https://x/a > NUL && curl https://x/b > C:\\Windows\\x', 'windows')).toEqual(
+      ['C:\\Windows\\x'],
+    );
     // The stderr of a download goes to a file as surely as its stdout does.
-    expect(paths('curl https://x/a 2>../err.log')).toEqual(['../err.log']);
-    expect(paths('curl https://x/a &> ../all.log')).toEqual(['../all.log']);
+    expect(paths('curl https://x/a 2>../err.log', 'posix')).toEqual(['../err.log']);
+    expect(paths('curl https://x/a &> ../all.log', 'posix')).toEqual(['../all.log']);
     // A redirection to a descriptor writes no file.
-    expect(paths('curl https://x/a 2>&1')).toEqual([]);
-    expect(paths('curl -sI https://x/a >&2')).toEqual([]);
+    expect(paths('curl https://x/a 2>&1', 'posix')).toEqual([]);
+    expect(paths('curl -sI https://x/a >&2', 'posix')).toEqual([]);
   });
 
   it('a program with its own store names no path: nothing to judge', () => {
