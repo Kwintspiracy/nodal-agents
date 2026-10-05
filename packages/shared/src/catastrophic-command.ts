@@ -489,7 +489,8 @@ export function staticShellCategories(cmd: string): StaticShellCategory[] {
   // the tokenizer, so it is read on the text of that segment. `curl --version
   // > log` is still a read.
   if (
-    /(^|[;&|(]\s*)(curl|irm|Invoke-RestMethod)\b(?:[^;&|\n]|&(?=>))*>/i.test(cmd) &&
+    // A wrapper's payload (`sh -c "curl URL > f"`) starts after a quote.
+    /(^|[;&|("'`]\s*)(curl|irm|Invoke-RestMethod)\b(?:[^;&|\n]|&(?=>))*>/i.test(cmd) &&
     !commandUnits(withoutRedirections(cmd))
       .filter((u) => /^(curl|irm|invoke-restmethod)$/i.test(u[0] ?? ''))
       .every(isVersionOrHelpOnly)
@@ -830,52 +831,43 @@ const GIT_CLONE_VALUE_FLAGS = new Set([
 ]);
 
 /**
- * Where the shell writes a line's output, read as OPERATORS outside quotes,
- * each found on its own so that none can hide another (`2>/dev/null>../x`
+ * Where the shell writes a line's output, read as OPERATORS, each found on its own so that none can hide another (`2>/dev/null>../x`
  * is two): `>`, `>>`, `>|`, `&>`, `&>>`, the same on another descriptor
  * (`2>`, `2>>`, `2>|`: the error log of a download is a write too), and
  * read/write (`<>`, `1<>`: its `>` opens the target for writing). The target is
  * the next word, attached or after spaces. No file is named by a duplication
  * (`2>&1`, `>&2`, `2>&-`, `<&0`: `>&file` is the bash form of `&>file` and does),
  * an input (`< file`), a here-document or here-string, or a process
- * substitution (`<(…)`, `>(…)`). An operator inside quotes is text.
+ * substitution (`<(…)`, `>(…)`).
+ *
+ * Quotes are NOT read: an operator counts wherever it stands. A quote state
+ * would hide the payload of `bash -c '… > f'` and everything after an escaped
+ * quote (`"O\"Brien" … > f`), and a safety net may over-ask but never under-
+ * report. The price is one harmless extra place when a `>` sits inside a quoted
+ * string of a download (`"…?p=1>2"` reads a file `2`).
  */
 function redirectionTargets(cmd: string): string[] {
   const targets: string[] = [];
   const delimiter = /[\s;&|()<>]/;
-  let quote: '"' | "'" | null = null;
   let i = 0;
-  /** The word that starts at `i` (after spaces): quoted parts joined, quotes removed. */
+  /** The word that starts at `i` (after spaces): a quoted one whole, otherwise up to a delimiter. */
   const word = (): string => {
     while (i < cmd.length && /\s/.test(cmd[i] ?? '')) i++;
-    let out = '';
-    while (i < cmd.length) {
-      const c = cmd[i] ?? '';
-      if (c === '"' || c === "'") {
-        const end = cmd.indexOf(c, i + 1);
-        const stop = end < 0 ? cmd.length : end;
-        out += cmd.slice(i + 1, stop);
-        i = end < 0 ? cmd.length : end + 1;
-      } else if (delimiter.test(c)) break;
-      else {
-        out += c;
-        i++;
+    const open = cmd[i];
+    if (open === '"' || open === "'") {
+      const end = cmd.indexOf(open, i + 1);
+      if (end >= 0) {
+        const quoted = cmd.slice(i + 1, end);
+        i = end + 1;
+        return quoted;
       }
     }
-    return out;
+    const start = i;
+    while (i < cmd.length && !delimiter.test(cmd[i] ?? '')) i++;
+    return stripQuotes(cmd.slice(start, i));
   };
   while (i < cmd.length) {
     const c = cmd[i] ?? '';
-    if (quote !== null) {
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      quote = c;
-      i++;
-      continue;
-    }
     if (c !== '>' && c !== '<') {
       i++;
       continue;

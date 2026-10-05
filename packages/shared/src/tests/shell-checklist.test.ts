@@ -578,7 +578,7 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
 
   // Passe 3 de la revue : les redirections sont LUES comme des opérateurs (hors
   // guillemets), chacun trouvé indépendamment : aucun ne peut en cacher un autre.
-  describe('redirection operators are scanned one by one, outside quotes (#669)', () => {
+  describe('redirection operators are scanned one by one, wherever they stand (#669)', () => {
     const OPERATORS = ['>', '>>', '>|', '&>', '&>>', '1>', '2>', '2>>', '2>|', '<>', '1<>', '0<>'];
 
     it('every write-capable operator yields its target, attached or spaced', () => {
@@ -652,14 +652,36 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
       expect(paths('curl https://x/a <in.txt >../o.txt', 'posix')).toEqual(['../o.txt']);
     });
 
-    it('an operator inside quotes is not an operator', () => {
-      expect(paths('curl -s -o out.bin "https://x/a?p=1>2"', 'posix')).toEqual(['out.bin']);
-      expect(paths("curl -s -o out.bin -H 'X: a>b' https://x/a", 'posix')).toEqual(['out.bin']);
-      expect(paths('curl -H "a>b" https://x/a > ../o.txt', 'posix')).toEqual(['../o.txt']);
-      expect(paths('curl -H "a >../no.txt" "https://x/a" 2>/dev/null', 'posix')).toEqual([]);
-      expect(paths('curl -s -o out.bin "https://x/a" && echo "done > ../no.txt"', 'posix')).toEqual(
-        ['out.bin'],
-      );
+    // Passe 4 : rien n'est lu comme du texte. Un `>` entre guillemets, dans une
+    // charge de `bash -c '…'` ou après un `\"` échappé, est un opérateur comme un
+    // autre : un filet de sécurité peut trop demander, jamais ne rien signaler.
+    it('an operator is an operator wherever it stands: quotes hide nothing', () => {
+      // The payload of a shell wrapper, and a quote escaped inside a string.
+      expect(paths("bash -c 'wget -O - https://x/a > ../outside.txt'", 'posix')).toEqual([
+        '../outside.txt',
+      ]);
+      expect(paths('sh -c "curl https://x/a > ../outside.txt"', 'posix')).toEqual([
+        '../outside.txt',
+      ]);
+      expect(paths('curl -H "X-Name: O\\"Brien" https://x/a > ../outside.txt', 'posix')).toEqual([
+        '../outside.txt',
+      ]);
+      expect(paths("curl -H 'X: it\\'s' https://x/a > ../outside.txt", 'posix')).toEqual([
+        '../outside.txt',
+      ]);
+      // The price, stated: a `>` inside a quoted string of a download is read as a
+      // redirection too, a harmless extra place (here a file `2`, `b`, `../x.txt`).
+      expect(paths('curl -s -o out.bin "https://x/a?p=1>2"', 'posix')).toEqual(['out.bin', '2']);
+      expect(paths("curl -s -o out.bin -H 'X: a>b' https://x/a", 'posix')).toEqual([
+        'out.bin',
+        'b',
+      ]);
+      expect(paths('curl -H "a>b" https://x/a > ../o.txt', 'posix')).toEqual(['b', '../o.txt']);
+      expect(paths('curl -H "a >../x.txt" "https://x/a" 2>/dev/null', 'posix')).toEqual([
+        '../x.txt',
+      ]);
+      // A quoted target is one word, spaces included.
+      expect(paths('curl https://x/a > "my out.txt"', 'posix')).toEqual(['my out.txt']);
     });
 
     it('the null sink of each host is still nowhere in any operator form', () => {

@@ -565,6 +565,26 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     }
   });
 
+  it('a redirection inside a wrapper or after an escaped quote still asks (#669)', async () => {
+    const commands = [
+      "bash -c 'wget -O - https://x/a > ../outside.txt'",
+      'curl -s -H "X-Name: O\\"Brien" https://x/a > ../outside.txt',
+    ];
+    for (const command of commands) {
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res.outcome, command).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      expect(await reasonsOf(res.approvalRequestId), command).toEqual([
+        {
+          category: 'download',
+          state: 'ask',
+          details: [command],
+          outside: [{ command, places: ['../outside.txt'] }],
+        },
+      ]);
+    }
+  });
+
   it('every name that is not the null sink is a place, and asks, shown as written (#669)', async () => {
     // Codex, passes 1 and 2: devices and descriptor aliases lead where the line
     // and the host decide (`3<f 0<&3`, cmd.exe reading `/dev/zero` as `\dev\zero`).
