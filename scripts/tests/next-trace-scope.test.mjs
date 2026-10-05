@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, resolve, parse } from 'node:path';
+import { join, relative, resolve, parse, sep } from 'node:path';
 import { scanTracesOutsideRoot, formatTracesOutsideRoot } from '../lib/next-trace-scope.mjs';
 
 let root;
@@ -84,11 +84,36 @@ describe('scanTracesOutsideRoot', () => {
     expect(report).toContain('1 file');
   });
 
-  it("attrape un chemin absolu — ce que Next écrit pour un fichier d'un AUTRE lecteur", () => {
-    // Sous Windows, `path.relative` entre deux lecteurs rend un chemin absolu :
-    // c'est la forme exacte des 1,77 M d'entrées du 05/10 (`C:\Users\…` dans
-    // un build fait sur D:). Un chemin absolu qui ne descend pas du dépôt est
-    // dehors, quelle que soit la plateforme.
+  it("attrape la forme que Next écrit pour un fichier d'un AUTRE lecteur Windows", () => {
+    // Next calcule chaque entrée par `path.join(racine, chemin)` ; pour un
+    // fichier d'un autre lecteur, `chemin` est absolu et se retrouve collé sous
+    // la racine. Forme lue dans un vrai manifeste le 05/10 (build sur D:,
+    // dossier personnel sur C:) :
+    //   ../../../../../../C:/Users/<nom>/.config/git/ignore
+    // Relue naïvement, elle désigne un fichier DANS le dépôt. La porte doit y
+    // lire le vrai chemin, et le dire dehors — sur toute plateforme, puisque
+    // la CI Linux relit ce que Windows a produit.
+    const page = join(nextDir, 'server', 'app', '(dashboard)', 'page.js.nft.json');
+    const commeNext = relFrom(page, join(root, 'C:', 'Users', 'u', '.config', 'git', 'ignore'));
+    expect(commeNext).toMatch(/^(\.\.\/)+C:\/Users\/u\/\.config\/git\/ignore$/);
+    writeManifest('server/app/(dashboard)/page.js.nft.json', [commeNext]);
+
+    const scan = scanTracesOutsideRoot(nextDir, root);
+
+    const vrai = ['C:', 'Users', 'u', '.config', 'git', 'ignore'].join(sep);
+    expect(scan.outside).toEqual([
+      {
+        manifest: join('server', 'app', '(dashboard)', 'page.js.nft.json'),
+        count: 1,
+        examples: [vrai],
+      },
+    ]);
+    expect(scan.directories).toEqual([
+      { dir: ['C:', 'Users', 'u', '.config', 'git'].join(sep), count: 1 },
+    ]);
+  });
+
+  it('attrape un chemin absolu qui ne descend pas du dépôt', () => {
     const ailleurs = resolve(parse(root).root, 'ailleurs', 'AppData', 'cache.bin');
     writeManifest('server/app/page.js.nft.json', [ailleurs.replace(/\\/g, '/')]);
 

@@ -21,14 +21,30 @@
 // relus depuis là, ne désignent plus les mêmes fichiers.
 
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
-import { join, relative, resolve, isAbsolute, dirname, sep, parse } from 'node:path';
+import { join, relative, resolve, isAbsolute, dirname, sep } from 'node:path';
 
 /** Exemples gardés par manifeste : assez pour reconnaître, pas pour noyer. */
 const EXEMPLES = 5;
 
-function dedans(racine, chemin) {
+const LECTEUR = /^[A-Za-z]:$/;
+
+/**
+ * Le fichier que désigne une entrée de manifeste, et s'il est hors du dépôt.
+ *
+ * Next écrit chaque entrée relative au dossier du manifeste, à partir de
+ * `path.join(racine, chemin)`. Pour un fichier d'un AUTRE lecteur Windows,
+ * `chemin` est absolu (`C:\Users\…`) et le join le colle sous la racine :
+ * `D:\dépôt\C:\Users\…`, écrit `../../C:/Users/…` dans le manifeste — lu sur
+ * un vrai build le 05/10. Une lettre de lecteur au milieu d'un chemin en marque
+ * le début réel, et ce fichier est dehors par définition.
+ */
+function designe(racine, base, entree) {
+  const chemin = resolve(base, entree);
+  const parts = chemin.split(/[\\/]/);
+  const i = parts.findIndex((p, k) => k > 0 && LECTEUR.test(p));
+  if (i !== -1) return { chemin: parts.slice(i).join(sep), dehors: true };
   const rel = relative(racine, chemin);
-  return rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel);
+  return { chemin, dehors: rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel) };
 }
 
 function manifestes(dir, nextDir, out = []) {
@@ -44,10 +60,11 @@ function manifestes(dir, nextDir, out = []) {
   return out;
 }
 
-/** Les segments d'un chemin absolu, racine comprise (`C:\`, `/`). */
+/** Les segments d'un chemin absolu ; le premier porte la racine (`C:`, `/home`). */
 function segments(chemin) {
-  const { root } = parse(chemin);
-  return [root, ...chemin.slice(root.length).split(sep).filter(Boolean)];
+  const parts = chemin.split(/[\\/]/).filter(Boolean);
+  if (/^[\\/]/.test(chemin) && parts.length > 0) parts[0] = sep + parts[0];
+  return parts;
 }
 
 /**
@@ -77,7 +94,7 @@ function dossiers(fichiers) {
     const parts = segments(f);
     // Un fichier posé directement dans l'ancêtre commun compte pour l'ancêtre.
     const n = parts.length - 1 > profondeur ? profondeur + 1 : profondeur;
-    const cle = resolve(parts[0], ...parts.slice(1, n));
+    const cle = parts.slice(0, n).join(sep);
     compte.set(cle, (compte.get(cle) ?? 0) + 1);
   }
   return [...compte.entries()]
@@ -121,8 +138,8 @@ export function scanTracesOutsideRoot(nextDir, racine) {
     let count = 0;
     const examples = [];
     for (const f of files) {
-      const chemin = resolve(base, f);
-      if (dedans(racine, chemin)) continue;
+      const { chemin, dehors } = designe(racine, base, f);
+      if (!dehors) continue;
       count++;
       uniques.add(chemin);
       if (examples.length < EXEMPLES) examples.push(chemin);
