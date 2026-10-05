@@ -195,11 +195,15 @@ async function readRunCode(
       base = bases[source.after] ?? null;
     } else {
       base = bases[source.after] ?? null;
-      if (source.path === null || (base === null && !isAbsolute(source.path))) {
+      // `.\setup.ps1` names the same file on every OS: a backslash in a path
+      // is a folder separator for cmd and PowerShell, which run on Linux too.
+      // The text is judged, not the machine (#669).
+      const written = source.path?.replace(/\\/g, '/') ?? null;
+      if (written === null || source.path === null || (base === null && !isAbsolute(written))) {
         unread.push({ source: source.path ?? command, why: 'decided_at_run_time' });
         continue;
       }
-      const path = isAbsolute(source.path) ? source.path : resolve(base ?? '', source.path);
+      const path = isAbsolute(written) ? written : resolve(base ?? '', written);
       const key = process.platform === 'win32' ? path.toLowerCase() : path;
       if (seen.has(key)) continue;
       seen.add(key);

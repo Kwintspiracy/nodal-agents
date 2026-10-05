@@ -160,32 +160,38 @@ kinds of action Nodal recognises in what the agent asks to run. Each one is
   `curl … > file`), including what `bash -c`, `bash -lc`, `cmd /c`, `call` or
   `$(…)` wrap. A mention in an argument (`git commit -m "rm old refs"`) is not
   the action.
-- **A command that runs a script is judged by the script.** When the line hands
-  a file to an interpreter (`python build.py`, `node x.js`, `tsx`, `deno run`,
-  `bun`, `bash x.sh`, `powershell -File x.ps1`, `perl`, `ruby`, `php`) or runs
-  one directly (`./x.sh`, `setup.bat`, `source env.sh`), Nodal reads that file
-  inside the job's workspaces, up to 256 KiB, and judges what it holds with
-  the same list. Code written into the command (`python -c`, `node -e`) is
-  read the same way. A shell, cmd or PowerShell script is read line by line.
-  In any other language, each string starts a command, followed by the strings
-  of the same statement (`["pip", "install", "x"]`, `os.system("rm -rf b")`),
-  and its comments are not read. `pip.main([...])` and `Gem.install` count as
-  installs. A script that script runs is read too. The approval card names the
-  file, the line, and that line.
+
+Folded under **Advanced**, the same tab keeps the older list of programs an
+agent may start, for people who know exactly what to write there.
+
+### Scripts it runs
+
+A line that runs a script is judged by the script. When the line hands a file
+to an interpreter (`python build.py`, `node x.js`, `tsx`, `deno run`, `bun`,
+`bash x.sh`, `powershell -File x.ps1`, `perl`, `ruby`, `php`) or runs one
+directly (`./x.sh`, `setup.bat`, `source env.sh`), Nodal reads that file inside
+the job's workspaces, up to 256 KiB, and judges what it holds with the same
+list. Code written into the line (`python -c`, `node -e`) is read the same way.
+
+- A shell, cmd or PowerShell script is read line by line.
+- In any other language, each string is read as a program call, followed by
+  the strings of the same statement (`["pip", "install", "x"]`, `os.system("rm -rf b")`).
+  Comments are not read. `pip.main([...])` and `Gem.install` count as installs.
+- A script that script runs is read too. The approval card names the file, the
+  line, and that line.
 - A string is read whether the script runs it or prints it:
-  `print("pip install x")` asks. A sentence that only mentions a command
+  `print("pip install x")` asks. A sentence that only mentions one
   (`print("Run pip install x first")`) does not.
-- A script Nodal cannot read is code nobody read ahead, like `curl … | bash`.
-  That covers a script outside the workspaces, one that does not exist yet
-  (downloaded in the same line), one over 256 KiB, or one whose path is a
-  variable. It follows the **Run code written into a command** row: it runs by
-  default, and under **Ask me** the card names the file and why it was not
-  read. A binary is a program, judged by its name like any other.
+- A script Nodal cannot read is code nobody read ahead, like `curl … | bash`:
+  outside the workspaces, not there yet (downloaded in the same line), over
+  256 KiB, or named by a variable. It follows the first row, inline code: it runs by default, and under **Ask me** the card names the
+  file and why it was not read. A binary is a program, judged by its name like
+  any other.
 
 **What this list does not do.** It reads the text the agent asks to run, and
 the scripts that text runs. It does not read what a program fetches, decodes or
 writes while it runs: code downloaded and run in the same line, a file a script
-writes and then runs, a module a script imports, a command assembled at run
+writes and then runs, a module a script imports, a line assembled at run
 time, or a program's own functions (`os.remove`, `fs.rmSync`,
 `urllib.request`). Code the agent runs can read, delete or download anything
 your user account can reach without the list seeing it. Where a download lands
@@ -193,9 +199,6 @@ is read; the rest of the shell is not kept inside the agent's folders, only the
 file tools are confined to them. Keeping what a program does inside a folder is
 the job of an operating-system sandbox, which Nodal does not have yet
 ([#628](https://github.com/Kwintspiracy/nodal-agents/issues/628)).
-
-Folded under **Advanced**, the same tab keeps the older list of programs an
-agent may start, for people who know exactly what to write there.
 
 ## The safety floor — commands that never auto-run
 
@@ -243,8 +246,8 @@ command line to an interpreter (`python -c "…"`, `node -e "…"`, `perl -e`,
 `ruby -e`, `php -r`, `sh -c`, `bash -c`, `powershell -Command`), code piped
 into a bare interpreter (`curl … | bash`, `echo '…' | python`) and `awk`
 programs that shell out (`awk 'BEGIN{system(…)}'`) all count as **Run code
-written into a command**. Running code is allowed by default: it has the same
-power as a script file (`python my_script.py`, `node build.js`,
+written into a command**. By default that code runs without a question: it
+has the same power as a script file (`python my_script.py`, `node build.js`,
 `bash deploy.sh`). Set that row to **Ask me** or **Never** to gate it. What the
 code or the script starts is still judged: a deletion it wraps
 (`bash -c "rm -rf x"`, `os.system("rm -rf x")` in a script) asks as a deletion.
