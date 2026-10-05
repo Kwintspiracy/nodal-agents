@@ -51,4 +51,6 @@ export const UNREAD_COPY: Record<ShellUnreadSource['why'], string> = {
   decided_at_run_time: 'a file decided when the command runs',
   not_a_file: 'not a file',
   unreadable: 'could not be read',
+  not_text: 'not text, could not be read',
+  over_budget: 'past what is read for one command',
 };

@@ -38,10 +38,14 @@ import {
 
 /** What the gate could read of a file a command runs (#635). */
 export type SourceFile =
-  | { kind: 'text'; text: string }
-  /** A program, not a script: judged by its name, as any program. */
-  | { kind: 'binary' }
-  | { kind: 'unread'; why: Exclude<ShellUnreadSource['why'], 'decided_at_run_time'> };
+  /** Text; `nul` when its first bytes hold a NUL, the mark of a program file. */
+  | { kind: 'text'; text: string; nul: boolean; bytes: number }
+  /** Not text in UTF-8 or UTF-16. */
+  | { kind: 'binary'; bytes: number }
+  | {
+      kind: 'unread';
+      why: Exclude<ShellUnreadSource['why'], 'decided_at_run_time' | 'not_text' | 'over_budget'>;
+    };
 
 /** Where the commands of a call run: what an allowed download is judged against. */
 export interface ShellPlace {
@@ -63,8 +67,10 @@ export const MAX_SOURCE_BYTES = 256 * 1024;
 
 /**
  * Read a file a command runs, already known to be inside a workspace: text in
- * UTF-8 or UTF-16 (PowerShell's own default), a binary when its first bytes
- * hold a NUL, or why it cannot be read.
+ * UTF-8 or UTF-16 (PowerShell's own default), bytes that are not text, or why
+ * it cannot be read. Whether a file that holds a NUL or is not text is a
+ * program or a source that cannot be read depends on how it is run, which
+ * the caller knows (review of #683, P1).
  */
 export async function readSourceFile(canonicalPath: string): Promise<SourceFile> {
   try {
@@ -73,9 +79,24 @@ export async function readSourceFile(canonicalPath: string): Promise<SourceFile>
     if (info.size > MAX_SOURCE_BYTES) return { kind: 'unread', why: 'too_large' };
     const bytes = await readFile(canonicalPath);
     if (bytes[0] === 0xff && bytes[1] === 0xfe)
-      return { kind: 'text', text: bytes.subarray(2).toString('utf16le') };
-    if (bytes.subarray(0, 8000).includes(0)) return { kind: 'binary' };
-    return { kind: 'text', text: bytes.toString('utf8').replace(/^﻿/, '') };
+      return {
+        kind: 'text',
+        text: bytes.subarray(2).toString('utf16le'),
+        nul: false,
+        bytes: bytes.length,
+      };
+    let text: string;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      return { kind: 'binary', bytes: bytes.length };
+    }
+    return {
+      kind: 'text',
+      text: text.replace(/^﻿/, ''),
+      nul: bytes.subarray(0, 8000).includes(0),
+      bytes: bytes.length,
+    };
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     return {
@@ -155,8 +176,24 @@ interface Judged {
   found: ShellSourceFinding | null;
 }
 
-/** How deep scripts run by scripts are followed. */
-const MAX_SOURCE_DEPTH = 3;
+/**
+ * What the gate reads for one call, at most (review of #683, P2): how deep
+ * scripts run by scripts are followed, how many files and bytes are read, how
+ * many commands are kept to judge. A runaway tree of scripts must not stall
+ * the turn before anyone is asked. What lies past it is not dropped: it is
+ * `unread` (`over_budget`), code nobody read ahead, under `inline_code`.
+ */
+export const MAX_SOURCE_DEPTH = 3;
+export const MAX_SOURCE_FILES = 50;
+export const MAX_SOURCE_TOTAL_BYTES = 4 * 1024 * 1024;
+export const MAX_JUDGED_COMMANDS = 10_000;
+
+/** What one call has read so far, against the limits above. */
+interface ReadBudget {
+  files: number;
+  bytes: number;
+  seen: Set<string>;
+}
 
 /** The line `line` (1-based) of `text`, as the card shows it. */
 function lineOf(text: string, line: number): string {
@@ -167,8 +204,9 @@ function lineOf(text: string, line: number): string {
 /**
  * The commands read in the code `command` runs (#635): the files it hands to
  * an interpreter or runs directly, and the code written into it, followed
- * into the scripts those run in turn. A file that cannot be read is reported
- * in `unread`; a binary is a program, judged by its name like any other.
+ * into the scripts those run in turn. A file that cannot be read, or lies past
+ * the reading budget, is reported in `unread`; a file the system runs itself
+ * that is not text is a program, judged by its name like any other.
  */
 async function readRunCode(
   call: string,
@@ -176,14 +214,18 @@ async function readRunCode(
   place: ShellPlace,
   fromStrings: boolean,
   depth: number,
-  seen: Set<string>,
+  budget: ReadBudget,
   judged: Judged[],
   unread: ShellUnreadSource[],
 ): Promise<void> {
-  if (depth > MAX_SOURCE_DEPTH) return;
   const { dirs, sources } = programSources(command, { direct: !fromStrings });
   const bases = basesOf(dirs, place.cwd);
   for (const source of sources) {
+    const named = source.kind === 'file' ? (source.path ?? command) : command;
+    if (depth > MAX_SOURCE_DEPTH) {
+      unread.push({ source: named, why: 'over_budget' });
+      continue;
+    }
     let text: string;
     let language: SourceLanguage;
     let label: string | null;
@@ -200,19 +242,36 @@ async function readRunCode(
       // The text is judged, not the machine (#669).
       const written = source.path?.replace(/\\/g, '/') ?? null;
       if (written === null || source.path === null || (base === null && !isAbsolute(written))) {
-        unread.push({ source: source.path ?? command, why: 'decided_at_run_time' });
+        unread.push({ source: named, why: 'decided_at_run_time' });
         continue;
       }
       const path = isAbsolute(written) ? written : resolve(base ?? '', written);
       const key = process.platform === 'win32' ? path.toLowerCase() : path;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      if (budget.seen.has(key)) continue;
+      budget.seen.add(key);
+      if (budget.files >= MAX_SOURCE_FILES || budget.bytes >= MAX_SOURCE_TOTAL_BYTES) {
+        unread.push({ source: source.path, why: 'over_budget' });
+        continue;
+      }
+      budget.files += 1;
       const read = await place.readSource(path);
-      if (read.kind === 'binary') continue;
       if (read.kind === 'unread') {
         // A bare name not in the folder: the shell takes it from the PATH.
         if (read.why === 'not_found' && source.searched) continue;
         unread.push({ source: source.path, why: read.why });
+        continue;
+      }
+      budget.bytes += read.bytes;
+      if (budget.bytes > MAX_SOURCE_TOTAL_BYTES) {
+        unread.push({ source: source.path, why: 'over_budget' });
+        continue;
+      }
+      // Run by the system, bytes that are not text (or hold a NUL) are a
+      // program. Read by an interpreter, they are source: a NUL does not stop
+      // it from being read, bytes that are not text do (review of #683, P1).
+      if (source.executed && (read.kind === 'binary' || read.nul)) continue;
+      if (read.kind === 'binary') {
+        unread.push({ source: source.path, why: 'not_text' });
         continue;
       }
       text = read.text;
@@ -224,6 +283,10 @@ async function readRunCode(
     // `cd` moves the lines after it.
     let cwd = base;
     for (const c of reading.commands) {
+      if (judged.length >= MAX_JUDGED_COMMANDS) {
+        unread.push({ source: label ?? command, why: 'over_budget' });
+        break;
+      }
       const at: ShellPlace = { ...place, cwd };
       judged.push({
         call,
@@ -231,7 +294,16 @@ async function readRunCode(
         place: at,
         found: { source: label, line: c.line, text: lineOf(text, c.line) },
       });
-      await readRunCode(call, c.command, at, reading.fromStrings, depth + 1, seen, judged, unread);
+      await readRunCode(
+        call,
+        c.command,
+        at,
+        reading.fromStrings,
+        depth + 1,
+        budget,
+        judged,
+        unread,
+      );
       if (!reading.fromStrings) {
         const after = basesOf(programSources(c.command).dirs, cwd);
         cwd = after[after.length - 1] ?? null;
@@ -264,10 +336,12 @@ export async function judgeShellChecklist(
   };
 
   const judged: Judged[] = [];
+  // One budget for the whole call: a declared proof's commands share it.
+  const budget: ReadBudget = { files: 0, bytes: 0, seen: new Set() };
   for (const command of commands) {
     judged.push({ call: command, text: command, place, found: null });
     const before = unread.length;
-    await readRunCode(command, command, place, false, 1, new Set(), judged, unread);
+    await readRunCode(command, command, place, false, 1, budget, judged, unread);
     if (unread.length > before) unreadCalls.push(command);
   }
 

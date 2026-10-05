@@ -81,8 +81,11 @@ describe('programSources: where the code a command runs is (#635) @cap:executer-
   it('a bare name is looked up on the PATH when it is not in the folder', () => {
     const [bare] = programSources('setup.bat').sources;
     const [relative] = programSources('.\\setup.bat').sources;
-    expect(bare).toMatchObject({ kind: 'file', searched: true });
-    expect(relative).toMatchObject({ kind: 'file', searched: false });
+    expect(bare).toMatchObject({ kind: 'file', searched: true, executed: true });
+    expect(relative).toMatchObject({ kind: 'file', searched: false, executed: true });
+    // A file an interpreter or a shell reads is source, not a program.
+    expect(programSources('python x.py').sources[0]).toMatchObject({ executed: false });
+    expect(programSources('source ./env.sh').sources[0]).toMatchObject({ executed: false });
   });
 
   it('the code written into a command, for an interpreter whose code is not a command line', () => {
@@ -136,7 +139,14 @@ describe('programSources: where the code a command runs is (#635) @cap:executer-
     const read = programSources('cd sub && node build.js');
     expect(read.dirs).toEqual(['sub']);
     expect(read.sources).toEqual([
-      { kind: 'file', path: 'build.js', language: 'javascript', after: 1, searched: false },
+      {
+        kind: 'file',
+        path: 'build.js',
+        language: 'javascript',
+        after: 1,
+        searched: false,
+        executed: false,
+      },
     ]);
   });
 
@@ -176,5 +186,51 @@ describe('the language of a file (#635) @cap:executer-une-commande/moteur', () =
     expect(languageOfShebang('#!/usr/bin/env -S node --no-warnings\n')).toBe('javascript');
     expect(languageOfShebang('#!/bin/bash\n')).toBe('shell');
     expect(languageOfShebang('echo hi')).toBeNull();
+  });
+});
+
+// Review pass 1 of #683 (P2): the command a control construct runs is the
+// command after its keyword or its opening bracket, in sh, cmd and PowerShell.
+describe('a control construct runs the command after its keyword (review of #683) @cap:executer-une-commande/moteur', () => {
+  it('sh: if/then/else, while/do, groups and sub-shells', () => {
+    for (const cmd of [
+      'if true; then pip install openpyxl; fi',
+      'if ! pip install x; then echo no; fi',
+      'if test -f a; then echo a; else pip install x; fi',
+      'while read p; do pip install "$p"; done < req.txt',
+      'for p in a b; do pip install $p; done',
+      '(cd sub && pip install x)',
+      '{ pip install x; }',
+      'time pip install x',
+    ]) {
+      expect(staticShellCategories(cmd), cmd).toContain('install_software');
+    }
+  });
+
+  it('cmd: if … ( … ), for … do, call inside a block', () => {
+    for (const cmd of [
+      'if exist req.txt (pip install -r req.txt)',
+      'if not errorlevel 1 (rd /s /q build)',
+      'for %i in (a b) do pip install %i',
+      'for %i in (a b) do (call npm ci)',
+    ]) {
+      expect(staticShellCategories(cmd).length, cmd).toBeGreaterThan(0);
+    }
+  });
+
+  it('PowerShell: if/foreach/while script blocks', () => {
+    expect(staticShellCategories('if ($true) { pip install x }')).toContain('install_software');
+    expect(staticShellCategories('foreach ($p in $l) { Remove-Item $p }')).toContain(
+      'delete_files',
+    );
+    expect(staticShellCategories('while ($i -lt 3) { Stop-Process -Name x }')).toContain(
+      'stop_programs',
+    );
+  });
+
+  it('a bracket inside an argument is not a command (review of PR #474)', () => {
+    expect(staticShellCategories('echo "(rm -rf x)"')).toEqual([]);
+    expect(staticShellCategories('git commit -m "{pip install x}"')).toEqual([]);
+    expect(staticShellCategories('echo then rm')).toEqual([]);
   });
 });

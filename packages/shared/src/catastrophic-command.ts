@@ -882,6 +882,50 @@ export function shellCommandIndex(args: readonly string[]): number {
   return -1;
 }
 
+/**
+ * The words that open or continue a control construct in sh, cmd and
+ * PowerShell: the command is what follows them (review of #683: in
+ * `if true; then pip install x; fi`, `then` is not the program).
+ */
+const CONTROL_KEYWORDS = new Set([
+  'if',
+  'then',
+  'else',
+  'elif',
+  'while',
+  'until',
+  'do',
+  'for',
+  'foreach',
+  'time',
+  '!',
+]);
+
+/**
+ * A segment without its leading control keywords and group brackets
+ * (`if`, `then`, `do`, `!`, `(`, `{`, and a bracket glued to the program,
+ * `(cd x`), and whether it had any.
+ */
+function withoutControl(segment: readonly string[]): { words: string[]; control: boolean } {
+  let words = [...segment];
+  let control = false;
+  while (words.length > 0) {
+    const w = words[0] ?? '';
+    if (CONTROL_KEYWORDS.has(w.toLowerCase()) || /^[({]+$/.test(w)) {
+      words = words.slice(1);
+      control = true;
+      continue;
+    }
+    if (/^[({]/.test(w)) {
+      words = [w.replace(/^[({]+/, ''), ...words.slice(1)];
+      control = true;
+      continue;
+    }
+    break;
+  }
+  return { words, control };
+}
+
 /** One command a line runs, as `commandUnits` reads it and as it was written. */
 export interface CommandUnit {
   /** The program (basename, lower-cased, without `.exe`), then its arguments. */
@@ -913,9 +957,21 @@ export function commandUnitsAsWritten(cmd: string, depth = 0): CommandUnit[] {
   for (const segment of splitShellWords(cmd)) {
     // `FOO=1 rm -rf build`: variables set for the command are not the program
     // (review of PR #476).
-    const tokens = skipPassthroughLeaders(
+    const { words, control } = withoutControl(
       segment.filter((_, i) => !isAssignmentPrefix(segment, i)),
     );
+    // Inside a control construct, a later `then`/`do`/`else` or an opening
+    // bracket starts a command too: cmd's `if exist x (pip install y)`,
+    // PowerShell's `if ($a) { Stop-Process x }` (review of #683). Only there:
+    // in `echo "(rm -rf x)"` the bracket is an argument.
+    if (control) {
+      for (let i = 1; i < words.length; i++) {
+        const w = words[i] ?? '';
+        if (/^(then|do|else)$/i.test(w)) inner(words.slice(i + 1).join(' '));
+        else if (/^[({]/.test(w)) inner([w.replace(/^[({]+/, ''), ...words.slice(i + 1)].join(' '));
+      }
+    }
+    const tokens = skipPassthroughLeaders(words);
     const head = tokens[0];
     if (head === undefined) continue;
     const program = interpreterBasename(head);

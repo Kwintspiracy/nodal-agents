@@ -18,7 +18,13 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { approvalRequests } from '@nodal-agents/db';
 import { DEFAULT_SHELL_POLICY, type ShellPolicy } from '@nodal-agents/shared';
 import { executeTool } from '../execute';
-import { MAX_SOURCE_BYTES } from '../shell-checklist';
+import {
+  MAX_SOURCE_BYTES,
+  MAX_SOURCE_DEPTH,
+  MAX_JUDGED_COMMANDS,
+  MAX_SOURCE_FILES,
+  MAX_SOURCE_TOTAL_BYTES,
+} from '../shell-checklist';
 import type { ApprovalRule, ExecuteOptions, ToolContext, ToolDefinition } from '../types';
 
 let db: TestDb;
@@ -384,5 +390,135 @@ describe('a script that cannot be read is code nobody read ahead (#635) @cap:exe
 
   it('a bare name not in the folder is a program from the PATH, not a missing script', async () => {
     await ranUnasked('deploy.bat --dry-run', askCode);
+  });
+});
+
+// Review pass 1 of PR #683 (Nodal, Reviewer A): four ways the code a command
+// runs went unjudged.
+describe('review pass 1 of #683: no source a command runs goes unjudged @cap:executer-une-commande/moteur', () => {
+  const NL = String.fromCharCode(10);
+  const askCode: ShellPolicy = { ...DEFAULT_SHELL_POLICY, inline_code: 'ask' };
+
+  // P1 : un fichier donné à un interpréteur est une SOURCE. Un octet NUL ne
+  // le rend pas « programme » : il se lit comme du texte, et s'il ne se lit
+  // pas comme du texte, il est illisible (jamais sauté en silence).
+  it('P1: a source with a NUL byte is still read; one that is not text is unread', async () => {
+    await put(
+      'nulbyte/setup.js',
+      `//${String.fromCharCode(0)}${NL}require('child_process').execSync('npm install left-pad');${NL}`,
+    );
+    expect(await asked('node nulbyte/setup.js')).toEqual([
+      {
+        category: 'install_software',
+        state: 'ask',
+        details: ['node nulbyte/setup.js'],
+        found: [
+          {
+            source: 'nulbyte/setup.js',
+            line: 2,
+            text: "require('child_process').execSync('npm install left-pad');",
+          },
+        ],
+      },
+    ]);
+    await put('nulbyte/bad.py', Buffer.from([0x70, 0x69, 0x70, 0x80, 0x81, 0xfe, 0x0a]));
+    expect(await asked('python nulbyte/bad.py', askCode)).toEqual([
+      {
+        category: 'inline_code',
+        state: 'ask',
+        details: ['python nulbyte/bad.py'],
+        unread: [{ source: 'nulbyte/bad.py', why: 'not_text' }],
+      },
+    ]);
+  });
+
+  // P2 : une chaîne se lit comme le langage la lit, échappements compris.
+  it('P2: string escapes are decoded as the language decodes them', async () => {
+    // The files hold each escape as the language writes it: a backslash, then
+    // the code (built from BS so the test source carries no escape of its own).
+    const BS = String.fromCharCode(92);
+    await put('esc/setup.py', `import os${NL}os.system("pip${BS}x20install openpyxl")${NL}`);
+    await put(
+      'esc/setup.js',
+      `require('child_process').execSync('npm${BS}u0020install sharp');${NL}`,
+    );
+    for (const [command, line] of [
+      ['python esc/setup.py', 2],
+      ['node esc/setup.js', 1],
+    ] as const) {
+      expect(await asked(command), command).toEqual([
+        expect.objectContaining({
+          category: 'install_software',
+          found: [expect.objectContaining({ line })],
+        }),
+      ]);
+    }
+  });
+
+  // P2 : une construction de contrôle sur une ligne (`if …; then …; fi`) lance
+  // la commande qui suit le mot-clé.
+  it('P2: the command inside a one-line control construct is judged', async () => {
+    await put('ctl/setup.sh', 'if true; then pip install openpyxl; fi\n');
+    await put('ctl/setup.bat', '@if exist req.txt (pip install -r req.txt)\r\n');
+    await put('ctl/setup.ps1', 'if ($true) { Stop-Process -Name excel }\n');
+    for (const [command, kind] of [
+      ['bash ctl/setup.sh', 'install_software'],
+      ['cmd /c ctl/setup.bat', 'install_software'],
+      ['powershell -File ctl/setup.ps1', 'stop_programs'],
+    ] as const) {
+      expect(await asked(command), command).toEqual([
+        expect.objectContaining({ category: kind, found: [expect.objectContaining({ line: 1 })] }),
+      ]);
+    }
+  });
+
+  // P2 : la lecture est bornée (nombre de fichiers, octets, profondeur) ; ce
+  // qui dépasse est illisible, donc sous inline_code, jamais lâché en silence.
+  it('P2: past the reading budget, the rest is unread, never dropped', async () => {
+    const many = Array.from({ length: MAX_SOURCE_FILES + 5 }, (_, i) => `b/s${i}.py`);
+    for (const f of many) await put(f, 'print(1)\n');
+    await put('b/run.py', many.map((f) => `subprocess.run(["python", "${f}"])`).join('\n') + '\n');
+    const files = (await asked('python b/run.py', askCode)) as Array<{
+      unread?: Array<{ why: string }>;
+    }>;
+    expect(files[0]?.unread?.map((u) => u.why)).toContain('over_budget');
+
+    const big = 'x = 1\n'.repeat(Math.floor((MAX_SOURCE_BYTES - 1024) / 6));
+    const count = Math.ceil(MAX_SOURCE_TOTAL_BYTES / big.length) + 1;
+    const bigs = Array.from({ length: count }, (_, i) => `big/s${i}.py`);
+    for (const f of bigs) await put(f, big);
+    await put('big/run.sh', bigs.map((f) => `python ${f}`).join('\n') + '\n');
+    const bytes = (await asked('sh big/run.sh', askCode)) as Array<{
+      unread?: Array<{ why: string }>;
+    }>;
+    expect(bytes[0]?.unread?.map((u) => u.why)).toContain('over_budget');
+
+    // Deeper than MAX_SOURCE_DEPTH: the next script is not read, and says so.
+    const chain = Array.from({ length: MAX_SOURCE_DEPTH + 2 }, (_, i) => `deep/d${i}.sh`);
+    for (const [i, f] of chain.entries())
+      await put(f, i + 1 < chain.length ? `sh ${chain[i + 1]}\n` : 'echo end\n');
+    expect(await asked(`sh ${chain[0]}`, askCode)).toEqual([
+      expect.objectContaining({
+        category: 'inline_code',
+        unread: [{ source: chain[MAX_SOURCE_DEPTH], why: 'over_budget' }],
+      }),
+    ]);
+
+    // More commands than are kept to judge: the rest of the file is unread.
+    await put(
+      'long/run.sh',
+      Array(MAX_JUDGED_COMMANDS + 10)
+        .fill('echo x')
+        .join(NL) + NL,
+    );
+    expect(await asked('sh long/run.sh', askCode)).toEqual([
+      expect.objectContaining({
+        category: 'inline_code',
+        unread: [{ source: 'long/run.sh', why: 'over_budget' }],
+      }),
+    ]);
+
+    // Under the default policy it runs, as any code nobody read ahead.
+    await ranUnasked('python b/run.py');
   });
 });

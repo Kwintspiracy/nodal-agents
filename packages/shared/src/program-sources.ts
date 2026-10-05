@@ -80,6 +80,14 @@ export type ProgramSource =
        * (`npm.cmd`), and it is a program like any other, judged by its name.
        */
       searched: boolean;
+      /**
+       * Run by the system itself (`./tool`, `setup.bat`): a file there that is
+       * not text, or holds a NUL, is a program, judged by its name. False when
+       * an interpreter or a shell reads it (`python x.py`, `source x.sh`): the
+       * file is source, and one that is not text cannot be read (review of
+       * #683, P1).
+       */
+      executed: boolean;
     }
   | { kind: 'code'; code: string; language: SourceLanguage; after: number };
 
@@ -239,12 +247,14 @@ function unitSources(
     path: string,
     language: SourceLanguage | null,
     searched = false,
+    executed = false,
   ): ProgramSource => ({
     kind: 'file',
     path: readablePath(path),
     language,
     after,
     searched,
+    executed,
   });
   const bare = (path: string): boolean => !/[\\/]/.test(path);
   const language = interpreterLanguage(program);
@@ -257,7 +267,7 @@ function unitSources(
       if (target === undefined) return [];
       return [file(target, languageOfPath(target) ?? 'shell', bare(target))];
     }
-    return directFile(head) ? [file(head, languageOfPath(head), bare(head))] : [];
+    return directFile(head) ? [file(head, languageOfPath(head), bare(head), true)] : [];
   }
   const lower = args.map((a) => a.toLowerCase());
   switch (language) {
@@ -509,6 +519,72 @@ interface Statement {
   line: number;
 }
 
+/**
+ * How a string's escapes are read (review of #683, P2): `full` decodes them
+ * as the language does (`"pip\x20install"` is `pip install`), `quote` only
+ * un-escapes the backslash and the quote (single quotes in Ruby, Perl, PHP),
+ * `none` keeps the text as written (a Python raw string).
+ */
+type EscapeMode = 'full' | 'quote' | 'none';
+
+function escapeMode(language: keyof typeof LEXERS, quote: string, raw: boolean): EscapeMode {
+  if (language === 'python') return raw ? 'none' : 'full';
+  if (language === 'javascript') return 'full';
+  return quote === "'" ? 'quote' : 'full';
+}
+
+const SIMPLE_ESCAPES: Record<string, string> = {
+  n: '\n',
+  t: '\t',
+  r: '\r',
+  a: '\x07',
+  b: '\b',
+  f: '\f',
+  v: '\v',
+  e: '\x1b',
+};
+
+/** One escape at `text[j]` (a backslash): what it reads as, and how many characters it takes. */
+function decodeEscape(text: string, j: number, mode: EscapeMode): [string, number] {
+  const next = text[j + 1] ?? '';
+  if (mode === 'none') return [text.slice(j, j + 2), 2];
+  if (mode === 'quote')
+    return next === '\\' || next === "'" ? [next, 2] : [text.slice(j, j + 2), 2];
+  // A backslash at the end of a line continues the string on the next.
+  if (next === '\n') return ['', 2];
+  if (next === '\r' && text[j + 2] === '\n') return ['', 3];
+  const code = (hex: string): string => {
+    const n = Number.parseInt(hex, 16);
+    return Number.isFinite(n) && n <= 0x10ffff ? String.fromCodePoint(n) : '';
+  };
+  const braced = /^\{([0-9A-Fa-f]{1,6})\}/.exec(text.slice(j + 2, j + 11));
+  if ((next === 'x' || next === 'u') && braced)
+    return [code(braced[1] ?? ''), 2 + (braced[0]?.length ?? 0)];
+  if (next === 'x') {
+    const hex = /^[0-9A-Fa-f]{1,2}/.exec(text.slice(j + 2, j + 4))?.[0] ?? '';
+    return hex === '' ? ['x', 2] : [code(hex), 2 + hex.length];
+  }
+  if (next === 'u' || next === 'U') {
+    const width = next === 'u' ? 4 : 8;
+    const hex = text.slice(j + 2, j + 2 + width);
+    return /^[0-9A-Fa-f]+$/.test(hex) && hex.length === width ? [code(hex), 2 + width] : [next, 2];
+  }
+  // `\N{U+20}` (Perl); a named character (`\N{SPACE}`) is not a command word.
+  if (next === 'N' && text[j + 2] === '{') {
+    const end = text.indexOf('}', j + 3);
+    if (end > 0) {
+      const name = text.slice(j + 3, end);
+      return [/^U\+[0-9A-Fa-f]+$/.test(name) ? code(name.slice(2)) : '?', end - j + 1];
+    }
+  }
+  const octal = /^[0-7]{1,3}/.exec(text.slice(j + 1, j + 4))?.[0];
+  if (octal !== undefined)
+    return [String.fromCharCode(Number.parseInt(octal, 8)), 1 + octal.length];
+  // Ruby's `\s` is a space.
+  if (next === 's') return [' ', 2];
+  return [SIMPLE_ESCAPES[next] ?? next, 2];
+}
+
 function isEmpty(s: Statement): boolean {
   return s.words.length === 0 && s.code.trim() === '';
 }
@@ -565,6 +641,8 @@ function statements(text: string, language: keyof typeof LEXERS): Statement[] {
             (cfg.interpolatingPrefix === undefined ||
               (prefix !== null && cfg.interpolatingPrefix.test(prefix[0]))),
         );
+        const raw = prefix !== null && /[rR]/.test(prefix[0]);
+        const escapes = escapeMode(language, quote, raw);
         const startLine = line;
         let j = quoteAt + close.length;
         let value = '';
@@ -579,10 +657,10 @@ function statements(text: string, language: keyof typeof LEXERS): Statement[] {
             line++;
           }
           if (c === '\\' && j + 1 < text.length) {
-            const next = text[j + 1] ?? '';
-            if (next === '\n') line++;
-            value += next === 'n' ? '\n' : next === 't' ? '\t' : next;
-            j += 2;
+            const [decoded, length] = decodeEscape(text, j, escapes);
+            for (let k = j; k < j + length; k++) if (text[k] === '\n') line++;
+            value += decoded;
+            j += length;
             continue;
           }
           const interp = interpolate.find((p) => text.startsWith(p.open, j));

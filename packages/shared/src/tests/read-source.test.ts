@@ -152,3 +152,50 @@ describe('readSource: the commands a source runs, with their line (#635) @cap:ex
     expect(kinds('print("Run pip install openpyxl first")', 'python')).toEqual([]);
   });
 });
+
+// Review pass 1 of #683 (P2): a string is read as its language reads it. The
+// sources are built with B, a backslash, so the test file itself carries no
+// escape: what is read is the escape as the script holds it.
+describe('readSource decodes each language string escapes (review of #683) @cap:executer-une-commande/moteur', () => {
+  const B = String.fromCharCode(92);
+  const commandOf = (text: string, language: SourceLanguage): string[] =>
+    readSource(text, language).commands.map((c) => c.command);
+  const install = [[1, ['install_software']]];
+  const del = [[1, ['delete_files']]];
+
+  it('Python: hex, octal, u and U escapes; a raw string stays as written', () => {
+    expect(kinds(`os.system("pip${B}x20install x")`, 'python')).toEqual(install);
+    expect(kinds(`os.system("pip${B}040install x")`, 'python')).toEqual(install);
+    expect(kinds(`os.system("pip${B}u0020install x")`, 'python')).toEqual(install);
+    expect(kinds(`os.system("pip${B}U00000020install x")`, 'python')).toEqual(install);
+    expect(kinds(`os.system(b"rm${B}x20-rf x")`, 'python')).toEqual(del);
+    expect(commandOf(`os.system(r"pip${B}x20install x")`, 'python')).toContain(
+      `pip${B}x20install x`,
+    );
+  });
+
+  it('JavaScript: hex, u and u-brace escapes, and a line continuation', () => {
+    expect(kinds(`execSync('npm${B}x20i x')`, 'javascript')).toEqual(install);
+    expect(kinds(`execSync('npm${B}u{20}i x')`, 'javascript')).toEqual(install);
+    expect(
+      kinds(
+        'execSync(' + String.fromCharCode(96) + `rm${B}u0020-rf x` + String.fromCharCode(96) + ')',
+        'javascript',
+      ),
+    ).toEqual(del);
+    expect(
+      kinds(`execSync('pip${B}` + String.fromCharCode(10) + ` install x')`, 'javascript'),
+    ).toEqual(install);
+  });
+
+  it('Ruby, PHP, Perl: double quotes decode; single quotes keep the backslash', () => {
+    expect(kinds(`system("gem${B}sinstall rails")`, 'ruby')).toEqual(install);
+    expect(kinds(`system("gem${B}x20install rails")`, 'ruby')).toEqual(install);
+    expect(kinds(`system('gem${B}x20install rails')`, 'ruby')).toEqual([]);
+    expect(kinds(`shell_exec("npm${B}x20install");`, 'php')).toEqual(install);
+    expect(kinds(`shell_exec("npm${B}u{20}install");`, 'php')).toEqual(install);
+    expect(kinds(`shell_exec('npm${B}x20install');`, 'php')).toEqual([]);
+    expect(kinds(`system("rm${B}x{20}-rf x");`, 'perl')).toEqual(del);
+    expect(kinds(`system("rm${B}040-rf x");`, 'perl')).toEqual(del);
+  });
+});

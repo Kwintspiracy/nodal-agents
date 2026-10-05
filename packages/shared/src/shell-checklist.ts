@@ -136,6 +136,10 @@ export const SHELL_UNREAD_REASONS = [
   'decided_at_run_time',
   'not_a_file',
   'unreadable',
+  /** A file an interpreter reads that is not text (review of #683, P1). */
+  'not_text',
+  /** Past what the gate reads for one call: files, bytes or depth (review of #683). */
+  'over_budget',
 ] as const;
 
 export interface ShellUnreadSource {
