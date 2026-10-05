@@ -30,6 +30,7 @@ import {
   staticShellCategories,
   type ShellCategory,
   type ShellGateReason,
+  type ShellHost,
   type ShellPolicy,
   type ShellSourceFinding,
   type ShellUnreadSource,
@@ -52,6 +53,8 @@ export type SourceFile =
 export interface ShellPlace {
   /** The folder the commands start in, canonical; null when it cannot be resolved. */
   cwd: string | null;
+  /** The kind of shell the commands run in: what a Windows device name is judged as (#669). */
+  host: ShellHost;
   /** True when an absolute path lies inside one of the job's workspaces. */
   inWorkspace(absolutePath: string): Promise<boolean>;
   /** Where an absolute path really lands, links followed; null when it cannot be told. */
@@ -158,7 +161,7 @@ function basesOf(dirs: ReadonlyArray<string | null>, cwd: string | null): Array<
  * whose place in the line is not known, is judged from every folder of it.
  */
 async function downloadsOutside(command: string, place: ShellPlace): Promise<string[]> {
-  const { dirs, targets } = downloadWrites(command);
+  const { dirs, targets } = downloadWrites(command, place.host);
   if (targets.length === 0) return [];
   const bases = basesOf(dirs, place.cwd);
   const outside: string[] = [];
@@ -169,7 +172,7 @@ async function downloadsOutside(command: string, place: ShellPlace): Promise<str
     }
     const from = after === null ? bases : [bases[after] ?? null];
     const candidates = isAbsolute(path)
-      ? [path]
+      ? [resolve(path)]
       : from.map((b) => (b === null ? null : resolve(b, path)));
     for (const candidate of candidates) {
       if (candidate === null || !(await place.inWorkspace(candidate))) {

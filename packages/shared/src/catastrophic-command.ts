@@ -496,7 +496,8 @@ export function staticShellCategories(command: string): StaticShellCategory[] {
   // the tokenizer, so it is read on the text of that segment. `curl --version
   // > log` is still a read.
   if (
-    /(^|[;&|(]\s*)(curl|irm|Invoke-RestMethod)\b[^;&|\n]*>/i.test(cmd) &&
+    // A wrapper's payload (`sh -c "curl URL > f"`) starts after a quote.
+    /(^|[;&|("'`]\s*)(curl|irm|Invoke-RestMethod)\b(?:[^;&|\n]|&(?=>))*>/i.test(cmd) &&
     !commandUnits(withoutRedirections(cmd))
       .filter((u) => /^(curl|irm|invoke-restmethod)$/i.test(u[0] ?? ''))
       .every(isVersionOrHelpOnly)
@@ -539,7 +540,14 @@ export interface DownloadWrites {
   targets: DownloadTarget[];
 }
 
-export function downloadWrites(command: string): DownloadWrites {
+/**
+ * The kind of shell a command is judged for. The null sink is the host's own
+ * (`isNullSink`): `NUL` is a device only where Windows resolves it, and on any
+ * other host `curl -o nul` writes a real file named `nul` (#669).
+ */
+export type ShellHost = 'windows' | 'posix';
+
+export function downloadWrites(command: string, host: ShellHost): DownloadWrites {
   const out: DownloadWrites = { dirs: [], targets: [] };
   if (typeof command !== 'string' || command.trim() === '') return out;
   const cmd = splitHereDocs(command).text;
@@ -557,11 +565,11 @@ export function downloadWrites(command: string): DownloadWrites {
       continue;
     }
     for (const t of pipeWriterTargets(program, args))
-      if (!isNowhere(t)) piped.push({ path: readablePath(t), after: out.dirs.length });
+      if (!isNullSink(t, host)) piped.push({ path: readablePath(t), after: out.dirs.length });
     if (!unitCategories(unit).includes('download')) continue;
     downloads = true;
     for (const t of fetcherTargets(program, args))
-      if (t === null || !isNowhere(t))
+      if (t === null || !isNullSink(t, host))
         out.targets.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
   }
   // `curl URL > file`: the bytes land where the shell sends them. Read on a
@@ -570,7 +578,7 @@ export function downloadWrites(command: string): DownloadWrites {
   if (downloads || staticShellCategories(cmd).includes('download')) {
     out.targets.push(...piped);
     for (const t of redirectionTargets(cmd))
-      if (!isNowhere(t)) out.targets.push({ path: readablePath(t), after: null });
+      if (!isNullSink(t, host)) out.targets.push({ path: readablePath(t), after: null });
   }
   return out;
 }
@@ -616,20 +624,37 @@ function changeDirArg(program: string, args: readonly string[]): string | null {
 }
 
 /**
- * A null device or a standard stream: what is written there lands in no place
- * (#669, approbation 0330a0fc du 02/10 : `curl -o /dev/null` lu comme un
- * fichier hors de l'espace interrogeait la personne). `/dev/null`,
- * `/dev/stdout`, `/dev/stderr`, PowerShell's `$null`, and Windows' `NUL` in
- * any case, with or without an extension (`nul.json` is the device too). Read
- * the same on every OS: the text is judged, not the machine it runs on. Only
- * the bare name: `nul/a.json` or `/tmp/dev/null` are places. A tool's own `-`
- * for its standard output is read where the tool is (`curl -o -`, `wget -O -`):
- * for a shell redirection or `tee`, `-` is a file. What KIND of action the
- * line is does not change: only where it writes.
+ * The null sink of the host that runs the command, and nothing else (#669,
+ * approbation 0330a0fc du 02/10 : `curl -o /dev/null` lu comme un fichier hors
+ * de l'espace interrogeait la personne). THE one exemption every write goes
+ * through (a fetcher's output, a pipe writer, a redirection): what is written
+ * there lands in no place.
+ *
+ * - POSIX host: `/dev/null`.
+ * - Windows host (the commands run in cmd.exe): `NUL` in any case, with a `:`
+ *   or an extension (`nul:`, `nul.json`, `NUL.tar.gz`: the device is what
+ *   comes before the first dot). Not PowerShell's `$null`: the shell
+ *   run_command uses on Windows is cmd.exe, where `$null` is a plain file name, so
+ *   it is read as a variable the shell decides (it asks). A PowerShell payload
+ *   that really means the null device over-asks, which a safety net may do.
+ *
+ * Every other name is an ordinary place, judged like any path and shown as
+ * written: `/dev/zero`, `/dev/tty`, `CON`, and the descriptor aliases
+ * (`/dev/stdin`, `/dev/stdout`, `/dev/fd/N`) whose target depends on
+ * redirections and descriptor copies the text may not show (`3<f 0<&3`).
+ * `/dev/null` on a Windows host is one too: cmd.exe reads it as `\dev\null` of
+ * the current drive. The price is a few harmless asks (`-o /dev/stdout`); the
+ * gain, an exemption that can never hide a write. Only the bare name: `nul/a.json`
+ * or `/tmp/dev/null` are places. A tool's own `-` for its standard output is
+ * read where the tool is (`curl -o -`, `wget -O -`): for a shell redirection or
+ * `tee`, `-` is a file. What KIND of action the line is does not change: only
+ * where it writes.
  */
-function isNowhere(p: string): boolean {
-  return /^\/dev\/(null|stdout|stderr)$/.test(p) || /^(\$null|nul(\.[^\\/]*)?)$/i.test(p);
+function isNullSink(p: string, host: ShellHost): boolean {
+  return host === 'windows' ? WINDOWS_NUL.test(p) : p === '/dev/null';
 }
+
+const WINDOWS_NUL = /^nul(?::|\.[^\\/]*)?$/i;
 
 /** A path as written, or null when the shell decides it at run time. */
 export function readablePath(p: string): string | null {
@@ -827,13 +852,72 @@ const GIT_CLONE_VALUE_FLAGS = new Set([
   '--bundle-uri',
 ]);
 
-/** Where the shell writes a line's output: `> file`, `>> file`. */
+/**
+ * Where the shell writes a line's output, read as OPERATORS, each found on its own so that none can hide another (`2>/dev/null>../x`
+ * is two): `>`, `>>`, `>|`, `&>`, `&>>`, the same on another descriptor
+ * (`2>`, `2>>`, `2>|`: the error log of a download is a write too), and
+ * read/write (`<>`, `1<>`: its `>` opens the target for writing). The target is
+ * the next word, attached or after spaces. No file is named by a duplication
+ * (`2>&1`, `>&2`, `2>&-`, `<&0`: `>&file` is the bash form of `&>file` and does),
+ * an input (`< file`), a here-document or here-string, or a process
+ * substitution (`<(…)`, `>(…)`).
+ *
+ * Quotes are NOT read: an operator counts wherever it stands. A quote state
+ * would hide the payload of `bash -c '… > f'` and everything after an escaped
+ * quote (`"O\"Brien" … > f`), and a safety net may over-ask but never under-
+ * report. The price is one harmless extra place when a `>` sits inside a quoted
+ * string of a download (`"…?p=1>2"` reads a file `2`).
+ */
 function redirectionTargets(cmd: string): string[] {
   const targets: string[] = [];
-  for (const m of cmd.matchAll(/(^|[^\d&>])1?>>?\s*("[^"]*"|'[^']*'|[^\s;&|()<>]+)/g)) {
-    const t = stripQuotes(m[2] ?? '');
-    if (t.startsWith('&')) continue;
-    targets.push(t);
+  const delimiter = /[\s;&|()<>]/;
+  let i = 0;
+  /** The word that starts at `i` (after spaces): a quoted one whole, otherwise up to a delimiter. */
+  const word = (): string => {
+    while (i < cmd.length && /\s/.test(cmd[i] ?? '')) i++;
+    const open = cmd[i];
+    if (open === '"' || open === "'") {
+      const end = cmd.indexOf(open, i + 1);
+      if (end >= 0) {
+        const quoted = cmd.slice(i + 1, end);
+        i = end + 1;
+        return quoted;
+      }
+    }
+    const start = i;
+    while (i < cmd.length && !delimiter.test(cmd[i] ?? '')) i++;
+    return stripQuotes(cmd.slice(start, i));
+  };
+  while (i < cmd.length) {
+    const c = cmd[i] ?? '';
+    if (c !== '>' && c !== '<') {
+      i++;
+      continue;
+    }
+    const next = cmd[i + 1] ?? '';
+    if (next === '(') {
+      i += 2; // process substitution
+    } else if (c === '<') {
+      // `<>` (read/write) is an input followed by the `>` that opens its target
+      // for writing: the next turn of the loop reads that `>` on its own.
+      if (next === '<') {
+        i += cmd[i + 2] === '<' ? 3 : 2; // here-string, here-document
+      } else if (next === '&') {
+        i += 2; // input duplication
+        word();
+      } else {
+        i++; // input
+      }
+    } else if (next === '&') {
+      i += 2;
+      const t = word();
+      // `>&2`, `>&-` copy a descriptor; `>&file` (bash) writes both streams to it.
+      if (t !== '' && !/^(\d+|-)$/.test(t)) targets.push(t);
+    } else {
+      i += next === '>' || next === '|' ? 2 : 1;
+      const t = word();
+      if (t !== '') targets.push(t);
+    }
   }
   return targets;
 }
