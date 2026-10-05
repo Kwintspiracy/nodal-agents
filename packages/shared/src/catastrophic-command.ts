@@ -344,7 +344,9 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
     subcommand('git', String.raw`branch\s+-D\b`),
   ],
   install_software: [
-    /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\binstall\b/i, // pkg install
+    /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\b(?:un)?install\b/i, // pkg install, and uninstall: what software is installed changes
+    // VS Code family: adding, updating or removing an extension (review of PR #682, pass 8)
+    /\b(code|code-insiders|codium|vscodium|cursor|windsurf)\b[^\n]*--(?:install-extension|uninstall-extension|update-extensions)\b/i,
     /\b(npm|pnpm|yarn|bun)\s+(i|add|ci)\b|\bInstall-(Module|Package)\b/i, // npm i, pnpm add, PowerShell modules
     /\buv\s+(pip\s+install|add|tool\s+install)\b/i, // uv (review of PR #476)
     /\bgo\s+install\b/i, // go install
@@ -451,6 +453,10 @@ const OUTWARD_SUBCOMMANDS: Record<string, ReadonlySet<string>> = {
  * `x*` is a prefix, `x=` also matches `x=value`, `a b` is two words.
  */
 const VSCODE_CLI = [
+  '--version',
+  '-v',
+  '--help',
+  '-h',
   '--install-extension',
   '--uninstall-extension',
   '--list-extensions',
@@ -743,6 +749,21 @@ function launchReachesOut(program: string, args: readonly string[]): boolean {
   const words = args.map((text) => ({ text, quoted: false }));
   const { target, verb, windowless } = readLaunch(words, launchForm(program));
   return verb || !windowless || (target !== null && isDocumentOrAddress(target));
+}
+
+/**
+ * A program that opens its window or its file whatever it is asked: a desktop
+ * program not told to stay windowless, or a document run by name. `notepad
+ * --help` opens Notepad: the help/version excuse ("it prints and exits") is
+ * not theirs (#691, review of PR #682, pass 8).
+ */
+function opensWhateverAsked(unit: readonly string[]): boolean {
+  const program = unit[0] ?? '';
+  const windowless = DESKTOP_PROGRAMS.get(program);
+  return (
+    isDocumentOrAddress(program) ||
+    (windowless !== undefined && !keepsWindowless(unit.slice(1), windowless))
+  );
 }
 
 /** True when one command unit hands something to the desktop, a device or someone (#667). */
@@ -1317,6 +1338,11 @@ function cmdLine(rest: readonly ShellWord[], from: LineShell): Payload[] {
   return [{ line, shell: 'cmd' }];
 }
 
+/** A payload whose program is decided at run time: it asks (`isDecidedAtRunTime`). */
+const DECIDED_AT_RUN_TIME: Payload[] = [
+  { words: [{ text: '$(…)', quoted: false }], shell: 'powershell', invoked: true },
+];
+
 /** A shell's reserved word that comes before a command it runs: `do rm x`, `then lp x`. */
 const before = (args: readonly ShellWord[], shell: LineShell): Payload[] => argv(args, shell);
 
@@ -1340,9 +1366,12 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
     return [];
   },
   // PowerShell joins the words after -Command into its script.
+  // A script that is only a variable (`-Command $c`, expanded by sh) is code
+  // decided at run time.
   powershell: (args) => {
     const i = args.findIndex((a) => /^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i.test(a.text));
     const rest = i < 0 ? [] : args.slice(i + 1);
+    if (rest.length === 1 && /^\$[\w:]+$/.test(rest[0]?.text ?? '')) return DECIDED_AT_RUN_TIME;
     return rest.length === 0
       ? []
       : [{ line: rest.map((a) => a.text).join(' '), shell: 'powershell' }];
@@ -1554,10 +1583,14 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
   },
   // PowerShell's Invoke-Expression: the string is code, read by PowerShell.
   // Without one it runs what the pipeline hands it (inline code, `isInlineEvalUnit`).
+  // Its code is a string the text holds (`iex 'Get-Date'`, a literal piped in,
+  // bound as its argument by `scanLine`), or one it does not: a variable, an
+  // expression, a command's output (`iex $c`, `iex (…)`, `Get-Content x | iex`),
+  // decided at run time (review of PR #682, pass 8).
   iex: (args) => {
     const rest = args.filter((a) => !/^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i.test(a.text));
-    return rest.length === 0
-      ? []
+    return rest.length === 0 || rest.some((a) => !a.quoted && /^[$(@]/.test(a.text))
+      ? DECIDED_AT_RUN_TIME
       : [{ line: rest.map((a) => a.text).join(' '), shell: 'powershell' }];
   },
   // The call and dot-source operators run what they name, even a `$variable`.
@@ -1862,12 +1895,24 @@ function scanLine(line: string, g: Grammar): ShellWord[][] {
     inWord = false;
     quoted = false;
   };
-  const endCommand = (at: number): void => {
+  // PowerShell binds a literal piped into a command to its input: `'cmd' |
+  // iex` runs that string. It is read as the command's argument when it has
+  // none (review of PR #682, pass 8).
+  let piped: ShellWord | null = null;
+  const endCommand = (at: number, separator = ''): void => {
     endWord();
-    if (words.length > 0)
-      segments.push(
-        words.map((w) => ({ text: w.text, quoted: w.quoted, tail: line.slice(w.start, at) })),
-      );
+    if (words.length > 0) {
+      const segment: ShellWord[] = words.map((w) => ({
+        text: w.text,
+        quoted: w.quoted,
+        tail: line.slice(w.start, at),
+      }));
+      if (piped !== null && segment.length === 1) segment.push(piped);
+      segments.push(segment);
+      piped = null;
+      if (g === POWERSHELL && separator === '|' && segment.length === 1 && segment[0]?.quoted)
+        piped = segment[0];
+    } else piped = null;
     words = [];
   };
   for (let at = 0; at < line.length; at++) {
@@ -1894,7 +1939,7 @@ function scanLine(line: string, g: Grammar): ShellWord[][] {
       word += next;
       at += 1;
     } else if (g.separators.includes(ch)) {
-      endCommand(at);
+      endCommand(at, ch);
       // PowerShell's call operator starts a command whose program follows it;
       // before a parenthesised expression, that program is decided at run time.
       if (g === POWERSHELL && ch === '&' && next !== '&') {
@@ -2014,7 +2059,8 @@ export function isDestructiveOrHeavyCommand(cmd: string, host?: ShellHost): bool
   if (isCatastrophicCommand(cmd, host) || isInlineInterpreterEvalCommand(cmd, host)) return true;
   // Every program only asked for its version or help: nothing happens.
   const units = commandUnits(withoutRedirections(cmd), 0, topShell(host));
-  const working = units.filter((u) => !runsAnother(u));
+  // A wrapper's own words are not work, but a launcher that reaches out is.
+  const working = units.filter((u) => !runsAnother(u) || reachesOut(u));
   if (working.length > 0 && working.every(isReadUnit)) return false;
   const c = normalizeSlashes(cmd.trim());
   return (
@@ -2089,7 +2135,7 @@ function curlWritesAFile(unit: readonly string[]): boolean {
 
 /** The kinds one command unit performs: none for a version or help check. */
 function unitCategories(unit: readonly string[]): StaticShellCategory[] {
-  if (isVersionOrHelpOnly(unit)) return [];
+  if (isVersionOrHelpOnly(unit) && !opensWhateverAsked(unit)) return [];
   const kinds: StaticShellCategory[] = patternKinds(unit);
   if (reachesOut(unit)) kinds.push('open_or_send');
   return isSubcommandHelp(unit) ? kinds.filter((k) => !SUBCOMMAND_HELP_EXCUSES.has(k)) : kinds;
@@ -2097,6 +2143,7 @@ function unitCategories(unit: readonly string[]): StaticShellCategory[] {
 
 /** A unit that only prints: a version or help check, or the help of a fetch or install subcommand. */
 function isReadUnit(unit: readonly string[]): boolean {
+  if (opensWhateverAsked(unit)) return false;
   if (isVersionOrHelpOnly(unit)) return true;
   if (!isSubcommandHelp(unit)) return false;
   const kinds = patternKinds(unit);
