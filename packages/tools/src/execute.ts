@@ -1438,6 +1438,7 @@ async function shellPlace(toolName: string, input: unknown, ctx: ToolContext): P
   const cwd = await resolveAndCheckPath(ctx, from).catch(() => null);
   return {
     cwd,
+    host: process.platform === 'win32' ? 'windows' : 'posix',
     inWorkspace: (absolutePath) =>
       resolveAndCheckPath(ctx, absolutePath).then(
         () => true,
