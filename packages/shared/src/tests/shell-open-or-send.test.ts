@@ -198,6 +198,7 @@ describe('open_or_send: what reaches the screen, a printer or someone (#667) @ca
   // again as a line; separate quoted words keep their quotes.
   it('cmd /c with one quoted line reads the line, never a program named after it', () => {
     expect(commandUnits('cmd /c "rm -rf build && del x.txt"')).toEqual([
+      ['cmd', '/c', 'rm -rf build && del x.txt'],
       ['rm', '-rf', 'build'],
       ['del', 'x.txt'],
     ]);
@@ -205,6 +206,7 @@ describe('open_or_send: what reaches the screen, a printer or someone (#667) @ca
     expect(staticShellCategories('cmd /c "rm -rf build && del x.txt"')).toEqual(['delete_files']);
     // Separate quoted words stay words.
     expect(commandUnits('cmd /c type "C:\\My Files\\a.txt"')).toEqual([
+      ['cmd', '/c', 'type', 'C:\\My Files\\a.txt'],
       ['type', 'C:\\My Files\\a.txt'],
     ]);
   });

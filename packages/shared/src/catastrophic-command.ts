@@ -249,7 +249,7 @@ export function isCatastrophicCommand(cmd: string): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
   // `shutdown --help` prints and exits (Reviewer A, #582 pass 2). Only the
   // long forms and `/?` here: `shutdown -h` HALTS the machine.
-  const units = commandUnits(withoutRedirections(cmd));
+  const units = commandUnits(withoutRedirections(cmd)).filter((u) => !runsAnother(u));
   if (
     units.length > 0 &&
     units.every((u) => u.length >= 2 && u.slice(1).every((t) => FLOOR_READ_FLAGS.has(t)))
@@ -634,16 +634,6 @@ function readLaunch(args: readonly string[]): Launch {
   }
   launch.launched = launch.launched.filter((w) => w !== '');
   return launch;
-}
-
-/**
- * The command a launcher starts, as a line `commandUnits` reads like any
- * other: what `Start-Process powershell -ArgumentList '-Command', 'Remove-Item
- * x'` deletes is a deletion, wherever it is started from.
- */
-function launchedCommand(args: readonly string[]): string | null {
-  const { target, launched } = readLaunch(args);
-  return target === null ? null : [`"${target}"`, ...launched].join(' ');
 }
 
 /**
@@ -1043,101 +1033,276 @@ function startsWithMatch(re: RegExp, text: string): boolean {
   return m !== null && m.index === 0;
 }
 
-const SHELL_WRAPPERS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash', 'fish']);
-
-/** `FOO=1` at index `i` of a segment, before any program word: an assignment, not the program. */
-function isAssignmentPrefix(segment: readonly string[], i: number): boolean {
-  return segment.slice(0, i + 1).every((t) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(t));
-}
-
 /**
- * Which shell reads a line: in PowerShell, `start` is Start-Process (no window
- * title); elsewhere it is cmd's. `run_command` runs through cmd.exe on Windows.
+ * Which shell reads a line or a list of words. The shell of the WRAPPER that
+ * runs it, whatever the line around was (review of PR #682, pass 2): `cmd /c`
+ * → cmd, `powershell -Command` → PowerShell, `sh -c` / `wsl` → a POSIX shell,
+ * `timeout`, `sudo`, `Start-Process`… → no shell, the program is executed.
+ * It decides one thing today: `start` is cmd's, with a window title, only in
+ * cmd; in PowerShell it is Start-Process. `run_command` runs through cmd.exe
+ * on Windows, so a line starts in cmd.
  */
-type LineShell = 'cmd' | 'powershell';
+type LineShell = 'cmd' | 'powershell' | 'sh' | 'exec';
+
+/** What a program that runs another one starts: a line read again, or the words of a program. */
+type Payload = { line: string; shell: LineShell } | { words: ShellWord[]; shell: LineShell };
 
 /**
  * cmd's `start ["title"] [/switches] program args`: the first quoted argument
  * before the program is ALWAYS the window title, empty or not, wherever the
  * switches sit (review of PR #682, pass 1). Never what it starts.
  */
-function withoutStartTitle(args: readonly string[], quoted: readonly boolean[]): string[] {
+function withoutStartTitle(args: readonly ShellWord[]): ShellWord[] {
   for (let j = 0; j < args.length; j++) {
-    if (quoted[j]) return [...args.slice(0, j), ...args.slice(j + 1)];
-    if (!/^\/\w+$/.test(args[j] ?? '')) break;
+    if (args[j]?.quoted) return [...args.slice(0, j), ...args.slice(j + 1)];
+    if (!/^\/\w+$/.test(args[j]?.text ?? '')) break;
   }
   return [...args];
 }
 
 /**
+ * The words after a program's options: `-x`, `--long`, `--long=v`, and for the
+ * options in `valued`, the word that follows. `--` ends them.
+ */
+function afterOptions(args: readonly ShellWord[], valued: ReadonlySet<string>): ShellWord[] {
+  let i = 0;
+  while (i < args.length) {
+    const w = args[i]?.text ?? '';
+    if (w === '--') return args.slice(i + 1);
+    if (!/^-./.test(w)) break;
+    i += valued.has(w) ? 2 : 1;
+  }
+  return args.slice(i);
+}
+
+const argv = (words: readonly ShellWord[], shell: LineShell = 'exec'): Payload[] =>
+  words.length > 0 ? [{ words: [...words], shell }] : [];
+
+/** `sh -c LINE`, `bash -lc LINE`, `zsh -o pipefail -c LINE`: a script file is not opened here. */
+function shellLine(args: readonly ShellWord[]): Payload[] {
+  for (let i = 0; i < args.length; i++) {
+    const w = args[i]?.text ?? '';
+    if (/^-[a-z]*c[a-z]*$/i.test(w)) {
+      const line = args[i + 1];
+      return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
+    }
+    if (w === '-o' || w === '+o') i += 1;
+    else if (!/^[-+]/.test(w)) return [];
+  }
+  return [];
+}
+
+/** After `cmd /c` or `powershell -Command`: one word is a line, several are the words of a command. */
+function lineOrWords(rest: readonly ShellWord[], shell: LineShell): Payload[] {
+  if (rest.length === 0) return [];
+  if (rest.length === 1) return [{ line: rest[0]?.text ?? '', shell }];
+  return [{ words: [...rest], shell }];
+}
+
+/** A shell's reserved word that comes before a command it runs: `do rm x`, `then lp x`. */
+const before = (args: readonly ShellWord[]): Payload[] => argv(args);
+
+/**
+ * Programs whose purpose is to run another program, each with its own option
+ * grammar (#667, review of PR #682, pass 2). ONE mechanism: what they run is
+ * read as a command of its own, for every kind of action, and the program
+ * itself stays a unit. Every entry of `SHELL_PROGRAMS` (shell-programs.ts, the
+ * same knowledge for the command allowlist) has one here, a test says so; a
+ * program that defines rather than runs (`doskey`) runs nothing.
+ */
+const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[]) => Payload[]> = {
+  // shells
+  cmd: (args) => {
+    // Every switch before /c, /k or /r is cmd's own (`/q /d /s /v:on`).
+    for (let i = 0; i < args.length; i++) {
+      const w = (args[i]?.text ?? '').toLowerCase();
+      if (w === '/c' || w === '/k' || w === '/r') return lineOrWords(args.slice(i + 1), 'cmd');
+      if (!/^\/\w/.test(w)) return [];
+    }
+    return [];
+  },
+  powershell: (args) => {
+    const i = args.findIndex((a) => /^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i.test(a.text));
+    return i < 0 ? [] : lineOrWords(args.slice(i + 1), 'powershell');
+  },
+  sh: shellLine,
+  bash: shellLine,
+  zsh: shellLine,
+  ksh: shellLine,
+  csh: shellLine,
+  tcsh: shellLine,
+  dash: shellLine,
+  ash: shellLine,
+  fish: shellLine,
+  // `wsl [-d distro] [-u user] [--cd dir] cmd…`: the distribution's shell reads
+  // it; `-e` executes it; `--list`, `--shutdown` and the rest manage WSL.
+  wsl: (args) => {
+    const valued = new Set(['-d', '--distribution', '-u', '--user', '--cd', '--distribution-id']);
+    for (let i = 0; i < args.length; i++) {
+      const w = args[i]?.text ?? '';
+      if (valued.has(w)) i += 1;
+      else if (w === '-e' || w === '--exec') return argv(args.slice(i + 1));
+      else if (w === '--') return argv(args.slice(i + 1), 'sh');
+      else if (/^-/.test(w)) return [];
+      else return argv(args.slice(i), 'sh');
+    }
+    return [];
+  },
+  busybox: (args) => argv(afterOptions(args, new Set())),
+  eval: (args) =>
+    args.length > 0 ? [{ line: args.map((a) => a.text).join(' '), shell: 'sh' }] : [],
+  script: (args) => {
+    const i = args.findIndex((a) => a.text === '-c' || a.text === '--command');
+    const line = i < 0 ? undefined : args[i + 1];
+    return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
+  },
+  // launchers
+  env: (args) => {
+    const valued = new Set(['-u', '--unset', '-C', '--chdir']);
+    let i = 0;
+    while (i < args.length) {
+      const w = args[i]?.text ?? '';
+      if (w === '-S' || w === '--split-string') {
+        const line = args[i + 1];
+        return line === undefined ? [] : [{ line: line.text, shell: 'exec' }];
+      }
+      if (w === '--') i += 1;
+      else if (valued.has(w)) i += 2;
+      else if (/^-/.test(w) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) i += 1;
+      else break;
+    }
+    return argv(args.slice(i));
+  },
+  sudo: (args) =>
+    argv(
+      afterOptions(
+        args,
+        new Set(['-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-U', '-T', '--user', '--group']),
+      ),
+    ),
+  doas: (args) => argv(afterOptions(args, new Set(['-u', '-C']))),
+  nohup: (args) => argv(afterOptions(args, new Set())),
+  nice: (args) => argv(afterOptions(args, new Set(['-n', '--adjustment']))),
+  time: (args) => argv(afterOptions(args, new Set(['-f', '-o', '--format', '--output']))),
+  // GNU `timeout [options] DURATION cmd…`; Windows' `timeout /t 5` only waits.
+  timeout: (args) => {
+    const rest = afterOptions(args, new Set(['-s', '--signal', '-k', '--kill-after']));
+    if (!/^\d+(\.\d+)?[smhd]?$/.test(rest[0]?.text ?? '')) return [];
+    return argv(rest.slice(1));
+  },
+  exec: (args) => argv(afterOptions(args, new Set(['-a']))),
+  // `command -v x` only looks x up.
+  command: (args) =>
+    args.some((a) => a.text === '-v' || a.text === '-V') ? [] : argv(afterOptions(args, new Set())),
+  xargs: (args) =>
+    argv(
+      afterOptions(
+        args,
+        new Set(['-I', '-n', '-P', '-L', '-s', '-d', '-E', '-a', '--max-args', '--max-procs']),
+      ),
+    ),
+  // `runas [/user:x] [/savecred…] "program args"`: one command line.
+  runas: (args) => {
+    const rest = args.filter((a) => !/^\/\w/.test(a.text));
+    return rest[0] === undefined ? [] : [{ line: rest[0].text, shell: 'exec' }];
+  },
+  call: (args) => argv(args, 'cmd'),
+  // cmd's `for %f in (set) do command`.
+  for: (args) => {
+    const i = args.findIndex((a) => a.text.toLowerCase() === 'do');
+    return i < 0 ? [] : argv(args.slice(i + 1), 'cmd');
+  },
+  doskey: () => [],
+  // cmd's start, PowerShell's Start-Process: what it starts, with its arguments.
+  start: (args) => launchedWords(args),
+  'start-process': (args) => launchedWords(args),
+  saps: (args) => launchedWords(args),
+  // `find … -exec cmd {} ;`, each of them.
+  find: (args) => {
+    const payloads: Payload[] = [];
+    for (let i = 0; i < args.length; i++) {
+      if (!['-exec', '-execdir', '-ok', '-okdir'].includes(args[i]?.text ?? '')) continue;
+      const end = args.findIndex((a, j) => j > i && [';', '\\;', '+'].includes(a.text));
+      payloads.push(...argv(args.slice(i + 1, end > i ? end : undefined)));
+      if (end > i) i = end;
+    }
+    return payloads;
+  },
+  // a POSIX shell's reserved words before a command (`for …; do rm $f; done`)
+  do: before,
+  then: before,
+  else: before,
+  elif: before,
+  if: before,
+  while: before,
+  until: before,
+  '!': before,
+};
+RUNS_ANOTHER['pwsh'] = RUNS_ANOTHER['powershell'] as (typeof RUNS_ANOTHER)[string];
+
+/** The programs whose purpose is to run another one, as `commandUnits` reads them. */
+export const RUNS_ANOTHER_PROGRAMS: readonly string[] = Object.keys(RUNS_ANOTHER);
+
+/** What `start` / `Start-Process` starts, as the words of a program (no shell). */
+function launchedWords(args: readonly ShellWord[]): Payload[] {
+  const { target, launched } = readLaunch(args.map((a) => a.text));
+  if (target === null) return [];
+  return argv([target, ...launched].map((text) => ({ text, quoted: false })));
+}
+
+/** True when a unit's program runs another one: its own words are not the work. */
+function runsAnother(unit: readonly string[]): boolean {
+  const grammar = RUNS_ANOTHER[unit[0] ?? ''];
+  return (
+    grammar !== undefined &&
+    grammar(unit.slice(1).map((text) => ({ text, quoted: false }))).length > 0
+  );
+}
+
+/**
  * The commands a command line actually runs, as token lists whose first token
  * is the program (its basename, lower-cased, without `.exe`): each segment,
- * the module of `python -m`, and what `bash -c`, `cmd /c`,
- * `powershell -Command`, `start` / `Start-Process`, `xargs`, `find -exec` and
- * `$(…)` / backticks run inside it.
+ * the module of `python -m`, what `$(…)` / backticks run, and what every
+ * program of `RUNS_ANOTHER` starts, the program itself kept as a unit.
  */
 export function commandUnits(cmd: string, depth = 0, shell: LineShell = 'cmd'): string[][] {
-  if (depth > 4 || typeof cmd !== 'string' || cmd.trim() === '') return [];
+  if (depth > 8 || typeof cmd !== 'string' || cmd.trim() === '') return [];
   const units: string[][] = [];
-  const inner = (text: string, by: LineShell = 'cmd') =>
-    units.push(...commandUnits(text, depth + 1, by));
-  for (const m of cmd.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) inner(m[1] ?? m[2] ?? '');
-  for (const words of splitQuotedShellWords(cmd)) {
-    const segment = words.map((w) => w.text);
-    // `cmd /c "rm -rf build && del x"`: cmd reads one quoted line as a line,
-    // never as the name of one program (review of PR #682, pass 1).
-    if (
-      segment.length === 3 &&
-      interpreterBasename(segment[0] ?? '') === 'cmd' &&
-      /^\/[ck]$/i.test(segment[1] ?? '') &&
-      words[2]?.quoted === true
-    ) {
-      inner(segment[2] ?? '');
-      continue;
-    }
-    // `FOO=1 rm -rf build`: variables set for the command are not the program
-    // (review of PR #476).
-    const tokens = skipPassthroughLeaders(
-      segment.filter((_, i) => !isAssignmentPrefix(segment, i)),
+  for (const m of cmd.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g))
+    units.push(...commandUnits(m[1] ?? m[2] ?? '', depth + 1, shell));
+  for (const words of splitQuotedShellWords(cmd)) units.push(...wordUnits(words, depth, shell));
+  return units;
+}
+
+/** The units of one command, given as its words. */
+function wordUnits(words: readonly ShellWord[], depth: number, shell: LineShell): string[][] {
+  if (depth > 8) return [];
+  // `FOO=1 rm -rf build`: variables set for the command are not the program
+  // (review of PR #476).
+  let k = 0;
+  while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k]?.text ?? '')) k += 1;
+  const head = words[k];
+  if (head === undefined) return [];
+  const program = interpreterBasename(head.text);
+  const args =
+    program === 'start' && shell === 'cmd'
+      ? withoutStartTitle(words.slice(k + 1))
+      : words.slice(k + 1);
+  const texts = args.map((a) => a.text);
+  const units: string[][] = [[program, ...texts]];
+  // `python -m pip install x` runs pip: the module is the program (review of
+  // PR #476; main caught it by reading the whole text).
+  if (interpreterKind(program) === 'python') {
+    const m = texts.map((t) => t.toLowerCase()).indexOf('-m');
+    const module = m >= 0 ? texts[m + 1] : undefined;
+    if (module !== undefined) units.push([module.toLowerCase(), ...texts.slice(m + 2)]);
+  }
+  for (const payload of RUNS_ANOTHER[program]?.(args) ?? []) {
+    units.push(
+      ...('line' in payload
+        ? commandUnits(payload.line, depth + 1, payload.shell)
+        : wordUnits(payload.words, depth + 1, payload.shell)),
     );
-    const head = tokens[0];
-    if (head === undefined) continue;
-    const program = interpreterBasename(head);
-    // Both only drop leading words: `tokens` is the tail of `segment`.
-    const quoted = words.slice(segment.length - tokens.length + 1).map((w) => w.quoted);
-    const args =
-      program === 'start' && shell === 'cmd'
-        ? withoutStartTitle(tokens.slice(1), quoted)
-        : tokens.slice(1);
-    units.push([program, ...args]);
-    const lower = args.map((a) => a.toLowerCase());
-    // `python -m pip install x` runs pip: the module is the program (review of
-    // PR #476; main caught it by reading the whole text).
-    if (interpreterKind(program) === 'python') {
-      const m = lower.indexOf('-m');
-      const module = m >= 0 ? args[m + 1] : undefined;
-      if (module !== undefined) units.push([module.toLowerCase(), ...args.slice(m + 2)]);
-    }
-    if (SHELL_WRAPPERS.has(program)) {
-      const i = lower.indexOf('-c');
-      if (i >= 0 && args[i + 1] !== undefined) inner(args[i + 1] ?? '');
-    } else if (program === 'powershell' || program === 'pwsh') {
-      const i = lower.findIndex((a) => a === '-command' || a === '-c');
-      if (i >= 0) inner(args.slice(i + 1).join(' '), 'powershell');
-    } else if (LAUNCHERS.has(program)) {
-      // What `start` / `Start-Process` starts runs too (#667).
-      const launched = launchedCommand(args);
-      if (launched !== null) inner(launched);
-    } else if (program === 'xargs') {
-      const rest = args.slice(args.findIndex((a) => !a.startsWith('-')));
-      if (rest.length > 0 && !rest[0]?.startsWith('-')) inner(rest.join(' '));
-    } else if (program === 'find') {
-      const i = lower.findIndex((a) => a === '-exec' || a === '-execdir' || a === '-ok');
-      if (i >= 0) {
-        const end = args.findIndex((a, j) => j > i && (a === ';' || a === '\\;' || a === '+'));
-        inner(args.slice(i + 1, end > i ? end : undefined).join(' '));
-      }
-    }
   }
   return units;
 }
@@ -1177,7 +1342,8 @@ function splitQuotedShellWords(cmd: string): ShellWord[][] {
     words = [];
   };
   let escaped = false;
-  for (const ch of cmd) {
+  for (let at = 0; at < cmd.length; at++) {
+    const ch = cmd[at] ?? '';
     if (escaped) {
       word += ch;
       inWord = true;
@@ -1185,7 +1351,13 @@ function splitQuotedShellWords(cmd: string): ShellWord[][] {
       continue;
     }
     if (quote !== null) {
-      if (ch === quote) quote = null;
+      // `\"` inside double quotes is a quote character, as Windows' argument
+      // parser and a POSIX shell both read it: `powershell -Command "cmd /c
+      // start \"\" x"` hands cmd an empty title (review of PR #682, pass 2).
+      if (quote === '"' && ch === '\\' && cmd[at + 1] === '"') {
+        word += '"';
+        at += 1;
+      } else if (ch === quote) quote = null;
       else word += ch;
       continue;
     }
@@ -1231,7 +1403,8 @@ export function isDestructiveOrHeavyCommand(cmd: string): boolean {
   if (isCatastrophicCommand(cmd) || isInlineInterpreterEvalCommand(cmd)) return true;
   // Every program only asked for its version or help: nothing happens.
   const units = commandUnits(withoutRedirections(cmd));
-  if (units.length > 0 && units.every(isReadUnit)) return false;
+  const working = units.filter((u) => !runsAnother(u));
+  if (working.length > 0 && working.every(isReadUnit)) return false;
   const c = normalizeSlashes(cmd.trim());
   return (
     DESTRUCTIVE_PATTERNS.some((re) => re.test(c)) ||
