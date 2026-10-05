@@ -284,3 +284,75 @@ describe('a command starts where the shell grammar lets one start (review pass 2
     expect(kinds("awk '{print $1}' file")).toEqual([]);
   });
 });
+
+// Before review pass 3 of #683: the two gaps the PR declared.
+describe('cmd conditions without brackets, and here-docs fed to a program (#683) @cap:executer-une-commande/moteur', () => {
+  const NL = String.fromCharCode(10);
+  const kinds = (cmd: string): string[] => staticShellCategories(cmd);
+
+  it('cmd: the command after an if condition, without brackets', () => {
+    const cases: Array<[string, string]> = [
+      ['if exist req.txt pip install -r req.txt', 'install_software'],
+      ['if not exist x rmdir /s /q build', 'delete_files'],
+      ['if errorlevel 1 taskkill /im x.exe', 'stop_programs'],
+      ['if /i "%a%"=="b" del x', 'delete_files'],
+      ['if /i "%a%" == "b" del x', 'delete_files'],
+      ['if defined X pip install y', 'install_software'],
+      ['if %x%==1 pip install y', 'install_software'],
+      ['if %x% EQU 1 del x', 'delete_files'],
+      ['if not %x% GEQ 2 taskkill /im y.exe', 'stop_programs'],
+      ['if cmdextversion 2 del x', 'delete_files'],
+      ['for %f in (*.txt) do pip install %f', 'install_software'],
+      ['for /f "tokens=*" %a in (\'dir /b\') do pip install %a', 'install_software'],
+      // `for /f` runs the command in its brackets.
+      ['for /f "delims=" %a in (\'pip install x\') do echo %a', 'install_software'],
+    ];
+    for (const [cmd, kind] of cases) expect(kinds(cmd), cmd).toContain(kind);
+  });
+
+  it('a here-doc or here-string fed to a shell or an interpreter is its source', () => {
+    const code = (cmd: string) =>
+      programSources(cmd).sources.flatMap((s) =>
+        s.kind === 'code' ? [{ language: s.language, code: s.code.trim() }] : [],
+      );
+    expect(code(`bash <<EOF${NL}pip install x${NL}EOF`)).toEqual([
+      { language: 'shell', code: 'pip install x' },
+    ]);
+    expect(code(`sh <<'EOF'${NL}rm -rf build${NL}EOF`)).toEqual([
+      { language: 'shell', code: 'rm -rf build' },
+    ]);
+    expect(code(`python - <<EOF${NL}import os${NL}os.system("pip install x")${NL}EOF`)).toEqual([
+      { language: 'python', code: `import os${NL}os.system("pip install x")` },
+    ]);
+    expect(code(`node <<-END${NL}	require('child_process').execSync('npm i x')${NL}	END`)).toEqual([
+      { language: 'javascript', code: "require('child_process').execSync('npm i x')" },
+    ]);
+    expect(code('bash <<< "pip install x"')).toEqual([
+      { language: 'shell', code: 'pip install x' },
+    ]);
+    expect(code(`@"${NL}Stop-Process -Name excel${NL}"@ | powershell -`)).toEqual([
+      { language: 'powershell', code: 'Stop-Process -Name excel' },
+    ]);
+  });
+
+  it('a file fed on standard input to a shell or an interpreter is its source', () => {
+    const files = (cmd: string) =>
+      programSources(cmd).sources.flatMap((s) =>
+        s.kind === 'file' ? [{ path: s.path, language: s.language }] : [],
+      );
+    expect(files('cmd < setup.txt')).toEqual([{ path: 'setup.txt', language: 'cmd' }]);
+    expect(files('python - < tool.py')).toEqual([{ path: 'tool.py', language: 'python' }]);
+    expect(files('bash < run.sh')).toContainEqual({ path: 'run.sh', language: 'shell' });
+    expect(files('sort < data.txt')).toEqual([]);
+  });
+
+  it('a here-doc fed to anything else is data, never commands', () => {
+    expect(kinds(`cat <<EOF > notes.txt${NL}rm -rf build${NL}pip install x${NL}EOF`)).toEqual([]);
+    expect(programSources(`cat <<EOF${NL}pip install x${NL}EOF`).sources).toEqual([]);
+    expect(kinds(`$s = @"${NL}Stop-Process -Name excel${NL}"@`)).toEqual([]);
+    // Inline code written in a body is data too.
+    expect(kinds(`cat <<EOF > a.txt${NL}python -c "print(1)"${NL}EOF`)).toEqual([]);
+    // The line after the here-doc is a command again.
+    expect(kinds(`cat <<EOF > a${NL}x${NL}EOF${NL}pip install y`)).toEqual(['install_software']);
+  });
+});

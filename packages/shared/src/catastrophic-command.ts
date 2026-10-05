@@ -12,6 +12,8 @@
 // killing a process) stay governed by the normal approval rules — the floor is
 // not a general safety net, it is the last-resort circuit breaker.
 
+import { splitHereDocs } from './here-docs';
+
 const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:?\s*&\s*\}\s*;\s*:/;
 const MKFS = /\bmkfs(\.\w+)?\b/i;
 // [\s\S]*? (not [^\n]*) so a shell line-continuation between `dd ...\` and
@@ -473,8 +475,11 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = Object.values(STATIC_SHELL_CATEGORY_PATTE
  * Inline code (`python -c "…"`, `node -e "…"`) is its own kind: what it does is
  * not read, it is asked about, as `destructive_gate` always did.
  */
-export function staticShellCategories(cmd: string): StaticShellCategory[] {
-  if (typeof cmd !== 'string' || cmd.trim() === '') return [];
+export function staticShellCategories(command: string): StaticShellCategory[] {
+  if (typeof command !== 'string' || command.trim() === '') return [];
+  // A here-document's body is data to this line; the program it feeds reads
+  // it as its source (program-sources.ts, review of #683).
+  const cmd = splitHereDocs(command).text;
   // Read from the PROGRAMS the command runs, never from any word of its text
   // (review of PR #474, Reviewer A, P1): `git commit -m "rm old refs"` does not
   // delete, and `clang-format` is not `format`. A pattern counts only where it
@@ -534,9 +539,10 @@ export interface DownloadWrites {
   targets: DownloadTarget[];
 }
 
-export function downloadWrites(cmd: string): DownloadWrites {
+export function downloadWrites(command: string): DownloadWrites {
   const out: DownloadWrites = { dirs: [], targets: [] };
-  if (typeof cmd !== 'string' || cmd.trim() === '') return out;
+  if (typeof command !== 'string' || command.trim() === '') return out;
+  const cmd = splitHereDocs(command).text;
   const units = commandUnits(withoutRedirections(cmd));
   // `iwr URL | Set-Content file`: where the fetched bytes land, kept only if
   // the line downloads.
@@ -955,6 +961,31 @@ const RESERVED_WORDS = new Set([
 interface ShellWord {
   text: string;
   quoted: boolean;
+  /** Its first and last characters came from quotes: `('dir /b')` opens and closes unquoted. */
+  firstQuoted: boolean;
+  lastQuoted: boolean;
+}
+
+/** cmd's comparison operators: `a EQU b`, `a NEQ b`… */
+const CMD_COMPARE = new Set(['==', 'equ', 'neq', 'lss', 'leq', 'gtr', 'geq']);
+
+/**
+ * Where a cmd `if` condition ends (the index of the word after it), or null
+ * when the words are not one (review of #683): `exist <path>`,
+ * `errorlevel <n>`, `cmdextversion <n>`, `defined <var>`, `<a>==<b>` (glued
+ * or not) and `<a> EQU|NEQ|LSS|LEQ|GTR|GEQ <b>`, after `/i` and `not`.
+ */
+function cmdConditionEnd(segment: readonly ShellWord[], from: number): number | null {
+  let i = from;
+  const word = (k: number): string => (segment[k]?.text ?? '').toLowerCase();
+  if (word(i) === '/i') i++;
+  if (word(i) === 'not') i++;
+  if (i >= segment.length) return null;
+  if (['exist', 'errorlevel', 'cmdextversion', 'defined'].includes(word(i)))
+    return i + 2 <= segment.length ? i + 2 : null;
+  if (/^[^=]+==[^=]*$|^[^=]*==[^=]+$/.test(segment[i]?.text ?? '')) return i + 1;
+  if (CMD_COMPARE.has(word(i + 1))) return i + 3 <= segment.length ? i + 3 : null;
+  return null;
 }
 
 /**
@@ -976,12 +1007,21 @@ function commandStarts(segment: readonly ShellWord[]): string[][] {
   for (let i = 0; i < segment.length; i++) {
     const w = segment[i] as ShellWord;
     const rest = (first: string): string[] => [first, ...segment.slice(i + 1).map((x) => x.text)];
+    if (expect && !w.quoted && w.text.toLowerCase() === 'if') {
+      // cmd's `if [/i] [not] <condition> <command>`: the command starts after
+      // the condition. In sh the condition is itself a command, read as one.
+      const end = cmdConditionEnd(segment, i + 1);
+      if (end !== null) {
+        i = end - 1;
+        continue;
+      }
+    }
     if (expect && !w.quoted && RESERVED_WORDS.has(w.text.toLowerCase())) continue;
-    if (!w.quoted && /^[({]/.test(w.text)) {
+    if (!w.firstQuoted && /^[({]/.test(w.text)) {
       // `(`, `{`, or a bracket glued to the program: `(cd x`, `{Stop-Process`.
       const first = w.text.replace(/^[({]+/, '');
       if (first !== '') starts.push(rest(first));
-      expect = first === '' || /[){]$/.test(w.text);
+      expect = first === '' || (!w.lastQuoted && /[){]$/.test(w.text));
       continue;
     }
     if (expect) {
@@ -992,7 +1032,7 @@ function commandStarts(segment: readonly ShellWord[]): string[][] {
         expect = false;
       }
     }
-    if (!w.quoted && /[){]$/.test(w.text)) expect = true;
+    if (!w.lastQuoted && /[){]$/.test(w.text)) expect = true;
   }
   return starts;
 }
@@ -1020,8 +1060,10 @@ export function commandUnits(cmd: string): string[][] {
 }
 
 /** `commandUnits`, each with its program word as written. */
-export function commandUnitsAsWritten(cmd: string, depth = 0): CommandUnit[] {
-  if (depth > 4 || typeof cmd !== 'string' || cmd.trim() === '') return [];
+export function commandUnitsAsWritten(command: string, depth = 0): CommandUnit[] {
+  if (depth > 4 || typeof command !== 'string' || command.trim() === '') return [];
+  // A here-document's body is data to the line that holds it (review of #683).
+  const cmd = depth === 0 ? splitHereDocs(command).text : command;
   const units: CommandUnit[] = [];
   const inner = (text: string) => units.push(...commandUnitsAsWritten(text, depth + 1));
   for (const m of cmd.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) inner(m[1] ?? m[2] ?? '');
@@ -1084,12 +1126,22 @@ function splitShellTokens(cmd: string): ShellWord[][] {
   let words: ShellWord[] = [];
   let word = '';
   let quoted = false;
+  let firstQuoted = false;
+  let lastQuoted = false;
   let inWord = false;
   let quote: '"' | "'" | null = null;
+  const add = (ch: string, inQuotes: boolean): void => {
+    if (word === '') firstQuoted = inQuotes;
+    lastQuoted = inQuotes;
+    word += ch;
+    inWord = true;
+  };
   const endWord = (): void => {
-    if (inWord) words.push({ text: word, quoted });
+    if (inWord) words.push({ text: word, quoted, firstQuoted, lastQuoted });
     word = '';
     quoted = false;
+    firstQuoted = false;
+    lastQuoted = false;
     inWord = false;
   };
   const endSegment = (): void => {
@@ -1100,14 +1152,13 @@ function splitShellTokens(cmd: string): ShellWord[][] {
   let escaped = false;
   for (const ch of cmd) {
     if (escaped) {
-      word += ch;
-      inWord = true;
+      add(ch, true);
       escaped = false;
       continue;
     }
     if (quote !== null) {
       if (ch === quote) quote = null;
-      else word += ch;
+      else add(ch, true);
       continue;
     }
     if (ch === '"' || ch === "'") {
@@ -1130,8 +1181,7 @@ function splitShellTokens(cmd: string): ShellWord[][] {
       endWord();
       continue;
     }
-    word += ch;
-    inWord = true;
+    add(ch, false);
   }
   endSegment();
   return segments;

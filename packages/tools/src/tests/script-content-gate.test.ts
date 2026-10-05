@@ -604,3 +604,68 @@ describe('review pass 2 of #683: a script the system runs is source, and every s
     }
   });
 });
+
+// Before review pass 3 of #683: cmd conditions and here-docs, at the gate.
+describe('cmd conditions and here-docs at the gate (#683) @cap:executer-une-commande/moteur', () => {
+  const askCode: ShellPolicy = { ...DEFAULT_SHELL_POLICY, inline_code: 'ask' };
+  const NL = String.fromCharCode(10);
+  const CRLF = String.fromCharCode(13, 10);
+
+  it('a cmd script with if, without brackets, is read', async () => {
+    await put('hd/setup.bat', `@echo off${CRLF}if not exist venv pip install -r req.txt${CRLF}`);
+    expect(await asked('cmd /c hd/setup.bat')).toEqual([
+      expect.objectContaining({
+        category: 'install_software',
+        found: [expect.objectContaining({ source: 'hd/setup.bat', line: 2 })],
+      }),
+    ]);
+  });
+
+  it('a here-doc in a script is read in the language of the program it feeds, at its line', async () => {
+    await put(
+      'hd/run.sh',
+      [
+        '#!/bin/sh',
+        'cat <<EOF > notes.txt',
+        'rm -rf build',
+        'EOF',
+        "python3 - <<'PY'",
+        'import os',
+        'os.system("pip install openpyxl")',
+        'PY',
+        '',
+      ].join(NL),
+    );
+    expect(await asked('sh hd/run.sh')).toEqual([
+      {
+        category: 'install_software',
+        state: 'ask',
+        details: ['sh hd/run.sh'],
+        found: [{ source: 'hd/run.sh', line: 7, text: 'os.system("pip install openpyxl")' }],
+      },
+    ]);
+  });
+
+  it('a here-doc and a here-string in the command itself, and a file on standard input', async () => {
+    expect(await asked(`bash <<EOF${NL}pip install x${NL}EOF`)).toEqual([
+      expect.objectContaining({ category: 'install_software' }),
+    ]);
+    expect(await asked('bash <<< "pip install x"')).toEqual([
+      expect.objectContaining({ category: 'install_software' }),
+    ]);
+    await put('hd/stdin.txt', `pip install x${CRLF}`);
+    expect(await asked('cmd < hd/stdin.txt')).toEqual([
+      expect.objectContaining({
+        category: 'install_software',
+        found: [expect.objectContaining({ source: 'hd/stdin.txt', line: 1 })],
+      }),
+    ]);
+    // A file on standard input that is not there yet is unread, like any script.
+    expect(await asked('cmd < hd/missing.txt', askCode)).toEqual([
+      expect.objectContaining({
+        category: 'inline_code',
+        unread: [{ source: 'hd/missing.txt', why: 'not_found' }],
+      }),
+    ]);
+  });
+});

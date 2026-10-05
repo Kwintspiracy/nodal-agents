@@ -44,7 +44,9 @@
 //
 // Pure: no filesystem (the gate in packages/tools reads the files).
 
+import { splitHereDocs } from './here-docs';
 import {
+  splitShellWords,
   changeDirOf,
   commandUnitsAsWritten,
   interpreterKind,
@@ -89,7 +91,17 @@ export type ProgramSource =
        */
       executed: boolean;
     }
-  | { kind: 'code'; code: string; language: SourceLanguage; after: number };
+  | {
+      kind: 'code';
+      code: string;
+      language: SourceLanguage;
+      after: number;
+      /**
+       * The line of the command text the code starts on (1-based): a
+       * here-document's body starts on the line after its opening one.
+       */
+      line: number;
+    };
 
 export interface ProgramSources {
   /** The folders the line moves into, in order (null when unreadable). */
@@ -287,7 +299,7 @@ function unitSources(
       // A first word that is not a script is a command (Windows PowerShell).
       return languageOfPath(args[i] ?? '') === 'powershell'
         ? [file(args[i] ?? '', 'powershell')]
-        : [{ kind: 'code', code: args.slice(i).join(' '), language: 'powershell', after }];
+        : [{ kind: 'code', code: args.slice(i).join(' '), language: 'powershell', after, line: 1 }];
     }
     default: {
       const kind = interpreterKind(program);
@@ -296,7 +308,7 @@ function unitSources(
         const e = lower.findIndex((a) => isInlineEvalFlag(kind, a));
         if (e >= 0) {
           const code = args[e + 1];
-          return code === undefined ? [] : [{ kind: 'code', code, language, after }];
+          return code === undefined ? [] : [{ kind: 'code', code, language, after, line: 1 }];
         }
       }
       // `python -m mod` runs a module, read as its own unit by `commandUnits`.
@@ -309,7 +321,7 @@ function unitSources(
       if (program === 'deno') {
         if (lower[0] === 'eval')
           return args[1] !== undefined
-            ? [{ kind: 'code', code: args[1] ?? '', language, after }]
+            ? [{ kind: 'code', code: args[1] ?? '', language, after, line: 1 }]
             : [];
         if (lower[0] !== 'run') return [];
         rest = args.slice(1);
@@ -318,7 +330,7 @@ function unitSources(
         if (lower[0] === 'run') rest = args.slice(1);
         else if (lower[0] === '-e' || lower[0] === '--eval')
           return args[1] !== undefined
-            ? [{ kind: 'code', code: args[1] ?? '', language, after }]
+            ? [{ kind: 'code', code: args[1] ?? '', language, after, line: 1 }]
             : [];
       }
       const i = firstOperand(rest, language);
@@ -350,6 +362,80 @@ export function programSources(
       continue;
     }
     out.sources.push(...unitSources(unit, head, out.dirs.length, opts.direct));
+  }
+  out.sources.push(...fedSources(cmd, out.dirs.length));
+  return out;
+}
+
+/**
+ * The program a line feeds its standard input to: the last command of the
+ * text before the redirection (`python -` in `python - <<EOF`), or null.
+ */
+function receivingProgram(before: string): string | null {
+  const segments = splitShellWords(before);
+  const words = segments[segments.length - 1] ?? [];
+  // Past variables set for it and `sudo`/`env`; `cmd` itself is a receiver.
+  const program = words.find(
+    (w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) && !/^(sudo|env)$/i.test(w) && !w.startsWith('-'),
+  );
+  if (program === undefined) return null;
+  return (program.split(/[\\/]/).pop() ?? program).replace(/\.(exe|com)$/i, '').toLowerCase();
+}
+
+/** The language a program reads its standard input in: a shell, cmd or an interpreter. */
+function stdinLanguage(program: string | null): SourceLanguage | null {
+  if (program === null) return null;
+  if (program === 'cmd') return 'cmd';
+  if (program === 'iex' || program === 'invoke-expression') return 'powershell';
+  return interpreterLanguage(program);
+}
+
+/**
+ * What a command feeds a shell or an interpreter on its standard input
+ * (review of #683): a here-document (`bash <<EOF`, `python - <<'PY'`), a
+ * here-string (`bash <<< "…"`), a PowerShell here-string piped to it
+ * (`@"…"@ | powershell -`), a file (`cmd < setup.txt`). It is that program's
+ * source, read in its language. Fed to any other program (`cat <<EOF > f`),
+ * it is data.
+ */
+function fedSources(cmd: string, after: number): ProgramSource[] {
+  const out: ProgramSource[] = [];
+  const split = splitHereDocs(cmd);
+  for (const doc of split.docs) {
+    const language = stdinLanguage(receivingProgram(doc.before));
+    if (language !== null)
+      out.push({ kind: 'code', code: doc.body, language, after, line: doc.line + 2 });
+  }
+  const lines = split.text.split('\n');
+  lines.forEach((line, i) => {
+    for (const m of line.matchAll(/(?<!<)<<<\s*(?:"([^"]*)"|'([^']*)'|(\S+))/g)) {
+      const language = stdinLanguage(receivingProgram(line.slice(0, m.index ?? 0)));
+      if (language !== null)
+        out.push({ kind: 'code', code: m[1] ?? m[2] ?? m[3] ?? '', language, after, line: i + 1 });
+    }
+    for (const m of line.matchAll(
+      /(?<![<\d&])<(?![<&])\s*(?:"([^"]*)"|'([^']*)'|([^\s;&|<>()]+))/g,
+    )) {
+      const language = stdinLanguage(receivingProgram(line.slice(0, m.index ?? 0)));
+      const path = m[1] ?? m[2] ?? m[3] ?? '';
+      if (language !== null)
+        out.push({
+          kind: 'file',
+          path: readablePath(path),
+          language,
+          after,
+          searched: false,
+          executed: false,
+        });
+    }
+  });
+  for (const m of split.text.matchAll(/@(["'])[ \t]*\r?\n([\s\S]*?)\r?\n\1@([^\n]*)/g)) {
+    const piped = /^\s*\|\s*(?:&\s*)?(\S+)/.exec(m[3] ?? '');
+    const language = stdinLanguage(piped ? receivingProgram(piped[1] ?? '') : null);
+    if (language !== null) {
+      const line = split.text.slice(0, m.index ?? 0).split('\n').length + 1;
+      out.push({ kind: 'code', code: m[2] ?? '', language, after, line });
+    }
   }
   return out;
 }
@@ -385,7 +471,22 @@ const MAX_ARGUMENT_WORDS = 16;
 /** Read `text`, written in `language`, for the commands it runs. */
 export function readSource(text: string, language: SourceLanguage): SourceReading {
   if (language === 'shell' || language === 'cmd' || language === 'powershell') {
-    const commands = shellLines(text, language);
+    // A here-document is carried by the line that opens it: its body is not a
+    // command of the script, but the source of the program it feeds (review
+    // of #683). Its lines stay counted, so a finding keeps its line.
+    const split = language === 'shell' ? splitHereDocs(text) : { text, docs: [] };
+    const commands = shellLines(split.text, language);
+    const original = text.split('\n');
+    const carried = new Set<SourceCommand>();
+    for (const doc of split.docs) {
+      const carrier = [...commands].reverse().find((c) => c.line <= doc.line + 1);
+      if (carrier === undefined) continue;
+      // The opening line as written (its operator included), then the body.
+      if (!carried.has(carrier) && carrier.line === doc.line + 1)
+        carrier.command = (original[doc.line] ?? '').replace(/\r$/, '').trim();
+      carried.add(carrier);
+      carrier.command += `\n${doc.raw}`;
+    }
     return {
       commands,
       shellText: commands.map((c) => c.command).join('\n'),
@@ -406,6 +507,15 @@ function shellLines(text: string, language: 'shell' | 'cmd' | 'powershell'): Sou
     let line = lines[i] ?? '';
     while (continues.test(line) && i + 1 < lines.length) {
       line = `${line.slice(0, -1)} ${lines[++i] ?? ''}`;
+    }
+    // A PowerShell here-string runs to its closing line: one string, not lines.
+    if (language === 'powershell' && /@["']\s*$/.test(line)) {
+      const close = (line.trimEnd().slice(-1) ?? '"') + '@';
+      while (i + 1 < lines.length) {
+        const next = lines[++i] ?? '';
+        line += `\n${next}`;
+        if (next.trimStart().startsWith(close)) break;
+      }
     }
     let s = line.trim();
     if (language === 'powershell') {

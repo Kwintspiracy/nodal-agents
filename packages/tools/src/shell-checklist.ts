@@ -239,6 +239,12 @@ async function readRunCode(
   budget: ReadBudget,
   judged: Judged[],
   unread: ShellUnreadSource[],
+  /**
+   * Where `command` itself was read: the file (null for the call's own text),
+   * that file's text and the line. Code a line carries (a here-document,
+   * `python -c`) is found there, at its own line.
+   */
+  origin: { label: string | null; text: string; line: number } | null,
 ): Promise<void> {
   const { dirs, sources } = programSources(command, { direct: !fromStrings });
   const bases = basesOf(dirs, place.cwd);
@@ -252,11 +258,24 @@ async function readRunCode(
     let language: SourceLanguage;
     let label: string | null;
     let base: string | null;
+    // Where the lines of this source are shown from: the file it is, or the
+    // file (or call) its code is written in, from the line it starts on.
+    let shown: string;
+    let firstLine = 1;
     if (source.kind === 'code') {
       text = source.code;
       language = source.language;
-      label = null;
+      // In a file, the code's lines are the file's, from the line it starts
+      // on; in the call's own text, the code's own lines.
+      label = origin?.label ?? null;
+      shown = origin?.text ?? text;
+      firstLine = origin === null ? 1 : origin.line + source.line - 1;
       base = bases[source.after] ?? null;
+      budget.bytes += text.length;
+      if (budget.bytes > MAX_SOURCE_TOTAL_BYTES) {
+        unread.push({ source: named, why: 'over_budget' });
+        continue;
+      }
     } else {
       base = bases[source.after] ?? null;
       // `.\setup.ps1` names the same file on every OS: a backslash in a path
@@ -303,6 +322,7 @@ async function readRunCode(
       text = read.text;
       language = source.language ?? languageOfShebang(text) ?? 'shell';
       label = source.path;
+      shown = text;
     }
     const reading = readSource(text, language);
     // A script runs from the folder its command was in; in a shell script, a
@@ -314,11 +334,12 @@ async function readRunCode(
         break;
       }
       const at: ShellPlace = { ...place, cwd };
+      const line = firstLine + c.line - 1;
       judged.push({
         call,
         text: c.command,
         place: at,
-        found: { source: label, line: c.line, text: lineOf(text, c.line) },
+        found: { source: label, line, text: lineOf(shown, line) },
       });
       await readRunCode(
         call,
@@ -329,6 +350,7 @@ async function readRunCode(
         budget,
         judged,
         unread,
+        { label, text: shown, line },
       );
       if (!reading.fromStrings) {
         const after = basesOf(programSources(c.command).dirs, cwd);
@@ -367,7 +389,7 @@ export async function judgeShellChecklist(
   for (const command of commands) {
     judged.push({ call: command, text: command, place, found: null });
     const before = unread.length;
-    await readRunCode(command, command, place, false, 1, budget, judged, unread);
+    await readRunCode(command, command, place, false, 1, budget, judged, unread, null);
     if (unread.length > before) unreadCalls.push(command);
   }
 

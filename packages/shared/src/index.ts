@@ -50,6 +50,7 @@ export * from './catastrophic-command';
 export * from './run-budget';
 export * from './shell-checklist';
 export * from './program-sources';
+export * from './here-docs';
 export * from './shell-programs';
 export * from './project-key';
 export * from './group-prefix';
