@@ -81,6 +81,13 @@ const yolo = (): ApprovalRule => ({
   entityId: seed.entityId,
 });
 
+/**
+ * The folder separator of the host the tests run on: `run_command` hands its
+ * line to cmd on Windows (a backslash separates folders) and to sh elsewhere
+ * (a backslash escapes), and the gate reads the line as that shell will.
+ */
+const HOST_SEP = process.platform === 'win32' ? String.fromCharCode(92) : '/';
+
 const run = (command: string, opts: ExecuteOptions) =>
   executeTool(runCommand, { command, purpose: 'Build the sheet.' }, ctx(), opts);
 
@@ -227,7 +234,9 @@ describe('a command that runs a script is judged by the script (#635) @cap:execu
       [
         'setup.ps1',
         "Write-Host 'go'\nSet-Acl -Path C:\\data -AclObject $acl",
-        'powershell -NoProfile -ExecutionPolicy Bypass -File .\\setup.ps1',
+        // A backslash is a folder separator where cmd reads the line (Windows),
+        // an escape where sh does: the path is written for the host.
+        `powershell -NoProfile -ExecutionPolicy Bypass -File .${HOST_SEP}setup.ps1`,
         'system_settings',
         2,
       ],
@@ -543,7 +552,6 @@ describe('review pass 2 of #683: a script the system runs is source, and every s
   const NL = String.fromCharCode(10);
   const CRLF = String.fromCharCode(13, 10);
   const NUL = String.fromCharCode(0);
-  const BS = String.fromCharCode(92);
 
   // C1 : un NUL ne fait pas d'un script un programme. Seul un exécutable (ELF,
   // PE, Mach-O, par ses octets de tête) en est un.
@@ -553,7 +561,7 @@ describe('review pass 2 of #683: a script the system runs is source, and every s
     await put('c1/deploy.sh', `#!/bin/sh${NL}pip install openpyxl${NL}# ${NUL}${NL}`);
     for (const command of [
       'c1/deploy.bat',
-      `.${BS}c1${BS}deploy.bat`,
+      `.${HOST_SEP}c1${HOST_SEP}deploy.bat`,
       'call c1/deploy.bat',
       'c1/after.bat',
       './c1/deploy.sh',
