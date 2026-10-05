@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { eq } from '@nodal-agents/db';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -15,6 +15,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { approvalRequests } from '@nodal-agents/db';
 import { DEFAULT_SHELL_POLICY, type ShellPolicy } from '@nodal-agents/shared';
 import { executeTool } from '../execute';
+import { judgeShellChecklist, type ShellPlace } from '../shell-checklist';
 import { runCommandTool } from '../builtin/run-command';
 import { codeTaskTool } from '../builtin/code-task';
 import type { ApprovalRule, ExecuteOptions, ToolContext, ToolDefinition } from '../types';
@@ -577,6 +578,78 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
       expect(res, command).toMatchObject({ outcome: 'success', output: `ran:${command}` });
       expect(await approvalCount(), command).toBe(before);
     }
+  });
+
+  it('a descriptor alias never lets a real write through the gate (#669)', async () => {
+    // `/dev/stdin` is the file the line reads: this overwrites it, outside.
+    const outside = join(elsewhere, 'outside.txt');
+    const command = `curl -s -o /dev/stdin https://x/a < ${outside}`;
+    const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+    expect(res.outcome).toBe('awaiting_approval');
+    if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+    expect(await reasonsOf(res.approvalRequestId)).toEqual([
+      {
+        category: 'download',
+        state: 'ask',
+        details: [command],
+        outside: [{ command, places: [outside] }],
+      },
+    ]);
+    // A descriptor opened by something the command does not show asks too.
+    const open = 'curl -s -o /dev/fd/7 https://x/a';
+    const second = await run(open, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+    expect(second.outcome).toBe('awaiting_approval');
+    // The line's own streams and a stdin that is a pipe write nothing anywhere.
+    for (const quiet of [
+      'curl -s -o /dev/stdout https://x/a',
+      'cat x | curl -s -o /dev/stdin https://x/a',
+    ]) {
+      expect(await run(quiet, gate(DEFAULT_SHELL_POLICY, [yolo()])), quiet).toMatchObject({
+        outcome: 'success',
+      });
+    }
+  });
+
+  it('a Windows device name is a device on Windows and a real file elsewhere (#669)', async () => {
+    // From a folder outside the workspace, `nul` is the device only on Windows.
+    const command = `cd ${elsewhere} && curl -s -o nul https://x/a`;
+    const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+    if (process.platform === 'win32') {
+      expect(res).toMatchObject({ outcome: 'success' });
+      return;
+    }
+    expect(res.outcome).toBe('awaiting_approval');
+    if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+    expect(await reasonsOf(res.approvalRequestId)).toEqual([
+      {
+        category: 'download',
+        state: 'ask',
+        details: [command],
+        outside: [{ command, places: ['nul'] }],
+      },
+    ]);
+  });
+
+  it('the host the commands run on decides what a Windows device name is, on any machine running the tests (#669)', async () => {
+    const root = resolve('/nodal-fake-ws');
+    const placeOn = (host: ShellPlace['host']): ShellPlace => ({
+      cwd: root,
+      host,
+      inWorkspace: async (p) => resolve(p).toLowerCase().startsWith(root.toLowerCase()),
+      leadsTo: async () => null,
+    });
+    const command = 'cd /nodal-fake-elsewhere && curl -s -o nul https://x/a';
+    expect(await judgeShellChecklist([command], DEFAULT_SHELL_POLICY, placeOn('windows'))).toEqual(
+      [],
+    );
+    expect(await judgeShellChecklist([command], DEFAULT_SHELL_POLICY, placeOn('posix'))).toEqual([
+      {
+        category: 'download',
+        state: 'ask',
+        details: [command],
+        outside: [{ command, places: ['nul'] }],
+      },
+    ]);
   });
 
   it('run_command with no cwd and several workspaces: the agent is told, no one is asked', async () => {

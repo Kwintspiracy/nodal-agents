@@ -532,10 +532,21 @@ export interface DownloadWrites {
   targets: DownloadTarget[];
 }
 
-export function downloadWrites(cmd: string): DownloadWrites {
+/**
+ * The kind of shell a command is judged for. A Windows device name (`nul`,
+ * `con`) is a device only where Windows resolves it: on any other host
+ * `curl -o nul` writes a real file named `nul` (#669).
+ */
+export type ShellHost = 'windows' | 'posix';
+
+export function downloadWrites(cmd: string, host: ShellHost): DownloadWrites {
   const out: DownloadWrites = { dirs: [], targets: [] };
   if (typeof cmd !== 'string' || cmd.trim() === '') return out;
   const units = commandUnits(withoutRedirections(cmd));
+  // The files the line feeds to its standard input (`< file`): what `/dev/stdin`
+  // leads to, and so a place that line writes when it names it.
+  const stdinFiles = inputRedirectionTargets(cmd);
+  const written = (name: string): Array<string | null> => writtenPlaces(name, host, stdinFiles);
   // `iwr URL | Set-Content file`: where the fetched bytes land, kept only if
   // the line downloads.
   const piped: DownloadTarget[] = [];
@@ -549,12 +560,16 @@ export function downloadWrites(cmd: string): DownloadWrites {
       continue;
     }
     for (const t of pipeWriterTargets(program, args))
-      if (!isNowhere(t)) piped.push({ path: readablePath(t), after: out.dirs.length });
+      for (const place of written(t))
+        piped.push({ path: place === null ? null : readablePath(place), after: out.dirs.length });
     if (!unitCategories(unit).includes('download')) continue;
     downloads = true;
     for (const t of fetcherTargets(program, args))
-      if (t === null || !isNowhere(t))
-        out.targets.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
+      for (const place of t === null ? [null] : written(t))
+        out.targets.push({
+          path: place === null ? null : readablePath(place),
+          after: out.dirs.length,
+        });
   }
   // `curl URL > file`: the bytes land where the shell sends them. Read on a
   // line that downloads (or reads a URL into a redirection, which
@@ -562,7 +577,8 @@ export function downloadWrites(cmd: string): DownloadWrites {
   if (downloads || staticShellCategories(cmd).includes('download')) {
     out.targets.push(...piped);
     for (const t of redirectionTargets(cmd))
-      if (!isNowhere(t)) out.targets.push({ path: readablePath(t), after: null });
+      for (const place of written(t))
+        out.targets.push({ path: place === null ? null : readablePath(place), after: null });
   }
   return out;
 }
@@ -596,35 +612,53 @@ function changeDirArg(program: string, args: readonly string[]): string | null {
 }
 
 /**
- * A device or a standard stream: what is written there lands in no place
- * (#669, approbation 0330a0fc du 02/10 : `curl -o /dev/null` lu comme un
- * fichier hors de l'espace interrogeait la personne). THE one rule every write
- * goes through (a fetcher's output, a pipe writer, a redirection): a device is
- * never judged against a workspace, and never named on a card.
+ * The places a written name stands for: none when it is a sink, the name
+ * itself otherwise (#669, approbation 0330a0fc du 02/10 : `curl -o /dev/null`
+ * lu comme un fichier hors de l'espace interrogeait la personne). THE one rule
+ * every write goes through (a fetcher's output, a pipe writer, a redirection),
+ * and a name is exempt only when nothing it leads to can be a file:
  *
- * - POSIX and Git Bash: `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`,
- *   `/dev/urandom`, `/dev/tty`, `/dev/stdin|stdout|stderr`, `/dev/fd/N`.
- *   Never `/dev/sda` or `/dev/tty1`: a disk or a console of the machine is a
- *   place.
- * - Windows: `NUL` and `CON` in any case, with a `:` (`nul:`) or an extension
- *   (`nul.json`, `NUL.tar.gz`: the device is what comes before the first dot),
- *   `CONIN$` / `CONOUT$`, and the same behind `\\.\`. The other reserved names
- *   (`PRN`, `AUX`, `COM1`, `LPT1`) reach hardware, which is a place to ask about.
- * - PowerShell: `$null`.
+ * - A SINK by definition, whatever the line does: the device nodes
+ *   `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`, `/dev/urandom`,
+ *   `/dev/tty` (never `/dev/sda` or `/dev/tty1`: a disk or a console of the
+ *   machine is a place), PowerShell's `$null` (nothing, on any host), and, on
+ *   a Windows host only, `NUL` and `CON` in any case with a `:` or an
+ *   extension (`nul.json`, `NUL.tar.gz`: the device is what comes before the
+ *   first dot), `CONIN$` / `CONOUT$`, and the same behind the DOS device prefix. The other
+ *   reserved names (`PRN`, `AUX`, `COM1`, `LPT1`) reach hardware: a place.
+ *   Elsewhere `nul` is an ordinary file.
+ * - A descriptor ALIAS is no sink: it is whatever that descriptor points at.
+ *   `/dev/stdout`, `/dev/stderr`, `/dev/fd/1`, `/dev/fd/2` are the line's own
+ *   output streams; a file behind them is a redirection of the line, read and
+ *   judged on its own. `/dev/stdin` and `/dev/fd/0` lead to the files the line
+ *   reads with `< file` (`curl -o /dev/stdin URL < /tmp/x` overwrites
+ *   `/tmp/x`): those are the places. `/dev/fd/N` for N of 3 and more was opened
+ *   by something the text does not show: `null`, which asks (invariant #4).
  *
- * Read the same on every OS: the text is judged, not the machine it runs on.
  * Only the bare name: `nul/a.json` or `/tmp/dev/null` are places. A tool's own
  * `-` for its standard output is read where the tool is (`curl -o -`,
  * `wget -O -`): for a shell redirection or `tee`, `-` is a file. What KIND of
  * action the line is does not change: only where it writes.
  */
-function isNowhere(p: string): boolean {
-  return POSIX_DEVICE.test(p) || WINDOWS_DEVICE.test(p) || POWERSHELL_NULL.test(p);
+function writtenPlaces(
+  name: string,
+  host: ShellHost,
+  stdinFiles: readonly string[],
+): Array<string | null> {
+  if (POSIX_SINK.test(name) || POWERSHELL_NULL.test(name)) return [];
+  if (host === 'windows' && WINDOWS_DEVICE.test(name)) return [];
+  if (OWN_OUTPUT_STREAM.test(name)) return [];
+  if (OWN_INPUT_STREAM.test(name)) return [...stdinFiles];
+  if (OPEN_DESCRIPTOR.test(name)) return [null];
+  return [name];
 }
 
-const POSIX_DEVICE = /^\/dev\/(?:null|zero|full|random|urandom|tty|stdin|stdout|stderr|fd\/\d+)$/;
+const POSIX_SINK = /^\/dev\/(?:null|zero|full|random|urandom|tty)$/;
 const WINDOWS_DEVICE = /^(?:\\\\\.\\)?(?:(?:nul|con)(?::|\.[^\\/]*)?|conin\$|conout\$)$/i;
 const POWERSHELL_NULL = /^\$null$/i;
+const OWN_OUTPUT_STREAM = /^\/dev\/(?:stdout|stderr|fd\/[12])$/;
+const OWN_INPUT_STREAM = /^\/dev\/(?:stdin|fd\/0)$/;
+const OPEN_DESCRIPTOR = /^\/dev\/fd\/\d+$/;
 
 /** A path as written, or null when the shell decides it at run time. */
 function readablePath(p: string): string | null {
@@ -834,6 +868,14 @@ function redirectionTargets(cmd: string): string[] {
     if (t.startsWith('&')) continue;
     targets.push(t);
   }
+  return targets;
+}
+
+/** The files the shell feeds to a line's standard input: `< file` (not a here-document, not `<(…)`). */
+function inputRedirectionTargets(cmd: string): string[] {
+  const targets: string[] = [];
+  for (const m of cmd.matchAll(/(?:^|[^<>\d])0?<(?![<(&])\s*("[^"]*"|'[^']*'|[^\s;&|()<>]+)/g))
+    targets.push(stripQuotes(m[1] ?? ''));
   return targets;
 }
 

@@ -263,7 +263,7 @@ describe('followLinks: where a path really lands is the path that was named (#66
   it.each([
     '/nodal-no-such-root/a/b',
     '/dev/null',
-    '/tmp/nodal-no-such/x.jpg',
+    '/dev/nodal-no-such/x.jpg',
     '/c/nodal-no-such/x',
     '/nodal-no-such-root/../nodal-other/a',
     '/nodal-no-such-root//a/./b',
@@ -275,7 +275,9 @@ describe('followLinks: where a path really lands is the path that was named (#66
 
   it('a relative path is read from the working folder, whole', async () => {
     const { canonical } = await followLinks('nodal-no-such-dir/a/b.txt');
-    expect(canonical.toLowerCase()).toBe(resolve('nodal-no-such-dir/a/b.txt').toLowerCase());
+    // The working folder itself may sit behind a link (macOS): its real path.
+    const expected = join(await realpath(process.cwd()), 'nodal-no-such-dir', 'a', 'b.txt');
+    expect(canonical.toLowerCase()).toBe(expected.toLowerCase());
   });
 });
 

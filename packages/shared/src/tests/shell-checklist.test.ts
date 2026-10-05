@@ -7,12 +7,16 @@
 import { describe, it, expect } from 'vitest';
 import {
   downloadWrites,
+  type ShellHost,
   isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
   splitShellWords,
   staticShellCategories,
 } from '../catastrophic-command';
 import { DEFAULT_SHELL_POLICY, resolveShellPolicy, SHELL_CATEGORIES } from '../shell-checklist';
+
+/** `downloadWrites` for a host: Windows unless a case says it is about POSIX. */
+const writesOf = (cmd: string, host: ShellHost = 'windows') => downloadWrites(cmd, host);
 
 describe('splitShellWords @cap:executer-une-commande/moteur', () => {
   it('keeps a quoted path with a space as one word, and cuts on && and pipes', () => {
@@ -373,11 +377,11 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
     ['pip download torch -d wheels', ['wheels']],
     ['hf download org/m f.safetensors --local-dir models/unet', ['models/unet']],
   ] as const)('%s', (cmd, targets) => {
-    expect(downloadWrites(cmd).targets.map((t) => t.path)).toEqual(targets);
+    expect(writesOf(cmd).targets.map((t) => t.path)).toEqual(targets);
   });
 
   it('a target it cannot read is null: a variable, a home path, a sub-shell', () => {
-    const paths = (cmd: string) => downloadWrites(cmd).targets.map((t) => t.path);
+    const paths = (cmd: string) => writesOf(cmd).targets.map((t) => t.path);
     expect(paths('curl -o $HOME/a https://x/a')).toEqual([null]);
     expect(paths('curl -o %TEMP%\\a https://x/a')).toEqual([null]);
     expect(paths('wget -O ~/a https://x/a')).toEqual([null]);
@@ -387,15 +391,15 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
 
   // Revue passe 2 : une cible n'est jugée que depuis les `cd` qui la précèdent.
   it("each target says how many of the line's folders come before it", () => {
-    expect(downloadWrites('cd shared/x && curl -o a.jpg https://x/a')).toEqual({
+    expect(writesOf('cd shared/x && curl -o a.jpg https://x/a')).toEqual({
       dirs: ['shared/x'],
       targets: [{ path: 'a.jpg', after: 1 }],
     });
-    expect(downloadWrites('curl -o a.jpg https://x/a && cd /elsewhere')).toEqual({
+    expect(writesOf('curl -o a.jpg https://x/a && cd /elsewhere')).toEqual({
       dirs: ['/elsewhere'],
       targets: [{ path: 'a.jpg', after: 0 }],
     });
-    expect(downloadWrites('cd a && wget -O x https://x && cd b && curl -o y https://y')).toEqual({
+    expect(writesOf('cd a && wget -O x https://x && cd b && curl -o y https://y')).toEqual({
       dirs: ['a', 'b'],
       targets: [
         { path: 'x', after: 1 },
@@ -403,28 +407,24 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
       ],
     });
     // A shell redirection has no known place in the line: judged from every folder.
-    expect(downloadWrites('curl https://x/a > a.zip && cd out').targets).toEqual([
+    expect(writesOf('curl https://x/a > a.zip && cd out').targets).toEqual([
       { path: 'a.zip', after: null },
     ]);
   });
 
   it('the folders the line moves into are kept in order', () => {
-    expect(downloadWrites('cd shared/x && curl -o a.jpg https://x/a').dirs).toEqual(['shared/x']);
-    expect(downloadWrites('cd && curl -o a.jpg https://x/a').dirs).toEqual([null]);
-    expect(downloadWrites('Push-Location D:\\out; iwr https://x -OutFile a').dirs).toEqual([
-      'D:\\out',
-    ]);
-    expect(downloadWrites('pushd out && popd && curl -o a https://x').dirs).toEqual(['out', null]);
-    expect(downloadWrites('Set-Location -Path D:\\x; iwr https://x -OutFile a').dirs).toEqual([
-      'D:\\x',
-    ]);
+    expect(writesOf('cd shared/x && curl -o a.jpg https://x/a').dirs).toEqual(['shared/x']);
+    expect(writesOf('cd && curl -o a.jpg https://x/a').dirs).toEqual([null]);
+    expect(writesOf('Push-Location D:\\out; iwr https://x -OutFile a').dirs).toEqual(['D:\\out']);
+    expect(writesOf('pushd out && popd && curl -o a https://x').dirs).toEqual(['out', null]);
+    expect(writesOf('Set-Location -Path D:\\x; iwr https://x -OutFile a').dirs).toEqual(['D:\\x']);
   });
 
   // Passe 3, P2-3 : une valeur collée à son option courte (`-sLoC:\x`). Une
   // seule lecture des options courtes pour curl, wget et aria2c : dans un
   // groupe, la première option qui prend une valeur prend le reste du groupe.
   it('a value glued to a short option is read, by the same reader for curl, wget and aria2c', () => {
-    const paths = (cmd: string) => downloadWrites(cmd).targets.map((t) => t.path);
+    const paths = (cmd: string) => writesOf(cmd).targets.map((t) => t.path);
     const glued = 'curl -sLoC:\\Users\\k\\.ssh\\authorized_keys https://x/k';
     expect(staticShellCategories(glued)).toEqual(['download']);
     expect(paths(glued)).toEqual(['C:\\Users\\k\\.ssh\\authorized_keys']);
@@ -443,7 +443,7 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
   // fichier, hors de l'espace, et la personne était interrogée sur un
   // téléchargement qui n'écrivait que dans l'espace.
   it('a null device or a standard stream is never a place, whatever writes there (#669)', () => {
-    const paths = (cmd: string) => downloadWrites(cmd).targets.map((t) => t.path);
+    const paths = (cmd: string) => writesOf(cmd).targets.map((t) => t.path);
     expect(
       paths(
         'curl -s "https://commons.wikimedia.org/w/api.php?action=query" -o commons.json && ' +
@@ -474,23 +474,50 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
     expect(paths('curl -o /tmp/dev/null https://x/a')).toEqual(['/tmp/dev/null']);
   });
 
-  // #669, second pass: the rule is ONE predicate (`isNowhere`) that every kind
-  // of write goes through, and it covers each standard device of each shell, not
-  // only the three the first report named.
-  it('every standard device of every shell is nowhere, written by any form of write (#669)', () => {
-    const paths = (cmd: string) => downloadWrites(cmd).targets.map((t) => t.path);
-    const devices = [
-      '/dev/null',
-      '/dev/zero',
-      '/dev/full',
-      '/dev/random',
-      '/dev/urandom',
-      '/dev/tty',
-      '/dev/stdin',
-      '/dev/stdout',
-      '/dev/stderr',
-      '/dev/fd/1',
-      '/dev/fd/12',
+  // #669, second pass: the rule is ONE function (`writtenPlaces`) that every kind
+  // of write goes through. A name is exempt only when nothing it leads to can be
+  // a file: a sink by definition, never a descriptor alias, and a Windows device
+  // name only for a Windows host.
+  const wrapped = (device: string) => [
+    `curl -s -o ${device} https://x/a`,
+    `curl -s --output ${device} https://x/a`,
+    `curl https://x/a > ${device}`,
+    `curl https://x/a >> ${device}`,
+    `curl https://x/a 2> ${device}`,
+    `curl https://x/a 2>${device}`,
+    `curl https://x/a &> ${device}`,
+    `curl https://x/a &>>${device}`,
+    `curl https://x/a >${device} 2>&1`,
+    `iwr https://x/a -OutFile ${device}`,
+    `iwr https://x/a | Out-File ${device}`,
+    `iwr https://x/a | Set-Content ${device}`,
+    `iwr https://x/a | tee ${device}`,
+  ];
+
+  it('a sink by definition is nowhere, for every form of write, on every host (#669)', () => {
+    const paths = (cmd: string, host: ShellHost) => writesOf(cmd, host).targets.map((t) => t.path);
+    for (const host of ['windows', 'posix'] as const) {
+      for (const device of [
+        '/dev/null',
+        '/dev/zero',
+        '/dev/full',
+        '/dev/random',
+        '/dev/urandom',
+        '/dev/tty',
+        '$null',
+        '$NULL',
+      ]) {
+        for (const cmd of wrapped(device)) expect(paths(cmd, host), `${host}: ${cmd}`).toEqual([]);
+      }
+    }
+    // Nothing is written by a pipe into Out-Null, whatever else the line does.
+    expect(paths('iwr https://x/a | Out-Null', 'posix')).toEqual([]);
+    expect(paths('curl -sI https://x/a 2>&1 >/dev/null', 'posix')).toEqual([]);
+  });
+
+  it('a Windows device name is a device on a Windows host, and a file anywhere else (#669)', () => {
+    const paths = (cmd: string, host: ShellHost) => writesOf(cmd, host).targets.map((t) => t.path);
+    for (const device of [
       'NUL',
       'nul',
       'Nul:',
@@ -502,35 +529,51 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
       '\\\\.\\NUL',
       '\\\\.\\nul',
       '\\\\.\\CONOUT$',
-      '$null',
-      '$NULL',
-    ];
-    for (const device of devices) {
-      for (const cmd of [
-        `curl -s -o ${device} https://x/a`,
-        `curl -s --output ${device} https://x/a`,
-        `curl https://x/a > ${device}`,
-        `curl https://x/a >> ${device}`,
-        `curl https://x/a 2> ${device}`,
-        `curl https://x/a 2>${device}`,
-        `curl https://x/a &> ${device}`,
-        `curl https://x/a &>>${device}`,
-        `curl https://x/a >${device} 2>&1`,
-        `iwr https://x/a -OutFile ${device}`,
-        `iwr https://x/a | Out-File ${device}`,
-        `iwr https://x/a | Set-Content ${device}`,
-        `curl https://x/a | tee ${device}`,
-      ]) {
-        expect(paths(cmd), cmd).toEqual([]);
+    ]) {
+      for (const cmd of wrapped(device)) {
+        expect(paths(cmd, 'windows'), `windows: ${cmd}`).toEqual([]);
+        // Judged where it is written: a real file, so a real place to judge.
+        expect(paths(cmd, 'posix'), `posix: ${cmd}`).not.toEqual([]);
       }
     }
-    // Nothing is written by a pipe into Out-Null, whatever else the line does.
-    expect(paths('iwr https://x/a | Out-Null')).toEqual([]);
-    expect(paths('curl -sI https://x/a 2>&1 >/dev/null')).toEqual([]);
+    // The same file, written from a folder the line moved into.
+    expect(paths('cd /etc && curl -o nul https://x/a', 'posix')).toEqual(['nul']);
+    expect(writesOf('cd /etc && curl -o nul https://x/a', 'posix').dirs).toEqual(['/etc']);
+    expect(paths('cd /etc && curl -o nul https://x/a', 'windows')).toEqual([]);
+    expect(paths('curl https://x/a > nul', 'posix')).toEqual(['nul']);
+  });
+
+  it('a descriptor alias is whatever the descriptor points at, never a sink (#669)', () => {
+    const paths = (cmd: string, host: ShellHost) => writesOf(cmd, host).targets.map((t) => t.path);
+    for (const host of ['windows', 'posix'] as const) {
+      // Standard input: the file the line reads is the file it overwrites.
+      expect(paths('curl -o /dev/stdin https://x/data < /tmp/outside.txt', host)).toEqual([
+        '/tmp/outside.txt',
+      ]);
+      expect(paths('curl -o /dev/fd/0 https://x/data <../outside.txt', host)).toEqual([
+        '../outside.txt',
+      ]);
+      expect(paths('curl https://x/data > /dev/stdin 0< "/tmp/my file.txt"', host)).toEqual([
+        '/tmp/my file.txt',
+      ]);
+      // A descriptor opened by something the text does not show asks.
+      expect(paths('curl -o /dev/fd/3 https://x/data', host)).toEqual([null]);
+      expect(paths('curl https://x/data > /dev/fd/12', host)).toEqual([null]);
+      // The line's own output streams: a file behind them is a redirection of the
+      // line, judged on its own, and with none they are the runner's pipes.
+      expect(paths('curl -o /dev/stdout https://x/a > /tmp/out.bin', host)).toEqual([
+        '/tmp/out.bin',
+      ]);
+      expect(paths('curl -o /dev/stderr https://x/a 2>../err.log', host)).toEqual(['../err.log']);
+      for (const own of ['/dev/stdout', '/dev/stderr', '/dev/fd/1', '/dev/fd/2'])
+        for (const cmd of wrapped(own)) expect(paths(cmd, host), `${host}: ${cmd}`).toEqual([]);
+      // Standard input read from a pipe or a here-string names no file.
+      expect(paths('cat x | curl -o /dev/stdin https://x/a', host)).toEqual([]);
+    }
   });
 
   it('a name that only starts like a device, or a device beyond the bare name, is a place (#669)', () => {
-    const paths = (cmd: string) => downloadWrites(cmd).targets.map((t) => t.path);
+    const paths = (cmd: string) => writesOf(cmd).targets.map((t) => t.path);
     for (const place of [
       '/dev/sda', // a disk is a place
       '/dev/tty1',
@@ -554,7 +597,7 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
   });
 
   it('a device in the same line never hides a real place, in any order and any form (#669)', () => {
-    const paths = (cmd: string) => downloadWrites(cmd).targets.map((t) => t.path);
+    const paths = (cmd: string) => writesOf(cmd).targets.map((t) => t.path);
     expect(paths('curl -s -o /etc/x https://x/a 2>/dev/null')).toEqual(['/etc/x']);
     expect(paths('curl https://x/a 2>/dev/null > ../outside.txt')).toEqual(['../outside.txt']);
     expect(paths('curl https://x/a > ../outside.txt 2>/dev/null')).toEqual(['../outside.txt']);
@@ -582,7 +625,7 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
       'Invoke-RestMethod https://x/status',
       'git status',
     ]) {
-      expect(downloadWrites(cmd).targets, cmd).toEqual([]);
+      expect(writesOf(cmd).targets, cmd).toEqual([]);
     }
   });
 });
