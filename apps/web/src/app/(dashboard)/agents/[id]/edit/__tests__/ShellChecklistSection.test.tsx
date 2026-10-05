@@ -70,6 +70,7 @@ describe('ShellChecklistSection @cap:regler-autonomie/ecran', () => {
       ['delete_files', 'ask'],
       ['install_software', 'ask'],
       ['download', 'allow'],
+      ['open_or_send', 'ask'],
       ['stop_programs', 'ask'],
       ['system_settings', 'ask'],
     ]);
@@ -100,6 +101,46 @@ describe('ShellChecklistSection @cap:regler-autonomie/ecran', () => {
     expect(container.textContent).toContain(
       'Nodal reads each command, then runs it, asks you first, or refuses it, at every autonomy level. A script run from a file is not read: it can do any of these unseen.',
     );
+  });
+
+  // #667 : un agent a imprimé par le shell sans que personne soit consulté.
+  // Ce qui atteint l'écran, une imprimante ou quelqu'un a sa ligne, demandée
+  // par défaut, y compris pour une liste enregistrée avant elle.
+  it('the row for what reaches the screen, a printer or someone asks by default, even on a policy stored before it (#667)', async () => {
+    await render({
+      inline_code: 'allow',
+      delete_files: 'allow',
+      install_software: 'allow',
+      download: 'allow',
+      stop_programs: 'allow',
+      system_settings: 'allow',
+    });
+    const row = container.querySelector('[data-testid="shell-row-open_or_send"]');
+    expect(row?.textContent).toContain('Open programs, print or send');
+    expect(row?.textContent).toContain(
+      'start, open, xdg-open, Start-Process, lp, Out-Printer, sendmail…',
+    );
+    expect(pressed('open_or_send')).toBe('ask');
+    expect(pressed('delete_files')).toBe('allow');
+  });
+
+  it('a click on Never for it saves that kind with that state (#667)', async () => {
+    setAgentShellPolicyAction.mockImplementation(async () => ({
+      ok: true,
+      data: { ...DEFAULT_SHELL_POLICY, open_or_send: 'never' },
+    }));
+    await render(null);
+
+    await act(async () => {
+      button('open_or_send', 'never').click();
+    });
+
+    expect(setAgentShellPolicyAction.mock.calls[0]?.[0]).toEqual({
+      agentId: AGENT_ID,
+      category: 'open_or_send',
+      state: 'never',
+    });
+    expect(pressed('open_or_send')).toBe('never');
   });
 
   it('shows what is stored', async () => {

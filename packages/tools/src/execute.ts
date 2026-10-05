@@ -472,8 +472,8 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // ── La liste de ce que l'agent n'a pas le droit de faire (#464) ─────────────
   //
   // Chaque commande qui va tourner est lue sorte par sorte (code en ligne,
-  // suppression, installation, téléchargement, arrêt de programmes, réglages
-  // système) et l'état que le propriétaire a donné à chaque sorte s'applique :
+  // suppression, installation, téléchargement, ouvrir/imprimer/envoyer (#667),
+  // arrêt de programmes, réglages système) et l'état que le propriétaire a donné à chaque sorte s'applique :
   // `never` bloque, `ask` retient pour approbation. Une lecture du texte, comme
   // celle de Hermes : elle ne suit pas ce qu'un script fait une fois lancé, et
   // ne garde pas l'agent dans ses dossiers (il faudrait un bac à sable de l'OS).

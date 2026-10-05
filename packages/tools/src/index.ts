@@ -158,6 +158,7 @@ export {
   isDestructiveOrHeavyCommand,
   isInlineInterpreterEvalCommand,
 } from '@nodal-agents/shared';
+export { shellChecklistDeclined } from './shell-checklist';
 
 // Whitelist computation
 export { computeToolWhitelist, agentBuiltinToolNames } from './whitelist';

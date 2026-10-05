@@ -33,6 +33,7 @@ const KIND_IMPACT: Record<StaticShellCategory, string> = {
   delete_files: 'deletes files or discards changes',
   install_software: 'installs software or packages',
   download: 'downloads files from the internet',
+  open_or_send: 'opens a program on the screen, prints or sends a message',
   stop_programs: 'stops other programs or services',
   system_settings: 'changes system settings, permissions or disks',
   inline_code: 'runs code written into the command',

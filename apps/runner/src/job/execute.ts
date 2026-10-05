@@ -41,6 +41,7 @@ import {
   metaToolsForAgent,
   parseRootGrants,
   resolveShellPolicy,
+  ShellGateReasonsSchema,
   serverTimezone,
   modelContextWindow,
   modelCanSeeImages,
@@ -114,6 +115,7 @@ import {
   deferredToolIndex,
   withToolLoader,
   toolOutputForModel,
+  shellChecklistDeclined,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -3334,8 +3336,19 @@ async function runJobTracked(
       } else {
         // Rejected: replace marker with a [REJECTED] explanation.
         const reason = req.notes ?? 'no reason provided';
+        // Held by the shell checklist (#667): the model also reads which kinds
+        // held it and where such an action goes instead (a tool that asks the
+        // person), or it tries the shell again another way. Unreadable reasons
+        // are said in the log, as the approval card does.
+        const held =
+          req.gateReasons === null ? null : ShellGateReasonsSchema.safeParse(req.gateReasons);
+        if (held && !held.success)
+          console.warn(`[exec ${jobId}] unreadable gate_reasons on approval ${req.id}`);
+        const heldNote =
+          held?.success && held.data.length > 0 ? ` ${shellChecklistDeclined(held.data)}` : '';
         replacementOutput = toResultOutput(
-          `[REJECTED] Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.`,
+          `[REJECTED] Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.` +
+            heldNote,
         );
         trace('resume_rejected_tool_marker_replaced', { toolName: req.toolName });
       }

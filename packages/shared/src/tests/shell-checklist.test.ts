@@ -232,6 +232,7 @@ describe('resolveShellPolicy @cap:executer-une-commande/moteur', () => {
       delete_files: 'ask',
       install_software: 'ask',
       download: 'allow',
+      open_or_send: 'ask',
       stop_programs: 'ask',
       system_settings: 'ask',
     });

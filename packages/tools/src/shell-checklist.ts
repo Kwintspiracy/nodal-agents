@@ -133,9 +133,21 @@ const CATEGORY_FOR_MODEL: Record<ShellCategory, string> = {
   delete_files: 'delete files or discard work',
   install_software: 'install software or packages',
   download: 'download from the internet',
+  open_or_send: `open a program or a file on the person's screen, print, or send a message`,
   stop_programs: 'stop other programs or services',
   system_settings: 'change system settings, permissions or disks',
 };
+
+/**
+ * Where the action goes instead of the shell, for every kind (#667): a tool
+ * that does it and asks the person itself. An agent holding a print tool that
+ * asks printed through the shell, past that question. Read from the agent's
+ * own tool descriptions, never a tool named here: which tools an agent holds
+ * is data.
+ */
+const ASKING_TOOL_REMEDY =
+  'if one of your tools does this action and its description says it asks the person ' +
+  'first, use that tool: the person decides there.';
 
 /**
  * The refusal the MODEL reads when a kind of action is set to "never".
@@ -145,8 +157,22 @@ const CATEGORY_FOR_MODEL: Record<ShellCategory, string> = {
 export function shellChecklistRefusal(never: readonly ShellGateReason[]): string {
   const what = never.map((r) => CATEGORY_FOR_MODEL[r.category]).join('; ');
   return (
-    `blocked: the owner does not allow this agent to ${what}. This is an intentional ` +
-    `restriction — do NOT retry it and do NOT work around it via other commands, scripts, ` +
-    `tools or sub-agents. Use your allowed tools, or report the limitation in your result.`
+    `blocked: the owner does not allow this agent to ${what} through the shell. This is an ` +
+    `intentional restriction — do NOT retry it and do NOT work around it via other commands, ` +
+    `scripts or sub-agents. Instead, ${ASKING_TOOL_REMEDY} Otherwise report the limitation in your ` +
+    `result.`
+  );
+}
+
+/**
+ * What the MODEL reads, after the person's refusal, when the checklist held
+ * the command (#667): which kinds held it, and the same remedy as a "never".
+ * The person's reason comes first and can rule the action out altogether.
+ */
+export function shellChecklistDeclined(held: readonly ShellGateReason[]): string {
+  const what = held.map((r) => CATEGORY_FOR_MODEL[r.category]).join('; ');
+  return (
+    `The shell checklist held this command because it would ${what}. Do not run it through ` +
+    `the shell again. Unless the person's reason rules the action out: ${ASKING_TOOL_REMEDY}`
   );
 }

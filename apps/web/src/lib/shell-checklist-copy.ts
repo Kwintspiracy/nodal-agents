@@ -33,6 +33,13 @@ export const SHELL_CATEGORY_COPY: Record<ShellCategory, { label: string; summary
       'Allowed: into its folders and the model and image stores (comfy, ollama, docker, hf). ' +
       'A target it reads elsewhere (curl -o, wget -O…) asks. Not watertight: what programs write on their own (cp, config files) is not bounded, that takes a sandbox.',
   },
+  // #667 : un agent a imprimé par le shell (`Start-Process -Verb Print`) au
+  // lieu de l'outil d'impression qui demande à la personne. Ce qui atteint
+  // l'écran, une imprimante ou quelqu'un a sa ligne.
+  open_or_send: {
+    label: 'Open programs, print or send',
+    summary: 'start, open, xdg-open, Start-Process, lp, Out-Printer, sendmail…',
+  },
   stop_programs: {
     label: 'Stop other programs or services',
     summary: 'kill, taskkill, Stop-Process, systemctl…',

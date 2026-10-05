@@ -460,9 +460,219 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
 
 /**
  * The kinds of action read from a command's text: the patterns above, plus
- * inline code (`python -c "…"`), whose program is text nobody can read ahead.
+ * inline code (`python -c "…"`), whose program is text nobody can read ahead,
+ * and what reaches past the computer's files (`reachesOut`).
  */
-export type StaticShellCategory = keyof typeof STATIC_SHELL_CATEGORY_PATTERNS | 'inline_code';
+export type StaticShellCategory =
+  | keyof typeof STATIC_SHELL_CATEGORY_PATTERNS
+  | 'inline_code'
+  | 'open_or_send';
+
+// ── What reaches past the computer's files (#667) ────────────────────────────
+// 01/10: asked to print, an agent holding a print tool that asks the person
+// first ran `Start-Process … -Verb Print` through the shell instead, and no
+// kind of action covered it. The rule: a command reaches out when the program
+// it runs hands something to the person's desktop (a window, a file opened in
+// its program, a notification), to a device (a printer), or to someone (mail).
+// Read from the program and its words, like every kind here: a script, inline
+// code or a .NET/COM call that does the same is not seen (#628, a sandbox).
+
+/** They exist to hand a file, an address or a message to the desktop or a device. */
+const OUTWARD_PROGRAMS = new Set([
+  // the OS's "open this" (macOS, Linux desktops, WSL, Windows)
+  'open',
+  'xdg-open',
+  'gnome-open',
+  'kde-open',
+  'kde-open5',
+  'wslview',
+  'sensible-browser',
+  'x-www-browser',
+  'invoke-item',
+  'ii',
+  'explorer',
+  'rundll32',
+  'osascript',
+  'notify-send',
+  // printers
+  'lp',
+  'lpr',
+  'out-printer',
+  'print',
+  // mail
+  'sendmail',
+  'send-mailmessage',
+  'msmtp',
+  'ssmtp',
+  'swaks',
+  'mail',
+  'mailx',
+  'mutt',
+]);
+
+/** `program subcommand` launchers: `gio open`, `kioclient exec`. */
+const OUTWARD_SUBCOMMANDS: Record<string, ReadonlySet<string>> = {
+  gio: new Set(['open', 'launch']),
+  kioclient: new Set(['exec']),
+  kioclient5: new Set(['exec']),
+};
+
+/** Desktop programs: they open a window, unless told to run headless. */
+const DESKTOP_PROGRAMS = new Set([
+  'notepad',
+  'mspaint',
+  'wordpad',
+  'write',
+  'winword',
+  'excel',
+  'powerpnt',
+  'acrord32',
+  'acrobat',
+  'soffice',
+  'libreoffice',
+  'msedge',
+  'chrome',
+  'google-chrome',
+  'chromium',
+  'chromium-browser',
+  'firefox',
+]);
+
+/** A desktop program's print flags (`notepad /p`, `AcroRd32 /t`, `soffice -p`): they print, window or not. */
+const PRINT_FLAGS = new Set(['/p', '/pt', '/t', '-p', '-pt', '--pt']);
+
+/** What makes a desktop program run without a window (LibreOffice's conversions imply it). */
+function isHeadlessFlag(word: string): boolean {
+  const w = word.toLowerCase();
+  return /^--headless(=|$)/.test(w) || ['--convert-to', '--print-to-file', '--cat'].includes(w);
+}
+
+/** Files a desktop hands to their program when they are run or launched. */
+const DOCUMENT =
+  /\.(txt|md|log|csv|pdf|rtf|docx?|xlsx?|pptx?|od[tsp]|html?|xml|json|png|jpe?g|gif|bmp|svg|webp|tiff?|mp[34]|wav|mov|avi|url|lnk)$/i;
+
+/** A file the desktop opens in its program, or an address it opens in a browser or mail client. */
+function isDocumentOrAddress(word: string): boolean {
+  return /^[a-z][\w+.-]*:\/\//i.test(word) || /^mailto:/i.test(word) || DOCUMENT.test(word);
+}
+
+/** Start-Process's switches, which take no value (`-Verbose` is not `-Verb`). */
+const START_SWITCHES = new Set([
+  'nonewwindow',
+  'nnw',
+  'wait',
+  'passthru',
+  'usenewenvironment',
+  'loaduserprofile',
+  'lup',
+  'verbose',
+  'debug',
+]);
+
+/** Start-Process's parameters that take a value, by full name or a prefix of three letters or more. */
+const START_PARAMETERS = [
+  'filepath',
+  'argumentlist',
+  'windowstyle',
+  'workingdirectory',
+  'verb',
+  'credential',
+  'redirectstandardinput',
+  'redirectstandardoutput',
+  'redirectstandarderror',
+  'environment',
+];
+
+/** cmd's `start`, and PowerShell's `Start-Process` with its aliases. */
+const LAUNCHERS = new Set(['start', 'start-process', 'saps']);
+
+/** What a launcher was asked to start, and how (#667). */
+interface Launch {
+  /** The program, file or address it starts; null when the text does not say. */
+  target: string | null;
+  /** The words given to what it starts (`-ArgumentList`, or what follows the target). */
+  launched: string[];
+  /** A shell verb: `-Verb Print`, `-Verb Open`, `-Verb RunAs`… */
+  verb: boolean;
+  /** No window: `start /b`, `-NoNewWindow`, `-WindowStyle Hidden`. */
+  windowless: boolean;
+}
+
+/** Read the words of `start` / `Start-Process`, in cmd's form and in PowerShell's. */
+function readLaunch(args: readonly string[]): Launch {
+  const launch: Launch = { target: null, launched: [], verb: false, windowless: false };
+  for (let i = 0; i < args.length; i++) {
+    const word = args[i] ?? '';
+    if (word === '') continue; // cmd's empty title: `start "" file`
+    if (word.startsWith('-')) {
+      const [rawName, inlineValue] = word.slice(1).toLowerCase().split(':', 2);
+      const name = rawName ?? '';
+      if (START_SWITCHES.has(name)) {
+        if (name === 'nonewwindow' || name === 'nnw') launch.windowless = true;
+        continue;
+      }
+      const param =
+        START_PARAMETERS.find((p) => p === name) ??
+        (name.length >= 3 ? START_PARAMETERS.find((p) => p.startsWith(name)) : undefined);
+      const value = inlineValue ?? args[++i] ?? '';
+      if (param === 'verb') launch.verb = true;
+      else if (param === 'windowstyle' && value.toLowerCase() === 'hidden')
+        launch.windowless = true;
+      else if (param === 'filepath') launch.target = value;
+      else if (param === 'argumentlist') launch.launched.push(...value.split(/[\s,]+/));
+      continue;
+    }
+    if (launch.target === null) {
+      // cmd's own flags come before what it starts: `start /b /min prog`.
+      if (/^\/\w+$/.test(word)) {
+        if (word.toLowerCase() === '/b') launch.windowless = true;
+        continue;
+      }
+      launch.target = word;
+      continue;
+    }
+    launch.launched.push(...word.split(/[\s,]+/));
+  }
+  launch.launched = launch.launched.filter((w) => w !== '');
+  return launch;
+}
+
+/**
+ * The command a launcher starts, as a line `commandUnits` reads like any
+ * other: what `Start-Process powershell -ArgumentList '-Command', 'Remove-Item
+ * x'` deletes is a deletion, wherever it is started from.
+ */
+function launchedCommand(args: readonly string[]): string | null {
+  const { target, launched } = readLaunch(args);
+  return target === null ? null : [`"${target}"`, ...launched].join(' ');
+}
+
+/**
+ * cmd's `start` and PowerShell's `Start-Process` hand what they start to the
+ * desktop: a shell verb (`-Verb Print`) is a desktop action, and so is a
+ * window, and so is a file or an address (opened in its program). Without
+ * any (`start /b node server.js`, `-WindowStyle Hidden`), they start a program
+ * in the background, the dev server idiom on Windows; what that program does
+ * is read as its own command (`commandUnits`).
+ */
+function launchReachesOut(args: readonly string[]): boolean {
+  const { target, verb, windowless } = readLaunch(args);
+  return verb || !windowless || (target !== null && isDocumentOrAddress(target));
+}
+
+/** True when one command unit hands something to the desktop, a device or someone (#667). */
+function reachesOut(unit: readonly string[]): boolean {
+  const program = unit[0] ?? '';
+  const args = unit.slice(1);
+  if (OUTWARD_PROGRAMS.has(program)) return true;
+  if (OUTWARD_SUBCOMMANDS[program]?.has((args[0] ?? '').toLowerCase())) return true;
+  if (LAUNCHERS.has(program)) return launchReachesOut(args);
+  if (DESKTOP_PROGRAMS.has(program)) {
+    return args.some((a) => PRINT_FLAGS.has(a.toLowerCase())) || !args.some(isHeadlessFlag);
+  }
+  // `.\report.txt`, `cmd /c report.pdf`: a document run by name opens in its program.
+  return isDocumentOrAddress(program);
+}
 
 const DESTRUCTIVE_PATTERNS: RegExp[] = Object.values(STATIC_SHELL_CATEGORY_PATTERNS).flat();
 
@@ -881,6 +1091,10 @@ export function commandUnits(cmd: string, depth = 0): string[][] {
     } else if (program === 'powershell' || program === 'pwsh') {
       const i = lower.findIndex((a) => a === '-command' || a === '-c');
       if (i >= 0) inner(args.slice(i + 1).join(' '));
+    } else if (LAUNCHERS.has(program)) {
+      // What `start` / `Start-Process` starts runs too (#667).
+      const launched = launchedCommand(args);
+      if (launched !== null) inner(launched);
     } else if (program === 'xargs') {
       const rest = args.slice(args.findIndex((a) => !a.startsWith('-')));
       if (rest.length > 0 && !rest[0]?.startsWith('-')) inner(rest.join(' '));
@@ -972,7 +1186,10 @@ export function isDestructiveOrHeavyCommand(cmd: string): boolean {
   const units = commandUnits(withoutRedirections(cmd));
   if (units.length > 0 && units.every(isReadUnit)) return false;
   const c = normalizeSlashes(cmd.trim());
-  return DESTRUCTIVE_PATTERNS.some((re) => re.test(c)) || units.some(curlWritesAFile);
+  return (
+    DESTRUCTIVE_PATTERNS.some((re) => re.test(c)) ||
+    units.some((u) => curlWritesAFile(u) || unitCategories(u).includes('open_or_send'))
+  );
 }
 
 /** The read flags the catastrophic floor lets through: never `-h` (`shutdown -h` halts). */
@@ -1042,7 +1259,8 @@ function curlWritesAFile(unit: readonly string[]): boolean {
 /** The kinds one command unit performs: none for a version or help check. */
 function unitCategories(unit: readonly string[]): StaticShellCategory[] {
   if (isVersionOrHelpOnly(unit)) return [];
-  const kinds = patternKinds(unit);
+  const kinds: StaticShellCategory[] = patternKinds(unit);
+  if (reachesOut(unit)) kinds.push('open_or_send');
   return isSubcommandHelp(unit) ? kinds.filter((k) => !SUBCOMMAND_HELP_EXCUSES.has(k)) : kinds;
 }
 
