@@ -464,7 +464,7 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
   it('the null sink of the host is no place, for every form of write (#669)', () => {
     const sinks = {
       posix: ['/dev/null'],
-      windows: ['NUL', 'nul', 'Nul:', 'nul.txt', 'NUL.tar.gz', '$null', '$NULL'],
+      windows: ['NUL', 'nul', 'Nul:', 'nul.txt', 'NUL.tar.gz'],
     } as const;
     for (const host of ['posix', 'windows'] as const)
       for (const sink of sinks[host])
@@ -523,8 +523,17 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
     for (const name of ['NUL', 'nul', 'nul:', 'nul.txt'])
       expect(paths(`curl -o ${name} https://x/a`, 'posix')).toEqual([name]);
     expect(paths('curl https://x/a > nul', 'posix')).toEqual(['nul']);
-    // `$null` and `CONOUT$` are read by a shell, not named: asks.
-    expect(paths('curl -o $null https://x/a', 'posix')).toEqual([null]);
+    // `$null` and `CONOUT$` are read by a shell, not named: asks. Neither host runs
+    // PowerShell by default (cmd.exe on Windows, where `$null` is a plain file name),
+    // so `$null` is no sink on any host; a PowerShell payload that really means the
+    // null device over-asks.
+    for (const host of ['posix', 'windows'] as const) {
+      expect(paths('curl -o $null https://x/a', host), host).toEqual([null]);
+      expect(paths('cd C:/elsewhere && curl -o $null https://x/a', host), host).toEqual([null]);
+      expect(paths('iwr https://x/a -OutFile $null', host), host).toEqual([null]);
+      expect(paths('curl https://x/a > $null', host), host).toEqual([null]);
+      expect(paths('iwr https://x/a | Out-File $null', host), host).toEqual([null]);
+    }
     expect(paths('curl -o CONOUT$ https://x/a', 'windows')).toEqual([null]);
     // From the folder the line moved into (an `nul` of a POSIX host is a real file).
     expect(paths('cd /etc && curl -o nul https://x/a', 'posix')).toEqual(['nul']);
@@ -688,7 +697,6 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
       for (const op of OPERATORS.filter((o) => !o.includes('<'))) {
         expect(paths(`curl https://x/a ${op}/dev/null`, 'posix'), op).toEqual([]);
         expect(paths(`curl https://x/a ${op}NUL`, 'windows'), op).toEqual([]);
-        expect(paths(`curl https://x/a ${op} $null`, 'windows'), op).toEqual([]);
       }
     });
   });

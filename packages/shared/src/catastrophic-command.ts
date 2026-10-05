@@ -613,7 +613,10 @@ function changeDirArg(program: string, args: readonly string[]): string | null {
  * - POSIX host: `/dev/null`.
  * - Windows host (the commands run in cmd.exe): `NUL` in any case, with a `:`
  *   or an extension (`nul:`, `nul.json`, `NUL.tar.gz`: the device is what
- *   comes before the first dot), and PowerShell's `$null`.
+ *   comes before the first dot). Not PowerShell's `$null`: the shell
+ *   run_command uses on Windows is cmd.exe, where `$null` is a plain file name, so
+ *   it is read as a variable the shell decides (it asks). A PowerShell payload
+ *   that really means the null device over-asks, which a safety net may do.
  *
  * Every other name is an ordinary place, judged like any path and shown as
  * written: `/dev/zero`, `/dev/tty`, `CON`, and the descriptor aliases
@@ -628,11 +631,10 @@ function changeDirArg(program: string, args: readonly string[]): string | null {
  * where it writes.
  */
 function isNullSink(p: string, host: ShellHost): boolean {
-  return host === 'windows' ? WINDOWS_NUL.test(p) || POWERSHELL_NULL.test(p) : p === '/dev/null';
+  return host === 'windows' ? WINDOWS_NUL.test(p) : p === '/dev/null';
 }
 
 const WINDOWS_NUL = /^nul(?::|\.[^\\/]*)?$/i;
-const POWERSHELL_NULL = /^\$null$/i;
 
 /** A path as written, or null when the shell decides it at run time. */
 function readablePath(p: string): string | null {

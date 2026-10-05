@@ -565,6 +565,23 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     }
   });
 
+  it('$null is a plain file name for the shell run_command uses, so it asks (#669)', async () => {
+    // Where it is judged from decides: the cmd.exe of a Windows host names a file `$null`.
+    for (const command of ['iwr https://x/a -OutFile $null', 'curl -s https://x/a > $null']) {
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res.outcome, command).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      expect(await reasonsOf(res.approvalRequestId), command).toEqual([
+        {
+          category: 'download',
+          state: 'ask',
+          details: [command],
+          outside: [{ command, places: ['a path decided when the command runs'] }],
+        },
+      ]);
+    }
+  });
+
   it('a redirection inside a wrapper or after an escaped quote still asks (#669)', async () => {
     const commands = [
       "bash -c 'wget -O - https://x/a > ../outside.txt'",
