@@ -684,8 +684,14 @@ function readLaunch(args: readonly string[]): Launch {
       continue;
     }
     if (launch.target === null) {
-      // cmd's own flags come before what it starts: `start /b /min prog`.
-      if (/^\/\w+$/.test(word)) {
+      // cmd's own switches come before what it starts: `start /b /min prog`.
+      // `/D path` (also glued, `/DC:\work`), `/NODE n`, `/AFFINITY hex` and
+      // `/MACHINE x` take a value, never what it starts (review of PR #682, pass 6).
+      if (/^\/(d|node|affinity|machine)$/i.test(word)) {
+        i += 1;
+        continue;
+      }
+      if (/^\/d\S/i.test(word) || /^\/\w+$/.test(word)) {
         if (word.toLowerCase() === '/b') launch.windowless = true;
         continue;
       }
@@ -1914,7 +1920,9 @@ function cmdCommands(line: string): string[] {
     } else current += ch;
   }
   commands.push(current);
-  return commands.filter((c) => c.trim() !== '');
+  // `@` before a command (`@lpr x`, `& @rd …`) is cmd's echo-off prefix, never
+  // part of the program's name (review of PR #682, pass 6).
+  return commands.map((c) => c.replace(/^(\s*@)+/, '')).filter((c) => c.trim() !== '');
 }
 
 /**
