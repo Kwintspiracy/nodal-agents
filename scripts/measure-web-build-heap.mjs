@@ -27,6 +27,7 @@ import { cpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { mesurerCommande, plancherPour, nodeOptionsAvecCap } from './lib/build-heap-sampler.mjs';
+import { scanTracesOutsideRoot, formatTracesOutsideRoot } from './lib/next-trace-scope.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
@@ -121,7 +122,22 @@ async function principal() {
     console.log("pic                 NON MESURÉ — aucun relevé n'a vu de processus");
   }
   console.log(`plancher en vigueur ${plancher} Mo`);
+
+  // Même porte que build-pack : un pic mesuré sur un build qui a tracé hors du
+  // dépôt décrit la machine qui construit, pas le code (05/10/2026, 24,5 Go
+  // pour un dossier personnel). On le dit, et on refuse d'en faire la référence.
+  let traceReport = null;
+  if (mesure.codeSortie === 0) {
+    const scan = scanTracesOutsideRoot(webNext, repoRoot);
+    traceReport = formatTracesOutsideRoot(scan, repoRoot);
+    console.log(
+      `traçage             ${scan.manifestsScanned} manifestes, ` +
+        `${(scan.manifestBytes / 1024 / 1024).toFixed(1)} Mo, ` +
+        (traceReport ? `${scan.uniqueFiles} fichiers HORS du dépôt` : 'rien hors du dépôt'),
+    );
+  }
   console.log('────────────────────────────────────────────────────────');
+  if (traceReport) console.error(`\n❌ ${traceReport}\n`);
 
   const iJson = args.indexOf('--json');
   if (iJson !== -1) {
@@ -140,6 +156,10 @@ async function principal() {
       console.log("Référence NON écrite : le build a échoué, son pic ne décrit rien d'entier.");
     } else if (!mesure.relevesUtiles) {
       console.log("Référence NON écrite : le pic n'a pas été mesuré.");
+    } else if (traceReport) {
+      console.log(
+        'Référence NON écrite : le build a tracé hors du dépôt, son pic ne décrit pas le code.',
+      );
     } else {
       writeFileSync(
         resolve(repoRoot, 'scripts/build-heap-reference.json'),
@@ -149,7 +169,7 @@ async function principal() {
     }
   }
 
-  process.exit(mesure.codeSortie === 0 ? 0 : 1);
+  process.exit(mesure.codeSortie === 0 && !traceReport ? 0 : 1);
 }
 
 // Importé par le test, il ne doit rien lancer.
