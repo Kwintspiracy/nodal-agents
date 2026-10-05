@@ -144,7 +144,7 @@ export function computeApprovalImpactLine(toolName: string, toolInput: unknown):
         return `Records how "${str(input['project_path'])}" is verified — no command declared, so nothing will run.`;
       }
       const liste = commands.map((c) => `\`${c}\``).join(', ');
-      const heavy = commands.filter(isDestructiveOrHeavyCommand);
+      const heavy = commands.filter((c) => isDestructiveOrHeavyCommand(c));
       return (
         `Records ${liste} as the proof for "${str(input['project_path'])}". ` +
         `${commands.length === 1 ? 'It runs' : 'They run'} when the job finishes, without asking again` +

@@ -333,7 +333,12 @@ describe('an allowed download asks when it writes outside the workspace (#614, r
       [`wget -P "${elsewhere}" https://x/a.zip`, elsewhere],
       ['curl -o ../escaped.jpg https://x/a.jpg', '../escaped.jpg'],
       [`cd "${elsewhere}" && curl -o a.jpg https://x/a.jpg`, 'a.jpg'],
-      [`Push-Location "${elsewhere}"; iwr https://x/a -OutFile a.jpg`, 'a.jpg'],
+      // PowerShell's own line, as it runs from run_command (cmd.exe on Windows,
+      // where `;` ends nothing): handed to powershell (#667, pass 3).
+      [
+        `powershell -Command "Push-Location '${elsewhere}'; iwr https://x/a -OutFile a.jpg"`,
+        'a.jpg',
+      ],
       ['curl -o $HOME/a https://x/a', 'a path decided when the command runs'],
     ] as const) {
       expect(await asked(command), command).toEqual([
@@ -802,6 +807,21 @@ describe('what reaches the screen, a printer or someone is asked (#667) @cap:exe
     );
     const after = await db.select({ id: approvalRequests.id }).from(approvalRequests);
     expect(after).toHaveLength(before.length);
+  });
+
+  // Revue de la PR #682, passe 3 : `(`, `)`, `{`, `}` ouvrent une commande ;
+  // `(xdg-open x)` n'est pas un programme nommé `(xdg-open`.
+  it('"never" refuses what a group or a block starts, glued or spaced', async () => {
+    for (const command of [
+      'bash -c "(xdg-open report.pdf)"',
+      'bash -c "{ lpr report.pdf; }"',
+      'powershell -Command "(Start-Process report.pdf -Verb Print)"',
+    ]) {
+      const res = await run(command, gate({ ...DEFAULT_SHELL_POLICY, open_or_send: 'never' }));
+      expect(res.outcome, command).toBe('error');
+      if (res.outcome !== 'error') throw new Error('unreachable');
+      expect(res.error, command).toContain("open a program or a file on the person's screen");
+    }
   });
 
   // La même issue pour toute sorte : la règle est générale, pas taillée pour l'impression.

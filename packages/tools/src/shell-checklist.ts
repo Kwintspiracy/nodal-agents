@@ -104,7 +104,7 @@ export async function judgeShellChecklist(
     details.set(category, list);
   };
   for (const command of commands) {
-    for (const category of staticShellCategories(command)) {
+    for (const category of staticShellCategories(command, place.host)) {
       if (policy[category] !== 'allow') {
         add(category, command);
         continue;

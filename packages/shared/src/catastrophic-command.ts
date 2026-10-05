@@ -138,13 +138,13 @@ function isInlineEvalUnit(unit: readonly string[]): boolean {
  * interpreter) and `… | python script.py` (reads a FILE, stdin is just data) are
  * left alone. Splits on `|` on the already-slash-normalized command.
  */
-function hasPipeIntoBareInterpreter(c: string): boolean {
+function hasPipeIntoBareInterpreter(c: string, host: ShellHost | undefined): boolean {
   const parts = c.split('|');
   // Segment 0 is the pipe SOURCE; segments 1+ are the pipe TARGETS.
   for (let i = 1; i < parts.length; i++) {
     // The interpreter may be started by a wrapper (`| timeout 5 bash`, `| sudo
     // -u x sh`): read as every command is, by `commandUnits`.
-    for (const unit of commandUnits(parts[i] ?? '')) {
+    for (const unit of commandUnits(parts[i] ?? '', 0, topShell(host))) {
       if (!interpreterKind(unit[0] ?? '')) continue;
       // A non-flag argument after the interpreter is a script/module path → it
       // reads that FILE, not stdin, so the pipe is just data. Bare (only flags,
@@ -177,11 +177,13 @@ function isWindowsRootOrWildcardTarget(token: string): boolean {
  * True when `cmd` contains a catastrophic, machine-wide-destructive operation
  * that must always require explicit human approval (never auto-run).
  */
-export function isCatastrophicCommand(cmd: string): boolean {
+export function isCatastrophicCommand(cmd: string, host?: ShellHost): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
   // `shutdown --help` prints and exits (Reviewer A, #582 pass 2). Only the
   // long forms and `/?` here: `shutdown -h` HALTS the machine.
-  const units = commandUnits(withoutRedirections(cmd)).filter((u) => !runsAnother(u));
+  const units = commandUnits(withoutRedirections(cmd), 0, topShell(host)).filter(
+    (u) => !runsAnother(u),
+  );
   if (
     units.length > 0 &&
     units.every((u) => u.length >= 2 && u.slice(1).every((t) => FLOOR_READ_FLAGS.has(t)))
@@ -222,7 +224,7 @@ export function isCatastrophicCommand(cmd: string): boolean {
   // passed the floor, its own list of wrappers knew only cmd, powershell, sh,
   // bash and sudo). A quoted mention (`echo "rm -rf /"`) is an argument of
   // `echo`, never a command, so no check can match it.
-  for (const unit of commandUnits(withoutRedirections(c))) {
+  for (const unit of commandUnits(withoutRedirections(c), 0, topShell(host))) {
     const cmdWord = unit[0] ?? '';
     const args = unit.slice(1);
     const s = unit.join(' ');
@@ -285,11 +287,11 @@ export function isCatastrophicCommand(cmd: string): boolean {
  * after a human OK, unlike the machine-destroyers). The runner also uses this
  * predicate to tailor its approval-card wording.
  */
-export function isInlineInterpreterEvalCommand(cmd: string): boolean {
+export function isInlineInterpreterEvalCommand(cmd: string, host?: ShellHost): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
   const c = normalizeSlashes(cmd.trim());
-  if (AWK_CODE_EXEC.test(c) || hasPipeIntoBareInterpreter(c)) return true;
-  return commandUnits(withoutRedirections(c)).some(isInlineEvalUnit);
+  if (AWK_CODE_EXEC.test(c) || hasPipeIntoBareInterpreter(c, host)) return true;
+  return commandUnits(withoutRedirections(c), 0, topShell(host)).some(isInlineEvalUnit);
 }
 
 // ── Destructive / heavy actions (for the `destructive_gate` autonomy level) ──────
@@ -583,7 +585,7 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = Object.values(STATIC_SHELL_CATEGORY_PATTE
  * Inline code (`python -c "…"`, `node -e "…"`) is its own kind: what it does is
  * not read, it is asked about, as `destructive_gate` always did.
  */
-export function staticShellCategories(cmd: string): StaticShellCategory[] {
+export function staticShellCategories(cmd: string, host?: ShellHost): StaticShellCategory[] {
   if (typeof cmd !== 'string' || cmd.trim() === '') return [];
   // Read from the PROGRAMS the command runs, never from any word of its text
   // (review of PR #474, Reviewer A, P1): `git commit -m "rm old refs"` does not
@@ -594,7 +596,7 @@ export function staticShellCategories(cmd: string): StaticShellCategory[] {
   // same way. Quotes and carets are removed by the tokenizer, so `r""m` and
   // `r^m` still read as `rm`.
   const found = new Set<StaticShellCategory>();
-  for (const unit of commandUnits(withoutRedirections(cmd))) {
+  for (const unit of commandUnits(withoutRedirections(cmd), 0, topShell(host))) {
     for (const category of unitCategories(unit)) found.add(category);
   }
   // `curl URL > file` downloads without `-o`: the redirection is dropped by
@@ -603,13 +605,13 @@ export function staticShellCategories(cmd: string): StaticShellCategory[] {
   if (
     // A wrapper's payload (`sh -c "curl URL > f"`) starts after a quote.
     /(^|[;&|("'`]\s*)(curl|irm|Invoke-RestMethod)\b(?:[^;&|\n]|&(?=>))*>/i.test(cmd) &&
-    !commandUnits(withoutRedirections(cmd))
+    !commandUnits(withoutRedirections(cmd), 0, topShell(host))
       .filter((u) => /^(curl|irm|invoke-restmethod)$/i.test(u[0] ?? ''))
       .every(isVersionOrHelpOnly)
   ) {
     found.add('download');
   }
-  if (isInlineInterpreterEvalCommand(cmd)) found.add('inline_code');
+  if (isInlineInterpreterEvalCommand(cmd, host)) found.add('inline_code');
   return [...found];
 }
 
@@ -655,7 +657,13 @@ export type ShellHost = 'windows' | 'posix';
 export function downloadWrites(cmd: string, host: ShellHost): DownloadWrites {
   const out: DownloadWrites = { dirs: [], targets: [] };
   if (typeof cmd !== 'string' || cmd.trim() === '') return out;
-  const units = commandUnits(withoutRedirections(cmd));
+  // Where a line writes is read ONCE, in order, because each target is judged
+  // from the folders before it (`dirs`, `after`): the two readings of a line
+  // whose shell is not known cannot be merged. It is read with the grammar
+  // that ends a command at `;`, `&` and `|` and keeps a backslash a path
+  // separator, PowerShell's, as the place analysis always did (#669); the
+  // kind of action (`staticShellCategories`) is read per host.
+  const units = commandUnits(withoutRedirections(cmd), 0, 'powershell');
   // `iwr URL | Set-Content file`: where the fetched bytes land, kept only if
   // the line downloads.
   const piped: DownloadTarget[] = [];
@@ -679,7 +687,7 @@ export function downloadWrites(cmd: string, host: ShellHost): DownloadWrites {
   // `curl URL > file`: the bytes land where the shell sends them. Read on a
   // line that downloads (or reads a URL into a redirection, which
   // `staticShellCategories` files as a download).
-  if (downloads || staticShellCategories(cmd).includes('download')) {
+  if (downloads || staticShellCategories(cmd, host).includes('download')) {
     out.targets.push(...piped);
     for (const t of redirectionTargets(cmd))
       if (!isNullSink(t, host)) out.targets.push({ path: readablePath(t), after: null });
@@ -1035,9 +1043,9 @@ function startsWithMatch(re: RegExp, text: string): boolean {
  * runs it, whatever the line around was (review of PR #682, pass 2): `cmd /c`
  * → cmd, `powershell -Command` → PowerShell, `sh -c` / `wsl` → a POSIX shell,
  * `timeout`, `sudo`, `Start-Process`… → no shell, the program is executed.
- * It decides one thing today: `start` is cmd's, with a window title, only in
- * cmd; in PowerShell it is Start-Process. `run_command` runs through cmd.exe
- * on Windows, so a line starts in cmd.
+ * It decides where a command ends and how quotes and escapes read (pass 3,
+ * `splitQuotedShellWords`), and that `start` is cmd's, with a window title,
+ * only in cmd (in PowerShell it is Start-Process).
  */
 type LineShell = 'cmd' | 'powershell' | 'sh' | 'exec';
 
@@ -1089,15 +1097,25 @@ function shellLine(args: readonly ShellWord[]): Payload[] {
   return [];
 }
 
-/** After `cmd /c` or `powershell -Command`: one word is a line, several are the words of a command. */
-function lineOrWords(rest: readonly ShellWord[], shell: LineShell): Payload[] {
+/**
+ * What `cmd /c` reads again: its own command line from the word after `/c`.
+ * Read by cmd, that is the raw text (quotes and all); handed over by another
+ * shell, the words as a program receives them, a quoted one quoted again.
+ * `cmd /s /c "…"`: the outer quotes of that line are cmd's.
+ */
+function cmdLine(rest: readonly ShellWord[], from: LineShell): Payload[] {
   if (rest.length === 0) return [];
-  if (rest.length === 1) return [{ line: rest[0]?.text ?? '', shell }];
-  return [{ words: [...rest], shell }];
+  const raw = (
+    from === 'cmd' && rest[0]?.tail !== undefined
+      ? rest[0].tail
+      : rest.map((w) => (w.quoted ? `"${w.text}"` : w.text)).join(' ')
+  ).trim();
+  const line = raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw;
+  return [{ line, shell: 'cmd' }];
 }
 
 /** A shell's reserved word that comes before a command it runs: `do rm x`, `then lp x`. */
-const before = (args: readonly ShellWord[]): Payload[] => argv(args);
+const before = (args: readonly ShellWord[], shell: LineShell): Payload[] => argv(args, shell);
 
 /**
  * Programs whose purpose is to run another program, each with its own option
@@ -1107,20 +1125,24 @@ const before = (args: readonly ShellWord[]): Payload[] => argv(args);
  * same knowledge for the command allowlist) has one here, a test says so; a
  * program that defines rather than runs (`doskey`) runs nothing.
  */
-const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[]) => Payload[]> = {
+const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell) => Payload[]> = {
   // shells
-  cmd: (args) => {
+  cmd: (args, shell) => {
     // Every switch before /c, /k or /r is cmd's own (`/q /d /s /v:on`).
     for (let i = 0; i < args.length; i++) {
       const w = (args[i]?.text ?? '').toLowerCase();
-      if (w === '/c' || w === '/k' || w === '/r') return lineOrWords(args.slice(i + 1), 'cmd');
+      if (w === '/c' || w === '/k' || w === '/r') return cmdLine(args.slice(i + 1), shell);
       if (!/^\/\w/.test(w)) return [];
     }
     return [];
   },
+  // PowerShell joins the words after -Command into its script.
   powershell: (args) => {
     const i = args.findIndex((a) => /^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i.test(a.text));
-    return i < 0 ? [] : lineOrWords(args.slice(i + 1), 'powershell');
+    const rest = i < 0 ? [] : args.slice(i + 1);
+    return rest.length === 0
+      ? []
+      : [{ line: rest.map((a) => a.text).join(' '), shell: 'powershell' }];
   },
   sh: shellLine,
   bash: shellLine,
@@ -1161,7 +1183,7 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[]) => Payload[]> = 
       const w = args[i]?.text ?? '';
       if (w === '-S' || w === '--split-string') {
         const line = args[i + 1];
-        return line === undefined ? [] : [{ line: line.text, shell: 'exec' }];
+        return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
       }
       if (w === '--') i += 1;
       else if (valued.has(w)) i += 2;
@@ -1252,23 +1274,54 @@ function runsAnother(unit: readonly string[]): boolean {
   const grammar = RUNS_ANOTHER[unit[0] ?? ''];
   return (
     grammar !== undefined &&
-    grammar(unit.slice(1).map((text) => ({ text, quoted: false }))).length > 0
+    grammar(
+      unit.slice(1).map((text) => ({ text, quoted: false })),
+      'exec',
+    ).length > 0
   );
 }
 
 /**
  * The commands a command line actually runs, as token lists whose first token
- * is the program (its basename, lower-cased, without `.exe`): each segment,
- * the module of `python -m`, what `$(…)` / backticks run, and what every
- * program of `RUNS_ANOTHER` starts, the program itself kept as a unit.
+ * is the program (its basename, lower-cased, without `.exe`): each command of
+ * the line, the module of `python -m`, what `$(…)` / backticks run, and what
+ * every program of `RUNS_ANOTHER` starts, the program itself kept as a unit.
+ *
+ * `shell` is the shell that READS the line: where a command ends, what quotes
+ * and what escapes follow its grammar (review of PR #682, pass 3). A line
+ * whose shell is not known (`run_command` uses cmd.exe on Windows and sh
+ * elsewhere, `topShell`) is read as both, and every command either would run
+ * is kept: a net may over-ask, never under-report.
  */
-export function commandUnits(cmd: string, depth = 0, shell: LineShell = 'cmd'): string[][] {
+export function commandUnits(cmd: string, depth = 0, shell?: LineShell): string[][] {
+  if (shell === undefined) {
+    const seen = new Set<string>();
+    return [...commandUnits(cmd, depth, 'cmd'), ...commandUnits(cmd, depth, 'sh')].filter(
+      (unit) => {
+        const key = JSON.stringify(unit);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      },
+    );
+  }
   if (depth > 8 || typeof cmd !== 'string' || cmd.trim() === '') return [];
   const units: string[][] = [];
-  for (const m of cmd.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g))
-    units.push(...commandUnits(m[1] ?? m[2] ?? '', depth + 1, shell));
-  for (const words of splitQuotedShellWords(cmd)) units.push(...wordUnits(words, depth, shell));
+  // Substitutions run even inside double quotes: `$(…)` in sh and PowerShell,
+  // backticks in sh (PowerShell's backtick is its escape, cmd has neither).
+  if (shell !== 'cmd' && shell !== 'exec') {
+    const substitution = shell === 'sh' ? /\$\(([^()]*)\)|`([^`]*)`/g : /\$\(([^()]*)\)/g;
+    for (const m of cmd.matchAll(substitution))
+      units.push(...commandUnits(m[1] ?? m[2] ?? '', depth + 1, shell));
+  }
+  for (const words of splitQuotedShellWords(cmd, shell))
+    units.push(...wordUnits(words, depth, shell));
   return units;
+}
+
+/** The shell that reads a `run_command` line on this host; unknown → both (`commandUnits`). */
+function topShell(host: ShellHost | undefined): LineShell | undefined {
+  return host === undefined ? undefined : host === 'windows' ? 'cmd' : 'sh';
 }
 
 /** The units of one command, given as its words. */
@@ -1294,7 +1347,7 @@ function wordUnits(words: readonly ShellWord[], depth: number, shell: LineShell)
     const module = m >= 0 ? texts[m + 1] : undefined;
     if (module !== undefined) units.push([module.toLowerCase(), ...texts.slice(m + 2)]);
   }
-  for (const payload of RUNS_ANOTHER[program]?.(args) ?? []) {
+  for (const payload of RUNS_ANOTHER[program]?.(args, shell) ?? []) {
     units.push(
       ...('line' in payload
         ? commandUnits(payload.line, depth + 1, payload.shell)
@@ -1305,87 +1358,225 @@ function wordUnits(words: readonly ShellWord[], depth: number, shell: LineShell)
 }
 
 /**
- * A command cut into its segments (`;`, `&&`, `||`, `|`, newlines) and each
- * segment into words, quotes honoured and removed: `python a.py "C:/My
- * Files/x.csv"` is three words, not four. Redirection targets are words too.
+ * A command cut into its commands and each into words, quotes honoured and
+ * removed: `python a.py "C:/My Files/x.csv"` is three words, not four.
+ * Redirection targets are words too. Read as `shell` reads it (sh by default).
  */
-export function splitShellWords(cmd: string): string[][] {
-  return splitQuotedShellWords(cmd).map((segment) => segment.map((w) => w.text));
+export function splitShellWords(cmd: string, shell: LineShell = 'sh'): string[][] {
+  return splitQuotedShellWords(cmd, shell).map((segment) => segment.map((w) => w.text));
 }
 
-/** One word of a command, and whether it was written in quotes (cmd's `start` title). */
+/**
+ * One word of a command: its text, whether it was written in quotes (cmd's
+ * `start` title), and the raw text of the command from it on (what `cmd /c`
+ * hands cmd to read again).
+ */
 interface ShellWord {
   text: string;
   quoted: boolean;
+  tail?: string;
 }
 
-/** `splitShellWords`, each word saying whether it was quoted. */
-function splitQuotedShellWords(cmd: string): ShellWord[][] {
+/**
+ * The grammar of a shell that reads a line: what ends a command, what quotes,
+ * what escapes (review of PR #682, pass 3). Unquoted `(` `)` `{` `}` are
+ * operators where the shell has them: a command starts after an opening one,
+ * glued or not (`(rm -rf /)`, `{ lpr x; }`, `ForEach-Object { Remove-Item $_ }`).
+ */
+interface Grammar {
+  /** Characters that end a command outside quotes. */
+  separators: string;
+  /** Characters that open a quoted span. */
+  quotes: string;
+  /** The escape character outside quotes, if the shell has one. */
+  escape: string | null;
+  /** Inside double quotes: does `ch` escape the character after it? */
+  escapesInDouble: (ch: string, next: string) => boolean;
+  /** A quote written twice inside its span is that quote (`'it''s'`, `"say ""hi"""`). */
+  doubledQuote: boolean;
+}
+
+/** sh: `\` escapes, single quotes are literal, `\` escapes only `"\$`` ` inside double quotes. */
+const SH: Grammar = {
+  separators: ';&|\n\r(){}',
+  quotes: `"'`,
+  escape: '\\',
+  escapesInDouble: (ch, next) => ch === '\\' && '"\\$`'.includes(next),
+  doubledQuote: false,
+};
+
+/** PowerShell: the backtick escapes, a quote is doubled inside its span, `&` calls a command. */
+const POWERSHELL: Grammar = {
+  separators: ';&|\n\r(){}',
+  quotes: `"'`,
+  escape: '`',
+  escapesInDouble: (ch) => ch === '`',
+  doubledQuote: true,
+};
+
+/** `splitShellWords`, each word saying whether it was quoted, for the shell that reads the line. */
+function splitQuotedShellWords(cmd: string, shell: LineShell): ShellWord[][] {
+  switch (shell) {
+    case 'sh':
+      return scanLine(cmd, SH);
+    case 'powershell':
+      return scanLine(cmd, POWERSHELL);
+    case 'cmd':
+      return cmdCommands(cmd).map(windowsArguments);
+    case 'exec':
+      // A command line handed to a program, no shell: no operator, its words
+      // by the Windows argument rules (`runas "prog args"`).
+      return [windowsArguments(cmd)].filter((words) => words.length > 0);
+  }
+}
+
+/** Read a line with the grammar of sh or PowerShell, words and commands in one pass. */
+function scanLine(line: string, g: Grammar): ShellWord[][] {
   const segments: ShellWord[][] = [];
-  let words: ShellWord[] = [];
+  let words: Array<{ text: string; quoted: boolean; start: number }> = [];
   let word = '';
   let inWord = false;
   let quoted = false;
-  let quote: '"' | "'" | null = null;
+  let start = 0;
+  let quote: string | null = null;
+  const begin = (at: number): void => {
+    if (!inWord) {
+      inWord = true;
+      start = at;
+    }
+  };
   const endWord = (): void => {
-    if (inWord) words.push({ text: word, quoted });
+    if (inWord) words.push({ text: word, quoted, start });
     word = '';
     inWord = false;
     quoted = false;
   };
-  const endSegment = (): void => {
+  const endCommand = (at: number): void => {
     endWord();
-    if (words.length > 0) segments.push(words);
+    if (words.length > 0)
+      segments.push(
+        words.map((w) => ({ text: w.text, quoted: w.quoted, tail: line.slice(w.start, at) })),
+      );
     words = [];
   };
-  let escaped = false;
-  for (let at = 0; at < cmd.length; at++) {
-    const ch = cmd[at] ?? '';
-    if (escaped) {
-      word += ch;
-      inWord = true;
-      escaped = false;
-      continue;
-    }
+  for (let at = 0; at < line.length; at++) {
+    const ch = line[at] ?? '';
+    const next = line[at + 1] ?? '';
     if (quote !== null) {
-      // `\"` inside double quotes is a quote character, as Windows' argument
-      // parser and a POSIX shell both read it: `powershell -Command "cmd /c
-      // start \"\" x"` hands cmd an empty title (review of PR #682, pass 2).
-      // Not when it is the last quote of the line: `cmd /c "rd /s /q C:\"` is
-      // a path ending in a backslash, and cmd, which reads that line, has no
-      // escape.
-      if (quote === '"' && ch === '\\' && cmd[at + 1] === '"' && cmd.includes('"', at + 2)) {
-        word += '"';
+      if (ch === quote) {
+        if (g.doubledQuote && next === quote) {
+          word += quote;
+          at += 1;
+        } else quote = null;
+      } else if (quote === '"' && g.escapesInDouble(ch, next)) {
+        word += next;
         at += 1;
-      } else if (ch === quote) quote = null;
-      else word += ch;
+      } else word += ch;
       continue;
     }
-    if (ch === '"' || ch === "'") {
+    if (g.quotes.includes(ch)) {
+      begin(at);
       quote = ch;
-      inWord = true;
       quoted = true;
-      continue;
-    }
-    // cmd.exe `^` escapes the next character: `r^m` runs `rm`. A backslash is
-    // kept: in a Windows path (`C:\x`) it is a separator, not an escape.
-    if (ch === '^') {
-      escaped = true;
-      continue;
-    }
-    if (ch === ';' || ch === '|' || ch === '&' || ch === '\n' || ch === '\r') {
-      endSegment();
-      continue;
-    }
-    if (ch === '>' || ch === '<' || /\s/.test(ch)) {
+    } else if (ch === g.escape) {
+      begin(at);
+      word += next;
+      at += 1;
+    } else if (g.separators.includes(ch)) {
+      endCommand(at);
+    } else if (/\s/.test(ch) || ch === '<' || ch === '>') {
       endWord();
-      continue;
+    } else {
+      begin(at);
+      word += ch;
     }
-    word += ch;
-    inWord = true;
   }
-  endSegment();
+  endCommand(line.length);
   return segments;
+}
+
+/**
+ * cmd.exe's commands: `&`, `|`, newlines and its `( )` blocks end one,
+ * outside quotes; a double quote toggles a quoted span (a single quote is a
+ * character, a backslash is a character: cmd has no backslash escape); `^`
+ * escapes the next character outside quotes and is removed (`r^m` runs `rm`).
+ * Each command keeps its raw text: the program reads its own words.
+ */
+function cmdCommands(line: string): string[] {
+  const commands: string[] = [];
+  let current = '';
+  let inQuote = false;
+  for (let at = 0; at < line.length; at++) {
+    const ch = line[at] ?? '';
+    if (ch === '"') {
+      inQuote = !inQuote;
+      current += ch;
+    } else if (inQuote) {
+      current += ch;
+    } else if (ch === '^') {
+      current += line[at + 1] ?? '';
+      at += 1;
+    } else if ('&|\n\r()'.includes(ch)) {
+      commands.push(current);
+      current = '';
+    } else current += ch;
+  }
+  commands.push(current);
+  return commands.filter((c) => c.trim() !== '');
+}
+
+/**
+ * The words of a Windows command line, as a program reads its arguments
+ * (CommandLineToArgvW): spaces split outside quotes, a double quote toggles,
+ * `2n` backslashes before a quote are `n` and the quote toggles, `2n+1` are
+ * `n` and a literal quote, other backslashes are characters (`C:\x`), and `""`
+ * inside quotes is a quote. `<` and `>` end a word (redirections).
+ */
+function windowsArguments(line: string): ShellWord[] {
+  const words: ShellWord[] = [];
+  let at = 0;
+  while (at < line.length) {
+    while (at < line.length && /[\s<>]/.test(line[at] ?? '')) at += 1;
+    if (at >= line.length) break;
+    const start = at;
+    let text = '';
+    let quoted = false;
+    let inQuote = false;
+    while (at < line.length) {
+      const ch = line[at] ?? '';
+      if (!inQuote && /[\s<>]/.test(ch)) break;
+      if (ch === '\\') {
+        let n = 0;
+        while (line[at + n] === '\\') n += 1;
+        if (line[at + n] === '"') {
+          text += '\\'.repeat(Math.floor(n / 2));
+          if (n % 2 === 1) {
+            text += '"';
+            at += n + 1;
+          } else at += n;
+        } else {
+          text += '\\'.repeat(n);
+          at += n;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        quoted = true;
+        if (inQuote && line[at + 1] === '"') {
+          text += '"';
+          at += 2;
+          continue;
+        }
+        inQuote = !inQuote;
+        at += 1;
+        continue;
+      }
+      text += ch;
+      at += 1;
+    }
+    words.push({ text, quoted, tail: line.slice(start) });
+  }
+  return words;
 }
 
 /**
@@ -1394,15 +1585,15 @@ function splitQuotedShellWords(cmd: string): ShellWord[][] {
  * while ordinary commands auto-run. Catastrophic commands are a subset (always
  * true here too).
  */
-export function isDestructiveOrHeavyCommand(cmd: string): boolean {
+export function isDestructiveOrHeavyCommand(cmd: string, host?: ShellHost): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
   // Catastrophic (machine-destroyers) and opaque interpreter-eval both keep
   // their gate under destructive_gate. Inline-eval is no longer catastrophic
   // (approvable), but it stays "heavy" here so destructive_gate still asks a
   // human before running an un-inspectable one-liner.
-  if (isCatastrophicCommand(cmd) || isInlineInterpreterEvalCommand(cmd)) return true;
+  if (isCatastrophicCommand(cmd, host) || isInlineInterpreterEvalCommand(cmd, host)) return true;
   // Every program only asked for its version or help: nothing happens.
-  const units = commandUnits(withoutRedirections(cmd));
+  const units = commandUnits(withoutRedirections(cmd), 0, topShell(host));
   const working = units.filter((u) => !runsAnother(u));
   if (working.length > 0 && working.every(isReadUnit)) return false;
   const c = normalizeSlashes(cmd.trim());

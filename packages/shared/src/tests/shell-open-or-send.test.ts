@@ -172,13 +172,17 @@ describe('open_or_send: what reaches the screen, a printer or someone (#667) @ca
     expect(staticShellCategories('cmd /c start /b "job" rm -rf build')).toEqual(['delete_files']);
 
     // Title before /b: still a background launch, and node is what it starts.
-    expect(opensOrSends('start "job" /b node server.js')).toBe(false);
-    expect(commandUnits('start "job" /b node server.js')).toEqual([
+    // `start` is cmd's: read on the host whose run_command shell is cmd (a line
+    // whose host is not known is also read as sh, where "job" is no title).
+    expect(staticShellCategories('start "job" /b node server.js', 'windows')).toEqual([]);
+    expect(commandUnits('start "job" /b node server.js', 0, 'cmd')).toEqual([
       ['start', '/b', 'node', 'server.js'],
       ['node', 'server.js'],
     ]);
     // A quoted program after the title is the program.
-    expect(commandUnits('start /b "job" "C:\\Program Files\\nodejs\\node.exe" server.js')).toEqual([
+    expect(
+      commandUnits('start /b "job" "C:\\Program Files\\nodejs\\node.exe" server.js', 0, 'cmd'),
+    ).toEqual([
       ['start', '/b', 'C:\\Program Files\\nodejs\\node.exe', 'server.js'],
       ['node', 'server.js'],
     ]);

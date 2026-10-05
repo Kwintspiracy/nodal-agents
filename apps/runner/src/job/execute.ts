@@ -3151,7 +3151,10 @@ async function runJobTracked(
                   (req.toolInput as { commands?: { command?: unknown }[] } | null)?.commands ?? []
                 ).map((c) => String(c?.command ?? ''))
               : [];
-        const isCatastrophicResume = resumeCommands.some(isCatastrophicCommand);
+        // Read by the shell of this host, as the gate read it (#667).
+        const isCatastrophicResume = resumeCommands.some((c) =>
+          isCatastrophicCommand(c, process.platform === 'win32' ? 'windows' : 'posix'),
+        );
 
         if (isCatastrophicResume) {
           // Only machine-wide destroyers (`rm -rf /`, `mkfs`, `shutdown`, …)
