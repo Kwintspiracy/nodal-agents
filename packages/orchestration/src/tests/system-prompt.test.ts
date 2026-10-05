@@ -1582,9 +1582,9 @@ describe('buildSystemPrompt — le bloc ## Conversation (P6)', () => {
 // every job shape the runner builds, against the tool list that job has.
 
 describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:assigner-outils/moteur', () => {
-  async function seedTeam() {
+  async function seedTeam(forcedTag?: string) {
     const { entityId } = await seedContext(db);
-    const tag = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const tag = forcedTag ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const [root] = await db
       .insert(agents)
       .values({
@@ -1714,6 +1714,12 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
   const withSend = [...ALWAYS_ON_TOOLS, ...DELIVERY_TOOL_NAMES];
   const deliveryLines = (prompt: string): string[] =>
     prompt.split('\n').filter((l) => l.startsWith('- delivery:'));
+  // A per-message size limit, in the forms the old catalog wrote it: "4096
+  // chars", "4 096 characters", "under_4096_chars", "4096-char", "≤4096". It is
+  // matched by its FORM, never by the bare number: the prompt carries random
+  // ids (seeded UUIDs) whose digits spell "2000" or "4096" now and then.
+  const statedLimits = (prompt: string): string[] =>
+    prompt.match(/(?:≤\s*)?\d[\d   ,.]*[\s_-]*(?:chars?|characters?|caractères)\b|≤\s*\d+/gi) ?? [];
 
   it('a Telegram job states the channel facts once, and no hand-written channel rule (#613)', async () => {
     const { entityId, root } = await seedTeam();
@@ -1734,8 +1740,6 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     expect(jobContext).toContain('- delivery:');
     for (const gone of [
       'MarkdownV2',
-      '4096',
-      '4 096',
       '## Channel etiquette',
       'Splitting rules',
       'Telegram delivery',
@@ -1743,6 +1747,7 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     ]) {
       expect({ gone, found: prompt.includes(gone) }).toEqual({ gone, found: false });
     }
+    expect(statedLimits(prompt)).toEqual([]);
   });
 
   it('a Discord job states ITS adapter facts: the marks it renders, same splitting (#613)', async () => {
@@ -1761,13 +1766,51 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     ]);
     for (const gone of [
       'MarkdownV2',
-      '4096',
-      '2000',
       '## Channel etiquette',
       'Telegram delivery',
       '## Markdown output',
     ]) {
       expect({ gone, found: prompt.includes(gone) }).toEqual({ gone, found: false });
+    }
+    // Neither the Telegram 4096 nor the Discord 2000 limit is stated.
+    expect(statedLimits(prompt)).toEqual([]);
+  });
+
+  it('generated values whose digits spell a channel limit do not read as a stated limit (flaky "2000", #613)', async () => {
+    // The prompt names the team's agents by a slug and assign-tool handle built
+    // from a timestamp and a random suffix. Forced here to contain the numbers
+    // the "limit not stated" checks look for, so the old bare-substring
+    // assertion fails deterministically instead of one run in a few hundred.
+    const { entityId, root } = await seedTeam('x2000y4096z');
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const prompt = await buildSystemPrompt(rootAgent, db, {
+      origin: 'discord',
+      telegramChatId: '1511202553420054671',
+      channelDelivery: DISCORD_FACTS,
+      availableToolNames: withSend,
+    });
+    // The forced value is in the prompt, so the bare number IS there...
+    expect(prompt).toContain('sweep-worker-x2000y4096z');
+    expect(prompt.includes('2000')).toBe(true);
+    // ...and still no limit is stated.
+    expect(statedLimits(prompt)).toEqual([]);
+    // The detector catches the sentences the old catalog wrote.
+    for (const sentence of [
+      'Telegram caps messages at 4096 chars.',
+      'Discord messages are limited to 2000 characters.',
+      'part1_under_4096_chars',
+      'split at 4 096 characters',
+      '(≤4096 chars)',
+    ]) {
+      expect({
+        sentence,
+        found:
+          statedLimits(`${prompt}
+${sentence}`).length > 0,
+      }).toEqual({
+        sentence,
+        found: true,
+      });
     }
   });
 
@@ -1863,15 +1906,10 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
         availableToolNames: tools,
       });
       expect(deliveryLines(workerPrompt)).toEqual([]);
-      for (const gone of [
-        'telegram_send_message',
-        'MarkdownV2',
-        '4096',
-        'Channel etiquette',
-        'split',
-      ]) {
+      for (const gone of ['telegram_send_message', 'MarkdownV2', 'Channel etiquette', 'split']) {
         expect({ gone, found: workerPrompt.includes(gone) }).toEqual({ gone, found: false });
       }
+      expect(statedLimits(workerPrompt)).toEqual([]);
       // The sub-task contract itself stays: reply, then return_result, no direct send.
       expect(workerPrompt).toContain('## Delegated sub-task');
       expect(workerPrompt).toContain('Do NOT contact the user yourself');
