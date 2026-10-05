@@ -20,7 +20,7 @@
 // are resolved against the command's working folder and the job's workspaces;
 // one outside them, or one the text does not name, asks.
 
-import { readFile, stat } from 'node:fs/promises';
+import { open, readFile, stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import {
   downloadWrites,
@@ -38,9 +38,10 @@ import {
 
 /** What the gate could read of a file a command runs (#635). */
 export type SourceFile =
-  /** Text; `nul` when its first bytes hold a NUL, the mark of a program file. */
-  | { kind: 'text'; text: string; nul: boolean; bytes: number }
-  /** Not text in UTF-8 or UTF-16. */
+  | { kind: 'text'; text: string; bytes: number }
+  /** An executable file format (ELF, PE, Mach-O): a program, not a script. */
+  | { kind: 'executable' }
+  /** Neither text in UTF-8 or UTF-16 nor an executable. */
   | { kind: 'binary'; bytes: number }
   | {
       kind: 'unread';
@@ -66,37 +67,58 @@ export interface ShellPlace {
 export const MAX_SOURCE_BYTES = 256 * 1024;
 
 /**
- * Read a file a command runs, already known to be inside a workspace: text in
- * UTF-8 or UTF-16 (PowerShell's own default), bytes that are not text, or why
- * it cannot be read. Whether a file that holds a NUL or is not text is a
- * program or a source that cannot be read depends on how it is run, which
- * the caller knows (review of #683, P1).
+ * The first bytes of an executable file format: ELF, PE (`MZ`), Mach-O (32
+ * and 64 bits, both byte orders) and universal Mach-O (review pass 2 of #683,
+ * C1). What the system runs as a program is recognised by its format, never
+ * by a NUL byte: cmd and sh run the lines of a script that holds one.
+ */
+const EXECUTABLE_MAGIC: ReadonlyArray<readonly number[]> = [
+  [0x7f, 0x45, 0x4c, 0x46],
+  [0x4d, 0x5a],
+  [0xfe, 0xed, 0xfa, 0xce],
+  [0xfe, 0xed, 0xfa, 0xcf],
+  [0xce, 0xfa, 0xed, 0xfe],
+  [0xcf, 0xfa, 0xed, 0xfe],
+  [0xca, 0xfe, 0xba, 0xbe],
+];
+
+function isExecutableFormat(head: Uint8Array): boolean {
+  return EXECUTABLE_MAGIC.some((magic) => magic.every((b, i) => head[i] === b));
+}
+
+/**
+ * Read a file a command runs, already known to be inside a workspace: an
+ * executable format (whatever its size), text in UTF-8 or UTF-16 (PowerShell's
+ * own default), bytes that are neither, or why it cannot be read. Whether
+ * bytes that are not text are a program or a source that cannot be read
+ * depends on how the file is run, which the caller knows.
  */
 export async function readSourceFile(canonicalPath: string): Promise<SourceFile> {
   try {
     const info = await stat(canonicalPath);
     if (!info.isFile()) return { kind: 'unread', why: 'not_a_file' };
+    const handle = await open(canonicalPath, 'r');
+    let head: Uint8Array;
+    try {
+      const buffer = new Uint8Array(8);
+      const { bytesRead } = await handle.read(buffer, 0, 8, 0);
+      head = buffer.subarray(0, bytesRead);
+    } finally {
+      await handle.close();
+    }
+    if (isExecutableFormat(head)) return { kind: 'executable' };
     if (info.size > MAX_SOURCE_BYTES) return { kind: 'unread', why: 'too_large' };
     const bytes = await readFile(canonicalPath);
     if (bytes[0] === 0xff && bytes[1] === 0xfe)
-      return {
-        kind: 'text',
-        text: bytes.subarray(2).toString('utf16le'),
-        nul: false,
-        bytes: bytes.length,
-      };
+      return { kind: 'text', text: bytes.subarray(2).toString('utf16le'), bytes: bytes.length };
     let text: string;
     try {
+      // A NUL is text: cmd and sh run the lines around it.
       text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     } catch {
       return { kind: 'binary', bytes: bytes.length };
     }
-    return {
-      kind: 'text',
-      text: text.replace(/^﻿/, ''),
-      nul: bytes.subarray(0, 8000).includes(0),
-      bytes: bytes.length,
-    };
+    return { kind: 'text', text: text.replace(/^﻿/, ''), bytes: bytes.length };
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     return {
@@ -261,15 +283,19 @@ async function readRunCode(
         unread.push({ source: source.path, why: read.why });
         continue;
       }
+      // An executable format is a program, judged by its name when the system
+      // runs it. Anything else is source: a script the system runs through
+      // cmd or sh, or a file an interpreter reads. Source that is not text
+      // cannot be read, and says so (review passes 1 and 2 of #683).
+      if (read.kind === 'executable') {
+        if (!source.executed) unread.push({ source: source.path, why: 'not_text' });
+        continue;
+      }
       budget.bytes += read.bytes;
       if (budget.bytes > MAX_SOURCE_TOTAL_BYTES) {
         unread.push({ source: source.path, why: 'over_budget' });
         continue;
       }
-      // Run by the system, bytes that are not text (or hold a NUL) are a
-      // program. Read by an interpreter, they are source: a NUL does not stop
-      // it from being read, bytes that are not text do (review of #683, P1).
-      if (source.executed && (read.kind === 'binary' || read.nul)) continue;
       if (read.kind === 'binary') {
         unread.push({ source: source.path, why: 'not_text' });
         continue;

@@ -522,3 +522,85 @@ describe('review pass 1 of #683: no source a command runs goes unjudged @cap:exe
     await ranUnasked('python b/run.py');
   });
 });
+
+// Review pass 2 of PR #683 (Nodal, Reviewer A).
+describe('review pass 2 of #683: a script the system runs is source, and every shell construct is read @cap:executer-une-commande/moteur', () => {
+  const askCode: ShellPolicy = { ...DEFAULT_SHELL_POLICY, inline_code: 'ask' };
+  const NL = String.fromCharCode(10);
+  const CRLF = String.fromCharCode(13, 10);
+  const NUL = String.fromCharCode(0);
+  const BS = String.fromCharCode(92);
+
+  // C1 : un NUL ne fait pas d'un script un programme. Seul un exécutable (ELF,
+  // PE, Mach-O, par ses octets de tête) en est un.
+  it('C1: a script run directly that holds a NUL is still read', async () => {
+    await put('c1/deploy.bat', `::${NUL}${CRLF}pip install openpyxl${CRLF}`);
+    await put('c1/after.bat', `pip install openpyxl${CRLF}rem ${NUL}${CRLF}`);
+    await put('c1/deploy.sh', `#!/bin/sh${NL}pip install openpyxl${NL}# ${NUL}${NL}`);
+    for (const command of [
+      'c1/deploy.bat',
+      `.${BS}c1${BS}deploy.bat`,
+      'call c1/deploy.bat',
+      'c1/after.bat',
+      './c1/deploy.sh',
+    ]) {
+      expect(await asked(command), command).toEqual([
+        expect.objectContaining({
+          category: 'install_software',
+          found: [expect.objectContaining({ line: 2 - (command.includes('after') ? 1 : 0) })],
+        }),
+      ]);
+    }
+  });
+
+  it('C1: an executable (ELF, PE, Mach-O) is a program; bytes that are neither text nor one are unread', async () => {
+    await put('c1/tool.elf', Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0, 0x70, 0x69, 0x70]));
+    await put('c1/tool.pe', Buffer.from([0x4d, 0x5a, 0x90, 0, 3, 0, 0, 0, 0x70, 0x69, 0x70]));
+    await put('c1/tool.macho', Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 7, 0, 0, 1, 0x70]));
+    for (const command of ['./c1/tool.elf', './c1/tool.pe', './c1/tool.macho']) {
+      await ranUnasked(command, askCode);
+    }
+    await put('c1/blob', Buffer.from([0x70, 0x69, 0x70, 0x80, 0x81, 0xfe, 0x0a]));
+    expect(await asked('./c1/blob', askCode)).toEqual([
+      {
+        category: 'inline_code',
+        state: 'ask',
+        details: ['./c1/blob'],
+        unread: [{ source: './c1/blob', why: 'not_text' }],
+      },
+    ]);
+  });
+
+  // C2 : une commande peut commencer à chaque position que la grammaire du
+  // shell lui ouvre, pas seulement après une liste de mots-clés.
+  it('C2: case, select, functions, switch, try and trap blocks are read, in sh and PowerShell', async () => {
+    const cases: Array<[string, string, string]> = [
+      ['c2/case.sh', `case $x in *) pip install openpyxl ;; esac${NL}`, 'bash c2/case.sh'],
+      ['c2/select.sh', `select p in a b; do pip install $p; done${NL}`, 'bash c2/select.sh'],
+      ['c2/func.sh', `function f { pip install x; }${NL}f${NL}`, 'bash c2/func.sh'],
+      ['c2/func2.sh', `f() { pip install x; }${NL}f${NL}`, 'bash c2/func2.sh'],
+      [
+        'c2/switch.ps1',
+        `switch ($x) { 1 { Stop-Process -Name excel } }${NL}`,
+        'pwsh -File c2/switch.ps1',
+      ],
+      [
+        'c2/function.ps1',
+        `function F { Stop-Process -Name excel }${NL}`,
+        'pwsh -File c2/function.ps1',
+      ],
+      ['c2/filter.ps1', `filter F { Stop-Process -Name excel }${NL}`, 'pwsh -File c2/filter.ps1'],
+      ['c2/try.ps1', `try { Stop-Process -Name excel } catch { }${NL}`, 'pwsh -File c2/try.ps1'],
+      ['c2/trap.ps1', `trap { Stop-Process -Name excel }${NL}`, 'pwsh -File c2/trap.ps1'],
+      ['c2/else.bat', `if exist a (echo a) else (pip install x)${CRLF}`, 'cmd /c c2/else.bat'],
+    ];
+    for (const [file, content, command] of cases) {
+      await put(file, content);
+      const reasons = (await asked(command)) as Array<{ category: string }>;
+      expect(
+        reasons.map((r) => r.category),
+        command,
+      ).toEqual([file.endsWith('.ps1') ? 'stop_programs' : 'install_software']);
+    }
+  });
+});

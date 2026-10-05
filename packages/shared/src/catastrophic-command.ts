@@ -850,11 +850,6 @@ function startsWithMatch(re: RegExp, text: string): boolean {
 
 const SHELL_WRAPPERS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash', 'fish']);
 
-/** `FOO=1` at index `i` of a segment, before any program word: an assignment, not the program. */
-function isAssignmentPrefix(segment: readonly string[], i: number): boolean {
-  return segment.slice(0, i + 1).every((t) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(t));
-}
-
 /**
  * Where a shell's command line is in its arguments: the first word after its
  * options when one of them is `-c`, alone or in a group (`bash -lc "…"`,
@@ -883,47 +878,123 @@ export function shellCommandIndex(args: readonly string[]): number {
 }
 
 /**
- * The words that open or continue a control construct in sh, cmd and
- * PowerShell: the command is what follows them (review of #683: in
- * `if true; then pip install x; fi`, `then` is not the program).
+ * The reserved words of sh/bash, cmd and PowerShell (about_Reserved_Words),
+ * none of which is ever the program of a command (review passes 1 and 2 of
+ * #683). Where one stands in a command's place, the command is what follows:
+ * an introducer (`then`, `do`, `!`, `exec`), a construct header whose body
+ * opens later (`case`, `function`, `switch`, `try`, `trap`), or a closer
+ * (`fi`, `done`, `esac`). The body itself is found by the grammar, not by the
+ * word: after an opening bracket, a case pattern's `)`, a `{`.
  */
-const CONTROL_KEYWORDS = new Set([
+const RESERVED_WORDS = new Set([
+  // sh / bash
   'if',
   'then',
   'else',
   'elif',
+  'fi',
+  'case',
+  'esac',
+  'for',
+  'select',
   'while',
   'until',
   'do',
-  'for',
-  'foreach',
+  'done',
+  'in',
+  'function',
   'time',
   '!',
+  '[[',
+  ']]',
+  'coproc',
+  'exec',
+  'command',
+  'builtin',
+  'nohup',
+  // cmd
+  'not',
+  'exist',
+  'defined',
+  // PowerShell
+  'elseif',
+  'foreach',
+  'switch',
+  'filter',
+  'try',
+  'catch',
+  'finally',
+  'trap',
+  'begin',
+  'process',
+  'end',
+  'data',
+  'dynamicparam',
+  'class',
+  'enum',
+  'param',
+  'workflow',
+  'parallel',
+  'sequence',
+  'inlinescript',
+  'configuration',
+  'using',
+  'return',
+  'throw',
+  'exit',
+  'break',
+  'continue',
+  'hidden',
+  'static',
+  'from',
+  'define',
+  'var',
 ]);
 
+/** A word of a command line, and whether any of it was quoted. */
+interface ShellWord {
+  text: string;
+  quoted: boolean;
+}
+
 /**
- * A segment without its leading control keywords and group brackets
- * (`if`, `then`, `do`, `!`, `(`, `{`, and a bracket glued to the program,
- * `(cd x`), and whether it had any.
+ * Where commands start in one segment (review pass 2 of #683): the words a
+ * program stands at, as the grammar of sh, cmd and PowerShell places them.
+ * A segment already ends at `;`, `;;`, `&`, `&&`, `||`, `|` and a newline. In
+ * it, a command starts at its first word, after a reserved word in a
+ * command's place, after an opening `(` or `{` (glued to the program or not),
+ * and after a word that closes with `)` or opens with `{` at its end: a case
+ * pattern (`*)`), a condition (`if ($x)`, `exist a (echo a) else (…)`), a
+ * function head (`f()`), a script block (`if($x){`). Quoted words are
+ * arguments, wherever their brackets are: `echo "(rm -rf x)"` runs `echo`.
+ * Returns each start as the words of its command, the first one stripped of
+ * the brackets glued to it.
  */
-function withoutControl(segment: readonly string[]): { words: string[]; control: boolean } {
-  let words = [...segment];
-  let control = false;
-  while (words.length > 0) {
-    const w = words[0] ?? '';
-    if (CONTROL_KEYWORDS.has(w.toLowerCase()) || /^[({]+$/.test(w)) {
-      words = words.slice(1);
-      control = true;
+function commandStarts(segment: readonly ShellWord[]): string[][] {
+  const starts: string[][] = [];
+  let expect = true;
+  for (let i = 0; i < segment.length; i++) {
+    const w = segment[i] as ShellWord;
+    const rest = (first: string): string[] => [first, ...segment.slice(i + 1).map((x) => x.text)];
+    if (expect && !w.quoted && RESERVED_WORDS.has(w.text.toLowerCase())) continue;
+    if (!w.quoted && /^[({]/.test(w.text)) {
+      // `(`, `{`, or a bracket glued to the program: `(cd x`, `{Stop-Process`.
+      const first = w.text.replace(/^[({]+/, '');
+      if (first !== '') starts.push(rest(first));
+      expect = first === '' || /[){]$/.test(w.text);
       continue;
     }
-    if (/^[({]/.test(w)) {
-      words = [w.replace(/^[({]+/, ''), ...words.slice(1)];
-      control = true;
-      continue;
+    if (expect) {
+      // `FOO=1 rm -rf build`: variables set for the command are not the
+      // program (review of PR #476).
+      if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(w.text) || w.quoted) {
+        starts.push(rest(w.text));
+        expect = false;
+      }
     }
-    break;
+    if (!w.quoted && /[){]$/.test(w.text)) expect = true;
   }
-  return { words, control };
+  return starts;
 }
 
 /** One command a line runs, as `commandUnits` reads it and as it was written. */
@@ -954,55 +1025,44 @@ export function commandUnitsAsWritten(cmd: string, depth = 0): CommandUnit[] {
   const units: CommandUnit[] = [];
   const inner = (text: string) => units.push(...commandUnitsAsWritten(text, depth + 1));
   for (const m of cmd.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) inner(m[1] ?? m[2] ?? '');
-  for (const segment of splitShellWords(cmd)) {
-    // `FOO=1 rm -rf build`: variables set for the command are not the program
-    // (review of PR #476).
-    const { words, control } = withoutControl(
-      segment.filter((_, i) => !isAssignmentPrefix(segment, i)),
-    );
-    // Inside a control construct, a later `then`/`do`/`else` or an opening
-    // bracket starts a command too: cmd's `if exist x (pip install y)`,
-    // PowerShell's `if ($a) { Stop-Process x }` (review of #683). Only there:
-    // in `echo "(rm -rf x)"` the bracket is an argument.
-    if (control) {
-      for (let i = 1; i < words.length; i++) {
-        const w = words[i] ?? '';
-        if (/^(then|do|else)$/i.test(w)) inner(words.slice(i + 1).join(' '));
-        else if (/^[({]/.test(w)) inner([w.replace(/^[({]+/, ''), ...words.slice(i + 1)].join(' '));
+  for (const segment of splitShellTokens(cmd)) {
+    for (const words of commandStarts(segment)) {
+      const tokens = skipPassthroughLeaders(words);
+      const head = tokens[0];
+      if (head === undefined) continue;
+      const program = interpreterBasename(head);
+      const args = tokens.slice(1);
+      units.push({ unit: [program, ...args], head });
+      const lower = args.map((a) => a.toLowerCase());
+      // `python -m pip install x` runs pip: the module is the program (review of
+      // PR #476; main caught it by reading the whole text).
+      if (interpreterKind(program) === 'python') {
+        const m = lower.indexOf('-m');
+        const module = m >= 0 ? args[m + 1] : undefined;
+        if (module !== undefined)
+          units.push({ unit: [module.toLowerCase(), ...args.slice(m + 2)], head: module });
       }
-    }
-    const tokens = skipPassthroughLeaders(words);
-    const head = tokens[0];
-    if (head === undefined) continue;
-    const program = interpreterBasename(head);
-    const args = tokens.slice(1);
-    units.push({ unit: [program, ...args], head });
-    const lower = args.map((a) => a.toLowerCase());
-    // `python -m pip install x` runs pip: the module is the program (review of
-    // PR #476; main caught it by reading the whole text).
-    if (interpreterKind(program) === 'python') {
-      const m = lower.indexOf('-m');
-      const module = m >= 0 ? args[m + 1] : undefined;
-      if (module !== undefined)
-        units.push({ unit: [module.toLowerCase(), ...args.slice(m + 2)], head: module });
-    }
-    if (SHELL_WRAPPERS.has(program)) {
-      const i = shellCommandIndex(args);
-      if (i >= 0) inner(args[i] ?? '');
-    } else if (program === 'cmd') {
-      const i = lower.findIndex((a) => a === '/c' || a === '/k');
-      if (i >= 0) inner(args.slice(i + 1).join(' '));
-    } else if (program === 'powershell' || program === 'pwsh') {
-      const i = lower.findIndex((a) => a === '-command' || a === '-c');
-      if (i >= 0) inner(args.slice(i + 1).join(' '));
-    } else if (program === 'xargs') {
-      const rest = args.slice(args.findIndex((a) => !a.startsWith('-')));
-      if (rest.length > 0 && !rest[0]?.startsWith('-')) inner(rest.join(' '));
-    } else if (program === 'find') {
-      const i = lower.findIndex((a) => a === '-exec' || a === '-execdir' || a === '-ok');
-      if (i >= 0) {
-        const end = args.findIndex((a, j) => j > i && (a === ';' || a === '\\;' || a === '+'));
-        inner(args.slice(i + 1, end > i ? end : undefined).join(' '));
+      if (SHELL_WRAPPERS.has(program)) {
+        const i = shellCommandIndex(args);
+        if (i >= 0) inner(args[i] ?? '');
+      } else if (program === 'cmd') {
+        const i = lower.findIndex((a) => a === '/c' || a === '/k');
+        if (i >= 0) inner(args.slice(i + 1).join(' '));
+      } else if (program === 'powershell' || program === 'pwsh') {
+        const i = lower.findIndex((a) => a === '-command' || a === '-c');
+        if (i >= 0) inner(args.slice(i + 1).join(' '));
+      } else if (program === 'xargs') {
+        const rest = args.slice(args.findIndex((a) => !a.startsWith('-')));
+        if (rest.length > 0 && !rest[0]?.startsWith('-')) inner(rest.join(' '));
+      } else if (program === 'find') {
+        const i = lower.findIndex((a) => a === '-exec' || a === '-execdir' || a === '-ok');
+        if (i >= 0) {
+          const end = args.findIndex((a, j) => j > i && (a === ';' || a === '\\;' || a === '+'));
+          inner(args.slice(i + 1, end > i ? end : undefined).join(' '));
+        }
+      } else if (program === 'eval' || program === 'iex' || program === 'invoke-expression') {
+        // Its arguments are a command line (review pass 2 of #683).
+        inner(args.join(' '));
       }
     }
   }
@@ -1015,14 +1075,21 @@ export function commandUnitsAsWritten(cmd: string, depth = 0): CommandUnit[] {
  * Files/x.csv"` is three words, not four. Redirection targets are words too.
  */
 export function splitShellWords(cmd: string): string[][] {
-  const segments: string[][] = [];
-  let words: string[] = [];
+  return splitShellTokens(cmd).map((segment) => segment.map((w) => w.text));
+}
+
+/** `splitShellWords`, each word with whether any of it was quoted (review pass 2 of #683). */
+function splitShellTokens(cmd: string): ShellWord[][] {
+  const segments: ShellWord[][] = [];
+  let words: ShellWord[] = [];
   let word = '';
+  let quoted = false;
   let inWord = false;
   let quote: '"' | "'" | null = null;
   const endWord = (): void => {
-    if (inWord) words.push(word);
+    if (inWord) words.push({ text: word, quoted });
     word = '';
+    quoted = false;
     inWord = false;
   };
   const endSegment = (): void => {
@@ -1045,6 +1112,7 @@ export function splitShellWords(cmd: string): string[][] {
     }
     if (ch === '"' || ch === "'") {
       quote = ch;
+      quoted = true;
       inWord = true;
       continue;
     }

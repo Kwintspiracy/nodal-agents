@@ -188,12 +188,17 @@ list. Code written into the line (`python -c`, `node -e`) is read the same way.
   budget of one call: 50 files, 4 MiB, scripts three levels deep, 10,000 lines
   to judge. It follows the first row, inline code: it runs by default, and
   under **Ask me** the card names the file and why it was not read.
-- A file the system runs itself (`./tool`) that is not text is a program,
-  judged by its name like any other. A file handed to an interpreter is
-  always read as source.
+- A file the system runs itself (`./tool`) is a program, judged by its name,
+  only when it is an executable (ELF, PE, Mach-O). Any other file is read as
+  source, a NUL byte included, and one that is not text is a script it
+  cannot read.
 - Strings are read as the language reads them, escapes decoded
-  (`"pip\x20install"` is `pip install`). The step after `then`, `do`, `else`
-  or an opening bracket (`if exist x (pip install y)`) is read too.
+  (`"pip\x20install"` is `pip install`). What follows is
+  read wherever the shell can start a program, in sh, cmd and PowerShell: after
+  a reserved word (`then`, `do`, `else`, `case`, `function`, `switch`, `try`…),
+  an opening bracket, a case pattern's `)` or a block's `{`
+  (`if exist x (pip install y)`). `eval` and `Invoke-Expression` have their
+  text read the same way.
 
 **What this list does not do.** It reads the text the agent asks to run, and
 the scripts that text runs. It does not read what a program fetches, decodes or

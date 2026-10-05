@@ -81,11 +81,11 @@ export type ProgramSource =
        */
       searched: boolean;
       /**
-       * Run by the system itself (`./tool`, `setup.bat`): a file there that is
-       * not text, or holds a NUL, is a program, judged by its name. False when
-       * an interpreter or a shell reads it (`python x.py`, `source x.sh`): the
-       * file is source, and one that is not text cannot be read (review of
-       * #683, P1).
+       * Run by the system itself (`./tool`, `setup.bat`): an executable file
+       * format (ELF, PE, Mach-O) there is a program, judged by its name.
+       * Anything else is source, whether the system runs it through cmd or sh
+       * or an interpreter reads it (`python x.py`, `source x.sh`), and source
+       * that is not text cannot be read (review passes 1 and 2 of #683).
        */
       executed: boolean;
     }

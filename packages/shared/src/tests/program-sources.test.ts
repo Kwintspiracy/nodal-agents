@@ -234,3 +234,53 @@ describe('a control construct runs the command after its keyword (review of #683
     expect(staticShellCategories('echo then rm')).toEqual([]);
   });
 });
+
+// Review pass 2 of #683 (C2): a command starts at every position the grammar
+// of sh, cmd or PowerShell opens to one, and a reserved word is never the
+// program that hides what follows it.
+describe('a command starts where the shell grammar lets one start (review pass 2 of #683) @cap:executer-une-commande/moteur', () => {
+  const kinds = (cmd: string): string[] => staticShellCategories(cmd);
+
+  it('sh: case patterns, select, function bodies, eval and exec', () => {
+    for (const cmd of [
+      'case $x in *) pip install openpyxl ;; esac',
+      'case $x in a|b) pip install openpyxl ;; esac',
+      'select p in a b; do pip install $p; done',
+      'function f { pip install x; }',
+      'f() { pip install x; }',
+      'coproc pip install x',
+      'eval "pip install x"',
+      'exec pip install x',
+      'if [ -f a ]; then echo a; elif [ -f b ]; then pip install x; fi',
+    ]) {
+      expect(kinds(cmd), cmd).toContain('install_software');
+    }
+  });
+
+  it('cmd: brackets, else and do', () => {
+    expect(kinds('if exist a (echo a) else (pip install x)')).toContain('install_software');
+    expect(kinds('for /f %i in (list.txt) do (pip install %i)')).toContain('install_software');
+  });
+
+  it('PowerShell: every script block, and Invoke-Expression', () => {
+    for (const cmd of [
+      'switch ($x) { 1 { Stop-Process -Name excel } }',
+      'function F { Stop-Process -Name excel }',
+      'filter F { Stop-Process -Name excel }',
+      'try { Stop-Process -Name excel } catch { }',
+      'try { echo a } finally { Stop-Process -Name excel }',
+      'trap { Stop-Process -Name excel }',
+      'Get-Process | ForEach-Object { Stop-Process -Id $_.Id }',
+      'iex "Stop-Process -Name excel"',
+    ]) {
+      expect(kinds(cmd), cmd).toContain('stop_programs');
+    }
+  });
+
+  it('what is quoted is an argument, wherever its brackets and keywords are', () => {
+    expect(kinds('echo "a)" "rm -rf x"')).toEqual([]);
+    expect(kinds('echo "{" "pip install x"')).toEqual([]);
+    expect(kinds('echo do rm -rf x')).toEqual([]);
+    expect(kinds("awk '{print $1}' file")).toEqual([]);
+  });
+});
