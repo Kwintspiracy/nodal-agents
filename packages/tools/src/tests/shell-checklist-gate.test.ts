@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { eq } from '@nodal-agents/db';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -15,6 +15,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { approvalRequests } from '@nodal-agents/db';
 import { DEFAULT_SHELL_POLICY, type ShellPolicy } from '@nodal-agents/shared';
 import { executeTool } from '../execute';
+import { judgeShellChecklist, type ShellPlace } from '../shell-checklist';
 import { runCommandTool } from '../builtin/run-command';
 import { codeTaskTool } from '../builtin/code-task';
 import type { ApprovalRule, ExecuteOptions, ToolContext, ToolDefinition } from '../types';
@@ -444,9 +445,11 @@ describe('an allowed download asks when it writes outside the workspace (#614, r
 // espaces, `cwd` absent) qui rendait tout chemin relatif « hors espace » — pour
 // une commande qui, approuvée, échoue de toute façon sur ce même dossier.
 describe('nowhere is not a place, and an unaddressed start never reaches a person (#669) @cap:executer-une-commande/moteur', () => {
+  // The null sink of the host that runs the tests: the only name that is no place.
+  const NOWHERE = process.platform === 'win32' ? 'NUL' : '/dev/null';
   const commons =
     'curl -s "https://commons.wikimedia.org/w/api.php?action=query&format=json" -o commons.json && ' +
-    'curl -s -o /dev/null -w "%{http_code}" -L "https://commons.wikimedia.org/wiki/File:x.jpg"';
+    `curl -s -o ${NOWHERE} -w "%{http_code}" -L "https://commons.wikimedia.org/wiki/File:x.jpg"`;
   let other: string;
 
   beforeAll(async () => {
@@ -481,12 +484,13 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     }
   });
 
-  it('a download sent to the null device or a standard stream asks no one', async () => {
+  it('a download sent to the null sink of the host asks no one, in any form', async () => {
     for (const command of [
-      'curl -s -o /dev/null -w "%{http_code}" https://x/a',
-      'curl -s https://x/a > NUL',
-      'curl -s -o nul.json https://x/a',
-      'wget -O /dev/stdout https://x/a',
+      `curl -s -o ${NOWHERE} -w "%{http_code}" https://x/a`,
+      `curl -s https://x/a > ${NOWHERE}`,
+      `curl -s https://x/a 2>${NOWHERE}`,
+      `curl -s https://x/a &>${NOWHERE}`,
+      `curl -s -o commons.json https://x/a 2>${NOWHERE}`,
     ]) {
       const before = await approvalCount();
       const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
@@ -497,7 +501,7 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
 
   it('a download really outside the workspace still asks, naming the place', async () => {
     const system = process.platform === 'win32' ? 'C:\\Windows\\x' : '/etc/x';
-    const command = `curl -s -o ${system} https://x/a && curl -s -o /dev/null https://x/b`;
+    const command = `curl -s -o ${system} https://x/a && curl -s -o ${NOWHERE} https://x/b`;
 
     const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
 
@@ -509,6 +513,163 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
         state: 'ask',
         details: [command],
         outside: [{ command, places: [system] }],
+      },
+    ]);
+  });
+
+  it('the card names the place as written: never a path the command did not write (#669)', async () => {
+    // A rooted path with no drive (`/srv/x`, what a POSIX or Git-Bash command
+    // writes) is judged on Windows as the current drive's `\srv\x`. The reason
+    // shown to the person said `/srv/x → D:\rv/x`, a place nobody wrote.
+    for (const named of [
+      '/nodal-gate-void/a.jpg',
+      '/dev/nodal-gate-void/a.jpg',
+      '/c/nodal/x.jpg',
+    ]) {
+      const command = `curl -s -o ${named} -w "%{http_code}" https://x/a 2>${NOWHERE}`;
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res.outcome, named).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      expect(await reasonsOf(res.approvalRequestId), named).toEqual([
+        {
+          category: 'download',
+          state: 'ask',
+          details: [command],
+          outside: [{ command, places: [named] }],
+        },
+      ]);
+    }
+  });
+
+  it('the null sink in the line never hides the real place, in any form (#669)', async () => {
+    const outside = join(elsewhere, 'x.bin');
+    for (const command of [
+      `curl -s -o ${outside} https://x/a 2>${NOWHERE}`,
+      `curl -s https://x/a 2>${NOWHERE} > ${outside}`,
+      `curl -s https://x/a &>${NOWHERE} > ${outside}`,
+      `curl -s -o ${NOWHERE} https://x/b && curl -s -o ${outside} https://x/a`,
+      `curl -s https://x/a 2>${NOWHERE}>${outside}`,
+      `curl -s https://x/a 1<>${outside}`,
+    ]) {
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res.outcome, command).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      expect(await reasonsOf(res.approvalRequestId), command).toEqual([
+        {
+          category: 'download',
+          state: 'ask',
+          details: [command],
+          outside: [{ command, places: [outside] }],
+        },
+      ]);
+    }
+  });
+
+  it('$null is a plain file name for the shell run_command uses, so it asks (#669)', async () => {
+    // Where it is judged from decides: the cmd.exe of a Windows host names a file `$null`.
+    for (const command of ['iwr https://x/a -OutFile $null', 'curl -s https://x/a > $null']) {
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res.outcome, command).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      expect(await reasonsOf(res.approvalRequestId), command).toEqual([
+        {
+          category: 'download',
+          state: 'ask',
+          details: [command],
+          outside: [{ command, places: ['a path decided when the command runs'] }],
+        },
+      ]);
+    }
+  });
+
+  it('a redirection inside a wrapper or after an escaped quote still asks (#669)', async () => {
+    const commands = [
+      "bash -c 'wget -O - https://x/a > ../outside.txt'",
+      'curl -s -H "X-Name: O\\"Brien" https://x/a > ../outside.txt',
+    ];
+    for (const command of commands) {
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res.outcome, command).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      expect(await reasonsOf(res.approvalRequestId), command).toEqual([
+        {
+          category: 'download',
+          state: 'ask',
+          details: [command],
+          outside: [{ command, places: ['../outside.txt'] }],
+        },
+      ]);
+    }
+  });
+
+  it('every name that is not the null sink is a place, and asks, shown as written (#669)', async () => {
+    // Codex, passes 1 and 2: devices and descriptor aliases lead where the line
+    // and the host decide (`3<f 0<&3`, cmd.exe reading `/dev/zero` as `\dev\zero`).
+    const commands: Array<[string, string]> = [
+      ['curl -s -o /dev/zero https://x/a', '/dev/zero'],
+      ['curl -s -o /dev/stdout https://x/a', '/dev/stdout'],
+      ['curl -s -o /dev/fd/7 https://x/a', '/dev/fd/7'],
+      ['curl -s https://x/a > /dev/tty', '/dev/tty'],
+      [`curl -s -o /dev/stdin https://x/a < ${join(elsewhere, 'in.txt')}`, '/dev/stdin'],
+      [`curl -s -o /dev/stdin https://x/a 3<${join(elsewhere, 'in.txt')} 0<&3`, '/dev/stdin'],
+      [
+        `exec < ${join(elsewhere, 'in.txt')}; cd sub && curl -s -o /dev/stdin https://x/a`,
+        '/dev/stdin',
+      ],
+    ];
+    for (const [command, place] of commands) {
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res.outcome, command).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      expect(await reasonsOf(res.approvalRequestId), command).toEqual([
+        {
+          category: 'download',
+          state: 'ask',
+          details: [command],
+          outside: [{ command, places: [place] }],
+        },
+      ]);
+    }
+  });
+
+  it('a Windows device name is a device on Windows and a real file elsewhere (#669)', async () => {
+    // From a folder outside the workspace, `nul` is the device only on Windows.
+    const command = `cd ${elsewhere} && curl -s -o nul https://x/a`;
+    const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+    if (process.platform === 'win32') {
+      expect(res).toMatchObject({ outcome: 'success' });
+      return;
+    }
+    expect(res.outcome).toBe('awaiting_approval');
+    if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+    expect(await reasonsOf(res.approvalRequestId)).toEqual([
+      {
+        category: 'download',
+        state: 'ask',
+        details: [command],
+        outside: [{ command, places: ['nul'] }],
+      },
+    ]);
+  });
+
+  it('the host the commands run on decides what a Windows device name is, on any machine running the tests (#669)', async () => {
+    const root = resolve('/nodal-fake-ws');
+    const placeOn = (host: ShellPlace['host']): ShellPlace => ({
+      cwd: root,
+      host,
+      inWorkspace: async (p) => resolve(p).toLowerCase().startsWith(root.toLowerCase()),
+      leadsTo: async () => null,
+    });
+    const command = 'cd /nodal-fake-elsewhere && curl -s -o nul https://x/a';
+    expect(await judgeShellChecklist([command], DEFAULT_SHELL_POLICY, placeOn('windows'))).toEqual(
+      [],
+    );
+    expect(await judgeShellChecklist([command], DEFAULT_SHELL_POLICY, placeOn('posix'))).toEqual([
+      {
+        category: 'download',
+        state: 'ask',
+        details: [command],
+        outside: [{ command, places: ['nul'] }],
       },
     ]);
   });
