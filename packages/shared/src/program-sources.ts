@@ -52,7 +52,9 @@ import {
   interpreterKind,
   isInlineEvalFlag,
   readablePath,
-  shellCommandIndex,
+  shellRunsLine,
+  type ScriptShell,
+  type ShellHost,
 } from './catastrophic-command';
 
 /** The languages a source is read in. */
@@ -272,20 +274,15 @@ function unitSources(
   const language = interpreterLanguage(program);
   if (language === null) {
     if (!direct) return [];
-    // `source x.sh`, `. x.ps1`: a file run by the shell itself. (cmd's
-    // `call x.bat` is read as `x.bat`, `call` being a pass-through leader.)
-    if (program === 'source' || program === '.') {
-      const target = args[0];
-      if (target === undefined) return [];
-      return [file(target, languageOfPath(target) ?? 'shell', bare(target))];
-    }
+    // `source x.sh`, `. x.ps1`, cmd's `call x.bat`: `commandUnits` reads the
+    // file as the program those run (RUNS_ANOTHER, #682), a file run directly.
     return directFile(head) ? [file(head, languageOfPath(head), bare(head), true)] : [];
   }
   const lower = args.map((a) => a.toLowerCase());
   switch (language) {
     case 'shell': {
       // `bash -c "…"` is a command line `commandUnits` already reads.
-      if (shellCommandIndex(args) >= 0) return [];
+      if (shellRunsLine(args)) return [];
       const i = firstOperand(args, 'shell');
       return i >= 0 ? [file(args[i] ?? '', languageOfPath(args[i] ?? '') ?? 'shell')] : [];
     }
@@ -351,11 +348,11 @@ function unitSources(
  */
 export function programSources(
   cmd: string,
-  opts: { direct: boolean } = { direct: true },
+  opts: { direct: boolean; host?: ShellHost; reader?: ScriptShell } = { direct: true },
 ): ProgramSources {
   const out: ProgramSources = { dirs: [], sources: [] };
   if (typeof cmd !== 'string' || cmd.trim() === '') return out;
-  for (const { unit, head } of commandUnitsAsWritten(cmd)) {
+  for (const { unit, head } of commandUnitsAsWritten(cmd, opts.host, opts.reader)) {
     const dir = changeDirOf(unit);
     if (dir !== undefined) {
       out.dirs.push(dir);
@@ -821,13 +818,25 @@ function statements(text: string, language: keyof typeof LEXERS): Statement[] {
   return out;
 }
 
+/**
+ * A string's first word names a program (`pip`, `rm`, `Stop-Process`,
+ * `python3.11`, `npm.cmd`), not a file or an address: in a script's strings,
+ * `"data/ventes.csv"` or `"report.pdf"` is data far more often than a program
+ * run by name, the same reading as a file name there (`programSources` with
+ * `direct: false`, review of #683).
+ */
+function namesAProgram(value: string): boolean {
+  const first = value.trim().split(/\s+/)[0] ?? '';
+  return /^[A-Za-z_][\w+-]*(?:\.\d+)*(?:\.(?:exe|cmd|com))?$/i.test(first);
+}
+
 /** The commands a non-shell source's strings spell, with the installs of its API. */
 function stringCommands(text: string, language: keyof typeof LEXERS): SourceCommand[] {
   const out: SourceCommand[] = [];
   for (const statement of statements(text, language)) {
     const words = statement.words.map((w) => (w.literal ? w.value : '$'));
     statement.words.forEach((w, i) => {
-      if (!w.literal || w.value.trim() === '') return;
+      if (!w.literal || !namesAProgram(w.value)) return;
       out.push({ line: w.line, command: words.slice(i, i + MAX_ARGUMENT_WORDS).join(' ') });
     });
     for (const { call, as } of LANGUAGE_INSTALLS[language] ?? []) {

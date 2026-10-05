@@ -35,6 +35,7 @@ const KIND_IMPACT: Record<StaticShellCategory, string> = {
   delete_files: 'deletes files or discards changes',
   install_software: 'installs software or packages',
   download: 'downloads files from the internet',
+  open_or_send: 'opens a program on the screen, prints or sends a message',
   stop_programs: 'stops other programs or services',
   system_settings: 'changes system settings, permissions or disks',
   inline_code: 'runs code written into the command',
@@ -179,7 +180,7 @@ export function computeApprovalImpactLine(
         return `Records how "${str(input['project_path'])}" is verified — no command declared, so nothing will run.`;
       }
       const liste = commands.map((c) => `\`${c}\``).join(', ');
-      const heavy = commands.filter(isDestructiveOrHeavyCommand);
+      const heavy = commands.filter((c) => isDestructiveOrHeavyCommand(c));
       const inCode = codeClause(gateReasons);
       return (
         `Records ${liste} as the proof for "${str(input['project_path'])}". ` +

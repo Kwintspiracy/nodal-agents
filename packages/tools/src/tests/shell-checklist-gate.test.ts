@@ -13,9 +13,9 @@ import { eq } from '@nodal-agents/db';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { approvalRequests } from '@nodal-agents/db';
-import { DEFAULT_SHELL_POLICY, type ShellPolicy } from '@nodal-agents/shared';
+import { DEFAULT_SHELL_POLICY, resolveShellPolicy, type ShellPolicy } from '@nodal-agents/shared';
 import { executeTool } from '../execute';
-import { judgeShellChecklist, type ShellPlace } from '../shell-checklist';
+import { judgeShellChecklist, shellChecklistDeclined, type ShellPlace } from '../shell-checklist';
 import { runCommandTool } from '../builtin/run-command';
 import { codeTaskTool } from '../builtin/code-task';
 import type { ApprovalRule, ExecuteOptions, ToolContext, ToolDefinition } from '../types';
@@ -77,6 +77,16 @@ const yolo = (): ApprovalRule => ({
   agentId: null,
   entityId: seed.entityId,
 });
+
+/** What migration 0125 stored for an agent that had Yolo on everywhere: six kinds, before #667. */
+const MIGRATED_0125 = {
+  inline_code: 'allow',
+  delete_files: 'allow',
+  install_software: 'allow',
+  download: 'allow',
+  stop_programs: 'allow',
+  system_settings: 'allow',
+};
 
 async function reasonsOf(approvalRequestId: string): Promise<unknown> {
   const [row] = await db
@@ -184,15 +194,9 @@ describe('the autonomy checklist at the gate (#464) @cap:executer-une-commande/m
   });
 
   it('a Yolo agent as migration 0125 leaves it runs everything unasked', async () => {
-    // What migration 0125 gives an agent that had Yolo on everywhere.
-    const migrated: ShellPolicy = {
-      inline_code: 'allow',
-      delete_files: 'allow',
-      install_software: 'allow',
-      download: 'allow',
-      stop_programs: 'allow',
-      system_settings: 'allow',
-    };
+    // What migration 0125 stored for an agent that had Yolo on everywhere,
+    // read the way the runner reads it.
+    const migrated = resolveShellPolicy(MIGRATED_0125);
     const res = await run(`node -e "console.log(1)" && rm -rf build`, gate(migrated, [yolo()]));
 
     expect(res.outcome).toBe('success');
@@ -329,7 +333,12 @@ describe('an allowed download asks when it writes outside the workspace (#614, r
       [`wget -P "${elsewhere}" https://x/a.zip`, elsewhere],
       ['curl -o ../escaped.jpg https://x/a.jpg', '../escaped.jpg'],
       [`cd "${elsewhere}" && curl -o a.jpg https://x/a.jpg`, 'a.jpg'],
-      [`Push-Location "${elsewhere}"; iwr https://x/a -OutFile a.jpg`, 'a.jpg'],
+      // PowerShell's own line, as it runs from run_command (cmd.exe on Windows,
+      // where `;` ends nothing): handed to powershell (#667, pass 3).
+      [
+        `powershell -Command "Push-Location '${elsewhere}'; iwr https://x/a -OutFile a.jpg"`,
+        'a.jpg',
+      ],
       ['curl -o $HOME/a https://x/a', 'a path decided when the command runs'],
     ] as const) {
       expect(await asked(command), command).toEqual([
@@ -724,5 +733,147 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     if (res.outcome !== 'error') throw new Error('unreachable');
     expect(res.error).toContain('This agent has multiple workspaces');
     expect(await approvalCount()).toBe(before);
+  });
+});
+
+// #667 : prié d'imprimer, un agent qui tenait un outil d'impression demandant
+// l'accord de la personne a imprimé par le shell (`Start-Process -Verb Print`),
+// sans que personne soit consulté. Ce qui atteint l'écran, une imprimante ou
+// quelqu'un est une sorte d'action à part, demandée par défaut ; un refus dit
+// au modèle d'emprunter un outil qui demande, sans en nommer aucun.
+describe('what reaches the screen, a printer or someone is asked (#667) @cap:executer-une-commande/moteur', () => {
+  const reproduction = `powershell -NoProfile -Command "Start-Process -FilePath 'C:\\Users\\x\\shared\\outputs\\test-nodal.txt' -Verb Print -PassThru"`;
+  const commands = [
+    reproduction,
+    'lp -d office report.pdf',
+    'open -a Preview report.pdf',
+    'xdg-open report.pdf',
+    'cmd /c start "" report.pdf',
+    'Get-Content report.txt | Out-Printer',
+    'mail -s "Report" bob@example.com < body.txt',
+  ];
+
+  it('with the default policy, each is held for the person, under destructive_gate and under a Yolo rule', async () => {
+    for (const opts of [gate(DEFAULT_SHELL_POLICY), gate(DEFAULT_SHELL_POLICY, [yolo()])]) {
+      for (const command of commands) {
+        const res = await run(command, opts);
+        expect(res.outcome, command).toBe('awaiting_approval');
+        if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+        const reasons = (await reasonsOf(res.approvalRequestId)) as Array<{ category: string }>;
+        expect(
+          reasons.find((r) => r.category === 'open_or_send'),
+          command,
+        ).toEqual({ category: 'open_or_send', state: 'ask', details: [command] });
+      }
+    }
+  });
+
+  it('an agent stored before #667, even with every kind allowed, is asked', async () => {
+    const command = 'lp -d office report.pdf';
+
+    const res = await run(command, gate(resolveShellPolicy(MIGRATED_0125), [yolo()]));
+
+    expect(res.outcome).toBe('awaiting_approval');
+    if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+    expect(await reasonsOf(res.approvalRequestId)).toEqual([
+      { category: 'open_or_send', state: 'ask', details: [command] },
+    ]);
+  });
+
+  it('allowed by the owner, it runs; a background dev server is never held', async () => {
+    const allowed = await run(
+      'xdg-open report.pdf',
+      gate({ ...DEFAULT_SHELL_POLICY, open_or_send: 'allow' }),
+    );
+    const server = 'Start-Process node -ArgumentList server.js -WindowStyle Hidden -PassThru';
+    const background = await run(server, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+
+    expect(allowed).toMatchObject({ outcome: 'success', output: 'ran:xdg-open report.pdf' });
+    expect(background).toMatchObject({ outcome: 'success', output: `ran:${server}` });
+  });
+
+  it('"never" refuses, asks no one, and points the agent to a tool that asks the person', async () => {
+    const before = await db.select({ id: approvalRequests.id }).from(approvalRequests);
+
+    const res = await run(reproduction, gate({ ...DEFAULT_SHELL_POLICY, open_or_send: 'never' }));
+
+    expect(res.outcome).toBe('error');
+    if (res.outcome !== 'error') throw new Error('unreachable');
+    expect(res.error).toBe(
+      "blocked: the owner does not allow this agent to open a program or a file on the person's " +
+        'screen, print, or send a message through the shell. This is an intentional restriction ' +
+        '— do NOT retry it and do NOT work around it via other commands, scripts or sub-agents. ' +
+        'Instead, if one of your tools does this action and its description says it asks the ' +
+        'person first, use that tool: the person decides there. Otherwise report the limitation ' +
+        'in your result.',
+    );
+    const after = await db.select({ id: approvalRequests.id }).from(approvalRequests);
+    expect(after).toHaveLength(before.length);
+  });
+
+  // Revue de la PR #682, passe 3 : `(`, `)`, `{`, `}` ouvrent une commande ;
+  // `(xdg-open x)` n'est pas un programme nommé `(xdg-open`.
+  // Passe 4 : un programme que le texte ne nomme pas demande, même quand le
+  // code en ligne est permis (comme un téléchargement permis dont la cible est
+  // décidée à l'exécution, #614) ; « never » sur le code en ligne le refuse.
+  it('a program decided at run time asks under the default policy, and "never" on inline code refuses it', async () => {
+    for (const command of ['$PYTHON script.py', '%COMSPEC% /c lpr report.pdf']) {
+      for (const policy of [
+        DEFAULT_SHELL_POLICY,
+        { ...DEFAULT_SHELL_POLICY, inline_code: 'allow' as const },
+      ]) {
+        const res = await run(command, gate(policy, [yolo()]));
+        expect(res.outcome, command).toBe('awaiting_approval');
+        if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+        const reasons = (await reasonsOf(res.approvalRequestId)) as Array<{ category: string }>;
+        expect(
+          reasons.find((r) => r.category === 'inline_code'),
+          command,
+        ).toEqual({ category: 'inline_code', state: 'ask', details: [command] });
+      }
+      const refused = await run(command, gate({ ...DEFAULT_SHELL_POLICY, inline_code: 'never' }));
+      expect(refused.outcome, command).toBe('error');
+    }
+    // a named program still runs unasked under the default policy
+    const named = await run('python script.py', gate(DEFAULT_SHELL_POLICY, [yolo()]));
+    expect(named).toMatchObject({ outcome: 'success', output: 'ran:python script.py' });
+  });
+
+  it('"never" refuses what a group or a block starts, glued or spaced', async () => {
+    for (const command of [
+      'bash -c "(xdg-open report.pdf)"',
+      'bash -c "{ lpr report.pdf; }"',
+      'powershell -Command "(Start-Process report.pdf -Verb Print)"',
+    ]) {
+      const res = await run(command, gate({ ...DEFAULT_SHELL_POLICY, open_or_send: 'never' }));
+      expect(res.outcome, command).toBe('error');
+      if (res.outcome !== 'error') throw new Error('unreachable');
+      expect(res.error, command).toContain("open a program or a file on the person's screen");
+    }
+  });
+
+  // La même issue pour toute sorte : la règle est générale, pas taillée pour l'impression.
+  it('every kind refused says the same remedy, never naming a tool', async () => {
+    const res = await run('rm -rf build', gate({ ...DEFAULT_SHELL_POLICY, delete_files: 'never' }));
+
+    expect(res.outcome).toBe('error');
+    if (res.outcome !== 'error') throw new Error('unreachable');
+    expect(res.error).toContain(
+      'if one of your tools does this action and its description says it asks the person first, use that tool',
+    );
+  });
+
+  it('after a decline, the model reads which kinds held the command and the same remedy', () => {
+    expect(
+      shellChecklistDeclined([
+        { category: 'open_or_send', state: 'ask', details: ['lp report.pdf'] },
+        { category: 'delete_files', state: 'ask', details: ['lp report.pdf'] },
+      ]),
+    ).toBe(
+      "The shell checklist held this command because it would open a program or a file on the person's " +
+        'screen, print, or send a message; delete files or discard work. Do not run it through the shell ' +
+        "again. Unless the person's reason rules the action out: if one of your tools does this action " +
+        'and its description says it asks the person first, use that tool: the person decides there.',
+    );
   });
 });

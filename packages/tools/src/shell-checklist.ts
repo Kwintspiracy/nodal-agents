@@ -25,6 +25,7 @@ import { isAbsolute, resolve } from 'node:path';
 import {
   downloadWrites,
   languageOfShebang,
+  programDecidedAtRunTime,
   programSources,
   readSource,
   staticShellCategories,
@@ -34,6 +35,7 @@ import {
   type ShellPolicy,
   type ShellSourceFinding,
   type ShellUnreadSource,
+  type ScriptShell,
   type SourceLanguage,
 } from '@nodal-agents/shared';
 
@@ -199,7 +201,16 @@ interface Judged {
   text: string;
   place: ShellPlace;
   found: ShellSourceFinding | null;
+  /** The shell a script's line is written for; the host's for the call's own text. */
+  reader: ScriptShell | undefined;
 }
+
+/** The shell that reads the lines of a source in this language, if it is one. */
+const SCRIPT_SHELL: Partial<Record<SourceLanguage, ScriptShell>> = {
+  shell: 'sh',
+  cmd: 'cmd',
+  powershell: 'powershell',
+};
 
 /**
  * What the gate reads for one call, at most (review of #683, P2): how deep
@@ -248,8 +259,14 @@ async function readRunCode(
    * `python -c`) is found there, at its own line.
    */
   origin: { label: string | null; text: string; line: number } | null,
+  /** The shell that reads `command`: a script's, or the host's (undefined). */
+  reader: ScriptShell | undefined,
 ): Promise<void> {
-  const { dirs, sources } = programSources(command, { direct: !fromStrings });
+  const { dirs, sources } = programSources(command, {
+    direct: !fromStrings,
+    host: place.host,
+    reader,
+  });
   const bases = basesOf(dirs, place.cwd);
   for (const source of sources) {
     const named = source.kind === 'file' ? (source.path ?? command) : command;
@@ -328,6 +345,7 @@ async function readRunCode(
       shown = text;
     }
     const reading = readSource(text, language);
+    const lineReader = SCRIPT_SHELL[language];
     // A script runs from the folder its command was in; in a shell script, a
     // `cd` moves the lines after it.
     let cwd = base;
@@ -343,6 +361,7 @@ async function readRunCode(
         text: c.command,
         place: at,
         found: { source: label, line, text: lineOf(shown, line) },
+        reader: lineReader,
       });
       await readRunCode(
         call,
@@ -354,9 +373,13 @@ async function readRunCode(
         judged,
         unread,
         { label, text: shown, line },
+        lineReader,
       );
       if (!reading.fromStrings) {
-        const after = basesOf(programSources(c.command).dirs, cwd);
+        const after = basesOf(
+          programSources(c.command, { direct: true, host: place.host, reader: lineReader }).dirs,
+          cwd,
+        );
         cwd = after[after.length - 1] ?? null;
       }
     }
@@ -390,16 +413,23 @@ export async function judgeShellChecklist(
   // One budget for the whole call: a declared proof's commands share it.
   const budget: ReadBudget = { files: 0, bytes: 0, seen: new Set() };
   for (const command of commands) {
-    judged.push({ call: command, text: command, place, found: null });
+    judged.push({ call: command, text: command, place, found: null, reader: undefined });
     const before = unread.length;
-    await readRunCode(command, command, place, false, 1, budget, judged, unread, null);
+    await readRunCode(command, command, place, false, 1, budget, judged, unread, null, undefined);
     if (unread.length > before) unreadCalls.push(command);
   }
 
   for (const j of judged) {
-    for (const category of staticShellCategories(j.text)) {
+    for (const category of staticShellCategories(j.text, j.place.host, j.reader)) {
       if (policy[category] !== 'allow') {
         add(category, j);
+        continue;
+      }
+      // An allowed kind still asks when the text cannot say what it acts on:
+      // a program decided at run time (`$c x`, `%X% x`) for inline code, as a
+      // target decided at run time for a download (#667, review of PR #682).
+      if (category === 'inline_code') {
+        if (programDecidedAtRunTime(j.text, j.place.host, j.reader)) add(category, j);
         continue;
       }
       if (category !== 'download') continue;
@@ -418,8 +448,16 @@ export async function judgeShellChecklist(
     const where = found.get(category);
     const extra = where !== undefined ? { found: where } : {};
     if (state === 'allow') {
-      // An allowed download that writes outside the job's workspaces asks.
-      reasons.push({ category, state: 'ask', details: list, outside, ...extra });
+      // An allowed download that writes outside the job's workspaces asks,
+      // saying where; allowed inline code that runs a program decided at run
+      // time asks with its commands.
+      reasons.push({
+        category,
+        state: 'ask',
+        details: list,
+        ...(category === 'download' ? { outside } : {}),
+        ...extra,
+      });
       continue;
     }
     reasons.push({ category, state, details: list, ...extra });
@@ -431,7 +469,11 @@ export async function judgeShellChecklist(
   // state applies, never a guess about what the script would do: allowed by
   // default (the owner's decision of 29/09, #618), asked or refused when the
   // owner set it so, and the card then names the file and why.
-  if (unread.length > 0 && policy.inline_code !== 'allow') {
+  // A script whose path the text does not say (`python $SCRIPT`) cannot be
+  // named ahead, like a program decided at run time (#667): it asks even when
+  // inline code is allowed.
+  const decided = unread.some((u) => u.why === 'decided_at_run_time');
+  if (unread.length > 0 && (policy.inline_code !== 'allow' || decided)) {
     const code = reasons.find((r) => r.category === 'inline_code');
     if (code !== undefined) {
       code.unread = unread;
@@ -439,7 +481,7 @@ export async function judgeShellChecklist(
     } else {
       reasons.push({
         category: 'inline_code',
-        state: policy.inline_code,
+        state: policy.inline_code === 'allow' ? 'ask' : policy.inline_code,
         details: unreadCalls,
         unread,
       });
@@ -454,9 +496,21 @@ const CATEGORY_FOR_MODEL: Record<ShellCategory, string> = {
   delete_files: 'delete files or discard work',
   install_software: 'install software or packages',
   download: 'download from the internet',
+  open_or_send: `open a program or a file on the person's screen, print, or send a message`,
   stop_programs: 'stop other programs or services',
   system_settings: 'change system settings, permissions or disks',
 };
+
+/**
+ * Where the action goes instead of the shell, for every kind (#667): a tool
+ * that does it and asks the person itself. An agent holding a print tool that
+ * asks printed through the shell, past that question. Read from the agent's
+ * own tool descriptions, never a tool named here: which tools an agent holds
+ * is data.
+ */
+const ASKING_TOOL_REMEDY =
+  'if one of your tools does this action and its description says it asks the person ' +
+  'first, use that tool: the person decides there.';
 
 /**
  * The refusal the MODEL reads when a kind of action is set to "never".
@@ -466,8 +520,22 @@ const CATEGORY_FOR_MODEL: Record<ShellCategory, string> = {
 export function shellChecklistRefusal(never: readonly ShellGateReason[]): string {
   const what = never.map((r) => CATEGORY_FOR_MODEL[r.category]).join('; ');
   return (
-    `blocked: the owner does not allow this agent to ${what}. This is an intentional ` +
-    `restriction — do NOT retry it and do NOT work around it via other commands, scripts, ` +
-    `tools or sub-agents. Use your allowed tools, or report the limitation in your result.`
+    `blocked: the owner does not allow this agent to ${what} through the shell. This is an ` +
+    `intentional restriction — do NOT retry it and do NOT work around it via other commands, ` +
+    `scripts or sub-agents. Instead, ${ASKING_TOOL_REMEDY} Otherwise report the limitation in your ` +
+    `result.`
+  );
+}
+
+/**
+ * What the MODEL reads, after the person's refusal, when the checklist held
+ * the command (#667): which kinds held it, and the same remedy as a "never".
+ * The person's reason comes first and can rule the action out altogether.
+ */
+export function shellChecklistDeclined(held: readonly ShellGateReason[]): string {
+  const what = held.map((r) => CATEGORY_FOR_MODEL[r.category]).join('; ');
+  return (
+    `The shell checklist held this command because it would ${what}. Do not run it through ` +
+    `the shell again. Unless the person's reason rules the action out: ${ASKING_TOOL_REMEDY}`
   );
 }

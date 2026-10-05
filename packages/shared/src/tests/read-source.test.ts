@@ -158,8 +158,6 @@ describe('readSource: the commands a source runs, with their line (#635) @cap:ex
 // escape: what is read is the escape as the script holds it.
 describe('readSource decodes each language string escapes (review of #683) @cap:executer-une-commande/moteur', () => {
   const B = String.fromCharCode(92);
-  const commandOf = (text: string, language: SourceLanguage): string[] =>
-    readSource(text, language).commands.map((c) => c.command);
   const install = [[1, ['install_software']]];
   const del = [[1, ['delete_files']]];
 
@@ -169,9 +167,8 @@ describe('readSource decodes each language string escapes (review of #683) @cap:
     expect(kinds(`os.system("pip${B}u0020install x")`, 'python')).toEqual(install);
     expect(kinds(`os.system("pip${B}U00000020install x")`, 'python')).toEqual(install);
     expect(kinds(`os.system(b"rm${B}x20-rf x")`, 'python')).toEqual(del);
-    expect(commandOf(`os.system(r"pip${B}x20install x")`, 'python')).toContain(
-      `pip${B}x20install x`,
-    );
+    // A raw string is not decoded: its first word is no program name.
+    expect(kinds(`os.system(r"pip${B}x20install x")`, 'python')).toEqual([]);
   });
 
   it('JavaScript: hex, u and u-brace escapes, and a line continuation', () => {

@@ -13,7 +13,11 @@ import {
 
 /** The files and code a command runs, without the bookkeeping. */
 function sources(cmd: string, direct = true): Array<Partial<ProgramSource>> {
-  return programSources(cmd, { direct }).sources.map((s) =>
+  // Read on the host its paths are written for: a backslash is a separator for
+  // cmd and PowerShell, an escape for sh (a line whose host is not known is
+  // read both ways, and both readings are kept).
+  const host = /[\\]/.test(cmd) ? 'windows' : 'posix';
+  return programSources(cmd, { direct, host }).sources.map((s) =>
     s.kind === 'file'
       ? { kind: s.kind, path: s.path, language: s.language }
       : { kind: s.kind, code: s.code, language: s.language },
@@ -83,9 +87,8 @@ describe('programSources: where the code a command runs is (#635) @cap:executer-
     const [relative] = programSources('.\\setup.bat').sources;
     expect(bare).toMatchObject({ kind: 'file', searched: true, executed: true });
     expect(relative).toMatchObject({ kind: 'file', searched: false, executed: true });
-    // A file an interpreter or a shell reads is source, not a program.
+    // A file an interpreter reads is source, not a program.
     expect(programSources('python x.py').sources[0]).toMatchObject({ executed: false });
-    expect(programSources('source ./env.sh').sources[0]).toMatchObject({ executed: false });
   });
 
   it('the code written into a command, for an interpreter whose code is not a command line', () => {
@@ -349,7 +352,11 @@ describe('cmd conditions without brackets, and here-docs fed to a program (#683)
   it('a here-doc fed to anything else is data, never commands', () => {
     expect(kinds(`cat <<EOF > notes.txt${NL}rm -rf build${NL}pip install x${NL}EOF`)).toEqual([]);
     expect(programSources(`cat <<EOF${NL}pip install x${NL}EOF`).sources).toEqual([]);
-    expect(kinds(`$s = @"${NL}Stop-Process -Name excel${NL}"@`)).toEqual([]);
+    // A script named in a body is no script run.
+    expect(programSources(`cat <<EOF > notes.txt${NL}python build.py${NL}EOF`).sources).toEqual([]);
+    expect(
+      staticShellCategories(`$s = @"${NL}Stop-Process -Name excel${NL}"@`, undefined, 'powershell'),
+    ).toEqual([]);
     // Inline code written in a body is data too.
     expect(kinds(`cat <<EOF > a.txt${NL}python -c "print(1)"${NL}EOF`)).toEqual([]);
     // The line after the here-doc is a command again.
