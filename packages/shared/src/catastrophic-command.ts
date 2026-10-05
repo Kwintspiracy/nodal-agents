@@ -123,7 +123,10 @@ function isInlineEvalFlag(kind: InterpreterKind, flag: string): boolean {
  * approval gate. This is the fix for the "wrap it in an interpreter" bypass class.
  */
 function isInlineEvalUnit(unit: readonly string[]): boolean {
-  const kind = interpreterKind(unit[0] ?? '');
+  const program = unit[0] ?? '';
+  if (isDecidedAtRunTime(program) || program === 'iex' || program === 'invoke-expression')
+    return true;
+  const kind = interpreterKind(program);
   return kind !== null && unit.slice(1).some((t) => isInlineEvalFlag(kind, t.toLowerCase()));
 }
 
@@ -1050,7 +1053,9 @@ function startsWithMatch(re: RegExp, text: string): boolean {
 type LineShell = 'cmd' | 'powershell' | 'sh' | 'exec';
 
 /** What a program that runs another one starts: a line read again, or the words of a program. */
-type Payload = { line: string; shell: LineShell } | { words: ShellWord[]; shell: LineShell };
+type Payload =
+  | { line: string; shell: LineShell }
+  | { words: ShellWord[]; shell: LineShell; invoked?: boolean };
 
 /**
  * cmd's `start ["title"] [/switches] program args`: the first quoted argument
@@ -1247,6 +1252,18 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
     }
     return payloads;
   },
+  // PowerShell's Invoke-Expression: the string is code, read by PowerShell.
+  // Without one it runs what the pipeline hands it (inline code, `isInlineEvalUnit`).
+  iex: (args) => {
+    const rest = args.filter((a) => !/^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i.test(a.text));
+    return rest.length === 0
+      ? []
+      : [{ line: rest.map((a) => a.text).join(' '), shell: 'powershell' }];
+  },
+  // The call and dot-source operators run what they name, even a `$variable`.
+  '&': (args, shell) => (args.length > 0 ? [{ words: [...args], shell, invoked: true }] : []),
+  '.': (args, shell) => (args.length > 0 ? [{ words: [...args], shell, invoked: true }] : []),
+  source: (args, shell) => argv(args, shell),
   // a POSIX shell's reserved words before a command (`for …; do rm $f; done`)
   do: before,
   then: before,
@@ -1258,6 +1275,62 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
   '!': before,
 };
 RUNS_ANOTHER['pwsh'] = RUNS_ANOTHER['powershell'] as (typeof RUNS_ANOTHER)[string];
+RUNS_ANOTHER['invoke-expression'] = RUNS_ANOTHER['iex'] as (typeof RUNS_ANOTHER)[string];
+
+/**
+ * Words that name a shell's keyword, builtin, alias or cmdlet, not a file:
+ * written with a path (`./start`, `C:\x\start.exe`), they name that file
+ * (review of PR #682, pass 4). A path to a real program that runs another
+ * (`/usr/bin/sudo`, `C:\Windows\System32\cmd.exe`) is still that program.
+ */
+const SHELL_KEYWORDS = new Set([
+  'start',
+  'call',
+  'for',
+  'doskey',
+  'do',
+  'then',
+  'else',
+  'elif',
+  'if',
+  'while',
+  'until',
+  '!',
+  'eval',
+  'exec',
+  'command',
+  'source',
+  'iex',
+  'invoke-expression',
+  'start-process',
+  'saps',
+  'ii',
+  'invoke-item',
+  'out-printer',
+  'send-mailmessage',
+]);
+
+/**
+ * A program word the text does not name: it comes from a variable (`$c`,
+ * `%X%`, `!X!`) or a substitution (`` `…` ``, `$(…)`, `lpr$(echo)`, PowerShell's
+ * `& (…)`). Like a download target decided when the command runs (#614), it
+ * cannot be read ahead (review of PR #682, pass 4).
+ */
+function isDecidedAtRunTime(word: string): boolean {
+  return /[$`]|%[^%\s]+%|![^!\s]+!/.test(word);
+}
+
+/**
+ * True when a command line runs a program the text does not name. The gate
+ * asks for it even when inline code is allowed, as an allowed download asks
+ * when its target is decided at run time.
+ */
+export function programDecidedAtRunTime(cmd: string, host?: ShellHost): boolean {
+  if (typeof cmd !== 'string' || cmd.trim() === '') return false;
+  return commandUnits(withoutRedirections(cmd), 0, topShell(host)).some((u) =>
+    isDecidedAtRunTime(u[0] ?? ''),
+  );
+}
 
 /** The programs whose purpose is to run another one, as `commandUnits` reads them. */
 export const RUNS_ANOTHER_PROGRAMS: readonly string[] = Object.keys(RUNS_ANOTHER);
@@ -1325,7 +1398,12 @@ function topShell(host: ShellHost | undefined): LineShell | undefined {
 }
 
 /** The units of one command, given as its words. */
-function wordUnits(words: readonly ShellWord[], depth: number, shell: LineShell): string[][] {
+function wordUnits(
+  words: readonly ShellWord[],
+  depth: number,
+  shell: LineShell,
+  invoked = false,
+): string[][] {
   if (depth > 8) return [];
   // `FOO=1 rm -rf build`: variables set for the command are not the program
   // (review of PR #476).
@@ -1333,7 +1411,31 @@ function wordUnits(words: readonly ShellWord[], depth: number, shell: LineShell)
   while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k]?.text ?? '')) k += 1;
   const head = words[k];
   if (head === undefined) return [];
-  const program = interpreterBasename(head.text);
+  // In PowerShell a statement that starts with `$` is an expression, not a
+  // command: it runs a program only through `&` or `.` (`invoked`). Its
+  // assignment runs what its right side names when that is a command
+  // (`$r = Invoke-RestMethod x`), never a string or a value (`$c = 'lpr'`).
+  if (shell === 'powershell' && !invoked && head.text.startsWith('$')) {
+    const tail =
+      head.tail ??
+      words
+        .slice(k)
+        .map((w) => w.text)
+        .join(' ');
+    const eq = tail.indexOf('=');
+    const right = eq < 0 ? '' : tail.slice(eq + 1).trim();
+    return eq < 0 || /^[$'"(@\[\d-]/.test(right) || right === ''
+      ? []
+      : commandUnits(right, depth + 1, 'powershell');
+  }
+  // A program the text does not name (#667, review of PR #682, pass 4) keeps
+  // its words, so it is never taken for a program it may not be; one written
+  // with a path is that file, never the shell's keyword of the same name.
+  const program =
+    isDecidedAtRunTime(head.text) ||
+    (/[\\/]/.test(head.text) && SHELL_KEYWORDS.has(interpreterBasename(head.text)))
+      ? head.text.toLowerCase()
+      : interpreterBasename(head.text);
   const args =
     program === 'start' && shell === 'cmd'
       ? withoutStartTitle(words.slice(k + 1))
@@ -1351,7 +1453,7 @@ function wordUnits(words: readonly ShellWord[], depth: number, shell: LineShell)
     units.push(
       ...('line' in payload
         ? commandUnits(payload.line, depth + 1, payload.shell)
-        : wordUnits(payload.words, depth + 1, payload.shell)),
+        : wordUnits(payload.words, depth + 1, payload.shell, payload.invoked === true)),
     );
   }
   return units;
@@ -1484,6 +1586,13 @@ function scanLine(line: string, g: Grammar): ShellWord[][] {
       at += 1;
     } else if (g.separators.includes(ch)) {
       endCommand(at);
+      // PowerShell's call operator starts a command whose program follows it;
+      // before a parenthesised expression, that program is decided at run time.
+      if (g === POWERSHELL && ch === '&' && next !== '&') {
+        const after = line.slice(at + 1).trimStart();
+        words.push({ text: '&', quoted: false, start: at });
+        if (after.startsWith('(')) words.push({ text: '$(…)', quoted: false, start: at });
+      }
     } else if (/\s/.test(ch) || ch === '<' || ch === '>') {
       endWord();
     } else {

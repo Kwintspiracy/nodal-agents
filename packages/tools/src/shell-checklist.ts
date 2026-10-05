@@ -21,6 +21,7 @@
 import { isAbsolute, resolve } from 'node:path';
 import {
   downloadWrites,
+  programDecidedAtRunTime,
   staticShellCategories,
   type ShellCategory,
   type ShellGateReason,
@@ -109,6 +110,13 @@ export async function judgeShellChecklist(
         add(category, command);
         continue;
       }
+      // An allowed kind still asks when the text cannot say what it acts on:
+      // a program decided at run time (`$c x`, `%X% x`) for inline code, as a
+      // target decided at run time for a download (#667, review of PR #682).
+      if (category === 'inline_code') {
+        if (programDecidedAtRunTime(command, place.host)) add(category, command);
+        continue;
+      }
       if (category !== 'download') continue;
       const places = await downloadsOutside(command, place);
       if (places.length === 0) continue;
@@ -121,8 +129,15 @@ export async function judgeShellChecklist(
   for (const [category, list] of details) {
     const state = policy[category];
     if (state === 'allow') {
-      // An allowed download that writes outside the job's workspaces asks.
-      reasons.push({ category, state: 'ask', details: list, outside });
+      // An allowed download that writes outside the job's workspaces asks,
+      // saying where; allowed inline code that runs a program decided at run
+      // time asks with its commands.
+      reasons.push({
+        category,
+        state: 'ask',
+        details: list,
+        ...(category === 'download' ? { outside } : {}),
+      });
       continue;
     }
     reasons.push({ category, state, details: list });

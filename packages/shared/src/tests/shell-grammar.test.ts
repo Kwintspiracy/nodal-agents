@@ -74,7 +74,9 @@ describe('command boundaries follow the shell that reads the line (#667, review 
       'write-host',
       'lpr',
     ]);
+    // `&` is the call operator: a unit of its own, and what it calls is the program.
     expect(programs("& 'C:\\Windows\\notepad.exe' /p report.txt", 'powershell')).toEqual([
+      '&',
       'notepad',
     ]);
   });

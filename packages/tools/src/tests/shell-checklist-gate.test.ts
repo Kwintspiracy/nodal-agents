@@ -811,6 +811,32 @@ describe('what reaches the screen, a printer or someone is asked (#667) @cap:exe
 
   // Revue de la PR #682, passe 3 : `(`, `)`, `{`, `}` ouvrent une commande ;
   // `(xdg-open x)` n'est pas un programme nommé `(xdg-open`.
+  // Passe 4 : un programme que le texte ne nomme pas demande, même quand le
+  // code en ligne est permis (comme un téléchargement permis dont la cible est
+  // décidée à l'exécution, #614) ; « never » sur le code en ligne le refuse.
+  it('a program decided at run time asks under the default policy, and "never" on inline code refuses it', async () => {
+    for (const command of ['$PYTHON script.py', '%COMSPEC% /c lpr report.pdf']) {
+      for (const policy of [
+        DEFAULT_SHELL_POLICY,
+        { ...DEFAULT_SHELL_POLICY, inline_code: 'allow' as const },
+      ]) {
+        const res = await run(command, gate(policy, [yolo()]));
+        expect(res.outcome, command).toBe('awaiting_approval');
+        if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+        const reasons = (await reasonsOf(res.approvalRequestId)) as Array<{ category: string }>;
+        expect(
+          reasons.find((r) => r.category === 'inline_code'),
+          command,
+        ).toEqual({ category: 'inline_code', state: 'ask', details: [command] });
+      }
+      const refused = await run(command, gate({ ...DEFAULT_SHELL_POLICY, inline_code: 'never' }));
+      expect(refused.outcome, command).toBe('error');
+    }
+    // a named program still runs unasked under the default policy
+    const named = await run('python script.py', gate(DEFAULT_SHELL_POLICY, [yolo()]));
+    expect(named).toMatchObject({ outcome: 'success', output: 'ran:python script.py' });
+  });
+
   it('"never" refuses what a group or a block starts, glued or spaced', async () => {
     for (const command of [
       'bash -c "(xdg-open report.pdf)"',
