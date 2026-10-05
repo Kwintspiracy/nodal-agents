@@ -64,4 +64,34 @@ describe("cmd's @ prefix and start's switches with a value (#667, review of #682
     ]);
     expect(opensOrSends('start /b /D C:\\work node server.js')).toBe(false);
   });
+
+  // Passe 7 : UN analyseur de `start`, de gauche à droite. Une valeur de /D
+  // entre guillemets n'est pas le titre ; le titre est le premier argument
+  // entre guillemets qui n'est pas une valeur d'option.
+  it('a quoted value of /D is the value, never the title: one reading of start', () => {
+    for (const cmd of [
+      'start /b /D "C:\\work" report.pdf',
+      'start /b /D "C:\\Program Files\\app" explorer C:\\Users\\x\\Pictures',
+      'start /b /D "C:\\work" pwsh -Command "Get-Content report.txt | Out-Printer"',
+      'start "title" /D "C:\\x" notepad /p r.txt',
+      'start /D "C:\\x" "title" notepad /p r.txt',
+    ]) {
+      expect(opensOrSends(cmd), cmd).toBe(true);
+    }
+    expect(isCatastrophicCommand('start /b /D "C:\\work" format C: /q', 'windows')).toBe(true);
+    expect(commandUnits('start /D "C:\\x" "title" app.exe', 0, 'cmd')).toEqual([
+      ['start', '/D', 'C:\\x', 'app.exe'],
+      ['app'],
+    ]);
+    expect(commandUnits('start "" /b /D "C:\\a b" node server.js', 0, 'cmd')).toEqual([
+      ['start', '/b', '/D', 'C:\\a b', 'node', 'server.js'],
+      ['node', 'server.js'],
+    ]);
+    expect(opensOrSends('start "" /b /D "C:\\a b" node server.js')).toBe(false);
+    // In a PowerShell line, `start` is Start-Process: its named parameters,
+    // not cmd's form (a hidden dev server stays unasked).
+    expect(
+      opensOrSends(`powershell -Command "start node -ArgumentList server.js -WindowStyle Hidden"`),
+    ).toBe(false);
+  });
 });

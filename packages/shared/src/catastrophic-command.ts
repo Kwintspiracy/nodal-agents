@@ -658,13 +658,50 @@ interface Launch {
   verb: boolean;
   /** No window: `start /b`, `-NoNewWindow`, `-WindowStyle Hidden`. */
   windowless: boolean;
+  /** Where cmd's window title stands among the words, when there is one. */
+  titleIndex: number | null;
 }
 
-/** Read the words of `start` / `Start-Process`, in cmd's form and in PowerShell's. */
-function readLaunch(args: readonly string[]): Launch {
-  const launch: Launch = { target: null, launched: [], verb: false, windowless: false };
+/**
+ * Which form a launcher's words take: cmd's `start` (switches `/x`, a window
+ * title, then the program and ITS words), or PowerShell's `Start-Process`
+ * (named parameters anywhere; `start` and `saps` are its aliases there, and
+ * `wordUnits` names `start` `start-process` in a PowerShell line).
+ */
+type LaunchForm = 'cmd' | 'powershell';
+
+/**
+ * THE reading of `start` / `Start-Process`, left to right (review of PR #682,
+ * pass 7). cmd: switches with their values (spaced, glued or quoted), the
+ * window title (the first quoted argument that is not a switch's value, when
+ * `readTitle`), then what it starts and its own words, untouched. PowerShell:
+ * its named parameters, then the positional file and argument list. The
+ * title, what it starts and how are all read from here, nowhere else.
+ */
+function readLaunch(words: readonly ShellWord[], form: LaunchForm, readTitle = false): Launch {
+  const args = words.map((w) => w.text);
+  const launch: Launch = {
+    target: null,
+    launched: [],
+    verb: false,
+    windowless: false,
+    titleIndex: null,
+  };
   for (let i = 0; i < args.length; i++) {
     const word = args[i] ?? '';
+    if (form === 'cmd') {
+      if (launch.target !== null) {
+        launch.launched.push(word);
+      } else if (readTitle && launch.titleIndex === null && words[i]?.quoted) {
+        launch.titleIndex = i;
+      } else if (/^\/(d|node|affinity|machine)$/i.test(word)) {
+        // `/D path`, `/NODE n`, `/AFFINITY hex`, `/MACHINE x` take a value (pass 6).
+        i += 1;
+      } else if (/^\/d\S/i.test(word) || /^\/\w+$/.test(word)) {
+        if (word.toLowerCase() === '/b') launch.windowless = true;
+      } else launch.target = word;
+      continue;
+    }
     if (word.startsWith('-')) {
       const [rawName, inlineValue] = word.slice(1).toLowerCase().split(':', 2);
       const name = rawName ?? '';
@@ -683,26 +720,15 @@ function readLaunch(args: readonly string[]): Launch {
       else if (param === 'argumentlist') launch.launched.push(...value.split(/[\s,]+/));
       continue;
     }
-    if (launch.target === null) {
-      // cmd's own switches come before what it starts: `start /b /min prog`.
-      // `/D path` (also glued, `/DC:\work`), `/NODE n`, `/AFFINITY hex` and
-      // `/MACHINE x` take a value, never what it starts (review of PR #682, pass 6).
-      if (/^\/(d|node|affinity|machine)$/i.test(word)) {
-        i += 1;
-        continue;
-      }
-      if (/^\/d\S/i.test(word) || /^\/\w+$/.test(word)) {
-        if (word.toLowerCase() === '/b') launch.windowless = true;
-        continue;
-      }
-      launch.target = word;
-      continue;
-    }
-    launch.launched.push(...word.split(/[\s,]+/));
+    if (launch.target === null) launch.target = word;
+    else launch.launched.push(...word.split(/[\s,]+/));
   }
   launch.launched = launch.launched.filter((w) => w !== '');
   return launch;
 }
+
+/** The form of a launcher unit's words: `start` is cmd's, the others PowerShell's. */
+const launchForm = (program: string): LaunchForm => (program === 'start' ? 'cmd' : 'powershell');
 
 /**
  * cmd's `start` and PowerShell's `Start-Process` hand what they start to the
@@ -712,8 +738,10 @@ function readLaunch(args: readonly string[]): Launch {
  * in the background, the dev server idiom on Windows; what that program does
  * is read as its own command (`commandUnits`).
  */
-function launchReachesOut(args: readonly string[]): boolean {
-  const { target, verb, windowless } = readLaunch(args);
+function launchReachesOut(program: string, args: readonly string[]): boolean {
+  // The unit has no title left: `wordUnits` took it out with this same reading.
+  const words = args.map((text) => ({ text, quoted: false }));
+  const { target, verb, windowless } = readLaunch(words, launchForm(program));
   return verb || !windowless || (target !== null && isDocumentOrAddress(target));
 }
 
@@ -723,7 +751,7 @@ function reachesOut(unit: readonly string[]): boolean {
   const args = unit.slice(1);
   if (OUTWARD_PROGRAMS.has(program)) return true;
   if (OUTWARD_SUBCOMMANDS[program]?.has((args[0] ?? '').toLowerCase())) return true;
-  if (LAUNCHERS.has(program)) return launchReachesOut(args);
+  if (LAUNCHERS.has(program)) return launchReachesOut(program, args);
   const windowless = DESKTOP_PROGRAMS.get(program);
   if (windowless !== undefined) {
     return args.some((a) => PRINT_FLAGS.has(a.toLowerCase())) || !keepsWindowless(args, windowless);
@@ -1209,19 +1237,6 @@ type Payload =
   | { words: ShellWord[]; shell: LineShell; invoked?: boolean };
 
 /**
- * cmd's `start ["title"] [/switches] program args`: the first quoted argument
- * before the program is ALWAYS the window title, empty or not, wherever the
- * switches sit (review of PR #682, pass 1). Never what it starts.
- */
-function withoutStartTitle(args: readonly ShellWord[]): ShellWord[] {
-  for (let j = 0; j < args.length; j++) {
-    if (args[j]?.quoted) return [...args.slice(0, j), ...args.slice(j + 1)];
-    if (!/^\/\w+$/.test(args[j]?.text ?? '')) break;
-  }
-  return [...args];
-}
-
-/**
  * The words after a program's options: `-x`, `--long`, `--long=v`, and for the
  * options in `valued`, the word that follows. `--` ends them.
  */
@@ -1523,9 +1538,9 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
   },
   doskey: () => [],
   // cmd's start, PowerShell's Start-Process: what it starts, with its arguments.
-  start: (args) => launchedWords(args),
-  'start-process': (args) => launchedWords(args),
-  saps: (args) => launchedWords(args),
+  start: (args) => launchedWords('start', args),
+  'start-process': (args) => launchedWords('start-process', args),
+  saps: (args) => launchedWords('saps', args),
   // `find … -exec cmd {} ;`, each of them.
   find: (args) => {
     const payloads: Payload[] = [];
@@ -1625,8 +1640,9 @@ export function programDecidedAtRunTime(cmd: string, host?: ShellHost): boolean 
 export const RUNS_ANOTHER_PROGRAMS: readonly string[] = Object.keys(RUNS_ANOTHER);
 
 /** What `start` / `Start-Process` starts, as the words of a program (no shell). */
-function launchedWords(args: readonly ShellWord[]): Payload[] {
-  const { target, launched } = readLaunch(args.map((a) => a.text));
+function launchedWords(program: string, args: readonly ShellWord[]): Payload[] {
+  // `args` has no title left: `wordUnits` took it out with this same reading.
+  const { target, launched } = readLaunch(args, launchForm(program));
   if (target === null) return [];
   return argv([target, ...launched].map((text) => ({ text, quoted: false })));
 }
@@ -1720,15 +1736,19 @@ function wordUnits(
   // A program the text does not name (#667, review of PR #682, pass 4) keeps
   // its words, so it is never taken for a program it may not be; one written
   // with a path is that file, never the shell's keyword of the same name.
-  const program =
+  const named =
     isDecidedAtRunTime(head.text) ||
     (/[\\/]/.test(head.text) && SHELL_KEYWORDS.has(interpreterBasename(head.text)))
       ? head.text.toLowerCase()
       : interpreterBasename(head.text);
-  const args =
-    program === 'start' && shell === 'cmd'
-      ? withoutStartTitle(words.slice(k + 1))
-      : words.slice(k + 1);
+  // In a PowerShell line `start` is Start-Process's alias, never cmd's start:
+  // named so, its words are read in PowerShell's form (`readLaunch`).
+  const program = shell === 'powershell' && named === 'start' ? 'start-process' : named;
+  // cmd's `start ["title"] …`: the title is no program and no argument of it,
+  // read by THE reading of start (`readLaunch`), never by a walk of its own.
+  const after = words.slice(k + 1);
+  const title = program === 'start' ? readLaunch(after, 'cmd', true).titleIndex : null;
+  const args = title === null ? after : after.filter((_, j) => j !== title);
   const texts = args.map((a) => a.text);
   const units: string[][] = [[program, ...texts]];
   // `python -m pip install x` runs pip: the module is the program (review of
