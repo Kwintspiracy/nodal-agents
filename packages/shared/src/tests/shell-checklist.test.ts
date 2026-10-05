@@ -474,6 +474,105 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
     expect(paths('curl -o /tmp/dev/null https://x/a')).toEqual(['/tmp/dev/null']);
   });
 
+  // #669, second pass: the rule is ONE predicate (`isNowhere`) that every kind
+  // of write goes through, and it covers each standard device of each shell, not
+  // only the three the first report named.
+  it('every standard device of every shell is nowhere, written by any form of write (#669)', () => {
+    const paths = (cmd: string) => downloadWrites(cmd).targets.map((t) => t.path);
+    const devices = [
+      '/dev/null',
+      '/dev/zero',
+      '/dev/full',
+      '/dev/random',
+      '/dev/urandom',
+      '/dev/tty',
+      '/dev/stdin',
+      '/dev/stdout',
+      '/dev/stderr',
+      '/dev/fd/1',
+      '/dev/fd/12',
+      'NUL',
+      'nul',
+      'Nul:',
+      'nul.txt',
+      'NUL.tar.gz',
+      'CON',
+      'con:',
+      'CONOUT$',
+      '\\\\.\\NUL',
+      '\\\\.\\nul',
+      '\\\\.\\CONOUT$',
+      '$null',
+      '$NULL',
+    ];
+    for (const device of devices) {
+      for (const cmd of [
+        `curl -s -o ${device} https://x/a`,
+        `curl -s --output ${device} https://x/a`,
+        `curl https://x/a > ${device}`,
+        `curl https://x/a >> ${device}`,
+        `curl https://x/a 2> ${device}`,
+        `curl https://x/a 2>${device}`,
+        `curl https://x/a &> ${device}`,
+        `curl https://x/a &>>${device}`,
+        `curl https://x/a >${device} 2>&1`,
+        `iwr https://x/a -OutFile ${device}`,
+        `iwr https://x/a | Out-File ${device}`,
+        `iwr https://x/a | Set-Content ${device}`,
+        `curl https://x/a | tee ${device}`,
+      ]) {
+        expect(paths(cmd), cmd).toEqual([]);
+      }
+    }
+    // Nothing is written by a pipe into Out-Null, whatever else the line does.
+    expect(paths('iwr https://x/a | Out-Null')).toEqual([]);
+    expect(paths('curl -sI https://x/a 2>&1 >/dev/null')).toEqual([]);
+  });
+
+  it('a name that only starts like a device, or a device beyond the bare name, is a place (#669)', () => {
+    const paths = (cmd: string) => downloadWrites(cmd).targets.map((t) => t.path);
+    for (const place of [
+      '/dev/sda', // a disk is a place
+      '/dev/tty1',
+      '/dev/fd/',
+      '/dev/fd/x',
+      '/dev/fd/1/x',
+      '/dev/zeroes',
+      'dev/null', // relative: a folder named dev
+      './dev/null',
+      '/tmp/dev/null',
+      'null',
+      'con/a.txt',
+      'console.log',
+      'nulled',
+      'nul/a',
+      '\\\\.\\C:\\x',
+    ]) {
+      expect(paths(`curl -s -o ${place} https://x/a`), place).toEqual([place]);
+      expect(paths(`curl https://x/a > ${place}`), place).toEqual([place]);
+    }
+  });
+
+  it('a device in the same line never hides a real place, in any order and any form (#669)', () => {
+    const paths = (cmd: string) => downloadWrites(cmd).targets.map((t) => t.path);
+    expect(paths('curl -s -o /etc/x https://x/a 2>/dev/null')).toEqual(['/etc/x']);
+    expect(paths('curl https://x/a 2>/dev/null > ../outside.txt')).toEqual(['../outside.txt']);
+    expect(paths('curl https://x/a > ../outside.txt 2>/dev/null')).toEqual(['../outside.txt']);
+    expect(paths('curl https://x/a &>/dev/null > C:\\Windows\\x')).toEqual(['C:\\Windows\\x']);
+    expect(paths('curl -s -o /dev/null https://x/a && curl -o /etc/x https://x/b')).toEqual([
+      '/etc/x',
+    ]);
+    expect(paths('curl https://x/a > NUL && curl https://x/b > C:\\Windows\\x')).toEqual([
+      'C:\\Windows\\x',
+    ]);
+    // The stderr of a download goes to a file as surely as its stdout does.
+    expect(paths('curl https://x/a 2>../err.log')).toEqual(['../err.log']);
+    expect(paths('curl https://x/a &> ../all.log')).toEqual(['../all.log']);
+    // A redirection to a descriptor writes no file.
+    expect(paths('curl https://x/a 2>&1')).toEqual([]);
+    expect(paths('curl -sI https://x/a >&2')).toEqual([]);
+  });
+
   it('a program with its own store names no path: nothing to judge', () => {
     for (const cmd of [
       'ollama pull llama3',

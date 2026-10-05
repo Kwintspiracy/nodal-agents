@@ -513,6 +513,72 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     ]);
   });
 
+  it('the card names the place as written: never a path the command did not write (#669)', async () => {
+    // A rooted path with no drive (`/srv/x`, what a POSIX or Git-Bash command
+    // writes) is judged on Windows as the current drive's `\srv\x`. The reason
+    // shown to the person said `/srv/x → D:\rv/x`, a place nobody wrote.
+    for (const named of [
+      '/nodal-gate-void/a.jpg',
+      '/dev/nodal-gate-void/a.jpg',
+      '/c/nodal/x.jpg',
+    ]) {
+      const command = `curl -s -o ${named} -w "%{http_code}" https://x/a 2>/dev/null`;
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res.outcome, named).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      expect(await reasonsOf(res.approvalRequestId), named).toEqual([
+        {
+          category: 'download',
+          state: 'ask',
+          details: [command],
+          outside: [{ command, places: [named] }],
+        },
+      ]);
+    }
+  });
+
+  it('a device in the line never hides the real place, whatever shell wrote it (#669)', async () => {
+    const outside = join(elsewhere, 'x.bin');
+    for (const command of [
+      `curl -s -o ${outside} https://x/a 2>/dev/null`,
+      `curl -s https://x/a 2>/dev/null > ${outside}`,
+      `curl -s https://x/a &>/dev/null > ${outside}`,
+      `curl -s https://x/a 2>nul > ${outside}`,
+      `curl -s -o NUL https://x/b && curl -s -o ${outside} https://x/a`,
+    ]) {
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res.outcome, command).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      expect(await reasonsOf(res.approvalRequestId), command).toEqual([
+        {
+          category: 'download',
+          state: 'ask',
+          details: [command],
+          outside: [{ command, places: [outside] }],
+        },
+      ]);
+    }
+  });
+
+  it('every device of every shell, on any download, asks no one (#669)', async () => {
+    for (const command of [
+      'curl -sI -o /dev/null https://x/a',
+      'curl -s https://x/a > /dev/zero',
+      'curl -s https://x/a 2>/dev/null > /dev/fd/2',
+      'curl -s https://x/a &>/dev/null',
+      'curl -s https://x/a 2>nul > NUL',
+      'curl -s https://x/a > CON',
+      'iwr https://x/a -OutFile $null',
+      'iwr https://x/a | Out-Null',
+      'wget -qO /dev/tty https://x/a',
+    ]) {
+      const before = await approvalCount();
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res, command).toMatchObject({ outcome: 'success', output: `ran:${command}` });
+      expect(await approvalCount(), command).toBe(before);
+    }
+  });
+
   it('run_command with no cwd and several workspaces: the agent is told, no one is asked', async () => {
     // The SHIPPED tool: its own refusal, not a fake's. Every posture that
     // would otherwise reach a person — the checklist (a "relative" download

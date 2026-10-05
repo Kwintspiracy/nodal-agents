@@ -489,7 +489,7 @@ export function staticShellCategories(cmd: string): StaticShellCategory[] {
   // the tokenizer, so it is read on the text of that segment. `curl --version
   // > log` is still a read.
   if (
-    /(^|[;&|(]\s*)(curl|irm|Invoke-RestMethod)\b[^;&|\n]*>/i.test(cmd) &&
+    /(^|[;&|(]\s*)(curl|irm|Invoke-RestMethod)\b(?:[^;&|\n]|&(?=>))*>/i.test(cmd) &&
     !commandUnits(withoutRedirections(cmd))
       .filter((u) => /^(curl|irm|invoke-restmethod)$/i.test(u[0] ?? ''))
       .every(isVersionOrHelpOnly)
@@ -596,20 +596,35 @@ function changeDirArg(program: string, args: readonly string[]): string | null {
 }
 
 /**
- * A null device or a standard stream: what is written there lands in no place
+ * A device or a standard stream: what is written there lands in no place
  * (#669, approbation 0330a0fc du 02/10 : `curl -o /dev/null` lu comme un
- * fichier hors de l'espace interrogeait la personne). `/dev/null`,
- * `/dev/stdout`, `/dev/stderr`, PowerShell's `$null`, and Windows' `NUL` in
- * any case, with or without an extension (`nul.json` is the device too). Read
- * the same on every OS: the text is judged, not the machine it runs on. Only
- * the bare name: `nul/a.json` or `/tmp/dev/null` are places. A tool's own `-`
- * for its standard output is read where the tool is (`curl -o -`, `wget -O -`):
- * for a shell redirection or `tee`, `-` is a file. What KIND of action the
- * line is does not change: only where it writes.
+ * fichier hors de l'espace interrogeait la personne). THE one rule every write
+ * goes through (a fetcher's output, a pipe writer, a redirection): a device is
+ * never judged against a workspace, and never named on a card.
+ *
+ * - POSIX and Git Bash: `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`,
+ *   `/dev/urandom`, `/dev/tty`, `/dev/stdin|stdout|stderr`, `/dev/fd/N`.
+ *   Never `/dev/sda` or `/dev/tty1`: a disk or a console of the machine is a
+ *   place.
+ * - Windows: `NUL` and `CON` in any case, with a `:` (`nul:`) or an extension
+ *   (`nul.json`, `NUL.tar.gz`: the device is what comes before the first dot),
+ *   `CONIN$` / `CONOUT$`, and the same behind `\\.\`. The other reserved names
+ *   (`PRN`, `AUX`, `COM1`, `LPT1`) reach hardware, which is a place to ask about.
+ * - PowerShell: `$null`.
+ *
+ * Read the same on every OS: the text is judged, not the machine it runs on.
+ * Only the bare name: `nul/a.json` or `/tmp/dev/null` are places. A tool's own
+ * `-` for its standard output is read where the tool is (`curl -o -`,
+ * `wget -O -`): for a shell redirection or `tee`, `-` is a file. What KIND of
+ * action the line is does not change: only where it writes.
  */
 function isNowhere(p: string): boolean {
-  return /^\/dev\/(null|stdout|stderr)$/.test(p) || /^(\$null|nul(\.[^\\/]*)?)$/i.test(p);
+  return POSIX_DEVICE.test(p) || WINDOWS_DEVICE.test(p) || POWERSHELL_NULL.test(p);
 }
+
+const POSIX_DEVICE = /^\/dev\/(?:null|zero|full|random|urandom|tty|stdin|stdout|stderr|fd\/\d+)$/;
+const WINDOWS_DEVICE = /^(?:\\\\\.\\)?(?:(?:nul|con)(?::|\.[^\\/]*)?|conin\$|conout\$)$/i;
+const POWERSHELL_NULL = /^\$null$/i;
 
 /** A path as written, or null when the shell decides it at run time. */
 function readablePath(p: string): string | null {
@@ -807,11 +822,15 @@ const GIT_CLONE_VALUE_FLAGS = new Set([
   '--bundle-uri',
 ]);
 
-/** Where the shell writes a line's output: `> file`, `>> file`. */
+/**
+ * Where the shell writes a line's output: `> file`, `>> file`, `>| file`, and
+ * the same for another descriptor (`2> file`, the error log of a download) or
+ * both (`&> file`). A redirection to a descriptor (`2>&1`, `>&2`) names no file.
+ */
 function redirectionTargets(cmd: string): string[] {
   const targets: string[] = [];
-  for (const m of cmd.matchAll(/(^|[^\d&>])1?>>?\s*("[^"]*"|'[^']*'|[^\s;&|()<>]+)/g)) {
-    const t = stripQuotes(m[2] ?? '');
+  for (const m of cmd.matchAll(/(?:^|[^<>])(?:&|\d+)?>>?\|?\s*("[^"]*"|'[^']*'|[^\s;&|()<>]+)/g)) {
+    const t = stripQuotes(m[1] ?? '');
     if (t.startsWith('&')) continue;
     targets.push(t);
   }

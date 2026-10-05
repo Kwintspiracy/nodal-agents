@@ -69,7 +69,7 @@ async function downloadsOutside(command: string, place: ShellPlace): Promise<str
     }
     const from = after === null ? bases : [bases[after] ?? null];
     const candidates = isAbsolute(path)
-      ? [path]
+      ? [resolve(path)]
       : from.map((b) => (b === null ? null : resolve(b, path)));
     for (const candidate of candidates) {
       if (candidate === null || !(await place.inWorkspace(candidate))) {
