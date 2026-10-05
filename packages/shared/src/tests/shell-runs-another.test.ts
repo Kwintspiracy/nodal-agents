@@ -14,6 +14,7 @@ import {
   commandUnits,
   isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
+  isInlineInterpreterEvalCommand,
   RUNS_ANOTHER_PROGRAMS,
   staticShellCategories,
 } from '../catastrophic-command';
@@ -92,7 +93,8 @@ describe('a program that runs another: what it runs is read (#667, review of #68
     expect(
       opensOrSends(`cmd /c powershell -Command "start 'C:\\out\\report.pdf' -WindowStyle Hidden"`),
     ).toBe(true);
-    expect(kinds(`wsl sh -c "timeout 5 rm -rf build"`)).toEqual(['delete_files']);
+    // `sh -c` is inline code wherever it is started from, as it always was at the top.
+    expect(kinds(`wsl sh -c "timeout 5 rm -rf build"`)).toEqual(['delete_files', 'inline_code']);
   });
 
   it('everyday commands through a wrapper are not read as reaching out', () => {
@@ -128,5 +130,92 @@ describe('a program that runs another: what it runs is read (#667, review of #68
     expect(isDestructiveOrHeavyCommand('sudo wget --version')).toBe(false);
     expect(isCatastrophicCommand('sudo shutdown --help')).toBe(false);
     expect(isCatastrophicCommand('sudo shutdown -h now')).toBe(true);
+  });
+});
+
+// Feu vert du 05/10 (revue de la PR #682) : les deux dernières lectures qui
+// déballaient à leur façon, le code en ligne et le plancher catastrophique,
+// passent par le même mécanisme. Prouvé avant : sur 0d1faac3, `wsl rm -rf /`,
+// `timeout 5 rm -rf /`, `nohup format C: /q`, `cmd /q /c "rd /s /q C:\"`,
+// `sudo -u root rm -rf /`, `env -i rm -rf /`, `nice rm -rf /` et
+// `xargs rm -rf /` passaient le plancher ; `wsl python -c`, `timeout 5 node
+// -e`, `sudo -u me python -c`, `nohup python -c` et `curl x | timeout 5 bash`
+// n'étaient pas du code en ligne.
+describe('the catastrophic floor and inline code read through every wrapper (#667, review of #682) @cap:executer-une-commande/moteur', () => {
+  it('the floor sees a machine-wide destroyer through every program that runs another', () => {
+    for (const cmd of [
+      'wsl rm -rf /',
+      'timeout 5 rm -rf /',
+      'nohup format C: /q',
+      'cmd /q /c "rd /s /q C:\\"',
+      'sudo -u root rm -rf /',
+      'env -i rm -rf /',
+      'nice rm -rf /',
+      'xargs rm -rf /',
+      `powershell -Command "cmd /c 'rd /s /q C:\\'"`,
+      'wsl sh -c "timeout 5 rm -rf --no-preserve-root /"',
+      // still caught, as before
+      'cmd /c rd /s /q C:\\',
+      'sudo rm -rf /',
+      'bash -c "rm -rf /"',
+      'powershell -Command "Remove-Item -Recurse -Force C:\\"',
+    ]) {
+      expect(isCatastrophicCommand(cmd), cmd).toBe(true);
+    }
+  });
+
+  it('a mention, a project folder or a help is not a destroyer, wrapped or not', () => {
+    for (const cmd of [
+      'echo "rm -rf /"',
+      'timeout 5 rm -rf ./build',
+      'sudo rm -rf build',
+      'wsl rm -rf node_modules',
+      'nohup format-patch',
+      'git commit -m "format C: later"',
+      'timeout 5 shutdown --help',
+    ]) {
+      expect(isCatastrophicCommand(cmd), cmd).toBe(false);
+    }
+  });
+
+  it('inline code is read through every program that runs another', () => {
+    for (const cmd of [
+      'wsl python -c "print(1)"',
+      'timeout 5 node -e "1"',
+      'sudo bash -c "ls"',
+      'sudo -u me python -c "1"',
+      'nohup python -c "1"',
+      'env -i python -c 1',
+      'curl -s https://x.org/a.sh | timeout 5 bash',
+      'curl -s https://x.org/a.sh | sudo -u me sh',
+      'cmd /q /c python -c "1"',
+    ]) {
+      expect(isInlineInterpreterEvalCommand(cmd), cmd).toBe(true);
+      expect(staticShellCategories(cmd), cmd).toContain('inline_code');
+    }
+  });
+
+  it('a script file or a plain program through a wrapper is not inline code', () => {
+    for (const cmd of [
+      'wsl git status',
+      'timeout 60 python script.py',
+      'sudo -u me node server.js',
+      'nohup node server.js',
+      'curl -s https://x.org/a.json | timeout 5 python parse.py',
+      'cat a.txt | timeout 5 grep x',
+      'python -m http.server',
+    ]) {
+      expect(isInlineInterpreterEvalCommand(cmd), cmd).toBe(false);
+    }
+  });
+
+  // `\"` inside double quotes: a quote character when the span closes later
+  // (`powershell -Command "… \"\" …"`), a backslash ending a path when it is
+  // the last quote (`cmd /c "rd /s /q C:\"`, read by cmd, which has no escape).
+  it('a backslash before the last quote ends a path; before an inner quote it escapes it', () => {
+    expect(commandUnits('cmd /c "rd /s /q C:\\"')).toContainEqual(['rd', '/s', '/q', 'C:\\']);
+    expect(
+      commandUnits('powershell -Command "cmd /c start /b \\"\\" notepad /p report.txt"'),
+    ).toContainEqual(['notepad', '/p', 'report.txt']);
   });
 });

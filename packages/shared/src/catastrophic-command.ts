@@ -60,54 +60,6 @@ function normalizeSlashes(s: string): string {
   return s.replace(/\/{2,}/g, '/').replace(/\\{2,}/g, '\\');
 }
 
-// Interpreter/wrapper leaders that hand their remaining argument straight to
-// a real shell — `cmd /c <cmd>`, `powershell -Command <cmd>`, `sudo <cmd>`,
-// `sh -c <cmd>`, `bash -c <cmd>`. Recognizing exactly these (and only these)
-// lets the command checks below "see through" the wrapper without falling
-// back to a blanket "the command word can be ANY token in the segment" scan
-// — that blanket version is what caused a real false positive: it also
-// matched a destructive-looking word sitting inside a QUOTED, merely-printed
-// argument to an unrelated command (`echo "rm -rf /" # just a comment`).
-const WRAPPER_LEADER = new Set([
-  'cmd',
-  'cmd.exe',
-  'powershell',
-  'powershell.exe',
-  'pwsh',
-  'pwsh.exe',
-  'sh',
-  'bash',
-  'sudo',
-]);
-
-/**
- * Strip zero or more leading interpreter-wrapper tokens (and, for each, the
- * single flag token that may follow it — `/c`, `-c`, `-Command`) so the
- * checks below can anchor on the FIRST token of what's left: the real
- * command being invoked. `cmd /c rm -rf /` → `["rm", "-rf", "/"]`; a plain
- * `echo "rm -rf /"` is untouched (`echo` isn't a recognized wrapper), so its
- * first token stays `echo` and no destructive check can match it.
- */
-function stripWrapperPrefix(tokens: string[]): string[] {
-  let i = 0;
-  while (i < tokens.length && WRAPPER_LEADER.has((tokens[i] ?? '').toLowerCase())) {
-    i += 1;
-    if (i < tokens.length && /^[-/]/.test(tokens[i] ?? '')) {
-      i += 1; // swallow the wrapper's own flag (/c, -c, -Command, …)
-    }
-  }
-  return tokens.slice(i);
-}
-
-// Leaders that hand off to whatever comes after them UNCHANGED — they carry
-// no language/interpreter of their own, so it's always safe to look past
-// them at the real command word. Distinct from WRAPPER_LEADER: those either
-// ARE an interpreter of interest (sh, bash, powershell) or fully consume a
-// following flag; these are consumed themselves (plus their own flags / env
-// assignments) purely to reach the token underneath (`sudo <cmd>`, `env
-// FOO=bar <cmd>`, `cmd /c <cmd>`).
-const PASSTHROUGH_LEADERS = new Set(['sudo', 'env', 'cmd', 'cmd.exe']);
-
 /** Last path segment, lowercased, `.exe`/`.com` suffix dropped — so
  * `/usr/bin/python3`, `C:\Python311\python.exe`, and `"python3"` all reduce
  * to the same bare interpreter name as a plain `python3`. */
@@ -115,20 +67,6 @@ function interpreterBasename(token: string): string {
   const t = stripQuotes(token);
   const base = t.split(/[\\/]/).pop() ?? t;
   return base.replace(/\.(exe|com)$/i, '').toLowerCase();
-}
-
-/** Skip leading pass-through leaders (`sudo`, `env`, `cmd`/`cmd.exe`) — each
- * one's own env-var assignments and a single flag token — so the interpreter
- * check below sees the real interpreter even when wrapped once, e.g.
- * `cmd /c python -c "…"`, `sudo python3 -c "…"`, `env FOO=bar python3 -c "…"`. */
-function skipPassthroughLeaders(tokens: string[]): string[] {
-  let i = 0;
-  while (i < tokens.length && PASSTHROUGH_LEADERS.has(interpreterBasename(tokens[i] ?? ''))) {
-    i += 1;
-    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i] ?? '')) i += 1;
-    if (i < tokens.length && /^[-/]/.test(tokens[i] ?? '')) i += 1;
-  }
-  return tokens.slice(i);
 }
 
 type InterpreterKind = 'python' | 'node' | 'perl' | 'ruby' | 'php' | 'shell' | 'powershell';
@@ -175,21 +113,18 @@ function isInlineEvalFlag(kind: InterpreterKind, flag: string): boolean {
 }
 
 /**
- * True when `tokens` invoke a general-purpose interpreter with the flag that
- * hands it an inline, opaque program (`python -c "…"`, `node -e "…"`,
- * `sh -c "…"`, `powershell -Command "…"`, …) — with or without one
- * pass-through leader (`sudo`/`env`/`cmd /c`) in front. The payload is
- * UNDECIDABLE from here (it could do anything, including a bare `rm -rf /`),
- * so this never tries to inspect it — matching alone forces the approval
- * gate, regardless of whether the payload looks dangerous or perfectly
- * anodyne. This is the fix for the "wrap it in an interpreter" bypass class.
+ * True when one command unit runs a general-purpose interpreter with the flag
+ * that hands it an inline, opaque program (`python -c "…"`, `node -e "…"`,
+ * `sh -c "…"`, `powershell -Command "…"`, …). The units are `commandUnits`',
+ * so whatever runs it (`sudo -u x`, `wsl`, `timeout 5`, `cmd /q /c`…) is seen
+ * through by the same reading as every kind of action (review of PR #682).
+ * The payload is UNDECIDABLE from here (it could do anything, including a bare
+ * `rm -rf /`), so this never tries to inspect it — matching alone forces the
+ * approval gate. This is the fix for the "wrap it in an interpreter" bypass class.
  */
-function hasInlineInterpreterEval(tokens: string[]): boolean {
-  const rest = skipPassthroughLeaders(tokens);
-  if (rest.length === 0) return false;
-  const kind = interpreterKind(interpreterBasename(rest[0] ?? ''));
-  if (!kind) return false;
-  return rest.slice(1).some((t) => isInlineEvalFlag(kind, stripQuotes(t).toLowerCase()));
+function isInlineEvalUnit(unit: readonly string[]): boolean {
+  const kind = interpreterKind(unit[0] ?? '');
+  return kind !== null && unit.slice(1).some((t) => isInlineEvalFlag(kind, t.toLowerCase()));
 }
 
 /**
@@ -207,19 +142,16 @@ function hasPipeIntoBareInterpreter(c: string): boolean {
   const parts = c.split('|');
   // Segment 0 is the pipe SOURCE; segments 1+ are the pipe TARGETS.
   for (let i = 1; i < parts.length; i++) {
-    const toks = (parts[i] ?? '')
-      .trim()
-      .split(/\s+/)
-      .map(stripQuotes)
-      .filter((t) => t.length > 0);
-    const rest = skipPassthroughLeaders(toks);
-    if (rest.length === 0) continue;
-    if (!interpreterKind(interpreterBasename(rest[0] ?? ''))) continue;
-    // A non-flag argument after the interpreter is a script/module path → it
-    // reads that FILE, not stdin, so the pipe is just data. Bare (only flags, or
-    // nothing) → it executes stdin as code.
-    const hasScriptArg = rest.slice(1).some((t) => !t.startsWith('-'));
-    if (!hasScriptArg) return true;
+    // The interpreter may be started by a wrapper (`| timeout 5 bash`, `| sudo
+    // -u x sh`): read as every command is, by `commandUnits`.
+    for (const unit of commandUnits(parts[i] ?? '')) {
+      if (!interpreterKind(unit[0] ?? '')) continue;
+      // A non-flag argument after the interpreter is a script/module path → it
+      // reads that FILE, not stdin, so the pipe is just data. Bare (only flags,
+      // or nothing) → it executes stdin as code.
+      const hasScriptArg = unit.slice(1).some((t) => !t.startsWith('-'));
+      if (!hasScriptArg) return true;
+    }
   }
   return false;
 }
@@ -271,38 +203,29 @@ export function isCatastrophicCommand(cmd: string): boolean {
     return true;
   }
 
-  // Segment-based checks below need each shell segment on its own, split on
-  // ;, &, |, AND newline/CR — a bare newline is a statement separator in every
-  // shell (sh, bash, cmd, PowerShell) just like `;`, and without splitting on
-  // it `echo hi\nrm -rf / --no-preserve-root` would dodge the `^rm` anchor.
-  for (const seg of c.split(/[;&|\n\r]+/)) {
-    const s = seg.trim();
-    if (!s) continue;
+  // NOTE (ComfyUI regression, 2026-07): inline interpreter-eval (`python -c`,
+  // `node -e`, `sh -c`, `… | python`, awk-code) is NO LONGER on the
+  // catastrophic hard floor. It is opaque but not inherently machine-wide
+  // destructive — and hard-refusing it (even after approval) broke the
+  // ubiquitous `curl … | python -c "json.load(...)"` idiom, systematically
+  // killing legitimate workflows. It is now classed as DESTRUCTIVE/heavy
+  // (isInlineInterpreterEvalCommand → isDestructiveOrHeavyCommand): gated for a
+  // human at propose_confirm/destructive_gate, auto-run under fully_autonomous
+  // (the owner's explicit "run everything" trust), and — crucially —
+  // APPROVABLE (it executes after a human OK). Only the deterministic
+  // machine-destroyers above stay refused-even-after-approval.
 
-    // Tokens with stray quotes stripped — an interpreter wrapper like
-    // `powershell -Command "format C:"` glues a quote onto the token next to
-    // it after a plain whitespace split.
-    const tokens = s.split(/\s+/).map(stripQuotes);
-
-    // NOTE (ComfyUI regression, 2026-07): inline interpreter-eval (`python -c`,
-    // `node -e`, `sh -c`, `… | python`, awk-code) is NO LONGER on the
-    // catastrophic hard floor. It is opaque but not inherently machine-wide
-    // destructive — and hard-refusing it (even after approval) broke the
-    // ubiquitous `curl … | python -c "json.load(...)"` idiom, systematically
-    // killing legitimate workflows. It is now classed as DESTRUCTIVE/heavy
-    // (isInlineInterpreterEvalCommand → isDestructiveOrHeavyCommand): gated for a
-    // human at propose_confirm/destructive_gate, auto-run under fully_autonomous
-    // (the owner's explicit "run everything" trust), and — crucially —
-    // APPROVABLE (it executes after a human OK). Only the deterministic
-    // machine-destroyers above stay refused-even-after-approval.
-
-    // The command actually being invoked, after peeling off a recognized
-    // interpreter wrapper (see stripWrapperPrefix doc comment). Used to
-    // ANCHOR the three command checks below on its first token — this is
-    // what lets `cmd /c rm -rf /` be caught while `echo "rm -rf /"` (a mere
-    // quoted mention, not an invocation) is not.
-    const cmdTokens = stripWrapperPrefix(tokens);
-    const cmdWord = cmdTokens[0] ?? '';
+  // The checks below are ANCHORED on the program of each command the line
+  // runs (`commandUnits`): what `cmd /q /c`, `powershell -Command`, `sh -c`,
+  // `wsl`, `timeout 5`, `sudo -u x`, `nohup`, `xargs`… start is a command of
+  // its own (review of PR #682: `wsl rm -rf /` and `timeout 5 rm -rf /`
+  // passed the floor, its own list of wrappers knew only cmd, powershell, sh,
+  // bash and sudo). A quoted mention (`echo "rm -rf /"`) is an argument of
+  // `echo`, never a command, so no check can match it.
+  for (const unit of commandUnits(withoutRedirections(c))) {
+    const cmdWord = unit[0] ?? '';
+    const args = unit.slice(1);
+    const s = unit.join(' ');
 
     // `rm` (unix, and PowerShell's `rm` alias for Remove-Item) recursive +
     // force against a machine-wide target — unix root/home/wildcard (/, /*,
@@ -316,36 +239,32 @@ export function isCatastrophicCommand(cmd: string): boolean {
       const force = /\s-\S*f/i.test(s) || /\s--force\b/i.test(s);
       if (recursive && force) {
         if (/\s--no-preserve-root\b/i.test(s)) return true;
-        // a root / home / wildcard target anywhere in the segment
+        // a root / home / wildcard target among its arguments
         if (/(\s|=)(\/|\/\*|~|~\/\*?|\$HOME\/?\*?|\*)(\s|$|"|')/.test(s)) return true;
-        if (tokens.some((t) => isWindowsRootOrWildcardTarget(t))) return true;
+        if (args.some((t) => isWindowsRootOrWildcardTarget(t))) return true;
       }
     }
 
-    // Windows `format <drive>:` — anchored on the (wrapper-unwrapped) command
-    // word so `cmd /c format C:`, `powershell -Command "format C:"` are
-    // caught while `clang-format`, `git format-patch`, `dotnet format`, and
-    // the `Format-Table` cmdlet (where "format" is glued to other text, is a
-    // different word, or isn't the invoked command) are left alone. A LATER
-    // token must be a bare drive-letter target.
+    // Windows `format <drive>:` — anchored on the program, so `clang-format`,
+    // `git format-patch`, `dotnet format`, and the `Format-Table` cmdlet are
+    // left alone. A LATER word must be a bare drive-letter target.
     if (
       /^format(\.(com|exe))?$/i.test(cmdWord) &&
-      cmdTokens.slice(1).some((d) => /^[a-z]:([\\/]\*?)?$/i.test(d))
+      args.some((d) => /^[a-z]:([\\/]\*?)?$/i.test(d))
     ) {
       return true;
     }
 
     // Windows recursive+forced delete (Remove-Item/ri/del/erase/rd/rmdir)
     // against a machine-wide target — mirrors the `rm` check above, same
-    // root-only scope AND the same wrapper-unwrapped command anchor (so
-    // `cmd /c del /s /q C:` doesn't dodge it). `Remove-Item .\build -Recurse
-    // -Force` (a relative project subfolder) must NOT match; only a drive
-    // root / wildcard / system env var does.
+    // root-only scope. `Remove-Item .\build -Recurse -Force` (a relative
+    // project subfolder) must NOT match; only a drive root / wildcard / system
+    // env var does.
     if (/^(ri|remove-item|del|erase|rd|rmdir)$/i.test(cmdWord)) {
       const psRecursiveForce = /(^|\s)-r(ecurse)?\b/i.test(s) && /(^|\s)-f(orce)?\b/i.test(s);
       const cmdRecursiveForce = /\/s\b/i.test(s) && /\/q\b/i.test(s);
       if (psRecursiveForce || cmdRecursiveForce) {
-        if (tokens.some((t) => isWindowsRootOrWildcardTarget(t))) return true;
+        if (args.some((t) => isWindowsRootOrWildcardTarget(t))) return true;
       }
     }
   }
@@ -370,13 +289,7 @@ export function isInlineInterpreterEvalCommand(cmd: string): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
   const c = normalizeSlashes(cmd.trim());
   if (AWK_CODE_EXEC.test(c) || hasPipeIntoBareInterpreter(c)) return true;
-  for (const seg of c.split(/[;&|\n\r]+/)) {
-    const s = seg.trim();
-    if (!s) continue;
-    const tokens = s.split(/\s+/).map(stripQuotes);
-    if (hasInlineInterpreterEval(tokens)) return true;
-  }
-  return false;
+  return commandUnits(withoutRedirections(c)).some(isInlineEvalUnit);
 }
 
 // ── Destructive / heavy actions (for the `destructive_gate` autonomy level) ──────
@@ -1354,7 +1267,10 @@ function splitQuotedShellWords(cmd: string): ShellWord[][] {
       // `\"` inside double quotes is a quote character, as Windows' argument
       // parser and a POSIX shell both read it: `powershell -Command "cmd /c
       // start \"\" x"` hands cmd an empty title (review of PR #682, pass 2).
-      if (quote === '"' && ch === '\\' && cmd[at + 1] === '"') {
+      // Not when it is the last quote of the line: `cmd /c "rd /s /q C:\"` is
+      // a path ending in a backslash, and cmd, which reads that line, has no
+      // escape.
+      if (quote === '"' && ch === '\\' && cmd[at + 1] === '"' && cmd.includes('"', at + 2)) {
         word += '"';
         at += 1;
       } else if (ch === quote) quote = null;
