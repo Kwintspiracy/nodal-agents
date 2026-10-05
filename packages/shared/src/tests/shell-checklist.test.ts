@@ -576,6 +576,101 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
     expect(paths('curl -sI https://x/a >&2', 'posix')).toEqual([]);
   });
 
+  // Passe 3 de la revue : les redirections sont LUES comme des opérateurs (hors
+  // guillemets), chacun trouvé indépendamment : aucun ne peut en cacher un autre.
+  describe('redirection operators are scanned one by one, outside quotes (#669)', () => {
+    const OPERATORS = ['>', '>>', '>|', '&>', '&>>', '1>', '2>', '2>>', '2>|', '<>', '1<>', '0<>'];
+
+    it('every write-capable operator yields its target, attached or spaced', () => {
+      for (const host of ['posix', 'windows'] as const)
+        for (const op of OPERATORS) {
+          expect(paths(`curl https://x/a ${op}../out.txt`, host), `${host}: ${op}`).toEqual([
+            '../out.txt',
+          ]);
+          expect(paths(`curl https://x/a ${op} ../out.txt`, host), `${host}: ${op} `).toEqual([
+            '../out.txt',
+          ]);
+          expect(paths(`curl https://x/a ${op} "my out.txt"`, host), `${host}: ${op} "`).toEqual([
+            'my out.txt',
+          ]);
+        }
+    });
+
+    it('the two commands of review pass 3 report the outside file', () => {
+      expect(paths('curl https://example.com/a 2>/dev/null>../outside.txt', 'posix')).toEqual([
+        '../outside.txt',
+      ]);
+      expect(paths('curl https://example.com/a 2>NUL>../outside.txt', 'windows')).toEqual([
+        '../outside.txt',
+      ]);
+      expect(paths('curl https://example.com/a 1<>../outside.txt', 'posix')).toEqual([
+        '../outside.txt',
+      ]);
+    });
+
+    it('adjacent redirections are each found, in both orders, with a sink on either side', () => {
+      expect(paths('curl https://x/a >../one.txt>../two.txt', 'posix')).toEqual([
+        '../one.txt',
+        '../two.txt',
+      ]);
+      expect(paths('curl https://x/a 2>/dev/null>../o.txt', 'posix')).toEqual(['../o.txt']);
+      expect(paths('curl https://x/a >../o.txt 2>/dev/null', 'posix')).toEqual(['../o.txt']);
+      expect(paths('curl https://x/a >../o.txt2>/dev/null', 'posix')).toEqual(['../o.txt2']);
+      expect(paths('curl https://x/a 2>../e.log 1>../o.txt', 'posix')).toEqual([
+        '../e.log',
+        '../o.txt',
+      ]);
+      expect(paths('curl https://x/a >../o.txt&>../all.log', 'posix')).toEqual([
+        '../o.txt',
+        '../all.log',
+      ]);
+      expect(paths('curl https://x/a 2>NUL>NUL', 'windows')).toEqual([]);
+      expect(paths('curl https://x/a >/dev/null 2>&1 >../o.txt', 'posix')).toEqual(['../o.txt']);
+    });
+
+    it('a duplication, an input, a here-document and a substitution name no file', () => {
+      for (const redirect of [
+        '2>&1',
+        '>&2',
+        '1>&2',
+        '2>&-',
+        '<&0',
+        '0<&3',
+        '< in.txt',
+        '0< in.txt',
+        '<in.txt',
+        "<<'EOF'",
+        '<<<"a b"',
+        '<(echo x)',
+        '>(cat)',
+      ])
+        expect(paths(`curl https://x/a ${redirect}`, 'posix'), redirect).toEqual([]);
+      // ...and do not hide a write that follows them.
+      expect(paths('curl https://x/a 2>&1>../o.txt', 'posix')).toEqual(['../o.txt']);
+      // bash: `>&file` is `&>file`, a duplication only when it names a descriptor.
+      expect(paths('curl https://x/a >&../o.txt', 'posix')).toEqual(['../o.txt']);
+      expect(paths('curl https://x/a <in.txt >../o.txt', 'posix')).toEqual(['../o.txt']);
+    });
+
+    it('an operator inside quotes is not an operator', () => {
+      expect(paths('curl -s -o out.bin "https://x/a?p=1>2"', 'posix')).toEqual(['out.bin']);
+      expect(paths("curl -s -o out.bin -H 'X: a>b' https://x/a", 'posix')).toEqual(['out.bin']);
+      expect(paths('curl -H "a>b" https://x/a > ../o.txt', 'posix')).toEqual(['../o.txt']);
+      expect(paths('curl -H "a >../no.txt" "https://x/a" 2>/dev/null', 'posix')).toEqual([]);
+      expect(paths('curl -s -o out.bin "https://x/a" && echo "done > ../no.txt"', 'posix')).toEqual(
+        ['out.bin'],
+      );
+    });
+
+    it('the null sink of each host is still nowhere in any operator form', () => {
+      for (const op of OPERATORS.filter((o) => !o.includes('<'))) {
+        expect(paths(`curl https://x/a ${op}/dev/null`, 'posix'), op).toEqual([]);
+        expect(paths(`curl https://x/a ${op}NUL`, 'windows'), op).toEqual([]);
+        expect(paths(`curl https://x/a ${op} $null`, 'windows'), op).toEqual([]);
+      }
+    });
+  });
+
   it('a program with its own store names no path: nothing to judge', () => {
     for (const cmd of [
       'ollama pull llama3',

@@ -548,6 +548,8 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
       `curl -s https://x/a 2>${NOWHERE} > ${outside}`,
       `curl -s https://x/a &>${NOWHERE} > ${outside}`,
       `curl -s -o ${NOWHERE} https://x/b && curl -s -o ${outside} https://x/a`,
+      `curl -s https://x/a 2>${NOWHERE}>${outside}`,
+      `curl -s https://x/a 1<>${outside}`,
     ]) {
       const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
       expect(res.outcome, command).toBe('awaiting_approval');

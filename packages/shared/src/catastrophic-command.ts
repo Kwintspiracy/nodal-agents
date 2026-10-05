@@ -830,16 +830,80 @@ const GIT_CLONE_VALUE_FLAGS = new Set([
 ]);
 
 /**
- * Where the shell writes a line's output: `> file`, `>> file`, `>| file`, and
- * the same for another descriptor (`2> file`, the error log of a download) or
- * both (`&> file`). A redirection to a descriptor (`2>&1`, `>&2`) names no file.
+ * Where the shell writes a line's output, read as OPERATORS outside quotes,
+ * each found on its own so that none can hide another (`2>/dev/null>../x`
+ * is two): `>`, `>>`, `>|`, `&>`, `&>>`, the same on another descriptor
+ * (`2>`, `2>>`, `2>|`: the error log of a download is a write too), and
+ * read/write (`<>`, `1<>`: its `>` opens the target for writing). The target is
+ * the next word, attached or after spaces. No file is named by a duplication
+ * (`2>&1`, `>&2`, `2>&-`, `<&0`: `>&file` is the bash form of `&>file` and does),
+ * an input (`< file`), a here-document or here-string, or a process
+ * substitution (`<(…)`, `>(…)`). An operator inside quotes is text.
  */
 function redirectionTargets(cmd: string): string[] {
   const targets: string[] = [];
-  for (const m of cmd.matchAll(/(?:^|[^<>])(?:&|\d+)?>>?\|?\s*("[^"]*"|'[^']*'|[^\s;&|()<>]+)/g)) {
-    const t = stripQuotes(m[1] ?? '');
-    if (t.startsWith('&')) continue;
-    targets.push(t);
+  const delimiter = /[\s;&|()<>]/;
+  let quote: '"' | "'" | null = null;
+  let i = 0;
+  /** The word that starts at `i` (after spaces): quoted parts joined, quotes removed. */
+  const word = (): string => {
+    while (i < cmd.length && /\s/.test(cmd[i] ?? '')) i++;
+    let out = '';
+    while (i < cmd.length) {
+      const c = cmd[i] ?? '';
+      if (c === '"' || c === "'") {
+        const end = cmd.indexOf(c, i + 1);
+        const stop = end < 0 ? cmd.length : end;
+        out += cmd.slice(i + 1, stop);
+        i = end < 0 ? cmd.length : end + 1;
+      } else if (delimiter.test(c)) break;
+      else {
+        out += c;
+        i++;
+      }
+    }
+    return out;
+  };
+  while (i < cmd.length) {
+    const c = cmd[i] ?? '';
+    if (quote !== null) {
+      if (c === quote) quote = null;
+      i++;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      quote = c;
+      i++;
+      continue;
+    }
+    if (c !== '>' && c !== '<') {
+      i++;
+      continue;
+    }
+    const next = cmd[i + 1] ?? '';
+    if (next === '(') {
+      i += 2; // process substitution
+    } else if (c === '<') {
+      // `<>` (read/write) is an input followed by the `>` that opens its target
+      // for writing: the next turn of the loop reads that `>` on its own.
+      if (next === '<') {
+        i += cmd[i + 2] === '<' ? 3 : 2; // here-string, here-document
+      } else if (next === '&') {
+        i += 2; // input duplication
+        word();
+      } else {
+        i++; // input
+      }
+    } else if (next === '&') {
+      i += 2;
+      const t = word();
+      // `>&2`, `>&-` copy a descriptor; `>&file` (bash) writes both streams to it.
+      if (t !== '' && !/^(\d+|-)$/.test(t)) targets.push(t);
+    } else {
+      i += next === '>' || next === '|' ? 2 : 1;
+      const t = word();
+      if (t !== '') targets.push(t);
+    }
   }
   return targets;
 }
