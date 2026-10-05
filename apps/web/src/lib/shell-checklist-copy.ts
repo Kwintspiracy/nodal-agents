@@ -5,12 +5,12 @@
 // and the card would name the kind of action differently from the setting
 // that decided it.
 
-import type { ShellCategory } from '@nodal-agents/shared';
+import type { ShellCategory, ShellUnreadSource } from '@nodal-agents/shared';
 
 export const SHELL_CATEGORY_COPY: Record<ShellCategory, { label: string; summary: string }> = {
   inline_code: {
     label: 'Run code written into a command',
-    summary: 'python -c, node -e, a script piped into bash…',
+    summary: 'python -c, node -e, a script piped into bash, or one it cannot read…',
   },
   delete_files: {
     label: 'Delete files or discard changes',
@@ -41,4 +41,14 @@ export const SHELL_CATEGORY_COPY: Record<ShellCategory, { label: string; summary
     label: 'Change system settings, permissions or disks',
     summary: 'icacls, chmod -R, format, diskpart…',
   },
+};
+
+/** Why a script a command runs could not be read (#635), said next to the file on the card. */
+export const UNREAD_COPY: Record<ShellUnreadSource['why'], string> = {
+  outside_workspaces: 'outside its workspaces, not read',
+  not_found: 'not there yet when the command was read',
+  too_large: 'too large to read',
+  decided_at_run_time: 'a file decided when the command runs',
+  not_a_file: 'not a file',
+  unreadable: 'could not be read',
 };

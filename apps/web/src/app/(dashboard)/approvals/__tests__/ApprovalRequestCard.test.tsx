@@ -818,6 +818,46 @@ describe('la carte dit ce que la liste de l’agent a vu (#464) @cap:approuver-u
     ]);
   });
 
+  // #635 : une commande qui lance un script est jugée sur le script ; la carte
+  // dit dans quel fichier, à quelle ligne, et ce qui n'a pas pu être lu.
+  it('dit dans quel script, à quelle ligne, et ce qui n’a pas pu être lu (#635)', async () => {
+    await monter(
+      demande({
+        toolName: 'run_command',
+        gateReasons: [
+          {
+            category: 'install_software',
+            state: 'ask',
+            details: ['python shared/scripts/build.py && python -c "import os"'],
+            found: [
+              {
+                source: 'shared/scripts/build.py',
+                line: 5,
+                text: 'subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl"])',
+              },
+              { source: null, line: 1, text: "os.system('npm i x')" },
+            ],
+          },
+          {
+            category: 'inline_code',
+            state: 'ask',
+            details: ['python C:/tmp/x.py'],
+            unread: [{ source: 'C:/tmp/x.py', why: 'outside_workspaces' }],
+          },
+        ],
+      }),
+    );
+    const items = [...container!.querySelectorAll('[data-testid="approval-shell-reasons"] li')].map(
+      (e) => e.textContent,
+    );
+    expect(items).toEqual([
+      'Install software or packages' +
+        'shared/scripts/build.py, line 5: subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl"])' +
+        "code in the command, line 1: os.system('npm i x')",
+      'Run code written into a command' + 'C:/tmp/x.py: outside its workspaces, not read',
+    ]);
+  });
+
   it('rien quand la liste n’y est pour rien', async () => {
     await monter(demande());
     expect(container!.querySelector('[data-testid="approval-shell-reasons"]')).toBeNull();

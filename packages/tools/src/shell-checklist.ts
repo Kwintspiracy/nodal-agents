@@ -7,9 +7,11 @@
 // (`executeTool`) turns them into a block or an approval, and stores them on
 // the approval so the card can show them.
 //
-// A reading of the text, like Hermes Agent's: it does not follow what a script
-// does once it runs, and it does not keep an agent inside its folders. That
-// takes an OS-level sandbox.
+// A reading of the text, like Hermes Agent's, and of the code the command runs
+// (#635): `python build.py` is judged by what build.py holds, read inside the
+// job's workspaces with the same classifier (packages/shared,
+// program-sources.ts). It does not keep an agent inside its folders: that
+// takes an OS-level sandbox (#628).
 //
 // One exception to "reading the text only", and it is the definition of an
 // allowed download (#614, revue Nodal de la PR #618, P1b): a download runs
@@ -18,14 +20,28 @@
 // are resolved against the command's working folder and the job's workspaces;
 // one outside them, or one the text does not name, asks.
 
+import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import {
   downloadWrites,
+  languageOfShebang,
+  programSources,
+  readSource,
   staticShellCategories,
   type ShellCategory,
   type ShellGateReason,
   type ShellPolicy,
+  type ShellSourceFinding,
+  type ShellUnreadSource,
+  type SourceLanguage,
 } from '@nodal-agents/shared';
+
+/** What the gate could read of a file a command runs (#635). */
+export type SourceFile =
+  | { kind: 'text'; text: string }
+  /** A program, not a script: judged by its name, as any program. */
+  | { kind: 'binary' }
+  | { kind: 'unread'; why: Exclude<ShellUnreadSource['why'], 'decided_at_run_time'> };
 
 /** Where the commands of a call run: what an allowed download is judged against. */
 export interface ShellPlace {
@@ -35,6 +51,38 @@ export interface ShellPlace {
   inWorkspace(absolutePath: string): Promise<boolean>;
   /** Where an absolute path really lands, links followed; null when it cannot be told. */
   leadsTo(absolutePath: string): Promise<string | null>;
+  /** A file the commands run, read only inside the job's workspaces (#635). */
+  readSource(absolutePath: string): Promise<SourceFile>;
+}
+
+/**
+ * The largest script the gate reads (#635). A script an agent writes is a few
+ * kilobytes; past this, it asks rather than reading part of it.
+ */
+export const MAX_SOURCE_BYTES = 256 * 1024;
+
+/**
+ * Read a file a command runs, already known to be inside a workspace: text in
+ * UTF-8 or UTF-16 (PowerShell's own default), a binary when its first bytes
+ * hold a NUL, or why it cannot be read.
+ */
+export async function readSourceFile(canonicalPath: string): Promise<SourceFile> {
+  try {
+    const info = await stat(canonicalPath);
+    if (!info.isFile()) return { kind: 'unread', why: 'not_a_file' };
+    if (info.size > MAX_SOURCE_BYTES) return { kind: 'unread', why: 'too_large' };
+    const bytes = await readFile(canonicalPath);
+    if (bytes[0] === 0xff && bytes[1] === 0xfe)
+      return { kind: 'text', text: bytes.subarray(2).toString('utf16le') };
+    if (bytes.subarray(0, 8000).includes(0)) return { kind: 'binary' };
+    return { kind: 'text', text: bytes.toString('utf8').replace(/^﻿/, '') };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return {
+      kind: 'unread',
+      why: code === 'ENOENT' || code === 'ENOTDIR' ? 'not_found' : 'unreadable',
+    };
+  }
 }
 
 /** Two absolute paths name the same place (case-insensitive on Windows). */
@@ -46,6 +94,20 @@ function samePlace(a: string, b: string): boolean {
 const UNREADABLE_TARGET = 'a path decided when the command runs';
 
 /**
+ * The folder a line is in at each point: the starting folder, then after each
+ * `cd` of the line, in order; null once one cannot be read.
+ */
+function basesOf(dirs: ReadonlyArray<string | null>, cwd: string | null): Array<string | null> {
+  const bases: Array<string | null> = [cwd];
+  let base = cwd;
+  for (const dir of dirs) {
+    base = base === null || dir === null ? null : resolve(base, dir);
+    bases.push(base);
+  }
+  return bases;
+}
+
+/**
  * The places `command` would download to that are not inside a workspace of
  * the job, as written. A relative target is judged from the folder the line is
  * in when it runs: the starting folder, then each `cd` that comes BEFORE it
@@ -55,12 +117,7 @@ const UNREADABLE_TARGET = 'a path decided when the command runs';
 async function downloadsOutside(command: string, place: ShellPlace): Promise<string[]> {
   const { dirs, targets } = downloadWrites(command);
   if (targets.length === 0) return [];
-  const bases: Array<string | null> = [place.cwd];
-  let base = place.cwd;
-  for (const dir of dirs) {
-    base = base === null || dir === null ? null : resolve(base, dir);
-    bases.push(base);
-  }
+  const bases = basesOf(dirs, place.cwd);
   const outside: string[] = [];
   for (const { path, after } of targets) {
     if (path === null) {
@@ -86,6 +143,99 @@ async function downloadsOutside(command: string, place: ShellPlace): Promise<str
   return outside;
 }
 
+/**
+ * One text the checklist judges: a command of the call, or a command read in
+ * the code it runs (#635), with the folder it runs from and where it was found.
+ */
+interface Judged {
+  /** The command of the call it belongs to: what the card's details list. */
+  call: string;
+  text: string;
+  place: ShellPlace;
+  found: ShellSourceFinding | null;
+}
+
+/** How deep scripts run by scripts are followed. */
+const MAX_SOURCE_DEPTH = 3;
+
+/** The line `line` (1-based) of `text`, as the card shows it. */
+function lineOf(text: string, line: number): string {
+  const s = (text.split(/\r?\n/)[line - 1] ?? '').trim();
+  return s.length > 200 ? `${s.slice(0, 200)}…` : s;
+}
+
+/**
+ * The commands read in the code `command` runs (#635): the files it hands to
+ * an interpreter or runs directly, and the code written into it, followed
+ * into the scripts those run in turn. A file that cannot be read is reported
+ * in `unread`; a binary is a program, judged by its name like any other.
+ */
+async function readRunCode(
+  call: string,
+  command: string,
+  place: ShellPlace,
+  fromStrings: boolean,
+  depth: number,
+  seen: Set<string>,
+  judged: Judged[],
+  unread: ShellUnreadSource[],
+): Promise<void> {
+  if (depth > MAX_SOURCE_DEPTH) return;
+  const { dirs, sources } = programSources(command, { direct: !fromStrings });
+  const bases = basesOf(dirs, place.cwd);
+  for (const source of sources) {
+    let text: string;
+    let language: SourceLanguage;
+    let label: string | null;
+    let base: string | null;
+    if (source.kind === 'code') {
+      text = source.code;
+      language = source.language;
+      label = null;
+      base = bases[source.after] ?? null;
+    } else {
+      base = bases[source.after] ?? null;
+      if (source.path === null || (base === null && !isAbsolute(source.path))) {
+        unread.push({ source: source.path ?? command, why: 'decided_at_run_time' });
+        continue;
+      }
+      const path = isAbsolute(source.path) ? source.path : resolve(base ?? '', source.path);
+      const key = process.platform === 'win32' ? path.toLowerCase() : path;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const read = await place.readSource(path);
+      if (read.kind === 'binary') continue;
+      if (read.kind === 'unread') {
+        // A bare name not in the folder: the shell takes it from the PATH.
+        if (read.why === 'not_found' && source.searched) continue;
+        unread.push({ source: source.path, why: read.why });
+        continue;
+      }
+      text = read.text;
+      language = source.language ?? languageOfShebang(text) ?? 'shell';
+      label = source.path;
+    }
+    const reading = readSource(text, language);
+    // A script runs from the folder its command was in; in a shell script, a
+    // `cd` moves the lines after it.
+    let cwd = base;
+    for (const c of reading.commands) {
+      const at: ShellPlace = { ...place, cwd };
+      judged.push({
+        call,
+        text: c.command,
+        place: at,
+        found: { source: label, line: c.line, text: lineOf(text, c.line) },
+      });
+      await readRunCode(call, c.command, at, reading.fromStrings, depth + 1, seen, judged, unread);
+      if (!reading.fromStrings) {
+        const after = basesOf(programSources(c.command).dirs, cwd);
+        cwd = after[after.length - 1] ?? null;
+      }
+    }
+  }
+}
+
 /** Judge `commands` (the ones this call will run, from `place`) against `policy`. */
 export async function judgeShellChecklist(
   commands: readonly string[],
@@ -93,36 +243,78 @@ export async function judgeShellChecklist(
   place: ShellPlace,
 ): Promise<ShellGateReason[]> {
   const details = new Map<ShellCategory, string[]>();
+  const found = new Map<ShellCategory, ShellSourceFinding[]>();
   // Each command's own places outside, attached to it (revue passe 2).
   const outside: NonNullable<ShellGateReason['outside']> = [];
-  const add = (category: ShellCategory, command: string): void => {
+  const unread: ShellUnreadSource[] = [];
+  const unreadCalls: string[] = [];
+  const add = (category: ShellCategory, j: Judged): void => {
     const list = details.get(category) ?? [];
-    if (!list.includes(command)) list.push(command);
+    if (!list.includes(j.call)) list.push(j.call);
     details.set(category, list);
+    if (j.found === null) return;
+    const f = j.found;
+    const where = found.get(category) ?? [];
+    if (!where.some((w) => w.source === f.source && w.line === f.line)) where.push(f);
+    found.set(category, where);
   };
+
+  const judged: Judged[] = [];
   for (const command of commands) {
-    for (const category of staticShellCategories(command)) {
+    judged.push({ call: command, text: command, place, found: null });
+    const before = unread.length;
+    await readRunCode(command, command, place, false, 1, new Set(), judged, unread);
+    if (unread.length > before) unreadCalls.push(command);
+  }
+
+  for (const j of judged) {
+    for (const category of staticShellCategories(j.text)) {
       if (policy[category] !== 'allow') {
-        add(category, command);
+        add(category, j);
         continue;
       }
       if (category !== 'download') continue;
-      const places = await downloadsOutside(command, place);
+      const places = await downloadsOutside(j.text, j.place);
       if (places.length === 0) continue;
-      add(category, command);
-      if (!outside.some((o) => o.command === command)) outside.push({ command, places });
+      add(category, j);
+      const entry = outside.find((o) => o.command === j.call);
+      if (entry === undefined) outside.push({ command: j.call, places });
+      else for (const p of places) if (!entry.places.includes(p)) entry.places.push(p);
     }
   }
 
   const reasons: ShellGateReason[] = [];
   for (const [category, list] of details) {
     const state = policy[category];
+    const where = found.get(category);
+    const extra = where !== undefined ? { found: where } : {};
     if (state === 'allow') {
       // An allowed download that writes outside the job's workspaces asks.
-      reasons.push({ category, state: 'ask', details: list, outside });
+      reasons.push({ category, state: 'ask', details: list, outside, ...extra });
       continue;
     }
-    reasons.push({ category, state, details: list });
+    reasons.push({ category, state, details: list, ...extra });
+  }
+
+  // A script that could not be read is code nobody read ahead (#635), the
+  // kind `inline_code` names: `curl … | bash`, or a script downloaded and run
+  // in the same line, which does not exist yet when the line is judged. Its
+  // state applies, never a guess about what the script would do: allowed by
+  // default (the owner's decision of 29/09, #618), asked or refused when the
+  // owner set it so, and the card then names the file and why.
+  if (unread.length > 0 && policy.inline_code !== 'allow') {
+    const code = reasons.find((r) => r.category === 'inline_code');
+    if (code !== undefined) {
+      code.unread = unread;
+      for (const c of unreadCalls) if (!code.details.includes(c)) code.details.push(c);
+    } else {
+      reasons.push({
+        category: 'inline_code',
+        state: policy.inline_code,
+        details: unreadCalls,
+        unread,
+      });
+    }
   }
   return reasons;
 }

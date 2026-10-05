@@ -1050,4 +1050,54 @@ describe('run_command — an agent nobody configured downloads into its workspac
     );
     await expect(readFile(join(workspaceDir, file), 'utf8')).rejects.toThrow();
   });
+
+  // #635 (run 074e7161) : un script qui installe un paquet, lancé par
+  // `node <fichier>`, demande comme l'installation elle-même. Le vrai runner
+  // lit la politique en base, la porte lit le fichier dans l'espace du job.
+  it('a script that installs a package asks, names the line, and does not run (#635)', async () => {
+    const marker = `ran-${Date.now()}.txt`;
+    const script = `setup-${Date.now()}.js`;
+    await writeFile(
+      join(workspaceDir, script),
+      [
+        "const { execSync } = require('child_process');",
+        `require('fs').writeFileSync('${marker}', 'ran');`,
+        "execSync('npm install left-pad');",
+      ].join('\n'),
+    );
+    const command = `node ${script}`;
+
+    const { result, approvals } = await underDestructiveGate(null, () => runOnce(command));
+
+    expect(result.status).toBe('awaiting_approval');
+    expect(approvals).toEqual([
+      {
+        status: 'pending',
+        gateReasons: [
+          {
+            category: 'install_software',
+            state: 'ask',
+            details: [command],
+            found: [{ source: script, line: 3, text: "execSync('npm install left-pad');" }],
+          },
+        ],
+      },
+    ]);
+    await expect(readFile(join(workspaceDir, marker), 'utf8')).rejects.toThrow();
+  });
+
+  it('a script that only writes its own file runs, really, with no approval row (#635)', async () => {
+    const marker = `wrote-${Date.now()}.txt`;
+    const script = `write-${Date.now()}.js`;
+    await writeFile(
+      join(workspaceDir, script),
+      `// npm install is not needed\nrequire('fs').writeFileSync('${marker}', 'ok');\n`,
+    );
+
+    const { result, approvals } = await underDestructiveGate(null, () => runOnce(`node ${script}`));
+
+    expect(result.status).toBe('completed');
+    expect(approvals).toEqual([]);
+    expect(await readFile(join(workspaceDir, marker), 'utf8')).toBe('ok');
+  });
 });

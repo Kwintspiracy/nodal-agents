@@ -25,7 +25,12 @@ import type {
 import { InvalidInputError, ToolFailedWithOutput } from './errors';
 import { refuseWithoutStatedPurpose } from './purpose';
 import { alreadyRejectedInstruction, priorRejectionOfSameCall } from './rejected-call';
-import { judgeShellChecklist, shellChecklistRefusal, type ShellPlace } from './shell-checklist';
+import {
+  judgeShellChecklist,
+  readSourceFile,
+  shellChecklistRefusal,
+  type ShellPlace,
+} from './shell-checklist';
 import {
   followLinks,
   resolveAndCheckPath,
@@ -1451,6 +1456,13 @@ async function shellPlace(toolName: string, input: unknown, ctx: ToolContext): P
             (f) => f.canonical,
             () => null,
           ),
+    // A script the call runs is read only inside the job's workspaces, through
+    // the file tools' boundary check (#635); outside, it asks.
+    readSource: (absolutePath) =>
+      resolveAndCheckPath(ctx, absolutePath).then(readSourceFile, () => ({
+        kind: 'unread' as const,
+        why: 'outside_workspaces' as const,
+      })),
   };
 }
 

@@ -105,8 +105,8 @@ function stripWrapperPrefix(tokens: string[]): string[] {
 // ARE an interpreter of interest (sh, bash, powershell) or fully consume a
 // following flag; these are consumed themselves (plus their own flags / env
 // assignments) purely to reach the token underneath (`sudo <cmd>`, `env
-// FOO=bar <cmd>`, `cmd /c <cmd>`).
-const PASSTHROUGH_LEADERS = new Set(['sudo', 'env', 'cmd', 'cmd.exe']);
+// FOO=bar <cmd>`, `cmd /c <cmd>`, and cmd's `call npm ci`, #635).
+const PASSTHROUGH_LEADERS = new Set(['sudo', 'env', 'cmd', 'cmd.exe', 'call']);
 
 /** Last path segment, lowercased, `.exe`/`.com` suffix dropped — so
  * `/usr/bin/python3`, `C:\Python311\python.exe`, and `"python3"` all reduce
@@ -131,12 +131,12 @@ function skipPassthroughLeaders(tokens: string[]): string[] {
   return tokens.slice(i);
 }
 
-type InterpreterKind = 'python' | 'node' | 'perl' | 'ruby' | 'php' | 'shell' | 'powershell';
+export type InterpreterKind = 'python' | 'node' | 'perl' | 'ruby' | 'php' | 'shell' | 'powershell';
 
 /** Classifies a bare interpreter name (already basename'd) into the kind of
  * inline-eval flag it accepts, or `null` if it isn't a recognized
  * general-purpose interpreter at all. */
-function interpreterKind(name: string): InterpreterKind | null {
+export function interpreterKind(name: string): InterpreterKind | null {
   if (name === 'py' || /^python[0-9.]*$/.test(name)) return 'python';
   if (/^node(js)?$/.test(name)) return 'node';
   if (/^perl[0-9.]*$/.test(name)) return 'perl';
@@ -152,7 +152,7 @@ function interpreterKind(name: string): InterpreterKind | null {
  * than a script FILE (`-c`, `-e`, `-Command`, …). Deliberately narrow: `-m`,
  * `-File`, a bare script path, etc. run a named module/file, not arbitrary
  * inline text, so they're left to the normal (non-catastrophic) path. */
-function isInlineEvalFlag(kind: InterpreterKind, flag: string): boolean {
+export function isInlineEvalFlag(kind: InterpreterKind, flag: string): boolean {
   switch (kind) {
     case 'python':
       return flag === '-c';
@@ -189,6 +189,8 @@ function hasInlineInterpreterEval(tokens: string[]): boolean {
   if (rest.length === 0) return false;
   const kind = interpreterKind(interpreterBasename(rest[0] ?? ''));
   if (!kind) return false;
+  // A shell's `-c` may be grouped (`bash -lc "…"`, #635).
+  if (kind === 'shell' && shellCommandIndex(rest.slice(1).map(stripQuotes)) >= 0) return true;
   return rest.slice(1).some((t) => isInlineEvalFlag(kind, stripQuotes(t).toLowerCase()));
 }
 
@@ -543,9 +545,9 @@ export function downloadWrites(cmd: string): DownloadWrites {
   for (const unit of units) {
     const program = unit[0] ?? '';
     const args = unit.slice(1);
-    if (CHANGE_DIR.has(program)) {
-      const dir = changeDirArg(program, args);
-      out.dirs.push(dir === null ? null : readablePath(dir));
+    const dir = changeDirOf(unit);
+    if (dir !== undefined) {
+      out.dirs.push(dir);
       continue;
     }
     for (const t of pipeWriterTargets(program, args))
@@ -577,6 +579,18 @@ const CHANGE_DIR = new Set([
   'push-location',
   'pop-location',
 ]);
+
+/**
+ * For a unit that changes folder (`cd`, `pushd`, `Set-Location`…): the folder
+ * it moves into, as `downloadWrites` reads it (null when unreadable).
+ * Undefined for any other unit.
+ */
+export function changeDirOf(unit: readonly string[]): string | null | undefined {
+  const program = unit[0] ?? '';
+  if (!CHANGE_DIR.has(program)) return undefined;
+  const dir = changeDirArg(program, unit.slice(1));
+  return dir === null ? null : readablePath(dir);
+}
 
 /**
  * The folder a `cd`-like unit moves into; null for home or back (`cd`, `cd ~`,
@@ -612,7 +626,7 @@ function isNowhere(p: string): boolean {
 }
 
 /** A path as written, or null when the shell decides it at run time. */
-function readablePath(p: string): string | null {
+export function readablePath(p: string): string | null {
   if (p === '' || /[$%`]/.test(p) || p.startsWith('~')) return null;
   return p;
 }
@@ -842,16 +856,59 @@ function isAssignmentPrefix(segment: readonly string[], i: number): boolean {
 }
 
 /**
+ * Where a shell's command line is in its arguments: the first word after its
+ * options when one of them is `-c`, alone or in a group (`bash -lc "…"`,
+ * `sh -ec "…"`, #635); -1 when the shell runs a script file or reads its
+ * input. Only the options BEFORE that word count: in `bash build.sh -clean`,
+ * `-clean` is the script's own argument.
+ */
+export function shellCommandIndex(args: readonly string[]): number {
+  let command = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? '';
+    if (a === '--') return command && i + 1 < args.length ? i + 1 : -1;
+    // `-o pipefail`, `+O extglob`: an option that takes the next word.
+    if (/^[-+][oO]$/.test(a)) {
+      i++;
+      continue;
+    }
+    if (/^[-+][A-Za-z]+$/.test(a)) {
+      if (a.startsWith('-') && a.includes('c')) command = true;
+      continue;
+    }
+    if (a.startsWith('--')) continue;
+    return command ? i : -1;
+  }
+  return -1;
+}
+
+/** One command a line runs, as `commandUnits` reads it and as it was written. */
+export interface CommandUnit {
+  /** The program (basename, lower-cased, without `.exe`), then its arguments. */
+  unit: string[];
+  /**
+   * The program word as written (`./build.sh`, `C:\x\run.bat`): where a script
+   * run directly lives (#635). For the module of `python -m`, the module.
+   */
+  head: string;
+}
+
+/**
  * The commands a command line actually runs, as token lists whose first token
  * is the program (its basename, lower-cased, without `.exe`): each segment,
  * the module of `python -m`, and what `bash -c`, `cmd /c`,
  * `powershell -Command`, `xargs`, `find -exec` and `$(…)` / backticks run
  * inside it.
  */
-export function commandUnits(cmd: string, depth = 0): string[][] {
+export function commandUnits(cmd: string): string[][] {
+  return commandUnitsAsWritten(cmd).map((u) => u.unit);
+}
+
+/** `commandUnits`, each with its program word as written. */
+export function commandUnitsAsWritten(cmd: string, depth = 0): CommandUnit[] {
   if (depth > 4 || typeof cmd !== 'string' || cmd.trim() === '') return [];
-  const units: string[][] = [];
-  const inner = (text: string) => units.push(...commandUnits(text, depth + 1));
+  const units: CommandUnit[] = [];
+  const inner = (text: string) => units.push(...commandUnitsAsWritten(text, depth + 1));
   for (const m of cmd.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) inner(m[1] ?? m[2] ?? '');
   for (const segment of splitShellWords(cmd)) {
     // `FOO=1 rm -rf build`: variables set for the command are not the program
@@ -863,18 +920,19 @@ export function commandUnits(cmd: string, depth = 0): string[][] {
     if (head === undefined) continue;
     const program = interpreterBasename(head);
     const args = tokens.slice(1);
-    units.push([program, ...args]);
+    units.push({ unit: [program, ...args], head });
     const lower = args.map((a) => a.toLowerCase());
     // `python -m pip install x` runs pip: the module is the program (review of
     // PR #476; main caught it by reading the whole text).
     if (interpreterKind(program) === 'python') {
       const m = lower.indexOf('-m');
       const module = m >= 0 ? args[m + 1] : undefined;
-      if (module !== undefined) units.push([module.toLowerCase(), ...args.slice(m + 2)]);
+      if (module !== undefined)
+        units.push({ unit: [module.toLowerCase(), ...args.slice(m + 2)], head: module });
     }
     if (SHELL_WRAPPERS.has(program)) {
-      const i = lower.indexOf('-c');
-      if (i >= 0 && args[i + 1] !== undefined) inner(args[i + 1] ?? '');
+      const i = shellCommandIndex(args);
+      if (i >= 0) inner(args[i] ?? '');
     } else if (program === 'cmd') {
       const i = lower.findIndex((a) => a === '/c' || a === '/k');
       if (i >= 0) inner(args.slice(i + 1).join(' '));

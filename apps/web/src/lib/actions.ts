@@ -6180,6 +6180,19 @@ function readGateReasons(approvalId: string, raw: unknown): ShellGateReason[] {
           })),
         }
       : {}),
+    // Les lignes d'un script et ses chemins peuvent porter un jeton (#635).
+    ...(r.found
+      ? {
+          found: r.found.map((f) => ({
+            ...f,
+            source: f.source === null ? null : redactSecretsInText(f.source),
+            text: redactSecretsInText(f.text),
+          })),
+        }
+      : {}),
+    ...(r.unread
+      ? { unread: r.unread.map((u) => ({ ...u, source: redactSecretsInText(u.source) })) }
+      : {}),
   }));
 }
 
