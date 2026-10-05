@@ -28,6 +28,13 @@ overrides:
   'qs@6': ^6.15.2
   'body-parser@2': ^2.3.0
   'ip-address@10': ^10.3.1
+# Le traceur de Next (@vercel/nft) traçait le dossier personnel de la machine
+# qui construit quand il est sur un autre lecteur que le dépôt (Windows) :
+# 24,5 Go de tas et 16 min de build le 05/10/2026. Le pourquoi est en tête du
+# fichier ajouté par le patch ; la porte qui empêche le retour est
+# scripts/lib/next-trace-scope.mjs.
+patchedDependencies:
+  next@16.3.0: patches/next@16.3.0.patch
 allowBuilds:
   '@embedded-postgres/windows-x64': true
   '@embedded-postgres/linux-x64': true

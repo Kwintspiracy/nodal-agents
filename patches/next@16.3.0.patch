@@ -1,0 +1,53 @@
+diff --git a/dist/compiled/@vercel/nft/guarded.js b/dist/compiled/@vercel/nft/guarded.js
+new file mode 100644
+index 0000000..9f4505a
+--- /dev/null
++++ b/dist/compiled/@vercel/nft/guarded.js
+@@ -0,0 +1,40 @@
++'use strict';
++// Nodal-Agents — patches/next@16.3.0.patch (2026-10-05).
++//
++// nft drops a file outside its `base` with one test: does the path, made
++// relative to the base, start with `..`? Between two Windows drives
++// `path.relative` returns an ABSOLUTE path (`C:\Users\…` from a base on D:),
++// the test misses it, and the file is traced. nft also EVALUATES
++// `os.homedir()` / `os.tmpdir()` at build time and walks the resulting
++// directory whole — so a build on D: traced the builder's entire home on C:
++// (1,776,635 files per page, 24.5 GB of heap, 16 min).
++//
++// Next's own `makeIgnoreFn` (dist/build/collect-build-traces.js) already
++// treats an absolute path outside the root as ignored, for two of its three
++// callers; the webpack page pass (next-trace-entrypoints-plugin.js) does not.
++// Wrapping the one entry point every caller goes through applies the rule
++// everywhere: a path with no relative form from the base is outside it.
++// On Linux and macOS there is one root, `path.relative` never returns an
++// absolute path, and this changes nothing.
++//
++// Such a file could never ship anyway: Next copies traced files to
++// `standalone/<relative path>`, and `standalone\C:\Users\…` fails to copy.
++const { isAbsolute } = require('path');
++const nft = require('./index.js');
++
++function nodeFileTrace(files, opts = {}) {
++  const ignore = opts.ignore;
++  if (ignore !== undefined && typeof ignore !== 'function') {
++    throw new Error(
++      'nodal-agents nft guard: `ignore` must be a function (got ' +
++        typeof ignore +
++        '). Next changed how it calls nft — revisit patches/next@*.patch.',
++    );
++  }
++  return nft.nodeFileTrace(files, {
++    ...opts,
++    ignore: (path, parent) => isAbsolute(path) || (ignore ? ignore(path, parent) : false),
++  });
++}
++
++module.exports = { ...nft, nodeFileTrace };
+diff --git a/dist/compiled/@vercel/nft/package.json b/dist/compiled/@vercel/nft/package.json
+index 501e74a..94e0ab5 100644
+--- a/dist/compiled/@vercel/nft/package.json
++++ b/dist/compiled/@vercel/nft/package.json
+@@ -1 +1 @@
+-{"name":"@vercel/nft","main":"index.js","license":"MIT"}
++{"name":"@vercel/nft","main":"guarded.js","license":"MIT"}
