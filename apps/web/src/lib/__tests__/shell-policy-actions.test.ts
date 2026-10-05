@@ -221,5 +221,11 @@ describe('listApprovalsAction carries the gate reasons (#464) @cap:approuver-une
     expect(row?.gateReasons[0]?.found?.[0]?.text).toContain('os.system("pip install x --token');
     expect(row?.gateReasons[1]?.unread?.[0]?.why).toBe('outside_workspaces');
     expect(JSON.stringify(row?.gateReasons)).not.toContain(secret);
+    // The impact line says what the gate read, never "likely read/inspect".
+    expect(row?.explanation.impact).toContain(
+      'the code it runs installs software or packages (build.py, line 3)',
+    );
+    expect(row?.explanation.impact).not.toContain('likely read/inspect');
+    expect(row?.explanation.impact).not.toContain(secret);
   });
 });

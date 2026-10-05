@@ -22,6 +22,8 @@ import {
   staticShellCategories,
   type StaticShellCategory,
 } from './catastrophic-command';
+import type { ShellGateReason } from './shell-checklist';
+import { redactSecretsInText } from './redact-transcript';
 
 /**
  * What each kind of action the checklist reads DOES, for the card (Reviewer A,
@@ -85,22 +87,51 @@ function commandBinaries(cmd: string): string[] {
 }
 
 /**
+ * What the gate found in the code a command runs (#635): a script it names or
+ * code written into it, read by the checklist, which the command text alone
+ * does not show. Said with where, so the line never calls "likely read" a
+ * command held for what its script does. Null when the gate read nothing
+ * there.
+ */
+function codeClause(reasons: readonly ShellGateReason[]): string | null {
+  const found: string[] = [];
+  const unread: string[] = [];
+  for (const r of reasons) {
+    const f = r.found?.[0];
+    // A path can carry a token: masked, as everywhere a card is shown.
+    if (f !== undefined)
+      found.push(
+        `${KIND_IMPACT[r.category]} (${f.source === null ? 'code in the command' : redactSecretsInText(f.source)}, line ${f.line})`,
+      );
+    for (const u of r.unread ?? []) unread.push(redactSecretsInText(u.source));
+  }
+  const parts: string[] = [];
+  if (found.length > 0) parts.push(`the code it runs ${found.join(', ')}`);
+  if (unread.length > 0) parts.push(`runs a script it could not read (${unread.join(', ')})`);
+  return parts.length > 0 ? parts.join('; ') : null;
+}
+
+/**
  * Descriptive risk verdict for a shell command, derived from the SAME
  * classifiers the approval gate uses (single source of truth — the card can
- * never say "read-only" about a command the gate flagged destructive).
+ * never say "read-only" about a command the gate flagged destructive), and
+ * from what the gate read in the code the command runs (`reasons`, #635).
  */
-function describeCommandImpact(cmd: string): string {
+function describeCommandImpact(cmd: string, reasons: readonly ShellGateReason[]): string {
   const bins = commandBinaries(cmd);
   const ran = bins.length > 0 ? `Runs \`${bins.join('` → `')}\`` : 'Runs a shell command';
   if (isCatastrophicCommand(cmd)) {
     return `${ran} — MACHINE-WIDE DESTRUCTIVE: refused even if approved (hardline floor).`;
   }
-  if (isInlineInterpreterEvalCommand(cmd)) {
-    return `${ran} — executes arbitrary inline code through an interpreter.`;
-  }
-  if (isDestructiveOrHeavyCommand(cmd)) {
-    return `${ran} — destructive or heavy: ${heavyKindsClause([cmd])}.`;
-  }
+  const text = isInlineInterpreterEvalCommand(cmd)
+    ? 'executes arbitrary inline code through an interpreter'
+    : isDestructiveOrHeavyCommand(cmd)
+      ? `destructive or heavy: ${heavyKindsClause([cmd])}`
+      : null;
+  const inCode = codeClause(reasons);
+  if (text !== null && inCode !== null) return `${ran} — ${text}; ${inCode}.`;
+  if (text !== null) return `${ran} — ${text}.`;
+  if (inCode !== null) return `${ran} — ${inCode}.`;
   return `${ran} — no destructive pattern detected (likely read/inspect).`;
 }
 
@@ -110,7 +141,12 @@ function describeCommandImpact(cmd: string): string {
  * below assumes the call already crossed some destructive/require-approval
  * threshold, so the wording doesn't hedge on "if" it matters.
  */
-export function computeApprovalImpactLine(toolName: string, toolInput: unknown): string {
+export function computeApprovalImpactLine(
+  toolName: string,
+  toolInput: unknown,
+  /** What the shell checklist held the call for, as stored on the approval. */
+  gateReasons: readonly ShellGateReason[] = [],
+): string {
   const input = (toolInput ?? {}) as Record<string, unknown>;
   const str = (v: unknown): string => (typeof v === 'string' && v.length > 0 ? v : '?');
   switch (toolName) {
@@ -120,7 +156,7 @@ export function computeApprovalImpactLine(toolName: string, toolInput: unknown):
     case 'run_command': {
       const cmd = input['command'];
       return typeof cmd === 'string' && cmd.trim().length > 0
-        ? describeCommandImpact(cmd)
+        ? describeCommandImpact(cmd, gateReasons)
         : 'Runs a shell command on the host.';
     }
     case 'run_skill_script':
@@ -144,10 +180,12 @@ export function computeApprovalImpactLine(toolName: string, toolInput: unknown):
       }
       const liste = commands.map((c) => `\`${c}\``).join(', ');
       const heavy = commands.filter(isDestructiveOrHeavyCommand);
+      const inCode = codeClause(gateReasons);
       return (
         `Records ${liste} as the proof for "${str(input['project_path'])}". ` +
         `${commands.length === 1 ? 'It runs' : 'They run'} when the job finishes, without asking again` +
-        (heavy.length > 0 ? ` — and at least one ${heavyKindsClause(heavy)}.` : '.')
+        (heavy.length > 0 ? ` — and at least one ${heavyKindsClause(heavy)}` : '') +
+        (inCode !== null ? `; ${inCode}.` : '.')
       );
     }
     case 'file_search': {

@@ -142,6 +142,31 @@ describe('a command that runs a script is judged by the script (#635) @cap:execu
     ]);
   });
 
+  // The channel card (Telegram, Discord…) is built from what the gate hands
+  // the notifier: the reasons travel with it, so the card says what was read.
+  it('the notifier receives what the gate read, the same as the row', async () => {
+    await put('scripts/notify.py', TICKET_SCRIPT);
+    const command = 'python scripts/notify.py';
+    const handed: unknown[] = [];
+
+    const res = await run(command, {
+      ...gate(DEFAULT_SHELL_POLICY, [yolo()]),
+      onApprovalRequired: async (req) => {
+        handed.push(req.gateReasons);
+      },
+    });
+
+    expect(res.outcome).toBe('awaiting_approval');
+    if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+    expect(handed).toEqual([await reasonsOf(res.approvalRequestId)]);
+    expect(handed[0]).toEqual([
+      expect.objectContaining({
+        category: 'install_software',
+        found: [expect.objectContaining({ source: 'scripts/notify.py', line: 5 })],
+      }),
+    ]);
+  });
+
   it('"never" refuses the script, tells the agent what, and asks no one', async () => {
     await put('scripts/setup.py', TICKET_SCRIPT);
     const before = await db.select({ id: approvalRequests.id }).from(approvalRequests);

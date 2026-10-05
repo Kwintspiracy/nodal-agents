@@ -714,6 +714,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       agentId: ctx.agentId,
       entityId: ctx.entityId,
       kind: tool.asksUser === true ? 'question' : 'approval',
+      gateReasons,
     };
 
     await opts.onApprovalRequired(gateRequest);
