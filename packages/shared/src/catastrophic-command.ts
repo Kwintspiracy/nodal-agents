@@ -603,7 +603,6 @@ function readLaunch(args: readonly string[]): Launch {
   const launch: Launch = { target: null, launched: [], verb: false, windowless: false };
   for (let i = 0; i < args.length; i++) {
     const word = args[i] ?? '';
-    if (word === '') continue; // cmd's empty title: `start "" file`
     if (word.startsWith('-')) {
       const [rawName, inlineValue] = word.slice(1).toLowerCase().split(':', 2);
       const name = rawName ?? '';
@@ -1052,18 +1051,50 @@ function isAssignmentPrefix(segment: readonly string[], i: number): boolean {
 }
 
 /**
+ * Which shell reads a line: in PowerShell, `start` is Start-Process (no window
+ * title); elsewhere it is cmd's. `run_command` runs through cmd.exe on Windows.
+ */
+type LineShell = 'cmd' | 'powershell';
+
+/**
+ * cmd's `start ["title"] [/switches] program args`: the first quoted argument
+ * before the program is ALWAYS the window title, empty or not, wherever the
+ * switches sit (review of PR #682, pass 1). Never what it starts.
+ */
+function withoutStartTitle(args: readonly string[], quoted: readonly boolean[]): string[] {
+  for (let j = 0; j < args.length; j++) {
+    if (quoted[j]) return [...args.slice(0, j), ...args.slice(j + 1)];
+    if (!/^\/\w+$/.test(args[j] ?? '')) break;
+  }
+  return [...args];
+}
+
+/**
  * The commands a command line actually runs, as token lists whose first token
  * is the program (its basename, lower-cased, without `.exe`): each segment,
  * the module of `python -m`, and what `bash -c`, `cmd /c`,
- * `powershell -Command`, `xargs`, `find -exec` and `$(…)` / backticks run
- * inside it.
+ * `powershell -Command`, `start` / `Start-Process`, `xargs`, `find -exec` and
+ * `$(…)` / backticks run inside it.
  */
-export function commandUnits(cmd: string, depth = 0): string[][] {
+export function commandUnits(cmd: string, depth = 0, shell: LineShell = 'cmd'): string[][] {
   if (depth > 4 || typeof cmd !== 'string' || cmd.trim() === '') return [];
   const units: string[][] = [];
-  const inner = (text: string) => units.push(...commandUnits(text, depth + 1));
+  const inner = (text: string, by: LineShell = 'cmd') =>
+    units.push(...commandUnits(text, depth + 1, by));
   for (const m of cmd.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) inner(m[1] ?? m[2] ?? '');
-  for (const segment of splitShellWords(cmd)) {
+  for (const words of splitQuotedShellWords(cmd)) {
+    const segment = words.map((w) => w.text);
+    // `cmd /c "rm -rf build && del x"`: cmd reads one quoted line as a line,
+    // never as the name of one program (review of PR #682, pass 1).
+    if (
+      segment.length === 3 &&
+      interpreterBasename(segment[0] ?? '') === 'cmd' &&
+      /^\/[ck]$/i.test(segment[1] ?? '') &&
+      words[2]?.quoted === true
+    ) {
+      inner(segment[2] ?? '');
+      continue;
+    }
     // `FOO=1 rm -rf build`: variables set for the command are not the program
     // (review of PR #476).
     const tokens = skipPassthroughLeaders(
@@ -1072,7 +1103,12 @@ export function commandUnits(cmd: string, depth = 0): string[][] {
     const head = tokens[0];
     if (head === undefined) continue;
     const program = interpreterBasename(head);
-    const args = tokens.slice(1);
+    // Both only drop leading words: `tokens` is the tail of `segment`.
+    const quoted = words.slice(segment.length - tokens.length + 1).map((w) => w.quoted);
+    const args =
+      program === 'start' && shell === 'cmd'
+        ? withoutStartTitle(tokens.slice(1), quoted)
+        : tokens.slice(1);
     units.push([program, ...args]);
     const lower = args.map((a) => a.toLowerCase());
     // `python -m pip install x` runs pip: the module is the program (review of
@@ -1085,12 +1121,9 @@ export function commandUnits(cmd: string, depth = 0): string[][] {
     if (SHELL_WRAPPERS.has(program)) {
       const i = lower.indexOf('-c');
       if (i >= 0 && args[i + 1] !== undefined) inner(args[i + 1] ?? '');
-    } else if (program === 'cmd') {
-      const i = lower.findIndex((a) => a === '/c' || a === '/k');
-      if (i >= 0) inner(args.slice(i + 1).join(' '));
     } else if (program === 'powershell' || program === 'pwsh') {
       const i = lower.findIndex((a) => a === '-command' || a === '-c');
-      if (i >= 0) inner(args.slice(i + 1).join(' '));
+      if (i >= 0) inner(args.slice(i + 1).join(' '), 'powershell');
     } else if (LAUNCHERS.has(program)) {
       // What `start` / `Start-Process` starts runs too (#667).
       const launched = launchedCommand(args);
@@ -1115,15 +1148,28 @@ export function commandUnits(cmd: string, depth = 0): string[][] {
  * Files/x.csv"` is three words, not four. Redirection targets are words too.
  */
 export function splitShellWords(cmd: string): string[][] {
-  const segments: string[][] = [];
-  let words: string[] = [];
+  return splitQuotedShellWords(cmd).map((segment) => segment.map((w) => w.text));
+}
+
+/** One word of a command, and whether it was written in quotes (cmd's `start` title). */
+interface ShellWord {
+  text: string;
+  quoted: boolean;
+}
+
+/** `splitShellWords`, each word saying whether it was quoted. */
+function splitQuotedShellWords(cmd: string): ShellWord[][] {
+  const segments: ShellWord[][] = [];
+  let words: ShellWord[] = [];
   let word = '';
   let inWord = false;
+  let quoted = false;
   let quote: '"' | "'" | null = null;
   const endWord = (): void => {
-    if (inWord) words.push(word);
+    if (inWord) words.push({ text: word, quoted });
     word = '';
     inWord = false;
+    quoted = false;
   };
   const endSegment = (): void => {
     endWord();
@@ -1146,6 +1192,7 @@ export function splitShellWords(cmd: string): string[][] {
     if (ch === '"' || ch === "'") {
       quote = ch;
       inWord = true;
+      quoted = true;
       continue;
     }
     // cmd.exe `^` escapes the next character: `r^m` runs `rm`. A backslash is

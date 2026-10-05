@@ -8,7 +8,11 @@
 // must NOT read as such.
 
 import { describe, it, expect } from 'vitest';
-import { isDestructiveOrHeavyCommand, staticShellCategories } from '../catastrophic-command';
+import {
+  commandUnits,
+  isDestructiveOrHeavyCommand,
+  staticShellCategories,
+} from '../catastrophic-command';
 import {
   DEFAULT_SHELL_POLICY,
   resolveShellPolicy,
@@ -149,6 +153,60 @@ describe('open_or_send: what reaches the screen, a printer or someone (#667) @ca
     expect(
       staticShellCategories('Start-Process node -ArgumentList server.js -NoNewWindow'),
     ).toEqual([]);
+  });
+
+  // Revue de la PR #682, passe 1 : `start ["titre"] [/options] programme`. Le
+  // premier argument entre guillemets de `start` (cmd) est TOUJOURS le titre de
+  // la fenêtre, vide ou non, où que soient les options : jamais le programme.
+  it("cmd's start: the first quoted argument is the window title, never what it starts", () => {
+    for (const cmd of [
+      'start /b "job" notepad /p report.txt',
+      'cmd /c start /b "job" notepad /p report.txt',
+      'start "My App" report.pdf',
+      'cmd /c start /b "job" report.pdf',
+      'start "" /b report.pdf',
+    ]) {
+      expect(opensOrSends(cmd), cmd).toBe(true);
+    }
+    expect(staticShellCategories('start /b "job" rm -rf build')).toEqual(['delete_files']);
+    expect(staticShellCategories('cmd /c start /b "job" rm -rf build')).toEqual(['delete_files']);
+
+    // Title before /b: still a background launch, and node is what it starts.
+    expect(opensOrSends('start "job" /b node server.js')).toBe(false);
+    expect(commandUnits('start "job" /b node server.js')).toEqual([
+      ['start', '/b', 'node', 'server.js'],
+      ['node', 'server.js'],
+    ]);
+    // A quoted program after the title is the program.
+    expect(commandUnits('start /b "job" "C:\\Program Files\\nodejs\\node.exe" server.js')).toEqual([
+      ['start', '/b', 'C:\\Program Files\\nodejs\\node.exe', 'server.js'],
+      ['node', 'server.js'],
+    ]);
+  });
+
+  // PowerShell's `start` is Start-Process: a quoted first argument is the file.
+  it("PowerShell's start alias has no title: its quoted first argument is what it starts", () => {
+    expect(
+      opensOrSends(`powershell -Command start "C:\\out\\report.pdf" -WindowStyle Hidden`),
+    ).toBe(true);
+    expect(
+      opensOrSends(`powershell -Command "start 'C:\\out\\report.pdf' -WindowStyle Hidden"`),
+    ).toBe(true);
+  });
+
+  // A command string given whole to cmd /c or powershell -Command is read
+  // again as a line; separate quoted words keep their quotes.
+  it('cmd /c with one quoted line reads the line, never a program named after it', () => {
+    expect(commandUnits('cmd /c "rm -rf build && del x.txt"')).toEqual([
+      ['rm', '-rf', 'build'],
+      ['del', 'x.txt'],
+    ]);
+    // The line ended in `.txt`: read whole, it looked like a document opened.
+    expect(staticShellCategories('cmd /c "rm -rf build && del x.txt"')).toEqual(['delete_files']);
+    // Separate quoted words stay words.
+    expect(commandUnits('cmd /c type "C:\\My Files\\a.txt"')).toEqual([
+      ['type', 'C:\\My Files\\a.txt'],
+    ]);
   });
 
   it('a PowerShell script run by name runs, it is not a document', () => {
