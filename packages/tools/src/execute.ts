@@ -13,6 +13,7 @@ import {
   type MutationTarget,
   type ChainWorkspace,
   type ShellGateReason,
+  type ShellHost,
 } from '@nodal-agents/shared';
 import type { z } from 'zod';
 import type {
@@ -26,6 +27,13 @@ import { InvalidInputError, ToolFailedWithOutput } from './errors';
 import { refuseWithoutStatedPurpose } from './purpose';
 import { alreadyRejectedInstruction, priorRejectionOfSameCall } from './rejected-call';
 import { judgeShellChecklist, shellChecklistRefusal, type ShellPlace } from './shell-checklist';
+
+/**
+ * The host that runs the commands, and so the shell that reads them:
+ * `run_command` uses cmd.exe on Windows and sh elsewhere (shell-engine.ts).
+ * Where a command ends, and what it runs, follow that shell (#667).
+ */
+const RUN_HOST: ShellHost = process.platform === 'win32' ? 'windows' : 'posix';
 import {
   followLinks,
   resolveAndCheckPath,
@@ -410,7 +418,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       // lourd couvrait (le code en ligne compris), et le propriétaire y dit,
       // sorte par sorte, s'il veut qu'on lui demande.
       if (tool.name === 'run_command' || tool.name === 'declare_verification')
-        isHeavy = opts.shellPolicy ? false : commandesJugees.some(isDestructiveOrHeavyCommand);
+        isHeavy = opts.shellPolicy
+          ? false
+          : commandesJugees.some((c) => isDestructiveOrHeavyCommand(c, RUN_HOST));
       // É-2 (audit sécu 2026-07-07): create_mcp with a stdio transport spawns an
       // arbitrary local subprocess (npx/uvx <cmd>) — RCE-equivalent to
       // run_command — so it must stay gated under destructive_gate. Its declared
@@ -472,8 +482,8 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // ── La liste de ce que l'agent n'a pas le droit de faire (#464) ─────────────
   //
   // Chaque commande qui va tourner est lue sorte par sorte (code en ligne,
-  // suppression, installation, téléchargement, arrêt de programmes, réglages
-  // système) et l'état que le propriétaire a donné à chaque sorte s'applique :
+  // suppression, installation, téléchargement, ouvrir/imprimer/envoyer (#667),
+  // arrêt de programmes, réglages système) et l'état que le propriétaire a donné à chaque sorte s'applique :
   // `never` bloque, `ask` retient pour approbation. Une lecture du texte, comme
   // celle de Hermes : elle ne suit pas ce qu'un script fait une fois lancé, et
   // ne garde pas l'agent dans ses dossiers (il faudrait un bac à sable de l'OS).
@@ -523,7 +533,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     commandesJugees.length > 0 &&
     effectiveAction !== 'block' &&
     effectiveAction !== 'require_approval' &&
-    commandesJugees.some(isCatastrophicCommand)
+    commandesJugees.some((c) => isCatastrophicCommand(c, RUN_HOST))
   ) {
     effectiveAction = 'require_approval';
   }
@@ -1438,7 +1448,7 @@ async function shellPlace(toolName: string, input: unknown, ctx: ToolContext): P
   const cwd = await resolveAndCheckPath(ctx, from).catch(() => null);
   return {
     cwd,
-    host: process.platform === 'win32' ? 'windows' : 'posix',
+    host: RUN_HOST,
     inWorkspace: (absolutePath) =>
       resolveAndCheckPath(ctx, absolutePath).then(
         () => true,

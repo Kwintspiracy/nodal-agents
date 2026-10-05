@@ -24,6 +24,7 @@ export const SHELL_CATEGORIES = [
   'delete_files',
   'install_software',
   'download',
+  'open_or_send',
   'stop_programs',
   'system_settings',
 ] as const satisfies readonly StaticShellCategory[];
@@ -52,12 +53,17 @@ export type ShellPolicy = Record<ShellCategory, ShellCategoryState>;
  * - Deleting, installing, stopping programs and system settings ask: they
  *   reach the machine beyond the agent, or cannot be undone from the screen
  *   yet (#617).
+ * - `open_or_send` asks: a window on the person's screen, a page on their
+ *   printer or a mail to someone leaves the computer's files, and a tool that
+ *   does it may have asked the person first (#667: an agent printed through
+ *   the shell past a print tool that asks).
  */
 export const DEFAULT_SHELL_POLICY: ShellPolicy = {
   inline_code: 'allow',
   delete_files: 'ask',
   install_software: 'ask',
   download: 'allow',
+  open_or_send: 'ask',
   stop_programs: 'ask',
   system_settings: 'ask',
 };
@@ -70,6 +76,8 @@ export const StoredShellPolicySchema = z
     delete_files: StateSchema,
     install_software: StateSchema,
     download: StateSchema,
+    // Absent from every policy stored before #667: it reads the default, no migration.
+    open_or_send: StateSchema,
     stop_programs: StateSchema,
     system_settings: StateSchema,
   } satisfies Record<ShellCategory, typeof StateSchema>)

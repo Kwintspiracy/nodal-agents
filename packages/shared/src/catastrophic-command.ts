@@ -60,54 +60,6 @@ function normalizeSlashes(s: string): string {
   return s.replace(/\/{2,}/g, '/').replace(/\\{2,}/g, '\\');
 }
 
-// Interpreter/wrapper leaders that hand their remaining argument straight to
-// a real shell — `cmd /c <cmd>`, `powershell -Command <cmd>`, `sudo <cmd>`,
-// `sh -c <cmd>`, `bash -c <cmd>`. Recognizing exactly these (and only these)
-// lets the command checks below "see through" the wrapper without falling
-// back to a blanket "the command word can be ANY token in the segment" scan
-// — that blanket version is what caused a real false positive: it also
-// matched a destructive-looking word sitting inside a QUOTED, merely-printed
-// argument to an unrelated command (`echo "rm -rf /" # just a comment`).
-const WRAPPER_LEADER = new Set([
-  'cmd',
-  'cmd.exe',
-  'powershell',
-  'powershell.exe',
-  'pwsh',
-  'pwsh.exe',
-  'sh',
-  'bash',
-  'sudo',
-]);
-
-/**
- * Strip zero or more leading interpreter-wrapper tokens (and, for each, the
- * single flag token that may follow it — `/c`, `-c`, `-Command`) so the
- * checks below can anchor on the FIRST token of what's left: the real
- * command being invoked. `cmd /c rm -rf /` → `["rm", "-rf", "/"]`; a plain
- * `echo "rm -rf /"` is untouched (`echo` isn't a recognized wrapper), so its
- * first token stays `echo` and no destructive check can match it.
- */
-function stripWrapperPrefix(tokens: string[]): string[] {
-  let i = 0;
-  while (i < tokens.length && WRAPPER_LEADER.has((tokens[i] ?? '').toLowerCase())) {
-    i += 1;
-    if (i < tokens.length && /^[-/]/.test(tokens[i] ?? '')) {
-      i += 1; // swallow the wrapper's own flag (/c, -c, -Command, …)
-    }
-  }
-  return tokens.slice(i);
-}
-
-// Leaders that hand off to whatever comes after them UNCHANGED — they carry
-// no language/interpreter of their own, so it's always safe to look past
-// them at the real command word. Distinct from WRAPPER_LEADER: those either
-// ARE an interpreter of interest (sh, bash, powershell) or fully consume a
-// following flag; these are consumed themselves (plus their own flags / env
-// assignments) purely to reach the token underneath (`sudo <cmd>`, `env
-// FOO=bar <cmd>`, `cmd /c <cmd>`).
-const PASSTHROUGH_LEADERS = new Set(['sudo', 'env', 'cmd', 'cmd.exe']);
-
 /** Last path segment, lowercased, `.exe`/`.com` suffix dropped — so
  * `/usr/bin/python3`, `C:\Python311\python.exe`, and `"python3"` all reduce
  * to the same bare interpreter name as a plain `python3`. */
@@ -117,21 +69,15 @@ function interpreterBasename(token: string): string {
   return base.replace(/\.(exe|com)$/i, '').toLowerCase();
 }
 
-/** Skip leading pass-through leaders (`sudo`, `env`, `cmd`/`cmd.exe`) — each
- * one's own env-var assignments and a single flag token — so the interpreter
- * check below sees the real interpreter even when wrapped once, e.g.
- * `cmd /c python -c "…"`, `sudo python3 -c "…"`, `env FOO=bar python3 -c "…"`. */
-function skipPassthroughLeaders(tokens: string[]): string[] {
-  let i = 0;
-  while (i < tokens.length && PASSTHROUGH_LEADERS.has(interpreterBasename(tokens[i] ?? ''))) {
-    i += 1;
-    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i] ?? '')) i += 1;
-    if (i < tokens.length && /^[-/]/.test(tokens[i] ?? '')) i += 1;
-  }
-  return tokens.slice(i);
-}
-
-type InterpreterKind = 'python' | 'node' | 'perl' | 'ruby' | 'php' | 'shell' | 'powershell';
+type InterpreterKind =
+  | 'python'
+  | 'node'
+  | 'perl'
+  | 'ruby'
+  | 'php'
+  | 'shell'
+  | 'powershell'
+  | 'expect';
 
 /** Classifies a bare interpreter name (already basename'd) into the kind of
  * inline-eval flag it accepts, or `null` if it isn't a recognized
@@ -144,6 +90,7 @@ function interpreterKind(name: string): InterpreterKind | null {
   if (/^php[0-9.]*$/.test(name)) return 'php';
   if (['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash'].includes(name)) return 'shell';
   if (name === 'powershell' || name === 'pwsh') return 'powershell';
+  if (name === 'expect') return 'expect';
   return null;
 }
 
@@ -164,6 +111,7 @@ function isInlineEvalFlag(kind: InterpreterKind, flag: string): boolean {
     case 'php':
       return flag === '-r';
     case 'shell':
+    case 'expect':
       return flag === '-c';
     case 'powershell':
       // PowerShell accepts any unambiguous prefix of a parameter name
@@ -175,21 +123,21 @@ function isInlineEvalFlag(kind: InterpreterKind, flag: string): boolean {
 }
 
 /**
- * True when `tokens` invoke a general-purpose interpreter with the flag that
- * hands it an inline, opaque program (`python -c "…"`, `node -e "…"`,
- * `sh -c "…"`, `powershell -Command "…"`, …) — with or without one
- * pass-through leader (`sudo`/`env`/`cmd /c`) in front. The payload is
- * UNDECIDABLE from here (it could do anything, including a bare `rm -rf /`),
- * so this never tries to inspect it — matching alone forces the approval
- * gate, regardless of whether the payload looks dangerous or perfectly
- * anodyne. This is the fix for the "wrap it in an interpreter" bypass class.
+ * True when one command unit runs a general-purpose interpreter with the flag
+ * that hands it an inline, opaque program (`python -c "…"`, `node -e "…"`,
+ * `sh -c "…"`, `powershell -Command "…"`, …). The units are `commandUnits`',
+ * so whatever runs it (`sudo -u x`, `wsl`, `timeout 5`, `cmd /q /c`…) is seen
+ * through by the same reading as every kind of action (review of PR #682).
+ * The payload is UNDECIDABLE from here (it could do anything, including a bare
+ * `rm -rf /`), so this never tries to inspect it — matching alone forces the
+ * approval gate. This is the fix for the "wrap it in an interpreter" bypass class.
  */
-function hasInlineInterpreterEval(tokens: string[]): boolean {
-  const rest = skipPassthroughLeaders(tokens);
-  if (rest.length === 0) return false;
-  const kind = interpreterKind(interpreterBasename(rest[0] ?? ''));
-  if (!kind) return false;
-  return rest.slice(1).some((t) => isInlineEvalFlag(kind, stripQuotes(t).toLowerCase()));
+function isInlineEvalUnit(unit: readonly string[]): boolean {
+  const program = unit[0] ?? '';
+  if (isDecidedAtRunTime(program) || program === 'iex' || program === 'invoke-expression')
+    return true;
+  const kind = interpreterKind(program);
+  return kind !== null && unit.slice(1).some((t) => isInlineEvalFlag(kind, t.toLowerCase()));
 }
 
 /**
@@ -203,23 +151,20 @@ function hasInlineInterpreterEval(tokens: string[]): boolean {
  * interpreter) and `… | python script.py` (reads a FILE, stdin is just data) are
  * left alone. Splits on `|` on the already-slash-normalized command.
  */
-function hasPipeIntoBareInterpreter(c: string): boolean {
+function hasPipeIntoBareInterpreter(c: string, host: ShellHost | undefined): boolean {
   const parts = c.split('|');
   // Segment 0 is the pipe SOURCE; segments 1+ are the pipe TARGETS.
   for (let i = 1; i < parts.length; i++) {
-    const toks = (parts[i] ?? '')
-      .trim()
-      .split(/\s+/)
-      .map(stripQuotes)
-      .filter((t) => t.length > 0);
-    const rest = skipPassthroughLeaders(toks);
-    if (rest.length === 0) continue;
-    if (!interpreterKind(interpreterBasename(rest[0] ?? ''))) continue;
-    // A non-flag argument after the interpreter is a script/module path → it
-    // reads that FILE, not stdin, so the pipe is just data. Bare (only flags, or
-    // nothing) → it executes stdin as code.
-    const hasScriptArg = rest.slice(1).some((t) => !t.startsWith('-'));
-    if (!hasScriptArg) return true;
+    // The interpreter may be started by a wrapper (`| timeout 5 bash`, `| sudo
+    // -u x sh`): read as every command is, by `commandUnits`.
+    for (const unit of commandUnits(parts[i] ?? '', 0, topShell(host))) {
+      if (!interpreterKind(unit[0] ?? '')) continue;
+      // A non-flag argument after the interpreter is a script/module path → it
+      // reads that FILE, not stdin, so the pipe is just data. Bare (only flags,
+      // or nothing) → it executes stdin as code.
+      const hasScriptArg = unit.slice(1).some((t) => !t.startsWith('-'));
+      if (!hasScriptArg) return true;
+    }
   }
   return false;
 }
@@ -245,11 +190,13 @@ function isWindowsRootOrWildcardTarget(token: string): boolean {
  * True when `cmd` contains a catastrophic, machine-wide-destructive operation
  * that must always require explicit human approval (never auto-run).
  */
-export function isCatastrophicCommand(cmd: string): boolean {
+export function isCatastrophicCommand(cmd: string, host?: ShellHost): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
   // `shutdown --help` prints and exits (Reviewer A, #582 pass 2). Only the
   // long forms and `/?` here: `shutdown -h` HALTS the machine.
-  const units = commandUnits(withoutRedirections(cmd));
+  const units = commandUnits(withoutRedirections(cmd), 0, topShell(host)).filter(
+    (u) => !runsAnother(u),
+  );
   if (
     units.length > 0 &&
     units.every((u) => u.length >= 2 && u.slice(1).every((t) => FLOOR_READ_FLAGS.has(t)))
@@ -271,38 +218,29 @@ export function isCatastrophicCommand(cmd: string): boolean {
     return true;
   }
 
-  // Segment-based checks below need each shell segment on its own, split on
-  // ;, &, |, AND newline/CR — a bare newline is a statement separator in every
-  // shell (sh, bash, cmd, PowerShell) just like `;`, and without splitting on
-  // it `echo hi\nrm -rf / --no-preserve-root` would dodge the `^rm` anchor.
-  for (const seg of c.split(/[;&|\n\r]+/)) {
-    const s = seg.trim();
-    if (!s) continue;
+  // NOTE (ComfyUI regression, 2026-07): inline interpreter-eval (`python -c`,
+  // `node -e`, `sh -c`, `… | python`, awk-code) is NO LONGER on the
+  // catastrophic hard floor. It is opaque but not inherently machine-wide
+  // destructive — and hard-refusing it (even after approval) broke the
+  // ubiquitous `curl … | python -c "json.load(...)"` idiom, systematically
+  // killing legitimate workflows. It is now classed as DESTRUCTIVE/heavy
+  // (isInlineInterpreterEvalCommand → isDestructiveOrHeavyCommand): gated for a
+  // human at propose_confirm/destructive_gate, auto-run under fully_autonomous
+  // (the owner's explicit "run everything" trust), and — crucially —
+  // APPROVABLE (it executes after a human OK). Only the deterministic
+  // machine-destroyers above stay refused-even-after-approval.
 
-    // Tokens with stray quotes stripped — an interpreter wrapper like
-    // `powershell -Command "format C:"` glues a quote onto the token next to
-    // it after a plain whitespace split.
-    const tokens = s.split(/\s+/).map(stripQuotes);
-
-    // NOTE (ComfyUI regression, 2026-07): inline interpreter-eval (`python -c`,
-    // `node -e`, `sh -c`, `… | python`, awk-code) is NO LONGER on the
-    // catastrophic hard floor. It is opaque but not inherently machine-wide
-    // destructive — and hard-refusing it (even after approval) broke the
-    // ubiquitous `curl … | python -c "json.load(...)"` idiom, systematically
-    // killing legitimate workflows. It is now classed as DESTRUCTIVE/heavy
-    // (isInlineInterpreterEvalCommand → isDestructiveOrHeavyCommand): gated for a
-    // human at propose_confirm/destructive_gate, auto-run under fully_autonomous
-    // (the owner's explicit "run everything" trust), and — crucially —
-    // APPROVABLE (it executes after a human OK). Only the deterministic
-    // machine-destroyers above stay refused-even-after-approval.
-
-    // The command actually being invoked, after peeling off a recognized
-    // interpreter wrapper (see stripWrapperPrefix doc comment). Used to
-    // ANCHOR the three command checks below on its first token — this is
-    // what lets `cmd /c rm -rf /` be caught while `echo "rm -rf /"` (a mere
-    // quoted mention, not an invocation) is not.
-    const cmdTokens = stripWrapperPrefix(tokens);
-    const cmdWord = cmdTokens[0] ?? '';
+  // The checks below are ANCHORED on the program of each command the line
+  // runs (`commandUnits`): what `cmd /q /c`, `powershell -Command`, `sh -c`,
+  // `wsl`, `timeout 5`, `sudo -u x`, `nohup`, `xargs`… start is a command of
+  // its own (review of PR #682: `wsl rm -rf /` and `timeout 5 rm -rf /`
+  // passed the floor, its own list of wrappers knew only cmd, powershell, sh,
+  // bash and sudo). A quoted mention (`echo "rm -rf /"`) is an argument of
+  // `echo`, never a command, so no check can match it.
+  for (const unit of commandUnits(withoutRedirections(c), 0, topShell(host))) {
+    const cmdWord = unit[0] ?? '';
+    const args = unit.slice(1);
+    const s = unit.join(' ');
 
     // `rm` (unix, and PowerShell's `rm` alias for Remove-Item) recursive +
     // force against a machine-wide target — unix root/home/wildcard (/, /*,
@@ -316,36 +254,32 @@ export function isCatastrophicCommand(cmd: string): boolean {
       const force = /\s-\S*f/i.test(s) || /\s--force\b/i.test(s);
       if (recursive && force) {
         if (/\s--no-preserve-root\b/i.test(s)) return true;
-        // a root / home / wildcard target anywhere in the segment
+        // a root / home / wildcard target among its arguments
         if (/(\s|=)(\/|\/\*|~|~\/\*?|\$HOME\/?\*?|\*)(\s|$|"|')/.test(s)) return true;
-        if (tokens.some((t) => isWindowsRootOrWildcardTarget(t))) return true;
+        if (args.some((t) => isWindowsRootOrWildcardTarget(t))) return true;
       }
     }
 
-    // Windows `format <drive>:` — anchored on the (wrapper-unwrapped) command
-    // word so `cmd /c format C:`, `powershell -Command "format C:"` are
-    // caught while `clang-format`, `git format-patch`, `dotnet format`, and
-    // the `Format-Table` cmdlet (where "format" is glued to other text, is a
-    // different word, or isn't the invoked command) are left alone. A LATER
-    // token must be a bare drive-letter target.
+    // Windows `format <drive>:` — anchored on the program, so `clang-format`,
+    // `git format-patch`, `dotnet format`, and the `Format-Table` cmdlet are
+    // left alone. A LATER word must be a bare drive-letter target.
     if (
       /^format(\.(com|exe))?$/i.test(cmdWord) &&
-      cmdTokens.slice(1).some((d) => /^[a-z]:([\\/]\*?)?$/i.test(d))
+      args.some((d) => /^[a-z]:([\\/]\*?)?$/i.test(d))
     ) {
       return true;
     }
 
     // Windows recursive+forced delete (Remove-Item/ri/del/erase/rd/rmdir)
     // against a machine-wide target — mirrors the `rm` check above, same
-    // root-only scope AND the same wrapper-unwrapped command anchor (so
-    // `cmd /c del /s /q C:` doesn't dodge it). `Remove-Item .\build -Recurse
-    // -Force` (a relative project subfolder) must NOT match; only a drive
-    // root / wildcard / system env var does.
+    // root-only scope. `Remove-Item .\build -Recurse -Force` (a relative
+    // project subfolder) must NOT match; only a drive root / wildcard / system
+    // env var does.
     if (/^(ri|remove-item|del|erase|rd|rmdir)$/i.test(cmdWord)) {
       const psRecursiveForce = /(^|\s)-r(ecurse)?\b/i.test(s) && /(^|\s)-f(orce)?\b/i.test(s);
       const cmdRecursiveForce = /\/s\b/i.test(s) && /\/q\b/i.test(s);
       if (psRecursiveForce || cmdRecursiveForce) {
-        if (tokens.some((t) => isWindowsRootOrWildcardTarget(t))) return true;
+        if (args.some((t) => isWindowsRootOrWildcardTarget(t))) return true;
       }
     }
   }
@@ -366,17 +300,11 @@ export function isCatastrophicCommand(cmd: string): boolean {
  * after a human OK, unlike the machine-destroyers). The runner also uses this
  * predicate to tailor its approval-card wording.
  */
-export function isInlineInterpreterEvalCommand(cmd: string): boolean {
+export function isInlineInterpreterEvalCommand(cmd: string, host?: ShellHost): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
   const c = normalizeSlashes(cmd.trim());
-  if (AWK_CODE_EXEC.test(c) || hasPipeIntoBareInterpreter(c)) return true;
-  for (const seg of c.split(/[;&|\n\r]+/)) {
-    const s = seg.trim();
-    if (!s) continue;
-    const tokens = s.split(/\s+/).map(stripQuotes);
-    if (hasInlineInterpreterEval(tokens)) return true;
-  }
-  return false;
+  if (AWK_CODE_EXEC.test(c) || hasPipeIntoBareInterpreter(c, host)) return true;
+  return commandUnits(withoutRedirections(c), 0, topShell(host)).some(isInlineEvalUnit);
 }
 
 // ── Destructive / heavy actions (for the `destructive_gate` autonomy level) ──────
@@ -416,7 +344,9 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
     subcommand('git', String.raw`branch\s+-D\b`),
   ],
   install_software: [
-    /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\binstall\b/i, // pkg install
+    /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\b(?:un)?install\b/i, // pkg install, and uninstall: what software is installed changes
+    // VS Code family: adding, updating or removing an extension (review of PR #682, pass 8)
+    /\b(code|code-insiders|codium|vscodium|cursor|windsurf)\b[^\n]*--(?:install-extension|uninstall-extension|update-extensions)\b/i,
     /\b(npm|pnpm|yarn|bun)\s+(i|add|ci)\b|\bInstall-(Module|Package)\b/i, // npm i, pnpm add, PowerShell modules
     /\buv\s+(pip\s+install|add|tool\s+install)\b/i, // uv (review of PR #476)
     /\bgo\s+install\b/i, // go install
@@ -460,9 +390,396 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
 
 /**
  * The kinds of action read from a command's text: the patterns above, plus
- * inline code (`python -c "…"`), whose program is text nobody can read ahead.
+ * inline code (`python -c "…"`), whose program is text nobody can read ahead,
+ * and what reaches past the computer's files (`reachesOut`).
  */
-export type StaticShellCategory = keyof typeof STATIC_SHELL_CATEGORY_PATTERNS | 'inline_code';
+export type StaticShellCategory =
+  | keyof typeof STATIC_SHELL_CATEGORY_PATTERNS
+  | 'inline_code'
+  | 'open_or_send';
+
+// ── What reaches past the computer's files (#667) ────────────────────────────
+// 01/10: asked to print, an agent holding a print tool that asks the person
+// first ran `Start-Process … -Verb Print` through the shell instead, and no
+// kind of action covered it. The rule: a command reaches out when the program
+// it runs hands something to the person's desktop (a window, a file opened in
+// its program, a notification), to a device (a printer), or to someone (mail).
+// Read from the program and its words, like every kind here: a script, inline
+// code or a .NET/COM call that does the same is not seen (#628, a sandbox).
+
+/** They exist to hand a file, an address or a message to the desktop or a device. */
+const OUTWARD_PROGRAMS = new Set([
+  // the OS's "open this" (macOS, Linux desktops, WSL, Windows)
+  'open',
+  'xdg-open',
+  'xdg-email',
+  'gnome-open',
+  'kde-open',
+  'kde-open5',
+  'wslview',
+  'sensible-browser',
+  'x-www-browser',
+  'invoke-item',
+  'ii',
+  'explorer',
+  'rundll32',
+  'osascript',
+  'notify-send',
+  // printers
+  'lp',
+  'lpr',
+  'out-printer',
+  'print',
+  // mail
+  'sendmail',
+  'send-mailmessage',
+  'msmtp',
+  'ssmtp',
+  'swaks',
+  'mail',
+  'mailx',
+  'mutt',
+]);
+
+/** `program subcommand` launchers: `gio open`, `kioclient exec`. */
+const OUTWARD_SUBCOMMANDS: Record<string, ReadonlySet<string>> = {
+  gio: new Set(['open', 'launch']),
+  kioclient: new Set(['exec']),
+  kioclient5: new Set(['exec']),
+};
+
+/**
+ * The flags that keep a desktop program windowless (its command-line uses).
+ * `x*` is a prefix, `x=` also matches `x=value`, `a b` is two words.
+ */
+const VSCODE_CLI = [
+  '--version',
+  '-v',
+  '--help',
+  '-h',
+  '--install-extension',
+  '--uninstall-extension',
+  '--list-extensions',
+  '--update-extensions',
+  '--locate-shell-integration-path',
+  'tunnel',
+  'serve-web',
+];
+const BROWSER_CLI = ['--headless*'];
+const LIBREOFFICE_CLI = ['--headless*', '--convert-to', '--print-to-file', '--cat'];
+
+/**
+ * Desktop programs of Windows, macOS and Linux: editors, viewers, office
+ * suites, browsers, mail clients, file managers, terminals (#667, #686). Run,
+ * they open a window on the person's screen, unless one of their command-line
+ * flags keeps them windowless. A desktop program not here is not seen: the
+ * OS launchers (`start`, `open`, `xdg-open`) are, whatever they open.
+ */
+const DESKTOP_PROGRAMS: ReadonlyMap<string, readonly string[]> = new Map<string, readonly string[]>(
+  [
+    // editors
+    ...['code', 'code-insiders', 'codium', 'vscodium', 'cursor', 'windsurf'].map(
+      (p) => [p, VSCODE_CLI] as const,
+    ),
+    ...[
+      'zed',
+      'subl',
+      'sublime_text',
+      'atom',
+      'notepad',
+      'notepad++',
+      'wordpad',
+      'write',
+      'gedit',
+      'gnome-text-editor',
+      'kate',
+      'kwrite',
+      'mousepad',
+      'pluma',
+      'xed',
+      'leafpad',
+      'featherpad',
+      'gvim',
+      'mvim',
+      'macvim',
+      'bbedit',
+      'mate',
+    ].map((p) => [p, []] as const),
+    ['emacs', ['--batch', '-batch', '--script', '-nw', '--no-window-system']],
+    // viewers, images, media
+    ...[
+      'mspaint',
+      'evince',
+      'okular',
+      'eog',
+      'eom',
+      'feh',
+      'gwenview',
+      'xreader',
+      'atril',
+      'zathura',
+      'mupdf',
+      'xpdf',
+      'sumatrapdf',
+      'acrord32',
+      'acrobat',
+      'foxitreader',
+      'foxitpdfreader',
+      'qpdfview',
+      'ristretto',
+      'shotwell',
+      'gthumb',
+      'totem',
+      'celluloid',
+      'wmplayer',
+      'mpv',
+    ].map((p) => [p, []] as const),
+    ['gimp', ['-i', '--no-interface']],
+    ['inkscape', ['--export-*', '--query-*', '-o']],
+    ['krita', ['--export', '--export-filename', '--export-pdf']],
+    ['vlc', ['-I dummy', '--intf=dummy']],
+    // office
+    ...['winword', 'excel', 'powerpnt', 'onenote', 'msaccess', 'mspub', 'visio', 'gnumeric'].map(
+      (p) => [p, []] as const,
+    ),
+    ...['soffice', 'libreoffice', 'lowriter', 'localc', 'loimpress'].map(
+      (p) => [p, LIBREOFFICE_CLI] as const,
+    ),
+    ['abiword', ['--to=', '-t']],
+    // browsers
+    ...[
+      'msedge',
+      'chrome',
+      'google-chrome',
+      'google-chrome-stable',
+      'chromium',
+      'chromium-browser',
+      'firefox',
+      'librewolf',
+      'brave',
+      'brave-browser',
+      'opera',
+      'vivaldi',
+      'iexplore',
+      'epiphany',
+      'falkon',
+      'konqueror',
+      'midori',
+    ].map((p) => [p, BROWSER_CLI] as const),
+    // mail, file managers, terminals, small tools
+    ...[
+      'thunderbird',
+      'outlook',
+      'evolution',
+      'kmail',
+      'geary',
+      'nautilus',
+      'dolphin',
+      'thunar',
+      'nemo',
+      'pcmanfm',
+      'caja',
+      'krusader',
+      'gnome-terminal',
+      'konsole',
+      'xterm',
+      'xfce4-terminal',
+      'terminator',
+      'alacritty',
+      'kitty',
+      'wezterm',
+      'tilix',
+      'wt',
+      'calc',
+      'gnome-calculator',
+      'kcalc',
+    ].map((p) => [p, []] as const),
+  ],
+);
+
+/** A desktop program's print flags (`notepad /p`, `AcroRd32 /t`, `soffice -p`): they print, window or not. */
+const PRINT_FLAGS = new Set(['/p', '/pt', '/t', '-p', '-pt', '--pt']);
+
+/** True when one of `flags` (a desktop program's command-line uses) is among `args`. */
+function keepsWindowless(args: readonly string[], flags: readonly string[]): boolean {
+  const lower = args.map((a) => a.toLowerCase());
+  return flags.some((flag) => {
+    const f = flag.toLowerCase();
+    if (f.includes(' ')) {
+      const [first, second] = f.split(' ');
+      return lower.some((a, i) => a === first && lower[i + 1] === second);
+    }
+    if (f.endsWith('*')) return lower.some((a) => a.startsWith(f.slice(0, -1)));
+    if (f.endsWith('=')) return lower.some((a) => a.startsWith(f) || a === f.slice(0, -1));
+    return lower.some((a) => a === f || a.startsWith(`${f}=`));
+  });
+}
+
+/** Files a desktop hands to their program when they are run or launched. */
+const DOCUMENT =
+  /\.(txt|md|log|csv|pdf|rtf|docx?|xlsx?|pptx?|od[tsp]|html?|xml|json|png|jpe?g|gif|bmp|svg|webp|tiff?|mp[34]|wav|mov|avi|url|lnk)$/i;
+
+/** A file the desktop opens in its program, or an address it opens in a browser or mail client. */
+function isDocumentOrAddress(word: string): boolean {
+  return /^[a-z][\w+.-]*:\/\//i.test(word) || /^mailto:/i.test(word) || DOCUMENT.test(word);
+}
+
+/** Start-Process's switches, which take no value (`-Verbose` is not `-Verb`). */
+const START_SWITCHES = new Set([
+  'nonewwindow',
+  'nnw',
+  'wait',
+  'passthru',
+  'usenewenvironment',
+  'loaduserprofile',
+  'lup',
+  'verbose',
+  'debug',
+]);
+
+/** Start-Process's parameters that take a value, by full name or a prefix of three letters or more. */
+const START_PARAMETERS = [
+  'filepath',
+  'argumentlist',
+  'windowstyle',
+  'workingdirectory',
+  'verb',
+  'credential',
+  'redirectstandardinput',
+  'redirectstandardoutput',
+  'redirectstandarderror',
+  'environment',
+];
+
+/** cmd's `start`, and PowerShell's `Start-Process` with its aliases. */
+const LAUNCHERS = new Set(['start', 'start-process', 'saps']);
+
+/** What a launcher was asked to start, and how (#667). */
+interface Launch {
+  /** The program, file or address it starts; null when the text does not say. */
+  target: string | null;
+  /** The words given to what it starts (`-ArgumentList`, or what follows the target). */
+  launched: string[];
+  /** A shell verb: `-Verb Print`, `-Verb Open`, `-Verb RunAs`… */
+  verb: boolean;
+  /** No window: `start /b`, `-NoNewWindow`, `-WindowStyle Hidden`. */
+  windowless: boolean;
+  /** Where cmd's window title stands among the words, when there is one. */
+  titleIndex: number | null;
+}
+
+/**
+ * Which form a launcher's words take: cmd's `start` (switches `/x`, a window
+ * title, then the program and ITS words), or PowerShell's `Start-Process`
+ * (named parameters anywhere; `start` and `saps` are its aliases there, and
+ * `wordUnits` names `start` `start-process` in a PowerShell line).
+ */
+type LaunchForm = 'cmd' | 'powershell';
+
+/**
+ * THE reading of `start` / `Start-Process`, left to right (review of PR #682,
+ * pass 7). cmd: switches with their values (spaced, glued or quoted), the
+ * window title (the first quoted argument that is not a switch's value, when
+ * `readTitle`), then what it starts and its own words, untouched. PowerShell:
+ * its named parameters, then the positional file and argument list. The
+ * title, what it starts and how are all read from here, nowhere else.
+ */
+function readLaunch(words: readonly ShellWord[], form: LaunchForm, readTitle = false): Launch {
+  const args = words.map((w) => w.text);
+  const launch: Launch = {
+    target: null,
+    launched: [],
+    verb: false,
+    windowless: false,
+    titleIndex: null,
+  };
+  for (let i = 0; i < args.length; i++) {
+    const word = args[i] ?? '';
+    if (form === 'cmd') {
+      if (launch.target !== null) {
+        launch.launched.push(word);
+      } else if (readTitle && launch.titleIndex === null && words[i]?.quoted) {
+        launch.titleIndex = i;
+      } else if (/^\/(d|node|affinity|machine)$/i.test(word)) {
+        // `/D path`, `/NODE n`, `/AFFINITY hex`, `/MACHINE x` take a value (pass 6).
+        i += 1;
+      } else if (/^\/d\S/i.test(word) || /^\/\w+$/.test(word)) {
+        if (word.toLowerCase() === '/b') launch.windowless = true;
+      } else launch.target = word;
+      continue;
+    }
+    if (word.startsWith('-')) {
+      const [rawName, inlineValue] = word.slice(1).toLowerCase().split(':', 2);
+      const name = rawName ?? '';
+      if (START_SWITCHES.has(name)) {
+        if (name === 'nonewwindow' || name === 'nnw') launch.windowless = true;
+        continue;
+      }
+      const param =
+        START_PARAMETERS.find((p) => p === name) ??
+        (name.length >= 3 ? START_PARAMETERS.find((p) => p.startsWith(name)) : undefined);
+      const value = inlineValue ?? args[++i] ?? '';
+      if (param === 'verb') launch.verb = true;
+      else if (param === 'windowstyle' && value.toLowerCase() === 'hidden')
+        launch.windowless = true;
+      else if (param === 'filepath') launch.target = value;
+      else if (param === 'argumentlist') launch.launched.push(...value.split(/[\s,]+/));
+      continue;
+    }
+    if (launch.target === null) launch.target = word;
+    else launch.launched.push(...word.split(/[\s,]+/));
+  }
+  launch.launched = launch.launched.filter((w) => w !== '');
+  return launch;
+}
+
+/** The form of a launcher unit's words: `start` is cmd's, the others PowerShell's. */
+const launchForm = (program: string): LaunchForm => (program === 'start' ? 'cmd' : 'powershell');
+
+/**
+ * cmd's `start` and PowerShell's `Start-Process` hand what they start to the
+ * desktop: a shell verb (`-Verb Print`) is a desktop action, and so is a
+ * window, and so is a file or an address (opened in its program). Without
+ * any (`start /b node server.js`, `-WindowStyle Hidden`), they start a program
+ * in the background, the dev server idiom on Windows; what that program does
+ * is read as its own command (`commandUnits`).
+ */
+function launchReachesOut(program: string, args: readonly string[]): boolean {
+  // The unit has no title left: `wordUnits` took it out with this same reading.
+  const words = args.map((text) => ({ text, quoted: false }));
+  const { target, verb, windowless } = readLaunch(words, launchForm(program));
+  return verb || !windowless || (target !== null && isDocumentOrAddress(target));
+}
+
+/**
+ * A program that opens its window or its file whatever it is asked: a desktop
+ * program not told to stay windowless, or a document run by name. `notepad
+ * --help` opens Notepad: the help/version excuse ("it prints and exits") is
+ * not theirs (#691, review of PR #682, pass 8).
+ */
+function opensWhateverAsked(unit: readonly string[]): boolean {
+  const program = unit[0] ?? '';
+  const windowless = DESKTOP_PROGRAMS.get(program);
+  return (
+    isDocumentOrAddress(program) ||
+    (windowless !== undefined && !keepsWindowless(unit.slice(1), windowless))
+  );
+}
+
+/** True when one command unit hands something to the desktop, a device or someone (#667). */
+function reachesOut(unit: readonly string[]): boolean {
+  const program = unit[0] ?? '';
+  const args = unit.slice(1);
+  if (OUTWARD_PROGRAMS.has(program)) return true;
+  if (OUTWARD_SUBCOMMANDS[program]?.has((args[0] ?? '').toLowerCase())) return true;
+  if (LAUNCHERS.has(program)) return launchReachesOut(program, args);
+  const windowless = DESKTOP_PROGRAMS.get(program);
+  if (windowless !== undefined) {
+    return args.some((a) => PRINT_FLAGS.has(a.toLowerCase())) || !keepsWindowless(args, windowless);
+  }
+  // `.\report.txt`, `cmd /c report.pdf`: a document run by name opens in its program.
+  return isDocumentOrAddress(program);
+}
 
 const DESTRUCTIVE_PATTERNS: RegExp[] = Object.values(STATIC_SHELL_CATEGORY_PATTERNS).flat();
 
@@ -471,7 +788,7 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = Object.values(STATIC_SHELL_CATEGORY_PATTE
  * Inline code (`python -c "…"`, `node -e "…"`) is its own kind: what it does is
  * not read, it is asked about, as `destructive_gate` always did.
  */
-export function staticShellCategories(cmd: string): StaticShellCategory[] {
+export function staticShellCategories(cmd: string, host?: ShellHost): StaticShellCategory[] {
   if (typeof cmd !== 'string' || cmd.trim() === '') return [];
   // Read from the PROGRAMS the command runs, never from any word of its text
   // (review of PR #474, Reviewer A, P1): `git commit -m "rm old refs"` does not
@@ -482,7 +799,7 @@ export function staticShellCategories(cmd: string): StaticShellCategory[] {
   // same way. Quotes and carets are removed by the tokenizer, so `r""m` and
   // `r^m` still read as `rm`.
   const found = new Set<StaticShellCategory>();
-  for (const unit of commandUnits(withoutRedirections(cmd))) {
+  for (const unit of commandUnits(withoutRedirections(cmd), 0, topShell(host))) {
     for (const category of unitCategories(unit)) found.add(category);
   }
   // `curl URL > file` downloads without `-o`: the redirection is dropped by
@@ -491,13 +808,13 @@ export function staticShellCategories(cmd: string): StaticShellCategory[] {
   if (
     // A wrapper's payload (`sh -c "curl URL > f"`) starts after a quote.
     /(^|[;&|("'`]\s*)(curl|irm|Invoke-RestMethod)\b(?:[^;&|\n]|&(?=>))*>/i.test(cmd) &&
-    !commandUnits(withoutRedirections(cmd))
+    !commandUnits(withoutRedirections(cmd), 0, topShell(host))
       .filter((u) => /^(curl|irm|invoke-restmethod)$/i.test(u[0] ?? ''))
       .every(isVersionOrHelpOnly)
   ) {
     found.add('download');
   }
-  if (isInlineInterpreterEvalCommand(cmd)) found.add('inline_code');
+  if (isInlineInterpreterEvalCommand(cmd, host)) found.add('inline_code');
   return [...found];
 }
 
@@ -543,7 +860,13 @@ export type ShellHost = 'windows' | 'posix';
 export function downloadWrites(cmd: string, host: ShellHost): DownloadWrites {
   const out: DownloadWrites = { dirs: [], targets: [] };
   if (typeof cmd !== 'string' || cmd.trim() === '') return out;
-  const units = commandUnits(withoutRedirections(cmd));
+  // Where a line writes is read ONCE, in order, because each target is judged
+  // from the folders before it (`dirs`, `after`): the two readings of a line
+  // whose shell is not known cannot be merged. It is read with the grammar
+  // that ends a command at `;`, `&` and `|` and keeps a backslash a path
+  // separator, PowerShell's, as the place analysis always did (#669); the
+  // kind of action (`staticShellCategories`) is read per host.
+  const units = commandUnits(withoutRedirections(cmd), 0, 'powershell');
   // `iwr URL | Set-Content file`: where the fetched bytes land, kept only if
   // the line downloads.
   const piped: DownloadTarget[] = [];
@@ -567,7 +890,7 @@ export function downloadWrites(cmd: string, host: ShellHost): DownloadWrites {
   // `curl URL > file`: the bytes land where the shell sends them. Read on a
   // line that downloads (or reads a URL into a redirection, which
   // `staticShellCategories` files as a download).
-  if (downloads || staticShellCategories(cmd).includes('download')) {
+  if (downloads || staticShellCategories(cmd, host).includes('download')) {
     out.targets.push(...piped);
     for (const t of redirectionTargets(cmd))
       if (!isNullSink(t, host)) out.targets.push({ path: readablePath(t), after: null });
@@ -918,125 +1241,807 @@ function startsWithMatch(re: RegExp, text: string): boolean {
   return m !== null && m.index === 0;
 }
 
-const SHELL_WRAPPERS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash', 'fish']);
+/**
+ * Which shell reads a line or a list of words. The shell of the WRAPPER that
+ * runs it, whatever the line around was (review of PR #682, pass 2): `cmd /c`
+ * → cmd, `powershell -Command` → PowerShell, `sh -c` / `wsl` → a POSIX shell,
+ * `timeout`, `sudo`, `Start-Process`… → no shell, the program is executed.
+ * It decides where a command ends and how quotes and escapes read (pass 3,
+ * `splitQuotedShellWords`), and that `start` is cmd's, with a window title,
+ * only in cmd (in PowerShell it is Start-Process).
+ */
+type LineShell = 'cmd' | 'powershell' | 'sh' | 'exec';
 
-/** `FOO=1` at index `i` of a segment, before any program word: an assignment, not the program. */
-function isAssignmentPrefix(segment: readonly string[], i: number): boolean {
-  return segment.slice(0, i + 1).every((t) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(t));
+/** What a program that runs another one starts: a line read again, or the words of a program. */
+type Payload =
+  | { line: string; shell: LineShell }
+  | { words: ShellWord[]; shell: LineShell; invoked?: boolean };
+
+/**
+ * The words after a program's options: `-x`, `--long`, `--long=v`, and for the
+ * options in `valued`, the word that follows. `--` ends them.
+ */
+function afterOptions(args: readonly ShellWord[], valued: ReadonlySet<string>): ShellWord[] {
+  let i = 0;
+  while (i < args.length) {
+    const w = args[i]?.text ?? '';
+    if (w === '--') return args.slice(i + 1);
+    if (!/^-./.test(w)) break;
+    i += valued.has(w) ? 2 : 1;
+  }
+  return args.slice(i);
+}
+
+const argv = (words: readonly ShellWord[], shell: LineShell = 'exec'): Payload[] =>
+  words.length > 0 ? [{ words: [...words], shell }] : [];
+
+/** One of `names` among a program's words. */
+const hasAny = (args: readonly ShellWord[], names: readonly string[]): boolean =>
+  args.some((a) => names.includes(a.text));
+
+/** The words after a leading number (`chrt 10 cmd`). */
+const afterNumber = (args: readonly ShellWord[]): ShellWord[] =>
+  /^\d+$/.test(args[0]?.text ?? '') ? args.slice(1) : [...args];
+
+/** `-c LINE` / `--command LINE`, read by a POSIX shell (`su -c`, `runuser -c`, `expect -c`). */
+function commandOption(args: readonly ShellWord[]): Payload[] {
+  const i = args.findIndex((a) => a.text === '-c' || a.text === '--command');
+  const line = i < 0 ? undefined : args[i + 1];
+  return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
+}
+
+/** strace/ltrace options that take a value. */
+const TRACE_VALUED = new Set([
+  '-o',
+  '-e',
+  '-p',
+  '-s',
+  '-u',
+  '-E',
+  '-I',
+  '-a',
+  '-P',
+  '-X',
+  '-O',
+  '-S',
+  '-b',
+]);
+
+/** `sh -c LINE`, `bash -lc LINE`, `zsh -o pipefail -c LINE`: a script file is not opened here. */
+function shellLine(args: readonly ShellWord[]): Payload[] {
+  for (let i = 0; i < args.length; i++) {
+    const w = args[i]?.text ?? '';
+    if (/^-[a-z]*c[a-z]*$/i.test(w)) {
+      const line = args[i + 1];
+      return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
+    }
+    if (w === '-o' || w === '+o') i += 1;
+    else if (!/^[-+]/.test(w)) return [];
+  }
+  return [];
+}
+
+/**
+ * What `cmd /c` reads again: its own command line from the word after `/c`.
+ * Read by cmd, that is the raw text (quotes and all); handed over by another
+ * shell, the words as a program receives them, a quoted one quoted again.
+ * `cmd /s /c "…"`: the outer quotes of that line are cmd's.
+ */
+function cmdLine(rest: readonly ShellWord[], from: LineShell): Payload[] {
+  if (rest.length === 0) return [];
+  const raw = (
+    from === 'cmd' && rest[0]?.tail !== undefined
+      ? rest[0].tail
+      : rest.map((w) => (w.quoted ? `"${w.text}"` : w.text)).join(' ')
+  ).trim();
+  const line = raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw;
+  return [{ line, shell: 'cmd' }];
+}
+
+/** A payload whose program is decided at run time: it asks (`isDecidedAtRunTime`). */
+const DECIDED_AT_RUN_TIME: Payload[] = [
+  { words: [{ text: '$(…)', quoted: false }], shell: 'powershell', invoked: true },
+];
+
+/** A shell's reserved word that comes before a command it runs: `do rm x`, `then lp x`. */
+const before = (args: readonly ShellWord[], shell: LineShell): Payload[] => argv(args, shell);
+
+/**
+ * Programs whose purpose is to run another program, each with its own option
+ * grammar (#667, review of PR #682, pass 2). ONE mechanism: what they run is
+ * read as a command of its own, for every kind of action, and the program
+ * itself stays a unit. Every entry of `SHELL_PROGRAMS` (shell-programs.ts, the
+ * same knowledge for the command allowlist) has one here, a test says so; a
+ * program that defines rather than runs (`doskey`) runs nothing.
+ */
+const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell) => Payload[]> = {
+  // shells
+  cmd: (args, shell) => {
+    // Every switch before /c, /k or /r is cmd's own (`/q /d /s /v:on`).
+    for (let i = 0; i < args.length; i++) {
+      const w = (args[i]?.text ?? '').toLowerCase();
+      if (w === '/c' || w === '/k' || w === '/r') return cmdLine(args.slice(i + 1), shell);
+      if (!/^\/\w/.test(w)) return [];
+    }
+    return [];
+  },
+  // PowerShell joins the words after -Command into its script.
+  // A script that is only a variable (`-Command $c`, expanded by sh) is code
+  // decided at run time.
+  powershell: (args) => {
+    const i = args.findIndex((a) => /^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i.test(a.text));
+    const rest = i < 0 ? [] : args.slice(i + 1);
+    if (rest.length === 1 && /^\$[\w:]+$/.test(rest[0]?.text ?? '')) return DECIDED_AT_RUN_TIME;
+    return rest.length === 0
+      ? []
+      : [{ line: rest.map((a) => a.text).join(' '), shell: 'powershell' }];
+  },
+  sh: shellLine,
+  bash: shellLine,
+  zsh: shellLine,
+  ksh: shellLine,
+  csh: shellLine,
+  tcsh: shellLine,
+  dash: shellLine,
+  ash: shellLine,
+  fish: shellLine,
+  // `wsl [-d distro] [-u user] [--cd dir] cmd…`: the distribution's shell reads
+  // it; `-e` executes it; `--list`, `--shutdown` and the rest manage WSL.
+  wsl: (args) => {
+    const valued = new Set(['-d', '--distribution', '-u', '--user', '--cd', '--distribution-id']);
+    for (let i = 0; i < args.length; i++) {
+      const w = args[i]?.text ?? '';
+      if (valued.has(w)) i += 1;
+      else if (w === '-e' || w === '--exec') return argv(args.slice(i + 1));
+      else if (w === '--') return argv(args.slice(i + 1), 'sh');
+      else if (/^-/.test(w)) return [];
+      else return argv(args.slice(i), 'sh');
+    }
+    return [];
+  },
+  busybox: (args) => argv(afterOptions(args, new Set())),
+  eval: (args) =>
+    args.length > 0 ? [{ line: args.map((a) => a.text).join(' '), shell: 'sh' }] : [],
+  script: (args) => {
+    const i = args.findIndex((a) => a.text === '-c' || a.text === '--command');
+    const line = i < 0 ? undefined : args[i + 1];
+    return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
+  },
+  // launchers
+  env: (args) => {
+    const valued = new Set(['-u', '--unset', '-C', '--chdir']);
+    let i = 0;
+    while (i < args.length) {
+      const w = args[i]?.text ?? '';
+      if (w === '-S' || w === '--split-string') {
+        const line = args[i + 1];
+        return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
+      }
+      if (w === '--') i += 1;
+      else if (valued.has(w)) i += 2;
+      else if (/^-/.test(w) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) i += 1;
+      else break;
+    }
+    return argv(args.slice(i));
+  },
+  sudo: (args) =>
+    argv(
+      afterOptions(
+        args,
+        new Set(['-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-U', '-T', '--user', '--group']),
+      ),
+    ),
+  doas: (args) => argv(afterOptions(args, new Set(['-u', '-C']))),
+  nohup: (args) => argv(afterOptions(args, new Set())),
+  nice: (args) => argv(afterOptions(args, new Set(['-n', '--adjustment']))),
+  time: (args) => argv(afterOptions(args, new Set(['-f', '-o', '--format', '--output']))),
+  // GNU `timeout [options] DURATION cmd…`; Windows' `timeout /t 5` only waits.
+  timeout: (args) => {
+    const rest = afterOptions(args, new Set(['-s', '--signal', '-k', '--kill-after']));
+    if (!/^\d+(\.\d+)?[smhd]?$/.test(rest[0]?.text ?? '')) return [];
+    return argv(rest.slice(1));
+  },
+  // ── exec wrappers (review of PR #682, pass 5): each runs the command that
+  // follows its own options, as it is, in another process state.
+  setsid: (args) => argv(afterOptions(args, new Set())),
+  stdbuf: (args) =>
+    argv(afterOptions(args, new Set(['-i', '-o', '-e', '--input', '--output', '--error']))),
+  // With `-p PID` they act on a running process: the word left is a number.
+  ionice: (args) => argv(afterOptions(args, new Set(['-c', '-n', '--class', '--classdata']))),
+  // `chrt [options] PRIORITY cmd…`
+  chrt: (args) => argv(afterNumber(afterOptions(args, new Set()))),
+  // `taskset [options] MASK|LIST cmd…`
+  taskset: (args) => argv(afterOptions(args, new Set()).slice(1)),
+  unbuffer: (args) => argv(afterOptions(args, new Set())),
+  strace: (args) => argv(afterOptions(args, TRACE_VALUED)),
+  ltrace: (args) => argv(afterOptions(args, TRACE_VALUED)),
+  valgrind: (args) => argv(afterOptions(args, new Set())),
+  // `watch` hands its words to `sh -c` (`-x` executes them).
+  watch: (args) => {
+    const rest = afterOptions(args, new Set(['-n', '--interval', '-q', '--equexit']));
+    if (rest.length === 0) return [];
+    return hasAny(args, ['-x', '--exec'])
+      ? argv(rest)
+      : [{ line: rest.map((a) => a.text).join(' '), shell: 'sh' }];
+  },
+  // `flock [options] FILE cmd…` or `flock [options] FILE -c LINE`; `flock FD` runs nothing.
+  flock: (args) => {
+    const rest = afterOptions(args, new Set(['-w', '--timeout', '-E', '--conflict-exit-code']));
+    const after = rest.slice(1);
+    const c = after.findIndex((a) => a.text === '-c' || a.text === '--command');
+    if (c >= 0) {
+      const line = after[c + 1];
+      return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
+    }
+    return argv(after);
+  },
+  // `chroot [options] NEWROOT [cmd…]`
+  chroot: (args) => argv(afterOptions(args, new Set()).slice(1)),
+  unshare: (args) =>
+    argv(
+      afterOptions(
+        args,
+        new Set([
+          '-S',
+          '--setuid',
+          '-G',
+          '--setgid',
+          '--map-user',
+          '--map-group',
+          '-R',
+          '--root',
+          '-w',
+          '--wd',
+        ]),
+      ),
+    ),
+  nsenter: (args) =>
+    argv(afterOptions(args, new Set(['-t', '--target', '-S', '--setuid', '-G', '--setgid']))),
+  'systemd-run': (args) =>
+    argv(
+      afterOptions(
+        args,
+        new Set([
+          '-p',
+          '--property',
+          '-u',
+          '--unit',
+          '-E',
+          '--setenv',
+          '--uid',
+          '--gid',
+          '-M',
+          '--machine',
+          '-H',
+          '--host',
+          '--description',
+          '--slice',
+          '--working-directory',
+          '--on-calendar',
+          '--on-active',
+        ]),
+      ),
+    ),
+  firejail: (args) => argv(afterOptions(args, new Set())),
+  // macOS: `caffeinate [-disu] [-t seconds] [-w pid] [utility args]`
+  caffeinate: (args) => argv(afterOptions(args, new Set(['-t', '-w']))),
+  builtin: (args) => argv(args),
+  pkexec: (args) => argv(afterOptions(args, new Set(['--user']))),
+  // `su [user] -c LINE`, `runuser -u user -- cmd…` / `runuser -c LINE`
+  su: (args) => commandOption(args),
+  runuser: (args) => {
+    const line = commandOption(args);
+    return line.length > 0
+      ? line
+      : argv(afterOptions(args, new Set(['-u', '--user', '-g', '--group', '-G', '-s', '--shell'])));
+  },
+  proxychains: (args) => argv(afterOptions(args, new Set(['-f']))),
+  torsocks: (args) => argv(afterOptions(args, new Set(['-u', '-p', '-a', '-P']))),
+  eatmydata: (args) => argv(afterOptions(args, new Set())),
+  fakeroot: (args) => argv(afterOptions(args, new Set(['-l', '-s', '-i']))),
+  'dbus-launch': (args) => argv(afterOptions(args, new Set())),
+  // `expect -c "spawn cmd…"`: Tcl, whose `spawn` starts a program.
+  expect: (args) => commandOption(args),
+  spawn: (args) => argv(afterOptions(args, new Set())),
+  exec: (args) => argv(afterOptions(args, new Set(['-a']))),
+  // `command -v x` only looks x up.
+  command: (args) =>
+    args.some((a) => a.text === '-v' || a.text === '-V') ? [] : argv(afterOptions(args, new Set())),
+  xargs: (args) =>
+    argv(
+      afterOptions(
+        args,
+        new Set(['-I', '-n', '-P', '-L', '-s', '-d', '-E', '-a', '--max-args', '--max-procs']),
+      ),
+    ),
+  // `runas [/user:x] [/savecred…] "program args"`: one command line.
+  runas: (args) => {
+    const rest = args.filter((a) => !/^\/\w/.test(a.text));
+    return rest[0] === undefined ? [] : [{ line: rest[0].text, shell: 'exec' }];
+  },
+  call: (args) => argv(args, 'cmd'),
+  // cmd's `for %f in (set) do command`.
+  for: (args) => {
+    const i = args.findIndex((a) => a.text.toLowerCase() === 'do');
+    return i < 0 ? [] : argv(args.slice(i + 1), 'cmd');
+  },
+  doskey: () => [],
+  // cmd's start, PowerShell's Start-Process: what it starts, with its arguments.
+  start: (args) => launchedWords('start', args),
+  'start-process': (args) => launchedWords('start-process', args),
+  saps: (args) => launchedWords('saps', args),
+  // `find … -exec cmd {} ;`, each of them.
+  find: (args) => {
+    const payloads: Payload[] = [];
+    for (let i = 0; i < args.length; i++) {
+      if (!['-exec', '-execdir', '-ok', '-okdir'].includes(args[i]?.text ?? '')) continue;
+      const end = args.findIndex((a, j) => j > i && [';', '\\;', '+'].includes(a.text));
+      payloads.push(...argv(args.slice(i + 1, end > i ? end : undefined)));
+      if (end > i) i = end;
+    }
+    return payloads;
+  },
+  // PowerShell's Invoke-Expression: the string is code, read by PowerShell.
+  // Without one it runs what the pipeline hands it (inline code, `isInlineEvalUnit`).
+  // Its code is a string the text holds (`iex 'Get-Date'`, a literal piped in,
+  // bound as its argument by `scanLine`), or one it does not: a variable, an
+  // expression, a command's output (`iex $c`, `iex (…)`, `Get-Content x | iex`),
+  // decided at run time (review of PR #682, pass 8).
+  iex: (args) => {
+    const rest = args.filter((a) => !/^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i.test(a.text));
+    return rest.length === 0 || rest.some((a) => !a.quoted && /^[$(@]/.test(a.text))
+      ? DECIDED_AT_RUN_TIME
+      : [{ line: rest.map((a) => a.text).join(' '), shell: 'powershell' }];
+  },
+  // The call and dot-source operators run what they name, even a `$variable`.
+  '&': (args, shell) => (args.length > 0 ? [{ words: [...args], shell, invoked: true }] : []),
+  '.': (args, shell) => (args.length > 0 ? [{ words: [...args], shell, invoked: true }] : []),
+  source: (args, shell) => argv(args, shell),
+  // a POSIX shell's reserved words before a command (`for …; do rm $f; done`)
+  do: before,
+  then: before,
+  else: before,
+  elif: before,
+  if: before,
+  while: before,
+  until: before,
+  '!': before,
+};
+RUNS_ANOTHER['pwsh'] = RUNS_ANOTHER['powershell'] as (typeof RUNS_ANOTHER)[string];
+RUNS_ANOTHER['invoke-expression'] = RUNS_ANOTHER['iex'] as (typeof RUNS_ANOTHER)[string];
+RUNS_ANOTHER['gtimeout'] = RUNS_ANOTHER['timeout'] as (typeof RUNS_ANOTHER)[string];
+RUNS_ANOTHER['proxychains4'] = RUNS_ANOTHER['proxychains'] as (typeof RUNS_ANOTHER)[string];
+
+/**
+ * Words that name a shell's keyword, builtin, alias or cmdlet, not a file:
+ * written with a path (`./start`, `C:\x\start.exe`), they name that file
+ * (review of PR #682, pass 4). A path to a real program that runs another
+ * (`/usr/bin/sudo`, `C:\Windows\System32\cmd.exe`) is still that program.
+ */
+const SHELL_KEYWORDS = new Set([
+  'start',
+  'call',
+  'for',
+  'doskey',
+  'do',
+  'then',
+  'else',
+  'elif',
+  'if',
+  'while',
+  'until',
+  '!',
+  'eval',
+  'exec',
+  'command',
+  'source',
+  'iex',
+  'invoke-expression',
+  'start-process',
+  'saps',
+  'ii',
+  'invoke-item',
+  'out-printer',
+  'send-mailmessage',
+]);
+
+/**
+ * A program word the text does not name: it comes from a variable (`$c`,
+ * `%X%`, `!X!`) or a substitution (`` `…` ``, `$(…)`, `lpr$(echo)`, PowerShell's
+ * `& (…)`). Like a download target decided when the command runs (#614), it
+ * cannot be read ahead (review of PR #682, pass 4).
+ */
+function isDecidedAtRunTime(word: string): boolean {
+  // `$x`, backticks; cmd's `%X%`, `%f`, `%%f`, `%~dpnxf`, `%1`…`%9`, `%*`,
+  // `%~1`, `%~dp0`, and delayed `!X!` (review of PR #682, pass 5).
+  return /[$`]|%%?(~[a-z]*)?[a-z0-9*]|![^!\s]+!/i.test(word);
+}
+
+/**
+ * True when a command line runs a program the text does not name. The gate
+ * asks for it even when inline code is allowed, as an allowed download asks
+ * when its target is decided at run time.
+ */
+export function programDecidedAtRunTime(cmd: string, host?: ShellHost): boolean {
+  if (typeof cmd !== 'string' || cmd.trim() === '') return false;
+  return commandUnits(withoutRedirections(cmd), 0, topShell(host)).some((u) =>
+    isDecidedAtRunTime(u[0] ?? ''),
+  );
+}
+
+/** The programs whose purpose is to run another one, as `commandUnits` reads them. */
+export const RUNS_ANOTHER_PROGRAMS: readonly string[] = Object.keys(RUNS_ANOTHER);
+
+/** What `start` / `Start-Process` starts, as the words of a program (no shell). */
+function launchedWords(program: string, args: readonly ShellWord[]): Payload[] {
+  // `args` has no title left: `wordUnits` took it out with this same reading.
+  const { target, launched } = readLaunch(args, launchForm(program));
+  if (target === null) return [];
+  return argv([target, ...launched].map((text) => ({ text, quoted: false })));
+}
+
+/** True when a unit's program runs another one: its own words are not the work. */
+function runsAnother(unit: readonly string[]): boolean {
+  const grammar = RUNS_ANOTHER[unit[0] ?? ''];
+  return (
+    grammar !== undefined &&
+    grammar(
+      unit.slice(1).map((text) => ({ text, quoted: false })),
+      'exec',
+    ).length > 0
+  );
 }
 
 /**
  * The commands a command line actually runs, as token lists whose first token
- * is the program (its basename, lower-cased, without `.exe`): each segment,
- * the module of `python -m`, and what `bash -c`, `cmd /c`,
- * `powershell -Command`, `xargs`, `find -exec` and `$(…)` / backticks run
- * inside it.
+ * is the program (its basename, lower-cased, without `.exe`): each command of
+ * the line, the module of `python -m`, what `$(…)` / backticks run, and what
+ * every program of `RUNS_ANOTHER` starts, the program itself kept as a unit.
+ *
+ * `shell` is the shell that READS the line: where a command ends, what quotes
+ * and what escapes follow its grammar (review of PR #682, pass 3). A line
+ * whose shell is not known (`run_command` uses cmd.exe on Windows and sh
+ * elsewhere, `topShell`) is read as both, and every command either would run
+ * is kept: a net may over-ask, never under-report.
  */
-export function commandUnits(cmd: string, depth = 0): string[][] {
-  if (depth > 4 || typeof cmd !== 'string' || cmd.trim() === '') return [];
-  const units: string[][] = [];
-  const inner = (text: string) => units.push(...commandUnits(text, depth + 1));
-  for (const m of cmd.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) inner(m[1] ?? m[2] ?? '');
-  for (const segment of splitShellWords(cmd)) {
-    // `FOO=1 rm -rf build`: variables set for the command are not the program
-    // (review of PR #476).
-    const tokens = skipPassthroughLeaders(
-      segment.filter((_, i) => !isAssignmentPrefix(segment, i)),
+export function commandUnits(cmd: string, depth = 0, shell?: LineShell): string[][] {
+  if (shell === undefined) {
+    const seen = new Set<string>();
+    return [...commandUnits(cmd, depth, 'cmd'), ...commandUnits(cmd, depth, 'sh')].filter(
+      (unit) => {
+        const key = JSON.stringify(unit);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      },
     );
-    const head = tokens[0];
-    if (head === undefined) continue;
-    const program = interpreterBasename(head);
-    const args = tokens.slice(1);
-    units.push([program, ...args]);
-    const lower = args.map((a) => a.toLowerCase());
-    // `python -m pip install x` runs pip: the module is the program (review of
-    // PR #476; main caught it by reading the whole text).
-    if (interpreterKind(program) === 'python') {
-      const m = lower.indexOf('-m');
-      const module = m >= 0 ? args[m + 1] : undefined;
-      if (module !== undefined) units.push([module.toLowerCase(), ...args.slice(m + 2)]);
-    }
-    if (SHELL_WRAPPERS.has(program)) {
-      const i = lower.indexOf('-c');
-      if (i >= 0 && args[i + 1] !== undefined) inner(args[i + 1] ?? '');
-    } else if (program === 'cmd') {
-      const i = lower.findIndex((a) => a === '/c' || a === '/k');
-      if (i >= 0) inner(args.slice(i + 1).join(' '));
-    } else if (program === 'powershell' || program === 'pwsh') {
-      const i = lower.findIndex((a) => a === '-command' || a === '-c');
-      if (i >= 0) inner(args.slice(i + 1).join(' '));
-    } else if (program === 'xargs') {
-      const rest = args.slice(args.findIndex((a) => !a.startsWith('-')));
-      if (rest.length > 0 && !rest[0]?.startsWith('-')) inner(rest.join(' '));
-    } else if (program === 'find') {
-      const i = lower.findIndex((a) => a === '-exec' || a === '-execdir' || a === '-ok');
-      if (i >= 0) {
-        const end = args.findIndex((a, j) => j > i && (a === ';' || a === '\\;' || a === '+'));
-        inner(args.slice(i + 1, end > i ? end : undefined).join(' '));
-      }
-    }
+  }
+  if (depth > 8 || typeof cmd !== 'string' || cmd.trim() === '') return [];
+  const units: string[][] = [];
+  // Substitutions run even inside double quotes: `$(…)` in sh and PowerShell,
+  // backticks in sh (PowerShell's backtick is its escape, cmd has neither).
+  if (shell !== 'cmd' && shell !== 'exec') {
+    const substitution = shell === 'sh' ? /\$\(([^()]*)\)|`([^`]*)`/g : /\$\(([^()]*)\)/g;
+    for (const m of cmd.matchAll(substitution))
+      units.push(...commandUnits(m[1] ?? m[2] ?? '', depth + 1, shell));
+  }
+  for (const words of splitQuotedShellWords(cmd, shell))
+    units.push(...wordUnits(words, depth, shell));
+  return units;
+}
+
+/** The shell that reads a `run_command` line on this host; unknown → both (`commandUnits`). */
+function topShell(host: ShellHost | undefined): LineShell | undefined {
+  return host === undefined ? undefined : host === 'windows' ? 'cmd' : 'sh';
+}
+
+/** The units of one command, given as its words. */
+function wordUnits(
+  words: readonly ShellWord[],
+  depth: number,
+  shell: LineShell,
+  invoked = false,
+): string[][] {
+  if (depth > 8) return [];
+  // `FOO=1 rm -rf build`: variables set for the command are not the program
+  // (review of PR #476).
+  let k = 0;
+  while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k]?.text ?? '')) k += 1;
+  const head = words[k];
+  if (head === undefined) return [];
+  // In PowerShell a statement that starts with `$` is an expression, not a
+  // command: it runs a program only through `&` or `.` (`invoked`). Its
+  // assignment runs what its right side names when that is a command
+  // (`$r = Invoke-RestMethod x`), never a string or a value (`$c = 'lpr'`).
+  if (shell === 'powershell' && !invoked && head.text.startsWith('$')) {
+    const tail =
+      head.tail ??
+      words
+        .slice(k)
+        .map((w) => w.text)
+        .join(' ');
+    const eq = tail.indexOf('=');
+    const right = eq < 0 ? '' : tail.slice(eq + 1).trim();
+    return eq < 0 || /^[$'"(@\[\d-]/.test(right) || right === ''
+      ? []
+      : commandUnits(right, depth + 1, 'powershell');
+  }
+  // A program the text does not name (#667, review of PR #682, pass 4) keeps
+  // its words, so it is never taken for a program it may not be; one written
+  // with a path is that file, never the shell's keyword of the same name.
+  const named =
+    isDecidedAtRunTime(head.text) ||
+    (/[\\/]/.test(head.text) && SHELL_KEYWORDS.has(interpreterBasename(head.text)))
+      ? head.text.toLowerCase()
+      : interpreterBasename(head.text);
+  // In a PowerShell line `start` is Start-Process's alias, never cmd's start:
+  // named so, its words are read in PowerShell's form (`readLaunch`).
+  const program = shell === 'powershell' && named === 'start' ? 'start-process' : named;
+  // cmd's `start ["title"] …`: the title is no program and no argument of it,
+  // read by THE reading of start (`readLaunch`), never by a walk of its own.
+  const after = words.slice(k + 1);
+  const title = program === 'start' ? readLaunch(after, 'cmd', true).titleIndex : null;
+  const args = title === null ? after : after.filter((_, j) => j !== title);
+  const texts = args.map((a) => a.text);
+  const units: string[][] = [[program, ...texts]];
+  // `python -m pip install x` runs pip: the module is the program (review of
+  // PR #476; main caught it by reading the whole text).
+  if (interpreterKind(program) === 'python') {
+    const m = texts.map((t) => t.toLowerCase()).indexOf('-m');
+    const module = m >= 0 ? texts[m + 1] : undefined;
+    if (module !== undefined) units.push([module.toLowerCase(), ...texts.slice(m + 2)]);
+  }
+  for (const payload of RUNS_ANOTHER[program]?.(args, shell) ?? []) {
+    units.push(
+      ...('line' in payload
+        ? commandUnits(payload.line, depth + 1, payload.shell)
+        : wordUnits(payload.words, depth + 1, payload.shell, payload.invoked === true)),
+    );
   }
   return units;
 }
 
 /**
- * A command cut into its segments (`;`, `&&`, `||`, `|`, newlines) and each
- * segment into words, quotes honoured and removed: `python a.py "C:/My
- * Files/x.csv"` is three words, not four. Redirection targets are words too.
+ * A command cut into its commands and each into words, quotes honoured and
+ * removed: `python a.py "C:/My Files/x.csv"` is three words, not four.
+ * Redirection targets are words too. Read as `shell` reads it (sh by default).
  */
-export function splitShellWords(cmd: string): string[][] {
-  const segments: string[][] = [];
-  let words: string[] = [];
+export function splitShellWords(cmd: string, shell: LineShell = 'sh'): string[][] {
+  return splitQuotedShellWords(cmd, shell).map((segment) => segment.map((w) => w.text));
+}
+
+/**
+ * One word of a command: its text, whether it was written in quotes (cmd's
+ * `start` title), and the raw text of the command from it on (what `cmd /c`
+ * hands cmd to read again).
+ */
+interface ShellWord {
+  text: string;
+  quoted: boolean;
+  tail?: string;
+}
+
+/**
+ * The grammar of a shell that reads a line: what ends a command, what quotes,
+ * what escapes (review of PR #682, pass 3). Unquoted `(` `)` `{` `}` are
+ * operators where the shell has them: a command starts after an opening one,
+ * glued or not (`(rm -rf /)`, `{ lpr x; }`, `ForEach-Object { Remove-Item $_ }`).
+ */
+interface Grammar {
+  /** Characters that end a command outside quotes. */
+  separators: string;
+  /** Characters that open a quoted span. */
+  quotes: string;
+  /** The escape character outside quotes, if the shell has one. */
+  escape: string | null;
+  /** Inside double quotes: does `ch` escape the character after it? */
+  escapesInDouble: (ch: string, next: string) => boolean;
+  /** A quote written twice inside its span is that quote (`'it''s'`, `"say ""hi"""`). */
+  doubledQuote: boolean;
+}
+
+/** sh: `\` escapes, single quotes are literal, `\` escapes only `"\$`` ` inside double quotes. */
+const SH: Grammar = {
+  separators: ';&|\n\r(){}',
+  quotes: `"'`,
+  escape: '\\',
+  escapesInDouble: (ch, next) => ch === '\\' && '"\\$`'.includes(next),
+  doubledQuote: false,
+};
+
+/** PowerShell: the backtick escapes, a quote is doubled inside its span, `&` calls a command. */
+const POWERSHELL: Grammar = {
+  separators: ';&|\n\r(){}',
+  quotes: `"'`,
+  escape: '`',
+  escapesInDouble: (ch) => ch === '`',
+  doubledQuote: true,
+};
+
+/** `splitShellWords`, each word saying whether it was quoted, for the shell that reads the line. */
+function splitQuotedShellWords(cmd: string, shell: LineShell): ShellWord[][] {
+  switch (shell) {
+    case 'sh':
+      return scanLine(cmd, SH);
+    case 'powershell':
+      return scanLine(cmd, POWERSHELL);
+    case 'cmd':
+      return cmdCommands(cmd).map(windowsArguments);
+    case 'exec':
+      // A command line handed to a program, no shell: no operator, its words
+      // by the Windows argument rules (`runas "prog args"`).
+      return [windowsArguments(cmd)].filter((words) => words.length > 0);
+  }
+}
+
+/** Read a line with the grammar of sh or PowerShell, words and commands in one pass. */
+function scanLine(line: string, g: Grammar): ShellWord[][] {
+  const segments: ShellWord[][] = [];
+  let words: Array<{ text: string; quoted: boolean; start: number }> = [];
   let word = '';
   let inWord = false;
-  let quote: '"' | "'" | null = null;
+  let quoted = false;
+  let start = 0;
+  let quote: string | null = null;
+  const begin = (at: number): void => {
+    if (!inWord) {
+      inWord = true;
+      start = at;
+    }
+  };
   const endWord = (): void => {
-    if (inWord) words.push(word);
+    if (inWord) words.push({ text: word, quoted, start });
     word = '';
     inWord = false;
+    quoted = false;
   };
-  const endSegment = (): void => {
+  // PowerShell binds a literal piped into a command to its input: `'cmd' |
+  // iex` runs that string. It is read as the command's argument when it has
+  // none (review of PR #682, pass 8).
+  let piped: ShellWord | null = null;
+  const endCommand = (at: number, separator = ''): void => {
     endWord();
-    if (words.length > 0) segments.push(words);
+    if (words.length > 0) {
+      const segment: ShellWord[] = words.map((w) => ({
+        text: w.text,
+        quoted: w.quoted,
+        tail: line.slice(w.start, at),
+      }));
+      if (piped !== null && segment.length === 1) segment.push(piped);
+      segments.push(segment);
+      piped = null;
+      if (g === POWERSHELL && separator === '|' && segment.length === 1 && segment[0]?.quoted)
+        piped = segment[0];
+    } else piped = null;
     words = [];
   };
-  let escaped = false;
-  for (const ch of cmd) {
-    if (escaped) {
-      word += ch;
-      inWord = true;
-      escaped = false;
-      continue;
-    }
+  for (let at = 0; at < line.length; at++) {
+    const ch = line[at] ?? '';
+    const next = line[at + 1] ?? '';
     if (quote !== null) {
-      if (ch === quote) quote = null;
-      else word += ch;
+      if (ch === quote) {
+        if (g.doubledQuote && next === quote) {
+          word += quote;
+          at += 1;
+        } else quote = null;
+      } else if (quote === '"' && g.escapesInDouble(ch, next)) {
+        word += next;
+        at += 1;
+      } else word += ch;
       continue;
     }
-    if (ch === '"' || ch === "'") {
+    if (g.quotes.includes(ch)) {
+      begin(at);
       quote = ch;
-      inWord = true;
-      continue;
-    }
-    // cmd.exe `^` escapes the next character: `r^m` runs `rm`. A backslash is
-    // kept: in a Windows path (`C:\x`) it is a separator, not an escape.
-    if (ch === '^') {
-      escaped = true;
-      continue;
-    }
-    if (ch === ';' || ch === '|' || ch === '&' || ch === '\n' || ch === '\r') {
-      endSegment();
-      continue;
-    }
-    if (ch === '>' || ch === '<' || /\s/.test(ch)) {
+      quoted = true;
+    } else if (ch === g.escape) {
+      begin(at);
+      word += next;
+      at += 1;
+    } else if (g.separators.includes(ch)) {
+      endCommand(at, ch);
+      // PowerShell's call operator starts a command whose program follows it;
+      // before a parenthesised expression, that program is decided at run time.
+      if (g === POWERSHELL && ch === '&' && next !== '&') {
+        const after = line.slice(at + 1).trimStart();
+        words.push({ text: '&', quoted: false, start: at });
+        if (after.startsWith('(')) words.push({ text: '$(…)', quoted: false, start: at });
+      }
+    } else if (/\s/.test(ch) || ch === '<' || ch === '>') {
       endWord();
-      continue;
+    } else {
+      begin(at);
+      word += ch;
     }
-    word += ch;
-    inWord = true;
   }
-  endSegment();
+  endCommand(line.length);
   return segments;
+}
+
+/**
+ * cmd.exe's commands: `&`, `|`, newlines and its `( )` blocks end one,
+ * outside quotes; a double quote toggles a quoted span (a single quote is a
+ * character, a backslash is a character: cmd has no backslash escape); `^`
+ * escapes the next character outside quotes and is removed (`r^m` runs `rm`).
+ * Each command keeps its raw text: the program reads its own words.
+ */
+function cmdCommands(line: string): string[] {
+  const commands: string[] = [];
+  let current = '';
+  let inQuote = false;
+  for (let at = 0; at < line.length; at++) {
+    const ch = line[at] ?? '';
+    if (ch === '"') {
+      inQuote = !inQuote;
+      current += ch;
+    } else if (inQuote) {
+      current += ch;
+    } else if (ch === '^') {
+      current += line[at + 1] ?? '';
+      at += 1;
+    } else if ('&|\n\r()'.includes(ch)) {
+      commands.push(current);
+      current = '';
+    } else current += ch;
+  }
+  commands.push(current);
+  // `@` before a command (`@lpr x`, `& @rd …`) is cmd's echo-off prefix, never
+  // part of the program's name (review of PR #682, pass 6).
+  return commands.map((c) => c.replace(/^(\s*@)+/, '')).filter((c) => c.trim() !== '');
+}
+
+/**
+ * The words of a Windows command line, as a program reads its arguments
+ * (CommandLineToArgvW): spaces split outside quotes, a double quote toggles,
+ * `2n` backslashes before a quote are `n` and the quote toggles, `2n+1` are
+ * `n` and a literal quote, other backslashes are characters (`C:\x`), and `""`
+ * inside quotes is a quote. `<` and `>` end a word (redirections).
+ */
+function windowsArguments(line: string): ShellWord[] {
+  const words: ShellWord[] = [];
+  let at = 0;
+  while (at < line.length) {
+    while (at < line.length && /[\s<>]/.test(line[at] ?? '')) at += 1;
+    if (at >= line.length) break;
+    const start = at;
+    let text = '';
+    let quoted = false;
+    let inQuote = false;
+    while (at < line.length) {
+      const ch = line[at] ?? '';
+      if (!inQuote && /[\s<>]/.test(ch)) break;
+      if (ch === '\\') {
+        let n = 0;
+        while (line[at + n] === '\\') n += 1;
+        if (line[at + n] === '"') {
+          text += '\\'.repeat(Math.floor(n / 2));
+          if (n % 2 === 1) {
+            text += '"';
+            at += n + 1;
+          } else at += n;
+        } else {
+          text += '\\'.repeat(n);
+          at += n;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        quoted = true;
+        if (inQuote && line[at + 1] === '"') {
+          text += '"';
+          at += 2;
+          continue;
+        }
+        inQuote = !inQuote;
+        at += 1;
+        continue;
+      }
+      text += ch;
+      at += 1;
+    }
+    words.push({ text, quoted, tail: line.slice(start) });
+  }
+  return words;
 }
 
 /**
@@ -1045,18 +2050,23 @@ export function splitShellWords(cmd: string): string[][] {
  * while ordinary commands auto-run. Catastrophic commands are a subset (always
  * true here too).
  */
-export function isDestructiveOrHeavyCommand(cmd: string): boolean {
+export function isDestructiveOrHeavyCommand(cmd: string, host?: ShellHost): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
   // Catastrophic (machine-destroyers) and opaque interpreter-eval both keep
   // their gate under destructive_gate. Inline-eval is no longer catastrophic
   // (approvable), but it stays "heavy" here so destructive_gate still asks a
   // human before running an un-inspectable one-liner.
-  if (isCatastrophicCommand(cmd) || isInlineInterpreterEvalCommand(cmd)) return true;
+  if (isCatastrophicCommand(cmd, host) || isInlineInterpreterEvalCommand(cmd, host)) return true;
   // Every program only asked for its version or help: nothing happens.
-  const units = commandUnits(withoutRedirections(cmd));
-  if (units.length > 0 && units.every(isReadUnit)) return false;
+  const units = commandUnits(withoutRedirections(cmd), 0, topShell(host));
+  // A wrapper's own words are not work, but a launcher that reaches out is.
+  const working = units.filter((u) => !runsAnother(u) || reachesOut(u));
+  if (working.length > 0 && working.every(isReadUnit)) return false;
   const c = normalizeSlashes(cmd.trim());
-  return DESTRUCTIVE_PATTERNS.some((re) => re.test(c)) || units.some(curlWritesAFile);
+  return (
+    DESTRUCTIVE_PATTERNS.some((re) => re.test(c)) ||
+    units.some((u) => curlWritesAFile(u) || unitCategories(u).includes('open_or_send'))
+  );
 }
 
 /** The read flags the catastrophic floor lets through: never `-h` (`shutdown -h` halts). */
@@ -1125,13 +2135,15 @@ function curlWritesAFile(unit: readonly string[]): boolean {
 
 /** The kinds one command unit performs: none for a version or help check. */
 function unitCategories(unit: readonly string[]): StaticShellCategory[] {
-  if (isVersionOrHelpOnly(unit)) return [];
-  const kinds = patternKinds(unit);
+  if (isVersionOrHelpOnly(unit) && !opensWhateverAsked(unit)) return [];
+  const kinds: StaticShellCategory[] = patternKinds(unit);
+  if (reachesOut(unit)) kinds.push('open_or_send');
   return isSubcommandHelp(unit) ? kinds.filter((k) => !SUBCOMMAND_HELP_EXCUSES.has(k)) : kinds;
 }
 
 /** A unit that only prints: a version or help check, or the help of a fetch or install subcommand. */
 function isReadUnit(unit: readonly string[]): boolean {
+  if (opensWhateverAsked(unit)) return false;
   if (isVersionOrHelpOnly(unit)) return true;
   if (!isSubcommandHelp(unit)) return false;
   const kinds = patternKinds(unit);

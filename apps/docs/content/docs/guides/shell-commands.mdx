@@ -96,18 +96,19 @@ the code, so a tool added to the autonomy guard cannot be forgotten here.
 
 ## What an agent may not do with a shell
 
-The agent's **Autonomy** tab lists, under **What it may do with a shell**, six
+The agent's **Autonomy** tab lists, under **What it may do with a shell**, seven
 kinds of action Nodal recognises in what the agent asks to run. Each one is
 **Allowed**, **Ask me** or **Never**:
 
-| Kind of action                               | Recognised by                                                          |
-| -------------------------------------------- | ---------------------------------------------------------------------- |
-| Run code written into a command              | `python -c`, `node -e`, `bash -c`, a script piped into an interpreter… |
-| Delete files or discard changes              | `rm`, `del`, `Remove-Item`, `git reset --hard`, `git clean`…           |
-| Install software or packages                 | `npm`, `pip`, `winget`, `choco`, `brew install`…                       |
-| Download files from the internet             | `wget`, `curl -o`, `git clone`, `Invoke-WebRequest`…                   |
-| Stop other programs or services              | `kill`, `taskkill`, `Stop-Process`, `systemctl`…                       |
-| Change system settings, permissions or disks | `icacls`, `chmod`, `format`, `diskpart`…                               |
+| Kind of action                               | Recognised by                                                                  |
+| -------------------------------------------- | ------------------------------------------------------------------------------ |
+| Run code written into a command              | `python -c`, `node -e`, `bash -c`, a script piped into an interpreter…         |
+| Delete files or discard changes              | `rm`, `del`, `Remove-Item`, `git reset --hard`, `git clean`…                   |
+| Install software or packages                 | `npm`, `pip`, `winget`, `choco`, `brew install`…                               |
+| Download files from the internet             | `wget`, `curl -o`, `git clone`, `Invoke-WebRequest`…                           |
+| Open programs, print or send                 | `start`, `open`, `xdg-open`, `Start-Process`, `lp`, `Out-Printer`, `sendmail`… |
+| Stop other programs or services              | `kill`, `taskkill`, `Stop-Process`, `systemctl`…                               |
+| Change system settings, permissions or disks | `icacls`, `chmod`, `format`, `diskpart`…                                       |
 
 - **Ask me** waits for you, and the approval card names the kinds of action it
   saw.
@@ -121,8 +122,10 @@ kinds of action Nodal recognises in what the agent asks to run. Each one is
   **runs code**, inline (`node -e`, `python -c`, `curl … | bash`) or in a
   script. Inline code has the same power as a script the agent writes with
   the file tools and then runs, which never asked. It **asks** before it
-  deletes, installs, stops a program, changes system settings, or downloads
-  **outside** its workspaces. When a download
+  deletes, installs, stops a program, changes system settings, opens a program
+  or a file on your screen, prints, sends mail, or downloads **outside** its
+  workspaces. A tool that does one of these and asks you itself (a print or
+  mail connector, say) is the way the agent is pointed to when you refuse. When a download
   replaces a file in a workspace, the
   [checkpoint](/docs/concepts/proof#checkpoints--the-snapshot-taken-before-a-write)
   taken just before keeps the old version.
