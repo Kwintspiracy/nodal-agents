@@ -199,6 +199,13 @@ jobs:
   #
   # Le plafond de concurrence turbo (3) vit dans `turbo.json` depuis #292 :
   # `pnpm test`, `release:check` et ce job lancent exactement la même chose.
+  #
+  # `--continue=dependencies-successful` (issue #698) : sans lui, turbo annule
+  # les tâches restantes au premier échec et leurs verdicts ne sont jamais
+  # rendus (« Tasks: 14 successful, 29 total » sur le run 37433850617). Avec,
+  # chaque tâche dont les dépendances ont réussi rend son verdict, et le job
+  # échoue quand même. Garde : scripts/tests/ci-tous-les-verdicts.test.mjs.
+  #
   # Mesuré sur la PR de #291 (run 35517309819, cache froid) : web 3 min 45 s
   # et 3 min 20 s, runner 3 min 37 s et 3 min 16 s, packages 4 min 45 s,
   # install et builds des dépendances compris → budget 10.
@@ -210,15 +217,15 @@ jobs:
       matrix:
         include:
           - shard: web-1
-            run: pnpm exec turbo run test --filter=@nodal-agents/web -- --shard=1/2
+            run: pnpm exec turbo run test --continue=dependencies-successful --filter=@nodal-agents/web -- --shard=1/2
           - shard: web-2
-            run: pnpm exec turbo run test --filter=@nodal-agents/web -- --shard=2/2
+            run: pnpm exec turbo run test --continue=dependencies-successful --filter=@nodal-agents/web -- --shard=2/2
           - shard: runner-1
-            run: pnpm exec turbo run test --filter=@nodal-agents/runner -- --shard=1/2
+            run: pnpm exec turbo run test --continue=dependencies-successful --filter=@nodal-agents/runner -- --shard=1/2
           - shard: runner-2
-            run: pnpm exec turbo run test --filter=@nodal-agents/runner -- --shard=2/2
+            run: pnpm exec turbo run test --continue=dependencies-successful --filter=@nodal-agents/runner -- --shard=2/2
           - shard: packages
-            run: pnpm exec turbo run test --filter=!@nodal-agents/web --filter=!@nodal-agents/runner
+            run: pnpm exec turbo run test --continue=dependencies-successful --filter=!@nodal-agents/web --filter=!@nodal-agents/runner
     name: test (${{ matrix.shard }})
     steps:
       - uses: actions/checkout@v5
