@@ -196,3 +196,31 @@ describe('readSource decodes each language string escapes (review of #683) @cap:
     expect(kinds(`system("rm${B}040-rf x");`, 'perl')).toEqual(del);
   });
 });
+
+// Review pass 3 of #683 (C1): a program named with its path is that program.
+describe('a program named with its path, in a string (review pass 3 of #683) @cap:executer-une-commande/moteur', () => {
+  it('is judged by its name; a data file or an address is not a program', () => {
+    expect(kinds('os.system("/usr/bin/pip install openpyxl")', 'python')).toEqual([
+      [1, ['install_software']],
+    ]);
+    expect(kinds('subprocess.run(["/bin/rm", "-rf", "build"])', 'python')).toEqual([
+      [1, ['delete_files']],
+    ]);
+    expect(kinds('os.system("/usr/bin/curl -o /tmp/x https://x/y")', 'python')).toEqual([
+      [1, ['download']],
+    ]);
+    expect(kinds("execSync('C:/Python311/Scripts/pip.exe install x')", 'javascript')).toEqual([
+      [1, ['install_software']],
+    ]);
+    expect(
+      kinds(
+        [
+          "rows = open('data/ventes.csv').read()",
+          'requests.get("https://example.com/report.pdf")',
+          'webbrowser.open("report.pdf")',
+        ].join(String.fromCharCode(10)),
+        'python',
+      ),
+    ).toEqual([]);
+  });
+});

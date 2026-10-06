@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   languageOfPath,
+  splitHereDocs,
   languageOfShebang,
   programSources,
   staticShellCategories,
@@ -361,5 +362,27 @@ describe('cmd conditions without brackets, and here-docs fed to a program (#683)
     expect(kinds(`cat <<EOF > a.txt${NL}python -c "print(1)"${NL}EOF`)).toEqual([]);
     // The line after the here-doc is a command again.
     expect(kinds(`cat <<EOF > a${NL}x${NL}EOF${NL}pip install y`)).toEqual(['install_software']);
+  });
+});
+
+// Review pass 3 of #683 (C2): only an operator sh reads opens a here-document,
+// and a body without its end marker leaves every line judged.
+describe('here-document operators as sh reads them (review pass 3 of #683) @cap:executer-une-commande/moteur', () => {
+  const NL = String.fromCharCode(10);
+  const kinds = (cmd: string): string[] => staticShellCategories(cmd, 'posix').sort();
+
+  it('a << in quotes, in a comment or in arithmetic opens nothing', () => {
+    for (const first of ['echo "usage: <<END"', "echo 'x <<END'", '# <<END', 'x=$((a << END))']) {
+      // An END line follows: opened wrongly, a body would swallow the install.
+      const text = [first, 'pip install openpyxl', 'END', 'rm -rf build'].join(NL);
+      expect(splitHereDocs(text).docs, first).toEqual([]);
+      expect(kinds(text), first).toEqual(['delete_files', 'install_software']);
+    }
+  });
+
+  it('a body whose end marker never comes stays judged, line by line', () => {
+    const text = ['cat <<END > notes.txt', 'pip install openpyxl', 'rm -rf build'].join(NL);
+    expect(splitHereDocs(text).docs).toEqual([]);
+    expect(kinds(text)).toEqual(['delete_files', 'install_software']);
   });
 });

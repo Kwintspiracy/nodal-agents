@@ -689,6 +689,65 @@ describe('run_command — E2E runner integration', () => {
   // job would silently feed the LLM an opaque `unexpected_gate_on_approved_tool`
   // tool-result and keep looping; after the fix it fails loud with a clear,
   // human-readable reason, and — provably — the command never executes.
+  // #635, revue passe 3 de la PR #683 : le destructeur est dans le SCRIPT que
+  // la commande lance. Le runner relit ce code avant de rejouer l'appel
+  // approuvé, et le refuse comme une commande tapée.
+  it('CATASTROPHIC SCRIPT: approved anyway → refused, the script never runs (#635)', async () => {
+    // A destroyer on the floor (diskpart) that would do nothing if the floor
+    // ever let it through: its script file does not exist.
+    const script = `wipe-${Date.now()}.py`;
+    const marker = `wiped-${Date.now()}.txt`;
+    await writeFile(
+      join(workspaceDir, script),
+      [
+        'import os',
+        `open('${marker}', 'w').write('ran')`,
+        'os.system("diskpart /s missing-635.txt")',
+      ].join(String.fromCharCode(10)),
+    );
+    const command = `python ${script}`;
+    const job = await createJob();
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-rc-635',
+            toolName: 'run_command',
+            args: { purpose: 'run the helper (should never run)', command },
+          },
+        ],
+      },
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-rr-635', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const suspendResult = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(suspendResult.status).toBe('awaiting_approval');
+    const [approvalRow] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, job.id));
+    await db
+      .update(approvalRequests)
+      .set({ status: 'approved', resolvedAt: new Date(), resolvedBy: 'test' })
+      .where(eq(approvalRequests.id, approvalRow!.id));
+    await db
+      .update(agentJobs)
+      .set({ status: 'pending', updatedAt: new Date() })
+      .where(eq(agentJobs.id, job.id));
+
+    const resumeResult = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(resumeResult.status).toBe('failed');
+    if (resumeResult.status === 'failed') {
+      expect(resumeResult.error).toBe('catastrophic_command_refused');
+    }
+    await expect(readFile(join(workspaceDir, marker), 'utf8')).rejects.toThrow();
+  });
+
   it('CATASTROPHIC COMMAND: approved anyway → job fails with a clear reason, command never executes', async () => {
     const COMMAND5 = 'rm -rf /';
 

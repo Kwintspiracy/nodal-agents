@@ -196,13 +196,24 @@ function isWindowsRootOrWildcardTarget(token: string): boolean {
  * True when `cmd` contains a catastrophic, machine-wide-destructive operation
  * that must always require explicit human approval (never auto-run).
  */
-export function isCatastrophicCommand(cmd: string, host?: ShellHost): boolean {
+export function isCatastrophicCommand(
+  cmd: string,
+  host?: ShellHost,
+  /** The shell a script's line is written for, over the host's (#635). */
+  reader?: ScriptShell,
+  /**
+   * Read at command positions only: a string of a script (#635, review pass
+   * 3 of #683) is a command only where it starts, so `print("Please reboot")`
+   * is no reboot while `os.system("reboot")` is. A typed line keeps the
+   * reading of the whole text it always had.
+   */
+  opts: { atCommandPositions?: boolean } = {},
+): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
+  const shell = reader ?? topShell(host);
   // `shutdown --help` prints and exits (Reviewer A, #582 pass 2). Only the
   // long forms and `/?` here: `shutdown -h` HALTS the machine.
-  const units = commandUnits(withoutRedirections(cmd), 0, topShell(host)).filter(
-    (u) => !runsAnother(u),
-  );
+  const units = commandUnits(withoutRedirections(cmd), 0, shell).filter((u) => !runsAnother(u));
   if (
     units.length > 0 &&
     units.every((u) => u.length >= 2 && u.slice(1).every((t) => FLOOR_READ_FLAGS.has(t)))
@@ -211,15 +222,23 @@ export function isCatastrophicCommand(cmd: string, host?: ShellHost): boolean {
   }
   const c = normalizeSlashes(cmd.trim());
 
+  const destroyers = [
+    MKFS,
+    DD_TO_DEVICE,
+    POWER_STATE,
+    INIT_RUNLEVEL,
+    OVERWRITE_DEVICE,
+    DISKPART,
+    DISK_CMDLET,
+  ];
+  const texts = opts.atCommandPositions
+    ? commandUnits(withoutRedirections(c), 0, shell).map((u) => normalizeSlashes(u.join(' ')))
+    : [c];
   if (
     FORK_BOMB.test(c) ||
-    MKFS.test(c) ||
-    DD_TO_DEVICE.test(c) ||
-    POWER_STATE.test(c) ||
-    INIT_RUNLEVEL.test(c) ||
-    OVERWRITE_DEVICE.test(c) ||
-    DISKPART.test(c) ||
-    DISK_CMDLET.test(c)
+    destroyers.some((re) =>
+      texts.some((t) => (opts.atCommandPositions ? startsWithMatch(re, t) : re.test(t))),
+    )
   ) {
     return true;
   }
@@ -243,7 +262,7 @@ export function isCatastrophicCommand(cmd: string, host?: ShellHost): boolean {
   // passed the floor, its own list of wrappers knew only cmd, powershell, sh,
   // bash and sudo). A quoted mention (`echo "rm -rf /"`) is an argument of
   // `echo`, never a command, so no check can match it.
-  for (const unit of commandUnits(withoutRedirections(c), 0, topShell(host))) {
+  for (const unit of commandUnits(withoutRedirections(c), 0, shell)) {
     const cmdWord = unit[0] ?? '';
     const args = unit.slice(1);
     const s = unit.join(' ');

@@ -17,7 +17,7 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { approvalRequests } from '@nodal-agents/db';
 import { DEFAULT_SHELL_POLICY, type ShellPolicy } from '@nodal-agents/shared';
-import { executeTool } from '../execute';
+import { executeTool, isCatastrophicCall } from '../execute';
 import {
   MAX_SOURCE_BYTES,
   MAX_SOURCE_DEPTH,
@@ -689,5 +689,58 @@ describe('cmd conditions and here-docs at the gate (#683) @cap:executer-une-comm
         unread: [{ source: 'hd/missing.txt', why: 'not_found' }],
       }),
     ]);
+  });
+});
+
+// Review pass 3 of #683.
+describe('review pass 3 of #683: no line dropped, and the hard floor reads the code too @cap:executer-une-commande/moteur', () => {
+  const NL = String.fromCharCode(10);
+  const allAllowed: ShellPolicy = {
+    inline_code: 'allow',
+    delete_files: 'allow',
+    install_software: 'allow',
+    download: 'allow',
+    stop_programs: 'allow',
+    system_settings: 'allow',
+    open_or_send: 'allow',
+  } as ShellPolicy;
+
+  // C2 : un `<<` cité ou commenté n'ouvre aucun here-doc.
+  it('C2: a quoted << opens no here-document, and the lines after it are judged', async () => {
+    await put(
+      'p3/build.sh',
+      ['echo "usage: <<END"', 'pip install openpyxl', 'END', 'rm -rf build'].join(NL),
+    );
+    const reasons = (await asked('sh p3/build.sh')) as Array<{ category: string }>;
+    expect(reasons.map((r) => r.category).sort()).toEqual(['delete_files', 'install_software']);
+  });
+
+  // C3 : le plancher lit le code lancé. Même tout permis et sous Yolo, la porte
+  // retient, et le runner refusera même approuvé.
+  it('C3: a machine-wide destroyer in a script reaches the floor, typed or not', async () => {
+    const cases: Array<[string, string, string]> = [
+      ['p3/reboot.py', 'import os' + NL + 'os.system("reboot")' + NL, 'python p3/reboot.py'],
+      ['p3/down.py', 'import os' + NL + 'os.system("shutdown /s /t 0")' + NL, 'python p3/down.py'],
+      ['p3/wipe.py', 'import os' + NL + 'os.system("rm -rf /")' + NL, 'python p3/wipe.py'],
+    ];
+    for (const [file, content, command] of cases) {
+      await put(file, content);
+      const res = await run(command, gate(allAllowed, [yolo()]));
+      expect(res.outcome, command).toBe('awaiting_approval');
+      expect(await isCatastrophicCall('run_command', { command }, ctx()), command).toBe(true);
+    }
+    // A fork bomb fed to bash in a here-document (in the command, not in a
+    // file: an antivirus may refuse to open a file that holds one).
+    const bomb = `bash <<EOF${NL}:(){ :|:& };:${NL}EOF`;
+    expect((await run(bomb, gate(allAllowed, [yolo()]))).outcome).toBe('awaiting_approval');
+    expect(await isCatastrophicCall('run_command', { command: bomb }, ctx())).toBe(true);
+  });
+
+  it('C3: a string that only mentions a destroyer is no command', async () => {
+    await put('p3/msg.py', 'print("Please reboot your machine, then shutdown the old one")' + NL);
+    await ranUnasked('python p3/msg.py', allAllowed);
+    expect(await isCatastrophicCall('run_command', { command: 'python p3/msg.py' }, ctx())).toBe(
+      false,
+    );
   });
 });

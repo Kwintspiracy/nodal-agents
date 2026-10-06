@@ -111,6 +111,7 @@ export { createToolRegistry } from './registry';
 // Execution wrapper
 export {
   executeTool,
+  isCatastrophicCall,
   matchApprovalRule,
   namespaceOf,
   namespaceRulePattern,

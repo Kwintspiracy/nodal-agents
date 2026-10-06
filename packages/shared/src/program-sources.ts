@@ -819,15 +819,17 @@ function statements(text: string, language: keyof typeof LEXERS): Statement[] {
 }
 
 /**
- * A string's first word names a program (`pip`, `rm`, `Stop-Process`,
- * `python3.11`, `npm.cmd`), not a file or an address: in a script's strings,
- * `"data/ventes.csv"` or `"report.pdf"` is data far more often than a program
- * run by name, the same reading as a file name there (`programSources` with
- * `direct: false`, review of #683).
+ * A string's first word names a program, by its name whatever its path
+ * (`pip`, `/usr/bin/pip`, `C:\Windows\System32\cmd.exe`, `python3.11`,
+ * `npm.cmd`), as the command reader names one (review pass 3 of #683): not a
+ * file. In a script's strings, `"data/ventes.csv"` or `"report.pdf"` is data
+ * far more often than a program run by name, the same reading as a file name
+ * there (`programSources` with `direct: false`).
  */
 function namesAProgram(value: string): boolean {
   const first = value.trim().split(/\s+/)[0] ?? '';
-  return /^[A-Za-z_][\w+-]*(?:\.\d+)*(?:\.(?:exe|cmd|com))?$/i.test(first);
+  const name = first.split(/[\\/]/).pop() ?? '';
+  return /^[A-Za-z_][\w+-]*(?:\.\d+)*(?:\.(?:exe|cmd|com))?$/i.test(name);
 }
 
 /** The commands a non-shell source's strings spell, with the installs of its API. */

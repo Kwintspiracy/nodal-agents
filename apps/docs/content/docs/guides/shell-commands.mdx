@@ -209,6 +209,9 @@ list. Code written into the line (`python -c`, `node -e`) is read the same way.
   (`cmd < setup.txt`). Fed to any other program (`cat <<eof` writing a file), it
   is data. A cmd `if` is read without brackets too: `if exist x pip install y`.
 
+- The hard floor reads that code too: `reboot` or `rm -rf /` in a script is
+  refused even after approval, like the same line typed.
+
 **What this list does not do.** It reads the text the agent asks to run, and
 the scripts that text runs. It does not read what a program fetches, decodes or
 writes while it runs: code downloaded and run in the same line, a file a script

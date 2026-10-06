@@ -24,6 +24,7 @@ import { open, readFile, stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import {
   downloadWrites,
+  isCatastrophicCommand,
   languageOfShebang,
   programDecidedAtRunTime,
   programSources,
@@ -203,6 +204,8 @@ interface Judged {
   found: ShellSourceFinding | null;
   /** The shell a script's line is written for; the host's for the call's own text. */
   reader: ScriptShell | undefined;
+  /** Read from a script's strings: a command only where a string starts. */
+  fromStrings: boolean;
 }
 
 /** The shell that reads the lines of a source in this language, if it is one. */
@@ -362,6 +365,7 @@ async function readRunCode(
         place: at,
         found: { source: label, line, text: lineOf(shown, line) },
         reader: lineReader,
+        fromStrings: reading.fromStrings,
       });
       await readRunCode(
         call,
@@ -386,6 +390,53 @@ async function readRunCode(
   }
 }
 
+/**
+ * Every command a call runs: its own, and those read in the code they run
+ * (#635), each with where it was read. What could not be read is in `unread`,
+ * with the commands of the call it belongs to.
+ */
+async function readCall(
+  commands: readonly string[],
+  place: ShellPlace,
+): Promise<{ judged: Judged[]; unread: ShellUnreadSource[]; unreadCalls: string[] }> {
+  const judged: Judged[] = [];
+  const unread: ShellUnreadSource[] = [];
+  const unreadCalls: string[] = [];
+  // One budget for the whole call: a declared proof's commands share it.
+  const budget: ReadBudget = { files: 0, bytes: 0, seen: new Set() };
+  for (const command of commands) {
+    judged.push({
+      call: command,
+      text: command,
+      place,
+      found: null,
+      reader: undefined,
+      fromStrings: false,
+    });
+    const before = unread.length;
+    await readRunCode(command, command, place, false, 1, budget, judged, unread, null, undefined);
+    if (unread.length > before) unreadCalls.push(command);
+  }
+  return { judged, unread, unreadCalls };
+}
+
+/**
+ * True when a command the call runs, typed or read in the code it runs, is a
+ * machine-wide destroyer (`isCatastrophicCommand`): the hard floor, refused
+ * even after approval (review pass 3 of #683: `os.system("reboot")` in a
+ * script ran unasked, `os.system("rm -rf /")` was an approvable deletion). A
+ * script's string is read where it starts, as everywhere for strings.
+ */
+export async function callReachesTheFloor(
+  commands: readonly string[],
+  place: ShellPlace,
+): Promise<boolean> {
+  const { judged } = await readCall(commands, place);
+  return judged.some((j) =>
+    isCatastrophicCommand(j.text, j.place.host, j.reader, { atCommandPositions: j.fromStrings }),
+  );
+}
+
 /** Judge `commands` (the ones this call will run, from `place`) against `policy`. */
 export async function judgeShellChecklist(
   commands: readonly string[],
@@ -396,8 +447,6 @@ export async function judgeShellChecklist(
   const found = new Map<ShellCategory, ShellSourceFinding[]>();
   // Each command's own places outside, attached to it (revue passe 2).
   const outside: NonNullable<ShellGateReason['outside']> = [];
-  const unread: ShellUnreadSource[] = [];
-  const unreadCalls: string[] = [];
   const add = (category: ShellCategory, j: Judged): void => {
     const list = details.get(category) ?? [];
     if (!list.includes(j.call)) list.push(j.call);
@@ -409,15 +458,7 @@ export async function judgeShellChecklist(
     found.set(category, where);
   };
 
-  const judged: Judged[] = [];
-  // One budget for the whole call: a declared proof's commands share it.
-  const budget: ReadBudget = { files: 0, bytes: 0, seen: new Set() };
-  for (const command of commands) {
-    judged.push({ call: command, text: command, place, found: null, reader: undefined });
-    const before = unread.length;
-    await readRunCode(command, command, place, false, 1, budget, judged, unread, null, undefined);
-    if (unread.length > before) unreadCalls.push(command);
-  }
+  const { judged, unread, unreadCalls } = await readCall(commands, place);
 
   for (const j of judged) {
     for (const category of staticShellCategories(j.text, j.place.host, j.reader)) {
