@@ -57,6 +57,7 @@ import {
   DiscordLogo,
   PaperPlaneTilt,
   PlugsConnected,
+  Plus,
   SlackLogo,
   TelegramLogo,
   WhatsappLogo,
@@ -69,7 +70,13 @@ import ThreadDot from './ui/ThreadDot';
 import RowActions from './sidebar/RowActions';
 import { useApprovals } from './ApprovalsProvider';
 import { useChatFolders } from './ChatFoldersProvider';
-import { chatFolders, unfoldedRows, DASHBOARD_FOLDER, MCP_FOLDER } from '@/lib/chat-folders.ts';
+import {
+  chatFolders,
+  unfoldedRows,
+  DASHBOARD_FOLDER,
+  MCP_FOLDER,
+  NEW_CONVERSATION_HREF,
+} from '@/lib/chat-folders.ts';
 import {
   listFolderThreadsAction,
   type FolderThreadsSnapshot,
@@ -287,6 +294,36 @@ export default function ChatFolderGroup() {
             />
             {ouvert && (
               <div className="flex flex-col gap-0 pt-0" data-testid={`folder-threads-${f.key}`}>
+                {/* « NEW CHAT » OUVRE « NODAL CHATS » (#701), et lui seul : une
+                    conversation se démarre ici, pas dans un canal où l'on
+                    ne fait que recevoir. Il va au MÊME endroit que le bouton
+                    « New conversation » de la page Chat (une seule adresse,
+                    `NEW_CONVERSATION_HREF`) et n'écrit rien non plus.
+
+                    Une LIGNE de la même liste — même forme, même hauteur, même
+                    retrait que les fils dessous —, qui se distingue sans
+                    devenir un bouton : un plus et un libellé Medium en `ink`,
+                    là où les fils sont en Regular `ink-3`. Il est rendu quel
+                    que soit l'état de la lecture : il ne dépend d'aucune
+                    conversation, et c'est justement le seul geste qu'offre un
+                    dossier vide. */}
+                {f.key === DASHBOARD_FOLDER && (
+                  <SidebarRow
+                    href={NEW_CONVERSATION_HREF}
+                    title="New Chat"
+                    depth="thread"
+                    active={pathname === NEW_CONVERSATION_HREF}
+                    markCurrent
+                    testId="folder-new-chat"
+                  >
+                    {/* Dans la colonne du point d'un fil : le plus s'aligne sur
+                      eux, et le libellé sur leurs titres. */}
+                    <Plus size={14} weight="bold" className="h-3.5 w-3.5 shrink-0 text-ink" />
+                    <span className="flex-1 truncate leading-5 font-medium! text-ink">
+                      New Chat
+                    </span>
+                  </SidebarRow>
+                )}
                 {erreur !== null ? (
                   <p className={SIDEBAR_NOTE}>{erreur}</p>
                 ) : fils === null ? (

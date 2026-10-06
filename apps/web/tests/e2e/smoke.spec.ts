@@ -181,6 +181,25 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
     await expect(dossier).toBeVisible();
     await expect(dossier).toHaveAttribute('aria-expanded', 'true');
   });
+
+  test('"New Chat" opens "Nodal chats" and leads to the empty conversation screen', async ({
+    page,
+  }) => {
+    await page.goto('/chat');
+    const bloc = page.locator('[data-testid="folder-threads-dashboard"]');
+    // La PREMIERE ligne du dossier, avant toute conversation (#701).
+    const nouvelle = bloc.locator('[data-sidebar-row]').first();
+    await expect(nouvelle).toHaveText('New Chat');
+    const lien = page.locator('[data-testid="folder-new-chat"]');
+    await expect(lien).toHaveAttribute('href', '/');
+    // Au clic : l'ecran vide de la racine, comme « New conversation » (#248).
+    await lien.click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.locator('[data-testid="folder-new-chat"]')).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
 });
 
 test.describe('agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran', () => {
