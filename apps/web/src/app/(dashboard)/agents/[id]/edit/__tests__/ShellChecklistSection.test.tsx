@@ -94,12 +94,13 @@ describe('ShellChecklistSection @cap:regler-autonomie/ecran', () => {
     );
   });
 
-  it('says what a reading can promise: a script run from a file is not read (review of PR #474)', async () => {
+  it('says what a reading can promise: a script is read, one it cannot read is code written into a command (#635)', async () => {
     await render(null);
     // A reading of the command is not a sandbox, and the screen does not
-    // pretend the agent stays in its folders.
+    // pretend the agent stays in its folders. Since #635 the scripts a command
+    // runs are read too; one that cannot be read follows the inline-code row.
     expect(container.textContent).toContain(
-      'Nodal reads each command, then runs it, asks you first, or refuses it, at every autonomy level. A script run from a file is not read: it can do any of these unseen.',
+      'Nodal reads each command and the scripts it runs, then runs it, asks you first, or refuses it, at every autonomy level. A script it cannot read counts as code written into a command.',
     );
   });
 

@@ -16,6 +16,7 @@ import {
   redactSecretsForAudit,
   type ApprovalExplanation,
   type McpServerContext,
+  type ShellGateReason,
 } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 
@@ -37,6 +38,8 @@ export async function explainApprovalRequest(
   agentId: string | null,
   toolName: string,
   toolInput: unknown,
+  /** What the shell checklist held the call for (#635): the impact line says it. */
+  gateReasons: readonly ShellGateReason[] = [],
 ): Promise<ApprovalExplanation> {
   const ctx = await getMcpApprovalContext(db, entityId, agentId, toolName).catch(() => null);
   const mcp: McpServerContext | null = ctx
@@ -57,5 +60,6 @@ export async function explainApprovalRequest(
     toolName,
     toolInput: redactSecretsForAudit(toolInput ?? {}),
     mcp,
+    gateReasons,
   });
 }

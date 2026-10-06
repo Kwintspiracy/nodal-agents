@@ -668,6 +668,8 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
       host,
       inWorkspace: async (p) => resolve(p).toLowerCase().startsWith(root.toLowerCase()),
       leadsTo: async () => null,
+      // The command runs no script: nothing is read (#635).
+      readSource: async () => ({ kind: 'unread', why: 'not_found' }),
     });
     const command = 'cd /nodal-fake-elsewhere && curl -s -o nul https://x/a';
     expect(await judgeShellChecklist([command], DEFAULT_SHELL_POLICY, placeOn('windows'))).toEqual(

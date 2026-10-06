@@ -23,7 +23,7 @@ import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import { useApprovals } from '@/components/ApprovalsProvider';
-import { SHELL_CATEGORY_COPY } from '@/lib/shell-checklist-copy.ts';
+import { SHELL_CATEGORY_COPY, UNREAD_COPY } from '@/lib/shell-checklist-copy.ts';
 import { conversationOf, openRunHref, questionHref } from '@/lib/run-page.ts';
 import ElicitationCard from '@/app/(dashboard)/spaces/ElicitationCard.tsx';
 
@@ -457,6 +457,22 @@ function ApprovalDecisionCard({
                       ...new Set(reason.outside.flatMap((o) => o.places)),
                     ].join(', ')}`}</span>
                   )}
+                  {/* Le code que la commande lance a été lu (#635) : la carte
+                      dit dans quel fichier, à quelle ligne, et ce qui n'a pas
+                      pu être lu. */}
+                  {reason.found?.map((f) => (
+                    <span
+                      key={`${f.source ?? ''}:${f.line}`}
+                      className="block text-mono-12 text-ink-2"
+                    >
+                      {`${f.source ?? 'code in the command'}, line ${f.line}: ${f.text}`}
+                    </span>
+                  ))}
+                  {reason.unread?.map((u) => (
+                    <span key={u.source} className="block text-ink-2">
+                      {`${u.source}: ${UNREAD_COPY[u.why]}`}
+                    </span>
+                  ))}
                 </li>
               ))}
             </ul>

@@ -103,7 +103,7 @@ import {
   createSendVoiceTool,
   createListConversationsTool,
   listWorkspaceMcpToolNames,
-  isCatastrophicCommand,
+  isCatastrophicCall,
   matchApprovalRule,
   DELIVERY_TOOL_NAMES as DELIVERY_TOOL_NAME_LIST,
   toolsNamedButAbsent,
@@ -3142,19 +3142,18 @@ async function runJobTracked(
         // either way.
         // `run_command` porte UNE commande, `declare_verification` en porte une
         // liste qui s'exécutera plus tard : les deux se jugent ici, sinon la
-        // seconde contournerait le refus (revue Codex, PR #49).
-        const resumeCommands =
-          req.toolName === 'run_command'
-            ? [String((req.toolInput as { command?: unknown } | null)?.command ?? '')]
-            : req.toolName === 'declare_verification'
-              ? (
-                  (req.toolInput as { commands?: { command?: unknown }[] } | null)?.commands ?? []
-                ).map((c) => String(c?.command ?? ''))
-              : [];
-        // Read by the shell of this host, as the gate read it (#667).
-        const isCatastrophicResume = resumeCommands.some((c) =>
-          isCatastrophicCommand(c, process.platform === 'win32' ? 'windows' : 'posix'),
-        );
+        // seconde contournerait le refus (revue Codex, PR #49). Avec elles, le
+        // code qu'elles lancent, relu MAINTENANT, au moment de tourner (#635,
+        // revue passe 3 de la PR #683) : la même lecture que la porte, par la
+        // même fonction, dans les mêmes espaces.
+        const isCatastrophicResume = await isCatastrophicCall(req.toolName, req.toolInput, {
+          jobId: jobId as string,
+          agentId: agentRow.id,
+          entityId: job.entityId ?? '',
+          db,
+          jobChatId: job.chatId ?? null,
+          workspaces: agentWorkspacesList,
+        });
 
         if (isCatastrophicResume) {
           // Only machine-wide destroyers (`rm -rf /`, `mkfs`, `shutdown`, …)

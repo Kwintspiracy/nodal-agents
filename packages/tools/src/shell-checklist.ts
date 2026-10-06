@@ -7,9 +7,11 @@
 // (`executeTool`) turns them into a block or an approval, and stores them on
 // the approval so the card can show them.
 //
-// A reading of the text, like Hermes Agent's: it does not follow what a script
-// does once it runs, and it does not keep an agent inside its folders. That
-// takes an OS-level sandbox.
+// A reading of the text, like Hermes Agent's, and of the code the command runs
+// (#635): `python build.py` is judged by what build.py holds, read inside the
+// job's workspaces with the same classifier (packages/shared,
+// program-sources.ts). It does not keep an agent inside its folders: that
+// takes an OS-level sandbox (#628).
 //
 // One exception to "reading the text only", and it is the definition of an
 // allowed download (#614, revue Nodal de la PR #618, P1b): a download runs
@@ -18,16 +20,37 @@
 // are resolved against the command's working folder and the job's workspaces;
 // one outside them, or one the text does not name, asks.
 
+import { open, readFile, stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import {
   downloadWrites,
+  isCatastrophicCommand,
+  languageOfShebang,
   programDecidedAtRunTime,
+  programSources,
+  readSource,
   staticShellCategories,
   type ShellCategory,
   type ShellGateReason,
   type ShellHost,
   type ShellPolicy,
+  type ShellSourceFinding,
+  type ShellUnreadSource,
+  type ScriptShell,
+  type SourceLanguage,
 } from '@nodal-agents/shared';
+
+/** What the gate could read of a file a command runs (#635). */
+export type SourceFile =
+  | { kind: 'text'; text: string; bytes: number }
+  /** An executable file format (ELF, PE, Mach-O): a program, not a script. */
+  | { kind: 'executable' }
+  /** Neither text in UTF-8 or UTF-16 nor an executable. */
+  | { kind: 'binary'; bytes: number }
+  | {
+      kind: 'unread';
+      why: Exclude<ShellUnreadSource['why'], 'decided_at_run_time' | 'not_text' | 'over_budget'>;
+    };
 
 /** Where the commands of a call run: what an allowed download is judged against. */
 export interface ShellPlace {
@@ -39,6 +62,76 @@ export interface ShellPlace {
   inWorkspace(absolutePath: string): Promise<boolean>;
   /** Where an absolute path really lands, links followed; null when it cannot be told. */
   leadsTo(absolutePath: string): Promise<string | null>;
+  /** A file the commands run, read only inside the job's workspaces (#635). */
+  readSource(absolutePath: string): Promise<SourceFile>;
+}
+
+/**
+ * The largest script the gate reads (#635). A script an agent writes is a few
+ * kilobytes; past this, it asks rather than reading part of it.
+ */
+export const MAX_SOURCE_BYTES = 256 * 1024;
+
+/**
+ * The first bytes of an executable file format: ELF, PE (`MZ`), Mach-O (32
+ * and 64 bits, both byte orders) and universal Mach-O (review pass 2 of #683,
+ * C1). What the system runs as a program is recognised by its format, never
+ * by a NUL byte: cmd and sh run the lines of a script that holds one.
+ */
+const EXECUTABLE_MAGIC: ReadonlyArray<readonly number[]> = [
+  [0x7f, 0x45, 0x4c, 0x46],
+  [0x4d, 0x5a],
+  [0xfe, 0xed, 0xfa, 0xce],
+  [0xfe, 0xed, 0xfa, 0xcf],
+  [0xce, 0xfa, 0xed, 0xfe],
+  [0xcf, 0xfa, 0xed, 0xfe],
+  [0xca, 0xfe, 0xba, 0xbe],
+];
+
+function isExecutableFormat(head: Uint8Array): boolean {
+  return EXECUTABLE_MAGIC.some((magic) => magic.every((b, i) => head[i] === b));
+}
+
+/**
+ * Read a file a command runs, already known to be inside a workspace: an
+ * executable format (whatever its size), text in UTF-8 or UTF-16 (PowerShell's
+ * own default), bytes that are neither, or why it cannot be read. Whether
+ * bytes that are not text are a program or a source that cannot be read
+ * depends on how the file is run, which the caller knows.
+ */
+export async function readSourceFile(canonicalPath: string): Promise<SourceFile> {
+  try {
+    const info = await stat(canonicalPath);
+    if (!info.isFile()) return { kind: 'unread', why: 'not_a_file' };
+    const handle = await open(canonicalPath, 'r');
+    let head: Uint8Array;
+    try {
+      const buffer = new Uint8Array(8);
+      const { bytesRead } = await handle.read(buffer, 0, 8, 0);
+      head = buffer.subarray(0, bytesRead);
+    } finally {
+      await handle.close();
+    }
+    if (isExecutableFormat(head)) return { kind: 'executable' };
+    if (info.size > MAX_SOURCE_BYTES) return { kind: 'unread', why: 'too_large' };
+    const bytes = await readFile(canonicalPath);
+    if (bytes[0] === 0xff && bytes[1] === 0xfe)
+      return { kind: 'text', text: bytes.subarray(2).toString('utf16le'), bytes: bytes.length };
+    let text: string;
+    try {
+      // A NUL is text: cmd and sh run the lines around it.
+      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      return { kind: 'binary', bytes: bytes.length };
+    }
+    return { kind: 'text', text: text.replace(/^﻿/, ''), bytes: bytes.length };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return {
+      kind: 'unread',
+      why: code === 'ENOENT' || code === 'ENOTDIR' ? 'not_found' : 'unreadable',
+    };
+  }
 }
 
 /** Two absolute paths name the same place (case-insensitive on Windows). */
@@ -50,6 +143,20 @@ function samePlace(a: string, b: string): boolean {
 const UNREADABLE_TARGET = 'a path decided when the command runs';
 
 /**
+ * The folder a line is in at each point: the starting folder, then after each
+ * `cd` of the line, in order; null once one cannot be read.
+ */
+function basesOf(dirs: ReadonlyArray<string | null>, cwd: string | null): Array<string | null> {
+  const bases: Array<string | null> = [cwd];
+  let base = cwd;
+  for (const dir of dirs) {
+    base = base === null || dir === null ? null : resolve(base, dir);
+    bases.push(base);
+  }
+  return bases;
+}
+
+/**
  * The places `command` would download to that are not inside a workspace of
  * the job, as written. A relative target is judged from the folder the line is
  * in when it runs: the starting folder, then each `cd` that comes BEFORE it
@@ -59,12 +166,7 @@ const UNREADABLE_TARGET = 'a path decided when the command runs';
 async function downloadsOutside(command: string, place: ShellPlace): Promise<string[]> {
   const { dirs, targets } = downloadWrites(command, place.host);
   if (targets.length === 0) return [];
-  const bases: Array<string | null> = [place.cwd];
-  let base = place.cwd;
-  for (const dir of dirs) {
-    base = base === null || dir === null ? null : resolve(base, dir);
-    bases.push(base);
-  }
+  const bases = basesOf(dirs, place.cwd);
   const outside: string[] = [];
   for (const { path, after } of targets) {
     if (path === null) {
@@ -90,6 +192,251 @@ async function downloadsOutside(command: string, place: ShellPlace): Promise<str
   return outside;
 }
 
+/**
+ * One text the checklist judges: a command of the call, or a command read in
+ * the code it runs (#635), with the folder it runs from and where it was found.
+ */
+interface Judged {
+  /** The command of the call it belongs to: what the card's details list. */
+  call: string;
+  text: string;
+  place: ShellPlace;
+  found: ShellSourceFinding | null;
+  /** The shell a script's line is written for; the host's for the call's own text. */
+  reader: ScriptShell | undefined;
+  /** Read from a script's strings: a command only where a string starts. */
+  fromStrings: boolean;
+}
+
+/** The shell that reads the lines of a source in this language, if it is one. */
+const SCRIPT_SHELL: Partial<Record<SourceLanguage, ScriptShell>> = {
+  shell: 'sh',
+  cmd: 'cmd',
+  powershell: 'powershell',
+};
+
+/**
+ * What the gate reads for one call, at most (review of #683, P2): how deep
+ * scripts run by scripts are followed, how many files and bytes are read, how
+ * many commands are kept to judge. A runaway tree of scripts must not stall
+ * the turn before anyone is asked. What lies past it is not dropped: it is
+ * `unread` (`over_budget`), code nobody read ahead, under `inline_code`.
+ */
+export const MAX_SOURCE_DEPTH = 3;
+export const MAX_SOURCE_FILES = 50;
+export const MAX_SOURCE_TOTAL_BYTES = 4 * 1024 * 1024;
+export const MAX_JUDGED_COMMANDS = 10_000;
+
+/** What one call has read so far, against the limits above. */
+interface ReadBudget {
+  files: number;
+  bytes: number;
+  seen: Set<string>;
+}
+
+/** The line `line` (1-based) of `text`, as the card shows it. */
+function lineOf(text: string, line: number): string {
+  const s = (text.split(/\r?\n/)[line - 1] ?? '').trim();
+  return s.length > 200 ? `${s.slice(0, 200)}…` : s;
+}
+
+/**
+ * The commands read in the code `command` runs (#635): the files it hands to
+ * an interpreter or runs directly, and the code written into it, followed
+ * into the scripts those run in turn. A file that cannot be read, or lies past
+ * the reading budget, is reported in `unread`; a file the system runs itself
+ * that is not text is a program, judged by its name like any other.
+ */
+async function readRunCode(
+  call: string,
+  command: string,
+  place: ShellPlace,
+  fromStrings: boolean,
+  depth: number,
+  budget: ReadBudget,
+  judged: Judged[],
+  unread: ShellUnreadSource[],
+  /**
+   * Where `command` itself was read: the file (null for the call's own text),
+   * that file's text and the line. Code a line carries (a here-document,
+   * `python -c`) is found there, at its own line.
+   */
+  origin: { label: string | null; text: string; line: number } | null,
+  /** The shell that reads `command`: a script's, or the host's (undefined). */
+  reader: ScriptShell | undefined,
+): Promise<void> {
+  const { dirs, sources } = programSources(command, {
+    direct: !fromStrings,
+    host: place.host,
+    reader,
+  });
+  const bases = basesOf(dirs, place.cwd);
+  for (const source of sources) {
+    const named = source.kind === 'file' ? (source.path ?? command) : command;
+    if (depth > MAX_SOURCE_DEPTH) {
+      unread.push({ source: named, why: 'over_budget' });
+      continue;
+    }
+    let text: string;
+    let language: SourceLanguage;
+    let label: string | null;
+    let base: string | null;
+    // Where the lines of this source are shown from: the file it is, or the
+    // file (or call) its code is written in, from the line it starts on.
+    let shown: string;
+    let firstLine = 1;
+    if (source.kind === 'code') {
+      text = source.code;
+      language = source.language;
+      // In a file, the code's lines are the file's, from the line it starts
+      // on; in the call's own text, the code's own lines.
+      label = origin?.label ?? null;
+      shown = origin?.text ?? text;
+      firstLine = origin === null ? 1 : origin.line + source.line - 1;
+      base = bases[source.after] ?? null;
+      budget.bytes += text.length;
+      if (budget.bytes > MAX_SOURCE_TOTAL_BYTES) {
+        unread.push({ source: named, why: 'over_budget' });
+        continue;
+      }
+    } else {
+      base = bases[source.after] ?? null;
+      // `.\setup.ps1` names the same file on every OS: a backslash in a path
+      // is a folder separator for cmd and PowerShell, which run on Linux too.
+      // The text is judged, not the machine (#669).
+      const written = source.path?.replace(/\\/g, '/') ?? null;
+      if (written === null || source.path === null || (base === null && !isAbsolute(written))) {
+        unread.push({ source: named, why: 'decided_at_run_time' });
+        continue;
+      }
+      const path = isAbsolute(written) ? written : resolve(base ?? '', written);
+      const key = process.platform === 'win32' ? path.toLowerCase() : path;
+      if (budget.seen.has(key)) continue;
+      budget.seen.add(key);
+      if (budget.files >= MAX_SOURCE_FILES || budget.bytes >= MAX_SOURCE_TOTAL_BYTES) {
+        unread.push({ source: source.path, why: 'over_budget' });
+        continue;
+      }
+      budget.files += 1;
+      const read = await place.readSource(path);
+      if (read.kind === 'unread') {
+        // A bare name not in the folder: the shell takes it from the PATH.
+        if (read.why === 'not_found' && source.searched) continue;
+        unread.push({ source: source.path, why: read.why });
+        continue;
+      }
+      // An executable format is a program, judged by its name when the system
+      // runs it. Anything else is source: a script the system runs through
+      // cmd or sh, or a file an interpreter reads. Source that is not text
+      // cannot be read, and says so (review passes 1 and 2 of #683).
+      if (read.kind === 'executable') {
+        if (!source.executed) unread.push({ source: source.path, why: 'not_text' });
+        continue;
+      }
+      budget.bytes += read.bytes;
+      if (budget.bytes > MAX_SOURCE_TOTAL_BYTES) {
+        unread.push({ source: source.path, why: 'over_budget' });
+        continue;
+      }
+      if (read.kind === 'binary') {
+        unread.push({ source: source.path, why: 'not_text' });
+        continue;
+      }
+      text = read.text;
+      language = source.language ?? languageOfShebang(text) ?? 'shell';
+      label = source.path;
+      shown = text;
+    }
+    const reading = readSource(text, language);
+    const lineReader = SCRIPT_SHELL[language];
+    // A script runs from the folder its command was in; in a shell script, a
+    // `cd` moves the lines after it.
+    let cwd = base;
+    for (const c of reading.commands) {
+      if (judged.length >= MAX_JUDGED_COMMANDS) {
+        unread.push({ source: label ?? command, why: 'over_budget' });
+        break;
+      }
+      const at: ShellPlace = { ...place, cwd };
+      const line = firstLine + c.line - 1;
+      judged.push({
+        call,
+        text: c.command,
+        place: at,
+        found: { source: label, line, text: lineOf(shown, line) },
+        reader: lineReader,
+        fromStrings: reading.fromStrings,
+      });
+      await readRunCode(
+        call,
+        c.command,
+        at,
+        reading.fromStrings,
+        depth + 1,
+        budget,
+        judged,
+        unread,
+        { label, text: shown, line },
+        lineReader,
+      );
+      if (!reading.fromStrings) {
+        const after = basesOf(
+          programSources(c.command, { direct: true, host: place.host, reader: lineReader }).dirs,
+          cwd,
+        );
+        cwd = after[after.length - 1] ?? null;
+      }
+    }
+  }
+}
+
+/**
+ * Every command a call runs: its own, and those read in the code they run
+ * (#635), each with where it was read. What could not be read is in `unread`,
+ * with the commands of the call it belongs to.
+ */
+async function readCall(
+  commands: readonly string[],
+  place: ShellPlace,
+): Promise<{ judged: Judged[]; unread: ShellUnreadSource[]; unreadCalls: string[] }> {
+  const judged: Judged[] = [];
+  const unread: ShellUnreadSource[] = [];
+  const unreadCalls: string[] = [];
+  // One budget for the whole call: a declared proof's commands share it.
+  const budget: ReadBudget = { files: 0, bytes: 0, seen: new Set() };
+  for (const command of commands) {
+    judged.push({
+      call: command,
+      text: command,
+      place,
+      found: null,
+      reader: undefined,
+      fromStrings: false,
+    });
+    const before = unread.length;
+    await readRunCode(command, command, place, false, 1, budget, judged, unread, null, undefined);
+    if (unread.length > before) unreadCalls.push(command);
+  }
+  return { judged, unread, unreadCalls };
+}
+
+/**
+ * True when a command the call runs, typed or read in the code it runs, is a
+ * machine-wide destroyer (`isCatastrophicCommand`): the hard floor, refused
+ * even after approval (review pass 3 of #683: `os.system("reboot")` in a
+ * script ran unasked, `os.system("rm -rf /")` was an approvable deletion). A
+ * script's string is read where it starts, as everywhere for strings.
+ */
+export async function callReachesTheFloor(
+  commands: readonly string[],
+  place: ShellPlace,
+): Promise<boolean> {
+  const { judged } = await readCall(commands, place);
+  return judged.some((j) =>
+    isCatastrophicCommand(j.text, j.place.host, j.reader, { atCommandPositions: j.fromStrings }),
+  );
+}
+
 /** Judge `commands` (the ones this call will run, from `place`) against `policy`. */
 export async function judgeShellChecklist(
   commands: readonly string[],
@@ -97,37 +444,50 @@ export async function judgeShellChecklist(
   place: ShellPlace,
 ): Promise<ShellGateReason[]> {
   const details = new Map<ShellCategory, string[]>();
+  const found = new Map<ShellCategory, ShellSourceFinding[]>();
   // Each command's own places outside, attached to it (revue passe 2).
   const outside: NonNullable<ShellGateReason['outside']> = [];
-  const add = (category: ShellCategory, command: string): void => {
+  const add = (category: ShellCategory, j: Judged): void => {
     const list = details.get(category) ?? [];
-    if (!list.includes(command)) list.push(command);
+    if (!list.includes(j.call)) list.push(j.call);
     details.set(category, list);
+    if (j.found === null) return;
+    const f = j.found;
+    const where = found.get(category) ?? [];
+    if (!where.some((w) => w.source === f.source && w.line === f.line)) where.push(f);
+    found.set(category, where);
   };
-  for (const command of commands) {
-    for (const category of staticShellCategories(command, place.host)) {
+
+  const { judged, unread, unreadCalls } = await readCall(commands, place);
+
+  for (const j of judged) {
+    for (const category of staticShellCategories(j.text, j.place.host, j.reader)) {
       if (policy[category] !== 'allow') {
-        add(category, command);
+        add(category, j);
         continue;
       }
       // An allowed kind still asks when the text cannot say what it acts on:
       // a program decided at run time (`$c x`, `%X% x`) for inline code, as a
       // target decided at run time for a download (#667, review of PR #682).
       if (category === 'inline_code') {
-        if (programDecidedAtRunTime(command, place.host)) add(category, command);
+        if (programDecidedAtRunTime(j.text, j.place.host, j.reader)) add(category, j);
         continue;
       }
       if (category !== 'download') continue;
-      const places = await downloadsOutside(command, place);
+      const places = await downloadsOutside(j.text, j.place);
       if (places.length === 0) continue;
-      add(category, command);
-      if (!outside.some((o) => o.command === command)) outside.push({ command, places });
+      add(category, j);
+      const entry = outside.find((o) => o.command === j.call);
+      if (entry === undefined) outside.push({ command: j.call, places });
+      else for (const p of places) if (!entry.places.includes(p)) entry.places.push(p);
     }
   }
 
   const reasons: ShellGateReason[] = [];
   for (const [category, list] of details) {
     const state = policy[category];
+    const where = found.get(category);
+    const extra = where !== undefined ? { found: where } : {};
     if (state === 'allow') {
       // An allowed download that writes outside the job's workspaces asks,
       // saying where; allowed inline code that runs a program decided at run
@@ -137,10 +497,36 @@ export async function judgeShellChecklist(
         state: 'ask',
         details: list,
         ...(category === 'download' ? { outside } : {}),
+        ...extra,
       });
       continue;
     }
-    reasons.push({ category, state, details: list });
+    reasons.push({ category, state, details: list, ...extra });
+  }
+
+  // A script that could not be read is code nobody read ahead (#635), the
+  // kind `inline_code` names: `curl … | bash`, or a script downloaded and run
+  // in the same line, which does not exist yet when the line is judged. Its
+  // state applies, never a guess about what the script would do: allowed by
+  // default (the owner's decision of 29/09, #618), asked or refused when the
+  // owner set it so, and the card then names the file and why.
+  // A script whose path the text does not say (`python $SCRIPT`) cannot be
+  // named ahead, like a program decided at run time (#667): it asks even when
+  // inline code is allowed.
+  const decided = unread.some((u) => u.why === 'decided_at_run_time');
+  if (unread.length > 0 && (policy.inline_code !== 'allow' || decided)) {
+    const code = reasons.find((r) => r.category === 'inline_code');
+    if (code !== undefined) {
+      code.unread = unread;
+      for (const c of unreadCalls) if (!code.details.includes(c)) code.details.push(c);
+    } else {
+      reasons.push({
+        category: 'inline_code',
+        state: policy.inline_code === 'allow' ? 'ask' : policy.inline_code,
+        details: unreadCalls,
+        unread,
+      });
+    }
   }
   return reasons;
 }

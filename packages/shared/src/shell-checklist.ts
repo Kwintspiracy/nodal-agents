@@ -7,11 +7,13 @@
 // one gets a state per agent: allowed, ask me, never.
 //
 // Every kind here is read from the command TEXT (`staticShellCategories`,
-// catastrophic-command.ts): the programs it runs, as Hermes Agent reads them.
-// A text reading cannot follow what a script does once it runs, nor where a
-// path built at run time leads; the reviews of PR #474 showed that trying to
-// only moves the hole. Keeping an agent inside its folders is the job of an
-// OS-level sandbox, not of this list, and the screen says so.
+// catastrophic-command.ts): the programs it runs, as Hermes Agent reads them,
+// and the code the command runs, a script it names or code written into it,
+// read with the same classifier (program-sources.ts, #635). A text reading
+// cannot follow where a path built at run time leads, nor code fetched or
+// assembled while the program runs; the reviews of PR #474 showed that trying
+// to only moves the hole. Keeping an agent inside its folders is the job of an
+// OS-level sandbox (#628), not of this list, and the screen says so.
 //
 // Pure: no filesystem, no `node:path` (the web imports this module too).
 
@@ -114,6 +116,44 @@ export interface ShellGateReason {
    * then does an allowed download ask, and this says why.
    */
   outside?: Array<{ command: string; places: string[] }>;
+  /**
+   * Where this kind was found in the code the call runs (#635): a script it
+   * names (`source`, as written) or the code written into the command
+   * (`source: null`), the line, and that line as written.
+   */
+  found?: ShellSourceFinding[];
+  /**
+   * The scripts the call runs that could not be read, and why (#635). Code
+   * nobody could read ahead: carried by an `inline_code` reason, under that
+   * kind's state.
+   */
+  unread?: ShellUnreadSource[];
+}
+
+export interface ShellSourceFinding {
+  source: string | null;
+  line: number;
+  text: string;
+}
+
+/** Why a script a command runs could not be read (#635). */
+export const SHELL_UNREAD_REASONS = [
+  'outside_workspaces',
+  'not_found',
+  'too_large',
+  'decided_at_run_time',
+  'not_a_file',
+  'unreadable',
+  /** A file an interpreter reads that is not text (review of #683, P1). */
+  'not_text',
+  /** Past what the gate reads for one call: files, bytes or depth (review of #683). */
+  'over_budget',
+] as const;
+
+export interface ShellUnreadSource {
+  /** As written in the command, or the text standing for it. */
+  source: string;
+  why: (typeof SHELL_UNREAD_REASONS)[number];
 }
 
 /** `approval_requests.gate_reasons` as stored, read back for the approval card. */
@@ -123,5 +163,9 @@ export const ShellGateReasonsSchema = z.array(
     state: z.enum(['ask', 'never']),
     details: z.array(z.string()),
     outside: z.array(z.object({ command: z.string(), places: z.array(z.string()) })).optional(),
+    found: z
+      .array(z.object({ source: z.string().nullable(), line: z.number().int(), text: z.string() }))
+      .optional(),
+    unread: z.array(z.object({ source: z.string(), why: z.enum(SHELL_UNREAD_REASONS) })).optional(),
   }),
 );

@@ -6180,6 +6180,19 @@ function readGateReasons(approvalId: string, raw: unknown): ShellGateReason[] {
           })),
         }
       : {}),
+    // Les lignes d'un script et ses chemins peuvent porter un jeton (#635).
+    ...(r.found
+      ? {
+          found: r.found.map((f) => ({
+            ...f,
+            source: f.source === null ? null : redactSecretsInText(f.source),
+            text: redactSecretsInText(f.text),
+          })),
+        }
+      : {}),
+    ...(r.unread
+      ? { unread: r.unread.map((u) => ({ ...u, source: redactSecretsInText(u.source) })) }
+      : {}),
   }));
 }
 
@@ -6380,6 +6393,9 @@ export async function listApprovalsAction(
         // fait.
         const { jobParentJobId: _chaine, response: _reponse, ...rest } = r;
         const root = roots.get(r.jobId) ?? { rootJobId: null, rootChannel: null };
+        // Lues (et masquées) une fois : la carte les liste, et la ligne
+        // d'impact dit ce que la porte a lu dans le code lancé (#635).
+        const gateReasons = readGateReasons(r.id, r.gateReasons);
         return {
           ...rest,
           elicitation:
@@ -6415,6 +6431,7 @@ export async function listApprovalsAction(
                   ...(ctx.readOnlyHint !== undefined ? { readOnlyHint: ctx.readOnlyHint } : {}),
                 }
               : null,
+            gateReasons,
           }),
           // LA MEME fonction que la porte (`matchApprovalRule` en derive) :
           // ce que la carte montre est ce que le moteur a obei, pas une
@@ -6434,7 +6451,7 @@ export async function listApprovalsAction(
           ),
           toolDefault: resolveToolDefaultApproval(r.toolName),
           agentWorkspaces: r.agentId === null ? [] : (workspacesByAgent.get(r.agentId) ?? []),
-          gateReasons: readGateReasons(r.id, r.gateReasons),
+          gateReasons,
         };
       }) as ApprovalRow[],
     );

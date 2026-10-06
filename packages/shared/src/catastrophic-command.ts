@@ -12,6 +12,8 @@
 // killing a process) stay governed by the normal approval rules — the floor is
 // not a general safety net, it is the last-resort circuit breaker.
 
+import { SHELLS } from './shell-programs';
+
 const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:?\s*&\s*\}\s*;\s*:/;
 const MKFS = /\bmkfs(\.\w+)?\b/i;
 // [\s\S]*? (not [^\n]*) so a shell line-continuation between `dd ...\` and
@@ -69,7 +71,7 @@ function interpreterBasename(token: string): string {
   return base.replace(/\.(exe|com)$/i, '').toLowerCase();
 }
 
-type InterpreterKind =
+export type InterpreterKind =
   | 'python'
   | 'node'
   | 'perl'
@@ -79,16 +81,21 @@ type InterpreterKind =
   | 'powershell'
   | 'expect';
 
+/** The shells of `SHELLS` that read sh's language (`-c LINE`, a script, their input). */
+const POSIX_SHELLS = new Set(
+  SHELLS.filter((shell) => !['cmd', 'powershell', 'pwsh', 'wsl', 'busybox'].includes(shell)),
+);
+
 /** Classifies a bare interpreter name (already basename'd) into the kind of
  * inline-eval flag it accepts, or `null` if it isn't a recognized
  * general-purpose interpreter at all. */
-function interpreterKind(name: string): InterpreterKind | null {
+export function interpreterKind(name: string): InterpreterKind | null {
   if (name === 'py' || /^python[0-9.]*$/.test(name)) return 'python';
   if (/^node(js)?$/.test(name)) return 'node';
   if (/^perl[0-9.]*$/.test(name)) return 'perl';
   if (/^ruby[0-9.]*$/.test(name)) return 'ruby';
   if (/^php[0-9.]*$/.test(name)) return 'php';
-  if (['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash'].includes(name)) return 'shell';
+  if (POSIX_SHELLS.has(name)) return 'shell';
   if (name === 'powershell' || name === 'pwsh') return 'powershell';
   if (name === 'expect') return 'expect';
   return null;
@@ -99,7 +106,7 @@ function interpreterKind(name: string): InterpreterKind | null {
  * than a script FILE (`-c`, `-e`, `-Command`, …). Deliberately narrow: `-m`,
  * `-File`, a bare script path, etc. run a named module/file, not arbitrary
  * inline text, so they're left to the normal (non-catastrophic) path. */
-function isInlineEvalFlag(kind: InterpreterKind, flag: string): boolean {
+export function isInlineEvalFlag(kind: InterpreterKind, flag: string): boolean {
   switch (kind) {
     case 'python':
       return flag === '-c';
@@ -137,6 +144,10 @@ function isInlineEvalUnit(unit: readonly string[]): boolean {
   if (isDecidedAtRunTime(program) || program === 'iex' || program === 'invoke-expression')
     return true;
   const kind = interpreterKind(program);
+  // A shell's line is read by `shellLine`, the reading `commandUnits` unwraps
+  // (`bash -lc`, `sh -ec`, `zsh -o x -c`), and only before its script file.
+  if (kind === 'shell')
+    return shellLine(unit.slice(1).map((text) => ({ text, quoted: false }))).length > 0;
   return kind !== null && unit.slice(1).some((t) => isInlineEvalFlag(kind, t.toLowerCase()));
 }
 
@@ -190,13 +201,24 @@ function isWindowsRootOrWildcardTarget(token: string): boolean {
  * True when `cmd` contains a catastrophic, machine-wide-destructive operation
  * that must always require explicit human approval (never auto-run).
  */
-export function isCatastrophicCommand(cmd: string, host?: ShellHost): boolean {
+export function isCatastrophicCommand(
+  cmd: string,
+  host?: ShellHost,
+  /** The shell a script's line is written for, over the host's (#635). */
+  reader?: ScriptShell,
+  /**
+   * Read at command positions only: a string of a script (#635, review pass
+   * 3 of #683) is a command only where it starts, so `print("Please reboot")`
+   * is no reboot while `os.system("reboot")` is. A typed line keeps the
+   * reading of the whole text it always had.
+   */
+  opts: { atCommandPositions?: boolean } = {},
+): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
+  const shell = reader ?? topShell(host);
   // `shutdown --help` prints and exits (Reviewer A, #582 pass 2). Only the
   // long forms and `/?` here: `shutdown -h` HALTS the machine.
-  const units = commandUnits(withoutRedirections(cmd), 0, topShell(host)).filter(
-    (u) => !runsAnother(u),
-  );
+  const units = commandUnits(withoutRedirections(cmd), 0, shell).filter((u) => !runsAnother(u));
   if (
     units.length > 0 &&
     units.every((u) => u.length >= 2 && u.slice(1).every((t) => FLOOR_READ_FLAGS.has(t)))
@@ -205,15 +227,23 @@ export function isCatastrophicCommand(cmd: string, host?: ShellHost): boolean {
   }
   const c = normalizeSlashes(cmd.trim());
 
+  const destroyers = [
+    MKFS,
+    DD_TO_DEVICE,
+    POWER_STATE,
+    INIT_RUNLEVEL,
+    OVERWRITE_DEVICE,
+    DISKPART,
+    DISK_CMDLET,
+  ];
+  const texts = opts.atCommandPositions
+    ? commandUnits(withoutRedirections(c), 0, shell).map((u) => normalizeSlashes(u.join(' ')))
+    : [c];
   if (
     FORK_BOMB.test(c) ||
-    MKFS.test(c) ||
-    DD_TO_DEVICE.test(c) ||
-    POWER_STATE.test(c) ||
-    INIT_RUNLEVEL.test(c) ||
-    OVERWRITE_DEVICE.test(c) ||
-    DISKPART.test(c) ||
-    DISK_CMDLET.test(c)
+    destroyers.some((re) =>
+      texts.some((t) => (opts.atCommandPositions ? startsWithMatch(re, t) : re.test(t))),
+    )
   ) {
     return true;
   }
@@ -237,7 +267,7 @@ export function isCatastrophicCommand(cmd: string, host?: ShellHost): boolean {
   // passed the floor, its own list of wrappers knew only cmd, powershell, sh,
   // bash and sudo). A quoted mention (`echo "rm -rf /"`) is an argument of
   // `echo`, never a command, so no check can match it.
-  for (const unit of commandUnits(withoutRedirections(c), 0, topShell(host))) {
+  for (const unit of commandUnits(withoutRedirections(c), 0, shell)) {
     const cmdWord = unit[0] ?? '';
     const args = unit.slice(1);
     const s = unit.join(' ');
@@ -300,11 +330,15 @@ export function isCatastrophicCommand(cmd: string, host?: ShellHost): boolean {
  * after a human OK, unlike the machine-destroyers). The runner also uses this
  * predicate to tailor its approval-card wording.
  */
-export function isInlineInterpreterEvalCommand(cmd: string, host?: ShellHost): boolean {
+export function isInlineInterpreterEvalCommand(
+  cmd: string,
+  host?: ShellHost,
+  reader?: ScriptShell,
+): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
   const c = normalizeSlashes(cmd.trim());
   if (AWK_CODE_EXEC.test(c) || hasPipeIntoBareInterpreter(c, host)) return true;
-  return commandUnits(withoutRedirections(c), 0, topShell(host)).some(isInlineEvalUnit);
+  return commandUnits(withoutRedirections(c), 0, reader ?? topShell(host)).some(isInlineEvalUnit);
 }
 
 // ── Destructive / heavy actions (for the `destructive_gate` autonomy level) ──────
@@ -788,8 +822,15 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = Object.values(STATIC_SHELL_CATEGORY_PATTE
  * Inline code (`python -c "…"`, `node -e "…"`) is its own kind: what it does is
  * not read, it is asked about, as `destructive_gate` always did.
  */
-export function staticShellCategories(cmd: string, host?: ShellHost): StaticShellCategory[] {
-  if (typeof cmd !== 'string' || cmd.trim() === '') return [];
+export function staticShellCategories(
+  command: string,
+  host?: ShellHost,
+  /** The shell a script's line is written for, over the host's (#635). */
+  reader?: ScriptShell,
+): StaticShellCategory[] {
+  if (typeof command !== 'string' || command.trim() === '') return [];
+  const cmd = command;
+  const shell = reader ?? topShell(host);
   // Read from the PROGRAMS the command runs, never from any word of its text
   // (review of PR #474, Reviewer A, P1): `git commit -m "rm old refs"` does not
   // delete, and `clang-format` is not `format`. A pattern counts only where it
@@ -799,7 +840,7 @@ export function staticShellCategories(cmd: string, host?: ShellHost): StaticShel
   // same way. Quotes and carets are removed by the tokenizer, so `r""m` and
   // `r^m` still read as `rm`.
   const found = new Set<StaticShellCategory>();
-  for (const unit of commandUnits(withoutRedirections(cmd), 0, topShell(host))) {
+  for (const unit of commandUnits(withoutRedirections(cmd), 0, shell)) {
     for (const category of unitCategories(unit)) found.add(category);
   }
   // `curl URL > file` downloads without `-o`: the redirection is dropped by
@@ -808,13 +849,13 @@ export function staticShellCategories(cmd: string, host?: ShellHost): StaticShel
   if (
     // A wrapper's payload (`sh -c "curl URL > f"`) starts after a quote.
     /(^|[;&|("'`]\s*)(curl|irm|Invoke-RestMethod)\b(?:[^;&|\n]|&(?=>))*>/i.test(cmd) &&
-    !commandUnits(withoutRedirections(cmd), 0, topShell(host))
+    !commandUnits(withoutRedirections(cmd), 0, shell)
       .filter((u) => /^(curl|irm|invoke-restmethod)$/i.test(u[0] ?? ''))
       .every(isVersionOrHelpOnly)
   ) {
     found.add('download');
   }
-  if (isInlineInterpreterEvalCommand(cmd, host)) found.add('inline_code');
+  if (isInlineInterpreterEvalCommand(cmd, host, reader)) found.add('inline_code');
   return [...found];
 }
 
@@ -857,9 +898,10 @@ export interface DownloadWrites {
  */
 export type ShellHost = 'windows' | 'posix';
 
-export function downloadWrites(cmd: string, host: ShellHost): DownloadWrites {
+export function downloadWrites(command: string, host: ShellHost): DownloadWrites {
   const out: DownloadWrites = { dirs: [], targets: [] };
-  if (typeof cmd !== 'string' || cmd.trim() === '') return out;
+  if (typeof command !== 'string' || command.trim() === '') return out;
+  const cmd = command;
   // Where a line writes is read ONCE, in order, because each target is judged
   // from the folders before it (`dirs`, `after`): the two readings of a line
   // whose shell is not known cannot be merged. It is read with the grammar
@@ -960,7 +1002,7 @@ function isNullSink(p: string, host: ShellHost): boolean {
 const WINDOWS_NUL = /^nul(?::|\.[^\\/]*)?$/i;
 
 /** A path as written, or null when the shell decides it at run time. */
-function readablePath(p: string): string | null {
+export function readablePath(p: string): string | null {
   if (p === '' || /[$%`]/.test(p) || p.startsWith('~')) return null;
   return p;
 }
@@ -1346,6 +1388,27 @@ const DECIDED_AT_RUN_TIME: Payload[] = [
 /** A shell's reserved word that comes before a command it runs: `do rm x`, `then lp x`. */
 const before = (args: readonly ShellWord[], shell: LineShell): Payload[] => argv(args, shell);
 
+/** cmd's comparison operators: `a EQU b`, `a NEQ b`… */
+const CMD_COMPARE = new Set(['==', 'equ', 'neq', 'lss', 'leq', 'gtr', 'geq']);
+
+/**
+ * The command of a cmd `if`, after its condition (#635, review of PR #683):
+ * `exist <path>`, `errorlevel <n>`, `cmdextversion <n>`, `defined <var>`,
+ * `<a>==<b>` glued or not, `<a> EQU|NEQ|LSS|LEQ|GTR|GEQ <b>`, after `/i` and
+ * `not`. A condition of another form runs nothing this reading can name.
+ */
+function cmdIfCommand(args: readonly ShellWord[]): Payload[] {
+  const word = (k: number): string => (args[k]?.text ?? '').toLowerCase();
+  let i = 0;
+  if (word(i) === '/i') i++;
+  if (word(i) === 'not') i++;
+  let end: number | null = null;
+  if (['exist', 'errorlevel', 'cmdextversion', 'defined'].includes(word(i))) end = i + 2;
+  else if (/^[^=]+==[^=]*$|^[^=]*==[^=]+$/.test(args[i]?.text ?? '')) end = i + 1;
+  else if (CMD_COMPARE.has(word(i + 1))) end = i + 3;
+  return end === null ? [] : argv(args.slice(end), 'cmd');
+}
+
 /**
  * Programs whose purpose is to run another program, each with its own option
  * grammar (#667, review of PR #682, pass 2). ONE mechanism: what they run is
@@ -1602,10 +1665,14 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
   then: before,
   else: before,
   elif: before,
-  if: before,
+  // cmd's `if [/i] [not] <condition> <command>`: the command after the
+  // condition (#635, review of PR #683). sh's condition is itself a command.
+  if: (args, shell) => (shell === 'cmd' ? cmdIfCommand(args) : before(args, shell)),
   while: before,
   until: before,
   '!': before,
+  // `coproc [NAME] command`: the command runs in the background (#635).
+  coproc: before,
 };
 RUNS_ANOTHER['pwsh'] = RUNS_ANOTHER['powershell'] as (typeof RUNS_ANOTHER)[string];
 RUNS_ANOTHER['invoke-expression'] = RUNS_ANOTHER['iex'] as (typeof RUNS_ANOTHER)[string];
@@ -1662,9 +1729,13 @@ function isDecidedAtRunTime(word: string): boolean {
  * asks for it even when inline code is allowed, as an allowed download asks
  * when its target is decided at run time.
  */
-export function programDecidedAtRunTime(cmd: string, host?: ShellHost): boolean {
+export function programDecidedAtRunTime(
+  cmd: string,
+  host?: ShellHost,
+  reader?: ScriptShell,
+): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
-  return commandUnits(withoutRedirections(cmd), 0, topShell(host)).some((u) =>
+  return commandUnits(withoutRedirections(cmd), 0, reader ?? topShell(host)).some((u) =>
     isDecidedAtRunTime(u[0] ?? ''),
   );
 }
@@ -1704,7 +1775,8 @@ function runsAnother(unit: readonly string[]): boolean {
  * elsewhere, `topShell`) is read as both, and every command either would run
  * is kept: a net may over-ask, never under-report.
  */
-export function commandUnits(cmd: string, depth = 0, shell?: LineShell): string[][] {
+export function commandUnits(command: string, depth = 0, shell?: LineShell): string[][] {
+  const cmd = command;
   if (shell === undefined) {
     const seen = new Set<string>();
     return [...commandUnits(cmd, depth, 'cmd'), ...commandUnits(cmd, depth, 'sh')].filter(
@@ -1722,12 +1794,60 @@ export function commandUnits(cmd: string, depth = 0, shell?: LineShell): string[
   // backticks in sh (PowerShell's backtick is its escape, cmd has neither).
   if (shell !== 'cmd' && shell !== 'exec') {
     const substitution = shell === 'sh' ? /\$\(([^()]*)\)|`([^`]*)`/g : /\$\(([^()]*)\)/g;
-    for (const m of cmd.matchAll(substitution))
+    // A here-document's body is read by the scan (`scanLine`): its own
+    // substitutions run only when its marker is not quoted.
+    const text = shell === 'sh' ? withoutHereDocBodies(cmd) : cmd;
+    for (const m of text.matchAll(substitution))
       units.push(...commandUnits(m[1] ?? m[2] ?? '', depth + 1, shell));
   }
   for (const words of splitQuotedShellWords(cmd, shell))
     units.push(...wordUnits(words, depth, shell));
   return units;
+}
+
+/** The program word of each unit as written (`./build.sh`), for `commandUnitsAsWritten`. */
+const UNIT_HEADS = new WeakMap<readonly string[], string>();
+
+/** One command a line runs, as `commandUnits` reads it and as it was written. */
+export interface CommandUnit {
+  /** The program (basename, lower-cased, without `.exe`), then its arguments. */
+  unit: string[];
+  /**
+   * The program word as written (`./build.sh`, `scripts/run.bat`): where a
+   * script run directly lives (#635). For the module of `python -m`, the module.
+   */
+  head: string;
+}
+
+/**
+ * The shell a script is written for, when the text read is a script's (#635):
+ * its lines are read with that shell's grammar, whatever the host.
+ */
+export type ScriptShell = 'sh' | 'cmd' | 'powershell';
+
+/** `commandUnits` of a line, each unit with its program word as written. */
+export function commandUnitsAsWritten(
+  cmd: string,
+  host?: ShellHost,
+  reader?: ScriptShell,
+): CommandUnit[] {
+  return commandUnits(cmd, 0, reader ?? topShell(host)).map((unit) => ({
+    unit,
+    head: UNIT_HEADS.get(unit) ?? unit[0] ?? '',
+  }));
+}
+
+/** For a unit that changes folder (`cd`, `pushd`, `Set-Location`…): where it goes, as `downloadWrites` reads it. */
+export function changeDirOf(unit: readonly string[]): string | null | undefined {
+  const program = unit[0] ?? '';
+  if (!CHANGE_DIR.has(program)) return undefined;
+  const dir = changeDirArg(program, unit.slice(1));
+  return dir === null ? null : readablePath(dir);
+}
+
+/** A shell's `-c LINE` (`sh -c`, `bash -lc`): the line is read as commands, not a script file. */
+export function shellRunsLine(args: readonly string[]): boolean {
+  return shellLine(args.map((text) => ({ text, quoted: false }))).length > 0;
 }
 
 /** The shell that reads a `run_command` line on this host; unknown → both (`commandUnits`). */
@@ -1784,12 +1904,17 @@ function wordUnits(
   const args = title === null ? after : after.filter((_, j) => j !== title);
   const texts = args.map((a) => a.text);
   const units: string[][] = [[program, ...texts]];
+  UNIT_HEADS.set(units[0] as string[], head.text);
   // `python -m pip install x` runs pip: the module is the program (review of
   // PR #476; main caught it by reading the whole text).
   if (interpreterKind(program) === 'python') {
     const m = texts.map((t) => t.toLowerCase()).indexOf('-m');
     const module = m >= 0 ? texts[m + 1] : undefined;
-    if (module !== undefined) units.push([module.toLowerCase(), ...texts.slice(m + 2)]);
+    if (module !== undefined) {
+      const unit = [module.toLowerCase(), ...texts.slice(m + 2)];
+      UNIT_HEADS.set(unit, module);
+      units.push(unit);
+    }
   }
   for (const payload of RUNS_ANOTHER[program]?.(args, shell) ?? []) {
     units.push(
@@ -1874,8 +1999,237 @@ function splitQuotedShellWords(cmd: string, shell: LineShell): ShellWord[][] {
   }
 }
 
-/** Read a line with the grammar of sh or PowerShell, words and commands in one pass. */
-function scanLine(line: string, g: Grammar): ShellWord[][] {
+/**
+ * A here-document as sh reads it: the operator (`<<EOF`, `<<-EOF`, `<<'EOF'`,
+ * `<<"EOF"`, `<<\\EOF`), the program it feeds, and its body up to the end
+ * marker. Only one that ends with its marker is one.
+ */
+export interface HereDocument {
+  index: number;
+  length: number;
+  /** `<<-`: leading tabs are stripped from the body and the end marker. */
+  strip: boolean;
+  marker: string;
+  /** A quoted marker: the body is taken as written, no substitution runs in it. */
+  quotedMarker: boolean;
+  /** Who reads the body (`stdinReceiver`): a shell, an interpreter, data, or not known. */
+  receiver: StdinReceiver;
+  /** Where the body starts and ends (the end marker's line excluded). */
+  bodyStart: number;
+  bodyEnd: number;
+  /** Just past the end marker's line. */
+  end: number;
+}
+
+const HERE_DOC_MARKER = /^<<(-?)[ \t]*(\\?)(["']?)([A-Za-z_][\w.-]*)\3/;
+
+/**
+ * Who reads what a command feeds on standard input (a here-document, a
+ * here-string, a redirected file): a shell (its commands), an interpreter
+ * (its source), a program that only reads data, or a program the reading
+ * cannot place (#635, review pass 6 of PR #683).
+ */
+export interface StdinReceiver {
+  kind: 'shell' | 'interpreter' | 'data' | 'doubt';
+  /** The program, as `commandUnits` names it; null when there is none to name. */
+  program: string | null;
+}
+
+/**
+ * Programs that read their input as data and CANNOT run anything from it
+ * (review pass 7 of #683): what a here-document fed to them holds is data
+ * only when one of them reads it, and nothing it is piped to runs it. A
+ * program with any way to execute what it reads is not one: sed (`e`,
+ * `s///e`), awk (`system()`, `| getline`), perl, ruby, find, xargs, vi, ex,
+ * ed, less, more (`!`), m4 (`syscmd`), make. Any other reader is judged.
+ */
+export const DATA_CONSUMERS: ReadonlySet<string> = new Set([
+  'cat',
+  'tee',
+  'dd',
+  'grep',
+  'egrep',
+  'fgrep',
+  'rg',
+  'head',
+  'tail',
+  'wc',
+  'sort',
+  'uniq',
+  'tr',
+  'cut',
+  'paste',
+  'column',
+  'fold',
+  'fmt',
+  'nl',
+  'rev',
+  'tac',
+  'base64',
+  'xxd',
+  'od',
+  'hexdump',
+  'jq',
+  'yq',
+  'gzip',
+  'gunzip',
+  'bzip2',
+  'bunzip2',
+  'xz',
+  'unxz',
+  'zstd',
+  'md5sum',
+  'sha1sum',
+  'sha256sum',
+  'sha512sum',
+  'cksum',
+  'iconv',
+  'dos2unix',
+  'unix2dos',
+  'diff',
+  'cmp',
+  'comm',
+  'read',
+  'mapfile',
+  'readarray',
+  'true',
+  'set-content',
+  'out-file',
+  'add-content',
+  'out-null',
+]);
+
+/** Interpreters that read a program on their standard input, besides `interpreterKind`'s. */
+const STDIN_INTERPRETERS = new Set(['tsx', 'ts-node', 'deno', 'bun']);
+
+/** The text after the first pipe of a line's tail (`|`, never `||`), outside quotes. */
+function pipeTail(text: string): string | null {
+  let quote: string | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i] ?? '';
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '\\') i++;
+    else if (ch === '|' && text[i + 1] !== '|' && text[i - 1] !== '|') return text.slice(i + 1);
+    else if (';&\n'.includes(ch)) return null;
+  }
+  return null;
+}
+
+/** What kind of reader one program is. */
+function readerOf(program: string): StdinReceiver['kind'] | null {
+  if (program === 'iex' || program === 'invoke-expression') return 'shell';
+  if (SHELLS.includes(program) || POSIX_SHELLS.has(program)) return 'shell';
+  const kind = interpreterKind(program);
+  if (kind === 'shell' || kind === 'powershell') return 'shell';
+  // An interpreter is a reader of source only in a language Nodal reads
+  // (program-sources.ts); any other (`expect`) is a reader it cannot place,
+  // whose body is judged as commands, never dropped (review pass 7 of #683).
+  if ((kind !== null && READABLE_KINDS.has(kind)) || STDIN_INTERPRETERS.has(program))
+    return 'interpreter';
+  return null;
+}
+
+/** The interpreters whose language program-sources reads. */
+const READABLE_KINDS: ReadonlySet<InterpreterKind> = new Set([
+  'python',
+  'node',
+  'perl',
+  'ruby',
+  'php',
+]);
+
+/**
+ * Who reads what a command feeds on its standard input, by the common reading
+ * of its line (#635, review pass 6 of PR #683): `before` is the line up to the
+ * operator, `after` the rest of it. The reader is the program the operator's
+ * command runs once its wrappers are unwrapped (`sudo -u x sh`, `nohup bash`,
+ * `timeout 5 sh`, `do bash` all feed sh), or, when it is piped on, a shell or
+ * an interpreter the pipe reaches (`cat <<EOF | sh`). Data only when proven: a
+ * known data reader, piped to nothing that runs anything.
+ */
+export function stdinReceiver(before: string, after: string): StdinReceiver {
+  const doubt = (program: string | null): StdinReceiver => ({ kind: 'doubt', program });
+  // A process substitution hands the input to a command the line does not name here.
+  if (/[<>]\(/.test(before) || /[<>]\(/.test(after)) return doubt(null);
+  const tail = pipeTail(after);
+  const downstream = tail === null ? [] : commandUnits(tail, 0, 'sh');
+  for (const unit of downstream) {
+    const program = unit[0] ?? '';
+    const kind = readerOf(program);
+    if (kind !== null) return { kind, program };
+  }
+  const units = before.trim() === '' ? [] : commandUnits(before, 0, 'sh');
+  // A literal piped on (`@"…"@ | x`): its reader is the first program of the pipe.
+  const program = units[units.length - 1]?.[0] ?? downstream[0]?.[0] ?? '';
+  if (program === '' || isDecidedAtRunTime(program)) return doubt(program || null);
+  const kind = readerOf(program);
+  if (kind !== null) return { kind, program };
+  const piped = downstream.map((u) => u[0] ?? '');
+  if (DATA_CONSUMERS.has(program) && piped.every((p) => DATA_CONSUMERS.has(p)))
+    return { kind: 'data', program };
+  return doubt(program);
+}
+
+/** Command substitutions, which sh runs in an unquoted here-document's body. */
+const SUBSTITUTION = /\$\(([^()]*)\)|`([^`]*)`/g;
+
+/**
+ * The here-documents of a text, as sh reads it (#635, reviews 4 and 5 of PR
+ * #683): the same scan as its commands, so a `<<` in quotes, in a comment, in
+ * arithmetic (`$(( ))`, `(( ))`, `let`) or in `[[ ]]` opens none, and a body
+ * is data to the scan: a quote or a `$((` in it changes nothing after it.
+ */
+export function hereDocuments(text: string): HereDocument[] {
+  const found: HereDocument[] = [];
+  scanLine(text, SH, found);
+  return found;
+}
+
+/** `text` with the body and end marker of each here-document blanked, lines kept. */
+function withoutHereDocBodies(text: string): string {
+  if (!text.includes('<<')) return text;
+  let out = text;
+  for (const doc of hereDocuments(text))
+    out =
+      out.slice(0, doc.bodyStart) +
+      out.slice(doc.bodyStart, doc.end).replace(/[^\n]/g, ' ') +
+      out.slice(doc.end);
+  return out;
+}
+
+/** Where a here-document's body ends: the end marker's line, from `from`; null when it never comes. */
+function bodyEnd(
+  text: string,
+  from: number,
+  strip: boolean,
+  marker: string,
+): { bodyEnd: number; end: number } | null {
+  let at = from;
+  while (at <= text.length) {
+    const nl = text.indexOf('\n', at);
+    const lineEnd = nl < 0 ? text.length : nl;
+    let l = text.slice(at, lineEnd).replace(/\r$/, '');
+    if (strip) l = l.replace(/^\t+/, '');
+    if (l === marker)
+      return { bodyEnd: Math.max(from, at - 1), end: nl < 0 ? text.length : nl + 1 };
+    if (nl < 0) return null;
+    at = nl + 1;
+  }
+  return null;
+}
+
+/**
+ * Read a line with the grammar of sh or PowerShell, words and commands in one
+ * pass. In sh, a here-document's body is not script grammar: its lines are
+ * read as the commands of the shell it feeds, and, unless its marker is
+ * quoted, the substitutions in it run; to any other program it is data. With
+ * `hereDocs`, the here-documents met are reported there.
+ */
+function scanLine(line: string, g: Grammar, hereDocs?: HereDocument[]): ShellWord[][] {
   const segments: ShellWord[][] = [];
   let words: Array<{ text: string; quoted: boolean; start: number }> = [];
   let word = '';
@@ -1889,8 +2243,21 @@ function scanLine(line: string, g: Grammar): ShellWord[][] {
       start = at;
     }
   };
+  // Where `<<` is no redirection in sh: arithmetic and `[[ ]]` (#635).
+  let arithmetic = 0;
+  let doubleBracket = false;
+  let letCommand = false;
+  // Here-documents opened on the current line: their bodies start after it.
+  const pending: Array<
+    Omit<HereDocument, 'bodyStart' | 'bodyEnd' | 'end' | 'receiver'> & { before: string }
+  > = [];
   const endWord = (): void => {
-    if (inWord) words.push({ text: word, quoted, start });
+    if (inWord) {
+      if (!quoted && word === '[[') doubleBracket = true;
+      else if (!quoted && word === ']]') doubleBracket = false;
+      else if (!quoted && word === 'let' && words.length === 0) letCommand = true;
+      words.push({ text: word, quoted, start });
+    }
     word = '';
     inWord = false;
     quoted = false;
@@ -1901,6 +2268,7 @@ function scanLine(line: string, g: Grammar): ShellWord[][] {
   let piped: ShellWord | null = null;
   const endCommand = (at: number, separator = ''): void => {
     endWord();
+    letCommand = false;
     if (words.length > 0) {
       const segment: ShellWord[] = words.map((w) => ({
         text: w.text,
@@ -1930,6 +2298,43 @@ function scanLine(line: string, g: Grammar): ShellWord[][] {
       } else word += ch;
       continue;
     }
+    // sh: a `#` that starts a word starts a comment, to the end of the line
+    // (after a separator, `)`, `;`, `|`, a backtick or a space alike).
+    if (g === SH && ch === '#' && (!inWord || line[at - 1] === '`')) {
+      const end = line.indexOf('\n', at);
+      at = (end < 0 ? line.length : end) - 1;
+      continue;
+    }
+    if (g === SH) {
+      if (line.startsWith('$((', at) || (line.startsWith('((', at) && line[at - 1] !== '$'))
+        arithmetic += 1;
+      else if (arithmetic > 0 && line.startsWith('))', at)) arithmetic -= 1;
+    }
+    if (
+      g === SH &&
+      ch === '<' &&
+      line[at - 1] !== '<' &&
+      arithmetic === 0 &&
+      !doubleBracket &&
+      !letCommand
+    ) {
+      const m = HERE_DOC_MARKER.exec(line.slice(at));
+      if (m !== null && line[at + 2] !== '<') {
+        pending.push({
+          index: at,
+          length: m[0].length,
+          strip: m[1] === '-',
+          marker: m[4] ?? '',
+          quotedMarker: m[2] === '\\' || m[3] !== '',
+          // The command so far, as the shell will run it: its reader is
+          // read by the common reading (`stdinReceiver`), never its first word.
+          before: [
+            ...words.map((w) => (w.quoted ? `'${w.text}'` : w.text)),
+            ...(inWord ? [word] : []),
+          ].join(' '),
+        });
+      }
+    }
     if (g.quotes.includes(ch)) {
       begin(at);
       quote = ch;
@@ -1940,6 +2345,45 @@ function scanLine(line: string, g: Grammar): ShellWord[][] {
       at += 1;
     } else if (g.separators.includes(ch)) {
       endCommand(at, ch);
+      // The line that opened here-documents ends: their bodies follow, each
+      // up to its end marker, outside the script's grammar.
+      if (ch === '\n' && pending.length > 0) {
+        let from = at + 1;
+        for (const { before, ...op } of pending) {
+          const ends = bodyEnd(line, from, op.strip, op.marker);
+          if (ends === null) break;
+          const lineEnd = line.indexOf('\n', op.index);
+          const receiver = stdinReceiver(before, line.slice(op.index + op.length, lineEnd));
+          const doc: HereDocument = { ...op, receiver, bodyStart: from, ...ends };
+          hereDocs?.push(doc);
+          const body = line.slice(doc.bodyStart, doc.bodyEnd);
+          // A shell runs its lines, and so does a reader the reading cannot
+          // place: judged as commands, never taken for data unproven. An
+          // interpreter's body is its source (program-sources.ts).
+          if (receiver.kind === 'shell' || receiver.kind === 'doubt') {
+            if (receiver.program === 'cmd')
+              segments.push(...cmdCommands(body).map(windowsArguments));
+            else
+              segments.push(
+                ...scanLine(
+                  body,
+                  ['powershell', 'pwsh', 'iex', 'invoke-expression'].includes(
+                    receiver.program ?? '',
+                  )
+                    ? POWERSHELL
+                    : SH,
+                ),
+              );
+          }
+          if (!op.quotedMarker)
+            for (const m of body.matchAll(SUBSTITUTION))
+              segments.push(...scanLine(m[1] ?? m[2] ?? '', SH));
+          from = doc.end;
+        }
+        pending.length = 0;
+        at = from - 1;
+        continue;
+      }
       // PowerShell's call operator starts a command whose program follows it;
       // before a parenthesised expression, that program is decided at run time.
       if (g === POWERSHELL && ch === '&' && next !== '&') {

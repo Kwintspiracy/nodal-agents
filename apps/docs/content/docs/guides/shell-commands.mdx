@@ -160,20 +160,77 @@ kinds of action Nodal recognises in what the agent asks to run. Each one is
 - The checklist also judges a declared proof (`declare_verification`), because
   its steps run later without asking again.
 - Nodal recognises each kind by the program started (`rm`, `npm i`,
-  `curl … > file`), including what `bash -c`, `cmd /c` or `$(…)` wrap. A
-  mention in an argument (`git commit -m "rm old refs"`) is not the action.
-
-**What this list does not do.** It reads the text the agent asks to run, not
-what a program does once it runs. Code the agent runs, inline or from a
-script, can read, delete or download anything your user account can reach
-without the list seeing it. Where a download lands is read; the rest of the
-shell is not kept inside the agent's folders, only the file tools are confined
-to them. Keeping what a program does inside a folder is the job of an
-operating-system sandbox, which Nodal does not have yet
-([#628](https://github.com/Kwintspiracy/nodal-agents/issues/628)).
+  `curl … > file`), including what `bash -c`, `bash -lc`, `cmd /c`, `call` or
+  `$(…)` wrap. A mention in an argument (`git commit -m "rm old refs"`) is not
+  the action.
 
 Folded under **Advanced**, the same tab keeps the older list of programs an
 agent may start, for people who know exactly what to write there.
+
+### Scripts it runs
+
+A line that runs a script is judged by the script. When the line hands a file
+to an interpreter (`python build.py`, `node x.js`, `tsx`, `deno run`, `bun`,
+`bash x.sh`, `powershell -File x.ps1`, `perl`, `ruby`, `php`) or runs one
+directly (`./x.sh`, `setup.bat`, `source env.sh`), Nodal reads that file inside
+the job's workspaces, up to 256 KiB, and judges what it holds with the same
+list. Code written into the line (`python -c`, `node -e`) is read the same way.
+
+- A shell, cmd or PowerShell script is read line by line.
+- In any other language, each string is read as a program call, followed by
+  the strings of the same statement (`["pip", "install", "x"]`, `os.system("rm -rf b")`).
+  Comments are not read. `pip.main([...])` and `Gem.install` count as installs.
+- A script that script runs is read too. The approval card names the file, the
+  line, and that line.
+- A string is read whether the script runs it or prints it:
+  `print("pip install x")` asks. A sentence that only mentions one
+  (`print("Run pip install x first")`) does not.
+- A script Nodal cannot read is code nobody read ahead, like `curl … | bash`:
+  outside the workspaces, not there yet (downloaded in the same line), over
+  256 KiB, not text, or named by a variable. So is what lies past the reading
+  budget of one call: 50 files, 4 MiB, scripts three levels deep, 10,000 lines
+  to judge. It follows the first row, inline code: it runs by default, and
+  under **Ask me** the card names the file and why it was not read.
+- A file the system runs itself (`./tool`) is a program, judged by its name,
+  only when it is an executable (ELF, PE, Mach-O). Any other file is read as
+  source, a NUL byte included, and one that is not text is a script it
+  cannot read.
+- Strings are read as the language reads them, escapes decoded
+  (`"pip\x20install"` is `pip install`). What follows is
+  read wherever the shell can start a program, in sh, cmd and PowerShell: after
+  a reserved word (`then`, `do`, `else`, `case`, `function`, `switch`, `try`…),
+  an opening bracket, a case pattern's `)` or a block's `{`
+  (`if exist x (pip install y)`). `eval` and `Invoke-Expression` have their
+  text read the same way.
+
+- What a line feeds a shell or an interpreter on its standard input is its
+  source too: a here-document (`bash <<EOF`, `python - <<'PY'`), a
+  here-string (`bash <<< "…"`, `@"…"@ | powershell -`), a file
+  (`cmd < setup.txt`). The reader is found
+  through wrappers and pipes (`sudo -u x sh <<eof`, `cat <<eof | sh`). The body
+  is data only when a reader that cannot run it (`cat`, `grep`, `tee`…, never
+  `sed` or `awk`) reads it and nothing
+  it is piped to runs it; then only the substitutions sh runs in it count
+  (`$(…)`, unless its marker is quoted). Any reader Nodal cannot place gets
+  its body read as shell lines. A cmd `if` is read without brackets too:
+  `if exist x pip install y`.
+
+- The hard floor reads that code too, when it can be read: `reboot` or
+  `rm -rf /` in a script is refused even after approval, like the same line
+  typed. A script Nodal cannot read follows the first row, inline code, as
+  above.
+
+**What this list does not do.** It reads the text the agent asks to run, and
+the scripts that text runs. It does not read what a program fetches, decodes or
+writes while it runs: code downloaded and run in the same line, a file a script
+writes and then runs, a module a script imports, a line assembled at run
+time, or a program's own functions (`os.remove`, `fs.rmSync`,
+`urllib.request`). Code the agent runs can read, delete or download anything
+your user account can reach without the list seeing it. Where a download lands
+is read; the rest of the shell is not kept inside the agent's folders, only the
+file tools are confined to them. Keeping what a program does inside a folder is
+the job of an operating-system sandbox, which Nodal does not have yet
+([#628](https://github.com/Kwintspiracy/nodal-agents/issues/628)).
 
 ## The safety floor — commands that never auto-run
 
@@ -221,11 +278,11 @@ command line to an interpreter (`python -c "…"`, `node -e "…"`, `perl -e`,
 `ruby -e`, `php -r`, `sh -c`, `bash -c`, `powershell -Command`), code piped
 into a bare interpreter (`curl … | bash`, `echo '…' | python`) and `awk`
 programs that shell out (`awk 'BEGIN{system(…)}'`) all count as **Run code
-written into a command**. Their code is not read: it has the same power as a
-script file (`python my_script.py`, `node build.js`, `bash deploy.sh`), which
-runs like any ordinary command, whoever wrote it. Set that row to **Ask me** or
-**Never** to gate it. What the code does inside the program is not read, and a
-deletion it wraps (`bash -c "rm -rf x"`) still asks as a deletion.
+written into a command**. By default that code runs without a question: it
+has the same power as a script file (`python my_script.py`, `node build.js`,
+`bash deploy.sh`). Set that row to **Ask me** or **Never** to gate it. What the
+code or the script starts is still judged: a deletion it wraps
+(`bash -c "rm -rf x"`, `os.system("rm -rf x")` in a script) asks as a deletion.
 
 This floor is deliberately narrow: only the 8 machine-wide destroyers above are
 un-bypassable. The floor is the last-resort circuit breaker, not a general
