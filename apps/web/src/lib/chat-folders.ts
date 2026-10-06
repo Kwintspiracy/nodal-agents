@@ -44,6 +44,15 @@ import { CHANNEL_LABELS } from './activity-runs.ts';
 export const DASHBOARD_FOLDER = 'dashboard';
 
 /**
+ * Où mène « démarrer une nouvelle conversation » : l'écran vide de la racine
+ * (#248). Aller là n'écrit rien, c'est le premier message qui fait naître la
+ * conversation. Le bouton « New conversation » de la page Chat et la ligne
+ * « New Chat » de « Nodal chats » (#701) lisent CETTE adresse : deux copies de
+ * `'/'` finiraient par mener à deux endroits.
+ */
+export const NEW_CONVERSATION_HREF = '/';
+
+/**
  * Le dossier des runs lancés depuis DEHORS — une requête à `/api/agent`, un
  * appel du serveur MCP (Quentin, 18/09/2026).
  *
