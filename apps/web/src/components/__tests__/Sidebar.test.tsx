@@ -24,13 +24,14 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 let pathname = '/agents';
+const push = vi.hoisted(() => vi.fn());
 /** Les paramètres de la route — `?page=` des réglages. Sans le « ? ». */
 let search = '';
 
 vi.mock('next/navigation', () => ({
   usePathname: () => pathname,
   // Les menus de ligne (RowActions) rafraîchissent la page après un geste.
-  useRouter: () => ({ refresh: () => {}, push: () => {} }),
+  useRouter: () => ({ refresh: () => {}, push }),
   useSearchParams: () => new URLSearchParams(search),
 }));
 vi.mock('next/link', () => ({
@@ -54,7 +55,13 @@ vi.mock('@/lib/row-actions.ts', () => ({
 }));
 vi.mock('@/lib/conversation-actions.ts', () => ({ getChatFoldersAction: vi.fn() }));
 vi.mock('@/lib/folder-threads-actions.ts', () => ({ listFolderThreadsAction: vi.fn() }));
-vi.mock('@/lib/project-actions.ts', () => ({ listSidebarProjectsAction: vi.fn() }));
+vi.mock('@/lib/project-actions.ts', () => ({
+  listSidebarProjectsAction: vi.fn(),
+  // La modale de création, ouverte par le « + » de PROJECTS.
+  createProjectAction: vi.fn(),
+  listProjectTerrainsAction: vi.fn(),
+}));
+vi.mock('sonner', () => ({ toast: { success: () => {}, error: () => {} } }));
 vi.mock('@/lib/sidebar-actions.ts', () => ({
   listSidebarAgentsAction: vi.fn(),
   listSidebarCronAction: vi.fn(),
@@ -72,7 +79,11 @@ import { ChatFoldersProvider } from '../ChatFoldersProvider';
 import { listApprovalsAction } from '@/lib/actions';
 import { getChatFoldersAction } from '@/lib/conversation-actions.ts';
 import { listFolderThreadsAction } from '@/lib/folder-threads-actions.ts';
-import { listSidebarProjectsAction } from '@/lib/project-actions.ts';
+import {
+  createProjectAction,
+  listProjectTerrainsAction,
+  listSidebarProjectsAction,
+} from '@/lib/project-actions.ts';
 import {
   listSidebarAgentsAction,
   listSidebarCronAction,
@@ -92,6 +103,15 @@ import { ListMagnifyingGlass } from '@phosphor-icons/react';
 import { SIDEBAR_POLL_MS } from '@/lib/use-polling';
 import { DESTINATIONS, RAIL_FOOT } from '../sidebar-nav.ts';
 import type { FolderThread } from '@/lib/chat-folders.ts';
+
+// jsdom n'a pas `CSS.supports`, que le `Select` du design system interroge au
+// montage : sans ce bouchon la modale de création ne monte pas du tout.
+if (typeof globalThis.CSS?.supports !== 'function') {
+  Object.defineProperty(globalThis, 'CSS', {
+    value: { supports: () => false } as unknown as typeof globalThis.CSS,
+    configurable: true,
+  });
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -692,24 +712,110 @@ describe('le « + » d’un titre de section @cap:planifier-une-tache/ecran', ()
     }
   });
 
-  it('PROJECTS en porte un, vers /spaces, et le panneau Work n’en a pas d’autre', async () => {
-    // #301 : la section vide ne finit plus par « See all », donc le chemin
-    // vers `/spaces` passe par ce « + ». Il DIT le geste — « New project » —
-    // là où « See all » ne disait rien, et il est là que la liste soit vide
-    // ou pleine.
+  it('PROJECTS en porte un, qui OUVRE la modale en place, et le panneau Work n’en a pas d’autre', async () => {
+    // #301 : la section vide ne finit plus par « See all », donc la création
+    // passe par ce « + ». Il DIT le geste — « New project » — là où « See all »
+    // ne disait rien, et il est là que la liste soit vide ou pleine. Depuis
+    // #697 il ne mène plus à `/spaces` : c'est un BOUTON, sans adresse, qui
+    // ouvre la modale sur la page où l'on est.
     //
-    // Mutation vérifiée : `add` retiré de WORK_GROUPS → ce cas rougit, et
-    // `/spaces` redevient inatteignable depuis la barre sur une base neuve.
+    // Mutation vérifiée : `add` retiré de WORK_GROUPS → ce cas rougit ;
+    // `add` remis en `href: '/spaces'` → l'absence d'`href` et le clic rougissent.
     pathname = '/chat';
     vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: [] });
     await renderSidebar();
     const plus = [...container.querySelectorAll('[data-testid="section-add"]')];
     expect(plus.map((a) => a.getAttribute('aria-label'))).toEqual(['New project']);
-    expect(plus[0]?.getAttribute('href')).toBe('/spaces');
+    expect(plus[0]?.tagName).toBe('BUTTON');
+    expect(plus[0]?.getAttribute('href')).toBeNull();
     // Il est bien SUR le titre PROJECTS, et pas sur celui des canaux.
     expect(plus[0]?.closest('[data-testid^="nav-group-"]')?.getAttribute('data-testid')).toBe(
       'nav-group-Projects',
     );
+    // Fermé : aucune modale dans le DOM.
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('cliquer le « + » de PROJECTS ouvre la MÊME modale que /spaces, et créer fait la même chose', async () => {
+    // La modale est un composant unique (`NewProjectModal`) : on prouve ici
+    // qu'ouverte depuis la barre elle charge les terrains, valide, appelle la
+    // MÊME action avec le MÊME corps, et emmène sur le projet créé comme le fait
+    // le bouton de `/spaces`.
+    //
+    // Mutation vérifiée : `onOpen` débranché du « + » → le clic n'ouvre rien et
+    // le cas rougit ; `router.push` retiré de la modale → la navigation rougit.
+    pathname = '/chat';
+    push.mockClear();
+    vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: [] });
+    vi.mocked(listProjectTerrainsAction).mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          agentId: 'a1',
+          agentName: 'Dev',
+          workspaces: [{ id: 'w1', label: 'terrain', path: 'D:/terrain' }],
+        },
+      ],
+    });
+    vi.mocked(createProjectAction).mockResolvedValue({
+      ok: true,
+      data: { id: 'p1', path: 'D:/terrain/mon-projet' },
+    });
+    await renderSidebar();
+    const plus = container.querySelector('[data-testid="section-add"]');
+    if (plus === null) throw new Error('no "+" on PROJECTS');
+    await click(plus);
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('New project');
+    expect(dialog?.textContent).toContain('Create project');
+    // La page n'a pas bougé : on est restés sur `/chat`.
+    expect(push).not.toHaveBeenCalled();
+    expect(listProjectTerrainsAction).toHaveBeenCalledTimes(1);
+
+    const nom = dialog?.querySelector<HTMLInputElement>('input');
+    if (!nom) throw new Error('no name input');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(nom, 'Mon projet');
+      nom.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const creer = [...(dialog?.querySelectorAll('button') ?? [])].find(
+      (b) => b.textContent === 'Create project',
+    );
+    if (!creer) throw new Error('no create button');
+    await click(creer);
+
+    expect(createProjectAction).toHaveBeenCalledWith({
+      name: 'Mon projet',
+      agentId: 'a1',
+      workspaceId: 'w1',
+      subfolder: '',
+      kind: 'code',
+      initGit: false,
+    });
+    expect(push).toHaveBeenCalledWith('/spaces/p1');
+    // La modale s'est refermée.
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('Annuler referme la modale ouverte depuis la barre, sans rien créer', async () => {
+    pathname = '/chat';
+    vi.mocked(createProjectAction).mockClear();
+    vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: [] });
+    vi.mocked(listProjectTerrainsAction).mockResolvedValue({ ok: true, data: [] });
+    await renderSidebar();
+    const plus = container.querySelector('[data-testid="section-add"]');
+    if (plus === null) throw new Error('no "+" on PROJECTS');
+    await click(plus);
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    const annuler = [...document.querySelectorAll('[role="dialog"] button')].find(
+      (b) => b.textContent === 'Cancel',
+    );
+    if (!annuler) throw new Error('no cancel button');
+    await click(annuler);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(createProjectAction).not.toHaveBeenCalled();
   });
 
   it('DIT le geste, et pas le signe', async () => {

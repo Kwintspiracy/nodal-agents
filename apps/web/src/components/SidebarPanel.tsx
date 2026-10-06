@@ -24,7 +24,7 @@
 // y compris celles de Run et de Settings, ce qui est le reste d'une copie et
 // non une demande (les cadres sont des duplicatas jamais renommés).
 
-import { Suspense, type ReactElement } from 'react';
+import { Suspense, useState, type ReactElement } from 'react';
 import { useSearchParams } from 'next/navigation';
 import SidebarSection from './ui/SidebarSection';
 import SidebarLink from './ui/SidebarLink';
@@ -36,8 +36,15 @@ import WebhooksList from './sidebar/WebhooksList';
 import ApprovalsList from './sidebar/ApprovalsList';
 import RecentApprovals from './sidebar/RecentApprovals';
 import LiveCard from './ui/LiveCard';
+import NewProjectModal from './NewProjectModal.tsx';
 import WorkspaceSwitcher from './WorkspaceSwitcher';
-import { isPanelItemActive, type Destination, type PanelDynamic } from './sidebar-nav.ts';
+import {
+  isPanelItemActive,
+  type Destination,
+  type PanelAdd,
+  type PanelDialog,
+  type PanelDynamic,
+} from './sidebar-nav.ts';
 import type { WorkspaceRow } from '@/lib/actions';
 
 /**
@@ -68,6 +75,27 @@ const DYNAMIC: Record<PanelDynamic, () => ReactElement> = {
     </Suspense>
   ),
 };
+
+/**
+ * Le nom d'une modale qu'un « + » ouvre en place, et le composant qui la rend.
+ *
+ * Même principe que `DYNAMIC` : une table que TypeScript force à être
+ * complète. Ce que la modale FAIT (créer, naviguer ensuite) est le sien ; le
+ * panneau ne sait que l'ouvrir et la fermer.
+ */
+const DIALOGS: Record<PanelDialog, (onClose: () => void) => ReactElement> = {
+  'new-project': (onClose) => <NewProjectModal open onClose={onClose} />,
+};
+
+/** Un « + » de la table, tel que le titre de section le dessine. */
+function addFor(add: PanelAdd | undefined, open: (d: PanelDialog) => void) {
+  if (add === undefined) return undefined;
+  if (add.opens !== undefined) {
+    const dialog = add.opens;
+    return { label: add.label, onOpen: () => open(dialog) };
+  }
+  return { label: add.label, href: add.href };
+}
 
 /**
  * Les entrées ÉCRITES d'un bloc, et la ligne allumée parmi elles.
@@ -123,6 +151,9 @@ export default function SidebarPanel({
   pathname: string;
   workspaces: readonly WorkspaceRow[];
 }) {
+  // La modale qu'un « + » a ouverte, s'il y en a une. Un seul état pour toutes
+  // les sections : on n'ouvre jamais deux formulaires à la fois.
+  const [dialog, setDialog] = useState<PanelDialog | null>(null);
   return (
     <nav
       // Nommé par la destination : un lecteur d'écran annonce « Work,
@@ -151,7 +182,7 @@ export default function SidebarPanel({
           // désigne par sa place, faute de nom.
           <div key={group.section ?? `group-${i}`} data-testid={`nav-group-${group.section ?? i}`}>
             {group.section !== undefined && (
-              <SidebarSection add={group.add}>{group.section}</SidebarSection>
+              <SidebarSection add={addFor(group.add, setDialog)}>{group.section}</SidebarSection>
             )}
 
             {group.dynamic !== undefined && DYNAMIC[group.dynamic]()}
@@ -172,6 +203,8 @@ export default function SidebarPanel({
       {/* Emplacement de la carte « ça tourne » — le primitif est en place pour
           le jour où la télémétrie sera branchée. */}
       <LiveCard runningAgents={undefined} />
+
+      {dialog !== null && DIALOGS[dialog](() => setDialog(null))}
     </nav>
   );
 }
