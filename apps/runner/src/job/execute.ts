@@ -3147,11 +3147,6 @@ async function runJobTracked(
         // revue passe 3 de la PR #683) : la même lecture que la porte, par la
         // même fonction, dans les mêmes espaces.
         const isCatastrophicResume = await isCatastrophicCall(req.toolName, req.toolInput, {
-          jobId: jobId as string,
-          agentId: agentRow.id,
-          entityId: job.entityId ?? '',
-          db,
-          jobChatId: job.chatId ?? null,
           workspaces: agentWorkspacesList,
         });
 
