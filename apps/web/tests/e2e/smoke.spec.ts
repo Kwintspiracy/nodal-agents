@@ -126,17 +126,19 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
 
     // Les espaces de travail ne se deplient plus (#258) : ce sont les lignes
     // memes de leur section. Sur une stack neuve la section est VIDE, donc
-    // elle ne finit plus par « See all » (#301) : le chemin vers `/spaces`
-    // est le « + » de son titre, qui dit « New project ».
+    // elle ne finit plus par « See all » (#301) : le chemin vers la creation
+    // est le « + » de son titre, qui dit « New project » et OUVRE la modale de
+    // creation en place (#697), sans quitter la page.
     await page.goto('/chat');
     await expect(page.locator('[data-testid="inbox-folder-workspaces"]')).toHaveCount(0);
     const groupeProjects = page.locator('[data-testid="nav-group-Projects"]');
-    await expect(groupeProjects.locator('[data-testid="section-add"]')).toHaveAttribute(
-      'href',
-      '/spaces',
-    );
-    await groupeProjects.locator('[data-testid="section-add"]').click();
-    await expect(page).toHaveURL(/\/spaces$/);
+    const plusProjects = groupeProjects.locator('[data-testid="section-add"]');
+    await expect(plusProjects).toHaveAttribute('aria-label', 'New project');
+    await plusProjects.click();
+    await expect(page.getByRole('dialog').getByText('New project').first()).toBeVisible();
+    await expect(page).toHaveURL(/\/chat$/);
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
 
     // Approvals et Settings OUVRENT un panneau depuis #258 : la case allumee
     // et le panneau montre disent enfin la meme chose.

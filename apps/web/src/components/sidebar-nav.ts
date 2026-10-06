@@ -87,6 +87,24 @@ export type PanelDynamic =
   | 'approvals'
   | 'recents';
 
+/**
+ * Ce qu'un « + » de titre peut OUVRIR en place, sans quitter la page.
+ *
+ * Un NOM, comme `PanelDynamic` : la table dit quoi, le panneau sait avec quel
+ * composant. Ajouter un nom ici sans le brancher dans `SidebarPanel` ne compile
+ * pas.
+ */
+export type PanelDialog = 'new-project';
+
+/**
+ * Le « + » d'un titre de section : son nom (ce que lit un lecteur d'écran), et
+ * ce qu'il FAIT — mener à une page (`href`) ou ouvrir une modale en place
+ * (`opens`). L'un OU l'autre, jamais les deux.
+ */
+export type PanelAdd =
+  | { label: string; href: string; opens?: undefined }
+  | { label: string; opens: PanelDialog; href?: undefined };
+
 /** Un bloc du panneau, sous son titre en capitales. */
 export type PanelGroup = {
   /**
@@ -104,7 +122,7 @@ export type PanelGroup = {
    * parce qu'une section VIDE ne porte plus « See all » et que `/spaces`
    * doit rester atteignable depuis la barre sur une installation neuve.
    */
-  add?: { href: string; label: string };
+  add?: PanelAdd;
 };
 
 /** Laquelle des cinq destinations du rail. */
@@ -153,10 +171,12 @@ const WORK_GROUPS: readonly PanelGroup[] = [
     items: [],
     // Le « + » de PROJECTS (#301). La planche ne le dessine pas ; il est là
     // parce que le vide ne porte plus de « See all » (une section vide qui
-    // finit par « tout voir » ne veut rien dire), et que `/spaces` doit
-    // rester atteignable sur une base neuve. Le titre dit alors où aller
-    // créer, et le cadre en pointillés dit qu'il n'y en a pas encore.
-    add: { href: '/spaces', label: 'New project' },
+    // finit par « tout voir » ne veut rien dire), et que la création doit
+    // rester atteignable sur une base neuve. Le titre dit alors où créer, et
+    // le cadre en pointillés dit qu'il n'y en a pas encore. Il OUVRE la modale
+    // de création en place (même composant que le bouton de `/spaces`) plutôt
+    // que d'emmener sur `/spaces` : on crée là où l'on est.
+    add: { opens: 'new-project', label: 'New project' },
   },
   { section: 'Channels', dynamic: 'channels', items: [] },
 ];
