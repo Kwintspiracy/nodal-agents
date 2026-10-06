@@ -16,6 +16,7 @@ import {
   type ProcessRecord,
 } from '../lib/processes.ts';
 import { PG_DATA_DIR } from '../lib/config.ts';
+import { importEmbeddedPostgres } from '../lib/embedded-postgres-module.ts';
 import { readPostmasterPid, postgresProcessesForDataDir } from '../lib/postgres.ts';
 import {
   confirmRecordedPid,
@@ -193,7 +194,7 @@ async function stopPostgresGracefully(ctx: KillContext): Promise<boolean> {
   }
 
   try {
-    const EmbeddedPostgres = (await import('embedded-postgres')).default;
+    const EmbeddedPostgres = await importEmbeddedPostgres();
     // Re-create the handle pointing at the existing data dir. The constructor
     // doesn't connect or start; .stop() reads postmaster.pid and signals the
     // postmaster the same way pg_ctl does.

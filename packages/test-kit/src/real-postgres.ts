@@ -81,8 +81,18 @@ function repoRoot(): string {
 /**
  * Résout `embedded-postgres` comme apps/cli le voit. Lève avec le chemin
  * cherché quand il manque — c'est l'information dont on a besoin pour réparer.
+ *
+ * Le paquet est chargé par `importEmbeddedPostgres` d'apps/cli, jamais par un
+ * `import` direct : à son chargement, il pose un `beforeExit` qui finit le
+ * processus par `process.exit(0)`. Chargé ainsi dans le processus PRINCIPAL de
+ * vitest (`pg-global-setup.ts`), il rendait 0 à tout run rouge contenant un
+ * `.pg` — la CI Linux verte sur un test en échec (issue #698). Exporté pour la
+ * garde qui le prouve (`tests/pg-run-exit-code.test.ts`).
  */
-async function loadEmbeddedPostgres(): Promise<{ ctor: EmbeddedPostgresCtor; resolved: string }> {
+export async function loadEmbeddedPostgres(): Promise<{
+  ctor: EmbeddedPostgresCtor;
+  resolved: string;
+}> {
   const anchor = join(repoRoot(), 'apps', 'cli', 'package.json');
   let resolved: string;
   try {
@@ -93,8 +103,15 @@ async function loadEmbeddedPostgres(): Promise<{ ctor: EmbeddedPostgresCtor; res
         `(${err instanceof Error ? err.message : String(err)})`,
     );
   }
-  const mod = (await import(pathToFileURL(resolved).href)) as { default: EmbeddedPostgresCtor };
-  if (typeof mod.default !== 'function') {
+  const loaderPath = join(repoRoot(), 'apps', 'cli', 'src', 'lib', 'embedded-postgres-module.ts');
+  const loader = (await import(pathToFileURL(loaderPath).href)) as {
+    importEmbeddedPostgres?: () => Promise<unknown>;
+  };
+  if (typeof loader.importEmbeddedPostgres !== 'function') {
+    throw new Error(`REAL_POSTGRES_UNAVAILABLE: importEmbeddedPostgres absent de ${loaderPath}`);
+  }
+  const ctor = await loader.importEmbeddedPostgres();
+  if (typeof ctor !== 'function') {
     throw new Error(`REAL_POSTGRES_UNAVAILABLE: export par défaut inattendu dans ${resolved}`);
   }
   // Le paquet natif de la plateforme est un dépendant OPTIONNEL
@@ -102,7 +119,10 @@ async function loadEmbeddedPostgres(): Promise<{ ctor: EmbeddedPostgresCtor; res
   // de l'install, `initdb` n'existe pas et le démarrage rejette sans message.
   // On le dit ICI, avec le chemin cherché, plutôt qu'au premier spawn muet.
   const binDir = join(dirname(resolved), '..', '..', `@embedded-postgres`);
-  return { ctor: mod.default, resolved: `${resolved} (natifs attendus sous ${binDir})` };
+  return {
+    ctor: ctor as EmbeddedPostgresCtor,
+    resolved: `${resolved} (natifs attendus sous ${binDir})`,
+  };
 }
 
 /** Un port libre, choisi par le système (bind sur 0), puis relâché. */

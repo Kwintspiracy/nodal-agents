@@ -12,6 +12,7 @@ import {
   scanForAgentSlugs,
   scanForHardcodedUuids,
   scanForDbDriverImports,
+  scanForPattern,
   assertNoViolations,
 } from '@nodal-agents/test-kit';
 
@@ -28,6 +29,25 @@ describe('architecture invariants', () => {
 
   it('does not import a database driver (only packages/db may)', () => {
     assertNoViolations('driver DB', scanForDbDriverImports({ srcDir }));
+  });
+
+  // `embedded-postgres` answers `beforeExit` with `process.exit(0)` as soon as it
+  // is loaded; `importEmbeddedPostgres` removes that hook and is the only door
+  // (issue #698). A direct import anywhere — product or test harness, tests
+  // included — would let a failing vitest run or a CLI command exit 0 again.
+  it('loads embedded-postgres only through importEmbeddedPostgres', () => {
+    const pattern = /(?:import\(\s*|from\s+)['"]embedded-postgres['"]/;
+    const skipDirs = ['node_modules', 'dist'];
+    assertNoViolations('import direct d’embedded-postgres', [
+      ...scanForPattern(
+        { srcDir, skipDirs, skipFiles: ['lib/embedded-postgres-module.ts'] },
+        { pattern, rule: 'embedded-postgres-direct-import' },
+      ),
+      ...scanForPattern(
+        { srcDir: join(srcDir, '..', '..', '..', 'packages', 'test-kit', 'src'), skipDirs },
+        { pattern, rule: 'embedded-postgres-direct-import' },
+      ),
+    ]);
   });
 
   // Invariant #2 is deliberately NOT asserted here. It governs the RUNNER —

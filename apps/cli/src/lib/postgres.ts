@@ -3,6 +3,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
+import { importEmbeddedPostgres } from './embedded-postgres-module.ts';
 import { applyPostgresLoggingConfig, postgresLogDirFor } from './pg-logging.ts';
 import {
   formatForeignSkip,
@@ -794,8 +795,9 @@ export async function startEmbeddedPostgres(
   // without writing into the user's own `~/.nodalai/logs/`.
   logDirectory: string = postgresLogDirFor(dataDir),
 ): Promise<PostgresHandle> {
-  // Dynamic import — embedded-postgres is a runtime-only dep
-  const EmbeddedPostgres = (await import('embedded-postgres')).default;
+  // Dynamic import — embedded-postgres is a runtime-only dep, loaded through
+  // the one helper that keeps it from rewriting the process exit code
+  const EmbeddedPostgres = await importEmbeddedPostgres();
 
   // embedded-postgres@18.3.0-beta.17 sometimes rejects `pg.start()` with
   // literal `undefined` — the real diagnostic only flows through `onLog`
