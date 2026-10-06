@@ -830,3 +830,23 @@ describe('review pass 6 of #683: the reader of a here-document @cap:executer-une
     }
   });
 });
+
+// The resume path judges a call with the job's workspaces and nothing else: it
+// has no job, chat or channel to offer, so none is asked of it (#649).
+describe('isCatastrophicCall needs only the workspaces @cap:executer-une-commande/moteur', () => {
+  const NL = String.fromCharCode(10);
+  it('gives the same verdict from { workspaces } as from a full context', async () => {
+    const workspaces = [{ label: 'ws', path: workspace }];
+    await put('pw/clean.sh', ['echo hello', ''].join(NL));
+    await put('pw/wipe.sh', ['rm -rf /', ''].join(NL));
+    for (const [command, verdict] of [
+      ['sh pw/wipe.sh', true],
+      ['sh pw/clean.sh', false],
+      ['rm -rf /', true],
+    ] as const) {
+      const reduced = await isCatastrophicCall('run_command', { command }, { workspaces });
+      expect(reduced, command).toBe(verdict);
+      expect(await isCatastrophicCall('run_command', { command }, ctx()), command).toBe(verdict);
+    }
+  });
+});
