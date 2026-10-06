@@ -44,7 +44,7 @@
 //
 // Pure: no filesystem (the gate in packages/tools reads the files).
 
-import { splitHereDocs } from './here-docs';
+import { hereDocs } from './here-docs';
 import {
   splitShellWords,
   changeDirOf,
@@ -397,13 +397,12 @@ function stdinLanguage(program: string | null): SourceLanguage | null {
  */
 function fedSources(cmd: string, after: number): ProgramSource[] {
   const out: ProgramSource[] = [];
-  const split = splitHereDocs(cmd);
-  for (const doc of split.docs) {
+  for (const doc of hereDocs(cmd)) {
     const language = stdinLanguage(receivingProgram(doc.before));
     if (language !== null)
       out.push({ kind: 'code', code: doc.body, language, after, line: doc.line + 2 });
   }
-  const lines = split.text.split('\n');
+  const lines = cmd.split('\n');
   lines.forEach((line, i) => {
     for (const m of line.matchAll(/(?<!<)<<<\s*(?:"([^"]*)"|'([^']*)'|(\S+))/g)) {
       const language = stdinLanguage(receivingProgram(line.slice(0, m.index ?? 0)));
@@ -426,11 +425,11 @@ function fedSources(cmd: string, after: number): ProgramSource[] {
         });
     }
   });
-  for (const m of split.text.matchAll(/@(["'])[ \t]*\r?\n([\s\S]*?)\r?\n\1@([^\n]*)/g)) {
+  for (const m of cmd.matchAll(/@(["'])[ \t]*\r?\n([\s\S]*?)\r?\n\1@([^\n]*)/g)) {
     const piped = /^\s*\|\s*(?:&\s*)?(\S+)/.exec(m[3] ?? '');
     const language = stdinLanguage(piped ? receivingProgram(piped[1] ?? '') : null);
     if (language !== null) {
-      const line = split.text.slice(0, m.index ?? 0).split('\n').length + 1;
+      const line = cmd.slice(0, m.index ?? 0).split('\n').length + 1;
       out.push({ kind: 'code', code: m[2] ?? '', language, after, line });
     }
   }
@@ -445,6 +444,12 @@ export interface SourceCommand {
   line: number;
   /** The command, as the checklist judges it. */
   command: string;
+  /**
+   * The here-documents the line opens, body and end marker as written: what
+   * it feeds a program, read as that program's source (review of #683). The
+   * body's lines are commands of the script too, judged on their own.
+   */
+  fed?: string;
 }
 
 export interface SourceReading {
@@ -468,21 +473,16 @@ const MAX_ARGUMENT_WORDS = 16;
 /** Read `text`, written in `language`, for the commands it runs. */
 export function readSource(text: string, language: SourceLanguage): SourceReading {
   if (language === 'shell' || language === 'cmd' || language === 'powershell') {
-    // A here-document is carried by the line that opens it: its body is not a
-    // command of the script, but the source of the program it feeds (review
-    // of #683). Its lines stay counted, so a finding keeps its line.
-    const split = language === 'shell' ? splitHereDocs(text) : { text, docs: [] };
-    const commands = shellLines(split.text, language);
-    const original = text.split('\n');
-    const carried = new Set<SourceCommand>();
-    for (const doc of split.docs) {
-      const carrier = [...commands].reverse().find((c) => c.line <= doc.line + 1);
-      if (carrier === undefined) continue;
-      // The opening line as written (its operator included), then the body.
-      if (!carried.has(carrier) && carrier.line === doc.line + 1)
-        carrier.command = (original[doc.line] ?? '').replace(/\r$/, '').trim();
-      carried.add(carrier);
-      carrier.command += `\n${doc.raw}`;
+    // A here-document is carried by the line that opens it (`fed`), for the
+    // program it feeds; its body's lines stay commands of the script, judged
+    // like the others (review pass 4 of #683: nothing is taken away).
+    const commands = shellLines(text, language);
+    if (language === 'shell') {
+      for (const doc of hereDocs(text)) {
+        const carrier = commands.find((c) => c.line === doc.line + 1);
+        if (carrier !== undefined)
+          carrier.fed = carrier.fed === undefined ? doc.raw : `${carrier.fed}\n${doc.raw}`;
+      }
     }
     return {
       commands,

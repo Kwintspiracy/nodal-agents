@@ -12,8 +12,6 @@
 // killing a process) stay governed by the normal approval rules — the floor is
 // not a general safety net, it is the last-resort circuit breaker.
 
-import { splitHereDocs } from './here-docs';
-
 const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:?\s*&\s*\}\s*;\s*:/;
 const MKFS = /\bmkfs(\.\w+)?\b/i;
 // [\s\S]*? (not [^\n]*) so a shell line-continuation between `dd ...\` and
@@ -331,7 +329,7 @@ export function isInlineInterpreterEvalCommand(
   reader?: ScriptShell,
 ): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
-  const c = normalizeSlashes(splitHereDocs(cmd).text.trim());
+  const c = normalizeSlashes(cmd.trim());
   if (AWK_CODE_EXEC.test(c) || hasPipeIntoBareInterpreter(c, host)) return true;
   return commandUnits(withoutRedirections(c), 0, reader ?? topShell(host)).some(isInlineEvalUnit);
 }
@@ -824,8 +822,7 @@ export function staticShellCategories(
   reader?: ScriptShell,
 ): StaticShellCategory[] {
   if (typeof command !== 'string' || command.trim() === '') return [];
-  // A here-document's body is data to this line (#635).
-  const cmd = splitHereDocs(command).text;
+  const cmd = command;
   const shell = reader ?? topShell(host);
   // Read from the PROGRAMS the command runs, never from any word of its text
   // (review of PR #474, Reviewer A, P1): `git commit -m "rm old refs"` does not
@@ -897,7 +894,7 @@ export type ShellHost = 'windows' | 'posix';
 export function downloadWrites(command: string, host: ShellHost): DownloadWrites {
   const out: DownloadWrites = { dirs: [], targets: [] };
   if (typeof command !== 'string' || command.trim() === '') return out;
-  const cmd = splitHereDocs(command).text;
+  const cmd = command;
   // Where a line writes is read ONCE, in order, because each target is judged
   // from the folders before it (`dirs`, `after`): the two readings of a line
   // whose shell is not known cannot be merged. It is read with the grammar
@@ -1772,9 +1769,7 @@ function runsAnother(unit: readonly string[]): boolean {
  * is kept: a net may over-ask, never under-report.
  */
 export function commandUnits(command: string, depth = 0, shell?: LineShell): string[][] {
-  // A here-document's body is data to the line that holds it; the program it
-  // feeds reads it as its source (program-sources.ts, #635).
-  const cmd = depth === 0 && typeof command === 'string' ? splitHereDocs(command).text : command;
+  const cmd = command;
   if (shell === undefined) {
     const seen = new Set<string>();
     return [...commandUnits(cmd, depth, 'cmd'), ...commandUnits(cmd, depth, 'sh')].filter(
@@ -1994,8 +1989,33 @@ function splitQuotedShellWords(cmd: string, shell: LineShell): ShellWord[][] {
   }
 }
 
-/** Read a line with the grammar of sh or PowerShell, words and commands in one pass. */
-function scanLine(line: string, g: Grammar): ShellWord[][] {
+/** Where sh reads a here-document operator: `<<EOF`, `<<-EOF`, `<<'EOF'`, `<<"EOF"`. */
+export interface HereDocOperator {
+  index: number;
+  length: number;
+  /** `<<-`: leading tabs are stripped from the body and the end marker. */
+  strip: boolean;
+  marker: string;
+}
+
+const HERE_DOC_MARKER = /^<<(-?)[ \t]*\\?(["']?)([A-Za-z_][\w.-]*)\2/;
+
+/**
+ * The here-document operators of a text, as sh reads it (#635, review pass 4
+ * of PR #683): the same scan as its commands, so a `<<` in quotes, in a
+ * comment, in arithmetic (`$(( ))`, `(( ))`, `let`) or in `[[ ]]` opens none.
+ */
+export function hereDocOperators(text: string): HereDocOperator[] {
+  const found: HereDocOperator[] = [];
+  scanLine(text, SH, found);
+  return found;
+}
+
+/**
+ * Read a line with the grammar of sh or PowerShell, words and commands in one
+ * pass. With `hereDocs`, sh's here-document operators are reported there.
+ */
+function scanLine(line: string, g: Grammar, hereDocs?: HereDocOperator[]): ShellWord[][] {
   const segments: ShellWord[][] = [];
   let words: Array<{ text: string; quoted: boolean; start: number }> = [];
   let word = '';
@@ -2009,8 +2029,17 @@ function scanLine(line: string, g: Grammar): ShellWord[][] {
       start = at;
     }
   };
+  // Where `<<` is no redirection in sh: arithmetic and `[[ ]]` (#635).
+  let arithmetic = 0;
+  let doubleBracket = false;
+  let letCommand = false;
   const endWord = (): void => {
-    if (inWord) words.push({ text: word, quoted, start });
+    if (inWord) {
+      if (!quoted && word === '[[') doubleBracket = true;
+      else if (!quoted && word === ']]') doubleBracket = false;
+      else if (!quoted && word === 'let' && words.length === 0) letCommand = true;
+      words.push({ text: word, quoted, start });
+    }
     word = '';
     inWord = false;
     quoted = false;
@@ -2021,6 +2050,7 @@ function scanLine(line: string, g: Grammar): ShellWord[][] {
   let piped: ShellWord | null = null;
   const endCommand = (at: number, separator = ''): void => {
     endWord();
+    letCommand = false;
     if (words.length > 0) {
       const segment: ShellWord[] = words.map((w) => ({
         text: w.text,
@@ -2049,6 +2079,30 @@ function scanLine(line: string, g: Grammar): ShellWord[][] {
         at += 1;
       } else word += ch;
       continue;
+    }
+    // sh: a `#` that starts a word starts a comment, to the end of the line
+    // (after a separator, `)`, `;`, `|`, a backtick or a space alike).
+    if (g === SH && ch === '#' && (!inWord || line[at - 1] === '`')) {
+      const end = line.indexOf('\n', at);
+      at = (end < 0 ? line.length : end) - 1;
+      continue;
+    }
+    if (g === SH) {
+      if (line.startsWith('$((', at) || (line.startsWith('((', at) && line[at - 1] !== '$'))
+        arithmetic += 1;
+      else if (arithmetic > 0 && line.startsWith('))', at)) arithmetic -= 1;
+    }
+    if (
+      hereDocs !== undefined &&
+      ch === '<' &&
+      line[at - 1] !== '<' &&
+      arithmetic === 0 &&
+      !doubleBracket &&
+      !letCommand
+    ) {
+      const m = HERE_DOC_MARKER.exec(line.slice(at));
+      if (m !== null && line[at + 2] !== '<')
+        hereDocs.push({ index: at, length: m[0].length, strip: m[1] === '-', marker: m[3] ?? '' });
     }
     if (g.quotes.includes(ch)) {
       begin(at);

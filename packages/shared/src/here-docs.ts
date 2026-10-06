@@ -1,18 +1,18 @@
 // here-docs.ts — the here-documents of a shell text (review of #683).
 //
 // `bash <<EOF … EOF` feeds the lines between the markers to a program on its
-// standard input. To the command reader they are not commands: `cat <<EOF >
-// notes.txt` writes them as data. To the program that receives them they may
-// be its source (`bash`, `python -`), read in its language.
+// standard input: to `bash` or `python -`, its source, read in its language.
 //
-// Only what sh reads as the operator opens one: `<<` outside quotes, outside
-// a comment, outside `$(( … ))` arithmetic (review pass 3 of #683: `echo
-// "usage: <<END"` or `# <<END` opened a body that swallowed the script). And a
-// line is taken out of what is judged only when it belongs to a body that
-// ends with its marker: an unterminated one leaves every line read as a
-// command. A net may over-ask; it never drops a line it cannot place.
+// Where an operator stands is read by THE scanner of sh (`hereDocOperators`,
+// catastrophic-command.ts): `<<` in quotes, in a comment, in arithmetic or in
+// `[[ ]]` opens nothing (review passes 3 and 4 of #683). Nothing here takes
+// a line away from what is judged: every line of a body is still read as a
+// command too, which may over-ask, never under-report. Only a body that ends
+// with its marker is a source; an unterminated one is no here-document.
 //
 // Pure: no filesystem.
+
+import { hereDocOperators } from './catastrophic-command';
 
 /** One here-document: where it opens, what it feeds, as written. */
 export interface HereDoc {
@@ -26,117 +26,55 @@ export interface HereDoc {
   raw: string;
 }
 
-export interface HereDocSplit {
-  /** The text with each body and end marker replaced by empty lines. */
-  text: string;
-  docs: HereDoc[];
-}
-
-interface Operator {
-  index: number;
-  length: number;
-  strip: boolean;
-  marker: string;
-}
-
-const MARKER = /^<<(-?)[ \t]*\\?(["']?)([A-Za-z_][\w.-]*)\2/;
-
-/** The here-document operators of one line, as sh reads them. */
-function operators(line: string): Operator[] {
-  const found: Operator[] = [];
-  let quote: '"' | "'" | null = null;
-  let arithmetic = 0;
-  for (let k = 0; k < line.length; k++) {
-    const ch = line[k] ?? '';
-    if (quote !== null) {
-      if (ch === '\\' && quote === '"') k++;
-      else if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === '\\') {
-      k++;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    // A comment runs to the end of the line.
-    if (ch === '#' && (k === 0 || /[\s;&|(]/.test(line[k - 1] ?? ''))) break;
-    if (line.startsWith('$((', k)) {
-      arithmetic++;
-      k += 2;
-      continue;
-    }
-    if (arithmetic > 0) {
-      if (line.startsWith('))', k)) {
-        arithmetic--;
-        k++;
-      }
-      continue;
-    }
-    if (line.startsWith('<<', k) && line[k + 2] !== '<' && line[k - 1] !== '<') {
-      const m = MARKER.exec(line.slice(k));
-      if (m !== null) {
-        found.push({ index: k, length: m[0].length, strip: m[1] === '-', marker: m[3] ?? '' });
-        k += m[0].length - 1;
-      }
-    }
-  }
-  return found;
-}
-
 /**
- * The here-documents of `text` (`<<EOF`, `<<-EOF`, `<<'EOF'`, `<<"EOF"`), and
- * the text without them: their operators become spaces and their bodies
- * empty lines, so columns and line numbers hold. A body whose end marker never
- * comes is no here-document here: its lines stay in the text, read as
- * commands.
+ * The here-documents of `text` that end with their marker. A `<<` inside a
+ * body already taken is part of that body, not an operator.
  */
-export function splitHereDocs(text: string): HereDocSplit {
-  if (!text.includes('<<')) return { text, docs: [] };
+export function hereDocs(text: string): HereDoc[] {
+  if (!text.includes('<<')) return [];
   const lines = text.split('\n');
-  const out = [...lines];
-  const docs: HereDoc[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? '';
-    let next = i + 1;
-    const taken: Operator[] = [];
-    for (const op of operators(line)) {
-      const body: string[] = [];
-      let j = next;
-      let ended = false;
-      while (j < lines.length) {
-        const l = (lines[j] ?? '').replace(/\r$/, '');
-        if ((op.strip ? l.replace(/^\t+/, '') : l) === op.marker) {
-          ended = true;
-          break;
-        }
-        body.push(op.strip ? l.replace(/^\t+/, '') : l);
-        j++;
-      }
-      if (!ended) break;
-      docs.push({
-        before: line.slice(0, op.index),
-        body: body.join('\n'),
-        line: i,
-        raw: lines.slice(next, j + 1).join('\n'),
-      });
-      for (let k = next; k <= j; k++) out[k] = '';
-      taken.push(op);
-      next = j + 1;
-    }
-    // The operators go too: read again, the text has no here-document left.
-    if (taken.length > 0) {
-      let rewritten = line;
-      for (const op of taken)
-        rewritten =
-          rewritten.slice(0, op.index) +
-          ' '.repeat(op.length) +
-          rewritten.slice(op.index + op.length);
-      out[i] = rewritten;
-    }
-    i = next - 1;
+  const starts: number[] = [];
+  let offset = 0;
+  for (const l of lines) {
+    starts.push(offset);
+    offset += l.length + 1;
   }
-  return { text: out.join('\n'), docs };
+  const lineOf = (index: number): number => {
+    let i = 0;
+    while (i + 1 < starts.length && (starts[i + 1] ?? 0) <= index) i++;
+    return i;
+  };
+  const docs: HereDoc[] = [];
+  // The line the next body of an opening line starts on: operators on one
+  // line feed bodies in turn, and nothing inside a body taken is an operator.
+  const bodyFrom = new Map<number, number>();
+  let taken = -1;
+  for (const op of hereDocOperators(text)) {
+    const i = lineOf(op.index);
+    if (i <= taken && !bodyFrom.has(i)) continue;
+    const from = bodyFrom.get(i) ?? i + 1;
+    const body: string[] = [];
+    let j = from;
+    let ended = false;
+    while (j < lines.length) {
+      const l = (lines[j] ?? '').replace(/\r$/, '');
+      if ((op.strip ? l.replace(/^\t+/, '') : l) === op.marker) {
+        ended = true;
+        break;
+      }
+      body.push(op.strip ? l.replace(/^\t+/, '') : l);
+      j++;
+    }
+    if (!ended) continue;
+    const line = lines[i] ?? '';
+    docs.push({
+      before: line.slice(0, op.index - (starts[i] ?? 0)),
+      body: body.join('\n'),
+      line: i,
+      raw: lines.slice(from, j + 1).join('\n'),
+    });
+    bodyFrom.set(i, j + 1);
+    taken = Math.max(taken, j);
+  }
+  return docs;
 }

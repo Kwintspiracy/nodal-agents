@@ -652,19 +652,29 @@ describe('cmd conditions and here-docs at the gate (#683) @cap:executer-une-comm
         'rm -rf build',
         'EOF',
         "python3 - <<'PY'",
-        'import os',
-        'os.system("pip install openpyxl")',
+        'import subprocess, sys',
+        'subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl"])',
         'PY',
         '',
       ].join(NL),
     );
+    // The body fed to cat stays judged (over-asking is accepted); the one fed
+    // to python is read as Python, which only Python finds an install in.
     expect(await asked('sh hd/run.sh')).toEqual([
-      {
+      expect.objectContaining({
+        category: 'delete_files',
+        found: [{ source: 'hd/run.sh', line: 3, text: 'rm -rf build' }],
+      }),
+      expect.objectContaining({
         category: 'install_software',
-        state: 'ask',
-        details: ['sh hd/run.sh'],
-        found: [{ source: 'hd/run.sh', line: 7, text: 'os.system("pip install openpyxl")' }],
-      },
+        found: [
+          {
+            source: 'hd/run.sh',
+            line: 7,
+            text: 'subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl"])',
+          },
+        ],
+      }),
     ]);
   });
 
@@ -704,6 +714,42 @@ describe('review pass 3 of #683: no line dropped, and the hard floor reads the c
     system_settings: 'allow',
     open_or_send: 'allow',
   } as ShellPolicy;
+
+  // Passe 4 : `#` après `)` est un commentaire pour sh, `(( ))` est de
+  // l'arithmétique : aucun faux here-doc n'avale les lignes suivantes.
+  it('C2 (pass 4): a comment after ) and (( )) arithmetic open no here-document', async () => {
+    await put(
+      'p4/case.sh',
+      ['case $v in', 'x)#<<END', 'pip install openpyxl', 'rm -rf build', 'END', ';;', 'esac'].join(
+        NL,
+      ),
+    );
+    await put('p4/arith.sh', ['((x<<END))', 'pip install openpyxl', 'END'].join(NL));
+    for (const [command, kinds] of [
+      ['sh p4/case.sh', ['delete_files', 'install_software']],
+      ['bash p4/arith.sh', ['install_software']],
+    ] as const) {
+      const reasons = (await asked(command)) as Array<{ category: string }>;
+      expect(reasons.map((r) => r.category).sort(), command).toEqual(kinds);
+    }
+    // In the command itself too.
+    const typed = ['((x<<END))', 'pip install openpyxl', 'END'].join(NL);
+    expect(((await asked(typed)) as Array<{ category: string }>).map((r) => r.category)).toContain(
+      'install_software',
+    );
+  });
+
+  // P2 (pass 4): without a checklist, destructive_gate still sees a body
+  // fed to a shell, as main did.
+  it('P2 (pass 4): destructive_gate holds a here-document fed to a shell', async () => {
+    const cmd = `bash <<EOF${NL}Stop-Process -Name excel${NL}EOF`;
+    const res = await run(cmd, {
+      approvalRules: [],
+      autonomy: 'destructive_gate',
+      onApprovalRequired: async () => {},
+    });
+    expect(res.outcome).toBe('awaiting_approval');
+  });
 
   // C2 : un `<<` cité ou commenté n'ouvre aucun here-doc.
   it('C2: a quoted << opens no here-document, and the lines after it are judged', async () => {

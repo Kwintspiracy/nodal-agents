@@ -4,7 +4,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   languageOfPath,
-  splitHereDocs,
+  hereDocs,
+  isDestructiveOrHeavyCommand,
+  computeApprovalImpactLine,
   languageOfShebang,
   programSources,
   staticShellCategories,
@@ -350,18 +352,29 @@ describe('cmd conditions without brackets, and here-docs fed to a program (#683)
     expect(files('sort < data.txt')).toEqual([]);
   });
 
-  it('a here-doc fed to anything else is data, never commands', () => {
-    expect(kinds(`cat <<EOF > notes.txt${NL}rm -rf build${NL}pip install x${NL}EOF`)).toEqual([]);
+  // Review pass 4 of #683: nothing is taken away from what is judged. A body
+  // fed to any other program is no source, and its lines stay commands too:
+  // over-asking is accepted, under-reporting is not.
+  it('a here-doc fed to anything else is no source, and its lines stay judged', () => {
     expect(programSources(`cat <<EOF${NL}pip install x${NL}EOF`).sources).toEqual([]);
-    // A script named in a body is no script run.
-    expect(programSources(`cat <<EOF > notes.txt${NL}python build.py${NL}EOF`).sources).toEqual([]);
+    expect(kinds(`cat <<EOF > notes.txt${NL}rm -rf build${NL}pip install x${NL}EOF`)).toEqual([
+      'delete_files',
+      'install_software',
+    ]);
     expect(
       staticShellCategories(`$s = @"${NL}Stop-Process -Name excel${NL}"@`, undefined, 'powershell'),
     ).toEqual([]);
-    // Inline code written in a body is data too.
-    expect(kinds(`cat <<EOF > a.txt${NL}python -c "print(1)"${NL}EOF`)).toEqual([]);
-    // The line after the here-doc is a command again.
     expect(kinds(`cat <<EOF > a${NL}x${NL}EOF${NL}pip install y`)).toEqual(['install_software']);
+  });
+
+  // Review pass 4 of #683 (P2): what main judged in a here-document, every
+  // reader still judges: destructive_gate and the card's impact line.
+  it('destructive_gate and the impact line still see a body fed to a shell', () => {
+    const cmd = `bash <<EOF${NL}Stop-Process -Name excel${NL}EOF`;
+    expect(isDestructiveOrHeavyCommand(cmd)).toBe(true);
+    expect(computeApprovalImpactLine('run_command', { command: cmd })).toContain(
+      'stops other programs or services',
+    );
   });
 });
 
@@ -372,17 +385,28 @@ describe('here-document operators as sh reads them (review pass 3 of #683) @cap:
   const kinds = (cmd: string): string[] => staticShellCategories(cmd, 'posix').sort();
 
   it('a << in quotes, in a comment or in arithmetic opens nothing', () => {
-    for (const first of ['echo "usage: <<END"', "echo 'x <<END'", '# <<END', 'x=$((a << END))']) {
+    for (const first of [
+      'echo "usage: <<END"',
+      "echo 'x <<END'",
+      '# <<END',
+      'x=$((a << END))',
+      // Review pass 4 of #683: sh's comment after `)`, and `(( ))` arithmetic.
+      'x)#<<END',
+      'f()#<<END',
+      '((x<<END))',
+      'let "y = x << END"',
+      '[[ $a <<END ]]',
+    ]) {
       // An END line follows: opened wrongly, a body would swallow the install.
       const text = [first, 'pip install openpyxl', 'END', 'rm -rf build'].join(NL);
-      expect(splitHereDocs(text).docs, first).toEqual([]);
+      expect(hereDocs(text), first).toEqual([]);
       expect(kinds(text), first).toEqual(['delete_files', 'install_software']);
     }
   });
 
   it('a body whose end marker never comes stays judged, line by line', () => {
     const text = ['cat <<END > notes.txt', 'pip install openpyxl', 'rm -rf build'].join(NL);
-    expect(splitHereDocs(text).docs).toEqual([]);
+    expect(hereDocs(text)).toEqual([]);
     expect(kinds(text)).toEqual(['delete_files', 'install_software']);
   });
 });
