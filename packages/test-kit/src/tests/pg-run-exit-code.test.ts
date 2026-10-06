@@ -46,11 +46,18 @@ function runFixture(
   return { status: run.status, output: `${run.stdout}${run.stderr}` };
 }
 
+// Ce que laisse un processus qui meurt EN sortant : le `gracefulShutdown` du
+// paquet appelé sans son rappel (`TypeError: done is not a function`, vu dans
+// pack-smoke au run 37433850617 quand le crochet était seulement retiré), et la
+// signature de Node sur une exception fatale.
+const EXIT_CRASH = /TypeError|Node\.js v\d/;
+
 describe('a vitest run that loaded embedded-postgres keeps its own verdict', () => {
   it('a failing test makes the run exit 1', () => {
     const { status, output } = runFixture('red');
     expect(output).toContain('EMBEDDED_POSTGRES_LOADED');
     expect(output).toMatch(/Tests\s+1 failed/);
+    expect(output).not.toMatch(EXIT_CRASH);
     expect(status).toBe(1);
   });
 
@@ -58,6 +65,7 @@ describe('a vitest run that loaded embedded-postgres keeps its own verdict', () 
     const { status, output } = runFixture('green');
     expect(output).toContain('EMBEDDED_POSTGRES_LOADED');
     expect(output).toMatch(/Tests\s+1 passed/);
+    expect(output).not.toMatch(EXIT_CRASH);
     expect(status).toBe(0);
   });
 
@@ -69,6 +77,7 @@ describe('a vitest run that loaded embedded-postgres keeps its own verdict', () 
     expect(output).toContain('EMBEDDED_POSTGRES_LOADED_BEFORE_THE_DOOR');
     expect(output).toContain('EMBEDDED_POSTGRES_LOADED\n');
     expect(output).toMatch(/Tests\s+1 failed/);
+    expect(output).not.toMatch(EXIT_CRASH);
     expect(status).toBe(1);
   });
 });

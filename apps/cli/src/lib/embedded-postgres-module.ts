@@ -13,13 +13,16 @@
 // the Linux CI went green on a red test (run 37429428426, issue #698). Windows
 // CI has no `pg` project, never loaded the package, and went red as it should.
 //
-// The hook's `beforeExit` handler is therefore unhooked after every load,
+// The hook's `beforeExit` handler is therefore REPLACED after every load,
 // through async-exit-hook's own API. It is found by WHAT it is, not by when it
 // appeared: a load that happened earlier, by any other path, is undone too.
-// Nothing else is lost: a postgres the package spawned keeps the event loop
-// alive (its stderr is piped and read, never unref'd), so `beforeExit` only
-// fires once `gracefulShutdown` has none left to stop; and the package's
-// `exit` and signal hooks — which do carry a real code — stay.
+// The replacement does exactly what the original did — run the package's
+// `gracefulShutdown` to completion, then exit — with the code the process had
+// decided instead of 0. Unhooking without replacing is not enough: the
+// package's `exit` handler then becomes the first to run, calls
+// `gracefulShutdown` without its callback, and the process dies on
+// `TypeError: done is not a function` (seen in pack-smoke, run 37433850617).
+// The signal hooks, which carry a real code, stay as they are.
 //
 // This file is the only one that names the package. Everything that loads it
 // — the package itself, its `binary.js`, the test harness in
@@ -40,7 +43,23 @@ export type EmbeddedPostgresBinaries = Partial<Record<'pg_ctl' | 'initdb' | 'pos
 interface AsyncExitHook {
   hookedEvents(): string[];
   unhookEvent(event: string): void;
+  /** Runs every registered hook, then `process.exit(code)`, when `event` is emitted. */
+  hookEvent(event: string, code: number): void;
 }
+
+/**
+ * The event our `beforeExit` replacement emits to run the package's shutdown
+ * with the process's own code. Hooked once, at the first natural exit, since
+ * async-exit-hook binds a code when the event is hooked.
+ */
+const NATURAL_EXIT = 'nodal-agents:embedded-postgres-natural-exit';
+
+/**
+ * Marks the hook instance as already given its replacement. A process-wide
+ * symbol on the hook itself, because this file can be evaluated more than once
+ * in one process (the CLI bundle, or vitest's module graph next to Node's).
+ */
+const REPLACED = Symbol.for('nodal-agents.embedded-postgres.before-exit-replaced');
 
 /** The package's entry point, as this CLI resolves it. Throws when it is not installed. */
 export function resolveEmbeddedPostgresEntry(): string {
@@ -48,39 +67,54 @@ export function resolveEmbeddedPostgresEntry(): string {
 }
 
 /**
- * Unhooks async-exit-hook's `beforeExit` handler — the one that turns a natural
- * exit into `process.exit(0)`. The hook is resolved from the package's own
- * directory, so it is the very instance the package registered with. A hook
- * that cannot be found or no longer has this API is an error, never a no-op:
- * the exit code would silently be at the package's mercy again.
+ * Replaces async-exit-hook's `beforeExit` handler — the one that turns a
+ * natural exit into `process.exit(0)` — by one that exits with the process's
+ * own code. The hook is resolved from the package's own directory, so it is
+ * the very instance the package registered with. A hook that cannot be found
+ * or no longer has this API is an error, never a no-op: the exit code would
+ * silently be at the package's mercy again.
  */
-function releaseExitCode(entry: string): void {
-  let hook: Partial<AsyncExitHook>;
+function keepExitCode(entry: string): void {
+  let loaded: unknown;
   try {
-    hook = createRequire(entry)('async-exit-hook') as Partial<AsyncExitHook>;
+    loaded = createRequire(entry)('async-exit-hook');
   } catch (err) {
     throw new Error(
       `EMBEDDED_POSTGRES_EXIT_HOOK_UNKNOWN: async-exit-hook not found next to ${entry} ` +
         `(${err instanceof Error ? err.message : String(err)})`,
     );
   }
-  if (typeof hook.hookedEvents !== 'function' || typeof hook.unhookEvent !== 'function') {
+  const candidate = loaded as Partial<AsyncExitHook> & { [REPLACED]?: true };
+  if (
+    typeof candidate.hookedEvents !== 'function' ||
+    typeof candidate.unhookEvent !== 'function' ||
+    typeof candidate.hookEvent !== 'function'
+  ) {
     throw new Error(
-      `EMBEDDED_POSTGRES_EXIT_HOOK_UNKNOWN: async-exit-hook next to ${entry} has no hookedEvents/unhookEvent`,
+      `EMBEDDED_POSTGRES_EXIT_HOOK_UNKNOWN: async-exit-hook next to ${entry} has no hookedEvents/unhookEvent/hookEvent`,
     );
   }
+  const hook = candidate as AsyncExitHook & { [REPLACED]?: true };
   if (hook.hookedEvents().includes('beforeExit')) hook.unhookEvent('beforeExit');
   if (hook.hookedEvents().includes('beforeExit')) {
     throw new Error(
       `EMBEDDED_POSTGRES_EXIT_HOOK_STUCK: beforeExit still hooked after unhook (${entry})`,
     );
   }
+  if (hook[REPLACED]) return;
+  hook[REPLACED] = true;
+  // Node hands `beforeExit` listeners the exit code the process is heading for.
+  process.on('beforeExit', (code: number) => {
+    if (hook.hookedEvents().includes(NATURAL_EXIT)) return;
+    hook.hookEvent(NATURAL_EXIT, code);
+    (process as NodeJS.EventEmitter).emit(NATURAL_EXIT, code);
+  });
 }
 
 export async function importEmbeddedPostgres(): Promise<EmbeddedPostgresCtor> {
   const entry = resolveEmbeddedPostgresEntry();
   const mod = (await import(pathToFileURL(entry).href)) as { default: EmbeddedPostgresCtor };
-  releaseExitCode(entry);
+  keepExitCode(entry);
   return mod.default;
 }
 
