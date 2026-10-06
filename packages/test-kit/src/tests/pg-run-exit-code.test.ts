@@ -24,13 +24,21 @@ const VITEST_BIN = join(
   'vitest.mjs',
 );
 
-function runFixture(verdict: 'red' | 'green'): { status: number | null; output: string } {
+function runFixture(
+  verdict: 'red' | 'green',
+  setup: 'door' | 'bypass' = 'door',
+): { status: number | null; output: string } {
   const run = spawnSync(
     process.execPath,
     [VITEST_BIN, 'run', '--root', FIXTURE, '--config', join(FIXTURE, 'vitest.config.ts')],
     {
       cwd: FIXTURE,
-      env: { ...process.env, PG_RUN_EXIT_CODE_VERDICT: verdict, NO_COLOR: '1' },
+      env: {
+        ...process.env,
+        PG_RUN_EXIT_CODE_VERDICT: verdict,
+        PG_RUN_EXIT_CODE_SETUP: setup,
+        NO_COLOR: '1',
+      },
       encoding: 'utf-8',
       timeout: 50_000,
     },
@@ -51,5 +59,16 @@ describe('a vitest run that loaded embedded-postgres keeps its own verdict', () 
     expect(output).toContain('EMBEDDED_POSTGRES_LOADED');
     expect(output).toMatch(/Tests\s+1 passed/);
     expect(status).toBe(0);
+  });
+
+  // La porte retire le crochet par ce qu'il EST, pas parce qu'il est apparu
+  // pendant son propre chargement : un chargement antérieur, par un autre
+  // chemin, est défait aussi.
+  it('still exits 1 when the package was loaded first WITHOUT the door', () => {
+    const { status, output } = runFixture('red', 'bypass');
+    expect(output).toContain('EMBEDDED_POSTGRES_LOADED_BEFORE_THE_DOOR');
+    expect(output).toContain('EMBEDDED_POSTGRES_LOADED\n');
+    expect(output).toMatch(/Tests\s+1 failed/);
+    expect(status).toBe(1);
   });
 });

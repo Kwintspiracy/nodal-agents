@@ -3,7 +3,10 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
-import { importEmbeddedPostgres } from './embedded-postgres-module.ts';
+import {
+  importEmbeddedPostgres,
+  importEmbeddedPostgresBinaries,
+} from './embedded-postgres-module.ts';
 import { applyPostgresLoggingConfig, postgresLogDirFor } from './pg-logging.ts';
 import {
   formatForeignSkip,
@@ -524,26 +527,15 @@ export async function stopOrphanPostgres(
  * The absolute path of the `pg_ctl` that ships with the embedded cluster — the
  * same binary that started it.
  *
- * `embedded-postgres` exports only `./dist/index.js`, so its `binary.js` cannot
- * be reached by specifier. It is loaded by PATH instead, next to the entry
- * point we resolve through the package we already depend on; that module picks
- * the right `@embedded-postgres/<platform>` and hands back absolute paths.
- * Everything is checked rather than assumed: a layout that stops exposing
- * `pg_ctl` returns null here and the caller says so with a code.
+ * Read by the package's own `binary.js` (`importEmbeddedPostgresBinaries`),
+ * which picks the right `@embedded-postgres/<platform>` and hands back absolute
+ * paths. Everything is checked rather than assumed: a layout that stops
+ * exposing `pg_ctl` returns null here and the caller says so with a code.
  */
 export async function resolvePgCtl(): Promise<string | null> {
   try {
-    const { createRequire } = await import('node:module');
-    const { pathToFileURL } = await import('node:url');
-    const { dirname } = await import('node:path');
-    const require = createRequire(import.meta.url);
-    const entry = require.resolve('embedded-postgres');
-    const module = (await import(pathToFileURL(join(dirname(entry), 'binary.js')).href)) as {
-      default?: () => Promise<{ pg_ctl?: string }>;
-    };
-    const binaries = await module.default?.();
-    const pgCtl = binaries?.pg_ctl;
-    return pgCtl !== undefined && existsSync(pgCtl) ? pgCtl : null;
+    const pgCtl = (await importEmbeddedPostgresBinaries())?.pg_ctl;
+    return typeof pgCtl === 'string' && existsSync(pgCtl) ? pgCtl : null;
   } catch {
     return null;
   }
