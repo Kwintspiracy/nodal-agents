@@ -84,9 +84,12 @@ jobs:
       # they lost their cache step (found by codex review).
       #
       # Sizes: ~176 MB for the `build` lineage (the `build` task declares
-      # outputs), a few hundred KB for the others (typecheck/test declare
+      # outputs), a few hundred KB for the others (typecheck/lint declare
       # none, so only logs and the up-to-date markers are stored — which is
-      # all that is needed to SKIP them). GitHub caps a repository at 10 GB
+      # all that is needed to SKIP them). `test` is NEVER cached (`turbo.json`,
+      # issue #698): a test reads files its package hash does not cover, and a
+      # replayed log hid a failing test; the test lineages below only keep the
+      # `^build` outputs the tests depend on. GitHub caps a repository at 10 GB
       # and evicts least-recently-used entries on its own; if busy branches
       # ever start missing, narrow the key to main rather than growing the
       # budget.
