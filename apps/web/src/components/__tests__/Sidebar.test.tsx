@@ -753,6 +753,7 @@ describe('le « + » d’un titre de section @cap:planifier-une-tache/ecran', ()
         {
           agentId: 'a1',
           agentName: 'Dev',
+          agentSlug: 'dev',
           workspaces: [{ id: 'w1', label: 'terrain', path: 'D:/terrain' }],
         },
       ],
