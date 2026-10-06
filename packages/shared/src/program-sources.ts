@@ -377,7 +377,9 @@ function fedLanguage(receiver: StdinReceiver): SourceLanguage | null {
   if (program === 'cmd') return 'cmd';
   if (['powershell', 'pwsh', 'iex', 'invoke-expression'].includes(program)) return 'powershell';
   if (receiver.kind === 'shell') return 'shell';
-  return interpreterLanguage(program);
+  // An interpreter whose language is not read here: its body is judged as
+  // shell lines, never dropped (invariant #4, review pass 7 of #683).
+  return interpreterLanguage(program) ?? 'shell';
 }
 
 /**

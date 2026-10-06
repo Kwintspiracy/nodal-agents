@@ -2036,11 +2036,14 @@ export interface StdinReceiver {
 }
 
 /**
- * Programs that read their input as data and run nothing from it: what a
- * here-document fed to them holds is data only when one of them reads it,
- * and nothing it is piped to runs it. Any other reader is judged.
+ * Programs that read their input as data and CANNOT run anything from it
+ * (review pass 7 of #683): what a here-document fed to them holds is data
+ * only when one of them reads it, and nothing it is piped to runs it. A
+ * program with any way to execute what it reads is not one: sed (`e`,
+ * `s///e`), awk (`system()`, `| getline`), perl, ruby, find, xargs, vi, ex,
+ * ed, less, more (`!`), m4 (`syscmd`), make. Any other reader is judged.
  */
-const DATA_CONSUMERS = new Set([
+export const DATA_CONSUMERS: ReadonlySet<string> = new Set([
   'cat',
   'tee',
   'dd',
@@ -2048,7 +2051,6 @@ const DATA_CONSUMERS = new Set([
   'egrep',
   'fgrep',
   'rg',
-  'sed',
   'head',
   'tail',
   'wc',
@@ -2123,9 +2125,22 @@ function readerOf(program: string): StdinReceiver['kind'] | null {
   if (SHELLS.includes(program) || POSIX_SHELLS.has(program)) return 'shell';
   const kind = interpreterKind(program);
   if (kind === 'shell' || kind === 'powershell') return 'shell';
-  if (kind !== null || STDIN_INTERPRETERS.has(program)) return 'interpreter';
+  // An interpreter is a reader of source only in a language Nodal reads
+  // (program-sources.ts); any other (`expect`) is a reader it cannot place,
+  // whose body is judged as commands, never dropped (review pass 7 of #683).
+  if ((kind !== null && READABLE_KINDS.has(kind)) || STDIN_INTERPRETERS.has(program))
+    return 'interpreter';
   return null;
 }
+
+/** The interpreters whose language program-sources reads. */
+const READABLE_KINDS: ReadonlySet<InterpreterKind> = new Set([
+  'python',
+  'node',
+  'perl',
+  'ruby',
+  'php',
+]);
 
 /**
  * Who reads what a command feeds on its standard input, by the common reading

@@ -6,6 +6,10 @@ import {
   languageOfPath,
   hereDocs,
   stdinReceiver,
+  DATA_CONSUMERS,
+  RUNS_ANOTHER_PROGRAMS,
+  interpreterKind,
+  isCatastrophicCommand,
   SHELLS,
   SHELL_PROGRAMS,
   isDestructiveOrHeavyCommand,
@@ -544,6 +548,64 @@ describe('the reader of what a command feeds on its input (review pass 6 of #683
     }
     for (const program of SHELL_PROGRAMS) {
       expect(stdinReceiver(`${program} `, '').kind, program).not.toBe('data');
+    }
+  });
+});
+
+// Review pass 7 of #683: "data" only for a reader that cannot execute what it
+// reads, and an interpreter whose language is not read gets its body judged.
+describe('data readers cannot execute, unreadable interpreters are judged (review pass 7 of #683) @cap:executer-une-commande/moteur', () => {
+  const NL = String.fromCharCode(10);
+  const posix = (cmd: string): string[] => staticShellCategories(cmd, 'posix');
+
+  it('sed and awk can execute what they read: their body is judged', () => {
+    expect(posix(["sed e <<'EOF'", 'rm -rf build', 'EOF'].join(NL))).toContain('delete_files');
+    expect(
+      posix(["awk -f - <<'EOF'", 'BEGIN { system("rm -rf build") }', 'EOF'].join(NL)),
+    ).toContain('delete_files');
+  });
+
+  it('expect, an interpreter Nodal does not read, has its body judged as commands', () => {
+    const text = ["expect <<'EOF'", 'exec rm -rf /', 'EOF'].join(NL);
+    expect(posix(text)).toContain('delete_files');
+    expect(isCatastrophicCommand(text, 'posix')).toBe(true);
+    expect(
+      programSources(text, { direct: true, host: 'posix' }).sources.flatMap((s) =>
+        s.kind === 'code' ? [s.language] : [],
+      ),
+    ).toEqual(['shell']);
+  });
+
+  it('no data reader can run anything: not a shell, a launcher, an interpreter or an executor', () => {
+    const executors = [
+      'sed',
+      'awk',
+      'gawk',
+      'mawk',
+      'nawk',
+      'perl',
+      'ruby',
+      'find',
+      'xargs',
+      'vi',
+      'vim',
+      'nvim',
+      'ex',
+      'ed',
+      'less',
+      'more',
+      'm4',
+      'make',
+      'gdb',
+      'emacs',
+      'nano',
+      'man',
+    ];
+    for (const reader of DATA_CONSUMERS) {
+      expect(SHELLS, reader).not.toContain(reader);
+      expect(RUNS_ANOTHER_PROGRAMS, reader).not.toContain(reader);
+      expect(interpreterKind(reader), reader).toBeNull();
+      expect(executors, reader).not.toContain(reader);
     }
   });
 });

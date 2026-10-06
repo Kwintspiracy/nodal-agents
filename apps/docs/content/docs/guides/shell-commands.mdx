@@ -208,7 +208,8 @@ list. Code written into the line (`python -c`, `node -e`) is read the same way.
   here-string (`bash <<< "…"`, `@"…"@ | powershell -`), a file
   (`cmd < setup.txt`). The reader is found
   through wrappers and pipes (`sudo -u x sh <<eof`, `cat <<eof | sh`). The body
-  is data only when a data reader (`cat`, `grep`, `tee`…) reads it and nothing
+  is data only when a reader that cannot run it (`cat`, `grep`, `tee`…, never
+  `sed` or `awk`) reads it and nothing
   it is piped to runs it; then only the substitutions sh runs in it count
   (`$(…)`, unless its marker is quoted). Any reader Nodal cannot place gets
   its body read as shell lines. A cmd `if` is read without brackets too:
