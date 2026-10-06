@@ -1442,7 +1442,11 @@ async function takeMutationIntent<TInput extends z.ZodTypeAny, TOutput>(
  * nothing relative to it can be shown to be inside, so an allowed download
  * from there asks.
  */
-async function shellPlace(toolName: string, input: unknown, ctx: ToolContext): Promise<ShellPlace> {
+async function shellPlace(
+  toolName: string,
+  input: unknown,
+  ctx: Pick<ToolContext, 'workspaces'>,
+): Promise<ShellPlace> {
   const from =
     toolName === 'declare_verification'
       ? String((input as { project_path?: unknown })?.project_path ?? '.')
@@ -1495,7 +1499,7 @@ function shellCommandsOf(toolName: string, input: unknown): string[] {
 export async function isCatastrophicCall(
   toolName: string,
   input: unknown,
-  ctx: ToolContext,
+  ctx: Pick<ToolContext, 'workspaces'>,
 ): Promise<boolean> {
   const commands = shellCommandsOf(toolName, input);
   if (commands.length === 0) return false;
