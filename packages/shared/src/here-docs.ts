@@ -11,7 +11,7 @@
 //
 // Pure: no filesystem.
 
-import { hereDocuments } from './catastrophic-command';
+import { hereDocuments, type StdinReceiver } from './catastrophic-command';
 
 /** One here-document: where it opens, what it feeds, as written. */
 export interface HereDoc {
@@ -23,6 +23,8 @@ export interface HereDoc {
   line: number;
   /** The body and the end marker, as written: what the opening line carries. */
   raw: string;
+  /** Who reads the body, by the common reading of its line. */
+  receiver: StdinReceiver;
 }
 
 /** The here-documents of `text` that end with their marker, as sh's scan finds them. */
@@ -36,6 +38,7 @@ export function hereDocs(text: string): HereDoc[] {
       body: doc.strip ? body.replace(/^\t+/gm, '') : body,
       line: text.slice(0, doc.index).split('\n').length - 1,
       raw: text.slice(doc.bodyStart, doc.end).replace(/\r?\n$/, ''),
+      receiver: doc.receiver,
     };
   });
 }

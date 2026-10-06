@@ -12,6 +12,8 @@
 // killing a process) stay governed by the normal approval rules — the floor is
 // not a general safety net, it is the last-resort circuit breaker.
 
+import { SHELLS } from './shell-programs';
+
 const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:?\s*&\s*\}\s*;\s*:/;
 const MKFS = /\bmkfs(\.\w+)?\b/i;
 // [\s\S]*? (not [^\n]*) so a shell line-continuation between `dd ...\` and
@@ -79,6 +81,11 @@ export type InterpreterKind =
   | 'powershell'
   | 'expect';
 
+/** The shells of `SHELLS` that read sh's language (`-c LINE`, a script, their input). */
+const POSIX_SHELLS = new Set(
+  SHELLS.filter((shell) => !['cmd', 'powershell', 'pwsh', 'wsl', 'busybox'].includes(shell)),
+);
+
 /** Classifies a bare interpreter name (already basename'd) into the kind of
  * inline-eval flag it accepts, or `null` if it isn't a recognized
  * general-purpose interpreter at all. */
@@ -88,7 +95,7 @@ export function interpreterKind(name: string): InterpreterKind | null {
   if (/^perl[0-9.]*$/.test(name)) return 'perl';
   if (/^ruby[0-9.]*$/.test(name)) return 'ruby';
   if (/^php[0-9.]*$/.test(name)) return 'php';
-  if (['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash'].includes(name)) return 'shell';
+  if (POSIX_SHELLS.has(name)) return 'shell';
   if (name === 'powershell' || name === 'pwsh') return 'powershell';
   if (name === 'expect') return 'expect';
   return null;
@@ -2005,8 +2012,8 @@ export interface HereDocument {
   marker: string;
   /** A quoted marker: the body is taken as written, no substitution runs in it. */
   quotedMarker: boolean;
-  /** The program word of the command that holds the operator, as written. */
-  receiver: string;
+  /** Who reads the body (`stdinReceiver`): a shell, an interpreter, data, or not known. */
+  receiver: StdinReceiver;
   /** Where the body starts and ends (the end marker's line excluded). */
   bodyStart: number;
   bodyEnd: number;
@@ -2016,8 +2023,141 @@ export interface HereDocument {
 
 const HERE_DOC_MARKER = /^<<(-?)[ \t]*(\\?)(["']?)([A-Za-z_][\w.-]*)\3/;
 
-/** The shells a here-document's body is a script for (sh reads its commands). */
-const SHELL_RECEIVERS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash', 'fish', 'busybox']);
+/**
+ * Who reads what a command feeds on standard input (a here-document, a
+ * here-string, a redirected file): a shell (its commands), an interpreter
+ * (its source), a program that only reads data, or a program the reading
+ * cannot place (#635, review pass 6 of PR #683).
+ */
+export interface StdinReceiver {
+  kind: 'shell' | 'interpreter' | 'data' | 'doubt';
+  /** The program, as `commandUnits` names it; null when there is none to name. */
+  program: string | null;
+}
+
+/**
+ * Programs that read their input as data and run nothing from it: what a
+ * here-document fed to them holds is data only when one of them reads it,
+ * and nothing it is piped to runs it. Any other reader is judged.
+ */
+const DATA_CONSUMERS = new Set([
+  'cat',
+  'tee',
+  'dd',
+  'grep',
+  'egrep',
+  'fgrep',
+  'rg',
+  'sed',
+  'head',
+  'tail',
+  'wc',
+  'sort',
+  'uniq',
+  'tr',
+  'cut',
+  'paste',
+  'column',
+  'fold',
+  'fmt',
+  'nl',
+  'rev',
+  'tac',
+  'base64',
+  'xxd',
+  'od',
+  'hexdump',
+  'jq',
+  'yq',
+  'gzip',
+  'gunzip',
+  'bzip2',
+  'bunzip2',
+  'xz',
+  'unxz',
+  'zstd',
+  'md5sum',
+  'sha1sum',
+  'sha256sum',
+  'sha512sum',
+  'cksum',
+  'iconv',
+  'dos2unix',
+  'unix2dos',
+  'diff',
+  'cmp',
+  'comm',
+  'read',
+  'mapfile',
+  'readarray',
+  'true',
+  'set-content',
+  'out-file',
+  'add-content',
+  'out-null',
+]);
+
+/** Interpreters that read a program on their standard input, besides `interpreterKind`'s. */
+const STDIN_INTERPRETERS = new Set(['tsx', 'ts-node', 'deno', 'bun']);
+
+/** The text after the first pipe of a line's tail (`|`, never `||`), outside quotes. */
+function pipeTail(text: string): string | null {
+  let quote: string | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i] ?? '';
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '\\') i++;
+    else if (ch === '|' && text[i + 1] !== '|' && text[i - 1] !== '|') return text.slice(i + 1);
+    else if (';&\n'.includes(ch)) return null;
+  }
+  return null;
+}
+
+/** What kind of reader one program is. */
+function readerOf(program: string): StdinReceiver['kind'] | null {
+  if (program === 'iex' || program === 'invoke-expression') return 'shell';
+  if (SHELLS.includes(program) || POSIX_SHELLS.has(program)) return 'shell';
+  const kind = interpreterKind(program);
+  if (kind === 'shell' || kind === 'powershell') return 'shell';
+  if (kind !== null || STDIN_INTERPRETERS.has(program)) return 'interpreter';
+  return null;
+}
+
+/**
+ * Who reads what a command feeds on its standard input, by the common reading
+ * of its line (#635, review pass 6 of PR #683): `before` is the line up to the
+ * operator, `after` the rest of it. The reader is the program the operator's
+ * command runs once its wrappers are unwrapped (`sudo -u x sh`, `nohup bash`,
+ * `timeout 5 sh`, `do bash` all feed sh), or, when it is piped on, a shell or
+ * an interpreter the pipe reaches (`cat <<EOF | sh`). Data only when proven: a
+ * known data reader, piped to nothing that runs anything.
+ */
+export function stdinReceiver(before: string, after: string): StdinReceiver {
+  const doubt = (program: string | null): StdinReceiver => ({ kind: 'doubt', program });
+  // A process substitution hands the input to a command the line does not name here.
+  if (/[<>]\(/.test(before) || /[<>]\(/.test(after)) return doubt(null);
+  const tail = pipeTail(after);
+  const downstream = tail === null ? [] : commandUnits(tail, 0, 'sh');
+  for (const unit of downstream) {
+    const program = unit[0] ?? '';
+    const kind = readerOf(program);
+    if (kind !== null) return { kind, program };
+  }
+  const units = before.trim() === '' ? [] : commandUnits(before, 0, 'sh');
+  // A literal piped on (`@"…"@ | x`): its reader is the first program of the pipe.
+  const program = units[units.length - 1]?.[0] ?? downstream[0]?.[0] ?? '';
+  if (program === '' || isDecidedAtRunTime(program)) return doubt(program || null);
+  const kind = readerOf(program);
+  if (kind !== null) return { kind, program };
+  const piped = downstream.map((u) => u[0] ?? '');
+  if (DATA_CONSUMERS.has(program) && piped.every((p) => DATA_CONSUMERS.has(p)))
+    return { kind: 'data', program };
+  return doubt(program);
+}
 
 /** Command substitutions, which sh runs in an unquoted here-document's body. */
 const SUBSTITUTION = /\$\(([^()]*)\)|`([^`]*)`/g;
@@ -2093,7 +2233,9 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocument[]): ShellWor
   let doubleBracket = false;
   let letCommand = false;
   // Here-documents opened on the current line: their bodies start after it.
-  const pending: Array<Omit<HereDocument, 'bodyStart' | 'bodyEnd' | 'end'>> = [];
+  const pending: Array<
+    Omit<HereDocument, 'bodyStart' | 'bodyEnd' | 'end' | 'receiver'> & { before: string }
+  > = [];
   const endWord = (): void => {
     if (inWord) {
       if (!quoted && word === '[[') doubleBracket = true;
@@ -2163,14 +2305,18 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocument[]): ShellWor
     ) {
       const m = HERE_DOC_MARKER.exec(line.slice(at));
       if (m !== null && line[at + 2] !== '<') {
-        const head = words.find((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w.text));
         pending.push({
           index: at,
           length: m[0].length,
           strip: m[1] === '-',
           marker: m[4] ?? '',
           quotedMarker: m[2] === '\\' || m[3] !== '',
-          receiver: head?.text ?? (inWord ? word : ''),
+          // The command so far, as the shell will run it: its reader is
+          // read by the common reading (`stdinReceiver`), never its first word.
+          before: [
+            ...words.map((w) => (w.quoted ? `'${w.text}'` : w.text)),
+            ...(inWord ? [word] : []),
+          ].join(' '),
         });
       }
     }
@@ -2188,15 +2334,33 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocument[]): ShellWor
       // up to its end marker, outside the script's grammar.
       if (ch === '\n' && pending.length > 0) {
         let from = at + 1;
-        for (const op of pending) {
+        for (const { before, ...op } of pending) {
           const ends = bodyEnd(line, from, op.strip, op.marker);
           if (ends === null) break;
-          const doc: HereDocument = { ...op, bodyStart: from, ...ends };
+          const lineEnd = line.indexOf('\n', op.index);
+          const receiver = stdinReceiver(before, line.slice(op.index + op.length, lineEnd));
+          const doc: HereDocument = { ...op, receiver, bodyStart: from, ...ends };
           hereDocs?.push(doc);
           const body = line.slice(doc.bodyStart, doc.bodyEnd);
-          if (SHELL_RECEIVERS.has(interpreterBasename(op.receiver)))
-            segments.push(...scanLine(body, SH));
-          else if (!op.quotedMarker)
+          // A shell runs its lines, and so does a reader the reading cannot
+          // place: judged as commands, never taken for data unproven. An
+          // interpreter's body is its source (program-sources.ts).
+          if (receiver.kind === 'shell' || receiver.kind === 'doubt') {
+            if (receiver.program === 'cmd')
+              segments.push(...cmdCommands(body).map(windowsArguments));
+            else
+              segments.push(
+                ...scanLine(
+                  body,
+                  ['powershell', 'pwsh', 'iex', 'invoke-expression'].includes(
+                    receiver.program ?? '',
+                  )
+                    ? POWERSHELL
+                    : SH,
+                ),
+              );
+          }
+          if (!op.quotedMarker)
             for (const m of body.matchAll(SUBSTITUTION))
               segments.push(...scanLine(m[1] ?? m[2] ?? '', SH));
           from = doc.end;

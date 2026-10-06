@@ -808,3 +808,25 @@ describe('review pass 3 of #683: no line dropped, and the hard floor reads the c
     );
   });
 });
+
+// Review pass 6 of #683: a body piped to a shell is the shell's commands.
+describe('review pass 6 of #683: the reader of a here-document @cap:executer-une-commande/moteur', () => {
+  const NL = String.fromCharCode(10);
+  it('a body piped to sh, or fed to sudo -u x sh, is judged as commands', async () => {
+    await put('p6/pipe.sh', ["cat <<'EOF' | sh", 'rm -rf build', 'EOF', ''].join(NL));
+    await put(
+      'p6/sudo.sh',
+      ['sudo -u builder sh <<EOF', 'pip install openpyxl', 'EOF', ''].join(NL),
+    );
+    for (const [command, kind] of [
+      ['sh p6/pipe.sh', 'delete_files'],
+      ['sh p6/sudo.sh', 'install_software'],
+    ] as const) {
+      const reasons = (await asked(command)) as Array<{ category: string }>;
+      expect(
+        reasons.map((r) => r.category),
+        command,
+      ).toContain(kind);
+    }
+  });
+});

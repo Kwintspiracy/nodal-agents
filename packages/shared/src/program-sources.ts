@@ -46,7 +46,8 @@
 
 import { hereDocs } from './here-docs';
 import {
-  splitShellWords,
+  stdinReceiver,
+  type StdinReceiver,
   changeDirOf,
   commandUnitsAsWritten,
   interpreterKind,
@@ -365,25 +366,17 @@ export function programSources(
 }
 
 /**
- * The program a line feeds its standard input to: the last command of the
- * text before the redirection (`python -` in `python - <<EOF`), or null.
+ * The language a program reads its standard input in (`stdinReceiver`, the
+ * common reading): a shell's commands, an interpreter's source, and commands
+ * when the reader is not known (over-ask, never under-report). Data: null.
  */
-function receivingProgram(before: string): string | null {
-  const segments = splitShellWords(before);
-  const words = segments[segments.length - 1] ?? [];
-  // Past variables set for it and `sudo`/`env`; `cmd` itself is a receiver.
-  const program = words.find(
-    (w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) && !/^(sudo|env)$/i.test(w) && !w.startsWith('-'),
-  );
-  if (program === undefined) return null;
-  return (program.split(/[\\/]/).pop() ?? program).replace(/\.(exe|com)$/i, '').toLowerCase();
-}
-
-/** The language a program reads its standard input in: a shell, cmd or an interpreter. */
-function stdinLanguage(program: string | null): SourceLanguage | null {
-  if (program === null) return null;
+function fedLanguage(receiver: StdinReceiver): SourceLanguage | null {
+  if (receiver.kind === 'data') return null;
+  if (receiver.kind === 'doubt') return 'shell';
+  const program = receiver.program ?? '';
   if (program === 'cmd') return 'cmd';
-  if (program === 'iex' || program === 'invoke-expression') return 'powershell';
+  if (['powershell', 'pwsh', 'iex', 'invoke-expression'].includes(program)) return 'powershell';
+  if (receiver.kind === 'shell') return 'shell';
   return interpreterLanguage(program);
 }
 
@@ -398,21 +391,23 @@ function stdinLanguage(program: string | null): SourceLanguage | null {
 function fedSources(cmd: string, after: number): ProgramSource[] {
   const out: ProgramSource[] = [];
   for (const doc of hereDocs(cmd)) {
-    const language = stdinLanguage(receivingProgram(doc.before));
+    const language = fedLanguage(doc.receiver);
     if (language !== null)
       out.push({ kind: 'code', code: doc.body, language, after, line: doc.line + 2 });
   }
   const lines = cmd.split('\n');
   lines.forEach((line, i) => {
     for (const m of line.matchAll(/(?<!<)<<<\s*(?:"([^"]*)"|'([^']*)'|(\S+))/g)) {
-      const language = stdinLanguage(receivingProgram(line.slice(0, m.index ?? 0)));
+      const at = m.index ?? 0;
+      const language = fedLanguage(stdinReceiver(line.slice(0, at), line.slice(at + m[0].length)));
       if (language !== null)
         out.push({ kind: 'code', code: m[1] ?? m[2] ?? m[3] ?? '', language, after, line: i + 1 });
     }
     for (const m of line.matchAll(
       /(?<![<\d&])<(?![<&])\s*(?:"([^"]*)"|'([^']*)'|([^\s;&|<>()]+))/g,
     )) {
-      const language = stdinLanguage(receivingProgram(line.slice(0, m.index ?? 0)));
+      const at = m.index ?? 0;
+      const language = fedLanguage(stdinReceiver(line.slice(0, at), line.slice(at + m[0].length)));
       const path = m[1] ?? m[2] ?? m[3] ?? '';
       if (language !== null)
         out.push({
@@ -426,8 +421,9 @@ function fedSources(cmd: string, after: number): ProgramSource[] {
     }
   });
   for (const m of cmd.matchAll(/@(["'])[ \t]*\r?\n([\s\S]*?)\r?\n\1@([^\n]*)/g)) {
-    const piped = /^\s*\|\s*(?:&\s*)?(\S+)/.exec(m[3] ?? '');
-    const language = stdinLanguage(piped ? receivingProgram(piped[1] ?? '') : null);
+    // A here-string is fed only when it is piped on (`@"…"@ | powershell -`).
+    const piped = /^\s*\|/.test(m[3] ?? '');
+    const language = piped ? fedLanguage(stdinReceiver('', m[3] ?? '')) : null;
     if (language !== null) {
       const line = cmd.slice(0, m.index ?? 0).split('\n').length + 1;
       out.push({ kind: 'code', code: m[2] ?? '', language, after, line });

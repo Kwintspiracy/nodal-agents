@@ -5,6 +5,9 @@ import { describe, it, expect } from 'vitest';
 import {
   languageOfPath,
   hereDocs,
+  stdinReceiver,
+  SHELLS,
+  SHELL_PROGRAMS,
   isDestructiveOrHeavyCommand,
   computeApprovalImpactLine,
   languageOfShebang,
@@ -461,5 +464,86 @@ describe('a here-document body is no script grammar (review pass 5 of #683) @cap
 
   it('an unterminated body stays read as lines', () => {
     expect(posix(`cat <<EOF${NL}rm -rf build`)).toEqual(['delete_files']);
+  });
+});
+
+// Review pass 6 of #683: who reads a here-document is found by the common
+// reading of its line, and a body is data only when that is proven.
+describe('the reader of what a command feeds on its input (review pass 6 of #683) @cap:executer-une-commande/moteur', () => {
+  const NL = String.fromCharCode(10);
+  const posix = (cmd: string): string[] => staticShellCategories(cmd, 'posix').sort();
+  const body = (opening: string, closing = ''): string =>
+    [opening, 'rm -rf build', 'EOF', ...(closing === '' ? [] : [closing])].join(NL);
+
+  it('a shell reached through a pipe or a wrapper runs the body', () => {
+    for (const [opening, closing] of [
+      ["cat <<'EOF' | sh", ''],
+      ['cat <<EOF | bash -s', ''],
+      ['nohup bash <<EOF', ''],
+      ['command sh <<EOF', ''],
+      ['exec sh <<EOF', ''],
+      ['time sh <<EOF', ''],
+      ['timeout 5 sh <<EOF', ''],
+      ['sudo -u builder sh <<EOF', ''],
+      ['for f in *; do bash <<EOF', 'done'],
+      ['if bash <<EOF', 'then :; fi'],
+      ['csh <<EOF', ''],
+      ['tcsh <<EOF', ''],
+    ] as const) {
+      expect(posix(body(opening, closing)), opening).toContain('delete_files');
+    }
+  });
+
+  it('an interpreter reached through a pipe reads the body as its source', () => {
+    const text = ["cat <<'EOF' | python3 -", 'import os', 'os.system("pip install x")', 'EOF'].join(
+      NL,
+    );
+    expect(
+      programSources(text, { direct: true, host: 'posix' }).sources.flatMap((s) =>
+        s.kind === 'code' ? [s.language] : [],
+      ),
+    ).toEqual(['python']);
+  });
+
+  it('a body is data only when a known data reader reads it, piped to nothing that runs', () => {
+    expect(posix(body("cat <<'EOF' > notes.txt"))).toEqual([]);
+    expect(posix(body("cat <<'EOF' | grep build"))).toEqual([]);
+    expect(posix(body("tee notes.txt <<'EOF'"))).toEqual([]);
+    // A reader the reading cannot place: judged as commands.
+    expect(posix(body("myprog <<'EOF'"))).toContain('delete_files');
+    expect(posix(body("$RUNNER <<'EOF'"))).toContain('delete_files');
+    expect(posix(body("cat <<'EOF' | myprog"))).toContain('delete_files');
+  });
+
+  it('an interpreter behind a wrapper reads the body as its source', () => {
+    const text = [
+      "sudo -u builder python3 - <<'EOF'",
+      'subprocess.check_call([sys.executable, "-m", "pip", "install", "x"])',
+      'EOF',
+    ].join(NL);
+    expect(
+      programSources(text, { direct: true, host: 'posix' }).sources.flatMap((s) =>
+        s.kind === 'code' ? [s.language] : [],
+      ),
+    ).toEqual(['python']);
+  });
+
+  it('csh and tcsh are shells everywhere: what they are fed and their -c line', () => {
+    for (const shell of ['csh', 'tcsh']) {
+      expect(stdinReceiver(`${shell} `, '').kind, shell).toBe('shell');
+      expect(staticShellCategories(`${shell} -c "rm -rf build"`, 'posix').sort(), shell).toEqual([
+        'delete_files',
+        'inline_code',
+      ]);
+    }
+  });
+
+  it('no shell is missing from the readers: every shell runs what it is fed', () => {
+    for (const shell of SHELLS) {
+      expect(stdinReceiver(`${shell} `, '').kind, shell).toBe('shell');
+    }
+    for (const program of SHELL_PROGRAMS) {
+      expect(stdinReceiver(`${program} `, '').kind, program).not.toBe('data');
+    }
   });
 });

@@ -206,9 +206,12 @@ list. Code written into the line (`python -c`, `node -e`) is read the same way.
 - What a line feeds a shell or an interpreter on its standard input is its
   source too: a here-document (`bash <<EOF`, `python - <<'PY'`), a
   here-string (`bash <<< "…"`, `@"…"@ | powershell -`), a file
-  (`cmd < setup.txt`). Fed to any other program (`cat <<eof` writing a file), it
-  is data, as sh reads it, but for the substitutions sh runs in it when its
-  marker is not quoted (`$(…)`). A cmd `if` is read without brackets too:
+  (`cmd < setup.txt`). The reader is found
+  through wrappers and pipes (`sudo -u x sh <<eof`, `cat <<eof | sh`). The body
+  is data only when a data reader (`cat`, `grep`, `tee`…) reads it and nothing
+  it is piped to runs it; then only the substitutions sh runs in it count
+  (`$(…)`, unless its marker is quoted). Any reader Nodal cannot place gets
+  its body read as shell lines. A cmd `if` is read without brackets too:
   `if exist x pip install y`.
 
 - The hard floor reads that code too, when it can be read: `reboot` or
