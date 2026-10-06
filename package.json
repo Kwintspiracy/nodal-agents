@@ -7,10 +7,10 @@
   "scripts": {
     "build": "turbo build",
     "dev": "turbo dev",
-    "lint": "turbo lint",
-    "test": "turbo test",
+    "lint": "turbo lint --continue=dependencies-successful",
+    "test": "turbo test --continue=dependencies-successful",
     "test:scripts": "vitest run scripts/tests",
-    "typecheck": "turbo typecheck",
+    "typecheck": "turbo typecheck --continue=dependencies-successful",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "deps:check": "depcruise --config .dependency-cruiser.cjs apps packages",

@@ -34,12 +34,8 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  registerTestCluster,
-  resolvePgCtlFrom,
-  withPostgresClusterStart,
-} from '@nodal-agents/test-kit';
-import { startEmbeddedPostgres, type PostgresHandle } from '../lib/postgres.ts';
+import { registerTestCluster, withPostgresClusterStart } from '@nodal-agents/test-kit';
+import { resolvePgCtl, startEmbeddedPostgres, type PostgresHandle } from '../lib/postgres.ts';
 import { findFreePort } from '../lib/ports.ts';
 
 export interface EmbeddedPostgresProbe {
@@ -72,7 +68,7 @@ async function probe(): Promise<EmbeddedPostgresProbe> {
       registerTestCluster({
         dataDir,
         port,
-        pgCtl: await resolvePgCtlFrom(join(process.cwd(), 'package.json')),
+        pgCtl: await resolvePgCtl(),
       });
       return started;
     });
