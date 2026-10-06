@@ -367,11 +367,9 @@ async function readRunCode(
         reader: lineReader,
         fromStrings: reading.fromStrings,
       });
-      // With the here-documents the line opens: the program it feeds reads
-      // them as its source.
       await readRunCode(
         call,
-        c.fed === undefined ? c.command : `${c.command}\n${c.fed}`,
+        c.command,
         at,
         reading.fromStrings,
         depth + 1,

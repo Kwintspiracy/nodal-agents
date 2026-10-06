@@ -444,12 +444,6 @@ export interface SourceCommand {
   line: number;
   /** The command, as the checklist judges it. */
   command: string;
-  /**
-   * The here-documents the line opens, body and end marker as written: what
-   * it feeds a program, read as that program's source (review of #683). The
-   * body's lines are commands of the script too, judged on their own.
-   */
-  fed?: string;
 }
 
 export interface SourceReading {
@@ -473,16 +467,25 @@ const MAX_ARGUMENT_WORDS = 16;
 /** Read `text`, written in `language`, for the commands it runs. */
 export function readSource(text: string, language: SourceLanguage): SourceReading {
   if (language === 'shell' || language === 'cmd' || language === 'powershell') {
-    // A here-document is carried by the line that opens it (`fed`), for the
-    // program it feeds; its body's lines stay commands of the script, judged
-    // like the others (review pass 4 of #683: nothing is taken away).
-    const commands = shellLines(text, language);
+    // A here-document belongs to the line that opens it: that command is
+    // read with its body, as sh reads it (its body runs as commands when it
+    // feeds a shell, is the source of the interpreter it feeds, and is data
+    // to anything else but for its substitutions). Its lines are no commands
+    // of the script of their own (review pass 5 of #683).
+    let commands = shellLines(text, language);
     if (language === 'shell') {
+      const original = text.split('\n');
+      const inBody = new Set<number>();
       for (const doc of hereDocs(text)) {
         const carrier = commands.find((c) => c.line === doc.line + 1);
-        if (carrier !== undefined)
-          carrier.fed = carrier.fed === undefined ? doc.raw : `${carrier.fed}\n${doc.raw}`;
+        if (carrier === undefined) continue;
+        const lines = doc.raw.split('\n').length;
+        for (let k = 1; k <= lines; k++) inBody.add(doc.line + 1 + k);
+        if (!carrier.command.includes('\n'))
+          carrier.command = (original[doc.line] ?? '').replace(/\r$/, '').trim();
+        carrier.command += `\n${doc.raw}`;
       }
+      commands = commands.filter((c) => !inBody.has(c.line));
     }
     return {
       commands,

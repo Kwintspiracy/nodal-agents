@@ -207,8 +207,8 @@ list. Code written into the line (`python -c`, `node -e`) is read the same way.
   source too: a here-document (`bash <<EOF`, `python - <<'PY'`), a
   here-string (`bash <<< "…"`, `@"…"@ | powershell -`), a file
   (`cmd < setup.txt`). Fed to any other program (`cat <<eof` writing a file), it
-  is no source. Either way its lines are still read like any other line, which
-  may ask once too often, never too rarely. A cmd `if` is read without brackets too:
+  is data, as sh reads it, but for the substitutions sh runs in it when its
+  marker is not quoted (`$(…)`). A cmd `if` is read without brackets too:
   `if exist x pip install y`.
 
 - The hard floor reads that code too, when it can be read: `reboot` or

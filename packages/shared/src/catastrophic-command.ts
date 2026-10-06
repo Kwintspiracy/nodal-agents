@@ -1787,7 +1787,10 @@ export function commandUnits(command: string, depth = 0, shell?: LineShell): str
   // backticks in sh (PowerShell's backtick is its escape, cmd has neither).
   if (shell !== 'cmd' && shell !== 'exec') {
     const substitution = shell === 'sh' ? /\$\(([^()]*)\)|`([^`]*)`/g : /\$\(([^()]*)\)/g;
-    for (const m of cmd.matchAll(substitution))
+    // A here-document's body is read by the scan (`scanLine`): its own
+    // substitutions run only when its marker is not quoted.
+    const text = shell === 'sh' ? withoutHereDocBodies(cmd) : cmd;
+    for (const m of text.matchAll(substitution))
       units.push(...commandUnits(m[1] ?? m[2] ?? '', depth + 1, shell));
   }
   for (const words of splitQuotedShellWords(cmd, shell))
@@ -1989,33 +1992,89 @@ function splitQuotedShellWords(cmd: string, shell: LineShell): ShellWord[][] {
   }
 }
 
-/** Where sh reads a here-document operator: `<<EOF`, `<<-EOF`, `<<'EOF'`, `<<"EOF"`. */
-export interface HereDocOperator {
+/**
+ * A here-document as sh reads it: the operator (`<<EOF`, `<<-EOF`, `<<'EOF'`,
+ * `<<"EOF"`, `<<\\EOF`), the program it feeds, and its body up to the end
+ * marker. Only one that ends with its marker is one.
+ */
+export interface HereDocument {
   index: number;
   length: number;
   /** `<<-`: leading tabs are stripped from the body and the end marker. */
   strip: boolean;
   marker: string;
+  /** A quoted marker: the body is taken as written, no substitution runs in it. */
+  quotedMarker: boolean;
+  /** The program word of the command that holds the operator, as written. */
+  receiver: string;
+  /** Where the body starts and ends (the end marker's line excluded). */
+  bodyStart: number;
+  bodyEnd: number;
+  /** Just past the end marker's line. */
+  end: number;
 }
 
-const HERE_DOC_MARKER = /^<<(-?)[ \t]*\\?(["']?)([A-Za-z_][\w.-]*)\2/;
+const HERE_DOC_MARKER = /^<<(-?)[ \t]*(\\?)(["']?)([A-Za-z_][\w.-]*)\3/;
+
+/** The shells a here-document's body is a script for (sh reads its commands). */
+const SHELL_RECEIVERS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash', 'fish', 'busybox']);
+
+/** Command substitutions, which sh runs in an unquoted here-document's body. */
+const SUBSTITUTION = /\$\(([^()]*)\)|`([^`]*)`/g;
 
 /**
- * The here-document operators of a text, as sh reads it (#635, review pass 4
- * of PR #683): the same scan as its commands, so a `<<` in quotes, in a
- * comment, in arithmetic (`$(( ))`, `(( ))`, `let`) or in `[[ ]]` opens none.
+ * The here-documents of a text, as sh reads it (#635, reviews 4 and 5 of PR
+ * #683): the same scan as its commands, so a `<<` in quotes, in a comment, in
+ * arithmetic (`$(( ))`, `(( ))`, `let`) or in `[[ ]]` opens none, and a body
+ * is data to the scan: a quote or a `$((` in it changes nothing after it.
  */
-export function hereDocOperators(text: string): HereDocOperator[] {
-  const found: HereDocOperator[] = [];
+export function hereDocuments(text: string): HereDocument[] {
+  const found: HereDocument[] = [];
   scanLine(text, SH, found);
   return found;
 }
 
+/** `text` with the body and end marker of each here-document blanked, lines kept. */
+function withoutHereDocBodies(text: string): string {
+  if (!text.includes('<<')) return text;
+  let out = text;
+  for (const doc of hereDocuments(text))
+    out =
+      out.slice(0, doc.bodyStart) +
+      out.slice(doc.bodyStart, doc.end).replace(/[^\n]/g, ' ') +
+      out.slice(doc.end);
+  return out;
+}
+
+/** Where a here-document's body ends: the end marker's line, from `from`; null when it never comes. */
+function bodyEnd(
+  text: string,
+  from: number,
+  strip: boolean,
+  marker: string,
+): { bodyEnd: number; end: number } | null {
+  let at = from;
+  while (at <= text.length) {
+    const nl = text.indexOf('\n', at);
+    const lineEnd = nl < 0 ? text.length : nl;
+    let l = text.slice(at, lineEnd).replace(/\r$/, '');
+    if (strip) l = l.replace(/^\t+/, '');
+    if (l === marker)
+      return { bodyEnd: Math.max(from, at - 1), end: nl < 0 ? text.length : nl + 1 };
+    if (nl < 0) return null;
+    at = nl + 1;
+  }
+  return null;
+}
+
 /**
  * Read a line with the grammar of sh or PowerShell, words and commands in one
- * pass. With `hereDocs`, sh's here-document operators are reported there.
+ * pass. In sh, a here-document's body is not script grammar: its lines are
+ * read as the commands of the shell it feeds, and, unless its marker is
+ * quoted, the substitutions in it run; to any other program it is data. With
+ * `hereDocs`, the here-documents met are reported there.
  */
-function scanLine(line: string, g: Grammar, hereDocs?: HereDocOperator[]): ShellWord[][] {
+function scanLine(line: string, g: Grammar, hereDocs?: HereDocument[]): ShellWord[][] {
   const segments: ShellWord[][] = [];
   let words: Array<{ text: string; quoted: boolean; start: number }> = [];
   let word = '';
@@ -2033,6 +2092,8 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocOperator[]): Shell
   let arithmetic = 0;
   let doubleBracket = false;
   let letCommand = false;
+  // Here-documents opened on the current line: their bodies start after it.
+  const pending: Array<Omit<HereDocument, 'bodyStart' | 'bodyEnd' | 'end'>> = [];
   const endWord = (): void => {
     if (inWord) {
       if (!quoted && word === '[[') doubleBracket = true;
@@ -2093,7 +2154,7 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocOperator[]): Shell
       else if (arithmetic > 0 && line.startsWith('))', at)) arithmetic -= 1;
     }
     if (
-      hereDocs !== undefined &&
+      g === SH &&
       ch === '<' &&
       line[at - 1] !== '<' &&
       arithmetic === 0 &&
@@ -2101,8 +2162,17 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocOperator[]): Shell
       !letCommand
     ) {
       const m = HERE_DOC_MARKER.exec(line.slice(at));
-      if (m !== null && line[at + 2] !== '<')
-        hereDocs.push({ index: at, length: m[0].length, strip: m[1] === '-', marker: m[3] ?? '' });
+      if (m !== null && line[at + 2] !== '<') {
+        const head = words.find((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w.text));
+        pending.push({
+          index: at,
+          length: m[0].length,
+          strip: m[1] === '-',
+          marker: m[4] ?? '',
+          quotedMarker: m[2] === '\\' || m[3] !== '',
+          receiver: head?.text ?? (inWord ? word : ''),
+        });
+      }
     }
     if (g.quotes.includes(ch)) {
       begin(at);
@@ -2114,6 +2184,27 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocOperator[]): Shell
       at += 1;
     } else if (g.separators.includes(ch)) {
       endCommand(at, ch);
+      // The line that opened here-documents ends: their bodies follow, each
+      // up to its end marker, outside the script's grammar.
+      if (ch === '\n' && pending.length > 0) {
+        let from = at + 1;
+        for (const op of pending) {
+          const ends = bodyEnd(line, from, op.strip, op.marker);
+          if (ends === null) break;
+          const doc: HereDocument = { ...op, bodyStart: from, ...ends };
+          hereDocs?.push(doc);
+          const body = line.slice(doc.bodyStart, doc.bodyEnd);
+          if (SHELL_RECEIVERS.has(interpreterBasename(op.receiver)))
+            segments.push(...scanLine(body, SH));
+          else if (!op.quotedMarker)
+            for (const m of body.matchAll(SUBSTITUTION))
+              segments.push(...scanLine(m[1] ?? m[2] ?? '', SH));
+          from = doc.end;
+        }
+        pending.length = 0;
+        at = from - 1;
+        continue;
+      }
       // PowerShell's call operator starts a command whose program follows it;
       // before a parenthesised expression, that program is decided at run time.
       if (g === POWERSHELL && ch === '&' && next !== '&') {

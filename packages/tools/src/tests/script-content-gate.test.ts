@@ -658,13 +658,9 @@ describe('cmd conditions and here-docs at the gate (#683) @cap:executer-une-comm
         '',
       ].join(NL),
     );
-    // The body fed to cat stays judged (over-asking is accepted); the one fed
-    // to python is read as Python, which only Python finds an install in.
+    // The body fed to cat is data, as sh reads it; the one fed to python is
+    // read as Python, which only Python finds an install in.
     expect(await asked('sh hd/run.sh')).toEqual([
-      expect.objectContaining({
-        category: 'delete_files',
-        found: [{ source: 'hd/run.sh', line: 3, text: 'rm -rf build' }],
-      }),
       expect.objectContaining({
         category: 'install_software',
         found: [
@@ -714,6 +710,28 @@ describe('review pass 3 of #683: no line dropped, and the hard floor reads the c
     system_settings: 'allow',
     open_or_send: 'allow',
   } as ShellPolicy;
+
+  // Passe 5 : le corps d'un here-doc n'est pas de la grammaire de script.
+  it('pass 5: an apostrophe in a body does not hide the next here-document', async () => {
+    await put(
+      'p5/run.sh',
+      [
+        'cat <<END > notes.txt',
+        "Don't panic",
+        'END',
+        "python3 - <<'PY'",
+        'subprocess.check_call([sys.executable, "-m", "pip", "install", "evil"])',
+        'PY',
+        '',
+      ].join(NL),
+    );
+    expect(await asked('sh p5/run.sh')).toEqual([
+      expect.objectContaining({
+        category: 'install_software',
+        found: [expect.objectContaining({ source: 'p5/run.sh', line: 5 })],
+      }),
+    ]);
+  });
 
   // Passe 4 : `#` après `)` est un commentaire pour sh, `(( ))` est de
   // l'arithmétique : aucun faux here-doc n'avale les lignes suivantes.

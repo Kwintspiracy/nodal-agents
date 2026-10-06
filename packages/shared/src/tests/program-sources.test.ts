@@ -355,12 +355,16 @@ describe('cmd conditions without brackets, and here-docs fed to a program (#683)
   // Review pass 4 of #683: nothing is taken away from what is judged. A body
   // fed to any other program is no source, and its lines stay commands too:
   // over-asking is accepted, under-reporting is not.
-  it('a here-doc fed to anything else is no source, and its lines stay judged', () => {
+  // Review pass 5 of #683: as sh reads it, a body fed to anything but a shell
+  // is data (but for the substitutions of an unquoted one).
+  it('a here-doc fed to anything else is data to sh, and no source', () => {
     expect(programSources(`cat <<EOF${NL}pip install x${NL}EOF`).sources).toEqual([]);
-    expect(kinds(`cat <<EOF > notes.txt${NL}rm -rf build${NL}pip install x${NL}EOF`)).toEqual([
-      'delete_files',
-      'install_software',
-    ]);
+    expect(
+      staticShellCategories(
+        `cat <<EOF > notes.txt${NL}rm -rf build${NL}pip install x${NL}EOF`,
+        'posix',
+      ),
+    ).toEqual([]);
     expect(
       staticShellCategories(`$s = @"${NL}Stop-Process -Name excel${NL}"@`, undefined, 'powershell'),
     ).toEqual([]);
@@ -408,5 +412,54 @@ describe('here-document operators as sh reads them (review pass 3 of #683) @cap:
     const text = ['cat <<END > notes.txt', 'pip install openpyxl', 'rm -rf build'].join(NL);
     expect(hereDocs(text)).toEqual([]);
     expect(kinds(text)).toEqual(['delete_files', 'install_software']);
+  });
+});
+
+// Review pass 5 of #683: a here-document's body is data to the scan of sh, so
+// a quote or a `$((` in it changes nothing after it; the shell it feeds runs
+// its lines, and an unquoted one runs its substitutions.
+describe('a here-document body is no script grammar (review pass 5 of #683) @cap:executer-une-commande/moteur', () => {
+  const NL = String.fromCharCode(10);
+  const posix = (cmd: string): string[] => staticShellCategories(cmd, 'posix').sort();
+  const python = (first: string): string =>
+    [
+      'cat <<END > notes.txt',
+      first,
+      'END',
+      "python3 - <<'PY'",
+      'subprocess.check_call([sys.executable, "-m", "pip", "install", "evil"])',
+      'PY',
+    ].join(NL);
+
+  it('an apostrophe, a quote or a $(( in a body leaves the next here-document whole', () => {
+    for (const first of ["Don't panic", 'say "hi', 'x = $((1 +']) {
+      const text = python(first);
+      expect(
+        hereDocs(text).map((d) => d.before.trim()),
+        first,
+      ).toEqual(['cat', 'python3 -']);
+      expect(
+        programSources(text, { direct: true, host: 'posix' }).sources.flatMap((x) =>
+          x.kind === 'code' ? [x.language] : [],
+        ),
+        first,
+      ).toEqual(['python']);
+    }
+  });
+
+  it('the substitutions of an unquoted body run; a quoted body is data', () => {
+    expect(posix(`cat <<EOF${NL}$(rm -rf build)${NL}EOF`)).toEqual(['delete_files']);
+    expect(posix(`cat <<EOF${NL}\`pip install x\`${NL}EOF`)).toEqual(['install_software']);
+    expect(posix(`cat <<'EOF'${NL}$(rm -rf build)${NL}EOF`)).toEqual([]);
+    expect(posix(`cat <<"EOF"${NL}$(rm -rf build)${NL}EOF`)).toEqual([]);
+  });
+
+  it('a body fed to a shell runs as its commands, quoted marker or not', () => {
+    expect(posix(`bash <<'EOF'${NL}rm -rf build${NL}EOF`)).toEqual(['delete_files']);
+    expect(posix(`sh <<EOF${NL}pip install x${NL}EOF`)).toEqual(['install_software']);
+  });
+
+  it('an unterminated body stays read as lines', () => {
+    expect(posix(`cat <<EOF${NL}rm -rf build`)).toEqual(['delete_files']);
   });
 });
