@@ -105,7 +105,7 @@ export class WorkspaceError extends Error {
  * Each workspace's path must be absolute (otherwise: workspace_invalid).
  */
 export function assertWorkspacesConfigured(
-  ctx: ToolContext,
+  ctx: Pick<ToolContext, 'workspaces'>,
 ): Array<{ label: string; path: string }> {
   const list = ctx.workspaces;
   if (!list || list.length === 0) {
@@ -158,7 +158,7 @@ export function assertWorkspacesConfigured(
  *      but realpath of the link target reveals the escape.
  */
 export async function resolveAndCheckPath(
-  ctx: ToolContext,
+  ctx: Pick<ToolContext, 'workspaces'>,
   requestedPath: string,
 ): Promise<string> {
   const workspaces = assertWorkspacesConfigured(ctx);
