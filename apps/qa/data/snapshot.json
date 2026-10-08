@@ -1,11 +1,11 @@
 {
-  "genereLe": "2026-10-07T10:54:44.712Z",
-  "tableauLe": "2026-10-07T10:54:44.712Z",
+  "genereLe": "2026-10-08T11:02:11.898Z",
+  "tableauLe": "2026-10-08T11:02:11.898Z",
   "execution": {
-    "id": "37606119624",
-    "url": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/37606119624"
+    "id": "37764293552",
+    "url": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/37764293552"
   },
-  "commit": "069b28dc",
+  "commit": "168014be",
   "branche": "main",
   "paquets": [
     {
@@ -731,11 +731,11 @@
         "casE2e": 0
       },
       "couverture": {
-        "instructions": 85.62,
-        "branches": 74.24,
+        "instructions": 85.59,
+        "branches": 74.22,
         "fonctions": 85.61,
-        "lignes": 88.16,
-        "lignesCouvertes": 4461,
+        "lignes": 88.12,
+        "lignesCouvertes": 4459,
         "lignesTotal": 5060,
         "fichiersMesures": 110
       },
@@ -777,11 +777,11 @@
         "casE2e": 0
       },
       "couverture": {
-        "instructions": 59.92,
-        "branches": 57.85,
+        "instructions": 59.98,
+        "branches": 57.95,
         "fonctions": 69.37,
-        "lignes": 60.83,
-        "lignesCouvertes": 904,
+        "lignes": 60.9,
+        "lignesCouvertes": 905,
         "lignesTotal": 1486,
         "fichiersMesures": 24
       },
@@ -801,11 +801,11 @@
     "paquetsMesures": 34,
     "paquetsExclus": 0,
     "paquetsSansMesure": 0,
-    "lignesCouvertes": 35471,
+    "lignesCouvertes": 35470,
     "lignesTotal": 43235,
     "couvertureLignes": 82.04,
     "capacites": 24,
-    "capacitesVerifiees": 20,
+    "capacitesVerifiees": 23,
     "capacitesSansMoteur": 0,
     "capacitesSansPreuve": 0,
     "testsEnMemoire": 12952,
@@ -4784,14 +4784,14 @@
         "exigee": true,
         "nonDit": [],
         "ecran": {
-          "etat": "instable",
+          "etat": "passee",
           "preuves": [
             {
               "capacite": "creer-agent",
               "niveau": "ecran",
               "origine": "apps/web/tests/e2e/smoke.spec.ts",
               "titre": "agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran creates an agent, sends a task, and shows the job in the list",
-              "sort": "instable"
+              "sort": "vert"
             },
             {
               "capacite": "creer-agent",
@@ -4870,14 +4870,14 @@
             }
           ]
         },
-        "phrase": "screen flaky · engine passed",
+        "phrase": "screen passed · engine passed",
         "preuves": [
           {
             "capacite": "creer-agent",
             "niveau": "ecran",
             "origine": "apps/web/tests/e2e/smoke.spec.ts",
             "titre": "agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran creates an agent, sends a task, and shows the job in the list",
-            "sort": "instable"
+            "sort": "vert"
           },
           {
             "capacite": "creer-agent",
@@ -10580,7 +10580,7 @@
         "exigee": true,
         "nonDit": [],
         "ecran": {
-          "etat": "instable",
+          "etat": "passee",
           "preuves": [
             {
               "capacite": "parler-a-un-agent",
@@ -10615,7 +10615,7 @@
               "niveau": "ecran",
               "origine": "apps/web/tests/e2e/smoke.spec.ts",
               "titre": "agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran creates an agent, sends a task, and shows the job in the list",
-              "sort": "instable"
+              "sort": "vert"
             },
             {
               "capacite": "parler-a-un-agent",
@@ -11856,7 +11856,7 @@
             }
           ]
         },
-        "phrase": "screen flaky · engine passed",
+        "phrase": "screen passed · engine passed",
         "preuves": [
           {
             "capacite": "parler-a-un-agent",
@@ -11891,7 +11891,7 @@
             "niveau": "ecran",
             "origine": "apps/web/tests/e2e/smoke.spec.ts",
             "titre": "agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran creates an agent, sends a task, and shows the job in the list",
-            "sort": "instable"
+            "sort": "vert"
           },
           {
             "capacite": "parler-a-un-agent",
@@ -14022,6 +14022,13 @@
             {
               "capacite": "suivre-execution",
               "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/scheduled/__tests__/scheduled-run-redirect.test.tsx",
+              "titre": "/scheduled/<id> @cap:suivre-execution/ecran redirige vers /runs/<id>, qui range le run dans SA section",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "ecran",
               "origine": "apps/web/src/app/(dashboard)/runs/__tests__/LiveRunStrip.test.tsx",
               "titre": "la bande du run en cours (#444) @cap:suivre-execution/ecran la bande dit le tour, ce qui s’écrit, le dernier morceau, et le budget face aux plafonds",
               "sort": "vert"
@@ -14486,13 +14493,6 @@
               "niveau": "ecran",
               "origine": "apps/web/src/app/(dashboard)/runs/__tests__/sections.test.tsx",
               "titre": "ReviewSection @cap:suivre-execution/ecran sans verdict, la ligne le dit — et n’est pas un bouton",
-              "sort": "vert"
-            },
-            {
-              "capacite": "suivre-execution",
-              "niveau": "ecran",
-              "origine": "apps/web/src/app/(dashboard)/scheduled/__tests__/scheduled-run-redirect.test.tsx",
-              "titre": "/scheduled/<id> @cap:suivre-execution/ecran redirige vers /runs/<id>, qui range le run dans SA section",
               "sort": "vert"
             },
             {
@@ -17496,6 +17496,13 @@
           {
             "capacite": "suivre-execution",
             "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/scheduled/__tests__/scheduled-run-redirect.test.tsx",
+            "titre": "/scheduled/<id> @cap:suivre-execution/ecran redirige vers /runs/<id>, qui range le run dans SA section",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "ecran",
             "origine": "apps/web/src/app/(dashboard)/runs/__tests__/LiveRunStrip.test.tsx",
             "titre": "la bande du run en cours (#444) @cap:suivre-execution/ecran la bande dit le tour, ce qui s’écrit, le dernier morceau, et le budget face aux plafonds",
             "sort": "vert"
@@ -17960,13 +17967,6 @@
             "niveau": "ecran",
             "origine": "apps/web/src/app/(dashboard)/runs/__tests__/sections.test.tsx",
             "titre": "ReviewSection @cap:suivre-execution/ecran sans verdict, la ligne le dit — et n’est pas un bouton",
-            "sort": "vert"
-          },
-          {
-            "capacite": "suivre-execution",
-            "niveau": "ecran",
-            "origine": "apps/web/src/app/(dashboard)/scheduled/__tests__/scheduled-run-redirect.test.tsx",
-            "titre": "/scheduled/<id> @cap:suivre-execution/ecran redirige vers /runs/<id>, qui range le run dans SA section",
             "sort": "vert"
           },
           {
@@ -44379,6 +44379,34 @@
             {
               "capacite": "travailler-sur-des-fichiers",
               "niveau": "moteur",
+              "origine": "apps/runner/src/tests/lib/root-prompt-volatile-blocks.test.ts",
+              "titre": "prompt d’un root sur l’espace partagé du 01/10 @cap:travailler-sur-des-fichiers/moteur Alfred (tableur, shell, voix) : le livrable d’hier n’est plus nommé, les moyens le restent",
+              "sort": "vert"
+            },
+            {
+              "capacite": "travailler-sur-des-fichiers",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/lib/root-prompt-volatile-blocks.test.ts",
+              "titre": "prompt d’un root sur l’espace partagé du 01/10 @cap:travailler-sur-des-fichiers/moteur un root sans shell (tableur seul) : ni `## Git`, ni rien qui le suppose",
+              "sort": "vert"
+            },
+            {
+              "capacite": "travailler-sur-des-fichiers",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/lib/workspace-git-binary.test.ts",
+              "titre": "la sonde git du workspace @cap:travailler-sur-des-fichiers/moteur un faux git POSÉ DANS LE WORKSPACE n’est pas celui qui répond",
+              "sort": "vert"
+            },
+            {
+              "capacite": "travailler-sur-des-fichiers",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/lib/workspace-git-binary.test.ts",
+              "titre": "la sonde git du workspace @cap:travailler-sur-des-fichiers/moteur « aucun git sur le PATH » fait DÉCLINER la sonde, jamais retomber sur le nom nu",
+              "sort": "vert"
+            },
+            {
+              "capacite": "travailler-sur-des-fichiers",
+              "niveau": "moteur",
               "origine": "apps/runner/src/tests/job/attach-invalide-cache.test.ts",
               "titre": "le cache du scan et les gestes du propriétaire @cap:travailler-sur-des-fichiers/moteur attacher PUIS masquer un dossier imbriqué prend effet tout de suite",
               "sort": "vert"
@@ -44430,34 +44458,6 @@
               "niveau": "moteur",
               "origine": "apps/runner/src/tests/job/resolve-speech.test.ts",
               "titre": "resolveSpeechGenerator @cap:travailler-sur-des-fichiers/moteur a key that cannot be decrypted is said as such, not as \"no key\"",
-              "sort": "vert"
-            },
-            {
-              "capacite": "travailler-sur-des-fichiers",
-              "niveau": "moteur",
-              "origine": "apps/runner/src/tests/lib/root-prompt-volatile-blocks.test.ts",
-              "titre": "prompt d’un root sur l’espace partagé du 01/10 @cap:travailler-sur-des-fichiers/moteur Alfred (tableur, shell, voix) : le livrable d’hier n’est plus nommé, les moyens le restent",
-              "sort": "vert"
-            },
-            {
-              "capacite": "travailler-sur-des-fichiers",
-              "niveau": "moteur",
-              "origine": "apps/runner/src/tests/lib/root-prompt-volatile-blocks.test.ts",
-              "titre": "prompt d’un root sur l’espace partagé du 01/10 @cap:travailler-sur-des-fichiers/moteur un root sans shell (tableur seul) : ni `## Git`, ni rien qui le suppose",
-              "sort": "vert"
-            },
-            {
-              "capacite": "travailler-sur-des-fichiers",
-              "niveau": "moteur",
-              "origine": "apps/runner/src/tests/lib/workspace-git-binary.test.ts",
-              "titre": "la sonde git du workspace @cap:travailler-sur-des-fichiers/moteur un faux git POSÉ DANS LE WORKSPACE n’est pas celui qui répond",
-              "sort": "vert"
-            },
-            {
-              "capacite": "travailler-sur-des-fichiers",
-              "niveau": "moteur",
-              "origine": "apps/runner/src/tests/lib/workspace-git-binary.test.ts",
-              "titre": "la sonde git du workspace @cap:travailler-sur-des-fichiers/moteur « aucun git sur le PATH » fait DÉCLINER la sonde, jamais retomber sur le nom nu",
               "sort": "vert"
             },
             {
@@ -46168,6 +46168,34 @@
           {
             "capacite": "travailler-sur-des-fichiers",
             "niveau": "moteur",
+            "origine": "apps/runner/src/tests/lib/root-prompt-volatile-blocks.test.ts",
+            "titre": "prompt d’un root sur l’espace partagé du 01/10 @cap:travailler-sur-des-fichiers/moteur Alfred (tableur, shell, voix) : le livrable d’hier n’est plus nommé, les moyens le restent",
+            "sort": "vert"
+          },
+          {
+            "capacite": "travailler-sur-des-fichiers",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/lib/root-prompt-volatile-blocks.test.ts",
+            "titre": "prompt d’un root sur l’espace partagé du 01/10 @cap:travailler-sur-des-fichiers/moteur un root sans shell (tableur seul) : ni `## Git`, ni rien qui le suppose",
+            "sort": "vert"
+          },
+          {
+            "capacite": "travailler-sur-des-fichiers",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/lib/workspace-git-binary.test.ts",
+            "titre": "la sonde git du workspace @cap:travailler-sur-des-fichiers/moteur un faux git POSÉ DANS LE WORKSPACE n’est pas celui qui répond",
+            "sort": "vert"
+          },
+          {
+            "capacite": "travailler-sur-des-fichiers",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/lib/workspace-git-binary.test.ts",
+            "titre": "la sonde git du workspace @cap:travailler-sur-des-fichiers/moteur « aucun git sur le PATH » fait DÉCLINER la sonde, jamais retomber sur le nom nu",
+            "sort": "vert"
+          },
+          {
+            "capacite": "travailler-sur-des-fichiers",
+            "niveau": "moteur",
             "origine": "apps/runner/src/tests/job/attach-invalide-cache.test.ts",
             "titre": "le cache du scan et les gestes du propriétaire @cap:travailler-sur-des-fichiers/moteur attacher PUIS masquer un dossier imbriqué prend effet tout de suite",
             "sort": "vert"
@@ -46219,34 +46247,6 @@
             "niveau": "moteur",
             "origine": "apps/runner/src/tests/job/resolve-speech.test.ts",
             "titre": "resolveSpeechGenerator @cap:travailler-sur-des-fichiers/moteur a key that cannot be decrypted is said as such, not as \"no key\"",
-            "sort": "vert"
-          },
-          {
-            "capacite": "travailler-sur-des-fichiers",
-            "niveau": "moteur",
-            "origine": "apps/runner/src/tests/lib/root-prompt-volatile-blocks.test.ts",
-            "titre": "prompt d’un root sur l’espace partagé du 01/10 @cap:travailler-sur-des-fichiers/moteur Alfred (tableur, shell, voix) : le livrable d’hier n’est plus nommé, les moyens le restent",
-            "sort": "vert"
-          },
-          {
-            "capacite": "travailler-sur-des-fichiers",
-            "niveau": "moteur",
-            "origine": "apps/runner/src/tests/lib/root-prompt-volatile-blocks.test.ts",
-            "titre": "prompt d’un root sur l’espace partagé du 01/10 @cap:travailler-sur-des-fichiers/moteur un root sans shell (tableur seul) : ni `## Git`, ni rien qui le suppose",
-            "sort": "vert"
-          },
-          {
-            "capacite": "travailler-sur-des-fichiers",
-            "niveau": "moteur",
-            "origine": "apps/runner/src/tests/lib/workspace-git-binary.test.ts",
-            "titre": "la sonde git du workspace @cap:travailler-sur-des-fichiers/moteur un faux git POSÉ DANS LE WORKSPACE n’est pas celui qui répond",
-            "sort": "vert"
-          },
-          {
-            "capacite": "travailler-sur-des-fichiers",
-            "niveau": "moteur",
-            "origine": "apps/runner/src/tests/lib/workspace-git-binary.test.ts",
-            "titre": "la sonde git du workspace @cap:travailler-sur-des-fichiers/moteur « aucun git sur le PATH » fait DÉCLINER la sonde, jamais retomber sur le nom nu",
             "sort": "vert"
           },
           {
@@ -48415,14 +48415,14 @@
         "exigee": true,
         "nonDit": [],
         "ecran": {
-          "etat": "instable",
+          "etat": "passee",
           "preuves": [
             {
               "capacite": "verifier-un-livrable",
               "niveau": "ecran",
               "origine": "apps/web/tests/e2e/code-verification.spec.ts",
               "titre": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran A — configurer puis approuver, hash écrit EN BASE",
-              "sort": "instable"
+              "sort": "vert"
             },
             {
               "capacite": "verifier-un-livrable",
@@ -50475,14 +50475,14 @@
             }
           ]
         },
-        "phrase": "screen flaky · engine passed",
+        "phrase": "screen passed · engine passed",
         "preuves": [
           {
             "capacite": "verifier-un-livrable",
             "niveau": "ecran",
             "origine": "apps/web/tests/e2e/code-verification.spec.ts",
             "titre": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran A — configurer puis approuver, hash écrit EN BASE",
-            "sort": "instable"
+            "sort": "vert"
           },
           {
             "capacite": "verifier-un-livrable",
@@ -53675,13 +53675,6 @@
             {
               "capacite": "voir-le-cout",
               "niveau": "moteur",
-              "origine": "apps/runner/src/tests/job/execute.test.ts",
-              "titre": "reliability guards #447: an agent over its daily budget stops before its next call, and says why @cap:voir-le-cout/moteur",
-              "sort": "vert"
-            },
-            {
-              "capacite": "voir-le-cout",
-              "niveau": "moteur",
               "origine": "apps/runner/src/tests/llm/call-sink.test.ts",
               "titre": "makeLlmCallSink @cap:voir-le-cout/moteur writes a full row: reported model wins, failover from chainIndex, provider cost kept",
               "sort": "vert"
@@ -53705,6 +53698,13 @@
               "niveau": "moteur",
               "origine": "apps/runner/src/tests/llm/call-sink.test.ts",
               "titre": "makeLlmCallSink @cap:voir-le-cout/moteur unknown-pricing estimate stays NULL, not a misleading 0",
+              "sort": "vert"
+            },
+            {
+              "capacite": "voir-le-cout",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/job/execute.test.ts",
+              "titre": "reliability guards #447: an agent over its daily budget stops before its next call, and says why @cap:voir-le-cout/moteur",
               "sort": "vert"
             },
             {
@@ -53973,13 +53973,6 @@
           {
             "capacite": "voir-le-cout",
             "niveau": "moteur",
-            "origine": "apps/runner/src/tests/job/execute.test.ts",
-            "titre": "reliability guards #447: an agent over its daily budget stops before its next call, and says why @cap:voir-le-cout/moteur",
-            "sort": "vert"
-          },
-          {
-            "capacite": "voir-le-cout",
-            "niveau": "moteur",
             "origine": "apps/runner/src/tests/llm/call-sink.test.ts",
             "titre": "makeLlmCallSink @cap:voir-le-cout/moteur writes a full row: reported model wins, failover from chainIndex, provider cost kept",
             "sort": "vert"
@@ -54003,6 +53996,13 @@
             "niveau": "moteur",
             "origine": "apps/runner/src/tests/llm/call-sink.test.ts",
             "titre": "makeLlmCallSink @cap:voir-le-cout/moteur unknown-pricing estimate stays NULL, not a misleading 0",
+            "sort": "vert"
+          },
+          {
+            "capacite": "voir-le-cout",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/job/execute.test.ts",
+            "titre": "reliability guards #447: an agent over its daily budget stops before its next call, and says why @cap:voir-le-cout/moteur",
             "sort": "vert"
           },
           {
@@ -55380,21 +55380,21 @@
         "cle": "apps/web/tests/e2e/code-verification.spec.ts::Proof commands — la page du projet @cap:verifier-un-livrable/ecran G — RIEN ne déborde du panneau, chemin long et commande longue comprises",
         "fichier": "apps/web/tests/e2e/code-verification.spec.ts",
         "titre": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran G — RIEN ne déborde du panneau, chemin long et commande longue comprises",
-        "tours": 21,
+        "tours": 22,
         "echecs": 11,
-        "recents": "rrrrrrrrrrrvvvvvvvvvv",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "rrrrrrrrrrrvvvvvvvvvvv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": "2026-09-28T22:59:49.803Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/36492421906",
-        "dureeMs": 2406,
+        "dureeMs": 2311,
         "verdict": "instable",
-        "tauxEchec": 52.4,
-        "fenetre": 21,
+        "tauxEchec": 50,
+        "fenetre": 22,
         "rouges": 11,
-        "verts": 10
+        "verts": 11
       },
       {
         "cle": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts::Connector scope disclosure Google Drive states it reaches the ENTIRE Drive",
@@ -55440,33 +55440,33 @@
         "cle": "apps/web/tests/e2e/autonomy-approvals.spec.ts::Approvals tab @cap:regler-autonomie/ecran Autonomy tab is visible in the agent editor",
         "fichier": "apps/web/tests/e2e/autonomy-approvals.spec.ts",
         "titre": "Approvals tab @cap:regler-autonomie/ecran Autonomy tab is visible in the agent editor",
-        "tours": 19,
+        "tours": 20,
         "echecs": 4,
-        "recents": "vvvvrrrrvvvvvvvvvvv",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "vvvvrrrrvvvvvvvvvvvv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": "2026-09-28T10:16:49.732Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": "2026-09-25T09:22:49.049Z",
         "repareLe": "2026-09-28T22:59:49.803Z",
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/36405503811",
-        "dureeMs": 1451,
+        "dureeMs": 1707,
         "verdict": "instable",
-        "tauxEchec": 21.1,
-        "fenetre": 19,
+        "tauxEchec": 20,
+        "fenetre": 20,
         "rouges": 4,
-        "verts": 15
+        "verts": 16
       },
       {
         "cle": "apps/web/tests/e2e/internal-tool-toggles.spec.ts::Built-in tools — per-tool controls return_result is shown but locked, with the reason",
         "fichier": "apps/web/tests/e2e/internal-tool-toggles.spec.ts",
         "titre": "Built-in tools — per-tool controls return_result is shown but locked, with the reason",
-        "tours": 41,
+        "tours": 42,
         "echecs": 5,
-        "recents": "vvvvvvvvvvvrvvvrrrrvvvvvvvvvvv",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "vvvvvvvvvvrvvvrrrrvvvvvvvvvvvv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": "2026-09-28T10:16:49.732Z",
         "rougeDepuis": null,
-        "dureeMs": 3915,
+        "dureeMs": 2937,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/36405503811",
         "dernierRougeDepuis": "2026-09-25T09:22:49.049Z",
         "repareLe": "2026-09-28T22:59:49.803Z",
@@ -55480,13 +55480,13 @@
         "cle": "apps/web/tests/e2e/internal-tool-toggles.spec.ts::Built-in tools — per-tool controls and can be handed back — the restriction is reversible",
         "fichier": "apps/web/tests/e2e/internal-tool-toggles.spec.ts",
         "titre": "Built-in tools — per-tool controls and can be handed back — the restriction is reversible",
-        "tours": 41,
+        "tours": 42,
         "echecs": 4,
-        "recents": "vvvvvvvvvvvvvvvrrrrvvvvvvvvvvv",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "vvvvvvvvvvvvvvrrrrvvvvvvvvvvvv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": "2026-09-28T10:16:49.732Z",
         "rougeDepuis": null,
-        "dureeMs": 7414,
+        "dureeMs": 4640,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/36405503811",
         "dernierRougeDepuis": "2026-09-25T09:22:49.049Z",
         "repareLe": "2026-09-28T22:59:49.803Z",
@@ -55500,13 +55500,13 @@
         "cle": "apps/web/tests/e2e/internal-tool-toggles.spec.ts::Built-in tools — per-tool controls blocking a built-in tool persists across a reload",
         "fichier": "apps/web/tests/e2e/internal-tool-toggles.spec.ts",
         "titre": "Built-in tools — per-tool controls blocking a built-in tool persists across a reload",
-        "tours": 41,
+        "tours": 42,
         "echecs": 4,
-        "recents": "vvvvvvvvvvvvvvvrrrrvvvvvvvvvvv",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "vvvvvvvvvvvvvvrrrrvvvvvvvvvvvv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": "2026-09-28T10:16:49.732Z",
         "rougeDepuis": null,
-        "dureeMs": 5957,
+        "dureeMs": 5768,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/36405503811",
         "dernierRougeDepuis": "2026-09-25T09:22:49.049Z",
         "repareLe": "2026-09-28T22:59:49.803Z",
@@ -55520,13 +55520,13 @@
         "cle": "apps/web/tests/e2e/internal-tool-toggles.spec.ts::Built-in tools — per-tool controls the section lists the built-in tools, always — no fixtures needed",
         "fichier": "apps/web/tests/e2e/internal-tool-toggles.spec.ts",
         "titre": "Built-in tools — per-tool controls the section lists the built-in tools, always — no fixtures needed",
-        "tours": 41,
+        "tours": 42,
         "echecs": 4,
-        "recents": "vvvvvvvvvvvvvvvrrrrvvvvvvvvvvv",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "vvvvvvvvvvvvvvrrrrvvvvvvvvvvvv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": "2026-09-28T10:16:49.732Z",
         "rougeDepuis": null,
-        "dureeMs": 3695,
+        "dureeMs": 2918,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/36405503811",
         "dernierRougeDepuis": "2026-09-25T09:22:49.049Z",
         "repareLe": "2026-09-28T22:59:49.803Z",
@@ -55540,21 +55540,21 @@
         "cle": "apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts::déplier un bloc du fil @cap:parler-a-un-agent/ecran C — déplier DEPUIS LE BAS ne fait pas filer la zone visible",
         "fichier": "apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
         "titre": "déplier un bloc du fil @cap:parler-a-un-agent/ecran C — déplier DEPUIS LE BAS ne fait pas filer la zone visible",
-        "tours": 25,
+        "tours": 26,
         "echecs": 3,
-        "recents": "frrrvvvvvvvvvvvvvvvvvvvvv",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "frrrvvvvvvvvvvvvvvvvvvvvvv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": "2026-09-19T08:26:53.733Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": "2026-09-18T20:38:47.430Z",
         "repareLe": "2026-09-20T08:57:57.372Z",
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35430921122",
-        "dureeMs": 2244,
+        "dureeMs": 1552,
         "verdict": "instable",
-        "tauxEchec": 12,
-        "fenetre": 25,
+        "tauxEchec": 11.5,
+        "fenetre": 26,
         "rouges": 3,
-        "verts": 21
+        "verts": 22
       },
       {
         "cle": "apps/web/tests/e2e/telegram-allowlist.spec.ts::A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke",
@@ -55577,16 +55577,16 @@
         "cle": "apps/qa/lib.test.mjs::le registre lui-même nomme la preuve attendue exactement là où le dépôt n’en a aucune",
         "fichier": "apps/qa/lib.test.mjs",
         "titre": "le registre lui-même nomme la preuve attendue exactement là où le dépôt n’en a aucune",
-        "tours": 36,
+        "tours": 37,
         "echecs": 2,
-        "recents": "vvvvrvvvvvvvvvvrvvvvvvvvvvvvvv",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "vvvrvvvvvvvvvvrvvvvvvvvvvvvvvv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": "2026-09-25T09:22:49.049Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": "2026-09-25T09:22:49.049Z",
         "repareLe": "2026-09-26T09:09:41.309Z",
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/36114942707",
-        "dureeMs": 269.04459099999997,
+        "dureeMs": 178.54112000000003,
         "verdict": "instable",
         "tauxEchec": 6.7,
         "fenetre": 30,
@@ -55597,53 +55597,53 @@
         "cle": "apps/runner/src/tests/cli-runtime/checkpoint-cli-runtime.test.ts::run-job : l’instantané AVANT binding.run (P11) un tour refusé par la BORNE nomme la taille du dossier et le geste @cap:executer-une-commande/moteur",
         "fichier": "apps/runner/src/tests/cli-runtime/checkpoint-cli-runtime.test.ts",
         "titre": "run-job : l’instantané AVANT binding.run (P11) un tour refusé par la BORNE nomme la taille du dossier et le geste @cap:executer-une-commande/moteur",
-        "tours": 21,
+        "tours": 22,
         "echecs": 1,
-        "recents": "vvvvvvvvvvvvvvvvvrvvv",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "vvvvvvvvvvvvvvvvvrvvvv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": "2026-10-04T10:16:42.954Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": "2026-10-04T10:16:42.954Z",
         "repareLe": "2026-10-05T11:00:45.828Z",
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/37193240621",
-        "dureeMs": 108.00193200000103,
+        "dureeMs": 46.56629299999986,
         "verdict": "instable",
-        "tauxEchec": 4.8,
-        "fenetre": 21,
+        "tauxEchec": 4.5,
+        "fenetre": 22,
         "rouges": 1,
-        "verts": 20
+        "verts": 21
       },
       {
         "cle": "apps/web/tests/e2e/agent-folder-pick-adds.spec.ts::Dossiers d’un agent @cap:travailler-sur-des-fichiers/ecran choisir un dossier dans Browse… l’ajoute ; un libellé pris se dit et se corrige",
         "fichier": "apps/web/tests/e2e/agent-folder-pick-adds.spec.ts",
         "titre": "Dossiers d’un agent @cap:travailler-sur-des-fichiers/ecran choisir un dossier dans Browse… l’ajoute ; un libellé pris se dit et se corrige",
-        "tours": 15,
+        "tours": 16,
         "echecs": 0,
-        "recents": "ffffvvvvvvvvvvv",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "ffffvvvvvvvvvvvv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": null,
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": null,
-        "dureeMs": 3726,
+        "dureeMs": 2973,
         "verdict": "instable",
         "tauxEchec": 0,
-        "fenetre": 15,
+        "fenetre": 16,
         "rouges": 0,
-        "verts": 11
+        "verts": 12
       },
       {
         "cle": "apps/web/tests/e2e/airtable-oauth.spec.ts::Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
         "fichier": "apps/web/tests/e2e/airtable-oauth.spec.ts",
         "titre": "Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
-        "tours": 41,
+        "tours": 42,
         "echecs": 5,
-        "recents": "vvvvvvvvvvvvvvvfvvvvvvvvvvvvvv",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "vvvvvvvvvvvvvvfvvvvvvvvvvvvvvv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": "2026-09-13T08:45:37.417Z",
         "rougeDepuis": null,
-        "dureeMs": 9761,
+        "dureeMs": 7873,
         "verdict": "instable",
         "tauxEchec": 0,
         "fenetre": 30,
@@ -55654,13 +55654,13 @@
         "cle": "apps/web/tests/e2e/brique31-flows.spec.ts::Test D — Skill edit flow navigate to skill edit page, modify content, save, toast Skill updated",
         "fichier": "apps/web/tests/e2e/brique31-flows.spec.ts",
         "titre": "Test D — Skill edit flow navigate to skill edit page, modify content, save, toast Skill updated",
-        "tours": 41,
+        "tours": 42,
         "echecs": 0,
-        "recents": "vvvvvvvfvvvvvvvvvvvvfvvvvvvfvv",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "vvvvvvfvvvvvvvvvvvvfvvvvvvfvvv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": null,
         "rougeDepuis": null,
-        "dureeMs": 15354,
+        "dureeMs": 16893,
         "verdict": "instable",
         "tauxEchec": 0,
         "fenetre": 30,
@@ -55671,56 +55671,56 @@
         "cle": "apps/web/tests/e2e/code-verification.spec.ts::Proof commands — la page du projet @cap:verifier-un-livrable/ecran A — configurer puis approuver, hash écrit EN BASE",
         "fichier": "apps/web/tests/e2e/code-verification.spec.ts",
         "titre": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran A — configurer puis approuver, hash écrit EN BASE",
-        "tours": 21,
+        "tours": 22,
         "echecs": 0,
-        "recents": "fffffffffffffffffffff",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "fffffffffffffffffffffv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": null,
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": null,
-        "dureeMs": 13918,
+        "dureeMs": 8939,
         "verdict": "instable",
         "tauxEchec": 0,
-        "fenetre": 21,
+        "fenetre": 22,
         "rouges": 0,
-        "verts": 0
+        "verts": 1
       },
       {
         "cle": "apps/web/tests/e2e/code-verification.spec.ts::Proof commands — la page du projet @cap:verifier-un-livrable/ecran F — /code mène à Projects : la liste a disparu, le panneau est sur le projet",
         "fichier": "apps/web/tests/e2e/code-verification.spec.ts",
         "titre": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran F — /code mène à Projects : la liste a disparu, le panneau est sur le projet",
-        "tours": 11,
+        "tours": 12,
         "echecs": 0,
-        "recents": "vfvvvvvvvvv",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "vfvvvvvvvvvv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": null,
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": null,
-        "dureeMs": 15001,
+        "dureeMs": 8440,
         "verdict": "instable",
         "tauxEchec": 0,
-        "fenetre": 11,
+        "fenetre": 12,
         "rouges": 0,
-        "verts": 10
+        "verts": 11
       },
       {
         "cle": "apps/web/tests/e2e/oauth-flow.spec.ts::Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status and toast",
         "fichier": "apps/web/tests/e2e/oauth-flow.spec.ts",
         "titre": "Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status and toast",
-        "tours": 36,
+        "tours": 37,
         "echecs": 3,
-        "recents": "vvvvvvvvvvvvvvvvvvvvvvvvfvvvvv",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "vvvvvvvvvvvvvvvvvvvvvvvfvvvvvv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": "2026-09-15T16:50:11.180Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": "2026-09-14T09:10:31.227Z",
         "repareLe": "2026-09-16T08:14:49.335Z",
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34995269564",
-        "dureeMs": 5042,
+        "dureeMs": 3709,
         "verdict": "instable",
         "tauxEchec": 0,
         "fenetre": 30,
@@ -55731,16 +55731,16 @@
         "cle": "apps/web/tests/e2e/smoke.spec.ts::agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran creates an agent, sends a task, and shows the job in the list",
         "fichier": "apps/web/tests/e2e/smoke.spec.ts",
         "titre": "agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran creates an agent, sends a task, and shows the job in the list",
-        "tours": 36,
+        "tours": 37,
         "echecs": 0,
-        "recents": "vvvvvvvvvvvvvvvvvvvvvvfvffvfff",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "vvvvvvvvvvvvvvvvvvvvvfvffvfffv",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": null,
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": null,
-        "dureeMs": 28715,
+        "dureeMs": 15076,
         "verdict": "instable",
         "tauxEchec": 0,
         "fenetre": 30,
@@ -56081,16 +56081,16 @@
         "cle": "apps/web/tests/e2e/user-menu.spec.ts::UserMenu — sign-out + re-login round-trip @cap:se-connecter/ecran shows email in sidebar, signs out, redirects to /login, re-logs in",
         "fichier": "apps/web/tests/e2e/user-menu.spec.ts",
         "titre": "UserMenu — sign-out + re-login round-trip @cap:se-connecter/ecran shows email in sidebar, signs out, redirects to /login, re-logs in",
-        "tours": 36,
+        "tours": 37,
         "echecs": 1,
-        "recents": "iiiiiiiriiiiiiiiiiiiiiiiiiiiii",
-        "dernierTourLe": "2026-10-07T10:54:44.712Z",
+        "recents": "iiiiiiriiiiiiiiiiiiiiiiiiiiiii",
+        "dernierTourLe": "2026-10-08T11:02:11.898Z",
         "dernierEchecLe": "2026-09-19T03:03:48.572Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35416459788",
-        "dureeMs": 4591,
+        "dureeMs": 3137,
         "verdict": "cassé",
         "tauxEchec": 100,
         "fenetre": 1,
@@ -56417,8 +56417,8 @@
     ],
     "dernierRun": {
       "run": {
-        "startedAt": "2026-10-07T10:45:04.597Z",
-        "gitSha": "069b28dc",
+        "startedAt": "2026-10-08T10:54:40.543Z",
+        "gitSha": "168014be",
         "sections": [
           {
             "sectionId": "architecture",
@@ -56495,7 +56495,7 @@
                 "detail": []
               }
             ],
-            "durationMs": 1203
+            "durationMs": 867
           },
           {
             "sectionId": "gate",
@@ -56553,7 +56553,7 @@
                 "direction": "exact"
               }
             ],
-            "durationMs": 26
+            "durationMs": 20
           },
           {
             "sectionId": "trust-boundary",
@@ -56596,7 +56596,7 @@
                 "direction": "lower-is-better"
               }
             ],
-            "durationMs": 1
+            "durationMs": 0
           },
           {
             "sectionId": "catalog",
@@ -56668,7 +56668,7 @@
                 ]
               }
             ],
-            "durationMs": 0
+            "durationMs": 1
           }
         ]
       },
@@ -57249,19 +57249,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 13527,
+        "dureeMs": 10551,
         "cas": [
           {
             "titre": "a run is one row, unfolded into its calls @cap:suivre-execution/ecran",
             "titreComplet": "a run is one row, unfolded into its calls @cap:suivre-execution/ecran",
             "sort": "vert",
-            "dureeMs": 4300
+            "dureeMs": 3632
           },
           {
             "titre": "the old Runs page has left the menu and /jobs lands on Activity @cap:suivre-execution/ecran",
             "titreComplet": "the old Runs page has left the menu and /jobs lands on Activity @cap:suivre-execution/ecran",
             "sort": "vert",
-            "dureeMs": 9227
+            "dureeMs": 6919
           }
         ]
       },
@@ -57280,13 +57280,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 13466,
+        "dureeMs": 11374,
         "cas": [
           {
             "titre": "shows what the agent spent, sets a ceiling, warns, then says the pause",
             "titreComplet": "Agent budget @cap:voir-le-cout/ecran shows what the agent spent, sets a ceiling, warns, then says the pause",
             "sort": "vert",
-            "dureeMs": 13466
+            "dureeMs": 11374
           }
         ]
       },
@@ -57305,13 +57305,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 3726,
+        "dureeMs": 2973,
         "cas": [
           {
             "titre": "choisir un dossier dans Browse… l’ajoute ; un libellé pris se dit et se corrige",
             "titreComplet": "Dossiers d’un agent @cap:travailler-sur-des-fichiers/ecran choisir un dossier dans Browse… l’ajoute ; un libellé pris se dit et se corrige",
             "sort": "vert",
-            "dureeMs": 3726
+            "dureeMs": 2973
           }
         ]
       },
@@ -57330,19 +57330,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 3698,
+        "dureeMs": 2840,
         "cas": [
           {
             "titre": "a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
             "titreComplet": "agent recipes @cap:configurer-agent/ecran a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
             "sort": "vert",
-            "dureeMs": 2314
+            "dureeMs": 1694
           },
           {
             "titre": "\"Customize a new agent\" is selected by default and Next opens the empty form",
             "titreComplet": "agent recipes @cap:configurer-agent/ecran \"Customize a new agent\" is selected by default and Next opens the empty form",
             "sort": "vert",
-            "dureeMs": 1384
+            "dureeMs": 1146
           }
         ]
       },
@@ -57361,31 +57361,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 11589,
+        "dureeMs": 9557,
         "cas": [
           {
             "titre": "Scenario A — Tools & Connectors section renders with the test connector",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario A — Tools & Connectors section renders with the test connector",
             "sort": "vert",
-            "dureeMs": 2266
+            "dureeMs": 1749
           },
           {
             "titre": "Scenario B — checking connector checkbox creates assignment row in DB",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario B — checking connector checkbox creates assignment row in DB",
             "sort": "vert",
-            "dureeMs": 2887
+            "dureeMs": 2351
           },
           {
             "titre": "Scenario C — unchecking connector removes assignment from DB",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario C — unchecking connector removes assignment from DB",
             "sort": "vert",
-            "dureeMs": 2524
+            "dureeMs": 2048
           },
           {
             "titre": "Scenario D — Enable all button keeps enabledOperations=null in DB",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario D — Enable all button keeps enabledOperations=null in DB",
             "sort": "vert",
-            "dureeMs": 3912
+            "dureeMs": 3409
           }
         ]
       },
@@ -57404,13 +57404,13 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 1040,
+        "dureeMs": 950,
         "cas": [
           {
             "titre": "render, dark mode, add-worker modal, keyboard drag round-trip",
             "titreComplet": "Agents page redesign @cap:organiser-equipe/ecran render, dark mode, add-worker modal, keyboard drag round-trip",
             "sort": "ignoré",
-            "dureeMs": 1040
+            "dureeMs": 950
           }
         ]
       },
@@ -57429,13 +57429,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 9761,
+        "dureeMs": 7873,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status",
             "titreComplet": "Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
             "sort": "vert",
-            "dureeMs": 9761
+            "dureeMs": 7873
           }
         ]
       },
@@ -57454,13 +57454,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4430,
+        "dureeMs": 3709,
         "cas": [
           {
             "titre": "marketplace card opens modal; connect with name + apiKey creates active instance",
             "titreComplet": "Apify api_key connector smoke test marketplace card opens modal; connect with name + apiKey creates active instance",
             "sort": "vert",
-            "dureeMs": 4430
+            "dureeMs": 3709
           }
         ]
       },
@@ -57479,25 +57479,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 12820,
+        "dureeMs": 10679,
         "cas": [
           {
             "titre": "shows warning when notify checked + bot-less agent; hides on uncheck",
             "titreComplet": "Scenario A — Garde-fou: Telegram notify warning for bot-less agent shows warning when notify checked + bot-less agent; hides on uncheck",
             "sort": "vert",
-            "dureeMs": 3277
+            "dureeMs": 2802
           },
           {
             "titre": "creates a schedule then clicks Run now and sees success toast",
             "titreComplet": "Scenario B — Run now button shows success toast creates a schedule then clicks Run now and sees success toast",
             "sort": "vert",
-            "dureeMs": 4623
+            "dureeMs": 3634
           },
           {
             "titre": "creates schedule, edits to check notify, re-opens edit form, notify is still checked",
             "titreComplet": "Scenario C — Notify persistence: checkbox survives edit + save creates schedule, edits to check notify, re-opens edit form, notify is still checked",
             "sort": "vert",
-            "dureeMs": 4920
+            "dureeMs": 4243
           }
         ]
       },
@@ -57516,31 +57516,31 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 6821,
+        "dureeMs": 6654,
         "cas": [
           {
             "titre": "find an existing agent to navigate to",
             "titreComplet": "Approvals tab @cap:regler-autonomie/ecran find an existing agent to navigate to",
             "sort": "vert",
-            "dureeMs": 1503
+            "dureeMs": 1217
           },
           {
             "titre": "Autonomy tab is visible in the agent editor",
             "titreComplet": "Approvals tab @cap:regler-autonomie/ecran Autonomy tab is visible in the agent editor",
             "sort": "vert",
-            "dureeMs": 1451
+            "dureeMs": 1707
           },
           {
             "titre": "Autonomy tab renders without errors (empty state or tool list)",
             "titreComplet": "Approvals tab @cap:regler-autonomie/ecran Autonomy tab renders without errors (empty state or tool list)",
             "sort": "vert",
-            "dureeMs": 2342
+            "dureeMs": 1861
           },
           {
             "titre": "3-way control is present and interactive when write tools exist",
             "titreComplet": "Approvals tab @cap:regler-autonomie/ecran 3-way control is present and interactive when write tools exist",
             "sort": "ignoré",
-            "dureeMs": 1525
+            "dureeMs": 1869
           }
         ]
       },
@@ -57559,37 +57559,37 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 24472,
+        "dureeMs": 23975,
         "cas": [
           {
             "titre": "navigate to /llm-providers, add a provider, test connection, save, row appears",
             "titreComplet": "Test A — LLM key add + test connection + save navigate to /llm-providers, add a provider, test connection, save, row appears",
             "sort": "vert",
-            "dureeMs": 2893
+            "dureeMs": 2651
           },
           {
             "titre": "change LLM provider dropdown on agent edit → model field updates → save → toast",
             "titreComplet": "Test B — Agent edit picks LLM provider @cap:choisir-modele/ecran change LLM provider dropdown on agent edit → model field updates → save → toast",
             "sort": "vert",
-            "dureeMs": 2835
+            "dureeMs": 2019
           },
           {
             "titre": "job row has chatId set + task is pristine when Telegram checkbox is ticked",
             "titreComplet": "Test C — Send-task with Telegram checkbox (Brique 31 acceptance) job row has chatId set + task is pristine when Telegram checkbox is ticked",
             "sort": "ignoré",
-            "dureeMs": 303
+            "dureeMs": 190
           },
           {
             "titre": "navigate to skill edit page, modify content, save, toast Skill updated",
             "titreComplet": "Test D — Skill edit flow navigate to skill edit page, modify content, save, toast Skill updated",
             "sort": "vert",
-            "dureeMs": 15354
+            "dureeMs": 16893
           },
           {
             "titre": "Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
             "titreComplet": "Test E — Skill delete with ConfirmDialog (invariant #10) Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
             "sort": "vert",
-            "dureeMs": 3087
+            "dureeMs": 2222
           }
         ]
       },
@@ -57608,19 +57608,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 10980,
+        "dureeMs": 7603,
         "cas": [
           {
             "titre": "a delegate's pending approval is answered from the conversation",
             "titreComplet": "approvals in the conversation @cap:approuver-une-action/ecran a delegate's pending approval is answered from the conversation",
             "sort": "vert",
-            "dureeMs": 8461
+            "dureeMs": 5605
           },
           {
             "titre": "confirming sets the kind of action to Never for that agent",
             "titreComplet": "Never for this agent, from the conversation @cap:regler-autonomie/ecran confirming sets the kind of action to Never for that agent",
             "sort": "vert",
-            "dureeMs": 2519
+            "dureeMs": 1998
           }
         ]
       },
@@ -57639,19 +57639,19 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 4218,
+        "dureeMs": 2988,
         "cas": [
           {
             "titre": "sur un fil existant",
             "titreComplet": "Saisie ancrée pendant une réponse @cap:parler-a-un-agent/ecran sur un fil existant",
             "sort": "ignoré",
-            "dureeMs": 2783
+            "dureeMs": 1954
           },
           {
             "titre": "sur une conversation neuve (l’écran où Quentin l’a vu)",
             "titreComplet": "Saisie ancrée pendant une réponse @cap:parler-a-un-agent/ecran sur une conversation neuve (l’écran où Quentin l’a vu)",
             "sort": "vert",
-            "dureeMs": 1435
+            "dureeMs": 1034
           }
         ]
       },
@@ -57670,13 +57670,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 2651,
+        "dureeMs": 1758,
         "cas": [
           {
             "titre": "la page rouverte montre ce qui est déjà écrit, et Stop arrête ce tour",
             "titreComplet": "revenir pendant la réponse @cap:parler-a-un-agent/ecran la page rouverte montre ce qui est déjà écrit, et Stop arrête ce tour",
             "sort": "vert",
-            "dureeMs": 2651
+            "dureeMs": 1758
           }
         ]
       },
@@ -57695,13 +57695,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 1825,
+        "dureeMs": 1158,
         "cas": [
           {
             "titre": "Envoyer devient Stop pendant la réponse, et Stop arrête CETTE conversation",
             "titreComplet": "Stop dans le chat @cap:parler-a-un-agent/ecran Envoyer devient Stop pendant la réponse, et Stop arrête CETTE conversation",
             "sort": "vert",
-            "dureeMs": 1825
+            "dureeMs": 1158
           }
         ]
       },
@@ -57716,53 +57716,53 @@
       "ciIllisible": false,
       "resultat": {
         "total": 7,
-        "vert": 5,
+        "vert": 6,
         "rouge": 0,
         "ignoré": 1,
-        "instable": 1,
-        "dureeMs": 43332,
+        "instable": 0,
+        "dureeMs": 30573,
         "cas": [
           {
             "titre": "A — configurer puis approuver, hash écrit EN BASE",
             "titreComplet": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran A — configurer puis approuver, hash écrit EN BASE",
-            "sort": "instable",
-            "dureeMs": 13918
+            "sort": "vert",
+            "dureeMs": 8939
           },
           {
             "titre": "B — éditer une commande approuvée retire l’approbation",
             "titreComplet": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran B — éditer une commande approuvée retire l’approbation",
             "sort": "vert",
-            "dureeMs": 4207
+            "dureeMs": 5534
           },
           {
             "titre": "C — le cap de cinq est visible : l’ajout disparaît",
             "titreComplet": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran C — le cap de cinq est visible : l’ajout disparaît",
             "sort": "vert",
-            "dureeMs": 2271
+            "dureeMs": 1388
           },
           {
             "titre": "D — non-owner : champs désactivés, pilule owner only, pas d’approbation",
             "titreComplet": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran D — non-owner : champs désactivés, pilule owner only, pas d’approbation",
             "sort": "ignoré",
-            "dureeMs": 1840
+            "dureeMs": 1054
           },
           {
             "titre": "E — un échec serveur ne ment pas",
             "titreComplet": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran E — un échec serveur ne ment pas",
             "sort": "vert",
-            "dureeMs": 3689
+            "dureeMs": 2907
           },
           {
             "titre": "G — RIEN ne déborde du panneau, chemin long et commande longue comprises",
             "titreComplet": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran G — RIEN ne déborde du panneau, chemin long et commande longue comprises",
             "sort": "vert",
-            "dureeMs": 2406
+            "dureeMs": 2311
           },
           {
             "titre": "F — /code mène à Projects : la liste a disparu, le panneau est sur le projet",
             "titreComplet": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran F — /code mène à Projects : la liste a disparu, le panneau est sur le projet",
             "sort": "vert",
-            "dureeMs": 15001
+            "dureeMs": 8440
           }
         ]
       },
@@ -57781,25 +57781,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 18006,
+        "dureeMs": 13389,
         "cas": [
           {
             "titre": "an owner names two commands, reads them back, then removes the list @cap:assigner-outils/ecran",
             "titreComplet": "an owner names two commands, reads them back, then removes the list @cap:assigner-outils/ecran",
             "sort": "vert",
-            "dureeMs": 10383
+            "dureeMs": 6887
           },
           {
             "titre": "\"Block all commands\" saves an empty list, which is not the same as no list",
             "titreComplet": "\"Block all commands\" saves an empty list, which is not the same as no list",
             "sort": "vert",
-            "dureeMs": 5600
+            "dureeMs": 4847
           },
           {
             "titre": "a shell on the list is refused, and the reason is shown next to the field",
             "titreComplet": "a shell on the list is refused, and the reason is shown next to the field",
             "sort": "vert",
-            "dureeMs": 2023
+            "dureeMs": 1655
           }
         ]
       },
@@ -57818,13 +57818,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 9068,
+        "dureeMs": 6406,
         "cas": [
           {
             "titre": "Run commands: three choices, Block reads back, and no rule lets the workspace decide @cap:executer-une-commande/ecran",
             "titreComplet": "Run commands: three choices, Block reads back, and no rule lets the workspace decide @cap:executer-une-commande/ecran",
             "sort": "vert",
-            "dureeMs": 9068
+            "dureeMs": 6406
           }
         ]
       },
@@ -57843,13 +57843,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 10655,
+        "dureeMs": 8615,
         "cas": [
           {
             "titre": "can create two instances of the same api_key connector and both appear in Active Connectors",
             "titreComplet": "Connector multi-instance can create two instances of the same api_key connector and both appear in Active Connectors",
             "sort": "vert",
-            "dureeMs": 10655
+            "dureeMs": 8615
           }
         ]
       },
@@ -57868,31 +57868,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 8223,
+        "dureeMs": 6948,
         "cas": [
           {
             "titre": "Google Drive states it reaches the ENTIRE Drive",
             "titreComplet": "Connector scope disclosure @cap:connecter-un-service/ecran Google Drive states it reaches the ENTIRE Drive",
             "sort": "vert",
-            "dureeMs": 1653
+            "dureeMs": 1338
           },
           {
             "titre": "Google Sheets and Docs disclose their reach too",
             "titreComplet": "Connector scope disclosure @cap:connecter-un-service/ecran Google Sheets and Docs disclose their reach too",
             "sort": "vert",
-            "dureeMs": 3286
+            "dureeMs": 2826
           },
           {
             "titre": "a connector whose reach matches its name shows NO disclosure",
             "titreComplet": "Connector scope disclosure @cap:connecter-un-service/ecran a connector whose reach matches its name shows NO disclosure",
             "sort": "vert",
-            "dureeMs": 1667
+            "dureeMs": 1372
           },
           {
             "titre": "la PREMIÈRE connexion est un chemin à part, et il est éprouvé",
             "titreComplet": "Connector scope disclosure @cap:connecter-un-service/ecran la PREMIÈRE connexion est un chemin à part, et il est éprouvé",
             "sort": "vert",
-            "dureeMs": 1617
+            "dureeMs": 1412
           }
         ]
       },
@@ -57911,13 +57911,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 9736,
+        "dureeMs": 8206,
         "cas": [
           {
             "titre": "connect Drive via wizard → reuse credential for Gmail via dropdown",
             "titreComplet": "Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
             "sort": "vert",
-            "dureeMs": 9736
+            "dureeMs": 8206
           }
         ]
       },
@@ -57936,19 +57936,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 2918,
+        "dureeMs": 1939,
         "cas": [
           {
             "titre": "a delegation that produced nothing shows its reason, never a promise",
             "titreComplet": "what the thread says when a delegation ends @cap:organiser-equipe/ecran a delegation that produced nothing shows its reason, never a promise",
             "sort": "vert",
-            "dureeMs": 1616
+            "dureeMs": 1060
           },
           {
             "titre": "a delegation that delivered puts the specialist’s own work in the thread",
             "titreComplet": "what the thread says when a delegation ends @cap:organiser-equipe/ecran a delegation that delivered puts the specialist’s own work in the thread",
             "sort": "vert",
-            "dureeMs": 1302
+            "dureeMs": 879
           }
         ]
       },
@@ -57967,25 +57967,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 1510,
+        "dureeMs": 1075,
         "cas": [
           {
             "titre": "dans une carte de 294 px, la méta est SOUS le nom",
             "titreComplet": "EdRow dans une grille étroite dans une carte de 294 px, la méta est SOUS le nom",
             "sort": "vert",
-            "dureeMs": 1185
+            "dureeMs": 812
           },
           {
             "titre": "dans 400 px, rien ne se recouvre",
             "titreComplet": "EdRow dans une grille étroite dans 400 px, rien ne se recouvre",
             "sort": "vert",
-            "dureeMs": 170
+            "dureeMs": 146
           },
           {
             "titre": "large, tout reste sur UNE ligne",
             "titreComplet": "EdRow dans une grille étroite large, tout reste sur UNE ligne",
             "sort": "vert",
-            "dureeMs": 155
+            "dureeMs": 117
           }
         ]
       },
@@ -58004,19 +58004,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4110,
+        "dureeMs": 3284,
         "cas": [
           {
             "titre": "wizard shows 4 Google API links and format hint",
             "titreComplet": "Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide/ecran wizard shows 4 Google API links and format hint",
             "sort": "vert",
-            "dureeMs": 2221
+            "dureeMs": 1706
           },
           {
             "titre": "\"Where do I get this?\" expander reveals console.apify.com link",
             "titreComplet": "Help guides — api_key connector (Apify) @cap:consulter-l-aide/ecran \"Where do I get this?\" expander reveals console.apify.com link",
             "sort": "vert",
-            "dureeMs": 1889
+            "dureeMs": 1578
           }
         ]
       },
@@ -58035,31 +58035,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 20981,
+        "dureeMs": 16263,
         "cas": [
           {
             "titre": "the section lists the built-in tools, always — no fixtures needed",
             "titreComplet": "Built-in tools — per-tool controls the section lists the built-in tools, always — no fixtures needed",
             "sort": "vert",
-            "dureeMs": 3695
+            "dureeMs": 2918
           },
           {
             "titre": "return_result is shown but locked, with the reason",
             "titreComplet": "Built-in tools — per-tool controls return_result is shown but locked, with the reason",
             "sort": "vert",
-            "dureeMs": 3915
+            "dureeMs": 2937
           },
           {
             "titre": "blocking a built-in tool persists across a reload",
             "titreComplet": "Built-in tools — per-tool controls blocking a built-in tool persists across a reload",
             "sort": "vert",
-            "dureeMs": 5957
+            "dureeMs": 5768
           },
           {
             "titre": "and can be handed back — the restriction is reversible",
             "titreComplet": "Built-in tools — per-tool controls and can be handed back — the restriction is reversible",
             "sort": "vert",
-            "dureeMs": 7414
+            "dureeMs": 4640
           }
         ]
       },
@@ -58078,31 +58078,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 6425,
+        "dureeMs": 5390,
         "cas": [
           {
             "titre": "renders the Learned Skills page at /learned-skills",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran renders the Learned Skills page at /learned-skills",
             "sort": "vert",
-            "dureeMs": 3254
+            "dureeMs": 2849
           },
           {
             "titre": "toggle switches the reflection_enabled flag (UI responds)",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran toggle switches the reflection_enabled flag (UI responds)",
             "sort": "vert",
-            "dureeMs": 1198
+            "dureeMs": 832
           },
           {
             "titre": "no window.confirm / window.alert / window.prompt is called (dialog uses ConfirmDialog)",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran no window.confirm / window.alert / window.prompt is called (dialog uses ConfirmDialog)",
             "sort": "vert",
-            "dureeMs": 639
+            "dureeMs": 565
           },
           {
             "titre": "assignment-mode control renders both options and is interactive",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran assignment-mode control renders both options and is interactive",
             "sort": "vert",
-            "dureeMs": 1334
+            "dureeMs": 1144
           }
         ]
       },
@@ -58121,19 +58121,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4866,
+        "dureeMs": 4064,
         "cas": [
           {
             "titre": "Scenario A — /mcp renders the connected Cogni Cortex server",
             "titreComplet": "MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
             "sort": "vert",
-            "dureeMs": 3478
+            "dureeMs": 2932
           },
           {
             "titre": "Scenario B — sidebar shows API Connectors and MCP Connectors",
             "titreComplet": "MCP Connectors page Scenario B — sidebar shows API Connectors and MCP Connectors",
             "sort": "vert",
-            "dureeMs": 1388
+            "dureeMs": 1132
           }
         ]
       },
@@ -58152,19 +58152,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 6428,
+        "dureeMs": 5067,
         "cas": [
           {
             "titre": "it is written, it survives a reload, and the search finds it again",
             "titreComplet": "a fact taught on the screen is kept @cap:se-souvenir/ecran it is written, it survives a reload, and the search finds it again",
             "sort": "vert",
-            "dureeMs": 4840
+            "dureeMs": 3742
           },
           {
             "titre": "archiving a fact takes it out of what the agent is given",
             "titreComplet": "a fact taught on the screen is kept @cap:se-souvenir/ecran archiving a fact takes it out of what the agent is given",
             "sort": "vert",
-            "dureeMs": 1588
+            "dureeMs": 1325
           }
         ]
       },
@@ -58183,31 +58183,31 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 12440,
+        "dureeMs": 10887,
         "cas": [
           {
             "titre": "create with explicit Telegram channel, persists across reload + edit",
             "titreComplet": "Scenario 1 — Schedule form: Notify via lists only the agent's real active channels create with explicit Telegram channel, persists across reload + edit",
             "sort": "ignoré",
-            "dureeMs": 3114
+            "dureeMs": 2626
           },
           {
             "titre": "create with notify ON, channel Auto, badge appears, then delete (never POST)",
             "titreComplet": "Scenario 2 — Webhook form: Notify via + Auto persists, badge on the row create with notify ON, channel Auto, badge appears, then delete (never POST)",
             "sort": "vert",
-            "dureeMs": 5181
+            "dureeMs": 4539
           },
           {
             "titre": "warns for a channel-less agent, clears when switching to a connected one",
             "titreComplet": "Scenario 3 — Agent switch: \"no channel connected\" warning for a channel-less agent warns for a channel-less agent, clears when switching to a connected one",
             "sort": "vert",
-            "dureeMs": 1912
+            "dureeMs": 1661
           },
           {
             "titre": "schedule form notify controls render correctly in both themes",
             "titreComplet": "Scenario 4 — Dark mode: notify controls stay theme-aware schedule form notify controls render correctly in both themes",
             "sort": "vert",
-            "dureeMs": 2233
+            "dureeMs": 2061
           }
         ]
       },
@@ -58226,13 +58226,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5301,
+        "dureeMs": 4674,
         "cas": [
           {
             "titre": "connect with api_key shows connected status and persists",
             "titreComplet": "Notion Internal Integration (api_key) — regression connect with api_key shows connected status and persists",
             "sort": "vert",
-            "dureeMs": 5301
+            "dureeMs": 4674
           }
         ]
       },
@@ -58251,13 +58251,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4765,
+        "dureeMs": 3835,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status (no Refresh button)",
             "titreComplet": "Notion OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status (no Refresh button)",
             "sort": "vert",
-            "dureeMs": 4765
+            "dureeMs": 3835
           }
         ]
       },
@@ -58276,13 +58276,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5042,
+        "dureeMs": 3709,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status and toast",
             "titreComplet": "Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status and toast",
             "sort": "vert",
-            "dureeMs": 5042
+            "dureeMs": 3709
           }
         ]
       },
@@ -58301,19 +58301,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 21644,
+        "dureeMs": 4833,
         "cas": [
           {
             "titre": "the workspace sets what a run may cost and how long it may work",
             "titreComplet": "Run budget @cap:suivre-execution/ecran the workspace sets what a run may cost and how long it may work",
             "sort": "vert",
-            "dureeMs": 10502
+            "dureeMs": 3008
           },
           {
             "titre": "an agent gets its own wait for the first word, and gives it back",
             "titreComplet": "Run budget @cap:suivre-execution/ecran an agent gets its own wait for the first word, and gives it back",
             "sort": "vert",
-            "dureeMs": 11142
+            "dureeMs": 1825
           }
         ]
       },
@@ -58332,19 +58332,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 8040,
+        "dureeMs": 5415,
         "cas": [
           {
             "titre": "is present with a default of 5 on the New schedule form",
             "titreComplet": "Daily budget field on ScheduleForm @cap:planifier-une-tache/ecran is present with a default of 5 on the New schedule form",
             "sort": "vert",
-            "dureeMs": 2729
+            "dureeMs": 1521
           },
           {
             "titre": "persists a custom value on create, and an edit updates it",
             "titreComplet": "Daily budget field on ScheduleForm @cap:planifier-une-tache/ecran persists a custom value on create, and an edit updates it",
             "sort": "vert",
-            "dureeMs": 5311
+            "dureeMs": 3894
           }
         ]
       },
@@ -58363,31 +58363,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 12435,
+        "dureeMs": 8388,
         "cas": [
           {
             "titre": "Network section renders with radio buttons and read-only URL fields",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran Network section renders with radio buttons and read-only URL fields",
             "sort": "vert",
-            "dureeMs": 2413
+            "dureeMs": 1615
           },
           {
             "titre": "clicking LAN radio shows LAN addresses or \"No LAN interface detected\"",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran clicking LAN radio shows LAN addresses or \"No LAN interface detected\"",
             "sort": "vert",
-            "dureeMs": 1472
+            "dureeMs": 967
           },
           {
             "titre": "re-saving the mode already in force reports no restart needed",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran re-saving the mode already in force reports no restart needed",
             "sort": "vert",
-            "dureeMs": 3032
+            "dureeMs": 2017
           },
           {
             "titre": "saving the other mode persists it, demands a restart, and is put back",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran saving the other mode persists it, demands a restart, and is put back",
             "sort": "vert",
-            "dureeMs": 5518
+            "dureeMs": 3789
           }
         ]
       },
@@ -58406,25 +58406,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5770,
+        "dureeMs": 4041,
         "cas": [
           {
             "titre": "la section rend ses quatre cases et la pilule owner only",
             "titreComplet": "Verification surfaces — /settings la section rend ses quatre cases et la pilule owner only",
             "sort": "vert",
-            "dureeMs": 1376
+            "dureeMs": 960
           },
           {
             "titre": "décocher demande confirmation, annuler laisse la case cochée",
             "titreComplet": "Verification surfaces — /settings décocher demande confirmation, annuler laisse la case cochée",
             "sort": "vert",
-            "dureeMs": 1879
+            "dureeMs": 1097
           },
           {
             "titre": "décocher puis recocher : le second geste n’ouvre aucun dialogue",
             "titreComplet": "Verification surfaces — /settings décocher puis recocher : le second geste n’ouvre aucun dialogue",
             "sort": "vert",
-            "dureeMs": 2515
+            "dureeMs": 1984
           }
         ]
       },
@@ -58443,13 +58443,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4240,
+        "dureeMs": 6796,
         "cas": [
           {
             "titre": "a new agent downloads and runs inline code without asking, and asks for the rest; \"Never\" for deleting is saved and read back",
             "titreComplet": "the shell checklist @cap:regler-autonomie/ecran a new agent downloads and runs inline code without asking, and asks for the rest; \"Never\" for deleting is saved and read back",
             "sort": "vert",
-            "dureeMs": 4240
+            "dureeMs": 6796
           }
         ]
       },
@@ -58464,65 +58464,65 @@
       "ciIllisible": false,
       "resultat": {
         "total": 9,
-        "vert": 8,
+        "vert": 9,
         "rouge": 0,
         "ignoré": 0,
-        "instable": 1,
-        "dureeMs": 56677,
+        "instable": 0,
+        "dureeMs": 48590,
         "cas": [
           {
             "titre": "the root page IS a new conversation, with no login form and no redirect away",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran the root page IS a new conversation, with no login form and no redirect away",
             "sort": "vert",
-            "dureeMs": 935
+            "dureeMs": 2263
           },
           {
             "titre": "the dashboard moved to /dashboard, and nothing redirects back to the root",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran the dashboard moved to /dashboard, and nothing redirects back to the root",
             "sort": "vert",
-            "dureeMs": 3478
+            "dureeMs": 11871
           },
           {
             "titre": "the rail carries the five destinations on every page",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran the rail carries the five destinations on every page",
             "sort": "vert",
-            "dureeMs": 770
+            "dureeMs": 2378
           },
           {
             "titre": "every dashboard section is one panel away",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran every dashboard section is one panel away",
             "sort": "vert",
-            "dureeMs": 5910
+            "dureeMs": 4947
           },
           {
             "titre": "the Work panel opens on Nodal chats, already unfolded",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran the Work panel opens on Nodal chats, already unfolded",
             "sort": "vert",
-            "dureeMs": 726
+            "dureeMs": 535
           },
           {
             "titre": "\"New Chat\" opens \"Nodal chats\" and leads to the empty conversation screen",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran \"New Chat\" opens \"Nodal chats\" and leads to the empty conversation screen",
             "sort": "vert",
-            "dureeMs": 1048
+            "dureeMs": 904
           },
           {
             "titre": "creates an agent, sends a task, and shows the job in the list",
             "titreComplet": "agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran creates an agent, sends a task, and shows the job in the list",
-            "sort": "instable",
-            "dureeMs": 28715
+            "sort": "vert",
+            "dureeMs": 15076
           },
           {
             "titre": "every (dashboard) route returns 200 and renders an h1",
             "titreComplet": "settings pages render without runtime errors @cap:installer-et-demarrer/ecran every (dashboard) route returns 200 and renders an h1",
             "sort": "vert",
-            "dureeMs": 11195
+            "dureeMs": 7679
           },
           {
             "titre": "les routes à paramètre rendent, atteintes par les liens de l’app",
             "titreComplet": "settings pages render without runtime errors @cap:installer-et-demarrer/ecran les routes à paramètre rendent, atteintes par les liens de l’app",
             "sort": "vert",
-            "dureeMs": 3900
+            "dureeMs": 2937
           }
         ]
       },
@@ -58541,25 +58541,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 19010,
+        "dureeMs": 12790,
         "cas": [
           {
             "titre": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke @cap:parler-par-canal-externe/ecran",
             "titreComplet": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke @cap:parler-par-canal-externe/ecran",
             "sort": "vert",
-            "dureeMs": 10887
+            "dureeMs": 5842
           },
           {
             "titre": "B — Approve a pending chat activates it",
             "titreComplet": "B — Approve a pending chat activates it",
             "sort": "vert",
-            "dureeMs": 3980
+            "dureeMs": 3375
           },
           {
             "titre": "C — Revoke a member deletes the row (via ConfirmDialog)",
             "titreComplet": "C — Revoke a member deletes the row (via ConfirmDialog)",
             "sort": "vert",
-            "dureeMs": 4143
+            "dureeMs": 3573
           }
         ]
       },
@@ -58578,31 +58578,31 @@
         "rouge": 0,
         "ignoré": 4,
         "instable": 0,
-        "dureeMs": 11187,
+        "dureeMs": 7906,
         "cas": [
           {
             "titre": "A — un fil long s’ouvre sur son dernier message @cap:suivre-execution/ecran",
             "titreComplet": "A — un fil long s’ouvre sur son dernier message @cap:suivre-execution/ecran",
             "sort": "ignoré",
-            "dureeMs": 3378
+            "dureeMs": 1934
           },
           {
             "titre": "C — remonter APRÈS un fil déjà en bas : le geste du lecteur n’est pas avalé",
             "titreComplet": "C — remonter APRÈS un fil déjà en bas : le geste du lecteur n’est pas avalé",
             "sort": "ignoré",
-            "dureeMs": 2553
+            "dureeMs": 2006
           },
           {
             "titre": "D — remonter PENDANT qu’un défilement automatique est en vol",
             "titreComplet": "D — remonter PENDANT qu’un défilement automatique est en vol",
             "sort": "ignoré",
-            "dureeMs": 2639
+            "dureeMs": 1945
           },
           {
             "titre": "B — remonter dans l’historique tient : on n’est pas ramené en bas @cap:reprendre-conversation/ecran",
             "titreComplet": "B — remonter dans l’historique tient : on n’est pas ramené en bas @cap:reprendre-conversation/ecran",
             "sort": "ignoré",
-            "dureeMs": 2617
+            "dureeMs": 2021
           }
         ]
       },
@@ -58621,25 +58621,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 8192,
+        "dureeMs": 5615,
         "cas": [
           {
             "titre": "C — déplier DEPUIS LE BAS ne fait pas filer la zone visible",
             "titreComplet": "déplier un bloc du fil @cap:parler-a-un-agent/ecran C — déplier DEPUIS LE BAS ne fait pas filer la zone visible",
             "sort": "vert",
-            "dureeMs": 2244
+            "dureeMs": 1552
           },
           {
             "titre": "A — depuis le milieu du fil, le dépliage grandit SOUS la zone visible",
             "titreComplet": "déplier un bloc du fil @cap:parler-a-un-agent/ecran A — depuis le milieu du fil, le dépliage grandit SOUS la zone visible",
             "sort": "vert",
-            "dureeMs": 2469
+            "dureeMs": 1359
           },
           {
             "titre": "B — revenu en bas après un dépliage, le lecteur est de nouveau suivi",
             "titreComplet": "déplier un bloc du fil @cap:parler-a-un-agent/ecran B — revenu en bas après un dépliage, le lecteur est de nouveau suivi",
             "sort": "vert",
-            "dureeMs": 3479
+            "dureeMs": 2704
           }
         ]
       },
@@ -58658,19 +58658,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 11752,
+        "dureeMs": 11412,
         "cas": [
           {
             "titre": "A — une arrivée TARDIVE ne déplace pas le lecteur qui vient d’ouvrir",
             "titreComplet": "déplier une PETITE boîte @cap:parler-a-un-agent/ecran A — une arrivée TARDIVE ne déplace pas le lecteur qui vient d’ouvrir",
             "sort": "vert",
-            "dureeMs": 6108
+            "dureeMs": 5362
           },
           {
             "titre": "B — revenu en bas, le lecteur est de nouveau suivi",
             "titreComplet": "déplier une PETITE boîte @cap:parler-a-un-agent/ecran B — revenu en bas, le lecteur est de nouveau suivi",
             "sort": "vert",
-            "dureeMs": 5644
+            "dureeMs": 6050
           }
         ]
       },
@@ -58689,37 +58689,37 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 21934,
+        "dureeMs": 16979,
         "cas": [
           {
             "titre": "Tools tab lists every tool group the catalogue declares @cap:assigner-outils/ecran",
             "titreComplet": "Tools tab lists every tool group the catalogue declares @cap:assigner-outils/ecran",
             "sort": "vert",
-            "dureeMs": 3839
+            "dureeMs": 3081
           },
           {
             "titre": "disclosure expands to show the gated tool names as chips",
             "titreComplet": "disclosure expands to show the gated tool names as chips",
             "sort": "vert",
-            "dureeMs": 4092
+            "dureeMs": 3029
           },
           {
             "titre": "\"Includes guidance\" badge opens a read-only modal with the skill content",
             "titreComplet": "\"Includes guidance\" badge opens a read-only modal with the skill content",
             "sort": "vert",
-            "dureeMs": 3934
+            "dureeMs": 3320
           },
           {
             "titre": "tool groups are absent from the agent's Skills tab, command-execution is NOT",
             "titreComplet": "tool groups are absent from the agent's Skills tab, command-execution is NOT",
             "sort": "vert",
-            "dureeMs": 3671
+            "dureeMs": 3162
           },
           {
             "titre": "a tool group assigned to this agent is still absent from /skills Assigned",
             "titreComplet": "a tool group assigned to this agent is still absent from /skills Assigned",
             "sort": "vert",
-            "dureeMs": 6398
+            "dureeMs": 4387
           }
         ]
       },
@@ -58738,13 +58738,13 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 4591,
+        "dureeMs": 3137,
         "cas": [
           {
             "titre": "shows email in sidebar, signs out, redirects to /login, re-logs in",
             "titreComplet": "UserMenu — sign-out + re-login round-trip @cap:se-connecter/ecran shows email in sidebar, signs out, redirects to /login, re-logs in",
             "sort": "ignoré",
-            "dureeMs": 4591
+            "dureeMs": 3137
           }
         ]
       },
@@ -58763,13 +58763,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5018,
+        "dureeMs": 4152,
         "cas": [
           {
             "titre": "create, copy URL, toggle, rotate, delete, empty state",
             "titreComplet": "Webhooks section — full click flow @cap:declencher-sur-evenement/ecran create, copy URL, toggle, rotate, delete, empty state",
             "sort": "vert",
-            "dureeMs": 5018
+            "dureeMs": 4152
           }
         ]
       },
@@ -58788,13 +58788,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 1742,
+        "dureeMs": 1257,
         "cas": [
           {
             "titre": "the entry opens the run under /chat/runs, and the sidebar stays on Work",
             "titreComplet": "a run from the MCP folder opens in Work @cap:suivre-execution/ecran the entry opens the run under /chat/runs, and the sidebar stays on Work",
             "sort": "vert",
-            "dureeMs": 1742
+            "dureeMs": 1257
           }
         ]
       },
@@ -60213,7 +60213,7 @@
         "etiquettes": [
           "test"
         ],
-        "majLe": "2026-10-06T10:55:38Z",
+        "majLe": "2026-10-07T10:55:05Z",
         "creeLe": "2026-09-20T08:58:17Z",
         "finiLe": null,
         "release": null,
@@ -63798,21 +63798,21 @@
   "release": {
     "npmInjoignable": false,
     "jamaisPubliee": false,
-    "verifieLe": "2026-10-07T10:54:54.784Z",
+    "verifieLe": "2026-10-08T11:02:25.223Z",
     "surNpm": "0.9.5",
     "publieeLe": "2026-10-05T01:53:53.515Z",
     "versionDuDepot": "0.9.5",
     "dernierTag": "v0.9.4",
-    "commitsDepuisLeTag": 151,
+    "commitsDepuisLeTag": 152,
     "depotEnAvance": false
   },
   "deploiement": {
     "runsLus": 30,
     "dernierSucces": {
-      "le": "2026-10-07T09:14:30Z",
+      "le": "2026-10-08T09:27:52Z",
       "evenement": "schedule",
       "sha": null,
-      "url": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/37599029317"
+      "url": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/37756596919"
     },
     "depuis": {
       "enCours": 0,
@@ -63829,11 +63829,11 @@
       }
     ],
     "complet": false,
-    "le": "2026-10-07T10:54:55.968Z"
+    "le": "2026-10-08T11:02:26.464Z"
   },
   "depotNom": "Kwintspiracy/nodal-agents",
   "rangement": {
-    "le": "2026-10-07T10:54:56.376Z",
+    "le": "2026-10-08T11:02:26.872Z",
     "fichiers": {
       "apps/cli/src/tests/already-running.test.ts": {
         "domaine": "install",
