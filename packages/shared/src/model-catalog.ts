@@ -641,6 +641,54 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         cacheWritePerMillionUsd: 12.5,
       },
     },
+    {
+      // Read off /api/v1/models on 2026-10-09 (created 2026-09-28): 1M window,
+      // input_modalities text+image+file, tools + tool_choice. Same posture as
+      // Fable 5.1: the `reasoning` object says mandatory:true with efforts
+      // max/xhigh/high/medium/low, so Off is hidden; four levels, and no
+      // always-on `reasoning` flag (see the Fable 5.1 comment).
+      modelId: 'anthropic/claude-sonnet-5.5',
+      label: 'Claude Sonnet 5.5',
+      capabilities: {
+        tools: true,
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high', 'max'],
+          mandatory: true,
+        },
+      },
+      contextWindow: 1_000_000,
+      pricing: {
+        inputPerMillionUsd: 2,
+        outputPerMillionUsd: 10,
+        cacheReadPerMillionUsd: 0.1,
+        cacheWritePerMillionUsd: 2.5,
+      },
+    },
+    {
+      // Read off /api/v1/models on 2026-10-09 (created 2026-10-07): 1M window,
+      // text+image+file, tools + tool_choice. Unlike Sonnet 5.5 its `reasoning`
+      // object says mandatory:false (default effort medium), so Off stays on
+      // the scale. Efforts max/xhigh/high/medium/low → the usual four levels.
+      // PRICING is the STANDARD tier, as for GPT-5.6 below. OpenRouter also
+      // lists `pricing.overrides` above 100K prompt tokens: 0.5 in / 2.5 out /
+      // 0.05 cache read / 0.625 cache write, i.e. 5x. `ModelPricing` has no
+      // tier notion, so a prompt over 100K is under-estimated by Guard 1e;
+      // the Guard 1a token budget still stands behind it.
+      modelId: 'anthropic/claude-haiku-5.5',
+      label: 'Claude Haiku 5.5',
+      capabilities: {
+        tools: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: {
+        inputPerMillionUsd: 0.1,
+        outputPerMillionUsd: 0.5,
+        cacheReadPerMillionUsd: 0.01,
+        cacheWritePerMillionUsd: 0.125,
+      },
+    },
     // ─── OpenAI ───────────────────────────────────────────────────────────────
     // OpenAI was absent from the OpenRouter list entirely — not a curation
     // choice, a gap: the native `openai` provider carried gpt-5 while anyone
@@ -1278,6 +1326,27 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         cacheReadPerMillionUsd: 0.036,
       },
     },
+    // Mistral — read off /api/v1/models on 2026-10-09. OpenRouter's namespace
+    // is `mistralai/` (the native provider block above is `mistral`).
+    {
+      // Created 2026-10-06; 1,048,576 window, input text+image, tools +
+      // tool_choice. The `reasoning` object is {mandatory:false,
+      // default_enabled:true, supported_efforts:[high,none]}: one intensity
+      // and off, so kind 'onoff' like MiMo V2.6 — not a made-up scale. No
+      // always-on `reasoning` flag: Auto keeps the provider's default.
+      modelId: 'mistralai/mistral-large-4-0',
+      label: 'Mistral Large 4',
+      capabilities: {
+        tools: true,
+        reasoningControl: { kind: 'onoff' },
+      },
+      contextWindow: 1_048_576,
+      pricing: {
+        inputPerMillionUsd: 0.68,
+        outputPerMillionUsd: 2.09,
+        cacheReadPerMillionUsd: 0.07,
+      },
+    },
     // Moonshot (Kimi)
     {
       modelId: 'moonshotai/kimi-k2.6',
@@ -1400,7 +1469,9 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         cacheReadPerMillionUsd: 0.4,
       },
     },
-    // Qwen — both verified via OpenRouter /api/v1/models (2026-07-20): 1M
+    // Qwen — qwen3.7-max and qwen3.7-plus verified via OpenRouter
+    // /api/v1/models (2026-07-20); the 3.8 entries carry their own dated
+    // comment. 1M
     // context, tools + tool_choice + reasoning params (no native
     // reasoning_effort — OpenRouter's unified param drives the hybrid
     // thinking mode). Same pattern as the Claude routes above:
@@ -1417,6 +1488,48 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       },
       contextWindow: 1_000_000,
       pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 6 },
+    },
+    {
+      // Read off /api/v1/models on 2026-10-09 (created 2026-09-23): 1M window,
+      // input text+image+video, tools + tool_choice. `reasoning` says
+      // mandatory:true, efforts xhigh/high/medium/low/minimal, default xhigh:
+      // Off is hidden, and the four UI levels cover the scale.
+      modelId: 'qwen/qwen3.8-max-prime',
+      label: 'Qwen 3.8 Max Prime',
+      capabilities: {
+        tools: true,
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high', 'max'],
+          mandatory: true,
+        },
+      },
+      contextWindow: 1_000_000,
+      pricing: {
+        inputPerMillionUsd: 4,
+        outputPerMillionUsd: 12,
+        cacheReadPerMillionUsd: 0.5,
+      },
+    },
+    {
+      // Created 2026-08-26, read off /api/v1/models on 2026-10-09: 1M window,
+      // input text+image+video, tools + tool_choice. `reasoning` is
+      // {mandatory:false, default_enabled:true, supports_max_tokens:true} with
+      // NO supported_efforts and no `reasoning_effort` parameter, so thinking
+      // can be switched on or off and nothing else: kind 'onoff' (MiMo V2.6).
+      modelId: 'qwen/qwen3.8-flash',
+      label: 'Qwen 3.8 Flash',
+      capabilities: {
+        tools: true,
+        reasoningControl: { kind: 'onoff' },
+      },
+      contextWindow: 1_000_000,
+      pricing: {
+        inputPerMillionUsd: 0.15,
+        outputPerMillionUsd: 0.47,
+        cacheReadPerMillionUsd: 0.016,
+        cacheWritePerMillionUsd: 0.2,
+      },
     },
     {
       modelId: 'qwen/qwen3.7-max',
@@ -1553,6 +1666,14 @@ export const VISION_MODEL_IDS = new Set<string>([
   // text-only per the same source and deliberately NOT in this set.
   'deepseek/deepseek-v4.1-flash',
   'qwen/qwen3.8-max',
+  // input_modalities on /api/v1/models, 2026-10-09: sonnet-5.5 and haiku-5.5
+  // ["text","image","file"]; mistral-large-4-0 ["text","image"];
+  // qwen3.8-max-prime and qwen3.8-flash ["text","image","video"].
+  'anthropic/claude-sonnet-5.5',
+  'anthropic/claude-haiku-5.5',
+  'mistralai/mistral-large-4-0',
+  'qwen/qwen3.8-max-prime',
+  'qwen/qwen3.8-flash',
   // Verified via OpenRouter /api/v1/models input_modalities on 2026-08-28:
   // z-ai/glm-5.3-flash reports ["text","image","video"]. The full z-ai/glm-5.3
   // reports ["text"] only and is deliberately NOT in this set.
@@ -1768,6 +1889,8 @@ const VENDOR_LABELS: Record<string, string> = {
   deepseek: 'DeepSeek',
   minimax: 'MiniMax',
   mistral: 'Mistral',
+  // OpenRouter's namespace for the same vendor (`mistralai/…`).
+  mistralai: 'Mistral',
   meta: 'Meta',
   qwen: 'Qwen',
   'meta-llama': 'Meta',
