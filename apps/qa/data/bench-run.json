@@ -1,7 +1,7 @@
 {
   "run": {
-    "startedAt": "2026-10-08T10:54:40.543Z",
-    "gitSha": "168014be",
+    "startedAt": "2026-10-09T11:01:20.234Z",
+    "gitSha": "5d6e7a6d",
     "sections": [
       {
         "sectionId": "architecture",
@@ -78,7 +78,7 @@
             "detail": []
           }
         ],
-        "durationMs": 867
+        "durationMs": 1165
       },
       {
         "sectionId": "gate",
@@ -136,7 +136,7 @@
             "direction": "exact"
           }
         ],
-        "durationMs": 20
+        "durationMs": 26
       },
       {
         "sectionId": "trust-boundary",
@@ -194,14 +194,14 @@
           {
             "id": "models",
             "label": "Models in the catalogue",
-            "value": 66,
+            "value": 71,
             "unit": "models",
             "direction": "higher-is-better"
           },
           {
             "id": "models_with_tools",
             "label": "Models declaring tools",
-            "value": 66,
+            "value": 71,
             "unit": "models",
             "direction": "higher-is-better"
           },
@@ -251,7 +251,7 @@
             ]
           }
         ],
-        "durationMs": 1
+        "durationMs": 0
       }
     ]
   },
@@ -481,8 +481,8 @@
           "label": "Models in the catalogue",
           "unit": "models",
           "before": 55,
-          "after": 66,
-          "delta": 11,
+          "after": 71,
+          "delta": 16,
           "verdict": "improved"
         },
         {
@@ -490,8 +490,8 @@
           "label": "Models declaring tools",
           "unit": "models",
           "before": 55,
-          "after": 66,
-          "delta": 11,
+          "after": 71,
+          "delta": 16,
           "verdict": "improved"
         },
         {
