@@ -205,3 +205,45 @@ describe('a path is judged as the shell that runs the line hands it on (#717, No
     expect(await judge('curl -o .\\sub\\a.jpg https://x/f', placeWith('windows', {}))).toEqual([]);
   });
 });
+
+describe('a redirection is read with its command, by each shell that reads the line (#717, Nodal review pass 8) @cap:executer-une-commande/moteur', () => {
+  // The program that downloads to its output is the one the shell runs
+  // (`cur\l`, `\curl`, `ir\m` in sh, `cu^rl` in cmd are curl and irm), and
+  // its target is a word of the shell (`""../x` is `../x`).
+  it.each([
+    ['posix', 'cur\\l https://x/f > .\\./out', '../out'],
+    // PowerShell's reading takes `\curl` for a path to curl too: one write, named as written
+    ['posix', '\\curl https://x/f > .\\./out', '.\\./out'],
+    ['posix', 'ir\\m https://x/f > .\\./out', '../out'],
+    ['windows', 'cu^rl https://x/f > ..\\out', '..\\out'],
+    // cmd takes the caret out of the target too (`echo hi > ..^\x` writes ..\x, measured)
+    ['windows', 'curl https://x/f > .^.\\out', '.^.\\out'],
+    ['posix', 'curl https://x/f > ""../x', '../x'],
+    ['windows', 'curl https://x/f > ""../x', '../x'],
+    // sh writes `..x` here, PowerShell's reading (`..\x`) asks: the target
+    // does not say which shell reads it (pass 7's over-ask)
+    ['posix', "curl https://x/f > ''..\\x", '..\\x'],
+    ['windows', "curl https://x/f > ''..\\x", '..\\x'],
+    ['posix', 'curl https://x/f > "a"/../../x', 'a/../../x'],
+    ['windows', 'curl https://x/f > "a"/../../x', 'a/../../x'],
+  ] as const)('%s: %s asks', async (host, command, place) => {
+    expect(await judge(command, placeWith(host, {}))).toEqual(downloadOutside(command, place));
+  });
+
+  it.each(['posix', 'windows'] as const)('%s: curl URL > out.txt asks nothing', async (host) => {
+    expect(await judge('curl https://x/f > out.txt', placeWith(host, {}))).toEqual([]);
+    expect(await judge('curl https://x/f > "my out.txt"', placeWith(host, {}))).toEqual([]);
+  });
+
+  it('a sh script on a Windows host: its line is read by sh, the download seen there', async () => {
+    // Only sh's reading sees `i\wr`: it must not be dropped as alike.
+    const files = { 'run.sh': 'i\\wr https://x/f > .\\./out\n' };
+    const command = 'bash run.sh';
+    expect(await judge(command, placeWith('windows', files))).toEqual([
+      {
+        ...downloadOutside(command, '../out')[0],
+        found: [{ source: 'run.sh', line: 1, text: 'i\\wr https://x/f > .\\./out' }],
+      },
+    ]);
+  });
+});

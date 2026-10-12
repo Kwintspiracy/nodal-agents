@@ -293,7 +293,7 @@ export function isCatastrophicCommand(
   const shell = reader ?? topShell(host);
   // `shutdown --help` prints and exits (Reviewer A, #582 pass 2). Only the
   // long forms and `/?` here: `shutdown -h` HALTS the machine.
-  const units = commandUnits(withoutRedirections(cmd), 0, shell).filter((u) => !runsAnother(u));
+  const units = commandUnits(cmd, 0, shell).filter((u) => !runsAnother(u));
   if (
     units.length > 0 &&
     units.every((u) => u.length >= 2 && u.slice(1).every((t) => FLOOR_READ_FLAGS.has(t)))
@@ -312,7 +312,7 @@ export function isCatastrophicCommand(
     DISK_CMDLET,
   ];
   const texts = opts.atCommandPositions
-    ? commandUnits(withoutRedirections(c), 0, shell).map((u) => normalizeSlashes(u.join(' ')))
+    ? commandUnits(c, 0, shell).map((u) => normalizeSlashes(u.join(' ')))
     : [c];
   if (
     FORK_BOMB.test(c) ||
@@ -342,7 +342,7 @@ export function isCatastrophicCommand(
   // passed the floor, its own list of wrappers knew only cmd, powershell, sh,
   // bash and sudo). A quoted mention (`echo "rm -rf /"`) is an argument of
   // `echo`, never a command, so no check can match it.
-  for (const unit of commandUnits(withoutRedirections(c), 0, shell)) {
+  for (const unit of commandUnits(c, 0, shell)) {
     const cmdWord = unit[0] ?? '';
     const args = unit.slice(1);
     const s = unit.join(' ');
@@ -416,7 +416,7 @@ export function isInlineInterpreterEvalCommand(
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
   const c = normalizeSlashes(cmd.trim());
   if (AWK_CODE_EXEC.test(c) || hasPipeIntoBareInterpreter(c, host)) return true;
-  return commandUnits(withoutRedirections(c), 0, reader ?? topShell(host)).some(isInlineEvalUnit);
+  return commandUnits(c, 0, reader ?? topShell(host)).some(isInlineEvalUnit);
 }
 
 // ── Destructive / heavy actions (for the `destructive_gate` autonomy level) ──────
@@ -1594,20 +1594,9 @@ export function staticShellCategories(
   // same way. Quotes and carets are removed by the tokenizer, so `r""m` and
   // `r^m` still read as `rm`.
   const found = new Set<StaticShellCategory>();
-  for (const unit of commandUnits(withoutRedirections(cmd), 0, shell)) {
+  for (const unit of commandUnits(cmd, 0, shell)) {
     for (const category of unitCategories(unit)) found.add(category);
-  }
-  // `curl URL > file` downloads without `-o`: the redirection is dropped by
-  // the tokenizer, so it is read on the text of that segment. `curl --version
-  // > log` is still a read.
-  if (
-    // A wrapper's payload (`sh -c "curl URL > f"`) starts after a quote.
-    /(^|[;&|("'`]\s*)(curl|irm|Invoke-RestMethod)\b(?:[^;&|\n]|&(?=>))*>/i.test(cmd) &&
-    !commandUnits(withoutRedirections(cmd), 0, shell)
-      .filter((u) => /^(curl|irm|invoke-restmethod)$/i.test(u[0] ?? ''))
-      .every(isVersionOrHelpOnly)
-  ) {
-    found.add('download');
+    if (downloadsToItsOutput(unit)) found.add('download');
   }
   if (isInlineInterpreterEvalCommand(cmd, host, reader)) found.add('inline_code');
   return [...found];
@@ -1630,9 +1619,8 @@ export function staticShellCategories(
  *   does not say where (a variable, `~`, a sub-shell): that asks, invariant #4.
  *   `after` is how many of `dirs` come before it in the line: the target is
  *   judged from the folder the line is in at that point (revue passe 2). A
- *   shell redirection (`> file`) is cut from the words before they are read,
- *   so its place in the line is not known: `after` is null, and it is judged
- *   from every folder of the line.
+ *   shell redirection (`> file`) is read with its command, and judged from
+ *   where that command stands (pass 8); null: from every folder of the line.
  *   A program that writes into its own store (`docker pull`, `ollama pull`,
  *   `comfy model download`, `hf download` without `--local-dir`) names no path
  *   and adds none.
@@ -1641,8 +1629,8 @@ export interface DownloadTarget {
   path: string | null;
   after: number | null;
   /**
-   * The same write as another reading of the line hands it on (`downloadWrites`,
-   * `redirectionTargets`): judged too, and named by `path`, the first reading.
+   * The same write as another reading of the line hands it on
+   * (`downloadWrites`): judged too, and named by `path`, the first reading.
    */
   also?: DownloadTarget[];
 }
@@ -1678,75 +1666,50 @@ export function downloadWrites(
   // judged, each from where the line starts (`{ save }`, `{ restore }`): a
   // place outside in either asks, a safety net never reads fewer than it did.
   // A write the readings both find (the same count of them) is one target,
-  // named as the first reads it, the other reading's place in `also`.
+  // named as the first reads it, the other reading's place in `also`. Two
+  // readings are alike only when all they report is (pass 8): one that alone
+  // sees a download (`i\wr` in sh) is never dropped.
   const shell: LineShell = reader ?? (host === 'windows' ? 'cmd' : 'sh');
-  const readings: Writes[] = [];
+  const readings: DownloadWrites[] = [];
   for (const grammar of new Set<LineShell>(['powershell', shell])) {
     const read = readWrites(cmd, host, grammar, shell, reader === 'cmd');
-    const same = (r: Writes): boolean =>
-      JSON.stringify([r.dirs, r.targets, r.piped]) ===
-      JSON.stringify([read.dirs, read.targets, read.piped]);
-    if (!readings.some(same)) readings.push(read);
+    if (!readings.some((r) => JSON.stringify(r) === JSON.stringify(read))) readings.push(read);
   }
-  const piped: DownloadTarget[] = [];
-  // The first reading's writes, then each other one's: attached to them when
-  // it finds as many, alongside otherwise.
-  const merge = (into: DownloadTarget[], from: DownloadTarget[], first: number): void => {
-    if (from.length !== first) into.push(...from);
-    else from.forEach((t, k) => into[k] !== undefined && (into[k].also ??= []).push(t));
-  };
-  let targets = 0;
-  let pipes = 0;
+  let first = 0;
   readings.forEach((read, n) => {
     if (n > 0) out.dirs.push({ restore: true });
     if (n < readings.length - 1) out.dirs.push({ save: true });
     const offset = out.dirs.length;
-    const shift = (t: DownloadTarget): DownloadTarget => ({
-      path: t.path,
-      after: t.after === null ? null : t.after + offset,
-    });
     out.dirs.push(
       ...read.dirs.map((d) =>
         d !== null && typeof d === 'object' && 'unsure' in d ? { unsure: d.unsure + offset } : d,
       ),
     );
-    if (n === 0) {
-      targets = read.targets.length;
-      pipes = read.piped.length;
-    }
-    merge(out.targets, read.targets.map(shift), n === 0 ? -1 : targets);
-    merge(piped, read.piped.map(shift), n === 0 ? -1 : pipes);
+    const targets = read.targets.map((t) => ({
+      path: t.path,
+      after: t.after === null ? null : t.after + offset,
+    }));
+    // The first reading's writes, then each other one's: attached to them
+    // when it finds as many, alongside otherwise.
+    if (n === 0) first = targets.length;
+    if (n === 0 || targets.length !== first) out.targets.push(...targets);
+    else
+      targets.forEach((t, k) => {
+        const into = out.targets[k];
+        if (into !== undefined) into.also = [...(into.also ?? []), t];
+      });
   });
-  // `curl URL > file`: the bytes land where the shell sends them. Read on a
-  // line that downloads (or reads a URL into a redirection, which
-  // `staticShellCategories` files as a download).
-  if (readings.some((r) => r.downloads) || staticShellCategories(cmd, host).includes('download')) {
-    out.targets.push(...piped);
-    for (const [kept, ...others] of redirectionTargets(cmd))
-      if (kept !== undefined && !isNullSink(kept, host))
-        out.targets.push({
-          path: readablePath(kept),
-          after: null,
-          ...(others.length > 0
-            ? { also: others.map((t) => ({ path: readablePath(t), after: null })) }
-            : {}),
-        });
-  }
   return out;
 }
 
-/** What one reading of a line writes (`downloadWrites`). */
-interface Writes {
-  dirs: FolderMove[];
-  targets: DownloadTarget[];
-  /** `iwr URL | Set-Content file`: where the fetched bytes land, kept only if the line downloads. */
-  piped: DownloadTarget[];
-  downloads: boolean;
-}
-
 /**
- * Where a line writes, read with `grammar`; which of its commands move the
- * folder is read for `shell`, the one whose process runs them (#717).
+ * Where a line writes, read with `grammar` (one reading of `downloadWrites`);
+ * which of its commands move the
+ * folder is read for `shell`, the one whose process runs them (#717). On a
+ * line that downloads, what its commands write besides: a pipe writer
+ * (`iwr URL | Set-Content file`) and a redirection (`curl URL > file`), read
+ * with the command by the same grammar (`UNIT_REDIRECTIONS`), from where it
+ * stands in the line (Nodal review of PR #721, pass 8).
  */
 function readWrites(
   cmd: string,
@@ -1754,29 +1717,39 @@ function readWrites(
   grammar: LineShell,
   shell: LineShell,
   batch: boolean,
-): Writes {
-  const out: Writes = { dirs: [], targets: [], piped: [], downloads: false };
-  const units = commandUnits(withoutRedirections(cmd), 0, grammar, shell);
+): DownloadWrites {
+  const out: DownloadWrites = { dirs: [], targets: [] };
+  let downloads = false;
+  const besides: DownloadTarget[] = [];
+  const opened = new Set<readonly Redirection[]>();
+  const write = (into: DownloadTarget[], t: string | null): void => {
+    if (t === null || !isNullSink(t, host))
+      into.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
+  };
   const folders = lineFolders(batch);
-  for (const unit of units) {
+  for (const unit of commandUnits(cmd, 0, grammar, shell)) {
     const program = unit[0] ?? '';
     const args = unit.slice(1);
     const { before, move } = folders.step(unit);
     out.dirs.push(...before);
     // What a command writes lands where it starts; a program the shell may
     // resolve to a script of the folder (`curl`) still writes (#717).
-    for (const t of pipeWriterTargets(program, args))
-      if (t === null || !isNullSink(t, host))
-        out.piped.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
+    for (const t of pipeWriterTargets(program, args)) write(besides, t);
+    // A command's redirections, once for the units read from it.
+    const redirections = UNIT_REDIRECTIONS.get(unit);
+    if (redirections !== undefined && !opened.has(redirections)) {
+      opened.add(redirections);
+      for (const r of redirections) if (r.write) write(besides, r.path);
+    }
+    if (downloadsToItsOutput(unit)) downloads = true;
     if (unitCategories(unit).includes('download')) {
-      out.downloads = true;
-      for (const t of fetcherTargets(program, args))
-        if (t === null || !isNullSink(t, host))
-          out.targets.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
+      downloads = true;
+      for (const t of fetcherTargets(program, args)) write(out.targets, t);
     }
     if (move !== undefined) out.dirs.push(move);
   }
   out.dirs.push(...folders.end());
+  if (downloads) out.targets.push(...besides);
   return out;
 }
 
@@ -2038,110 +2011,6 @@ const GIT_CLONE_VALUE_FLAGS = new Set([
   '--server-option',
   '--bundle-uri',
 ]);
-
-/**
- * Where the shell writes a line's output, read as OPERATORS, each found on its own so that none can hide another (`2>/dev/null>../x`
- * is two): `>`, `>>`, `>|`, `&>`, `&>>`, the same on another descriptor
- * (`2>`, `2>>`, `2>|`: the error log of a download is a write too), and
- * read/write (`<>`, `1<>`: its `>` opens the target for writing). The target is
- * the next word, attached or after spaces. No file is named by a duplication
- * (`2>&1`, `>&2`, `2>&-`, `<&0`: `>&file` is the bash form of `&>file` and does),
- * an input (`< file`), a here-document or here-string, or a process
- * substitution (`<(…)`, `>(…)`).
- *
- * Quotes are NOT read: an operator counts wherever it stands. A quote state
- * would hide the payload of `bash -c '… > f'` and everything after an escaped
- * quote (`"O\"Brien" … > f`), and a safety net may over-ask but never under-
- * report. The price is one harmless extra place when a `>` sits inside a quoted
- * string of a download (`"…?p=1>2"` reads a file `2`).
- *
- * For the same reason the scan does not know which shell's word a target is
- * (a `bash -c` payload in a cmd line): each is read as cmd and PowerShell hand
- * it on, a backslash kept, then as sh does when that differs (`shWordAt`:
- * `.\./out` is `../out`, Nodal review of PR #721, pass 7). Outside in either
- * reading, it asks.
- */
-function redirectionTargets(cmd: string): string[][] {
-  const targets: string[][] = [];
-  const delimiter = /[\s;&|()<>]/;
-  let i = 0;
-  /** The readings of the word that starts at `i` (after spaces): cmd's and PowerShell's, then sh's. */
-  const word = (): string[] => {
-    while (i < cmd.length && /\s/.test(cmd[i] ?? '')) i++;
-    const sh = shWordAt(cmd, i);
-    const kept = ((): string => {
-      const open = cmd[i];
-      if (open === '"' || open === "'") {
-        const end = cmd.indexOf(open, i + 1);
-        if (end >= 0) {
-          const quoted = cmd.slice(i + 1, end);
-          i = end + 1;
-          return quoted;
-        }
-      }
-      const start = i;
-      while (i < cmd.length && !delimiter.test(cmd[i] ?? '')) i++;
-      return stripQuotes(cmd.slice(start, i));
-    })();
-    return sh === kept || sh === '' ? [kept] : [kept, sh];
-  };
-  while (i < cmd.length) {
-    const c = cmd[i] ?? '';
-    if (c !== '>' && c !== '<') {
-      i++;
-      continue;
-    }
-    const next = cmd[i + 1] ?? '';
-    if (next === '(') {
-      i += 2; // process substitution
-    } else if (c === '<') {
-      // `<>` (read/write) is an input followed by the `>` that opens its target
-      // for writing: the next turn of the loop reads that `>` on its own.
-      if (next === '<') {
-        i += cmd[i + 2] === '<' ? 3 : 2; // here-string, here-document
-      } else if (next === '&') {
-        i += 2; // input duplication
-        word();
-      } else {
-        i++; // input
-      }
-    } else if (next === '&') {
-      i += 2;
-      // `>&2`, `>&-` copy a descriptor; `>&file` (bash) writes both streams to it.
-      const t = word();
-      if (t[0] !== '' && !/^(\d+|-)$/.test(t[0] ?? '')) targets.push(t);
-    } else {
-      i += next === '>' || next === '|' ? 2 : 1;
-      const t = word();
-      if (t[0] !== '') targets.push(t);
-    }
-  }
-  return targets;
-}
-
-/**
- * The unquoted word that starts at `at`, as sh hands it on: a backslash takes
- * the next character out of any meaning and is dropped (`\.` is `.`; before a
- * new line, it joins the lines). It ends at a delimiter or at a quote: the
- * scan of `redirectionTargets` does not know whether a quote it meets opens
- * or closes one, and a quoted word keeps its backslashes but before `$`, `` ` ``,
- * `"`, `\` (read whole by the other reading).
- */
-function shWordAt(text: string, at: number): string {
-  let out = '';
-  let i = at;
-  while (i < text.length && !/[\s;&|()<>"']/.test(text[i] ?? '')) {
-    if (text[i] === '\\') {
-      const next = text[i + 1];
-      if (next !== undefined && next !== '\n') out += next;
-      i += 2;
-    } else {
-      out += text[i] ?? '';
-      i += 1;
-    }
-  }
-  return out;
-}
 
 /** The cmdlets that write what a pipe hands them. */
 const PIPE_WRITERS: Record<string, PsSignature> = {
@@ -2728,7 +2597,7 @@ export function programDecidedAtRunTime(
   reader?: ScriptShell,
 ): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
-  return commandUnits(withoutRedirections(cmd), 0, reader ?? topShell(host)).some(
+  return commandUnits(cmd, 0, reader ?? topShell(host)).some(
     (u) => isDecidedAtRunTime(u[0] ?? '') || redefinesCommand(u),
   );
 }
@@ -2818,6 +2687,9 @@ export function commandUnits(
   }
   for (const words of splitQuotedShellWords(cmd, shell, model)) {
     const read = wordUnits(words, depth, shell, { model });
+    const redirections = COMMAND_REDIRECTIONS.get(words);
+    if (redirections !== undefined)
+      for (const unit of read) UNIT_REDIRECTIONS.set(unit, redirections);
     runIn(read, COMMAND_PROCESS.get(words) ?? []);
     if (COMMAND_MAY_NOT_RUN.has(words)) for (const unit of read) MAY_NOT_RUN.add(unit);
     chainIn(read, COMMAND_CHAIN.get(words) ?? []);
@@ -2828,6 +2700,22 @@ export function commandUnits(
 
 /** The program word of each unit as written (`./build.sh`), for `commandUnitsAsWritten`. */
 const UNIT_HEADS = new WeakMap<readonly string[], string>();
+
+/** A redirection of a command: what it opens, as the shell reads its target. */
+interface Redirection {
+  /** `>`, `>>`, `&>`, `<>`…: the target is written; `<`: it is read. */
+  write: boolean;
+  path: string;
+}
+
+/**
+ * The redirections of each command a scanner reads (`scanLine`,
+ * `cmdCommands`), taken out of its words; then of each unit read from that
+ * command, which share them (`sudo curl URL > f`, `bash -c "curl URL" > f`:
+ * what the units write lands there).
+ */
+const COMMAND_REDIRECTIONS = new WeakMap<readonly ShellWord[], readonly Redirection[]>();
+const UNIT_REDIRECTIONS = new WeakMap<readonly string[], readonly Redirection[]>();
 
 /** The units read as the program a script is named after (`npm.cmd` → npm), for `folderMoveOf`. */
 const NAMED_AFTER_UNITS = new WeakSet<readonly string[]>();
@@ -3992,8 +3880,17 @@ function scanLine(
   const pending: Array<
     Omit<HereDocument, 'bodyStart' | 'bodyEnd' | 'end' | 'receiver'> & { before: string }
   > = [];
+  // The redirections of the command being read; `redirect`: the next word is
+  // the target of the one just met (`readRedirection`).
+  let redirects: Redirection[] = [];
+  let redirect: { write: boolean; duplicates: boolean } | null = null;
   const endWord = (): void => {
-    if (inWord) {
+    if (inWord && redirect !== null) {
+      // `>&2`, `>&-` copy a descriptor; `>&file` (bash) writes both streams to it.
+      if (!(redirect.duplicates && !quoted && /^(\d+|-)$/.test(word)))
+        redirects.push({ write: redirect.write, path: word });
+      redirect = null;
+    } else if (inWord) {
       if (!quoted && word === '[[') doubleBracket = true;
       else if (!quoted && word === ']]') doubleBracket = false;
       else if (!quoted && word === 'let' && words.length === 0) letCommand = true;
@@ -4017,6 +3914,7 @@ function scanLine(
         tail: line.slice(w.start, at),
       }));
       if (piped !== null && segment.length === 1) segment.push(piped);
+      if (redirects.length > 0) COMMAND_REDIRECTIONS.set(segment, redirects);
       segments.push(segment);
       processes.command();
       piped = null;
@@ -4024,6 +3922,8 @@ function scanLine(
         piped = segment[0];
     } else piped = null;
     words = [];
+    redirects = [];
+    redirect = null;
   };
   for (let at = 0; at < line.length; at++) {
     const ch = line[at] ?? '';
@@ -4085,6 +3985,41 @@ function scanLine(
       begin(at);
       word += next;
       at += 1;
+    } else if (
+      (ch === '>' ||
+        (ch === '<' && next !== '<' && line[at - 1] !== '<') ||
+        (g === SH && ch === '&' && next === '>')) &&
+      next !== '(' &&
+      (g !== SH || (arithmetic === 0 && !doubleBracket && !letCommand))
+    ) {
+      // A redirection (`> f`, `2>>log`, `&>f`, `>|f`, `<in`, `<>f`, `2>&1`,
+      // PowerShell's `*>f`) is no word of the command: the shell opens it
+      // before running it. Its target is the next word, read like any other
+      // (quotes joined, escapes taken out: sh's `.\./out` is `../out`), kept
+      // with the command (`COMMAND_REDIRECTIONS`, Nodal review of PR #721,
+      // pass 8). The descriptor glued before it (`2>`) goes with it; the `&`
+      // of a duplication separates nothing.
+      if (
+        redirect === null &&
+        inWord &&
+        !quoted &&
+        (/^\d+$/.test(word) || (g === POWERSHELL && word === '*'))
+      ) {
+        word = '';
+        inWord = false;
+      } else endWord();
+      let k = at + 1;
+      let write = ch !== '<';
+      if (ch === '&' || (ch === '>' && (line[k] === '>' || line[k] === '|'))) k += 1;
+      if (ch === '&' && line[k] === '>') k += 1;
+      if (ch === '<' && line[k] === '>') {
+        write = true;
+        k += 1;
+      }
+      const duplicates = ch !== '&' && line[k] === '&';
+      if (duplicates) k += 1;
+      redirect = { write, duplicates };
+      at = k - 1;
     } else if (g.separators.includes(ch)) {
       const command = [...words.map((w) => w.text), ...(inWord ? [word] : [])];
       endCommand(at, ch);
@@ -4160,7 +4095,7 @@ function scanLine(
  * escapes the next character outside quotes and is removed (`r^m` runs `rm`).
  * Each command keeps its raw text: the program reads its own words, by the
  * Windows argument rules, its redirections taken out as cmd takes them out
- * (`redirectionEnd`). Which run in a process of their own: `Processes`.
+ * (`cmdRedirection`). Which run in a process of their own: `Processes`.
  */
 function cmdCommands(line: string): ShellWord[][] {
   const commands: ShellWord[][] = [];
@@ -4170,13 +4105,16 @@ function cmdCommands(line: string): ShellWord[][] {
   const text = (c: string): string => c.replace(/^(\s*@)+/, '');
   let current = '';
   let inQuote = false;
+  let redirects: Redirection[] = [];
   const end = (): void => {
     const words = text(current).trim() === '' ? [] : windowsArguments(text(current));
     if (words.length > 0) {
+      if (redirects.length > 0) COMMAND_REDIRECTIONS.set(words, redirects);
       commands.push(words);
       processes.command();
     }
     current = '';
+    redirects = [];
   };
   for (let at = 0; at < line.length; at++) {
     const ch = line[at] ?? '';
@@ -4193,9 +4131,12 @@ function cmdCommands(line: string): ShellWord[][] {
       // the command: cmd takes it out before running it, the handle glued
       // before it (`2>`) with it. The `&` of a handle duplication separates
       // nothing (Nodal review of PR #721, pass 5); with a space before it
-      // (`2> &1`) cmd refuses the line, and it separates nothing either.
+      // (`2> &1`) cmd refuses the line, and it separates nothing either. Its
+      // target is kept with the command (`COMMAND_REDIRECTIONS`, pass 8).
       current = current.replace(/(^|\s)\d$/, '$1');
-      at = redirectionEnd(line, at);
+      const read = cmdRedirection(line, at);
+      if (read.path !== null) redirects.push({ write: ch === '>', path: read.path });
+      at = read.end;
       current += ' ';
     } else if ('&|\n\r()'.includes(ch)) {
       const before = text(current).trim();
@@ -4215,25 +4156,32 @@ function cmdCommands(line: string): ShellWord[][] {
 }
 
 /**
- * Where the cmd redirection that starts at `at` (its `>` or `<`) ends: past
- * the spaces, and a handle (`&1`) or a target, quoted or up to the next
- * operator or space. The index of its last character. The first `>` of `>>`
- * ends where it starts, and the second is read as one.
+ * The cmd redirection that starts at `at` (its `>` or `<`): where it ends (the
+ * index of its last character) and its target, read as cmd reads a word:
+ * past the spaces, up to the next operator or space outside quotes, quotes
+ * joined and taken out, a caret taking the next character out of any meaning
+ * (`"a"b` is `ab`, `..^\x` is `..\x`); none for a handle (`&1`). The first `>`
+ * of `>>` reads an empty target, the second the real one.
  */
-function redirectionEnd(line: string, at: number): number {
+function cmdRedirection(line: string, at: number): { end: number; path: string | null } {
   let i = at + 1;
   while (line[i] === ' ' || line[i] === '\t') i += 1;
   if (line[i] === '&') {
     i += 1;
     while (/\d/.test(line[i] ?? '')) i += 1;
-    return i - 1;
+    return { end: i - 1, path: null };
   }
-  if (line[i] === '"') {
-    const close = line.indexOf('"', i + 1);
-    return close < 0 ? line.length - 1 : close;
+  let path = '';
+  let inQuote = false;
+  for (; i < line.length; i += 1) {
+    const c = line[i] ?? '';
+    if (c === '"') inQuote = !inQuote;
+    else if (inQuote) path += c;
+    else if (c === '^') path += line[++i] ?? '';
+    else if (/[\s&|()<>]/.test(c)) break;
+    else path += c;
   }
-  while (i < line.length && !/[\s&|()<>]/.test(line[i] ?? '')) i += 1;
-  return i - 1;
+  return { end: i - 1, path: path === '' ? null : path };
 }
 
 /**
@@ -4304,7 +4252,7 @@ export function isDestructiveOrHeavyCommand(cmd: string, host?: ShellHost): bool
   // human before running an un-inspectable one-liner.
   if (isCatastrophicCommand(cmd, host) || isInlineInterpreterEvalCommand(cmd, host)) return true;
   // Every program only asked for its version or help: nothing happens.
-  const units = commandUnits(withoutRedirections(cmd), 0, topShell(host));
+  const units = commandUnits(cmd, 0, topShell(host));
   // A wrapper's own words are not work, but a launcher that reaches out is.
   const working = units.filter((u) => !runsAnother(u) || reachesOut(u));
   if (working.length > 0 && working.every(isReadUnit)) return false;
@@ -4333,6 +4281,21 @@ const VERSION_OR_HELP = new Set(['--version', '-V', '--help', '-h', '-?', '/?'])
  */
 function isVersionOrHelpOnly(unit: readonly string[]): boolean {
   return unit.length >= 2 && unit.slice(1).every((t) => VERSION_OR_HELP.has(t));
+}
+
+/**
+ * `curl URL > file` downloads without `-o`: a program that prints what it
+ * fetches, its output written to a file (`UNIT_REDIRECTIONS`). Read on the
+ * unit, the program as the shell resolves its name (`cur\l`, `cu^rl` are
+ * curl, Nodal review of PR #721, pass 8), never on the text. `curl --version
+ * > log` is still a read.
+ */
+function downloadsToItsOutput(unit: readonly string[]): boolean {
+  return (
+    /^(curl|irm|invoke-restmethod)$/i.test(unit[0] ?? '') &&
+    (UNIT_REDIRECTIONS.get(unit) ?? []).some((r) => r.write) &&
+    !isVersionOrHelpOnly(unit)
+  );
 }
 
 /**
@@ -4398,17 +4361,4 @@ function isReadUnit(unit: readonly string[]): boolean {
   if (!isSubcommandHelp(unit)) return false;
   const kinds = patternKinds(unit);
   return kinds.length > 0 && kinds.every((k) => SUBCOMMAND_HELP_EXCUSES.has(k));
-}
-
-/**
- * The command with its redirections removed (`2>&1`, `> /dev/null`, `>> log`,
- * `< in`): they are the shell's, not the program's arguments, and the
- * tokenizer kept their fd and target as words (`wget --version 2>&1` read
- * as `wget --version 2` then `1`).
- */
-function withoutRedirections(cmd: string): string {
-  return cmd.replace(
-    /(^|\s)(?:\d|&|\*)?(?:>>?|<)(?:&\d+|\s*(?:"[^"]*"|'[^']*'|[^\s;&|()<>]+))/g,
-    '$1',
-  );
 }
