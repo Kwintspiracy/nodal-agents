@@ -11,7 +11,7 @@
 // (`downloadWrites`).
 
 import { describe, it, expect } from 'vitest';
-import { downloadWrites, programSources, type FolderMove } from '..';
+import { downloadWrites, programSources, splitShellWords, type FolderMove } from '..';
 
 const SAVE: FolderMove = { save: true };
 const RESTORE: FolderMove = { restore: true };
@@ -413,8 +413,9 @@ describe("a script run in the line's own process leaves it where it ends (#717) 
       probe('scripts\\prepare'),
       script('x.bat'),
     ]);
-    // a Windows device is no file of any folder (`&>NUL` leaves a `NUL` command in cmd)
+    // `&>NUL` is a separator, then a redirection: no `NUL` command (pass 5)
     expect(read('curl -s https://x/a &>NUL', 'windows').dirs).toEqual([looked('curl')]);
+    // a Windows device is no file of any folder
     expect(read('con & lpt1 & COM3', 'windows').dirs).toEqual([]);
     // cmd's own commands are never looked for
     expect(read('echo hi & cd sub & x.bat', 'windows').dirs).toEqual([
@@ -614,5 +615,35 @@ describe('where a download lands follows the same folder moves (#717) @cap:execu
     expect(
       writes('setlocal & cd sub & endlocal & curl -o a.zip https://x/a', 'windows', 'cmd'),
     ).toEqual({ dirs: [SAVE, 'sub', either(1), RESTORE, looked('curl')], after: [4] });
+  });
+});
+
+describe('cmd: a redirection, handle duplication included, is no command and no word (#717, Nodal review pass 5) @cap:executer-une-commande/moteur', () => {
+  // cmd reads `2>&1`, `>&2`, `<&0` as a redirection: the `&` after `>` or `<`
+  // separates nothing (and `2> &1`, a space between, is a line cmd refuses).
+  it.each([
+    ['echo done >NUL 2>&1', [['echo', 'done']]],
+    ['x.bat 2>&1', [['x.bat']]],
+    ['curl -o a.jpg https://x/a 2>&1', [['curl', '-o', 'a.jpg', 'https://x/a']]],
+    ['1>&2 echo hi', [['echo', 'hi']]],
+    ['echo hi >&2 & x.bat', [['echo', 'hi'], ['x.bat']]],
+    ['type a.txt <&0 & x.bat', [['type', 'a.txt'], ['x.bat']]],
+    ['echo x 2> &1', [['echo', 'x']]],
+    ['echo x > out.txt & y.bat', [['echo', 'x'], ['y.bat']]],
+    ['echo x>out.txt', [['echo', 'x']]],
+    ['dir 2>>err.log', [['dir']]],
+    ['dir >> "err log.txt" & y.bat', [['dir'], ['y.bat']]],
+    ['echo x > "out file.txt" & y.bat', [['echo', 'x'], ['y.bat']]],
+    ['echo "a>b" 2>&1', [['echo', 'a>b']]],
+    // `&>NUL`: a separator, then a redirection that runs nothing
+    ['echo H &>NUL', [['echo', 'H']]],
+  ])('%s', (line, commands) => {
+    expect(splitShellWords(line, 'cmd')).toEqual(commands);
+  });
+
+  it('no word of a redirection is looked for as a script', () => {
+    expect(read('cd .. & echo done >NUL 2>&1', 'windows').dirs).toEqual(['..', either(0)]);
+    expect(read('x.bat 2>&1', 'windows').dirs).toEqual([script('x.bat')]);
+    expect(read('1>&2 echo hi', 'windows').dirs).toEqual([]);
   });
 });

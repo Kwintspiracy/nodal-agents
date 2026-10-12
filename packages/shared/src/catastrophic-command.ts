@@ -4052,7 +4052,8 @@ function scanLine(
  * character, a backslash is a character: cmd has no backslash escape); `^`
  * escapes the next character outside quotes and is removed (`r^m` runs `rm`).
  * Each command keeps its raw text: the program reads its own words, by the
- * Windows argument rules. Which run in a process of their own: `Processes`.
+ * Windows argument rules, its redirections taken out as cmd takes them out
+ * (`redirectionEnd`). Which run in a process of their own: `Processes`.
  */
 function cmdCommands(line: string): ShellWord[][] {
   const commands: ShellWord[][] = [];
@@ -4080,6 +4081,15 @@ function cmdCommands(line: string): ShellWord[][] {
     } else if (ch === '^') {
       current += line[at + 1] ?? '';
       at += 1;
+    } else if (ch === '>' || ch === '<') {
+      // A redirection (`>out`, `2>>log`, `<in`, `2>&1`, `<&0`) is no word of
+      // the command: cmd takes it out before running it, the handle glued
+      // before it (`2>`) with it. The `&` of a handle duplication separates
+      // nothing (Nodal review of PR #721, pass 5); with a space before it
+      // (`2> &1`) cmd refuses the line, and it separates nothing either.
+      current = current.replace(/(^|\s)\d$/, '$1');
+      at = redirectionEnd(line, at);
+      current += ' ';
     } else if ('&|\n\r()'.includes(ch)) {
       const before = text(current).trim();
       end();
@@ -4095,6 +4105,28 @@ function cmdCommands(line: string): ShellWord[][] {
   }
   end();
   return commands;
+}
+
+/**
+ * Where the cmd redirection that starts at `at` (its `>` or `<`) ends: past
+ * the spaces, and a handle (`&1`) or a target, quoted or up to the next
+ * operator or space. The index of its last character. The first `>` of `>>`
+ * ends where it starts, and the second is read as one.
+ */
+function redirectionEnd(line: string, at: number): number {
+  let i = at + 1;
+  while (line[i] === ' ' || line[i] === '\t') i += 1;
+  if (line[i] === '&') {
+    i += 1;
+    while (/\d/.test(line[i] ?? '')) i += 1;
+    return i - 1;
+  }
+  if (line[i] === '"') {
+    const close = line.indexOf('"', i + 1);
+    return close < 0 ? line.length - 1 : close;
+  }
+  while (i < line.length && !/[\s&|()<>]/.test(line[i] ?? '')) i += 1;
+  return i - 1;
 }
 
 /**

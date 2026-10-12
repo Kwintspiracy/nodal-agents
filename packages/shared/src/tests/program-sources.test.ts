@@ -355,9 +355,15 @@ describe('cmd conditions without brackets, and here-docs fed to a program (#683)
   });
 
   it('a file fed on standard input to a shell or an interpreter is its source', () => {
+    // cmd takes `< setup.txt` out of the command (Nodal review of PR #721,
+    // pass 5): read by cmd, the program word alone (`cmd`, `python`) may be a
+    // batch file of the folder, looked for as on a Windows host (`extensions`).
+    // That is no file fed on standard input.
     const files = (cmd: string) =>
       programSources(cmd).sources.flatMap((s) =>
-        s.kind === 'file' ? [{ path: s.path, language: s.language }] : [],
+        s.kind === 'file' && s.extensions === undefined
+          ? [{ path: s.path, language: s.language }]
+          : [],
       );
     expect(files('cmd < setup.txt')).toEqual([{ path: 'setup.txt', language: 'cmd' }]);
     expect(files('python - < tool.py')).toEqual([{ path: 'tool.py', language: 'python' }]);

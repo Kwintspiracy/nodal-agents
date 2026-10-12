@@ -638,3 +638,24 @@ describe('a cd may fail whatever the disk holds when the gate judges: every fold
     );
   });
 });
+
+describe('cmd: the & of a handle duplication separates nothing (#717, Nodal review pass 5) @cap:executer-une-commande/moteur', () => {
+  // A 1.bat and a 2.bat that delete, in the folder the line starts in: a
+  // redirection read as a command would look `1` or `2` up, find them, read them.
+  const decoys = { '1.bat': DELETE_HERE.bat, '2.bat': DELETE_HERE.bat, 'x.bat': HARMLESS.bat };
+
+  it.each([
+    'echo done >NUL 2>&1',
+    'x.bat 2>&1',
+    'curl -o a.jpg https://x/a 2>&1',
+    '1>&2 echo hi',
+    'echo hi >&2 & x.bat',
+  ])('%s reads no decoy', async (command) => {
+    expect(await judge(command, placeWith('windows', decoys))).toEqual([]);
+  });
+
+  it('cd .. & echo done >NUL 2>&1 asks nothing', async () => {
+    // no `1` looked for in the folder above the workspace, which cannot be looked at
+    expect(await judge('cd .. & echo done >NUL 2>&1', placeWith('windows', {}))).toEqual([]);
+  });
+});
