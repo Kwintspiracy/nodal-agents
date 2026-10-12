@@ -168,8 +168,9 @@ function endKey(path: string, base: string): string {
  * run in the line's own process leaves it where its body ended, as the gate
  * read it (`scripts.ends`), and in a folder not known when it was not read
  * (#717). A word the shell may resolve to a script of the folder moves nothing
- * when the gate found no script there (`scripts.programs`), and the folder is
- * not known after a script found that may not run. A folder kept (`{ save }`:
+ * when the gate found no script there (`scripts.programs`). Past the `&&`
+ * chain of a move that may not have run (`{ unsure }`), the folder is not
+ * known, unless that move left it where it was. A folder kept (`{ save }`:
  * entering a child process, cmd's `setlocal`) comes back with its
  * `{ restore }`; `kept` carries them across a script's lines.
  */
@@ -189,9 +190,10 @@ function basesOf(
       if (base === null || path === null) base = null;
       else {
         const key = endKey(path, base);
-        if (!scripts.programs.has(key))
-          base = move.mayNotRun === true ? null : (scripts.ends.get(key) ?? null);
+        if (!scripts.programs.has(key)) base = scripts.ends.get(key) ?? null;
       }
+    } else if ('unsure' in move) {
+      if ((bases[move.unsure] ?? null) !== (bases[move.unsure + 1] ?? null)) base = null;
     } else if ('save' in move) kept.push(base);
     else base = kept.length > 0 ? (kept.pop() ?? null) : null;
     bases.push(base);

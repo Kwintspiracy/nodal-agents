@@ -2713,6 +2713,7 @@ export function commandUnits(
     const read = wordUnits(words, depth, shell, { model });
     runIn(read, COMMAND_PROCESS.get(words) ?? []);
     if (COMMAND_MAY_NOT_RUN.has(words)) for (const unit of read) MAY_NOT_RUN.add(unit);
+    chainIn(read, COMMAND_CHAIN.get(words) ?? []);
     units.push(...read);
   }
   return units;
@@ -2768,6 +2769,20 @@ const FOLDER_UNKNOWN = new WeakSet<readonly string[]>();
  * line goes on in: unknown (null) from there.
  */
 const MAY_NOT_RUN = new WeakSet<readonly string[]>();
+
+/**
+ * The `&&` chains a unit is in, outermost first (Nodal review of PR #721): a
+ * move that may not run is still made for what follows it in its own chain,
+ * which runs only if it ran (`mkdir out && cd out && make`), and leaves the
+ * folder unknown past that chain (`lineFolders`).
+ */
+const UNIT_CHAIN = new WeakMap<readonly string[], readonly number[]>();
+
+/** Every unit of `units` is in `chains` too, around the ones it is already in. */
+function chainIn(units: ReadonlyArray<readonly string[]>, chains: readonly number[]): void {
+  if (chains.length === 0) return;
+  for (const unit of units) UNIT_CHAIN.set(unit, [...chains, ...(UNIT_CHAIN.get(unit) ?? [])]);
+}
 
 /**
  * The units whose program word the shell may resolve, by adding an extension,
@@ -2917,22 +2932,23 @@ export function commandUnitsAsWritten(
 export type FolderMove =
   | string
   | null
-  | {
-      readonly script: string;
-      readonly extensions?: readonly string[];
-      /** A word looked for that may not run: if it is a script, where the line goes on is not known. */
-      readonly mayNotRun?: true;
-    }
+  | { readonly script: string; readonly extensions?: readonly string[] }
   | { readonly save: true }
-  | { readonly restore: true };
+  | { readonly restore: true }
+  /**
+   * The move at this index of the list may not have run: past the `&&` chain
+   * that runs only if it did, the folder is not known, unless that move left
+   * it where it was (a program found, `cd .`).
+   */
+  | { readonly unsure: number };
 
 /**
  * How one unit moves the folder of the process it runs in: a `cd`-like
  * command, a script run in that process, and in a batch file cmd's `setlocal`
  * and `endlocal` (on a command line they do nothing). A unit read as the
  * program a script is named after (`cd.bat decoy`) is a guess: it may add a
- * kind, never move a folder (Codex, PR #710 pass 8). A move by a unit that
- * may not run, or that the reading cannot tell, is to a folder not known.
+ * kind, never move a folder (Codex, PR #710 pass 8). A move the reading
+ * cannot tell is to a folder not known; one that may not run, `lineFolders`.
  */
 function folderMoveOf(unit: readonly string[], batch: boolean): FolderMove | undefined {
   if (NAMED_AFTER_UNITS.has(unit)) return undefined;
@@ -2946,25 +2962,21 @@ function folderMoveOf(unit: readonly string[], batch: boolean): FolderMove | und
     // Only a script found moves the folder: one that may not run is told to
     // the gate, which knows whether it found one (a program moves nothing).
     const path = readablePath(UNIT_HEADS.get(unit) ?? program);
-    if (path === null) move = null;
-    else if (FOLDER_UNKNOWN.has(unit)) move = null;
-    else
-      return MAY_NOT_RUN.has(unit)
-        ? { script: path, extensions, mayNotRun: true }
-        : { script: path, extensions };
+    move = path === null || FOLDER_UNKNOWN.has(unit) ? null : { script: path, extensions };
   } else if (batch && program === 'setlocal') move = { save: true };
   else if (batch && program === 'endlocal') move = { restore: true };
   else if (CHANGE_DIR.has(program)) {
     const dir = changeDirArg(program, unit.slice(1));
     move = dir === null ? null : readablePath(dir);
   }
-  return move !== undefined && (FOLDER_UNKNOWN.has(unit) || MAY_NOT_RUN.has(unit)) ? null : move;
+  return move !== undefined && FOLDER_UNKNOWN.has(unit) ? null : move;
 }
 
 /** How a unit moves its own process's folder, and whether that process is the line's. */
 function folderReading(unit: readonly string[]): string {
   return JSON.stringify([
     (UNIT_PROCESS.get(unit) ?? []).length > 0,
+    MAY_NOT_RUN.has(unit),
     folderMoveOf(unit, false) ?? 'none',
   ]);
 }
@@ -2985,8 +2997,11 @@ export interface FolderStep {
  * process runs (`cmd /c`, `bash -c`, `( … )` in sh, a side of a pipe…) moves
  * that child, for its own later commands, and the move is undone where the
  * child ends (`{ save }` … `{ restore }`). A script run in the line's process
- * leaves it where the script ends (`{ script }`). `batch`: the line is one of
- * a batch file, where `setlocal` and `endlocal` keep and restore the folder.
+ * leaves it where the script ends (`{ script }`). A move that may not run
+ * (`MAY_NOT_RUN`) is made for what follows it in its own `&&` chain, which
+ * runs only if it ran, and past that chain the folder is not known unless the
+ * move left it where it was (`{ unsure }`). `batch`: the line is one of a
+ * batch file, where `setlocal` and `endlocal` keep and restore the folder.
  */
 export function lineFolders(batch: boolean): {
   step(unit: readonly string[]): FolderStep;
@@ -2999,26 +3014,55 @@ export function lineFolders(batch: boolean): {
   const leave = (depth: number, out: FolderMove[]): void => {
     while (open.length > depth) if (open.pop()?.kept === true) out.push({ restore: true });
   };
+  // The moves that may not have run (Nodal review of PR #721): where each
+  // stands in the list, and the `&&` chain past which it is unsure.
+  const unsure: Array<{ chain: number | undefined; at: number }> = [];
+  const settle = (chains: readonly number[] | null, out: FolderMove[]): void => {
+    for (let i = unsure.length - 1; i >= 0; i--) {
+      const move = unsure[i];
+      if (move === undefined) continue;
+      if (chains !== null && move.chain !== undefined && chains.includes(move.chain)) continue;
+      out.push({ unsure: move.at });
+      unsure.splice(i, 1);
+    }
+  };
+  // How many moves the list holds so far: the consumers push every one.
+  let count = 0;
   return {
     step(unit) {
       const path = UNIT_PROCESS.get(unit) ?? [];
+      const chains = UNIT_CHAIN.get(unit) ?? [];
+      const before: FolderMove[] = [];
+      // Past the chain of a move that may not have run, the folder is not
+      // known (before leaving a child: its own moves are undone after).
+      settle(chains, before);
       let shared = 0;
       while (shared < open.length && open[shared]?.process === path[shared]) shared += 1;
-      const before: FolderMove[] = [];
       leave(shared, before);
       for (const process of path.slice(shared)) open.push({ process, kept: false });
-      const move = folderMoveOf(unit, batch && path.length === 0);
+      let move = folderMoveOf(unit, batch && path.length === 0);
+      const mayNotRun = move !== undefined && move !== null && MAY_NOT_RUN.has(unit);
+      // A folder kept that may not have been leaves nothing to restore to.
+      if (mayNotRun && typeof move === 'object' && move !== null && !('script' in move))
+        move = null;
       if (move !== undefined)
         for (const level of open)
           if (!level.kept) {
             level.kept = true;
             before.push({ save: true });
           }
+      count += before.length;
+      if (move !== undefined) {
+        if (mayNotRun && move !== null) unsure.push({ chain: chains.at(-1), at: count });
+        count += 1;
+      }
       return { before, move };
     },
     end() {
       const out: FolderMove[] = [];
+      settle(null, out);
       leave(0, out);
+      count += out.length;
       return out;
     },
   };
@@ -3147,7 +3191,12 @@ function wordUnits(
       if (runs === undefined) runIn(read, [newProcess()]);
       else if (runs === 'not-known') {
         for (const unit of read) if (!UNIT_PROCESS.has(unit)) FOLDER_UNKNOWN.add(unit);
-      } else if (runs === 'maybe') for (const unit of read) MAY_NOT_RUN.add(unit);
+      } else if (runs === 'maybe') {
+        // What it runs is a chain of its own: the `&&` after `if … cd x`
+        // runs whether the cd did or not.
+        for (const unit of read) MAY_NOT_RUN.add(unit);
+        chainIn(read, [newProcess()]);
+      }
       units.push(...read);
     }
     if (name === namedAfter) for (const unit of units.slice(from)) NAMED_AFTER_UNITS.add(unit);
@@ -3468,6 +3517,9 @@ const COMMAND_PROCESS = new WeakMap<readonly ShellWord[], readonly number[]>();
 /** The scanned commands that may not run whenever the line reaches them: `MAY_NOT_RUN`. */
 const COMMAND_MAY_NOT_RUN = new WeakSet<readonly ShellWord[]>();
 
+/** The `&&` chains a scanned command is in, outermost first: `UNIT_CHAIN`. */
+const COMMAND_CHAIN = new WeakMap<readonly ShellWord[], readonly number[]>();
+
 /** sh's compound commands: what opens one, where its body starts, what closes it. */
 const SH_OPENS = new Set(['if', 'while', 'until', 'for', 'select', 'case']);
 const SH_BODY = new Set(['then', 'else', 'elif', 'do']);
@@ -3509,6 +3561,9 @@ class Processes {
     list: number;
     orElse: boolean;
     afterWord: boolean;
+    /** The chain the group is an element of, and the one the scan goes on in after it. */
+    chain: number;
+    then: number;
   }> = [];
   /** Where the last whole command (simple, or a group) starts: what a pipe takes. */
   private last = -1;
@@ -3522,6 +3577,16 @@ class Processes {
   private readonly compounds: boolean[] = [];
   /** sh: `name()` was just written, and the brace that follows is a function's body. */
   private functionNext = false;
+  /**
+   * The `&&` chain the next command joins (Nodal review of PR #721): what
+   * follows a command through `&&` alone runs only if it ran. `;`, a new
+   * line, `&` and `||` end it; the command right after `||` is in none, for
+   * it is skipped exactly when what came before succeeded, and the `&&` after
+   * it then runs anyway.
+   */
+  private chain = newProcess();
+  /** The next command, right after `||`, joins no chain of the list. */
+  private alone = false;
 
   constructor(
     private readonly model: LineShell,
@@ -3531,6 +3596,15 @@ class Processes {
   /** The child processes open where the scan is. */
   here(): number[] {
     return this.groups.flatMap((g) => (g.process === null ? [] : [g.process]));
+  }
+
+  /** The chain the next element of the list joins: its own one, right after `||`. */
+  private joinChain(): number {
+    if (!this.alone) return this.chain;
+    this.alone = false;
+    const own = newProcess();
+    this.chain = newProcess();
+    return own;
   }
 
   /** True when what the scan meets now may not run whenever the line reaches it. */
@@ -3544,6 +3618,7 @@ class Processes {
     const words = this.commands[at];
     if (words === undefined) return;
     COMMAND_PROCESS.set(words, [...this.here(), ...(this.side === null ? [] : [this.side])]);
+    COMMAND_CHAIN.set(words, [...this.groups.map((g) => g.chain), this.joinChain()]);
     this.side = null;
     this.last = at;
     this.functionNext = false;
@@ -3589,6 +3664,7 @@ class Processes {
     }
     const process = this.side ?? (child ? newProcess() : null);
     this.side = null;
+    const chain = this.joinChain();
     this.groups.push({
       process,
       mayNotRun: mayNotRun || this.mayNotRun(),
@@ -3596,10 +3672,13 @@ class Processes {
       list: this.list,
       orElse: this.orElse,
       afterWord: kind === 'after-word',
+      chain,
+      then: this.chain,
     });
     this.list = this.commands.length;
     this.orElse = false;
     this.functionNext = false;
+    this.chain = newProcess();
   }
 
   /** A closing `)` or `}`: the group is one command of the list around it. */
@@ -3609,6 +3688,7 @@ class Processes {
     this.last = group.start;
     this.list = group.list;
     this.orElse = group.orElse;
+    this.chain = group.then;
     // `name()`: an empty parenthesis after a word names a function.
     this.functionNext =
       this.model === 'sh' && group.afterWord && group.start === this.commands.length;
@@ -3622,8 +3702,12 @@ class Processes {
   }
 
   /** `&&` or `||`: what follows in the list runs only on the result of what came before. */
-  andOr(): void {
+  andOr(operator: '&&' | '||'): void {
     this.orElse = true;
+    if (operator === '||') {
+      this.chain = newProcess();
+      this.alone = true;
+    }
   }
 
   /** `&` alone: what it ends is sent to the background, in sh and PowerShell (`rest`, after it). */
@@ -3638,6 +3722,8 @@ class Processes {
   next(): void {
     this.list = this.commands.length;
     this.orElse = false;
+    this.chain = newProcess();
+    this.alone = false;
   }
 
   /** The commands from `from` on run in one process of their own. */
@@ -3736,12 +3822,12 @@ function readOperator(
       return;
     case '|':
       // `||` is a list; `>|` a redirection; `|&` a pipe.
-      if (next === '|') processes.andOr();
+      if (next === '|') processes.andOr('||');
       else if (prev !== '|' && prev !== '>') processes.pipe();
       return;
     case '&':
       // `&&` is a list; `>&2`, `<&3`, `&>f` redirections; `|&` a pipe.
-      if (next === '&') processes.andOr();
+      if (next === '&') processes.andOr('&&');
       else if (prev !== '&' && !oneOf(prev, '<>|') && next !== '>')
         processes.ampersand(line.slice(at + 1));
       return;
@@ -3988,7 +4074,7 @@ function cmdCommands(line: string): ShellWord[][] {
       else if (ch === ')') processes.close();
       else if ((ch === '&' || ch === '|') && line[at + 1] === ch) {
         // `&&` and `||`: the next command runs on the result of this one.
-        processes.andOr();
+        processes.andOr(ch === '&' ? '&&' : '||');
         at += 1;
       } else if (ch === '|') processes.pipe();
       else processes.next();

@@ -398,14 +398,14 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
       dirs: ['shared/x'],
       targets: [{ path: 'a.jpg', after: 1 }],
     });
-    // a `cd` on the right of `&&` may not run: the folder after it is not known (#717)
+    // a `cd` on the right of `&&` may not run: made for its chain, not past it (#717)
     expect(writesOf('curl -o a.jpg https://x/a && cd /elsewhere', 'posix')).toEqual({
-      dirs: [null],
+      dirs: ['/elsewhere', { unsure: 0 }],
       targets: [{ path: 'a.jpg', after: 0 }],
     });
     expect(writesOf('cd a && wget -O x https://x && cd b && curl -o y https://y', 'posix')).toEqual(
       {
-        dirs: ['a', null],
+        dirs: ['a', 'b', { unsure: 1 }],
         targets: [
           { path: 'x', after: 1 },
           { path: 'y', after: 2 },

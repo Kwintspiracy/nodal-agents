@@ -352,6 +352,43 @@ describe('a folder move that may not happen is not taken as made (#717, Nodal re
   });
 });
 
+describe('a move joined by && to what follows is made for it (#717, Nodal review) @cap:executer-une-commande/moteur', () => {
+  it('mkdir out && cd out && ./gen.sh reads out/gen.sh, and asks nothing for it', async () => {
+    const command = 'mkdir out && cd out && ./gen.sh';
+    expect(await judge(command, placeWith('posix', { 'out/gen.sh': HARMLESS.sh }))).toEqual([]);
+    expect(await kinds(command, placeWith('posix', { 'out/gen.sh': DELETE_HERE.sh }))).toEqual([
+      'delete_files',
+    ]);
+  });
+
+  it('mkdir -p build && cd build && cmake .. && make, and a download there, ask nothing', async () => {
+    for (const command of [
+      'mkdir -p build && cd build && cmake .. && make',
+      'mkdir -p build && cd build && curl -o a.zip https://x/a',
+    ])
+      expect(await judge(command, placeWith('posix', {})), command).toEqual([]);
+  });
+
+  it('past the chain, the folder is not known: what follows asks', async () => {
+    // out/gen.sh is there and harmless; the starting folder's deletes: which
+    // one runs is not known
+    const command = 'mkdir out && cd out; ./gen.sh';
+    expect(
+      await judge(
+        command,
+        placeWith('posix', { 'gen.sh': DELETE_HERE.sh, 'out/gen.sh': HARMLESS.sh }),
+      ),
+    ).toEqual([
+      {
+        category: 'inline_code',
+        state: 'ask',
+        details: [command],
+        unread: [{ source: './gen.sh', why: 'decided_at_run_time' }],
+      },
+    ]);
+  });
+});
+
 describe('a script named without its extension is the script the shell finds (#717, Nodal review pass 1) @cap:executer-une-commande/moteur', () => {
   it('cmd: a bare name or a path that is a batch file of the folder is read, and leaves the line where it ends', async () => {
     for (const command of [
