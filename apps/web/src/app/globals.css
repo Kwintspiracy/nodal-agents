@@ -272,8 +272,9 @@
   --text-xs: 13px;
   --text-sm: 15px;
 
-  /* Fonts — Inter/JetBrains Mono are wired via next/font in app/layout.tsx
-     (it injects --font-inter and --font-jetbrains). */
+  /* Fonts — Inter/JetBrains Mono are self-hosted by src/fonts/fonts.css
+     (imported in app/layout.tsx), which defines --font-inter and
+     --font-jetbrains. */
   --font-sans:
     var(--font-inter, 'Inter'), 'Söhne', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui,
     sans-serif;

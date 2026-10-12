@@ -1,23 +1,12 @@
 import type { Metadata } from 'next';
-import { Inter, JetBrains_Mono } from 'next/font/google';
+import '../fonts/fonts.css';
 import './globals.css';
 import { LOGO_SRC, PRODUCT_NAME } from '@/components/ui/BrandMark';
 
-// Self-hosted via next/font — no external CDN, no FOUT. Exposes the fonts as
-// CSS variables so globals.css can fall them into --font-sans / --font-mono.
-const inter = Inter({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-inter',
-  display: 'swap',
-});
-
-const jetbrains = JetBrains_Mono({
-  subsets: ['latin'],
-  weight: ['400', '500', '600'],
-  variable: '--font-jetbrains',
-  display: 'swap',
-});
+// Fonts are self-hosted: `src/fonts/fonts.css` declares the @font-face rules
+// over woff2 files committed in the repo and defines --font-inter /
+// --font-jetbrains on :root, which globals.css falls into --font-sans /
+// --font-mono. Nothing is fetched from a font CDN at build or boot (#688).
 
 export const metadata: Metadata = {
   title: PRODUCT_NAME,
@@ -46,7 +35,7 @@ const THEME_BOOTSTRAP = `(function(){try{var t=localStorage.getItem('nodal.theme
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`} suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
       </head>
