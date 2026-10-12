@@ -724,7 +724,7 @@ const LINUX_INSTALLERS: Record<string, Installer> = {
       'upgrade-nix',
     ],
   },
-  pkg: { verbs: ['install', 'add', 'delete', 'remove', 'upgrade', 'autoremove'] },
+  pkg: { verbs: ['install', 'add', 'delete', 'remove', 'upgrade', 'autoremove', 'bootstrap'] },
 };
 
 /**
@@ -732,8 +732,12 @@ const LINUX_INSTALLERS: Record<string, Installer> = {
  * patterns before #693), with the verbs that install, update or remove. A
  * manager that replaces ITSELF changes installed software too, in every table:
  * `brew update`, `port selfupdate`, `scoop update`, `pnpm self-update`, `yarn
- * set version`, `uv self update`, `nix upgrade-nix` (Codex, PR #710 pass 9). A
- * refresh of the package lists alone (`apt-get update`, `pkg update`) does not.
+ * set version` and Yarn 1's `policies set-version`, `uv self update`, `nix
+ * upgrade-nix`, `pkg bootstrap`, `rustup self update` (Codex, PR #710 passes 9
+ * and 10); so does a runtime a manager installs (`pnpm env use`, `uv python
+ * upgrade`, rustup's toolchains), and a dependency added to a project (`go
+ * get`, `cargo add`), as `npm add` and `uv add` already were. A refresh of the
+ * package lists alone (`apt-get update`, `pkg update`) does not.
  */
 const CROSS_PLATFORM_INSTALLERS: Record<string, Installer> = {
   'npm|pnpm|yarn|bun': {
@@ -755,6 +759,10 @@ const CROSS_PLATFORM_INSTALLERS: Record<string, Installer> = {
       'global upgrade',
       'self-update',
       'set version',
+      'policies set-version',
+      'env use',
+      'env add',
+      'env remove',
     ],
   },
   'pip|pip3': { verbs: ['install', 'uninstall'] },
@@ -770,6 +778,7 @@ const CROSS_PLATFORM_INSTALLERS: Record<string, Installer> = {
       'reinstall-all',
       'inject',
       'uninject',
+      'upgrade-shared',
     ],
   },
   // uv (review of PR #476)
@@ -786,11 +795,28 @@ const CROSS_PLATFORM_INSTALLERS: Record<string, Installer> = {
       'python install',
       'python uninstall',
       'self update',
+      'python upgrade',
     ],
   },
-  go: { verbs: ['install'] },
+  go: { verbs: ['install', 'get'] },
   gem: { verbs: ['install', 'i', 'uninstall', 'update'] },
-  cargo: { verbs: ['install', 'uninstall'] },
+  cargo: { verbs: ['install', 'uninstall', 'add', 'remove'] },
+  rustup: {
+    verbs: [
+      'update',
+      'install',
+      'uninstall',
+      'toolchain install',
+      'toolchain uninstall',
+      'component add',
+      'component remove',
+      'target add',
+      'target remove',
+      'default',
+      'self update',
+      'self uninstall',
+    ],
+  },
   'conda|mamba|micromamba': { verbs: ['install', 'remove', 'uninstall', 'update', 'upgrade'] },
   // ComfyUI's CLI: ComfyUI itself and its custom nodes
   comfy: {
