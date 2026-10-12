@@ -974,6 +974,10 @@ const CROSS_PLATFORM_INSTALLERS: Record<string, Installer> = {
       'tool restore',
       'add package',
       'remove package',
+      // .NET 10's noun-first forms (Nodal Reviewer A, PR #710 pass 12).
+      'package add',
+      'package remove',
+      'package update',
       'workload install',
       'workload update',
       'workload uninstall',
@@ -1086,6 +1090,24 @@ function hasVerb(args: readonly string[], verbs: readonly string[]): boolean {
   });
 }
 
+/**
+ * True when the words name a command: a word that is not an option, and not
+ * right after an option written without `=`, which may be that option's value
+ * (`yarn --cwd /srv/app` names none; Nodal Reviewer A, PR #710 pass 12).
+ * Which options take a value is each one's grammar, not read here: a word
+ * after an option asks (`yarn --silent build`).
+ */
+function namesACommand(args: readonly string[]): boolean {
+  let afterOption = false;
+  for (const w of args) {
+    if (w === '--') afterOption = false;
+    else if (w.startsWith('-')) afterOption = !w.includes('=');
+    else if (afterOption) afterOption = false;
+    else return true;
+  }
+  return false;
+}
+
 /** True when one command unit installs, updates or removes software (#693). */
 function installsSoftware(unit: readonly string[]): boolean {
   const program = unit[0] ?? '';
@@ -1107,7 +1129,7 @@ function installsSoftware(unit: readonly string[]): boolean {
     words.groups.some((g) => /[vVh]/.test(g));
   return (
     installer.always === true ||
-    (installer.bare === 'options' && words.operands.length === 0 && !onlyInforms) ||
+    (installer.bare === 'options' && !namesACommand(args) && !onlyInforms) ||
     (installer.bare === 'alone' && args.length === 0) ||
     (installer.abbreviations === true &&
       words.operands.some((w) => {

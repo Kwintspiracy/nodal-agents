@@ -653,6 +653,9 @@ const CROSS_PLATFORM_CASES: Record<string, InstallerCase> = {
       'yarn policies set-version 1.22.22',
       'yarn',
       'yarn --frozen-lockfile',
+      // An option's value is no command (Nodal Reviewer A, pass 12).
+      'yarn --cwd /srv/app',
+      'yarn --cache-folder /tmp/y --frozen-lockfile',
       'yarn plugin import workspace-tools',
     ],
     changesNothing: [
@@ -782,6 +785,9 @@ const CROSS_PLATFORM_CASES: Record<string, InstallerCase> = {
       'bundle add rails',
       'bundle remove rails',
       'bundle clean',
+      'bundle --path vendor',
+      'bundle --without development',
+      'bundle -j 4',
     ],
     changesNothing: ['bundle exec rspec', 'bundle list', 'bundle -v', 'bundle --version'],
   },
@@ -848,6 +854,9 @@ const CROSS_PLATFORM_CASES: Record<string, InstallerCase> = {
       'dotnet workload install maui',
       'dotnet new install x.Templates',
       'dotnet restore',
+      // .NET 10's noun-first forms.
+      'dotnet package add Newtonsoft.Json',
+      'dotnet package remove Newtonsoft.Json',
     ],
     changesNothing: [
       'dotnet build --no-restore',
