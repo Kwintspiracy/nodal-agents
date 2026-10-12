@@ -67,6 +67,15 @@ export const approvalRequests = pgTable(
      */
     response: jsonb('response'),
     /**
+     * Le BROUILLON d'une élicitation remplie depuis un canal (0146) : ce que la
+     * personne a posé geste par geste sur la carte Telegram, Discord ou Slack,
+     * `{ values, awaiting }` (`readElicitationDraft`, `@nodal-agents/shared`).
+     * `awaiting` : le champ qui attend une valeur tapée en réponse à la carte.
+     * NULL tant que personne n'a touché la carte ; la réponse envoyée, elle,
+     * va dans `response`.
+     */
+    draft: jsonb('draft'),
+    /**
      * Why the autonomy checklist held this command (#464): one entry per kind
      * of action — `{ category, state, details }`, the details being the
      * commands that did it. The approval card shows them; NULL when the

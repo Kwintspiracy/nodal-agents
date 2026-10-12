@@ -26,7 +26,26 @@ import {
 } from '../approvals/notify.ts';
 import { showApprovalCard, requeueApprovalCard } from '../approvals/card-settlement.ts';
 import { upsertAutoApproveRule, getApprovalRule, restoreApprovalRule } from '../approvals/rules.ts';
-import { readQuestionToolInput } from '@nodal-agents/shared';
+import {
+  readQuestionToolInput,
+  ShellGateReasonsSchema,
+  type ShellGateReason,
+} from '@nodal-agents/shared';
+
+/**
+ * `gate_reasons` as stored, for the restored card (#635): the same reading as
+ * the dashboard's. A value that does not parse is said in the log and the card
+ * says what the command text shows, as before.
+ */
+function storedGateReasons(approvalId: string, raw: unknown): ShellGateReason[] {
+  if (raw === null || raw === undefined) return [];
+  const parsed = ShellGateReasonsSchema.safeParse(raw);
+  if (!parsed.success) {
+    console.warn(`[approval-callback] unreadable gate_reasons on ${approvalId}`);
+    return [];
+  }
+  return parsed.data;
+}
 
 export interface HandleApprovalCallbackArgs {
   update: TelegramUpdate;
@@ -158,6 +177,7 @@ export async function handleApprovalCallback(
       kind: approvalRequests.kind,
       toolName: approvalRequests.toolName,
       toolInput: approvalRequests.toolInput,
+      gateReasons: approvalRequests.gateReasons,
     })
     .from(approvalRequests)
     .where(eq(approvalRequests.id, parsed.approvalRequestId))
@@ -364,6 +384,7 @@ export async function handleApprovalCallback(
         toolName: approval.toolName,
         toolInput: approval.toolInput,
         who: agentRow?.name ?? 'An agent',
+        gateReasons: storedGateReasons(approval.id, approval.gateReasons),
       });
       const cbId = `${APPROVAL_CALLBACK_PREFIX}:${approval.id}`;
       // Par `showApprovalCard`, comme la question de confirmation (#637).

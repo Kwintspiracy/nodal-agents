@@ -235,10 +235,28 @@ export type CardDisplayOutcome =
  *    était tenue n'a pas pu la prendre — c'est ici qu'elle la rattrape, et non
  *    au tick suivant. Sans effet si la demande est encore ouverte.
  */
+/** What a card shows: its text and its buttons. */
+export interface CardView {
+  text: string;
+  buttons?: readonly (readonly CardButton[])[];
+}
+
+/**
+ * A card rendered from its request AS IT STANDS, with the version of what it
+ * shows. Rendered under the lease, then again before the lease is released:
+ * a change written meanwhile (another gesture on the same form) is shown at
+ * once, so the last edit always shows the row (review of #664, pass 4).
+ * null: the request can no longer be rendered.
+ */
+export type LiveCardView = () => Promise<{ view: CardView; version: string } | null>;
+
+/** Edits of one hold, at most: each one shows a change written during the previous one. */
+const LIVE_CARD_EDITS = 3;
+
 export async function showApprovalCard(
   db: Db,
   card: ApprovalCardLocation,
-  view: { text: string; buttons?: readonly (readonly CardButton[])[] },
+  view: CardView | LiveCardView,
 ): Promise<CardDisplayOutcome> {
   const cardId = await adoptApprovalCard(db, card);
   if (!(await claimApprovalCardForDisplay(db, cardId))) return { outcome: 'busy' };
@@ -263,14 +281,40 @@ export async function showApprovalCard(
           error: `no usable ${card.channel} credentials for agent ${card.agentId}`,
         };
       } else {
-        const edit = await adapter.editMessageText(
-          creds,
-          card.conversationId,
-          card.messageId,
-          view.text,
-          view.buttons,
-        );
-        result = edit.ok ? { outcome: 'shown' } : { outcome: 'failed', error: edit.error };
+        const editMessageText = adapter.editMessageText;
+        const edit = async (v: CardView): Promise<CardDisplayOutcome> => {
+          const r = await editMessageText(
+            creds,
+            card.conversationId,
+            card.messageId,
+            v.text,
+            v.buttons,
+          );
+          return r.ok ? { outcome: 'shown' } : { outcome: 'failed', error: r.error };
+        };
+        if (typeof view !== 'function') {
+          result = await edit(view);
+        } else {
+          result = { outcome: 'failed', error: 'the card could not be rendered from its request' };
+          let shownVersion: string | null = null;
+          for (let i = 0; i <= LIVE_CARD_EDITS; i += 1) {
+            const live = await view();
+            if (!live) break;
+            if (live.version === shownVersion) break;
+            if (i === LIVE_CARD_EDITS) {
+              // Still changing after every edit allowed: what is shown is not
+              // the row, and that is said; the next gesture redraws it.
+              result = {
+                outcome: 'failed',
+                error: `the form kept changing during ${LIVE_CARD_EDITS} edits`,
+              };
+              break;
+            }
+            result = await edit(live.view);
+            if (result.outcome !== 'shown') break;
+            shownVersion = live.version;
+          }
+        }
       }
     }
   } finally {

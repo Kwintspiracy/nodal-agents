@@ -41,12 +41,16 @@ import {
   metaToolsForAgent,
   parseRootGrants,
   resolveShellPolicy,
+  ShellGateReasonsSchema,
   serverTimezone,
   modelContextWindow,
   modelCanSeeImages,
   estimateCallCostUsd,
   isUntrustedTool,
-  wrapUntrusted,
+  TOOL_RESULT_MODEL_CHARS,
+  framedForModel,
+  fitToolResult,
+  raisedErrorBlockLength,
   PROVIDER_REJECTED,
   PROVIDER_REJECTED_PREFIX,
   findMcpToolNameCollision,
@@ -99,7 +103,7 @@ import {
   createSendVoiceTool,
   createListConversationsTool,
   listWorkspaceMcpToolNames,
-  isCatastrophicCommand,
+  isCatastrophicCall,
   matchApprovalRule,
   DELIVERY_TOOL_NAMES as DELIVERY_TOOL_NAME_LIST,
   toolsNamedButAbsent,
@@ -110,12 +114,15 @@ import {
   isExistingDirectory,
   deferredToolIndex,
   withToolLoader,
+  toolOutputForModel,
+  shellChecklistDeclined,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
   ApprovalRule,
   ToolProvisioning,
   ApprovalGateRequest,
+  ToolExecutionResult,
 } from '@nodal-agents/tools';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import {
@@ -233,16 +240,13 @@ import { skillStoreDir } from '../skills/index.ts';
 import { maybeRunReflection } from '../reflection/index.ts';
 import { getDeploymentContext } from './deployment.ts';
 
-// Per-result char budget for tool outputs entering the conversation. A single
-// tool (e.g. firecrawl_scrape returning a full web page) can otherwise inject
-// 100K+ tokens into `messages`, which every subsequent turn re-sends to the
-// LLM — the cost multiplier behind runaway jobs. We truncate to a fixed budget
-// with an explicit marker so the model knows content was cut and can re-scrape
-// a narrower target. 25K chars ≈ ~6.5K tokens — lowered from 50K (perf/tokens
-// audit): several parallel tool calls in one turn (e.g. 6 tool-calls × 50K)
-// were injecting ~78K tokens into a single message. Not env-overridable —
-// hardcoded like the other truncation constants in this file.
-const MAX_TOOL_RESULT_CHARS = 25_000;
+// Per-result char budget for tool outputs entering the conversation: the
+// model reads at most this much of one result, and we truncate to it with an
+// explicit marker so the model knows content was cut and can re-scrape a
+// narrower target. ONE source (`@nodal-agents/shared`, tool-result-budget.ts),
+// so a tool that shapes its own model text (`toModelOutput`) fits it exactly
+// and keeps what must survive, instead of this cut taking its tail.
+const MAX_TOOL_RESULT_CHARS = TOOL_RESULT_MODEL_CHARS;
 
 // Capabilities injected into ROOT meta-tools (create_mcp) via ToolContext.
 // Verify-then-write: connectMcp throws on any connect/auth/spawn failure, so the
@@ -464,23 +468,74 @@ export function sameToolList(
   return a.length === current.length && a.every((name, i) => name === current[i]);
 }
 
-/** Truncate an oversized tool-result string with an explicit, model-readable marker. */
-export function truncateForContext(value: string): string {
-  // Elide long base64/binary runs FIRST. They're useless to the model as text,
-  // and they're the dominant re-sent-every-turn bloat: a generated image comes
-  // back as ~50K of base64, and the runner re-sends the whole history each turn,
-  // so over ~10 turns one job burns ~700K input tokens (observed live, 7c78bf2c,
-  // $2.14). Files belong on disk — reference them by path/URL, not inline bytes.
-  const v = value.replace(
+/**
+ * Elide long base64/binary runs. They're useless to the model as text, and
+ * they're the dominant re-sent-every-turn bloat: a generated image comes back
+ * as ~50K of base64, and the runner re-sends the whole history each turn, so
+ * over ~10 turns one job burns ~700K input tokens (observed live, 7c78bf2c,
+ * $2.14). Files belong on disk — reference them by path/URL, not inline bytes.
+ */
+function elideBinary(value: string): string {
+  return value.replace(
     /[A-Za-z0-9+/]{256,}={0,2}/g,
     (m) => `[binary elided: ${m.length} chars — reference the file by path/URL, not inline]`,
   );
-  if (v.length <= MAX_TOOL_RESULT_CHARS) return v;
-  const dropped = v.length - MAX_TOOL_RESULT_CHARS;
+}
+
+/** `value` cut to `room` characters, with an explicit, model-readable marker. */
+function cutForContext(value: string, room: number): string {
+  if (value.length <= room) return value;
+  const dropped = value.length - room;
   return (
-    v.slice(0, MAX_TOOL_RESULT_CHARS) +
-    `\n\n[... truncated: ${dropped} chars dropped (total ${v.length}) ...]`
+    value.slice(0, room) +
+    `\n\n[... truncated: ${dropped} chars dropped (total ${value.length}) ...]`
   );
+}
+
+/** Truncate an oversized tool-result string with an explicit, model-readable marker. */
+export function truncateForContext(value: string): string {
+  // Binary runs are elided FIRST (elideBinary), then the rest is cut.
+  return cutForContext(elideBinary(value), MAX_TOOL_RESULT_CHARS);
+}
+
+/**
+ * The framed text the model reads of a third party's result (INJECT-001),
+ * within the one budget.
+ *
+ * The content is cut to fit, THEN framed — never framed then cut: a cut after
+ * the frame could remove the closing delimiter, and a payload framed with an
+ * opening tag and no closing one is worse than an unframed one, because
+ * everything after it reads as inside the boundary. The budget is measured on
+ * the framed block (`fitToolResult`), so the frame's own length and the
+ * neutralization of delimiter tokens inside the content are counted.
+ */
+export function framedToolResult(toolName: string, text: string): string {
+  const content = elideBinary(text);
+  return framedForModel(
+    toolName,
+    fitToolResult(
+      (room) => cutForContext(content, room),
+      (t) => framedForModel(toolName, t).length,
+    ),
+  );
+}
+
+/**
+ * The `{ error }` block of a failure a third party's tool raised: its text cut,
+ * THEN framed inside the object, the whole block — frame and JSON escaping
+ * included — within the one budget.
+ */
+export function raisedErrorBlock(
+  toolName: string,
+  error: string,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const content = elideBinary(error);
+  const fitted = fitToolResult(
+    (room) => cutForContext(content, room),
+    (t) => raisedErrorBlockLength(toolName, t, extra),
+  );
+  return { error: framedForModel(toolName, fitted), ...extra };
 }
 
 const EVICTED_TOOL_RESULT_MARKER =
@@ -767,17 +822,26 @@ export const UNAVAILABLE_TOOL_MARK = '[système:outil-indisponible:\u0001]';
  * truncated/abbreviated form of a real one (the classic "dropped the MCP
  * prefix" slip), surfaces a "did you mean" hint so the model can self-correct.
  * Carries `UNAVAILABLE_TOOL_MARK`, which the budget counts on resume.
+ * A call without a name is told so: no tool is named "" and every name
+ * "includes" the empty string, so the hint would list arbitrary tools.
  * Pure — unit-tested in isolation.
  */
 export function describeUnavailableTool(badName: string, available: readonly string[]): string {
-  const lower = badName.toLowerCase();
-  const suggestions = available.filter((t) => {
-    const tl = t.toLowerCase();
-    return tl !== lower && (tl.endsWith(lower) || tl.includes(lower));
-  });
+  const lower = badName.trim().toLowerCase();
+  const suggestions =
+    lower === ''
+      ? []
+      : available.filter((t) => {
+          const tl = t.toLowerCase();
+          return tl !== lower && (tl.endsWith(lower) || tl.includes(lower));
+        });
   const hint = suggestions.length ? ` Did you mean: ${suggestions.slice(0, 3).join(' or ')}?` : '';
+  const mistake =
+    lower === ''
+      ? 'The tool call had no tool name: call a tool by its exact name.'
+      : `The tool "${badName}" is not available to you.`;
   return (
-    `${UNAVAILABLE_TOOL_MARK} The tool "${badName}" is not available to you.${hint} ` +
+    `${UNAVAILABLE_TOOL_MARK} ${mistake}${hint} ` +
     `Your available tools are: ${available.join(', ')}. ` +
     `Use one of those EXACT names — do not invent, abbreviate, or drop prefixes from tool names.`
   );
@@ -2934,24 +2998,67 @@ async function runJobTracked(
   // `[DEFERRED]`, `[REJECTED]`, whitelist refusals — which are not third-party
   // content and must not be framed as if they were. Safe by omission.
   //
-  // Framing happens BEFORE truncation so the closing delimiter cannot be cut
-  // off: a payload framed with an opening tag and no closing one is worse than
-  // an unframed one, because everything after it reads as inside the boundary.
+  // A third party's result is cut to fit, THEN framed (`framedToolResult`).
   const toResultOutput = (raw: unknown, toolName?: string): ToolResultOutput => {
-    const frame = (text: string): string =>
-      isUntrustedTool(toolName) ? wrapUntrusted(toolName as string, text) : text;
-
-    if (typeof raw === 'string') return { type: 'text', value: truncateForContext(frame(raw)) };
+    if (typeof raw === 'string') {
+      return {
+        type: 'text',
+        value: isUntrustedTool(toolName)
+          ? framedToolResult(toolName as string, raw)
+          : truncateForContext(raw),
+      };
+    }
     const json: unknown = JSON.parse(JSON.stringify(raw ?? null));
     // A framed result is text by necessity — the frame is prose around the
     // payload, and there is no way to express it in the `json` variant.
     if (isUntrustedTool(toolName)) {
-      return { type: 'text', value: truncateForContext(frame(JSON.stringify(json))) };
+      return { type: 'text', value: framedToolResult(toolName as string, JSON.stringify(json)) };
     }
     const serialized = JSON.stringify(json);
     if (serialized.length <= MAX_TOOL_RESULT_CHARS) return { type: 'json', value: json };
     return { type: 'text', value: truncateForContext(serialized) };
   };
+
+  // INJECT-001 for failures. An error the TOOL raised (`raisedByTool`) is the
+  // tool's own text — for a third-party tool, a third party's words (an MCP
+  // server's `isError` result, an API's error body) — and is framed like the
+  // tool's success. Errors the gate writes (invalid input, a rule, a refusal)
+  // are the product's own words and stay bare.
+  //
+  // The frame goes INSIDE the `{ error }` object, never around it: the readers
+  // of a turn's blocks (`isToolErrorBlock`, the delegation outcome) recognise a
+  // failed call by that shape, and a frame around the block would hide the
+  // failure from them. The text is cut BEFORE it is framed, and the whole
+  // `{ error }` block fits the same budget as a success (`raisedErrorBlock`).
+  const toErrorOutput = (
+    error: string,
+    opts: { raisedBy?: string | undefined; mayHaveDelivered?: boolean } = {},
+  ): ToolResultOutput => {
+    const extra = opts.mayHaveDelivered ? { mayHaveDelivered: true } : {};
+    if (!isUntrustedTool(opts.raisedBy)) return toResultOutput({ error, ...extra });
+    return { type: 'json', value: raisedErrorBlock(opts.raisedBy as string, error, extra) };
+  };
+
+  // ONE conversion of a call that ran into what the model reads, for every path
+  // that runs a tool — inline in the loop, and on resume after a human approved
+  // it — so the two can never frame, flag or render differently:
+  //   - a success: what the tool says the model reads (`toModelOutput`),
+  //     framed when the tool is a third party's (INJECT-001);
+  //   - a failure: framed only when the TOOL raised it (`raisedByTool`), with
+  //     `mayHaveDelivered` kept in the block — the sibling-error guard reads
+  //     it to let a same-turn return_result through instead of deferring it
+  //     (deferral invites the duplicate re-send that flag exists to prevent).
+  const executedCallOutput = (
+    tool: ToolDefinition<z.ZodTypeAny, unknown>,
+    toolName: string,
+    result: Exclude<ToolExecutionResult, { outcome: 'awaiting_approval' }>,
+  ): ToolResultOutput =>
+    result.outcome === 'success'
+      ? toResultOutput(toolOutputForModel(tool, result.output), toolName)
+      : toErrorOutput(result.error, {
+          raisedBy: result.raisedByTool ? toolName : undefined,
+          mayHaveDelivered: result.mayHaveDelivered === true,
+        });
 
   // ── 11.6.5 Shared: execute already-resolved approval requests in-process ─────
   // Runs an approved tool (bypassing its gate — a human already reviewed this
@@ -3035,16 +3142,13 @@ async function runJobTracked(
         // either way.
         // `run_command` porte UNE commande, `declare_verification` en porte une
         // liste qui s'exécutera plus tard : les deux se jugent ici, sinon la
-        // seconde contournerait le refus (revue Codex, PR #49).
-        const resumeCommands =
-          req.toolName === 'run_command'
-            ? [String((req.toolInput as { command?: unknown } | null)?.command ?? '')]
-            : req.toolName === 'declare_verification'
-              ? (
-                  (req.toolInput as { commands?: { command?: unknown }[] } | null)?.commands ?? []
-                ).map((c) => String(c?.command ?? ''))
-              : [];
-        const isCatastrophicResume = resumeCommands.some(isCatastrophicCommand);
+        // seconde contournerait le refus (revue Codex, PR #49). Avec elles, le
+        // code qu'elles lancent, relu MAINTENANT, au moment de tourner (#635,
+        // revue passe 3 de la PR #683) : la même lecture que la porte, par la
+        // même fonction, dans les mêmes espaces.
+        const isCatastrophicResume = await isCatastrophicCall(req.toolName, req.toolInput, {
+          workspaces: agentWorkspacesList,
+        });
 
         if (isCatastrophicResume) {
           // Only machine-wide destroyers (`rm -rf /`, `mkfs`, `shutdown`, …)
@@ -3176,14 +3280,13 @@ async function runJobTracked(
                   onApprovalRequired: (r: ApprovalGateRequest) => notifyApprovalCreated(deps, r),
                 },
               );
-              if (execResult.outcome === 'success') {
+              if (execResult.outcome === 'success' || execResult.outcome === 'error') {
                 // INJECT-001: the resume path executes the SAME tool the gate
-                // suspended, so it needs the same framing. A boundary that is
-                // framed on first call and bare after a human approval would be
-                // framed exactly when nobody is looking at it.
-                replacementOutput = toResultOutput(execResult.output, req.toolName);
-              } else if (execResult.outcome === 'error') {
-                replacementOutput = toResultOutput({ error: execResult.error });
+                // suspended, so it goes through the SAME conversion as the
+                // first call (`executedCallOutput`). A boundary that is framed
+                // on first call and bare after a human approval would be framed
+                // exactly when nobody is looking at it.
+                replacementOutput = executedCallOutput(toolDef, req.toolName, execResult);
               } else {
                 // outcome === 'awaiting_approval' should never occur here — we
                 // passed a synthetic auto_approve rule that overrides any
@@ -3230,8 +3333,19 @@ async function runJobTracked(
       } else {
         // Rejected: replace marker with a [REJECTED] explanation.
         const reason = req.notes ?? 'no reason provided';
+        // Held by the shell checklist (#667): the model also reads which kinds
+        // held it and where such an action goes instead (a tool that asks the
+        // person), or it tries the shell again another way. Unreadable reasons
+        // are said in the log, as the approval card does.
+        const held =
+          req.gateReasons === null ? null : ShellGateReasonsSchema.safeParse(req.gateReasons);
+        if (held && !held.success)
+          console.warn(`[exec ${jobId}] unreadable gate_reasons on approval ${req.id}`);
+        const heldNote =
+          held?.success && held.data.length > 0 ? ` ${shellChecklistDeclined(held.data)}` : '';
         replacementOutput = toResultOutput(
-          `[REJECTED] Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.`,
+          `[REJECTED] Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.` +
+            heldNote,
         );
         trace('resume_rejected_tool_marker_replaced', { toolName: req.toolName });
       }
@@ -6120,23 +6234,8 @@ async function runJobTracked(
           type: 'tool-result',
           toolCallId: call.id,
           toolName: call.name,
-          output: toResultOutput(
-            toolResult.outcome === 'success'
-              ? toolResult.output
-              : toolResult.mayHaveDelivered === true
-                ? // Keep the flag in the block so the sibling-error guard below
-                  // can recognize this as "probably delivered" and let a
-                  // same-turn return_result through instead of deferring it
-                  // (deferral invites the duplicate re-send this flag exists
-                  // to prevent).
-                  { error: toolResult.error, mayHaveDelivered: true }
-                : { error: toolResult.error },
-            // INJECT-001. The name is passed ONLY on the success path: an
-            // error string is the product's own text, and framing it as
-            // untrusted third-party data would be a lie the model has to
-            // reason about.
-            toolResult.outcome === 'success' ? call.name : undefined,
-          ),
+          // The same conversion as the resume path (`executedCallOutput`).
+          output: executedCallOutput(toolDef, call.name, toolResult),
         });
 
         // Guard 1f (S2) — error streak, across the whole job. Checked once this

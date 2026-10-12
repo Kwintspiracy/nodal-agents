@@ -28,11 +28,12 @@ export default function SidebarSection({
    * menu. Un « + » sur RECENTS ou sur APPROVALS promettrait un geste qui
    * n'existe pas là.
    *
-   * C'est un LIEN, et pas un bouton : il mène à la page où l'on crée, il a
-   * donc une adresse, et on peut l'ouvrir dans un onglet comme n'importe
-   * quelle autre entrée du menu.
+   * Deux formes. Un LIEN (`href`) quand il mène à la page où l'on crée : il a
+   * une adresse, et on peut l'ouvrir dans un onglet comme n'importe quelle
+   * autre entrée du menu. Un BOUTON (`onOpen`) quand il ouvre le formulaire en
+   * place, sans quitter la page où l'on est — il n'a alors pas d'adresse.
    */
-  add?: { href: string; label: string };
+  add?: { label: string; href: string } | { label: string; onOpen: () => void };
   children: ReactNode;
 }) {
   return (
@@ -40,19 +41,39 @@ export default function SidebarSection({
       <div className="min-w-0 flex-1 truncate text-mono-11 tracking-[0.14em] text-ink-4 uppercase">
         {children}
       </div>
-      {add !== undefined && (
-        <Link
-          href={add.href}
-          // Le nom DIT le geste, pas le signe : un lecteur d'écran annonce
-          // « New automation », pas « plus ».
-          aria-label={add.label}
-          title={add.label}
-          data-testid="section-add"
-          className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-ink-4 transition-colors hover:text-ink-2"
-        >
-          <Plus size={16} className="h-4 w-4" />
-        </Link>
-      )}
+      {add !== undefined && <AddControl add={add} />}
     </div>
+  );
+}
+
+const ADD_CLASS =
+  'flex h-4 w-4 shrink-0 items-center justify-center rounded text-ink-4 transition-colors hover:text-ink-2';
+
+/** Le « + », lien ou bouton : le MÊME dessin, le même nom, la même ancre de test. */
+function AddControl({
+  add,
+}: {
+  add: { label: string; href: string } | { label: string; onOpen: () => void };
+}) {
+  // Le nom DIT le geste, pas le signe : un lecteur d'écran annonce
+  // « New automation », pas « plus ».
+  const common = {
+    'aria-label': add.label,
+    title: add.label,
+    'data-testid': 'section-add',
+    className: ADD_CLASS,
+  };
+  const plus = <Plus size={16} className="h-4 w-4" />;
+  if ('href' in add) {
+    return (
+      <Link href={add.href} {...common}>
+        {plus}
+      </Link>
+    );
+  }
+  return (
+    <button type="button" onClick={add.onOpen} {...common}>
+      {plus}
+    </button>
   );
 }

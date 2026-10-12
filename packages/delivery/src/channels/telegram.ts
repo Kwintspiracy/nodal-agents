@@ -785,7 +785,9 @@ export interface TelegramUpdate {
     document?: { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
     chat?: { id?: number; type?: string };
     from?: { id?: number; first_name?: string; username?: string; is_bot?: boolean };
-    reply_to_message?: { from?: { is_bot?: boolean; username?: string } };
+    /** The message this one replies to: its author, and its id (a reply to a
+     *  card the bot sent is how a person types a value into it, 0145). */
+    reply_to_message?: { message_id?: number; from?: { is_bot?: boolean; username?: string } };
   };
   callback_query?: {
     id: string;

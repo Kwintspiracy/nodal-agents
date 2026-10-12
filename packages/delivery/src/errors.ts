@@ -28,6 +28,9 @@ export type DeliveryErrorCode =
   | 'delivery_job_not_found'
   | 'delivery_no_content'
   | 'channel_adapter_not_found'
+  /** A card asks for more buttons than the channel can show
+   *  (`capabilities.buttonLimits`): refused, never cut. */
+  | 'card_too_large'
   /** Generic send failure for a channel adapter without a more specific code
    *  of its own — Discord's and Slack's own API/HTTP-level failures land here
    *  (mirrors what telegram_request_failed is for Telegram); a future channel

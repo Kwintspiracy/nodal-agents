@@ -25,6 +25,9 @@ const cachedDescriptors: McpToolDescriptor[] = [
   },
 ];
 
+/** What execute() returns for the server's `ok`: the recorded result (result.ts). */
+const OK = { format: 'mcp-tool-result/1', content: [{ type: 'text', text: 'ok' }] };
+
 function fakeConnection(overrides?: Partial<McpConnection>): McpConnection {
   return {
     client: {
@@ -74,7 +77,7 @@ describe('createLazyMcpTools', () => {
     );
 
     const out = await toolset.tools[0]!.execute({ detail: true }, {} as never);
-    expect(out).toBe('ok');
+    expect(out).toEqual(OK);
     expect(h.connectMcp).toHaveBeenCalledOnce();
 
     // onConnected fires asynchronously off the connect chain — flush microtasks.
@@ -106,8 +109,8 @@ describe('createLazyMcpTools', () => {
 
     resolveConnect(fakeConnection());
     const [out1, out2] = await Promise.all([call1, call2]);
-    expect(out1).toBe('ok');
-    expect(out2).toBe('ok');
+    expect(out1).toEqual(OK);
+    expect(out2).toEqual(OK);
     // Still exactly one connect — the second call reused the memoized promise.
     expect(h.connectMcp).toHaveBeenCalledOnce();
   });
@@ -127,7 +130,7 @@ describe('createLazyMcpTools', () => {
     // Retry: connectMcp succeeds this time.
     h.connectMcp.mockResolvedValueOnce(fakeConnection());
     const out = await toolset.tools[0]!.execute({}, {} as never);
-    expect(out).toBe('ok');
+    expect(out).toEqual(OK);
     expect(h.connectMcp).toHaveBeenCalledTimes(2);
   });
 
@@ -187,7 +190,7 @@ describe('createLazyMcpTools', () => {
     await closing;
     expect(conn.close).toHaveBeenCalledOnce();
     // The racing tool call still settles (the shared client resolved).
-    await expect(inFlightCall).resolves.toBe('ok');
+    await expect(inFlightCall).resolves.toEqual(OK);
   });
 
   it('close() after a FAILED connect is a no-op — nothing to close, no throw', async () => {

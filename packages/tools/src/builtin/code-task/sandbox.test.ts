@@ -21,6 +21,7 @@
 // still calls it.
 
 import { describe, it, expect } from 'vitest';
+import { tmpdir } from 'node:os';
 import { providerConfinementHolds, assertSandboxEnforced } from './sandbox';
 import type { CodeTaskProvider } from './providers';
 
@@ -80,18 +81,23 @@ describe('the shipped code_task keeps its refusal seam ahead of the approval', (
 
   it('preflight stays quiet for the combinations that are confined', async () => {
     const { codeTaskTool } = await import('./index');
+    // A starting folder that resolves: preflight also refuses one that does
+    // not (#669), which is not what this case is about.
+    const ctx = { workspaces: [{ label: 'ws', path: tmpdir() }] };
     for (const provider of PROVIDERS) {
-      expect(() =>
-        codeTaskTool.preflight?.(
-          {
-            purpose: 'p',
-            provider,
-            task: 't',
-            mode: 'read',
-          } as never,
-          {} as never,
+      await expect(
+        Promise.resolve(
+          codeTaskTool.preflight?.(
+            {
+              purpose: 'p',
+              provider,
+              task: 't',
+              mode: 'read',
+            } as never,
+            ctx as never,
+          ),
         ),
-      ).not.toThrow();
+      ).resolves.toBeUndefined();
     }
   });
 });

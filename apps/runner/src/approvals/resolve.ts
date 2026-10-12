@@ -6,7 +6,7 @@
 // executes or rejects the gated tool in execute.ts step 11.7). `resolvedBy`
 // records WHERE the decision came from ('api' = dashboard, 'telegram' = button).
 
-import { eq, and } from '@nodal-agents/db';
+import { eq, and, isNull, sql } from '@nodal-agents/db';
 import { approvalRequests, agentJobs } from '@nodal-agents/db';
 import { z } from 'zod';
 import {
@@ -69,6 +69,13 @@ export interface ResolveApprovalInput {
    */
   content?: Record<string, unknown>;
   /**
+   * Le brouillon (`approval_requests.draft`) sur lequel la décision a été
+   * prise — null : aucun. Fourni, la demande n'est tranchée que si la ligne le
+   * porte encore ; sinon `draft_changed` : un geste a changé les valeurs
+   * entre la lecture et la décision (cartes des canaux, revue de #664).
+   */
+  expectedDraft?: unknown;
+  /**
    * Set by an UNTRUSTED caller (session bearer-token via /api/approve —
    * finding #4/#5): the approval must belong to this entity, closing the
    * runner-direct IDOR where an approval could be resolved by GUID alone
@@ -114,11 +121,22 @@ export type ResolveApprovalResult =
         | 'content_required'
         | 'content_invalid'
         | 'content_not_expected'
-        | 'form_unreadable';
+        | 'form_unreadable'
+        | 'draft_changed';
       status?: string | null;
       /** Pour `content_invalid` : ce qui ne va pas, champ par champ. */
       errors?: ElicitationContentError[];
     };
+
+/**
+ * La ligne porte encore ce brouillon (`approval_requests.draft`) : égalité
+ * jsonb (l'ordre des clés n'y compte pas), ou aucun brouillon pour null.
+ */
+export function draftIs(expected: unknown) {
+  return expected === null
+    ? isNull(approvalRequests.draft)
+    : sql`${approvalRequests.draft} = ${JSON.stringify(expected)}::jsonb`;
+}
 
 /**
  * Resolve an approval request and resume its job. Idempotent-safe: a request
@@ -246,7 +264,11 @@ export async function resolveApprovalDecision(
       response: responseToStore,
     })
     .where(
-      and(eq(approvalRequests.id, input.approvalRequestId), eq(approvalRequests.status, 'pending')),
+      and(
+        eq(approvalRequests.id, input.approvalRequestId),
+        eq(approvalRequests.status, 'pending'),
+        ...(input.expectedDraft === undefined ? [] : [draftIs(input.expectedDraft)]),
+      ),
     )
     .returning({ id: approvalRequests.id });
 
@@ -257,6 +279,9 @@ export async function resolveApprovalDecision(
       .from(approvalRequests)
       .where(eq(approvalRequests.id, input.approvalRequestId))
       .limit(1);
+    if (input.expectedDraft !== undefined && current?.status === 'pending') {
+      return { ok: false, code: 'draft_changed', status: 'pending' };
+    }
     return { ok: false, code: 'already_resolved', status: current?.status ?? null };
   }
 

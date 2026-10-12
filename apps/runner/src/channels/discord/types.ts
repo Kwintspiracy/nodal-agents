@@ -39,6 +39,9 @@ export interface DiscordInboundMessage {
   selfMentionTokens?: string[];
   /** Set when this message is a reply, to the AUTHOR id of the message it replies to. */
   referencedMessageAuthorId?: string;
+  /** Set when this message is a reply, to the ID of the message it replies to
+   *  (a reply to the card of an MCP server's question fills a field, 0145). */
+  referencedMessageId?: string;
   attachments: DiscordInboundAttachment[];
 }
 

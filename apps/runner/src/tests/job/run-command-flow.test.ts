@@ -689,6 +689,65 @@ describe('run_command — E2E runner integration', () => {
   // job would silently feed the LLM an opaque `unexpected_gate_on_approved_tool`
   // tool-result and keep looping; after the fix it fails loud with a clear,
   // human-readable reason, and — provably — the command never executes.
+  // #635, revue passe 3 de la PR #683 : le destructeur est dans le SCRIPT que
+  // la commande lance. Le runner relit ce code avant de rejouer l'appel
+  // approuvé, et le refuse comme une commande tapée.
+  it('CATASTROPHIC SCRIPT: approved anyway → refused, the script never runs (#635)', async () => {
+    // A destroyer on the floor (diskpart) that would do nothing if the floor
+    // ever let it through: its script file does not exist.
+    const script = `wipe-${Date.now()}.py`;
+    const marker = `wiped-${Date.now()}.txt`;
+    await writeFile(
+      join(workspaceDir, script),
+      [
+        'import os',
+        `open('${marker}', 'w').write('ran')`,
+        'os.system("diskpart /s missing-635.txt")',
+      ].join(String.fromCharCode(10)),
+    );
+    const command = `python ${script}`;
+    const job = await createJob();
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-rc-635',
+            toolName: 'run_command',
+            args: { purpose: 'run the helper (should never run)', command },
+          },
+        ],
+      },
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-rr-635', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const suspendResult = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(suspendResult.status).toBe('awaiting_approval');
+    const [approvalRow] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, job.id));
+    await db
+      .update(approvalRequests)
+      .set({ status: 'approved', resolvedAt: new Date(), resolvedBy: 'test' })
+      .where(eq(approvalRequests.id, approvalRow!.id));
+    await db
+      .update(agentJobs)
+      .set({ status: 'pending', updatedAt: new Date() })
+      .where(eq(agentJobs.id, job.id));
+
+    const resumeResult = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(resumeResult.status).toBe('failed');
+    if (resumeResult.status === 'failed') {
+      expect(resumeResult.error).toBe('catastrophic_command_refused');
+    }
+    await expect(readFile(join(workspaceDir, marker), 'utf8')).rejects.toThrow();
+  });
+
   it('CATASTROPHIC COMMAND: approved anyway → job fails with a clear reason, command never executes', async () => {
     const COMMAND5 = 'rm -rf /';
 
@@ -1049,5 +1108,145 @@ describe('run_command — an agent nobody configured downloads into its workspac
       'blocked: the owner does not allow this agent to download from the internet',
     );
     await expect(readFile(join(workspaceDir, file), 'utf8')).rejects.toThrow();
+  });
+
+  // #635 (run 074e7161) : un script qui installe un paquet, lancé par
+  // `node <fichier>`, demande comme l'installation elle-même. Le vrai runner
+  // lit la politique en base, la porte lit le fichier dans l'espace du job.
+  it('a script that installs a package asks, names the line, and does not run (#635)', async () => {
+    const marker = `ran-${Date.now()}.txt`;
+    const script = `setup-${Date.now()}.js`;
+    await writeFile(
+      join(workspaceDir, script),
+      [
+        "const { execSync } = require('child_process');",
+        `require('fs').writeFileSync('${marker}', 'ran');`,
+        "execSync('npm install left-pad');",
+      ].join('\n'),
+    );
+    const command = `node ${script}`;
+
+    const { result, approvals } = await underDestructiveGate(null, () => runOnce(command));
+
+    expect(result.status).toBe('awaiting_approval');
+    expect(approvals).toEqual([
+      {
+        status: 'pending',
+        gateReasons: [
+          {
+            category: 'install_software',
+            state: 'ask',
+            details: [command],
+            found: [{ source: script, line: 3, text: "execSync('npm install left-pad');" }],
+          },
+        ],
+      },
+    ]);
+    await expect(readFile(join(workspaceDir, marker), 'utf8')).rejects.toThrow();
+  });
+
+  it('a script that only writes its own file runs, really, with no approval row (#635)', async () => {
+    const marker = `wrote-${Date.now()}.txt`;
+    const script = `write-${Date.now()}.js`;
+    await writeFile(
+      join(workspaceDir, script),
+      `// npm install is not needed\nrequire('fs').writeFileSync('${marker}', 'ok');\n`,
+    );
+
+    const { result, approvals } = await underDestructiveGate(null, () => runOnce(`node ${script}`));
+
+    expect(result.status).toBe('completed');
+    expect(approvals).toEqual([]);
+    expect(await readFile(join(workspaceDir, marker), 'utf8')).toBe('ok');
+  });
+});
+
+// ─── #667 : ce qui atteint l'écran, une imprimante ou quelqu'un ───────────────
+//
+// Le VRAI chemin : un job, `agents.shell_policy` lu en base (NULL, la valeur
+// par défaut), la porte, la carte, puis le refus de la personne et la reprise.
+// Ce que le modèle lit après le refus est relu dans les messages du job : il
+// sait quelle sorte a retenu la commande, et qu'un outil qui demande à la
+// personne est le chemin, sans qu'aucun soit nommé.
+describe('run_command — what reaches a printer or the screen asks, and a decline says where to go (#667) @cap:executer-une-commande/moteur', () => {
+  it('a print through the shell suspends with its kind named; declined, the model reads the remedy', async () => {
+    const [before] = await db
+      .select({ rootGrants: entities.rootGrants })
+      .from(entities)
+      .where(eq(entities.id, seed.entityId));
+    await db
+      .update(entities)
+      .set({ rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'destructive_gate' } })
+      .where(eq(entities.id, seed.entityId));
+    try {
+      const job = await createJob();
+      const command = 'lp -d office report.pdf';
+      const llmClient = makeMockLlmClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-rc-667',
+              toolName: 'run_command',
+              args: { purpose: 'print the report', command },
+            },
+          ],
+        },
+        {
+          text: 'Done.',
+          toolCalls: [
+            { toolCallId: 'tc-667-done', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]);
+
+      const suspended = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+      expect(suspended.status).toBe('awaiting_approval');
+      const [row] = await db
+        .select({ id: approvalRequests.id, gateReasons: approvalRequests.gateReasons })
+        .from(approvalRequests)
+        .where(eq(approvalRequests.jobId, job.id));
+      expect(row?.gateReasons).toEqual([
+        { category: 'open_or_send', state: 'ask', details: [command] },
+      ]);
+
+      await db
+        .update(approvalRequests)
+        .set({ status: 'rejected', resolvedAt: new Date(), resolvedBy: 'test', notes: null })
+        .where(eq(approvalRequests.id, row!.id));
+      await db
+        .update(agentJobs)
+        .set({ status: 'pending', updatedAt: new Date() })
+        .where(eq(agentJobs.id, job.id));
+      await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+      const [jobRow] = await db
+        .select({ messages: agentJobs.messages })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job.id));
+      const results: string[] = [];
+      for (const msg of (jobRow?.messages ?? []) as Array<{ role: string; content: unknown }>) {
+        if (msg.role !== 'tool') continue;
+        for (const block of msg.content as Array<Record<string, unknown>>) {
+          if (block['type'] === 'tool-result' && block['toolName'] === 'run_command')
+            results.push(JSON.stringify(block['output']));
+        }
+      }
+      expect(results).toHaveLength(1);
+      expect(JSON.parse(results[0] ?? 'null')).toEqual({
+        type: 'text',
+        value:
+          '[REJECTED] Human reviewer rejected this action. Reason: no reason provided. Adapt your approach. ' +
+          "The shell checklist held this command because it would open a program or a file on the person's " +
+          'screen, print, or send a message. Do not run it through the shell again. Unless the ' +
+          "person's reason rules the action out: if one of your tools does this action and its " +
+          'description says it asks the person first, use that tool: the person decides there.',
+      });
+    } finally {
+      await db
+        .update(entities)
+        .set({ rootGrants: before?.rootGrants ?? {} })
+        .where(eq(entities.id, seed.entityId));
+    }
   });
 });

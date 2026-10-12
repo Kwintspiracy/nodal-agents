@@ -10,6 +10,107 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.9.5 — Oct 5, 2026
+
+A release about the MCP servers you connect, and about conversations that keep
+up with you. An MCP server can now ask you a question in the middle of a call,
+on the web or on the Telegram, Slack or Discord conversation where you made the
+request, and gets your filled form back. Its instructions reach the agent that
+holds its tools, and the agent reads every block of its results. A print request
+is answered with a print preview you approve. A message you send while the work
+runs is never left unanswered. An agent saves new files in its own folder
+without asking where. Nineteen pull requests, seven migrations (`0140` to
+`0146`).
+
+**Upgrading: what changes for you**
+
+- **Each MCP server is connected once on the first job after the upgrade**, to
+  read the instructions it publishes. Later jobs connect it only when one of its
+  tools is called, as before.
+- **An agent no longer holds two MCP servers whose tool names overlap.**
+  Attaching the second one is refused, with a message naming both and the way
+  out. A new server's short name follows one grammar: lowercase letters and
+  digits, single hyphens. An existing pair keeps working as long as its servers
+  lend different tools.
+- **An MCP tool's description reaches the model whole**, up to 50,000
+  characters. `MCP_DESCRIPTION_CHAR_CAP` no longer exists.
+- **An agent asks no more where to save a document**: new files go in the job's
+  folder, else its own folder, and it says where it put them.
+- **Time spent waiting for your answer** to an approval or to a server's
+  question no longer counts toward a run's time budget.
+
+**Questions from MCP servers**
+
+- **An MCP server can ask you a question during a call**: a form (choices,
+  numbers, switches, text) with images if it joins some, such as a print
+  preview. The run keeps going while you think, and the server gets exactly what
+  you filled in. (#660)
+- **The question comes where you made the request**: in the run, on the
+  Approvals page and in the bell for a request made on the web, or as a card to
+  fill in place on Telegram, Slack and Discord. Each button sets one value, and
+  you type a number or a text in reply to the card. The accept button carries
+  the server's own label, such as "Print". (#664)
+- **A question that cannot be answered says why**: no answer in time, the run
+  stopped, or the server withdrew it. A form too large for the channel, or an
+  image that could not be sent, points to the dashboard with the reason.
+  (#660, #664)
+- **A server's words stay in their frame** on every channel: quoted line by
+  line, never formatted, and they notify nobody. (#664)
+
+**MCP servers your agents understand**
+
+- **A server's instructions reach the agent that holds its tools**, framed as
+  third-party guidance, capped, and refreshed at every connection. (#659)
+- **The agent reads every block a server returns**, in order, and the run's log
+  keeps the whole result, including when the call fails. (#665)
+- **One tool name designates one server inside a job.** (#663)
+
+**Printing**
+
+- **A print request is answered with a print preview you approve**, laid out by
+  the agent you asked, inside the printable area your print server reports, on
+  the number of pages you asked for. A new **magazine page** skill gives a
+  proven one-page or several-page layout. Both are system skills. (#670)
+- **A tool call without a name no longer kills a job**: the request leaves
+  without it, and the agent is told to call a tool by its exact name. (#670)
+
+**Conversations that keep up**
+
+- **A message sent while the work runs is answered**, on every channel and on
+  the web. The agent can pass your words to the running work, or stop and
+  restart it. It is never assumed to be about that work. (#642, #651)
+- **A request's answer goes back where it came from.** A request made through
+  MCP is answered by its result, never by your Telegram. (#657)
+- **An approval card follows its request on every channel**, whatever settles
+  it: an answer elsewhere, expiry, a cancelled run. (#639)
+- **A replayed conversation turn carries its date**, on every channel and on the
+  web. (#652)
+
+**Agents and teams**
+
+- **An orchestrator holds the tools you switched on for it.** The root's tool
+  groups (spreadsheet, documents, shell…) were dead on orchestrators, and now
+  work. (#641)
+- **An agent reuses workflows, scripts and templates, never a past request's
+  deliverable**, and its prompt names folders instead of past files. (#640,
+  #658)
+- **The team roster says what each teammate's connectors and MCP servers do**,
+  and an `assign_*` tool names its teammate. (#653, #655)
+- **The baseline every job carries says each rule once**, for every model, in
+  under 5,000 characters. (#656)
+- **The shell gate never reads `/dev/null` as a place**, and a command whose
+  starting folder does not resolve goes back to the agent instead of asking you.
+  (#670)
+
+**Quality**
+
+- **The QA portal shows every test by part of the product**, with the last five
+  runs. (#633)
+- **A workflow bench replays the same everyday requests on the real stack**,
+  judged on facts, nightly and across versions. (#634)
+
+---
+
 ## v0.9.4 — Sep 30, 2026
 
 A release about runs that finish, and finish when you say so. It closes the

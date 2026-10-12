@@ -10,6 +10,7 @@ import {
   modelToolsSupport,
   modelOptionLabel,
   modelCanSeeImages,
+  modelGroupLabel,
 } from '../model-catalog';
 
 describe('modelContextWindow', () => {
@@ -323,6 +324,97 @@ describe('Claude Fable 5.1 on OpenRouter (2026-09-22)', () => {
       mandatory: true,
     });
     expect(modelCanSeeImages('anthropic/claude-fable-5.1')).toBe(true);
+  });
+});
+
+describe('OpenRouter models read on 2026-10-09', () => {
+  // Each figure below was read off /api/v1/models on 2026-10-09: a wrong
+  // window mis-sizes compaction, a wrong price mis-reports every job.
+  const entry = (id: string) => findModelCatalogEntry('openrouter', id);
+
+  it('Claude Sonnet 5.5 is mandatory-effort with the upstream prices', () => {
+    const e = entry('anthropic/claude-sonnet-5.5');
+    expect(e?.label).toBe('Claude Sonnet 5.5');
+    expect(e?.contextWindow).toBe(1_000_000);
+    expect(e?.pricing).toEqual({
+      inputPerMillionUsd: 2,
+      outputPerMillionUsd: 10,
+      cacheReadPerMillionUsd: 0.1,
+      cacheWritePerMillionUsd: 2.5,
+    });
+    expect(e?.capabilities.reasoning).toBeUndefined();
+    expect(e?.capabilities.reasoningControl).toEqual({
+      kind: 'effort',
+      levels: ['low', 'medium', 'high', 'max'],
+      mandatory: true,
+    });
+  });
+
+  it('Claude Haiku 5.5 keeps Off (mandatory:false upstream) and the STANDARD price tier', () => {
+    const e = entry('anthropic/claude-haiku-5.5');
+    expect(e?.pricing).toEqual({
+      inputPerMillionUsd: 0.1,
+      outputPerMillionUsd: 0.5,
+      cacheReadPerMillionUsd: 0.01,
+      cacheWritePerMillionUsd: 0.125,
+    });
+    expect(e?.capabilities.reasoningControl).toEqual({
+      kind: 'effort',
+      levels: ['low', 'medium', 'high', 'max'],
+    });
+  });
+
+  it('Mistral Large 4 and Qwen 3.8 Flash expose on/off only, Max Prime a mandatory scale', () => {
+    expect(entry('mistralai/mistral-large-4-0')?.capabilities.reasoningControl).toEqual({
+      kind: 'onoff',
+    });
+    expect(entry('qwen/qwen3.8-flash')?.capabilities.reasoningControl).toEqual({ kind: 'onoff' });
+    expect(entry('qwen/qwen3.8-max-prime')?.capabilities.reasoningControl).toEqual({
+      kind: 'effort',
+      levels: ['low', 'medium', 'high', 'max'],
+      mandatory: true,
+    });
+    expect(modelContextWindow('openrouter', 'mistralai/mistral-large-4-0')).toBe(1_048_576);
+    expect(entry('mistralai/mistral-large-4-0')?.pricing).toEqual({
+      inputPerMillionUsd: 0.68,
+      outputPerMillionUsd: 2.09,
+      cacheReadPerMillionUsd: 0.07,
+    });
+    expect(entry('qwen/qwen3.8-max-prime')?.pricing).toEqual({
+      inputPerMillionUsd: 4,
+      outputPerMillionUsd: 12,
+      cacheReadPerMillionUsd: 0.5,
+    });
+    expect(entry('qwen/qwen3.8-flash')?.pricing).toEqual({
+      inputPerMillionUsd: 0.15,
+      outputPerMillionUsd: 0.47,
+      cacheReadPerMillionUsd: 0.016,
+      cacheWritePerMillionUsd: 0.2,
+    });
+  });
+
+  it('all five accept tools and images', () => {
+    for (const id of [
+      'anthropic/claude-sonnet-5.5',
+      'anthropic/claude-haiku-5.5',
+      'mistralai/mistral-large-4-0',
+      'qwen/qwen3.8-max-prime',
+      'qwen/qwen3.8-flash',
+    ]) {
+      expect(entry(id)?.capabilities.tools, id).toBe(true);
+      expect(modelCanSeeImages(id), id).toBe(true);
+    }
+  });
+});
+
+describe('modelGroupLabel', () => {
+  it("labels OpenRouter's mistralai/ namespace as Mistral, not Mistralai", () => {
+    expect(modelGroupLabel('mistralai/mistral-large-4-0')).toBe('Mistral');
+  });
+
+  it('title-cases a namespace it has no label for, and leaves flat ids ungrouped', () => {
+    expect(modelGroupLabel('newvendor/some-model')).toBe('Newvendor');
+    expect(modelGroupLabel('gpt-5')).toBeNull();
   });
 });
 

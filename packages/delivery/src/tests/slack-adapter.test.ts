@@ -57,6 +57,7 @@ describe('slackAdapter.channel / capabilities', () => {
       threads: true,
       media: true,
       editMessage: true,
+      buttonLimits: { maxRows: 48, maxPerRow: 25 },
     });
   });
 });
@@ -302,19 +303,6 @@ describe('slackAdapter.editMessageText', () => {
   });
 });
 
-describe('slackAdapter.editMessageText with buttons', () => {
-  it('refuses buttons on an edit instead of sending the text alone', async () => {
-    vi.mocked(WebClient.prototype.apiCall).mockClear();
-
-    const result = await slackAdapter.editMessageText!(CREDS, CHANNEL_ID, '42.1', 'Sure?', [
-      [{ label: 'Yes', callbackData: 'apr:x:wc' }],
-    ]);
-
-    expect(result).toEqual({ ok: false, error: 'slack cannot put buttons on an edited message' });
-    expect(vi.mocked(WebClient.prototype.apiCall).mock.calls).toEqual([]);
-  });
-});
-
 describe('slackAdapter.listConversations', () => {
   it('maps public/private channels, im, and mpim into DiscoveredConversation[]', async () => {
     vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce({
@@ -496,5 +484,26 @@ describe('slackAdapter.sendText — a send that fails partway resumes, never rep
     const delivered = texts.filter((_, i) => i !== 2);
     expect(delivered).toHaveLength(4);
     expect(delivered.join('')).toBe(text);
+  });
+});
+
+// Revue Codex passe 2 de #664 : un bloc `section` porte au plus 3 000
+// caractères ; la carte en mettait jusqu'à 3 900 dans un seul, et Slack la
+// refusait. Le texte se répartit en sections, sur les fins de ligne.
+describe('slackAdapter.sendCard — le texte d’une carte en sections de 3 000 caractères au plus', () => {
+  it('un texte de 3 500 caractères part en deux sections, entier et dans l’ordre', async () => {
+    vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce(fakePostMessageResult('9.1'));
+    const text = `${'a'.repeat(2000)}\n${'b'.repeat(1499)}`;
+    await slackAdapter.sendCard!(CREDS, CHANNEL_ID, {
+      text,
+      buttons: [[{ label: 'OK', callbackData: 'eli:x:d' }]],
+    });
+    const [, options] = vi.mocked(WebClient.prototype.apiCall).mock.calls[0]!;
+    const blocks = (options as { blocks: Array<{ type: string; text?: { text: string } }> }).blocks;
+    const sections = blocks.filter((b) => b.type === 'section').map((b) => b.text!.text);
+    expect(sections.length).toBe(2);
+    expect(sections.every((s) => s.length <= 3000)).toBe(true);
+    expect(sections.join('\n')).toBe(text);
+    expect(blocks.at(-1)!.type).toBe('actions');
   });
 });

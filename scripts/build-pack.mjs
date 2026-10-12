@@ -29,6 +29,7 @@ import { scanServerChunks, formatMissingChunks } from './lib/next-chunk-integrit
 import { pinToInstalledVersions, formatUnresolved } from './lib/pin-runtime-deps.mjs';
 import { shouldPackMigrationFile } from './lib/migration-pack-filter.mjs';
 import { mesurerCommande, verdictPic, plancherPour } from './lib/build-heap-sampler.mjs';
+import { scanTracesOutsideRoot, formatTracesOutsideRoot } from './lib/next-trace-scope.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
@@ -71,7 +72,20 @@ const packDir = resolve(repoRoot, 'pack');
 // qui n'est pas celle-ci. Sans les deux réglages il faudrait 19 456 — c'est ce
 // qu'ils achètent. Et ce chiffre ne se repose plus à l'aveugle : chaque pack
 // mesure son pic et le compare à build-heap-reference.json.
-const HEAP_FLOOR_MB = 16384;
+//
+// 05/10/2026 — la vraie cause de la montée était ailleurs. Le traceur de Next
+// listait le dossier personnel ENTIER de la machine qui construit (sur un
+// autre lecteur que le dépôt) : 1 776 635 fichiers par page, 238 Mo par
+// manifeste, 12 Go de `.next`, 24,5 Go de pic et 16 min ce jour-là. Le besoin
+// suivait le contenu du dossier personnel, pas le code — 13 Go le 20/09, même
+// machine. Corrigé par patches/next@16.3.0.patch ; le build refuse désormais
+// tout traçage hors du dépôt (étape qui suit le build web).
+//
+// Mesuré le 05/10 sur l'arbre corrigé, machine de release (24 cœurs, 64 Go,
+// Node 26.4.0), `.next` purgé, aucun réglage d'environnement, plafond 16384 :
+// pic d'un processus 3 325 Mo, pic de l'arbre 9 947 Mo, 84 s, 51 manifestes
+// pour 1,4 Mo. Plancher : 3 325 + 25 % arrondi au Go.
+const HEAP_FLOOR_MB = 5120;
 
 function heapEnv() {
   const inherited = process.env['NODE_OPTIONS'] ?? '';
@@ -195,6 +209,21 @@ console.log(
   verdictWeb.niveau === 'ok' ? `  ${verdictWeb.message}` : `  ⚠ ${verdictWeb.message} (#219)`,
 );
 
+// Le traçage est resté dans le dépôt (05/10/2026). Un build qui trace hors du
+// dépôt coûte en mémoire et en temps ce qu'il trouve sur la machine qui
+// construit — 24,5 Go et 16 min quand c'était le dossier personnel entier — et
+// peut embarquer ses fichiers. Pourquoi et comment : lib/next-trace-scope.mjs.
+const traceScan = scanTracesOutsideRoot(webNext, repoRoot);
+const traceReport = formatTracesOutsideRoot(traceScan, repoRoot);
+if (traceReport) {
+  console.error(`\n❌ ${traceReport}\n`);
+  process.exit(1);
+}
+console.log(
+  `✔ Web build traces: ${traceScan.manifestsScanned} manifests ` +
+    `(${(traceScan.manifestBytes / 1024 / 1024).toFixed(1)} MB), none outside the repository`,
+);
+
 // ─── 3. Stage CLI ───────────────────────────────────────────────────────────
 cpSync(resolve(repoRoot, 'apps/cli/dist/index.js'), resolve(packDir, 'cli.js'));
 
@@ -256,12 +285,13 @@ if (existsSync(publicSrc)) {
 // en `413 Payload Too Large` — après le build, après le smoke-test, au moment
 // le plus tardif possible.
 //
-// La cause de leur taille est locale à cette machine : `pnpm install` étant
-// cassé (Node 26.4.0), les liens d'espace de travail sont posés à la main, et
-// le traçage suit ces jonctions jusque dans des dossiers qui n'ont rien à voir
-// avec le projet — extensions d'éditeur, applications Windows. D'où les
-// avertissements « Failed to copy traced files » qui accompagnent chaque build
-// ici. Les retirer supprime le symptôme ET le poids, sur toute machine.
+// La cause de leur taille, trouvée le 05/10/2026 : le traceur évaluait
+// `os.homedir()` et listait le dossier personnel entier de la machine qui
+// construit, posé sur un autre lecteur que le dépôt (238 Mo par manifeste ce
+// jour-là ; d'où aussi les « Failed to copy traced files »). Corrigé dans
+// patches/next@16.3.0.patch, gardé par le contrôle du traçage juste après le
+// build web. Les manifestes restent inutiles au serveur : on les retire quand
+// même.
 let tracesDropped = 0;
 let tracesBytes = 0;
 (function dropTraces(dir) {

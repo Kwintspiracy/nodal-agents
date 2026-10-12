@@ -10,29 +10,28 @@
 // Le binaire : `embedded-postgres` n'est une dépendance que d'apps/cli (c'est
 // le Postgres embarqué de `nodal-agents up`). `pnpm install` étant cassé sur
 // cette machine (Node 26.4.0) et un package.json de plus n'étant pas la bonne
-// réponse à un besoin de test, on le résout DEPUIS apps/cli par
-// `createRequire` — reproductible en CI, où apps/cli/node_modules existe après
-// l'install, et dit tel quel ici plutôt que caché derrière une jonction.
+// réponse à un besoin de test, il est chargé par la porte d'apps/cli
+// (`cli-embedded-postgres.ts`, issue #698) — reproductible en CI, où
+// apps/cli/node_modules existe après l'install.
 //
 // Invariant #4 : ce harnais ÉCHOUE quand le binaire manque. Un test qui se
 // saute est un test vert par absence.
 
-import { createRequire } from 'node:module';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve, dirname } from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { join, dirname } from 'node:path';
 import { createServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { SHARED_POSTGRES_KEY, type SharedPostgres } from './shared-postgres';
 import { withPostgresClusterStart } from './cluster-lock';
 import {
   registerTestCluster,
-  resolvePgCtlFrom,
+  resolveTestPgCtl,
   unregisterTestCluster,
   type TestClusterEntry,
 } from './cluster-registry';
+import { cliEmbeddedPostgres, CLI_EMBEDDED_POSTGRES_MODULE } from './cli-embedded-postgres';
 
 export interface RealPostgres {
   /** `postgresql://user:pwd@localhost:port/db` — même forme que le CLI. */
@@ -73,28 +72,33 @@ const PG_USER = 'nodalai';
 const PG_PASSWORD = 'test';
 const PG_DATABASE = 'nodalai_test';
 
-/** Racine du monorepo, dérivée de ce fichier (packages/test-kit/src/…). */
-function repoRoot(): string {
-  return resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-}
-
 /**
  * Résout `embedded-postgres` comme apps/cli le voit. Lève avec le chemin
  * cherché quand il manque — c'est l'information dont on a besoin pour réparer.
+ *
+ * Le paquet est chargé par `importEmbeddedPostgres` d'apps/cli, jamais par un
+ * `import` direct : à son chargement, il pose un `beforeExit` qui finit le
+ * processus par `process.exit(0)`. Chargé ainsi dans le processus PRINCIPAL de
+ * vitest (`pg-global-setup.ts`), il rendait 0 à tout run rouge contenant un
+ * `.pg` — la CI Linux verte sur un test en échec (issue #698). Exporté pour la
+ * garde qui le prouve (`tests/pg-run-exit-code.test.ts`).
  */
-async function loadEmbeddedPostgres(): Promise<{ ctor: EmbeddedPostgresCtor; resolved: string }> {
-  const anchor = join(repoRoot(), 'apps', 'cli', 'package.json');
+export async function loadEmbeddedPostgres(): Promise<{
+  ctor: EmbeddedPostgresCtor;
+  resolved: string;
+}> {
+  const loader = await cliEmbeddedPostgres();
   let resolved: string;
   try {
-    resolved = createRequire(anchor).resolve('embedded-postgres');
+    resolved = loader.resolveEmbeddedPostgresEntry();
   } catch (err) {
     throw new Error(
-      `REAL_POSTGRES_UNAVAILABLE: embedded-postgres introuvable depuis ${anchor} ` +
+      `REAL_POSTGRES_UNAVAILABLE: embedded-postgres introuvable depuis ${CLI_EMBEDDED_POSTGRES_MODULE} ` +
         `(${err instanceof Error ? err.message : String(err)})`,
     );
   }
-  const mod = (await import(pathToFileURL(resolved).href)) as { default: EmbeddedPostgresCtor };
-  if (typeof mod.default !== 'function') {
+  const ctor = await loader.importEmbeddedPostgres();
+  if (typeof ctor !== 'function') {
     throw new Error(`REAL_POSTGRES_UNAVAILABLE: export par défaut inattendu dans ${resolved}`);
   }
   // Le paquet natif de la plateforme est un dépendant OPTIONNEL
@@ -102,7 +106,10 @@ async function loadEmbeddedPostgres(): Promise<{ ctor: EmbeddedPostgresCtor; res
   // de l'install, `initdb` n'existe pas et le démarrage rejette sans message.
   // On le dit ICI, avec le chemin cherché, plutôt qu'au premier spawn muet.
   const binDir = join(dirname(resolved), '..', '..', `@embedded-postgres`);
-  return { ctor: mod.default, resolved: `${resolved} (natifs attendus sous ${binDir})` };
+  return {
+    ctor: ctor as EmbeddedPostgresCtor,
+    resolved: `${resolved} (natifs attendus sous ${binDir})`,
+  };
 }
 
 /** Un port libre, choisi par le système (bind sur 0), puis relâché. */
@@ -269,7 +276,7 @@ async function startRealPostgresLocked(): Promise<RealPostgres> {
   // Résolu UNE fois, avant tout démarrage : le gestionnaire de sortie qui
   // arrête les clusters survivants est synchrone et ne peut pas faire cet
   // `import()`. Null quand il échoue — l'arrêt tombe alors sur le signal.
-  const pgCtl = await resolvePgCtlFrom(join(repoRoot(), 'apps', 'cli', 'package.json'));
+  const pgCtl = await resolveTestPgCtl();
   const reserved = installedPorts();
 
   // TROIS ESSAIS, chacun sur un port neuf.

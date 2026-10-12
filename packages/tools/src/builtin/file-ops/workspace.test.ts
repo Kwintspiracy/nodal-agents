@@ -5,8 +5,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm, symlink, realpath, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { linkTargetAsPath, resolveAndCheckPath, windowsPathViolation } from './workspace';
+import { join, resolve } from 'node:path';
+import {
+  followLinks,
+  linkTargetAsPath,
+  resolveAndCheckPath,
+  windowsPathViolation,
+} from './workspace';
 import { fileWriteTool } from './file-write';
 import type { ToolContext } from '../../types';
 
@@ -245,6 +250,34 @@ describe('resolveAndCheckPath — a dangling link is followed, not read as a nam
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
+  });
+});
+
+// #669 : « /dev/null → D:/null ». `followLinks` walks UP from the path it is
+// given, then glues the part that does not exist back onto the real ancestor by
+// LENGTH. A rooted path with no drive (`/dev/null`, `/tmp/x`: what a Git-Bash or
+// POSIX command writes, judged on Windows) was walked up as `D:\dev`, so the
+// ancestor was shorter than the text it was cut from and the cut landed inside
+// a word. Every caller gets the answer for the path it NAMES.
+describe('followLinks: where a path really lands is the path that was named (#669)', () => {
+  it.each([
+    '/nodal-no-such-root/a/b',
+    '/dev/null',
+    '/dev/nodal-no-such/x.jpg',
+    '/c/nodal-no-such/x',
+    '/nodal-no-such-root/../nodal-other/a',
+    '/nodal-no-such-root//a/./b',
+  ])('%s resolves like the OS resolves it, never into the middle of a word', async (named) => {
+    const { canonical, share } = await followLinks(named);
+    expect(share).toBeNull();
+    expect(canonical.toLowerCase()).toBe(resolve(named).toLowerCase());
+  });
+
+  it('a relative path is read from the working folder, whole', async () => {
+    const { canonical } = await followLinks('nodal-no-such-dir/a/b.txt');
+    // The working folder itself may sit behind a link (macOS): its real path.
+    const expected = join(await realpath(process.cwd()), 'nodal-no-such-dir', 'a', 'b.txt');
+    expect(canonical.toLowerCase()).toBe(expected.toLowerCase());
   });
 });
 

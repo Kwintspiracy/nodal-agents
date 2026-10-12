@@ -93,7 +93,7 @@ export { hasMarker } from './projects/markers';
 
 // RiskLevel (re-exported from @nodal-agents/shared via types.ts) + runtime constant
 export type { RiskLevel } from './types';
-export { RISK_LEVELS } from './types';
+export { RISK_LEVELS, toolOutputForModel } from './types';
 
 // Errors
 export {
@@ -102,6 +102,7 @@ export {
   ToolNotFoundError,
   WhitelistDriftError,
   WebSearchNotConfiguredError,
+  ToolFailedWithOutput,
 } from './errors';
 
 // Registry
@@ -110,6 +111,7 @@ export { createToolRegistry } from './registry';
 // Execution wrapper
 export {
   executeTool,
+  isCatastrophicCall,
   matchApprovalRule,
   namespaceOf,
   namespaceRulePattern,
@@ -157,6 +159,7 @@ export {
   isDestructiveOrHeavyCommand,
   isInlineInterpreterEvalCommand,
 } from '@nodal-agents/shared';
+export { shellChecklistDeclined } from './shell-checklist';
 
 // Whitelist computation
 export { computeToolWhitelist, agentBuiltinToolNames } from './whitelist';

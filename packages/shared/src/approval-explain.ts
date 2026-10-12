@@ -24,6 +24,7 @@
 // drifting between them.
 
 import { computeApprovalImpactLine } from './approval-impact';
+import type { ShellGateReason } from './shell-checklist';
 
 /** How consequential the call is, as far as the PLATFORM can tell. */
 export type ApprovalEffect =
@@ -198,6 +199,12 @@ export interface ExplainOptions {
   toolInput: unknown;
   /** Resolved by the caller from `mcp_servers` when the tool name carries `__`. */
   mcp?: McpServerContext | null;
+  /**
+   * What the shell checklist held the call for (`approval_requests.gate_reasons`):
+   * the impact line then says what the gate read in the code the command runs
+   * (#635), which its text alone does not show.
+   */
+  gateReasons?: readonly ShellGateReason[] | null;
 }
 
 /**
@@ -256,7 +263,7 @@ export function explainApproval(opts: ExplainOptions): ApprovalExplanation {
   }
 
   // Built-in tool: the deterministic impact line is authoritative here.
-  const impact = computeApprovalImpactLine(opts.toolName, opts.toolInput);
+  const impact = computeApprovalImpactLine(opts.toolName, opts.toolInput, opts.gateReasons ?? []);
   const input = (opts.toolInput ?? {}) as Record<string, unknown>;
   let effect: ApprovalEffect = 'write';
   let target: string | null = null;

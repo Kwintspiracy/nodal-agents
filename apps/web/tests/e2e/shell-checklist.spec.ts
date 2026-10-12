@@ -7,7 +7,8 @@
  * What this journey proves, in a browser against the real database:
  *   - the tab is named Autonomy (#438: the guides always called it that);
  *   - a new agent shows "Allowed" for downloads and inline code, and "Ask
- *     me" on the other rows of the checklist (#614);
+ *     me" on the other rows of the checklist (#614), opening a program,
+ *     printing or sending included (#667);
  *   - a click on "Never" for deleting files is WRITTEN (the row read back from
  *     `agents.shell_policy`), and survives a reload;
  *   - the "Run commands" sentence says what really happens instead of
@@ -93,7 +94,11 @@ test.describe('the shell checklist @cap:regler-autonomie/ecran', () => {
         'true',
       );
     }
-    for (const row of ['delete_files', 'install_software']) {
+    // #667 : ouvrir un programme, imprimer ou envoyer a sa ligne, et demande.
+    await expect(page.getByTestId('shell-row-open_or_send')).toContainText(
+      'Open programs, print or send',
+    );
+    for (const row of ['delete_files', 'install_software', 'open_or_send']) {
       await expect(page.getByTestId(`shell-btn-${row}-ask`)).toHaveAttribute(
         'aria-pressed',
         'true',

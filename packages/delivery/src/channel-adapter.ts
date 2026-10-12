@@ -87,6 +87,18 @@ export interface QuestionCard {
   callbackId: string;
 }
 
+/**
+ * Une carte à boutons LIBRES : un texte et des rangées de boutons dont le
+ * `callbackData` est opaque à l'adaptateur. La forme générale des deux cartes
+ * ci-dessus ; ce qu'il faut à un formulaire rempli geste par geste (la question
+ * d'un serveur MCP, 0145), dont chaque geste réécrit la carte avec
+ * `editMessageText` et les mêmes rangées.
+ */
+export interface ButtonCard {
+  text: string;
+  buttons: readonly (readonly CardButton[])[];
+}
+
 export interface SendResult {
   messageId: string;
 }
@@ -127,6 +139,12 @@ export interface ChannelCapabilities {
   media: boolean;
   /** Can rewrite a previously-sent message's text (editMessageText is implemented). */
   editMessage: boolean;
+  /**
+   * What a card can carry on this channel, when the platform bounds it
+   * (Discord: 5 rows of 5). Absent: no bound the caller must plan for. A card
+   * beyond it is refused by `sendCard` / `editMessageText`, never cut.
+   */
+  buttonLimits?: { maxRows: number; maxPerRow: number; maxButtons?: number };
 }
 
 /** One conversation a bot/session can send into, as surfaced by a channel's
@@ -210,6 +228,17 @@ export interface ChannelAdapter {
     creds: ChannelCredentials,
     conversationId: string,
     card: QuestionCard,
+  ): Promise<SendResult>;
+
+  /**
+   * Optional: only channels with `capabilities.buttons` implement this. A text
+   * and free rows of buttons (`ButtonCard`); refused (thrown) when the card
+   * exceeds `capabilities.buttonLimits`.
+   */
+  sendCard?(
+    creds: ChannelCredentials,
+    conversationId: string,
+    card: ButtonCard,
   ): Promise<SendResult>;
 
   /**

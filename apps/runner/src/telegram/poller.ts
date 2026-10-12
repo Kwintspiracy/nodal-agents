@@ -28,6 +28,10 @@ import {
 } from './handler.ts';
 import { handleApprovalCallback } from './approval-callback.ts';
 import {
+  handleTelegramElicitationCallback,
+  handleTelegramElicitationReply,
+} from './elicitation-callback.ts';
+import {
   handleAuthCallback,
   parseAuthCallbackData,
   buildAuthConfirmKeyboard,
@@ -276,6 +280,17 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
           // authorization decision (H-1); anything else = an approval tap.
           if (parseAuthCallbackData(update.callback_query.data)) {
             await handleAuthCallback({ update, receivingAgentId: agentId, botToken, deps });
+          } else if (
+            // `eli:` = a gesture on the card of an MCP server's question (0145).
+            (await handleTelegramElicitationCallback({
+              update,
+              receivingAgentId: agentId,
+              botToken,
+              deps,
+              env,
+            })) !== null
+          ) {
+            // Handled — the card was redrawn or the request settled.
           } else {
             await handleApprovalCallback({
               update,
@@ -365,6 +380,44 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
         failureCounts.delete(update.update_id);
         offset = newOffset;
         continue;
+      }
+
+      // 0145 — a message typed IN REPLY to the card of an MCP server's
+      // question fills the field that waits for it. Any other reply is an
+      // ordinary message and goes on below. A failure here is said and the
+      // message goes on below too: a turn of conversation, never lost.
+      if (update.message?.reply_to_message?.message_id !== undefined) {
+        let answered = false;
+        try {
+          answered =
+            (await handleTelegramElicitationReply({ update, receivingAgentId: agentId, deps })) !==
+            null;
+        } catch (err) {
+          console.error(
+            `[telegram-poller agent=${agentId}] update_id=${update.update_id} could not be read as ` +
+              `an answer to a question card, handled as a message: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+          );
+        }
+        if (answered) {
+          try {
+            await deps.db
+              .update(agents)
+              .set({ telegramOffset: newOffset, updatedAt: new Date() })
+              .where(eq(agents.id, agentId));
+            await mirrorOffsetToBinding(deps.db, agentId, newOffset);
+          } catch (err) {
+            console.warn(
+              `[telegram-poller agent=${agentId}] answer update_id=${update.update_id} applied, ` +
+                `offset not persisted (the next poll may replay it, which sets the same value): ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+            );
+          }
+          offset = newOffset;
+          continue;
+        }
       }
 
       let createdJobId: string | undefined;

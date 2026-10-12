@@ -11,7 +11,7 @@ import {
   LLMOutputLimitError,
 } from './errors';
 import { CAPABILITY_MATRIX } from './providers/registry';
-import { validateMessageStructure } from './message-structure';
+import { validateMessageStructure, withoutNamelessToolCalls } from './message-structure';
 import { withRetry } from './retry';
 import { buildLlmCallObservation, emitLlmCall } from './observe';
 import type { LlmCallObserver, LlmClientMeta } from './observe';
@@ -252,19 +252,21 @@ function buildModel(config: ProviderConfig): LanguageModel {
 // ─── Message structure helper ──────────────────────────────────────────────────
 
 /**
- * Extract messages from the args object if present, and validate structure.
- * Validation only runs when ModelMessage[] messages are provided.
+ * Extract messages from the args object if present, make them replayable by
+ * every provider (`withoutNamelessToolCalls`), and validate structure.
+ * Only runs when ModelMessage[] messages are provided.
  * Omit<Message, 'id'>[] (useChat format) is passed through without validation —
  * those are legacy messages and not produced by our orchestrators.
  */
-function validateIfMessages(args: { messages?: unknown }): void {
-  const messages = args.messages;
-  if (!Array.isArray(messages) || messages.length === 0) return;
+function prepareMessages<A>(args: A): A {
+  const messages = (args as { messages?: unknown }).messages;
+  if (!Array.isArray(messages) || messages.length === 0) return args;
   // Only validate if the first message looks like a ModelMessage (has role + content)
   const first = messages[0] as Record<string, unknown> | undefined;
-  if (first && typeof first['role'] === 'string' && 'content' in first) {
-    validateMessageStructure(messages as ModelMessage[]);
-  }
+  if (!first || typeof first['role'] !== 'string' || !('content' in first)) return args;
+  const replayable = withoutNamelessToolCalls(messages as ModelMessage[]);
+  validateMessageStructure(replayable);
+  return { ...args, messages: replayable };
 }
 
 // ─── Factory ───────────────────────────────────────────────────────────────────
@@ -422,8 +424,8 @@ export function createLlmClient(
     return result;
   };
 
-  const clientGenerateText: NodalLlmClient['generateText'] = async (args, callOpts) => {
-    validateIfMessages(args as { messages?: unknown });
+  const clientGenerateText: NodalLlmClient['generateText'] = async (rawArgs, callOpts) => {
+    const args = prepareMessages(rawArgs);
     // Caching path splits on the E1 boundary; non-caching path strips it so the
     // marker never leaks into a non-Anthropic provider's prompt.
     const prepared = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
@@ -519,8 +521,8 @@ export function createLlmClient(
     return refuseCutTurn(args, result, startedAt, callOpts?.inspectOnly === true);
   };
 
-  const clientStreamText: NodalLlmClient['streamText'] = (args) => {
-    validateIfMessages(args as { messages?: unknown });
+  const clientStreamText: NodalLlmClient['streamText'] = (rawArgs) => {
+    const args = prepareMessages(rawArgs);
     // streamText returns a StreamTextResult synchronously (not a Promise).
     // Streaming semantics differ from generateText (timeout would have to be
     // per-chunk, not total) — left untouched here. Add when a streaming user
@@ -530,8 +532,8 @@ export function createLlmClient(
     return streamText({ ...prepared, model } as Parameters<typeof streamText>[0]);
   };
 
-  const clientGenerateObject: NodalLlmClient['generateObject'] = async (args) => {
-    validateIfMessages(args as { messages?: unknown });
+  const clientGenerateObject: NodalLlmClient['generateObject'] = async (rawArgs) => {
+    const args = prepareMessages(rawArgs);
     const prepared = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
     const startedAt = Date.now();
     try {
