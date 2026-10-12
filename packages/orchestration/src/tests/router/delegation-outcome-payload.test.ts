@@ -14,10 +14,10 @@ import {
 import {
   DELEGATION_FAILED_MARKER,
   DELEGATION_TEXT_AFTER_OBJECT,
-  failedSubDelegationsLeftUnnamed,
   parseDelegationOutcomePayload,
   renderDelegationOutcome,
 } from '../../router/resume';
+import { failedDelegationGuidance } from '../../router/failed-delegation';
 import type { DelegationOutcomeRecord } from '../../router/resume';
 import type { AuthoredReviewVerdict } from '../../router/job-deliverable';
 
@@ -128,7 +128,8 @@ This delegation delivered NOTHING usable. DO NOT retry the same specialist.`;
 // JSON devenait invalide, `parseDelegationOutcomePayload` rendait `null`, et le
 // runner perdait en silence le statut de chaque sous-délégation. L'objet est
 // désormais borné PAR CONSTRUCTION : chaque liste garde ce qui tient, dit
-// combien elle a laissé, et les comptes de décision portent sur tout.
+// combien elle a laissé, et `sub_delegations_incomplete` dit qu'un échec n'y
+// est plus nommé. Chaque texte libre y a sa part fixe (passe 4).
 
 /** Un verdict de relecteur aux constats longs. */
 function verdictLong(i: number, verdict: 'approve' | 'request_changes'): AuthoredReviewVerdict {
@@ -196,7 +197,7 @@ const ajuste = (record: DelegationOutcomeRecord): string =>
   );
 
 describe('renderDelegationOutcome borné : l’objet est du JSON complet, par construction @cap:organiser-equipe/moteur', () => {
-  it('500 verdicts, 2000 fichiers, 300 sous-délégations : le budget tient, l’objet se relit, les comptes portent sur tout', () => {
+  it('500 verdicts, 2000 fichiers, 300 sous-délégations : le budget tient, l’objet se relit, la liste partielle le dit', () => {
     const charge = ajuste(enormeRecord('completed'));
 
     expect(charge.length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
@@ -206,23 +207,18 @@ describe('renderDelegationOutcome borné : l’objet est du JSON complet, par co
     const relu = parseDelegationOutcomePayload(charge);
     expect(relu).not.toBeNull();
     expect(relu?.status).toBe('completed');
-    expect(relu?.sub_delegations_failed).toBe(60);
     const gardees = relu?.sub_delegations ?? [];
     expect(gardees.length).toBeGreaterThan(0);
-    expect(gardees.length).toBeLessThan(300);
-    expect(relu?.sub_delegations_omitted).toBe(300 - gardees.length);
     // Les échecs d'abord : c'est eux que le runner dit à la personne.
     const nommes = gardees.filter((s) => s.status === 'failed').length;
-    expect(nommes).toBe(Math.min(60, gardees.length));
-    expect(gardees.slice(0, nommes).every((s) => s.status === 'failed')).toBe(true);
-    expect(failedSubDelegationsLeftUnnamed(relu!)).toBe(60 - nommes);
-    // Le scénario retire bien des échecs de la liste : c'est ce cas que le compte couvre.
-    expect(60 - nommes).toBeGreaterThan(0);
+    expect(nommes).toBe(gardees.length);
+    // Le scénario retire bien des échecs de la liste, et le record le DIT.
+    expect(nommes).toBeLessThan(60);
+    expect(relu?.sub_delegations_incomplete).toBe(true);
 
     const tete = objetDeTete(charge);
+    expect(gardees.length + (tete['sub_delegations_omitted'] as number)).toBe(300);
     expect(tete['delivery_blocked']).toBe(REVIEW_CHANGES_REQUESTED);
-    // Compté sur les 500, pas sur ceux que la liste garde.
-    expect(tete['review_verdicts_request_changes']).toBe(71);
     const verdicts = tete['review_verdicts'] as Array<{ author: { agent_slug: string } }>;
     expect(verdicts.length).toBeGreaterThan(0);
     expect(verdicts.length + (tete['review_verdicts_omitted'] as number)).toBe(500);
@@ -260,7 +256,7 @@ describe('renderDelegationOutcome borné : l’objet est du JSON complet, par co
     const relu = parseDelegationOutcomePayload(charge);
     expect(relu?.status).toBe('failed');
     expect(relu?.error).toBe('max_tool_calls');
-    expect(relu?.sub_delegations_failed).toBe(60);
+    expect(relu?.sub_delegations_incomplete).toBe(true);
   });
 
   it('quelle que soit la place, l’objet n’est jamais coupé : il se relit, et la charge tient', () => {
@@ -271,47 +267,99 @@ describe('renderDelegationOutcome borné : l’objet est du JSON complet, par co
       expect(charge.length, `room=${room}`).toBeLessThanOrEqual(room + 80);
       const relu = parseDelegationOutcomePayload(charge);
       expect(relu, `room=${room}`).not.toBeNull();
-      expect(relu?.sub_delegations_failed).toBe(60);
-      expect((relu?.sub_delegations?.length ?? 0) + (relu?.sub_delegations_omitted ?? 0)).toBe(300);
-      expect(objetDeTete(charge)['review_verdicts_request_changes']).toBe(71);
+      expect(relu?.sub_delegations_incomplete).toBe(true);
+      const tete = objetDeTete(charge);
+      expect(
+        (relu?.sub_delegations?.length ?? 0) + (tete['sub_delegations_omitted'] as number),
+      ).toBe(300);
+      expect(tete['delivery_blocked']).toBe(REVIEW_CHANGES_REQUESTED);
     }
   });
 
-  it('une liste déjà PARTIELLE remonte avec ses comptes, même quand elle tient', () => {
-    // Le runner a compté 4 échecs qu'il ne pouvait plus nommer : le record le
-    // dit, et le rendu entier, qui n'a pas de place pour ces comptes, cède la
-    // main au rendu borné.
-    const charge = renderDelegationOutcome({
+  it('un drapeau reçu d’en bas remonte : forme entière comme forme bornée', () => {
+    // Un étage plus bas a été borné : la liste que ce record porte est déjà
+    // partielle, même si elle tient entière ici.
+    const petit: DelegationOutcomeRecord = {
       status: 'completed',
       summary: 'Fait.',
-      sub_delegations: [
-        { tool: 'assign_researcher', status: 'failed' },
-        { tool: 'assign_writer', status: 'delivered' },
-      ],
-      sub_delegations_omitted: 4,
-      sub_delegations_failed: 5,
-    });
+      sub_delegations: [{ tool: 'assign_writer', status: 'delivered' }],
+      sub_delegations_incomplete: true,
+    };
+    const entier = renderDelegationOutcome(petit);
+    expect((JSON.parse(entier) as Record<string, unknown>)['sub_delegations_incomplete']).toBe(
+      true,
+    );
+    expect(parseDelegationOutcomePayload(entier)?.sub_delegations_incomplete).toBe(true);
 
-    expect(charge.length).toBeLessThan(TOOL_RESULT_MODEL_CHARS);
-    const relu = parseDelegationOutcomePayload(charge);
-    expect(relu?.sub_delegations).toEqual([
-      { tool: 'assign_researcher', status: 'failed' },
-      { tool: 'assign_writer', status: 'delivered' },
-    ]);
-    expect(relu?.sub_delegations_omitted).toBe(4);
-    expect(relu?.sub_delegations_failed).toBe(5);
-    expect(failedSubDelegationsLeftUnnamed(relu!)).toBe(4);
-    expect(charge).toContain('\n\n[summary]\nFait.');
+    // Borné, sans aucun échec retiré ICI : le drapeau d'en bas tient quand même.
+    const borne = renderDelegationOutcome({ ...petit, summary: 'x'.repeat(30_000) });
+    expect(borne).toContain(`"summary": "${DELEGATION_TEXT_AFTER_OBJECT}"`);
+    expect(parseDelegationOutcomePayload(borne)?.sub_delegations_incomplete).toBe(true);
   });
 
-  it('un petit enregistrement complet : rendu entier, sans aucun compte, rien d’innommé', () => {
+  it('un petit enregistrement complet : rendu entier, sans drapeau', () => {
     const charge = renderDelegationOutcome({
       status: 'completed',
       summary: 'Fait.',
       sub_delegations: [{ tool: 'assign_researcher', status: 'failed' }],
     });
 
-    expect(Object.keys(JSON.parse(charge) as object)).not.toContain('sub_delegations_failed');
-    expect(failedSubDelegationsLeftUnnamed(parseDelegationOutcomePayload(charge)!)).toBe(0);
+    expect(Object.keys(JSON.parse(charge) as object)).not.toContain('sub_delegations_incomplete');
+    expect(parseDelegationOutcomePayload(charge)?.sub_delegations_incomplete).toBeUndefined();
+  });
+});
+
+describe('un texte libre de 30 000 caractères a sa part, jamais toute la place (revue Codex de #712, passe 4) @cap:organiser-equipe/moteur', () => {
+  /** Le record de la passe 4 : `error` et `exit_reason` immenses, plus l'énorme sous-arbre. */
+  const record = (): DelegationOutcomeRecord => ({
+    ...enormeRecord('failed'),
+    // Des retours à la ligne et des guillemets : la forme JSON est plus longue que le texte.
+    error: 'erreur "longue"\n'.repeat(1_875),
+    exit_reason: 'x'.repeat(30_000),
+  });
+  const MARQUE = /\[\.\.\. truncated: \d+ chars dropped \(total 30000\) \.\.\.\]$/;
+
+  it('à chaque place depuis le plancher, l’objet tient, se relit, et chaque texte est coupé avec la marque', () => {
+    for (const room of [1_500, 3_000, 8_000, 16_000, 25_000]) {
+      const charge = renderDelegationOutcome(record(), room);
+      const tete = charge.slice(0, charge.indexOf('\n}') + 2);
+      expect(tete.length, `room=${room}`).toBeLessThanOrEqual(room);
+      expect(charge.length, `room=${room}`).toBeLessThanOrEqual(room + 80);
+      const relu = parseDelegationOutcomePayload(charge);
+      expect(relu, `room=${room}`).not.toBeNull();
+      expect(relu?.error, `room=${room}`).toMatch(MARQUE);
+      expect(relu?.error?.startsWith('erreur "longue"\n')).toBe(true);
+      expect(relu?.exit_reason, `room=${room}`).toMatch(MARQUE);
+      expect(relu?.sub_delegations_incomplete).toBe(true);
+    }
+  });
+
+  it('la plus petite place que fitToolResult donne vraiment, sous un échec aux consignes les plus longues : ≤ budget', () => {
+    // Les consignes les plus longues : le plafond d'échecs atteint, l'enfant a
+    // laissé des fichiers, un slug long.
+    const consignes = failedDelegationGuidance(
+      { slug: `specialiste-${'s'.repeat(80)}`, streak: 99 },
+      { childLeftFiles: true },
+    );
+    const places: number[] = [];
+    const charge = fitToolResult(
+      (room) => {
+        places.push(room);
+        return `${DELEGATION_FAILED_MARKER}\n${renderDelegationOutcome(record(), room)}\n\n${consignes}`;
+      },
+      (t) => t.length,
+    );
+
+    expect(charge.length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
+    expect(Math.min(...places)).toBeGreaterThan(20_000);
+    expect(charge.endsWith(consignes)).toBe(true);
+    const relu = parseDelegationOutcomePayload(charge);
+    expect(relu?.status).toBe('failed');
+    expect(relu?.error).toMatch(MARQUE);
+    expect(relu?.exit_reason).toMatch(MARQUE);
+  });
+
+  it('sous le plancher, une erreur NOMMÉE plutôt qu’un résultat qui dépasse', () => {
+    expect(() => renderDelegationOutcome(record(), 600)).toThrow(/delegation_outcome_no_room/);
   });
 });

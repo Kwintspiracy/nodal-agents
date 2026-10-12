@@ -137,7 +137,6 @@ import {
   describeDuplicateReview,
   resumeDelegated,
   parseDelegationOutcomePayload,
-  failedSubDelegationsLeftUnnamed,
   DELEGATION_FAILED_MARKER,
   filterToolCallsForDelegation,
   buildDeferredToolResults,
@@ -714,7 +713,7 @@ export type ExecuteJobResult =
       toolsUsed?: string[];
       exitReason?: string;
       subDelegations?: SubDelegationOutcome[];
-      unnamedFailedSubDelegations?: number;
+      subDelegationsIncomplete?: boolean;
     }
   // `result` carries a user-facing explanation when one exists (e.g. a blocked
   // agent's reason). It lets a delegating parent relay WHY a child stopped,
@@ -732,11 +731,11 @@ export type ExecuteJobResult =
       hint?: JobFailureHint;
       subDelegations?: SubDelegationOutcome[];
       /**
-       * Les échecs du sous-arbre que ce run a COMPTÉS sans pouvoir les nommer :
-       * un enregistrement borné les avait retirés de sa liste (revue Codex de
-       * la PR #712, passe 3). Absent ou `0` quand tout échec a son nom.
+       * `true` quand `subDelegations` ne nomme pas tous les échecs du
+       * sous-arbre : le dernier enregistrement d'une délégation de ce run le
+       * disait (revue Codex de la PR #712, passes 3 et 4).
        */
-      unnamedFailedSubDelegations?: number;
+      subDelegationsIncomplete?: boolean;
     }
   | { status: 'cancelled' }
   | { status: 'awaiting_approval' }
@@ -768,7 +767,7 @@ export function delegationRecordFromOutcome(
       // d'un petit-enfant n'atteignait le grand-parent que dans la prose du
       // livrable, donc dans un texte qu'un modèle peut écrire lui-même.
       sub_delegations: outcome.subDelegations ?? [],
-      ...unnamedFailureCounts(outcome),
+      ...(outcome.subDelegationsIncomplete ? { sub_delegations_incomplete: true } : {}),
     };
   }
   return {
@@ -781,23 +780,8 @@ export function delegationRecordFromOutcome(
     // relaierait un échec sans savoir qu'un autre modèle le réglerait (#119).
     hint: outcome.hint ?? null,
     sub_delegations: outcome.subDelegations ?? [],
-    ...unnamedFailureCounts(outcome),
+    ...(outcome.subDelegationsIncomplete ? { sub_delegations_incomplete: true } : {}),
   };
-}
-
-/**
- * Les comptes qu'un record porte quand des échecs du sous-arbre n'ont plus de
- * nom (revue Codex de la PR #712, passe 3) : ils remontent COMPTÉS, et le
- * parent ne lit jamais la liste partielle comme le sous-arbre entier. Rien
- * quand tout échec a son nom — le record garde alors sa forme d'avant.
- */
-function unnamedFailureCounts(
-  outcome: Extract<ExecuteJobResult, { status: 'completed' | 'failed' }>,
-): Pick<DelegationOutcomeRecord, 'sub_delegations_omitted' | 'sub_delegations_failed'> {
-  const sansNom = outcome.unnamedFailedSubDelegations ?? 0;
-  if (sansNom === 0) return {};
-  const nommes = (outcome.subDelegations ?? []).filter((s) => s.status === 'failed').length;
-  return { sub_delegations_omitted: sansNom, sub_delegations_failed: nommes + sansNom };
 }
 
 // ─── AnyToolDef ──────────────────────────────────────────────────────────────
@@ -1616,18 +1600,13 @@ export async function reviveJobIfApprovalResolvedDuringSuspend(
 type DelegationOutcomeMap = Map<string, 'failed' | 'delivered'>;
 
 /**
- * Les échecs du sous-arbre que la carte ne peut pas nommer, par délégation qui
- * les a rapportés (revue Codex de la PR #712, passe 3) : l'enregistrement de
- * `assign_x` était borné et comptait N échecs de plus que sa liste. Le dernier
- * enregistrement de chaque délégation décide, comme pour la carte.
+ * Les délégations de ce run dont le DERNIER enregistrement dit que sa liste
+ * `sub_delegations` ne nomme pas tous les échecs du sous-arbre (revue Codex de
+ * la PR #712, passes 3 et 4). Un fait par délégation, remplacé par chacun de
+ * ses enregistrements comme toute autre issue : aucun compte, donc aucun échec
+ * compté deux fois ni gardé après sa réparation.
  */
-type UnnamedFailureMap = Map<string, number>;
-
-function unnamedFailureTotal(sansNom: UnnamedFailureMap): number {
-  let total = 0;
-  for (const n of sansNom.values()) total += n;
-  return total;
-}
+type IncompleteDelegations = Set<string>;
 
 /** Les noms qui n'ont RIEN rendu, triés — ce que la notice nomme. */
 function failedDelegationNames(carte: DelegationOutcomeMap): string[] {
@@ -1664,7 +1643,7 @@ async function runJob(
   // en ligne, ouvrent la leur.
   return withinRunScope(jobId as string, async () => {
     const delegationOutcomes: DelegationOutcomeMap = new Map();
-    const unnamedFailures: UnnamedFailureMap = new Map();
+    const incompleteDelegations: IncompleteDelegations = new Set();
     // Le battement du job (#565) : posé par `runJobTracked` dès que la prise
     // réussit, rendu ici quand le run rend la main — fini, suspendu, perdu ou
     // levé. Aucune autre partie du run ne bat.
@@ -1680,7 +1659,7 @@ async function runJob(
         runnerEnv,
         opts,
         delegationOutcomes,
-        unnamedFailures,
+        incompleteDelegations,
         tenue,
       );
       if (result.status !== 'completed' && result.status !== 'failed') return result;
@@ -1692,7 +1671,7 @@ async function runJob(
       return {
         ...rapproche,
         subDelegations: subDelegationList(delegationOutcomes),
-        unnamedFailedSubDelegations: unnamedFailureTotal(unnamedFailures),
+        subDelegationsIncomplete: incompleteDelegations.size > 0,
       };
     } catch (err) {
       // Lit déjà la ligne quand son écriture est refusée.
@@ -1746,7 +1725,7 @@ async function runJobTracked(
   runnerEnv: RunnerEnv | undefined,
   opts: ExecuteJobOpts | undefined,
   delegationOutcomes: DelegationOutcomeMap,
-  unnamedFailures: UnnamedFailureMap,
+  incompleteDelegations: IncompleteDelegations,
   tenue: JobHold,
 ): Promise<ExecuteJobResult> {
   const { db, registry } = deps;
@@ -3632,14 +3611,12 @@ async function runJobTracked(
    * — une redite vaut mieux qu'un silence, et elle nomme le spécialiste.
    */
   const failedDelegationNotice = (): string => {
-    // Les échecs qu'un enregistrement borné a comptés sans les nommer sont
-    // dits par leur NOMBRE, `+N`, à la suite des noms : la liste partielle ne
-    // fait jamais conclure que rien d'autre n'a échoué (revue Codex de la
-    // PR #712, passe 3).
-    const sansNom = unnamedFailureTotal(unnamedFailures);
+    // Une liste partielle ne fait jamais conclure que rien d'autre n'a
+    // échoué : `…` à la suite des noms dit qu'il en manque (revue Codex de la
+    // PR #712, passes 3 et 4).
     const noms = [
       ...failedDelegationNames(delegationOutcomes),
-      ...(sansNom > 0 ? [`+${sansNom}`] : []),
+      ...(incompleteDelegations.size > 0 ? ['…'] : []),
     ];
     return noms.length === 0 ? '' : `[delegation stopped: ${noms.join(', ')} — no deliverable]`;
   };
@@ -4278,10 +4255,10 @@ async function runJobTracked(
       for (const issue of record?.sub_delegations ?? []) {
         delegationOutcomes.set(issue.tool, issue.status);
       }
-      // Un enregistrement BORNÉ ne nomme plus tous ses échecs ; il les compte.
-      // Ce compte, jamais la liste partielle, dit combien ont échoué, et le
-      // dernier enregistrement de cette délégation décide.
-      if (record) unnamedFailures.set(name, failedSubDelegationsLeftUnnamed(record));
+      // Un enregistrement BORNÉ peut ne plus nommer tous ses échecs ; il le
+      // dit. Le dernier enregistrement de cette délégation décide.
+      if (record?.sub_delegations_incomplete) incompleteDelegations.add(name);
+      else if (record) incompleteDelegations.delete(name);
 
       // Une délégation qui n'a RIEN rendu porte le marqueur d'échec. Les autres
       // `error-text` sont des REPORTS (« un autre transfert a la priorité,

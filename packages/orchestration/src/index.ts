@@ -96,7 +96,6 @@ export {
   normalizeDelegationOutcome,
   renderDelegationOutcome,
   parseDelegationOutcomePayload,
-  failedSubDelegationsLeftUnnamed,
   DELEGATION_FAILED_MARKER,
 } from './router/resume';
 export type {

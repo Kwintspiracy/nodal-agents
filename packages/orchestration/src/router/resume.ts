@@ -95,26 +95,14 @@ export interface DelegationOutcomeRecord {
    */
   sub_delegations?: SubDelegationOutcome[];
   /**
-   * Combien d'issues du sous-arbre NE SONT PAS dans `sub_delegations` (revue
-   * Codex de la PR #712, passe 3). Absent quand la liste est complète, ce qui
-   * est le cas ordinaire.
-   *
-   * Une liste ne devient partielle qu'à un endroit : le rendu borné de
-   * `renderDelegationOutcome`, quand le résultat ne tient pas dans le budget
-   * d'un résultat d'outil. Le runner qui relit ce rendu ne connaît plus le nom
-   * des issues retirées ; il les compte, et les fait remonter comptées.
+   * `true` quand `sub_delegations` ne nomme pas tous les échecs du sous-arbre
+   * (revue Codex de la PR #712, passes 3 et 4) ; absent sinon, ce qui est le
+   * cas ordinaire. Il naît à un seul endroit : le rendu borné de
+   * `renderDelegationOutcome`, quand des entrées `failed` n'y tiennent plus.
+   * Un parent qui le relit le porte à son tour, si bien qu'une liste partielle
+   * ne se lit jamais, à aucun étage, comme le sous-arbre entier.
    */
-  sub_delegations_omitted?: number;
-  /**
-   * Combien d'issues du sous-arbre sont `failed`, sur TOUTES — celles que
-   * `sub_delegations` liste et celles qu'elle ne liste plus. Absent quand la
-   * liste est complète : le compte se lit alors sur la liste.
-   *
-   * C'est lui, et jamais la liste partielle, qui dit si quelque chose a échoué
-   * (`failedSubDelegationsLeftUnnamed`) : une liste bornée qui ne montre aucun
-   * échec ne prouve pas qu'il n'y en a eu aucun.
-   */
-  sub_delegations_failed?: number;
+  sub_delegations_incomplete?: boolean;
   /**
    * Les fichiers que l'enfant a ÉCRITS ou DÉCLARÉS, relus par `resumeDelegated`
    * sur les lignes d'état de vérification de l'enfant (issue #491) — jamais
@@ -231,16 +219,16 @@ export function renderDelegationOutcome(
       // Toujours présent, `[]` quand le sous-arbre n'a rien à dire — même
       // raison que les deux champs ci-dessus (#116).
       sub_delegations: result.sub_delegations ?? [],
+      // Présent SEULEMENT quand il dit vrai : une liste complète, le cas
+      // ordinaire, garde son rendu d'avant octet pour octet.
+      ...(result.sub_delegations_incomplete === true ? { sub_delegations_incomplete: true } : {}),
       // Toujours présent, `[]` quand l'enfant n'a rien écrit (#491).
       files_written: result.files_written ?? [],
     },
     null,
     2,
   );
-  // Une liste de sous-délégations déjà partielle (un étage plus bas a été
-  // borné) ne s'écrit pas sous la forme entière, qui n'a pas de place pour le
-  // dire : elle prend la forme bornée, qui porte ses comptes.
-  if (entier.length <= room && (result.sub_delegations_omitted ?? 0) === 0) return entier;
+  if (entier.length <= room) return entier;
 
   // Ce que chaque liste garde D'ABORD quand elle doit laisser des entrées : ce
   // sur quoi quelqu'un agit. L'ordre d'origine tient à l'intérieur de chaque
@@ -279,10 +267,9 @@ export function renderDelegationOutcome(
     // le texte laisse sinon.
     Math.max(Math.floor(room / 2), room - (texteLong === '' ? 0 : texteLong.length + 2)),
   );
-  // L'objet sans aucune entrée de liste ne porte que des codes : il ne dépasse
-  // pas la place. S'il le faisait, il serait rendu entier plutôt que coupé —
-  // un objet tranché n'est plus lisible par personne.
-  if (texteLong === '' || decisions.length >= room) return decisions;
+  // L'objet tient dans sa place, elle-même dans `room` : la coupe ne peut
+  // tomber que dans le texte long.
+  if (texteLong === '') return decisions;
   return cutForContext(`${decisions}\n\n${texteLong}`, room);
 }
 
@@ -308,18 +295,28 @@ const LISTES: readonly NomDeListe[] = [
   'tools_used',
 ];
 
+/** Les textes libres de l'objet borné : ceux dont la longueur ne dépend que de l'enfant. */
+type TextesLibres = Record<'error' | 'exit_reason', string | null>;
+
 /**
  * L'objet de décision d'un résultat borné : du JSON valide, complet, d'au plus
- * `place` caractères dès que ses champs scalaires y tiennent — par
- * CONSTRUCTION, jamais par une coupe de texte.
+ * `place` caractères — par CONSTRUCTION, jamais par une coupe de texte.
  *
  * Une seule forme pour toutes les listes : `<liste>` porte les entrées gardées,
  * `<liste>_omitted` dit combien n'y sont pas. Le total est leur somme.
  *
  * Ce qui ne s'omet JAMAIS : `status`, `error`, `exit_reason`,
- * `delivery_blocked` (calculé en amont sur tous les verdicts), `hint`, et les
- * comptes sur lesquels le runner et le parent décident, calculés sur TOUTES
- * les entrées — `review_verdicts_request_changes` et `sub_delegations_failed`.
+ * `delivery_blocked` (calculé en amont sur tous les verdicts), `hint`, et
+ * `sub_delegations_incomplete` dès qu'un échec du sous-arbre n'est plus nommé,
+ * ici ou déjà plus bas.
+ *
+ * Chaque texte libre (`error`, `exit_reason`) a sa part FIXE de ce que le
+ * squelette laisse, la moitié chacun, et y est coupé avec la marque de
+ * troncature (revue Codex de la PR #712, passe 4) ; le reste n'est que codes.
+ * L'objet aux listes vides tient donc dans toute `room` d'au moins 1 500
+ * (mesuré : 1 120 avec des centaines de milliers d'entrées omises), quand
+ * `fitToolResult` n'en donne jamais moins de 20 000. Sous ce plancher,
+ * `delegation_outcome_no_room` plutôt qu'un résultat hors budget (invariant #4).
  *
  * Les listes se remplissent à tour de rôle, une entrée chacune, dans l'ordre où
  * elles gardent leurs entrées : aucune ne prend toute la place aux autres. Une
@@ -332,24 +329,23 @@ function decisionsBornees(
   place: number,
 ): string {
   const echouees = listes.sub_delegations.filter((s) => s.status === 'failed').length;
-  const corrections = listes.review_verdicts.filter((v) => reviewBlocksDelivery(v)).length;
-  const rendre = (gardes: Record<NomDeListe, number>): string =>
+  const rendre = (gardes: Record<NomDeListe, number>, libres: TextesLibres): string =>
     JSON.stringify(
       {
         status: result.status,
-        error: result.error ?? null,
-        exit_reason: result.exit_reason ?? null,
+        error: libres.error,
+        exit_reason: libres.exit_reason,
         delivery_blocked: result.delivery_blocked ?? null,
         hint: result.hint ?? null,
         review_verdicts: listes.review_verdicts.slice(0, gardes.review_verdicts),
         review_verdicts_omitted: listes.review_verdicts.length - gardes.review_verdicts,
-        review_verdicts_request_changes: corrections,
         sub_delegations: listes.sub_delegations.slice(0, gardes.sub_delegations),
-        sub_delegations_omitted:
-          (result.sub_delegations_omitted ?? 0) +
-          listes.sub_delegations.length -
-          gardes.sub_delegations,
-        sub_delegations_failed: result.sub_delegations_failed ?? echouees,
+        sub_delegations_omitted: listes.sub_delegations.length - gardes.sub_delegations,
+        // Les échecs passent en tête : il en manque un dès que la liste garde
+        // moins d'entrées qu'il n'y a d'échecs.
+        ...(result.sub_delegations_incomplete === true || gardes.sub_delegations < echouees
+          ? { sub_delegations_incomplete: true }
+          : {}),
         files_written: listes.files_written.slice(0, gardes.files_written),
         files_written_omitted: listes.files_written.length - gardes.files_written,
         tools_used: listes.tools_used.slice(0, gardes.tools_used),
@@ -366,10 +362,16 @@ function decisionsBornees(
     files_written: 0,
     tools_used: 0,
   };
+  const part = Math.floor((place - rendre(gardes, { error: null, exit_reason: null }).length) / 2);
+  const libres: TextesLibres = {
+    error: texteLibreBorne(result.error ?? null, part),
+    exit_reason: texteLibreBorne(result.exit_reason ?? null, part),
+  };
   // Mesuré avec toutes les listes vides, donc avec les comptes `_omitted` au
-  // plus grand : ajouter une entrée ne fait que les baisser, si bien que
-  // `longueur` reste une borne HAUTE de la longueur réelle.
-  let longueur = rendre(gardes).length;
+  // plus grand et `sub_delegations_incomplete` présent s'il peut l'être :
+  // ajouter une entrée ne fait que les réduire, si bien que `longueur` reste
+  // une borne HAUTE de la longueur réelle.
+  let longueur = rendre(gardes, libres).length;
   const ouvertes = new Set<NomDeListe>(LISTES);
   while (ouvertes.size > 0) {
     for (const nom of LISTES) {
@@ -389,7 +391,29 @@ function decisionsBornees(
       longueur += cout;
     }
   }
-  return rendre(gardes);
+  return rendre(gardes, libres);
+}
+
+/**
+ * `valeur` coupée par `cutForContext` pour que sa forme JSON (guillemets et
+ * échappements compris) tienne en `part` caractères ; telle quelle si elle y
+ * tient déjà. Quand même la seule marque de coupe n'y tient pas, la place est
+ * sous le plancher : erreur nommée, jamais un objet qui dépasse.
+ */
+function texteLibreBorne(valeur: string | null, part: number): string | null {
+  if (valeur === null || JSON.stringify(valeur).length <= part) return valeur;
+  for (let garde = Math.max(0, part); ; ) {
+    const coupe = cutForContext(valeur, garde);
+    const exces = JSON.stringify(coupe).length - part;
+    if (exces <= 0) return coupe;
+    if (garde === 0) {
+      throw new OrchestrationError(
+        'delegation_outcome_no_room',
+        `${part} chars for a text field of a bounded delegation outcome, fewer than its truncation marker`,
+      );
+    }
+    garde = Math.max(0, garde - exces);
+  }
 }
 
 /**
@@ -405,19 +429,6 @@ function coutDansUneListe(entree: unknown, premiere: boolean): number {
 }
 
 /**
- * Combien d'échecs du sous-arbre ce record compte SANS les nommer : ceux qu'un
- * rendu borné a retirés de `sub_delegations` (revue Codex de la PR #712,
- * passe 3). `0` sur un record complet.
- *
- * Le runner s'en sert pour ne jamais conclure « rien n'a échoué » d'une liste
- * partielle : il dit ces échecs comptés, et les fait remonter comptés.
- */
-export function failedSubDelegationsLeftUnnamed(record: DelegationOutcomeRecord): number {
-  const nommes = (record.sub_delegations ?? []).filter((s) => s.status === 'failed').length;
-  return Math.max(0, (record.sub_delegations_failed ?? nommes) - nommes);
-}
-
-/**
  * L'inverse de `renderDelegationOutcome` : relit l'enregistrement typé dans la
  * charge utile d'un `tool_result` de délégation (issue #116).
  *
@@ -430,8 +441,8 @@ export function failedSubDelegationsLeftUnnamed(record: DelegationOutcomeRecord)
  *   - un échec, `DELEGATION_FAILED_MARKER`, l'objet JSON, puis les consignes
  *     que le parent lit.
  * Dans les deux, l'objet peut être le rendu entier ou le rendu borné, suivi de
- * son texte long : l'objet borné est toujours du JSON complet, et ses comptes
- * (`sub_delegations_omitted`, `sub_delegations_failed`) sont relus avec lui.
+ * son texte long : l'objet borné est toujours du JSON complet, et
+ * `sub_delegations_incomplete` est relu avec lui.
  *
  * Rend `null` sur tout le reste — un report, un texte posé par la compaction,
  * une ligne d'une version antérieure. `null` veut dire « je ne sais pas », pas
@@ -498,12 +509,9 @@ export function parseDelegationOutcomePayload(payload: string): DelegationOutcom
     }
     record.sub_delegations = issues;
   }
-  // Les comptes d'une liste bornée (revue Codex de la PR #712, passe 3) : sans
-  // eux, une liste partielle se lirait comme le sous-arbre entier.
-  for (const champ of ['sub_delegations_omitted', 'sub_delegations_failed'] as const) {
-    const n = objet[champ];
-    if (typeof n === 'number' && Number.isInteger(n) && n >= 0) record[champ] = n;
-  }
+  // Sans lui, une liste bornée se lirait comme le sous-arbre entier (revue
+  // Codex de la PR #712, passe 3).
+  if (objet['sub_delegations_incomplete'] === true) record.sub_delegations_incomplete = true;
   return record;
 }
 

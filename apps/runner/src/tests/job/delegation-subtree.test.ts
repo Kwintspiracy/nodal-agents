@@ -40,7 +40,6 @@ import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import {
-  failedSubDelegationsLeftUnnamed,
   parseDelegationOutcomePayload,
   renderDelegationOutcome,
   resumeDelegated,
@@ -520,85 +519,181 @@ describe('le SUCCÈS pose sa livraison dans la transaction terminale @cap:organi
 });
 
 describe('un enregistrement BORNÉ ne fait jamais conclure « rien n’a échoué » @cap:organiser-equipe/moteur', () => {
-  // Revue Codex de la PR #712, passe 3. Quand l'objet de décision dépassait à
-  // lui seul le budget d'un résultat d'outil, il était coupé comme du texte :
-  // `parseDelegationOutcomePayload` rendait `null`, et ce runner perdait en
-  // silence le statut de chaque sous-délégation. L'objet est maintenant borné
-  // par construction ; ce test prouve que le runner, de l'autre côté, dit
-  // l'échec même quand la liste ne le nomme plus.
-  it('300 sous-délégations dont 200 échouées : les noms gardés ET le nombre des autres sont dits, et remontent comptés', async () => {
-    const issues = Array.from({ length: 300 }, (_, i) => ({
+  // Revue Codex de la PR #712, passes 3 et 4. Un objet de décision trop grand
+  // était coupé comme du texte (passe 3) ; il est borné par construction, et
+  // quand sa liste ne nomme plus tous les échecs il le DIT
+  // (`sub_delegations_incomplete`). La passe 4 avait trouvé que le COMPTE des
+  // échecs sans nom, tenu par délégation rapporteuse alors que les issues
+  // nommées sont globales, comptait un échec deux fois et le gardait après sa
+  // réparation. Il n'y a plus de compte : un drapeau par délégation, que son
+  // dernier enregistrement remplace.
+
+  /** 300 issues aux noms longs, dont 200 échouées. */
+  const issuesLongues = (): Array<{ tool: string; status: 'failed' | 'delivered' }> =>
+    Array.from({ length: 300 }, (_, i) => ({
       tool: `assign_specialiste_${String(i).padStart(3, '0')}_${'n'.repeat(60)}`,
       status: i % 3 === 2 ? ('delivered' as const) : ('failed' as const),
     }));
-    const task = 'Fais la synthèse de la longueur de Planck';
-    const parentId = await insertJob({
-      status: 'awaiting_delegation',
-      messages: [
-        { role: 'user', content: task },
-        {
-          role: 'assistant',
-          content: [
-            {
-              type: 'tool-call',
-              toolCallId: 'borne-a',
-              toolName: outilEnfant,
-              input: { task: 'cherche la valeur' },
-            },
-          ],
-        },
-      ],
-      pendingDelegation: { toolUseId: 'borne-a', toolName: outilEnfant },
-    });
+
+  /**
+   * Le parent appelle `toolName`, l'enfant finit, et `resumeDelegated` — le
+   * point de passage de production — injecte son record chez le parent.
+   */
+  async function injecter(
+    parentId: string,
+    toolName: string,
+    callId: string,
+    outcome: Parameters<typeof resumeDelegated>[2],
+  ): Promise<void> {
+    const [avant] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentId));
+    await db
+      .update(agentJobs)
+      .set({
+        status: 'awaiting_delegation',
+        messages: [
+          ...(avant!.messages as unknown[]),
+          {
+            role: 'assistant',
+            content: [
+              { type: 'tool-call', toolCallId: callId, toolName, input: { task: 'fais-le' } },
+            ],
+          },
+        ],
+        pendingDelegation: { toolUseId: callId, toolName },
+      } as never)
+      .where(eq(agentJobs.id, parentId));
     const childId = await insertJob({
       channel: 'internal',
       status: 'completed',
       parentJobId: parentId,
     });
+    await resumeDelegated(parentId as JobId, childId as JobId, outcome, db);
+  }
 
-    // Le point de passage de production : l'enfant a fini, son record est
-    // injecté chez le parent, borné s'il le faut.
-    await resumeDelegated(
-      parentId as JobId,
-      childId as JobId,
-      { status: 'completed', summary: 'Rapport de l’enfant.', sub_delegations: issues },
-      db,
-    );
-    const [apresReprise] = await db
+  /** Le dernier `tool_result` injecté chez le parent, tel que son modèle le lit. */
+  async function dernierBloc(parentId: string): Promise<string> {
+    const [row] = await db
       .select({ messages: agentJobs.messages })
       .from(agentJobs)
       .where(eq(agentJobs.id, parentId));
-    const bloc = (
-      (apresReprise!.messages as Array<{ content: unknown }>).at(-1)!.content as Array<{
+    return (
+      (row!.messages as Array<{ content: unknown }>).at(-1)!.content as Array<{
         output: { value: string };
       }>
     )[0]!.output.value;
-    const relu = parseDelegationOutcomePayload(bloc);
+  }
+
+  /** La DERNIÈRE ligne du harnais dans le résultat du job : celle de ce run. */
+  const derniereLigne = async (jobId: string): Promise<string> => {
+    const result = (await jobRow(jobId)).result ?? '';
+    return result.slice(result.lastIndexOf('[delegation stopped: '));
+  };
+
+  const nouveauParent = (): Promise<string> =>
+    insertJob({
+      status: 'awaiting_delegation',
+      messages: [{ role: 'user', content: 'Synthèse.' }],
+    });
+
+  it('300 sous-délégations dont 200 échouées : les noms gardés sont dits, `…` dit qu’il en manque, et le drapeau remonte', async () => {
+    const parentId = await nouveauParent();
+    await injecter(parentId, outilEnfant, 'borne-a', {
+      status: 'completed',
+      summary: 'Rapport de l’enfant.',
+      sub_delegations: issuesLongues(),
+    });
+    const relu = parseDelegationOutcomePayload(await dernierBloc(parentId));
     expect(relu).not.toBeNull();
     const nommes = (relu!.sub_delegations ?? []).filter((s) => s.status === 'failed');
-    const sansNom = failedSubDelegationsLeftUnnamed(relu!);
     // Le scénario est bien celui de la passe 3 : des échecs ont quitté la liste.
-    expect(sansNom).toBeGreaterThan(0);
-    expect(nommes.length + sansNom).toBe(200);
+    expect(nommes.length).toBeLessThan(200);
+    expect(relu!.sub_delegations_incomplete).toBe(true);
 
     const deps = makeDeps(makeMockLlmClient([livre('borne', 'Voici la synthèse.')]));
     const outcome = await executeJob(parentId as JobId, deps, testEnv);
 
     expect(outcome.status).toBe('completed');
     const row = await jobRow(parentId);
-    // La ligne du harnais nomme ceux qu'elle peut, et COMPTE les autres.
-    expect(row.result ?? '').toContain('no deliverable');
     expect(row.result ?? '').toContain(nommes[0]!.tool);
-    expect(row.result ?? '').toContain(`+${sansNom} — no deliverable]`);
+    expect(row.result ?? '').toContain(', … — no deliverable]');
 
-    // Et le compte remonte : le record que le grand-parent recevrait dit 200
-    // échecs, pas seulement ceux qui ont encore un nom.
+    // Et le drapeau remonte : le record que le grand-parent recevrait le porte.
     if (outcome.status !== 'completed') throw new Error('unreachable');
-    expect(outcome.unnamedFailedSubDelegations).toBe(sansNom);
+    expect(outcome.subDelegationsIncomplete).toBe(true);
     const record = delegationRecordFromOutcome(outcome);
-    expect(record.sub_delegations_failed).toBe(200);
-    expect(failedSubDelegationsLeftUnnamed(record)).toBe(sansNom);
+    expect(record.sub_delegations_incomplete).toBe(true);
     const releGrandParent = parseDelegationOutcomePayload(renderDelegationOutcome(record));
-    expect(releGrandParent?.sub_delegations_failed).toBe(200);
+    expect(releGrandParent?.sub_delegations_incomplete).toBe(true);
+  });
+
+  /**
+   * La collision de la passe 4, chez un parent neuf : le Lead (outilEnfant)
+   * rend un record borné d'où l'échec du rédacteur (outilPetitEnfant), dernier
+   * de ses échecs, est sorti ; un record plus récent NOMME le rédacteur en
+   * échec, le sien ; puis le rédacteur livre.
+   */
+  async function collision(): Promise<string> {
+    const parentId = await nouveauParent();
+    await injecter(parentId, outilEnfant, 'col-lead', {
+      status: 'completed',
+      summary: 'Rapport du Lead.',
+      sub_delegations: [...issuesLongues(), { tool: outilPetitEnfant, status: 'failed' }],
+    });
+    const duLead = parseDelegationOutcomePayload(await dernierBloc(parentId));
+    expect(duLead!.sub_delegations_incomplete).toBe(true);
+    expect((duLead!.sub_delegations ?? []).map((s) => s.tool)).not.toContain(outilPetitEnfant);
+    await injecter(parentId, outilPetitEnfant, 'col-red-1', {
+      status: 'failed',
+      summary: '',
+      error: 'empty_deliverable',
+    });
+    await injecter(parentId, outilPetitEnfant, 'col-red-2', {
+      status: 'completed',
+      summary: 'Le texte demandé.',
+    });
+    return parentId;
+  }
+
+  it('collision de la passe 4 : l’échec retiré par le Lead, puis nommé, puis réparé, n’est jamais dit deux fois ni gardé', async () => {
+    const parentId = await collision();
+
+    const deps = makeDeps(makeMockLlmClient([livre('col', 'Voici la synthèse.')]));
+    const outcome = await executeJob(parentId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    const ligne = await derniereLigne(parentId);
+    // Réparé : le rédacteur n'est plus dit, ni par son nom ni par un compte.
+    expect(ligne).not.toContain(outilPetitEnfant);
+    expect(ligne).not.toMatch(/\+\d+/);
+    // Chaque échec nommé l'est une fois.
+    const noms = ligne.match(/assign_\w+/g) ?? [];
+    expect(noms.length).toBeGreaterThan(0);
+    expect(new Set(noms).size).toBe(noms.length);
+    // Le dernier record du Lead est partiel : la ligne le dit.
+    expect(ligne).toContain(', … — no deliverable]');
+  });
+
+  it('`…` suit le DERNIER record du Lead : un record complet plus récent le fait tomber', async () => {
+    const parentId = await collision();
+    await injecter(parentId, outilEnfant, 'col-lead-2', {
+      status: 'completed',
+      summary: 'Rapport du Lead, repris.',
+      sub_delegations: [],
+    });
+
+    const deps = makeDeps(makeMockLlmClient([livre('col2', 'Synthèse reprise.')]));
+    const outcome = await executeJob(parentId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    const ligne = await derniereLigne(parentId);
+    // Les échecs nommés par le premier record restent dits ; le drapeau, non.
+    expect(ligne).toContain('no deliverable]');
+    expect(ligne).not.toContain('…');
+    if (outcome.status !== 'completed') throw new Error('unreachable');
+    expect(outcome.subDelegationsIncomplete).toBe(false);
+    expect(delegationRecordFromOutcome(outcome).sub_delegations_incomplete).toBeUndefined();
   });
 });

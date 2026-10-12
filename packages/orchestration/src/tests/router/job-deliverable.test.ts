@@ -28,7 +28,6 @@ import {
   resumeDelegated,
   DELEGATION_FAILED_MARKER,
   DELEGATION_TEXT_AFTER_OBJECT,
-  failedSubDelegationsLeftUnnamed,
   parseDelegationOutcomePayload,
 } from '../../router/resume';
 import type { JobId } from '../../types';
@@ -750,7 +749,6 @@ describe('resumeDelegated : un résultat de délégation tient dans le budget d�
       authors.map(() => ({ blocker: 0, major: 50, minor: 0 })),
     );
     expect(head['review_verdicts_omitted']).toBe(0);
-    expect(head['review_verdicts_request_changes']).toBe(1);
     expect(head['summary']).toBe(DELEGATION_TEXT_AFTER_OBJECT);
 
     // Le texte long suit, dans l'ordre : le résumé de l'enfant, puis les verdicts
@@ -926,24 +924,22 @@ describe('resumeDelegated : un résultat de délégation tient dans le budget d�
     expect(out.type).toBe('text');
     expect(out.value.length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
 
-    // Le lecteur du runner relit l'enregistrement : jamais `null`, et les
-    // échecs se comptent sur les 300, pas sur ceux que la liste garde.
+    // Le lecteur du runner relit l'enregistrement : jamais `null`, et une
+    // liste qui ne nomme plus tous les échecs le dit.
     const relu = parseDelegationOutcomePayload(out.value);
     expect(relu).not.toBeNull();
     expect(relu?.status).toBe('completed');
-    expect(relu?.sub_delegations_failed).toBe(75);
     const gardees = relu?.sub_delegations ?? [];
-    expect(relu?.sub_delegations_omitted).toBe(300 - gardees.length);
     const nommes = gardees.filter((s) => s.status === 'failed').length;
     expect(gardees.slice(0, nommes).every((s) => s.status === 'failed')).toBe(true);
-    expect(failedSubDelegationsLeftUnnamed(relu!)).toBe(75 - nommes);
-    // Le scénario retire bien des échecs de la liste : c'est ce cas que le compte couvre.
-    expect(75 - nommes).toBeGreaterThan(0);
+    // Le scénario retire bien des échecs de la liste : c'est ce cas que le drapeau couvre.
+    expect(nommes).toBeLessThan(75);
+    expect(relu?.sub_delegations_incomplete).toBe(true);
 
     const head = decisionObject(out.value);
+    expect(gardees.length + (head['sub_delegations_omitted'] as number)).toBe(300);
     // L'interdit, calculé sur les 500 verdicts.
     expect(head['delivery_blocked']).toBe(REVIEW_CHANGES_REQUESTED);
-    expect(head['review_verdicts_request_changes']).toBe(demandes);
     const verdicts = head['review_verdicts'] as Array<{ verdict: string }>;
     expect(verdicts.length).toBeGreaterThan(0);
     expect(verdicts.length + (head['review_verdicts_omitted'] as number)).toBe(500);
