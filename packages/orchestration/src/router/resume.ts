@@ -10,6 +10,7 @@ import {
   TOOL_RESULT_MODEL_CHARS,
   cutForContext,
   fitToolResult,
+  reviewBlocksDelivery,
 } from '@nodal-agents/shared';
 import { nextFailedDelegationState, failedDelegationGuidance } from './failed-delegation';
 import {
@@ -94,6 +95,27 @@ export interface DelegationOutcomeRecord {
    */
   sub_delegations?: SubDelegationOutcome[];
   /**
+   * Combien d'issues du sous-arbre NE SONT PAS dans `sub_delegations` (revue
+   * Codex de la PR #712, passe 3). Absent quand la liste est complète, ce qui
+   * est le cas ordinaire.
+   *
+   * Une liste ne devient partielle qu'à un endroit : le rendu borné de
+   * `renderDelegationOutcome`, quand le résultat ne tient pas dans le budget
+   * d'un résultat d'outil. Le runner qui relit ce rendu ne connaît plus le nom
+   * des issues retirées ; il les compte, et les fait remonter comptées.
+   */
+  sub_delegations_omitted?: number;
+  /**
+   * Combien d'issues du sous-arbre sont `failed`, sur TOUTES — celles que
+   * `sub_delegations` liste et celles qu'elle ne liste plus. Absent quand la
+   * liste est complète : le compte se lit alors sur la liste.
+   *
+   * C'est lui, et jamais la liste partielle, qui dit si quelque chose a échoué
+   * (`failedSubDelegationsLeftUnnamed`) : une liste bornée qui ne montre aucun
+   * échec ne prouve pas qu'il n'y en a eu aucun.
+   */
+  sub_delegations_failed?: number;
+  /**
    * Les fichiers que l'enfant a ÉCRITS ou DÉCLARÉS, relus par `resumeDelegated`
    * sur les lignes d'état de vérification de l'enfant (issue #491) — jamais
    * fournis par l'appelant, jamais lus dans une phrase.
@@ -175,14 +197,16 @@ export const DELEGATION_TEXT_AFTER_OBJECT = '[after this object]';
  * la PR #712, passe 2 : un arbre large de relecteurs, chacun jusqu'à 50
  * constats, rendait un `tool_result` sans borne dans le contexte du parent).
  *
- * Tant qu'il tient dans `room`, il est rendu tel quel, octet pour octet. Au-delà,
- * l'ordre change pour que la coupe ne puisse tomber QUE sur du texte long :
- *  1. un objet JSON complet, qui porte tout ce sur quoi le parent décide — le
- *     statut, l'erreur, `delivery_blocked`, et pour CHAQUE verdict sa valeur,
- *     ses comptes et son auteur (slug et id de job) ; `parseDelegationOutcomePayload`
- *     le relit comme avant ;
+ * Le rendu entier n'est écrit que s'il porte TOUT et tient dans `room` : il est
+ * alors tel qu'avant, octet pour octet. Sinon, c'est le rendu borné :
+ *  1. un objet JSON VALIDE et COMPLET, qui tient par construction — jamais
+ *     coupé comme du texte (revue Codex de la PR #712, passe 3 : un objet trop
+ *     grand à lui seul était tranché, `parseDelegationOutcomePayload` rendait
+ *     `null`, et le runner perdait en silence les échecs du sous-arbre). Voir
+ *     `decisionsBornees` ;
  *  2. puis le texte long : le `summary` de l'enfant, puis chaque verdict mis en
- *     page (`renderDeliveredVerdicts`) avec son résumé et ses constats.
+ *     page (`renderDeliveredVerdicts`) avec son résumé et ses constats. C'est
+ *     lui, et lui seul, que la coupe peut atteindre.
  * La marque de troncature dit combien a été retiré. Les constats complets
  * restent en base, dans les `tool_calls` de chaque job relecteur, que les ids
  * affichés désignent.
@@ -213,36 +237,184 @@ export function renderDelegationOutcome(
     null,
     2,
   );
-  if (entier.length <= room) return entier;
+  // Une liste de sous-délégations déjà partielle (un étage plus bas a été
+  // borné) ne s'écrit pas sous la forme entière, qui n'a pas de place pour le
+  // dire : elle prend la forme bornée, qui porte ses comptes.
+  if (entier.length <= room && (result.sub_delegations_omitted ?? 0) === 0) return entier;
 
-  const verdicts = result.review_verdicts ?? [];
-  const decisions = JSON.stringify(
-    {
-      status: result.status,
-      error: result.error ?? null,
-      exit_reason: result.exit_reason ?? null,
-      delivery_blocked: result.delivery_blocked ?? null,
-      hint: result.hint ?? null,
-      review_verdicts: verdicts.map((v) => ({
-        author: v.author,
-        verdict: v.verdict,
-        counts: v.counts,
-      })),
-      sub_delegations: result.sub_delegations ?? [],
-      files_written: result.files_written ?? [],
-      tools_used: result.tools_used ?? [],
-      summary: result.summary === '' ? '' : DELEGATION_TEXT_AFTER_OBJECT,
-    },
-    null,
-    2,
-  );
+  // Ce que chaque liste garde D'ABORD quand elle doit laisser des entrées : ce
+  // sur quoi quelqu'un agit. L'ordre d'origine tient à l'intérieur de chaque
+  // groupe. Les comptes, eux, portent sur toutes les entrées.
+  //  - verdicts : ceux qui demandent des corrections, puisque ce sont eux qui
+  //    bloquent la livraison ;
+  //  - sous-délégations : les échecs, puisque ce sont eux que le runner dit à
+  //    la personne (`[delegation stopped: …]`) ;
+  //  - fichiers : ceux que l'enfant a écrits et qui sont là, puisque ce sont
+  //    eux que le parent ne doit pas refaire (#491) ;
+  //  - outils : l'ordre d'origine, aucun n'emporte de décision.
+  const verdicts = gardeDAbord(result.review_verdicts ?? [], (v) => reviewBlocksDelivery(v));
   const texteLong = [
     result.summary === '' ? '' : `[summary]\n${result.summary}`,
     renderDeliveredVerdicts({ review_verdicts: verdicts, unreadable_review_verdicts: [] }),
   ]
     .filter((t) => t !== '')
     .join('\n\n');
+  const decisions = decisionsBornees(
+    result,
+    {
+      review_verdicts: verdicts.map((v) => ({
+        author: v.author,
+        verdict: v.verdict,
+        counts: v.counts,
+      })),
+      sub_delegations: gardeDAbord(result.sub_delegations ?? [], (s) => s.status === 'failed'),
+      files_written: gardeDAbord(
+        result.files_written ?? [],
+        (f) => filesTheChildWrote([f]).length > 0,
+      ),
+      tools_used: result.tools_used ?? [],
+    },
+    // Ni les listes ni le texte n'affament l'autre : l'objet prend au plus la
+    // moitié de la place quand le texte long en veut davantage, et tout ce que
+    // le texte laisse sinon.
+    Math.max(Math.floor(room / 2), room - (texteLong === '' ? 0 : texteLong.length + 2)),
+  );
+  // L'objet sans aucune entrée de liste ne porte que des codes : il ne dépasse
+  // pas la place. S'il le faisait, il serait rendu entier plutôt que coupé —
+  // un objet tranché n'est plus lisible par personne.
+  if (texteLong === '' || decisions.length >= room) return decisions;
   return cutForContext(`${decisions}\n\n${texteLong}`, room);
+}
+
+/** Les entrées qui vérifient `dAbord` en tête, l'ordre d'origine gardé dans chaque groupe. */
+function gardeDAbord<T>(entrees: readonly T[], dAbord: (e: T) => boolean): T[] {
+  return [...entrees.filter(dAbord), ...entrees.filter((e) => !dAbord(e))];
+}
+
+/** Les listes de l'objet borné, chacune déjà dans l'ordre où elle garde ses entrées. */
+interface ListesBornables {
+  review_verdicts: Array<Pick<AuthoredReviewVerdict, 'author' | 'verdict' | 'counts'>>;
+  sub_delegations: SubDelegationOutcome[];
+  files_written: DelegatedFile[];
+  tools_used: string[];
+}
+
+type NomDeListe = keyof ListesBornables;
+
+const LISTES: readonly NomDeListe[] = [
+  'review_verdicts',
+  'sub_delegations',
+  'files_written',
+  'tools_used',
+];
+
+/**
+ * L'objet de décision d'un résultat borné : du JSON valide, complet, d'au plus
+ * `place` caractères dès que ses champs scalaires y tiennent — par
+ * CONSTRUCTION, jamais par une coupe de texte.
+ *
+ * Une seule forme pour toutes les listes : `<liste>` porte les entrées gardées,
+ * `<liste>_omitted` dit combien n'y sont pas. Le total est leur somme.
+ *
+ * Ce qui ne s'omet JAMAIS : `status`, `error`, `exit_reason`,
+ * `delivery_blocked` (calculé en amont sur tous les verdicts), `hint`, et les
+ * comptes sur lesquels le runner et le parent décident, calculés sur TOUTES
+ * les entrées — `review_verdicts_request_changes` et `sub_delegations_failed`.
+ *
+ * Les listes se remplissent à tour de rôle, une entrée chacune, dans l'ordre où
+ * elles gardent leurs entrées : aucune ne prend toute la place aux autres. Une
+ * liste dont l'entrée suivante ne tient plus s'arrête là — ce qu'elle garde est
+ * toujours un début de son ordre.
+ */
+function decisionsBornees(
+  result: DelegationOutcomeRecord,
+  listes: ListesBornables,
+  place: number,
+): string {
+  const echouees = listes.sub_delegations.filter((s) => s.status === 'failed').length;
+  const corrections = listes.review_verdicts.filter((v) => reviewBlocksDelivery(v)).length;
+  const rendre = (gardes: Record<NomDeListe, number>): string =>
+    JSON.stringify(
+      {
+        status: result.status,
+        error: result.error ?? null,
+        exit_reason: result.exit_reason ?? null,
+        delivery_blocked: result.delivery_blocked ?? null,
+        hint: result.hint ?? null,
+        review_verdicts: listes.review_verdicts.slice(0, gardes.review_verdicts),
+        review_verdicts_omitted: listes.review_verdicts.length - gardes.review_verdicts,
+        review_verdicts_request_changes: corrections,
+        sub_delegations: listes.sub_delegations.slice(0, gardes.sub_delegations),
+        sub_delegations_omitted:
+          (result.sub_delegations_omitted ?? 0) +
+          listes.sub_delegations.length -
+          gardes.sub_delegations,
+        sub_delegations_failed: result.sub_delegations_failed ?? echouees,
+        files_written: listes.files_written.slice(0, gardes.files_written),
+        files_written_omitted: listes.files_written.length - gardes.files_written,
+        tools_used: listes.tools_used.slice(0, gardes.tools_used),
+        tools_used_omitted: listes.tools_used.length - gardes.tools_used,
+        summary: result.summary === '' ? '' : DELEGATION_TEXT_AFTER_OBJECT,
+      },
+      null,
+      2,
+    );
+
+  const gardes: Record<NomDeListe, number> = {
+    review_verdicts: 0,
+    sub_delegations: 0,
+    files_written: 0,
+    tools_used: 0,
+  };
+  // Mesuré avec toutes les listes vides, donc avec les comptes `_omitted` au
+  // plus grand : ajouter une entrée ne fait que les baisser, si bien que
+  // `longueur` reste une borne HAUTE de la longueur réelle.
+  let longueur = rendre(gardes).length;
+  const ouvertes = new Set<NomDeListe>(LISTES);
+  while (ouvertes.size > 0) {
+    for (const nom of LISTES) {
+      if (!ouvertes.has(nom)) continue;
+      const liste: readonly unknown[] = listes[nom];
+      const deja = gardes[nom];
+      if (deja >= liste.length) {
+        ouvertes.delete(nom);
+        continue;
+      }
+      const cout = coutDansUneListe(liste[deja], deja === 0);
+      if (longueur + cout > place) {
+        ouvertes.delete(nom);
+        continue;
+      }
+      gardes[nom] = deja + 1;
+      longueur += cout;
+    }
+  }
+  return rendre(gardes);
+}
+
+/**
+ * Ce qu'une entrée ajoute à un tableau de second niveau dans
+ * `JSON.stringify(_, null, 2)` : chacune de ses lignes indentée de quatre
+ * espaces, plus `\n` … `\n  ` autour de la première (le `[]` vide avait déjà
+ * ses crochets), ou `,\n` devant les suivantes.
+ */
+function coutDansUneListe(entree: unknown, premiere: boolean): number {
+  const brut = JSON.stringify(entree, null, 2);
+  const lignes = brut.split('\n').length;
+  return brut.length + 4 * lignes + (premiere ? 4 : 2);
+}
+
+/**
+ * Combien d'échecs du sous-arbre ce record compte SANS les nommer : ceux qu'un
+ * rendu borné a retirés de `sub_delegations` (revue Codex de la PR #712,
+ * passe 3). `0` sur un record complet.
+ *
+ * Le runner s'en sert pour ne jamais conclure « rien n'a échoué » d'une liste
+ * partielle : il dit ces échecs comptés, et les fait remonter comptés.
+ */
+export function failedSubDelegationsLeftUnnamed(record: DelegationOutcomeRecord): number {
+  const nommes = (record.sub_delegations ?? []).filter((s) => s.status === 'failed').length;
+  return Math.max(0, (record.sub_delegations_failed ?? nommes) - nommes);
 }
 
 /**
@@ -257,6 +429,9 @@ export function renderDelegationOutcome(
  *   - un succès, qui EST le JSON ;
  *   - un échec, `DELEGATION_FAILED_MARKER`, l'objet JSON, puis les consignes
  *     que le parent lit.
+ * Dans les deux, l'objet peut être le rendu entier ou le rendu borné, suivi de
+ * son texte long : l'objet borné est toujours du JSON complet, et ses comptes
+ * (`sub_delegations_omitted`, `sub_delegations_failed`) sont relus avec lui.
  *
  * Rend `null` sur tout le reste — un report, un texte posé par la compaction,
  * une ligne d'une version antérieure. `null` veut dire « je ne sais pas », pas
@@ -322,6 +497,12 @@ export function parseDelegationOutcomePayload(payload: string): DelegationOutcom
       issues.push({ tool, status: etat });
     }
     record.sub_delegations = issues;
+  }
+  // Les comptes d'une liste bornée (revue Codex de la PR #712, passe 3) : sans
+  // eux, une liste partielle se lirait comme le sous-arbre entier.
+  for (const champ of ['sub_delegations_omitted', 'sub_delegations_failed'] as const) {
+    const n = objet[champ];
+    if (typeof n === 'number' && Number.isInteger(n) && n >= 0) record[champ] = n;
   }
   return record;
 }

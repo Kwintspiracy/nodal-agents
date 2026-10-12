@@ -39,10 +39,16 @@ import {
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
+import {
+  failedSubDelegationsLeftUnnamed,
+  parseDelegationOutcomePayload,
+  renderDelegationOutcome,
+  resumeDelegated,
+} from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
-import { executeJob } from '../../job/execute.ts';
+import { delegationRecordFromOutcome, executeJob } from '../../job/execute.ts';
 
 // ─── Interception du LLM ────────────────────────────────────────────────────
 
@@ -510,5 +516,89 @@ describe('le SUCCÈS pose sa livraison dans la transaction terminale @cap:organi
       .where(eq(agentJobs.parentJobId, jobId));
     expect(enfants.length).toBeGreaterThan(0);
     expect(enfants).toEqual(enfants.map(() => ({ chatId: '4242', chatChannel: 'telegram' })));
+  });
+});
+
+describe('un enregistrement BORNÉ ne fait jamais conclure « rien n’a échoué » @cap:organiser-equipe/moteur', () => {
+  // Revue Codex de la PR #712, passe 3. Quand l'objet de décision dépassait à
+  // lui seul le budget d'un résultat d'outil, il était coupé comme du texte :
+  // `parseDelegationOutcomePayload` rendait `null`, et ce runner perdait en
+  // silence le statut de chaque sous-délégation. L'objet est maintenant borné
+  // par construction ; ce test prouve que le runner, de l'autre côté, dit
+  // l'échec même quand la liste ne le nomme plus.
+  it('300 sous-délégations dont 200 échouées : les noms gardés ET le nombre des autres sont dits, et remontent comptés', async () => {
+    const issues = Array.from({ length: 300 }, (_, i) => ({
+      tool: `assign_specialiste_${String(i).padStart(3, '0')}_${'n'.repeat(60)}`,
+      status: i % 3 === 2 ? ('delivered' as const) : ('failed' as const),
+    }));
+    const task = 'Fais la synthèse de la longueur de Planck';
+    const parentId = await insertJob({
+      status: 'awaiting_delegation',
+      messages: [
+        { role: 'user', content: task },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'borne-a',
+              toolName: outilEnfant,
+              input: { task: 'cherche la valeur' },
+            },
+          ],
+        },
+      ],
+      pendingDelegation: { toolUseId: 'borne-a', toolName: outilEnfant },
+    });
+    const childId = await insertJob({
+      channel: 'internal',
+      status: 'completed',
+      parentJobId: parentId,
+    });
+
+    // Le point de passage de production : l'enfant a fini, son record est
+    // injecté chez le parent, borné s'il le faut.
+    await resumeDelegated(
+      parentId as JobId,
+      childId as JobId,
+      { status: 'completed', summary: 'Rapport de l’enfant.', sub_delegations: issues },
+      db,
+    );
+    const [apresReprise] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentId));
+    const bloc = (
+      (apresReprise!.messages as Array<{ content: unknown }>).at(-1)!.content as Array<{
+        output: { value: string };
+      }>
+    )[0]!.output.value;
+    const relu = parseDelegationOutcomePayload(bloc);
+    expect(relu).not.toBeNull();
+    const nommes = (relu!.sub_delegations ?? []).filter((s) => s.status === 'failed');
+    const sansNom = failedSubDelegationsLeftUnnamed(relu!);
+    // Le scénario est bien celui de la passe 3 : des échecs ont quitté la liste.
+    expect(sansNom).toBeGreaterThan(0);
+    expect(nommes.length + sansNom).toBe(200);
+
+    const deps = makeDeps(makeMockLlmClient([livre('borne', 'Voici la synthèse.')]));
+    const outcome = await executeJob(parentId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    const row = await jobRow(parentId);
+    // La ligne du harnais nomme ceux qu'elle peut, et COMPTE les autres.
+    expect(row.result ?? '').toContain('no deliverable');
+    expect(row.result ?? '').toContain(nommes[0]!.tool);
+    expect(row.result ?? '').toContain(`+${sansNom} — no deliverable]`);
+
+    // Et le compte remonte : le record que le grand-parent recevrait dit 200
+    // échecs, pas seulement ceux qui ont encore un nom.
+    if (outcome.status !== 'completed') throw new Error('unreachable');
+    expect(outcome.unnamedFailedSubDelegations).toBe(sansNom);
+    const record = delegationRecordFromOutcome(outcome);
+    expect(record.sub_delegations_failed).toBe(200);
+    expect(failedSubDelegationsLeftUnnamed(record)).toBe(sansNom);
+    const releGrandParent = parseDelegationOutcomePayload(renderDelegationOutcome(record));
+    expect(releGrandParent?.sub_delegations_failed).toBe(200);
   });
 });

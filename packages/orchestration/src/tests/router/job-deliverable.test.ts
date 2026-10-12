@@ -28,6 +28,7 @@ import {
   resumeDelegated,
   DELEGATION_FAILED_MARKER,
   DELEGATION_TEXT_AFTER_OBJECT,
+  failedSubDelegationsLeftUnnamed,
   parseDelegationOutcomePayload,
 } from '../../router/resume';
 import type { JobId } from '../../types';
@@ -716,7 +717,13 @@ describe('resumeDelegated : un résultat de délégation tient dans le budget d�
       await verdict(w, reviewerJob, wideVerdict(v, i));
       authors.push([await slugOf(reviewer), reviewerJob, v]);
     }
-    return { root, leadJob, authors };
+    // Le rendu borné met en tête les verdicts qui demandent des corrections,
+    // l'ordre d'origine gardé dans chaque groupe (revue Codex de #712, passe 3).
+    const enOrdreDeGarde = [
+      ...authors.filter(([, , v]) => v === 'request_changes'),
+      ...authors.filter(([, , v]) => v !== 'request_changes'),
+    ];
+    return { root, leadJob, authors: enOrdreDeGarde };
   }
 
   it('12 relecteurs × 50 constats : le tool_result tient dans le budget, chaque verdict et son auteur sont lus en entier, la coupe est dite', async () => {
@@ -742,17 +749,19 @@ describe('resumeDelegated : un résultat de délégation tient dans le budget d�
     expect(verdicts.map((v) => v.counts)).toEqual(
       authors.map(() => ({ blocker: 0, major: 50, minor: 0 })),
     );
+    expect(head['review_verdicts_omitted']).toBe(0);
+    expect(head['review_verdicts_request_changes']).toBe(1);
     expect(head['summary']).toBe(DELEGATION_TEXT_AFTER_OBJECT);
 
     // Le texte long suit, dans l'ordre : le résumé de l'enfant, puis les verdicts
-    // mis en page, jusqu'à la coupe.
+    // mis en page dans le même ordre, jusqu'à la coupe.
     const apres = out.value.slice(out.value.indexOf('\n}') + 2);
     expect(
       apres.startsWith(
-        '\n\n[summary]\nDouze relectures.\n\n[review_verdict] verdict: approve · author: ',
+        '\n\n[summary]\nDouze relectures.\n\n[review_verdict] verdict: request_changes · author: ',
       ),
     ).toBe(true);
-    expect(apres).toContain('R0F0 constat détaillé');
+    expect(apres).toContain('R6F0 constat détaillé');
 
     // Le lecteur du runner relit toujours l'enregistrement typé.
     expect(parseDelegationOutcomePayload(out.value)?.status).toBe('completed');
@@ -836,5 +845,112 @@ describe('resumeDelegated : un résultat de délégation tient dans le budget d�
         2,
       ),
     );
+  });
+
+  it('500 relecteurs aux constats longs, 300 sous-délégations : l’objet se relit, l’interdit et les échecs sont comptés sur tout (revue Codex de #712, passe 3)', async () => {
+    const w = await world();
+    const [alfred, lead] = await Promise.all([w.agent('alfred'), w.agent('lead')]);
+    const root = await awaitingRoot(w, alfred, 'assign_lead');
+    const leadJob = await job(w, lead, { parentJobId: root, result: 'Cinq cents relectures.' });
+    const suffixe = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const verdictDe = (i: number): 'approve' | 'request_changes' =>
+      i % 9 === 4 ? 'request_changes' : 'approve';
+    const relecteurs = await db
+      .insert(agents)
+      .values(
+        Array.from({ length: 500 }, (_, i) => ({
+          entityId: w.entityId,
+          name: `R${i}`,
+          slug: `rv-${i}-${suffixe}`,
+          personality: 'p',
+          role: 'agent' as const,
+          active: true,
+        })),
+      )
+      .returning({ id: agents.id });
+    clock += 1000;
+    const jobs = await db
+      .insert(agentJobs)
+      .values(
+        relecteurs.map((r, i) => ({
+          entityId: w.entityId,
+          agentId: r.id,
+          channel: 'internal',
+          task: 'relis la PR #679',
+          status: 'completed',
+          parentJobId: leadJob,
+          createdAt: new Date(clock + i),
+        })),
+      )
+      .returning({ id: agentJobs.id });
+    clock += 1000;
+    await db.insert(toolCalls).values(
+      jobs.map((j, i) => {
+        const { findings, ...reste } = wideVerdict(verdictDe(i), i) as {
+          findings: unknown[];
+        };
+        return {
+          entityId: w.entityId,
+          jobId: j.id,
+          toolName: 'review_verdict',
+          toolInput: {},
+          // Cinq constats de ~900 caractères chacun : longs, sans peser 22 Mo.
+          toolOutput: JSON.stringify({
+            ...reste,
+            findings: findings.slice(0, 5),
+            counts: { blocker: 0, major: 5, minor: 0 },
+          }),
+          turn: 1,
+        };
+      }),
+    );
+    const demandes = Array.from({ length: 500 }, (_, i) => verdictDe(i)).filter(
+      (v) => v === 'request_changes',
+    ).length;
+
+    await resumeDelegated(
+      root as JobId,
+      leadJob as JobId,
+      {
+        status: 'completed',
+        summary: 'Cinq cents relectures.',
+        sub_delegations: Array.from({ length: 300 }, (_, i) => ({
+          tool: `assign_specialiste_${String(i).padStart(3, '0')}`,
+          status: i % 4 === 1 ? ('failed' as const) : ('delivered' as const),
+        })),
+      },
+      db,
+    );
+
+    const out = await parentToolResult(root);
+    expect(out.type).toBe('text');
+    expect(out.value.length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
+
+    // Le lecteur du runner relit l'enregistrement : jamais `null`, et les
+    // échecs se comptent sur les 300, pas sur ceux que la liste garde.
+    const relu = parseDelegationOutcomePayload(out.value);
+    expect(relu).not.toBeNull();
+    expect(relu?.status).toBe('completed');
+    expect(relu?.sub_delegations_failed).toBe(75);
+    const gardees = relu?.sub_delegations ?? [];
+    expect(relu?.sub_delegations_omitted).toBe(300 - gardees.length);
+    const nommes = gardees.filter((s) => s.status === 'failed').length;
+    expect(gardees.slice(0, nommes).every((s) => s.status === 'failed')).toBe(true);
+    expect(failedSubDelegationsLeftUnnamed(relu!)).toBe(75 - nommes);
+    // Le scénario retire bien des échecs de la liste : c'est ce cas que le compte couvre.
+    expect(75 - nommes).toBeGreaterThan(0);
+
+    const head = decisionObject(out.value);
+    // L'interdit, calculé sur les 500 verdicts.
+    expect(head['delivery_blocked']).toBe(REVIEW_CHANGES_REQUESTED);
+    expect(head['review_verdicts_request_changes']).toBe(demandes);
+    const verdicts = head['review_verdicts'] as Array<{ verdict: string }>;
+    expect(verdicts.length).toBeGreaterThan(0);
+    expect(verdicts.length + (head['review_verdicts_omitted'] as number)).toBe(500);
+    expect(
+      verdicts
+        .slice(0, Math.min(demandes, verdicts.length))
+        .every((v) => v.verdict === 'request_changes'),
+    ).toBe(true);
   });
 });
