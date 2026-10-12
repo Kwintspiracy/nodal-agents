@@ -32,7 +32,7 @@ This is the all-Node monorepo replacing the legacy KwintAgents (Python+Next dual
 - When Fable orchestrate the session, it delegates coding to Opus 5 and Sonnet 5 depending on the task complexity.
 - Never use Haiku
 - Each brique and PR can only be merge when proper PR Reviews and/or applicable test gates pass (unit + arch + regression always; integration/smoke when external service touched).
-- When a PR or coding session is over, always delegates review and testing to Codex
+- Review a PR independently as soon as it is OPEN: Codex, or Nodal MCP (Reviewer A) when Codex cannot run; never a Claude subagent. See CLAUDE.md "Reviewing a PR".
 
 ## Commands
 
