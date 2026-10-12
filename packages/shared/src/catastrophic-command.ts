@@ -197,6 +197,25 @@ function isWindowsRootOrWildcardTarget(token: string): boolean {
   return false;
 }
 
+/** Remove-Item and its aliases in PowerShell, of which del, erase, rd and rmdir are also cmd's own. */
+const REMOVE_ITEM_NAMES: readonly string[] = [
+  'remove-item',
+  'ri',
+  'rm',
+  'del',
+  'erase',
+  'rd',
+  'rmdir',
+];
+
+/**
+ * The programs that delete files on Windows, macOS and Linux: ONE list, read
+ * by the floor (the Remove-Item family, recursive and forced, on a whole disk)
+ * and by the `delete_files` kind (any of them). Each kept its own list, and
+ * they drifted: the floor knew `erase` and `ri`, the kind did not (#693).
+ */
+const DELETE_PROGRAMS: readonly string[] = [...REMOVE_ITEM_NAMES, 'unlink', 'shred', 'srm'];
+
 /**
  * True when `cmd` contains a catastrophic, machine-wide-destructive operation
  * that must always require explicit human approval (never auto-run).
@@ -300,12 +319,12 @@ export function isCatastrophicCommand(
       return true;
     }
 
-    // Windows recursive+forced delete (Remove-Item/ri/del/erase/rd/rmdir)
+    // Windows recursive+forced delete (Remove-Item and its names, `REMOVE_ITEM_NAMES`)
     // against a machine-wide target — mirrors the `rm` check above, same
     // root-only scope. `Remove-Item .\build -Recurse -Force` (a relative
     // project subfolder) must NOT match; only a drive root / wildcard / system
     // env var does.
-    if (/^(ri|remove-item|del|erase|rd|rmdir)$/i.test(cmdWord)) {
+    if (REMOVE_ITEM_NAMES.includes(cmdWord)) {
       const psRecursiveForce = /(^|\s)-r(ecurse)?\b/i.test(s) && /(^|\s)-f(orce)?\b/i.test(s);
       const cmdRecursiveForce = /\/s\b/i.test(s) && /\/q\b/i.test(s);
       if (psRecursiveForce || cmdRecursiveForce) {
@@ -362,15 +381,48 @@ function subcommand(program: string, rest: string): RegExp {
 }
 
 /**
+ * The package managers of Windows, macOS and Linux, each with the subcommands
+ * that change what software is installed: install, update or remove (#693).
+ * Their other subcommands only read (`list`, `search`, `info`, `show`), or
+ * refresh an index (`apt update`, `brew update`, `zypper refresh`).
+ */
+const PACKAGE_MANAGER_VERBS: Record<string, string> = {
+  'apt-get|apt|aptitude':
+    'install|reinstall|remove|purge|upgrade|full-upgrade|dist-upgrade|safe-upgrade|autoremove|autopurge|build-dep',
+  'dnf|yum|microdnf|tdnf':
+    'install|reinstall|remove|erase|upgrade|update|downgrade|autoremove|distro-sync|swap|localinstall|groupinstall|groupremove|groupupdate',
+  zypper: 'install|in|reinstall|remove|rm|update|up|dist-upgrade|dup|patch',
+  apk: 'add|del|upgrade|fix',
+  brew: 'install|reinstall|uninstall|remove|rm|upgrade',
+  port: 'install|uninstall|upgrade',
+  mas: 'install|uninstall|upgrade|purchase',
+  pkg: 'install|add|delete|remove|upgrade',
+  snap: 'install|remove|refresh|revert',
+  flatpak: 'install|uninstall|update',
+  choco: 'install|uninstall|upgrade',
+  winget: 'install|add|uninstall|remove|rm|upgrade|update|import',
+  scoop: 'install|uninstall|update|reset',
+  'npm|pnpm|yarn|bun': 'install|i|add|ci|uninstall|remove|rm|r|un|update|up|upgrade',
+  // uv (review of PR #476)
+  uv: String.raw`pip\s+(?:install|uninstall)|add|remove|tool\s+(?:install|uninstall|upgrade)`,
+  go: 'install',
+  gem: 'install|uninstall|update',
+  'conda|mamba|micromamba': 'install|remove|uninstall|update|upgrade',
+  nix: String.raw`profile\s+(?:install|add|remove|upgrade)`,
+};
+
+/**
  * The same patterns, sorted by what a person would call them (#464). The
  * autonomy checklist lets an owner allow, ask or forbid each KIND of action;
  * their union below is still exactly what `destructive_gate` has always gated.
  */
 export const STATIC_SHELL_CATEGORY_PATTERNS = {
   delete_files: [
-    /\b(rm|rmdir|unlink|shred)\b/i, // delete (unix)
-    /\bdel\s|\bRemove-Item\b|\brd\s+\/s/i, // delete (windows/ps)
+    // every program that deletes files (`DELETE_PROGRAMS`, the floor's list too)
+    new RegExp(String.raw`\b(?:${DELETE_PROGRAMS.join('|')})(?=\s|$)`, 'i'),
     /\bfind\b[^\n]*-delete\b/i, // find … -delete
+    // rsync deleting what the source does not have, or the source itself
+    /\brsync\b[^\n]*\s--(?:delete(?:-[a-z]+)*|del|remove-source-files)(?![\w-])/i,
     // destructive VCS: work thrown away
     subcommand('git', String.raw`push\b[^\n]*(?:--force|-f\b)`),
     subcommand('git', String.raw`reset\s+--hard\b`),
@@ -381,9 +433,24 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
     /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\b(?:un)?install\b/i, // pkg install, and uninstall: what software is installed changes
     // VS Code family: adding, updating or removing an extension (review of PR #682, pass 8)
     /\b(code|code-insiders|codium|vscodium|cursor|windsurf)\b[^\n]*--(?:install-extension|uninstall-extension|update-extensions)\b/i,
-    /\b(npm|pnpm|yarn|bun)\s+(i|add|ci)\b|\bInstall-(Module|Package)\b/i, // npm i, pnpm add, PowerShell modules
-    /\buv\s+(pip\s+install|add|tool\s+install)\b/i, // uv (review of PR #476)
-    /\bgo\s+install\b/i, // go install
+    // every package manager's verbs that install, update or remove (#693)
+    ...Object.entries(PACKAGE_MANAGER_VERBS).map(([program, verbs]) =>
+      subcommand(program, String.raw`(?:${verbs})(?![\w-])`),
+    ),
+    // PowerShell: modules, packages, Store apps, Windows features (#693)
+    /\b(?:Install|Uninstall|Update)-(?:Module|Package|Script|PSResource)\b|\b(?:Add|Remove)-(?:AppxPackage|WindowsPackage|WindowsCapability)\b|\b(?:Install|Uninstall)-WindowsFeature\b|\b(?:Enable|Disable)-WindowsOptionalFeature\b/i,
+    // The system installers, read by their options (#693): an option that
+    // installs, upgrades or removes; their queries (`dpkg -l`, `rpm -q…`,
+    // `msiexec /?`, `installer -pkginfo`) do not. dpkg, rpm, pacman, nix-env
+    // and softwareupdate options are case-sensitive (`rpm -e` erases, `-E` evaluates).
+    /\bmsiexec(?:\.exe)?\b[^\n]*\s[/-](?:i|package|a|x|uninstall|f[a-z]*|p|update|j[mu])(?![\w-])/i,
+    /\bdism(?:\.exe)?\b[^\n]*\s\/(?:add|remove)-(?:package|capability|provisionedappxpackage)\b|\bdism(?:\.exe)?\b[^\n]*\s\/(?:enable|disable)-feature\b/i,
+    /\bdpkg(?![\w-])[^\n]*\s(?:-[a-zA-Z]*[iPr][a-zA-Z]*|--(?:install|remove|purge|unpack|configure))(?![\w-])/,
+    /\brpm(?![\w-])(?![^\n]*\s-[a-zA-Z]*q)[^\n]*\s(?:-[a-zA-Z]*[iUFe][a-zA-Z]*|--(?:install|upgrade|freshen|erase|reinstall))(?![\w-])/,
+    /\bpacman(?![\w-])[^\n]*\s(?:-S(?![a-zA-Z]*[sigplcw])[a-zA-Z]*|-[UR][a-zA-Z]*|--(?:sync|upgrade|remove))(?![\w-])/,
+    /\bnix-env(?![\w-])(?![^\n]*\s-[a-zA-Z]*q)[^\n]*\s(?:-[a-zA-Z]*[ieu][a-zA-Z]*|--(?:install|uninstall|upgrade))(?![\w-])/,
+    /\binstaller(?![\w-])(?=[^\n]*\s-(?:pkg|package)\s)[^\n]*\s-target\b/i, // macOS
+    /\bsoftwareupdate\b[^\n]*\s(?:-i[a-zA-Z]*|--install(?:-rosetta)?)(?![\w-])/, // macOS
   ],
   // A command is filed by what it DOES (#581): fetching files (a model, an
   // archive, an image) is a download, whatever tool fetches it; installing
