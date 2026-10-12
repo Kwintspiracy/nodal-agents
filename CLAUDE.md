@@ -56,7 +56,7 @@ to rediscover it):
 - Never use Haiku.
 - A brique or PR is merged only once PR review and the applicable test gates pass (unit + arch + regression always; integration/smoke when an external service is touched).
 
-### Reviewing a PR — `codex review`, never a Claude subagent
+### Reviewing a PR — an independent review, never a Claude subagent
 
 **This rule exists because it was broken on 2026-08-25.** The review plan said
 "external Codex for the P0s"; four Claude subagents were launched instead, over
@@ -65,8 +65,15 @@ but the argument for reviewing them — an outside pair of eyes — was not: two
 instances of the same model share the same blind spots. The plan was written and
 then forgotten by its own author, which is why the rule now lives here.
 
-- **Reviewing a PR means running `codex review`.** Not the Agent tool. Not a
-  subagent named after Codex. The command must appear in the tool calls.
+- **Reviewing a PR means an independent review:** Codex, or Nodal MCP
+  (Reviewer A) when Codex cannot run. Not the Agent tool. Not a subagent named
+  after Codex. The review's command (the `codex` invocation or the Nodal
+  `run_task`) must appear in the tool calls.
+- **Codex is launched the way the `revue-codex` skill says** (`codex exec
+  --sandbox read-only --skip-git-repo-check --ignore-user-config -c
+  windows.sandbox="elevated" -m gpt-5.6-sol "<consigne>" < /dev/null`). A bare
+  `codex review` loads the user's config with its MCP secrets and no sandbox,
+  and the owner's Claude Code auto-mode refuses it (learned 2026-10-09/12).
 - **Launching a Claude subagent to review a PR is FORBIDDEN.** No exception for
   "just a second opinion", "a quick pass", or "the diff is small".
 - **The trigger is an OPEN PR, not the end of a session.** A review is due as
@@ -83,15 +90,18 @@ then forgotten by its own author, which is why the rule now lives here.
   - **Minor** findings (P3) are not fixed in the PR. They are listed in a
     backlog issue (file:line and scenario for each, a `## Verified` section),
     linked from the PR, and the PR merges.
-  - Static portal pages (`apps/qa`) get **one pass**. A finding is closed by a
-    test that fails first, and the fix is verified BY MUTATION (disable it, the
-    test must go red).
+  - Static portal pages (`apps/qa`) get **one pass**; a P1/P2 found in it is
+    fixed and reviewed again like any PR. A finding is closed by a test that
+    fails first, and the fix is verified BY MUTATION (disable it, the test must
+    go red).
 - **A quota drop never stops the queue, and never makes it wait.** When Codex
   has no quota, the pass goes through Nodal MCP: `run_task` to the root, no
   target agent, asking for a review by Reviewer A, read-only, on a review
   package in the shared workspace (the diff plus `git archive` of the head),
   never the repository itself. Nodal's reviewers run on other models: they are
-  the outside eye when Codex is not there. The verdict is posted on the PR.
+  the outside eye when Codex is not there. The verdict is posted on the PR. The
+  agent running the queue reports only when the whole queue is empty or on a
+  real blocker — every intermediate report ends its turn and stalls the queue.
 - **If neither `codex` nor Nodal MCP can run a pass: say so and stop.** Never
   fall back to a Claude reviewer — that is a silent smart fallback (invariant
   #4), and it hides the fact that no independent review happened.

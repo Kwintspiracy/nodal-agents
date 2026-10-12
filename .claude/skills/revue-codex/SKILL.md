@@ -77,6 +77,8 @@ codex exec --sandbox read-only --skip-git-repo-check --ignore-user-config -c win
 codex exec --sandbox workspace-write --skip-git-repo-check --ignore-user-config -c windows.sandbox="elevated" -m gpt-5.6-sol "<consigne>" < /dev/null
 ```
 
+**Jamais un `codex review` nu** : il charge la config de l'utilisateur (secrets MCP compris) sans sandbox, et l'auto-mode de Claude Code le refuse. Toujours la commande de ce skill.
+
 **`-m gpt-5.6-sol` est la décision de Quentin (15/09/2026)** : le quota est commun à tous les modèles (vérifié : sol répond « usage limit » en même temps qu'astra), la qualité des constats s'est montrée équivalente sur #108, et le coût par passe n'est pas mesurable (`codex exec` n'imprime ses jetons qu'à la coupure). On reste sur sol jusqu'à nouvel ordre.
 
 **`< /dev/null` n'est pas décoratif.** Lancé en tâche de fond sans lui,
@@ -130,10 +132,14 @@ Un rapport qui me donne tort est le meilleur résultat de la boucle.
 
 ## Quand s'arrêter
 
-Quand une passe ne trouve **rien de neuf**. Pas quand elle ne trouve rien : une
-passe qui redit les constats déjà traités confirme seulement qu'ils sont
-traités.
+La boucle s'arrête à la **première passe qui ne rend aucun constat P1/P2**
+(bloquant ou important : faux vert, faux rouge, kill, perte de données,
+comportement faux). Un P1/P2 se corrige, puis la PR est relue : pour vérifier le
+correctif, et parce qu'un correctif peut créer un autre défaut. Il n'y a pas de
+budget de passes.
 
-Compter les passes. Si la passe N trouve encore des constats bloquants dans les
-correctifs de la passe N-1, ce n'est plus une boucle de vérification, c'est le
-signe que la PR a la mauvaise forme — le dire plutôt que d'itérer.
+Les P3 ne se corrigent pas dans la PR : une issue de backlog (fichier:ligne et
+scénario de chacun, section `## Verified`), liée à la PR, et la PR est mergée.
+
+Si la même zone continue de produire des P1/P2, le dire au propriétaire avec le
+détail, mais continuer.
