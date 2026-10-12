@@ -1091,21 +1091,17 @@ function hasVerb(args: readonly string[], verbs: readonly string[]): boolean {
 }
 
 /**
- * True when the words name a command: a word that is not an option, and not
- * right after an option written without `=`, which may be that option's value
- * (`yarn --cwd /srv/app` names none; Nodal Reviewer A, PR #710 pass 12).
- * Which options take a value is each one's grammar, not read here: a word
- * after an option asks (`yarn --silent build`).
+ * True when the words name a command: their first word is not an option.
+ * Past an option, a word may be its value, or one of several (`yarn --cwd
+ * /srv/app`, `bundle --without development test` install; Nodal Reviewer A,
+ * PR #710 passes 12 and 13): how many words an option takes is its grammar,
+ * not read here, so a command written after an option asks (`yarn --silent
+ * build`). The common reads name their command first (`yarn build`, `bundle
+ * exec rspec`).
  */
 function namesACommand(args: readonly string[]): boolean {
-  let afterOption = false;
-  for (const w of args) {
-    if (w === '--') afterOption = false;
-    else if (w.startsWith('-')) afterOption = !w.includes('=');
-    else if (afterOption) afterOption = false;
-    else return true;
-  }
-  return false;
+  const first = args[0];
+  return first !== undefined && !first.startsWith('-');
 }
 
 /** True when one command unit installs, updates or removes software (#693). */

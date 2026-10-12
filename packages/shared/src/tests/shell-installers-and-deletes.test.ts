@@ -788,6 +788,9 @@ const CROSS_PLATFORM_CASES: Record<string, InstallerCase> = {
       'bundle --path vendor',
       'bundle --without development',
       'bundle -j 4',
+      // A list option takes several words (Nodal Reviewer A, pass 13).
+      'bundle --without development test',
+      'bundle --with a b',
     ],
     changesNothing: ['bundle exec rspec', 'bundle list', 'bundle -v', 'bundle --version'],
   },
@@ -857,6 +860,7 @@ const CROSS_PLATFORM_CASES: Record<string, InstallerCase> = {
       // .NET 10's noun-first forms.
       'dotnet package add Newtonsoft.Json',
       'dotnet package remove Newtonsoft.Json',
+      'dotnet package update Newtonsoft.Json',
     ],
     changesNothing: [
       'dotnet build --no-restore',
