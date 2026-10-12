@@ -668,6 +668,8 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
       host,
       inWorkspace: async (p) => resolve(p).toLowerCase().startsWith(root.toLowerCase()),
       leadsTo: async () => null,
+      // No folder of these commands is looked at (#717): none is there.
+      isFolder: async () => false,
       // The command runs no script: nothing is read (#635).
       readSource: async () => ({ kind: 'unread', why: 'not_found' }),
     });
@@ -695,6 +697,8 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
       host: 'windows',
       inWorkspace: async (p) => resolve(p).toLowerCase().startsWith(root.toLowerCase()),
       leadsTo: async () => null,
+      // No folder of these commands is looked at (#717): none is there.
+      isFolder: async () => false,
       readSource: async (p) =>
         /\.(cmd|bat)$/i.test(p)
           ? { kind: 'text', text: 'npm install lodash\r\n', bytes: 20 }
@@ -725,6 +729,8 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
       host: 'windows',
       inWorkspace: async (p) => resolve(p).toLowerCase().startsWith(root.toLowerCase()),
       leadsTo: async () => null,
+      // No folder of these commands is looked at (#717): none is there.
+      isFolder: async () => false,
       readSource: async (p) =>
         resolve(p).toLowerCase() === cleanup
           ? { kind: 'text', text: 'del /q important.txt\r\n', bytes: 22 }

@@ -66,6 +66,12 @@ export interface ShellPlace {
   leadsTo(absolutePath: string): Promise<string | null>;
   /** A file the commands run, read only inside the job's workspaces (#635). */
   readSource(absolutePath: string): Promise<SourceFile>;
+  /**
+   * True when an absolute path is a folder inside the job's workspaces; false
+   * when it is not there, is no folder, or cannot be looked at (outside them):
+   * a `cd` into it may fail, and the line go on where it was (#717, #723).
+   */
+  isFolder(absolutePath: string): Promise<boolean>;
 }
 
 /**
@@ -170,16 +176,20 @@ function endKey(path: string, base: string): string {
  * (#717). A word the shell may resolve to a script of the folder moves nothing
  * when the gate found no script there (`scripts.programs`). Past the `&&`
  * chain of a move that may not have run (`{ unsure }`), the folder is not
- * known, unless that move left it where it was. A folder kept (`{ save }`:
- * entering a child process, cmd's `setlocal`) comes back with its
- * `{ restore }`; `kept` carries them across a script's lines.
+ * known, unless that move left it where it was; past the chain of a move
+ * that ran (`{ unsure, ran }`), unless the folder it entered is there when the
+ * gate judges: a `cd` into a missing one fails, and the line goes on where it
+ * was (#723). A folder kept (`{ save }`: entering a child process, cmd's
+ * `setlocal`) comes back with its `{ restore }`; `kept` carries them across a
+ * script's lines.
  */
-function basesOf(
+async function basesOf(
   dirs: readonly FolderMove[],
   cwd: string | null,
   scripts: ScriptsRead,
+  place: ShellPlace,
   kept: Array<string | null> = [],
-): Array<string | null> {
+): Promise<Array<string | null>> {
   const bases: Array<string | null> = [cwd];
   let base = cwd;
   for (const move of dirs) {
@@ -193,7 +203,10 @@ function basesOf(
         if (!scripts.programs.has(key)) base = scripts.ends.get(key) ?? null;
       }
     } else if ('unsure' in move) {
-      if ((bases[move.unsure] ?? null) !== (bases[move.unsure + 1] ?? null)) base = null;
+      const entered = bases[move.unsure + 1] ?? null;
+      if ((bases[move.unsure] ?? null) !== entered)
+        if (move.ran !== true || entered === null || !(await isFolder(entered, scripts, place)))
+          base = null;
     } else if ('save' in move) kept.push(base);
     else base = kept.length > 0 ? (kept.pop() ?? null) : null;
     bases.push(base);
@@ -216,7 +229,7 @@ async function downloadsOutside(
 ): Promise<string[]> {
   const { dirs, targets } = downloadWrites(command, place.host, reader);
   if (targets.length === 0) return [];
-  const bases = basesOf(dirs, place.cwd, scripts);
+  const bases = await basesOf(dirs, place.cwd, scripts, place);
   const outside: string[] = [];
   for (const { path, after } of targets) {
     if (path === null) {
@@ -300,10 +313,22 @@ interface ReadBudget {
    * (Nodal review of PR #721, P1).
    */
   start: string | null;
+  /** Whether each folder a line entered is there (`ShellPlace.isFolder`), looked at once. */
+  folders: Map<string, boolean>;
 }
 
 /** What the gate learnt of the scripts a call runs in its own process. */
-type ScriptsRead = Pick<ReadBudget, 'ends' | 'programs'>;
+type ScriptsRead = Pick<ReadBudget, 'ends' | 'programs' | 'folders'>;
+
+/** `ShellPlace.isFolder`, once per folder and call. */
+async function isFolder(path: string, scripts: ScriptsRead, place: ShellPlace): Promise<boolean> {
+  const key = process.platform === 'win32' ? path.toLowerCase() : path;
+  const known = scripts.folders.get(key);
+  if (known !== undefined) return known;
+  const there = await place.isFolder(path);
+  scripts.folders.set(key, there);
+  return there;
+}
 
 /** The extensions of a script a shell runs in its own process, among those it tries. */
 const IN_PROCESS_SCRIPT = /\.(bat|cmd|ps1)$/i;
@@ -366,7 +391,7 @@ async function readRunCode(
   for (const source of sources) {
     // Read again for each source: a script read before it, in the line's own
     // process, has said by now where it leaves the line (#717).
-    const bases = basesOf(dirs, place.cwd, budget);
+    const bases = await basesOf(dirs, place.cwd, budget, place);
     const named = source.kind === 'file' ? (source.path ?? command) : command;
     // A word only looked for, past the depth read, is not reported: whether
     // it is a script is not known, and so is the folder after it.
@@ -403,7 +428,10 @@ async function readRunCode(
       base = bases[source.after] ?? null;
       const written = source.path === null ? null : sourcePath(source.path, base);
       if (source.path === null || written === null) {
-        unread.push({ source: named, why: 'decided_at_run_time' });
+        // A word only looked for, in a folder not known: as past the depth
+        // read, the folder after it is not known, and nothing more is said.
+        if (source.extensions === undefined)
+          unread.push({ source: named, why: 'decided_at_run_time' });
         continue;
       }
       endAt = base === null ? null : endKey(written, base);
@@ -433,11 +461,13 @@ async function readRunCode(
       budget.files += 1;
       const read = looked ?? (await place.readSource(path));
       if (read.kind === 'unread') {
-        // A file looked for in a folder only a move took the line to: the
-        // move may have failed, and the file of the folder the line is still
-        // in runs (P1). It is no file that nothing runs.
+        // A file written as a path, looked for in a folder only a move took
+        // the line to: the move may have failed, and the file of the folder
+        // the line is still in runs (P1). It is no file that nothing runs. A
+        // bare name not found is a program of the PATH, as anywhere (pass 2).
         if (
           read.why === 'not_found' &&
+          !source.searched &&
           !isAbsolute(file.replace(/\\/g, '/')) &&
           base !== null &&
           (budget.start === null || !samePlace(base, budget.start))
@@ -513,10 +543,11 @@ async function readRunCode(
         lineReader,
       );
       if (!reading.fromStrings) {
-        const after = basesOf(
+        const after = await basesOf(
           programSources(c.command, { direct: true, host: place.host, reader: lineReader }).dirs,
           cwd,
           budget,
+          place,
           kept,
         );
         cwd = after[after.length - 1] ?? null;
@@ -553,6 +584,7 @@ async function readCall(
     seen: new Set(),
     ends: new Map(),
     programs: new Set(),
+    folders: new Map(),
     start: place.cwd,
   };
   for (const command of commands) {

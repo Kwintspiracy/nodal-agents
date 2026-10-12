@@ -155,7 +155,8 @@ describe('programSources: where the code a command runs is (#635) @cap:executer-
   it('a cd before the file moves where it is read from', () => {
     // On a posix host: cmd would look for node.bat in the folder first (#717).
     const read = programSources('cd sub && node build.js', { direct: true, host: 'posix' });
-    expect(read.dirs).toEqual(['sub']);
+    // (past the line, the gate looks whether `sub` is there: #723)
+    expect(read.dirs).toEqual(['sub', { unsure: 0, ran: true }]);
     expect(read.sources).toEqual([
       {
         kind: 'file',

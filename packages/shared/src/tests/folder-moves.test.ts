@@ -17,6 +17,11 @@ const SAVE: FolderMove = { save: true };
 const RESTORE: FolderMove = { restore: true };
 const script = (path: string): FolderMove => ({ script: path });
 /**
+ * Past the `&&` chain of the `cd` at `at`: the gate looks whether the folder
+ * it entered is there; a `cd` into a missing one fails (#723).
+ */
+const checked = (at: number): FolderMove => ({ unsure: at, ran: true });
+/**
  * A word cmd may resolve to a batch file of the folder (`cmd`, `curl`): the
  * gate looks there (Nodal review of PR #721, P2).
  */
@@ -67,7 +72,8 @@ function folderAt(dirs: readonly FolderMove[], upTo: number | undefined): string
     else if ('script' in m) {
       if (m.extensions === undefined) base = base === null ? null : `${base}|${m.script}`;
     } else if ('unsure' in m) {
-      if (bases[m.unsure] !== bases[m.unsure + 1]) base = null;
+      // a cd that ran is taken here into a folder that is there (only the gate looks)
+      if (m.ran !== true && bases[m.unsure] !== bases[m.unsure + 1]) base = null;
     } else if ('save' in m) kept.push(base);
     else base = kept.length > 0 ? (kept.pop() ?? null) : null;
     bases.push(base);
@@ -78,16 +84,16 @@ function folderAt(dirs: readonly FolderMove[], upTo: number | undefined): string
 describe('a folder move made in a child process stays there (#717) @cap:executer-une-commande/moteur', () => {
   it('the issue lines, as the gate receives them', () => {
     expect(read('cmd /c "cd decoy" & cleanup.bat', 'windows')).toEqual({
-      dirs: [looked('cmd'), SAVE, 'decoy', RESTORE, script('cleanup.bat')],
-      after: { cmd: 0, 'cleanup.bat': 4 },
+      dirs: [looked('cmd'), SAVE, 'decoy', checked(2), RESTORE, script('cleanup.bat')],
+      after: { cmd: 0, 'cleanup.bat': 5 },
     });
     expect(read('bash -c "cd decoy" && ./cleanup.sh', 'posix')).toEqual({
-      dirs: [SAVE, 'decoy', RESTORE],
-      after: { './cleanup.sh': 3 },
+      dirs: [SAVE, 'decoy', checked(1), RESTORE],
+      after: { './cleanup.sh': 4 },
     });
     expect(read('(cd decoy) && ./cleanup.sh', 'posix')).toEqual({
-      dirs: [SAVE, 'decoy', RESTORE],
-      after: { './cleanup.sh': 3 },
+      dirs: [SAVE, 'decoy', checked(1), RESTORE],
+      after: { './cleanup.sh': 4 },
     });
   });
 
@@ -132,8 +138,8 @@ describe('a folder move made in a child process stays there (#717) @cap:executer
 
   it('PowerShell: a job sent to the background', () => {
     expect(read('cd decoy &\n.\\x.ps1', 'windows', 'powershell')).toEqual({
-      dirs: [SAVE, 'decoy', RESTORE, script('.\\x.ps1')],
-      after: { '.\\x.ps1': 3 },
+      dirs: [SAVE, 'decoy', checked(1), RESTORE, script('.\\x.ps1')],
+      after: { '.\\x.ps1': 4 },
     });
   });
 
@@ -161,16 +167,17 @@ describe('a folder move made in a child process stays there (#717) @cap:executer
 
   it("a child's moves still reach its own later commands", () => {
     expect(read('bash -c "cd sub && ./x.sh" && ./y.sh', 'posix')).toEqual({
-      dirs: [SAVE, 'sub', RESTORE],
-      after: { './x.sh': 2, './y.sh': 3 },
+      dirs: [SAVE, 'sub', checked(1), RESTORE],
+      after: { './x.sh': 2, './y.sh': 4 },
     });
     expect(read('(cd sub && ./x.sh) && ./y.sh', 'posix')).toEqual({
-      dirs: [SAVE, 'sub', RESTORE],
-      after: { './x.sh': 2, './y.sh': 3 },
+      dirs: [SAVE, 'sub', checked(1), RESTORE],
+      after: { './x.sh': 2, './y.sh': 4 },
     });
+    // past `&`, cmd's next command: whether `sub` is there, the gate looks
     expect(read('cmd /c "cd sub & x.bat" & y.bat', 'windows')).toEqual({
-      dirs: [looked('cmd'), SAVE, 'sub', script('x.bat'), RESTORE, script('y.bat')],
-      after: { cmd: 0, 'x.bat': 3, 'y.bat': 5 },
+      dirs: [looked('cmd'), SAVE, 'sub', checked(2), script('x.bat'), RESTORE, script('y.bat')],
+      after: { cmd: 0, 'x.bat': 4, 'y.bat': 6 },
     });
   });
 });
@@ -270,8 +277,8 @@ describe("a folder move made in the line's own process moves it (#717) @cap:exec
     });
     // what they start in a process of its own stays there
     expect(read('time bash -c "cd decoy"; ./x.sh', 'posix')).toEqual({
-      dirs: [SAVE, 'decoy', RESTORE],
-      after: { './x.sh': 3 },
+      dirs: [SAVE, 'decoy', checked(1), RESTORE],
+      after: { './x.sh': 4 },
     });
   });
 
@@ -384,7 +391,11 @@ describe("a script run in the line's own process leaves it where it ends (#717) 
       script('x.bat'),
     ]);
     // cmd's own commands are never looked for
-    expect(read('echo hi & cd sub & x.bat', 'windows').dirs).toEqual(['sub', script('x.bat')]);
+    expect(read('echo hi & cd sub & x.bat', 'windows').dirs).toEqual([
+      'sub',
+      checked(0),
+      script('x.bat'),
+    ]);
   });
 
   it('PowerShell: a path without its extension may be a .ps1; a bare name is not looked for in the folder', () => {
@@ -448,13 +459,13 @@ describe("a script run in the line's own process leaves it where it ends (#717) 
 
   it("cmd's setlocal keeps a batch file's moves inside it, in a batch file only", () => {
     expect(read('setlocal & cd sub & endlocal & x.bat', 'windows', 'cmd')).toEqual({
-      dirs: [SAVE, 'sub', RESTORE, script('x.bat')],
-      after: { 'x.bat': 3 },
+      dirs: [SAVE, 'sub', checked(1), RESTORE, script('x.bat')],
+      after: { 'x.bat': 4 },
     });
     // On a command line, setlocal does nothing.
     expect(read('setlocal & cd sub & endlocal & x.bat', 'windows')).toEqual({
-      dirs: ['sub', script('x.bat')],
-      after: { 'x.bat': 1 },
+      dirs: ['sub', checked(0), script('x.bat')],
+      after: { 'x.bat': 2 },
     });
   });
 });
@@ -466,14 +477,15 @@ describe('a line whose shell is not known, read as both (#717) @cap:executer-une
     // a batch file of cmd's own process, a program sh starts
     expect(programSources('prepare.bat && x.bat').dirs).toEqual([null, null]);
     // a name cmd looks for in the folder first, a program sh starts
-    expect(programSources('cd sub && node build.js').dirs).toEqual(['sub', null]);
+    expect(programSources('cd sub && node build.js').dirs).toEqual(['sub', null, checked(0)]);
   });
 
   it('where they agree, the move is read', () => {
-    expect(programSources('cd sub && ./build.sh').dirs).toEqual(['sub']);
+    expect(programSources('cd sub && ./build.sh').dirs).toEqual(['sub', checked(0)]);
     expect(programSources('bash.exe -c "cd sub" && ./build.sh').dirs).toEqual([
       SAVE,
       'sub',
+      checked(1),
       RESTORE,
     ]);
   });
@@ -498,35 +510,35 @@ describe('where a download lands follows the same folder moves (#717) @cap:execu
     // `&` and `&&` are read as PowerShell's call operator before the next
     // command: in cmd and sh it is the line's own process all the same.
     expect(writes('cd a & cd b & curl -o z.zip https://x/a', 'windows')).toEqual({
-      dirs: ['a', 'b', looked('curl')],
-      after: [2],
+      dirs: ['a', checked(0), 'b', checked(2), looked('curl')],
+      after: [4],
     });
     // (`cd b`, on the right of `&&`, may not run: certain for its chain, not past it)
     expect(writes('cd a && cd b && curl -o z.zip https://x/a', 'posix')).toEqual({
-      dirs: ['a', 'b', { unsure: 1 }],
+      dirs: ['a', 'b', { unsure: 1 }, checked(0)],
       after: [2],
     });
   });
 
   it('a download inside a child is read from its folder', () => {
     expect(writes('bash -c "cd sub && curl -o a.zip https://x/a"', 'posix')).toEqual({
-      dirs: [SAVE, 'sub', RESTORE],
+      dirs: [SAVE, 'sub', checked(1), RESTORE],
       after: [2],
     });
   });
 
   it("the line's own process moves it", () => {
     expect(writes('(cd sub) & curl -o a.zip https://x/a', 'windows')).toEqual({
-      dirs: ['sub', looked('curl')],
-      after: [1],
+      dirs: ['sub', checked(0), looked('curl')],
+      after: [2],
     });
     expect(writes('{ cd sub; } && curl -o a.zip https://x/a', 'posix')).toEqual({
-      dirs: ['sub'],
-      after: [1],
+      dirs: ['sub', checked(0)],
+      after: [2],
     });
     expect(
       writes('cd sub | Out-Null; iwr https://x/a -OutFile a.zip', 'windows', 'powershell'),
-    ).toEqual({ dirs: ['sub'], after: [1] });
+    ).toEqual({ dirs: ['sub', checked(0)], after: [2] });
   });
 
   it("a script run in the line's process leaves the download where it ends", () => {
@@ -575,6 +587,6 @@ describe('where a download lands follows the same folder moves (#717) @cap:execu
   it("a batch file's setlocal", () => {
     expect(
       writes('setlocal & cd sub & endlocal & curl -o a.zip https://x/a', 'windows', 'cmd'),
-    ).toEqual({ dirs: [SAVE, 'sub', RESTORE, looked('curl')], after: [3] });
+    ).toEqual({ dirs: [SAVE, 'sub', checked(1), RESTORE, looked('curl')], after: [4] });
   });
 });

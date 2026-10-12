@@ -392,10 +392,11 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
 
   // Revue passe 2 : une cible n'est jugée que depuis les `cd` qui la précèdent.
   // Read on a posix host: on a cmd line, `curl` and `wget` are names cmd looks
-  // for in the folder first (#717, folder-moves.test.ts).
+  // for in the folder first (#717, folder-moves.test.ts). Past the `&&` chain
+  // of a `cd`, the gate looks whether its folder is there (`ran`, #723).
   it("each target says how many of the line's folders come before it", () => {
     expect(writesOf('cd shared/x && curl -o a.jpg https://x/a', 'posix')).toEqual({
-      dirs: ['shared/x'],
+      dirs: ['shared/x', { unsure: 0, ran: true }],
       targets: [{ path: 'a.jpg', after: 1 }],
     });
     // a `cd` on the right of `&&` may not run: made for its chain, not past it (#717)
@@ -405,7 +406,7 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
     });
     expect(writesOf('cd a && wget -O x https://x && cd b && curl -o y https://y', 'posix')).toEqual(
       {
-        dirs: ['a', 'b', { unsure: 1 }],
+        dirs: ['a', 'b', { unsure: 1 }, { unsure: 0, ran: true }],
         targets: [
           { path: 'x', after: 1 },
           { path: 'y', after: 2 },
@@ -421,16 +422,24 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
   it('the folders the line moves into are kept in order', () => {
     expect(writesOf('cd shared/x && curl -o a.jpg https://x/a', 'posix').dirs).toEqual([
       'shared/x',
+      { unsure: 0, ran: true },
     ]);
     expect(writesOf('cd && curl -o a.jpg https://x/a', 'posix').dirs).toEqual([null]);
     expect(writesOf('pushd out && popd && curl -o a https://x', 'posix').dirs).toEqual([
       'out',
       null,
+      { unsure: 0, ran: true },
     ]);
     // PowerShell lines, read as PowerShell runs them
     const ps = (cmd: string) => downloadWrites(cmd, 'windows', 'powershell').dirs;
-    expect(ps('Push-Location D:\\out; iwr https://x -OutFile a')).toEqual(['D:\\out']);
-    expect(ps('Set-Location -Path D:\\x; iwr https://x -OutFile a')).toEqual(['D:\\x']);
+    expect(ps('Push-Location D:\\out; iwr https://x -OutFile a')).toEqual([
+      'D:\\out',
+      { unsure: 0, ran: true },
+    ]);
+    expect(ps('Set-Location -Path D:\\x; iwr https://x -OutFile a')).toEqual([
+      'D:\\x',
+      { unsure: 0, ran: true },
+    ]);
   });
 
   // Passe 3, P2-3 : une valeur collée à son option courte (`-sLoC:\x`). Une
@@ -550,7 +559,10 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
     expect(paths('curl -o CONOUT$ https://x/a', 'windows')).toEqual([null]);
     // From the folder the line moved into (an `nul` of a POSIX host is a real file).
     expect(paths('cd /etc && curl -o nul https://x/a', 'posix')).toEqual(['nul']);
-    expect(writesOf('cd /etc && curl -o nul https://x/a', 'posix').dirs).toEqual(['/etc']);
+    expect(writesOf('cd /etc && curl -o nul https://x/a', 'posix').dirs).toEqual([
+      '/etc',
+      { unsure: 0, ran: true },
+    ]);
     expect(paths('cd /etc && curl -o nul https://x/a', 'windows')).toEqual([]);
   });
 

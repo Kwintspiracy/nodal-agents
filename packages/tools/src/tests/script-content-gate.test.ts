@@ -330,11 +330,19 @@ describe('a command that runs a script is judged by the script (#635) @cap:execu
   });
 
   it('a download in a script runs inside the workspace, and asks when the script sends it outside', async () => {
-    await put('fetch-in.sh', 'mkdir -p img\ncd img\ncurl -o a.jpg https://x/a.jpg\n');
+    // `img` is not there when the gate reads: the download joined to the `cd`
+    // by `&&` runs only if it succeeded (#717, #723); on lines of their own,
+    // a `cd` into a missing folder may fail, and asks.
+    await put('fetch-in.sh', 'mkdir -p img && cd img && curl -o a.jpg https://x/a.jpg\n');
     await put('fetch-out.sh', `cd "${elsewhere}"\ncurl -o a.jpg https://x/a.jpg\n`);
     await put('fetch-var.py', 'import subprocess\nsubprocess.run(["git", "clone", url, dest])\n');
 
     await ranUnasked('sh fetch-in.sh');
+    // A folder that is there is looked at in the workspace: the download on
+    // the next line lands in it (#723).
+    await put('assets/.keep', '');
+    await put('fetch-there.sh', 'cd assets\ncurl -o a.jpg https://x/a.jpg\n');
+    await ranUnasked('sh fetch-there.sh');
     expect(await asked('sh fetch-out.sh')).toEqual([
       {
         category: 'download',
