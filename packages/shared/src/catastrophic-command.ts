@@ -1721,7 +1721,7 @@ function readWrites(
   const out: DownloadWrites = { dirs: [], targets: [] };
   let downloads = false;
   const besides: DownloadTarget[] = [];
-  const opened = new Set<readonly Redirection[]>();
+  const opened = new Set<Redirection>();
   const write = (into: DownloadTarget[], t: string | null): void => {
     if (t === null || !isNullSink(t, host))
       into.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
@@ -1735,12 +1735,14 @@ function readWrites(
     // What a command writes lands where it starts; a program the shell may
     // resolve to a script of the folder (`curl`) still writes (#717).
     for (const t of pipeWriterTargets(program, args)) write(besides, t);
-    // A command's redirections, once for the units read from it.
-    const redirections = UNIT_REDIRECTIONS.get(unit);
-    if (redirections !== undefined && !opened.has(redirections)) {
-      opened.add(redirections);
-      for (const r of redirections) if (r.write) write(besides, r.path);
-    }
+    // Each redirection once, where the first command it covers stands: the
+    // shell opens it before running that command, a group's before entering
+    // it (`( cd sub; curl URL ) > f` writes f where the line was, measured).
+    for (const r of UNIT_REDIRECTIONS.get(unit) ?? [])
+      if (!opened.has(r)) {
+        opened.add(r);
+        if (r.write) write(besides, r.path);
+      }
     if (downloadsToItsOutput(unit)) downloads = true;
     if (unitCategories(unit).includes('download')) {
       downloads = true;
@@ -3581,8 +3583,14 @@ class Processes {
   private side: number | null = null;
   /** Past the head of the current list: after `&&` or `||`. */
   private orElse = false;
-  /** sh's compound commands open, and whether the scan is in their body. */
-  private readonly compounds: boolean[] = [];
+  /** sh's compound commands open: whether the scan is in their body, and where each starts. */
+  private readonly compounds: Array<{ body: boolean; start: number }> = [];
+  /**
+   * Where the group that just closed starts, while nothing follows it but its
+   * redirections (`( … ) > f`): they are its commands' (Nodal review of PR
+   * #721, pass 9).
+   */
+  private closed: number | null = null;
   /** sh: `name()` was just written, and the brace that follows is a function's body. */
   private functionNext = false;
   /**
@@ -3617,7 +3625,9 @@ class Processes {
 
   /** True when what the scan meets now may not run whenever the line reaches it. */
   private mayNotRun(): boolean {
-    return this.orElse || this.groups.some((g) => g.mayNotRun) || this.compounds.includes(true);
+    return (
+      this.orElse || this.groups.some((g) => g.mayNotRun) || this.compounds.some((c) => c.body)
+    );
   }
 
   /** The scanner pushed a command. */
@@ -3629,15 +3639,50 @@ class Processes {
     COMMAND_CHAIN.set(words, [...this.groups.map((g) => g.chain), this.joinChain()]);
     this.side = null;
     this.last = at;
+    this.closed = null;
     this.functionNext = false;
     const first = words[0]?.quoted === false ? words[0].text : '';
-    if (this.model === 'sh' && SH_BODY.has(first) && this.compounds.length > 0)
-      this.compounds[this.compounds.length - 1] = true;
+    const open = this.compounds[this.compounds.length - 1];
+    if (this.model === 'sh' && SH_BODY.has(first) && open !== undefined) open.body = true;
     if (this.mayNotRun()) COMMAND_MAY_NOT_RUN.add(words);
     if (this.model !== 'sh') return;
-    // `case … in` is followed by its body at once.
-    if (SH_OPENS.has(first)) this.compounds.push(first === 'case');
-    else if (SH_CLOSES.has(first)) this.compounds.pop();
+    // `case … in` is followed by its body at once. The compound that closes
+    // is the whole command (`for … done | x`, `if … fi > f`).
+    if (SH_OPENS.has(first)) this.compounds.push({ body: first === 'case', start: at });
+    else if (SH_CLOSES.has(first)) this.last = this.compounds.pop()?.start ?? at;
+  }
+
+  /**
+   * The redirections of the command the scanner just pushed: of the whole
+   * compound when it closes one (`if … fi > f`, `for … done > f`, measured
+   * in bash). Every command they cover shares them: the shell opens each
+   * once, before running the first.
+   */
+  redirectCommand(redirections: readonly Redirection[]): void {
+    this.cover(this.last, redirections);
+  }
+
+  /**
+   * Redirections written where no command stands: after a group that just
+   * closed (`( … ) > f`, `{ …; } > f`, cmd's `( … ) > f`, PowerShell's
+   * `( … ) > f`, measured), they are its commands', nested groups included.
+   * Alone (`> f`), they run nothing: bash creates an empty file, cmd refuses
+   * the line (measured). No download lands there.
+   */
+  redirectGroup(redirections: readonly Redirection[]): void {
+    if (this.closed !== null) this.cover(this.closed, redirections);
+  }
+
+  private cover(from: number, redirections: readonly Redirection[]): void {
+    if (from < 0 || redirections.length === 0) return;
+    for (let i = from; i < this.commands.length; i++) {
+      const words = this.commands[i];
+      if (words !== undefined)
+        COMMAND_REDIRECTIONS.set(words, [
+          ...(COMMAND_REDIRECTIONS.get(words) ?? []),
+          ...redirections,
+        ]);
+    }
   }
 
   /**
@@ -3687,6 +3732,7 @@ class Processes {
     this.orElse = false;
     this.functionNext = false;
     this.chain = newProcess();
+    this.closed = null;
   }
 
   /** A closing `)` or `}`: the group is one command of the list around it. */
@@ -3694,6 +3740,7 @@ class Processes {
     const group = this.groups.pop();
     if (group === undefined) return;
     this.last = group.start;
+    this.closed = group.start;
     this.list = group.list;
     this.orElse = group.orElse;
     this.chain = group.then;
@@ -3704,6 +3751,7 @@ class Processes {
 
   /** A pipe: each side is a process of its own, but in PowerShell. */
   pipe(): void {
+    this.closed = null;
     if (this.model === 'powershell') return;
     this.apart(this.last);
     this.side = newProcess();
@@ -3711,6 +3759,7 @@ class Processes {
 
   /** `&&` or `||`: what follows in the list runs only on the result of what came before. */
   andOr(operator: '&&' | '||'): void {
+    this.closed = null;
     this.orElse = true;
     if (operator === '||') {
       this.chain = newProcess();
@@ -3728,6 +3777,7 @@ class Processes {
 
   /** `;` or a new line: a new list starts. */
   next(): void {
+    this.closed = null;
     this.list = this.commands.length;
     this.orElse = false;
     this.chain = newProcess();
@@ -3914,13 +3964,16 @@ function scanLine(
         tail: line.slice(w.start, at),
       }));
       if (piped !== null && segment.length === 1) segment.push(piped);
-      if (redirects.length > 0) COMMAND_REDIRECTIONS.set(segment, redirects);
       segments.push(segment);
       processes.command();
+      processes.redirectCommand(redirects);
       piped = null;
       if (g === POWERSHELL && separator === '|' && segment.length === 1 && segment[0]?.quoted)
         piped = segment[0];
-    } else piped = null;
+    } else {
+      piped = null;
+      processes.redirectGroup(redirects);
+    }
     words = [];
     redirects = [];
     redirect = null;
@@ -4072,7 +4125,8 @@ function scanLine(
       }
       // PowerShell's call operator starts a command whose program follows it;
       // before a parenthesised expression, that program is decided at run time.
-      if (g === POWERSHELL && ch === '&' && next !== '&') {
+      // The second `&` of `&&` (PowerShell 7's chain) is none.
+      if (g === POWERSHELL && ch === '&' && next !== '&' && line[at - 1] !== '&') {
         const after = line.slice(at + 1).trimStart();
         words.push({ text: '&', quoted: false, start: at });
         if (after.startsWith('(')) words.push({ text: '$(…)', quoted: false, start: at });
@@ -4109,10 +4163,10 @@ function cmdCommands(line: string): ShellWord[][] {
   const end = (): void => {
     const words = text(current).trim() === '' ? [] : windowsArguments(text(current));
     if (words.length > 0) {
-      if (redirects.length > 0) COMMAND_REDIRECTIONS.set(words, redirects);
       commands.push(words);
       processes.command();
-    }
+      processes.redirectCommand(redirects);
+    } else processes.redirectGroup(redirects);
     current = '';
     redirects = [];
   };

@@ -247,3 +247,65 @@ describe('a redirection is read with its command, by each shell that reads the l
     ]);
   });
 });
+
+describe("a group's redirection is its commands' (#717, Nodal review pass 9) @cap:executer-une-commande/moteur", () => {
+  // Measured: bash writes the output of `( … )`, `{ …; }`, nested groups,
+  // `for`/`while`/`if`/`case` to the file after them; cmd.exe the output of
+  // `( … )`, nested, and `if … ( … )`; PowerShell the output of `( … )`,
+  // `$( … )` and `& { … }`.
+  it.each([
+    ['posix', '( curl https://x/a ) > ../outside.txt', '../outside.txt'],
+    ['posix', '{ curl https://x/a; } > ../outside.txt', '../outside.txt'],
+    ['posix', '( ( curl https://x/a ) ) > ../outside.txt', '../outside.txt'],
+    ['posix', '{ ( curl https://x/a ); } > ../outside.txt', '../outside.txt'],
+    ['posix', 'for i in 1; do curl https://x/a; done > ../outside.txt', '../outside.txt'],
+    ['posix', 'while true; do curl https://x/a; done > ../outside.txt', '../outside.txt'],
+    ['posix', 'if true; then curl https://x/a; fi > ../outside.txt', '../outside.txt'],
+    ['windows', '( curl https://x/a ) > ..\\outside.txt', '..\\outside.txt'],
+    ['windows', '( ( curl https://x/a ) ) > ..\\outside.txt', '..\\outside.txt'],
+    ['windows', 'if 1==1 ( curl https://x/a ) > ..\\outside.txt', '..\\outside.txt'],
+  ] as const)('%s: %s asks', async (host, command, place) => {
+    expect(await judge(command, placeWith(host, {}))).toEqual(downloadOutside(command, place));
+  });
+
+  it('PowerShell: a parenthesis redirected writes its output', async () => {
+    const command = 'powershell -Command "( irm https://x/a ) > ..\\outside.txt"';
+    expect(await judge(command, placeWith('windows', {}))).toEqual(
+      downloadOutside(command, '..\\outside.txt'),
+    );
+  });
+
+  it.each([
+    ['posix', '( cd ..; curl https://x/a ) > out.txt'],
+    ['windows', '(cd .. & curl https://x/a) > out.txt'],
+  ] as const)(
+    '%s: %s is opened before the group runs, in the folder the line is in',
+    async (host, command) => {
+      // Measured: bash and cmd.exe write out.txt in the starting folder, not
+      // in the one the group moves to. (cmd also looks for `curl` in `..`,
+      // which it cannot look into, pass 4: that asks, as inline code.)
+      const reasons = await judge(command, placeWith(host, {}));
+      expect(reasons.filter((r) => r.category === 'download')).toEqual([]);
+    },
+  );
+
+  it.each(['posix', 'windows'] as const)(
+    '%s: ( npm test ) > log.txt 2>&1 asks nothing',
+    async (host) => {
+      expect(await judge('( npm test ) > log.txt 2>&1', placeWith(host, {}))).toEqual([]);
+    },
+  );
+
+  it('a redirection alone runs nothing and lands no download', async () => {
+    // bash creates an empty ../x, cmd.exe refuses `> ..\x` (measured): no
+    // fetched byte goes there.
+    expect(await judge('curl -o a.jpg https://x/a; > ../x', placeWith('posix', {}))).toEqual([]);
+    // ...and a group that ended before it (`;`, `&&`, `|`) is not its own.
+    for (const command of [
+      '( curl -o a.jpg https://x/a ); > ../x',
+      '( curl -o a.jpg https://x/a ) && > ../x',
+      '( curl -o a.jpg https://x/a ) | > ../x',
+    ])
+      expect(await judge(command, placeWith('posix', {})), command).toEqual([]);
+  });
+});
