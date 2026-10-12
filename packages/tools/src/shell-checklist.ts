@@ -38,6 +38,7 @@ import {
   type ShellUnreadSource,
   type ScriptShell,
   type SourceLanguage,
+  type FolderMove,
 } from '@nodal-agents/shared';
 
 /** What the gate could read of a file a command runs (#635). */
@@ -143,14 +144,47 @@ function samePlace(a: string, b: string): boolean {
 const UNREADABLE_TARGET = 'a path decided when the command runs';
 
 /**
- * The folder a line is in at each point: the starting folder, then after each
- * `cd` of the line, in order; null once one cannot be read.
+ * Where a file a command names is, from the folder `base` it runs from. A
+ * backslash is a folder separator for cmd and PowerShell, which run on Linux
+ * too: `.\setup.ps1` names the same file on every OS. The text is judged, not
+ * the machine (#669).
  */
-function basesOf(dirs: ReadonlyArray<string | null>, cwd: string | null): Array<string | null> {
+function sourcePath(written: string, base: string | null): string | null {
+  const path = written.replace(/\\/g, '/');
+  if (isAbsolute(path)) return path;
+  return base === null ? null : resolve(base, path);
+}
+
+/** The key of a script read from a folder, in `ReadBudget.ends`. */
+function endKey(path: string, base: string): string {
+  const key = `${path}\n${base}`;
+  return process.platform === 'win32' ? key.toLowerCase() : key;
+}
+
+/**
+ * The folder a line is in at each point: the starting folder, then after each
+ * folder move of the line, in order; null once one cannot be read. A script
+ * run in the line's own process leaves it where its body ended, as the gate
+ * read it (`ends`), and in a folder not known when it was not read (#717). A
+ * folder kept (`{ save }`: entering a child process, cmd's `setlocal`) comes
+ * back with its `{ restore }`; `kept` carries them across a script's lines.
+ */
+function basesOf(
+  dirs: readonly FolderMove[],
+  cwd: string | null,
+  ends: ReadonlyMap<string, string | null>,
+  kept: Array<string | null> = [],
+): Array<string | null> {
   const bases: Array<string | null> = [cwd];
   let base = cwd;
-  for (const dir of dirs) {
-    base = base === null || dir === null ? null : resolve(base, dir);
+  for (const move of dirs) {
+    if (move === null || typeof move === 'string')
+      base = base === null || move === null ? null : resolve(base, move);
+    else if ('script' in move) {
+      const path = sourcePath(move.script, base);
+      base = base === null || path === null ? null : (ends.get(endKey(path, base)) ?? null);
+    } else if ('save' in move) kept.push(base);
+    else base = kept.length > 0 ? (kept.pop() ?? null) : null;
     bases.push(base);
   }
   return bases;
@@ -163,10 +197,15 @@ function basesOf(dirs: ReadonlyArray<string | null>, cwd: string | null): Array<
  * (revue passe 2 : un `cd` écrit après ne la déplace pas). A redirection,
  * whose place in the line is not known, is judged from every folder of it.
  */
-async function downloadsOutside(command: string, place: ShellPlace): Promise<string[]> {
-  const { dirs, targets } = downloadWrites(command, place.host);
+async function downloadsOutside(
+  command: string,
+  place: ShellPlace,
+  reader: ScriptShell | undefined,
+  ends: ReadonlyMap<string, string | null>,
+): Promise<string[]> {
+  const { dirs, targets } = downloadWrites(command, place.host, reader);
   if (targets.length === 0) return [];
-  const bases = basesOf(dirs, place.cwd);
+  const bases = basesOf(dirs, place.cwd, ends);
   const outside: string[] = [];
   for (const { path, after } of targets) {
     if (path === null) {
@@ -232,6 +271,12 @@ interface ReadBudget {
   files: number;
   bytes: number;
   seen: Set<string>;
+  /**
+   * The folder each shell, cmd or PowerShell script read to its end ends in,
+   * by its path and the folder it ran from (`endKey`): where a script run in
+   * the line's own process leaves it (#717). One not read is not here.
+   */
+  ends: Map<string, string | null>;
 }
 
 /** The line `line` (1-based) of `text`, as the card shows it. */
@@ -270,8 +315,10 @@ async function readRunCode(
     host: place.host,
     reader,
   });
-  const bases = basesOf(dirs, place.cwd);
   for (const source of sources) {
+    // Read again for each source: a script read before it, in the line's own
+    // process, has said by now where it leaves the line (#717).
+    const bases = basesOf(dirs, place.cwd, budget.ends);
     const named = source.kind === 'file' ? (source.path ?? command) : command;
     if (depth > MAX_SOURCE_DEPTH) {
       unread.push({ source: named, why: 'over_budget' });
@@ -301,15 +348,11 @@ async function readRunCode(
       }
     } else {
       base = bases[source.after] ?? null;
-      // `.\setup.ps1` names the same file on every OS: a backslash in a path
-      // is a folder separator for cmd and PowerShell, which run on Linux too.
-      // The text is judged, not the machine (#669).
-      const written = source.path?.replace(/\\/g, '/') ?? null;
-      if (written === null || source.path === null || (base === null && !isAbsolute(written))) {
+      const path = source.path === null ? null : sourcePath(source.path, base);
+      if (source.path === null || path === null) {
         unread.push({ source: named, why: 'decided_at_run_time' });
         continue;
       }
-      const path = isAbsolute(written) ? written : resolve(base ?? '', written);
       const key = process.platform === 'win32' ? path.toLowerCase() : path;
       if (budget.seen.has(key)) continue;
       budget.seen.add(key);
@@ -352,9 +395,13 @@ async function readRunCode(
     // A script runs from the folder its command was in; in a shell script, a
     // `cd` moves the lines after it.
     let cwd = base;
+    // The folders kept by cmd's `setlocal`: the end of a batch file restores them.
+    const kept: Array<string | null> = [];
+    let toTheEnd = true;
     for (const c of reading.commands) {
       if (judged.length >= MAX_JUDGED_COMMANDS) {
         unread.push({ source: label ?? command, why: 'over_budget' });
+        toTheEnd = false;
         break;
       }
       const at: ShellPlace = { ...place, cwd };
@@ -383,9 +430,24 @@ async function readRunCode(
         const after = basesOf(
           programSources(c.command, { direct: true, host: place.host, reader: lineReader }).dirs,
           cwd,
+          budget.ends,
+          kept,
         );
         cwd = after[after.length - 1] ?? null;
       }
+    }
+    // Where a script read to its end leaves the process that runs it, when
+    // that process is the line's (`{ script }` moves, #717).
+    if (
+      source.kind === 'file' &&
+      !reading.fromStrings &&
+      toTheEnd &&
+      base !== null &&
+      label !== null
+    ) {
+      const path = sourcePath(label, base);
+      if (path !== null)
+        budget.ends.set(endKey(path, base), kept.length > 0 ? (kept[0] ?? null) : cwd);
     }
   }
 }
@@ -398,12 +460,17 @@ async function readRunCode(
 async function readCall(
   commands: readonly string[],
   place: ShellPlace,
-): Promise<{ judged: Judged[]; unread: ShellUnreadSource[]; unreadCalls: string[] }> {
+): Promise<{
+  judged: Judged[];
+  unread: ShellUnreadSource[];
+  unreadCalls: string[];
+  ends: ReadonlyMap<string, string | null>;
+}> {
   const judged: Judged[] = [];
   const unread: ShellUnreadSource[] = [];
   const unreadCalls: string[] = [];
   // One budget for the whole call: a declared proof's commands share it.
-  const budget: ReadBudget = { files: 0, bytes: 0, seen: new Set() };
+  const budget: ReadBudget = { files: 0, bytes: 0, seen: new Set(), ends: new Map() };
   for (const command of commands) {
     judged.push({
       call: command,
@@ -417,7 +484,7 @@ async function readCall(
     await readRunCode(command, command, place, false, 1, budget, judged, unread, null, undefined);
     if (unread.length > before) unreadCalls.push(command);
   }
-  return { judged, unread, unreadCalls };
+  return { judged, unread, unreadCalls, ends: budget.ends };
 }
 
 /**
@@ -458,7 +525,7 @@ export async function judgeShellChecklist(
     found.set(category, where);
   };
 
-  const { judged, unread, unreadCalls } = await readCall(commands, place);
+  const { judged, unread, unreadCalls, ends } = await readCall(commands, place);
 
   for (const j of judged) {
     for (const category of staticShellCategories(j.text, j.place.host, j.reader)) {
@@ -474,7 +541,7 @@ export async function judgeShellChecklist(
         continue;
       }
       if (category !== 'download') continue;
-      const places = await downloadsOutside(j.text, j.place);
+      const places = await downloadsOutside(j.text, j.place, j.reader, ends);
       if (places.length === 0) continue;
       add(category, j);
       const entry = outside.find((o) => o.command === j.call);

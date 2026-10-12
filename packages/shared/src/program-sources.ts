@@ -49,11 +49,12 @@ import { POWERSHELL_CLI, bindPsArguments } from './powershell-parameters';
 import {
   stdinReceiver,
   type StdinReceiver,
-  changeDirOf,
   commandUnitsAsWritten,
   interpreterKind,
   isInlineEvalFlag,
+  lineFolders,
   readablePath,
+  type FolderMove,
   shellRunsLine,
   type ScriptShell,
   type ShellHost,
@@ -108,8 +109,12 @@ export type ProgramSource =
     };
 
 export interface ProgramSources {
-  /** The folders the line moves into, in order (null when unreadable). */
-  dirs: Array<string | null>;
+  /**
+   * How the line moves its folder, in order (`lineFolders`, #717): a folder
+   * (null when unreadable), a script run in the line's process whose body says
+   * where it ends, the folder kept and restored around a child process.
+   */
+  dirs: FolderMove[];
   sources: ProgramSource[];
 }
 
@@ -341,14 +346,16 @@ export function programSources(
 ): ProgramSources {
   const out: ProgramSources = { dirs: [], sources: [] };
   if (typeof cmd !== 'string' || cmd.trim() === '') return out;
+  // A script that runs in the line's process is read from where it starts and
+  // moves the line to where it ends: its source comes before its move (#717).
+  const folders = lineFolders(opts.reader === 'cmd');
   for (const { unit, head } of commandUnitsAsWritten(cmd, opts.host, opts.reader)) {
-    const dir = changeDirOf(unit);
-    if (dir !== undefined) {
-      out.dirs.push(dir);
-      continue;
-    }
+    const { before, move } = folders.step(unit);
+    out.dirs.push(...before);
     out.sources.push(...unitSources(unit, head, out.dirs.length, opts.direct));
+    if (move !== undefined) out.dirs.push(move);
   }
+  out.dirs.push(...folders.end());
   out.sources.push(...fedSources(cmd, out.dirs.length));
   return out;
 }

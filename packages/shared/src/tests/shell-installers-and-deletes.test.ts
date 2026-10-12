@@ -1494,14 +1494,16 @@ describe('a program named with the extension Windows runs it by is that program 
 
 describe('a script named after a folder change moves no folder (#710, Codex pass 8) @cap:executer-une-commande/moteur', () => {
   it('where a download lands is read from the folder the line is in', () => {
-    // `cd.bat` runs a file: the download lands where the line started.
+    // `cd.bat` runs a file, never `cd decoy`: a batch file of cmd's own
+    // process, which leaves the line where its body ends, as the gate reads
+    // it (#717).
     const read = downloadWrites('cd.bat decoy && curl -o x.zip https://x/a', 'windows');
-    expect(read.dirs).toEqual([]);
-    expect(read.targets).toEqual([{ path: 'x.zip', after: 0 }]);
+    expect(read.dirs).toEqual([{ script: 'cd.bat' }]);
+    expect(read.targets).toEqual([{ path: 'x.zip', after: 1 }]);
     // What the guess reads is a guess too: `cmd.cmd /c "cd decoy"` (pass 9).
     expect(
       downloadWrites('cmd.cmd /c "cd decoy" & curl -o x.zip https://x/a', 'windows').dirs,
-    ).toEqual([]);
+    ).toEqual([{ script: 'cmd.cmd' }]);
     // `cd` itself still moves it.
     expect(downloadWrites('cd decoy && curl -o x.zip https://x/a', 'windows').dirs).toEqual([
       'decoy',
