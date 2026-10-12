@@ -25,6 +25,7 @@ import {
   TEE_OBJECT,
   bindPsArguments,
   isPsParameter,
+  isSplat,
   psHasUnknownParameter,
   psParameterNames,
   psPositional,
@@ -438,6 +439,9 @@ function subcommand(program: string, rest: string): RegExp {
 // unflagged by naming no action: no verb of the program among its words
 // (`apt list`, `winget show`; which word is the subcommand takes the same
 // grammar), a mode with no action letter (`rpm -q x`, `pacman -Qi x`).
+// A word decided at run time (`apt-get "$verb" x`, `winget %V% x`, a splat)
+// could be any verb, so it asks (Codex, PR #710 pass 3); a program name
+// decided at run time is inline code already (`isInlineEvalUnit`).
 
 /** How one program says it installs, updates or removes software. */
 interface Installer {
@@ -848,6 +852,8 @@ function installsSoftware(unit: readonly string[]): boolean {
   // A versioned name is the same program (`pip3.12`, `gem3.2`).
   const installer = INSTALLERS.get(program) ?? INSTALLERS.get(program.replace(/[\d.]+$/, ''));
   if (installer === undefined) return false;
+  // A word the text does not hold could be an install verb: it asks.
+  if (args.some((w) => isDecidedAtRunTime(w) || isSplat(w))) return true;
   const words = installerWords(args, installer.syntax ?? 'gnu');
   const option = (o: string) =>
     o.endsWith('*')

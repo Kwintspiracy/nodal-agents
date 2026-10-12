@@ -13,6 +13,8 @@
 // install it simulates, and a read stays unflagged by naming no action.
 // A two-value option hid the verb from the option walk (`nix --option sandbox
 // false profile install x`): a verb of the program anywhere in its words asks.
+// Pass 3 found the verb in a variable (`apt-get "$verb" cowsay`): a word
+// decided at run time could be any verb, and asks.
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -962,6 +964,104 @@ describe('install_software: a verb of the program anywhere in its words asks (#7
         'brew search git',
         'zypper search vim',
         'pip show requests',
+      ],
+      'install_software',
+      false,
+    );
+  });
+});
+
+describe('install_software: a word decided at run time could be the verb, and asks (#710, Codex pass 3) @cap:executer-une-commande/moteur', () => {
+  // `verb=install; apt-get "$verb" cowsay` installs, and its words name no
+  // verb: the reader matched literal words only. A word the text does not
+  // hold (a variable, a substitution, cmd's `%V%` / `!V!`, a splat) could be
+  // any verb of the program, so it asks, read by the same detector as a
+  // program name decided at run time (`isDecidedAtRunTime`) and the splat of
+  // the PowerShell binder (`isSplat`).
+  it('Codex: the verb in a variable', () => {
+    for (const cmd of ['verb=install; apt-get "$verb" cowsay', 'apt-get $verb cowsay'])
+      for (const host of HOSTS) {
+        expect(kindsOn(cmd, host), `${cmd} (${host})`).toContain('install_software');
+        expect(isDestructiveOrHeavyCommand(cmd, host), `${cmd} (${host})`).toBe(true);
+      }
+  });
+
+  it('sh: a parameter expansion, a command substitution, backticks', () => {
+    expectKind(
+      [
+        'apt-get ${verb} cowsay',
+        'apt-get "${verb:-install}" cowsay',
+        'apt-get $(echo install) cowsay',
+        'apt-get `echo install` cowsay',
+        'brew "$@"',
+        'sh -c "dnf $1 x" _ install',
+        'nix profile "$sub" x',
+      ],
+      'install_software',
+      true,
+    );
+  });
+
+  it('cmd: %VAR%, a batch parameter, delayed !VAR!', () => {
+    expectKind(
+      [
+        'winget %V% x',
+        'cmd /c "winget %V% x"',
+        'cmd /c "choco %1 x"',
+        'cmd /v:on /c "winget !V! x"',
+        'for %v in (install) do winget %v x',
+      ],
+      'install_software',
+      true,
+    );
+  });
+
+  it('PowerShell: a variable, a subexpression, a splat', () => {
+    expectKind(
+      [
+        'winget $v x',
+        "winget $('install') x",
+        'winget @a',
+        'powershell -Command "winget $v x"',
+        'pwsh -c "choco @args"',
+        'powershell -Command "scoop $(Get-Verb) x"',
+      ],
+      'install_software',
+      true,
+    );
+  });
+
+  it('a program name decided at run time is inline code already, not read again here', () => {
+    for (const cmd of ['$pm install x', '%PM% install x', '& $pm install x'])
+      for (const host of HOSTS)
+        expect(kindsOn(cmd, host), `${cmd} (${host})`).toContain('inline_code');
+  });
+
+  it('the earlier Codex cases still ask', () => {
+    expectKind(
+      ['apt-get -c --simulate install cowsay', 'nix --option sandbox false profile install x'],
+      'install_software',
+      true,
+    );
+  });
+
+  it('accepted over-ask: a read whose operand is decided at run time asks', () => {
+    // The trade-off, pinned: the word may be an operand, not the verb.
+    expectKind(
+      ['npm run "$script"', 'pip show "$pkg"', 'apt list "$pkg"', 'winget search %Q%'],
+      'install_software',
+      true,
+    );
+  });
+
+  it('a runtime word elsewhere on the line, or a literal read, stays unflagged', () => {
+    expectKind(
+      [
+        'echo "$verb" && apt list --installed',
+        'v=$(cat f); npm ls',
+        'set V=install & winget search git',
+        'Write-Host $v; pip show requests',
+        'winget search git',
       ],
       'install_software',
       false,

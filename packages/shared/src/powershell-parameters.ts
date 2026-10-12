@@ -61,6 +61,11 @@ const DASHES = '-\u2013\u2014\u2015';
 /** The value a splat gives every parameter: decided when the command runs. */
 const SPLATTED = '$splat';
 
+/** A splat (`@params`, `@global:p`): the words it gives are decided when the command runs. */
+export function isSplat(word: string): boolean {
+  return /^@[\w:]+$/.test(word);
+}
+
 /** What a word names as a parameter, if it is one: its key and its glued value. */
 function parameterWord(
   word: string,
@@ -120,7 +125,7 @@ export function bindPsArguments(args: readonly string[], sig: PsSignature): PsBi
   let positionalOnly = false;
   for (let i = 0; i < args.length; i++) {
     const word = args[i] ?? '';
-    if (!positionalOnly && sig.cli !== true && /^@[\w:]+$/.test(word)) {
+    if (!positionalOnly && sig.cli !== true && isSplat(word)) {
       bound.push({ names: all, value: SPLATTED, index: i });
       continue;
     }
