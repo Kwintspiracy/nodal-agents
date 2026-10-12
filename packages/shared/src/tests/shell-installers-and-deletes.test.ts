@@ -293,8 +293,10 @@ const MACOS_CASES: Record<string, InstallerCase> = {
       'brew autoremove',
       'brew install -n x',
       'brew upgrade --dry-run',
+      // Updates Homebrew itself, not only its formula lists (Codex, #710 pass 9).
+      'brew update',
     ],
-    changesNothing: ['brew list', 'brew info x', 'brew search x', 'brew update'],
+    changesNothing: ['brew list', 'brew info x', 'brew search x'],
   },
   port: {
     acts: [
@@ -562,6 +564,7 @@ const LINUX_CASES: Record<string, InstallerCase> = {
       'nix profile remove hello',
       'nix profile upgrade --all',
       'nix profile rollback',
+      'nix upgrade-nix',
     ],
     changesNothing: [
       'nix profile list',
@@ -598,11 +601,17 @@ const CROSS_PLATFORM_CASES: Record<string, InstallerCase> = {
     changesNothing: ['npm ls', 'npm run build', 'npm view x'],
   },
   pnpm: {
-    acts: ['pnpm add x', 'pnpm remove x', 'pnpm --filter web up x', 'pnpm i'],
+    acts: ['pnpm add x', 'pnpm remove x', 'pnpm --filter web up x', 'pnpm i', 'pnpm self-update'],
     changesNothing: ['pnpm list', 'pnpm run build'],
   },
   yarn: {
-    acts: ['yarn add x', 'yarn remove x', 'yarn global add x', 'yarn upgrade'],
+    acts: [
+      'yarn add x',
+      'yarn remove x',
+      'yarn global add x',
+      'yarn upgrade',
+      'yarn set version stable',
+    ],
     changesNothing: ['yarn list', 'yarn run build', 'yarn info x'],
   },
   bun: {
@@ -639,6 +648,7 @@ const CROSS_PLATFORM_CASES: Record<string, InstallerCase> = {
       'uv tool upgrade ruff',
       'uv python install 3.12',
       'uv pip install --dry-run x',
+      'uv self update',
     ],
     changesNothing: ['uv pip list', 'uv run pytest', 'uv tool list', 'uv python list'],
   },

@@ -575,7 +575,8 @@ const MACOS_INSTALLERS: Record<string, Installer> = {
     letters: 'i',
   },
   brew: {
-    verbs: ['install', 'reinstall', 'uninstall', 'remove', 'rm', 'upgrade', 'autoremove'],
+    // `update` fetches Homebrew itself, not only its formula lists (#710 pass 9).
+    verbs: ['install', 'reinstall', 'uninstall', 'remove', 'rm', 'upgrade', 'autoremove', 'update'],
   },
   port: { verbs: ['install', 'uninstall', 'upgrade', 'activate', 'deactivate', 'selfupdate'] },
   mas: { verbs: ['install', 'uninstall', 'upgrade', 'purchase', 'lucky'] },
@@ -720,6 +721,7 @@ const LINUX_INSTALLERS: Record<string, Installer> = {
       'profile remove',
       'profile upgrade',
       'profile rollback',
+      'upgrade-nix',
     ],
   },
   pkg: { verbs: ['install', 'add', 'delete', 'remove', 'upgrade', 'autoremove'] },
@@ -727,7 +729,11 @@ const LINUX_INSTALLERS: Record<string, Installer> = {
 
 /**
  * The language and tool managers the kind already meant (they were in its
- * patterns before #693), with the verbs that install, update or remove.
+ * patterns before #693), with the verbs that install, update or remove. A
+ * manager that replaces ITSELF changes installed software too, in every table:
+ * `brew update`, `port selfupdate`, `scoop update`, `pnpm self-update`, `yarn
+ * set version`, `uv self update`, `nix upgrade-nix` (Codex, PR #710 pass 9). A
+ * refresh of the package lists alone (`apt-get update`, `pkg update`) does not.
  */
 const CROSS_PLATFORM_INSTALLERS: Record<string, Installer> = {
   'npm|pnpm|yarn|bun': {
@@ -747,6 +753,8 @@ const CROSS_PLATFORM_INSTALLERS: Record<string, Installer> = {
       'global add',
       'global remove',
       'global upgrade',
+      'self-update',
+      'set version',
     ],
   },
   'pip|pip3': { verbs: ['install', 'uninstall'] },
@@ -777,6 +785,7 @@ const CROSS_PLATFORM_INSTALLERS: Record<string, Installer> = {
       'tool upgrade',
       'python install',
       'python uninstall',
+      'self update',
     ],
   },
   go: { verbs: ['install'] },
