@@ -261,8 +261,8 @@ describe('where a PowerShell line writes, read as PowerShell binds it (#694) @ca
   const targets = (cmd: string) => downloadWrites(cmd, 'windows').targets.map((t) => t.path);
   // A PowerShell line: on a cmd line, `Set-Location` would be a name cmd
   // looks for in the folder (#717).
-  // The folders moved into, as bound: past each one's chain, the gate looks
-  // whether it is there (`{ unsure }`, #723), not what this reading is about.
+  // The folders moved into, as bound: past each one's chain, the line may be
+  // in the folder before it too (`{ unsure }`, #723), not what this reading is about.
   const dirs = (cmd: string) =>
     downloadWrites(cmd, 'windows', 'powershell').dirs.filter(
       (m) => m === null || typeof m !== 'object' || !('unsure' in m),

@@ -2937,13 +2937,12 @@ export type FolderMove =
   | { readonly restore: true }
   /**
    * The end of the `&&` chain after the move at this index, which runs only
-   * if that move was made. Past it, the folder is not known unless the move
-   * left it where it was (a program found, `cd .`), or, for a move that ran
-   * (`ran`, a `cd` the line reaches whatever happened before), unless the
-   * folder it entered is there when the gate judges: a `cd` into a missing
-   * one fails, and the line goes on where it was (#723).
+   * if that move was made. Past it, the move may not have been: a `cd` into a
+   * folder that is not there when it runs fails (#723), a move that may not
+   * run may not have. The line is in the folder it was in before the move or
+   * in the one it entered (the gate keeps both, packages/tools).
    */
-  | { readonly unsure: number; readonly ran?: true };
+  | { readonly unsure: number };
 
 /**
  * How one unit moves the folder of the process it runs in: a `cd`-like
@@ -3002,10 +3001,11 @@ export interface FolderStep {
  * child ends (`{ save }` … `{ restore }`). A script run in the line's process
  * leaves it where the script ends (`{ script }`). A move that may not run
  * (`MAY_NOT_RUN`) is made for what follows it in its own `&&` chain, which
- * runs only if it ran, and past that chain the folder is not known unless the
- * move left it where it was (`{ unsure }`). A `cd` that ran may still have
- * failed, its folder missing: past its chain, the gate looks (`ran`, #723). `batch`: the line is one of a
- * batch file, where `setlocal` and `endlocal` keep and restore the folder.
+ * runs only if it ran; so is any `cd`, which fails into a folder that is not
+ * there when it runs (#723). Past that chain, the line is in the folder before
+ * the move or in the one it entered (`{ unsure }`). `batch`: the line is one
+ * of a batch file, where `setlocal` and `endlocal` keep and restore the
+ * folder.
  */
 export function lineFolders(batch: boolean): {
   step(unit: readonly string[]): FolderStep;
@@ -3020,13 +3020,13 @@ export function lineFolders(batch: boolean): {
   };
   // The moves that may not have run (Nodal review of PR #721): where each
   // stands in the list, and the `&&` chain past which it is unsure.
-  const unsure: Array<{ chain: number | undefined; at: number; ran: boolean }> = [];
+  const unsure: Array<{ chain: number | undefined; at: number }> = [];
   const settle = (chains: readonly number[] | null, out: FolderMove[]): void => {
     for (let i = unsure.length - 1; i >= 0; i--) {
       const move = unsure[i];
       if (move === undefined) continue;
       if (chains !== null && move.chain !== undefined && chains.includes(move.chain)) continue;
-      out.push(move.ran ? { unsure: move.at, ran: true } : { unsure: move.at });
+      out.push({ unsure: move.at });
       unsure.splice(i, 1);
     }
   };
@@ -3058,9 +3058,9 @@ export function lineFolders(batch: boolean): {
       count += before.length;
       if (move !== undefined) {
         // A move that may not run, and a `cd` that may fail (#723): made
-        // for its own chain, not known past it but by the gate.
+        // for its own chain, either folder past it.
         if (move !== null && (mayNotRun || typeof move === 'string'))
-          unsure.push({ chain: chains.at(-1), at: count, ran: !mayNotRun });
+          unsure.push({ chain: chains.at(-1), at: count });
         count += 1;
       }
       return { before, move };

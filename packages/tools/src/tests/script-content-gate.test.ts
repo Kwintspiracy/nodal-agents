@@ -330,19 +330,11 @@ describe('a command that runs a script is judged by the script (#635) @cap:execu
   });
 
   it('a download in a script runs inside the workspace, and asks when the script sends it outside', async () => {
-    // `img` is not there when the gate reads: the download joined to the `cd`
-    // by `&&` runs only if it succeeded (#717, #723); on lines of their own,
-    // a `cd` into a missing folder may fail, and asks.
-    await put('fetch-in.sh', 'mkdir -p img && cd img && curl -o a.jpg https://x/a.jpg\n');
+    await put('fetch-in.sh', 'mkdir -p img\ncd img\ncurl -o a.jpg https://x/a.jpg\n');
     await put('fetch-out.sh', `cd "${elsewhere}"\ncurl -o a.jpg https://x/a.jpg\n`);
     await put('fetch-var.py', 'import subprocess\nsubprocess.run(["git", "clone", url, dest])\n');
 
     await ranUnasked('sh fetch-in.sh');
-    // A folder that is there is looked at in the workspace: the download on
-    // the next line lands in it (#723).
-    await put('assets/.keep', '');
-    await put('fetch-there.sh', 'cd assets\ncurl -o a.jpg https://x/a.jpg\n');
-    await ranUnasked('sh fetch-there.sh');
     expect(await asked('sh fetch-out.sh')).toEqual([
       {
         category: 'download',
@@ -360,6 +352,33 @@ describe('a command that runs a script is judged by the script (#635) @cap:execu
           { command: 'python fetch-var.py', places: ['a path decided when the command runs'] },
         ],
       }),
+    ]);
+  });
+
+  // Nodal review of PR #721, pass 3: whether a `cd` succeeds is never read
+  // from the disk when the gate judges. The line may remove the folder before
+  // it (or make it), and `sub/../other` fails in POSIX when sub is missing.
+  it('past a cd that may fail, the folder the line started in is judged too (#723)', async () => {
+    const win = process.platform === 'win32';
+    await put('sub/keep.txt', 'x');
+    await put('other/keep.txt', 'x');
+    const removed = win
+      ? 'rmdir /s /q sub & cd sub & curl -o ..\\evil.zip https://x/a'
+      : 'rm -rf sub; cd sub; curl -o ../evil.zip https://x/a';
+    expect(await asked(removed)).toContainEqual({
+      category: 'download',
+      state: 'ask',
+      details: [removed],
+      outside: [{ command: removed, places: [win ? '..\\evil.zip' : '../evil.zip'] }],
+    });
+    const lexical = win ? 'cd sub\\..\\other & ..\\cleanup.bat' : 'cd sub/../other; ../cleanup.sh';
+    expect(await asked(lexical)).toEqual([
+      {
+        category: 'inline_code',
+        state: 'ask',
+        details: [lexical],
+        unread: [{ source: win ? '..\\cleanup.bat' : '../cleanup.sh', why: 'decided_at_run_time' }],
+      },
     ]);
   });
 });

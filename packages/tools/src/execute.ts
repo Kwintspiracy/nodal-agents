@@ -1475,17 +1475,6 @@ async function shellPlace(
         kind: 'unread' as const,
         why: 'outside_workspaces' as const,
       })),
-    // A folder a `cd` of the call enters, looked at only inside the job's
-    // workspaces: outside, whether it is there cannot be told (#717, #723).
-    isFolder: (absolutePath) =>
-      resolveAndCheckPath(ctx, absolutePath).then(
-        (canonical) =>
-          stat(canonical).then(
-            (s) => s.isDirectory(),
-            () => false,
-          ),
-        () => false,
-      ),
   };
 }
 
