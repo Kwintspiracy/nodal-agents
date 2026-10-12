@@ -108,3 +108,100 @@ describe('the gate judges the text, not the machine it runs on (#717) @cap:execu
     );
   });
 });
+
+describe('a path is judged as the shell that runs the line hands it on (#717, Nodal review pass 7) @cap:executer-une-commande/moteur', () => {
+  // sh takes a backslash out before the program sees the word: `.\./evil.zip`
+  // is `../evil.zip` (Git Bash: `printf '%s\n' .\./evil.zip` prints
+  // `../evil.zip`; `curl -o .\./evil.zip` writes the folder above). The card
+  // names the place as written.
+  it.each([
+    ['curl -o .\\./evil.zip https://x/f', '.\\./evil.zip'],
+    ['curl https://x/f > .\\./out', '.\\./out'],
+    ['curl -o \\.\\./evil.zip https://x/f', '\\.\\./evil.zip'],
+    ['curl -o .\\.\\/evil.zip https://x/f', '.\\.\\/evil.zip'],
+    ['wget -O .\\./evil.zip https://x/f', '.\\./evil.zip'],
+  ])('sh: %s writes outside, and asks', async (command, place) => {
+    expect(await judge(command, placeWith('posix', {}))).toEqual(downloadOutside(command, place));
+  });
+
+  it('sh: a cd written with escapes moves where sh goes', async () => {
+    // `cd .\./sub` is `cd ../sub`; past the `&&` chain the cd may have failed,
+    // and the starting folder's a.jpg is inside: the one outside asks.
+    const command = 'cd .\\./sub && curl -o a.jpg https://x/f';
+    expect(await judge(command, placeWith('posix', {}))).toEqual(downloadOutside(command, 'a.jpg'));
+  });
+
+  it('sh: a program name written with escapes is the program sh runs', async () => {
+    // `cur\l` is curl: only sh's reading sees the download.
+    const command = 'cur\\l -o ../a.jpg https://x/f';
+    expect(await judge(command, placeWith('posix', {}))).toEqual(
+      downloadOutside(command, '../a.jpg'),
+    );
+  });
+
+  it("each reading is judged from where the line starts, never from the other's folders", async () => {
+    // PowerShell's reading moves to `..\y`, the folder above, and sees no
+    // download (`cur\l`); sh's moves to `..y`, a folder of the workspace, then
+    // into `sub`, and downloads there: a.jpg lands inside, from every folder
+    // sh's reading may be in. Nothing asks.
+    expect(
+      await judge('cd ..\\y; cd sub; cur\\l -o a.jpg https://x/f', placeWith('posix', {})),
+    ).toEqual([]);
+  });
+
+  it('sh: a script written with escapes is the one sh runs', async () => {
+    // `sub/.\./run.sh` runs sub/../run.sh, the workspace's run.sh, never
+    // sub/./run.sh: which one deletes says which one was read.
+    const command = 'sub/.\\./run.sh';
+    expect(
+      await judge(
+        command,
+        placeWith('posix', { 'run.sh': 'rm -rf build\n', 'sub/run.sh': 'echo done\n' }),
+      ),
+    ).toEqual([expect.objectContaining({ category: 'delete_files' })]);
+    expect(
+      await judge(
+        command,
+        placeWith('posix', { 'run.sh': 'echo done\n', 'sub/run.sh': 'rm -rf build\n' }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('sh: an escaped backslash inside the workspace stays inside', async () => {
+    // `.\/a.jpg` is `./a.jpg`: no question.
+    expect(await judge('curl -o .\\/a.jpg https://x/f', placeWith('posix', {}))).toEqual([]);
+  });
+
+  it('sh: a backslash sh keeps (in quotes) is still read as a separator: one question too many', async () => {
+    // `"..\x"` is a file `..\x` of the folder for sh. The target does not say
+    // which shell read it (a PowerShell payload of the same line takes it as
+    // `..\x` the folder above): it asks.
+    const command = 'curl -o "..\\x" https://x/f';
+    expect(await judge(command, placeWith('posix', {}))).toEqual(downloadOutside(command, '..\\x'));
+  });
+
+  it('PowerShell on a POSIX host, inline: a backslash still separates folders', async () => {
+    const command = 'pwsh -Command "iwr https://x/a -OutFile ..\\evil.zip"';
+    expect(await judge(command, placeWith('posix', {}))).toEqual(
+      downloadOutside(command, '..\\evil.zip'),
+    );
+  });
+
+  it('cmd: a caret is taken out as cmd takes it (`echo .^.\\evil.zip` prints `..\\evil.zip`)', async () => {
+    const command = 'curl -o .^.\\evil.zip https://x/f';
+    expect(await judge(command, placeWith('windows', {}))).toEqual(
+      downloadOutside(command, '.^.\\evil.zip'),
+    );
+  });
+
+  it('cmd and PowerShell keep a backslash: #669 unchanged on a Windows host', async () => {
+    for (const command of [
+      'curl -o ..\\evil.zip https://x/f',
+      'powershell -Command "iwr https://x/a -OutFile ..\\evil.zip"',
+    ])
+      expect(await judge(command, placeWith('windows', {}))).toEqual(
+        downloadOutside(command, '..\\evil.zip'),
+      );
+    expect(await judge('curl -o .\\sub\\a.jpg https://x/f', placeWith('windows', {}))).toEqual([]);
+  });
+});

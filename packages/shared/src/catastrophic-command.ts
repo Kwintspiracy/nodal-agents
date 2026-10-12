@@ -1640,6 +1640,11 @@ export function staticShellCategories(
 export interface DownloadTarget {
   path: string | null;
   after: number | null;
+  /**
+   * The same write as another reading of the line hands it on (`downloadWrites`,
+   * `redirectionTargets`): judged too, and named by `path`, the first reading.
+   */
+  also?: DownloadTarget[];
 }
 
 export interface DownloadWrites {
@@ -1663,20 +1668,96 @@ export function downloadWrites(
   const out: DownloadWrites = { dirs: [], targets: [] };
   if (typeof command !== 'string' || command.trim() === '') return out;
   const cmd = command;
-  // Where a line writes is read ONCE, in order, because each target is judged
-  // from the folders before it (`dirs`, `after`): the two readings of a line
-  // whose shell is not known cannot be merged. It is read with the grammar
-  // that ends a command at `;`, `&` and `|` and keeps a backslash a path
-  // separator, PowerShell's, as the place analysis always did (#669); the
-  // kind of action (`staticShellCategories`) is read per host. Which of its
-  // commands move the line's folder is read for the shell that runs it: the
-  // script's (`reader`), or the host's (#717).
-  const units = commandUnits(withoutRedirections(cmd), 0, 'powershell', reader ?? topShell(host));
-  const folders = lineFolders(reader === 'cmd');
-  // `iwr URL | Set-Content file`: where the fetched bytes land, kept only if
-  // the line downloads.
+  // Each target is judged from the folders before it (`dirs`, `after`), so a
+  // line is read in order, by one grammar at a time. Two readings: the one
+  // the place analysis always made, PowerShell's, which ends a command at
+  // `;`, `&` and `|` and keeps a backslash a folder separator (#669), and the
+  // one of the shell that runs the line, the script's (`reader`) or the
+  // host's, as it hands each word on (Nodal review of PR #721, pass 7): sh
+  // takes a backslash out, `.\./x` is `../x`. Where they differ, both are
+  // judged, each from where the line starts (`{ save }`, `{ restore }`): a
+  // place outside in either asks, a safety net never reads fewer than it did.
+  // A write the readings both find (the same count of them) is one target,
+  // named as the first reads it, the other reading's place in `also`.
+  const shell: LineShell = reader ?? (host === 'windows' ? 'cmd' : 'sh');
+  const readings: Writes[] = [];
+  for (const grammar of new Set<LineShell>(['powershell', shell])) {
+    const read = readWrites(cmd, host, grammar, shell, reader === 'cmd');
+    const same = (r: Writes): boolean =>
+      JSON.stringify([r.dirs, r.targets, r.piped]) ===
+      JSON.stringify([read.dirs, read.targets, read.piped]);
+    if (!readings.some(same)) readings.push(read);
+  }
   const piped: DownloadTarget[] = [];
-  let downloads = false;
+  // The first reading's writes, then each other one's: attached to them when
+  // it finds as many, alongside otherwise.
+  const merge = (into: DownloadTarget[], from: DownloadTarget[], first: number): void => {
+    if (from.length !== first) into.push(...from);
+    else from.forEach((t, k) => into[k] !== undefined && (into[k].also ??= []).push(t));
+  };
+  let targets = 0;
+  let pipes = 0;
+  readings.forEach((read, n) => {
+    if (n > 0) out.dirs.push({ restore: true });
+    if (n < readings.length - 1) out.dirs.push({ save: true });
+    const offset = out.dirs.length;
+    const shift = (t: DownloadTarget): DownloadTarget => ({
+      path: t.path,
+      after: t.after === null ? null : t.after + offset,
+    });
+    out.dirs.push(
+      ...read.dirs.map((d) =>
+        d !== null && typeof d === 'object' && 'unsure' in d ? { unsure: d.unsure + offset } : d,
+      ),
+    );
+    if (n === 0) {
+      targets = read.targets.length;
+      pipes = read.piped.length;
+    }
+    merge(out.targets, read.targets.map(shift), n === 0 ? -1 : targets);
+    merge(piped, read.piped.map(shift), n === 0 ? -1 : pipes);
+  });
+  // `curl URL > file`: the bytes land where the shell sends them. Read on a
+  // line that downloads (or reads a URL into a redirection, which
+  // `staticShellCategories` files as a download).
+  if (readings.some((r) => r.downloads) || staticShellCategories(cmd, host).includes('download')) {
+    out.targets.push(...piped);
+    for (const [kept, ...others] of redirectionTargets(cmd))
+      if (kept !== undefined && !isNullSink(kept, host))
+        out.targets.push({
+          path: readablePath(kept),
+          after: null,
+          ...(others.length > 0
+            ? { also: others.map((t) => ({ path: readablePath(t), after: null })) }
+            : {}),
+        });
+  }
+  return out;
+}
+
+/** What one reading of a line writes (`downloadWrites`). */
+interface Writes {
+  dirs: FolderMove[];
+  targets: DownloadTarget[];
+  /** `iwr URL | Set-Content file`: where the fetched bytes land, kept only if the line downloads. */
+  piped: DownloadTarget[];
+  downloads: boolean;
+}
+
+/**
+ * Where a line writes, read with `grammar`; which of its commands move the
+ * folder is read for `shell`, the one whose process runs them (#717).
+ */
+function readWrites(
+  cmd: string,
+  host: ShellHost,
+  grammar: LineShell,
+  shell: LineShell,
+  batch: boolean,
+): Writes {
+  const out: Writes = { dirs: [], targets: [], piped: [], downloads: false };
+  const units = commandUnits(withoutRedirections(cmd), 0, grammar, shell);
+  const folders = lineFolders(batch);
   for (const unit of units) {
     const program = unit[0] ?? '';
     const args = unit.slice(1);
@@ -1686,9 +1767,9 @@ export function downloadWrites(
     // resolve to a script of the folder (`curl`) still writes (#717).
     for (const t of pipeWriterTargets(program, args))
       if (t === null || !isNullSink(t, host))
-        piped.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
+        out.piped.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
     if (unitCategories(unit).includes('download')) {
-      downloads = true;
+      out.downloads = true;
       for (const t of fetcherTargets(program, args))
         if (t === null || !isNullSink(t, host))
           out.targets.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
@@ -1696,14 +1777,6 @@ export function downloadWrites(
     if (move !== undefined) out.dirs.push(move);
   }
   out.dirs.push(...folders.end());
-  // `curl URL > file`: the bytes land where the shell sends them. Read on a
-  // line that downloads (or reads a URL into a redirection, which
-  // `staticShellCategories` files as a download).
-  if (downloads || staticShellCategories(cmd, host).includes('download')) {
-    out.targets.push(...piped);
-    for (const t of redirectionTargets(cmd))
-      if (!isNullSink(t, host)) out.targets.push({ path: readablePath(t), after: null });
-  }
   return out;
 }
 
@@ -1981,26 +2054,36 @@ const GIT_CLONE_VALUE_FLAGS = new Set([
  * quote (`"O\"Brien" … > f`), and a safety net may over-ask but never under-
  * report. The price is one harmless extra place when a `>` sits inside a quoted
  * string of a download (`"…?p=1>2"` reads a file `2`).
+ *
+ * For the same reason the scan does not know which shell's word a target is
+ * (a `bash -c` payload in a cmd line): each is read as cmd and PowerShell hand
+ * it on, a backslash kept, then as sh does when that differs (`shWordAt`:
+ * `.\./out` is `../out`, Nodal review of PR #721, pass 7). Outside in either
+ * reading, it asks.
  */
-function redirectionTargets(cmd: string): string[] {
-  const targets: string[] = [];
+function redirectionTargets(cmd: string): string[][] {
+  const targets: string[][] = [];
   const delimiter = /[\s;&|()<>]/;
   let i = 0;
-  /** The word that starts at `i` (after spaces): a quoted one whole, otherwise up to a delimiter. */
-  const word = (): string => {
+  /** The readings of the word that starts at `i` (after spaces): cmd's and PowerShell's, then sh's. */
+  const word = (): string[] => {
     while (i < cmd.length && /\s/.test(cmd[i] ?? '')) i++;
-    const open = cmd[i];
-    if (open === '"' || open === "'") {
-      const end = cmd.indexOf(open, i + 1);
-      if (end >= 0) {
-        const quoted = cmd.slice(i + 1, end);
-        i = end + 1;
-        return quoted;
+    const sh = shWordAt(cmd, i);
+    const kept = ((): string => {
+      const open = cmd[i];
+      if (open === '"' || open === "'") {
+        const end = cmd.indexOf(open, i + 1);
+        if (end >= 0) {
+          const quoted = cmd.slice(i + 1, end);
+          i = end + 1;
+          return quoted;
+        }
       }
-    }
-    const start = i;
-    while (i < cmd.length && !delimiter.test(cmd[i] ?? '')) i++;
-    return stripQuotes(cmd.slice(start, i));
+      const start = i;
+      while (i < cmd.length && !delimiter.test(cmd[i] ?? '')) i++;
+      return stripQuotes(cmd.slice(start, i));
+    })();
+    return sh === kept || sh === '' ? [kept] : [kept, sh];
   };
   while (i < cmd.length) {
     const c = cmd[i] ?? '';
@@ -2024,16 +2107,40 @@ function redirectionTargets(cmd: string): string[] {
       }
     } else if (next === '&') {
       i += 2;
-      const t = word();
       // `>&2`, `>&-` copy a descriptor; `>&file` (bash) writes both streams to it.
-      if (t !== '' && !/^(\d+|-)$/.test(t)) targets.push(t);
+      const t = word();
+      if (t[0] !== '' && !/^(\d+|-)$/.test(t[0] ?? '')) targets.push(t);
     } else {
       i += next === '>' || next === '|' ? 2 : 1;
       const t = word();
-      if (t !== '') targets.push(t);
+      if (t[0] !== '') targets.push(t);
     }
   }
   return targets;
+}
+
+/**
+ * The unquoted word that starts at `at`, as sh hands it on: a backslash takes
+ * the next character out of any meaning and is dropped (`\.` is `.`; before a
+ * new line, it joins the lines). It ends at a delimiter or at a quote: the
+ * scan of `redirectionTargets` does not know whether a quote it meets opens
+ * or closes one, and a quoted word keeps its backslashes but before `$`, `` ` ``,
+ * `"`, `\` (read whole by the other reading).
+ */
+function shWordAt(text: string, at: number): string {
+  let out = '';
+  let i = at;
+  while (i < text.length && !/[\s;&|()<>"']/.test(text[i] ?? '')) {
+    if (text[i] === '\\') {
+      const next = text[i + 1];
+      if (next !== undefined && next !== '\n') out += next;
+      i += 2;
+    } else {
+      out += text[i] ?? '';
+      i += 1;
+    }
+  }
+  return out;
 }
 
 /** The cmdlets that write what a pipe hands them. */

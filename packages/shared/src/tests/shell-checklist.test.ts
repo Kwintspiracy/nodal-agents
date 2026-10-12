@@ -579,7 +579,9 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
         'exec < ../outside.txt; cd sub && curl -o /dev/stdin https://x/a',
         host,
       );
-      expect(read.targets).toEqual([{ path: '/dev/stdin', after: expect.any(Number) }]);
+      // One write; on a Windows host cmd's reading, where `;` ends nothing,
+      // finds it too, judged as well (`also`, #717 pass 7).
+      expect(read.targets).toMatchObject([{ path: '/dev/stdin', after: expect.any(Number) }]);
       // judged from the folder the line is in once in `sub` (cmd also looks
       // for `exec` and `curl` in the folder, #717)
       expect(read.dirs.slice(0, read.targets[0]?.after ?? 0)).toContain('sub');

@@ -253,7 +253,9 @@ function basesOf(
  * may be in when it runs (`basesOf`): the starting folder, then each `cd` that
  * comes BEFORE it (revue passe 2 : un `cd` écrit après ne la déplace pas). A
  * redirection, whose place in the line is not known, is judged from every
- * folder of it.
+ * folder of it. A target read otherwise by another reading of the line
+ * (`also`: sh takes a backslash out, pass 7) is judged in each, and named as
+ * the first reads it.
  */
 async function downloadsOutside(
   command: string,
@@ -266,17 +268,20 @@ async function downloadsOutside(
   if (targets.length === 0) return [];
   const bases = basesOf(dirs, from, scripts);
   const outside: string[] = [];
-  for (const { path, after } of targets) {
-    if (path === null) {
+  for (const target of targets) {
+    const { path } = target;
+    const readings = [target, ...(target.also ?? [])];
+    if (path === null || readings.some((r) => r.path === null)) {
       if (!outside.includes(UNREADABLE_TARGET)) outside.push(UNREADABLE_TARGET);
       continue;
     }
-    const folders = after === null ? bases : [bases[after] ?? null];
-    const absolute = namedPath(path, null);
-    const candidates =
-      absolute !== null
-        ? [absolute]
-        : folders.flatMap((f) => (f === null ? [null] : f.map((b) => namedPath(path, b))));
+    const candidates = readings.flatMap(({ path: read, after }) => {
+      if (read === null) return [];
+      const absolute = namedPath(read, null);
+      if (absolute !== null) return [absolute];
+      const folders = after === null ? bases : [bases[after] ?? null];
+      return folders.flatMap((f) => (f === null ? [null] : f.map((b) => namedPath(read, b))));
+    });
     for (const candidate of candidates) {
       if (candidate === null || !(await place.inWorkspace(candidate))) {
         // The card names what was judged: the path as written, and where it
