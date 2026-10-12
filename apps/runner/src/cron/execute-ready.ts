@@ -6,6 +6,8 @@
 import {
   remainingDelegationHops,
   delegationDepthExceededMessage,
+  appendDeliveredVerdicts,
+  readJobDeliverable,
 } from '@nodal-agents/orchestration';
 import { and, asc, desc, eq, inArray, notInArray, isNotNull } from '@nodal-agents/db';
 import { agentJobs, agentTasks, insertChildJob } from '@nodal-agents/db';
@@ -267,7 +269,7 @@ export async function executeReadyTasks(
     executions.map(async (exec) => {
       try {
         const result = await executeJob(exec.jobId as JobId, deps);
-        await markTaskFromResult(db, exec.taskId, result);
+        await markTaskFromResult(db, exec.taskId, exec.jobId, result);
       } catch {
         // executeJob threw — the job is already marked failed by its internal
         // handler. Mirror onto the task NOW so it never lingers in_progress.
@@ -289,25 +291,38 @@ export async function executeReadyTasks(
  * returns. Terminal outcomes finalize the task (done / blocked); suspended
  * outcomes (approval / delegation / nested tasks) leave it `in_progress` because
  * a resume elsewhere will finish it.
+ *
+ * The task's result is the job's text followed by the review verdicts its
+ * subtree delivered, read by the one reader of "what did this job deliver"
+ * (#646). The task result is what the root's compilation, the dependants'
+ * context and the run memory read: a task whose job delivered only a verdict
+ * is no longer "(no result)" for all three.
  */
 async function markTaskFromResult(
   db: AnyDrizzleDb,
   taskId: string,
+  jobId: string,
   result: ExecuteJobResult,
 ): Promise<void> {
   if (result.status === 'completed') {
+    const delivered = await readJobDeliverable(db, jobId);
     await db
       .update(agentTasks)
-      .set({ status: 'done', result: result.result, updatedAt: new Date() })
+      .set({
+        status: 'done',
+        result: appendDeliveredVerdicts(result.result, delivered),
+        updatedAt: new Date(),
+      })
       .where(eq(agentTasks.id, taskId));
   } else if (result.status === 'failed') {
+    const delivered = await readJobDeliverable(db, jobId);
     await db
       .update(agentTasks)
       .set({
         // Prefer the user-facing reason (e.g. a blocked agent's reason) over the
         // bare error code so the compiled task result explains WHY it stopped.
         status: 'blocked',
-        result: result.result ?? result.error,
+        result: appendDeliveredVerdicts(result.result ?? result.error, delivered),
         updatedAt: new Date(),
       })
       .where(eq(agentTasks.id, taskId));

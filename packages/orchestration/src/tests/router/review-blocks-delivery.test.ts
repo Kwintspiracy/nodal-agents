@@ -147,8 +147,8 @@ describe('delivery_blocked @cap:verifier-un-livrable/moteur', () => {
     const payload = await parentPayload(ctx.parentJobId);
     expect(payload['delivery_blocked']).toBe(REVIEW_CHANGES_REQUESTED);
     // Le verdict voyage toujours avec, entier : l'interdit et sa raison.
-    const verdict = payload['review_verdict'] as Record<string, unknown>;
-    expect(verdict['verdict']).toBe('request_changes');
+    const verdicts = payload['review_verdicts'] as Array<Record<string, unknown>>;
+    expect(verdicts.map((v) => v['verdict'])).toEqual(['request_changes']);
   });
 
   it('ne bloque RIEN sur un approve — le champ est présent et nul', async () => {
@@ -160,7 +160,9 @@ describe('delivery_blocked @cap:verifier-un-livrable/moteur', () => {
     const payload = await parentPayload(ctx.parentJobId);
     expect(payload).toHaveProperty('delivery_blocked');
     expect(payload['delivery_blocked']).toBeNull();
-    expect((payload['review_verdict'] as Record<string, unknown>)['verdict']).toBe('approve');
+    expect(
+      (payload['review_verdicts'] as Array<Record<string, unknown>>).map((v) => v['verdict']),
+    ).toEqual(['approve']);
   });
 
   it('ne bloque RIEN sur une délégation qui n’est pas une revue', async () => {
@@ -171,7 +173,7 @@ describe('delivery_blocked @cap:verifier-un-livrable/moteur', () => {
     const payload = await parentPayload(ctx.parentJobId);
     expect(payload).toHaveProperty('delivery_blocked');
     expect(payload['delivery_blocked']).toBeNull();
-    expect(payload['review_verdict']).toBeNull();
+    expect(payload['review_verdicts']).toEqual([]);
   });
 });
 

@@ -5,11 +5,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentJobs, toolCalls, users, entities } from '@nodal-agents/db';
-import {
-  readDeliveredReviewVerdict,
-  readFinalReviewVerdict,
-  parseReviewVerdictOutput,
-} from '../../router/review-verdict';
+import { readFinalReviewVerdict, parseReviewVerdictOutput } from '../../router/review-verdict';
+import { readJobDeliverable } from '../../router/job-deliverable';
 import { OrchestrationError } from '../../errors';
 import type { JobId } from '../../types';
 
@@ -141,12 +138,23 @@ describe('parseReviewVerdictOutput @cap:organiser-equipe/moteur', () => {
   });
 });
 
-describe('readDeliveredReviewVerdict @cap:organiser-equipe/moteur', () => {
+/**
+ * Le verdict que le job a livré, tel que le lecteur unique le rend (#646) —
+ * `readDeliveredReviewVerdict` a été fondu dans `readJobDeliverables`, et ces
+ * cas le suivent.
+ */
+async function deliveredVerdict(jobId: string) {
+  const delivered = await readJobDeliverable(db, jobId);
+  expect(delivered?.review_verdicts.length ?? 0).toBeLessThanOrEqual(1);
+  return delivered?.review_verdicts[0] ?? null;
+}
+
+describe('readJobDeliverable — le verdict du job lui-même @cap:organiser-equipe/moteur', () => {
   it('lit le verdict sur la ligne tool_calls du job', async () => {
     const { jobId, entityId } = await seedJob();
     await recordVerdictRow(jobId, entityId, VERDICT_OUTPUT, new Date('2026-09-16T10:00:00Z'));
 
-    const verdict = await readDeliveredReviewVerdict(db, jobId as JobId);
+    const verdict = await deliveredVerdict(jobId);
 
     expect(verdict?.verdict).toBe('request_changes');
     expect(verdict?.findings).toHaveLength(2);
@@ -155,7 +163,7 @@ describe('readDeliveredReviewVerdict @cap:organiser-equipe/moteur', () => {
 
   it('rend null quand le job n’a jamais appelé l’outil', async () => {
     const { jobId } = await seedJob();
-    expect(await readDeliveredReviewVerdict(db, jobId as JobId)).toBeNull();
+    expect(await deliveredVerdict(jobId)).toBeNull();
   });
 
   it('c’est le DERNIER appel qui fait foi', async () => {
@@ -173,7 +181,7 @@ describe('readDeliveredReviewVerdict @cap:organiser-equipe/moteur', () => {
       new Date('2026-09-16T10:05:00Z'),
     );
 
-    const verdict = await readDeliveredReviewVerdict(db, jobId as JobId);
+    const verdict = await deliveredVerdict(jobId);
 
     expect(verdict?.verdict).toBe('approve');
     expect(verdict?.findings).toEqual([]);
@@ -191,7 +199,7 @@ describe('readDeliveredReviewVerdict @cap:organiser-equipe/moteur', () => {
       new Date('2026-09-16T10:05:00Z'),
     );
 
-    expect(await readDeliveredReviewVerdict(db, jobId as JobId)).toBeNull();
+    expect(await deliveredVerdict(jobId)).toBeNull();
   });
 });
 
@@ -225,7 +233,7 @@ describe('readFinalReviewVerdict @cap:organiser-equipe/moteur', () => {
 
     expect(await readFinalReviewVerdict(db, jobId as JobId)).toBeNull();
     // Le verdict, lui, reste le verdict de ce job pour son parent.
-    expect((await readDeliveredReviewVerdict(db, jobId as JobId))?.verdict).toBe('request_changes');
+    expect((await deliveredVerdict(jobId))?.verdict).toBe('request_changes');
   });
 
   it('deux appels du MÊME tour : c’est l’ordre d’écriture qui tranche', async () => {
@@ -292,7 +300,7 @@ describe('readFinalReviewVerdict @cap:organiser-equipe/moteur', () => {
       7,
     );
 
-    expect((await readDeliveredReviewVerdict(db, jobId as JobId))?.verdict).toBe('approve');
+    expect((await deliveredVerdict(jobId))?.verdict).toBe('approve');
     expect((await readFinalReviewVerdict(db, jobId as JobId))?.verdict).toBe('approve');
   });
 });

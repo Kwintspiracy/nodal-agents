@@ -536,7 +536,7 @@ describe('parent receives a typed delegation record @cap:organiser-equipe/moteur
     'exit_reason',
     'files_written',
     'hint',
-    'review_verdict',
+    'review_verdicts',
     'status',
     'sub_delegations',
     'summary',
@@ -593,7 +593,7 @@ describe('parent receives a typed delegation record @cap:organiser-equipe/moteur
 
     expect(clesDuContrat(payload)).toEqual(CLES_DU_CONTRAT);
     expect(payload['hint']).toBeNull();
-    expect(payload['review_verdict']).toBeNull();
+    expect(payload['review_verdicts']).toEqual([]);
     expect(payload['status']).toBe('completed');
   });
 
@@ -1332,8 +1332,14 @@ describe('le verdict de revue voyage jusqu’au parent @cap:organiser-equipe/mot
     );
 
     const payload = lastToolResultPayload((await jobRow(parentId)).messages);
-    const verdict = payload['review_verdict'] as Record<string, unknown>;
-    expect(verdict).toBeTruthy();
+    const verdicts = payload['review_verdicts'] as Array<Record<string, unknown>>;
+    expect(verdicts).toHaveLength(1);
+    const verdict = verdicts[0]!;
+    // Son auteur voyage avec lui (#646) : l'enfant qui l'a enregistré.
+    expect(verdict['author']).toEqual({
+      agent_slug: expect.stringMatching(/^test-agent-/),
+      job_id: childId,
+    });
     expect(verdict['verdict']).toBe('request_changes');
     expect(verdict['summary']).toBe(REVIEW_VERDICT_OUTPUT.summary);
     expect(verdict['findings']).toHaveLength(2);
@@ -1348,7 +1354,7 @@ describe('le verdict de revue voyage jusqu’au parent @cap:organiser-equipe/mot
     expect(payload['summary']).toBe(PROSE_RESULT);
   });
 
-  it('une délégation ordinaire est inchangée : review_verdict est null', async () => {
+  it('une délégation ordinaire est inchangée : review_verdicts est vide', async () => {
     const parentId = await seedParentAwaitingReview('assign-rv-2');
     const childId = await insertJob({ channel: 'internal', parentJobId: parentId });
 
@@ -1366,7 +1372,7 @@ describe('le verdict de revue voyage jusqu’au parent @cap:organiser-equipe/mot
     );
 
     const payload = lastToolResultPayload((await jobRow(parentId)).messages);
-    expect(payload['review_verdict']).toBeNull();
+    expect(payload['review_verdicts']).toEqual([]);
     expect(payload['summary']).toBe('Longueur de Planck : 1.616255e-35 m.');
     expect(payload['status']).toBe('completed');
   });

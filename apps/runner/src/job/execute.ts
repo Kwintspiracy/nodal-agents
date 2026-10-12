@@ -50,6 +50,9 @@ import {
   TOOL_RESULT_MODEL_CHARS,
   framedForModel,
   fitToolResult,
+  elideBinary,
+  cutForContext,
+  truncateForContext,
   raisedErrorBlockLength,
   PROVIDER_REJECTED,
   PROVIDER_REJECTED_PREFIX,
@@ -154,6 +157,8 @@ import {
   CANCEL_UNDO_INTENT_SCAN_CHARS,
   VERIFY_BEFORE_ASSERT_NUDGE,
   readFinalReviewVerdict,
+  readChildDeliverables,
+  deliveredSomething,
   isSameAgentRetryBlocked,
   retryBlockedMessage,
   remainingDelegationHops,
@@ -469,36 +474,6 @@ export function sameToolList(
 }
 
 /**
- * Elide long base64/binary runs. They're useless to the model as text, and
- * they're the dominant re-sent-every-turn bloat: a generated image comes back
- * as ~50K of base64, and the runner re-sends the whole history each turn, so
- * over ~10 turns one job burns ~700K input tokens (observed live, 7c78bf2c,
- * $2.14). Files belong on disk — reference them by path/URL, not inline bytes.
- */
-function elideBinary(value: string): string {
-  return value.replace(
-    /[A-Za-z0-9+/]{256,}={0,2}/g,
-    (m) => `[binary elided: ${m.length} chars — reference the file by path/URL, not inline]`,
-  );
-}
-
-/** `value` cut to `room` characters, with an explicit, model-readable marker. */
-function cutForContext(value: string, room: number): string {
-  if (value.length <= room) return value;
-  const dropped = value.length - room;
-  return (
-    value.slice(0, room) +
-    `\n\n[... truncated: ${dropped} chars dropped (total ${value.length}) ...]`
-  );
-}
-
-/** Truncate an oversized tool-result string with an explicit, model-readable marker. */
-export function truncateForContext(value: string): string {
-  // Binary runs are elided FIRST (elideBinary), then the rest is cut.
-  return cutForContext(elideBinary(value), MAX_TOOL_RESULT_CHARS);
-}
-
-/**
  * The framed text the model reads of a third party's result (INJECT-001),
  * within the one budget.
  *
@@ -738,6 +713,7 @@ export type ExecuteJobResult =
       toolsUsed?: string[];
       exitReason?: string;
       subDelegations?: SubDelegationOutcome[];
+      subDelegationsIncomplete?: boolean;
     }
   // `result` carries a user-facing explanation when one exists (e.g. a blocked
   // agent's reason). It lets a delegating parent relay WHY a child stopped,
@@ -754,6 +730,12 @@ export type ExecuteJobResult =
       exitReason?: string;
       hint?: JobFailureHint;
       subDelegations?: SubDelegationOutcome[];
+      /**
+       * `true` quand `subDelegations` ne nomme pas tous les échecs du
+       * sous-arbre : le dernier enregistrement d'une délégation de ce run le
+       * disait (revue Codex de la PR #712, passes 3 et 4).
+       */
+      subDelegationsIncomplete?: boolean;
     }
   | { status: 'cancelled' }
   | { status: 'awaiting_approval' }
@@ -785,6 +767,7 @@ export function delegationRecordFromOutcome(
       // d'un petit-enfant n'atteignait le grand-parent que dans la prose du
       // livrable, donc dans un texte qu'un modèle peut écrire lui-même.
       sub_delegations: outcome.subDelegations ?? [],
+      ...(outcome.subDelegationsIncomplete ? { sub_delegations_incomplete: true } : {}),
     };
   }
   return {
@@ -797,6 +780,7 @@ export function delegationRecordFromOutcome(
     // relaierait un échec sans savoir qu'un autre modèle le réglerait (#119).
     hint: outcome.hint ?? null,
     sub_delegations: outcome.subDelegations ?? [],
+    ...(outcome.subDelegationsIncomplete ? { sub_delegations_incomplete: true } : {}),
   };
 }
 
@@ -1615,6 +1599,16 @@ export async function reviveJobIfApprovalResolvedDuringSuspend(
  */
 type DelegationOutcomeMap = Map<string, 'failed' | 'delivered'>;
 
+/**
+ * Vrai dès qu'UN enregistrement de la transcription de ce run a dit que sa
+ * liste `sub_delegations` ne nomme pas tous les échecs du sous-arbre (revue
+ * Codex de la PR #712, passes 3 à 5). Collant pour tout le run : un échec omis
+ * n'a pas de nom, donc rien de plus tard ne peut prouver qu'il a été réparé.
+ */
+interface IncompleteDelegations {
+  value: boolean;
+}
+
 /** Les noms qui n'ont RIEN rendu, triés — ce que la notice nomme. */
 function failedDelegationNames(carte: DelegationOutcomeMap): string[] {
   return [...carte.entries()]
@@ -1650,6 +1644,7 @@ async function runJob(
   // en ligne, ouvrent la leur.
   return withinRunScope(jobId as string, async () => {
     const delegationOutcomes: DelegationOutcomeMap = new Map();
+    const incompleteDelegations: IncompleteDelegations = { value: false };
     // Le battement du job (#565) : posé par `runJobTracked` dès que la prise
     // réussit, rendu ici quand le run rend la main — fini, suspendu, perdu ou
     // levé. Aucune autre partie du run ne bat.
@@ -1659,14 +1654,26 @@ async function runJob(
     // erreur levée n'importe où finit le job par le chemin d'échec normal, et
     // `executeJob` remonte alors au parent comme pour toute autre issue.
     try {
-      const result = await runJobTracked(jobId, deps, runnerEnv, opts, delegationOutcomes, tenue);
+      const result = await runJobTracked(
+        jobId,
+        deps,
+        runnerEnv,
+        opts,
+        delegationOutcomes,
+        incompleteDelegations,
+        tenue,
+      );
       if (result.status !== 'completed' && result.status !== 'failed') return result;
       // Un résultat qui porte déjà sa carte vient d'une reprise imbriquée
       // (`return runJob(...)`), sous SA prise : elle l'a déjà rapprochée de la ligne.
       if (result.subDelegations !== undefined) return result;
       const rapproche = await issueTelleQueLaLigneLaDit(deps, jobId, result);
       if (rapproche.status !== 'completed' && rapproche.status !== 'failed') return rapproche;
-      return { ...rapproche, subDelegations: subDelegationList(delegationOutcomes) };
+      return {
+        ...rapproche,
+        subDelegations: subDelegationList(delegationOutcomes),
+        subDelegationsIncomplete: incompleteDelegations.value,
+      };
     } catch (err) {
       // Lit déjà la ligne quand son écriture est refusée.
       return await failOnUncaughtError(deps, jobId, err);
@@ -1719,6 +1726,7 @@ async function runJobTracked(
   runnerEnv: RunnerEnv | undefined,
   opts: ExecuteJobOpts | undefined,
   delegationOutcomes: DelegationOutcomeMap,
+  incompleteDelegations: IncompleteDelegations,
   tenue: JobHold,
 ): Promise<ExecuteJobResult> {
   const { db, registry } = deps;
@@ -3604,7 +3612,13 @@ async function runJobTracked(
    * — une redite vaut mieux qu'un silence, et elle nomme le spécialiste.
    */
   const failedDelegationNotice = (): string => {
-    const noms = failedDelegationNames(delegationOutcomes);
+    // Une liste partielle ne fait jamais conclure que rien d'autre n'a
+    // échoué : `…` à la suite des noms dit qu'il en manque (revue Codex de la
+    // PR #712, passes 3 et 4).
+    const noms = [
+      ...failedDelegationNames(delegationOutcomes),
+      ...(incompleteDelegations.value ? ['…'] : []),
+    ];
     return noms.length === 0 ? '' : `[delegation stopped: ${noms.join(', ')} — no deliverable]`;
   };
 
@@ -3766,7 +3780,7 @@ async function runJobTracked(
   };
 
   const stampFailedDelegations = async (): Promise<void> => {
-    if (failedDelegationNames(delegationOutcomes).length === 0) return;
+    if (failedDelegationNotice() === '') return;
     const [row] = await db
       .select({ result: agentJobs.result, runnerNotes: agentJobs.runnerNotes })
       .from(agentJobs)
@@ -4242,6 +4256,9 @@ async function runJobTracked(
       for (const issue of record?.sub_delegations ?? []) {
         delegationOutcomes.set(issue.tool, issue.status);
       }
+      // Un enregistrement BORNÉ peut ne plus nommer tous ses échecs ; il le
+      // dit, et ce fait ne s'efface plus (voir `IncompleteDelegations`).
+      if (record?.sub_delegations_incomplete) incompleteDelegations.value = true;
 
       // Une délégation qui n'a RIEN rendu porte le marqueur d'échec. Les autres
       // `error-text` sont des REPORTS (« un autre transfert a la priorité,
@@ -6682,12 +6699,12 @@ async function runJobTracked(
           // texte d'assistant, et `completeJob` sait le compiler. Échouer ici
           // rendait un « vide » sur du contenu qui existe, et empêchait
           // précisément la compilation d'avoir lieu (revue Codex de la PR #108,
-          // constat 5). On demande donc à la base, pas à la transcription.
-          const childDeliverables = await db
-            .select({ result: agentJobs.result })
-            .from(agentJobs)
-            .where(eq(agentJobs.parentJobId, jobId as string));
-          const aChildDelivered = childDeliverables.some((r) => (r.result ?? '').trim() !== '');
+          // constat 5). On demande donc à la base, pas à la transcription — et
+          // au lecteur unique de « ce qu'un job a livré » (#646), le même que
+          // la compilation : un enfant qui n'a livré qu'un verdict a livré.
+          const aChildDelivered = (await readChildDeliverables(db, jobId as string)).some(
+            deliveredSomething,
+          );
           // Un verdict de revue ENREGISTRÉ est un livrable (issue #124) : il est
           // validé par le schéma de l'outil, il voyage dans le record typé de la
           // délégation, et il est plus précis que la phrase que l'agent aurait

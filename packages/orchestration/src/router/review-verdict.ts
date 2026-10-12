@@ -16,7 +16,7 @@
 // jamais sur la transcription — c'est l'outil qui a validé le verdict par son
 // schéma Zod, pas le texte du modèle.
 
-import { desc, eq, and, toolCalls } from '@nodal-agents/db';
+import { desc, eq, toolCalls } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
 import type { AnyDrizzleDb, JobId } from '../types';
 
@@ -119,40 +119,11 @@ export function parseReviewVerdictOutput(
 }
 
 /**
- * Le verdict livré par ce job, s'il en a livré un : celui de son DERNIER appel
- * à `review_verdict`, et seulement si cet appel a réussi.
- *
- * Le dernier, et pas « le dernier réussi » : un relecteur qui corrige un appel
- * refusé rappelle l'outil, et c'est ce second appel qui fait foi ; à l'inverse,
- * remonter à un succès plus ancien livrerait un verdict que le relecteur a
- * lui-même remis en cause.
- *
- * « Dernier » se lit sur `seq`, l'ordre d'ÉCRITURE (migration 0110). Ni l'heure
- * ni le tour ne le disent : deux appels d'un même tour portent le même `turn`,
- * et souvent le même `created_at` à la précision stockée — la pré-passe de
- * lectures en lance plusieurs en parallèle (revue de la PR #170, passe 2).
- */
-export async function readDeliveredReviewVerdict(
-  db: AnyDrizzleDb,
-  jobId: JobId,
-): Promise<ReviewVerdictRecord | null> {
-  const rows = await db
-    .select({ toolOutput: toolCalls.toolOutput })
-    .from(toolCalls)
-    .where(and(eq(toolCalls.jobId, jobId as string), eq(toolCalls.toolName, REVIEW_VERDICT_TOOL)))
-    .orderBy(desc(toolCalls.seq))
-    .limit(1);
-
-  const last = rows[0];
-  if (!last) return null;
-  return parseReviewVerdictOutput(last.toolOutput);
-}
-
-/**
  * Le verdict est-il le DERNIER geste de ce job ?
  *
- * Question différente de celle du dessus, et c'est voulu. `readDelivered…`
- * répond « qu'est-ce que ce job a produit pour son parent » : un verdict
+ * Question différente de celle de `readJobDeliverables` (job-deliverable.ts),
+ * et c'est voulu. Celle-là répond « qu'est-ce que ce job a produit pour son
+ * parent » : un verdict
  * enregistré reste son verdict, même si le job a continué ensuite. Ici on
  * répond « ce job a-t-il livré QUOI QUE CE SOIT », pour un job qui n'a écrit
  * aucun texte — et là, un verdict posé au tour 2 suivi d'un travail sans

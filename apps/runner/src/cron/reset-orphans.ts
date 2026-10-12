@@ -9,6 +9,7 @@
 import { and, eq, gte, inArray, isNull, lt, or } from '@nodal-agents/db';
 import { agentJobs, agentTasks, approvalRequests, CALL_GATE_KINDS } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { appendDeliveredVerdicts, readJobDeliverable } from '@nodal-agents/orchestration';
 import { sendTelegramMessage } from '@nodal-agents/delivery';
 import { failJob } from '../job/state.ts';
 import { resumeJobAfterApprovalResolution } from '../approvals/resume.ts';
@@ -102,6 +103,7 @@ export async function resetOrphanedTasks(db: AnyDrizzleDb, staleMinutes = 5): Pr
   const inProgressTasks = await db
     .select({
       taskId: agentTasks.id,
+      jobId: agentJobs.id,
       jobStatus: agentJobs.status,
       jobResult: agentJobs.result,
       jobError: agentJobs.error,
@@ -114,10 +116,17 @@ export async function resetOrphanedTasks(db: AnyDrizzleDb, staleMinutes = 5): Pr
   for (const t of inProgressTasks) {
     if (!t.jobStatus || !TERMINAL_JOB_STATUSES.includes(t.jobStatus)) continue;
     const taskStatus = t.jobStatus === 'completed' ? 'done' : 'blocked';
+    // Le texte du job, suivi des verdicts que son sous-arbre a livrés — le
+    // lecteur unique de « ce qu'un job a livré » (#646), le même que celui de
+    // `markTaskFromResult`. Un job annulé n'a rien livré à recopier.
+    const delivered = t.jobStatus === 'cancelled' ? null : await readJobDeliverable(db, t.jobId);
     const taskResult =
       t.jobStatus === 'completed'
-        ? (t.jobResult ?? '')
-        : (t.jobResult ?? t.jobError ?? 'job ended without a result');
+        ? appendDeliveredVerdicts(t.jobResult ?? '', delivered)
+        : appendDeliveredVerdicts(
+            t.jobResult ?? t.jobError ?? 'job ended without a result',
+            delivered,
+          );
     const updated = await db
       .update(agentTasks)
       .set({

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { truncateForContext } from '../../job/execute.ts';
+import { truncateForContext } from '@nodal-agents/shared';
 
 const b64 = (n: number) => 'A'.repeat(n); // [A-Za-z0-9+/] run → matches the binary regex
 

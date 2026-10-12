@@ -2,10 +2,16 @@
 // All transitions are explicit. Invalid transitions throw JobStateError.
 
 import { and, eq, notInArray, or, isNull, sql } from '@nodal-agents/db';
-import { agentJobs, agents, toolCalls, heldBy, ownJobRow, RUN_ACTS_WHILE } from '@nodal-agents/db';
+import { agentJobs, toolCalls, heldBy, ownJobRow, RUN_ACTS_WHILE } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
 import { isInboxMessage } from '@nodal-agents/shared';
+import {
+  appendDeliveredVerdicts,
+  readChildDeliverables,
+  renderDeliveredVerdicts,
+} from '@nodal-agents/orchestration';
+import type { JobDeliverable } from '@nodal-agents/orchestration';
 import {
   flattenTranscript,
   deepDbSafe,
@@ -212,39 +218,48 @@ function genericFailExplanation(errorCode: string): string {
  * though the real content lives on the children — so the dashboard, the chat
  * poll, and the orchestrator's next turn all see nothing. This surfaces that
  * content. Returns '' when the job delegated to no children.
+ *
+ * What each child delivered is read by `readChildDeliverables`, the one reader
+ * of "what did this job deliver" (#646): its text AND the review verdicts of
+ * its subtree, with their authors. A child that delivered only a verdict is no
+ * longer "no deliverable", and a child whose last text is a narration line
+ * still shows the verdict it recorded.
  */
 async function compileChildResults(db: AnyDrizzleDb, parentJobId: string): Promise<string> {
-  const kids = await db
-    .select({
-      name: agents.name,
-      slug: agents.slug,
-      status: agentJobs.status,
-      result: agentJobs.result,
-      error: agentJobs.error,
-    })
-    .from(agentJobs)
-    .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-    .where(eq(agentJobs.parentJobId, parentJobId))
-    .orderBy(agentJobs.createdAt);
+  const kids = await readChildDeliverables(db, parentJobId);
   if (kids.length === 0) return '';
   return kids
-    .map((k) => {
-      const who = k.name ?? k.slug ?? 'Agent';
-      const tag = k.status === 'completed' ? '' : ` [${k.status ?? 'pending'}]`;
-      // #107 — a child with nothing to show is NOT a child that answered
-      // "(no output)". The old placeholder was indistinguishable from a real
-      // answer, and the parent read it as one (job f1852d35: the orchestrator
-      // then promised the user a synthesis that never existed). The runner now
-      // fails such a child before it can get here (empty-deliverable guard), so
-      // this is the last-resort wording — and it says FAILURE, not emptiness.
-      const body =
-        (k.result ?? '').trim() ||
-        (k.status === 'failed'
-          ? (k.error ?? NO_DELIVERABLE)
-          : `${NO_DELIVERABLE} (status: ${k.status ?? 'pending'})`);
-      return `## ${who}${tag}\n${body}`;
-    })
+    .map((k) => `## ${k.agent_name ?? k.agent_slug ?? 'Agent'}${statusTag(k)}\n${childBody(k)}`)
     .join('\n\n---\n\n');
+}
+
+function statusTag(k: JobDeliverable): string {
+  return k.status === 'completed' ? '' : ` [${k.status ?? 'pending'}]`;
+}
+
+/**
+ * One child's section body: its text, then its verdicts laid out field by
+ * field (`renderDeliveredVerdicts`, invariant #2). A child without any verdict
+ * reads exactly as before.
+ */
+function childBody(k: JobDeliverable): string {
+  const text = k.text.trim();
+  const verdicts = renderDeliveredVerdicts(k);
+  if (verdicts === '') {
+    // #107 — a child with nothing to show is NOT a child that answered
+    // "(no output)". The old placeholder was indistinguishable from a real
+    // answer, and the parent read it as one (job f1852d35: the orchestrator
+    // then promised the user a synthesis that never existed). The runner now
+    // fails such a child before it can get here (empty-deliverable guard), so
+    // this is the last-resort wording — and it says FAILURE, not emptiness.
+    return (
+      text ||
+      (k.status === 'failed'
+        ? (k.error ?? NO_DELIVERABLE)
+        : `${NO_DELIVERABLE} (status: ${k.status ?? 'pending'})`)
+    );
+  }
+  return appendDeliveredVerdicts(text || (k.status === 'failed' ? (k.error ?? '') : ''), k);
 }
 
 /**
