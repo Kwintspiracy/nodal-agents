@@ -83,22 +83,24 @@ function normalizeSlashes(s: string): string {
   return s.replace(/\/{2,}/g, '/').replace(/\\{2,}/g, '\\');
 }
 
-/** Last path segment, lowercased, without the extension Windows runs it by —
- * so `/usr/bin/python3`, `C:\Python311\python.exe`, and `"python3"` all reduce
- * to the same bare interpreter name as a plain `python3`, and `npm.cmd`,
- * `conda.bat`, `npm.ps1` to the installer they are (Codex, PR #710 pass 6). */
+/** Last path segment, lowercased, `.exe`/`.com` suffix dropped — so
+ * `/usr/bin/python3`, `C:\Python311\python.exe`, and `"python3"` all reduce
+ * to the same bare interpreter name as a plain `python3`. */
 function interpreterBasename(token: string): string {
   const t = stripQuotes(token);
   const base = t.split(/[\\/]/).pop() ?? t;
-  return base.replace(RUN_BY_NAME_EXTENSION, '').toLowerCase();
+  return base.replace(/\.(exe|com)$/i, '').toLowerCase();
 }
 
 /**
- * The extensions a program runs by without being written: Windows' default
- * PATHEXT, and PowerShell's `.ps1`. Package managers ship their Windows entry
- * points as `.cmd`, `.bat` and `.ps1` shims, so the name as typed carries one.
+ * The script extensions Windows runs a file by without them being written
+ * (the default PATHEXT past `.exe`/`.com`) and PowerShell's `.ps1`. Package
+ * managers ship their Windows entry points as such shims (`npm.cmd`,
+ * `conda.bat`, `npm.ps1`), so the name as typed carries one (Codex, PR #710
+ * pass 6). Unlike `.exe`, the word is then a script AND the program it is
+ * named after: `wordUnits` reads both (pass 7).
  */
-const RUN_BY_NAME_EXTENSION = /\.(exe|com|cmd|bat|ps1|vbs|vbe|js|jse|wsf|wsh|msc)$/i;
+const SCRIPT_RUN_BY_NAME = /\.(cmd|bat|ps1|vbs|vbe|js|jse|wsf|wsh|msc)$/i;
 
 export type InterpreterKind =
   | 'python'
@@ -2477,23 +2479,35 @@ function wordUnits(
   const texts = args.map((a) => a.text);
   const units: string[][] = [[program, ...texts]];
   UNIT_HEADS.set(units[0] as string[], head.text);
-  // `python -m pip install x` runs pip: the module is the program (review of
-  // PR #476; main caught it by reading the whole text).
-  if (interpreterKind(program) === 'python') {
-    const m = texts.map((t) => t.toLowerCase()).indexOf('-m');
-    const module = m >= 0 ? texts[m + 1] : undefined;
-    if (module !== undefined) {
-      const unit = [module.toLowerCase(), ...texts.slice(m + 2)];
-      UNIT_HEADS.set(unit, module);
-      units.push(unit);
-    }
+  // `npm.cmd install x`: the script, whose file is read where it lives (the
+  // unit above), and the program it is named after, read as that program. A
+  // file is never the shell's keyword of its name (`start.bat`, as above).
+  const stem = program.replace(SCRIPT_RUN_BY_NAME, '');
+  const namedAfter = stem !== program && stem !== '' && !SHELL_KEYWORDS.has(stem) ? stem : null;
+  if (namedAfter !== null) {
+    const unit = [namedAfter, ...texts];
+    UNIT_HEADS.set(unit, namedAfter);
+    units.push(unit);
   }
-  for (const payload of RUNS_ANOTHER[program]?.(args, shell) ?? []) {
-    units.push(
-      ...('line' in payload
-        ? commandUnits(payload.line, depth + 1, payload.shell)
-        : wordUnits(payload.words, depth + 1, payload.shell, payload.invoked === true)),
-    );
+  for (const name of namedAfter === null ? [program] : [program, namedAfter]) {
+    // `python -m pip install x` runs pip: the module is the program (review of
+    // PR #476; main caught it by reading the whole text).
+    if (interpreterKind(name) === 'python') {
+      const m = texts.map((t) => t.toLowerCase()).indexOf('-m');
+      const module = m >= 0 ? texts[m + 1] : undefined;
+      if (module !== undefined) {
+        const unit = [module.toLowerCase(), ...texts.slice(m + 2)];
+        UNIT_HEADS.set(unit, module);
+        units.push(unit);
+      }
+    }
+    for (const payload of RUNS_ANOTHER[name]?.(args, shell) ?? []) {
+      units.push(
+        ...('line' in payload
+          ? commandUnits(payload.line, depth + 1, payload.shell)
+          : wordUnits(payload.words, depth + 1, payload.shell, payload.invoked === true)),
+      );
+    }
   }
   return units;
 }

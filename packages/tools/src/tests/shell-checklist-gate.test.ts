@@ -685,6 +685,35 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     ]);
   });
 
+  it('a script named after an interpreter is read as the script it is (#710, Codex pass 7)', async () => {
+    // Pass 6 judged `npm.cmd` as npm by dropping its extension; that also
+    // turned `powershell.cmd`, a script of the folder, into the interpreter,
+    // and its body went unread. The file is read, and the name judged too.
+    const root = resolve('/nodal-fake-ws');
+    const place: ShellPlace = {
+      cwd: root,
+      host: 'windows',
+      inWorkspace: async (p) => resolve(p).toLowerCase().startsWith(root.toLowerCase()),
+      leadsTo: async () => null,
+      readSource: async (p) =>
+        /\.(cmd|bat)$/i.test(p)
+          ? { kind: 'text', text: 'npm install lodash\r\n', bytes: 20 }
+          : { kind: 'unread', why: 'not_found' },
+    };
+    for (const command of [
+      'powershell.cmd',
+      '.\\powershell.cmd',
+      'node.cmd',
+      'python.bat',
+      'bash.cmd',
+    ]) {
+      const judged = await judgeShellChecklist([command], DEFAULT_SHELL_POLICY, place);
+      expect(judged, command).toContainEqual(
+        expect.objectContaining({ category: 'install_software', state: 'ask' }),
+      );
+    }
+  });
+
   it('run_command with no cwd and several workspaces: the agent is told, no one is asked', async () => {
     // The SHIPPED tool: its own refusal, not a fake's. Every posture that
     // would otherwise reach a person — the checklist (a "relative" download
