@@ -7,9 +7,10 @@
 // already knew `erase` and `ri`; the kind kept a list of its own, and the two
 // drifted. One list now feeds both, and each kind covers every OS's forms.
 // Codex (PR #710, pass 1) found the next installers missing (`wusa`,
-// `Install-PackageProvider`) and simulations taken for installs (`apt-get -s`,
-// `dpkg --no-act`, `rpm --test`): every standard installer is now listed, and
-// every documented dry run read, per OS.
+// `Install-PackageProvider`): every standard installer is now listed, per OS.
+// Pass 2 found a simulation flag that was the value of the option before it
+// (`apt-get -c --simulate install x` installs): a simulation now asks like the
+// install it simulates, and a read stays unflagged by naming no action.
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -96,7 +97,8 @@ describe('delete_files: every delete command, from the floor’s own list (#693)
 // a broken table cannot make its own cases pass. Each program of the table has
 // its own case (one `it` per program), so dropping one entry turns exactly
 // that program red; `INSTALLER_PROGRAMS` is compared with the cases both ways,
-// so a program added without a case is red too.
+// so a program added without a case is red too. A simulation is in `acts`: it
+// asks like the install it simulates.
 
 /** For one program: commands that install, update or remove, and commands that change nothing. */
 interface InstallerCase {
@@ -104,8 +106,8 @@ interface InstallerCase {
   changesNothing?: readonly string[];
 }
 
-/** PowerShell cmdlets that support ShouldProcess: -WhatIf runs nothing. */
-const CMDLETS_WITH_WHATIF = [
+/** The PowerShell cmdlets that install, update or remove: -WhatIf, or a word read as it, asks too. */
+const CMDLETS = [
   'Install-Module',
   'inmo',
   'Uninstall-Module',
@@ -133,10 +135,6 @@ const CMDLETS_WITH_WHATIF = [
   'Add-WindowsFeature',
   'Uninstall-WindowsFeature',
   'Remove-WindowsFeature',
-];
-
-/** The DISM-module cmdlets and their kin: no -WhatIf (`Get-Command` on Windows 11). */
-const CMDLETS_WITHOUT_WHATIF = [
   'Add-AppxProvisionedPackage',
   'Add-AppProvisionedPackage',
   'Add-ProvisionedAppPackage',
@@ -181,8 +179,9 @@ const WINDOWS_CASES: Record<string, InstallerCase> = {
       'wusa windows10.0-kb5030219-x64.msu /quiet /norestart',
       'wusa.exe /uninstall /kb:5030219',
       'wusa /uninstall /kb:5030219 /quiet /norestart',
+      'wusa update.msu /extract:out',
     ],
-    changesNothing: ['wusa /?', 'wusa update.msu /extract:out'],
+    changesNothing: ['wusa /?'],
   },
   dism: {
     acts: [
@@ -195,12 +194,12 @@ const WINDOWS_CASES: Record<string, InstallerCase> = {
       'dism /online /remove-capability /capabilityname:x',
       'dism /online /add-provisionedappxpackage /packagepath:x.appx /skiplicense',
       'dism /image:mount /add-driver /driver:x.inf',
+      'dism /online /enable-feature /?',
     ],
     changesNothing: [
       'dism /online /get-features',
       'dism /online /get-packages',
       'dism /online /get-capabilities',
-      'dism /online /enable-feature /?',
     ],
   },
   pnputil: {
@@ -227,14 +226,14 @@ const WINDOWS_CASES: Record<string, InstallerCase> = {
     changesNothing: ['winget list', 'winget search git', 'winget show Git.Git', 'winget --info'],
   },
   choco: {
-    acts: ['choco install git -y', 'choco upgrade all', 'choco uninstall git'],
-    changesNothing: [
-      'choco list',
-      'choco search git',
+    acts: [
+      'choco install git -y',
+      'choco upgrade all',
+      'choco uninstall git',
       'choco install git --noop',
-      'choco install git --whatif',
       'choco upgrade all --what-if',
     ],
+    changesNothing: ['choco list', 'choco search git'],
   },
   scoop: {
     acts: ['scoop install git', 'scoop update git', 'scoop uninstall git', 'scoop reset python'],
@@ -242,20 +241,9 @@ const WINDOWS_CASES: Record<string, InstallerCase> = {
   },
   setup: { acts: ['setup.exe /S', 'start setup.exe /quiet'] },
   ...Object.fromEntries(
-    CMDLETS_WITH_WHATIF.map((name) => [
+    CMDLETS.map((name) => [
       name.toLowerCase(),
-      {
-        acts: [`${name} X`, `${name} -Name X -WhatIf:$false`, `${name} X -WhatIf:$f`],
-        changesNothing: [`${name} X -WhatIf`, `${name} X -wi`, `${name} X -WhatIf:$true`],
-      },
-    ]),
-  ),
-  ...Object.fromEntries(
-    CMDLETS_WITHOUT_WHATIF.map((name) => [
-      name.toLowerCase(),
-      // No -WhatIf: `-wi` is a prefix of -WindowsDirectory on the DISM cmdlets,
-      // and the command runs.
-      { acts: [`${name} -Online X`, `${name} -Online X -wi C:\\Windows`] },
+      { acts: [`${name} X`, `${name} -Online X`, `${name} X -WhatIf`, `${name} X -wi`] },
     ]),
   ),
 };
@@ -266,13 +254,13 @@ const MACOS_CASES: Record<string, InstallerCase> = {
       'installer -pkg x.pkg -target /',
       'sudo installer -pkg /tmp/x.pkg -target /',
       'installer -package x.pkg -target CurrentUserHomeDirectory',
+      'installer -showChoicesXML -pkg x.pkg -target /',
     ],
     changesNothing: [
       'installer -pkginfo -pkg x.pkg',
       'installer -volinfo -pkg x.pkg',
       'installer -dominfo -pkg x.pkg',
       'installer -query RestartAction -pkg x.pkg',
-      'installer -showChoicesXML -pkg x.pkg -target /',
     ],
   },
   softwareupdate: {
@@ -295,16 +283,10 @@ const MACOS_CASES: Record<string, InstallerCase> = {
       'brew remove x',
       'brew rm x',
       'brew autoremove',
-      'brew install --dry-run=false x',
-    ],
-    changesNothing: [
-      'brew list',
-      'brew info x',
-      'brew search x',
-      'brew update',
       'brew install -n x',
       'brew upgrade --dry-run',
     ],
+    changesNothing: ['brew list', 'brew info x', 'brew search x', 'brew update'],
   },
   port: {
     acts: [
@@ -340,39 +322,33 @@ const LINUX_CASES: Record<string, InstallerCase> = {
       'apt-get autoremove',
       'apt-get -o Dpkg::Options::=--force-confold install x',
       'apt-get build-dep x',
-    ],
-    changesNothing: [
       'apt-get -s upgrade',
       'apt-get --simulate install x',
       'apt-get install --dry-run x',
       'apt-get --just-print dist-upgrade',
-      'apt-get --recon install x',
       'apt-get --no-act remove x',
       'apt-get -qs install x',
-      'apt-get update',
-      'apt-get check',
-      'apt-get changelog x',
     ],
+    changesNothing: ['apt-get update', 'apt-get check', 'apt-get changelog x'],
   },
   apt: {
-    acts: ['apt remove x', 'apt full-upgrade', 'sudo apt install ./x.deb', 'apt reinstall x'],
-    changesNothing: [
-      'apt list --installed',
-      'apt show x',
-      'apt search x',
-      'apt update',
+    acts: [
+      'apt remove x',
+      'apt full-upgrade',
+      'sudo apt install ./x.deb',
+      'apt reinstall x',
       'apt -s install x',
-      'apt install -s x',
     ],
+    changesNothing: ['apt list --installed', 'apt show x', 'apt search x', 'apt update'],
   },
   aptitude: {
-    acts: ['aptitude install x', 'aptitude safe-upgrade', 'aptitude purge x'],
-    changesNothing: [
-      'aptitude search x',
-      'aptitude show x',
-      'aptitude -s install x',
+    acts: [
+      'aptitude install x',
+      'aptitude safe-upgrade',
+      'aptitude purge x',
       'aptitude --simulate full-upgrade',
     ],
+    changesNothing: ['aptitude search x', 'aptitude show x'],
   },
   dpkg: {
     acts: [
@@ -385,6 +361,8 @@ const LINUX_CASES: Record<string, InstallerCase> = {
       'dpkg -R -i ./debs',
       'dpkg --unpack x.deb',
       'dpkg --configure -a',
+      'dpkg --no-act -i pkg.deb',
+      'dpkg --simulate --purge pkg',
     ],
     changesNothing: [
       'dpkg -l',
@@ -393,9 +371,6 @@ const LINUX_CASES: Record<string, InstallerCase> = {
       'dpkg -S /bin/ls',
       'dpkg -p curl',
       'dpkg --print-architecture',
-      'dpkg --no-act -i pkg.deb',
-      'dpkg --dry-run -r pkg',
-      'dpkg --simulate --purge pkg',
     ],
   },
   rpm: {
@@ -409,20 +384,22 @@ const LINUX_CASES: Record<string, InstallerCase> = {
       'rpm --erase pkg',
       'rpm --reinstall pkg.rpm',
       'sudo rpm -U --nodeps pkg.rpm',
+      'rpm --test -Uvh pkg.rpm',
+      'rpm -e --test pkg',
+      // `-i` is --info in query mode, but whether `-q` is the mode or the
+      // value of an option before it (`rpm --dbpath -q -i x.rpm`) takes rpm's
+      // grammar: it asks
+      'rpm -qi curl',
+      'rpm -q -i curl',
     ],
     changesNothing: [
       'rpm -q curl',
       'rpm -qa',
-      'rpm -qi curl',
-      'rpm -qip x.rpm',
       'rpm -ql curl',
-      'rpm -q -i curl',
       'rpm --query --info curl',
       'rpm -V curl',
       'rpm -E %_arch',
       'rpm --eval %_arch',
-      'rpm --test -Uvh pkg.rpm',
-      'rpm -e --test pkg',
     ],
   },
   dnf: {
@@ -481,17 +458,10 @@ const LINUX_CASES: Record<string, InstallerCase> = {
       'zypper --non-interactive install x',
       'zypper si x',
       'zypper ve',
-      // -D before the command is the global --reposd-dir, not a dry run
       'zypper -D /etc/zypp/repos.d install x',
-    ],
-    changesNothing: [
-      'zypper search x',
-      'zypper info x',
-      'zypper refresh',
-      'zypper lr',
       'zypper install --dry-run x',
-      'zypper dup --dry-run',
     ],
+    changesNothing: ['zypper search x', 'zypper info x', 'zypper refresh', 'zypper lr'],
   },
   pacman: {
     acts: [
@@ -504,31 +474,24 @@ const LINUX_CASES: Record<string, InstallerCase> = {
       'pacman --sync x',
       'pacman --remove x',
       'sudo pacman -S --needed x',
-    ],
-    changesNothing: [
+      // -S's reads and -p: in a group, a letter after one that takes a value
+      // is that value (`-Srs` is -S with the root `s`), so they ask
       'pacman -Ss x',
-      'pacman -Si x',
-      'pacman -Sg',
-      'pacman -Sl',
-      'pacman -Sc',
-      'pacman -Sw x',
-      'pacman -Qi x',
-      'pacman -Q',
       'pacman -Sp x',
-      'pacman -Rp x',
-      'pacman -S --print x',
       'pacman --sync --search x',
     ],
+    changesNothing: ['pacman -Qi x', 'pacman -Q', 'pacman -Qs x'],
   },
   apk: {
-    acts: ['apk add curl', 'apk del curl', 'apk upgrade', 'apk fix', 'apk --no-cache add curl'],
-    changesNothing: [
-      'apk info',
-      'apk search curl',
-      'apk update',
+    acts: [
+      'apk add curl',
+      'apk del curl',
+      'apk upgrade',
+      'apk fix',
+      'apk --no-cache add curl',
       'apk -s add curl',
-      'apk add --simulate curl',
     ],
+    changesNothing: ['apk info', 'apk search curl', 'apk update'],
   },
   emerge: {
     acts: [
@@ -540,17 +503,13 @@ const LINUX_CASES: Record<string, InstallerCase> = {
       'emerge --depclean',
       'emerge -c',
       'emerge -P x',
-    ],
-    changesNothing: [
-      'emerge -p x',
       'emerge --pretend x',
       'emerge -pv @world',
-      'emerge -s firefox',
+      // a search names an atom too, and whether `--search` is the mode or a
+      // value takes emerge's grammar
       'emerge --search firefox',
-      'emerge -S firefox',
-      'emerge --info',
-      'emerge --sync',
     ],
+    changesNothing: ['emerge --info', 'emerge --sync'],
   },
   snap: {
     acts: ['snap install x', 'sudo snap remove x', 'snap refresh x', 'snap revert x'],
@@ -579,12 +538,12 @@ const LINUX_CASES: Record<string, InstallerCase> = {
       'nix-env --rollback',
       'nix-env -G 42',
       'nix-env --set /nix/store/x',
+      'nix-env -iA nixpkgs.hello --dry-run',
     ],
     changesNothing: [
       'nix-env -q',
       'nix-env -qaP hello',
       'nix-env --query --installed',
-      'nix-env -iA nixpkgs.hello --dry-run',
       'nix-env --list-generations',
     ],
   },
@@ -611,14 +570,9 @@ const LINUX_CASES: Record<string, InstallerCase> = {
       'pkg upgrade',
       'pkg autoremove',
       'pkg add ./x.pkg',
-    ],
-    changesNothing: [
-      'pkg info',
-      'pkg search x',
-      'pkg update',
       'pkg install -n x',
-      'pkg upgrade --dry-run',
     ],
+    changesNothing: ['pkg info', 'pkg search x', 'pkg update'],
   },
 };
 
@@ -630,16 +584,10 @@ const CROSS_PLATFORM_CASES: Record<string, InstallerCase> = {
       'npm ci',
       'npm uninstall x',
       'npm update',
-      'npm install --dry-run=false x',
-      'npm install --dry-run false x',
-    ],
-    changesNothing: [
-      'npm ls',
-      'npm run build',
-      'npm view x',
       'npm install --dry-run x',
       'npm uninstall x --dry-run',
     ],
+    changesNothing: ['npm ls', 'npm run build', 'npm view x'],
   },
   pnpm: {
     acts: ['pnpm add x', 'pnpm remove x', 'pnpm --filter web up x', 'pnpm i'],
@@ -649,14 +597,18 @@ const CROSS_PLATFORM_CASES: Record<string, InstallerCase> = {
     acts: ['yarn add x', 'yarn remove x', 'yarn global add x', 'yarn upgrade'],
     changesNothing: ['yarn list', 'yarn run build', 'yarn info x'],
   },
-  // bun's --dry-run still runs the project's lifecycle scripts: not a dry run
   bun: {
     acts: ['bun add x', 'bun remove x', 'bun install --dry-run'],
     changesNothing: ['bun run build', 'bun pm ls'],
   },
   pip: {
-    acts: ['pip install x', 'python -m pip install x', 'pip uninstall -y x'],
-    changesNothing: ['pip list', 'pip show x', 'pip install --dry-run x', 'pip freeze'],
+    acts: [
+      'pip install x',
+      'python -m pip install x',
+      'pip uninstall -y x',
+      'pip install --dry-run x',
+    ],
+    changesNothing: ['pip list', 'pip show x', 'pip freeze'],
   },
   pip3: { acts: ['pip3 install x', 'pip3.12 install x'], changesNothing: ['pip3 freeze'] },
   pipx: {
@@ -678,31 +630,31 @@ const CROSS_PLATFORM_CASES: Record<string, InstallerCase> = {
       'uv tool install ruff',
       'uv tool upgrade ruff',
       'uv python install 3.12',
-    ],
-    changesNothing: [
-      'uv pip list',
-      'uv run pytest',
       'uv pip install --dry-run x',
-      'uv tool list',
-      'uv python list',
     ],
+    changesNothing: ['uv pip list', 'uv run pytest', 'uv tool list', 'uv python list'],
   },
   go: {
     acts: [
       'go install golang.org/x/tools/gopls@latest',
       'go install -trimpath ./cmd/x',
-      // `-installsuffix` is one flag, not a group holding `-n`
-      'go install -installsuffix x ./...',
+      'go install -n ./...',
     ],
-    changesNothing: ['go install -n ./...', 'go build ./...', 'go list -m all'],
+    changesNothing: ['go build ./...', 'go list -m all'],
   },
   gem: {
-    acts: ['gem install rails', 'gem i rails', 'gem uninstall rails', 'gem update'],
-    changesNothing: ['gem list', 'gem install rails --explain', 'gem search rails'],
+    acts: [
+      'gem install rails',
+      'gem i rails',
+      'gem uninstall rails',
+      'gem update',
+      'gem install rails --explain',
+    ],
+    changesNothing: ['gem list', 'gem search rails'],
   },
   cargo: {
-    acts: ['cargo install ripgrep', 'cargo uninstall ripgrep'],
-    changesNothing: ['cargo build', 'cargo install --list'],
+    acts: ['cargo install ripgrep', 'cargo uninstall ripgrep', 'cargo install --list'],
+    changesNothing: ['cargo build'],
   },
   conda: {
     acts: [
@@ -710,18 +662,15 @@ const CROSS_PLATFORM_CASES: Record<string, InstallerCase> = {
       'conda remove numpy',
       'conda update --all',
       'conda install -c conda-forge x',
-    ],
-    changesNothing: [
-      'conda list',
       'conda install -d numpy',
       'conda install --dry-run numpy',
-      'conda env list',
     ],
+    changesNothing: ['conda list', 'conda env list'],
   },
-  mamba: { acts: ['mamba install x'], changesNothing: ['mamba install --dry-run x', 'mamba list'] },
+  mamba: { acts: ['mamba install x', 'mamba install --dry-run x'], changesNothing: ['mamba list'] },
   micromamba: {
-    acts: ['micromamba install x'],
-    changesNothing: ['micromamba install --dry-run x', 'micromamba list'],
+    acts: ['micromamba install x', 'micromamba install --dry-run x'],
+    changesNothing: ['micromamba list'],
   },
   comfy: {
     acts: [
@@ -776,27 +725,17 @@ describe('install_software: written out by hand, one per OS, outside any table (
     expect(staticShellCategories('Install-PackageProvider NuGet', 'windows')).toContain(
       'install_software',
     );
-    expect(
-      staticShellCategories('powershell -Command "Install-Module Pester -WhatIf"', 'windows'),
-    ).not.toContain('install_software');
   });
 
   it('macOS', () => {
     expect(staticShellCategories('sudo installer -pkg x.pkg -target /', 'posix')).toContain(
       'install_software',
     );
-    expect(staticShellCategories('brew install -n x', 'posix')).not.toContain('install_software');
   });
 
-  it('Linux: the simulations Codex named change nothing', () => {
-    expect(staticShellCategories('apt-get -s upgrade', 'posix')).not.toContain('install_software');
-    expect(staticShellCategories('dpkg --no-act -i pkg.deb', 'posix')).not.toContain(
-      'install_software',
-    );
-    expect(staticShellCategories('rpm --test -Uvh pkg.rpm', 'posix')).not.toContain(
-      'install_software',
-    );
+  it('Linux', () => {
     expect(staticShellCategories('rpm -Uvh pkg.rpm', 'posix')).toContain('install_software');
+    expect(staticShellCategories('dpkg -i pkg.deb', 'posix')).toContain('install_software');
   });
 
   it('a package file run as a program goes to its installer', () => {
@@ -815,7 +754,7 @@ describe('install_software: written out by hand, one per OS, outside any table (
     expectKind(['notepad readme.txt', 'type x.msi.txt'], 'install_software', false);
   });
 
-  it('wrapped as each OS runs them: the wrapper does not hide the installer, nor its dry run', () => {
+  it('wrapped as each OS runs them: the wrapper does not hide the installer, nor its simulation', () => {
     expectKind(
       [
         'cmd /c msiexec /i pkg.msi /qn',
@@ -823,29 +762,115 @@ describe('install_software: written out by hand, one per OS, outside any table (
         'sudo -u root dnf install x',
         'bash -c "apt-get install -y x"',
         'uvx --from comfy-cli comfy install --nvidia',
-      ],
-      'install_software',
-      true,
-    );
-    expectKind(
-      [
         'powershell -Command "inmo Pester -wi"',
         'bash -c "apt-get -s upgrade"',
         'sh -c "rpm --test -Uvh x.rpm"',
       ],
       'install_software',
-      false,
+      true,
     );
   });
 
-  it('destructive_gate gates what the kind files, and lets a simulation run', () => {
+  it('destructive_gate gates what the kind files, a simulation included', () => {
     for (const cmd of [
       'wusa.exe update.msu /quiet',
       'dpkg -i x.deb',
       'Install-PackageProvider NuGet',
+      'apt-get -s upgrade',
+      'rpm --test -Uvh x.rpm',
+      'Install-Module x -WhatIf',
     ])
-      expect(isDestructiveOrHeavyCommand(cmd, 'windows'), cmd).toBe(true);
-    for (const cmd of ['apt-get -s upgrade', 'rpm --test -Uvh x.rpm', 'Install-Module x -WhatIf'])
-      expect(isDestructiveOrHeavyCommand(cmd, 'posix'), cmd).toBe(false);
+      for (const host of HOSTS) expect(isDestructiveOrHeavyCommand(cmd, host), cmd).toBe(true);
+    for (const cmd of ['apt list --installed', 'rpm -q curl', 'winget list'])
+      for (const host of HOSTS) expect(isDestructiveOrHeavyCommand(cmd, host), cmd).toBe(false);
+  });
+});
+
+describe('install_software: a simulation asks like the install it simulates (#710, Codex pass 2) @cap:executer-une-commande/moteur', () => {
+  // Whether a word is a simulation flag or the value of the option before it
+  // takes each program's whole option grammar: `apt-get -c --simulate install
+  // cowsay` reads `--simulate` as -c's config file and installs. What the text
+  // cannot establish asks, so no flag makes an install a simulation any more.
+  it('Codex: `--simulate` as the value of `-c` installs, and asks', () => {
+    const cmd = 'touch -- --simulate && apt-get -c --simulate install cowsay';
+    for (const host of HOSTS) {
+      expect(kindsOn(cmd, host), `${host}`).toContain('install_software');
+      expect(isDestructiveOrHeavyCommand(cmd, host), `${host}`).toBe(true);
+    }
+  });
+
+  it('the same shape on other programs: a dry-run or read flag taken as a value', () => {
+    expectKind(
+      [
+        'dpkg --admindir --no-act -i x.deb',
+        'rpm --dbpath -q -i x.rpm',
+        'rpm --dbpath --test -Uvh x.rpm',
+        'pacman --config -Ss -S x',
+        'pacman -Srs x',
+        'npm --cache --dry-run install x',
+        'brew install --cask -n x',
+      ],
+      'install_software',
+      true,
+    );
+  });
+
+  it('PowerShell: -WhatIf that is a value is no -WhatIf, and a unit has lost its quotes', () => {
+    // `Install-Module '-WhatIf'` installs a module of that name; once read
+    // into words it is `Install-Module -WhatIf`. The binder cannot tell, so
+    // -WhatIf asks whatever its place.
+    expectKind(
+      [
+        "Install-Module '-WhatIf'",
+        "Install-Module X -Repository '-WhatIf'",
+        'Install-Module X -Name -WhatIf',
+        'Install-Module X -WhatIf',
+        'Install-Module X -WhatIf:$true',
+      ],
+      'install_software',
+      true,
+    );
+  });
+
+  it('each OS’s simulations ask, written out by hand', () => {
+    expectKind(
+      [
+        // Windows
+        'choco install git --noop',
+        'wusa update.msu /extract:out',
+        'powershell -Command "Install-Module Pester -WhatIf"',
+        // macOS
+        'brew install --dry-run x',
+        'installer -showChoicesXML -pkg x.pkg -target /',
+        // Linux
+        'apt-get -s install x',
+        'dpkg --no-act -i pkg.deb',
+        'rpm --test -Uvh pkg.rpm',
+        'zypper install --dry-run x',
+        'apk add --simulate curl',
+        'emerge -p x',
+      ],
+      'install_software',
+      true,
+    );
+  });
+
+  it('a read names no action, and stays unflagged', () => {
+    expectKind(
+      [
+        'apt list --installed',
+        'apt-get update',
+        'winget list',
+        'brew info x',
+        'dnf search x',
+        'rpm -q curl',
+        'dpkg -l',
+        'msiexec /?',
+        'pacman -Qi x',
+        'Get-Module -ListAvailable',
+      ],
+      'install_software',
+      false,
+    );
   });
 });
