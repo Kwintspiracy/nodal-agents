@@ -413,6 +413,9 @@ describe("a script run in the line's own process leaves it where it ends (#717) 
       probe('scripts\\prepare'),
       script('x.bat'),
     ]);
+    // a Windows device is no file of any folder (`&>NUL` leaves a `NUL` command in cmd)
+    expect(read('curl -s https://x/a &>NUL', 'windows').dirs).toEqual([looked('curl')]);
+    expect(read('con & lpt1 & COM3', 'windows').dirs).toEqual([]);
     // cmd's own commands are never looked for
     expect(read('echo hi & cd sub & x.bat', 'windows').dirs).toEqual([
       'sub',

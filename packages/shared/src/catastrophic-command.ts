@@ -2845,10 +2845,16 @@ const CMD_INTERNAL = new Set([
   'else',
 ]);
 
+/** Windows' reserved device names, which no file of any folder can take (`nul.bat`). */
+const WINDOWS_DEVICE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
 /** The extensions `model` tries after a program word that has none (`MAY_BE_SCRIPT`). */
 function scriptExtensions(model: LineShell, word: string): readonly string[] | null {
-  // PowerShell's `&` and `.` read for another shell's line name no file.
+  // PowerShell's `&` and `.` read for another shell's line name no file, and
+  // a Windows device (`nul`, `con`, `com1`…) is no file of any folder: no
+  // `nul.bat` can be there.
   if (!/\w/.test(word) || isDecidedAtRunTime(word) || /\.[^.\\/]+$/.test(word)) return null;
+  if (WINDOWS_DEVICE.test(word.split(/[\\/]/).pop() ?? '')) return null;
   const path = /[\\/]/.test(word);
   switch (model) {
     case 'cmd':

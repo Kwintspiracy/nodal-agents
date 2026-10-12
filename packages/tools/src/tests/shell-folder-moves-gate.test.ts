@@ -269,7 +269,23 @@ describe('where a download lands follows the same folder moves (#717) @cap:execu
       ['prepare.bat && curl -o a.zip https://x/a', 'windows', { 'prepare.bat': 'cd ..\r\n' }],
       ['. ./env.sh && curl -o a.zip https://x/a', 'posix', { 'env.sh': 'cd ..\n' }],
     ] as const) {
-      expect(await judge(command, placeWith(host, files)), command).toEqual([download(command)]);
+      // cmd also looks for `curl` in the folder above the workspace, which
+      // the gate cannot look into: it asks (pass 4).
+      const lookedUp =
+        host === 'windows'
+          ? [
+              {
+                category: 'inline_code',
+                state: 'ask',
+                details: [command],
+                unread: [{ source: 'curl', why: 'decided_at_run_time' }],
+              },
+            ]
+          : [];
+      expect(await judge(command, placeWith(host, files)), command).toEqual([
+        download(command),
+        ...lookedUp,
+      ]);
       // the same script, staying: the download lands in the workspace
       const staying = Object.fromEntries(Object.keys(files).map((f) => [f, 'echo done\n']));
       expect(await judge(command, placeWith(host, staying)), command).toEqual([]);
@@ -545,6 +561,13 @@ describe('a cd may fail whatever the disk holds when the gate judges: every fold
         details: [command],
         found: [{ source: 'prepare.bat', line: 2, text: 'del /q important.txt' }],
       },
+      // `curl`, looked for in the folder above the workspace (pass 4)
+      {
+        category: 'inline_code',
+        state: 'ask',
+        details: [command],
+        unread: [{ source: 'curl', why: 'decided_at_run_time' }],
+      },
     ]);
   });
 
@@ -565,6 +588,27 @@ describe('a cd may fail whatever the disk holds when the gate judges: every fold
       },
     ]);
   });
+
+  // `cd ..` may succeed: the prepare.bat of the folder above the workspace,
+  // which the gate cannot read, is the one that runs; whether the workspace
+  // holds a harmless one or none changes nothing.
+  it.each([
+    ['a harmless prepare.bat in the workspace', { 'prepare.bat': HARMLESS.bat }],
+    ['none', {}],
+  ])(
+    'a word that may be a script, in a folder the gate cannot look into, asks (pass 4): %s',
+    async (_, files) => {
+      const command = 'cd .. & prepare';
+      expect(await judge(command, placeWith('windows', files))).toEqual([
+        {
+          category: 'inline_code',
+          state: 'ask',
+          details: [command],
+          unread: [{ source: 'prepare', why: 'decided_at_run_time' }],
+        },
+      ]);
+    },
+  );
 
   it('in a folder not known, a word that may be a script of it asks', async () => {
     // `call x.bat`, not in the folder, comes from the PATH: where it leaves the line is not known

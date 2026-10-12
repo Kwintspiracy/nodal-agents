@@ -341,6 +341,19 @@ describe('an allowed download asks when it writes outside the workspace (#614, r
       ],
       ['curl -o $HOME/a https://x/a', 'a path decided when the command runs'],
     ] as const) {
+      // On Windows, cmd also looks for `curl` in the folder the line moved
+      // into, which the gate cannot look into: it asks too (#717, pass 4).
+      const lookedUp =
+        process.platform === 'win32' && command.startsWith('cd ')
+          ? [
+              {
+                category: 'inline_code',
+                state: 'ask',
+                details: [command],
+                unread: [{ source: 'curl', why: 'decided_at_run_time' }],
+              },
+            ]
+          : [];
       expect(await asked(command), command).toEqual([
         {
           category: 'download',
@@ -348,6 +361,7 @@ describe('an allowed download asks when it writes outside the workspace (#614, r
           details: [command],
           outside: [{ command, places: [where] }],
         },
+        ...lookedUp,
       ]);
     }
   });
@@ -646,7 +660,19 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     const command = `cd ${elsewhere} && curl -s -o nul https://x/a`;
     const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
     if (process.platform === 'win32') {
-      expect(res).toMatchObject({ outcome: 'success' });
+      // No download outside: `nul` is the device. cmd looks for `curl` in
+      // the folder outside the workspace, which the gate cannot look into:
+      // that alone asks (#717, pass 4).
+      expect(res.outcome).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      expect(await reasonsOf(res.approvalRequestId)).toEqual([
+        {
+          category: 'inline_code',
+          state: 'ask',
+          details: [command],
+          unread: [{ source: 'curl', why: 'decided_at_run_time' }],
+        },
+      ]);
       return;
     }
     expect(res.outcome).toBe('awaiting_approval');

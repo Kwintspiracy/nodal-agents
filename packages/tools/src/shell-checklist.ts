@@ -482,7 +482,12 @@ async function readRunCode(
         // `prepare` may be `prepare.bat` of the folder (P2): the file the
         // shell would find, in its order; none, or a program, moves nothing.
         const found = await lookFor(place, written, source.extensions);
-        if (found === 'unknown') continue;
+        // A folder the gate cannot look into (outside the workspaces): what
+        // the word runs there is not known, as in a folder not known (pass 4).
+        if (found === 'unknown') {
+          unread.push({ source: source.path, why: 'decided_at_run_time' });
+          continue;
+        }
         if (found === null || !IN_PROCESS_SCRIPT.test(found.path)) {
           for (const key of endsAt) budget.programs.add(key);
           continue;
