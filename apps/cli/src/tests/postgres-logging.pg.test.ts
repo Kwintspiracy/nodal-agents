@@ -67,6 +67,11 @@ afterAll(async () => {
   rmSync(embeddedPostgres.root, { recursive: true, force: true });
 }, 120_000);
 
+/** The `(PID n)` fragment of the postmaster's reap line, exact on the number. */
+function pidLineRegExp(pid: number): RegExp {
+  return new RegExp(`\\(PID ${pid}\\)`);
+}
+
 /** Everything the cluster has written so far, all files concatenated. */
 function logText(): string {
   let out = '';
@@ -141,10 +146,11 @@ describe('the embedded cluster keeps its own log @cap:installer-et-demarrer/mote
       }
       await close().catch(() => {});
 
-      const named = await until(
-        () => new RegExp(`\\(PID ${backendPid}\\)`).test(logText()),
-        60_000,
-      );
+      // Built once for the wait and the order search: two copies drifted (in a
+      // template literal `\(` is just `(`, so the search matched `(PID 1234)`
+      // for pid 123). Escaped parens bound the number exactly.
+      const pidLine = pidLineRegExp(backendPid);
+      const named = await until(() => pidLine.test(logText()), 60_000);
       expect(named, logText()).toBe(true);
       // And the postmaster's own account of the aftermath, which is the
       // sentence whose absence made the incident unattributable. The
@@ -158,7 +164,8 @@ describe('the embedded cluster keeps its own log @cap:installer-et-demarrer/mote
       expect(aftermath, logText()).toBe(true);
       // Order, from one snapshot of the real log.
       const log = logText();
-      const pidAt = log.search(new RegExp(`\(PID ${backendPid}\)`));
+      const pidAt = log.search(pidLine);
+      expect(pidAt, `pid line not found in the log snapshot:\n${log}`).toBeGreaterThanOrEqual(0);
       const aftermathAt = log.search(/terminating any other active server processes/);
       expect(aftermathAt, log).toBeGreaterThan(pidAt);
     },
