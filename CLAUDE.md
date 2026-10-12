@@ -86,14 +86,12 @@ then forgotten by its own author, which is why the rule now lives here.
     check the fix, and because a fix can create another defect. A PR is not
     merged while a pass reports one. There is no pass budget: the loop runs
     until a pass reports none. If the same area keeps producing them, say so to
-    the owner with the details, but do not stop on your own.
+    the owner with the details, but do not stop on your own. A finding is
+    closed by a test that fails first, and the fix is verified BY MUTATION
+    (disable it, the test must go red).
   - **Minor** findings (P3) are not fixed in the PR. They are listed in a
     backlog issue (file:line and scenario for each, a `## Verified` section),
     linked from the PR, and the PR merges.
-  - Static portal pages (`apps/qa`) get **one pass**; a P1/P2 found in it is
-    fixed and reviewed again like any PR. A finding is closed by a test that
-    fails first, and the fix is verified BY MUTATION (disable it, the test must
-    go red).
 - **A quota drop never stops the queue, and never makes it wait.** When Codex
   has no quota, the pass goes through Nodal MCP: `run_task` to the root, no
   target agent, asking for a review by Reviewer A, read-only, on a review
