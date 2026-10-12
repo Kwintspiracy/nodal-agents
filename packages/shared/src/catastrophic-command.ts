@@ -435,12 +435,13 @@ function subcommand(program: string, rest: string): RegExp {
 // with `--simulate` as its config file; `Install-Module '-WhatIf'` installs a
 // module of that name, and a unit has lost its quotes) takes each program's
 // whole option grammar, and what the text cannot establish asks. A read stays
-// unflagged by naming no action: a subcommand that is none (`apt list`,
-// `winget show`), a mode with no action letter (`rpm -q x`, `pacman -Qi x`).
+// unflagged by naming no action: no verb of the program among its words
+// (`apt list`, `winget show`; which word is the subcommand takes the same
+// grammar), a mode with no action letter (`rpm -q x`, `pacman -Qi x`).
 
 /** How one program says it installs, updates or removes software. */
 interface Installer {
-  /** Its subcommands that do, after its global options (`apt-get -y install`); a nested one in words (`uv pip install`). */
+  /** Its subcommands that do, wherever they stand (`apt-get -y install`); a nested one in words, in order (`uv pip install`). */
   verbs?: readonly string[];
   /** Its options that do, by name (`--install`, msiexec's `/i`, installer's `-target`); `f*` is every name that starts with `f`. */
   options?: readonly string[];
@@ -826,23 +827,17 @@ function installerWords(args: readonly string[], syntax: Installer['syntax']): I
 }
 
 /**
- * `verb` (one or more words) at a place the program's global options lead to:
- * each option may take the next word as its value (`apt-get -o k=v install`,
- * `pnpm --filter web up x`), as `subcommand` reads them.
+ * `verb` anywhere in the unit, its words in order (`dnf module -y install x`).
+ * Reaching it past the program's options would take each one's grammar (`nix
+ * --option sandbox false profile install x`: a two-value option), so where it
+ * stands is not read: a read that names a verb word asks (`zypper search patch`).
  */
 function hasVerb(args: readonly string[], verbs: readonly string[]): boolean {
-  const reached = new Set([0]);
-  for (let i = 0; i < args.length; i++) {
-    if (!reached.has(i)) continue;
-    const isVerbAt = (verb: string) =>
-      verb.split(' ').every((part, k) => (args[i + k] ?? '').toLowerCase() === part);
-    if (verbs.some(isVerbAt)) return true;
-    const w = args[i] ?? '';
-    if (!w.startsWith('-')) continue;
-    reached.add(i + 1);
-    if (!w.includes('=') && !(args[i + 1] ?? '-').startsWith('-')) reached.add(i + 2);
-  }
-  return false;
+  const words = args.map((w) => w.toLowerCase());
+  return verbs.some((verb) => {
+    let from = 0;
+    return verb.split(' ').every((part) => (from = words.indexOf(part, from) + 1) > 0);
+  });
 }
 
 /** True when one command unit installs, updates or removes software (#693). */

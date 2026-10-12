@@ -11,6 +11,8 @@
 // Pass 2 found a simulation flag that was the value of the option before it
 // (`apt-get -c --simulate install x` installs): a simulation now asks like the
 // install it simulates, and a read stays unflagged by naming no action.
+// A two-value option hid the verb from the option walk (`nix --option sandbox
+// false profile install x`): a verb of the program anywhere in its words asks.
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -868,6 +870,98 @@ describe('install_software: a simulation asks like the install it simulates (#71
         'msiexec /?',
         'pacman -Qi x',
         'Get-Module -ListAvailable',
+      ],
+      'install_software',
+      false,
+    );
+  });
+});
+
+describe('install_software: a verb of the program anywhere in its words asks (#710) @cap:executer-une-commande/moteur', () => {
+  // The reader walked the options to the subcommand, each taking at most one
+  // value: `nix --option sandbox false profile install x` (a two-value option)
+  // never reached `profile install`. Placing the verb takes each program's
+  // whole option grammar, so a verb word anywhere in the unit asks.
+  it('nix: a two-value option before `profile install`', () => {
+    for (const cmd of [
+      'nix --option sandbox false profile install x',
+      'nix --argstr system x86_64-linux profile install x',
+    ])
+      for (const host of HOSTS) {
+        expect(kindsOn(cmd, host), `${cmd} (${host})`).toContain('install_software');
+        expect(isDestructiveOrHeavyCommand(cmd, host), `${cmd} (${host})`).toBe(true);
+      }
+  });
+
+  it('an option value hides the verb, on each OS', () => {
+    expectKind(
+      [
+        // Windows
+        'winget --header=a b install x',
+        'choco --source a b install x',
+        'scoop -k a b install x',
+        // macOS
+        'brew --repo a b install x',
+        'port -D a b install x',
+        'mas --opt=a b install 497799835',
+        // Linux
+        'dnf module -y install nodejs',
+        'dnf --setopt a b install x',
+        'apt-get --option=a b install x',
+        'apk --repository a b add curl',
+        'nix profile --profile /tmp/p install x',
+        // cross-platform
+        'npm --prefix a b install x',
+        'yarn workspace web add x',
+        'uv pip --verbose install x',
+        'pip --proxy a b install x',
+        // a verb after `--`
+        'apt-get -c a.conf b -- install x',
+      ],
+      'install_software',
+      true,
+    );
+  });
+
+  it('Codex pass 2 still asks', () => {
+    expectKind(['apt-get -c --simulate install cowsay'], 'install_software', true);
+  });
+
+  it('accepted over-ask: a read that names a verb word of its program asks', () => {
+    // The trade-off, pinned: these change nothing, and ask.
+    expectKind(
+      [
+        'zypper search patch',
+        'npm search install',
+        'npm test -- --grep install',
+        'brew search rm',
+        'winget search update',
+        'dnf info update',
+        'pip show install',
+        'apt show remove',
+        'go doc install',
+        'snap info refresh',
+      ],
+      'install_software',
+      true,
+    );
+  });
+
+  it('a read with no verb of its program anywhere stays unflagged', () => {
+    expectKind(
+      [
+        'apt list --installed',
+        'dnf search x',
+        'dnf history list',
+        'dnf group list',
+        'nix profile list',
+        'nix search nixpkgs hello',
+        'npm ls',
+        'pnpm test',
+        'winget search git',
+        'brew search git',
+        'zypper search vim',
+        'pip show requests',
       ],
       'install_software',
       false,
