@@ -21,6 +21,7 @@ import {
   SET_CONTENT,
   SET_LOCATION,
   START_BITS_TRANSFER,
+  SHOULD_PROCESS_CMDLET,
   START_PROCESS,
   TEE_OBJECT,
   bindPsArguments,
@@ -421,41 +422,549 @@ function subcommand(program: string, rest: string): RegExp {
   return new RegExp(String.raw`\b(?:${program})${GLOBAL_OPTIONS}\s+${rest}`, 'i');
 }
 
+// ── What installs, updates or removes software (#693) ────────────────────────
+// The `install_software` kind read "the word `install` after a known manager":
+// every installer whose verb is an option (`msiexec /i`, `dpkg -i`, `rpm -Uvh`,
+// `wusa x.msu`), every manager missing from the list and every remove or
+// upgrade verb ran with no ask, and Codex kept finding the next one. Each
+// operating system's standard ways to install, update or remove software or
+// an OS component are now listed below, one table per family, from the
+// platform's own documentation; ONE reader (`installsSoftware`) reads them all.
+// A simulation or a read (`apt-get -s`, `rpm --test`, `rpm -q`, `-WhatIf`)
+// changes nothing and is not the kind: a flag is listed as one only where its
+// documentation says nothing is changed (bun's `--dry-run` still runs the
+// project's scripts, dnf's `--assumeno` depends on `alwaysprompt`: not listed).
+
+/** How one program says it installs, updates or removes software. */
+interface Installer {
+  /** Its subcommands that do, after its global options (`apt-get -y install`); a nested one in words (`uv pip install`). */
+  verbs?: readonly string[];
+  /** Its options that do, by name (`--install`, msiexec's `/i`, installer's `-target`); `f*` is every name that starts with `f`. */
+  options?: readonly string[];
+  /**
+   * Its short options that do, alone or in a group (`rpm -Uvh`), each with
+   * the letters that make it a read when any group of the line holds one
+   * (pacman's `-Ss` searches). Letters are case-sensitive: `rpm -e` erases,
+   * `rpm -E` evaluates a macro.
+   */
+  letters?: Readonly<Record<string, string>>;
+  /** Every word that is not an option is a package it installs (`emerge atom`, `wusa x.msu`). */
+  operands?: true;
+  /** It does whenever it runs: a cmdlet, a setup program. */
+  always?: true;
+  /** The options that make the command a simulation or a read, so nothing changes: names, or one letter for a short option. */
+  dryRun?: readonly string[];
+  /**
+   * How its options are written. `gnu` (the default): `--name[=v]`, `-abc` a
+   * group of letters, `--` ends them. `windows`: `/name[:v]` or `-name[:v]`.
+   * `single-dash`: `-name[=v]`. `powershell`: a cmdlet, its parameters bound
+   * as PowerShell binds them (`powershell-parameters.ts`); its `dryRun` is
+   * -WhatIf, listed only for the cmdlets that support ShouldProcess.
+   */
+  syntax?: 'gnu' | 'windows' | 'single-dash' | 'powershell';
+}
+
+/** A cmdlet that installs, updates or removes, and -WhatIf, when it has it, runs nothing. */
+const CMDLET: Installer = { syntax: 'powershell', always: true, dryRun: ['whatif'] };
+/** A DISM-module cmdlet: it has no -WhatIf (PowerShell refuses it, or binds a prefix of `-WindowsDirectory`). */
+const CMDLET_WITHOUT_WHATIF: Installer = { syntax: 'powershell', always: true };
+
 /**
- * The package managers of Windows, macOS and Linux, each with the subcommands
- * that change what software is installed: install, update or remove (#693).
- * Their other subcommands only read (`list`, `search`, `info`, `show`), or
- * refresh an index (`apt update`, `brew update`, `zypper refresh`).
+ * Windows. Sources (Microsoft Learn): msiexec (windows-commands/msiexec:
+ * /i /package /a /x /uninstall /f[pocdaumsv] /p /update /j[u|m]); wusa ("Windows
+ * Update Standalone Installer": `wusa x.msu`, /uninstall [/kb:N], /extract only
+ * unpacks); DISM (dism-operating-system-package-servicing, -capabilities,
+ * enable-or-disable-windows-features, -app-package-servicing, -driver-servicing;
+ * `/?` after an option prints its help);
+ * pnputil (/add-driver /delete-driver, the legacy -a -d -i); the PowerShell
+ * modules PowerShellGet, PackageManagement, Microsoft.PowerShell.PSResourceGet
+ * (isres, usres, udres), Appx, Dism, ServerManager (Add-/Remove-WindowsFeature
+ * are the names before Windows Server 2012), LanguagePackManagement; the
+ * aliases are those `Get-Alias -Definition` lists on Windows 11 (inmo, upmo,
+ * Add-AppPackage, Add-MsixPackage…). winget (install|add, uninstall|remove|rm,
+ * upgrade|update, import, configure, repair), Chocolatey (install, uninstall,
+ * upgrade; --noop --whatif --what-if "don't actually do anything"), Scoop.
+ * `msiexec /?`, `wusa /?` and `pnputil /enum-drivers` name no action: they
+ * need no entry to stay unflagged.
  */
-const PACKAGE_MANAGER_VERBS: Record<string, string> = {
-  'apt-get|apt|aptitude':
-    'install|reinstall|remove|purge|upgrade|full-upgrade|dist-upgrade|safe-upgrade|autoremove|autopurge|build-dep',
-  'dnf|yum|microdnf|tdnf':
-    'install|reinstall|remove|erase|upgrade|update|downgrade|autoremove|distro-sync|swap|localinstall|groupinstall|groupremove|groupupdate',
-  zypper: 'install|in|reinstall|remove|rm|update|up|dist-upgrade|dup|patch',
-  apk: 'add|del|upgrade|fix',
-  brew: 'install|reinstall|uninstall|remove|rm|upgrade',
-  port: 'install|uninstall|upgrade',
-  mas: 'install|uninstall|upgrade|purchase',
-  pkg: 'install|add|delete|remove|upgrade',
-  snap: 'install|remove|refresh|revert',
-  flatpak: 'install|uninstall|update',
-  choco: 'install|uninstall|upgrade',
-  winget: 'install|add|uninstall|remove|rm|upgrade|update|import',
-  scoop: 'install|uninstall|update|reset',
-  'npm|pnpm|yarn|bun': 'install|i|add|ci|uninstall|remove|rm|r|un|update|up|upgrade',
-  // uv (review of PR #476)
-  uv: String.raw`pip\s+(?:install|uninstall)|add|remove|tool\s+(?:install|uninstall|upgrade)`,
-  go: 'install',
-  gem: 'install|uninstall|update',
-  'conda|mamba|micromamba': 'install|remove|uninstall|update|upgrade',
-  nix: String.raw`profile\s+(?:install|add|remove|upgrade)`,
+const WINDOWS_INSTALLERS: Record<string, Installer> = {
+  msiexec: {
+    syntax: 'windows',
+    options: ['i', 'package', 'a', 'x', 'uninstall', 'f*', 'p', 'update', 'j*'],
+  },
+  wusa: { syntax: 'windows', operands: true, options: ['uninstall'], dryRun: ['extract'] },
+  dism: {
+    syntax: 'windows',
+    options: [
+      'add-package',
+      'remove-package',
+      'enable-feature',
+      'disable-feature',
+      'add-capability',
+      'remove-capability',
+      'add-provisionedappxpackage',
+      'remove-provisionedappxpackage',
+      'add-driver',
+      'remove-driver',
+    ],
+    dryRun: ['?'],
+  },
+  pnputil: { syntax: 'windows', options: ['add-driver', 'delete-driver', 'a', 'd', 'i'] },
+  'install-module|inmo|uninstall-module|update-module|upmo': CMDLET,
+  'install-script|uninstall-script|update-script': CMDLET,
+  'install-package|uninstall-package|install-packageprovider': CMDLET,
+  'install-psresource|isres|uninstall-psresource|usres|update-psresource|udres': CMDLET,
+  'add-appxpackage|add-apppackage|add-msixpackage|remove-appxpackage|remove-apppackage|remove-msixpackage':
+    CMDLET,
+  'install-windowsfeature|add-windowsfeature|uninstall-windowsfeature|remove-windowsfeature':
+    CMDLET,
+  'add-appxprovisionedpackage|add-appprovisionedpackage|add-provisionedapppackage|add-provisionedappxpackage':
+    CMDLET_WITHOUT_WHATIF,
+  'remove-appxprovisionedpackage|remove-appprovisionedpackage|remove-provisionedapppackage|remove-provisionedappxpackage':
+    CMDLET_WITHOUT_WHATIF,
+  'add-windowspackage|remove-windowspackage|add-windowscapability|remove-windowscapability':
+    CMDLET_WITHOUT_WHATIF,
+  'enable-windowsoptionalfeature|disable-windowsoptionalfeature': CMDLET_WITHOUT_WHATIF,
+  'add-windowsdriver|remove-windowsdriver|install-language|uninstall-language':
+    CMDLET_WITHOUT_WHATIF,
+  winget: {
+    verbs: [
+      'install',
+      'add',
+      'uninstall',
+      'remove',
+      'rm',
+      'upgrade',
+      'update',
+      'import',
+      'configure',
+      'repair',
+    ],
+  },
+  choco: { verbs: ['install', 'uninstall', 'upgrade'], dryRun: ['noop', 'whatif', 'what-if'] },
+  scoop: { verbs: ['install', 'uninstall', 'update', 'reset'] },
+  // A setup program run directly: the name Windows installers ship under.
+  setup: { always: true },
 };
+
+/**
+ * macOS. Sources: installer(8) (`-pkg x -target /` installs; -pkginfo
+ * -volinfo -dominfo -query -showChoicesXML only read), softwareupdate(8) (-i
+ * --install, --install-rosetta, --fetch-full-installer), the Homebrew manpage
+ * (install, reinstall, uninstall|remove|rm, upgrade, autoremove; install and
+ * upgrade -n|--dry-run "do not actually install"), MacPorts port(1) (install,
+ * uninstall, upgrade, activate, deactivate, selfupdate), mas (install,
+ * uninstall, upgrade, purchase, lucky).
+ */
+const MACOS_INSTALLERS: Record<string, Installer> = {
+  installer: {
+    syntax: 'single-dash',
+    options: ['target'],
+    dryRun: [
+      'pkginfo',
+      'volinfo',
+      'dominfo',
+      'query',
+      'showchoicesxml',
+      'showchoicesafterapplyingchangesxml',
+    ],
+  },
+  softwareupdate: {
+    options: ['install', 'install-rosetta', 'fetch-full-installer'],
+    letters: { i: '' },
+  },
+  brew: {
+    verbs: ['install', 'reinstall', 'uninstall', 'remove', 'rm', 'upgrade', 'autoremove'],
+    dryRun: ['n', 'dry-run'],
+  },
+  port: { verbs: ['install', 'uninstall', 'upgrade', 'activate', 'deactivate', 'selfupdate'] },
+  mas: { verbs: ['install', 'uninstall', 'upgrade', 'purchase', 'lucky'] },
+};
+
+/**
+ * Linux and the BSDs. Sources: apt-get(8) (install, reinstall, remove, purge,
+ * upgrade, dist-upgrade, dselect-upgrade, autoremove, autopurge, build-dep,
+ * satisfy; -s --simulate --just-print --dry-run --recon --no-act "no action"),
+ * apt(8) (full-upgrade), aptitude (safe-upgrade); dpkg(1) (-i -r -P --install
+ * --remove --purge --unpack --configure; --no-act --dry-run --simulate); rpm(8)
+ * (-i -U -F -e and long forms, query mode -q, --test "don't install"); the DNF
+ * command reference (install|in, remove|rm, upgrade|up, upgrade-minimal,
+ * downgrade|dg, reinstall|rei, autoremove, distro-sync|dsync, swap, group,
+ * module, history undo|redo|rollback|replay) and yum's older names;
+ * zypper(8) (install|in, source-install|si, install-new-recommends|inr,
+ * remove|rm, removeptf, update|up, dist-upgrade|dup, patch, verify|ve,
+ * purge-kernels; --dry-run, not -D, which is also the global --reposd-dir);
+ * pacman(8) (-S -R -U; -p --print "only print the targets"; -S's -s -i -g -l
+ * -c -w search, show, list, clean or only download); apk(8) (add, del, fix,
+ * upgrade; -s --simulate); emerge(1) (an atom merges, -C -c -P --unmerge
+ * --depclean --prune; -p --pretend, -s -S --search --searchdesc, --info only
+ * read); snap, flatpak, PackageKit's pkcon; nix-env(1) (-i -e -u, --rollback,
+ * -G --switch-generation, --set; -q, --dry-run) and `nix profile`; FreeBSD
+ * pkg(8) (install, add, delete, remove, upgrade, autoremove; -n --dry-run).
+ */
+const LINUX_INSTALLERS: Record<string, Installer> = {
+  'apt-get|apt|aptitude': {
+    verbs: [
+      'install',
+      'reinstall',
+      'remove',
+      'purge',
+      'upgrade',
+      'full-upgrade',
+      'dist-upgrade',
+      'safe-upgrade',
+      'dselect-upgrade',
+      'autoremove',
+      'autopurge',
+      'build-dep',
+      'satisfy',
+    ],
+    dryRun: ['s', 'simulate', 'just-print', 'dry-run', 'recon', 'no-act'],
+  },
+  dpkg: {
+    options: ['install', 'remove', 'purge', 'unpack', 'configure'],
+    letters: { i: '', r: '', P: '' },
+    dryRun: ['no-act', 'dry-run', 'simulate'],
+  },
+  rpm: {
+    options: ['install', 'upgrade', 'freshen', 'erase', 'reinstall'],
+    letters: { i: '', U: '', F: '', e: '' },
+    dryRun: ['test', 'query', 'q'],
+  },
+  'dnf|dnf5|yum|microdnf|tdnf': {
+    verbs: [
+      'install',
+      'in',
+      'install-n',
+      'install-na',
+      'install-nevra',
+      'localinstall',
+      'reinstall',
+      'rei',
+      'remove',
+      'rm',
+      'erase',
+      'remove-n',
+      'remove-na',
+      'remove-nevra',
+      'upgrade',
+      'up',
+      'update',
+      'upgrade-minimal',
+      'up-min',
+      'update-minimal',
+      'downgrade',
+      'dg',
+      'autoremove',
+      'distro-sync',
+      'dsync',
+      'distrosync',
+      'swap',
+      'groupinstall',
+      'groupremove',
+      'groupupdate',
+      'group install',
+      'group remove',
+      'group upgrade',
+      'group update',
+      'groups install',
+      'groups remove',
+      'grp install',
+      'grp remove',
+      'module install',
+      'module update',
+      'module remove',
+      'module switch-to',
+      'history undo',
+      'history redo',
+      'history rollback',
+      'history replay',
+    ],
+  },
+  zypper: {
+    verbs: [
+      'install',
+      'in',
+      'source-install',
+      'si',
+      'install-new-recommends',
+      'inr',
+      'remove',
+      'rm',
+      'removeptf',
+      'rmptf',
+      'update',
+      'up',
+      'dist-upgrade',
+      'dup',
+      'patch',
+      'verify',
+      've',
+      'purge-kernels',
+    ],
+    dryRun: ['dry-run'],
+  },
+  pacman: {
+    options: ['sync', 'remove', 'upgrade'],
+    letters: { S: 'sigclw', R: '', U: '' },
+    dryRun: ['p', 'print', 'search', 'info', 'groups', 'list', 'clean', 'downloadonly'],
+  },
+  apk: { verbs: ['add', 'del', 'fix', 'upgrade'], dryRun: ['s', 'simulate'] },
+  emerge: {
+    operands: true,
+    options: ['unmerge', 'depclean', 'prune'],
+    letters: { C: '', c: '', P: '' },
+    dryRun: ['p', 'pretend', 's', 'search', 'S', 'searchdesc', 'info'],
+  },
+  snap: { verbs: ['install', 'remove', 'refresh', 'revert'] },
+  flatpak: { verbs: ['install', 'uninstall', 'update'] },
+  pkcon: { verbs: ['install', 'install-local', 'remove', 'update', 'upgrade-system'] },
+  'nix-env': {
+    options: ['install', 'uninstall', 'upgrade', 'rollback', 'switch-generation', 'set'],
+    letters: { i: '', e: '', u: '', G: '' },
+    dryRun: ['q', 'query', 'dry-run'],
+  },
+  nix: {
+    verbs: [
+      'profile install',
+      'profile add',
+      'profile remove',
+      'profile upgrade',
+      'profile rollback',
+    ],
+  },
+  pkg: {
+    verbs: ['install', 'add', 'delete', 'remove', 'upgrade', 'autoremove'],
+    dryRun: ['n', 'dry-run'],
+  },
+};
+
+/**
+ * The language and tool managers the kind already meant (they were in its
+ * patterns before #693), with the verbs that install, update or remove, and
+ * their documented dry runs: npm's --dry-run ("make no changes"), pip's
+ * --dry-run ("don't actually install anything"), uv pip's --dry-run, go's -n
+ * ("print the commands but do not run them"), gem install's --explain
+ * ("rather than install the gems, indicate which would be installed"), conda's
+ * -d --dry-run ("only display what would have been done").
+ */
+const CROSS_PLATFORM_INSTALLERS: Record<string, Installer> = {
+  npm: {
+    verbs: [
+      'install',
+      'i',
+      'add',
+      'ci',
+      'uninstall',
+      'remove',
+      'rm',
+      'r',
+      'un',
+      'update',
+      'up',
+      'upgrade',
+    ],
+    dryRun: ['dry-run'],
+  },
+  'pnpm|yarn|bun': {
+    verbs: [
+      'install',
+      'i',
+      'add',
+      'ci',
+      'uninstall',
+      'remove',
+      'rm',
+      'r',
+      'un',
+      'update',
+      'up',
+      'upgrade',
+      'global add',
+      'global remove',
+      'global upgrade',
+    ],
+  },
+  'pip|pip3': { verbs: ['install', 'uninstall'], dryRun: ['dry-run'] },
+  pipx: {
+    verbs: [
+      'install',
+      'install-all',
+      'uninstall',
+      'uninstall-all',
+      'upgrade',
+      'upgrade-all',
+      'reinstall',
+      'reinstall-all',
+      'inject',
+      'uninject',
+    ],
+  },
+  // uv (review of PR #476)
+  uv: {
+    verbs: [
+      'pip install',
+      'pip uninstall',
+      'pip sync',
+      'add',
+      'remove',
+      'tool install',
+      'tool uninstall',
+      'tool upgrade',
+      'python install',
+      'python uninstall',
+    ],
+    dryRun: ['dry-run'],
+  },
+  go: { syntax: 'single-dash', verbs: ['install'], dryRun: ['n'] },
+  gem: { verbs: ['install', 'i', 'uninstall', 'update'], dryRun: ['explain'] },
+  // cargo-install(1): --list lists the installed packages
+  cargo: { verbs: ['install', 'uninstall'], dryRun: ['list'] },
+  'conda|mamba': {
+    verbs: ['install', 'remove', 'uninstall', 'update', 'upgrade'],
+    dryRun: ['d', 'dry-run'],
+  },
+  micromamba: {
+    verbs: ['install', 'remove', 'uninstall', 'update', 'upgrade'],
+    dryRun: ['dry-run'],
+  },
+  // ComfyUI's CLI: ComfyUI itself and its custom nodes
+  comfy: {
+    verbs: [
+      'install',
+      'update',
+      'node install',
+      'node uninstall',
+      'node reinstall',
+      'node update',
+      'node install-deps',
+    ],
+  },
+};
+
+/** Every installer, by program name (the unit's: lower-cased, without `.exe`). */
+const INSTALLERS: ReadonlyMap<string, Installer> = new Map(
+  [WINDOWS_INSTALLERS, MACOS_INSTALLERS, LINUX_INSTALLERS, CROSS_PLATFORM_INSTALLERS].flatMap(
+    (table) =>
+      Object.entries(table).flatMap(([names, installer]) =>
+        names.split('|').map((name): [string, Installer] => [name, installer]),
+      ),
+  ),
+);
+
+/** The programs `installsSoftware` reads, for the tests that keep one case per program. */
+export const INSTALLER_PROGRAMS: readonly string[] = [...INSTALLERS.keys()];
+
+/**
+ * A package file run as a program (`x.msi`, `start x.msu`, `Start-Process
+ * app.msix`): Windows hands it to its installer. macOS `.pkg` and Linux
+ * `.deb` / `.rpm` / `.flatpakref` opened the same way go to theirs.
+ */
+const PACKAGE_FILE =
+  /\.(?:msi|msp|msu|msix|msixbundle|appx|appxbundle|appinstaller|pkg|mpkg|deb|rpm|flatpakref)$/i;
+
+/** A boolean given as a word: `--dry-run=false`, `--dry-run false`. */
+const BOOLEAN_WORD = /^(?:true|false|yes|no|on|off|0|1)$/i;
+
+/** One installer's words, read as its syntax writes them. */
+interface InstallerWords {
+  /**
+   * Option names, lower-cased (`--install` → `install`, `/Enable-Feature:x` →
+   * `enable-feature`), each with its value when it is glued (`--dry-run=false`)
+   * or a boolean word after it (npm reads `--dry-run false`).
+   */
+  names: Map<string, string | null>;
+  /** GNU groups of short options, without their dash (`-Uvh` → `Uvh`). */
+  groups: string[];
+  /** The words that are not options. */
+  operands: string[];
+}
+
+function installerWords(args: readonly string[], syntax: Installer['syntax']): InstallerWords {
+  const words: InstallerWords = { names: new Map(), groups: [], operands: [] };
+  const name = (w: string, i: number, lead: RegExp, sep: string) => {
+    const [key = '', ...glued] = w.replace(lead, '').split(sep);
+    const next = args[i + 1] ?? '';
+    const value = glued.length > 0 ? glued.join(sep) : BOOLEAN_WORD.test(next) ? next : null;
+    words.names.set(key.toLowerCase(), value);
+  };
+  let optionsEnded = false;
+  args.forEach((w, i) => {
+    if (optionsEnded) words.operands.push(w);
+    else if (syntax === 'windows' && /^[/-]./.test(w)) name(w, i, /^[/-]/, ':');
+    else if (syntax === 'single-dash' && /^-./.test(w)) name(w, i, /^-+/, '=');
+    else if (w === '--') optionsEnded = true;
+    else if (/^--./.test(w)) name(w, i, /^--/, '=');
+    else if (/^-[A-Za-z]+$/.test(w)) words.groups.push(w.slice(1));
+    else if (!w.startsWith('-')) words.operands.push(w);
+  });
+  return words;
+}
+
+/**
+ * `verb` (one or more words) at a place the program's global options lead to:
+ * each option may take the next word as its value (`apt-get -o k=v install`,
+ * `pnpm --filter web up x`), as `subcommand` reads them.
+ */
+function hasVerb(args: readonly string[], verbs: readonly string[]): boolean {
+  const reached = new Set([0]);
+  for (let i = 0; i < args.length; i++) {
+    if (!reached.has(i)) continue;
+    const isVerbAt = (verb: string) =>
+      verb.split(' ').every((part, k) => (args[i + k] ?? '').toLowerCase() === part);
+    if (verbs.some(isVerbAt)) return true;
+    const w = args[i] ?? '';
+    if (!w.startsWith('-')) continue;
+    reached.add(i + 1);
+    if (!w.includes('=') && !(args[i + 1] ?? '-').startsWith('-')) reached.add(i + 2);
+  }
+  return false;
+}
+
+/** True when one command unit installs, updates or removes software (#693). */
+function installsSoftware(unit: readonly string[]): boolean {
+  const program = unit[0] ?? '';
+  const args = unit.slice(1);
+  if (PACKAGE_FILE.test(program)) return true;
+  // A versioned name is the same program (`pip3.12`, `gem3.2`).
+  const installer = INSTALLERS.get(program) ?? INSTALLERS.get(program.replace(/[\d.]+$/, ''));
+  if (installer === undefined) return false;
+  const syntax = installer.syntax ?? 'gnu';
+  const dryRun = installer.dryRun ?? [];
+  if (syntax === 'powershell')
+    return !(
+      dryRun.includes('whatif') &&
+      psSwitch(bindPsArguments(args, SHOULD_PROCESS_CMDLET), 'whatif') === true
+    );
+  const words = installerWords(args, syntax);
+  const inGroup = (letter: string) => words.groups.some((g) => g.includes(letter));
+  // A dry run set to false (`--dry-run=false`, `--dry-run false`) is none.
+  const set = (d: string) =>
+    words.names.has(d) && !/^(?:false|no|off|0)$/i.test(words.names.get(d) ?? '');
+  const simulated = dryRun.some((d) =>
+    d.length === 1 && syntax === 'gnu' ? inGroup(d) : set(d.toLowerCase()),
+  );
+  if (simulated) return false;
+  const option = (o: string) =>
+    o.endsWith('*')
+      ? [...words.names.keys()].some((n) => n.startsWith(o.slice(0, -1)))
+      : words.names.has(o);
+  return (
+    installer.always === true ||
+    (installer.operands === true && words.operands.length > 0) ||
+    hasVerb(args, installer.verbs ?? []) ||
+    (installer.options ?? []).some(option) ||
+    Object.entries(installer.letters ?? {}).some(
+      ([op, reads]) => inGroup(op) && ![...reads].some(inGroup),
+    )
+  );
+}
 
 /**
  * The same patterns, sorted by what a person would call them (#464). The
  * autonomy checklist lets an owner allow, ask or forbid each KIND of action;
- * their union below is still exactly what `destructive_gate` has always gated.
+ * their union below, with the installers `installsSoftware` reads, is still
+ * exactly what `destructive_gate` gates.
  */
 export const STATIC_SHELL_CATEGORY_PATTERNS = {
   delete_files: [
@@ -471,27 +980,12 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
     subcommand('git', String.raw`branch\s+-D\b`),
   ],
   install_software: [
-    /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\b(?:un)?install\b/i, // pkg install, and uninstall: what software is installed changes
+    // The installers of every OS are read by `installsSoftware` (#693), not
+    // here. `uvx` runs a package's program, whose words are not read: an
+    // install word in its line still asks (`uvx --from comfy-cli comfy install`).
+    /\buvx\b[^\n]*\b(?:un)?install\b/i,
     // VS Code family: adding, updating or removing an extension (review of PR #682, pass 8)
     /\b(code|code-insiders|codium|vscodium|cursor|windsurf)\b[^\n]*--(?:install-extension|uninstall-extension|update-extensions)\b/i,
-    // every package manager's verbs that install, update or remove (#693)
-    ...Object.entries(PACKAGE_MANAGER_VERBS).map(([program, verbs]) =>
-      subcommand(program, String.raw`(?:${verbs})(?![\w-])`),
-    ),
-    // PowerShell: modules, packages, Store apps, Windows features (#693)
-    /\b(?:Install|Uninstall|Update)-(?:Module|Package|Script|PSResource)\b|\b(?:Add|Remove)-(?:AppxPackage|WindowsPackage|WindowsCapability)\b|\b(?:Install|Uninstall)-WindowsFeature\b|\b(?:Enable|Disable)-WindowsOptionalFeature\b/i,
-    // The system installers, read by their options (#693): an option that
-    // installs, upgrades or removes; their queries (`dpkg -l`, `rpm -q…`,
-    // `msiexec /?`, `installer -pkginfo`) do not. dpkg, rpm, pacman, nix-env
-    // and softwareupdate options are case-sensitive (`rpm -e` erases, `-E` evaluates).
-    /\bmsiexec(?:\.exe)?\b[^\n]*\s[/-](?:i|package|a|x|uninstall|f[a-z]*|p|update|j[mu])(?![\w-])/i,
-    /\bdism(?:\.exe)?\b[^\n]*\s\/(?:add|remove)-(?:package|capability|provisionedappxpackage)\b|\bdism(?:\.exe)?\b[^\n]*\s\/(?:enable|disable)-feature\b/i,
-    /\bdpkg(?![\w-])[^\n]*\s(?:-[a-zA-Z]*[iPr][a-zA-Z]*|--(?:install|remove|purge|unpack|configure))(?![\w-])/,
-    /\brpm(?![\w-])(?![^\n]*\s-[a-zA-Z]*q)[^\n]*\s(?:-[a-zA-Z]*[iUFe][a-zA-Z]*|--(?:install|upgrade|freshen|erase|reinstall))(?![\w-])/,
-    /\bpacman(?![\w-])[^\n]*\s(?:-S(?![a-zA-Z]*[sigplcw])[a-zA-Z]*|-[UR][a-zA-Z]*|--(?:sync|upgrade|remove))(?![\w-])/,
-    /\bnix-env(?![\w-])(?![^\n]*\s-[a-zA-Z]*q)[^\n]*\s(?:-[a-zA-Z]*[ieu][a-zA-Z]*|--(?:install|uninstall|upgrade))(?![\w-])/,
-    /\binstaller(?![\w-])(?=[^\n]*\s-(?:pkg|package)\s)[^\n]*\s-target\b/i, // macOS
-    /\bsoftwareupdate\b[^\n]*\s(?:-i[a-zA-Z]*|--install(?:-rosetta)?)(?![\w-])/, // macOS
   ],
   // A command is filed by what it DOES (#581): fetching files (a model, an
   // archive, an image) is a download, whatever tool fetches it; installing
@@ -2613,7 +3107,10 @@ export function isDestructiveOrHeavyCommand(cmd: string, host?: ShellHost): bool
   const c = normalizeSlashes(cmd.trim());
   return (
     DESTRUCTIVE_PATTERNS.some((re) => re.test(c)) ||
-    units.some((u) => curlWritesAFile(u) || unitCategories(u).includes('open_or_send'))
+    units.some(
+      (u) =>
+        curlWritesAFile(u) || installsSoftware(u) || unitCategories(u).includes('open_or_send'),
+    )
   );
 }
 
@@ -2667,7 +3164,8 @@ function patternKinds(unit: readonly string[]): Array<keyof typeof STATIC_SHELL_
     .filter(
       ([category, patterns]) =>
         patterns.some((re) => startsWithMatch(re, text)) ||
-        (category === 'download' && curlWritesAFile(unit)),
+        (category === 'download' && curlWritesAFile(unit)) ||
+        (category === 'install_software' && installsSoftware(unit)),
     )
     .map(([category]) => category);
 }

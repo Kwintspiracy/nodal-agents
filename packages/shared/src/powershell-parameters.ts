@@ -212,6 +212,17 @@ const SHOULD_PROCESS: Record<string, PsParameter> = {
 
 const LITERAL_PATH: PsParameter = { aliases: ['pspath', 'lp'] };
 
+/**
+ * What every cmdlet that supports ShouldProcess has: the common parameters,
+ * -WhatIf and -Confirm. Not a whole signature (the cmdlet's own parameters are
+ * not here): read only `whatif` with it. A word it reads as -WhatIf is -WhatIf,
+ * or a prefix PowerShell refuses as ambiguous, and either way the cmdlet does
+ * nothing; `psHasUnknownParameter` means nothing on it (#693).
+ */
+export const SHOULD_PROCESS_CMDLET: PsSignature = {
+  parameters: { ...COMMON, ...SHOULD_PROCESS },
+};
+
 /** Remove-Item, and its aliases ri, rm, del, erase, rd, rmdir. */
 export const REMOVE_ITEM: PsSignature = {
   parameters: {
