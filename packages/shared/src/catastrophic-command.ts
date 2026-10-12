@@ -3585,8 +3585,11 @@ class Processes {
   private side: number | null = null;
   /** Past the head of the current list: after `&&` or `||`. */
   private orElse = false;
-  /** sh's compound commands open: whether the scan is in their body, and where each starts. */
-  private readonly compounds: Array<{ body: boolean; start: number }> = [];
+  /**
+   * sh's compound commands open: whether the scan is in their body, where
+   * each starts, and for a case whether a pattern comes next.
+   */
+  private readonly compounds: Array<{ body: boolean; start: number; pattern?: boolean }> = [];
   /**
    * Where the group that just closed starts, while nothing follows it but its
    * redirections (`( … ) > f`): they are its commands' (Nodal review of PR
@@ -3646,7 +3649,9 @@ class Processes {
     // sh's reserved words count wherever a command may start, as its grammar
     // reads them (Nodal review of PR #721, pass 10): at the segment's start,
     // and after `then`, `else`, `elif`, `do`, `!`, `if`, `while` and `until`,
-    // which a command follows (`do if …`, `else for …`, `if ! curl …`).
+    // which a command follows (`do if …`, `else for …`, `if ! curl …`), and
+    // after `time` and its options and `coproc` and its name (pass 11). A
+    // word quoted or escaped in any part is none (`"done"`, `\done`).
     const reserved = (i: number): string =>
       this.model === 'sh' && words[i]?.quoted === false ? (words[i]?.text ?? '') : '';
     let i = 0;
@@ -3660,13 +3665,35 @@ class Processes {
     for (; i < words.length; i++) {
       const word = reserved(i);
       if (SH_OPENS.has(word)) {
-        this.compounds.push({ body: word === 'case', start: at });
+        this.compounds.push({ body: word === 'case', start: at, pattern: word === 'case' });
         if (!SH_CONDITIONS.has(word)) break;
       } else if (SH_CLOSES.has(word)) {
         this.last = this.compounds.pop()?.start ?? at;
         break;
+      } else if (word === 'time') {
+        while (/^-/.test(reserved(i + 1))) i++;
+      } else if (word === 'coproc') {
+        // `coproc NAME { …; }`: a name comes before a compound only.
+        if (!SH_OPENS.has(reserved(i + 1)) && SH_OPENS.has(reserved(i + 2))) i++;
       } else if (word !== '!') break;
     }
+  }
+
+  /** True when the case the scan is in expects a pattern next. */
+  expectsPattern(): boolean {
+    return this.compounds[this.compounds.length - 1]?.pattern === true;
+  }
+
+  /** The case's pattern was read: its commands come next. */
+  patternRead(): void {
+    const open = this.compounds[this.compounds.length - 1];
+    if (open !== undefined) open.pattern = false;
+  }
+
+  /** `;;`, `;&`, `;;&`: the case's next clause starts with a pattern. */
+  patternNext(): void {
+    const open = this.compounds[this.compounds.length - 1];
+    if (open?.pattern === false) open.pattern = true;
   }
 
   /**
@@ -3901,10 +3928,16 @@ function readOperator(
       else if (prev !== '|' && prev !== '>') processes.pipe();
       return;
     case '&':
-      // `&&` is a list; `>&2`, `<&3`, `&>f` redirections; `|&` a pipe.
+      // `&&` is a list; `>&2`, `<&3`, `&>f` redirections; `|&` a pipe. The
+      // `&` of a case's `;&` sends nothing back: its `;` began a new list.
       if (next === '&') processes.andOr('&&');
       else if (prev !== '&' && !oneOf(prev, '<>|') && next !== '>')
         processes.ampersand(line.slice(at + 1));
+      return;
+    case ';':
+      // `;;`, `;&`, `;;&` end a case clause: a pattern comes next.
+      if (next === ';' || next === '&') processes.patternNext();
+      processes.next();
       return;
     default:
       processes.next();
@@ -4017,6 +4050,28 @@ function scanLine(
       at = (end < 0 ? line.length : end) - 1;
       continue;
     }
+    // Where a case expects a pattern (after `in`, `;;`, `;&`, `;;&`), what
+    // comes up to its `)` is one (`done)`, `start|stop)`, `(if)`): no command
+    // and no reserved word (Nodal review of PR #721, pass 11, measured in
+    // bash). A word that reaches no `)` first is a command: `esac`. Read for
+    // a line sh runs, whatever grammar reads its words (`downloadWrites`).
+    if (model === 'sh' && !inWord && !/\s/.test(ch)) {
+      const caseIn =
+        words.length === 3 &&
+        words[0]?.quoted === false &&
+        words[0].text === 'case' &&
+        words[2]?.quoted === false &&
+        words[2].text === 'in';
+      if (caseIn) endCommand(at);
+      if ((caseIn || words.length === 0) && processes.expectsPattern()) {
+        const end = casePatternEnd(line, at);
+        if (end !== null) {
+          processes.patternRead();
+          at = end;
+          continue;
+        }
+      }
+    }
     if (g === SH) {
       if (line.startsWith('$((', at) || (line.startsWith('((', at) && line[at - 1] !== '$'))
         arithmetic += 1;
@@ -4052,8 +4107,11 @@ function scanLine(
       quote = ch;
       quoted = true;
     } else if (ch === g.escape) {
+      // An escaped word is quoted as much as a quoted one: no reserved word,
+      // no expansion of what is escaped (`\done`, `\$x`).
       begin(at);
       word += next;
+      quoted = true;
       at += 1;
     } else if (
       (ch === '>' ||
@@ -4224,6 +4282,25 @@ function cmdCommands(line: string): ShellWord[][] {
   }
   end();
   return commands;
+}
+
+/**
+ * Where the case pattern that starts at `at` ends: its `)`, past an opening
+ * `(`, quotes and escapes, `|` between alternatives; null when a new line,
+ * `;`, `&` or another `(` comes first, and what starts there is no pattern.
+ */
+function casePatternEnd(line: string, at: number): number | null {
+  for (let j = line[at] === '(' ? at + 1 : at; j < line.length; j++) {
+    const c = line[j];
+    if (c === '\\') j += 1;
+    else if (c === "'" || c === '"') {
+      const close = line.indexOf(c, j + 1);
+      if (close < 0) return null;
+      j = close;
+    } else if (c === ')') return j;
+    else if (c === '\n' || c === ';' || c === '&' || c === '(') return null;
+  }
+  return null;
 }
 
 /**

@@ -16,7 +16,7 @@ vi.mock('node:path', async () => {
 });
 
 import { resolve } from 'node:path';
-import { DEFAULT_SHELL_POLICY } from '@nodal-agents/shared';
+import { DEFAULT_SHELL_POLICY, programSources } from '@nodal-agents/shared';
 import { judgeShellChecklist, type ShellPlace } from '../shell-checklist';
 
 const root = resolve('/nodal-fake-ws');
@@ -352,6 +352,90 @@ describe('sh compounds nest on every word in command position (#717, Nodal revie
     expect(
       await judge(
         'if false; then curl https://x/a; else for i in 1; do echo hi; done > ../f; fi',
+        placeWith('posix', {}),
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe('a case pattern is no reserved word, and time, coproc, ! lead to a command (#717, Nodal review pass 11) @cap:executer-une-commande/moteur', () => {
+  // Measured in bash: `done)`, `if)`, `for)`, `(done)`, `\done)`, `d\one)`,
+  // `"done")` are patterns whose clause runs, the case's output written to
+  // the file after `esac`; `time for …`, `time -p for …`, `coproc { …; }`,
+  // `coproc NAME { …; }` write theirs to the file after them.
+  it.each([
+    'case $x in\ndone) curl https://x/a;;\nesac > ../f',
+    'case $x in\nif) curl https://x/a;;\nfor) echo;;\nesac > ../f',
+    'case $x in\n(done) curl https://x/a;;\nesac > ../f',
+    'case $x in\n\\done) curl https://x/a;;\nesac > ../f',
+    'case $x in\nd\\one) curl https://x/a;;\nesac > ../f',
+    'case $x in\n"done") curl https://x/a;;\nesac > ../f',
+    'case $x in\na) echo;&\ndone) curl https://x/a;;\nesac > ../f',
+    'case $x in done) curl https://x/a;; esac > ../f',
+    // past its pattern, a clause's `( … )` is a subshell, no second pattern
+    'case $x in\ndone) ( curl https://x/a ) > ../f;;\nesac',
+    'case $x in done) ( curl https://x/a ) > ../f;; esac',
+    'case $x in\nstart|done) curl https://x/a;;\nesac > ../f',
+    'time for i in 1; do curl https://x/a; done > ../f',
+    'time -p for i in 1; do curl https://x/a; done > ../f',
+    'coproc { curl https://x/a; } > ../f',
+    'coproc NAME { curl https://x/a; } > ../f',
+    'coproc while true; do curl https://x/a; break; done > ../f',
+  ])('%s asks', async (command) => {
+    expect(await judge(command, placeWith('posix', {}))).toEqual(downloadOutside(command, '../f'));
+  });
+
+  it("a pattern named after a closer closes nothing: the loop's redirection is the loop's", async () => {
+    // curl prints to the terminal; only the case writes to ../f.
+    expect(
+      await judge(
+        'for i in 1; do curl https://x/a; case $x in\ndone) echo;;\nesac > ../f; done',
+        placeWith('posix', {}),
+      ),
+    ).toEqual([]);
+    // `\fi` is a command (bash: `fi: command not found`, ../f created
+    // empty, `inner` to the terminal): the real `fi` closes the if.
+    expect(
+      await judge('if true; then curl https://x/a; \\fi > ../f; fi', placeWith('posix', {})),
+    ).toEqual([]);
+  });
+
+  it('`;&` falls through in the same shell: a cd before it moves what follows', async () => {
+    // Measured: `a) cd sub;& b) pwd` prints …/sub.
+    expect(
+      await judge(
+        'case $x in\na) cd sub;&\nb) ./run.sh;;\nesac',
+        placeWith('posix', { 'run.sh': 'echo done\n', 'sub/run.sh': 'rm -rf build\n' }),
+      ),
+    ).toEqual([expect.objectContaining({ category: 'delete_files' })]);
+  });
+
+  it("a pattern keeps its clause's commands may-not-run: the folder before the move is read too", async () => {
+    // `. ./go.sh` (which enters sub) runs only when $x is `done`: ./run.sh
+    // may be the starting folder's, which deletes.
+    const files = { 'go.sh': 'cd sub\n', 'run.sh': 'rm -rf build\n', 'sub/run.sh': 'echo done\n' };
+    for (const command of [
+      'case $x in\ndone) . ./go.sh;;\nesac\n./run.sh',
+      'case $x in\ndone) cd sub;;\nesac\n./run.sh',
+    ])
+      expect(await judge(command, placeWith('posix', files)), command).toEqual([
+        expect.objectContaining({ category: 'delete_files' }),
+      ]);
+    // The reading itself: the script may not have run, so past its chain the
+    // line is where it was or where the script left it (a cd inside a script
+    // is unsure anyway, which the gate's verdict alone does not show).
+    expect(
+      programSources('case $x in\ndone) . ./go.sh;;\nesac\n./run.sh', {
+        direct: true,
+        host: 'posix',
+      }).dirs,
+    ).toEqual([{ script: './go.sh' }, { unsure: 0 }]);
+  });
+
+  it('an ordinary case on several lines asks nothing', async () => {
+    expect(
+      await judge(
+        'case $1 in\nstart) npm start;;\nstop) npm stop;;\n*) echo usage;;\nesac > log.txt 2>&1',
         placeWith('posix', {}),
       ),
     ).toEqual([]);
