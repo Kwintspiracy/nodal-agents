@@ -117,6 +117,25 @@ describe('a folder move made in a child process stays there (#717) @cap:executer
     });
   });
 
+  it.each([
+    'Start-Job { cd decoy }; .\\x.ps1',
+    'Start-Job -ScriptBlock { Set-Location decoy }; .\\x.ps1',
+    'sajb { cd decoy }; .\\x.ps1',
+    '$j = Start-Job { cd decoy }; .\\x.ps1',
+    '$j=Start-Job { cd decoy }; .\\x.ps1',
+    'Start-ThreadJob { cd decoy }; .\\x.ps1',
+    '1..3 | ForEach-Object -Parallel { cd decoy }; .\\x.ps1',
+    '1..3 | % -Parallel { cd decoy }; .\\x.ps1',
+    '1..3 | foreach -Pa { cd decoy }; .\\x.ps1',
+    'Invoke-Command -ComputerName srv { cd decoy }; .\\x.ps1',
+    'icm -Session $s -ScriptBlock { cd decoy }; .\\x.ps1',
+    'Invoke-Command -AsJob { cd decoy }; .\\x.ps1',
+  ])('PowerShell: a script block run in another runspace or process: %s', (cmd) => {
+    const { dirs, after } = read(cmd, 'windows', 'powershell');
+    expect(after['.\\x.ps1']).toBeDefined();
+    expect(inForce(dirs, after['.\\x.ps1'])).not.toContain('decoy');
+  });
+
   it("a child's moves still reach its own later commands", () => {
     expect(read('bash -c "cd sub && ./x.sh" && ./y.sh', 'posix')).toEqual({
       dirs: [SAVE, 'sub', RESTORE],
@@ -150,10 +169,38 @@ describe("a folder move made in the line's own process moves it (#717) @cap:exec
     ["iex 'cd decoy'; .\\x.ps1", 'windows', '.\\x.ps1', 'powershell'],
     ['& { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
     ['Get-Item a | ForEach-Object { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    ['1..3 | % -Process { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    ['foreach ($d in $a) { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    ['Invoke-Command { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    ['Invoke-Command -NoNewScope { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
   ] as const)('%s', (cmd, host, file, reader) => {
     const { dirs, after } = read(cmd, host, reader);
     expect(after[file]).toBeDefined();
     expect(inForce(dirs, after[file])).toContain('decoy');
+  });
+
+  it('sh: what only bash runs in its own process leaves the folder unknown', () => {
+    // The posix host's /bin/sh is dash on Debian and Ubuntu, bash elsewhere:
+    // dash has no `source` and no `builtin`, and its `time` is a program.
+    // Whether they ran what they name in the line's process, the text does
+    // not say. `.` is POSIX: certain.
+    expect(read('source env.sh && ./x.sh', 'posix')).toEqual({
+      dirs: [null],
+      after: { 'env.sh': 0, './x.sh': 1 },
+    });
+    expect(read('time cd decoy; ./x.sh', 'posix')).toEqual({
+      dirs: [null],
+      after: { './x.sh': 1 },
+    });
+    expect(read('builtin cd decoy; ./x.sh', 'posix')).toEqual({
+      dirs: [null],
+      after: { './x.sh': 1 },
+    });
+    // what they start in a process of its own stays there
+    expect(read('time bash -c "cd decoy"; ./x.sh', 'posix')).toEqual({
+      dirs: [SAVE, 'decoy', RESTORE],
+      after: { './x.sh': 3 },
+    });
   });
 
   it('a PowerShell subexpression read twice, when it is not quoted, leaves the folder unknown', () => {
@@ -176,11 +223,7 @@ describe("a script run in the line's own process leaves it where it ends (#717) 
     });
   });
 
-  it('sh: what `.` and `source` read; a script run directly is a child', () => {
-    expect(read('source env.sh && ./x.sh', 'posix')).toEqual({
-      dirs: [script('env.sh')],
-      after: { 'env.sh': 0, './x.sh': 1 },
-    });
+  it('sh: what `.` reads; a script run directly is a child', () => {
     expect(read('. ./env.sh; ./x.sh', 'posix')).toEqual({
       dirs: [script('./env.sh')],
       after: { './env.sh': 0, './x.sh': 1 },
@@ -309,10 +352,19 @@ describe('where a download lands follows the same folder moves (#717) @cap:execu
       dirs: [script('setup.bat')],
       after: [1],
     });
-    expect(writes('source env.sh && curl -o a.zip https://x/a', 'posix')).toEqual({
-      dirs: [script('env.sh')],
+    expect(writes('. ./env.sh && curl -o a.zip https://x/a', 'posix')).toEqual({
+      dirs: [script('./env.sh')],
       after: [1],
     });
+    // `source`: only bash has it; where the line is after it is not known
+    expect(writes('source env.sh && curl -o a.zip https://x/a', 'posix')).toEqual({
+      dirs: [null],
+      after: [1],
+    });
+    // a job's script block keeps its location to itself
+    expect(
+      writes('Start-Job { cd .. }; iwr https://x/a -OutFile a.zip', 'windows', 'powershell'),
+    ).toEqual({ dirs: [SAVE, '..', RESTORE], after: [3] });
     expect(writes('.\\env.ps1; iwr https://x/a -OutFile a.zip', 'windows', 'powershell')).toEqual({
       dirs: [script('.\\env.ps1')],
       after: [1],

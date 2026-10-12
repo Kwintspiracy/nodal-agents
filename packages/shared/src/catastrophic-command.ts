@@ -32,6 +32,8 @@ import {
   psSwitch,
   psValues,
   type PsSignature,
+  FOREACH_OBJECT,
+  INVOKE_COMMAND,
 } from './powershell-parameters';
 import { SHELLS } from './shell-programs';
 
@@ -2474,40 +2476,38 @@ RUNS_ANOTHER['gtimeout'] = RUNS_ANOTHER['timeout'] as (typeof RUNS_ANOTHER)[stri
 RUNS_ANOTHER['proxychains4'] = RUNS_ANOTHER['proxychains'] as (typeof RUNS_ANOTHER)[string];
 
 /**
- * The programs of `RUNS_ANOTHER` that run what they name in the process of the
- * shell that reads them, per shell (#717): its own builtins and keywords. Any
- * other one starts a process of its own (`cmd /c`, `bash -c`, `powershell
- * -Command`, `sudo`, `env`, `xargs`, `find -exec`, `start`, `nohup`, `exec`…),
- * or, named in a shell that does not have it, runs nothing: either way, a
- * folder it moves into is not the line's. The sh reading is bash's, as
- * everywhere in this file (`[[`, `coproc`): `source`, `time` and `builtin`
- * are its own. PowerShell's call operator `&` keeps its runspace; read with
- * PowerShell's grammar for another shell's line (`downloadWrites`), it only
- * marks where the next command starts, in the same process.
+ * Where the programs of `RUNS_ANOTHER` run what they name, per shell that
+ * reads them (#717):
+ * - `own`: in that shell's process, its own builtins and keywords;
+ * - `not-known`: in its process in one shell the host may be, not in another.
+ *   The posix host's /bin/sh is dash on Debian and Ubuntu, bash elsewhere:
+ *   dash has no `source` and no `builtin`, and its `time` is a program. A
+ *   folder moved there, or a script sourced, leaves the line in a folder the
+ *   text does not establish (invariant #4). `.` is POSIX: `own`.
+ * Any other one starts a process of its own (`cmd /c`, `bash -c`,
+ * `powershell -Command`, `sudo`, `env`, `xargs`, `find -exec`, `start`,
+ * `nohup`, `exec`…), or, named in a shell that does not have it, runs
+ * nothing: either way, a folder it moves into is not the line's. PowerShell's
+ * call operator `&` keeps its runspace; read with PowerShell's grammar for
+ * another shell's line (`downloadWrites`), it only marks where the next
+ * command starts, in the same process.
  */
-const RUNS_IN_PROCESS: Record<LineShell, ReadonlySet<string>> = {
-  sh: new Set([
-    'eval',
-    'source',
-    '.',
-    'command',
-    'builtin',
-    'time',
-    'do',
-    'then',
-    'else',
-    'elif',
-    'if',
-    'while',
-    'until',
-    '!',
-    '&',
+const RUNS_IN_PROCESS: Record<LineShell, ReadonlyMap<string, 'own' | 'not-known'>> = {
+  sh: new Map([
+    ...['eval', '.', 'command', 'do', 'then', 'else', 'elif', 'if', 'while', 'until', '!', '&'].map(
+      (name) => [name, 'own'] as const,
+    ),
+    ...['source', 'builtin', 'time'].map((name) => [name, 'not-known'] as const),
   ]),
   // `do` and `else` start the command of a `for` and an `if` once their
   // parentheses have cut the line (`for %d in (a) do cd %d`).
-  cmd: new Set(['call', 'for', 'if', 'do', 'else', '&']),
-  powershell: new Set(['iex', 'invoke-expression', '&', '.', 'if', 'else', 'while', 'do', 'until']),
-  exec: new Set(),
+  cmd: new Map(['call', 'for', 'if', 'do', 'else', '&'].map((name) => [name, 'own'] as const)),
+  powershell: new Map(
+    ['iex', 'invoke-expression', '&', '.', 'if', 'else', 'while', 'do', 'until'].map(
+      (name) => [name, 'own'] as const,
+    ),
+  ),
+  exec: new Map(),
 };
 
 /**
@@ -2745,7 +2745,9 @@ const IN_PROCESS_SCRIPTS = new WeakSet<readonly string[]>();
 /**
  * The units whose folder move the reading cannot tell: a line whose shell is
  * not known, read as both, where they disagree; a PowerShell subexpression,
- * read twice (#717). A folder they would move into is unknown (null).
+ * read twice; what a program runs whose process depends on which shell the
+ * host has (`source`, `RUNS_IN_PROCESS`) (#717). A folder they would move
+ * into is unknown (null).
  */
 const FOLDER_UNKNOWN = new WeakSet<readonly string[]>();
 
@@ -3008,18 +3010,22 @@ function wordUnits(
       }
     }
     // What a program of the shell's own runs stays in its process; any other
-    // program starts one, where what it runs moves no folder of the line (#717).
-    const own = RUNS_IN_PROCESS[model].has(name);
+    // program starts one, where what it runs moves no folder of the line. One
+    // whose process depends on which shell the host has moves it to a folder
+    // not known (#717, `RUNS_IN_PROCESS`).
+    const runs = RUNS_IN_PROCESS[model].get(name);
     for (const payload of RUNS_ANOTHER[name]?.(args, shell) ?? []) {
       const read =
         'line' in payload
-          ? commandUnits(payload.line, depth + 1, payload.shell, own ? model : undefined)
+          ? commandUnits(payload.line, depth + 1, payload.shell, runs ? model : undefined)
           : wordUnits(payload.words, depth + 1, payload.shell, {
               invoked: payload.invoked === true,
               sourced: payload.sourced === true,
-              ...(own ? { model } : {}),
+              ...(runs ? { model } : {}),
             });
-      if (!own) runIn(read, [newProcess()]);
+      if (runs === undefined) runIn(read, [newProcess()]);
+      else if (runs === 'not-known')
+        for (const unit of read) if (!UNIT_PROCESS.has(unit)) FOLDER_UNKNOWN.add(unit);
       units.push(...read);
     }
     if (name === namedAfter) for (const unit of units.slice(from)) NAMED_AFTER_UNITS.add(unit);
@@ -3346,8 +3352,10 @@ const COMMAND_PROCESS = new WeakMap<readonly ShellWord[], readonly number[]>();
  * - cmd: each side of a pipe; its `( … )` blocks run in its process, after an
  *   `if`, a `for`, an `else` or where a command starts; elsewhere a
  *   parenthesis, like `$(` and a brace, is text, where nothing runs;
- * - PowerShell: a pipeline sent to the background with a final `&`; pipes,
- *   `( … )`, `$( … )` and `{ … }` run in its own runspace.
+ * - PowerShell: a pipeline sent to the background with a final `&`, and the
+ *   script block of a command that runs it in another runspace or process
+ *   (`runsBlockApart`); pipes, `( … )`, `$( … )` and any other `{ … }` run in
+ *   its own runspace.
  */
 class Processes {
   /** The groups open, each a child process or not, with the list it is part of. */
@@ -3381,9 +3389,10 @@ class Processes {
 
   /**
    * An opening `(` or `{`. `kind`: `$(`, `@(`, `<(`, `>(` are substitutions;
-   * a `(` is at a command's start or after a word (`head`, the command's first).
+   * a `(` is at a command's start or after a word. `command`: the words of the
+   * command written before it, as written.
    */
-  open(kind: 'substitution' | 'start' | 'after-word' | 'brace', head: string): void {
+  open(kind: 'substitution' | 'start' | 'after-word' | 'brace', command: readonly string[]): void {
     let child: boolean;
     switch (this.model) {
       case 'sh':
@@ -3393,7 +3402,11 @@ class Processes {
         child =
           kind === 'substitution' ||
           kind === 'brace' ||
-          (kind === 'after-word' && !['if', 'for', 'else', 'do'].includes(head));
+          (kind === 'after-word' &&
+            !['if', 'for', 'else', 'do'].includes((command[0] ?? '').toLowerCase()));
+        break;
+      case 'powershell':
+        child = kind === 'brace' && runsBlockApart(command);
         break;
       default:
         child = false;
@@ -3446,20 +3459,64 @@ class Processes {
   }
 }
 
+/**
+ * True when a PowerShell command runs the script block it is given in another
+ * runspace or process, where a location it sets is not the line's (#717):
+ * `Start-Job` (`sajb`) and `Start-ThreadJob`, `ForEach-Object -Parallel` (`%`,
+ * `foreach`), and `Invoke-Command` (`icm`) on a computer, a session, a VM, a
+ * container, an SSH host, or as a job; a plain `ForEach-Object` or
+ * `Invoke-Command` runs it in the caller's runspace. `command`: its words
+ * before the block, after an assignment (`$j = Start-Job`).
+ */
+function runsBlockApart(command: readonly string[]): boolean {
+  let words = [...command];
+  const glued = /^\$[\w:]+=(.+)$/.exec(words[0] ?? '');
+  if (glued) words = [glued[1] ?? '', ...words.slice(1)];
+  else if ((words[0] ?? '').startsWith('$') && words[1] === '=') words = words.slice(2);
+  const [head = '', ...args] = words;
+  const bindsOne = (sig: PsSignature, names: readonly string[]): boolean =>
+    bindPsArguments(args, sig).some((b) => b.names?.some((n) => names.includes(n)) === true);
+  switch (head.toLowerCase()) {
+    case 'start-job':
+    case 'sajb':
+    case 'start-threadjob':
+      return true;
+    case 'foreach-object':
+    case '%':
+    case 'foreach':
+      return bindsOne(FOREACH_OBJECT, ['parallel']);
+    case 'invoke-command':
+    case 'icm':
+      return bindsOne(INVOKE_COMMAND, [
+        'computername',
+        'session',
+        'connectionuri',
+        'vmid',
+        'vmname',
+        'containerid',
+        'hostname',
+        'sshconnection',
+        'asjob',
+        'indisconnectedsession',
+      ]);
+    default:
+      return false;
+  }
+}
+
 /** True when `ch` is one of `set` (never the empty string). */
 const oneOf = (ch: string, set: string): boolean => ch !== '' && set.includes(ch);
 
 /**
  * What one operator of a line read with sh's or PowerShell's grammar says of
- * the processes its commands run in (`Processes`). `startsCommand`: nothing
- * of a command was written before it; `head`: that command's first word.
+ * the processes its commands run in (`Processes`). `command`: the words of the
+ * command written before it, none when it starts one.
  */
 function readOperator(
   processes: Processes,
   line: string,
   at: number,
-  startsCommand: boolean,
-  head: string,
+  command: readonly string[],
 ): void {
   const ch = line[at] ?? '';
   const prev = line[at - 1] ?? '';
@@ -3467,12 +3524,12 @@ function readOperator(
   switch (ch) {
     case '(':
       processes.open(
-        oneOf(prev, '$@<>') ? 'substitution' : startsCommand ? 'start' : 'after-word',
-        head,
+        oneOf(prev, '$@<>') ? 'substitution' : command.length === 0 ? 'start' : 'after-word',
+        command,
       );
       return;
     case '{':
-      processes.open('brace', head);
+      processes.open('brace', command);
       return;
     case ')':
     case '}':
@@ -3622,10 +3679,9 @@ function scanLine(
       word += next;
       at += 1;
     } else if (g.separators.includes(ch)) {
-      const startsCommand = words.length === 0 && !inWord;
-      const head = (words[0]?.text ?? (inWord ? word : '')).toLowerCase();
+      const command = [...words.map((w) => w.text), ...(inWord ? [word] : [])];
       endCommand(at, ch);
-      readOperator(processes, line, at, startsCommand, head);
+      readOperator(processes, line, at, command);
       // The line that opened here-documents ends: their bodies follow, each
       // up to its end marker, outside the script's grammar.
       if (ch === '\n' && pending.length > 0) {
@@ -3727,11 +3783,7 @@ function cmdCommands(line: string): ShellWord[][] {
     } else if ('&|\n\r()'.includes(ch)) {
       const before = text(current).trim();
       end();
-      if (ch === '(')
-        processes.open(
-          before === '' ? 'start' : 'after-word',
-          (before.split(/\s+/)[0] ?? '').toLowerCase(),
-        );
+      if (ch === '(') processes.open(before === '' ? 'start' : 'after-word', before.split(/\s+/));
       else if (ch === ')') processes.close();
       else if (ch === '|') {
         // `||` runs the next command when this one fails, in the same process.

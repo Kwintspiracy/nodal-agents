@@ -119,6 +119,24 @@ describe("a script run in the line's own process leaves the line where it ends (
     expect(await kinds('bash env.sh && ./cleanup.sh', placeWith('posix', files))).toEqual([]);
   });
 
+  it('sh: after `source`, which only bash has, the folder is not known: what follows asks', async () => {
+    // env.sh stays where it is: in bash, cleanup.sh runs from the starting
+    // folder; in dash, `source` does not exist. The text cannot say which.
+    const command = 'source ./env.sh; ./cleanup.sh';
+    const reasons = await judge(
+      command,
+      placeWith('posix', { 'env.sh': 'echo ready\n', 'cleanup.sh': HARMLESS.sh }),
+    );
+    expect(reasons).toEqual([
+      {
+        category: 'inline_code',
+        state: 'ask',
+        details: [command],
+        unread: [{ source: './cleanup.sh', why: 'decided_at_run_time' }],
+      },
+    ]);
+  });
+
   it('PowerShell: a .ps1 a script runs leaves it in the location the .ps1 ends in', async () => {
     const files = {
       'run.ps1': '.\\env.ps1\n.\\cleanup.ps1\n',
@@ -136,6 +154,28 @@ describe("a script run in the line's own process leaves the line where it ends (
         placeWith('windows', { ...files, 'run.ps1': 'powershell -File env.ps1\n.\\cleanup.ps1\n' }),
       ),
     ).toEqual([]);
+    // So does a job, a thread job, a parallel ForEach-Object, a remote command.
+    for (const run of [
+      'Start-Job { Set-Location sub }\n.\\cleanup.ps1\n',
+      'Start-ThreadJob { Set-Location sub }\n.\\cleanup.ps1\n',
+      '1..2 | ForEach-Object -Parallel { Set-Location sub }\n.\\cleanup.ps1\n',
+      'Invoke-Command -ComputerName srv { Set-Location sub }\n.\\cleanup.ps1\n',
+    ]) {
+      expect(
+        await kinds('powershell -File run.ps1', placeWith('windows', { ...files, 'run.ps1': run })),
+        run,
+      ).toEqual([]);
+    }
+    // A plain ForEach-Object runs its block in the runspace: it moves it.
+    expect(
+      await kinds(
+        'powershell -File run.ps1',
+        placeWith('windows', {
+          ...files,
+          'run.ps1': '1..2 | ForEach-Object { Set-Location sub }\n.\\cleanup.ps1\n',
+        }),
+      ),
+    ).toEqual(['delete_files']);
   });
 
   it('a script of the line that is not read leaves the folder unknown: what follows asks', async () => {

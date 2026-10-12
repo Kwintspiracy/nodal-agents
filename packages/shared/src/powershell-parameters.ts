@@ -348,6 +348,74 @@ export const INVOKE_EXPRESSION: PsSignature = {
   parameters: { command: {}, ...COMMON },
 };
 
+/** ForEach-Object (%, foreach): `-Parallel` runs its block in other runspaces (#717). */
+export const FOREACH_OBJECT: PsSignature = {
+  parameters: {
+    inputobject: {},
+    begin: {},
+    process: {},
+    end: {},
+    remainingscripts: {},
+    membername: {},
+    argumentlist: { aliases: ['args'] },
+    parallel: {},
+    throttlelimit: {},
+    timeoutseconds: {},
+    asjob: { switch: true },
+    usenewrunspace: { switch: true },
+    ...SHOULD_PROCESS,
+    ...COMMON,
+  },
+};
+
+/**
+ * Invoke-Command (icm): a computer, a session, a VM, a container, an SSH host
+ * or a job runs its block in another process (#717); without one, it runs in
+ * the caller's runspace.
+ */
+export const INVOKE_COMMAND: PsSignature = {
+  parameters: {
+    scriptblock: { aliases: ['command'] },
+    filepath: { aliases: ['pspath'] },
+    argumentlist: { aliases: ['args'] },
+    inputobject: {},
+    computername: { aliases: ['cn'] },
+    session: {},
+    connectionuri: { aliases: ['uri', 'cu'] },
+    vmid: { aliases: ['vmguid'] },
+    vmname: {},
+    containerid: {},
+    hostname: {},
+    sshconnection: {},
+    asjob: { switch: true },
+    indisconnectedsession: { aliases: ['disconnected'], switch: true },
+    sessionname: {},
+    hidecomputername: { aliases: ['hcn'], switch: true },
+    jobname: {},
+    credential: {},
+    port: {},
+    usessl: { switch: true },
+    configurationname: {},
+    applicationname: {},
+    throttlelimit: {},
+    sessionoption: {},
+    authentication: {},
+    enablenetworkaccess: { switch: true },
+    certificatethumbprint: {},
+    allowredirection: { switch: true },
+    nonewscope: { switch: true },
+    runasadministrator: { switch: true },
+    username: {},
+    keyfilepath: { aliases: ['identityfilepath'] },
+    sshtransport: { switch: true },
+    subsystem: {},
+    connectingtimeout: {},
+    remotedebug: { switch: true },
+    options: {},
+    ...COMMON,
+  },
+};
+
 /**
  * The powershell / pwsh command line (`about_Pwsh`, `about_PowerShell_exe`).
  * The first positional word is a script for pwsh, a command for Windows
