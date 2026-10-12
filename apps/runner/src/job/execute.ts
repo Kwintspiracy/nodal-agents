@@ -154,6 +154,8 @@ import {
   CANCEL_UNDO_INTENT_SCAN_CHARS,
   VERIFY_BEFORE_ASSERT_NUDGE,
   readFinalReviewVerdict,
+  readChildDeliverables,
+  deliveredSomething,
   isSameAgentRetryBlocked,
   retryBlockedMessage,
   remainingDelegationHops,
@@ -6682,12 +6684,12 @@ async function runJobTracked(
           // texte d'assistant, et `completeJob` sait le compiler. Échouer ici
           // rendait un « vide » sur du contenu qui existe, et empêchait
           // précisément la compilation d'avoir lieu (revue Codex de la PR #108,
-          // constat 5). On demande donc à la base, pas à la transcription.
-          const childDeliverables = await db
-            .select({ result: agentJobs.result })
-            .from(agentJobs)
-            .where(eq(agentJobs.parentJobId, jobId as string));
-          const aChildDelivered = childDeliverables.some((r) => (r.result ?? '').trim() !== '');
+          // constat 5). On demande donc à la base, pas à la transcription — et
+          // au lecteur unique de « ce qu'un job a livré » (#646), le même que
+          // la compilation : un enfant qui n'a livré qu'un verdict a livré.
+          const aChildDelivered = (await readChildDeliverables(db, jobId as string)).some(
+            deliveredSomething,
+          );
           // Un verdict de revue ENREGISTRÉ est un livrable (issue #124) : il est
           // validé par le schéma de l'outil, il voyage dans le record typé de la
           // délégation, et il est plus précis que la phrase que l'agent aurait

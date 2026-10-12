@@ -5,10 +5,10 @@ import { eq, and } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import type { JobFailureHint } from '@nodal-agents/shared';
 import { OrchestrationError } from '../errors';
-import { reviewBlocksDelivery, REVIEW_CHANGES_REQUESTED } from '@nodal-agents/shared';
+import { REVIEW_CHANGES_REQUESTED } from '@nodal-agents/shared';
 import { nextFailedDelegationState, failedDelegationGuidance } from './failed-delegation';
-import { readDeliveredReviewVerdict } from './review-verdict';
-import type { ReviewVerdictRecord } from './review-verdict';
+import { readJobDeliverable, verdictsBlockDelivery } from './job-deliverable';
+import type { AuthoredReviewVerdict } from './job-deliverable';
 import { filesTheChildWrote, readFilesWrittenBy } from './delegated-files';
 import type { DelegatedFile } from './delegated-files';
 import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types';
@@ -34,20 +34,24 @@ export interface DelegationOutcomeRecord {
   /** Tools the child actually ran, so the parent can see what was attempted. */
   tools_used?: string[];
   /**
-   * Le verdict de revue que l'enfant a ENREGISTRÉ, quand il en a enregistré un
-   * (issue #124). `summary` reste la dernière phrase du modèle ; ce champ, lui,
-   * porte ce que l'outil `review_verdict` a validé — verdict, résumé, constats.
-   * `null` sur l'immense majorité des délégations, qui ne sont pas des revues.
+   * Les verdicts de revue livrés dans le SOUS-ARBRE de l'enfant, chacun avec
+   * son auteur — slug d'agent et id de job (issues #124, #646). `summary` reste
+   * la dernière phrase du modèle ; ce champ porte ce que l'outil
+   * `review_verdict` a validé. Le verdict de l'enfant s'il en a enregistré un,
+   * sinon ceux de sa descendance : un intermédiaire qui relaie (root → Lead →
+   * relecteur) ne fait plus disparaître le verdict d'en dessous. Lus par
+   * `readJobDeliverables`, seul lecteur de « ce qu'un job a livré ».
+   * `[]` sur l'immense majorité des délégations, qui ne sont pas des revues.
    */
-  review_verdict?: ReviewVerdictRecord | null;
+  review_verdicts?: AuthoredReviewVerdict[];
   /**
-   * Ce que la relecture INTERDIT (#59). `review_changes_requested` quand
-   * l'enfant a enregistré un verdict `request_changes` : le parent ne peut pas
-   * conclure que le travail est livré, et il reçoit ce fait typé plutôt qu'une
-   * phrase à interpréter dans le résumé.
+   * Ce que la relecture INTERDIT (#59). `review_changes_requested` dès qu'UN
+   * des verdicts portés demande des corrections (`verdictsBlockDelivery`) : le
+   * parent ne peut pas conclure que le travail est livré, et il reçoit ce fait
+   * typé plutôt qu'une phrase à interpréter dans le résumé.
    *
-   * `null` partout ailleurs — une délégation ordinaire, ou une relecture qui
-   * approuve, n'interdit rien.
+   * `null` partout ailleurs — une délégation ordinaire, ou des relectures qui
+   * approuvent toutes, n'interdisent rien.
    */
   delivery_blocked?: typeof REVIEW_CHANGES_REQUESTED | null;
   /**
@@ -157,10 +161,10 @@ export function renderDelegationOutcome(result: DelegationOutcomeRecord): string
       error: result.error ?? null,
       exit_reason: result.exit_reason ?? null,
       tools_used: result.tools_used ?? [],
-      // Tous TOUJOURS présents, `null` quand il n'y a pas eu de revue, que
-      // rien n'est interdit ou qu'aucun geste n'est nommé : un champ qui
+      // Tous TOUJOURS présents, `[]` / `null` quand il n'y a pas eu de revue,
+      // que rien n'est interdit ou qu'aucun geste n'est nommé : un champ qui
       // apparaît et disparaît se lit comme une absence de contrat.
-      review_verdict: result.review_verdict ?? null,
+      review_verdicts: result.review_verdicts ?? [],
       delivery_blocked: result.delivery_blocked ?? null,
       hint: result.hint ?? null,
       // Toujours présent, `[]` quand le sous-arbre n'a rien à dire — même
@@ -256,61 +260,41 @@ export function parseDelegationOutcomePayload(payload: string): DelegationOutcom
 }
 
 /**
- * Attache au record le verdict que l'enfant a enregistré, s'il en a enregistré
- * un. Le verdict déjà porté par l'appelant l'emporte — il l'a lu de plus près.
+ * Pose sur le record les verdicts livrés dans le sous-arbre de l'enfant, et ce
+ * qu'ils interdisent (#59) — lus par `readJobDeliverable`, le lecteur unique de
+ * « ce qu'un job a livré » (#646). Toujours relus ici : aucun appelant ne les
+ * fournit, et une seconde source serait une seconde réponse.
  *
- * Une ligne illisible ne remonte PAS en exception : elle deviendrait une sortie
- * de `resumeDelegated` AVANT la mise à jour du parent, qui resterait
- * `awaiting_delegation` avec un appel d'outil sans réponse, et personne ne
- * serait prévenu (revue de la PR #170, constat 2). La délégation devient donc
- * un ÉCHEC nommé : le parent reçoit le `error-text` des délégations ratées,
- * avec le code, et peut agir. Fort et à la bonne place.
- *
- * Le verdict lu POSE AUSSI ce qu'il interdit (#59) : un `request_changes`
- * remplit `delivery_blocked`, si bien que le parent lit dans un CHAMP — et non
- * entre les lignes d'un résumé — qu'il ne peut pas conclure à une livraison.
+ * Une ligne illisible dans le sous-arbre ne remonte PAS en exception : elle
+ * deviendrait une sortie de `resumeDelegated` AVANT la mise à jour du parent,
+ * qui resterait `awaiting_delegation` avec un appel d'outil sans réponse, et
+ * personne ne serait prévenu (revue de la PR #170, constat 2). La délégation
+ * devient donc un ÉCHEC nommé : le parent reçoit le `error-text` des
+ * délégations ratées, avec le code, et peut agir. Fort et à la bonne place.
  */
-async function withDeliveredReviewVerdict(
+async function withDeliveredReviewVerdicts(
   outcome: DelegationOutcomeRecord,
   childJobId: JobId,
   db: AnyDrizzleDb,
 ): Promise<DelegationOutcomeRecord> {
-  if (outcome.review_verdict) return withDeliveryBlock(outcome);
-  try {
-    return withDeliveryBlock({
-      ...outcome,
-      review_verdict: await readDeliveredReviewVerdict(db, childJobId),
-    });
-  } catch (err) {
-    if (!(err instanceof OrchestrationError) || err.code !== 'review_verdict_malformed') throw err;
-    console.error(
-      `[resume] child ${childJobId} recorded an unreadable review_verdict — the delegation is reported as failed:`,
-      err,
-    );
+  const delivered = await readJobDeliverable(db, childJobId as string);
+  if (delivered && delivered.unreadable_review_verdicts.length > 0) {
     return {
       ...outcome,
       status: 'failed',
       error: 'review_verdict_malformed',
-      review_verdict: null,
+      review_verdicts: [],
       delivery_blocked: null,
     };
   }
-}
-
-/**
- * Pose sur le record ce que sa relecture interdit — une seule lecture de la
- * règle (`reviewBlocksDelivery`), partagée avec l'écran.
- *
- * Le champ est TOUJOURS écrit, `null` compris : un parent qui reçoit un
- * résultat sans ce champ ne saurait pas s'il n'y a rien à dire ou si personne
- * ne l'a regardé.
- */
-function withDeliveryBlock(outcome: DelegationOutcomeRecord): DelegationOutcomeRecord {
+  const verdicts = delivered?.review_verdicts ?? [];
   return {
     ...outcome,
-    delivery_blocked: reviewBlocksDelivery(outcome.review_verdict)
-      ? REVIEW_CHANGES_REQUESTED
-      : null,
+    review_verdicts: verdicts,
+    // Le champ est TOUJOURS écrit, `null` compris : un parent qui reçoit un
+    // résultat sans ce champ ne saurait pas s'il n'y a rien à dire ou si
+    // personne ne l'a regardé.
+    delivery_blocked: verdictsBlockDelivery(verdicts) ? REVIEW_CHANGES_REQUESTED : null,
   };
 }
 
@@ -342,8 +326,8 @@ function childSlugFromToolName(toolName: string): string | null {
  * 5. Set parent.status = 'pending', clear pending_delegation
  *
  * @param parentJobId  The ID of the waiting parent job
- * @param childJobId   The ID of the completed child job — read for its
- *                     `review_verdict` rows (#124), and for logging/audit
+ * @param childJobId   The ID of the completed child job — read for the
+ *                     verdicts of its subtree (#124, #646), and for logging/audit
  * @param childOutcome The child's text result, OR `{error}` if the child failed
  * @param db           Drizzle DB handle
  * @returns            Updated parent job row
@@ -463,12 +447,17 @@ export async function resumeDelegated(
   // results (string) and 'error-text' for the deferred-sibling markers (which
   // carry is_error=true so the LLM treats them as failures, not normal results).
   type ToolResultOutput = { type: 'text'; value: string } | { type: 'error-text'; value: string };
-  // Le livrable d'une revue est le verdict que l'enfant a enregistré, pas la
-  // phrase par laquelle il l'annonce (issue #124). On le lit sur ses lignes
-  // `tool_calls` et on le met dans le record TYPÉ, seul objet que le parent
-  // reçoive : sans cela le parent redélègue la même revue.
+  // Le livrable d'une revue est le verdict enregistré, pas la phrase par
+  // laquelle on l'annonce (issue #124), et il traverse les relais (#646). On le
+  // lit sur les lignes `tool_calls` du sous-arbre et on le met dans le record
+  // TYPÉ, seul objet que le parent reçoive : sans cela le parent redélègue la
+  // même revue.
   const outcome = {
-    ...(await withDeliveredReviewVerdict(normalizeDelegationOutcome(childOutcome), childJobId, db)),
+    ...(await withDeliveredReviewVerdicts(
+      normalizeDelegationOutcome(childOutcome),
+      childJobId,
+      db,
+    )),
     // Relu ICI, point de passage de toute issue de délégation qu'un parent
     // ATTEND — l'enfant exécuté en ligne, celui qu'un runner mort laisse au
     // faucheur, celui qu'une approbation reprend plus tard : un seul endroit,

@@ -107,7 +107,6 @@ export type {
 
 // ─── Router: le verdict de revue est un livrable (#124) ───────────────────────
 export {
-  readDeliveredReviewVerdict,
   readFinalReviewVerdict,
   parseReviewVerdictOutput,
   // #59 — la règle qui dit si une relecture demande des corrections, et le
@@ -118,6 +117,22 @@ export {
   REVIEW_CHANGES_REQUESTED,
 } from './router/review-verdict';
 export type { ReviewVerdictRecord, ReviewVerdictFinding } from './router/review-verdict';
+
+// ─── Router: ce qu'un job a livré, lu en un seul endroit (#646) ───────────────
+export {
+  readJobDeliverables,
+  readJobDeliverable,
+  readChildDeliverables,
+  deliveredSomething,
+  verdictsBlockDelivery,
+  renderDeliveredVerdicts,
+  appendDeliveredVerdicts,
+} from './router/job-deliverable';
+export type {
+  JobDeliverable,
+  AuthoredReviewVerdict,
+  VerdictAuthor,
+} from './router/job-deliverable';
 
 // ─── Router: pas de seconde revue de la même chose (#173) ─────────────────────
 export {
