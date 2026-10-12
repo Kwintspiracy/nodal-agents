@@ -145,14 +145,20 @@ function samePlace(a: string, b: string): boolean {
 const UNREADABLE_TARGET = 'a path decided when the command runs';
 
 /**
- * Where a file a command names is, from the folder `base` it runs from. A
- * backslash is a folder separator for cmd and PowerShell, which run on Linux
- * too: `.\setup.ps1` names the same file on every OS. The text is judged, not
- * the machine (#669).
+ * Where a path a command names is, from the folder `base` it runs from: a
+ * script it runs, a folder it moves into, a file it downloads to; null for a
+ * relative path from a folder not known. A backslash is a folder separator
+ * for cmd and PowerShell, which run on Linux too: `.\setup.ps1` and
+ * `..\evil.zip` name the same place on every OS. The text is judged, not the
+ * machine (#669); every path of the gate goes through here (#717: folder moves
+ * and download targets resolved with the machine's `path` left `..\evil.zip`
+ * inside the workspace on Linux).
  */
-function sourcePath(written: string, base: string | null): string | null {
+function namedPath(written: string, base: string): string;
+function namedPath(written: string, base: string | null): string | null;
+function namedPath(written: string, base: string | null): string | null {
   const path = written.replace(/\\/g, '/');
-  if (isAbsolute(path)) return path;
+  if (isAbsolute(path)) return resolve(path);
   return base === null ? null : resolve(base, path);
 }
 
@@ -224,12 +230,10 @@ function basesOf(
   let base = start;
   for (const move of dirs) {
     if (move === null) base = null;
-    else if (typeof move === 'string') base = eachOf(base, (folder) => [resolve(folder, move)]);
+    else if (typeof move === 'string') base = eachOf(base, (folder) => [namedPath(move, folder)]);
     else if ('script' in move)
       base = eachOf(base, (folder) => {
-        const path = sourcePath(move.script, folder);
-        if (path === null) return null;
-        const key = endKey(path, folder);
+        const key = endKey(namedPath(move.script, folder), folder);
         if (move.extensions !== undefined && scripts.programs.has(key)) return [folder];
         return scripts.ends.get(key) ?? null;
       });
@@ -268,9 +272,11 @@ async function downloadsOutside(
       continue;
     }
     const folders = after === null ? bases : [bases[after] ?? null];
-    const candidates = isAbsolute(path)
-      ? [resolve(path)]
-      : folders.flatMap((f) => (f === null ? [null] : f.map((b) => resolve(b, path))));
+    const absolute = namedPath(path, null);
+    const candidates =
+      absolute !== null
+        ? [absolute]
+        : folders.flatMap((f) => (f === null ? [null] : f.map((b) => namedPath(path, b))));
     for (const candidate of candidates) {
       if (candidate === null || !(await place.inWorkspace(candidate))) {
         // The card names what was judged: the path as written, and where it
@@ -454,9 +460,9 @@ async function readRunCode(
     // The file each folder the line may be in names, and the folders it is
     // named from (one file for an absolute path); none where it is not known.
     const files = new Map<string, { path: string; from: string[] }>();
-    if (isAbsolute(source.path.replace(/\\/g, '/'))) {
-      const path = sourcePath(source.path, null) as string;
-      files.set(path, { path, from: at === null ? [] : [...at] });
+    const absolute = namedPath(source.path, null);
+    if (absolute !== null) {
+      files.set(absolute, { path: absolute, from: at === null ? [] : [...at] });
     } else if (at === null) {
       // In a folder not known, a word the shell may resolve to a script of it
       // is one nobody read too (pass 3).
@@ -464,7 +470,7 @@ async function readRunCode(
       continue;
     } else
       for (const folder of at) {
-        const path = sourcePath(source.path, folder) as string;
+        const path = namedPath(source.path, folder);
         const key = process.platform === 'win32' ? path.toLowerCase() : path;
         const entry = files.get(key) ?? { path, from: [] };
         entry.from.push(folder);
