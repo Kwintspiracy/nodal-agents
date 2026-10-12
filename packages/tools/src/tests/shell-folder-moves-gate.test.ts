@@ -166,7 +166,18 @@ describe("a script run in the line's own process leaves the line where it ends (
         run,
       ).toEqual([]);
     }
-    // A plain ForEach-Object runs its block in the runspace: it moves it.
+    // A block the call operator runs once, in the runspace, moves it.
+    expect(
+      await kinds(
+        'powershell -File run.ps1',
+        placeWith('windows', {
+          ...files,
+          'run.ps1': '& { Set-Location sub }\n.\\cleanup.ps1\n',
+        }),
+      ),
+    ).toEqual(['delete_files']);
+    // A plain ForEach-Object runs its block in the runspace, any number of
+    // times, none included: where the line goes on is not known, and asks.
     expect(
       await kinds(
         'powershell -File run.ps1',
@@ -175,7 +186,7 @@ describe("a script run in the line's own process leaves the line where it ends (
           'run.ps1': '1..2 | ForEach-Object { Set-Location sub }\n.\\cleanup.ps1\n',
         }),
       ),
-    ).toEqual(['delete_files']);
+    ).toEqual(['inline_code']);
   });
 
   it('a script of the line that is not read leaves the folder unknown: what follows asks', async () => {
@@ -271,5 +282,180 @@ describe('where a download lands follows the same folder moves (#717) @cap:execu
     // but one inside the child lands where the child is
     const inside = 'bash -c "cd .. && curl -o a.zip https://x/a"';
     expect(await judge(inside, placeWith('posix', {}))).toEqual([download(inside)]);
+  });
+});
+
+describe('a folder move that may not happen is not taken as made (#717, Nodal review pass 1) @cap:executer-une-commande/moteur', () => {
+  /** What the gate asks for a line whose cleanup.sh deletes in the starting folder only. */
+  const asked = (command: string) =>
+    judge(command, placeWith('posix', { 'cleanup.sh': DELETE_HERE.sh }));
+
+  it.each([
+    'false && cd decoy; ./cleanup.sh',
+    'if false; then cd decoy; fi; ./cleanup.sh',
+    'for i in ; do cd decoy; done; ./cleanup.sh',
+    // the move runs, but may fail: the file looked for in decoy is not there
+    'cd nonexistent; ./cleanup.sh',
+  ])('%s: the cleanup that runs is not one nobody read', async (command) => {
+    expect(await asked(command)).toEqual([
+      {
+        category: 'inline_code',
+        state: 'ask',
+        details: [command],
+        unread: [{ source: './cleanup.sh', why: 'decided_at_run_time' }],
+      },
+    ]);
+  });
+
+  it('a file not there in the folder the line starts in still runs nothing', async () => {
+    expect(await judge('./cleanup.sh', placeWith('posix', {}))).toEqual([]);
+  });
+
+  it("a script's move, on an earlier line of it, is a move too", async () => {
+    // prepare.bat's `cd sub` may fail: cleanup.bat, not in sub, may be the
+    // starting folder's, which deletes.
+    const reasons = await judge(
+      'prepare.bat',
+      placeWith('windows', {
+        'prepare.bat': 'cd sub\r\ncall cleanup.bat\r\n',
+        'cleanup.bat': DELETE_HERE.bat,
+      }),
+    );
+    expect(reasons).toEqual([
+      {
+        category: 'inline_code',
+        state: 'ask',
+        details: ['prepare.bat'],
+        unread: [{ source: 'cleanup.bat', why: 'decided_at_run_time' }],
+      },
+    ]);
+  });
+
+  it('cmd: a move on the right of && or in an if body', async () => {
+    for (const command of [
+      'ver && cd decoy & cleanup.bat',
+      'if exist a (cd decoy) & cleanup.bat',
+    ]) {
+      const reasons = await judge(
+        command,
+        placeWith('windows', { 'cleanup.bat': DELETE_HERE.bat, 'decoy/cleanup.bat': HARMLESS.bat }),
+      );
+      expect(reasons, command).toEqual([
+        {
+          category: 'inline_code',
+          state: 'ask',
+          details: [command],
+          unread: [{ source: 'cleanup.bat', why: 'decided_at_run_time' }],
+        },
+      ]);
+    }
+  });
+});
+
+describe('a script named without its extension is the script the shell finds (#717, Nodal review pass 1) @cap:executer-une-commande/moteur', () => {
+  it('cmd: a bare name or a path that is a batch file of the folder is read, and leaves the line where it ends', async () => {
+    for (const command of [
+      'prepare & cleanup.bat',
+      'call prepare & cleanup.bat',
+      '.\\prepare & cleanup.bat',
+    ]) {
+      expect(
+        await kinds(
+          command,
+          placeWith('windows', {
+            'prepare.bat': '@echo off\r\ncd sub\r\n',
+            'cleanup.bat': HARMLESS.bat,
+            'sub/cleanup.bat': DELETE_HERE.bat,
+          }),
+        ),
+        command,
+      ).toEqual(['delete_files']);
+    }
+    // what the batch file does is judged too, read as cmd reads it (an `if`
+    // without brackets runs its command only in cmd's reading)
+    expect(
+      await kinds(
+        'prepare',
+        placeWith('windows', { 'prepare.cmd': 'if exist a del /q important.txt\r\n' }),
+      ),
+    ).toEqual(['delete_files']);
+  });
+
+  it('a batch file found that may not run leaves the folder unknown; a program does not', async () => {
+    const files = {
+      'prepare.bat': '@echo off\r\ncd sub\r\n',
+      'cleanup.bat': HARMLESS.bat,
+      'sub/cleanup.bat': HARMLESS.bat,
+    };
+    expect(await kinds('ver && prepare & cleanup.bat', placeWith('windows', files))).toEqual([
+      'inline_code',
+    ]);
+    expect(await judge('ver && npm test & cleanup.bat', placeWith('windows', files))).toEqual([]);
+  });
+
+  it('a folder the gate cannot look into: what the word is, and the folder after it, are not known', async () => {
+    const place = placeWith('windows', { 'cleanup.bat': HARMLESS.bat });
+    expect(
+      await kinds('prepare & cleanup.bat', {
+        ...place,
+        readSource: async (p) =>
+          /prepare\.\w+$/i.test(p)
+            ? { kind: 'unread', why: 'outside_workspaces' }
+            : place.readSource(p),
+      }),
+    ).toEqual(['inline_code']);
+  });
+
+  it('cmd: an .exe of the same name comes first; a name not in the folder is a program', async () => {
+    const files = {
+      'prepare.bat': '@echo off\r\ncd sub\r\n',
+      'cleanup.bat': DELETE_HERE.bat,
+      'sub/cleanup.bat': HARMLESS.bat,
+    };
+    expect(
+      await kinds('prepare & cleanup.bat', {
+        ...placeWith('windows', files),
+        readSource: async (p) =>
+          /prepare\.exe$/i.test(p)
+            ? { kind: 'executable' }
+            : placeWith('windows', files).readSource(p),
+      }),
+    ).toEqual(['delete_files']);
+    // npm is no file of the folder: a program from the PATH, nothing asked
+    expect(
+      await judge('npm test & cleanup.bat', placeWith('windows', { 'cleanup.bat': HARMLESS.bat })),
+    ).toEqual([]);
+  });
+
+  it('PowerShell: a path without .ps1 is the .ps1 of the folder', async () => {
+    const files = {
+      'env.ps1': 'Set-Location sub\n',
+      'cleanup.ps1': 'Get-Date\n',
+      'sub/cleanup.ps1': 'Remove-Item -Recurse build\n',
+    };
+    expect(
+      await kinds(
+        'powershell -File run.ps1',
+        placeWith('windows', { ...files, 'run.ps1': '.\\env\n.\\cleanup.ps1\n' }),
+      ),
+    ).toEqual(['delete_files']);
+    const download = 'powershell -File run.ps1';
+    expect(
+      await judge(
+        download,
+        placeWith('windows', {
+          'env.ps1': 'Set-Location ..\n',
+          'run.ps1': '.\\env\niwr https://x/a -OutFile a.zip\n',
+        }),
+      ),
+    ).toEqual([
+      {
+        category: 'download',
+        state: 'ask',
+        details: [download],
+        outside: [{ command: download, places: ['a.zip'] }],
+        found: [{ source: 'run.ps1', line: 2, text: 'iwr https://x/a -OutFile a.zip' }],
+      },
+    ]);
   });
 });

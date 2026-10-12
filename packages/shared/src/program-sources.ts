@@ -95,6 +95,13 @@ export type ProgramSource =
        * that is not text cannot be read (review passes 1 and 2 of #683).
        */
       executed: boolean;
+      /**
+       * A name the shell may resolve by adding one of these, in order (cmd's
+       * `prepare` → `prepare.bat`, PowerShell's `.env` → `env.ps1`): the
+       * file is the first of them found in the folder; none, or one that is
+       * not a script (`.exe`), and it is a program (Nodal review of PR #721, P2).
+       */
+      extensions?: readonly string[];
     }
   | {
       kind: 'code';
@@ -352,6 +359,22 @@ export function programSources(
   for (const { unit, head } of commandUnitsAsWritten(cmd, opts.host, opts.reader)) {
     const { before, move } = folders.step(unit);
     out.dirs.push(...before);
+    // A word the shell may resolve to a script of the folder is that script
+    // when the gate finds it there (`FolderMove`'s `extensions`).
+    const looked =
+      move !== null && typeof move === 'object' && 'script' in move && move.extensions
+        ? { path: move.script, extensions: move.extensions }
+        : null;
+    if (opts.direct && looked !== null)
+      out.sources.push({
+        kind: 'file',
+        path: looked.path,
+        language: null,
+        after: out.dirs.length,
+        searched: !/[\\/]/.test(looked.path),
+        executed: true,
+        extensions: looked.extensions,
+      });
     out.sources.push(...unitSources(unit, head, out.dirs.length, opts.direct));
     if (move !== undefined) out.dirs.push(move);
   }

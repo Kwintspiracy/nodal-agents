@@ -1497,16 +1497,18 @@ describe('a script named after a folder change moves no folder (#710, Codex pass
     // `cd.bat` runs a file, never `cd decoy`: a batch file of cmd's own
     // process, which leaves the line where its body ends, as the gate reads
     // it (#717).
-    const read = downloadWrites('cd.bat decoy && curl -o x.zip https://x/a', 'windows');
-    expect(read.dirs).toEqual([{ script: 'cd.bat' }]);
-    expect(read.targets).toEqual([{ path: 'x.zip', after: 1 }]);
+    // The folder moves before the download (cmd also looks for `curl` in the
+    // folder, after it).
+    const before = (cmd: string) => {
+      const { dirs, targets } = downloadWrites(cmd, 'windows');
+      return dirs.slice(0, targets[0]?.after ?? 0);
+    };
+    expect(before('cd.bat decoy && curl -o x.zip https://x/a')).toEqual([{ script: 'cd.bat' }]);
     // What the guess reads is a guess too: `cmd.cmd /c "cd decoy"` (pass 9).
-    expect(
-      downloadWrites('cmd.cmd /c "cd decoy" & curl -o x.zip https://x/a', 'windows').dirs,
-    ).toEqual([{ script: 'cmd.cmd' }]);
-    // `cd` itself still moves it.
-    expect(downloadWrites('cd decoy && curl -o x.zip https://x/a', 'windows').dirs).toEqual([
-      'decoy',
+    expect(before('cmd.cmd /c "cd decoy" & curl -o x.zip https://x/a')).toEqual([
+      { script: 'cmd.cmd' },
     ]);
+    // `cd` itself still moves it.
+    expect(before('cd decoy && curl -o x.zip https://x/a')).toEqual(['decoy']);
   });
 });

@@ -1682,18 +1682,18 @@ export function downloadWrites(
     const args = unit.slice(1);
     const { before, move } = folders.step(unit);
     out.dirs.push(...before);
-    if (move !== undefined) {
-      out.dirs.push(move);
-      continue;
-    }
+    // What a command writes lands where it starts; a program the shell may
+    // resolve to a script of the folder (`curl`) still writes (#717).
     for (const t of pipeWriterTargets(program, args))
       if (t === null || !isNullSink(t, host))
         piped.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
-    if (!unitCategories(unit).includes('download')) continue;
-    downloads = true;
-    for (const t of fetcherTargets(program, args))
-      if (t === null || !isNullSink(t, host))
-        out.targets.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
+    if (unitCategories(unit).includes('download')) {
+      downloads = true;
+      for (const t of fetcherTargets(program, args))
+        if (t === null || !isNullSink(t, host))
+          out.targets.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
+    }
+    if (move !== undefined) out.dirs.push(move);
   }
   out.dirs.push(...folders.end());
   // `curl URL > file`: the bytes land where the shell sends them. Read on a
@@ -2479,6 +2479,11 @@ RUNS_ANOTHER['proxychains4'] = RUNS_ANOTHER['proxychains'] as (typeof RUNS_ANOTH
  * Where the programs of `RUNS_ANOTHER` run what they name, per shell that
  * reads them (#717):
  * - `own`: in that shell's process, its own builtins and keywords;
+ * - `maybe`: in that process, but only when a condition holds: cmd's `if`
+ *   and `for` (and the `else` and `do` its parentheses leave), whose command
+ *   may never run (Nodal review of PR #721, P1). A folder moved there leaves
+ *   the line in a folder not known. sh's bodies (`then`, `do`…) are read by
+ *   the scan, which sees where they end (`Processes`);
  * - `not-known`: in its process in one shell the host may be, not in another.
  *   The posix host's /bin/sh is dash on Debian and Ubuntu, bash elsewhere:
  *   dash has no `source` and no `builtin`, and its `time` is a program. A
@@ -2492,7 +2497,7 @@ RUNS_ANOTHER['proxychains4'] = RUNS_ANOTHER['proxychains'] as (typeof RUNS_ANOTH
  * another shell's line (`downloadWrites`), it only marks where the next
  * command starts, in the same process.
  */
-const RUNS_IN_PROCESS: Record<LineShell, ReadonlyMap<string, 'own' | 'not-known'>> = {
+const RUNS_IN_PROCESS: Record<LineShell, ReadonlyMap<string, 'own' | 'maybe' | 'not-known'>> = {
   sh: new Map([
     ...['eval', '.', 'command', 'do', 'then', 'else', 'elif', 'if', 'while', 'until', '!', '&'].map(
       (name) => [name, 'own'] as const,
@@ -2501,7 +2506,10 @@ const RUNS_IN_PROCESS: Record<LineShell, ReadonlyMap<string, 'own' | 'not-known'
   ]),
   // `do` and `else` start the command of a `for` and an `if` once their
   // parentheses have cut the line (`for %d in (a) do cd %d`).
-  cmd: new Map(['call', 'for', 'if', 'do', 'else', '&'].map((name) => [name, 'own'] as const)),
+  cmd: new Map([
+    ...['call', '&'].map((name) => [name, 'own'] as const),
+    ...['for', 'if', 'do', 'else'].map((name) => [name, 'maybe'] as const),
+  ]),
   powershell: new Map(
     ['iex', 'invoke-expression', '&', '.', 'if', 'else', 'while', 'do', 'until'].map(
       (name) => [name, 'own'] as const,
@@ -2704,6 +2712,7 @@ export function commandUnits(
   for (const words of splitQuotedShellWords(cmd, shell, model)) {
     const read = wordUnits(words, depth, shell, { model });
     runIn(read, COMMAND_PROCESS.get(words) ?? []);
+    if (COMMAND_MAY_NOT_RUN.has(words)) for (const unit of read) MAY_NOT_RUN.add(unit);
     units.push(...read);
   }
   return units;
@@ -2750,6 +2759,93 @@ const IN_PROCESS_SCRIPTS = new WeakSet<readonly string[]>();
  * into is unknown (null).
  */
 const FOLDER_UNKNOWN = new WeakSet<readonly string[]>();
+
+/**
+ * The units that may not run whenever the line reaches them (Nodal review of
+ * PR #721, P1): on the right of `&&` / `||`, in the body of an `if`, a loop,
+ * a `case`, a function (`Processes`), in what cmd's `if` and `for` run
+ * (`RUNS_IN_PROCESS`). A folder they would move into may not be the one the
+ * line goes on in: unknown (null) from there.
+ */
+const MAY_NOT_RUN = new WeakSet<readonly string[]>();
+
+/**
+ * The units whose program word the shell may resolve, by adding an extension,
+ * to a script it runs in its own process (Nodal review of PR #721, P2), with
+ * the extensions it tries, in order: cmd a bare name or a path through
+ * PATHEXT's `.com .exe .bat .cmd`, a file of the folder first; PowerShell a
+ * path (`.\env`) to its `.ps1`. Only the gate can look (`{ script, extensions }`):
+ * a batch file or a `.ps1` found is that script, anything else is a program.
+ */
+const MAY_BE_SCRIPT = new WeakMap<readonly string[], readonly string[]>();
+
+/** cmd's own commands: never a file of the folder, whatever is there. */
+const CMD_INTERNAL = new Set([
+  'assoc',
+  'break',
+  'call',
+  'cd',
+  'chdir',
+  'cls',
+  'color',
+  'copy',
+  'date',
+  'del',
+  'dir',
+  'dpath',
+  'echo',
+  'endlocal',
+  'erase',
+  'exit',
+  'for',
+  'ftype',
+  'goto',
+  'if',
+  'keys',
+  'md',
+  'mkdir',
+  'mklink',
+  'move',
+  'path',
+  'pause',
+  'popd',
+  'prompt',
+  'pushd',
+  'rd',
+  'rem',
+  'ren',
+  'rename',
+  'rmdir',
+  'set',
+  'setlocal',
+  'shift',
+  'start',
+  'time',
+  'title',
+  'type',
+  'ver',
+  'verify',
+  'vol',
+  'do',
+  'else',
+]);
+
+/** The extensions `model` tries after a program word that has none (`MAY_BE_SCRIPT`). */
+function scriptExtensions(model: LineShell, word: string): readonly string[] | null {
+  // PowerShell's `&` and `.` read for another shell's line name no file.
+  if (!/\w/.test(word) || isDecidedAtRunTime(word) || /\.[^.\\/]+$/.test(word)) return null;
+  const path = /[\\/]/.test(word);
+  switch (model) {
+    case 'cmd':
+      return path || !CMD_INTERNAL.has(word.toLowerCase())
+        ? ['.com', '.exe', '.bat', '.cmd']
+        : null;
+    case 'powershell':
+      return path ? ['.ps1'] : null;
+    default:
+      return null;
+  }
+}
 
 /**
  * True when the shell `model` runs the file a command names in its own process
@@ -2810,7 +2906,10 @@ export function commandUnitsAsWritten(
  * How a command moves the folder the commands after it run from (#717):
  * - a folder, as written; null when the text does not say which;
  * - `{ script }`: the folder a script run in that process ends in, which only
- *   its body says (the gate reads it, packages/tools);
+ *   its body says (the gate reads it, packages/tools); with `extensions`, a
+ *   word the shell may resolve to such a script by adding one of them, in
+ *   order (`MAY_BE_SCRIPT`): the gate looks, and anything else it finds, or
+ *   nothing, is a program that moves nothing;
  * - `{ save }` / `{ restore }`: the folder is kept, then the one kept comes
  *   back: around the moves of a child process, and cmd's `setlocal` /
  *   `endlocal` in a batch file, whose end restores every one it kept.
@@ -2818,7 +2917,12 @@ export function commandUnitsAsWritten(
 export type FolderMove =
   | string
   | null
-  | { readonly script: string }
+  | {
+      readonly script: string;
+      readonly extensions?: readonly string[];
+      /** A word looked for that may not run: if it is a script, where the line goes on is not known. */
+      readonly mayNotRun?: true;
+    }
   | { readonly save: true }
   | { readonly restore: true };
 
@@ -2827,22 +2931,34 @@ export type FolderMove =
  * command, a script run in that process, and in a batch file cmd's `setlocal`
  * and `endlocal` (on a command line they do nothing). A unit read as the
  * program a script is named after (`cd.bat decoy`) is a guess: it may add a
- * kind, never move a folder (Codex, PR #710 pass 8).
+ * kind, never move a folder (Codex, PR #710 pass 8). A move by a unit that
+ * may not run, or that the reading cannot tell, is to a folder not known.
  */
 function folderMoveOf(unit: readonly string[], batch: boolean): FolderMove | undefined {
   if (NAMED_AFTER_UNITS.has(unit)) return undefined;
   const program = unit[0] ?? '';
+  const extensions = MAY_BE_SCRIPT.get(unit);
   let move: FolderMove | undefined;
   if (IN_PROCESS_SCRIPTS.has(unit)) {
     const path = readablePath(UNIT_HEADS.get(unit) ?? program);
     move = path === null ? null : { script: path };
+  } else if (extensions !== undefined) {
+    // Only a script found moves the folder: one that may not run is told to
+    // the gate, which knows whether it found one (a program moves nothing).
+    const path = readablePath(UNIT_HEADS.get(unit) ?? program);
+    if (path === null) move = null;
+    else if (FOLDER_UNKNOWN.has(unit)) move = null;
+    else
+      return MAY_NOT_RUN.has(unit)
+        ? { script: path, extensions, mayNotRun: true }
+        : { script: path, extensions };
   } else if (batch && program === 'setlocal') move = { save: true };
   else if (batch && program === 'endlocal') move = { restore: true };
   else if (CHANGE_DIR.has(program)) {
     const dir = changeDirArg(program, unit.slice(1));
     move = dir === null ? null : readablePath(dir);
   }
-  return move !== undefined && FOLDER_UNKNOWN.has(unit) ? null : move;
+  return move !== undefined && (FOLDER_UNKNOWN.has(unit) || MAY_NOT_RUN.has(unit)) ? null : move;
 }
 
 /** How a unit moves its own process's folder, and whether that process is the line's. */
@@ -2982,6 +3098,10 @@ function wordUnits(
   UNIT_HEADS.set(units[0] as string[], head.text);
   if (runsInItsShell(model, head.text, invoked, how.sourced === true))
     IN_PROCESS_SCRIPTS.add(units[0] as string[]);
+  else {
+    const extensions = scriptExtensions(model, head.text);
+    if (extensions !== null) MAY_BE_SCRIPT.set(units[0] as string[], extensions);
+  }
   // `npm.cmd install x`: the script, whose file is read where it lives (the
   // unit above), and the program it is named after, read as that program. A
   // file is never the shell's keyword of its name (`start.bat`, as above).
@@ -3012,7 +3132,8 @@ function wordUnits(
     // What a program of the shell's own runs stays in its process; any other
     // program starts one, where what it runs moves no folder of the line. One
     // whose process depends on which shell the host has moves it to a folder
-    // not known (#717, `RUNS_IN_PROCESS`).
+    // not known; one that runs it only when a condition holds, too, if it
+    // moves it (#717, `RUNS_IN_PROCESS`).
     const runs = RUNS_IN_PROCESS[model].get(name);
     for (const payload of RUNS_ANOTHER[name]?.(args, shell) ?? []) {
       const read =
@@ -3024,8 +3145,9 @@ function wordUnits(
               ...(runs ? { model } : {}),
             });
       if (runs === undefined) runIn(read, [newProcess()]);
-      else if (runs === 'not-known')
+      else if (runs === 'not-known') {
         for (const unit of read) if (!UNIT_PROCESS.has(unit)) FOLDER_UNKNOWN.add(unit);
+      } else if (runs === 'maybe') for (const unit of read) MAY_NOT_RUN.add(unit);
       units.push(...read);
     }
     if (name === namedAfter) for (const unit of units.slice(from)) NAMED_AFTER_UNITS.add(unit);
@@ -3343,6 +3465,17 @@ function bodyEnd(
  */
 const COMMAND_PROCESS = new WeakMap<readonly ShellWord[], readonly number[]>();
 
+/** The scanned commands that may not run whenever the line reaches them: `MAY_NOT_RUN`. */
+const COMMAND_MAY_NOT_RUN = new WeakSet<readonly ShellWord[]>();
+
+/** sh's compound commands: what opens one, where its body starts, what closes it. */
+const SH_OPENS = new Set(['if', 'while', 'until', 'for', 'select', 'case']);
+const SH_BODY = new Set(['then', 'else', 'elif', 'do']);
+const SH_CLOSES = new Set(['fi', 'done', 'esac']);
+
+/** The PowerShell commands that run the block they are given once, in the runspace. */
+const PS_RUNS_BLOCK_ONCE = new Set(['&', '.', 'try', 'finally', 'invoke-command', 'icm']);
+
 /**
  * Which commands of a line its shell runs in a process of their own (#717),
  * told operator by operator by the scanner that cuts the line, read with the
@@ -3356,16 +3489,39 @@ const COMMAND_PROCESS = new WeakMap<readonly ShellWord[], readonly number[]>();
  *   script block of a command that runs it in another runspace or process
  *   (`runsBlockApart`); pipes, `( … )`, `$( … )` and any other `{ … }` run in
  *   its own runspace.
+ *
+ * And which may not run whenever the line reaches them (Nodal review of PR
+ * #721, P1): a command on the right of `&&` or `||` (the head of a list runs);
+ * in sh, the body of an `if`, a loop or a `case`, and a function's; in cmd, the
+ * block of an `if`, an `else` or a `for`; in PowerShell, any script block but
+ * the one `&`, `.`, `try`, `finally` or `Invoke-Command` runs once (`if`, loops,
+ * `ForEach-Object`, `catch`, a function, a block left as a value).
  */
 class Processes {
-  /** The groups open, each a child process or not, with the list it is part of. */
-  private readonly groups: Array<{ process: number | null; start: number; list: number }> = [];
+  /**
+   * The groups open: each a child process or not, whether its commands may not
+   * run, the list it is part of, and whether it is a parenthesis after a word.
+   */
+  private readonly groups: Array<{
+    process: number | null;
+    mayNotRun: boolean;
+    start: number;
+    list: number;
+    orElse: boolean;
+    afterWord: boolean;
+  }> = [];
   /** Where the last whole command (simple, or a group) starts: what a pipe takes. */
   private last = -1;
   /** Where the current list (`a && b || c`) starts: what `&` sends to the background. */
   private list = 0;
   /** The process of the command that comes next: a pipe's right side. */
   private side: number | null = null;
+  /** Past the head of the current list: after `&&` or `||`. */
+  private orElse = false;
+  /** sh's compound commands open, and whether the scan is in their body. */
+  private readonly compounds: boolean[] = [];
+  /** sh: `name()` was just written, and the brace that follows is a function's body. */
+  private functionNext = false;
 
   constructor(
     private readonly model: LineShell,
@@ -3377,6 +3533,11 @@ class Processes {
     return this.groups.flatMap((g) => (g.process === null ? [] : [g.process]));
   }
 
+  /** True when what the scan meets now may not run whenever the line reaches it. */
+  private mayNotRun(): boolean {
+    return this.orElse || this.groups.some((g) => g.mayNotRun) || this.compounds.includes(true);
+  }
+
   /** The scanner pushed a command. */
   command(): void {
     const at = this.commands.length - 1;
@@ -3385,6 +3546,15 @@ class Processes {
     COMMAND_PROCESS.set(words, [...this.here(), ...(this.side === null ? [] : [this.side])]);
     this.side = null;
     this.last = at;
+    this.functionNext = false;
+    const first = words[0]?.quoted === false ? words[0].text : '';
+    if (this.model === 'sh' && SH_BODY.has(first) && this.compounds.length > 0)
+      this.compounds[this.compounds.length - 1] = true;
+    if (this.mayNotRun()) COMMAND_MAY_NOT_RUN.add(words);
+    if (this.model !== 'sh') return;
+    // `case … in` is followed by its body at once.
+    if (SH_OPENS.has(first)) this.compounds.push(first === 'case');
+    else if (SH_CLOSES.has(first)) this.compounds.pop();
   }
 
   /**
@@ -3393,28 +3563,43 @@ class Processes {
    * command written before it, as written.
    */
   open(kind: 'substitution' | 'start' | 'after-word' | 'brace', command: readonly string[]): void {
+    const head = (command[0] ?? '').toLowerCase();
     let child: boolean;
+    let mayNotRun: boolean;
     switch (this.model) {
       case 'sh':
         child = kind === 'substitution' || kind === 'start';
+        mayNotRun = kind === 'brace' && (this.functionNext || head === 'function');
         break;
-      case 'cmd':
-        child =
-          kind === 'substitution' ||
-          kind === 'brace' ||
-          (kind === 'after-word' &&
-            !['if', 'for', 'else', 'do'].includes((command[0] ?? '').toLowerCase()));
+      case 'cmd': {
+        const block = ['if', 'for', 'else', 'do'].includes(head);
+        child = kind === 'substitution' || kind === 'brace' || (kind === 'after-word' && !block);
+        mayNotRun = kind === 'after-word' && block;
         break;
+      }
       case 'powershell':
         child = kind === 'brace' && runsBlockApart(command);
+        mayNotRun =
+          kind === 'brace' &&
+          !PS_RUNS_BLOCK_ONCE.has((afterAssignment(command)[0] ?? '').toLowerCase());
         break;
       default:
         child = false;
+        mayNotRun = false;
     }
     const process = this.side ?? (child ? newProcess() : null);
     this.side = null;
-    this.groups.push({ process, start: this.commands.length, list: this.list });
+    this.groups.push({
+      process,
+      mayNotRun: mayNotRun || this.mayNotRun(),
+      start: this.commands.length,
+      list: this.list,
+      orElse: this.orElse,
+      afterWord: kind === 'after-word',
+    });
     this.list = this.commands.length;
+    this.orElse = false;
+    this.functionNext = false;
   }
 
   /** A closing `)` or `}`: the group is one command of the list around it. */
@@ -3423,6 +3608,10 @@ class Processes {
     if (group === undefined) return;
     this.last = group.start;
     this.list = group.list;
+    this.orElse = group.orElse;
+    // `name()`: an empty parenthesis after a word names a function.
+    this.functionNext =
+      this.model === 'sh' && group.afterWord && group.start === this.commands.length;
   }
 
   /** A pipe: each side is a process of its own, but in PowerShell. */
@@ -3430,6 +3619,11 @@ class Processes {
     if (this.model === 'powershell') return;
     this.apart(this.last);
     this.side = newProcess();
+  }
+
+  /** `&&` or `||`: what follows in the list runs only on the result of what came before. */
+  andOr(): void {
+    this.orElse = true;
   }
 
   /** `&` alone: what it ends is sent to the background, in sh and PowerShell (`rest`, after it). */
@@ -3443,6 +3637,7 @@ class Processes {
   /** `;` or a new line: a new list starts. */
   next(): void {
     this.list = this.commands.length;
+    this.orElse = false;
   }
 
   /** The commands from `from` on run in one process of their own. */
@@ -3459,21 +3654,25 @@ class Processes {
   }
 }
 
+/** A PowerShell command's words past an assignment of its result (`$j = Start-Job`). */
+function afterAssignment(command: readonly string[]): string[] {
+  const glued = /^\$[\w:]+=(.+)$/.exec(command[0] ?? '');
+  if (glued) return [glued[1] ?? '', ...command.slice(1)];
+  if ((command[0] ?? '').startsWith('$') && command[1] === '=') return command.slice(2);
+  return [...command];
+}
+
 /**
  * True when a PowerShell command runs the script block it is given in another
  * runspace or process, where a location it sets is not the line's (#717):
- * `Start-Job` (`sajb`) and `Start-ThreadJob`, `ForEach-Object -Parallel` (`%`,
- * `foreach`), and `Invoke-Command` (`icm`) on a computer, a session, a VM, a
- * container, an SSH host, or as a job; a plain `ForEach-Object` or
- * `Invoke-Command` runs it in the caller's runspace. `command`: its words
- * before the block, after an assignment (`$j = Start-Job`).
+ * `Start-Job` (`sajb`) and `Start-ThreadJob`, `ForEach-Object` with `-Parallel` or
+ * `-UseNewRunspace` (`%`, `foreach`), and `Invoke-Command` (`icm`) on a computer, a
+ * session, a VM, a container, an SSH host, or as a job; a plain
+ * `ForEach-Object` or `Invoke-Command` runs it in the caller's runspace.
+ * `command`: its words before the block.
  */
 function runsBlockApart(command: readonly string[]): boolean {
-  let words = [...command];
-  const glued = /^\$[\w:]+=(.+)$/.exec(words[0] ?? '');
-  if (glued) words = [glued[1] ?? '', ...words.slice(1)];
-  else if ((words[0] ?? '').startsWith('$') && words[1] === '=') words = words.slice(2);
-  const [head = '', ...args] = words;
+  const [head = '', ...args] = afterAssignment(command);
   const bindsOne = (sig: PsSignature, names: readonly string[]): boolean =>
     bindPsArguments(args, sig).some((b) => b.names?.some((n) => names.includes(n)) === true);
   switch (head.toLowerCase()) {
@@ -3484,7 +3683,7 @@ function runsBlockApart(command: readonly string[]): boolean {
     case 'foreach-object':
     case '%':
     case 'foreach':
-      return bindsOne(FOREACH_OBJECT, ['parallel']);
+      return bindsOne(FOREACH_OBJECT, ['parallel', 'usenewrunspace']);
     case 'invoke-command':
     case 'icm':
       return bindsOne(INVOKE_COMMAND, [
@@ -3537,11 +3736,13 @@ function readOperator(
       return;
     case '|':
       // `||` is a list; `>|` a redirection; `|&` a pipe.
-      if (next !== '|' && prev !== '|' && prev !== '>') processes.pipe();
+      if (next === '|') processes.andOr();
+      else if (prev !== '|' && prev !== '>') processes.pipe();
       return;
     case '&':
       // `&&` is a list; `>&2`, `<&3`, `&>f` redirections; `|&` a pipe.
-      if (next !== '&' && prev !== '&' && !oneOf(prev, '<>|') && next !== '>')
+      if (next === '&') processes.andOr();
+      else if (prev !== '&' && !oneOf(prev, '<>|') && next !== '>')
         processes.ampersand(line.slice(at + 1));
       return;
     default:
@@ -3785,10 +3986,12 @@ function cmdCommands(line: string): ShellWord[][] {
       end();
       if (ch === '(') processes.open(before === '' ? 'start' : 'after-word', before.split(/\s+/));
       else if (ch === ')') processes.close();
-      else if (ch === '|') {
-        // `||` runs the next command when this one fails, in the same process.
-        if (line[at + 1] !== '|' && line[at - 1] !== '|') processes.pipe();
-      } else processes.next();
+      else if ((ch === '&' || ch === '|') && line[at + 1] === ch) {
+        // `&&` and `||`: the next command runs on the result of this one.
+        processes.andOr();
+        at += 1;
+      } else if (ch === '|') processes.pipe();
+      else processes.next();
     } else current += ch;
   }
   end();

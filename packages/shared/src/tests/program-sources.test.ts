@@ -27,11 +27,15 @@ function sources(cmd: string, direct = true): Array<Partial<ProgramSource>> {
   // cmd and PowerShell, an escape for sh (a line whose host is not known is
   // read both ways, and both readings are kept).
   const host = /[\\]/.test(cmd) ? 'windows' : 'posix';
-  return programSources(cmd, { direct, host }).sources.map((s) =>
-    s.kind === 'file'
-      ? { kind: s.kind, path: s.path, language: s.language }
-      : { kind: s.kind, code: s.code, language: s.language },
-  );
+  // A word cmd only looks for in the folder (`powershell` → powershell.bat?,
+  // #717) is a file of its own reading, not what these cases are about.
+  return programSources(cmd, { direct, host })
+    .sources.filter((s) => s.kind === 'code' || s.extensions === undefined)
+    .map((s) =>
+      s.kind === 'file'
+        ? { kind: s.kind, path: s.path, language: s.language }
+        : { kind: s.kind, code: s.code, language: s.language },
+    );
 }
 
 describe('programSources: where the code a command runs is (#635) @cap:executer-une-commande/moteur', () => {
@@ -149,7 +153,8 @@ describe('programSources: where the code a command runs is (#635) @cap:executer-
   });
 
   it('a cd before the file moves where it is read from', () => {
-    const read = programSources('cd sub && node build.js');
+    // On a posix host: cmd would look for node.bat in the folder first (#717).
+    const read = programSources('cd sub && node build.js', { direct: true, host: 'posix' });
     expect(read.dirs).toEqual(['sub']);
     expect(read.sources).toEqual([
       {
@@ -365,7 +370,10 @@ describe('cmd conditions without brackets, and here-docs fed to a program (#683)
   // Review pass 5 of #683: as sh reads it, a body fed to anything but a shell
   // is data (but for the substitutions of an unquoted one).
   it('a here-doc fed to anything else is data to sh, and no source', () => {
-    expect(programSources(`cat <<EOF${NL}pip install x${NL}EOF`).sources).toEqual([]);
+    expect(
+      programSources(`cat <<EOF${NL}pip install x${NL}EOF`, { direct: true, host: 'posix' })
+        .sources,
+    ).toEqual([]);
     expect(
       staticShellCategories(
         `cat <<EOF > notes.txt${NL}rm -rf build${NL}pip install x${NL}EOF`,

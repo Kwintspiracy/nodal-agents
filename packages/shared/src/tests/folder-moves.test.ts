@@ -16,6 +16,15 @@ import { downloadWrites, programSources, type FolderMove } from '..';
 const SAVE: FolderMove = { save: true };
 const RESTORE: FolderMove = { restore: true };
 const script = (path: string): FolderMove => ({ script: path });
+/**
+ * A word cmd may resolve to a batch file of the folder (`cmd`, `curl`): the
+ * gate looks there (Nodal review of PR #721, P2).
+ */
+const looked = (path: string, mayNotRun = false): FolderMove => ({
+  script: path,
+  extensions: ['.com', '.exe', '.bat', '.cmd'],
+  ...(mayNotRun ? { mayNotRun: true as const } : {}),
+});
 
 type Host = 'windows' | 'posix';
 type Reader = 'sh' | 'cmd' | 'powershell';
@@ -59,8 +68,8 @@ function inForce(dirs: readonly FolderMove[], upTo: number | undefined): FolderM
 describe('a folder move made in a child process stays there (#717) @cap:executer-une-commande/moteur', () => {
   it('the issue lines, as the gate receives them', () => {
     expect(read('cmd /c "cd decoy" & cleanup.bat', 'windows')).toEqual({
-      dirs: [SAVE, 'decoy', RESTORE, script('cleanup.bat')],
-      after: { 'cleanup.bat': 3 },
+      dirs: [looked('cmd'), SAVE, 'decoy', RESTORE, script('cleanup.bat')],
+      after: { cmd: 0, 'cleanup.bat': 4 },
     });
     expect(read('bash -c "cd decoy" && ./cleanup.sh', 'posix')).toEqual({
       dirs: [SAVE, 'decoy', RESTORE],
@@ -127,13 +136,16 @@ describe('a folder move made in a child process stays there (#717) @cap:executer
     '1..3 | ForEach-Object -Parallel { cd decoy }; .\\x.ps1',
     '1..3 | % -Parallel { cd decoy }; .\\x.ps1',
     '1..3 | foreach -Pa { cd decoy }; .\\x.ps1',
+    '1..3 | ForEach-Object -UseNewRunspace { cd decoy }; .\\x.ps1',
+    '1..3 | % -UseNew { cd decoy }; .\\x.ps1',
     'Invoke-Command -ComputerName srv { cd decoy }; .\\x.ps1',
     'icm -Session $s -ScriptBlock { cd decoy }; .\\x.ps1',
     'Invoke-Command -AsJob { cd decoy }; .\\x.ps1',
   ])('PowerShell: a script block run in another runspace or process: %s', (cmd) => {
     const { dirs, after } = read(cmd, 'windows', 'powershell');
     expect(after['.\\x.ps1']).toBeDefined();
-    expect(inForce(dirs, after['.\\x.ps1'])).not.toContain('decoy');
+    // the line stays where it was, known: nothing of the block is in force
+    expect(inForce(dirs, after['.\\x.ps1'])).toEqual([]);
   });
 
   it("a child's moves still reach its own later commands", () => {
@@ -146,8 +158,8 @@ describe('a folder move made in a child process stays there (#717) @cap:executer
       after: { './x.sh': 2, './y.sh': 3 },
     });
     expect(read('cmd /c "cd sub & x.bat" & y.bat', 'windows')).toEqual({
-      dirs: [SAVE, 'sub', script('x.bat'), RESTORE, script('y.bat')],
-      after: { 'x.bat': 2, 'y.bat': 4 },
+      dirs: [looked('cmd'), SAVE, 'sub', script('x.bat'), RESTORE, script('y.bat')],
+      after: { cmd: 0, 'x.bat': 3, 'y.bat': 5 },
     });
   });
 });
@@ -156,28 +168,79 @@ describe("a folder move made in the line's own process moves it (#717) @cap:exec
   it.each([
     ['call cd decoy & x.bat', 'windows', 'x.bat', undefined],
     ['(cd decoy) & x.bat', 'windows', 'x.bat', undefined],
-    ['if exist a (cd decoy) & x.bat', 'windows', 'x.bat', undefined],
-    ['for %d in (a) do cd decoy & x.bat', 'windows', 'x.bat', undefined],
+    ['cd decoy && x.bat', 'windows', 'x.bat', undefined],
     ['{ cd decoy; } && ./x.sh', 'posix', './x.sh', undefined],
     ['eval "cd decoy"; ./x.sh', 'posix', './x.sh', undefined],
     ['command cd decoy; ./x.sh', 'posix', './x.sh', undefined],
-    ['if true; then cd decoy; fi; ./x.sh', 'posix', './x.sh', undefined],
+    // the head of a list runs whenever the line reaches it
     ['cd decoy || exit 1; ./x.sh', 'posix', './x.sh', undefined],
+    ['cd decoy && ./x.sh', 'posix', './x.sh', undefined],
+    ['if cd decoy; then echo in; fi; ./x.sh', 'posix', './x.sh', undefined],
+    // past a list, or a compound command, the next one starts again
+    ['true && echo; cd decoy; ./x.sh', 'posix', './x.sh', undefined],
+    ['if x; then echo; fi; cd decoy; ./x.sh', 'posix', './x.sh', undefined],
+    ['ver && echo & cd decoy & x.bat', 'windows', 'x.bat', undefined],
     // PowerShell: a block, a pipeline, the call operator and iex run in its runspace
     ['(cd decoy); .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
     ['cd decoy | Out-Null; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
     ["iex 'cd decoy'; .\\x.ps1", 'windows', '.\\x.ps1', 'powershell'],
     ['& { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
-    ['Get-Item a | ForEach-Object { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
-    ['1..3 | % -Process { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
-    ['foreach ($d in $a) { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
     ['Invoke-Command { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
     ['Invoke-Command -NoNewScope { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    ['try { cd decoy } catch { }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
   ] as const)('%s', (cmd, host, file, reader) => {
     const { dirs, after } = read(cmd, host, reader);
     expect(after[file]).toBeDefined();
     expect(inForce(dirs, after[file])).toContain('decoy');
   });
+
+  it.each([
+    // sh: the right of `&&` / `||`, an if, while, until, for or case body, a function
+    ['false && cd decoy; ./x.sh', 'posix', './x.sh', undefined],
+    ['true || cd decoy; ./x.sh', 'posix', './x.sh', undefined],
+    ['true && (cd sub; ./a.sh) && cd decoy; ./x.sh', 'posix', './x.sh', undefined],
+    ['if false; then cd decoy; fi; ./x.sh', 'posix', './x.sh', undefined],
+    ['if true; then echo; else cd decoy; fi; ./x.sh', 'posix', './x.sh', undefined],
+    ['while false; do cd decoy; done; ./x.sh', 'posix', './x.sh', undefined],
+    ['until true; do cd decoy; done; ./x.sh', 'posix', './x.sh', undefined],
+    ['for i in ; do cd decoy; done; ./x.sh', 'posix', './x.sh', undefined],
+    ['case $x in a) cd decoy;; esac; ./x.sh', 'posix', './x.sh', undefined],
+    ['{ false && cd decoy; }; ./x.sh', 'posix', './x.sh', undefined],
+    ['f() { cd decoy; }; ./x.sh', 'posix', './x.sh', undefined],
+    ['function f { cd decoy; }; ./x.sh', 'posix', './x.sh', undefined],
+    ['false && . ./env.sh; ./x.sh', 'posix', './x.sh', undefined],
+    // cmd: the right of `&&` / `||`, an if, else or for command
+    ['ver && cd decoy & x.bat', 'windows', 'x.bat', undefined],
+    ['ver || cd decoy & x.bat', 'windows', 'x.bat', undefined],
+    ['if exist a cd decoy & x.bat', 'windows', 'x.bat', undefined],
+    ['if exist a (cd decoy) & x.bat', 'windows', 'x.bat', undefined],
+    ['if exist a (echo) else (cd decoy) & x.bat', 'windows', 'x.bat', undefined],
+    ['for %d in (a) do cd decoy & x.bat', 'windows', 'x.bat', undefined],
+    ['for %d in (a) do (cd decoy) & x.bat', 'windows', 'x.bat', undefined],
+    ['ver && prepare.bat & x.bat', 'windows', 'x.bat', undefined],
+    // PowerShell: a block that may run any number of times, the right of `&&` / `||`
+    ['if ($x) { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    ['if ($x) { } else { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    ['foreach ($d in $a) { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    ['while ($x) { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    ['Get-Item a | ForEach-Object { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    ['1..3 | % -Process { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    ['try { } catch { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    ['function f { cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    ['{ cd decoy }; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    ['Test-Path a && cd decoy; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+    // past a group, the list it is part of goes on
+    ['Test-Path a && (echo) | cd decoy; .\\x.ps1', 'windows', '.\\x.ps1', 'powershell'],
+  ] as const)(
+    'a move that may not happen leaves the folder unknown: %s',
+    (cmd, host, file, reader) => {
+      const { dirs, after } = read(cmd, host, reader);
+      expect(after[file]).toBeDefined();
+      const moves = inForce(dirs, after[file]);
+      expect(moves).not.toContain('decoy');
+      expect(moves).toContain(null);
+    },
+  );
 
   it('sh: what only bash runs in its own process leaves the folder unknown', () => {
     // The posix host's /bin/sh is dash on Debian and Ubuntu, bash elsewhere:
@@ -213,14 +276,56 @@ describe("a folder move made in the line's own process moves it (#717) @cap:exec
 
 describe("a script run in the line's own process leaves it where it ends (#717) @cap:executer-une-commande/moteur", () => {
   it('cmd: a batch file run directly or with call', () => {
-    expect(read('setup.bat && cleanup.bat', 'windows')).toEqual({
+    expect(read('setup.bat & cleanup.bat', 'windows')).toEqual({
       dirs: [script('setup.bat'), script('cleanup.bat')],
+      after: { 'setup.bat': 0, 'cleanup.bat': 1 },
+    });
+    // on the right of `&&`, a script may not run: where it leaves the line is not known
+    expect(read('setup.bat && cleanup.bat', 'windows')).toEqual({
+      dirs: [script('setup.bat'), null],
       after: { 'setup.bat': 0, 'cleanup.bat': 1 },
     });
     expect(read('call setup.cmd & cleanup.bat', 'windows')).toEqual({
       dirs: [script('setup.cmd'), script('cleanup.bat')],
       after: { 'setup.cmd': 0, 'cleanup.bat': 1 },
     });
+  });
+
+  it('cmd: a name without its extension may be a batch file of the folder: the gate looks', () => {
+    const probe = (path: string): FolderMove => ({
+      script: path,
+      extensions: ['.com', '.exe', '.bat', '.cmd'],
+    });
+    const { dirs, sources } = programSources('prepare & cleanup.bat', {
+      direct: true,
+      host: 'windows',
+    });
+    expect(dirs).toEqual([probe('prepare'), script('cleanup.bat')]);
+    expect(sources[0]).toEqual({
+      kind: 'file',
+      path: 'prepare',
+      language: null,
+      after: 0,
+      searched: true,
+      executed: true,
+      extensions: ['.com', '.exe', '.bat', '.cmd'],
+    });
+    expect(read('scripts\\prepare & x.bat', 'windows').dirs).toEqual([
+      probe('scripts\\prepare'),
+      script('x.bat'),
+    ]);
+    // cmd's own commands are never looked for
+    expect(read('echo hi & cd sub & x.bat', 'windows').dirs).toEqual(['sub', script('x.bat')]);
+  });
+
+  it('PowerShell: a path without its extension may be a .ps1; a bare name is not looked for in the folder', () => {
+    expect(read('.\\env; .\\x.ps1', 'windows', 'powershell')).toEqual({
+      dirs: [{ script: '.\\env', extensions: ['.ps1'] }, script('.\\x.ps1')],
+      after: { '.\\env': 0, '.\\x.ps1': 1 },
+    });
+    expect(read('env; .\\x.ps1', 'windows', 'powershell').dirs).toEqual([script('.\\x.ps1')]);
+    // sh runs no file of the folder in its own process but what `.` reads
+    expect(read('prepare; ./x.sh', 'posix').dirs).toEqual([]);
   });
 
   it('sh: what `.` reads; a script run directly is a child', () => {
@@ -252,11 +357,14 @@ describe("a script run in the line's own process leaves it where it ends (#717) 
   });
 
   it('a script run as a child moves nothing of the line', () => {
-    expect(read('powershell -File env.ps1 & x.bat', 'windows').dirs).toEqual([script('x.bat')]);
+    expect(read('powershell -File env.ps1 & x.bat', 'windows').dirs).toEqual([
+      looked('powershell'),
+      script('x.bat'),
+    ]);
     expect(read('env.ps1 & x.bat', 'windows').dirs).toEqual([script('x.bat')]);
     expect(read('cmd /c env.bat & x.bat', 'windows')).toEqual({
-      dirs: [SAVE, script('env.bat'), RESTORE, script('x.bat')],
-      after: { 'env.bat': 1, 'x.bat': 3 },
+      dirs: [looked('cmd'), SAVE, script('env.bat'), RESTORE, script('x.bat')],
+      after: { cmd: 0, 'env.bat': 2, 'x.bat': 4 },
     });
   });
 
@@ -288,11 +396,13 @@ describe('a line whose shell is not known, read as both (#717) @cap:executer-une
     expect(programSources('(cd decoy) && ./x.sh').dirs).toEqual([null]);
     // a batch file of cmd's own process, a program sh starts
     expect(programSources('prepare.bat && x.bat').dirs).toEqual([null, null]);
+    // a name cmd looks for in the folder first, a program sh starts
+    expect(programSources('cd sub && node build.js').dirs).toEqual(['sub', null]);
   });
 
   it('where they agree, the move is read', () => {
-    expect(programSources('cd sub && node build.js').dirs).toEqual(['sub']);
-    expect(programSources('bash -c "cd sub" && node build.js').dirs).toEqual([
+    expect(programSources('cd sub && ./build.sh').dirs).toEqual(['sub']);
+    expect(programSources('bash.exe -c "cd sub" && ./build.sh').dirs).toEqual([
       SAVE,
       'sub',
       RESTORE,
@@ -309,7 +419,10 @@ describe('where a download lands follows the same folder moves (#717) @cap:execu
       ['(cd decoy) && curl -o a.zip https://x/a', 'posix'],
       ['cd decoy | cat; curl -o a.zip https://x/a', 'posix'],
     ] as const) {
-      expect(writes(cmd, host), cmd).toEqual({ dirs: [SAVE, 'decoy', RESTORE], after: [3] });
+      const { dirs, after } = writes(cmd, host);
+      expect(inForce(dirs, after[0] ?? undefined), cmd).not.toContain('decoy');
+      expect(inForce(dirs, after[0] ?? undefined), cmd).not.toContain(null);
+      expect(dirs, cmd).toContain('decoy');
     }
   });
 
@@ -317,11 +430,12 @@ describe('where a download lands follows the same folder moves (#717) @cap:execu
     // `&` and `&&` are read as PowerShell's call operator before the next
     // command: in cmd and sh it is the line's own process all the same.
     expect(writes('cd a & cd b & curl -o z.zip https://x/a', 'windows')).toEqual({
-      dirs: ['a', 'b'],
+      dirs: ['a', 'b', looked('curl')],
       after: [2],
     });
+    // (`cd b`, on the right of `&&`, may not run: the folder after it is not known)
     expect(writes('cd a && cd b && curl -o z.zip https://x/a', 'posix')).toEqual({
-      dirs: ['a', 'b'],
+      dirs: ['a', null],
       after: [2],
     });
   });
@@ -335,7 +449,7 @@ describe('where a download lands follows the same folder moves (#717) @cap:execu
 
   it("the line's own process moves it", () => {
     expect(writes('(cd sub) & curl -o a.zip https://x/a', 'windows')).toEqual({
-      dirs: ['sub'],
+      dirs: ['sub', looked('curl')],
       after: [1],
     });
     expect(writes('{ cd sub; } && curl -o a.zip https://x/a', 'posix')).toEqual({
@@ -349,7 +463,7 @@ describe('where a download lands follows the same folder moves (#717) @cap:execu
 
   it("a script run in the line's process leaves the download where it ends", () => {
     expect(writes('setup.bat && curl -o a.zip https://x/a', 'windows')).toEqual({
-      dirs: [script('setup.bat')],
+      dirs: [script('setup.bat'), looked('curl', true)],
       after: [1],
     });
     expect(writes('. ./env.sh && curl -o a.zip https://x/a', 'posix')).toEqual({
@@ -364,7 +478,7 @@ describe('where a download lands follows the same folder moves (#717) @cap:execu
     // a job's script block keeps its location to itself
     expect(
       writes('Start-Job { cd .. }; iwr https://x/a -OutFile a.zip', 'windows', 'powershell'),
-    ).toEqual({ dirs: [SAVE, '..', RESTORE], after: [3] });
+    ).toEqual({ dirs: [SAVE, null, RESTORE], after: [3] });
     expect(writes('.\\env.ps1; iwr https://x/a -OutFile a.zip', 'windows', 'powershell')).toEqual({
       dirs: [script('.\\env.ps1')],
       after: [1],
@@ -375,9 +489,24 @@ describe('where a download lands follows the same folder moves (#717) @cap:execu
     });
   });
 
+  it('a name the shell may resolve to a script of the folder, and a move that may not happen', () => {
+    expect(writes('prepare & curl -o a.zip https://x/a', 'windows')).toEqual({
+      dirs: [looked('prepare'), looked('curl')],
+      after: [1],
+    });
+    expect(writes('.\\env; iwr https://x/a -OutFile a.zip', 'windows', 'powershell')).toEqual({
+      dirs: [{ script: '.\\env', extensions: ['.ps1'] }],
+      after: [1],
+    });
+    expect(writes('false && cd .. ; curl -o a.zip https://x/a', 'posix')).toEqual({
+      dirs: [null],
+      after: [1],
+    });
+  });
+
   it("a batch file's setlocal", () => {
     expect(
       writes('setlocal & cd sub & endlocal & curl -o a.zip https://x/a', 'windows', 'cmd'),
-    ).toEqual({ dirs: [SAVE, 'sub', RESTORE], after: [3] });
+    ).toEqual({ dirs: [SAVE, 'sub', RESTORE, looked('curl')], after: [3] });
   });
 });

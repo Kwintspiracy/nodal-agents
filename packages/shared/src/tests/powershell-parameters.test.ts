@@ -259,7 +259,9 @@ describe('Start-Process read as PowerShell binds it (open_or_send, #694) @cap:ex
 
 describe('where a PowerShell line writes, read as PowerShell binds it (#694) @cap:executer-une-commande/moteur', () => {
   const targets = (cmd: string) => downloadWrites(cmd, 'windows').targets.map((t) => t.path);
-  const dirs = (cmd: string) => downloadWrites(cmd, 'windows').dirs;
+  // A PowerShell line: on a cmd line, `Set-Location` would be a name cmd
+  // looks for in the folder (#717).
+  const dirs = (cmd: string) => downloadWrites(cmd, 'windows', 'powershell').dirs;
 
   it.each([
     ['iwr https://x/a -OutFile C:\\out\\a', ['C:\\out\\a']],
@@ -334,10 +336,12 @@ describe('the powershell CLI read as it binds its words (#694) @cap:executer-une
     }
   });
 
+  // What the powershell CLI runs; `powershell` itself is a name cmd looks
+  // for in the folder first (#717), not what this reading is about.
   const scripts = (cmd: string) =>
-    programSources(cmd, { direct: true, host: 'windows' }).sources.map((s) =>
-      s.kind === 'file' ? s.path : `code:${s.code}`,
-    );
+    programSources(cmd, { direct: true, host: 'windows' })
+      .sources.filter((s) => s.kind === 'code' || s.extensions === undefined)
+      .map((s) => (s.kind === 'file' ? s.path : `code:${s.code}`));
 
   it.each([
     ['powershell -File x.ps1', ['x.ps1']],

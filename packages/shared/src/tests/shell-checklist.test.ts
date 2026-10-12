@@ -391,22 +391,27 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
   });
 
   // Revue passe 2 : une cible n'est jugée que depuis les `cd` qui la précèdent.
+  // Read on a posix host: on a cmd line, `curl` and `wget` are names cmd looks
+  // for in the folder first (#717, folder-moves.test.ts).
   it("each target says how many of the line's folders come before it", () => {
-    expect(writesOf('cd shared/x && curl -o a.jpg https://x/a')).toEqual({
+    expect(writesOf('cd shared/x && curl -o a.jpg https://x/a', 'posix')).toEqual({
       dirs: ['shared/x'],
       targets: [{ path: 'a.jpg', after: 1 }],
     });
-    expect(writesOf('curl -o a.jpg https://x/a && cd /elsewhere')).toEqual({
-      dirs: ['/elsewhere'],
+    // a `cd` on the right of `&&` may not run: the folder after it is not known (#717)
+    expect(writesOf('curl -o a.jpg https://x/a && cd /elsewhere', 'posix')).toEqual({
+      dirs: [null],
       targets: [{ path: 'a.jpg', after: 0 }],
     });
-    expect(writesOf('cd a && wget -O x https://x && cd b && curl -o y https://y')).toEqual({
-      dirs: ['a', 'b'],
-      targets: [
-        { path: 'x', after: 1 },
-        { path: 'y', after: 2 },
-      ],
-    });
+    expect(writesOf('cd a && wget -O x https://x && cd b && curl -o y https://y', 'posix')).toEqual(
+      {
+        dirs: ['a', null],
+        targets: [
+          { path: 'x', after: 1 },
+          { path: 'y', after: 2 },
+        ],
+      },
+    );
     // A shell redirection has no known place in the line: judged from every folder.
     expect(writesOf('curl https://x/a > a.zip && cd out').targets).toEqual([
       { path: 'a.zip', after: null },
@@ -414,11 +419,18 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
   });
 
   it('the folders the line moves into are kept in order', () => {
-    expect(writesOf('cd shared/x && curl -o a.jpg https://x/a').dirs).toEqual(['shared/x']);
-    expect(writesOf('cd && curl -o a.jpg https://x/a').dirs).toEqual([null]);
-    expect(writesOf('Push-Location D:\\out; iwr https://x -OutFile a').dirs).toEqual(['D:\\out']);
-    expect(writesOf('pushd out && popd && curl -o a https://x').dirs).toEqual(['out', null]);
-    expect(writesOf('Set-Location -Path D:\\x; iwr https://x -OutFile a').dirs).toEqual(['D:\\x']);
+    expect(writesOf('cd shared/x && curl -o a.jpg https://x/a', 'posix').dirs).toEqual([
+      'shared/x',
+    ]);
+    expect(writesOf('cd && curl -o a.jpg https://x/a', 'posix').dirs).toEqual([null]);
+    expect(writesOf('pushd out && popd && curl -o a https://x', 'posix').dirs).toEqual([
+      'out',
+      null,
+    ]);
+    // PowerShell lines, read as PowerShell runs them
+    const ps = (cmd: string) => downloadWrites(cmd, 'windows', 'powershell').dirs;
+    expect(ps('Push-Location D:\\out; iwr https://x -OutFile a')).toEqual(['D:\\out']);
+    expect(ps('Set-Location -Path D:\\x; iwr https://x -OutFile a')).toEqual(['D:\\x']);
   });
 
   // Passe 3, P2-3 : une valeur collée à son option courte (`-sLoC:\x`). Une
@@ -551,9 +563,14 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
         '/dev/stdin',
       ]);
       // stdin redirected earlier in the line, the fetcher run from a later folder.
-      expect(
-        writesOf('exec < ../outside.txt; cd sub && curl -o /dev/stdin https://x/a', host),
-      ).toEqual({ dirs: ['sub'], targets: [{ path: '/dev/stdin', after: 1 }] });
+      const read = writesOf(
+        'exec < ../outside.txt; cd sub && curl -o /dev/stdin https://x/a',
+        host,
+      );
+      expect(read.targets).toEqual([{ path: '/dev/stdin', after: expect.any(Number) }]);
+      // judged from the folder the line is in once in `sub` (cmd also looks
+      // for `exec` and `curl` in the folder, #717)
+      expect(read.dirs.slice(0, read.targets[0]?.after ?? 0)).toContain('sub');
       // Codex, pass 1.
       expect(paths('curl -o /dev/stdin https://x/data < /tmp/outside.txt', host)).toEqual([
         '/dev/stdin',

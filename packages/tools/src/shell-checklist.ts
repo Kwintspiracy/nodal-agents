@@ -25,6 +25,7 @@ import { isAbsolute, resolve } from 'node:path';
 import {
   downloadWrites,
   isCatastrophicCommand,
+  languageOfPath,
   languageOfShebang,
   programDecidedAtRunTime,
   programSources,
@@ -165,14 +166,17 @@ function endKey(path: string, base: string): string {
  * The folder a line is in at each point: the starting folder, then after each
  * folder move of the line, in order; null once one cannot be read. A script
  * run in the line's own process leaves it where its body ended, as the gate
- * read it (`ends`), and in a folder not known when it was not read (#717). A
- * folder kept (`{ save }`: entering a child process, cmd's `setlocal`) comes
- * back with its `{ restore }`; `kept` carries them across a script's lines.
+ * read it (`scripts.ends`), and in a folder not known when it was not read
+ * (#717). A word the shell may resolve to a script of the folder moves nothing
+ * when the gate found no script there (`scripts.programs`), and the folder is
+ * not known after a script found that may not run. A folder kept (`{ save }`:
+ * entering a child process, cmd's `setlocal`) comes back with its
+ * `{ restore }`; `kept` carries them across a script's lines.
  */
 function basesOf(
   dirs: readonly FolderMove[],
   cwd: string | null,
-  ends: ReadonlyMap<string, string | null>,
+  scripts: ScriptsRead,
   kept: Array<string | null> = [],
 ): Array<string | null> {
   const bases: Array<string | null> = [cwd];
@@ -182,7 +186,12 @@ function basesOf(
       base = base === null || move === null ? null : resolve(base, move);
     else if ('script' in move) {
       const path = sourcePath(move.script, base);
-      base = base === null || path === null ? null : (ends.get(endKey(path, base)) ?? null);
+      if (base === null || path === null) base = null;
+      else {
+        const key = endKey(path, base);
+        if (!scripts.programs.has(key))
+          base = move.mayNotRun === true ? null : (scripts.ends.get(key) ?? null);
+      }
     } else if ('save' in move) kept.push(base);
     else base = kept.length > 0 ? (kept.pop() ?? null) : null;
     bases.push(base);
@@ -201,11 +210,11 @@ async function downloadsOutside(
   command: string,
   place: ShellPlace,
   reader: ScriptShell | undefined,
-  ends: ReadonlyMap<string, string | null>,
+  scripts: ScriptsRead,
 ): Promise<string[]> {
   const { dirs, targets } = downloadWrites(command, place.host, reader);
   if (targets.length === 0) return [];
-  const bases = basesOf(dirs, place.cwd, ends);
+  const bases = basesOf(dirs, place.cwd, scripts);
   const outside: string[] = [];
   for (const { path, after } of targets) {
     if (path === null) {
@@ -277,6 +286,43 @@ interface ReadBudget {
    * the line's own process leaves it (#717). One not read is not here.
    */
   ends: Map<string, string | null>;
+  /**
+   * The words the shell may resolve to a script of the folder (`prepare`,
+   * `.\env`) for which none was found there, by the same key: programs, which
+   * move no folder (Nodal review of PR #721, P2).
+   */
+  programs: Set<string>;
+  /**
+   * The folder the call starts in. A file not found in another one was looked
+   * for where only a move took the line, which may have failed: it asks
+   * (Nodal review of PR #721, P1).
+   */
+  start: string | null;
+}
+
+/** What the gate learnt of the scripts a call runs in its own process. */
+type ScriptsRead = Pick<ReadBudget, 'ends' | 'programs'>;
+
+/** The extensions of a script a shell runs in its own process, among those it tries. */
+const IN_PROCESS_SCRIPT = /\.(bat|cmd|ps1)$/i;
+
+/**
+ * The file a word the shell may resolve by adding an extension names, looked
+ * for in the order the shell tries them; null when there is none, `unknown`
+ * when the folder cannot be looked into (outside the job's workspaces).
+ */
+async function lookFor(
+  place: ShellPlace,
+  path: string,
+  extensions: readonly string[],
+): Promise<{ path: string; read: SourceFile } | null | 'unknown'> {
+  for (const extension of extensions) {
+    const read = await place.readSource(path + extension);
+    if (read.kind === 'unread' && read.why === 'not_found') continue;
+    if (read.kind === 'unread' && read.why === 'outside_workspaces') return 'unknown';
+    return { path: path + extension, read };
+  }
+  return null;
 }
 
 /** The line `line` (1-based) of `text`, as the card shows it. */
@@ -318,8 +364,11 @@ async function readRunCode(
   for (const source of sources) {
     // Read again for each source: a script read before it, in the line's own
     // process, has said by now where it leaves the line (#717).
-    const bases = basesOf(dirs, place.cwd, budget.ends);
+    const bases = basesOf(dirs, place.cwd, budget);
     const named = source.kind === 'file' ? (source.path ?? command) : command;
+    // A word only looked for, past the depth read, is not reported: whether
+    // it is a script is not known, and so is the folder after it.
+    if (depth > MAX_SOURCE_DEPTH && source.kind === 'file' && source.extensions) continue;
     if (depth > MAX_SOURCE_DEPTH) {
       unread.push({ source: named, why: 'over_budget' });
       continue;
@@ -332,6 +381,8 @@ async function readRunCode(
     // file (or call) its code is written in, from the line it starts on.
     let shown: string;
     let firstLine = 1;
+    // Where the end of this script is kept, when it runs in the line's process.
+    let endAt: string | null = null;
     if (source.kind === 'code') {
       text = source.code;
       language = source.language;
@@ -348,24 +399,53 @@ async function readRunCode(
       }
     } else {
       base = bases[source.after] ?? null;
-      const path = source.path === null ? null : sourcePath(source.path, base);
-      if (source.path === null || path === null) {
+      const written = source.path === null ? null : sourcePath(source.path, base);
+      if (source.path === null || written === null) {
         unread.push({ source: named, why: 'decided_at_run_time' });
         continue;
+      }
+      endAt = base === null ? null : endKey(written, base);
+      let path = written;
+      let file = source.path;
+      let looked: SourceFile | null = null;
+      if (source.extensions !== undefined) {
+        // `prepare` may be `prepare.bat` of the folder (P2): the file the
+        // shell would find, in its order; none, or a program, moves nothing.
+        const found = await lookFor(place, written, source.extensions);
+        if (found === 'unknown') continue;
+        if (found === null || !IN_PROCESS_SCRIPT.test(found.path)) {
+          if (endAt !== null) budget.programs.add(endAt);
+          continue;
+        }
+        path = found.path;
+        file = source.path + found.path.slice(written.length);
+        looked = found.read;
       }
       const key = process.platform === 'win32' ? path.toLowerCase() : path;
       if (budget.seen.has(key)) continue;
       budget.seen.add(key);
       if (budget.files >= MAX_SOURCE_FILES || budget.bytes >= MAX_SOURCE_TOTAL_BYTES) {
-        unread.push({ source: source.path, why: 'over_budget' });
+        unread.push({ source: file, why: 'over_budget' });
         continue;
       }
       budget.files += 1;
-      const read = await place.readSource(path);
+      const read = looked ?? (await place.readSource(path));
       if (read.kind === 'unread') {
+        // A file looked for in a folder only a move took the line to: the
+        // move may have failed, and the file of the folder the line is still
+        // in runs (P1). It is no file that nothing runs.
+        if (
+          read.why === 'not_found' &&
+          !isAbsolute(file.replace(/\\/g, '/')) &&
+          base !== null &&
+          (budget.start === null || !samePlace(base, budget.start))
+        ) {
+          unread.push({ source: file, why: 'decided_at_run_time' });
+          continue;
+        }
         // A bare name not in the folder: the shell takes it from the PATH.
         if (read.why === 'not_found' && source.searched) continue;
-        unread.push({ source: source.path, why: read.why });
+        unread.push({ source: file, why: read.why });
         continue;
       }
       // An executable format is a program, judged by its name when the system
@@ -386,8 +466,12 @@ async function readRunCode(
         continue;
       }
       text = read.text;
-      language = source.language ?? languageOfShebang(text) ?? 'shell';
-      label = source.path;
+      language =
+        source.language ??
+        (source.extensions ? languageOfPath(path) : null) ??
+        languageOfShebang(text) ??
+        'shell';
+      label = file;
       shown = text;
     }
     const reading = readSource(text, language);
@@ -430,7 +514,7 @@ async function readRunCode(
         const after = basesOf(
           programSources(c.command, { direct: true, host: place.host, reader: lineReader }).dirs,
           cwd,
-          budget.ends,
+          budget,
           kept,
         );
         cwd = after[after.length - 1] ?? null;
@@ -438,17 +522,8 @@ async function readRunCode(
     }
     // Where a script read to its end leaves the process that runs it, when
     // that process is the line's (`{ script }` moves, #717).
-    if (
-      source.kind === 'file' &&
-      !reading.fromStrings &&
-      toTheEnd &&
-      base !== null &&
-      label !== null
-    ) {
-      const path = sourcePath(label, base);
-      if (path !== null)
-        budget.ends.set(endKey(path, base), kept.length > 0 ? (kept[0] ?? null) : cwd);
-    }
+    if (endAt !== null && !reading.fromStrings && toTheEnd)
+      budget.ends.set(endAt, kept.length > 0 ? (kept[0] ?? null) : cwd);
   }
 }
 
@@ -464,13 +539,20 @@ async function readCall(
   judged: Judged[];
   unread: ShellUnreadSource[];
   unreadCalls: string[];
-  ends: ReadonlyMap<string, string | null>;
+  scripts: ScriptsRead;
 }> {
   const judged: Judged[] = [];
   const unread: ShellUnreadSource[] = [];
   const unreadCalls: string[] = [];
   // One budget for the whole call: a declared proof's commands share it.
-  const budget: ReadBudget = { files: 0, bytes: 0, seen: new Set(), ends: new Map() };
+  const budget: ReadBudget = {
+    files: 0,
+    bytes: 0,
+    seen: new Set(),
+    ends: new Map(),
+    programs: new Set(),
+    start: place.cwd,
+  };
   for (const command of commands) {
     judged.push({
       call: command,
@@ -484,7 +566,7 @@ async function readCall(
     await readRunCode(command, command, place, false, 1, budget, judged, unread, null, undefined);
     if (unread.length > before) unreadCalls.push(command);
   }
-  return { judged, unread, unreadCalls, ends: budget.ends };
+  return { judged, unread, unreadCalls, scripts: budget };
 }
 
 /**
@@ -525,7 +607,7 @@ export async function judgeShellChecklist(
     found.set(category, where);
   };
 
-  const { judged, unread, unreadCalls, ends } = await readCall(commands, place);
+  const { judged, unread, unreadCalls, scripts } = await readCall(commands, place);
 
   for (const j of judged) {
     for (const category of staticShellCategories(j.text, j.place.host, j.reader)) {
@@ -541,7 +623,7 @@ export async function judgeShellChecklist(
         continue;
       }
       if (category !== 'download') continue;
-      const places = await downloadsOutside(j.text, j.place, j.reader, ends);
+      const places = await downloadsOutside(j.text, j.place, j.reader, scripts);
       if (places.length === 0) continue;
       add(category, j);
       const entry = outside.find((o) => o.command === j.call);
