@@ -685,6 +685,65 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     ]);
   });
 
+  it('a script named after an interpreter is read as the script it is (#710, Codex pass 7)', async () => {
+    // Pass 6 judged `npm.cmd` as npm by dropping its extension; that also
+    // turned `powershell.cmd`, a script of the folder, into the interpreter,
+    // and its body went unread. The file is read, and the name judged too.
+    const root = resolve('/nodal-fake-ws');
+    const place: ShellPlace = {
+      cwd: root,
+      host: 'windows',
+      inWorkspace: async (p) => resolve(p).toLowerCase().startsWith(root.toLowerCase()),
+      leadsTo: async () => null,
+      readSource: async (p) =>
+        /\.(cmd|bat)$/i.test(p)
+          ? { kind: 'text', text: 'npm install lodash\r\n', bytes: 20 }
+          : { kind: 'unread', why: 'not_found' },
+    };
+    for (const command of [
+      'powershell.cmd',
+      '.\\powershell.cmd',
+      'node.cmd',
+      'python.bat',
+      'bash.cmd',
+    ]) {
+      const judged = await judgeShellChecklist([command], DEFAULT_SHELL_POLICY, place);
+      expect(judged, command).toContainEqual(
+        expect.objectContaining({ category: 'install_software', state: 'ask' }),
+      );
+    }
+  });
+
+  it('a script named after cd moves no folder of the reading (#710, Codex pass 8)', async () => {
+    // `cd.bat decoy` runs a file of the folder; taken for `cd`, it moved the
+    // reading into `decoy`, where `cleanup.bat` was not found, and the
+    // workspace's `cleanup.bat`, the one that runs, went unread.
+    const root = resolve('/nodal-fake-ws');
+    const cleanup = resolve(root, 'cleanup.bat').toLowerCase();
+    const place: ShellPlace = {
+      cwd: root,
+      host: 'windows',
+      inWorkspace: async (p) => resolve(p).toLowerCase().startsWith(root.toLowerCase()),
+      leadsTo: async () => null,
+      readSource: async (p) =>
+        resolve(p).toLowerCase() === cleanup
+          ? { kind: 'text', text: 'del /q important.txt\r\n', bytes: 22 }
+          : /(cd|chdir|pushd)\.(bat|cmd)$/i.test(p)
+            ? { kind: 'text', text: '@echo off\r\n', bytes: 11 }
+            : { kind: 'unread', why: 'not_found' },
+    };
+    for (const command of [
+      'cd.bat decoy && cleanup.bat',
+      'chdir.cmd decoy & cleanup.bat',
+      'pushd.bat decoy && cleanup.bat',
+    ]) {
+      const judged = await judgeShellChecklist([command], DEFAULT_SHELL_POLICY, place);
+      expect(judged, command).toContainEqual(
+        expect.objectContaining({ category: 'delete_files', state: 'ask' }),
+      );
+    }
+  });
+
   it('run_command with no cwd and several workspaces: the agent is told, no one is asked', async () => {
     // The SHIPPED tool: its own refusal, not a fake's. Every posture that
     // would otherwise reach a person — the checklist (a "relative" download
@@ -875,5 +934,37 @@ describe('what reaches the screen, a printer or someone is asked (#667) @cap:exe
         "again. Unless the person's reason rules the action out: if one of your tools does this action " +
         'and its description says it asks the person first, use that tool: the person decides there.',
     );
+  });
+});
+
+// Codex, PR #710 passe 4 : `alias npm='npm install'` puis `npm cowsay`
+// installait sans rien demander. Une ligne qui redéfinit un nom de commande
+// lance des programmes que son texte ne nomme pas : elle demande sous la
+// politique par défaut, comme un programme décidé à l'exécution.
+describe('a line that redefines a command name asks (#710, Codex pass 4) @cap:executer-une-commande/moteur', () => {
+  it('asks under the default policy, and "never" on inline code refuses it', async () => {
+    for (const command of [
+      "shopt -s expand_aliases\nalias npm='npm install'\nnpm cowsay",
+      'hash -p /usr/bin/apt-get ls; ls install x',
+      'powershell -Command "Set-Alias ls Remove-Item; ls x"',
+      'doskey npm=npm install $*',
+    ]) {
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res.outcome, command).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      const reasons = (await reasonsOf(res.approvalRequestId)) as Array<{ category: string }>;
+      expect(
+        reasons.find((r) => r.category === 'inline_code'),
+        command,
+      ).toEqual({ category: 'inline_code', state: 'ask', details: [command] });
+      const refused = await run(command, gate({ ...DEFAULT_SHELL_POLICY, inline_code: 'never' }));
+      expect(refused.outcome, command).toBe('error');
+    }
+  });
+
+  it('a helper function written with its body runs unasked', async () => {
+    const command = 'greet() { echo hi; }; greet';
+    const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+    expect(res).toMatchObject({ outcome: 'success', output: `ran:${command}` });
   });
 });

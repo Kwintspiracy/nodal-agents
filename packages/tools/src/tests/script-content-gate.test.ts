@@ -251,7 +251,7 @@ describe('a command that runs a script is judged by the script (#635) @cap:execu
       ['tool.rb', 'system("gem install rails")', 'ruby tool.rb', 'install_software', 1],
       [
         'tool.php',
-        '<?php\nshell_exec("composer install && rm -rf vendor/x");',
+        '<?php\nshell_exec("composer dump-autoload && rm -rf vendor/x");',
         'php tool.php',
         'delete_files',
         2,

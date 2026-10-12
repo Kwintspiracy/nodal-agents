@@ -25,6 +25,7 @@ import {
   TEE_OBJECT,
   bindPsArguments,
   isPsParameter,
+  isSplat,
   psHasUnknownParameter,
   psParameterNames,
   psPositional,
@@ -90,6 +91,16 @@ function interpreterBasename(token: string): string {
   const base = t.split(/[\\/]/).pop() ?? t;
   return base.replace(/\.(exe|com)$/i, '').toLowerCase();
 }
+
+/**
+ * The script extensions Windows runs a file by without them being written
+ * (the default PATHEXT past `.exe`/`.com`) and PowerShell's `.ps1`. Package
+ * managers ship their Windows entry points as such shims (`npm.cmd`,
+ * `conda.bat`, `npm.ps1`), so the name as typed carries one (Codex, PR #710
+ * pass 6). Unlike `.exe`, the word is then a script AND the program it is
+ * named after: `wordUnits` reads both (pass 7).
+ */
+const SCRIPT_RUN_BY_NAME = /\.(cmd|bat|ps1|vbs|vbe|js|jse|wsf|wsh|msc)$/i;
 
 export type InterpreterKind =
   | 'python'
@@ -163,7 +174,12 @@ export function isInlineEvalFlag(kind: InterpreterKind, flag: string): boolean {
  */
 function isInlineEvalUnit(unit: readonly string[]): boolean {
   const program = unit[0] ?? '';
-  if (isDecidedAtRunTime(program) || program === 'iex' || program === 'invoke-expression')
+  if (
+    isDecidedAtRunTime(program) ||
+    redefinesCommand(unit) ||
+    program === 'iex' ||
+    program === 'invoke-expression'
+  )
     return true;
   const kind = interpreterKind(program);
   // A shell's line is read by `shellLine`, the reading `commandUnits` unwraps
@@ -218,6 +234,25 @@ function isWindowsRootOrWildcardTarget(token: string): boolean {
   if (/^\$env:(systemdrive|systemroot|userprofile)\\?\*?$/i.test(t)) return true;
   return false;
 }
+
+/** Remove-Item and its aliases in PowerShell, of which del, erase, rd and rmdir are also cmd's own. */
+const REMOVE_ITEM_NAMES: readonly string[] = [
+  'remove-item',
+  'ri',
+  'rm',
+  'del',
+  'erase',
+  'rd',
+  'rmdir',
+];
+
+/**
+ * The programs that delete files on Windows, macOS and Linux: ONE list, read
+ * by the floor (the Remove-Item family, recursive and forced, on a whole disk)
+ * and by the `delete_files` kind (any of them). Each kept its own list, and
+ * they drifted: the floor knew `erase` and `ri`, the kind did not (#693).
+ */
+const DELETE_PROGRAMS: readonly string[] = [...REMOVE_ITEM_NAMES, 'unlink', 'shred', 'srm'];
 
 /** rm's short options (GNU, BSD/macOS, busybox), which a group (`-rfv`) may hold. */
 const RM_SHORT_GROUP = /^-[dfiIPRrvWx]+$/;
@@ -338,14 +373,14 @@ export function isCatastrophicCommand(
       return true;
     }
 
-    // Windows recursive+forced delete (Remove-Item/ri/del/erase/rd/rmdir)
+    // Windows recursive+forced delete (Remove-Item and its names, `REMOVE_ITEM_NAMES`)
     // against a machine-wide target — mirrors the `rm` check above, same
     // root-only scope. `Remove-Item .\build -Recurse -Force` (a relative
     // project subfolder) must NOT match; only a drive root / wildcard / system
-    // env var does. All six are Remove-Item in PowerShell: its parameters are
-    // read as PowerShell binds them (`-Fo`, `-r`, `-Force:$true`, `–Force`),
-    // and `-Force:$false` sets nothing (#694).
-    if (/^(ri|remove-item|del|erase|rd|rmdir)$/i.test(cmdWord)) {
+    // env var does. All of them are Remove-Item in PowerShell: its parameters
+    // are read as PowerShell binds them (`-Fo`, `-r`, `-Force:$true`,
+    // `–Force`), and `-Force:$false` sets nothing (#694).
+    if (REMOVE_ITEM_NAMES.includes(cmdWord)) {
       const ps = bindPsArguments(args, REMOVE_ITEM);
       const psRecursiveForce = psSwitch(ps, 'recurse') !== false && psSwitch(ps, 'force') !== false;
       const cmdRecursiveForce = /\/s\b/i.test(s) && /\/q\b/i.test(s);
@@ -402,16 +437,721 @@ function subcommand(program: string, rest: string): RegExp {
   return new RegExp(String.raw`\b(?:${program})${GLOBAL_OPTIONS}\s+${rest}`, 'i');
 }
 
+// ── What installs, updates or removes software (#693) ────────────────────────
+// The `install_software` kind read "the word `install` after a known manager":
+// every installer whose verb is an option (`msiexec /i`, `dpkg -i`, `rpm -Uvh`,
+// `wusa x.msu`), every manager missing from the list and every remove or
+// upgrade verb ran with no ask, and Codex kept finding the next one. Each
+// operating system's standard ways to install, update or remove software or
+// an OS component are now listed below, one table per family, from the
+// platform's own documentation; ONE reader (`installsSoftware`) reads them all.
+// A simulation (`apt-get -s`, `rpm --test`, `-WhatIf`) asks like the install
+// it simulates (Codex, PR #710 pass 2): whether a word is that flag or the
+// value of the option before it (`apt-get -c --simulate install x` installs,
+// with `--simulate` as its config file; `Install-Module '-WhatIf'` installs a
+// module of that name, and a unit has lost its quotes) takes each program's
+// whole option grammar, and what the text cannot establish asks. A read stays
+// unflagged by naming no action: no verb of the program among its words
+// (`apt list`, `winget show`; which word is the subcommand takes the same
+// grammar), a mode with no action letter (`rpm -q x`, `pacman -Qi x`).
+// A word decided at run time (`apt-get "$verb" x`, `winget %V% x`, a splat)
+// could be any verb, so it asks (Codex, PR #710 pass 3); a program name
+// decided at run time is inline code already (`isInlineEvalUnit`).
+
+/** How one program says it installs, updates or removes software. */
+interface Installer {
+  /** Its subcommands that do, wherever they stand (`apt-get -y install`); a nested one in words, in order (`uv pip install`). */
+  verbs?: readonly string[];
+  /** Its options that do, by name (`--install`, msiexec's `/i`, installer's `-target`); `f*` is every name that starts with `f`. */
+  options?: readonly string[];
+  /**
+   * Its short options that do, alone or in a group (`rpm -Uvh`). Letters are
+   * case-sensitive: `rpm -e` erases, `rpm -E` evaluates a macro.
+   */
+  letters?: string;
+  /** Every word that is not an option is a package it installs (`emerge atom`, `wusa x.msu`). */
+  operands?: true;
+  /** It does whenever it runs: a cmdlet, a setup program. */
+  always?: true;
+  /**
+   * Run with no command it installs. `options`: its options only modify that
+   * install (`yarn --frozen-lockfile`, `bundle`), unless one only prints its
+   * version or its help (`-v`, `--version`, `-h`, `--help`). `alone`: an
+   * option is itself the operation (`yay -Q` queries), so only `yay` alone does.
+   */
+  bare?: 'options' | 'alone';
+  /**
+   * It takes any unambiguous start of a command as that command (Symfony
+   * Console's `composer req`): an operand of three letters or more that
+   * starts one of its one-word verbs does.
+   */
+  abbreviations?: true;
+  /**
+   * How its options are written. `gnu` (the default): `--name[=v]`, `-abc` a
+   * group of letters, `--` ends them. `windows`: `/name[:v]` or `-name[:v]`.
+   * `single-dash`: `-name[=v]`.
+   */
+  syntax?: 'gnu' | 'windows' | 'single-dash';
+}
+
+/** A cmdlet that installs, updates or removes software or an OS component. */
+const CMDLET: Installer = { always: true };
+
+/**
+ * Windows. Sources (Microsoft Learn): msiexec (windows-commands/msiexec:
+ * /i /package /a /x /uninstall /f[pocdaumsv] /p /update /j[u|m]); wusa ("Windows
+ * Update Standalone Installer": `wusa x.msu`, /uninstall [/kb:N]); DISM
+ * (dism-operating-system-package-servicing, -capabilities,
+ * enable-or-disable-windows-features, -app-package-servicing, -driver-servicing);
+ * pnputil (/add-driver /delete-driver, the legacy -a -d -i); the PowerShell
+ * modules PowerShellGet, PackageManagement, Microsoft.PowerShell.PSResourceGet
+ * (isres, usres, udres), Appx, Dism, ServerManager (Add-/Remove-WindowsFeature
+ * are the names before Windows Server 2012), LanguagePackManagement; the
+ * aliases are those `Get-Alias -Definition` lists on Windows 11 (inmo, upmo,
+ * Add-AppPackage, Add-MsixPackage…). winget (install|add, uninstall|remove|rm,
+ * upgrade|update, import, configure, repair), Chocolatey (install, uninstall,
+ * upgrade), Scoop.
+ * `msiexec /?`, `wusa /?` and `pnputil /enum-drivers` name no action: they
+ * need no entry to stay unflagged.
+ */
+const WINDOWS_INSTALLERS: Record<string, Installer> = {
+  msiexec: {
+    syntax: 'windows',
+    options: ['i', 'package', 'a', 'x', 'uninstall', 'f*', 'p', 'update', 'j*'],
+  },
+  wusa: { syntax: 'windows', operands: true, options: ['uninstall'] },
+  dism: {
+    syntax: 'windows',
+    options: [
+      'add-package',
+      'remove-package',
+      'enable-feature',
+      'disable-feature',
+      'add-capability',
+      'remove-capability',
+      'add-provisionedappxpackage',
+      'remove-provisionedappxpackage',
+      'add-driver',
+      'remove-driver',
+    ],
+  },
+  pnputil: { syntax: 'windows', options: ['add-driver', 'delete-driver', 'a', 'd', 'i'] },
+  'install-module|inmo|uninstall-module|update-module|upmo': CMDLET,
+  'install-script|uninstall-script|update-script': CMDLET,
+  'install-package|uninstall-package|install-packageprovider': CMDLET,
+  'install-psresource|isres|uninstall-psresource|usres|update-psresource|udres': CMDLET,
+  'add-appxpackage|add-apppackage|add-msixpackage|remove-appxpackage|remove-apppackage|remove-msixpackage':
+    CMDLET,
+  'install-windowsfeature|add-windowsfeature|uninstall-windowsfeature|remove-windowsfeature':
+    CMDLET,
+  'add-appxprovisionedpackage|add-appprovisionedpackage|add-provisionedapppackage|add-provisionedappxpackage':
+    CMDLET,
+  'remove-appxprovisionedpackage|remove-appprovisionedpackage|remove-provisionedapppackage|remove-provisionedappxpackage':
+    CMDLET,
+  'add-windowspackage|remove-windowspackage|add-windowscapability|remove-windowscapability': CMDLET,
+  'enable-windowsoptionalfeature|disable-windowsoptionalfeature': CMDLET,
+  'add-windowsdriver|remove-windowsdriver|install-language|uninstall-language': CMDLET,
+  winget: {
+    verbs: [
+      'install',
+      'add',
+      'uninstall',
+      'remove',
+      'rm',
+      'upgrade',
+      'update',
+      'import',
+      'configure',
+      'repair',
+    ],
+  },
+  choco: { verbs: ['install', 'uninstall', 'upgrade', 'update'] },
+  // Chocolatey 1's shortcuts: `cinst x` is `choco install x`.
+  'cinst|cuninst|cup': { always: true },
+  scoop: { verbs: ['install', 'uninstall', 'update', 'reset', 'cleanup'] },
+  // A setup program run directly: the name Windows installers ship under.
+  setup: { always: true },
+};
+
+/**
+ * macOS. Sources: installer(8) (`-pkg x -target /` installs), softwareupdate(8)
+ * (-i --install, --install-rosetta, --fetch-full-installer), the Homebrew
+ * manpage (install, reinstall, uninstall|remove|rm, upgrade, autoremove), MacPorts port(1) (install,
+ * uninstall, upgrade, activate, deactivate, selfupdate), mas (install,
+ * uninstall, upgrade, purchase, lucky).
+ */
+const MACOS_INSTALLERS: Record<string, Installer> = {
+  installer: {
+    syntax: 'single-dash',
+    options: ['target'],
+  },
+  softwareupdate: {
+    options: ['install', 'install-rosetta', 'fetch-full-installer'],
+    letters: 'i',
+  },
+  brew: {
+    // `update` fetches Homebrew itself, not only its formula lists (#710 pass 9).
+    // `bundle` installs a Brewfile; `link`/`unlink` switch an installed version.
+    verbs: [
+      'install',
+      'reinstall',
+      'uninstall',
+      'remove',
+      'rm',
+      'upgrade',
+      'autoremove',
+      'update',
+      'bundle',
+      'link',
+      'unlink',
+    ],
+  },
+  port: { verbs: ['install', 'uninstall', 'upgrade', 'activate', 'deactivate', 'selfupdate'] },
+  mas: { verbs: ['install', 'uninstall', 'upgrade', 'purchase', 'lucky'] },
+};
+
+/**
+ * Linux and the BSDs. Sources: apt-get(8) (install, reinstall, remove, purge,
+ * upgrade, dist-upgrade, dselect-upgrade, autoremove, autopurge, build-dep,
+ * satisfy), apt(8) (full-upgrade), aptitude (safe-upgrade); dpkg(1) (-i -r -P
+ * --install --remove --purge --unpack --configure); rpm(8) (-i -U -F -e and
+ * long forms); the DNF
+ * command reference (install|in, remove|rm, upgrade|up, upgrade-minimal,
+ * downgrade|dg, reinstall|rei, autoremove, distro-sync|dsync, swap, group,
+ * module, history undo|redo|rollback|replay) and yum's older names;
+ * zypper(8) (install|in, source-install|si, install-new-recommends|inr,
+ * remove|rm, removeptf, update|up, dist-upgrade|dup, patch, verify|ve,
+ * purge-kernels); pacman(8) (-S -R -U); apk(8) (add, del, fix, upgrade);
+ * emerge(1) (an atom merges, -C -c -P --unmerge --depclean --prune); snap,
+ * flatpak, PackageKit's pkcon; nix-env(1) (-i -e -u, --rollback, -G
+ * --switch-generation, --set) and `nix profile`; FreeBSD pkg(8) (install,
+ * add, delete, remove, upgrade, autoremove).
+ */
+const LINUX_INSTALLERS: Record<string, Installer> = {
+  'apt-get|apt|aptitude': {
+    verbs: [
+      'install',
+      'reinstall',
+      'remove',
+      'purge',
+      'upgrade',
+      'full-upgrade',
+      'dist-upgrade',
+      'safe-upgrade',
+      'dselect-upgrade',
+      'autoremove',
+      'autopurge',
+      'build-dep',
+      'satisfy',
+    ],
+  },
+  dpkg: {
+    options: ['install', 'remove', 'purge', 'unpack', 'configure'],
+    letters: 'irP',
+  },
+  rpm: {
+    options: ['install', 'upgrade', 'freshen', 'erase', 'reinstall'],
+    letters: 'iUFe',
+  },
+  'dnf|dnf5|yum|microdnf|tdnf': {
+    verbs: [
+      'install',
+      'in',
+      'install-n',
+      'install-na',
+      'install-nevra',
+      'localinstall',
+      'reinstall',
+      'rei',
+      'remove',
+      'rm',
+      'erase',
+      'remove-n',
+      'remove-na',
+      'remove-nevra',
+      'upgrade',
+      'up',
+      'update',
+      'upgrade-minimal',
+      'up-min',
+      'update-minimal',
+      'downgrade',
+      'dg',
+      'autoremove',
+      'distro-sync',
+      'dsync',
+      'distrosync',
+      'swap',
+      'groupinstall',
+      'groupremove',
+      'groupupdate',
+      'group install',
+      'group remove',
+      'group upgrade',
+      'group update',
+      'groups install',
+      'groups remove',
+      'grp install',
+      'grp remove',
+      'module install',
+      'module update',
+      'module remove',
+      'module switch-to',
+      'history undo',
+      'history redo',
+      'history rollback',
+      'history replay',
+    ],
+  },
+  zypper: {
+    verbs: [
+      'install',
+      'in',
+      'source-install',
+      'si',
+      'install-new-recommends',
+      'inr',
+      'remove',
+      'rm',
+      'removeptf',
+      'rmptf',
+      'update',
+      'up',
+      'dist-upgrade',
+      'dup',
+      'patch',
+      'verify',
+      've',
+      'purge-kernels',
+    ],
+  },
+  pacman: {
+    options: ['sync', 'remove', 'upgrade'],
+    letters: 'SRU',
+  },
+  // The AUR helpers take pacman's operations; alone they upgrade the system.
+  'yay|paru': {
+    options: ['sync', 'remove', 'upgrade'],
+    letters: 'SRU',
+    bare: 'alone',
+  },
+  // Void's xbps, OpenBSD's pkg_add/pkg_delete: they do whenever they run.
+  'xbps-install|xbps-remove|pkg_add|pkg_delete': { always: true },
+  apk: { verbs: ['add', 'del', 'fix', 'upgrade'] },
+  emerge: {
+    operands: true,
+    options: ['unmerge', 'depclean', 'prune'],
+    letters: 'CcP',
+  },
+  snap: { verbs: ['install', 'remove', 'refresh', 'revert'] },
+  flatpak: { verbs: ['install', 'uninstall', 'update'] },
+  pkcon: { verbs: ['install', 'install-local', 'remove', 'update', 'upgrade-system'] },
+  'nix-env': {
+    options: ['install', 'uninstall', 'upgrade', 'rollback', 'switch-generation', 'set'],
+    letters: 'ieuG',
+  },
+  nix: {
+    verbs: [
+      'profile install',
+      'profile add',
+      'profile remove',
+      'profile upgrade',
+      'profile rollback',
+      'upgrade-nix',
+    ],
+  },
+  pkg: { verbs: ['install', 'add', 'delete', 'remove', 'upgrade', 'autoremove', 'bootstrap'] },
+};
+
+/**
+ * npm, pnpm, yarn and bun: what installs, updates or removes a package of the
+ * project, a global one, the manager itself (`self-update`, `set version`,
+ * Yarn 1's `policies set-version`) or a Node.js runtime (`pnpm env use`).
+ * npm's documented aliases are listed (`inst`, `isntall`, `ic`, `cit`, `ln`…).
+ */
+const NODE_VERBS: readonly string[] = [
+  'install',
+  'i',
+  'in',
+  'ins',
+  'inst',
+  'insta',
+  'instal',
+  'isnt',
+  'isnta',
+  'isntal',
+  'isntall',
+  'add',
+  'a',
+  'ci',
+  'clean-install',
+  'ic',
+  'install-clean',
+  'isntall-clean',
+  'install-test',
+  'it',
+  'install-ci-test',
+  'cit',
+  'uninstall',
+  'remove',
+  'rm',
+  'r',
+  'un',
+  'update',
+  'udpate',
+  'up',
+  'upgrade',
+  'upgrade-interactive',
+  'link',
+  'ln',
+  'unlink',
+  'prune',
+  'dedupe',
+  'ddp',
+  'rebuild',
+  'rb',
+  'global add',
+  'global remove',
+  'global upgrade',
+  'self-update',
+  'set version',
+  'policies set-version',
+  'plugin import',
+  'pm trust',
+  'env use',
+  'env add',
+  'env remove',
+];
+
+/**
+ * The language, project and runtime managers, with every command of each that
+ * installs, updates or removes (Codex, PR #710 passes 9 to 11, read against
+ * each tool's own command reference): a package of a project or a global one,
+ * the manager ITSELF (`brew update`, `port selfupdate`, `scoop update`,
+ * `pnpm self-update`, Yarn 1's `policies set-version`, `uv self update`,
+ * `nix upgrade-nix`, `pkg bootstrap`, `rustup self update`, `composer
+ * self-update`), a runtime (`pnpm env use`, `uv python upgrade`, rustup's
+ * toolchains, nvm, fnm, volta, pyenv, rbenv, asdf, mise, sdkman), and a
+ * dependency added to or synced into a project (`go get`, `cargo add`, `uv
+ * sync`, `bundle`, `dotnet restore`), as `npm add` and `npm ci` already were.
+ * Building or running, which may fetch what a lockfile names (`cargo build`,
+ * `uv run`, `dotnet build`), does not; nor does a refresh of the package lists
+ * alone (`apt-get update`, `pkg update`).
+ */
+const CROSS_PLATFORM_INSTALLERS: Record<string, Installer> = {
+  'npm|pnpm|bun': { verbs: NODE_VERBS },
+  // `yarn` alone installs the project's dependencies.
+  yarn: { verbs: NODE_VERBS, bare: 'options' },
+  'pip|pip3': { verbs: ['install', 'uninstall'] },
+  pipx: {
+    verbs: [
+      'install',
+      'install-all',
+      'uninstall',
+      'uninstall-all',
+      'upgrade',
+      'upgrade-all',
+      'reinstall',
+      'reinstall-all',
+      'inject',
+      'uninject',
+      'upgrade-shared',
+    ],
+  },
+  // uv (review of PR #476)
+  uv: {
+    verbs: [
+      'pip install',
+      'pip uninstall',
+      'pip sync',
+      'add',
+      'remove',
+      'tool install',
+      'tool uninstall',
+      'tool upgrade',
+      'python install',
+      'python uninstall',
+      'self update',
+      'python upgrade',
+      'sync',
+    ],
+  },
+  go: { verbs: ['install', 'get', 'mod tidy'] },
+  gem: { verbs: ['install', 'i', 'uninstall', 'update', 'cleanup', 'pristine'] },
+  // Bundler: `bundle` alone is `bundle install`.
+  'bundle|bundler': { verbs: ['install', 'update', 'add', 'remove', 'clean'], bare: 'options' },
+  cargo: { verbs: ['install', 'uninstall', 'add', 'remove', 'update', 'binstall'] },
+  rustup: {
+    verbs: [
+      'update',
+      'install',
+      'uninstall',
+      'toolchain install',
+      'toolchain uninstall',
+      'toolchain link',
+      'component add',
+      'component remove',
+      'target add',
+      'target remove',
+      'default',
+      'override set',
+      'self update',
+      'self uninstall',
+    ],
+  },
+  'conda|mamba|micromamba': {
+    verbs: [
+      'install',
+      'remove',
+      'uninstall',
+      'update',
+      'upgrade',
+      'create',
+      'env create',
+      'env update',
+      'env remove',
+      'self-update',
+    ],
+  },
+  // Composer runs on Symfony Console: any unambiguous start of a command is
+  // that command (`composer req x`).
+  composer: {
+    verbs: [
+      'install',
+      'i',
+      'update',
+      'u',
+      'upgrade',
+      'require',
+      'r',
+      'remove',
+      'rm',
+      'uninstall',
+      'reinstall',
+      'self-update',
+      'selfupdate',
+      'create-project',
+    ],
+    abbreviations: true,
+  },
+  poetry: {
+    verbs: [
+      'install',
+      'add',
+      'remove',
+      'update',
+      'sync',
+      'self update',
+      'self add',
+      'self remove',
+      'self install',
+      'python install',
+      'python remove',
+    ],
+  },
+  pdm: {
+    verbs: [
+      'install',
+      'add',
+      'remove',
+      'update',
+      'sync',
+      'self update',
+      'self add',
+      'self remove',
+      'python install',
+      'py install',
+      'python remove',
+      'py remove',
+    ],
+  },
+  pipenv: { verbs: ['install', 'uninstall', 'update', 'upgrade', 'sync', 'clean'] },
+  dotnet: {
+    verbs: [
+      'tool install',
+      'tool update',
+      'tool uninstall',
+      'tool restore',
+      'add package',
+      'remove package',
+      // .NET 10's noun-first forms (Nodal Reviewer A, PR #710 pass 12).
+      'package add',
+      'package remove',
+      'package update',
+      'workload install',
+      'workload update',
+      'workload uninstall',
+      'workload repair',
+      'workload restore',
+      'new install',
+      'new uninstall',
+      'restore',
+    ],
+  },
+  nuget: { verbs: ['install', 'update', 'restore'] },
+  deno: { verbs: ['install', 'i', 'uninstall', 'upgrade', 'add', 'remove'] },
+  // Runtime version managers: what they install is a language's runtime.
+  nvm: { verbs: ['install', 'uninstall', 'reinstall-packages', 'install-latest-npm'] },
+  fnm: { verbs: ['install', 'uninstall'] },
+  volta: { verbs: ['install', 'uninstall', 'setup'] },
+  'pyenv|rbenv|nodenv': { verbs: ['install', 'uninstall', 'update'] },
+  asdf: {
+    verbs: ['install', 'uninstall', 'plugin add', 'plugin remove', 'plugin update', 'update'],
+  },
+  mise: {
+    verbs: [
+      'install',
+      'i',
+      'uninstall',
+      'use',
+      'u',
+      'upgrade',
+      'up',
+      'self-update',
+      'plugins install',
+      'plugins uninstall',
+      'plugins update',
+    ],
+  },
+  sdk: { verbs: ['install', 'i', 'uninstall', 'rm', 'upgrade', 'ug', 'selfupdate'] },
+  // ComfyUI's CLI: ComfyUI itself and its custom nodes
+  comfy: {
+    verbs: [
+      'install',
+      'update',
+      'node install',
+      'node uninstall',
+      'node reinstall',
+      'node update',
+      'node install-deps',
+    ],
+  },
+};
+
+/** Every installer, by program name (the unit's: lower-cased, without `.exe`). */
+const INSTALLERS: ReadonlyMap<string, Installer> = new Map(
+  [WINDOWS_INSTALLERS, MACOS_INSTALLERS, LINUX_INSTALLERS, CROSS_PLATFORM_INSTALLERS].flatMap(
+    (table) =>
+      Object.entries(table).flatMap(([names, installer]) =>
+        names.split('|').map((name): [string, Installer] => [name, installer]),
+      ),
+  ),
+);
+
+/** The programs `installsSoftware` reads, for the tests that keep one case per program. */
+export const INSTALLER_PROGRAMS: readonly string[] = [...INSTALLERS.keys()];
+
+/**
+ * A package file run as a program (`x.msi`, `start x.msu`, `Start-Process
+ * app.msix`): Windows hands it to its installer. macOS `.pkg` and Linux
+ * `.deb` / `.rpm` / `.flatpakref` opened the same way go to theirs.
+ */
+const PACKAGE_FILE =
+  /\.(?:msi|msp|msu|msix|msixbundle|appx|appxbundle|appinstaller|pkg|mpkg|deb|rpm|flatpakref)$/i;
+
+/** One installer's words, read as its syntax writes them. */
+interface InstallerWords {
+  /** Option names, lower-cased (`--install` → `install`, `/Enable-Feature:x` → `enable-feature`). */
+  names: Set<string>;
+  /** GNU groups of short options, without their dash (`-Uvh` → `Uvh`). */
+  groups: string[];
+  /** The words that are not options. */
+  operands: string[];
+}
+
+function installerWords(args: readonly string[], syntax: Installer['syntax']): InstallerWords {
+  const words: InstallerWords = { names: new Set(), groups: [], operands: [] };
+  const name = (w: string, lead: RegExp, sep: string) =>
+    words.names.add((w.replace(lead, '').split(sep)[0] ?? '').toLowerCase());
+  let optionsEnded = false;
+  for (const w of args) {
+    if (optionsEnded) words.operands.push(w);
+    else if (syntax === 'windows' && /^[/-]./.test(w)) name(w, /^[/-]/, ':');
+    else if (syntax === 'single-dash' && /^-./.test(w)) name(w, /^-+/, '=');
+    else if (w === '--') optionsEnded = true;
+    else if (/^--./.test(w)) name(w, /^--/, '=');
+    else if (/^-[A-Za-z]+$/.test(w)) words.groups.push(w.slice(1));
+    else if (!w.startsWith('-')) words.operands.push(w);
+  }
+  return words;
+}
+
+/**
+ * `verb` anywhere in the unit, its words in order (`dnf module -y install x`).
+ * Reaching it past the program's options would take each one's grammar (`nix
+ * --option sandbox false profile install x`: a two-value option), so where it
+ * stands is not read: a read that names a verb word asks (`zypper search patch`).
+ */
+function hasVerb(args: readonly string[], verbs: readonly string[]): boolean {
+  const words = args.map((w) => w.toLowerCase());
+  return verbs.some((verb) => {
+    let from = 0;
+    return verb.split(' ').every((part) => (from = words.indexOf(part, from) + 1) > 0);
+  });
+}
+
+/**
+ * True when the words name a command: their first word is not an option.
+ * Past an option, a word may be its value, or one of several (`yarn --cwd
+ * /srv/app`, `bundle --without development test` install; Nodal Reviewer A,
+ * PR #710 passes 12 and 13): how many words an option takes is its grammar,
+ * not read here, so a command written after an option asks (`yarn --silent
+ * build`). The common reads name their command first (`yarn build`, `bundle
+ * exec rspec`).
+ */
+function namesACommand(args: readonly string[]): boolean {
+  const first = args[0];
+  return first !== undefined && !first.startsWith('-');
+}
+
+/** True when one command unit installs, updates or removes software (#693). */
+function installsSoftware(unit: readonly string[]): boolean {
+  const program = unit[0] ?? '';
+  const args = unit.slice(1);
+  if (PACKAGE_FILE.test(program)) return true;
+  // A versioned name is the same program (`pip3.12`, `gem3.2`).
+  const installer = INSTALLERS.get(program) ?? INSTALLERS.get(program.replace(/[\d.]+$/, ''));
+  if (installer === undefined) return false;
+  // A word the text does not hold could be an install verb: it asks.
+  if (args.some((w) => isDecidedAtRunTime(w) || isSplat(w))) return true;
+  const words = installerWords(args, installer.syntax ?? 'gnu');
+  const option = (o: string) =>
+    o.endsWith('*')
+      ? [...words.names.keys()].some((n) => n.startsWith(o.slice(0, -1)))
+      : words.names.has(o);
+  const verbs = installer.verbs ?? [];
+  const onlyInforms =
+    ['version', 'help'].some((n) => words.names.has(n)) ||
+    words.groups.some((g) => /[vVh]/.test(g));
+  return (
+    installer.always === true ||
+    (installer.bare === 'options' && !namesACommand(args) && !onlyInforms) ||
+    (installer.bare === 'alone' && args.length === 0) ||
+    (installer.abbreviations === true &&
+      words.operands.some((w) => {
+        const start = w.toLowerCase();
+        return start.length >= 3 && verbs.some((v) => !v.includes(' ') && v.startsWith(start));
+      })) ||
+    (installer.operands === true && words.operands.length > 0) ||
+    hasVerb(args, verbs) ||
+    (installer.options ?? []).some(option) ||
+    [...(installer.letters ?? '')].some((letter) => words.groups.some((g) => g.includes(letter)))
+  );
+}
+
 /**
  * The same patterns, sorted by what a person would call them (#464). The
  * autonomy checklist lets an owner allow, ask or forbid each KIND of action;
- * their union below is still exactly what `destructive_gate` has always gated.
+ * their union below, with the installers `installsSoftware` reads, is still
+ * exactly what `destructive_gate` gates.
  */
 export const STATIC_SHELL_CATEGORY_PATTERNS = {
   delete_files: [
-    /\b(rm|rmdir|unlink|shred)\b/i, // delete (unix)
-    /\bdel\s|\bRemove-Item\b|\brd\s+\/s/i, // delete (windows/ps)
+    // every program that deletes files (`DELETE_PROGRAMS`, the floor's list too)
+    new RegExp(String.raw`\b(?:${DELETE_PROGRAMS.join('|')})(?=\s|$)`, 'i'),
     /\bfind\b[^\n]*-delete\b/i, // find … -delete
+    // rsync deleting what the source does not have, or the source itself
+    /\brsync\b[^\n]*\s--(?:delete(?:-[a-z]+)*|del|remove-source-files)(?![\w-])/i,
     // destructive VCS: work thrown away
     subcommand('git', String.raw`push\b[^\n]*(?:--force|-f\b)`),
     subcommand('git', String.raw`reset\s+--hard\b`),
@@ -419,12 +1159,12 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
     subcommand('git', String.raw`branch\s+-D\b`),
   ],
   install_software: [
-    /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\b(?:un)?install\b/i, // pkg install, and uninstall: what software is installed changes
+    // The installers of every OS are read by `installsSoftware` (#693), not
+    // here. `uvx` runs a package's program, whose words are not read: an
+    // install word in its line still asks (`uvx --from comfy-cli comfy install`).
+    /\buvx\b[^\n]*\b(?:un)?install\b/i,
     // VS Code family: adding, updating or removing an extension (review of PR #682, pass 8)
     /\b(code|code-insiders|codium|vscodium|cursor|windsurf)\b[^\n]*--(?:install-extension|uninstall-extension|update-extensions)\b/i,
-    /\b(npm|pnpm|yarn|bun)\s+(i|add|ci)\b|\bInstall-(Module|Package)\b/i, // npm i, pnpm add, PowerShell modules
-    /\buv\s+(pip\s+install|add|tool\s+install)\b/i, // uv (review of PR #476)
-    /\bgo\s+install\b/i, // go install
   ],
   // A command is filed by what it DOES (#581): fetching files (a model, an
   // archive, an image) is a download, whatever tool fetches it; installing
@@ -928,9 +1668,9 @@ export function downloadWrites(command: string, host: ShellHost): DownloadWrites
   for (const unit of units) {
     const program = unit[0] ?? '';
     const args = unit.slice(1);
-    if (CHANGE_DIR.has(program)) {
-      const dir = changeDirArg(program, args);
-      out.dirs.push(dir === null ? null : readablePath(dir));
+    const dir = changeDirOf(unit);
+    if (dir !== undefined) {
+      out.dirs.push(dir);
       continue;
     }
     for (const t of pipeWriterTargets(program, args))
@@ -1762,7 +2502,54 @@ function isDecidedAtRunTime(word: string): boolean {
 }
 
 /**
- * True when a command line runs a program the text does not name. The gate
+ * True when a unit gives a command name a meaning held in text the reading
+ * does not read as a command: an alias (`alias npm='npm install'`, fish's
+ * `alias npm 'npm install'`, bash's `BASH_ALIASES[x]=`, zsh's `aliases[x]=`
+ * and `functions[x]=`), `hash -p FILE name`, a doskey macro, PowerShell's
+ * `Set-Alias` / `New-Alias` / `Import-Alias` and a write to its `alias:` or
+ * `function:` drive (`Set-Item function:npm '…'`, `$function:npm = '…'`).
+ * Every later word of the line may then run it, so the program those words
+ * name is not the one written (Codex, PR #710 pass 4). A function written
+ * with its body (`f() { …; }`, `function f { … }`) is not one: its body is
+ * read as commands where it stands.
+ *
+ * PowerShell reaches those two stores by their drive (`alias:`), by their
+ * provider written out (`Alias::`, `Microsoft.PowerShell.Core\Alias::`), after
+ * a parameter's colon (`-Path:alias:zz`), and through a drive of any name made
+ * over the provider (`New-PSDrive q Alias ''`). Each form is read (pass 5).
+ */
+function redefinesCommand(unit: readonly string[]): boolean {
+  const [program = '', ...args] = unit;
+  if (unit.some((word) => /(^|[:\\/])(function|alias):/i.test(word))) return true;
+  if (/^(bash_aliases|aliases|galiases|saliases|functions)\[/.test(program)) return true;
+  switch (program) {
+    case 'new-psdrive':
+    case 'ndr':
+    case 'mount':
+      return args.some((a) =>
+        /^(-psprovider:)?(microsoft\.powershell\.core\\)?(function|alias)$/i.test(a),
+      );
+    case 'alias':
+      return args.some((a) => !a.startsWith('-'));
+    case 'hash':
+      return args.includes('-p');
+    case 'doskey':
+      return args.some((a) => a.includes('='));
+    case 'set-alias':
+    case 'sal':
+    case 'new-alias':
+    case 'nal':
+    case 'import-alias':
+    case 'ipal':
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * True when a command line runs a program the text does not name: one decided
+ * at run time, or a name the line redefines (`redefinesCommand`). The gate
  * asks for it even when inline code is allowed, as an allowed download asks
  * when its target is decided at run time.
  */
@@ -1772,8 +2559,8 @@ export function programDecidedAtRunTime(
   reader?: ScriptShell,
 ): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
-  return commandUnits(withoutRedirections(cmd), 0, reader ?? topShell(host)).some((u) =>
-    isDecidedAtRunTime(u[0] ?? ''),
+  return commandUnits(withoutRedirections(cmd), 0, reader ?? topShell(host)).some(
+    (u) => isDecidedAtRunTime(u[0] ?? '') || redefinesCommand(u),
   );
 }
 
@@ -1845,6 +2632,9 @@ export function commandUnits(command: string, depth = 0, shell?: LineShell): str
 /** The program word of each unit as written (`./build.sh`), for `commandUnitsAsWritten`. */
 const UNIT_HEADS = new WeakMap<readonly string[], string>();
 
+/** The units read as the program a script is named after (`npm.cmd` → npm), for `changeDirOf`. */
+const NAMED_AFTER_UNITS = new WeakSet<readonly string[]>();
+
 /** One command a line runs, as `commandUnits` reads it and as it was written. */
 export interface CommandUnit {
   /** The program (basename, lower-cased, without `.exe`), then its arguments. */
@@ -1874,10 +2664,16 @@ export function commandUnitsAsWritten(
   }));
 }
 
-/** For a unit that changes folder (`cd`, `pushd`, `Set-Location`…): where it goes, as `downloadWrites` reads it. */
+/**
+ * For a unit that changes folder (`cd`, `pushd`, `Set-Location`…): where it
+ * goes. THE reading of a folder change, for the sources a line runs and for
+ * where its downloads land. A unit read as the program a script is named
+ * after (`cd.bat decoy`) is a guess: it may add a kind, never move the folder
+ * the rest of the line is read from (Codex, PR #710 pass 8).
+ */
 export function changeDirOf(unit: readonly string[]): string | null | undefined {
   const program = unit[0] ?? '';
-  if (!CHANGE_DIR.has(program)) return undefined;
+  if (!CHANGE_DIR.has(program) || NAMED_AFTER_UNITS.has(unit)) return undefined;
   const dir = changeDirArg(program, unit.slice(1));
   return dir === null ? null : readablePath(dir);
 }
@@ -1919,15 +2715,21 @@ function wordUnits(
         .join(' ');
     const eq = tail.indexOf('=');
     const right = eq < 0 ? '' : tail.slice(eq + 1).trim();
-    return eq < 0 || /^[$'"(@\[\d-]/.test(right) || right === ''
-      ? []
-      : commandUnits(right, depth + 1, 'powershell');
+    const units =
+      eq < 0 || /^[$'"(@\[\d-]/.test(right) || right === ''
+        ? []
+        : commandUnits(right, depth + 1, 'powershell');
+    // `$function:npm = '…'` writes the function: drive (`redefinesCommand`).
+    const drive = /^\$((?:function|alias):[^=]*)/i.exec(head.text)?.[1];
+    return drive === undefined ? units : [[drive.toLowerCase()], ...units];
   }
   // A program the text does not name (#667, review of PR #682, pass 4) keeps
   // its words, so it is never taken for a program it may not be; one written
-  // with a path is that file, never the shell's keyword of the same name.
+  // with a path is that file, never the shell's keyword of the same name. An
+  // array element assigned (`BASH_ALIASES[ls]=/bin/rm`) is no program either.
   const named =
     isDecidedAtRunTime(head.text) ||
+    /^[A-Za-z_]\w*\[[^\]]*\]=/.test(head.text) ||
     (/[\\/]/.test(head.text) && SHELL_KEYWORDS.has(interpreterBasename(head.text)))
       ? head.text.toLowerCase()
       : interpreterBasename(head.text);
@@ -1942,23 +2744,39 @@ function wordUnits(
   const texts = args.map((a) => a.text);
   const units: string[][] = [[program, ...texts]];
   UNIT_HEADS.set(units[0] as string[], head.text);
-  // `python -m pip install x` runs pip: the module is the program (review of
-  // PR #476; main caught it by reading the whole text).
-  if (interpreterKind(program) === 'python') {
-    const m = texts.map((t) => t.toLowerCase()).indexOf('-m');
-    const module = m >= 0 ? texts[m + 1] : undefined;
-    if (module !== undefined) {
-      const unit = [module.toLowerCase(), ...texts.slice(m + 2)];
-      UNIT_HEADS.set(unit, module);
-      units.push(unit);
-    }
+  // `npm.cmd install x`: the script, whose file is read where it lives (the
+  // unit above), and the program it is named after, read as that program. A
+  // file is never the shell's keyword of its name (`start.bat`, as above).
+  const stem = program.replace(SCRIPT_RUN_BY_NAME, '');
+  const namedAfter = stem !== program && stem !== '' && !SHELL_KEYWORDS.has(stem) ? stem : null;
+  if (namedAfter !== null) {
+    const unit = [namedAfter, ...texts];
+    UNIT_HEADS.set(unit, namedAfter);
+    NAMED_AFTER_UNITS.add(unit);
+    units.push(unit);
   }
-  for (const payload of RUNS_ANOTHER[program]?.(args, shell) ?? []) {
-    units.push(
-      ...('line' in payload
-        ? commandUnits(payload.line, depth + 1, payload.shell)
-        : wordUnits(payload.words, depth + 1, payload.shell, payload.invoked === true)),
-    );
+  for (const name of namedAfter === null ? [program] : [program, namedAfter]) {
+    // What the guess reads is a guess too (`cmd.cmd /c "cd x"`, pass 9).
+    const from = units.length;
+    // `python -m pip install x` runs pip: the module is the program (review of
+    // PR #476; main caught it by reading the whole text).
+    if (interpreterKind(name) === 'python') {
+      const m = texts.map((t) => t.toLowerCase()).indexOf('-m');
+      const module = m >= 0 ? texts[m + 1] : undefined;
+      if (module !== undefined) {
+        const unit = [module.toLowerCase(), ...texts.slice(m + 2)];
+        UNIT_HEADS.set(unit, module);
+        units.push(unit);
+      }
+    }
+    for (const payload of RUNS_ANOTHER[name]?.(args, shell) ?? []) {
+      units.push(
+        ...('line' in payload
+          ? commandUnits(payload.line, depth + 1, payload.shell)
+          : wordUnits(payload.words, depth + 1, payload.shell, payload.invoked === true)),
+      );
+    }
+    if (name === namedAfter) for (const unit of units.slice(from)) NAMED_AFTER_UNITS.add(unit);
   }
   return units;
 }
@@ -2546,7 +3364,10 @@ export function isDestructiveOrHeavyCommand(cmd: string, host?: ShellHost): bool
   const c = normalizeSlashes(cmd.trim());
   return (
     DESTRUCTIVE_PATTERNS.some((re) => re.test(c)) ||
-    units.some((u) => curlWritesAFile(u) || unitCategories(u).includes('open_or_send'))
+    units.some(
+      (u) =>
+        curlWritesAFile(u) || installsSoftware(u) || unitCategories(u).includes('open_or_send'),
+    )
   );
 }
 
@@ -2600,7 +3421,8 @@ function patternKinds(unit: readonly string[]): Array<keyof typeof STATIC_SHELL_
     .filter(
       ([category, patterns]) =>
         patterns.some((re) => startsWithMatch(re, text)) ||
-        (category === 'download' && curlWritesAFile(unit)),
+        (category === 'download' && curlWritesAFile(unit)) ||
+        (category === 'install_software' && installsSoftware(unit)),
     )
     .map(([category]) => category);
 }
