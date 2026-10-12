@@ -3537,6 +3537,26 @@ const SH_CLOSES = new Set(['fi', 'done', 'esac']);
 /** The compounds whose first word a command follows: their condition. */
 const SH_CONDITIONS = new Set(['if', 'while', 'until']);
 
+/**
+ * Where the next word in command position is, past the reserved word at `i`
+ * that leaves one after it (Nodal review of PR #721, passes 10 to 12): `then`,
+ * `else`, `elif`, `do`, `!`, `if`, `while`, `until`, `time` and its options,
+ * `coproc` and its name before a compound; null for any other word.
+ * `reserved(i)`: the word at `i` when sh may read it as reserved, else ''.
+ */
+function shNextCommand(reserved: (i: number) => string, i: number): number | null {
+  const word = reserved(i);
+  if (SH_BODY.has(word) || SH_CONDITIONS.has(word) || word === '!') return i + 1;
+  if (word === 'time') {
+    let next = i + 1;
+    while (/^-/.test(reserved(next))) next++;
+    return next;
+  }
+  if (word === 'coproc')
+    return !SH_OPENS.has(reserved(i + 1)) && SH_OPENS.has(reserved(i + 2)) ? i + 2 : i + 1;
+  return null;
+}
+
 /** The PowerShell commands that run the block they are given once, in the runspace. */
 const PS_RUNS_BLOCK_ONCE = new Set(['&', '.', 'try', 'finally', 'invoke-command', 'icm']);
 
@@ -3662,20 +3682,17 @@ class Processes {
     if (this.mayNotRun()) COMMAND_MAY_NOT_RUN.add(words);
     // `case … in` is followed by its body at once. The compound that closes
     // is the whole command (`for … done | x`, `if … fi > f`).
-    for (; i < words.length; i++) {
+    while (i < words.length) {
       const word = reserved(i);
-      if (SH_OPENS.has(word)) {
+      if (SH_OPENS.has(word))
         this.compounds.push({ body: word === 'case', start: at, pattern: word === 'case' });
-        if (!SH_CONDITIONS.has(word)) break;
-      } else if (SH_CLOSES.has(word)) {
+      else if (SH_CLOSES.has(word)) {
         this.last = this.compounds.pop()?.start ?? at;
         break;
-      } else if (word === 'time') {
-        while (/^-/.test(reserved(i + 1))) i++;
-      } else if (word === 'coproc') {
-        // `coproc NAME { …; }`: a name comes before a compound only.
-        if (!SH_OPENS.has(reserved(i + 1)) && SH_OPENS.has(reserved(i + 2))) i++;
-      } else if (word !== '!') break;
+      }
+      const next = shNextCommand(reserved, i);
+      if (next === null) break;
+      i = next;
     }
   }
 
@@ -4051,24 +4068,36 @@ function scanLine(
       continue;
     }
     // Where a case expects a pattern (after `in`, `;;`, `;&`, `;;&`), what
-    // comes up to its `)` is one (`done)`, `start|stop)`, `(if)`): no command
-    // and no reserved word (Nodal review of PR #721, pass 11, measured in
-    // bash). A word that reaches no `)` first is a command: `esac`. Read for
-    // a line sh runs, whatever grammar reads its words (`downloadWrites`).
-    if (model === 'sh' && !inWord && !/\s/.test(ch)) {
-      const caseIn =
-        words.length === 3 &&
-        words[0]?.quoted === false &&
-        words[0].text === 'case' &&
-        words[2]?.quoted === false &&
-        words[2].text === 'in';
-      if (caseIn) endCommand(at);
-      if ((caseIn || words.length === 0) && processes.expectsPattern()) {
+    // comes up to its `)` is one (`done)`, `start|stop)`, `(if)`,
+    // `@(a|b))`): no command and no reserved word (Nodal review of PR #721,
+    // passes 11 and 12, measured in bash). As bash does, `esac` is tested
+    // first: it closes the case (`(case …;; esac)`). Read for a line sh runs,
+    // whatever grammar reads its words (`downloadWrites`).
+    if (model === 'sh' && !inWord && !/[\s;&|)<>]/.test(ch)) {
+      // `case X in`, wherever a command may start (`then case …`, `! case …`):
+      // its first pattern may follow on its line.
+      const reserved = (i: number): string => (words[i]?.quoted === false ? words[i].text : '');
+      let k = 0;
+      for (let next = shNextCommand(reserved, k); next !== null; next = shNextCommand(reserved, k))
+        k = next;
+      if (reserved(k) === 'case' && words.length === k + 3 && reserved(k + 2) === 'in')
+        endCommand(at);
+      const esac = line.startsWith('esac', at) && /^[\s;&|()<>]?$/.test(line[at + 4] ?? '');
+      if (words.length === 0 && processes.expectsPattern() && !esac) {
         const end = casePatternEnd(line, at);
-        if (end !== null) {
-          processes.patternRead();
+        processes.patternRead();
+        if (typeof end === 'number') {
           at = end;
           continue;
+        }
+        // A pattern cut by a new line, `;` or `&`: bash refuses the line.
+        // What it runs is not known here: a program decided at run time,
+        // which asks. A text that ends inside one is a piece of a line read
+        // apart (`$(case $x in a)`, cut by the substitution pass), whose
+        // whole the scan reads.
+        if (end === 'cut') {
+          segments.push([{ text: '$(…)', quoted: false }]);
+          processes.command();
         }
       }
     }
@@ -4285,22 +4314,27 @@ function cmdCommands(line: string): ShellWord[][] {
 }
 
 /**
- * Where the case pattern that starts at `at` ends: its `)`, past an opening
- * `(`, quotes and escapes, `|` between alternatives; null when a new line,
- * `;`, `&` or another `(` comes first, and what starts there is no pattern.
+ * Where the case pattern that starts at `at` ends: its first `)` left open,
+ * past an opening `(`, quotes and escapes, `|` between alternatives, and the
+ * parentheses of an extglob, which balance (`@(a|b(c)))`, pass 12); `cut`
+ * when a new line, `;` or `&` comes first, `eof` when the text ends first.
  */
-function casePatternEnd(line: string, at: number): number | null {
+function casePatternEnd(line: string, at: number): number | 'cut' | 'eof' {
+  let depth = 0;
   for (let j = line[at] === '(' ? at + 1 : at; j < line.length; j++) {
     const c = line[j];
     if (c === '\\') j += 1;
     else if (c === "'" || c === '"') {
       const close = line.indexOf(c, j + 1);
-      if (close < 0) return null;
+      if (close < 0) return 'eof';
       j = close;
-    } else if (c === ')') return j;
-    else if (c === '\n' || c === ';' || c === '&' || c === '(') return null;
+    } else if (c === '(') depth += 1;
+    else if (c === ')') {
+      if (depth === 0) return j;
+      depth -= 1;
+    } else if (c === '\n' || c === ';' || c === '&') return 'cut';
   }
-  return null;
+  return 'eof';
 }
 
 /**

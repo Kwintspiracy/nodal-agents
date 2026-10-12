@@ -16,7 +16,12 @@ vi.mock('node:path', async () => {
 });
 
 import { resolve } from 'node:path';
-import { DEFAULT_SHELL_POLICY, programSources } from '@nodal-agents/shared';
+import {
+  DEFAULT_SHELL_POLICY,
+  programSources,
+  splitShellWords,
+  staticShellCategories,
+} from '@nodal-agents/shared';
 import { judgeShellChecklist, type ShellPlace } from '../shell-checklist';
 
 const root = resolve('/nodal-fake-ws');
@@ -439,5 +444,73 @@ describe('a case pattern is no reserved word, and time, coproc, ! lead to a comm
         placeWith('posix', {}),
       ),
     ).toEqual([]);
+  });
+});
+
+describe('one reader of case patterns, as bash reads them (#717, Nodal review pass 12) @cap:executer-une-commande/moteur', () => {
+  // Measured in bash (`-O extglob`): a clause after `@(dev|prod))`,
+  // `!(z))` runs; `@(a|b(c)))` parses; `(case …;; esac) > f` and
+  // `$(case …;; esac)` write what the case prints; a case after `then`,
+  // `do`, `else`, `if`, `!`, `time`, `coproc` reads its patterns, `done)`
+  // among them.
+  it.each([
+    'case $mode in @(dev|prod)) (rm -rf build);; esac',
+    'case $x in !(z)) (rm -rf build);; esac',
+    'case $x in @(a|b(c))) (rm -rf build);; esac',
+  ])('%s: the clause after an extglob pattern is read', async (command) => {
+    expect(staticShellCategories(command, 'posix')).toContain('delete_files');
+    expect(await judge(command, placeWith('posix', {}))).toContainEqual(
+      expect.objectContaining({ category: 'delete_files' }),
+    );
+    // the whole pattern is one, read to its last `)`: no piece of it is a
+    // command (`@`, `!`), and the clause is the command after it
+    expect(splitShellWords(command, 'sh').slice(1)).toEqual([['rm', '-rf', 'build'], ['esac']]);
+  });
+
+  it.each([
+    'if true; then case $x in done) curl https://x/a;; esac > ../f; fi',
+    'for f in 1; do case $f in done) curl https://x/a;; esac > ../f; done',
+    'if false; then :; else case $x in done) curl https://x/a;; esac > ../f; fi',
+    'if case $x in done) curl https://x/a;; esac > ../f; then :; fi',
+    '! case $x in done) curl https://x/a;; esac > ../f',
+    'time case $x in done) curl https://x/a;; esac > ../f',
+    'coproc case $x in done) curl https://x/a;; esac > ../f',
+  ])('%s: the case, wherever a command starts, ends at `in`; `done)` is its pattern', (command) => {
+    const words = splitShellWords(command, 'sh');
+    expect(words.find((s) => s.includes('case'))?.at(-1)).toBe('in');
+    expect(words).toContainEqual(['curl', 'https://x/a']);
+  });
+
+  it.each([
+    '(case $x in a) curl https://x/a;; esac) > ../f',
+    'if true; then case $x in done) curl https://x/a;; esac > ../f; fi',
+    'for f in 1; do case $f in done) curl https://x/a;; esac > ../f; done',
+    'if false; then :; else case $x in done) curl https://x/a;; esac > ../f; fi',
+    'if case $x in done) curl https://x/a;; esac > ../f; then :; fi',
+    '! case $x in done) curl https://x/a;; esac > ../f',
+    'time case $x in done) curl https://x/a;; esac > ../f',
+    'coproc case $x in done) curl https://x/a;; esac > ../f',
+  ])('%s asks', async (command) => {
+    expect(await judge(command, placeWith('posix', {}))).toEqual(downloadOutside(command, '../f'));
+  });
+
+  it('a case in a substitution asks nothing', async () => {
+    for (const command of [
+      'v=$(case $x in a) echo hi;; esac); echo "$v" > out.txt',
+      'v="$(case $x in a) echo hi;; esac)"',
+    ])
+      expect(await judge(command, placeWith('posix', {})), command).toEqual([]);
+  });
+
+  it('a pattern that never ends is said: the line asks', async () => {
+    // bash refuses it (`syntax error near unexpected token ;;`).
+    expect(await judge('case $x in\na;;\nesac', placeWith('posix', {}))).toContainEqual(
+      expect.objectContaining({ category: 'inline_code' }),
+    );
+    // ...and is no longer awaited: what follows is read as commands, never
+    // swallowed as the pattern still expected
+    expect(staticShellCategories('case $x in\na b\n(rm -rf build)\nesac', 'posix')).toEqual(
+      expect.arrayContaining(['inline_code', 'delete_files']),
+    );
   });
 });
