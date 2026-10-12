@@ -1412,9 +1412,9 @@ export function downloadWrites(command: string, host: ShellHost): DownloadWrites
   for (const unit of units) {
     const program = unit[0] ?? '';
     const args = unit.slice(1);
-    if (CHANGE_DIR.has(program)) {
-      const dir = changeDirArg(program, args);
-      out.dirs.push(dir === null ? null : readablePath(dir));
+    const dir = changeDirOf(unit);
+    if (dir !== undefined) {
+      out.dirs.push(dir);
       continue;
     }
     for (const t of pipeWriterTargets(program, args))
@@ -2376,6 +2376,9 @@ export function commandUnits(command: string, depth = 0, shell?: LineShell): str
 /** The program word of each unit as written (`./build.sh`), for `commandUnitsAsWritten`. */
 const UNIT_HEADS = new WeakMap<readonly string[], string>();
 
+/** The units read as the program a script is named after (`npm.cmd` → npm), for `changeDirOf`. */
+const NAMED_AFTER_UNITS = new WeakSet<readonly string[]>();
+
 /** One command a line runs, as `commandUnits` reads it and as it was written. */
 export interface CommandUnit {
   /** The program (basename, lower-cased, without `.exe`), then its arguments. */
@@ -2405,10 +2408,16 @@ export function commandUnitsAsWritten(
   }));
 }
 
-/** For a unit that changes folder (`cd`, `pushd`, `Set-Location`…): where it goes, as `downloadWrites` reads it. */
+/**
+ * For a unit that changes folder (`cd`, `pushd`, `Set-Location`…): where it
+ * goes. THE reading of a folder change, for the sources a line runs and for
+ * where its downloads land. A unit read as the program a script is named
+ * after (`cd.bat decoy`) is a guess: it may add a kind, never move the folder
+ * the rest of the line is read from (Codex, PR #710 pass 8).
+ */
 export function changeDirOf(unit: readonly string[]): string | null | undefined {
   const program = unit[0] ?? '';
-  if (!CHANGE_DIR.has(program)) return undefined;
+  if (!CHANGE_DIR.has(program) || NAMED_AFTER_UNITS.has(unit)) return undefined;
   const dir = changeDirArg(program, unit.slice(1));
   return dir === null ? null : readablePath(dir);
 }
@@ -2487,6 +2496,7 @@ function wordUnits(
   if (namedAfter !== null) {
     const unit = [namedAfter, ...texts];
     UNIT_HEADS.set(unit, namedAfter);
+    NAMED_AFTER_UNITS.add(unit);
     units.push(unit);
   }
   for (const name of namedAfter === null ? [program] : [program, namedAfter]) {

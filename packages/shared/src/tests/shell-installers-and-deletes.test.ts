@@ -21,6 +21,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   INSTALLER_PROGRAMS,
+  downloadWrites,
   isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
   programDecidedAtRunTime,
@@ -1236,5 +1237,18 @@ describe('a program named with the extension Windows runs it by is that program 
 
   it('a read named with its extension stays a read', () => {
     expectKind(['npm.cmd ls', 'conda.bat list'], 'install_software', false);
+  });
+});
+
+describe('a script named after a folder change moves no folder (#710, Codex pass 8) @cap:executer-une-commande/moteur', () => {
+  it('where a download lands is read from the folder the line is in', () => {
+    // `cd.bat` runs a file: the download lands where the line started.
+    const read = downloadWrites('cd.bat decoy && curl -o x.zip https://x/a', 'windows');
+    expect(read.dirs).toEqual([]);
+    expect(read.targets).toEqual([{ path: 'x.zip', after: 0 }]);
+    // `cd` itself still moves it.
+    expect(downloadWrites('cd decoy && curl -o x.zip https://x/a', 'windows').dirs).toEqual([
+      'decoy',
+    ]);
   });
 });

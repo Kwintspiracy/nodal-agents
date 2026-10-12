@@ -714,6 +714,36 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     }
   });
 
+  it('a script named after cd moves no folder of the reading (#710, Codex pass 8)', async () => {
+    // `cd.bat decoy` runs a file of the folder; taken for `cd`, it moved the
+    // reading into `decoy`, where `cleanup.bat` was not found, and the
+    // workspace's `cleanup.bat`, the one that runs, went unread.
+    const root = resolve('/nodal-fake-ws');
+    const cleanup = resolve(root, 'cleanup.bat').toLowerCase();
+    const place: ShellPlace = {
+      cwd: root,
+      host: 'windows',
+      inWorkspace: async (p) => resolve(p).toLowerCase().startsWith(root.toLowerCase()),
+      leadsTo: async () => null,
+      readSource: async (p) =>
+        resolve(p).toLowerCase() === cleanup
+          ? { kind: 'text', text: 'del /q important.txt\r\n', bytes: 22 }
+          : /(cd|chdir|pushd)\.(bat|cmd)$/i.test(p)
+            ? { kind: 'text', text: '@echo off\r\n', bytes: 11 }
+            : { kind: 'unread', why: 'not_found' },
+    };
+    for (const command of [
+      'cd.bat decoy && cleanup.bat',
+      'chdir.cmd decoy & cleanup.bat',
+      'pushd.bat decoy && cleanup.bat',
+    ]) {
+      const judged = await judgeShellChecklist([command], DEFAULT_SHELL_POLICY, place);
+      expect(judged, command).toContainEqual(
+        expect.objectContaining({ category: 'delete_files', state: 'ask' }),
+      );
+    }
+  });
+
   it('run_command with no cwd and several workspaces: the agent is told, no one is asked', async () => {
     // The SHIPPED tool: its own refusal, not a fake's. Every posture that
     // would otherwise reach a person — the checklist (a "relative" download
