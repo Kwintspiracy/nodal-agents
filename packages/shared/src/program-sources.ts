@@ -45,6 +45,7 @@
 // Pure: no filesystem (the gate in packages/tools reads the files).
 
 import { hereDocs } from './here-docs';
+import { POWERSHELL_CLI, bindPsArguments } from './powershell-parameters';
 import {
   stdinReceiver,
   type StdinReceiver,
@@ -200,27 +201,8 @@ const VALUE_OPTIONS: Record<SourceLanguage, ReadonlySet<string>> = {
   ruby: new Set(['-i', '-r', '-c', '-x']),
   php: new Set(['-c', '-d', '-z']),
   shell: new Set(['-o', '+o', '-O', '+O', '--rcfile', '--init-file']),
-  powershell: new Set([
-    '-executionpolicy',
-    '-ep',
-    '-ex',
-    '-exec',
-    '-windowstyle',
-    '-w',
-    '-version',
-    '-v',
-    '-inputformat',
-    '-if',
-    '-outputformat',
-    '-of',
-    '-o',
-    '-configurationname',
-    '-workingdirectory',
-    '-wd',
-    '-psconsolefile',
-    '-custompipename',
-    '-settingsfile',
-  ]),
+  // The powershell CLI's words are bound by `bindPsArguments` (POWERSHELL_CLI).
+  powershell: new Set(),
   cmd: new Set(),
 };
 
@@ -288,12 +270,18 @@ function unitSources(
       return i >= 0 ? [file(args[i] ?? '', languageOfPath(args[i] ?? '') ?? 'shell')] : [];
     }
     case 'powershell': {
-      // `-Command` is read by `commandUnits`; `-EncodedCommand` is not readable here.
-      if (lower.some((a) => /^-(c|com\w*|e|ec|enc\w*)$/.test(a))) return [];
-      const f = lower.findIndex((a) => a === '-file' || a === '-f');
-      if (f >= 0) return args[f + 1] !== undefined ? [file(args[f + 1] ?? '', 'powershell')] : [];
-      const i = firstOperand(args, 'powershell');
-      if (i < 0) return [];
+      // The CLI's words as it binds them (#694): `-Command` is read by
+      // `commandUnits`, `-EncodedCommand` is not readable here, `-File` (`-Fi`,
+      // `/f`, `--file`) names the script, and so may a first positional word.
+      const bound = bindPsArguments(args, POWERSHELL_CLI);
+      if (bound.some((b) => b.names?.includes('command') || b.names?.includes('encodedcommand')))
+        return [];
+      const script = bound.find((b) => b.names?.includes('file'));
+      if (script !== undefined)
+        return script.value !== null ? [file(script.value, 'powershell')] : [];
+      const i = bound.find((b) => b.names === null)?.index ?? -1;
+      // `-`: the commands come on standard input (a here-document's body).
+      if (i < 0 || args[i] === '-') return [];
       // A first word that is not a script is a command (Windows PowerShell).
       return languageOfPath(args[i] ?? '') === 'powershell'
         ? [file(args[i] ?? '', 'powershell')]
