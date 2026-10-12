@@ -97,8 +97,13 @@ describe('the embedded cluster keeps its own log @cap:installer-et-demarrer/mote
       // The collector opens its first file at startup and writes the "database
       // system is ready" line into it. Before #111 this directory did not exist
       // at all — neither here nor under pg-data.
-      expect(await until(() => logText().trim().length > 0, 30_000)).toBe(true);
-      expect(logText()).toMatch(/database system is ready to accept connections/);
+      // Waited for the very line asserted: "any content" is present before the
+      // next line is flushed, so waiting on that and reading once is the race.
+      const ready = await until(
+        () => /database system is ready to accept connections/.test(logText()),
+        30_000,
+      );
+      expect(ready, logText()).toBe(true);
     },
     60_000,
   );
@@ -140,7 +145,7 @@ describe('the embedded cluster keeps its own log @cap:installer-et-demarrer/mote
         () => new RegExp(`\\(PID ${backendPid}\\)`).test(logText()),
         60_000,
       );
-      expect(named).toBe(true);
+      expect(named, logText()).toBe(true);
       // And the postmaster's own account of the aftermath, which is the
       // sentence whose absence made the incident unattributable. The
       // postmaster writes it AFTER the line naming the pid: read right after
@@ -151,6 +156,11 @@ describe('the embedded cluster keeps its own log @cap:installer-et-demarrer/mote
         60_000,
       );
       expect(aftermath, logText()).toBe(true);
+      // Order, from one snapshot of the real log.
+      const log = logText();
+      const pidAt = log.search(new RegExp(`\(PID ${backendPid}\)`));
+      const aftermathAt = log.search(/terminating any other active server processes/);
+      expect(aftermathAt, log).toBeGreaterThan(pidAt);
     },
     180_000,
   );
