@@ -1600,13 +1600,14 @@ export async function reviveJobIfApprovalResolvedDuringSuspend(
 type DelegationOutcomeMap = Map<string, 'failed' | 'delivered'>;
 
 /**
- * Les délégations de ce run dont le DERNIER enregistrement dit que sa liste
- * `sub_delegations` ne nomme pas tous les échecs du sous-arbre (revue Codex de
- * la PR #712, passes 3 et 4). Un fait par délégation, remplacé par chacun de
- * ses enregistrements comme toute autre issue : aucun compte, donc aucun échec
- * compté deux fois ni gardé après sa réparation.
+ * Vrai dès qu'UN enregistrement de la transcription de ce run a dit que sa
+ * liste `sub_delegations` ne nomme pas tous les échecs du sous-arbre (revue
+ * Codex de la PR #712, passes 3 à 5). Collant pour tout le run : un échec omis
+ * n'a pas de nom, donc rien de plus tard ne peut prouver qu'il a été réparé.
  */
-type IncompleteDelegations = Set<string>;
+interface IncompleteDelegations {
+  value: boolean;
+}
 
 /** Les noms qui n'ont RIEN rendu, triés — ce que la notice nomme. */
 function failedDelegationNames(carte: DelegationOutcomeMap): string[] {
@@ -1643,7 +1644,7 @@ async function runJob(
   // en ligne, ouvrent la leur.
   return withinRunScope(jobId as string, async () => {
     const delegationOutcomes: DelegationOutcomeMap = new Map();
-    const incompleteDelegations: IncompleteDelegations = new Set();
+    const incompleteDelegations: IncompleteDelegations = { value: false };
     // Le battement du job (#565) : posé par `runJobTracked` dès que la prise
     // réussit, rendu ici quand le run rend la main — fini, suspendu, perdu ou
     // levé. Aucune autre partie du run ne bat.
@@ -1671,7 +1672,7 @@ async function runJob(
       return {
         ...rapproche,
         subDelegations: subDelegationList(delegationOutcomes),
-        subDelegationsIncomplete: incompleteDelegations.size > 0,
+        subDelegationsIncomplete: incompleteDelegations.value,
       };
     } catch (err) {
       // Lit déjà la ligne quand son écriture est refusée.
@@ -3616,7 +3617,7 @@ async function runJobTracked(
     // PR #712, passes 3 et 4).
     const noms = [
       ...failedDelegationNames(delegationOutcomes),
-      ...(incompleteDelegations.size > 0 ? ['…'] : []),
+      ...(incompleteDelegations.value ? ['…'] : []),
     ];
     return noms.length === 0 ? '' : `[delegation stopped: ${noms.join(', ')} — no deliverable]`;
   };
@@ -4256,9 +4257,8 @@ async function runJobTracked(
         delegationOutcomes.set(issue.tool, issue.status);
       }
       // Un enregistrement BORNÉ peut ne plus nommer tous ses échecs ; il le
-      // dit. Le dernier enregistrement de cette délégation décide.
-      if (record?.sub_delegations_incomplete) incompleteDelegations.add(name);
-      else if (record) incompleteDelegations.delete(name);
+      // dit, et ce fait ne s'efface plus (voir `IncompleteDelegations`).
+      if (record?.sub_delegations_incomplete) incompleteDelegations.value = true;
 
       // Une délégation qui n'a RIEN rendu porte le marqueur d'échec. Les autres
       // `error-text` sont des REPORTS (« un autre transfert a la priorité,

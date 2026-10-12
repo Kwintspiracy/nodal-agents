@@ -676,7 +676,7 @@ describe('un enregistrement BORNÉ ne fait jamais conclure « rien n’a échou�
     expect(ligne).toContain(', … — no deliverable]');
   });
 
-  it('`…` suit le DERNIER record du Lead : un record complet plus récent le fait tomber', async () => {
+  it('passe 5 : un record complet plus récent du Lead ne fait pas tomber `…` — les échecs omis n’ont pas de nom, rien ne prouve leur réparation', async () => {
     const parentId = await collision();
     await injecter(parentId, outilEnfant, 'col-lead-2', {
       status: 'completed',
@@ -689,11 +689,11 @@ describe('un enregistrement BORNÉ ne fait jamais conclure « rien n’a échou�
 
     expect(outcome.status).toBe('completed');
     const ligne = await derniereLigne(parentId);
-    // Les échecs nommés par le premier record restent dits ; le drapeau, non.
-    expect(ligne).toContain('no deliverable]');
-    expect(ligne).not.toContain('…');
+    expect(ligne).not.toContain(outilPetitEnfant);
+    expect(ligne).toMatch(/, … — no deliverable\]$/);
     if (outcome.status !== 'completed') throw new Error('unreachable');
-    expect(outcome.subDelegationsIncomplete).toBe(false);
-    expect(delegationRecordFromOutcome(outcome).sub_delegations_incomplete).toBeUndefined();
+    expect(outcome.subDelegationsIncomplete).toBe(true);
+    // Ce que le grand-parent reçoit.
+    expect(delegationRecordFromOutcome(outcome).sub_delegations_incomplete).toBe(true);
   });
 });
