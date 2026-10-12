@@ -2246,12 +2246,23 @@ function isDecidedAtRunTime(word: string): boolean {
  * name is not the one written (Codex, PR #710 pass 4). A function written
  * with its body (`f() { …; }`, `function f { … }`) is not one: its body is
  * read as commands where it stands.
+ *
+ * PowerShell reaches those two stores by their drive (`alias:`), by their
+ * provider written out (`Alias::`, `Microsoft.PowerShell.Core\Alias::`), after
+ * a parameter's colon (`-Path:alias:zz`), and through a drive of any name made
+ * over the provider (`New-PSDrive q Alias ''`). Each form is read (pass 5).
  */
 function redefinesCommand(unit: readonly string[]): boolean {
   const [program = '', ...args] = unit;
-  if (unit.some((word) => /^(function|alias):/i.test(word))) return true;
+  if (unit.some((word) => /(^|[:\\/])(function|alias):/i.test(word))) return true;
   if (/^(bash_aliases|aliases|galiases|saliases|functions)\[/.test(program)) return true;
   switch (program) {
+    case 'new-psdrive':
+    case 'ndr':
+    case 'mount':
+      return args.some((a) =>
+        /^(-psprovider:)?(microsoft\.powershell\.core\\)?(function|alias)$/i.test(a),
+      );
     case 'alias':
       return args.some((a) => !a.startsWith('-'));
     case 'hash':

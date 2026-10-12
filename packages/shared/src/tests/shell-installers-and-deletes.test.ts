@@ -1137,6 +1137,29 @@ describe('a line that redefines a command name asks, as inline code (#710, Codex
     ]);
   });
 
+  it('PowerShell: the alias and function providers however the path names them (Codex, pass 5)', () => {
+    // Each form defines `zz` in a real powershell.exe 5.1 (checked on 2026-10-12);
+    // a wildcard in the drive or provider name is refused there, so not read.
+    expectRedefinition(
+      [
+        'Set-Item Microsoft.PowerShell.Core\\Alias::zz winget; zz install cowsay',
+        'Set-Item Alias::zz winget; zz install cowsay',
+        'Set-Item -Path:alias:zz winget; zz install cowsay',
+        "Set-Content Microsoft.PowerShell.Core\\Function::zz 'winget install x'; zz",
+        'Set-Location Microsoft.PowerShell.Core\\Alias::; Set-Item zz winget; zz install cowsay',
+        "New-PSDrive -Name q -PSProvider Alias -Root ''; Set-Item q:zz winget; zz install cowsay",
+        "New-PSDrive -PSProvider:Function -Name q -Root ''; Set-Item q:zz {winget install x}; zz",
+        "ndr q Microsoft.PowerShell.Core\\Alias ''; Set-Item q:zz winget; zz install cowsay",
+      ],
+      'powershell',
+    );
+    // A drive over another provider redefines nothing.
+    expectNoRedefinition(
+      ['New-PSDrive -Name w -PSProvider FileSystem -Root C:\\work'],
+      'powershell',
+    );
+  });
+
   it('cmd: a doskey macro', () => {
     expectRedefinition([
       'doskey npm=npm install $*',
