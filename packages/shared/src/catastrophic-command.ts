@@ -474,6 +474,19 @@ interface Installer {
   /** It does whenever it runs: a cmdlet, a setup program. */
   always?: true;
   /**
+   * Run with no command it installs. `options`: its options only modify that
+   * install (`yarn --frozen-lockfile`, `bundle`), unless one only prints its
+   * version or its help (`-v`, `--version`, `-h`, `--help`). `alone`: an
+   * option is itself the operation (`yay -Q` queries), so only `yay` alone does.
+   */
+  bare?: 'options' | 'alone';
+  /**
+   * It takes any unambiguous start of a command as that command (Symfony
+   * Console's `composer req`): an operand of three letters or more that
+   * starts one of its one-word verbs does.
+   */
+  abbreviations?: true;
+  /**
    * How its options are written. `gnu` (the default): `--name[=v]`, `-abc` a
    * group of letters, `--` ends them. `windows`: `/name[:v]` or `-name[:v]`.
    * `single-dash`: `-name[=v]`.
@@ -552,8 +565,10 @@ const WINDOWS_INSTALLERS: Record<string, Installer> = {
       'repair',
     ],
   },
-  choco: { verbs: ['install', 'uninstall', 'upgrade'] },
-  scoop: { verbs: ['install', 'uninstall', 'update', 'reset'] },
+  choco: { verbs: ['install', 'uninstall', 'upgrade', 'update'] },
+  // Chocolatey 1's shortcuts: `cinst x` is `choco install x`.
+  'cinst|cuninst|cup': { always: true },
+  scoop: { verbs: ['install', 'uninstall', 'update', 'reset', 'cleanup'] },
   // A setup program run directly: the name Windows installers ship under.
   setup: { always: true },
 };
@@ -576,7 +591,20 @@ const MACOS_INSTALLERS: Record<string, Installer> = {
   },
   brew: {
     // `update` fetches Homebrew itself, not only its formula lists (#710 pass 9).
-    verbs: ['install', 'reinstall', 'uninstall', 'remove', 'rm', 'upgrade', 'autoremove', 'update'],
+    // `bundle` installs a Brewfile; `link`/`unlink` switch an installed version.
+    verbs: [
+      'install',
+      'reinstall',
+      'uninstall',
+      'remove',
+      'rm',
+      'upgrade',
+      'autoremove',
+      'update',
+      'bundle',
+      'link',
+      'unlink',
+    ],
   },
   port: { verbs: ['install', 'uninstall', 'upgrade', 'activate', 'deactivate', 'selfupdate'] },
   mas: { verbs: ['install', 'uninstall', 'upgrade', 'purchase', 'lucky'] },
@@ -701,6 +729,14 @@ const LINUX_INSTALLERS: Record<string, Installer> = {
     options: ['sync', 'remove', 'upgrade'],
     letters: 'SRU',
   },
+  // The AUR helpers take pacman's operations; alone they upgrade the system.
+  'yay|paru': {
+    options: ['sync', 'remove', 'upgrade'],
+    letters: 'SRU',
+    bare: 'alone',
+  },
+  // Void's xbps, OpenBSD's pkg_add/pkg_delete: they do whenever they run.
+  'xbps-install|xbps-remove|pkg_add|pkg_delete': { always: true },
   apk: { verbs: ['add', 'del', 'fix', 'upgrade'] },
   emerge: {
     operands: true,
@@ -728,43 +764,84 @@ const LINUX_INSTALLERS: Record<string, Installer> = {
 };
 
 /**
- * The language and tool managers the kind already meant (they were in its
- * patterns before #693), with the verbs that install, update or remove. A
- * manager that replaces ITSELF changes installed software too, in every table:
- * `brew update`, `port selfupdate`, `scoop update`, `pnpm self-update`, `yarn
- * set version` and Yarn 1's `policies set-version`, `uv self update`, `nix
- * upgrade-nix`, `pkg bootstrap`, `rustup self update` (Codex, PR #710 passes 9
- * and 10); so does a runtime a manager installs (`pnpm env use`, `uv python
- * upgrade`, rustup's toolchains), and a dependency added to a project (`go
- * get`, `cargo add`), as `npm add` and `uv add` already were. A refresh of the
- * package lists alone (`apt-get update`, `pkg update`) does not.
+ * npm, pnpm, yarn and bun: what installs, updates or removes a package of the
+ * project, a global one, the manager itself (`self-update`, `set version`,
+ * Yarn 1's `policies set-version`) or a Node.js runtime (`pnpm env use`).
+ * npm's documented aliases are listed (`inst`, `isntall`, `ic`, `cit`, `ln`…).
+ */
+const NODE_VERBS: readonly string[] = [
+  'install',
+  'i',
+  'in',
+  'ins',
+  'inst',
+  'insta',
+  'instal',
+  'isnt',
+  'isnta',
+  'isntal',
+  'isntall',
+  'add',
+  'a',
+  'ci',
+  'clean-install',
+  'ic',
+  'install-clean',
+  'isntall-clean',
+  'install-test',
+  'it',
+  'install-ci-test',
+  'cit',
+  'uninstall',
+  'remove',
+  'rm',
+  'r',
+  'un',
+  'update',
+  'udpate',
+  'up',
+  'upgrade',
+  'upgrade-interactive',
+  'link',
+  'ln',
+  'unlink',
+  'prune',
+  'dedupe',
+  'ddp',
+  'rebuild',
+  'rb',
+  'global add',
+  'global remove',
+  'global upgrade',
+  'self-update',
+  'set version',
+  'policies set-version',
+  'plugin import',
+  'pm trust',
+  'env use',
+  'env add',
+  'env remove',
+];
+
+/**
+ * The language, project and runtime managers, with every command of each that
+ * installs, updates or removes (Codex, PR #710 passes 9 to 11, read against
+ * each tool's own command reference): a package of a project or a global one,
+ * the manager ITSELF (`brew update`, `port selfupdate`, `scoop update`,
+ * `pnpm self-update`, Yarn 1's `policies set-version`, `uv self update`,
+ * `nix upgrade-nix`, `pkg bootstrap`, `rustup self update`, `composer
+ * self-update`), a runtime (`pnpm env use`, `uv python upgrade`, rustup's
+ * toolchains, nvm, fnm, volta, pyenv, rbenv, asdf, mise, sdkman), and a
+ * dependency added to or synced into a project (`go get`, `cargo add`, `uv
+ * sync`, `bundle`, `dotnet restore`), as `npm add` and `npm ci` already were.
+ * Building or running, which may fetch what a lockfile names (`cargo build`,
+ * `uv run`, `dotnet build`), does not; nor does a refresh of the package lists
+ * alone (`apt-get update`, `pkg update`).
  */
 const CROSS_PLATFORM_INSTALLERS: Record<string, Installer> = {
-  'npm|pnpm|yarn|bun': {
-    verbs: [
-      'install',
-      'i',
-      'add',
-      'ci',
-      'uninstall',
-      'remove',
-      'rm',
-      'r',
-      'un',
-      'update',
-      'up',
-      'upgrade',
-      'global add',
-      'global remove',
-      'global upgrade',
-      'self-update',
-      'set version',
-      'policies set-version',
-      'env use',
-      'env add',
-      'env remove',
-    ],
-  },
+  'npm|pnpm|bun': { verbs: NODE_VERBS },
+  // `yarn` alone installs the project's dependencies.
+  yarn: { verbs: NODE_VERBS, bare: 'options' },
   'pip|pip3': { verbs: ['install', 'uninstall'] },
   pipx: {
     verbs: [
@@ -796,11 +873,14 @@ const CROSS_PLATFORM_INSTALLERS: Record<string, Installer> = {
       'python uninstall',
       'self update',
       'python upgrade',
+      'sync',
     ],
   },
-  go: { verbs: ['install', 'get'] },
-  gem: { verbs: ['install', 'i', 'uninstall', 'update'] },
-  cargo: { verbs: ['install', 'uninstall', 'add', 'remove'] },
+  go: { verbs: ['install', 'get', 'mod tidy'] },
+  gem: { verbs: ['install', 'i', 'uninstall', 'update', 'cleanup', 'pristine'] },
+  // Bundler: `bundle` alone is `bundle install`.
+  'bundle|bundler': { verbs: ['install', 'update', 'add', 'remove', 'clean'], bare: 'options' },
+  cargo: { verbs: ['install', 'uninstall', 'add', 'remove', 'update', 'binstall'] },
   rustup: {
     verbs: [
       'update',
@@ -808,16 +888,128 @@ const CROSS_PLATFORM_INSTALLERS: Record<string, Installer> = {
       'uninstall',
       'toolchain install',
       'toolchain uninstall',
+      'toolchain link',
       'component add',
       'component remove',
       'target add',
       'target remove',
       'default',
+      'override set',
       'self update',
       'self uninstall',
     ],
   },
-  'conda|mamba|micromamba': { verbs: ['install', 'remove', 'uninstall', 'update', 'upgrade'] },
+  'conda|mamba|micromamba': {
+    verbs: [
+      'install',
+      'remove',
+      'uninstall',
+      'update',
+      'upgrade',
+      'create',
+      'env create',
+      'env update',
+      'env remove',
+      'self-update',
+    ],
+  },
+  // Composer runs on Symfony Console: any unambiguous start of a command is
+  // that command (`composer req x`).
+  composer: {
+    verbs: [
+      'install',
+      'i',
+      'update',
+      'u',
+      'upgrade',
+      'require',
+      'r',
+      'remove',
+      'rm',
+      'uninstall',
+      'reinstall',
+      'self-update',
+      'selfupdate',
+      'create-project',
+    ],
+    abbreviations: true,
+  },
+  poetry: {
+    verbs: [
+      'install',
+      'add',
+      'remove',
+      'update',
+      'sync',
+      'self update',
+      'self add',
+      'self remove',
+      'self install',
+      'python install',
+      'python remove',
+    ],
+  },
+  pdm: {
+    verbs: [
+      'install',
+      'add',
+      'remove',
+      'update',
+      'sync',
+      'self update',
+      'self add',
+      'self remove',
+      'python install',
+      'py install',
+      'python remove',
+      'py remove',
+    ],
+  },
+  pipenv: { verbs: ['install', 'uninstall', 'update', 'upgrade', 'sync', 'clean'] },
+  dotnet: {
+    verbs: [
+      'tool install',
+      'tool update',
+      'tool uninstall',
+      'tool restore',
+      'add package',
+      'remove package',
+      'workload install',
+      'workload update',
+      'workload uninstall',
+      'workload repair',
+      'workload restore',
+      'new install',
+      'new uninstall',
+      'restore',
+    ],
+  },
+  nuget: { verbs: ['install', 'update', 'restore'] },
+  deno: { verbs: ['install', 'i', 'uninstall', 'upgrade', 'add', 'remove'] },
+  // Runtime version managers: what they install is a language's runtime.
+  nvm: { verbs: ['install', 'uninstall', 'reinstall-packages', 'install-latest-npm'] },
+  fnm: { verbs: ['install', 'uninstall'] },
+  volta: { verbs: ['install', 'uninstall', 'setup'] },
+  'pyenv|rbenv|nodenv': { verbs: ['install', 'uninstall', 'update'] },
+  asdf: {
+    verbs: ['install', 'uninstall', 'plugin add', 'plugin remove', 'plugin update', 'update'],
+  },
+  mise: {
+    verbs: [
+      'install',
+      'i',
+      'uninstall',
+      'use',
+      'u',
+      'upgrade',
+      'up',
+      'self-update',
+      'plugins install',
+      'plugins uninstall',
+      'plugins update',
+    ],
+  },
+  sdk: { verbs: ['install', 'i', 'uninstall', 'rm', 'upgrade', 'ug', 'selfupdate'] },
   // ComfyUI's CLI: ComfyUI itself and its custom nodes
   comfy: {
     verbs: [
@@ -909,10 +1101,21 @@ function installsSoftware(unit: readonly string[]): boolean {
     o.endsWith('*')
       ? [...words.names.keys()].some((n) => n.startsWith(o.slice(0, -1)))
       : words.names.has(o);
+  const verbs = installer.verbs ?? [];
+  const onlyInforms =
+    ['version', 'help'].some((n) => words.names.has(n)) ||
+    words.groups.some((g) => /[vVh]/.test(g));
   return (
     installer.always === true ||
+    (installer.bare === 'options' && words.operands.length === 0 && !onlyInforms) ||
+    (installer.bare === 'alone' && args.length === 0) ||
+    (installer.abbreviations === true &&
+      words.operands.some((w) => {
+        const start = w.toLowerCase();
+        return start.length >= 3 && verbs.some((v) => !v.includes(' ') && v.startsWith(start));
+      })) ||
     (installer.operands === true && words.operands.length > 0) ||
-    hasVerb(args, installer.verbs ?? []) ||
+    hasVerb(args, verbs) ||
     (installer.options ?? []).some(option) ||
     [...(installer.letters ?? '')].some((letter) => words.groups.some((g) => g.includes(letter)))
   );
