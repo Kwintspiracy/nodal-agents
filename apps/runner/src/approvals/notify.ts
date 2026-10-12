@@ -32,6 +32,7 @@ import {
   renderExplanationText,
   readQuestionToolInput,
   quoteThirdPartyText,
+  type ShellGateReason,
 } from '@nodal-agents/shared';
 import { explainApprovalRequest } from './explain-request.ts';
 import {
@@ -78,6 +79,8 @@ export async function buildApprovalCardBody(
     toolName: string;
     toolInput: unknown;
     who: string;
+    /** What the shell checklist held the call for (`gate_reasons`, #635). */
+    gateReasons?: readonly ShellGateReason[];
   },
 ): Promise<string> {
   const explanation = await explainApprovalRequest(
@@ -86,6 +89,7 @@ export async function buildApprovalCardBody(
     args.agentId,
     args.toolName,
     args.toolInput,
+    args.gateReasons ?? [],
   );
   return (
     `⏳ Approbation requise — ${args.who}\n\n` +
@@ -629,6 +633,7 @@ export async function notifyApprovalCreated(
       toolName: req.toolName,
       toolInput: req.toolInput,
       who,
+      gateReasons: req.gateReasons ?? [],
     });
 
     // Channel-neutral (W2): sent through the ChannelAdapter rather than the

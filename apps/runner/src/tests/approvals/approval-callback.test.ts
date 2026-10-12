@@ -506,6 +506,48 @@ describe('handleApprovalCallback — Toujours autoriser', () => {
     ]);
   });
 
+  // #635 : la carte restaurée relit ce que la porte a retenu (gate_reasons) et
+  // dit ce qu'elle a lu dans le script, comme la carte d'origine.
+  it('annulation (wb) : la carte restaurée dit ce que la porte a lu dans le script (#635)', async () => {
+    const [row] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: seed.jobId,
+        agentId: seed.agentId,
+        toolName: 'run_command',
+        toolInput: { command: 'python shared/scripts/build.py' },
+        status: 'pending',
+        gateReasons: [
+          {
+            category: 'install_software',
+            state: 'ask',
+            details: ['python shared/scripts/build.py'],
+            found: [
+              { source: 'shared/scripts/build.py', line: 5, text: 'os.system("pip install x")' },
+            ],
+          },
+        ],
+      })
+      .returning();
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockClear();
+
+    const r = await handleApprovalCallback({
+      update: callbackUpdate(`apr:${row!.id}:wb`, CHAT_ID),
+      receivingAgentId: seed.agentId,
+      botToken: 'fake-token',
+      deps,
+      env,
+    });
+
+    expect(r.handled && r.decision).toBe('card_restored');
+    const edits = editMessageBodies();
+    expect(edits[0]!.text).toContain(
+      'the code it runs installs software or packages (shared/scripts/build.py, line 5)',
+    );
+    expect(edits[0]!.text).not.toContain('likely read/inspect');
+  });
+
   it('wc depuis un MAUVAIS chat : refusé, AUCUNE règle écrite', async () => {
     const id = await insertPendingApproval('skill_file_write');
 

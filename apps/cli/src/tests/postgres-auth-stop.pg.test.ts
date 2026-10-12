@@ -26,12 +26,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   registerTestCluster,
-  resolvePgCtlFrom,
   unregisterTestCluster,
   withPostgresClusterStart,
   type TestClusterEntry,
 } from '@nodal-agents/test-kit';
-import { startEmbeddedPostgres, livePostmasterPid } from '../lib/postgres.ts';
+import { resolvePgCtl, startEmbeddedPostgres, livePostmasterPid } from '../lib/postgres.ts';
 import { findFreePort } from '../lib/ports.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'nodal-pg-auth-'));
@@ -43,7 +42,7 @@ const WRONG = 'nodalai-wrong';
 const port = await findFreePort(25480);
 // Résolu UNE fois : le gestionnaire de sortie du registre est synchrone et ne
 // peut pas faire cet `import()` au moment où il en a besoin.
-const pgCtl = await resolvePgCtlFrom(join(process.cwd(), 'package.json'));
+const pgCtl = await resolvePgCtl();
 
 /**
  * Démarre un cluster SOUS LE VERROU DE LA MACHINE, et le tient inscrit tant

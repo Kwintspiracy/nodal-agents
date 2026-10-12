@@ -105,7 +105,7 @@ export class WorkspaceError extends Error {
  * Each workspace's path must be absolute (otherwise: workspace_invalid).
  */
 export function assertWorkspacesConfigured(
-  ctx: ToolContext,
+  ctx: Pick<ToolContext, 'workspaces'>,
 ): Array<{ label: string; path: string }> {
   const list = ctx.workspaces;
   if (!list || list.length === 0) {
@@ -158,7 +158,7 @@ export function assertWorkspacesConfigured(
  *      but realpath of the link target reveals the escape.
  */
 export async function resolveAndCheckPath(
-  ctx: ToolContext,
+  ctx: Pick<ToolContext, 'workspaces'>,
   requestedPath: string,
 ): Promise<string> {
   const workspaces = assertWorkspacesConfigured(ctx);
@@ -449,8 +449,13 @@ export async function followLinks(
   lexical: string,
   requestedPath: string = lexical,
 ): Promise<{ canonical: string; share: string | null }> {
-  let path = lexical;
-  let probe = lexical;
+  // The walk below cuts `path` at the length of `probe`, so both must be the
+  // same text: a rooted path with no drive (`/dev/null`) is walked up as
+  // `D:\dev`, three characters longer than the ancestor it started from, and
+  // the cut landed inside a word (`D:\v/null`, #669). Resolved once, here, for
+  // every caller.
+  let path = resolvePath(lexical);
+  let probe = path;
   let hops = 0;
   while (true) {
     try {

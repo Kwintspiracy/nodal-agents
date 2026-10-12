@@ -4,7 +4,6 @@ import { approvalRequests, toolCalls, jobCheckpoints, and, eq, inArray } from '@
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
 import {
   redactSecretsForAudit,
-  isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
   surfaceForTool,
   explainApprovalRules,
@@ -13,6 +12,7 @@ import {
   type MutationTarget,
   type ChainWorkspace,
   type ShellGateReason,
+  type ShellHost,
 } from '@nodal-agents/shared';
 import type { z } from 'zod';
 import type {
@@ -25,7 +25,20 @@ import type {
 import { InvalidInputError, ToolFailedWithOutput } from './errors';
 import { refuseWithoutStatedPurpose } from './purpose';
 import { alreadyRejectedInstruction, priorRejectionOfSameCall } from './rejected-call';
-import { judgeShellChecklist, shellChecklistRefusal, type ShellPlace } from './shell-checklist';
+import {
+  callReachesTheFloor,
+  judgeShellChecklist,
+  readSourceFile,
+  shellChecklistRefusal,
+  type ShellPlace,
+} from './shell-checklist';
+
+/**
+ * The host that runs the commands, and so the shell that reads them:
+ * `run_command` uses cmd.exe on Windows and sh elsewhere (shell-engine.ts).
+ * Where a command ends, and what it runs, follow that shell (#667).
+ */
+const RUN_HOST: ShellHost = process.platform === 'win32' ? 'windows' : 'posix';
 import {
   followLinks,
   resolveAndCheckPath,
@@ -281,14 +294,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // la finalisation, SANS repasser par une approbation : ce qui n'est pas jugé
   // ici ne le sera jamais. Un outil qui n'exécute aucun shell rend une liste
   // vide, et se juge alors sur son seul `riskLevel`, comme avant.
-  const commandesJugees =
-    tool.name === 'run_command'
-      ? [String((validatedInput as { command?: unknown })?.command ?? '')]
-      : tool.name === 'declare_verification'
-        ? ((validatedInput as { commands?: { command?: unknown }[] })?.commands ?? []).map((c) =>
-            String(c?.command ?? ''),
-          )
-        : [];
+  const commandesJugees = shellCommandsOf(tool.name, validatedInput);
 
   // ── La règle du shell suit la commande déclarée ─────────────────────────────
   //
@@ -410,7 +416,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       // lourd couvrait (le code en ligne compris), et le propriétaire y dit,
       // sorte par sorte, s'il veut qu'on lui demande.
       if (tool.name === 'run_command' || tool.name === 'declare_verification')
-        isHeavy = opts.shellPolicy ? false : commandesJugees.some(isDestructiveOrHeavyCommand);
+        isHeavy = opts.shellPolicy
+          ? false
+          : commandesJugees.some((c) => isDestructiveOrHeavyCommand(c, RUN_HOST));
       // É-2 (audit sécu 2026-07-07): create_mcp with a stdio transport spawns an
       // arbitrary local subprocess (npx/uvx <cmd>) — RCE-equivalent to
       // run_command — so it must stay gated under destructive_gate. Its declared
@@ -472,8 +480,8 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // ── La liste de ce que l'agent n'a pas le droit de faire (#464) ─────────────
   //
   // Chaque commande qui va tourner est lue sorte par sorte (code en ligne,
-  // suppression, installation, téléchargement, arrêt de programmes, réglages
-  // système) et l'état que le propriétaire a donné à chaque sorte s'applique :
+  // suppression, installation, téléchargement, ouvrir/imprimer/envoyer (#667),
+  // arrêt de programmes, réglages système) et l'état que le propriétaire a donné à chaque sorte s'applique :
   // `never` bloque, `ask` retient pour approbation. Une lecture du texte, comme
   // celle de Hermes : elle ne suit pas ce qu'un script fait une fois lancé, et
   // ne garde pas l'agent dans ses dossiers (il faudrait un bac à sable de l'OS).
@@ -523,7 +531,10 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     commandesJugees.length > 0 &&
     effectiveAction !== 'block' &&
     effectiveAction !== 'require_approval' &&
-    commandesJugees.some(isCatastrophicCommand)
+    // Les commandes de l'appel ET celles du code qu'elles lancent (#635,
+    // revue passe 3 de la PR #683) : un `reboot` dans un script est le même
+    // destructeur qu'un `reboot` tapé.
+    (await callReachesTheFloor(commandesJugees, await shellPlace(tool.name, validatedInput, ctx)))
   ) {
     effectiveAction = 'require_approval';
   }
@@ -709,6 +720,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       agentId: ctx.agentId,
       entityId: ctx.entityId,
       kind: tool.asksUser === true ? 'question' : 'approval',
+      gateReasons,
     };
 
     await opts.onApprovalRequired(gateRequest);
@@ -1430,7 +1442,11 @@ async function takeMutationIntent<TInput extends z.ZodTypeAny, TOutput>(
  * nothing relative to it can be shown to be inside, so an allowed download
  * from there asks.
  */
-async function shellPlace(toolName: string, input: unknown, ctx: ToolContext): Promise<ShellPlace> {
+async function shellPlace(
+  toolName: string,
+  input: unknown,
+  ctx: Pick<ToolContext, 'workspaces'>,
+): Promise<ShellPlace> {
   const from =
     toolName === 'declare_verification'
       ? String((input as { project_path?: unknown })?.project_path ?? '.')
@@ -1438,6 +1454,7 @@ async function shellPlace(toolName: string, input: unknown, ctx: ToolContext): P
   const cwd = await resolveAndCheckPath(ctx, from).catch(() => null);
   return {
     cwd,
+    host: RUN_HOST,
     inWorkspace: (absolutePath) =>
       resolveAndCheckPath(ctx, absolutePath).then(
         () => true,
@@ -1451,7 +1468,42 @@ async function shellPlace(toolName: string, input: unknown, ctx: ToolContext): P
             (f) => f.canonical,
             () => null,
           ),
+    // A script the call runs is read only inside the job's workspaces, through
+    // the file tools' boundary check (#635); outside, it asks.
+    readSource: (absolutePath) =>
+      resolveAndCheckPath(ctx, absolutePath).then(readSourceFile, () => ({
+        kind: 'unread' as const,
+        why: 'outside_workspaces' as const,
+      })),
   };
+}
+
+/**
+ * The shell commands a call will run: `run_command`'s, or the steps of a
+ * declared proof, run later without asking again. Empty for any other tool.
+ */
+function shellCommandsOf(toolName: string, input: unknown): string[] {
+  if (toolName === 'run_command') return [String((input as { command?: unknown })?.command ?? '')];
+  if (toolName === 'declare_verification')
+    return ((input as { commands?: { command?: unknown }[] })?.commands ?? []).map((c) =>
+      String(c?.command ?? ''),
+    );
+  return [];
+}
+
+/**
+ * True when a call reaches the hard floor: a command it runs, typed or read in
+ * the code it runs (#635), is a machine-wide destroyer. The runner asks it
+ * before replaying an approved call, which the floor refuses even approved.
+ */
+export async function isCatastrophicCall(
+  toolName: string,
+  input: unknown,
+  ctx: Pick<ToolContext, 'workspaces'>,
+): Promise<boolean> {
+  const commands = shellCommandsOf(toolName, input);
+  if (commands.length === 0) return false;
+  return callReachesTheFloor(commands, await shellPlace(toolName, input, ctx));
 }
 
 /**

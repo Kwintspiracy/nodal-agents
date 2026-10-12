@@ -54,7 +54,13 @@ import ChatFolderGroup from '../ChatFolderGroup.tsx';
 import SidebarLink from '../ui/SidebarLink';
 import { ApprovalsProvider, type PendingApproval } from '../ApprovalsProvider';
 import { ChatFoldersProvider } from '../ChatFoldersProvider';
-import { chatWaitingTotal, type FolderThread, type WorkOrigin } from '@/lib/chat-folders.ts';
+import {
+  chatWaitingTotal,
+  NEW_CONVERSATION_HREF,
+  type FolderThread,
+  type WorkOrigin,
+} from '@/lib/chat-folders.ts';
+import { SIDEBAR_ROW_H } from '../ui/SidebarRow';
 import { listFolderThreadsAction } from '@/lib/folder-threads-actions.ts';
 import { listApprovalsAction } from '@/lib/actions';
 import { getChatFoldersAction } from '@/lib/conversation-actions.ts';
@@ -572,9 +578,12 @@ describe('les derniers fils d’un dossier @cap:reprendre-conversation/ecran', (
     expect(threadRows('dashboard')).toHaveLength(0);
     // La phrase SEULE : un dossier vide n'offre pas « See all », puisqu'il n'y
     // a rien de plus à voir (19/09/2026 au soir).
-    expect(container.querySelector('[data-testid="folder-threads-dashboard"]')?.textContent).toBe(
-      'Nothing here yet',
-    );
+    const notes = [
+      ...(container.querySelector('[data-testid="folder-threads-dashboard"]')?.children ?? []),
+    ]
+      // « New Chat » ouvre le dossier (#701) ; la phrase est ce qui reste.
+      .filter((el) => el.querySelector('[data-testid="folder-new-chat"]') === null);
+    expect(notes.map((el) => el.textContent)).toEqual(['Nothing here yet']);
   });
 
   it('DIT qu’il n’a pas pu lire, au lieu d’afficher un dossier vide', async () => {
@@ -590,6 +599,119 @@ describe('les derniers fils d’un dossier @cap:reprendre-conversation/ecran', (
     expect(container.querySelector('[data-testid="folder-threads-telegram"]')?.textContent).toBe(
       'Failed to load conversations',
     );
+  });
+});
+
+// ─── « New Chat », la première ligne de « Nodal chats » (#701) ───────────────
+//
+// Mutations vérifiées : la ligne retirée → tous les cas rougissent ; la ligne
+// posée sur TOUS les dossiers (condition `f.key === DASHBOARD_FOLDER` retirée) →
+// le cas des canaux rougit ; la ligne posée APRÈS les fils → le cas de l'ordre
+// rougit ; son `href` changé → le cas de la destination rougit.
+
+describe('la ligne « New Chat » de « Nodal chats » @cap:parler-a-un-agent/ecran', () => {
+  const nouvelle = (): HTMLAnchorElement | null =>
+    container.querySelector<HTMLAnchorElement>('[data-testid="folder-new-chat"]');
+
+  it('est la PREMIÈRE ligne du dossier, au-dessus des conversations', async () => {
+    seedThreads({ dashboard: [fil('d1', 'Draft the plan'), fil('d2', 'Weekly report')] });
+    await renderGroup({});
+    const bloc = container.querySelector('[data-testid="folder-threads-dashboard"]');
+    const lignes = [...(bloc?.querySelectorAll('[data-sidebar-row]') ?? [])];
+    expect(lignes.map((l) => l.textContent?.trim())).toEqual([
+      'New Chat',
+      'Draft the plan',
+      'Weekly report',
+    ]);
+    expect(lignes[0]?.contains(nouvelle())).toBe(true);
+  });
+
+  it('mène là où mène « New conversation », et n’est qu’un lien', async () => {
+    // Un LIEN vers l'écran vide : il n'écrit rien (#248). La même adresse que
+    // le bouton de la page Chat, que `ConversationsList.test.tsx` fige à `/`.
+    await renderGroup({});
+    expect(nouvelle()?.tagName).toBe('A');
+    expect(nouvelle()?.getAttribute('href')).toBe('/');
+    expect(nouvelle()?.getAttribute('href')).toBe(NEW_CONVERSATION_HREF);
+  });
+
+  it('reste là quand le dossier est vide ou que la lecture a échoué', async () => {
+    // C'est le SEUL geste qu’offre alors le dossier : il ne dépend d'aucune
+    // conversation.
+    seedThreads({});
+    await renderGroup({});
+    expect(nouvelle()?.textContent?.trim()).toBe('New Chat');
+    await act(async () => {
+      root.unmount();
+    });
+    document.body.innerHTML = '';
+    vi.mocked(listFolderThreadsAction).mockResolvedValue({
+      ok: false,
+      code: 'db_error',
+      message: 'Failed to load conversations',
+    });
+    await renderGroup({});
+    expect(nouvelle()?.textContent?.trim()).toBe('New Chat');
+    expect(container.textContent).toContain('Failed to load conversations');
+  });
+
+  it('a la forme d’une ligne de fil : même hauteur, même retrait, plus un libellé Medium', async () => {
+    seedThreads({ dashboard: [fil('d1', 'Draft the plan')] });
+    await renderGroup({});
+    const ligne = nouvelle()?.closest('[data-sidebar-row]');
+    const fil1 = threadRows('dashboard')[0]?.closest('[data-sidebar-row]');
+    // Les MÊMES classes de forme et de hauteur : une ligne de la même liste.
+    expect(ligne?.className).toContain(SIDEBAR_ROW_H.thread);
+    expect(fil1?.className).toContain(SIDEBAR_ROW_H.thread);
+    expect(nouvelle()?.className).toBe(threadRows('dashboard')[0]?.className);
+    // Ce qui la distingue : un plus dans la colonne du point, et un libellé en
+    // `ink` Medium — des jetons, pas des couleurs.
+    const plus = nouvelle()?.querySelector('svg');
+    expect(plus?.getAttribute('class')).toContain('h-3.5 w-3.5');
+    expect(plus?.getAttribute('class')).toContain('text-ink');
+    const libelle = nouvelle()?.querySelector('span');
+    expect(libelle?.className).toContain('font-medium!');
+    expect(libelle?.className).toContain('text-ink');
+  });
+
+  it('n’existe dans AUCUN dossier de canal', async () => {
+    seedThreads({
+      telegram: [fil('t1', 'Invoice for March')],
+      mcp: [fil('r1', 'Review PR')],
+    });
+    await renderGroup({ channels: ['telegram', 'slack'], externalRuns: 1 });
+    for (const key of ['telegram', 'slack', 'mcp']) {
+      await click(container.querySelector(`[data-testid="folder-caret-${key}"]`)!);
+      const bloc = container.querySelector(`[data-testid="folder-threads-${key}"]`);
+      expect(bloc, `${key} déplié`).not.toBeNull();
+      expect(bloc?.querySelector('[data-testid="folder-new-chat"]'), key).toBeNull();
+      expect(bloc?.textContent, key).not.toContain('New Chat');
+    }
+    // Une seule ligne dans toute la barre, celle de « Nodal chats ».
+    expect(container.querySelectorAll('[data-testid="folder-new-chat"]')).toHaveLength(1);
+    expect(
+      container
+        .querySelector('[data-testid="folder-threads-dashboard"]')
+        ?.contains(nouvelle() ?? null),
+    ).toBe(true);
+  });
+
+  it('disparaît avec le dossier replié, et revient au dépliage', async () => {
+    seedThreads({ dashboard: [fil('d1', 'Draft the plan')] });
+    await renderGroup({});
+    const caret = container.querySelector('[data-testid="folder-caret-dashboard"]')!;
+    await click(caret);
+    expect(nouvelle()).toBeNull();
+    await click(caret);
+    expect(nouvelle()).not.toBeNull();
+  });
+
+  it('s’allume sur l’écran vide, là où elle mène', async () => {
+    pathname = '/';
+    await renderGroup({});
+    expect(nouvelle()?.getAttribute('aria-current')).toBe('page');
+    await naviguer('/chat/d1');
+    expect(nouvelle()?.getAttribute('aria-current')).toBeNull();
   });
 });
 

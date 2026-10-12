@@ -111,6 +111,7 @@ export { createToolRegistry } from './registry';
 // Execution wrapper
 export {
   executeTool,
+  isCatastrophicCall,
   matchApprovalRule,
   namespaceOf,
   namespaceRulePattern,
@@ -158,6 +159,7 @@ export {
   isDestructiveOrHeavyCommand,
   isInlineInterpreterEvalCommand,
 } from '@nodal-agents/shared';
+export { shellChecklistDeclined } from './shell-checklist';
 
 // Whitelist computation
 export { computeToolWhitelist, agentBuiltinToolNames } from './whitelist';

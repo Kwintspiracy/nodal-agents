@@ -40,6 +40,7 @@ import EmptyState from '@/components/ui/EmptyState';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import { deleteConversationsAction } from '@/lib/actions.ts';
+import { NEW_CONVERSATION_HREF } from '@/lib/chat-folders.ts';
 import type { ConversationRowModel } from './conversation-rows.ts';
 
 export default function ConversationsList({ rows }: { rows: ConversationRowModel[] }) {
@@ -160,7 +161,7 @@ export default function ConversationsList({ rows }: { rows: ConversationRowModel
                 n'écrit plus rien : on va sur l'écran vide, et c'est le premier
                 message qui fait naître la ligne. Sans ROOT, c'est cet écran qui
                 le dit, à un seul endroit, au lieu d'un clic qui échoue ici. */}
-            <PrimaryButton href="/">New conversation</PrimaryButton>
+            <PrimaryButton href={NEW_CONVERSATION_HREF}>New conversation</PrimaryButton>
             {rows.length > 0 && (
               <PrimaryButton variant="neutral" size="sm" onClick={() => setSelecting(true)}>
                 Select

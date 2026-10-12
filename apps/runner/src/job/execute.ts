@@ -41,6 +41,7 @@ import {
   metaToolsForAgent,
   parseRootGrants,
   resolveShellPolicy,
+  ShellGateReasonsSchema,
   serverTimezone,
   modelContextWindow,
   modelCanSeeImages,
@@ -102,7 +103,7 @@ import {
   createSendVoiceTool,
   createListConversationsTool,
   listWorkspaceMcpToolNames,
-  isCatastrophicCommand,
+  isCatastrophicCall,
   matchApprovalRule,
   DELIVERY_TOOL_NAMES as DELIVERY_TOOL_NAME_LIST,
   toolsNamedButAbsent,
@@ -114,6 +115,7 @@ import {
   deferredToolIndex,
   withToolLoader,
   toolOutputForModel,
+  shellChecklistDeclined,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -3140,16 +3142,13 @@ async function runJobTracked(
         // either way.
         // `run_command` porte UNE commande, `declare_verification` en porte une
         // liste qui s'exécutera plus tard : les deux se jugent ici, sinon la
-        // seconde contournerait le refus (revue Codex, PR #49).
-        const resumeCommands =
-          req.toolName === 'run_command'
-            ? [String((req.toolInput as { command?: unknown } | null)?.command ?? '')]
-            : req.toolName === 'declare_verification'
-              ? (
-                  (req.toolInput as { commands?: { command?: unknown }[] } | null)?.commands ?? []
-                ).map((c) => String(c?.command ?? ''))
-              : [];
-        const isCatastrophicResume = resumeCommands.some(isCatastrophicCommand);
+        // seconde contournerait le refus (revue Codex, PR #49). Avec elles, le
+        // code qu'elles lancent, relu MAINTENANT, au moment de tourner (#635,
+        // revue passe 3 de la PR #683) : la même lecture que la porte, par la
+        // même fonction, dans les mêmes espaces.
+        const isCatastrophicResume = await isCatastrophicCall(req.toolName, req.toolInput, {
+          workspaces: agentWorkspacesList,
+        });
 
         if (isCatastrophicResume) {
           // Only machine-wide destroyers (`rm -rf /`, `mkfs`, `shutdown`, …)
@@ -3334,8 +3333,19 @@ async function runJobTracked(
       } else {
         // Rejected: replace marker with a [REJECTED] explanation.
         const reason = req.notes ?? 'no reason provided';
+        // Held by the shell checklist (#667): the model also reads which kinds
+        // held it and where such an action goes instead (a tool that asks the
+        // person), or it tries the shell again another way. Unreadable reasons
+        // are said in the log, as the approval card does.
+        const held =
+          req.gateReasons === null ? null : ShellGateReasonsSchema.safeParse(req.gateReasons);
+        if (held && !held.success)
+          console.warn(`[exec ${jobId}] unreadable gate_reasons on approval ${req.id}`);
+        const heldNote =
+          held?.success && held.data.length > 0 ? ` ${shellChecklistDeclined(held.data)}` : '';
         replacementOutput = toResultOutput(
-          `[REJECTED] Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.`,
+          `[REJECTED] Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.` +
+            heldNote,
         );
         trace('resume_rejected_tool_marker_replaced', { toolName: req.toolName });
       }

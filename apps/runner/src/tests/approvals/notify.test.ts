@@ -180,6 +180,43 @@ describe('notifyApprovalCreated', () => {
     expect(detailIdx).toBeGreaterThan(impactIdx);
   });
 
+  // #635 : la porte a lu le script ; la carte du canal le dit, au lieu de
+  // « likely read/inspect » pour `python <fichier>`.
+  it('says what the gate read in the script the command runs (#635)', async () => {
+    await db.update(agentJobs).set({ chatId: CHAT_ID }).where(eq(agentJobs.id, seed.jobId));
+    await db
+      .update(agents)
+      .set({ telegramBotToken: '123:fake' })
+      .where(eq(agents.id, seed.agentId));
+
+    await notifyApprovalCreated(deps, {
+      approvalRequestId: '00000000-0000-0000-0000-0000000000ad',
+      toolName: 'run_command',
+      toolInput: { command: 'python shared/scripts/build.py', purpose: 'Build the sheet' },
+      jobId: seed.jobId,
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+      kind: 'approval',
+      gateReasons: [
+        {
+          category: 'install_software',
+          state: 'ask',
+          details: ['python shared/scripts/build.py'],
+          found: [
+            { source: 'shared/scripts/build.py', line: 5, text: 'os.system("pip install x")' },
+          ],
+        },
+      ],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { text: string };
+    expect(body.text).toContain(
+      'the code it runs installs software or packages (shared/scripts/build.py, line 5)',
+    );
+    expect(body.text).not.toContain('likely read/inspect');
+  });
+
   it('falls back to an honest "not specified" line when the agent omits purpose — never invents one', async () => {
     await db.update(agentJobs).set({ chatId: CHAT_ID }).where(eq(agentJobs.id, seed.jobId));
     await db

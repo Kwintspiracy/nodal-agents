@@ -6,6 +6,7 @@ import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { EmbeddingClient, SpeechGenerator } from '@nodal-agents/llm';
 import type {
   ApprovalRuleCondition,
+  ShellGateReason,
   ShellPolicy,
   ElicitationAttachment,
   ElicitationActions,
@@ -717,6 +718,13 @@ export interface ApprovalGateRequest {
    * cours (0145). Jamais posée par la porte : par `ctx.requestUserInput`.
    */
   kind: 'approval' | 'question' | 'elicitation';
+  /**
+   * What the shell checklist held the call for, as the gate stored it on the
+   * row (`gate_reasons`): the card on every channel says what the gate read,
+   * in the command and in the code it runs (#635). Empty when the checklist
+   * held nothing.
+   */
+  gateReasons?: readonly ShellGateReason[];
 }
 
 export interface ExecuteOptions {

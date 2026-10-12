@@ -533,3 +533,66 @@ export function formatViolations(label: string, violations: readonly Violation[]
     violations.map((v) => `  ${v.file}:${v.line} [${v.rule}]\n    ${v.text}`).join('\n')
   );
 }
+
+/**
+ * Every place a source file names a module as something to LOAD or RESOLVE:
+ * the exact specifier in a string (`'pkg'`, `"pkg/sub"`, `` `pkg` ``) or a path
+ * segment that leads into it (`node_modules/pkg/…`). The whole file is read,
+ * comments removed, so a multi-line `import`, a `require`, a `createRequire`
+ * resolution or a computed path are caught alike — only the module's NAME is
+ * needed to reach it, and that name is what this scan looks for.
+ *
+ * Prose that mentions the name (an error message, `@pkg/sub` platform
+ * packages, `pkg-other` file names) does not fire: a load needs the bare name
+ * between quotes or path separators.
+ *
+ * Born from issue #698: a module whose mere evaluation rewrites the process
+ * exit code must be loaded through one door, and a line-based import regex let
+ * computed imports pass.
+ */
+export function scanForModuleReferences(opts: {
+  srcDirs: readonly string[];
+  moduleName: string;
+  /** Absolute paths allowed to name the module, matched by suffix. */
+  allowFiles: readonly string[];
+}): Violation[] {
+  const name = opts.moduleName.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&');
+  const pattern = new RegExp(
+    String.raw`(?:['"${'`'}]${name}(?:/[^'"${'`'}\n]*)?['"${'`'}])|(?:[/\\]${name}(?=[/\\'"${'`'}]))`,
+    'g',
+  );
+  const out: Violation[] = [];
+  for (const srcDir of opts.srcDirs) {
+    const files = collectTsFiles(
+      srcDir,
+      ['node_modules', 'dist', '.next'],
+      [],
+      [...TS_EXTENSIONS, '.mts', '.cts', '.js', '.mjs', '.cjs'],
+    ).filter((f) => !isSkipped(f, opts.allowFiles));
+    for (const file of files) {
+      const source = stripComments(readFileSync(file, 'utf-8'));
+      for (const m of source.matchAll(pattern)) {
+        const line = source.slice(0, m.index).split('\n').length;
+        out.push({
+          file,
+          line,
+          text: source.split('\n')[line - 1]!.trim().slice(0, 120),
+          rule: `module-reference:${opts.moduleName}`,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Comments blanked out, line breaks kept so line numbers still match. Naive on
+ * purpose: `//` inside a string ends nothing it should not, because a line
+ * comment is only taken when what precedes it is not a quote or a colon
+ * (`'http://…'`).
+ */
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, ' '))
+    .replace(/(^|[^:'"`\\])\/\/[^\n]*/g, '$1');
+}

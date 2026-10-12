@@ -272,8 +272,8 @@ export const STATUS: readonly Definition[] = [
 ];
 
 /** Source: apps/cli/package.json (version). */
-export const VERSION = '0.9.4';
-export const VERSION_DATE = 'September 2026';
+export const VERSION = '0.9.5';
+export const VERSION_DATE = 'October 2026';
 
 /* ── 05 Try it and compare notes ────────────────────────────────────────── */
 

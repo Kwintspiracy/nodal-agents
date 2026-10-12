@@ -34,9 +34,14 @@
  * stated in `run-command.ts`'s security model rather than pretended away by a
  * list that refuses the only useful entry.
  */
-export const SHELL_PROGRAMS: readonly string[] = [
+/**
+ * The shells: programs that read a command line, as an argument or on their
+ * standard input. ONE list: the allowlist refuses them (`SHELL_PROGRAMS`),
+ * and the checklist reads what a here-document or a redirection feeds them
+ * as their commands (`stdinReceiver`, catastrophic-command.ts, #635).
+ */
+export const SHELLS: readonly string[] = [
   'cmd',
-  'command',
   'powershell',
   'pwsh',
   'sh',
@@ -46,9 +51,15 @@ export const SHELL_PROGRAMS: readonly string[] = [
   'csh',
   'tcsh',
   'dash',
+  'ash',
   'fish',
   'wsl',
   'busybox',
+];
+
+export const SHELL_PROGRAMS: readonly string[] = [
+  ...SHELLS,
+  'command',
   // Launchers: not shells, same effect.
   'env',
   'start',
@@ -63,6 +74,40 @@ export const SHELL_PROGRAMS: readonly string[] = [
   'exec',
   'eval',
   'script',
+  // Exec wrappers: they run the command that follows their options (#667,
+  // review of PR #682, pass 5).
+  'doas',
+  'nice',
+  'time',
+  'builtin',
+  'setsid',
+  'stdbuf',
+  'ionice',
+  'chrt',
+  'taskset',
+  'unbuffer',
+  'strace',
+  'ltrace',
+  'valgrind',
+  'watch',
+  'flock',
+  'chroot',
+  'unshare',
+  'nsenter',
+  'systemd-run',
+  'firejail',
+  'caffeinate',
+  'gtimeout',
+  'pkexec',
+  'su',
+  'runuser',
+  'proxychains',
+  'proxychains4',
+  'torsocks',
+  'eatmydata',
+  'fakeroot',
+  'dbus-launch',
+  'expect',
 ];
 
 /**

@@ -182,4 +182,50 @@ describe('listApprovalsAction carries the gate reasons (#464) @cap:approuver-une
     expect(row?.gateReasons[0]?.details).toEqual(['wget https://example.com/a.zip']);
     expect(JSON.stringify(row?.gateReasons)).not.toContain(secret);
   });
+
+  // #635 : une ligne de script lue, et le chemin d'un script illisible.
+  it('reads back the lines found in a script and the scripts not read, masked (#635)', async () => {
+    const secret = 'sk-ant-api03-ABCDEFGHIJ0123456789QRSTUVWXYZ'; // secrets:allow (fixture : clé factice)
+    await testDb.insert(approvalRequests).values({
+      entityId: seed.entityId,
+      jobId: seed.jobId,
+      agentId: seed.agentId,
+      toolName: 'run_command',
+      toolInput: { command: 'python build.py', purpose: 'build' },
+      status: 'pending',
+      gateReasons: [
+        {
+          category: 'install_software',
+          state: 'ask',
+          details: ['python build.py'],
+          found: [
+            { source: 'build.py', line: 3, text: `os.system("pip install x --token ${secret}")` },
+          ],
+        },
+        {
+          category: 'inline_code',
+          state: 'ask',
+          details: ['python other.py'],
+          unread: [{ source: `/tmp/${secret}.py`, why: 'outside_workspaces' }],
+        },
+      ],
+    });
+    const { listApprovalsAction } = await import('../actions.ts');
+
+    const res = await listApprovalsAction({ status: 'pending', jobIds: [seed.jobId] });
+
+    const row = res.ok
+      ? res.data.find((r) => r.toolName === 'run_command' && r.gateReasons[0]?.found)
+      : undefined;
+    expect(row?.gateReasons[0]?.found?.[0]).toMatchObject({ source: 'build.py', line: 3 });
+    expect(row?.gateReasons[0]?.found?.[0]?.text).toContain('os.system("pip install x --token');
+    expect(row?.gateReasons[1]?.unread?.[0]?.why).toBe('outside_workspaces');
+    expect(JSON.stringify(row?.gateReasons)).not.toContain(secret);
+    // The impact line says what the gate read, never "likely read/inspect".
+    expect(row?.explanation.impact).toContain(
+      'the code it runs installs software or packages (build.py, line 3)',
+    );
+    expect(row?.explanation.impact).not.toContain('likely read/inspect');
+    expect(row?.explanation.impact).not.toContain(secret);
+  });
 });
