@@ -26,13 +26,18 @@
 //  - le TEXTE d'un job est sa colonne `result`, telle quelle. Savoir s'il
 //    faudrait plutôt son dernier texte SUBSTANTIEL est une question ouverte de
 //    l'issue #646, volontairement pas tranchée ici ;
-//  - les VERDICTS d'un job sont ceux livrés dans son SOUS-ARBRE : le sien s'il
-//    en a enregistré un (son dernier appel à `review_verdict`, comme avant),
-//    sinon ceux de ses enfants, dans l'ordre de leur création, récursivement.
-//    Un intermédiaire qui enregistre son propre verdict REMPLACE ceux d'en
-//    dessous — c'est la seule façon typée d'arbitrer ;
+//  - les VERDICTS d'un job sont TOUS ceux livrés dans son SOUS-ARBRE : le sien
+//    s'il en a enregistré un, puis ceux de ses enfants, dans l'ordre de leur
+//    création, récursivement. Le verdict d'un job est son dernier appel à
+//    `review_verdict` (un relecteur qui corrige son propre appel refusé) — une
+//    règle PAR JOB, jamais d'un job à l'autre : le verdict d'un intermédiaire ne
+//    remplace pas celui d'un relecteur en dessous. Rien dans les lignes ne dit
+//    que l'un a lu l'autre, ni qu'ils portent sur la même cible (revue Codex de
+//    la PR #712, passe 1 : un `approve` de Lead effaçait le `request_changes` de
+//    Reviewer A, et le root concluait à une livraison) ;
 //  - chaque verdict porte son AUTEUR (slug d'agent et id de job). Plusieurs
-//    verdicts voyagent tous ; aucun n'est choisi parmi les autres.
+//    verdicts voyagent tous ; aucun n'est choisi parmi les autres. Une ligne
+//    illisible, où qu'elle soit dans le sous-arbre, voyage de même.
 //
 // La lecture se fait sur les lignes réelles (`agent_jobs`, `tool_calls`),
 // jamais sur une transcription ni sur un texte de modèle.
@@ -69,7 +74,7 @@ export interface JobDeliverable {
    * Les jobs du sous-arbre dont la dernière ligne `review_verdict` s'annonce
    * réussie SANS respecter le contrat de l'outil. Un contrat rompu, jamais tu
    * (invariant #4) : la reprise en fait une délégation échouée, la compilation
-   * l'écrit par son code. Il remplace, à son étage, comme un verdict lisible.
+   * l'écrit par son code. Aucun verdict, au-dessus ou à côté, ne la cache.
    */
   unreadable_review_verdicts: VerdictAuthor[];
 }
@@ -185,21 +190,16 @@ export async function readJobDeliverables(
     memo.set(node.id, { review_verdicts: [], unreadable_review_verdicts: [] });
     const author: VerdictAuthor = { agent_slug: node.slug, job_id: node.id };
     const mine = own.get(node.id) ?? { kind: 'none' };
-    let value: Pick<JobDeliverable, 'review_verdicts' | 'unreadable_review_verdicts'>;
-    if (mine.kind === 'verdict') {
-      value = { review_verdicts: [{ author, ...mine.record }], unreadable_review_verdicts: [] };
-    } else if (mine.kind === 'unreadable') {
-      value = { review_verdicts: [], unreadable_review_verdicts: [author] };
-    } else {
-      const verdicts: AuthoredReviewVerdict[] = [];
-      const unreadable: VerdictAuthor[] = [];
-      for (const child of childrenOf.get(node.id) ?? []) {
-        const s = subtree(child);
-        verdicts.push(...s.review_verdicts);
-        unreadable.push(...s.unreadable_review_verdicts);
-      }
-      value = { review_verdicts: verdicts, unreadable_review_verdicts: unreadable };
+    // Le job d'abord, puis chaque enfant : un verdict n'en remplace aucun autre.
+    const verdicts: AuthoredReviewVerdict[] =
+      mine.kind === 'verdict' ? [{ author, ...mine.record }] : [];
+    const unreadable: VerdictAuthor[] = mine.kind === 'unreadable' ? [author] : [];
+    for (const child of childrenOf.get(node.id) ?? []) {
+      const s = subtree(child);
+      verdicts.push(...s.review_verdicts);
+      unreadable.push(...s.unreadable_review_verdicts);
     }
+    const value = { review_verdicts: verdicts, unreadable_review_verdicts: unreadable };
     memo.set(node.id, value);
     return value;
   };
@@ -256,11 +256,10 @@ export function deliveredSomething(d: JobDeliverable): boolean {
  *
  * Oui dès qu'UN d'eux demande des corrections, quels que soient les autres.
  * Deux verdicts qui se contredisent dans un même sous-arbre ne s'annulent pas :
- * un `approve` d'un relecteur ne lève pas le `request_changes` d'un autre (ou
- * du même, sur une autre cible — rien dans les lignes ne dit que les deux
- * portent sur la même chose). Le parent reçoit les deux, avec leurs auteurs ;
- * seul un intermédiaire qui enregistre son PROPRE verdict remplace ceux d'en
- * dessous, et c'est alors le sien qui décide. Un faux « bloqué » se lit et se
+ * un `approve` ne lève pas le `request_changes` d'un autre job, qu'il vienne
+ * d'un relecteur voisin ou d'un intermédiaire au-dessus — rien dans les lignes
+ * ne dit que les deux portent sur la même chose, ni que l'un a lu l'autre. Le
+ * parent reçoit les deux, avec leurs auteurs. Un faux « bloqué » se lit et se
  * tranche ; un faux « livré » est le défaut que #59 ferme.
  */
 export function verdictsBlockDelivery(verdicts: readonly AuthoredReviewVerdict[]): boolean {

@@ -5,8 +5,9 @@
 // relaie sans appeler `review_verdict` ; le verdict de Reviewer A doit quand même
 // arriver au root, avec son auteur. Ces cas prouvent la règle générale sur
 // davantage que ce scénario : relais à un et deux étages, intermédiaire qui
-// remplace, deux verdicts qui se contredisent, ligne illisible, délégation
-// ordinaire.
+// juge à son tour (son verdict s'AJOUTE, il ne remplace rien — revue Codex de
+// la PR #712, passe 1), deux verdicts qui se contredisent, ligne illisible,
+// délégation ordinaire.
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { eq } from '@nodal-agents/db';
@@ -183,17 +184,65 @@ describe('readJobDeliverables — le verdict traverse les relais @cap:organiser-
     ]);
   });
 
-  it('un intermédiaire qui enregistre SON verdict remplace ceux d’en dessous', async () => {
+  it('un intermédiaire qui juge à son tour ne remplace pas le verdict d’en dessous : les deux voyagent', async () => {
     const w = await world();
     const [lead, reviewer] = await Promise.all([w.agent('lead'), w.agent('reviewer-a')]);
-    const leadJob = await job(w, lead, { result: 'J’arbitre.' });
+    const leadJob = await job(w, lead, { result: 'J’ai relu aussi.' });
     const reviewerJob = await job(w, reviewer, { parentJobId: leadJob });
     await verdict(w, reviewerJob, REQUEST_CHANGES);
     await verdict(w, leadJob, APPROVE);
 
     const d = await readJobDeliverable(db, leadJob);
+    expect(
+      d?.review_verdicts.map((v) => [v.author.agent_slug, v.author.job_id, v.verdict]),
+    ).toEqual([
+      [await slugOf(lead), leadJob, 'approve'],
+      [await slugOf(reviewer), reviewerJob, 'request_changes'],
+    ]);
+    expect(verdictsBlockDelivery(d!.review_verdicts)).toBe(true);
+  });
+
+  it('une ligne illisible sous un intermédiaire qui a jugé est nommée quand même', async () => {
+    const w = await world();
+    const [lead, reviewer] = await Promise.all([w.agent('lead'), w.agent('reviewer-a')]);
+    const leadJob = await job(w, lead, { result: 'Approuvé.' });
+    const reviewerJob = await job(w, reviewer, { parentJobId: leadJob });
+    await verdict(w, reviewerJob, {
+      ok: true,
+      verdict: 'request_changes',
+      findings: 'pas un tableau',
+    });
+    await verdict(w, leadJob, APPROVE);
+
+    const d = await readJobDeliverable(db, leadJob);
     expect(d?.review_verdicts.map((v) => [v.author.job_id, v.verdict])).toEqual([
       [leadJob, 'approve'],
+    ]);
+    expect(d?.unreadable_review_verdicts).toEqual([
+      { agent_slug: await slugOf(reviewer), job_id: reviewerJob },
+    ]);
+  });
+
+  it('un job qui appelle review_verdict deux fois (refusé, puis accepté) : seul son dernier appel compte', async () => {
+    const w = await world();
+    const [lead, reviewer] = await Promise.all([w.agent('lead'), w.agent('reviewer-a')]);
+    const leadJob = await job(w, lead, { result: 'Relayé.' });
+    const reviewerJob = await job(w, reviewer, { parentJobId: leadJob });
+    await verdict(w, reviewerJob, { ok: false, error: 'findings[0].severity: invalid enum value' });
+    await verdict(w, reviewerJob, REQUEST_CHANGES);
+
+    const d = await readJobDeliverable(db, leadJob);
+    expect(d?.review_verdicts.map((v) => [v.author.job_id, v.verdict])).toEqual([
+      [reviewerJob, 'request_changes'],
+    ]);
+    expect(d?.unreadable_review_verdicts).toEqual([]);
+
+    // La même règle, par job : un relecteur qui se corrige (deux appels
+    // acceptés) ne livre que le second.
+    await verdict(w, reviewerJob, APPROVE);
+    const again = await readJobDeliverable(db, leadJob);
+    expect(again?.review_verdicts.map((v) => [v.author.job_id, v.verdict])).toEqual([
+      [reviewerJob, 'approve'],
     ]);
   });
 
@@ -449,5 +498,175 @@ describe('resumeDelegated porte les verdicts du sous-arbre @cap:verifier-un-livr
     expect(out.type).toBe('error-text');
     expect(out.value.startsWith(DELEGATION_FAILED_MARKER)).toBe(true);
     expect(out.value).toContain('"error": "review_verdict_malformed"');
+  });
+
+  it('Reviewer A demande des corrections, Lead approuve : le root reçoit les deux, avec leurs auteurs, et la livraison reste bloquée', async () => {
+    const w = await world();
+    const [alfred, lead, reviewer] = await Promise.all([
+      w.agent('alfred'),
+      w.agent('lead'),
+      w.agent('reviewer-a'),
+    ]);
+    const root = await awaitingRoot(w, alfred, 'assign_lead');
+    const leadJob = await job(w, lead, { parentJobId: root, result: 'Approuvé.' });
+    const reviewerJob = await job(w, reviewer, { parentJobId: leadJob });
+    await verdict(w, reviewerJob, REQUEST_CHANGES);
+    await verdict(w, leadJob, APPROVE);
+
+    await resumeDelegated(root as JobId, leadJob as JobId, 'Approuvé.', db);
+
+    const payload = JSON.parse((await parentToolResult(root)).value) as Record<string, unknown>;
+    expect(payload['status']).toBe('completed');
+    expect(payload['review_verdicts']).toEqual([
+      {
+        author: { agent_slug: await slugOf(lead), job_id: leadJob },
+        verdict: 'approve',
+        summary: APPROVE.summary,
+        findings: [],
+        counts: APPROVE.counts,
+      },
+      {
+        author: { agent_slug: await slugOf(reviewer), job_id: reviewerJob },
+        verdict: 'request_changes',
+        summary: REQUEST_CHANGES.summary,
+        findings: REQUEST_CHANGES.findings,
+        counts: REQUEST_CHANGES.counts,
+      },
+    ]);
+    expect(payload['delivery_blocked']).toBe(REVIEW_CHANGES_REQUESTED);
+  });
+
+  it('Reviewer A approuve, Lead demande des corrections : les deux portés, livraison bloquée', async () => {
+    const w = await world();
+    const [alfred, lead, reviewer] = await Promise.all([
+      w.agent('alfred'),
+      w.agent('lead'),
+      w.agent('reviewer-a'),
+    ]);
+    const root = await awaitingRoot(w, alfred, 'assign_lead');
+    const leadJob = await job(w, lead, { parentJobId: root, result: 'À corriger.' });
+    const reviewerJob = await job(w, reviewer, { parentJobId: leadJob });
+    await verdict(w, reviewerJob, APPROVE);
+    await verdict(w, leadJob, REQUEST_CHANGES);
+
+    await resumeDelegated(root as JobId, leadJob as JobId, 'À corriger.', db);
+
+    const payload = JSON.parse((await parentToolResult(root)).value) as Record<string, unknown>;
+    const verdicts = payload['review_verdicts'] as Array<{
+      author: { agent_slug: string; job_id: string };
+      verdict: string;
+    }>;
+    expect(verdicts.map((v) => [v.author.agent_slug, v.author.job_id, v.verdict])).toEqual([
+      [await slugOf(lead), leadJob, 'request_changes'],
+      [await slugOf(reviewer), reviewerJob, 'approve'],
+    ]);
+    expect(payload['delivery_blocked']).toBe(REVIEW_CHANGES_REQUESTED);
+  });
+
+  it('deux relecteurs en désaccord dans deux branches, chacune sous un intermédiaire qui approuve : les quatre portés, livraison bloquée', async () => {
+    const w = await world();
+    const [alfred, lead, subA, subB, ra, rb] = await Promise.all([
+      w.agent('alfred'),
+      w.agent('lead'),
+      w.agent('sub-a'),
+      w.agent('sub-b'),
+      w.agent('reviewer-a'),
+      w.agent('reviewer-b'),
+    ]);
+    const root = await awaitingRoot(w, alfred, 'assign_lead');
+    const leadJob = await job(w, lead, { parentJobId: root, result: 'Deux branches.' });
+    const branchA = await job(w, subA, { parentJobId: leadJob, result: 'Branche A.' });
+    const branchB = await job(w, subB, { parentJobId: leadJob, result: 'Branche B.' });
+    const leafA = await job(w, ra, { parentJobId: branchA });
+    const leafB = await job(w, rb, { parentJobId: branchB });
+    await verdict(w, leafA, APPROVE);
+    await verdict(w, leafB, REQUEST_CHANGES);
+    await verdict(w, branchA, APPROVE);
+    await verdict(w, branchB, APPROVE);
+
+    await resumeDelegated(root as JobId, leadJob as JobId, 'Deux branches.', db);
+
+    const payload = JSON.parse((await parentToolResult(root)).value) as Record<string, unknown>;
+    const verdicts = payload['review_verdicts'] as Array<{
+      author: { job_id: string };
+      verdict: string;
+    }>;
+    expect(verdicts.map((v) => [v.author.job_id, v.verdict])).toEqual([
+      [branchA, 'approve'],
+      [leafA, 'approve'],
+      [branchB, 'approve'],
+      [leafB, 'request_changes'],
+    ]);
+    expect(payload['delivery_blocked']).toBe(REVIEW_CHANGES_REQUESTED);
+  });
+
+  it('une ligne illisible sous un intermédiaire qui a approuvé : délégation échouée nommée, l’approbation ne la cache pas', async () => {
+    const w = await world();
+    const [alfred, lead, reviewer] = await Promise.all([
+      w.agent('alfred'),
+      w.agent('lead'),
+      w.agent('reviewer-a'),
+    ]);
+    const root = await awaitingRoot(w, alfred, 'assign_lead');
+    const leadJob = await job(w, lead, { parentJobId: root, result: 'Approuvé.' });
+    const reviewerJob = await job(w, reviewer, { parentJobId: leadJob });
+    await verdict(w, reviewerJob, { ok: true, verdict: 'request_changes' });
+    await verdict(w, leadJob, APPROVE);
+
+    await resumeDelegated(root as JobId, leadJob as JobId, 'Approuvé.', db);
+
+    const [row] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, root));
+    expect(row?.status).toBe('pending');
+    const out = await parentToolResult(root);
+    expect(out.type).toBe('error-text');
+    expect(out.value.startsWith(DELEGATION_FAILED_MARKER)).toBe(true);
+    expect(out.value).toContain('"error": "review_verdict_malformed"');
+  });
+
+  it('un relecteur délégué directement : son verdict seul, comme avant', async () => {
+    const w = await world();
+    const [alfred, reviewer] = await Promise.all([w.agent('alfred'), w.agent('reviewer-a')]);
+    const root = await awaitingRoot(w, alfred, 'assign_reviewer_a');
+    const reviewerJob = await job(w, reviewer, { parentJobId: root, result: 'Verdict émis.' });
+    await verdict(w, reviewerJob, REQUEST_CHANGES);
+
+    await resumeDelegated(root as JobId, reviewerJob as JobId, 'Verdict émis.', db);
+
+    const payload = JSON.parse((await parentToolResult(root)).value) as Record<string, unknown>;
+    expect(payload['review_verdicts']).toEqual([
+      {
+        author: { agent_slug: await slugOf(reviewer), job_id: reviewerJob },
+        verdict: 'request_changes',
+        summary: REQUEST_CHANGES.summary,
+        findings: REQUEST_CHANGES.findings,
+        counts: REQUEST_CHANGES.counts,
+      },
+    ]);
+    expect(payload['delivery_blocked']).toBe(REVIEW_CHANGES_REQUESTED);
+  });
+
+  it('une délégation qui n’est pas une revue, même sous un relais : aucun verdict, rien d’interdit, texte inchangé octet pour octet', async () => {
+    const w = await world();
+    const [alfred, lead, researcher] = await Promise.all([
+      w.agent('alfred'),
+      w.agent('lead'),
+      w.agent('researcher'),
+    ]);
+    const texte = '  Longueur de Planck :\n1.616255e-35 m.  ';
+    const root = await awaitingRoot(w, alfred, 'assign_lead');
+    const leadJob = await job(w, lead, { parentJobId: root, result: texte });
+    await job(w, researcher, { parentJobId: leadJob, result: 'Source : CODATA 2018.' });
+
+    const d = await readJobDeliverable(db, leadJob);
+    expect(appendDeliveredVerdicts(d!.text, d)).toBe(texte);
+
+    await resumeDelegated(root as JobId, leadJob as JobId, texte, db);
+
+    const payload = JSON.parse((await parentToolResult(root)).value) as Record<string, unknown>;
+    expect(payload['review_verdicts']).toEqual([]);
+    expect(payload['delivery_blocked']).toBeNull();
   });
 });

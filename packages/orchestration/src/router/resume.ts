@@ -37,9 +37,10 @@ export interface DelegationOutcomeRecord {
    * Les verdicts de revue livrés dans le SOUS-ARBRE de l'enfant, chacun avec
    * son auteur — slug d'agent et id de job (issues #124, #646). `summary` reste
    * la dernière phrase du modèle ; ce champ porte ce que l'outil
-   * `review_verdict` a validé. Le verdict de l'enfant s'il en a enregistré un,
-   * sinon ceux de sa descendance : un intermédiaire qui relaie (root → Lead →
-   * relecteur) ne fait plus disparaître le verdict d'en dessous. Lus par
+   * `review_verdict` a validé. Celui de l'enfant s'il en a enregistré un, ET
+   * ceux de sa descendance : un intermédiaire qui relaie (root → Lead →
+   * relecteur) ou qui juge à son tour ne fait plus disparaître le verdict d'en
+   * dessous — aucun verdict d'un job n'en remplace un autre. Lus par
    * `readJobDeliverables`, seul lecteur de « ce qu'un job a livré ».
    * `[]` sur l'immense majorité des délégations, qui ne sont pas des revues.
    */
