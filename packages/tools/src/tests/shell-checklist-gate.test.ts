@@ -877,3 +877,35 @@ describe('what reaches the screen, a printer or someone is asked (#667) @cap:exe
     );
   });
 });
+
+// Codex, PR #710 passe 4 : `alias npm='npm install'` puis `npm cowsay`
+// installait sans rien demander. Une ligne qui redéfinit un nom de commande
+// lance des programmes que son texte ne nomme pas : elle demande sous la
+// politique par défaut, comme un programme décidé à l'exécution.
+describe('a line that redefines a command name asks (#710, Codex pass 4) @cap:executer-une-commande/moteur', () => {
+  it('asks under the default policy, and "never" on inline code refuses it', async () => {
+    for (const command of [
+      "shopt -s expand_aliases\nalias npm='npm install'\nnpm cowsay",
+      'hash -p /usr/bin/apt-get ls; ls install x',
+      'powershell -Command "Set-Alias ls Remove-Item; ls x"',
+      'doskey npm=npm install $*',
+    ]) {
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res.outcome, command).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      const reasons = (await reasonsOf(res.approvalRequestId)) as Array<{ category: string }>;
+      expect(
+        reasons.find((r) => r.category === 'inline_code'),
+        command,
+      ).toEqual({ category: 'inline_code', state: 'ask', details: [command] });
+      const refused = await run(command, gate({ ...DEFAULT_SHELL_POLICY, inline_code: 'never' }));
+      expect(refused.outcome, command).toBe('error');
+    }
+  });
+
+  it('a helper function written with its body runs unasked', async () => {
+    const command = 'greet() { echo hi; }; greet';
+    const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+    expect(res).toMatchObject({ outcome: 'success', output: `ran:${command}` });
+  });
+});

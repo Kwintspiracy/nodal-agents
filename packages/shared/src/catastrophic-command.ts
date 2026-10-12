@@ -164,7 +164,12 @@ export function isInlineEvalFlag(kind: InterpreterKind, flag: string): boolean {
  */
 function isInlineEvalUnit(unit: readonly string[]): boolean {
   const program = unit[0] ?? '';
-  if (isDecidedAtRunTime(program) || program === 'iex' || program === 'invoke-expression')
+  if (
+    isDecidedAtRunTime(program) ||
+    redefinesCommand(unit) ||
+    program === 'iex' ||
+    program === 'invoke-expression'
+  )
     return true;
   const kind = interpreterKind(program);
   // A shell's line is read by `shellLine`, the reading `commandUnits` unwraps
@@ -2231,7 +2236,43 @@ function isDecidedAtRunTime(word: string): boolean {
 }
 
 /**
- * True when a command line runs a program the text does not name. The gate
+ * True when a unit gives a command name a meaning held in text the reading
+ * does not read as a command: an alias (`alias npm='npm install'`, fish's
+ * `alias npm 'npm install'`, bash's `BASH_ALIASES[x]=`, zsh's `aliases[x]=`
+ * and `functions[x]=`), `hash -p FILE name`, a doskey macro, PowerShell's
+ * `Set-Alias` / `New-Alias` / `Import-Alias` and a write to its `alias:` or
+ * `function:` drive (`Set-Item function:npm '…'`, `$function:npm = '…'`).
+ * Every later word of the line may then run it, so the program those words
+ * name is not the one written (Codex, PR #710 pass 4). A function written
+ * with its body (`f() { …; }`, `function f { … }`) is not one: its body is
+ * read as commands where it stands.
+ */
+function redefinesCommand(unit: readonly string[]): boolean {
+  const [program = '', ...args] = unit;
+  if (unit.some((word) => /^(function|alias):/i.test(word))) return true;
+  if (/^(bash_aliases|aliases|galiases|saliases|functions)\[/.test(program)) return true;
+  switch (program) {
+    case 'alias':
+      return args.some((a) => !a.startsWith('-'));
+    case 'hash':
+      return args.includes('-p');
+    case 'doskey':
+      return args.some((a) => a.includes('='));
+    case 'set-alias':
+    case 'sal':
+    case 'new-alias':
+    case 'nal':
+    case 'import-alias':
+    case 'ipal':
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * True when a command line runs a program the text does not name: one decided
+ * at run time, or a name the line redefines (`redefinesCommand`). The gate
  * asks for it even when inline code is allowed, as an allowed download asks
  * when its target is decided at run time.
  */
@@ -2241,8 +2282,8 @@ export function programDecidedAtRunTime(
   reader?: ScriptShell,
 ): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
-  return commandUnits(withoutRedirections(cmd), 0, reader ?? topShell(host)).some((u) =>
-    isDecidedAtRunTime(u[0] ?? ''),
+  return commandUnits(withoutRedirections(cmd), 0, reader ?? topShell(host)).some(
+    (u) => isDecidedAtRunTime(u[0] ?? '') || redefinesCommand(u),
   );
 }
 
@@ -2388,15 +2429,21 @@ function wordUnits(
         .join(' ');
     const eq = tail.indexOf('=');
     const right = eq < 0 ? '' : tail.slice(eq + 1).trim();
-    return eq < 0 || /^[$'"(@\[\d-]/.test(right) || right === ''
-      ? []
-      : commandUnits(right, depth + 1, 'powershell');
+    const units =
+      eq < 0 || /^[$'"(@\[\d-]/.test(right) || right === ''
+        ? []
+        : commandUnits(right, depth + 1, 'powershell');
+    // `$function:npm = '…'` writes the function: drive (`redefinesCommand`).
+    const drive = /^\$((?:function|alias):[^=]*)/i.exec(head.text)?.[1];
+    return drive === undefined ? units : [[drive.toLowerCase()], ...units];
   }
   // A program the text does not name (#667, review of PR #682, pass 4) keeps
   // its words, so it is never taken for a program it may not be; one written
-  // with a path is that file, never the shell's keyword of the same name.
+  // with a path is that file, never the shell's keyword of the same name. An
+  // array element assigned (`BASH_ALIASES[ls]=/bin/rm`) is no program either.
   const named =
     isDecidedAtRunTime(head.text) ||
+    /^[A-Za-z_]\w*\[[^\]]*\]=/.test(head.text) ||
     (/[\\/]/.test(head.text) && SHELL_KEYWORDS.has(interpreterBasename(head.text)))
       ? head.text.toLowerCase()
       : interpreterBasename(head.text);

@@ -15,12 +15,15 @@
 // false profile install x`): a verb of the program anywhere in its words asks.
 // Pass 3 found the verb in a variable (`apt-get "$verb" cowsay`): a word
 // decided at run time could be any verb, and asks.
+// Pass 4 found an alias (`alias npm='npm install'; npm cowsay`): a line that
+// redefines a command name asks, as a program decided at run time does.
 
 import { describe, it, expect } from 'vitest';
 import {
   INSTALLER_PROGRAMS,
   isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
+  programDecidedAtRunTime,
   staticShellCategories,
   type ShellHost,
 } from '../catastrophic-command';
@@ -1066,5 +1069,120 @@ describe('install_software: a word decided at run time could be the verb, and as
       'install_software',
       false,
     );
+  });
+});
+
+describe('a line that redefines a command name asks, as inline code (#710, Codex pass 4) @cap:executer-une-commande/moteur', () => {
+  // `alias npm='npm install'` then `npm cowsay` installs, and no word of the
+  // line names an install: an alias's text is a string the reading does not
+  // read as a command. Resolving aliases would be a second shell; the rule is
+  // instead that a line redefining a command name runs programs its text does
+  // not name, which is what a program decided at run time already is: the
+  // `inline_code` kind, which asks even when inline code is allowed
+  // (`programDecidedAtRunTime`), and `destructive_gate` gates it.
+  function expectRedefinition(cmds: readonly string[], reader?: 'powershell'): void {
+    for (const cmd of cmds)
+      for (const host of HOSTS) {
+        const at = `${cmd} (${host})`;
+        expect(staticShellCategories(cmd, host, reader), at).toContain('inline_code');
+        expect(programDecidedAtRunTime(cmd, host, reader), at).toBe(true);
+        if (reader === undefined) expect(isDestructiveOrHeavyCommand(cmd, host), at).toBe(true);
+      }
+  }
+
+  function expectNoRedefinition(cmds: readonly string[], reader?: 'powershell'): void {
+    for (const cmd of cmds)
+      for (const host of HOSTS) {
+        const at = `${cmd} (${host})`;
+        expect(staticShellCategories(cmd, host, reader), at).not.toContain('inline_code');
+        expect(programDecidedAtRunTime(cmd, host, reader), at).toBe(false);
+      }
+  }
+
+  it('Codex: an alias, then its use', () => {
+    expectRedefinition(["shopt -s expand_aliases\nalias npm='npm install'\nnpm cowsay"]);
+  });
+
+  it('sh, bash, zsh, fish: an alias, `hash -p`, the alias arrays', () => {
+    expectRedefinition([
+      "alias npm='npm install'; npm cowsay",
+      "alias npm 'npm install'; npm cowsay",
+      'hash -p /usr/bin/apt-get ls; ls install x',
+      "BASH_ALIASES[npm]='npm install'; npm cowsay",
+      "aliases[ls]='rm -rf'; ls x",
+      "functions[ls]='rm -rf x'; ls",
+      `bash -c "alias npm='npm install'; npm cowsay"`,
+    ]);
+  });
+
+  it('PowerShell: Set-Alias, New-Alias, Import-Alias, and the alias: and function: drives', () => {
+    const lines = [
+      'Set-Alias ls Remove-Item; ls x',
+      'sal ls Remove-Item; ls x',
+      'New-Alias -Name ls -Value Remove-Item; ls x',
+      'nal ls Remove-Item; ls x',
+      'Import-Alias aliases.csv; ls x',
+      "Set-Item -Path Function:npm -Value 'winget install x'; npm",
+      "$function:npm = 'winget install x'; npm",
+      "${function:npm} = 'winget install x'; npm",
+      'Set-Item alias:ls Remove-Item; ls x',
+    ];
+    expectRedefinition(lines, 'powershell');
+    // As run_command starts PowerShell, on each host.
+    expectRedefinition([
+      'powershell -Command "Set-Alias ls Remove-Item; ls x"',
+      'pwsh -c "sal ls Remove-Item; ls x"',
+      'powershell -Command "nal ls Remove-Item; ls x"',
+      'powershell -Command "Set-Item function:npm {winget install x}; npm"',
+    ]);
+  });
+
+  it('cmd: a doskey macro', () => {
+    expectRedefinition([
+      'doskey npm=npm install $*',
+      'cmd /c "doskey ls=del $* & ls x"',
+      'doskey /macrofile=macros.txt',
+    ]);
+  });
+
+  it('the earlier Codex cases still ask', () => {
+    expectKind(
+      [
+        'apt-get -c --simulate install cowsay',
+        'nix --option sandbox false profile install x',
+        'verb=install; apt-get "$verb" cowsay',
+      ],
+      'install_software',
+      true,
+    );
+  });
+
+  it('accepted over-ask: a line that only shows an alias or a function', () => {
+    expectRedefinition(['alias ll']);
+    expectRedefinition(['Get-Item function:prompt'], 'powershell');
+  });
+
+  it('a function written with its body is read where it stands, not redefined', () => {
+    // Its body is commands of the line: what it does is read there.
+    expect(
+      staticShellCategories('npm() { command npm install x; }; npm cowsay', 'posix'),
+    ).toContain('install_software');
+    expect(staticShellCategories('f() { "$@"; }; f rm -rf x', 'posix')).toContain('inline_code');
+    expectNoRedefinition(['greet() { echo hi; }; greet', 'function greet { echo hi; }; greet']);
+    expectNoRedefinition(['function greet { Write-Host hi }; greet'], 'powershell');
+  });
+
+  it('a line that redefines nothing is unchanged', () => {
+    expectNoRedefinition([
+      'alias',
+      'alias -p',
+      'hash',
+      'hash -r',
+      'doskey /macros',
+      'echo alias npm=x',
+      'npm cowsay',
+      'arr[0]=/usr/bin/rm; echo ok',
+    ]);
+    expectNoRedefinition(['Get-Alias ls', 'Get-ChildItem env:'], 'powershell');
   });
 });
