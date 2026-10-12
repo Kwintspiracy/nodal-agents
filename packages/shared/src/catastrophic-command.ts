@@ -12,6 +12,26 @@
 // killing a process) stay governed by the normal approval rules — the floor is
 // not a general safety net, it is the last-resort circuit breaker.
 
+import {
+  INVOKE_EXPRESSION,
+  INVOKE_WEB_REQUEST,
+  OUT_FILE,
+  POWERSHELL_CLI,
+  REMOVE_ITEM,
+  SET_CONTENT,
+  SET_LOCATION,
+  START_BITS_TRANSFER,
+  START_PROCESS,
+  TEE_OBJECT,
+  bindPsArguments,
+  isPsParameter,
+  psHasUnknownParameter,
+  psParameterNames,
+  psPositional,
+  psSwitch,
+  psValues,
+  type PsSignature,
+} from './powershell-parameters';
 import { SHELLS } from './shell-programs';
 
 const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:?\s*&\s*\}\s*;\s*:/;
@@ -121,9 +141,11 @@ export function isInlineEvalFlag(kind: InterpreterKind, flag: string): boolean {
     case 'expect':
       return flag === '-c';
     case 'powershell':
-      // PowerShell accepts any unambiguous prefix of a parameter name
-      // (`-Com`, `-Comm`, …); match the prefix rather than the full word.
-      return /^-com/.test(flag) || /^-enc/.test(flag);
+      // `-Command` / `-EncodedCommand` as the powershell CLI binds them
+      // (`-c`, `-Com`, `/c`, `--command`, `-e`, `-ec`…), #694.
+      return (psParameterNames(flag, POWERSHELL_CLI) ?? []).some(
+        (name) => name === 'command' || name === 'encodedcommand',
+      );
     default:
       return false;
   }
@@ -195,6 +217,22 @@ function isWindowsRootOrWildcardTarget(token: string): boolean {
   if (/^%(systemdrive|systemroot|userprofile)%\\?\*?$/i.test(t)) return true;
   if (/^\$env:(systemdrive|systemroot|userprofile)\\?\*?$/i.test(t)) return true;
   return false;
+}
+
+/** rm's short options (GNU, BSD/macOS, busybox), which a group (`-rfv`) may hold. */
+const RM_SHORT_GROUP = /^-[dfiIPRrvWx]+$/;
+
+/**
+ * True when rm is given one of its options: a short one in a group (`-rf`,
+ * `-Rfv`) matching `short`, or the long one abbreviated as getopt allows
+ * (`--recursive`, `--rec`, `--f`).
+ */
+function rmOption(args: readonly string[], short: RegExp, long: string): boolean {
+  return args.some(
+    (a) =>
+      (RM_SHORT_GROUP.test(a) && short.test(a.slice(1))) ||
+      (a.length > 2 && a.startsWith('--') && long.startsWith(a.slice(2))),
+  );
 }
 
 /**
@@ -275,13 +313,13 @@ export function isCatastrophicCommand(
     // `rm` (unix, and PowerShell's `rm` alias for Remove-Item) recursive +
     // force against a machine-wide target — unix root/home/wildcard (/, /*,
     // ~, $HOME, bare *) OR a Windows drive root/wildcard/system env var
-    // (`rm -r -Force C:\`, `rm -Recurse -Force C:\`, `cmd /c rm -rf /`). The
-    // loose "-\S*r" / "-\S*f" match is deliberate: it must catch both a
-    // bundled short flag (`-rf`) and a PowerShell long flag (`-Recurse`/
-    // `-Force`) — both spellings contain the letter regardless of form.
+    // (`rm -r -Force C:\`, `rm -Recurse -Fo C:\`, `cmd /c rm -rf /`). Read as
+    // both programs read it: rm's options (`-rf`, `--recursive`, `--rec`) and
+    // Remove-Item's parameters as PowerShell binds them (#694).
     if (/^rm$/i.test(cmdWord)) {
-      const recursive = /\s-\S*r/i.test(s) || /\s--recursive\b/i.test(s);
-      const force = /\s-\S*f/i.test(s) || /\s--force\b/i.test(s);
+      const ps = bindPsArguments(args, REMOVE_ITEM);
+      const recursive = rmOption(args, /[rR]/, 'recursive') || psSwitch(ps, 'recurse') !== false;
+      const force = rmOption(args, /f/, 'force') || psSwitch(ps, 'force') !== false;
       if (recursive && force) {
         if (/\s--no-preserve-root\b/i.test(s)) return true;
         // a root / home / wildcard target among its arguments
@@ -304,9 +342,12 @@ export function isCatastrophicCommand(
     // against a machine-wide target — mirrors the `rm` check above, same
     // root-only scope. `Remove-Item .\build -Recurse -Force` (a relative
     // project subfolder) must NOT match; only a drive root / wildcard / system
-    // env var does.
+    // env var does. All six are Remove-Item in PowerShell: its parameters are
+    // read as PowerShell binds them (`-Fo`, `-r`, `-Force:$true`, `–Force`),
+    // and `-Force:$false` sets nothing (#694).
     if (/^(ri|remove-item|del|erase|rd|rmdir)$/i.test(cmdWord)) {
-      const psRecursiveForce = /(^|\s)-r(ecurse)?\b/i.test(s) && /(^|\s)-f(orce)?\b/i.test(s);
+      const ps = bindPsArguments(args, REMOVE_ITEM);
+      const psRecursiveForce = psSwitch(ps, 'recurse') !== false && psSwitch(ps, 'force') !== false;
       const cmdRecursiveForce = /\/s\b/i.test(s) && /\/q\b/i.test(s);
       if (psRecursiveForce || cmdRecursiveForce) {
         if (args.some((t) => isWindowsRootOrWildcardTarget(t))) return true;
@@ -658,33 +699,6 @@ function isDocumentOrAddress(word: string): boolean {
   return /^[a-z][\w+.-]*:\/\//i.test(word) || /^mailto:/i.test(word) || DOCUMENT.test(word);
 }
 
-/** Start-Process's switches, which take no value (`-Verbose` is not `-Verb`). */
-const START_SWITCHES = new Set([
-  'nonewwindow',
-  'nnw',
-  'wait',
-  'passthru',
-  'usenewenvironment',
-  'loaduserprofile',
-  'lup',
-  'verbose',
-  'debug',
-]);
-
-/** Start-Process's parameters that take a value, by full name or a prefix of three letters or more. */
-const START_PARAMETERS = [
-  'filepath',
-  'argumentlist',
-  'windowstyle',
-  'workingdirectory',
-  'verb',
-  'credential',
-  'redirectstandardinput',
-  'redirectstandardoutput',
-  'redirectstandarderror',
-  'environment',
-];
-
 /** cmd's `start`, and PowerShell's `Start-Process` with its aliases. */
 const LAUNCHERS = new Set(['start', 'start-process', 'saps']);
 
@@ -727,41 +741,39 @@ function readLaunch(words: readonly ShellWord[], form: LaunchForm, readTitle = f
     windowless: false,
     titleIndex: null,
   };
-  for (let i = 0; i < args.length; i++) {
-    const word = args[i] ?? '';
-    if (form === 'cmd') {
-      if (launch.target !== null) {
-        launch.launched.push(word);
-      } else if (readTitle && launch.titleIndex === null && words[i]?.quoted) {
-        launch.titleIndex = i;
-      } else if (/^\/(d|node|affinity|machine)$/i.test(word)) {
-        // `/D path`, `/NODE n`, `/AFFINITY hex`, `/MACHINE x` take a value (pass 6).
-        i += 1;
-      } else if (/^\/d\S/i.test(word) || /^\/\w+$/.test(word)) {
-        if (word.toLowerCase() === '/b') launch.windowless = true;
-      } else launch.target = word;
-      continue;
-    }
-    if (word.startsWith('-')) {
-      const [rawName, inlineValue] = word.slice(1).toLowerCase().split(':', 2);
-      const name = rawName ?? '';
-      if (START_SWITCHES.has(name)) {
-        if (name === 'nonewwindow' || name === 'nnw') launch.windowless = true;
+  if (form === 'powershell') {
+    // Start-Process's parameters as PowerShell binds them (#694): `-n` is
+    // -NoNewWindow, `-Path` -FilePath, `–Verb` a verb. A switch counts only
+    // when it is surely set (`-NoNewWindow:$false` keeps the window).
+    for (const b of bindPsArguments(args, START_PROCESS)) {
+      const is = (name: string): boolean => b.names?.includes(name) === true;
+      const value = b.value ?? '';
+      if (b.names === null) {
+        if (launch.target === null) launch.target = value;
+        else launch.launched.push(...value.split(/[\s,]+/));
         continue;
       }
-      const param =
-        START_PARAMETERS.find((p) => p === name) ??
-        (name.length >= 3 ? START_PARAMETERS.find((p) => p.startsWith(name)) : undefined);
-      const value = inlineValue ?? args[++i] ?? '';
-      if (param === 'verb') launch.verb = true;
-      else if (param === 'windowstyle' && value.toLowerCase() === 'hidden')
-        launch.windowless = true;
-      else if (param === 'filepath') launch.target = value;
-      else if (param === 'argumentlist') launch.launched.push(...value.split(/[\s,]+/));
-      continue;
+      if (is('verb')) launch.verb = true;
+      if (is('nonewwindow') && psSwitch([b], 'nonewwindow') === true) launch.windowless = true;
+      if (is('windowstyle') && value.toLowerCase() === 'hidden') launch.windowless = true;
+      if (is('filepath')) launch.target = value;
+      if (is('argumentlist')) launch.launched.push(...value.split(/[\s,]+/));
     }
-    if (launch.target === null) launch.target = word;
-    else launch.launched.push(...word.split(/[\s,]+/));
+    launch.launched = launch.launched.filter((w) => w !== '');
+    return launch;
+  }
+  for (let i = 0; i < args.length; i++) {
+    const word = args[i] ?? '';
+    if (launch.target !== null) {
+      launch.launched.push(word);
+    } else if (readTitle && launch.titleIndex === null && words[i]?.quoted) {
+      launch.titleIndex = i;
+    } else if (/^\/(d|node|affinity|machine)$/i.test(word)) {
+      // `/D path`, `/NODE n`, `/AFFINITY hex`, `/MACHINE x` take a value (pass 6).
+      i += 1;
+    } else if (/^\/d\S/i.test(word) || /^\/\w+$/.test(word)) {
+      if (word.toLowerCase() === '/b') launch.windowless = true;
+    } else launch.target = word;
   }
   launch.launched = launch.launched.filter((w) => w !== '');
   return launch;
@@ -922,7 +934,8 @@ export function downloadWrites(command: string, host: ShellHost): DownloadWrites
       continue;
     }
     for (const t of pipeWriterTargets(program, args))
-      if (!isNullSink(t, host)) piped.push({ path: readablePath(t), after: out.dirs.length });
+      if (t === null || !isNullSink(t, host))
+        piped.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
     if (!unitCategories(unit).includes('download')) continue;
     downloads = true;
     for (const t of fetcherTargets(program, args))
@@ -957,13 +970,15 @@ const CHANGE_DIR = new Set([
  */
 function changeDirArg(program: string, args: readonly string[]): string | null {
   if (program === 'popd' || program === 'pop-location') return null;
-  if (program === 'set-location' || program === 'sl' || program === 'push-location') {
-    const i = args.findIndex((a) => /^-(literal)?path$/i.test(a));
-    const value = i >= 0 ? args[i + 1] : args.find((a) => !a.startsWith('-'));
-    return value ?? null;
-  }
-  // `cd /d D:\x` (cmd) takes a drive switch before the folder.
-  const value = args.find((a) => !/^(-[LP]|\/d)$/i.test(a));
+  // One reading for the three shells (#694): PowerShell's -Path / -LiteralPath
+  // as it binds them (`-Pat`, `-LP`, `–Path`, `-Path:x`), which `cd` and
+  // `pushd` are aliases of there; otherwise the first positional word, past
+  // sh's `-L` / `-P` (PowerShell reads them as -LiteralPath / -Path: the same
+  // folder) and cmd's `/d` drive switch (`cd /d D:\x`). `-` goes back: null.
+  const bound = bindPsArguments(args, SET_LOCATION);
+  const value =
+    [...psValues(bound, 'path'), ...psValues(bound, 'literalpath')][0] ??
+    psPositional(bound).find((a) => !/^\/d$/i.test(a));
   if (value === undefined || value === '-') return null;
   return value;
 }
@@ -1120,9 +1135,9 @@ function fetcherTargets(program: string, args: readonly string[]): Array<string 
     case 'invoke-restmethod':
     case 'irm':
       // Without -OutFile the content is returned, not written.
-      return flagValues(args, (f) => /^-outf/i.test(f));
+      return psValues(bindPsArguments(args, INVOKE_WEB_REQUEST), 'outfile');
     case 'start-bitstransfer': {
-      const dest = flagValues(args, (f) => /^-dest/i.test(f));
+      const dest = psValues(bindPsArguments(args, START_BITS_TRANSFER), 'destination');
       // Positional destination: which word is a value and which a switch is
       // not readable without the cmdlet's signature, so it asks.
       return dest.length > 0 ? dest : [null];
@@ -1267,11 +1282,28 @@ function redirectionTargets(cmd: string): string[] {
   return targets;
 }
 
-/** Where a program at the end of a pipe writes what it reads: `Out-File x`, `tee x`. */
-function pipeWriterTargets(program: string, args: readonly string[]): string[] {
-  if (['out-file', 'set-content', 'add-content', 'tee-object'].includes(program)) {
-    const named = flagValues(args, (f) => /^-(file)?path$|^-literalpath$/i.test(f));
-    return named.length > 0 ? named : args.filter((a) => !a.startsWith('-')).slice(0, 1);
+/** The cmdlets that write what a pipe hands them. */
+const PIPE_WRITERS: Record<string, PsSignature> = {
+  'out-file': OUT_FILE,
+  'set-content': SET_CONTENT,
+  'add-content': SET_CONTENT,
+  'tee-object': TEE_OBJECT,
+};
+
+/**
+ * Where a program at the end of a pipe writes what it reads: `Out-File x`,
+ * `tee x`. A cmdlet's path is its -Path / -FilePath / -LiteralPath or its
+ * first positional word, bound as PowerShell binds them (#694); null when a
+ * word the binding cannot place hides which word that is.
+ */
+function pipeWriterTargets(program: string, args: readonly string[]): Array<string | null> {
+  const sig = PIPE_WRITERS[program];
+  if (sig !== undefined) {
+    const bound = bindPsArguments(args, sig);
+    const named = ['path', 'filepath', 'literalpath'].flatMap((p) => psValues(bound, p));
+    if (named.length > 0) return named;
+    if (psHasUnknownParameter(bound)) return [null];
+    return psPositional(bound).slice(0, 1);
   }
   if (program === 'tee') return args.filter((a) => !a.startsWith('-'));
   return [];
@@ -1432,8 +1464,13 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
   // A script that is only a variable (`-Command $c`, expanded by sh) is code
   // decided at run time.
   powershell: (args) => {
-    const i = args.findIndex((a) => /^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i.test(a.text));
-    const rest = i < 0 ? [] : args.slice(i + 1);
+    // -Command as the CLI binds it (`-c`, `-Com`, `/c`, `--command`), #694;
+    // a script (-File, a first positional word) ends the reading before it.
+    const command = bindPsArguments(
+      args.map((a) => a.text),
+      POWERSHELL_CLI,
+    ).find((b) => b.names?.includes('command'));
+    const rest = command === undefined ? [] : args.slice(command.index);
     if (rest.length === 1 && /^\$[\w:]+$/.test(rest[0]?.text ?? '')) return DECIDED_AT_RUN_TIME;
     return rest.length === 0
       ? []
@@ -1651,7 +1688,7 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
   // expression, a command's output (`iex $c`, `iex (…)`, `Get-Content x | iex`),
   // decided at run time (review of PR #682, pass 8).
   iex: (args) => {
-    const rest = args.filter((a) => !/^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i.test(a.text));
+    const rest = args.filter((a) => !isPsParameter(a.text, INVOKE_EXPRESSION, 'command'));
     return rest.length === 0 || rest.some((a) => !a.quoted && /^[$(@]/.test(a.text))
       ? DECIDED_AT_RUN_TIME
       : [{ line: rest.map((a) => a.text).join(' '), shell: 'powershell' }];
