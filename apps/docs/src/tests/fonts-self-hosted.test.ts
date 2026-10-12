@@ -5,6 +5,12 @@
 // mal. Les polices sont des fichiers du dépôt (`app/fonts/`), déclarés par
 // `fonts.css`. Ce paquet n'a pas @nodal-agents/test-kit : un parcours de
 // dossier de quelques lignes suffit.
+//
+// La garde ne s'arrête pas au site : `docs.yml` publie aussi le portail qualité
+// (`apps/qa`) sous `/qa/`, et ce portail chargeait ses polices chez Google. Elle
+// couvre donc TOUTE source qui écrit le HTML ou le CSS d'une page que Nodal livre
+// ou publie. Les plans de `docs/plans/*.html` n'en font pas partie : aucun
+// workflow ni aucun build ne les lit, on les ouvre depuis le dépôt.
 
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -13,15 +19,19 @@ import { fileURLToPath } from 'node:url';
 
 const docsRoot = join(fileURLToPath(import.meta.url), '..', '..', '..');
 const fontsDir = join(docsRoot, 'app', 'fonts');
+const qaRoot = join(docsRoot, '..', 'qa');
 const FORBIDDEN = /next\/font\/google|@next\/font|fonts\.googleapis\.com|fonts\.gstatic\.com/;
 
 function sources(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
-      if (['node_modules', '.next', 'out', 'tests', '.source'].includes(entry)) continue;
+      if (['node_modules', '.next', 'out', 'tests', '.source', 'dist', 'data'].includes(entry))
+        continue;
       sources(full, acc);
-    } else if (/\.(tsx?|css|mjs|js|html)$/.test(entry)) acc.push(full);
+    } else if (/\.(tsx?|css|mjs|js|html)$/.test(entry) && !/\.test\.[mc]?[jt]s$/.test(entry)) {
+      acc.push(full);
+    }
   }
   return acc;
 }
@@ -31,6 +41,15 @@ describe('docs fonts are self-hosted (#688)', () => {
     const offenders = ['app', 'lib', 'content']
       .flatMap((d) => (existsSync(join(docsRoot, d)) ? sources(join(docsRoot, d)) : []))
       .filter((file) => FORBIDDEN.test(readFileSync(file, 'utf8')));
+    expect(offenders).toEqual([]);
+  });
+
+  it('no source of the QA portal, published under /qa/ by docs.yml, loads a font from the network', () => {
+    expect(existsSync(qaRoot), 'apps/qa is missing: the guard would scan nothing').toBe(true);
+    const files = sources(qaRoot);
+    // Le portail se rend dans build.mjs : une garde qui ne le lirait pas serait vide.
+    expect(files.map((f) => f.slice(qaRoot.length + 1))).toContain('build.mjs');
+    const offenders = files.filter((file) => FORBIDDEN.test(readFileSync(file, 'utf8')));
     expect(offenders).toEqual([]);
   });
 
