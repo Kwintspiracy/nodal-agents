@@ -17,6 +17,7 @@ This is the all-Node monorepo replacing the legacy KwintAgents (Python+Next dual
 
 1. **No hardcoded agent metadata.** Skills, routing, team blocks, sub-agent descriptions: 100% from DB.
 2. **No hardcoded user-facing text in runner.** LLM speaks or runner stays silent.
+   The fixed frame of a platform card is allowed (owner's ruling, 2026-10-04): its buttons, "❓ The MCP server "X" asks:", "Answer from the dashboard…", "✅ Answered", like the approval and question cards. What an agent or a server says never comes from the runner: it is quoted, as data. Do not report that frame as a violation.
 3. **No agent-specific band-aids in runner.** Fix at agent layer (DB), never patch the runtime.
 4. **No silent smart fallbacks.** Fail loud with clear error.
 5. **Tests assert real results** — body of LLM request, DB row, tool_result content. Never just call counts.
@@ -30,8 +31,8 @@ This is the all-Node monorepo replacing the legacy KwintAgents (Python+Next dual
 
 - When Fable orchestrate the session, it delegates coding to Opus 5 and Sonnet 5 depending on the task complexity.
 - Never use Haiku
-- Each brique and PR can only be merge when proper PR Reviews and/or applicable test gates pass (unit + arch + regression always; integration/smoke when external service touched).
-- When a PR or coding session is over, always delegates review and testing to Codex
+- A brique or PR is merged only once PR review and the applicable test gates pass (unit + arch + regression always; integration/smoke when an external service is touched).
+- Review a PR independently as soon as it is OPEN: Codex, or Nodal MCP (Reviewer A) when Codex cannot run; never a Claude subagent. See CLAUDE.md "Reviewing a PR".
 
 ## Commands
 

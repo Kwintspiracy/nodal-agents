@@ -67,6 +67,11 @@ afterAll(async () => {
   rmSync(embeddedPostgres.root, { recursive: true, force: true });
 }, 120_000);
 
+/** The `(PID n)` fragment of the postmaster's reap line, exact on the number. */
+function pidLineRegExp(pid: number): RegExp {
+  return new RegExp(`\\(PID ${pid}\\)`);
+}
+
 /** Everything the cluster has written so far, all files concatenated. */
 function logText(): string {
   let out = '';
@@ -97,8 +102,13 @@ describe('the embedded cluster keeps its own log @cap:installer-et-demarrer/mote
       // The collector opens its first file at startup and writes the "database
       // system is ready" line into it. Before #111 this directory did not exist
       // at all — neither here nor under pg-data.
-      expect(await until(() => logText().trim().length > 0, 30_000)).toBe(true);
-      expect(logText()).toMatch(/database system is ready to accept connections/);
+      // Waited for the very line asserted: "any content" is present before the
+      // next line is flushed, so waiting on that and reading once is the race.
+      const ready = await until(
+        () => /database system is ready to accept connections/.test(logText()),
+        30_000,
+      );
+      expect(ready, logText()).toBe(true);
     },
     60_000,
   );
@@ -136,14 +146,28 @@ describe('the embedded cluster keeps its own log @cap:installer-et-demarrer/mote
       }
       await close().catch(() => {});
 
-      const named = await until(
-        () => new RegExp(`\\(PID ${backendPid}\\)`).test(logText()),
+      // Built once for the wait and the order search: two copies drifted (in a
+      // template literal `\(` is just `(`, so the search matched `(PID 1234)`
+      // for pid 123). Escaped parens bound the number exactly.
+      const pidLine = pidLineRegExp(backendPid);
+      const named = await until(() => pidLine.test(logText()), 60_000);
+      expect(named, logText()).toBe(true);
+      // And the postmaster's own account of the aftermath, which is the
+      // sentence whose absence made the incident unattributable. The
+      // postmaster writes it AFTER the line naming the pid: read right after
+      // that one, the log may not hold it yet (red once on CI, 04/10, the
+      // first line present and the second not). Waited for like the first.
+      const aftermath = await until(
+        () => /terminating any other active server processes/.test(logText()),
         60_000,
       );
-      expect(named).toBe(true);
-      // And the postmaster's own account of the aftermath, which is the
-      // sentence whose absence made the incident unattributable.
-      expect(logText()).toMatch(/terminating any other active server processes/);
+      expect(aftermath, logText()).toBe(true);
+      // Order, from one snapshot of the real log.
+      const log = logText();
+      const pidAt = log.search(pidLine);
+      expect(pidAt, `pid line not found in the log snapshot:\n${log}`).toBeGreaterThanOrEqual(0);
+      const aftermathAt = log.search(/terminating any other active server processes/);
+      expect(aftermathAt, log).toBeGreaterThan(pidAt);
     },
     180_000,
   );

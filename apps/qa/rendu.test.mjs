@@ -47,6 +47,7 @@ const MODULES_DU_BAC = [
   'capacites.mjs',
   'porte.mjs',
   'workflows.mjs',
+  'polices.mjs',
 ];
 
 /** Les modules locaux qu'un fichier importe, et ceux que ceux-là importent. */
@@ -138,6 +139,13 @@ const rendre = (instantane, modules = {}, tests = null) => {
     if (Object.hasOwn(modules, f)) writeFileSync(join(app, f), modules[f]);
     else cpSync(new URL(`./${f}`, import.meta.url), join(app, f));
   }
+  // Les polices du portail sont lues dans le dossier du site de docs, à côté
+  // du portail : le bac en reçoit la feuille et les seuls sous-ensembles latin.
+  cpSync(new URL('../docs/app/fonts/', import.meta.url), join(app, '..', 'docs', 'app', 'fonts'), {
+    recursive: true,
+    filter: (src) =>
+      /fonts$|fonts\.css$|-latin-wght-normal\.woff2$/.test(src.replace(/[\\/]$/, '')),
+  });
   writeFileSync(join(app, 'data', 'snapshot.json'), JSON.stringify(instantane));
   // La mémoire test par test (`tests.ndjson`), quand le cas en a besoin.
   if (tests) {
@@ -168,6 +176,33 @@ describe('le bac à sable du renderer porte tout ce que le renderer atteint', ()
     const atteints = modulesAtteints('build.mjs');
     expect(atteints.size).toBeGreaterThan(1);
     for (const m of atteints) expect(MODULES_DU_BAC).toContain(m);
+  });
+});
+
+// #688 : le portail est publié sous /qa/ avec le site de docs, et c'est aussi un
+// fichier qu'on ouvre hors ligne. Aucune police n'est demandée à un tiers :
+// elles sont dans la page.
+describe('les polices du portail, sur la page', () => {
+  it('ne demande rien à un CDN de polices', () => {
+    expect(page).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com/);
+    expect(page).not.toMatch(/<link[^>]+rel="(stylesheet|preconnect)"[^>]+https?:/);
+  });
+
+  it('embarque un @font-face par famille que la feuille nomme, avec ses octets', () => {
+    for (const famille of ['Archivo', 'Public Sans', 'JetBrains Mono']) {
+      const bloc = page.match(
+        new RegExp(`@font-face\\s*\\{[^}]*font-family: '${famille}';[^}]*\\}`),
+      );
+      expect(bloc, `@font-face de ${famille}`).not.toBeNull();
+      const donnees = /url\(data:font\/woff2;base64,([A-Za-z0-9+/=]+)\)/.exec(bloc?.[0] ?? '');
+      expect(donnees, `octets de ${famille}`).not.toBeNull();
+      // Un woff2 commence par la signature « wOF2 ».
+      expect(
+        Buffer.from(donnees?.[1] ?? '', 'base64')
+          .subarray(0, 4)
+          .toString('latin1'),
+      ).toBe('wOF2');
+    }
   });
 });
 
