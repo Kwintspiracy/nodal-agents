@@ -50,6 +50,9 @@ import {
   TOOL_RESULT_MODEL_CHARS,
   framedForModel,
   fitToolResult,
+  elideBinary,
+  cutForContext,
+  truncateForContext,
   raisedErrorBlockLength,
   PROVIDER_REJECTED,
   PROVIDER_REJECTED_PREFIX,
@@ -468,36 +471,6 @@ export function sameToolList(
   if (stored === null) return false;
   const a = [...stored].sort();
   return a.length === current.length && a.every((name, i) => name === current[i]);
-}
-
-/**
- * Elide long base64/binary runs. They're useless to the model as text, and
- * they're the dominant re-sent-every-turn bloat: a generated image comes back
- * as ~50K of base64, and the runner re-sends the whole history each turn, so
- * over ~10 turns one job burns ~700K input tokens (observed live, 7c78bf2c,
- * $2.14). Files belong on disk — reference them by path/URL, not inline bytes.
- */
-function elideBinary(value: string): string {
-  return value.replace(
-    /[A-Za-z0-9+/]{256,}={0,2}/g,
-    (m) => `[binary elided: ${m.length} chars — reference the file by path/URL, not inline]`,
-  );
-}
-
-/** `value` cut to `room` characters, with an explicit, model-readable marker. */
-function cutForContext(value: string, room: number): string {
-  if (value.length <= room) return value;
-  const dropped = value.length - room;
-  return (
-    value.slice(0, room) +
-    `\n\n[... truncated: ${dropped} chars dropped (total ${value.length}) ...]`
-  );
-}
-
-/** Truncate an oversized tool-result string with an explicit, model-readable marker. */
-export function truncateForContext(value: string): string {
-  // Binary runs are elided FIRST (elideBinary), then the rest is cut.
-  return cutForContext(elideBinary(value), MAX_TOOL_RESULT_CHARS);
 }
 
 /**

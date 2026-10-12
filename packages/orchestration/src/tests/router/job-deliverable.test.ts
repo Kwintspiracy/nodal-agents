@@ -14,7 +14,7 @@ import { eq } from '@nodal-agents/db';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentJobs, entities, toolCalls, users } from '@nodal-agents/db';
-import { REVIEW_CHANGES_REQUESTED } from '@nodal-agents/shared';
+import { REVIEW_CHANGES_REQUESTED, TOOL_RESULT_MODEL_CHARS } from '@nodal-agents/shared';
 import {
   appendDeliveredVerdicts,
   deliveredSomething,
@@ -24,7 +24,12 @@ import {
   renderDeliveredVerdicts,
   verdictsBlockDelivery,
 } from '../../router/job-deliverable';
-import { resumeDelegated, DELEGATION_FAILED_MARKER } from '../../router/resume';
+import {
+  resumeDelegated,
+  DELEGATION_FAILED_MARKER,
+  DELEGATION_TEXT_AFTER_OBJECT,
+  parseDelegationOutcomePayload,
+} from '../../router/resume';
 import type { JobId } from '../../types';
 
 let db: TestDb;
@@ -668,5 +673,168 @@ describe('resumeDelegated porte les verdicts du sous-arbre @cap:verifier-un-livr
     const payload = JSON.parse((await parentToolResult(root)).value) as Record<string, unknown>;
     expect(payload['review_verdicts']).toEqual([]);
     expect(payload['delivery_blocked']).toBeNull();
+  });
+});
+
+/** Un verdict de relecteur aux bornes de l'outil : 50 constats de ~900 caractères. */
+function wideVerdict(verdict: 'approve' | 'request_changes', reviewer: number): unknown {
+  const findings = Array.from({ length: 50 }, (_, i) => ({
+    file: `packages/p${reviewer}/src/f${i}.ts`,
+    line: i + 1,
+    issue: `R${reviewer}F${i} ` + 'constat détaillé '.repeat(52),
+    severity: 'major',
+  }));
+  return {
+    ok: true,
+    verdict,
+    summary: `Relecteur ${reviewer} : ` + 'résumé long '.repeat(80),
+    findings,
+    counts: { blocker: 0, major: 50, minor: 0 },
+  };
+}
+
+/** L'objet JSON qui ouvre le `tool_result` (après le marqueur d'échec s'il y en a un). */
+function decisionObject(value: string): Record<string, unknown> {
+  const debut = value.indexOf('{\n');
+  const fin = value.indexOf('\n}', debut);
+  return JSON.parse(value.slice(debut, fin + 2)) as Record<string, unknown>;
+}
+
+const TRUNCATION_MARKER = /\n\n\[\.\.\. truncated: \d+ chars dropped \(total \d+\) \.\.\.\]$/;
+
+describe('resumeDelegated : un résultat de délégation tient dans le budget d’un résultat d’outil @cap:verifier-un-livrable/moteur', () => {
+  /** root → Lead → 12 relecteurs aux bornes de l'outil ; le 7e demande des corrections. */
+  async function wideTree(w: World, leadResult: string) {
+    const [alfred, lead] = await Promise.all([w.agent('alfred'), w.agent('lead')]);
+    const root = await awaitingRoot(w, alfred, 'assign_lead');
+    const leadJob = await job(w, lead, { parentJobId: root, result: leadResult });
+    const authors: Array<[string, string, string]> = [];
+    for (let i = 0; i < 12; i++) {
+      const reviewer = await w.agent(`reviewer-${i}`);
+      const reviewerJob = await job(w, reviewer, { parentJobId: leadJob });
+      const v = i === 6 ? 'request_changes' : 'approve';
+      await verdict(w, reviewerJob, wideVerdict(v, i));
+      authors.push([await slugOf(reviewer), reviewerJob, v]);
+    }
+    return { root, leadJob, authors };
+  }
+
+  it('12 relecteurs × 50 constats : le tool_result tient dans le budget, chaque verdict et son auteur sont lus en entier, la coupe est dite', async () => {
+    const w = await world();
+    const { root, leadJob, authors } = await wideTree(w, 'Douze relectures.');
+
+    await resumeDelegated(root as JobId, leadJob as JobId, 'Douze relectures.', db);
+
+    const out = await parentToolResult(root);
+    expect(out.type).toBe('text');
+    expect(out.value.length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
+    expect(out.value).toMatch(TRUNCATION_MARKER);
+
+    const head = decisionObject(out.value);
+    expect(head['status']).toBe('completed');
+    expect(head['delivery_blocked']).toBe(REVIEW_CHANGES_REQUESTED);
+    const verdicts = head['review_verdicts'] as Array<{
+      author: { agent_slug: string; job_id: string };
+      verdict: string;
+      counts: unknown;
+    }>;
+    expect(verdicts.map((v) => [v.author.agent_slug, v.author.job_id, v.verdict])).toEqual(authors);
+    expect(verdicts.map((v) => v.counts)).toEqual(
+      authors.map(() => ({ blocker: 0, major: 50, minor: 0 })),
+    );
+    expect(head['summary']).toBe(DELEGATION_TEXT_AFTER_OBJECT);
+
+    // Le texte long suit, dans l'ordre : le résumé de l'enfant, puis les verdicts
+    // mis en page, jusqu'à la coupe.
+    const apres = out.value.slice(out.value.indexOf('\n}') + 2);
+    expect(
+      apres.startsWith(
+        '\n\n[summary]\nDouze relectures.\n\n[review_verdict] verdict: approve · author: ',
+      ),
+    ).toBe(true);
+    expect(apres).toContain('R0F0 constat détaillé');
+
+    // Le lecteur du runner relit toujours l'enregistrement typé.
+    expect(parseDelegationOutcomePayload(out.value)?.status).toBe('completed');
+  });
+
+  it('le même arbre sous une délégation ÉCHOUÉE : marqueur, verdicts et consignes du parent tiennent ensemble dans le budget', async () => {
+    const w = await world();
+    const { root, leadJob, authors } = await wideTree(w, 'Interrompu.');
+
+    await resumeDelegated(root as JobId, leadJob as JobId, { error: 'max_tool_calls' }, db);
+
+    const out = await parentToolResult(root);
+    expect(out.type).toBe('error-text');
+    expect(out.value.length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
+    expect(out.value.startsWith(`${DELEGATION_FAILED_MARKER}\n{`)).toBe(true);
+    const head = decisionObject(out.value);
+    expect(head['status']).toBe('failed');
+    expect(head['error']).toBe('max_tool_calls');
+    expect(head['delivery_blocked']).toBe(REVIEW_CHANGES_REQUESTED);
+    const verdicts = head['review_verdicts'] as Array<{
+      author: { agent_slug: string; job_id: string };
+      verdict: string;
+    }>;
+    expect(verdicts.map((v) => [v.author.agent_slug, v.author.job_id, v.verdict])).toEqual(authors);
+    // La coupe tombe dans le texte long ; les consignes qui suivent sont entières.
+    expect(out.value).toMatch(/\[\.\.\. truncated: \d+ chars dropped \(total \d+\) \.\.\.\]\n\n/);
+    expect(out.value).toContain('DO NOT tell the user the work is in progress');
+  });
+
+  it('une délégation ordinaire au résumé démesuré : bornée de même, statut lisible, début du résumé gardé', async () => {
+    const w = await world();
+    const [alfred, researcher] = await Promise.all([w.agent('alfred'), w.agent('researcher')]);
+    const root = await awaitingRoot(w, alfred, 'assign_researcher');
+    const resume = 'DÉBUT ' + 'page web recopiée '.repeat(5_000);
+    const child = await job(w, researcher, { parentJobId: root, result: resume });
+
+    await resumeDelegated(root as JobId, child as JobId, resume, db);
+
+    const out = await parentToolResult(root);
+    expect(out.value.length).toBeLessThanOrEqual(TOOL_RESULT_MODEL_CHARS);
+    expect(out.value).toMatch(TRUNCATION_MARKER);
+    const head = decisionObject(out.value);
+    expect(head['status']).toBe('completed');
+    expect(head['review_verdicts']).toEqual([]);
+    expect(head['delivery_blocked']).toBeNull();
+    expect(out.value).toContain('\n\n[summary]\nDÉBUT page web recopiée');
+  });
+
+  it('un petit résultat : rendu tel qu’avant, octet pour octet', async () => {
+    const w = await world();
+    const [alfred, lead, reviewer] = await Promise.all([
+      w.agent('alfred'),
+      w.agent('lead'),
+      w.agent('reviewer-a'),
+    ]);
+    const root = await awaitingRoot(w, alfred, 'assign_lead');
+    const leadJob = await job(w, lead, { parentJobId: root, result: 'Relayé.' });
+    const reviewerJob = await job(w, reviewer, { parentJobId: leadJob });
+    await verdict(w, reviewerJob, REQUEST_CHANGES);
+
+    await resumeDelegated(root as JobId, leadJob as JobId, 'Relayé.', db);
+
+    const { ok: _ok, ...record } = REQUEST_CHANGES;
+    expect((await parentToolResult(root)).value).toBe(
+      JSON.stringify(
+        {
+          status: 'completed',
+          summary: 'Relayé.',
+          error: null,
+          exit_reason: null,
+          tools_used: [],
+          review_verdicts: [
+            { author: { agent_slug: await slugOf(reviewer), job_id: reviewerJob }, ...record },
+          ],
+          delivery_blocked: REVIEW_CHANGES_REQUESTED,
+          hint: null,
+          sub_delegations: [],
+          files_written: [],
+        },
+        null,
+        2,
+      ),
+    );
   });
 });

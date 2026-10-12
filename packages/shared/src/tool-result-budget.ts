@@ -25,6 +25,44 @@ import { isUntrustedTool, wrapUntrusted } from './untrusted';
 /** Characters of one tool result the model reads. */
 export const TOOL_RESULT_MODEL_CHARS = 25_000;
 
+/**
+ * Elide long base64/binary runs. They're useless to the model as text, and
+ * they're the dominant re-sent-every-turn bloat: a generated image comes back
+ * as ~50K of base64, and the runner re-sends the whole history each turn, so
+ * over ~10 turns one job burns ~700K input tokens (observed live, 7c78bf2c,
+ * $2.14). Files belong on disk — reference them by path/URL, not inline bytes.
+ */
+export function elideBinary(value: string): string {
+  return value.replace(
+    /[A-Za-z0-9+/]{256,}={0,2}/g,
+    (m) => `[binary elided: ${m.length} chars — reference the file by path/URL, not inline]`,
+  );
+}
+
+/**
+ * `value` cut to `room` characters, with an explicit, model-readable marker.
+ *
+ * THE cut of a tool result, for every writer of one: the runner's loop
+ * (apps/runner/src/job/execute.ts) and the delegation resume, which writes a
+ * child's outcome into its parent's conversation
+ * (packages/orchestration/src/router/resume.ts). One function, so one marker
+ * and one budget, whoever writes the result.
+ */
+export function cutForContext(value: string, room: number = TOOL_RESULT_MODEL_CHARS): string {
+  if (value.length <= room) return value;
+  const dropped = value.length - room;
+  return (
+    value.slice(0, room) +
+    `\n\n[... truncated: ${dropped} chars dropped (total ${value.length}) ...]`
+  );
+}
+
+/** Truncate an oversized tool-result string with an explicit, model-readable marker. */
+export function truncateForContext(value: string): string {
+  // Binary runs are elided FIRST (elideBinary), then the rest is cut.
+  return cutForContext(elideBinary(value), TOOL_RESULT_MODEL_CHARS);
+}
+
 /** The text the model reads for `text` from `toolName`: framed when the tool is a third party's. */
 export function framedForModel(toolName: string, text: string): string {
   return isUntrustedTool(toolName) ? wrapUntrusted(toolName, text) : text;

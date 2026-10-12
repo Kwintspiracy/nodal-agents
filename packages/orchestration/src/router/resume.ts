@@ -5,9 +5,18 @@ import { eq, and } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import type { JobFailureHint } from '@nodal-agents/shared';
 import { OrchestrationError } from '../errors';
-import { REVIEW_CHANGES_REQUESTED } from '@nodal-agents/shared';
+import {
+  REVIEW_CHANGES_REQUESTED,
+  TOOL_RESULT_MODEL_CHARS,
+  cutForContext,
+  fitToolResult,
+} from '@nodal-agents/shared';
 import { nextFailedDelegationState, failedDelegationGuidance } from './failed-delegation';
-import { readJobDeliverable, verdictsBlockDelivery } from './job-deliverable';
+import {
+  readJobDeliverable,
+  renderDeliveredVerdicts,
+  verdictsBlockDelivery,
+} from './job-deliverable';
 import type { AuthoredReviewVerdict } from './job-deliverable';
 import { filesTheChildWrote, readFilesWrittenBy } from './delegated-files';
 import type { DelegatedFile } from './delegated-files';
@@ -150,12 +159,39 @@ export function normalizeDelegationOutcome(outcome: DelegationOutcome): Delegati
 }
 
 /**
+ * Valeur du `summary` d'un résultat de délégation qui dépasse le budget : le
+ * texte n'est pas vide, il est APRÈS l'objet JSON, avec les constats.
+ */
+export const DELEGATION_TEXT_AFTER_OBJECT = '[after this object]';
+
+/**
  * Render the typed outcome as the tool-result payload the parent's model reads.
  * JSON, deliberately: the fields are the contract, and a model that sees
  * `"status": "failed"` cannot mistake it for a specialist that answered.
+ *
+ * Un résultat de délégation EST un résultat d'outil : il tient dans le même
+ * budget (`TOOL_RESULT_MODEL_CHARS`), coupé par la même fonction
+ * (`cutForContext`, `@nodal-agents/shared`) que tous les autres (revue Codex de
+ * la PR #712, passe 2 : un arbre large de relecteurs, chacun jusqu'à 50
+ * constats, rendait un `tool_result` sans borne dans le contexte du parent).
+ *
+ * Tant qu'il tient dans `room`, il est rendu tel quel, octet pour octet. Au-delà,
+ * l'ordre change pour que la coupe ne puisse tomber QUE sur du texte long :
+ *  1. un objet JSON complet, qui porte tout ce sur quoi le parent décide — le
+ *     statut, l'erreur, `delivery_blocked`, et pour CHAQUE verdict sa valeur,
+ *     ses comptes et son auteur (slug et id de job) ; `parseDelegationOutcomePayload`
+ *     le relit comme avant ;
+ *  2. puis le texte long : le `summary` de l'enfant, puis chaque verdict mis en
+ *     page (`renderDeliveredVerdicts`) avec son résumé et ses constats.
+ * La marque de troncature dit combien a été retiré. Les constats complets
+ * restent en base, dans les `tool_calls` de chaque job relecteur, que les ids
+ * affichés désignent.
  */
-export function renderDelegationOutcome(result: DelegationOutcomeRecord): string {
-  return JSON.stringify(
+export function renderDelegationOutcome(
+  result: DelegationOutcomeRecord,
+  room: number = TOOL_RESULT_MODEL_CHARS,
+): string {
+  const entier = JSON.stringify(
     {
       status: result.status,
       summary: result.summary,
@@ -177,6 +213,36 @@ export function renderDelegationOutcome(result: DelegationOutcomeRecord): string
     null,
     2,
   );
+  if (entier.length <= room) return entier;
+
+  const verdicts = result.review_verdicts ?? [];
+  const decisions = JSON.stringify(
+    {
+      status: result.status,
+      error: result.error ?? null,
+      exit_reason: result.exit_reason ?? null,
+      delivery_blocked: result.delivery_blocked ?? null,
+      hint: result.hint ?? null,
+      review_verdicts: verdicts.map((v) => ({
+        author: v.author,
+        verdict: v.verdict,
+        counts: v.counts,
+      })),
+      sub_delegations: result.sub_delegations ?? [],
+      files_written: result.files_written ?? [],
+      tools_used: result.tools_used ?? [],
+      summary: result.summary === '' ? '' : DELEGATION_TEXT_AFTER_OBJECT,
+    },
+    null,
+    2,
+  );
+  const texteLong = [
+    result.summary === '' ? '' : `[summary]\n${result.summary}`,
+    renderDeliveredVerdicts({ review_verdicts: verdicts, unreadable_review_verdicts: [] }),
+  ]
+    .filter((t) => t !== '')
+    .join('\n\n');
+  return cutForContext(`${decisions}\n\n${texteLong}`, room);
 }
 
 /**
@@ -516,16 +582,32 @@ export async function resumeDelegated(
   // The moves themselves, and their order, live in failed-delegation.ts
   // (#510), which also says what the child left.
   const fichiersDeLEnfant = filesTheChildWrote(outcome.files_written);
+  //
+  // The whole block — marker and guidance included — fits the one tool-result
+  // budget (`fitToolResult`): only the outcome's long text gives way, never the
+  // moves the parent must read (Codex review of #712, pass 2).
+  const consignes = failedDelegationGuidance(nextFailedState, {
+    childLeftFiles: fichiersDeLEnfant.length > 0,
+  });
   const errorValue = isFailure
-    ? `${DELEGATION_FAILED_MARKER}
-${renderDelegationOutcome(outcome)}
+    ? fitToolResult(
+        (room) => `${DELEGATION_FAILED_MARKER}
+${renderDelegationOutcome(outcome, room)}
 
-${failedDelegationGuidance(nextFailedState, { childLeftFiles: fichiersDeLEnfant.length > 0 })}`
+${consignes}`,
+        (t) => t.length,
+      )
     : '';
 
   const primaryOutput: ToolResultOutput = isFailure
     ? { type: 'error-text', value: errorValue }
-    : { type: 'text', value: renderDelegationOutcome(outcome) };
+    : {
+        type: 'text',
+        value: fitToolResult(
+          (room) => renderDelegationOutcome(outcome, room),
+          (t) => t.length,
+        ),
+      };
 
   const toolResultParts: Array<{
     type: 'tool-result';
