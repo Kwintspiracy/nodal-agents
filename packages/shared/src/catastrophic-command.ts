@@ -2500,6 +2500,8 @@ function wordUnits(
     units.push(unit);
   }
   for (const name of namedAfter === null ? [program] : [program, namedAfter]) {
+    // What the guess reads is a guess too (`cmd.cmd /c "cd x"`, pass 9).
+    const from = units.length;
     // `python -m pip install x` runs pip: the module is the program (review of
     // PR #476; main caught it by reading the whole text).
     if (interpreterKind(name) === 'python') {
@@ -2518,6 +2520,7 @@ function wordUnits(
           : wordUnits(payload.words, depth + 1, payload.shell, payload.invoked === true)),
       );
     }
+    if (name === namedAfter) for (const unit of units.slice(from)) NAMED_AFTER_UNITS.add(unit);
   }
   return units;
 }

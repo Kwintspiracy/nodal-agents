@@ -1246,6 +1246,10 @@ describe('a script named after a folder change moves no folder (#710, Codex pass
     const read = downloadWrites('cd.bat decoy && curl -o x.zip https://x/a', 'windows');
     expect(read.dirs).toEqual([]);
     expect(read.targets).toEqual([{ path: 'x.zip', after: 0 }]);
+    // What the guess reads is a guess too: `cmd.cmd /c "cd decoy"` (pass 9).
+    expect(
+      downloadWrites('cmd.cmd /c "cd decoy" & curl -o x.zip https://x/a', 'windows').dirs,
+    ).toEqual([]);
     // `cd` itself still moves it.
     expect(downloadWrites('cd decoy && curl -o x.zip https://x/a', 'windows').dirs).toEqual([
       'decoy',
