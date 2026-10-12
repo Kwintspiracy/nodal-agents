@@ -3534,6 +3534,8 @@ const COMMAND_CHAIN = new WeakMap<readonly ShellWord[], readonly number[]>();
 const SH_OPENS = new Set(['if', 'while', 'until', 'for', 'select', 'case']);
 const SH_BODY = new Set(['then', 'else', 'elif', 'do']);
 const SH_CLOSES = new Set(['fi', 'done', 'esac']);
+/** The compounds whose first word a command follows: their condition. */
+const SH_CONDITIONS = new Set(['if', 'while', 'until']);
 
 /** The PowerShell commands that run the block they are given once, in the runspace. */
 const PS_RUNS_BLOCK_ONCE = new Set(['&', '.', 'try', 'finally', 'invoke-command', 'icm']);
@@ -3641,15 +3643,30 @@ class Processes {
     this.last = at;
     this.closed = null;
     this.functionNext = false;
-    const first = words[0]?.quoted === false ? words[0].text : '';
-    const open = this.compounds[this.compounds.length - 1];
-    if (this.model === 'sh' && SH_BODY.has(first) && open !== undefined) open.body = true;
+    // sh's reserved words count wherever a command may start, as its grammar
+    // reads them (Nodal review of PR #721, pass 10): at the segment's start,
+    // and after `then`, `else`, `elif`, `do`, `!`, `if`, `while` and `until`,
+    // which a command follows (`do if …`, `else for …`, `if ! curl …`).
+    const reserved = (i: number): string =>
+      this.model === 'sh' && words[i]?.quoted === false ? (words[i]?.text ?? '') : '';
+    let i = 0;
+    for (; SH_BODY.has(reserved(i)); i++) {
+      const open = this.compounds[this.compounds.length - 1];
+      if (open !== undefined) open.body = true;
+    }
     if (this.mayNotRun()) COMMAND_MAY_NOT_RUN.add(words);
-    if (this.model !== 'sh') return;
     // `case … in` is followed by its body at once. The compound that closes
     // is the whole command (`for … done | x`, `if … fi > f`).
-    if (SH_OPENS.has(first)) this.compounds.push({ body: first === 'case', start: at });
-    else if (SH_CLOSES.has(first)) this.last = this.compounds.pop()?.start ?? at;
+    for (; i < words.length; i++) {
+      const word = reserved(i);
+      if (SH_OPENS.has(word)) {
+        this.compounds.push({ body: word === 'case', start: at });
+        if (!SH_CONDITIONS.has(word)) break;
+      } else if (SH_CLOSES.has(word)) {
+        this.last = this.compounds.pop()?.start ?? at;
+        break;
+      } else if (word !== '!') break;
+    }
   }
 
   /**

@@ -309,3 +309,51 @@ describe("a group's redirection is its commands' (#717, Nodal review pass 9) @ca
       expect(await judge(command, placeWith('posix', {})), command).toEqual([]);
   });
 });
+
+describe('sh compounds nest on every word in command position (#717, Nodal review pass 10) @cap:executer-une-commande/moteur', () => {
+  // Measured in bash: `for … do if … fi; done > f`, `while … do case … esac;
+  // done > f` and three levels write what runs inside to f; `if …; then echo
+  // X; for … done > f; fi` writes only the loop's output there.
+  it.each([
+    'for u in "$@"; do if [[ $u == https* ]]; then curl "$u"; fi; done > ../log',
+    'while read l; do case $l in a) curl https://x/a;; esac; done > ../log',
+    'for i in 1; do while true; do if true; then curl https://x/a; fi; break; done; done > ../log',
+    'if true; then while true; do ! curl https://x/a; break; done; fi > ../log',
+    '! for i in 1; do curl https://x/a; done > ../log',
+  ])('%s asks', async (command) => {
+    expect(await judge(command, placeWith('posix', {}))).toEqual(
+      downloadOutside(command, '../log'),
+    );
+  });
+
+  it("a loop's redirection inside an if is the loop's, not the if's first command's", async () => {
+    // `curl https://x/a` prints to the terminal; only the loop's `echo` goes to ../f.
+    expect(
+      await judge(
+        'if true; then curl https://x/a; for i in 1; do echo hi; done > ../f; fi',
+        placeWith('posix', {}),
+      ),
+    ).toEqual([]);
+    expect(
+      await judge(
+        'if true; then for i in 1; do echo hi; done > ../f; curl https://x/a; fi',
+        placeWith('posix', {}),
+      ),
+    ).toEqual([]);
+    // a loop that opens in the condition of an `if` is a compound of its own:
+    // its `done` closes it, the `fi` the if, never the `for` around them
+    expect(
+      await judge(
+        'for i in 1; do curl https://x/a; if while false; do :; done; then :; fi > ../f; done',
+        placeWith('posix', {}),
+      ),
+    ).toEqual([]);
+    // the loop opens right after `else`: still a loop of its own
+    expect(
+      await judge(
+        'if false; then curl https://x/a; else for i in 1; do echo hi; done > ../f; fi',
+        placeWith('posix', {}),
+      ),
+    ).toEqual([]);
+  });
+});
