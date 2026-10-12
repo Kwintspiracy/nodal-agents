@@ -24,13 +24,6 @@ import { createRoot, type Root } from 'react-dom/client';
 /** Le dessin du produit, tel qu'il est servi. Écrit ici, pas importé. */
 const FICHIER = '/logo-128.png';
 
-// `next/font` ne tourne qu'a travers le compilateur de Next : importe tel quel
-// dans un test, `Inter(...)` n'est pas une fonction. Le faux rend ce que le
-// layout lui demande - une variable de police - et rien d'autre.
-vi.mock('next/font/google', () => ({
-  Inter: () => ({ variable: 'font-inter-test' }),
-  JetBrains_Mono: () => ({ variable: 'font-jetbrains-test' }),
-}));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: () => {}, refresh: () => {} }),
   usePathname: () => '/login',
