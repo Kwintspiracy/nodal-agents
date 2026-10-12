@@ -1209,3 +1209,32 @@ describe('a line that redefines a command name asks, as inline code (#710, Codex
     expectNoRedefinition(['Get-Alias ls', 'Get-ChildItem env:'], 'powershell');
   });
 });
+
+describe('a program named with the extension Windows runs it by is that program (#710, Codex pass 6) @cap:executer-une-commande/moteur', () => {
+  // npm, pnpm and yarn ship `.cmd` and `.ps1` shims, conda a `.bat`: each one
+  // runs by its full name in cmd.exe and in PowerShell.
+  it('an installer named with .cmd, .bat, .ps1 or .exe, in any case, installs', () => {
+    expectKind(
+      [
+        'npm.cmd install lodash',
+        'pnpm.cmd add lodash',
+        'yarn.cmd add lodash',
+        'conda.bat install numpy',
+        'npm.ps1 install lodash',
+        'NPM.CMD install lodash',
+        'C:/Users/me/AppData/Roaming/npm/npm.cmd install lodash',
+        'winget.EXE install x',
+      ],
+      'install_software',
+      true,
+    );
+  });
+
+  it('a delete command named with its extension deletes', () => {
+    expectKind(['rm.exe -rf build', 'rmdir.bat build'], 'delete_files', true);
+  });
+
+  it('a read named with its extension stays a read', () => {
+    expectKind(['npm.cmd ls', 'conda.bat list'], 'install_software', false);
+  });
+});

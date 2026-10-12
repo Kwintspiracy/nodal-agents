@@ -83,14 +83,22 @@ function normalizeSlashes(s: string): string {
   return s.replace(/\/{2,}/g, '/').replace(/\\{2,}/g, '\\');
 }
 
-/** Last path segment, lowercased, `.exe`/`.com` suffix dropped — so
- * `/usr/bin/python3`, `C:\Python311\python.exe`, and `"python3"` all reduce
- * to the same bare interpreter name as a plain `python3`. */
+/** Last path segment, lowercased, without the extension Windows runs it by —
+ * so `/usr/bin/python3`, `C:\Python311\python.exe`, and `"python3"` all reduce
+ * to the same bare interpreter name as a plain `python3`, and `npm.cmd`,
+ * `conda.bat`, `npm.ps1` to the installer they are (Codex, PR #710 pass 6). */
 function interpreterBasename(token: string): string {
   const t = stripQuotes(token);
   const base = t.split(/[\\/]/).pop() ?? t;
-  return base.replace(/\.(exe|com)$/i, '').toLowerCase();
+  return base.replace(RUN_BY_NAME_EXTENSION, '').toLowerCase();
 }
+
+/**
+ * The extensions a program runs by without being written: Windows' default
+ * PATHEXT, and PowerShell's `.ps1`. Package managers ship their Windows entry
+ * points as `.cmd`, `.bat` and `.ps1` shims, so the name as typed carries one.
+ */
+const RUN_BY_NAME_EXTENSION = /\.(exe|com|cmd|bat|ps1|vbs|vbe|js|jse|wsf|wsh|msc)$/i;
 
 export type InterpreterKind =
   | 'python'
