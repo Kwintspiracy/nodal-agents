@@ -44,6 +44,7 @@ import {
   SCRIPT_TESTES,
 } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
+import { fontFacesDuPortail } from './polices.mjs';
 import { lireWorkflows, htmlWorkflows, workflowsARegarder } from './workflows.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
@@ -1532,10 +1533,8 @@ const html = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nodal-Agents, Quality</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
+${fontFacesDuPortail()}
 :root{
   /* Homepage identity, same three signal colours the dashboard uses.
      The accent is the connector blue, NOT the orange-red of the homepage:
