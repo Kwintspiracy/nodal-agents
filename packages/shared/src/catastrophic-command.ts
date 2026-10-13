@@ -294,9 +294,9 @@ export function isCatastrophicCommand(
   // `shutdown --help` prints and exits (Reviewer A, #582 pass 2). Only the
   // long forms and `/?` here: `shutdown -h` HALTS the machine.
   const units = commandUnits(cmd, 0, shell).filter((u) => !runsAnother(u));
-  // Text no reading follows (`UNFOLLOWED`): what it runs is not known, so it
+  // Text no reading follows (`UNFOLLOWED_UNITS`): what it runs is not known, so it
   // is held as a destroyer may be, whatever the rest of the line reads.
-  if (units.some((u) => u[0] === UNFOLLOWED)) return true;
+  if (units.some((u) => UNFOLLOWED_UNITS.has(u))) return true;
   if (
     units.length > 0 &&
     units.every((u) => u.length >= 2 && u.slice(1).every((t) => FLOOR_READ_FLAGS.has(t)))
@@ -2666,7 +2666,11 @@ export function commandUnits(
       if (first === undefined) {
         kept.set(key, unit);
         units.push(unit);
-      } else if (folderReading(first) !== folderReading(unit)) FOLDER_UNKNOWN.add(first);
+      } else {
+        if (folderReading(first) !== folderReading(unit)) FOLDER_UNKNOWN.add(first);
+        // what one reading cannot follow, the kept unit cannot either
+        if (UNFOLLOWED_UNITS.has(unit)) UNFOLLOWED_UNITS.add(first);
+      }
     }
     return units;
   }
@@ -2674,12 +2678,12 @@ export function commandUnits(
   // What no reading follows (Nodal review of PR #721, passes 14 and 15):
   // payloads and substitutions nested past eight levels, and the text of a
   // line past `MAX_NESTING` parentheses or braces (ten thousand levels ran
-  // the readers out of stack or memory). It is `UNFOLLOWED`, which the floor
+  // the readers out of stack or memory). It is `unfollowed`, which the floor
   // holds for a human under any autonomy; what stands within the limits, the
   // rest of the line, is read as any line.
-  if (depth > 8) return [[UNFOLLOWED]];
+  if (depth > MAX_DEPTH) return [unfollowed()];
   const within = depth === 0 ? withinNesting(cmd) : { text: cmd, cut: false };
-  if (within.cut) return [[UNFOLLOWED], ...commandUnits(within.text, depth, shell, processes)];
+  if (within.cut) return [unfollowed(), ...commandUnits(within.text, depth, shell, processes)];
   const model = processes ?? shell;
   const units: string[][] = [];
   // Substitutions run even inside double quotes: `$(…)` in sh and PowerShell,
@@ -3110,7 +3114,7 @@ function wordUnits(
   shell: LineShell,
   how: { invoked?: boolean; sourced?: boolean; model?: LineShell } = {},
 ): string[][] {
-  if (depth > 8) return [];
+  if (depth > MAX_DEPTH) return [unfollowed()];
   const invoked = how.invoked === true;
   const model = how.model ?? shell;
   // `FOO=1 rm -rf build`: variables set for the command are not the program
@@ -3482,13 +3486,32 @@ export function stdinReceiver(before: string, after: string): StdinReceiver {
 }
 
 /**
- * The unit that stands for text no reading follows (`commandUnits`): nobody
- * knows what it runs. A program decided at run
- * time to the checklist, and for the floor a destroyer not known
- * (`isCatastrophicCommand`): it never runs without a human, under any
- * autonomy (Nodal review of PR #721, pass 15).
+ * The units that stand for text no reading follows (`unfollowed`): nobody
+ * knows what they run. Marked by identity, never by text (Nodal review of PR
+ * #721, pass 16): no line can write one, and a line that writes their text
+ * (`$(…)`) is the program decided at run time it always was. To the
+ * checklist they are such a program; to the floor a destroyer not known
+ * (`isCatastrophicCommand`), refused under any autonomy.
  */
-const UNFOLLOWED = '$(…)';
+const UNFOLLOWED_UNITS = new WeakSet<readonly string[]>();
+
+/** A unit for text no reading follows (`UNFOLLOWED_UNITS`). */
+function unfollowed(): string[] {
+  const unit = ['$(…)'];
+  UNFOLLOWED_UNITS.add(unit);
+  return unit;
+}
+
+/** True when `unit` stands for text no reading follows (`unfollowed`). */
+export function isUnfollowedUnit(unit: readonly string[]): boolean {
+  return UNFOLLOWED_UNITS.has(unit);
+}
+
+/**
+ * How deep payloads and substitutions are followed (`commandUnits`,
+ * `wordUnits`, every recursion of a line's reading): past it, `unfollowed`.
+ */
+const MAX_DEPTH = 8;
 
 /**
  * How deep a line's parentheses and braces nest before the reading stops

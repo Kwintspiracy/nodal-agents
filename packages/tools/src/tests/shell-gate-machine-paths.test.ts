@@ -20,6 +20,7 @@ import {
   DEFAULT_SHELL_POLICY,
   commandUnits,
   isCatastrophicCommand,
+  isUnfollowedUnit,
   programSources,
   splitShellWords,
   staticShellCategories,
@@ -669,5 +670,50 @@ describe('a reading limit takes nothing away, and what it cannot read reaches th
       expect(isCatastrophicCommand(command, 'posix')).toBe(true);
       expect(await callReachesTheFloor([command], placeWith('posix', {}))).toBe(true);
     }
+  });
+});
+
+describe('unread text has a mark of its own, and one depth rule for every reading (#717, Nodal review pass 16) @cap:executer-une-commande/moteur', () => {
+  const unread = (command: string, shell: 'sh' | 'powershell' = 'sh') =>
+    commandUnits(command, 0, shell).some(isUnfollowedUnit);
+
+  it.each([
+    ['pwsh -Command $c', 'posix', undefined],
+    ['powershell -Command $c', 'windows', undefined],
+    ['iex $c', undefined, 'powershell'],
+    ['& (Get-Item x)', undefined, 'powershell'],
+  ] as const)('%s: decided at run time, asked, never the floor', (command, host, reader) => {
+    expect(isCatastrophicCommand(command, host, reader)).toBe(false);
+    expect(staticShellCategories(command, host, reader)).toContain('inline_code');
+    // a program decided at run time, not text no reading follows
+    expect(unread(command, reader ?? (host === 'windows' ? 'powershell' : 'sh'))).toBe(false);
+  });
+
+  it('a line that writes the text of the mark is no unread text', () => {
+    for (const command of ['echo hi; $(…)', '$(…)']) {
+      expect(unread(command), command).toBe(false);
+      expect(isCatastrophicCommand(command, 'posix'), command).toBe(false);
+    }
+  });
+
+  it.each(['env', 'wsl', 'busybox', 'source'])(
+    '%s nine times: past the depth every reading follows, unread, and the floor holds it',
+    async (wrapper) => {
+      const deep = `${wrapper} `.repeat(9) + 'echo hi';
+      expect(unread(deep)).toBe(true);
+      expect(isCatastrophicCommand(deep, 'posix')).toBe(true);
+      expect(await callReachesTheFloor([deep], placeWith('posix', {}))).toBe(true);
+      // within the depth, read as any line
+      const shallow = `${wrapper} `.repeat(3) + 'echo hi';
+      expect(unread(shallow)).toBe(false);
+      expect(isCatastrophicCommand(shallow, 'posix')).toBe(false);
+    },
+  );
+
+  it('payloads and wrappers mixed past the depth: unread', () => {
+    const payload = (n: number, inner: string): string =>
+      n === 0 ? inner : payload(n - 1, `bash -c '${inner.replace(/'/g, "'\\''")}'`);
+    expect(unread(payload(5, 'env '.repeat(5) + 'echo hi'))).toBe(true);
+    expect(unread(payload(3, 'env '.repeat(3) + 'echo hi'))).toBe(false);
   });
 });
