@@ -43,12 +43,21 @@ describe('delete_files: every delete command, from the floor’s own list (#693)
   // Remove-Item and every one of its names: the floor's list.
   const removeItemNames = ['Remove-Item', 'ri', 'rm', 'del', 'erase', 'rd', 'rmdir'];
 
-  it('each name of the one list is a delete_files kind', () => {
+  // `ri` is PowerShell's alias, an alias only where PowerShell reads the
+  // line (#715, Nodal review pass 2 of PR #730): Ruby's `ri` is a program of
+  // its own, and cmd runs no cmdlet. The floor still reads it everywhere.
+  it('each name of the one list is a delete_files kind, an alias where PowerShell reads it', () => {
     expectKind(
-      removeItemNames.map((name) => `${name} file.txt`),
+      removeItemNames.filter((name) => name !== 'ri').map((name) => `${name} file.txt`),
       'delete_files',
       true,
     );
+    expectKind(
+      removeItemNames.map((name) => `powershell -Command "${name} file.txt"`),
+      'delete_files',
+      true,
+    );
+    expectKind(['ri file.txt', 'ri Array'], 'delete_files', false);
   });
 
   it('and the floor reads each of them, recursive and forced, on a whole disk', () => {
@@ -58,7 +67,7 @@ describe('delete_files: every delete command, from the floor’s own list (#693)
   });
 
   it('the ticket: `erase file.txt` (cmd) and `ri file.txt` (PowerShell)', () => {
-    expectKind(['erase file.txt', 'ri file.txt'], 'delete_files', true);
+    expectKind(['erase file.txt'], 'delete_files', true);
     expectKind(
       ['cmd /c erase /q file.txt', 'powershell -Command "ri file.txt"'],
       'delete_files',

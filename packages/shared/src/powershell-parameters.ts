@@ -32,6 +32,14 @@ export interface PsParameter {
   switch?: boolean;
   /** The CLI's `-Command` / `-File`: every word after it is its value. */
   rest?: boolean;
+  /** Where a positional word binds it (0: the first positional word). */
+  position?: number;
+  /**
+   * What a pipeline may bind it to, when the text leaves it empty (#715):
+   * parameters of one group are one target written two ways (`-Path`,
+   * `-LiteralPath`), any of them given gives the group.
+   */
+  pipeline?: string;
 }
 
 /** The parameters of a PowerShell command, by full name in lower case. */
@@ -217,11 +225,20 @@ const SHOULD_PROCESS: Record<string, PsParameter> = {
 
 const LITERAL_PATH: PsParameter = { aliases: ['pspath', 'lp'] };
 
+/**
+ * The provider cmdlets' item: `[-Path] <string[]>` or `-LiteralPath`, either
+ * taken from what a pipeline hands the command (ValueFromPipeline and
+ * ByPropertyName, #715).
+ */
+const PIPED_ITEM: Record<string, PsParameter> = {
+  path: { position: 0, pipeline: 'item' },
+  literalpath: { ...LITERAL_PATH, pipeline: 'item' },
+};
+
 /** Remove-Item, and its aliases ri, rm, del, erase, rd, rmdir. */
 export const REMOVE_ITEM: PsSignature = {
   parameters: {
-    path: {},
-    literalpath: LITERAL_PATH,
+    ...PIPED_ITEM,
     filter: {},
     include: {},
     exclude: {},
@@ -229,6 +246,69 @@ export const REMOVE_ITEM: PsSignature = {
     force: { switch: true },
     credential: {},
     stream: {},
+    ...COMMON,
+    ...SHOULD_PROCESS,
+  },
+};
+
+/** Clear-Content (clc): empties an item, keeps it. */
+export const CLEAR_CONTENT: PsSignature = {
+  parameters: {
+    ...PIPED_ITEM,
+    filter: {},
+    include: {},
+    exclude: {},
+    force: { switch: true },
+    credential: {},
+    stream: {},
+    ...COMMON,
+    ...SHOULD_PROCESS,
+  },
+};
+
+/** Clear-Item (cli): erases an item's value (a variable, an alias, a registry value). */
+export const CLEAR_ITEM: PsSignature = {
+  parameters: {
+    ...PIPED_ITEM,
+    filter: {},
+    include: {},
+    exclude: {},
+    force: { switch: true },
+    credential: {},
+    ...COMMON,
+    ...SHOULD_PROCESS,
+  },
+};
+
+/** An item's property, `[-Name] <string>` after its path, taken from a pipeline by property name. */
+const PIPED_PROPERTY: PsParameter = { position: 1, pipeline: 'name' };
+
+/** Clear-ItemProperty (clp): erases the value of an item's property. */
+export const CLEAR_ITEM_PROPERTY: PsSignature = {
+  parameters: {
+    ...PIPED_ITEM,
+    name: PIPED_PROPERTY,
+    passthru: { switch: true },
+    force: { switch: true },
+    filter: {},
+    include: {},
+    exclude: {},
+    credential: {},
+    ...COMMON,
+    ...SHOULD_PROCESS,
+  },
+};
+
+/** Remove-ItemProperty (rp): removes an item's property and its value. */
+export const REMOVE_ITEM_PROPERTY: PsSignature = {
+  parameters: {
+    ...PIPED_ITEM,
+    name: { ...PIPED_PROPERTY, aliases: ['psproperty'] },
+    force: { switch: true },
+    filter: {},
+    include: {},
+    exclude: {},
+    credential: {},
     ...COMMON,
     ...SHOULD_PROCESS,
   },

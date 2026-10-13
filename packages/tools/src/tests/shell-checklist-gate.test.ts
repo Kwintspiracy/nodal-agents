@@ -202,6 +202,19 @@ describe('the autonomy checklist at the gate (#464) @cap:executer-une-commande/m
     expect(res.outcome).toBe('success');
   });
 
+  // #715 : ce que le texte ne dit pas, même une sorte permise le demande.
+  it('a Yolo agent as migration 0125 is asked for a deletion whose files the text does not name (#715)', async () => {
+    const migrated = resolveShellPolicy(MIGRATED_0125);
+    const command = 'ls build | xargs ' + 'r' + 'm -rf';
+    const res = await run(command, gate(migrated, [yolo()]));
+
+    expect(res.outcome).toBe('awaiting_approval');
+    if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+    expect(await reasonsOf(res.approvalRequestId)).toEqual([
+      { category: 'delete_files', state: 'ask', details: [command] },
+    ]);
+  });
+
   it('without a checklist (a replay a human approved), the command is not judged again', async () => {
     const res = await run('rm -rf build', gate(undefined, [yolo()]));
 

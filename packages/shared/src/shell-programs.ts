@@ -57,14 +57,49 @@ export const SHELLS: readonly string[] = [
   'busybox',
 ];
 
+/**
+ * The programs that run a command with words of their own, handed when they
+ * run (#715): xargs and parallel what they read, find and fd each file they
+ * find. The ONE list: the checklist reads what they run as fed at run time
+ * (`HANDS_WORDS`, catastrophic-command.ts), and an allowlist may name none.
+ */
+export const PROGRAMS_HANDING_WORDS: readonly string[] = [
+  'xargs',
+  'parallel',
+  'find',
+  'fd',
+  'fdfind',
+];
+
+/**
+ * A shell's own words before a command, which no allowlist entry names as a
+ * program (`do rm x`, `! curl x`, `. ./env.sh`): the programs that run another
+ * one (`RUNS_ANOTHER`) are these and `SHELL_PROGRAMS`, a test says so.
+ */
+export const SHELL_RESERVED_WORDS: readonly string[] = [
+  'do',
+  'then',
+  'else',
+  'elif',
+  'if',
+  'while',
+  'until',
+  '!',
+  'coproc',
+  '&',
+  '.',
+];
+
 export const SHELL_PROGRAMS: readonly string[] = [
   ...SHELLS,
+  ...PROGRAMS_HANDING_WORDS,
   'command',
   // Launchers: not shells, same effect.
   'env',
   'start',
+  'start-process',
+  'saps',
   'nohup',
-  'xargs',
   'timeout',
   'sudo',
   'runas',
@@ -74,6 +109,10 @@ export const SHELL_PROGRAMS: readonly string[] = [
   'exec',
   'eval',
   'script',
+  // Code read by the shell itself: a file (`source x.sh`), a string (`iex $s`).
+  'source',
+  'iex',
+  'invoke-expression',
   // Exec wrappers: they run the command that follows their options (#667,
   // review of PR #682, pass 5).
   'doas',
@@ -108,6 +147,8 @@ export const SHELL_PROGRAMS: readonly string[] = [
   'fakeroot',
   'dbus-launch',
   'expect',
+  // expect's own command that starts a program.
+  'spawn',
 ];
 
 /**
