@@ -49,7 +49,15 @@ function stubFetch(reply: () => unknown): void {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      bodies.push(JSON.parse(init?.body as string) as Record<string, unknown>);
+      // A GET is the SDK downloading an image given by URL, for a provider
+      // that takes only bytes: it is not a request to the model.
+      if (init?.body === undefined) {
+        return new Response(new Uint8Array([137, 80, 78, 71]), {
+          status: 200,
+          headers: { 'content-type': 'image/png' },
+        });
+      }
+      bodies.push(JSON.parse(init.body as string) as Record<string, unknown>);
       return new Response(JSON.stringify(reply()), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -391,26 +399,6 @@ describe('a known cap is stated only when the estimated input leaves room for it
       ],
     });
     expect(bodies[0]).not.toHaveProperty('max_tokens');
-
-    // An image sent as a file part is an image: bounded, the cap is stated.
-    stubFetch(() => chatCompletion('stop', 20));
-    await createLlmClient(DEEPSEEK).generateText({
-      ...ARGS,
-      messages: [
-        {
-          role: 'user' as const,
-          content: [
-            { type: 'text' as const, text: 'what is this?' },
-            {
-              type: 'file' as const,
-              data: new Uint8Array([137, 80, 78, 71]),
-              mediaType: 'image/png',
-            },
-          ],
-        },
-      ],
-    });
-    expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
   });
 
   it('streamText counts its tools in the bound', async () => {
@@ -432,16 +420,59 @@ describe('a known cap is stated only when the estimated input leaves room for it
     expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
   });
 
-  it('attachments count in that decision, at their allowance', async () => {
-    // 12 images leave room for 65 536 in 128 000; 14 do not.
-    stubFetch(() => chatCompletion('stop', 20));
-    await createLlmClient(DEEPSEEK).generateText(withImages(12) as unknown as typeof ARGS);
-    expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
+  // Revue Nodal de #571, passe 4 (P2) : 4 784 n'est pas un plafond par image.
+  // OpenAI compte les images par blocs de 32×32 : ~7 372 jetons par image sur
+  // gpt-5.2, ~12 000 sur gpt-5.4 en `original`. Douze images y étaient bornées
+  // à 57 408 quand elles en font ~88 000. Le coût d'une image dépend du
+  // fournisseur, du modèle, de la résolution et du détail : aucun plafond
+  // universel n'existe, et une image rend la borne infinie, comme un PDF.
+  const imageParts = [
+    {
+      label: 'an image as bytes',
+      part: {
+        type: 'image' as const,
+        image: new Uint8Array([137, 80, 78, 71]),
+        mediaType: 'image/png',
+      },
+    },
+    {
+      label: 'an image by URL',
+      part: { type: 'image' as const, image: new URL('https://example.com/a.png') },
+    },
+    {
+      label: 'an image sent as a file part',
+      part: {
+        type: 'file' as const,
+        data: new Uint8Array([137, 80, 78, 71]),
+        mediaType: 'image/png',
+      },
+    },
+  ];
+  for (const { label, part } of imageParts) {
+    it(`${label}: no image has a universal ceiling, so no cap is stated`, async () => {
+      stubFetch(() => chatCompletion('stop', 20));
 
+      await createLlmClient(DEEPSEEK).generateText({
+        ...ARGS,
+        messages: [
+          {
+            role: 'user' as const,
+            content: [{ type: 'text' as const, text: 'what is this?' }, part],
+          },
+        ],
+      } as unknown as typeof ARGS);
+
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]).not.toHaveProperty('max_tokens');
+    });
+  }
+
+  it('one image among text: no cap, while the clocks still count its allowance', async () => {
     stubFetch(() => chatCompletion('stop', 20));
-    await createLlmClient(DEEPSEEK).generateText(withImages(14) as unknown as typeof ARGS);
+    await createLlmClient(DEEPSEEK).generateText(withImages(1) as unknown as typeof ARGS);
     expect(bodies[0]).not.toHaveProperty('max_tokens');
-    expect(await estimate(withImages(14))).toBeGreaterThan(14 * ATTACHMENT_TOKEN_ESTIMATE);
+    // The average for the clocks still counts its allowance.
+    expect(await estimate(withImages(1))).toBeGreaterThan(ATTACHMENT_TOKEN_ESTIMATE);
   });
 
   it("the caller's own cap is always stated and judged, whatever the estimate says", async () => {
@@ -701,6 +732,36 @@ describe('every request of the client states its output cap @cap:suivre-executio
 
     expect(res.object).toEqual({ city: 'Lyon', celsius: 21 });
     expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
+  });
+
+  // Revue Nodal de #571, passe 4 (P2) : le schéma de sortie de generateObject
+  // part dans la requête (response_format, ou un outil forcé) et compte dans
+  // l'entrée du serveur. La borne ne le lisait pas.
+  it('generateObject counts its output schema in the bound', async () => {
+    // ~55 000 bytes of prompt: room for 65 536 alone, not with a 10 000-byte schema.
+    const prompt = 'x'.repeat(55_000);
+    const BIG = z.object(
+      Object.fromEntries(
+        Array.from({ length: 50 }, (_v, i) => [`field_${i}`, z.string().describe('d'.repeat(200))]),
+      ),
+    );
+    stubFetch(objectReply);
+    await createLlmClient(DEEPSEEK)
+      .generateObject({ output: 'object', schema: CITY, prompt } as Parameters<
+        ReturnType<typeof createLlmClient>['generateObject']
+      >[0])
+      .catch(() => null);
+    expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
+
+    stubFetch(objectReply);
+    await createLlmClient(DEEPSEEK)
+      .generateObject({ output: 'object', schema: BIG, prompt } as Parameters<
+        ReturnType<typeof createLlmClient>['generateObject']
+      >[0])
+      .catch(() => null);
+    expect(bodies).toHaveLength(1);
+    expect(JSON.stringify(bodies[0]).length).toBeGreaterThan(55_000 + 10_000);
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
   });
 
   it('generateObject whose prompt leaves less than the cap in the window states none', async () => {

@@ -854,15 +854,13 @@ describe('inputTokensUpperBound: never below what a tokenizer can make of the in
     expect(inputTokensUpperBound(cjk)).toBe(3_000 + 2 * FRAMING_TOKENS_PER_UNIT);
   });
 
-  it('an image counts its ceiling; a PDF has none, so the bound is infinite', () => {
+  it('an image or a PDF has no universal ceiling, so the bound is infinite', () => {
     const image = {
       messages: [
         { role: 'user', content: [{ type: 'image', image: 'zzzz', mediaType: 'image/png' }] },
       ],
     };
-    expect(inputTokensUpperBound(image)).toBe(
-      ATTACHMENT_TOKEN_ESTIMATE + 2 * FRAMING_TOKENS_PER_UNIT,
-    );
+    expect(inputTokensUpperBound(image)).toBe(Infinity);
     const pdf = {
       messages: [
         { role: 'user', content: [{ type: 'file', data: 'zzzz', mediaType: 'application/pdf' }] },
@@ -886,5 +884,24 @@ describe('inputTokensUpperBound: never below what a tokenizer can make of the in
       },
     };
     expect(inputTokensUpperBound(later)).toBe(Infinity);
+  });
+
+  it('a schema that cannot be serialised makes the bound infinite instead of throwing', () => {
+    const cyclic: Record<string, unknown> = { type: 'object' };
+    cyclic['self'] = cyclic;
+    const tools = { find: { description: 'ab', inputSchema: jsonSchema(cyclic as never) } };
+    expect(() => inputTokensUpperBound({ tools })).not.toThrow();
+    expect(inputTokensUpperBound({ tools })).toBe(Infinity);
+    expect(inputTokensUpperBound({ schema: jsonSchema(cyclic as never) })).toBe(Infinity);
+  });
+
+  it('an output schema (generateObject) counts its bytes; unreadable, it is infinite', () => {
+    const schema = z.object({ city: z.string().describe('c'.repeat(1_000)) });
+    expect(inputTokensUpperBound({ schema })).toBeGreaterThan(1_000);
+    expect(
+      inputTokensUpperBound({
+        schema: jsonSchema(() => Promise.resolve({ type: 'object' as const })),
+      }),
+    ).toBe(Infinity);
   });
 });
