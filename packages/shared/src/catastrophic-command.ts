@@ -2123,7 +2123,66 @@ type LineShell = 'cmd' | 'powershell' | 'sh' | 'exec';
  */
 type Payload =
   | { line: string; shell: LineShell }
-  | { words: ShellWord[]; shell: LineShell; invoked?: boolean; sourced?: boolean };
+  | { words: ShellWord[]; shell: LineShell; invoked?: boolean; sourced?: boolean }
+  /** What no reading follows: past `MAX_CANDIDATES` (`unfollowed()`). */
+  | { unfollowed: true };
+
+/**
+ * How many commands that may run behind options a grammar cannot classify
+ * one line's reading follows, across every program that hides them (#715,
+ * Nodal review pass 4 of PR #730). Each reader finds its candidates in one
+ * pass, linear in its words; nested readers (`sudo --x env --y timeout --z
+ * …`) still multiply them. Past this, what is left is text no reading
+ * follows, which the floor holds (`unfollowed()`, invariant #4): never
+ * dropped, never an exception.
+ */
+export const MAX_CANDIDATES = 64;
+
+/** What the current line's reading may still follow (`MAX_CANDIDATES`), reset where it starts. */
+let candidatesLeft = MAX_CANDIDATES;
+
+/**
+ * What a program whose options cannot all be read runs: a program decided at
+ * run time, which asks under any autonomy, and each command that may start
+ * behind them (`payloads`), within what the line's reading may still follow.
+ */
+function opaqueReading(payloads: readonly Payload[]): Payload[] {
+  const kept = payloads.slice(0, candidatesLeft);
+  candidatesLeft -= kept.length;
+  return [
+    ...DECIDED_AT_RUN_TIME,
+    ...kept,
+    ...(kept.length < payloads.length ? [{ unfollowed: true as const }] : []),
+  ];
+}
+
+/**
+ * What a program's words lead to, read from the left where an option may
+ * leave the command at more than one place (#715, Nodal review pass 4):
+ * `step(i)` says what the word at `i` does, the indices the reading goes on
+ * from (two past an option it cannot classify, `opaque`), or what runs from
+ * there. Each index is read once, in order: linear in the words, however many
+ * ways lead to it.
+ */
+function readEachWay(
+  count: number,
+  step: (i: number) => { next: number[]; opaque?: boolean } | { runs: Payload[] },
+): Payload[] {
+  const reached = new Set<number>([0]);
+  const runs: Payload[] = [];
+  let opaque = false;
+  for (let i = 0; i <= count; i++) {
+    if (!reached.has(i)) continue;
+    const read = step(i);
+    if ('runs' in read) {
+      runs.push(...read.runs);
+      continue;
+    }
+    if (read.opaque === true) opaque = true;
+    for (const next of read.next) reached.add(Math.min(next, count));
+  }
+  return opaque ? opaqueReading(runs) : runs;
+}
 
 /**
  * What `program` runs after its options, read with its grammar
@@ -2144,7 +2203,7 @@ const afterItsOptions =
       PROGRAM_OPTIONS[program],
     );
     const payloads = read.starts.flatMap((start) => then(args.slice(start), args.slice(0, start)));
-    return read.opaque ? [...DECIDED_AT_RUN_TIME, ...payloads] : payloads;
+    return read.opaque ? opaqueReading(payloads) : payloads;
   };
 
 /**
@@ -2165,7 +2224,7 @@ function optionLine(
     .filter((v) => names.includes(v.option))
     .map((v) => ({ line: v.value, shell: 'sh' }));
   if (lines.length === 0) return [];
-  return read.opaque ? [...DECIDED_AT_RUN_TIME, ...lines] : lines;
+  return read.opaque ? opaqueReading(lines) : lines;
 }
 
 const argv = (words: readonly ShellWord[], shell: LineShell = 'exec'): Payload[] =>
@@ -2188,27 +2247,24 @@ function commandOption(args: readonly ShellWord[]): Payload[] {
 
 /** `sh -c LINE`, `bash -lc LINE`, `zsh -o pipefail -c LINE`: a script file is not opened here. */
 function shellLine(args: readonly ShellWord[]): Payload[] {
-  return shellLineFrom(args, 0);
-}
-
-/** `shellLine` from the word at `start`. */
-function shellLineFrom(args: readonly ShellWord[], start: number): Payload[] {
-  for (let i = start; i < args.length; i++) {
-    const w = args[i]?.text ?? '';
+  return readEachWay(args.length, (i) => {
+    const w = args[i]?.text;
+    if (w === undefined) return { runs: [] };
     if (/^-[a-z]*c[a-z]*$/i.test(w)) {
       const line = args[i + 1];
-      return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
+      return { runs: line === undefined ? [] : [{ line: line.text, shell: 'sh' }] };
     }
     // `-o`/`+o` and `-O`/`+O` (bash's shopt) take a value, and so do bash's
     // `--rcfile` / `--init-file`; its other long options are switches. One
     // it does not hold hides where `-c` stands: decided at run time, and both
-    // readings kept (#715, Nodal review passes 2 and 3).
-    if (/^[-+][oO]$/.test(w) || w === '--rcfile' || w === '--init-file') i += 1;
-    else if (/^--./.test(w) && !SHELL_LONG_SWITCHES.has(w))
-      return [...DECIDED_AT_RUN_TIME, ...shellLineFrom(args, i + 1), ...shellLineFrom(args, i + 2)];
-    else if (!/^[-+]/.test(w)) return [];
-  }
-  return [];
+    // readings kept (#715, Nodal review passes 2 to 4).
+    if (/^[-+][oO]$/.test(w) || w === '--rcfile' || w === '--init-file') return { next: [i + 2] };
+    if (/^--./.test(w) && !SHELL_LONG_SWITCHES.has(w))
+      return { next: [i + 1, i + 2], opaque: true };
+    // A script file: its line is not read here.
+    if (!/^[-+]/.test(w)) return { runs: [] };
+    return { next: [i + 1] };
+  });
 }
 
 /** busybox's own modes, which run no applet. */
@@ -2366,21 +2422,18 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
       '--distribution-id',
       '--shell-type',
     ]);
-    const from = (start: number): Payload[] => {
-      for (let i = start; i < args.length; i++) {
-        const w = args[i]?.text ?? '';
-        if (valued.has(w)) i += 1;
-        else if (w === '--system') continue;
-        else if (w === '-e' || w === '--exec') return argv(args.slice(i + 1));
-        else if (w === '--') return argv(args.slice(i + 1), 'sh');
-        else if (WSL_MANAGES.has(w)) return [];
-        // One it does not have: decided at run time, and both readings kept.
-        else if (/^-/.test(w)) return [...DECIDED_AT_RUN_TIME, ...from(i + 1), ...from(i + 2)];
-        else return argv(args.slice(i), 'sh');
-      }
-      return [];
-    };
-    return from(0);
+    return readEachWay(args.length, (i) => {
+      const w = args[i]?.text;
+      if (w === undefined) return { runs: [] };
+      if (valued.has(w)) return { next: [i + 2] };
+      if (w === '--system') return { next: [i + 1] };
+      if (w === '-e' || w === '--exec') return { runs: argv(args.slice(i + 1)) };
+      if (w === '--') return { runs: argv(args.slice(i + 1), 'sh') };
+      if (WSL_MANAGES.has(w)) return { runs: [] };
+      // One it does not have: decided at run time, and both readings kept.
+      if (/^-/.test(w)) return { next: [i + 1, i + 2], opaque: true };
+      return { runs: argv(args.slice(i), 'sh') };
+    });
   },
   // `busybox APPLET …`; `--list`, `--list-full`, `--install` and `--help` run
   // no applet. `--` ends its options; one it does not have is opaque.
@@ -2921,6 +2974,7 @@ export function commandUnits(
     return units;
   }
   if (typeof cmd !== 'string' || cmd.trim() === '') return [];
+  if (depth === 0) candidatesLeft = MAX_CANDIDATES;
   // What no reading follows (Nodal review of PR #721, passes 14 and 15):
   // payloads and substitutions nested past eight levels, and the text of a
   // line past `MAX_NESTING` parentheses or braces (ten thousand levels ran
@@ -3476,13 +3530,15 @@ function wordUnits(
     const runs = RUNS_IN_PROCESS[model].get(name);
     for (const payload of RUNS_ANOTHER[name]?.(args, shell) ?? []) {
       const read =
-        'line' in payload
-          ? commandUnits(payload.line, depth + 1, payload.shell, runs ? model : undefined)
-          : wordUnits(payload.words, depth + 1, payload.shell, {
-              invoked: payload.invoked === true,
-              sourced: payload.sourced === true,
-              ...(runs ? { model } : {}),
-            });
+        'unfollowed' in payload
+          ? [unfollowed()]
+          : 'line' in payload
+            ? commandUnits(payload.line, depth + 1, payload.shell, runs ? model : undefined)
+            : wordUnits(payload.words, depth + 1, payload.shell, {
+                invoked: payload.invoked === true,
+                sourced: payload.sourced === true,
+                ...(runs ? { model } : {}),
+              });
       if (HANDS_WORDS.has(name)) for (const unit of read) FED_AT_RUN_TIME.add(unit);
       if (runs === undefined) runIn(read, [newProcess()]);
       else if (runs === 'not-known') {

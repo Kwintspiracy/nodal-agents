@@ -120,36 +120,35 @@ function optionWords(
  * A program's options among `words` (its words after its name), read with
  * its grammar. Past an option it cannot classify, the reading goes on both
  * ways: the option alone, and the option with the next word as its value.
+ * Each word is read once, left to right, from every place a way reaches it
+ * (Nodal review pass 4 of PR #730): linear in the words, however many ways
+ * lead to a start (walking each way apart grew as Fibonacci).
  */
 export function readOptions(words: readonly string[], grammar: OptionGrammar): OptionsRead {
   const values: OptionsRead['values'] = [];
-  const read = new Map<number, number[]>();
+  const reached = new Set<number>([0]);
+  const starts = new Set<number>();
   let opaque = false;
-  const from = (start: number): number[] => {
-    const known = read.get(start);
-    if (known !== undefined) return known;
-    read.set(start, []);
-    let i = start;
-    let starts: number[] | null = null;
-    while (starts === null) {
-      const word = words[i];
-      if (word === undefined) starts = [words.length];
-      else if (word === '--') starts = [i + 1];
-      else if (!/^-./.test(word)) starts = [i];
+  const reach = (i: number): void => {
+    reached.add(Math.min(i, words.length));
+  };
+  for (let i = 0; i <= words.length; i++) {
+    if (!reached.has(i)) continue;
+    const word = words[i];
+    if (word === undefined) starts.add(words.length);
+    else if (word === '--') starts.add(i + 1);
+    else if (!/^-./.test(word)) starts.add(i);
+    else {
+      const taken = optionWords(word, words[i + 1], grammar, values);
+      if (taken !== null) reach(i + taken);
       else {
-        const taken = optionWords(word, words[i + 1], grammar, values);
-        if (taken !== null) i += taken;
-        else {
-          opaque = true;
-          starts = [...from(i + 1), ...(i + 1 < words.length ? from(i + 2) : [])];
-        }
+        opaque = true;
+        reach(i + 1);
+        if (i + 1 < words.length) reach(i + 2);
       }
     }
-    read.set(start, starts);
-    return starts;
-  };
-  const starts = [...new Set(from(0))].sort((x, y) => x - y);
-  return { starts, opaque, values };
+  }
+  return { starts: [...starts].sort((x, y) => x - y), opaque, values };
 }
 
 const VERSION_HELP = ['--help', '--version'];

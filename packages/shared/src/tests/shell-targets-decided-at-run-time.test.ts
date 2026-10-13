@@ -453,6 +453,61 @@ describe('an option a program’s grammar cannot classify makes what it runs opa
   });
 });
 
+// Passe 4 Nodal (PR #730) : lire chaque façon dont une option inconnue peut
+// laisser la commande coûtait 2^k ou Fibonacci(k) (timeout avec 40 options
+// inconnues : RangeError après 3 s ; main : 2 ms). La lecture est linéaire en
+// mots, et au-delà de MAX_CANDIDATES à travers les imbrications, le reste va
+// au plancher comme texte non lu.
+describe('reading options that hide the command is linear, and bounded across nesting (#715) @cap:executer-une-commande/moteur', () => {
+  const D = `${RM} -rf /`;
+  const unknown = (k: number, prefix = '--o') =>
+    Array.from({ length: k }, (_, n) => `${prefix}${n}`).join(' ');
+  const timed = (cmd: string): { floor: boolean; kinds: StaticShellCategory[]; ms: number } => {
+    const t = performance.now();
+    const floor = isCatastrophicCommand(cmd, 'posix');
+    const kinds = staticShellCategories(cmd, 'posix');
+    targetsDecidedAtRunTime(cmd, 'posix');
+    return { floor, kinds, ms: performance.now() - t };
+  };
+
+  it('60 unknown options: timeout, bash -c, wsl, each read fast, with the verdict of 2', () => {
+    for (const k of [2, 60]) {
+      for (const [harmless, destroyer] of [
+        [`timeout ${unknown(k)} 5 ls`, `timeout ${unknown(k)} 5 ${D}`],
+        [`bash ${unknown(k)} -c 'ls'`, `bash ${unknown(k)} -c '${D}'`],
+        [`wsl ${unknown(k)} ls`, `wsl ${unknown(k)} ${D}`],
+        [`sudo ${unknown(k)} ls`, `sudo ${unknown(k)} ${D}`],
+      ] as const) {
+        const safe = timed(harmless);
+        const bad = timed(destroyer);
+        expect(safe.ms, harmless).toBeLessThan(200);
+        expect(bad.ms, destroyer).toBeLessThan(200);
+        expect(safe.floor, harmless).toBe(false);
+        expect(bad.floor, destroyer).toBe(true);
+        expect(safe.kinds, harmless).toContain('inline_code');
+      }
+    }
+  });
+
+  it('nested programs whose options hide the command: bounded, never an exception, the floor held', () => {
+    const level = (n: number) => `sudo --x${n} env --y${n} timeout --z${n} 5 nice --w${n}`;
+    const nested = (levels: number, tail: string) =>
+      [...Array.from({ length: levels }, (_, n) => level(n)), tail].join(' ');
+    // a few levels: read in full, the same verdict as one
+    expect(timed(nested(1, 'ls')).floor).toBe(false);
+    expect(timed(nested(1, D)).floor).toBe(true);
+    // many: fast, and what lies past what is followed is held by the floor
+    for (const levels of [6, 20]) {
+      for (const tail of ['ls', D]) {
+        const cmd = nested(levels, tail);
+        const read = timed(cmd);
+        expect(read.ms, cmd).toBeLessThan(200);
+        if (tail === D) expect(read.floor, cmd).toBe(true);
+      }
+    }
+  });
+});
+
 // Passe 2 Nodal (PR #730) : `npm run cli`, `ls cli` et `echo rp` étaient des
 // suppressions pour destructive_gate (motif lu sans ancrage), `./cli test`
 // pour la liste. Un alias PowerShell n'en est un que là où PowerShell lit.
