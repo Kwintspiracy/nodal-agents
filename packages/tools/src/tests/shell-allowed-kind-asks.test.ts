@@ -14,7 +14,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { resolve } from 'node:path';
-import { SHELL_CATEGORIES, type ShellPolicy } from '@nodal-agents/shared';
+import { DEFAULT_SHELL_POLICY, SHELL_CATEGORIES, type ShellPolicy } from '@nodal-agents/shared';
 import { judgeShellChecklist, type ShellPlace } from '../shell-checklist';
 
 const root = resolve('/nodal-fake-ws-715');
@@ -51,7 +51,6 @@ describe('an allowed kind asks when the text cannot establish its target (#715) 
         'windows',
       ],
       [`powershell -Command "gci ${WIN_ROOT} | ri -r -fo"`, 'windows'],
-      [`Get-ChildItem ${WIN_ROOT} -Force | Remove-Item -Recurse -Force`, 'windows'],
       [`ls / | xargs ${RM} -rf`, 'posix'],
       [`find / -print0 | xargs -0 ${RM} -rf`, 'posix'],
       [`find / -exec ${RM} -rf {} +`, 'posix'],
@@ -188,5 +187,24 @@ describe('an allowed kind asks when the text cannot establish its target (#715) 
         outside: [{ command: line, places: ['/elsewhere/a.zip'] }],
       },
     ]);
+  });
+
+  // Passe 1 Nodal : ces formes n'avaient aucune sorte, elles passaient même
+  // sous « ask », la politique par défaut des suppressions.
+  it('forms that had no kind at all are now deletions, held under the default policy', async () => {
+    for (const [command, host] of [
+      [`find . | parallel ${RM} -rf {}`, 'posix'],
+      [`fd -x ${RM}`, 'posix'],
+      ['powershell -Command "Get-ChildItem secret | Clear-Content"', 'windows'],
+      [
+        'powershell -Command "Get-Item HKCU:\\Software\\X | Remove-ItemProperty -Name Y"',
+        'windows',
+      ],
+    ] as const) {
+      expect(
+        await judgeShellChecklist([command], DEFAULT_SHELL_POLICY, place(host)),
+        command,
+      ).toEqual([{ category: 'delete_files', state: 'ask', details: [command] }]);
+    }
   });
 });

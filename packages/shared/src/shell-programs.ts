@@ -65,6 +65,7 @@ export const SHELL_PROGRAMS: readonly string[] = [
   'start',
   'nohup',
   'xargs',
+  'parallel',
   'timeout',
   'sudo',
   'runas',

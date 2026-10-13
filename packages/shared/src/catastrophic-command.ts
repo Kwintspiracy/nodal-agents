@@ -13,11 +13,15 @@
 // not a general safety net, it is the last-resort circuit breaker.
 
 import {
+  CLEAR_CONTENT,
+  CLEAR_ITEM,
+  CLEAR_ITEM_PROPERTY,
   INVOKE_EXPRESSION,
   INVOKE_WEB_REQUEST,
   OUT_FILE,
   POWERSHELL_CLI,
   REMOVE_ITEM,
+  REMOVE_ITEM_PROPERTY,
   SET_CONTENT,
   SET_LOCATION,
   START_BITS_TRANSFER,
@@ -255,6 +259,24 @@ const REMOVE_ITEM_NAMES: readonly string[] = [
  * they drifted: the floor knew `erase` and `ri`, the kind did not (#693).
  */
 const DELETE_PROGRAMS: readonly string[] = [...REMOVE_ITEM_NAMES, 'unlink', 'shred', 'srm'];
+
+/**
+ * The provider cmdlets that erase what an item holds, or an entry of it, and
+ * their aliases (#715, Nodal review pass 1): Clear-Content empties a file,
+ * Clear-Item a value, Clear-ItemProperty and Remove-ItemProperty a registry
+ * value. Deletions, read as Remove-Item is (`PIPELINE_TARGETS`); not the
+ * floor's, whose list is Remove-Item's names.
+ */
+const PROVIDER_ERASERS: Readonly<Record<string, PsSignature>> = {
+  'clear-content': CLEAR_CONTENT,
+  clc: CLEAR_CONTENT,
+  'clear-item': CLEAR_ITEM,
+  cli: CLEAR_ITEM,
+  'clear-itemproperty': CLEAR_ITEM_PROPERTY,
+  clp: CLEAR_ITEM_PROPERTY,
+  'remove-itemproperty': REMOVE_ITEM_PROPERTY,
+  rp: REMOVE_ITEM_PROPERTY,
+};
 
 /** rm's short options (GNU, BSD/macOS, busybox), which a group (`-rfv`) may hold. */
 const RM_SHORT_GROUP = /^-[dfiIPRrvWx]+$/;
@@ -1152,8 +1174,12 @@ function installsSoftware(unit: readonly string[]): boolean {
  */
 export const STATIC_SHELL_CATEGORY_PATTERNS = {
   delete_files: [
-    // every program that deletes files (`DELETE_PROGRAMS`, the floor's list too)
-    new RegExp(String.raw`\b(?:${DELETE_PROGRAMS.join('|')})(?=\s|$)`, 'i'),
+    // every program that deletes files (`DELETE_PROGRAMS`, the floor's list
+    // too), and the cmdlets that erase an item's content or an entry
+    new RegExp(
+      String.raw`\b(?:${[...DELETE_PROGRAMS, ...Object.keys(PROVIDER_ERASERS)].join('|')})(?=\s|$)`,
+      'i',
+    ),
     /\bfind\b[^\n]*-delete\b/i, // find … -delete
     // rsync deleting what the source does not have, or the source itself
     /\brsync\b[^\n]*\s--(?:delete(?:-[a-z]+)*|del|remove-source-files)(?![\w-])/i,
@@ -2127,6 +2153,56 @@ const TRACE_VALUED = new Set([
   '-b',
 ]);
 
+/** GNU parallel's options that take the next word as their value. */
+const PARALLEL_VALUED = new Set([
+  '-a',
+  '--arg-file',
+  '-C',
+  '--colsep',
+  '-d',
+  '--delimiter',
+  '-E',
+  '-I',
+  '-j',
+  '--jobs',
+  '-P',
+  '--max-procs',
+  '-L',
+  '--max-lines',
+  '-n',
+  '--max-args',
+  '-N',
+  '-s',
+  '--max-chars',
+  '-S',
+  '--sshlogin',
+  '--sshloginfile',
+  '--slf',
+  '--basefile',
+  '--bf',
+  '--block',
+  '--block-size',
+  '--delay',
+  '--env',
+  '--halt',
+  '--header',
+  '--joblog',
+  '--load',
+  '--memfree',
+  '--nice',
+  '--results',
+  '--res',
+  '--retries',
+  '--return',
+  '--tagstring',
+  '--timeout',
+  '--tmpdir',
+  '--transferfile',
+  '--tf',
+  '--workdir',
+  '--wd',
+]);
+
 /** `sh -c LINE`, `bash -lc LINE`, `zsh -o pipefail -c LINE`: a script file is not opened here. */
 function shellLine(args: readonly ShellWord[]): Payload[] {
   for (let i = 0; i < args.length; i++) {
@@ -2416,6 +2492,33 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
   start: (args) => launchedWords('start', args),
   'start-process': (args) => launchedWords('start-process', args),
   saps: (args) => launchedWords('saps', args),
+  // GNU parallel: `parallel [options] command [::: args]`. Its command is
+  // composed with each input and handed to the shell (#715, Nodal review
+  // pass 1): read as a line, up to the first `:::` / `::::` separator.
+  parallel: (args) => {
+    const end = args.findIndex((a) => /^::::?\+?$/.test(a.text));
+    const command = afterOptions(end < 0 ? args : args.slice(0, end), PARALLEL_VALUED);
+    return command.length === 0
+      ? []
+      : [{ line: command.map((a) => a.text).join(' '), shell: 'sh' }];
+  },
+  // fd: `-x`/`--exec` runs a command per file found, `-X`/`--exec-batch`
+  // once with all of them, its words up to a `;` (#715, Nodal review pass 1).
+  fd: (args) => {
+    const payloads: Payload[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const word = args[i]?.text ?? '';
+      const glued = /^--exec(?:-batch)?=(.+)$/.exec(word)?.[1];
+      if (glued === undefined && !['-x', '--exec', '-X', '--exec-batch'].includes(word)) continue;
+      const end = args.findIndex((a, j) => j > i && [';', '\\;'].includes(a.text));
+      const words = args.slice(i + 1, end > i ? end : undefined);
+      payloads.push(
+        ...argv(glued === undefined ? words : [{ text: glued, quoted: false }, ...words]),
+      );
+      if (end > i) i = end;
+    }
+    return payloads;
+  },
   // `find … -exec cmd {} ;`, each of them.
   find: (args) => {
     const payloads: Payload[] = [];
@@ -2462,6 +2565,8 @@ RUNS_ANOTHER['pwsh'] = RUNS_ANOTHER['powershell'] as (typeof RUNS_ANOTHER)[strin
 RUNS_ANOTHER['invoke-expression'] = RUNS_ANOTHER['iex'] as (typeof RUNS_ANOTHER)[string];
 RUNS_ANOTHER['gtimeout'] = RUNS_ANOTHER['timeout'] as (typeof RUNS_ANOTHER)[string];
 RUNS_ANOTHER['proxychains4'] = RUNS_ANOTHER['proxychains'] as (typeof RUNS_ANOTHER)[string];
+// Debian and Ubuntu install fd as `fdfind`.
+RUNS_ANOTHER['fdfind'] = RUNS_ANOTHER['fd'] as (typeof RUNS_ANOTHER)[string];
 
 /**
  * Where the programs of `RUNS_ANOTHER` run what they name, per shell that
@@ -2639,41 +2744,58 @@ export const SHELL_KIND_TARGETS = {
 } as const satisfies Record<StaticShellCategory, 'program' | 'writes' | 'words'>;
 
 /**
- * The PowerShell commands whose target parameters the reading holds (#715):
- * the provider cmdlets' `[-Path] <string[]>` and `-LiteralPath`, which take
- * what a pipeline hands the command when the text gives neither. Remove-Item
- * and its names (`REMOVE_ITEM_NAMES`), whatever shell runs them, as the
- * floor reads them.
+ * The PowerShell commands whose parameters a pipeline may bind the reading
+ * holds (#715): the provider cmdlets that delete or erase, Remove-Item's names
+ * (`REMOVE_ITEM_NAMES`) and `PROVIDER_ERASERS`. Their signatures say which
+ * parameters a pipeline binds (`PsParameter.pipeline`).
  */
-const PIPELINE_TARGETS: ReadonlyMap<
-  string,
-  { signature: PsSignature; parameters: readonly string[] }
-> = new Map(
-  REMOVE_ITEM_NAMES.map((name) => [
-    name,
-    { signature: REMOVE_ITEM, parameters: ['path', 'literalpath'] },
-  ]),
-);
+const PIPELINE_TARGETS: ReadonlyMap<string, PsSignature> = new Map([
+  ...REMOVE_ITEM_NAMES.map((name) => [name, REMOVE_ITEM] as const),
+  ...Object.entries(PROVIDER_ERASERS),
+]);
 
-/** True when the text gives a held command one of its target parameters, by name or by position. */
+/**
+ * True when the text gives a held command every parameter a pipeline could
+ * bind (`PsParameter.pipeline`): each group by one of its names, or by its
+ * position. Only then is nothing left for a pipeline, or a prompt, to fill.
+ */
 function givesTarget(unit: readonly string[]): boolean {
-  const held = PIPELINE_TARGETS.get(unit[0] ?? '');
-  if (held === undefined) return false;
-  const bound = bindPsArguments(unit.slice(1), held.signature);
-  return (
-    psPositional(bound).length > 0 || held.parameters.some((p) => psValues(bound, p).length > 0)
-  );
+  const signature = PIPELINE_TARGETS.get(unit[0] ?? '');
+  if (signature === undefined) return false;
+  const bound = bindPsArguments(unit.slice(1), signature);
+  const positional = psPositional(bound);
+  const groups = new Map<string, boolean>();
+  for (const [name, p] of Object.entries(signature.parameters)) {
+    if (p.pipeline === undefined) continue;
+    const given =
+      psValues(bound, name).length > 0 ||
+      (p.position !== undefined && positional[p.position] !== undefined);
+    groups.set(p.pipeline, (groups.get(p.pipeline) ?? false) || given);
+  }
+  return [...groups.values()].every(Boolean);
+}
+
+/**
+ * True when PowerShell binds this command's parameters as the reading holds
+ * them: a held command (`PIPELINE_TARGETS`) in a line PowerShell reads
+ * (`UNIT_SHELL`). Read by sh or cmd, `rm -i ./dist` is rm and its option
+ * (Nodal review pass 1), and cmd runs no cmdlet (measured: `'Remove-Item' is
+ * not recognized`).
+ */
+function readByPowerShell(unit: readonly string[]): boolean {
+  return UNIT_SHELL.get(unit) === 'powershell' && PIPELINE_TARGETS.has(unit[0] ?? '');
 }
 
 /**
  * True when a PowerShell pipeline binds what it hands this command: any
  * command whose parameters the reading does not hold may take it; one it
- * holds (`PIPELINE_TARGETS`) only where the text leaves its targets empty
+ * holds only where the text leaves a parameter the pipeline binds empty
  * (measured, Windows PowerShell 5.1: `Get-ChildItem src | Remove-Item
- * .\x.txt` refuses each object it is handed, and deletes nothing).
+ * .\x.txt` refuses each object it is handed and deletes nothing, and `|
+ * Clear-Content .\x.txt` empties nothing).
  */
 function pipelineBinds(unit: readonly string[]): boolean {
-  return !PIPELINE_TARGETS.has(unit[0] ?? '') || !givesTarget(unit);
+  return !readByPowerShell(unit) || !givesTarget(unit);
 }
 
 /**
@@ -2688,14 +2810,14 @@ function wordDecidedAtRunTime(word: string): boolean {
 /**
  * True when what one unit acts on is decided when it runs (#715): a word of
  * it the reading cannot read, words handed to it when it runs
- * (`FED_AT_RUN_TIME`: xargs, find's `{}`, a PowerShell pipeline), or a
- * command whose targets the reading holds given none of them by the text,
- * which then come from a pipeline or a prompt. The reading does not hold each
+ * (`FED_AT_RUN_TIME`: xargs, parallel, find and fd, a PowerShell pipeline),
+ * or a command PowerShell reads whose parameters a pipeline binds the text
+ * leaves empty, which then come from a pipeline or a prompt. The reading does not hold each
  * program's grammar: any word it cannot read may be what the program acts on.
  */
 function wordsDecidedAtRunTime(unit: readonly string[]): boolean {
   if (FED_AT_RUN_TIME.has(unit) || unit.slice(1).some(wordDecidedAtRunTime)) return true;
-  return PIPELINE_TARGETS.has(unit[0] ?? '') && !givesTarget(unit);
+  return readByPowerShell(unit) && !givesTarget(unit);
 }
 
 /**
@@ -2930,10 +3052,17 @@ const MAY_BE_SCRIPT = new WeakMap<readonly string[], readonly string[]>();
  */
 const FED_AT_RUN_TIME = new WeakSet<readonly string[]>();
 
+/** The shell that reads each unit's words, as `wordUnits` read them (#715: whose parameters bind). */
+const UNIT_SHELL = new WeakMap<readonly string[], LineShell>();
+
 /** The programs of `RUNS_ANOTHER` that hand what they run words of their own (`FED_AT_RUN_TIME`). */
 const HANDS_WORDS: ReadonlySet<string> = new Set([
-  // `xargs rm`, `xargs -I{} rm {}`: the words it reads.
+  // `xargs rm`, `xargs -I{} rm {}`, `parallel rm`: the words they read.
   'xargs',
+  'parallel',
+  // `fd -x rm`, `fd -X rm`: each file found, or all of them.
+  'fd',
+  'fdfind',
   // `find … -exec rm {} +`: what it runs, once per file found, gets that file
   // in place of `{}` (glued too: `x{}y`, measured). sh's scanner reads `{`
   // and `}` as its own operators, so the `{}` is not always among the words
@@ -3300,6 +3429,7 @@ function wordUnits(
   const texts = args.map((a) => a.text);
   const units: string[][] = [[program, ...texts]];
   UNIT_HEADS.set(units[0] as string[], head.text);
+  UNIT_SHELL.set(units[0] as string[], shell);
   if (runsInItsShell(model, head.text, invoked, how.sourced === true))
     IN_PROCESS_SCRIPTS.add(units[0] as string[]);
   else {

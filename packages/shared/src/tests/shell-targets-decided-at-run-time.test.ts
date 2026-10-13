@@ -15,6 +15,7 @@
 // l'exécution : aucune ligne de ce fichier n'en est une telle quelle.
 
 import { describe, it, expect } from 'vitest';
+import { isShellProgram } from '../shell-programs';
 import {
   SHELL_KIND_TARGETS,
   staticShellCategories,
@@ -133,11 +134,34 @@ describe('delete_files: a target the text does not establish asks (#715) @cap:ex
     );
   });
 
-  it('cmd: a PowerShell pipeline typed into cmd names no path either', () => {
+  // Mesuré : cmd ne lance aucune cmdlet (`'Remove-Item' is not recognized`).
+  // Les paramètres de PowerShell ne se lient que là où PowerShell lit la
+  // ligne ; ailleurs, `rm -i ./dist` est rm et son option (passe 1 Nodal, P2).
+  it('PowerShell binds its parameters only where PowerShell reads the line', () => {
+    for (const flag of ['-i', '-I', '-f -i', '-v'])
+      expectEstablished(
+        [...sh(`${RM} ${flag} ./dist`), ...cmd(`${RM} ${flag} ./dist`)],
+        'delete_files',
+      );
+  });
+
+  it('programs that run a command with words of their own, read as xargs is: parallel, fd -x', () => {
     expectAsks(
-      cmd(`Get-ChildItem ${WIN_ROOT} -Force | Remove-Item -Recurse -Force`),
+      [
+        ...sh(`find . | parallel ${RM} -rf {}`),
+        ...sh(`find . | parallel ${RM}`),
+        ...sh(`parallel -j 4 '${RM} -rf {}' ::: a b`),
+        ...sh(`fd -x ${RM}`),
+        ...sh(`fd -e tmp --exec ${RM} {}`),
+        ...sh(`fdfind . -X ${RM} -rf`),
+        ...sh(`fd --exec-batch ${RM} -rf`),
+      ],
       'delete_files',
     );
+    expectAsks(sh('pgrep node | parallel kill'), 'stop_programs');
+    // like xargs, it runs whatever it is handed: never a program an allowlist may name
+    expect(isShellProgram('parallel')).toBe(true);
+    expectAsks(sh('fd -t d -x chmod 777'), 'system_settings');
   });
 
   it('sh: xargs, find -exec, a variable, a substitution, a loop, the home folder', () => {
@@ -187,7 +211,46 @@ describe('delete_files: a target the text does not establish asks (#715) @cap:ex
   // et ne supprime rien, ni src\*, ni x.txt. Le pipeline ne lie que les
   // paramètres que le texte laisse vides.
   it('a pipeline binds nothing when the text names the path: the target is the one written', () => {
-    expectEstablished(powershell('Get-ChildItem src | Remove-Item .\\x.txt'), 'delete_files');
+    expectEstablished(
+      [
+        ...powershell('Get-ChildItem src | Remove-Item .\\x.txt'),
+        // measured the same way: x.txt and src\a.txt both kept their content
+        ...powershell('Get-ChildItem src | Clear-Content .\\x.txt'),
+      ],
+      'delete_files',
+    );
+  });
+
+  // Passe 1 Nodal, P2 : les cmdlets du fournisseur qui effacent un contenu ou
+  // une entrée n'avaient aucune sorte (`remove-item(?=\s|$)` ratait
+  // Remove-ItemProperty) : silencieuses sous « ask » comme sous « allow ».
+  it('the provider cmdlets that erase content or an entry are deletions, read as Remove-Item is', () => {
+    expectAsks(
+      [
+        ...powershell('Get-ChildItem secret | Clear-Content'),
+        ...powershell('gci secret | clc'),
+        ...powershell('gci | Clear-Item'),
+        ...powershell('gci | cli'),
+        ...powershell('Get-Item HKCU:\\Software\\X | Remove-ItemProperty -Name Y'),
+        ...powershell('gi HKCU:\\Software\\X | rp -Name Y'),
+        ...powershell('Get-Item HKCU:\\Software\\X | Clear-ItemProperty -Name Y'),
+        ...powershell('gi HKCU:\\Software\\X | clp -Name Y'),
+        // the path given, the property name left to what the pipeline hands
+        ...powershell('Get-ChildItem | Remove-ItemProperty -Path HKCU:\\Software\\X'),
+        ...powershell('Clear-Content $log'),
+      ],
+      'delete_files',
+    );
+    expectEstablished(
+      [
+        ...powershell('Clear-Content .\\log.txt'),
+        ...powershell('Clear-Content -Path .\\out\\*.log'),
+        ...powershell('Remove-ItemProperty -Path HKCU:\\Software\\X -Name Y'),
+        ...powershell('Remove-ItemProperty HKCU:\\Software\\X Y'),
+        ...powershell('Clear-ItemProperty -LiteralPath HKCU:\\Software\\X -Name Y'),
+      ],
+      'delete_files',
+    );
   });
 });
 
