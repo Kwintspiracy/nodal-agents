@@ -23,6 +23,7 @@ import {
   consumeUnderClocks,
   estimateContextTokens,
   estimateToolTokens,
+  inputTokensUpperBound,
 } from './turn-clocks';
 
 import { buildAnthropicModel } from './providers/anthropic';
@@ -345,28 +346,30 @@ export function createLlmClient(
   /**
    * The cap a request states, or undefined:
    * - the caller's own cap, always (the caller knows what it asks);
-   * - this client's known cap (`outputCap`), only when the estimated input
-   *   leaves at least that much room in the known window, and never above a
-   *   caller's lower one (a caller never raises it, Codex review of #571);
+   * - this client's known cap (`outputCap`), only when an UPPER bound of the
+   *   input (`inputTokensUpperBound`: UTF-8 bytes, attachments at their
+   *   ceiling, framing, tools) leaves at least that much room in the known
+   *   window, and never above a caller's lower one (a caller never raises it,
+   *   Codex review of #571);
    * - nothing otherwise, as before #563.
    *
-   * The estimate never SETS the cap (Nodal review of #571, pass 2). A cap
-   * drawn from the room it leaves was too low whenever it overestimated: it
-   * counts each attachment at a ceiling (`ATTACHMENT_TOKEN_ESTIMATE`), so on a
-   * 16 384 window with two images it stated ~6 384 where ~14 000 was free,
-   * and an ordinary 7 000-token turn, cut there by the server, was refused.
-   * Used this way, an overestimate can only make the client state its cap
-   * less often, which falls back on the behaviour before #563, and never
-   * states a cap that a strict server refuses because input plus cap exceed
-   * the window. Nor does it refuse a request (pass 1): whether the input
-   * overflows is the server's count, and its refusal is classified as a
-   * context overflow (`isContextOverflowError`, the job loop's
+   * The input is never estimated here, it is bounded. An estimate never SET
+   * the cap (Nodal review of #571, pass 2: a cap drawn from the room it left
+   * cut ordinary turns when it overestimated), and an AVERAGE estimate could
+   * not decide either (pass 3): characters / 4 counts 100 000 Chinese
+   * characters as ~25 000 tokens where they are ~100 000, so the cap was
+   * stated, and input plus cap exceeded the window a strict server checks.
+   * With a bound, the decision errs only towards stating nothing, which is
+   * the behaviour before #563. Nor does it refuse a request (pass 1): whether
+   * the input overflows is the server's count, and its refusal is classified
+   * as a context overflow (`isContextOverflowError`, the job loop's
    * `context_window_exceeded`).
    */
-  const statedCapFor = (estimatedInput: number, callerCap: unknown): number | undefined => {
+  const statedCapFor = (input: object, callerCap: unknown): number | undefined => {
     const own = typeof callerCap === 'number' && callerCap > 0 ? callerCap : Infinity;
     const fits =
-      outputCap !== null && (contextWindow === null || contextWindow - estimatedInput >= outputCap);
+      outputCap !== null &&
+      (contextWindow === null || contextWindow - inputTokensUpperBound(input) >= outputCap);
     const cap = Math.min(fits ? outputCap : Infinity, own);
     return Number.isFinite(cap) ? cap : undefined;
   };
@@ -515,11 +518,9 @@ export function createLlmClient(
     // LOWER. A caller never raises it (revue Codex de #571): asking 131 072
     // stated a cap the provider cut under, without `length`, as in #563.
     //
-    // And only when the model's KNOWN context window has room for it once the
-    // estimated input is in (`statedCapFor`): the estimate decides whether the
-    // cap is stated, never its value. The input is the same estimate the turn
-    // clocks use (characters / 4, tools included, attachments at their
-    // allowance).
+    // And only when the model's KNOWN context window has room for it once an
+    // upper bound of the input is in (`statedCapFor`). The estimate below is
+    // an average, for the turn clocks only.
     const callerCap = (args as { maxOutputTokens?: unknown }).maxOutputTokens;
     // Caching path splits on the E1 boundary; non-caching path strips it so the
     // marker never leaks into a non-Anthropic provider's prompt.
@@ -528,7 +529,7 @@ export function createLlmClient(
       estimateContextTokens(
         unbounded as { system?: unknown; prompt?: unknown; messages?: unknown },
       ) + (await estimateToolTokens((unbounded as { tools?: unknown }).tools));
-    const statedCap = statedCapFor(estimatedInput, callerCap);
+    const statedCap = statedCapFor(unbounded, callerCap);
     const prepared = withStatedCap(unbounded, statedCap);
     const startedAt = Date.now();
     if (callOpts?.streamed === true && canStreamTurns) {
@@ -639,15 +640,10 @@ export function createLlmClient(
     // surfaces a hang in the wild. Strip the E1 boundary marker (this path
     // doesn't apply Anthropic caching, so the marker must not reach the model).
     const unbounded = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
-    // The stated cap, as on every request (#563). streamText answers
-    // synchronously, and a tool's schema is measured asynchronously
-    // (`estimateToolTokens`): the window part counts the prompt and messages
-    // only. An underestimate is refused by the server like any other `max_tokens`
-    // too high for its window (#119).
+    // The stated cap, as on every request (#563), decided on the same bound,
+    // tools included.
     const statedCap = statedCapFor(
-      estimateContextTokens(
-        unbounded as { system?: unknown; prompt?: unknown; messages?: unknown },
-      ),
+      unbounded,
       (args as { maxOutputTokens?: unknown }).maxOutputTokens,
     );
     return streamText({ ...withStatedCap(unbounded, statedCap), model } as Parameters<
@@ -660,9 +656,7 @@ export function createLlmClient(
     const unbounded = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
     // The stated cap, as on every request (#563).
     const statedCap = statedCapFor(
-      estimateContextTokens(
-        unbounded as { system?: unknown; prompt?: unknown; messages?: unknown },
-      ) + (await estimateToolTokens((unbounded as { tools?: unknown }).tools)),
+      unbounded,
       (args as { maxOutputTokens?: unknown }).maxOutputTokens,
     );
     const prepared = withStatedCap(unbounded, statedCap);

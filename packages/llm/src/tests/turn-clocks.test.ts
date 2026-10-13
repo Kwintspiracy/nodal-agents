@@ -7,7 +7,8 @@
 // LLMTimeoutError with the text written before the clock fired.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { streamText } from 'ai';
+import { jsonSchema, streamText } from 'ai';
+import { z } from 'zod';
 import { MockLanguageModelV3 } from 'ai/test';
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 
@@ -16,6 +17,8 @@ import {
   consumeUnderClocks,
   estimateContextTokens,
   ATTACHMENT_TOKEN_ESTIMATE,
+  FRAMING_TOKENS_PER_UNIT,
+  inputTokensUpperBound,
   estimateToolTokens,
   isLocalEndpoint,
   BETWEEN_TOKENS_MS,
@@ -838,5 +841,50 @@ describe('a tool call finished IN the stream does not reset the ceiling (#484) @
     expect(err).toBeInstanceOf(LLMTimeoutError);
     expect(err.reason).toBe('invisible_production');
     expect(err.timeoutMs).toBe(INVISIBLE_PRODUCTION_MS);
+  });
+});
+
+// Revue Nodal de #571, passe 3 : la décision d'annoncer un plafond lit une
+// borne SUPÉRIEURE de l'entrée, jamais la moyenne des horloges.
+describe('inputTokensUpperBound: never below what a tokenizer can make of the input @cap:suivre-execution/moteur', () => {
+  it('text counts its UTF-8 bytes: dense text is not averaged away', () => {
+    const cjk = { messages: [{ role: 'user', content: '中'.repeat(1_000) }] };
+    expect(estimateContextTokens(cjk)).toBe(250);
+    // 3 000 bytes, one framed message, plus the reply's framing.
+    expect(inputTokensUpperBound(cjk)).toBe(3_000 + 2 * FRAMING_TOKENS_PER_UNIT);
+  });
+
+  it('an image counts its ceiling; a PDF has none, so the bound is infinite', () => {
+    const image = {
+      messages: [
+        { role: 'user', content: [{ type: 'image', image: 'zzzz', mediaType: 'image/png' }] },
+      ],
+    };
+    expect(inputTokensUpperBound(image)).toBe(
+      ATTACHMENT_TOKEN_ESTIMATE + 2 * FRAMING_TOKENS_PER_UNIT,
+    );
+    const pdf = {
+      messages: [
+        { role: 'user', content: [{ type: 'file', data: 'zzzz', mediaType: 'application/pdf' }] },
+      ],
+    };
+    expect(inputTokensUpperBound(pdf)).toBe(Infinity);
+  });
+
+  it('tools count the bytes of their definitions; a schema not readable now makes it infinite', () => {
+    const sync = {
+      tools: { find: { description: 'ab', inputSchema: z.object({ q: z.string() }) } },
+    };
+    expect(inputTokensUpperBound(sync)).toBeGreaterThan(4 + 2 + 2 * FRAMING_TOKENS_PER_UNIT);
+    expect(Number.isFinite(inputTokensUpperBound(sync))).toBe(true);
+    const later = {
+      tools: {
+        find: {
+          description: 'ab',
+          inputSchema: jsonSchema(() => Promise.resolve({ type: 'object' as const })),
+        },
+      },
+    };
+    expect(inputTokensUpperBound(later)).toBe(Infinity);
   });
 });

@@ -111,11 +111,11 @@ export function isLocalEndpoint(config: Pick<ProviderConfig, 'provider' | 'baseU
  * with-claude/vision, read 2026-10-13: "Max visual tokens" 4784 on the
  * high-resolution tier, images larger than it are downscaled to fit).
  * OpenAI and Gemini document lower per-image costs, so the allowance is a
- * ceiling for one image. For a file it is about one to three PDF pages
- * (Anthropic: 1 500 to 3 000 tokens per page): a document of more pages is
- * still underestimated, and the server's own refusal of a `max_tokens` too
- * high for its window remains the backstop (#119). Its bytes are never read
- * as text: base64 says nothing about what the model sees.
+ * ceiling for one image. In the average estimate (the turn clocks) a file
+ * counts the same, about one to three PDF pages (Anthropic: 1 500 to 3 000
+ * tokens per page); the upper bound (`inputTokensUpperBound`) does not bound
+ * a file at all. Its bytes are never read as text: base64 says nothing about
+ * what the model sees.
  */
 export const ATTACHMENT_TOKEN_ESTIMATE = 4_784;
 
@@ -133,24 +133,33 @@ const ATTACHMENT_PART_TYPES = new Set([
   'media',
 ]);
 
-/**
- * Rough token count of what a call sends: characters / 4 over the system
- * prompt, the `prompt` of a call that sends one instead of messages, and every
- * textual part of the messages, tool results included, plus
- * `ATTACHMENT_TOKEN_ESTIMATE` per image or file. It picks a clock tier
- * (50K / 100K) and bounds the stated output cap by the known window (#563),
- * so a rough count is all it needs.
- */
-export function estimateContextTokens(args: {
+/** What a call's input carries, read once for the estimate and for the bound. */
+interface InputMeasure {
+  /** UTF-16 code units of its text (`String.length`). */
+  chars: number;
+  /** UTF-8 bytes of the same text. */
+  bytes: number;
+  /** Image attachments (an image part, or a file part whose media type is an image). */
+  images: number;
+  /** Other file attachments (a PDF, a document): no per-file ceiling exists. */
+  files: number;
+  /** Framed units: the system prompt, the prompt, each message. */
+  framed: number;
+}
+
+function measureInput(args: {
   system?: unknown;
   prompt?: unknown;
   messages?: unknown;
-}): number {
-  let chars = 0;
-  let attachments = 0;
+}): InputMeasure {
+  const m: InputMeasure = { chars: 0, bytes: 0, images: 0, files: 0, framed: 0 };
+  const text = (t: string): void => {
+    m.chars += t.length;
+    m.bytes += Buffer.byteLength(t, 'utf8');
+  };
   const add = (v: unknown): void => {
     if (typeof v === 'string') {
-      chars += v.length;
+      text(v);
       return;
     }
     if (Array.isArray(v)) {
@@ -160,11 +169,13 @@ export function estimateContextTokens(args: {
     if (v && typeof v === 'object') {
       const part = v as Record<string, unknown>;
       if (typeof part['type'] === 'string' && ATTACHMENT_PART_TYPES.has(part['type'])) {
-        attachments += 1;
+        const mediaType = typeof part['mediaType'] === 'string' ? part['mediaType'] : '';
+        if (part['type'].startsWith('image') || mediaType.startsWith('image/')) m.images += 1;
+        else m.files += 1;
         return;
       }
       if (typeof part['text'] === 'string') {
-        chars += part['text'].length;
+        text(part['text']);
         return;
       }
       if ('content' in part) {
@@ -183,16 +194,110 @@ export function estimateContextTokens(args: {
         return;
       }
       try {
-        chars += JSON.stringify(part).length;
+        text(JSON.stringify(part));
       } catch {
         // A value that cannot be serialised adds nothing to the estimate.
       }
     }
   };
-  add(args.system);
-  add(args.prompt);
-  add(args.messages);
-  return Math.ceil(chars / 4) + attachments * ATTACHMENT_TOKEN_ESTIMATE;
+  for (const unit of [args.system, args.prompt]) {
+    if (unit !== undefined && unit !== null) {
+      m.framed += 1;
+      add(unit);
+    }
+  }
+  if (Array.isArray(args.messages)) {
+    m.framed += args.messages.length;
+    add(args.messages);
+  }
+  return m;
+}
+
+/**
+ * Rough token count of what a call sends: characters / 4 over the system
+ * prompt, the `prompt` of a call that sends one instead of messages, and every
+ * textual part of the messages, tool results included, plus
+ * `ATTACHMENT_TOKEN_ESTIMATE` per image or file. An AVERAGE: it picks a clock
+ * tier (50K / 100K), where a rough count is all that is needed. Dense text
+ * (code, JSON, Chinese, Japanese, Korean) runs above it; anything that must
+ * not be exceeded reads `inputTokensUpperBound`.
+ */
+export function estimateContextTokens(args: {
+  system?: unknown;
+  prompt?: unknown;
+  messages?: unknown;
+}): number {
+  const m = measureInput(args);
+  return Math.ceil(m.chars / 4) + (m.images + m.files) * ATTACHMENT_TOKEN_ESTIMATE;
+}
+
+/**
+ * What a chat template adds around each framed unit (a message, the system
+ * prompt, the prompt, a tool definition): role markers and separators that
+ * are tokens but not text. OpenAI counts 3 per message plus 3 to prime the
+ * reply ("How to count tokens with tiktoken", OpenAI cookbook); Llama 3 frames
+ * a message with 5 (`<|start_header_id|>`, role, `<|end_header_id|>`, `\n\n`,
+ * `<|eot_id|>`). 16 stays above both, and above a SentencePiece tokenizer's
+ * leading `▁` per text.
+ */
+export const FRAMING_TOKENS_PER_UNIT = 16;
+
+/**
+ * An UPPER bound of the input tokens a call sends (#563, Nodal review of #571,
+ * pass 3), for a decision that must not be wrong in the dangerous direction:
+ * whether a cap still fits in the window.
+ * - Text counts its UTF-8 bytes. A byte-level BPE token (OpenAI, DeepSeek,
+ *   Llama 3, Qwen, Kimi, Mistral's Tekken) covers at least one byte, and a
+ *   SentencePiece tokenizer with byte fallback (Gemma, Gemini) falls back to
+ *   one token per byte at worst. Not covered: a Unicode normalisation (NFKC)
+ *   that lengthens a character before tokenising, such as a compatibility
+ *   ideograph expanded into several; rare in practice.
+ * - An image counts `ATTACHMENT_TOKEN_ESTIMATE`, the documented ceiling for
+ *   one image. Any other file (a PDF, a document) makes the bound infinite:
+ *   its cost grows with its pages, and no per-file ceiling exists.
+ * - Each framed unit and each tool adds `FRAMING_TOKENS_PER_UNIT`.
+ * - Tool definitions count the bytes of their name, description and JSON
+ *   schema. A schema that cannot be read synchronously, or not at all, makes
+ *   the bound infinite: what cannot be bounded is not bounded.
+ * Synchronous, so that every path reads the same bound (streamText answers
+ * synchronously).
+ */
+export function inputTokensUpperBound(args: {
+  system?: unknown;
+  prompt?: unknown;
+  messages?: unknown;
+  tools?: unknown;
+}): number {
+  const m = measureInput(args);
+  if (m.files > 0) return Infinity;
+  return (
+    m.bytes +
+    m.images * ATTACHMENT_TOKEN_ESTIMATE +
+    (m.framed + 1) * FRAMING_TOKENS_PER_UNIT +
+    toolsUpperBound(args.tools)
+  );
+}
+
+function toolsUpperBound(tools: unknown): number {
+  if (!tools || typeof tools !== 'object') return 0;
+  let tokens = 0;
+  for (const [name, def] of Object.entries(tools as Record<string, unknown>)) {
+    tokens += Buffer.byteLength(name, 'utf8') + FRAMING_TOKENS_PER_UNIT;
+    const tool = (def ?? {}) as { description?: unknown; inputSchema?: unknown };
+    if (typeof tool.description === 'string') {
+      tokens += Buffer.byteLength(tool.description, 'utf8');
+    }
+    if (tool.inputSchema == null) continue;
+    let schema: unknown;
+    try {
+      schema = asSchema(tool.inputSchema as Parameters<typeof asSchema>[0]).jsonSchema;
+    } catch {
+      return Infinity;
+    }
+    if (schema === null || typeof schema !== 'object' || 'then' in schema) return Infinity;
+    tokens += Buffer.byteLength(JSON.stringify(schema), 'utf8');
+  }
+  return tokens;
 }
 
 /**

@@ -255,6 +255,26 @@ describe('a known cap is stated only when the estimated input leaves room for it
   const DEEPSEEK = { provider: 'deepseek' as const, model: 'deepseek-chat', apiKey: 'k' };
   const estimate = async (args: { system?: unknown; messages?: unknown; tools?: unknown }) =>
     estimateContextTokens(args) + (await estimateToolTokens(args.tools));
+  function stubSse(): void {
+    bodies = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        bodies.push(JSON.parse(init?.body as string) as Record<string, unknown>);
+        const chunks = [
+          { id: 'c', choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' } }] },
+          {
+            id: 'c',
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+          },
+        ];
+        const sse =
+          chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n';
+        return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+      }),
+    );
+  }
   const withImages = (n: number) => ({
     ...ARGS,
     messages: [
@@ -314,6 +334,102 @@ describe('a known cap is stated only when the estimated input leaves room for it
 
     expect(res.toolCalls.map((c) => c.toolName)).toEqual(['save_memory']);
     expect(bodies[0]).not.toHaveProperty('max_tokens');
+  });
+
+  // Revue Nodal de #571, passe 3 (P2) : `fits` lisait une estimation MOYENNE
+  // (caractères / 4). Le texte dense la dépasse : 100 000 caractères chinois
+  // font ~25 000 jetons sur le papier et ~100 000 en vrai. `max_tokens: 65536`
+  // partait, et entrée + plafond dépassaient la fenêtre : un serveur strict
+  // refuse, là où main n'annonçait rien. La décision lit une BORNE SUPÉRIEURE :
+  // les octets UTF-8 (un jeton fait au moins un octet).
+  it('100 000 CJK characters on deepseek-chat: no cap, the bound counts their 300 000 bytes', async () => {
+    stubFetch(() => chatCompletion('stop', 20));
+    const cjk = { ...ARGS, messages: [{ role: 'user' as const, content: '中'.repeat(100_000) }] };
+    // The average estimate would have let the cap through.
+    expect(128_000 - estimateContextTokens(cjk)).toBeGreaterThan(TURN_OUTPUT_TOKEN_CAP);
+
+    await createLlmClient(DEEPSEEK).generateText(cjk);
+
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
+  });
+
+  it('ASCII: 40 000 characters leave room for the cap, 100 000 do not (bytes = characters)', async () => {
+    // 40 000 bytes + framing: 128 000 − ~40 100 ≥ 65 536, the cap is stated.
+    stubFetch(() => chatCompletion('stop', 20));
+    await createLlmClient(DEEPSEEK).generateText({
+      ...ARGS,
+      messages: [{ role: 'user' as const, content: 'x'.repeat(40_000) }],
+    });
+    expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
+
+    // 100 000 bytes: 128 000 − ~100 100 < 65 536, no cap, as on main (the
+    // average estimate, 25 000, would have stated it).
+    stubFetch(() => chatCompletion('stop', 20));
+    await createLlmClient(DEEPSEEK).generateText({
+      ...ARGS,
+      messages: [{ role: 'user' as const, content: 'x'.repeat(100_000) }],
+    });
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
+  });
+
+  it('a PDF has no per-file ceiling: the bound is infinite and no cap is stated', async () => {
+    stubFetch(() => chatCompletion('stop', 20));
+    await createLlmClient(DEEPSEEK).generateText({
+      ...ARGS,
+      messages: [
+        {
+          role: 'user' as const,
+          content: [
+            { type: 'text' as const, text: 'summarise' },
+            {
+              type: 'file' as const,
+              data: new Uint8Array([37, 80, 68, 70]),
+              mediaType: 'application/pdf',
+            },
+          ],
+        },
+      ],
+    });
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
+
+    // An image sent as a file part is an image: bounded, the cap is stated.
+    stubFetch(() => chatCompletion('stop', 20));
+    await createLlmClient(DEEPSEEK).generateText({
+      ...ARGS,
+      messages: [
+        {
+          role: 'user' as const,
+          content: [
+            { type: 'text' as const, text: 'what is this?' },
+            {
+              type: 'file' as const,
+              data: new Uint8Array([137, 80, 78, 71]),
+              mediaType: 'image/png',
+            },
+          ],
+        },
+      ],
+    });
+    expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
+  });
+
+  it('streamText counts its tools in the bound', async () => {
+    // 300 tools of ~330 bytes each: ~100 000 bytes of definitions.
+    const tools = Object.fromEntries(
+      Array.from({ length: 300 }, (_v, i) => [
+        `tool_${i}`,
+        { description: 'd'.repeat(300), inputSchema: z.object({ q: z.string() }) },
+      ]),
+    );
+    stubSse();
+
+    await createLlmClient(DEEPSEEK).streamText({ prompt: 'go', tools }).text;
+
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
+    // Without them, the same prompt states the cap.
+    stubSse();
+    await createLlmClient(DEEPSEEK).streamText({ prompt: 'go' }).text;
+    expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
   });
 
   it('attachments count in that decision, at their allowance', async () => {
