@@ -8,18 +8,22 @@
 // switch, and its value for the command. `parallel --replace X rm -rf X ::: a`
 // was read as running the program `X`: no kind at all, even under "ask".
 //
-// The rule now: a program's grammar names its switches AND its valued
-// options, as its manual writes them, and an option the grammar cannot
-// classify makes the reading opaque. What the program runs is then decided at
-// run time, which asks under any autonomy (invariant #4), never a command
-// chosen by a guess.
+// The rule now: a program's grammar names its switches, its valued options
+// and its options whose value is optional, as its manual writes them. An
+// option the grammar cannot classify makes the reading opaque: the command
+// may start right after it, or after the word it may take, and the program
+// it runs is decided at run time, which asks under any autonomy (invariant
+// #4). Each of those starts is kept as a candidate (Nodal review pass 3): the
+// kinds and the hard floor still read what may run, so no longer guessing
+// never makes the floor blinder than the guess was.
 //
 // Read as getopt reads them: `--` ends the options; a word that does not start
 // with `-` is the command; `--name=value` is one word, whatever `name` is; a
 // group of short letters (`-rf`, `-j4`) is read letter by letter, a valued
-// letter taking the rest of the word or the next one. A long option is read
-// only by its exact name: an abbreviation (`--rep`) could be any option of a
-// program whose manual the grammar does not hold in full.
+// letter taking the rest of the word or the next one, an optional one only
+// the rest of the word (`watch -d1`). A long option is read only by its exact
+// name: an abbreviation (`--rep`) could be any option of a program whose
+// manual the grammar does not hold in full.
 
 /** The options of one program, as written in its manual. */
 export interface OptionGrammar {
@@ -27,6 +31,8 @@ export interface OptionGrammar {
   switches: ReadonlySet<string>;
   /** Options that take the next word (or the rest of a short group) as their value. */
   valued: ReadonlySet<string>;
+  /** Options whose value is optional, given glued only: `-d1`, `--differences=1`, or none. */
+  optional: ReadonlySet<string>;
   /**
    * Every option is one word, its value glued with `=` (firejail): no option
    * can take the next word, so none hides where the command starts.
@@ -35,74 +41,115 @@ export interface OptionGrammar {
 }
 
 /**
- * A grammar from a program's manual: its short switches and valued letters,
- * and its long switches and valued options (single-dash long names, as
- * expect's `spawn -noecho`, go with the long ones).
+ * A grammar from a program's manual: its short switches, valued and optional
+ * letters, then its long switches, valued and optional options (single-dash
+ * long names, as expect's `spawn -noecho`, go with the long ones).
  */
 export function optionGrammar(
   shortSwitches: string,
   shortValued: string,
   longSwitches: readonly string[] = [],
   longValued: readonly string[] = [],
+  shortOptional = '',
+  longOptional: readonly string[] = [],
 ): OptionGrammar {
+  const short = (letters: string) => [...letters].map((c) => `-${c}`);
   return {
-    switches: new Set([...[...shortSwitches].map((c) => `-${c}`), ...longSwitches]),
-    valued: new Set([...[...shortValued].map((c) => `-${c}`), ...longValued]),
+    switches: new Set([...short(shortSwitches), ...longSwitches]),
+    valued: new Set([...short(shortValued), ...longValued]),
+    optional: new Set([...short(shortOptional), ...longOptional]),
   };
 }
 
-/** A program's options, read: where its command starts, and each valued option with its value. */
+/** A program's options, read: where its command may start, and each valued option with its value. */
 export interface OptionsRead {
-  /** The index of the command's first word (`words.length` when there is none). */
-  start: number;
+  /**
+   * Where the command may start (`words.length` when there is none): one
+   * index when every option is classified; past an option the grammar cannot
+   * classify, each start it may give, in order.
+   */
+  starts: number[];
+  /** True when an option could not be classified: which start is the command's is the program's call. */
+  opaque: boolean;
   /** Each valued option given, by the name it was written with (`-c`, `--command`), and its value. */
   values: Array<{ option: string; value: string }>;
 }
 
 /**
- * A program's options among `words` (its words after its name), read with
- * its grammar; null when an option the grammar cannot classify hides where
- * the command starts.
+ * How many words one option takes (1 or 2), its value recorded in `values`;
+ * null when the grammar cannot classify it.
  */
-export function readOptions(words: readonly string[], grammar: OptionGrammar): OptionsRead | null {
-  const values: OptionsRead['values'] = [];
-  let i = 0;
-  while (i < words.length) {
-    const word = words[i] ?? '';
-    if (word === '--') return { start: i + 1, values };
-    if (!/^-./.test(word)) return { start: i, values };
-    if (grammar.gluedOnly === true || grammar.switches.has(word)) {
-      i += 1;
-      continue;
-    }
-    if (grammar.valued.has(word)) {
-      values.push({ option: word, value: words[i + 1] ?? '' });
-      i += 2;
-      continue;
-    }
-    // `--name=value`: one word, its value glued.
-    if (word.startsWith('--')) {
-      const eq = word.indexOf('=');
-      if (eq < 0) return null;
-      values.push({ option: word.slice(0, eq), value: word.slice(eq + 1) });
-      i += 1;
-      continue;
-    }
-    // A group of short letters: switches, then at most one valued letter,
-    // which takes the rest of the word or the next one.
-    let taken = 1;
-    for (let j = 1; j < word.length; j++) {
-      const option = `-${word[j]}`;
-      if (grammar.switches.has(option)) continue;
-      if (!grammar.valued.has(option)) return null;
-      const glued = word.slice(j + 1);
-      values.push({ option, value: glued !== '' ? glued : (words[i + 1] ?? '') });
-      if (glued === '') taken = 2;
-      break;
-    }
-    i += taken;
+function optionWords(
+  word: string,
+  next: string | undefined,
+  grammar: OptionGrammar,
+  values: OptionsRead['values'],
+): number | null {
+  if (grammar.gluedOnly === true || grammar.switches.has(word) || grammar.optional.has(word))
+    return 1;
+  if (grammar.valued.has(word)) {
+    values.push({ option: word, value: next ?? '' });
+    return 2;
   }
-  return { start: words.length, values };
+  // `--name=value`: one word, its value glued.
+  if (word.startsWith('--')) {
+    const eq = word.indexOf('=');
+    if (eq < 0) return null;
+    values.push({ option: word.slice(0, eq), value: word.slice(eq + 1) });
+    return 1;
+  }
+  // A group of short letters: switches, then at most one letter with a value,
+  // a valued one taking the rest of the word or the next one, an optional one
+  // the rest of the word only.
+  for (let j = 1; j < word.length; j++) {
+    const option = `-${word[j]}`;
+    const glued = word.slice(j + 1);
+    if (grammar.switches.has(option)) continue;
+    if (grammar.optional.has(option)) {
+      if (glued !== '') values.push({ option, value: glued });
+      return 1;
+    }
+    if (!grammar.valued.has(option)) return null;
+    values.push({ option, value: glued !== '' ? glued : (next ?? '') });
+    return glued !== '' ? 1 : 2;
+  }
+  return 1;
+}
+
+/**
+ * A program's options among `words` (its words after its name), read with
+ * its grammar. Past an option it cannot classify, the reading goes on both
+ * ways: the option alone, and the option with the next word as its value.
+ */
+export function readOptions(words: readonly string[], grammar: OptionGrammar): OptionsRead {
+  const values: OptionsRead['values'] = [];
+  const read = new Map<number, number[]>();
+  let opaque = false;
+  const from = (start: number): number[] => {
+    const known = read.get(start);
+    if (known !== undefined) return known;
+    read.set(start, []);
+    let i = start;
+    let starts: number[] | null = null;
+    while (starts === null) {
+      const word = words[i];
+      if (word === undefined) starts = [words.length];
+      else if (word === '--') starts = [i + 1];
+      else if (!/^-./.test(word)) starts = [i];
+      else {
+        const taken = optionWords(word, words[i + 1], grammar, values);
+        if (taken !== null) i += taken;
+        else {
+          opaque = true;
+          starts = [...from(i + 1), ...(i + 1 < words.length ? from(i + 2) : [])];
+        }
+      }
+    }
+    read.set(start, starts);
+    return starts;
+  };
+  const starts = [...new Set(from(0))].sort((x, y) => x - y);
+  return { starts, opaque, values };
 }
 
 const VERSION_HELP = ['--help', '--version'];
@@ -151,6 +198,8 @@ export const PROGRAM_OPTIONS = {
       '--user',
     ],
   ),
+  // busybox's own modes (`--list`…) are read apart: past them, `--` and an applet.
+  busybox: optionGrammar('', ''),
   doas: optionGrammar('Lns', 'Cu'),
   nohup: optionGrammar('', '', VERSION_HELP),
   nice: optionGrammar('', 'n', VERSION_HELP, ['--adjustment']),
@@ -244,15 +293,18 @@ export const PROGRAM_OPTIONS = {
     '--verbose',
     ...VERSION_HELP,
   ]),
+  // procps-ng watch(1): `-d`/`--differences[=permanent]` takes its value
+  // glued only; `-s`/`--shotsdir` is left out, its manual line shows no value
+  // but speaks of a folder.
   watch: optionGrammar(
-    'bcCdeghprtwx',
+    'bcCefgprtwxhv',
     'nq',
     [
       '--beep',
       '--color',
       '--no-color',
-      '--differences',
       '--errexit',
+      '--follow',
       '--chgexit',
       '--precise',
       '--no-rerun',
@@ -262,6 +314,8 @@ export const PROGRAM_OPTIONS = {
       ...VERSION_HELP,
     ],
     ['--interval', '--equexit'],
+    'd',
+    ['--differences'],
   ),
   // `flock [options] FILE -c LINE`: its `-c` is read apart (`RUNS_ANOTHER`).
   flock: optionGrammar(
@@ -282,22 +336,12 @@ export const PROGRAM_OPTIONS = {
   ),
   chroot: optionGrammar('', '', ['--skip-chdir', ...VERSION_HELP], ['--userspec', '--groups']),
   unshare: optionGrammar(
-    'cCfhimnprTuUV',
+    'cfhrV',
     'GRSw',
     [
       '--map-current-user',
-      '--cgroup',
       '--fork',
-      '--ipc',
-      '--mount',
-      '--net',
-      '--pid',
       '--map-root-user',
-      '--time',
-      '--uts',
-      '--user',
-      '--mount-proc',
-      '--kill-child',
       '--keep-caps',
       '--map-auto',
       ...VERSION_HELP,
@@ -316,14 +360,30 @@ export const PROGRAM_OPTIONS = {
       '--monotonic',
       '--boottime',
     ],
+    // a namespace's file, glued: `--mount=/run/ns`
+    'CimnpTuU',
+    [
+      '--cgroup',
+      '--ipc',
+      '--mount',
+      '--net',
+      '--pid',
+      '--time',
+      '--uts',
+      '--user',
+      '--mount-proc',
+      '--kill-child',
+    ],
   ),
   nsenter: optionGrammar(
-    'aCFhimnprTuUVwZ',
+    'aFhVZ',
     'GSt',
+    ['--all', '--no-fork', '--follow-context', '--preserve-credentials', ...VERSION_HELP],
+    ['--setgid', '--setuid', '--target'],
+    // a namespace's file, the root or the working folder, glued: `-r/srv`
+    'CimnprTuUw',
     [
-      '--all',
       '--cgroup',
-      '--no-fork',
       '--ipc',
       '--mount',
       '--net',
@@ -333,11 +393,7 @@ export const PROGRAM_OPTIONS = {
       '--uts',
       '--user',
       '--wd',
-      '--follow-context',
-      '--preserve-credentials',
-      ...VERSION_HELP,
     ],
-    ['--setgid', '--setuid', '--target'],
   ),
   'systemd-run': optionGrammar(
     'dGhPqrStV',
@@ -384,7 +440,7 @@ export const PROGRAM_OPTIONS = {
     ],
   ),
   // firejail writes every value glued (`--private=dir`).
-  firejail: { switches: new Set(), valued: new Set(), gluedOnly: true },
+  firejail: { switches: new Set(), valued: new Set(), optional: new Set(), gluedOnly: true },
   caffeinate: optionGrammar('dimsu', 'tw'),
   pkexec: optionGrammar(
     '',
@@ -439,6 +495,8 @@ export const PROGRAM_OPTIONS = {
   ),
   exec: optionGrammar('cl', 'a'),
   command: optionGrammar('pvV', ''),
+  // findutils xargs(1): `-e`, `-i`, `-l` and their long forms take their value
+  // glued only.
   xargs: optionGrammar(
     '0oprtx',
     'adEILnPs',
@@ -453,95 +511,301 @@ export const PROGRAM_OPTIONS = {
       ...VERSION_HELP,
     ],
     ['--arg-file', '--delimiter', '--max-args', '--max-procs', '--max-chars', '--process-slot-var'],
+    'eil',
+    ['--eof', '--replace', '--max-lines'],
   ),
+  // GNU parallel 20260922: every option of its Getopt::Long table
+  // (`options_completion_hash`). Perl takes a word that does not start with
+  // `-` as the value of an optional string (`--replace X`, `-i X`): valued.
+  // `-l` / `--max-lines` take theirs only when it is a number: left out, so
+  // both readings are kept.
   parallel: optionGrammar(
-    '0gkmqrtuvX',
-    'aCdEIjJLnNPsS',
+    '0MTVXYghkmopqrtuvx',
+    'BCDEHIJLNPSUWadeijns',
     [
-      '--null',
-      '--group',
-      '--keep-order',
-      '--quote',
-      '--no-run-if-empty',
-      '--verbose',
-      '--ungroup',
-      '--line-buffer',
-      '--lb',
-      '--tag',
-      '--ctag',
-      '--dry-run',
-      '--eta',
-      '--progress',
       '--bar',
-      '--will-cite',
-      '--nonall',
-      '--onall',
-      '--pipe',
-      '--spreadstdin',
-      '--pipe-part',
-      '--round-robin',
-      '--round',
-      '--xargs',
-      '--tty',
-      '--no-notice',
-      '--noswap',
-      '--fg',
       '--bg',
+      '--bibtex',
+      '--cat',
+      '--cf',
+      '--citation',
+      '--cleanup',
+      '--color',
+      '--color-fail',
+      '--color-failed',
+      '--colorfail',
+      '--colorfailed',
+      '--colour',
+      '--colour-fail',
+      '--colour-failed',
+      '--colourfail',
+      '--colourfailed',
+      '--compress',
+      '--compress-program',
+      '--controlmaster',
+      '--csv',
+      '--ctag',
+      '--ctrl-c',
+      '--ctrlc',
+      '--decompress-program',
+      '--dr',
+      '--dry-run',
+      '--dryrun',
+      '--embed',
+      '--eta',
+      '--exit',
+      '--fast',
+      '--fg',
+      '--fifo',
+      '--files',
+      '--files0',
+      '--filter-host',
+      '--filter-hosts',
+      '--filterhosts',
+      '--gnu',
+      '--group',
+      '--hashbang',
+      '--help',
+      '--hgrp',
+      '--hostgroup',
+      '--hostgroups',
+      '--hostgrp',
+      '--interactive',
+      '--keep-order',
+      '--keeporder',
+      '--latest-line',
+      '--latestline',
+      '--lb',
+      '--line-buffer',
+      '--line-buffered',
+      '--linebuffer',
+      '--linebuffered',
+      '--link',
+      '--ll',
+      '--max-line-length-allowed',
+      '--maxlinelengthallowed',
+      '--nn',
+      '--no-ctrl-c',
+      '--no-ctrlc',
+      '--no-k',
+      '--no-keep-order',
+      '--no-notice',
+      '--no-run-if-empty',
+      '--noctrlc',
+      '--nok',
+      '--nokeeporder',
+      '--nonall',
+      '--nonotice',
+      '--norunifempty',
+      '--noswap',
+      '--null',
+      '--number-of-cores',
+      '--number-of-cpus',
+      '--number-of-sockets',
+      '--number-of-threads',
+      '--numberofcores',
+      '--numberofcpus',
+      '--numberofsockets',
+      '--numberofthreads',
+      '--onall',
+      '--open-tty',
+      '--output-as-files',
+      '--output-as-files0',
+      '--outputasfiles',
+      '--outputasfiles0',
+      '--pipe',
+      '--pipe-part',
+      '--pipepart',
+      '--plain',
+      '--plus',
+      '--progress',
+      '--quote',
+      '--record-env',
+      '--recordenv',
+      '--regex',
+      '--regexp',
+      '--remove-rec-sep',
+      '--removerecsep',
       '--resume',
       '--resume-failed',
+      '--resumefailed',
       '--retry-failed',
+      '--retryfailed',
+      '--round',
+      '--round-robin',
+      '--roundrobin',
+      '--rrs',
+      '--semaphore',
+      '--session',
+      '--shebang',
+      '--shell-quote',
+      '--shell_quote',
+      '--shellquote',
+      '--show-limits',
+      '--showlimits',
       '--shuf',
+      '--silent',
       '--skip-first-line',
-      '--files',
-      '--record-env',
-      '--plus',
-      '--csv',
-      '--filter-hosts',
-      '--cleanup',
+      '--skipfirstline',
+      '--spreadstdin',
+      '--tag',
+      '--tee',
+      '--tmux',
+      '--tmux-pane',
+      '--tmuxpane',
+      '--tollef',
       '--transfer',
-      ...VERSION_HELP,
+      '--tty',
+      '--ungroup',
+      '--unsafe',
+      '--use-compress-program',
+      '--use-cores-instead-of-threads',
+      '--use-cpus-instead-of-cores',
+      '--use-decompress-program',
+      '--use-sockets-instead-of-threads',
+      '--usecoresinsteadofthreads',
+      '--usecpusinsteadofcores',
+      '--usesocketsinsteadofthreads',
+      '--verbose',
+      '--version',
+      '--wait',
+      '--will-cite',
+      '--willcite',
+      '--xapply',
+      '--xargs',
     ],
     [
       '--arg-file',
       '--arg-file-sep',
       '--arg-sep',
+      '--argfile',
+      '--argfilesep',
+      '--argsep',
       '--basefile',
+      '--basenameextensionreplace',
+      '--basenamereplace',
       '--bf',
+      '--bin',
       '--block',
       '--block-size',
+      '--block-timeout',
+      '--blocksize',
+      '--blocktimeout',
+      '--bner',
+      '--bnr',
+      '--bt',
+      '--col-sep',
       '--colsep',
+      '--combine-exec',
+      '--combine-executable',
+      '--combineexec',
+      '--combineexecutable',
+      '--compressprogram',
+      '--ctag-string',
+      '--ctagstring',
+      '--debug',
+      '--decompressprogram',
       '--delay',
       '--delimiter',
+      '--dirnamereplace',
+      '--dnr',
       '--env',
+      '--eof',
+      '--er',
+      '--extensionreplace',
+      '--filter',
+      '--group-by',
+      '--groupby',
       '--halt',
       '--halt-on-error',
+      '--haltonerror',
       '--header',
+      '--id',
+      '--jl',
       '--joblog',
       '--jobs',
+      '--limit',
+      '--linkinputsource',
       '--load',
+      '--match',
       '--max-args',
       '--max-chars',
-      '--max-lines',
       '--max-procs',
       '--max-replace-args',
+      '--maxargs',
+      '--maxchars',
+      '--maxprocs',
+      '--maxreplaceargs',
       '--memfree',
+      '--memsuspend',
+      '--milestone',
+      '--min-version',
+      '--minversion',
+      '--ms',
       '--nice',
+      '--parens',
+      '--process-slot-var',
+      '--processslotvar',
       '--profile',
-      '--results',
+      '--recend',
+      '--recstart',
+      '--replace',
       '--res',
+      '--result',
+      '--results',
       '--retries',
       '--return',
+      '--rpl',
+      '--rsync-opts',
+      '--rsyncopts',
+      '--semaphore-name',
+      '--semaphore-timeout',
+      '--semaphorename',
+      '--semaphoretimeout',
+      '--seqreplace',
+      '--shard',
+      '--shell-completion',
+      '--shellcompletion',
+      '--slf',
+      '--slotreplace',
+      '--sql',
+      '--sql-and-worker',
+      '--sql-master',
+      '--sql-worker',
+      '--sqlandworker',
+      '--sqlmaster',
+      '--sqlworker',
+      '--ssh',
+      '--ssh-delay',
       '--sshdelay',
       '--sshlogin',
       '--sshloginfile',
-      '--slf',
+      '--st',
+      '--tag-string',
       '--tagstring',
+      '--tempdir',
+      '--template',
+      '--term-seq',
+      '--termseq',
+      '--tf',
       '--timeout',
       '--tmpdir',
+      '--tmpl',
+      '--total',
+      '--total-jobs',
+      '--totaljobs',
+      '--transfer-file',
+      '--transfer-files',
       '--transferfile',
-      '--tf',
-      '--workdir',
+      '--transferfiles',
+      '--trc',
+      '--trim',
+      '--usecompressprogram',
+      '--usedecompressprogram',
       '--wd',
+      '--work-dir',
+      '--workdir',
+      '--xapplyinputsource',
     ],
   ),
   // `env [options] [NAME=value]… command`: `-S LINE` is read apart (`RUNS_ANOTHER`).
@@ -550,5 +814,7 @@ export const PROGRAM_OPTIONS = {
     'CPSu',
     ['--ignore-environment', '--null', '--debug', '--list-signal-handling', ...VERSION_HELP],
     ['--chdir', '--split-string', '--unset'],
+    '',
+    ['--block-signal', '--default-signal', '--ignore-signal'],
   ),
 } satisfies Record<string, OptionGrammar>;

@@ -2126,39 +2126,31 @@ type Payload =
   | { words: ShellWord[]; shell: LineShell; invoked?: boolean; sourced?: boolean };
 
 /**
- * The words of the command `program` runs after its options, read with its
- * grammar (`PROGRAM_OPTIONS`); null when an option the grammar cannot
- * classify hides where it starts (#715, Nodal review pass 2 of PR #730).
- */
-function afterOptions(
-  program: keyof typeof PROGRAM_OPTIONS,
-  args: readonly ShellWord[],
-): ShellWord[] | null {
-  const read = readOptions(
-    args.map((a) => a.text),
-    PROGRAM_OPTIONS[program],
-  );
-  return read === null ? null : args.slice(read.start);
-}
-
-/**
- * What `program` runs after its options: its words (`then` reads them), or,
- * when its options cannot be read, a program decided at run time, which asks
- * under any autonomy rather than a command picked by a guess.
+ * What `program` runs after its options, read with its grammar
+ * (`PROGRAM_OPTIONS`): `then` reads the words from where the command starts.
+ * Past an option the grammar cannot classify (#715, Nodal review passes 2 and
+ * 3 of PR #730), the program is decided at run time, which asks under any
+ * autonomy, AND each start that option may leave is read: the kinds and the
+ * floor still see a command hidden behind it, as the guess before them did.
  */
 const afterItsOptions =
   (
     program: keyof typeof PROGRAM_OPTIONS,
-    then: (rest: ShellWord[]) => Payload[] = (rest) => argv(rest),
+    then: (rest: ShellWord[], options: readonly ShellWord[]) => Payload[] = (rest) => argv(rest),
   ) =>
   (args: readonly ShellWord[]): Payload[] => {
-    const rest = afterOptions(program, args);
-    return rest === null ? DECIDED_AT_RUN_TIME : then(rest);
+    const read = readOptions(
+      args.map((a) => a.text),
+      PROGRAM_OPTIONS[program],
+    );
+    const payloads = read.starts.flatMap((start) => then(args.slice(start), args.slice(0, start)));
+    return read.opaque ? [...DECIDED_AT_RUN_TIME, ...payloads] : payloads;
   };
 
 /**
  * The line a program's option hands a shell (`env -S LINE`, `flock -c LINE`,
- * `runuser -c LINE`), read among its options as its grammar reads them.
+ * `runuser -c LINE`), read among its options as its grammar reads them, with
+ * the mark of a program decided at run time when they cannot all be read.
  */
 function optionLine(
   program: keyof typeof PROGRAM_OPTIONS,
@@ -2169,8 +2161,11 @@ function optionLine(
     args.map((a) => a.text),
     PROGRAM_OPTIONS[program],
   );
-  const value = read?.values.find((v) => names.includes(v.option))?.value;
-  return value === undefined ? [] : [{ line: value, shell: 'sh' }];
+  const lines: Payload[] = read.values
+    .filter((v) => names.includes(v.option))
+    .map((v) => ({ line: v.value, shell: 'sh' }));
+  if (lines.length === 0) return [];
+  return read.opaque ? [...DECIDED_AT_RUN_TIME, ...lines] : lines;
 }
 
 const argv = (words: readonly ShellWord[], shell: LineShell = 'exec'): Payload[] =>
@@ -2193,7 +2188,12 @@ function commandOption(args: readonly ShellWord[]): Payload[] {
 
 /** `sh -c LINE`, `bash -lc LINE`, `zsh -o pipefail -c LINE`: a script file is not opened here. */
 function shellLine(args: readonly ShellWord[]): Payload[] {
-  for (let i = 0; i < args.length; i++) {
+  return shellLineFrom(args, 0);
+}
+
+/** `shellLine` from the word at `start`. */
+function shellLineFrom(args: readonly ShellWord[], start: number): Payload[] {
+  for (let i = start; i < args.length; i++) {
     const w = args[i]?.text ?? '';
     if (/^-[a-z]*c[a-z]*$/i.test(w)) {
       const line = args[i + 1];
@@ -2201,13 +2201,23 @@ function shellLine(args: readonly ShellWord[]): Payload[] {
     }
     // `-o`/`+o` and `-O`/`+O` (bash's shopt) take a value, and so do bash's
     // `--rcfile` / `--init-file`; its other long options are switches. One
-    // it does not hold hides where `-c` stands: opaque (#715).
+    // it does not hold hides where `-c` stands: decided at run time, and both
+    // readings kept (#715, Nodal review passes 2 and 3).
     if (/^[-+][oO]$/.test(w) || w === '--rcfile' || w === '--init-file') i += 1;
-    else if (/^--./.test(w) && !SHELL_LONG_SWITCHES.has(w)) return DECIDED_AT_RUN_TIME;
+    else if (/^--./.test(w) && !SHELL_LONG_SWITCHES.has(w))
+      return [...DECIDED_AT_RUN_TIME, ...shellLineFrom(args, i + 1), ...shellLineFrom(args, i + 2)];
     else if (!/^[-+]/.test(w)) return [];
   }
   return [];
 }
+
+/** busybox's own modes, which run no applet. */
+const BUSYBOX_MANAGES: ReadonlySet<string> = new Set([
+  '--list',
+  '--list-full',
+  '--install',
+  '--help',
+]);
 
 /** `wsl`'s options that manage WSL and run no command (`wsl --help`). */
 const WSL_MANAGES: ReadonlySet<string> = new Set([
@@ -2356,20 +2366,26 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
       '--distribution-id',
       '--shell-type',
     ]);
-    for (let i = 0; i < args.length; i++) {
-      const w = args[i]?.text ?? '';
-      if (valued.has(w)) i += 1;
-      else if (w === '--system') continue;
-      else if (w === '-e' || w === '--exec') return argv(args.slice(i + 1));
-      else if (w === '--') return argv(args.slice(i + 1), 'sh');
-      else if (WSL_MANAGES.has(w)) return [];
-      else if (/^-/.test(w)) return DECIDED_AT_RUN_TIME;
-      else return argv(args.slice(i), 'sh');
-    }
-    return [];
+    const from = (start: number): Payload[] => {
+      for (let i = start; i < args.length; i++) {
+        const w = args[i]?.text ?? '';
+        if (valued.has(w)) i += 1;
+        else if (w === '--system') continue;
+        else if (w === '-e' || w === '--exec') return argv(args.slice(i + 1));
+        else if (w === '--') return argv(args.slice(i + 1), 'sh');
+        else if (WSL_MANAGES.has(w)) return [];
+        // One it does not have: decided at run time, and both readings kept.
+        else if (/^-/.test(w)) return [...DECIDED_AT_RUN_TIME, ...from(i + 1), ...from(i + 2)];
+        else return argv(args.slice(i), 'sh');
+      }
+      return [];
+    };
+    return from(0);
   },
-  // `busybox APPLET …`; `busybox --list`, `--install`, `--help` run no applet.
-  busybox: (args) => (/^-/.test(args[0]?.text ?? '') ? [] : argv(args)),
+  // `busybox APPLET …`; `--list`, `--list-full`, `--install` and `--help` run
+  // no applet. `--` ends its options; one it does not have is opaque.
+  busybox: (args) =>
+    BUSYBOX_MANAGES.has(args[0]?.text ?? '') ? [] : afterItsOptions('busybox')(args),
   eval: (args) =>
     args.length > 0 ? [{ line: args.map((a) => a.text).join(' '), shell: 'sh' }] : [],
   script: (args) => {
@@ -2415,14 +2431,12 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
   ltrace: afterItsOptions('ltrace'),
   valgrind: afterItsOptions('valgrind'),
   // `watch` hands its words to `sh -c` (`-x` executes them).
-  watch: (args) => {
-    const rest = afterOptions('watch', args);
-    if (rest === null) return DECIDED_AT_RUN_TIME;
+  watch: afterItsOptions('watch', (rest, options) => {
     if (rest.length === 0) return [];
-    return hasAny(args.slice(0, args.length - rest.length), ['-x', '--exec'])
+    return hasAny(options, ['-x', '--exec'])
       ? argv(rest)
       : [{ line: rest.map((a) => a.text).join(' '), shell: 'sh' }];
-  },
+  }),
   // `flock [options] FILE cmd…` or `flock [options] FILE -c LINE`; `flock FD` runs nothing.
   flock: (args) => {
     const line = optionLine('flock', args, ['-c', '--command']);
@@ -2483,10 +2497,15 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
   // GNU parallel: `parallel [options] command [::: args]`. Its command is
   // composed with each input and handed to the shell (#715, Nodal review
   // pass 1): read as a line, up to the first `:::` / `::::` separator.
+  // Without a command, it runs its arguments (`parallel ::: 'cmd'`) or the
+  // lines it reads as commands: decided at run time, its arguments read too.
   parallel: (args) => {
     const end = args.findIndex((a) => /^::::?\+?$/.test(a.text));
+    const inputs = end < 0 ? [] : args.slice(end + 1).filter((a) => !/^::::?\+?$/.test(a.text));
     return afterItsOptions('parallel', (command) =>
-      command.length === 0 ? [] : [{ line: command.map((a) => a.text).join(' '), shell: 'sh' }],
+      command.length > 0
+        ? [{ line: command.map((a) => a.text).join(' '), shell: 'sh' }]
+        : [...DECIDED_AT_RUN_TIME, ...inputs.map((a) => ({ line: a.text, shell: 'sh' as const }))],
     )(end < 0 ? args : args.slice(0, end));
   },
   // fd: `-x`/`--exec` runs a command per file found, `-X`/`--exec-batch`

@@ -337,25 +337,32 @@ describe('every other kind: what the text does not establish asks (#715) @cap:ex
   });
 });
 
-// Passe 2 Nodal (PR #730) : une option que la grammaire d'un programme ne
-// classe pas faisait lire sa valeur comme le programme lancé
-// (`parallel --replace X rm -rf X`). Elle rend maintenant la lecture opaque :
-// ce qu'il lance est décidé à l'exécution, et demande.
+// Passes 2 et 3 Nodal (PR #730) : une option que la grammaire d'un programme
+// ne classe pas faisait lire sa valeur comme le programme lancé
+// (`parallel --replace X rm -rf X`). La lecture devient opaque : ce qu'il
+// lance est décidé à l'exécution, et demande. Et ne plus deviner ne rend
+// jamais le plancher plus aveugle : chaque début possible de la commande est
+// lu, une destruction cachée derrière l'option reste au plancher (passe 3).
 describe('an option a program’s grammar cannot classify makes what it runs opaque (#715) @cap:executer-une-commande/moteur', () => {
   const ROOT = '/';
+  const D = `${RM} -rf ${ROOT}`;
+  // one per reader that reads options, each hiding D behind one it does not have
   const opaque = [
-    `parallel --replace X ${RM} -rf X ::: a`,
-    `parallel --argfile jobs.txt ${RM} -rf ${ROOT}`,
-    `parallel --rep X ${RM} -rf X ::: a`,
-    `sudo --bogus x ${RM} -rf ./x`,
-    `sudo -Z x ${RM} -rf ./x`,
-    `timeout --nope 5 ${RM} -rf ./x`,
-    `xargs -i ${RM} {}`,
-    `env --bogus x ${RM} -rf ./x`,
-    `nice -19 ${RM} -rf ./x`,
-    `bash --bogus x -c '${RM} -rf ./x'`,
-    `wsl --newflag ${RM} -rf ./x`,
-    `strace -K x ${RM} -rf ./x`,
+    `parallel --bogus X ${D} ::: a`,
+    `parallel --rep X ${D} ::: a`,
+    `sudo --bogus x ${D}`,
+    `sudo -Z x ${D}`,
+    `timeout --nope 5 ${D}`,
+    `env --bogus x ${D}`,
+    `nice -19 ${D}`,
+    `xargs --bogus ${D}`,
+    `bash --bogus x -c '${D}'`,
+    `wsl --newflag ${D}`,
+    `strace -K x ${D}`,
+    `busybox -Z ${D}`,
+    `watch -Q 5 ${D}`,
+    `flock --bogus lockfile ${D}`,
+    `chroot --bogus /srv ${D}`,
   ];
 
   it('opaque: a program decided at run time, which asks under any autonomy', () => {
@@ -367,14 +374,39 @@ describe('an option a program’s grammar cannot classify makes what it runs opa
     }
   });
 
+  it('opaque never blinds the floor: what may run behind the option is read, and reaches it', () => {
+    for (const cmd of opaque) {
+      expect(isCatastrophicCommand(cmd, 'posix'), cmd).toBe(true);
+      expect(staticShellCategories(cmd, 'posix'), cmd).toContain('delete_files');
+    }
+    // and what is harmless behind it is no destroyer: no hard refusal
+    for (const cmd of ['nice -19 make', 'timeout --nope 5 make test', 'sudo -Z x make'])
+      expect(isCatastrophicCommand(cmd, 'posix'), cmd).toBe(false);
+  });
+
+  it('busybox: `--` ends its options, as every reader’s', () => {
+    expect(isCatastrophicCommand(`busybox -- ${D}`, 'posix')).toBe(true);
+    expect(staticShellCategories(`busybox -- ${RM} -rf ./x`, 'posix')).toContain('delete_files');
+  });
+
   it('the options each manual holds still find the command, and its kind', () => {
     for (const cmd of [
       `sudo -E -u root ${RM} -rf ./x`,
       `sudo -iu root ${RM} -rf ./x`,
       `xargs -0 -n 1 ${RM}`,
       `xargs --null --max-args=1 ${RM}`,
+      `xargs -i ${RM} {}`,
+      `xargs -i{} ${RM} {}`,
+      `xargs -l1 ${RM}`,
+      `xargs -e ${RM}`,
       `parallel -j4 ${RM} {} ::: a b`,
       `parallel --jobs 4 --halt now,fail=1 ${RM} {} ::: a b`,
+      // GNU parallel's own table: `--replace` and `-i` take the next word, `--argfile` is `--arg-file`
+      `parallel --replace X ${RM} -rf X ::: a`,
+      `parallel -i X ${RM} -rf X ::: a`,
+      `parallel --argfile jobs.txt ${RM} -rf ./x`,
+      `parallel --max-replace-args 2 ${RM} {1} {2} ::: a b`,
+      `parallel -J myprofile ${RM} {} ::: a`,
       `timeout -k 5 10 ${RM} -rf ./x`,
       `env -i A=1 ${RM} -rf ./x`,
       `env -S '${RM} -rf ./x'`,
@@ -386,6 +418,9 @@ describe('an option a program’s grammar cannot classify makes what it runs opa
       `flock -w 5 lockfile -c '${RM} -rf ./x'`,
       `runuser -u bob -- ${RM} -rf ./x`,
       `watch -n 5 ${RM} -rf ./x`,
+      `watch -d1 ${RM} -rf ./x`,
+      `watch --differences=permanent ${RM} -rf ./x`,
+      `unshare -m/run/ns ${RM} -rf ./x`,
       `bash --norc -c '${RM} -rf ./x'`,
       `wsl --system ${RM} -rf ./x`,
     ]) {
@@ -393,11 +428,27 @@ describe('an option a program’s grammar cannot classify makes what it runs opa
       expect(programDecidedAtRunTime(cmd, 'posix'), cmd).toBe(false);
     }
     // and the floor reads what they run, as before
-    expect(isCatastrophicCommand(`sudo -E ${RM} -rf ${ROOT}`, 'posix')).toBe(true);
+    for (const cmd of [`sudo -E ${D}`, `parallel --replace X ${D} ::: a`, `xargs -i ${D}`])
+      expect(isCatastrophicCommand(cmd, 'posix'), cmd).toBe(true);
+  });
+
+  it('a glued optional value is no command: `watch -d1 ls` runs ls, unasked as on main', () => {
+    for (const cmd of ['watch -d1 ls', 'watch -d ls', 'xargs -l1 echo', 'xargs -i{} echo {}']) {
+      expect(programDecidedAtRunTime(cmd, 'posix'), cmd).toBe(false);
+      expect(staticShellCategories(cmd, 'posix'), cmd).toEqual([]);
+    }
+  });
+
+  it('GNU parallel with no command runs its arguments or its input: decided at run time, its arguments read', () => {
+    expect(programDecidedAtRunTime('parallel ::: "make a" "make b"', 'posix')).toBe(true);
+    expect(staticShellCategories(`parallel ::: '${RM} -rf ./x'`, 'posix')).toContain(
+      'delete_files',
+    );
+    expect(programDecidedAtRunTime('cat jobs.txt | parallel', 'posix')).toBe(true);
   });
 
   it('what manages a program runs nothing: `wsl --list`, `busybox --list`', () => {
-    for (const cmd of ['wsl --list', 'wsl --shutdown', 'busybox --list'])
+    for (const cmd of ['wsl --list', 'wsl --shutdown', 'busybox --list', 'busybox --help'])
       expect(staticShellCategories(cmd, 'posix'), cmd).toEqual([]);
   });
 });
