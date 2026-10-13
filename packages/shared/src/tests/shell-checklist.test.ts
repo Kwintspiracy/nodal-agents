@@ -23,7 +23,8 @@ describe('splitShellWords @cap:executer-une-commande/moteur', () => {
     expect(splitShellWords('python a.py "C:/My Files/x.csv" && cat y | grep z > out.txt')).toEqual([
       ['python', 'a.py', 'C:/My Files/x.csv'],
       ['cat', 'y'],
-      ['grep', 'z', 'out.txt'],
+      // a redirection is no word of the command: the shell opens it (#717 pass 8)
+      ['grep', 'z'],
     ]);
   });
 });
@@ -391,34 +392,59 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
   });
 
   // Revue passe 2 : une cible n'est jugée que depuis les `cd` qui la précèdent.
+  // Read on a posix host: on a cmd line, `curl` and `wget` are names cmd looks
+  // for in the folder first (#717, folder-moves.test.ts). Past the `&&` chain
+  // of a `cd`, the line is in the folder before it or in the one it entered (#723).
   it("each target says how many of the line's folders come before it", () => {
-    expect(writesOf('cd shared/x && curl -o a.jpg https://x/a')).toEqual({
-      dirs: ['shared/x'],
+    expect(writesOf('cd shared/x && curl -o a.jpg https://x/a', 'posix')).toEqual({
+      dirs: ['shared/x', { unsure: 0 }],
       targets: [{ path: 'a.jpg', after: 1 }],
     });
-    expect(writesOf('curl -o a.jpg https://x/a && cd /elsewhere')).toEqual({
-      dirs: ['/elsewhere'],
+    // a `cd` on the right of `&&` may not run: made for its chain, not past it (#717)
+    expect(writesOf('curl -o a.jpg https://x/a && cd /elsewhere', 'posix')).toEqual({
+      dirs: ['/elsewhere', { unsure: 0 }],
       targets: [{ path: 'a.jpg', after: 0 }],
     });
-    expect(writesOf('cd a && wget -O x https://x && cd b && curl -o y https://y')).toEqual({
-      dirs: ['a', 'b'],
-      targets: [
-        { path: 'x', after: 1 },
-        { path: 'y', after: 2 },
-      ],
-    });
-    // A shell redirection has no known place in the line: judged from every folder.
+    expect(writesOf('cd a && wget -O x https://x && cd b && curl -o y https://y', 'posix')).toEqual(
+      {
+        dirs: ['a', 'b', { unsure: 1 }, { unsure: 0 }],
+        targets: [
+          { path: 'x', after: 1 },
+          { path: 'y', after: 2 },
+        ],
+      },
+    );
+    // A shell redirection is read with its command (#717 pass 8): judged from
+    // where that command stands, before the `cd` that follows it.
     expect(writesOf('curl https://x/a > a.zip && cd out').targets).toEqual([
-      { path: 'a.zip', after: null },
+      { path: 'a.zip', after: 0 },
+    ]);
+    expect(writesOf('cd out && curl https://x/a > a.zip').targets).toEqual([
+      { path: 'a.zip', after: 1 },
     ]);
   });
 
   it('the folders the line moves into are kept in order', () => {
-    expect(writesOf('cd shared/x && curl -o a.jpg https://x/a').dirs).toEqual(['shared/x']);
-    expect(writesOf('cd && curl -o a.jpg https://x/a').dirs).toEqual([null]);
-    expect(writesOf('Push-Location D:\\out; iwr https://x -OutFile a').dirs).toEqual(['D:\\out']);
-    expect(writesOf('pushd out && popd && curl -o a https://x').dirs).toEqual(['out', null]);
-    expect(writesOf('Set-Location -Path D:\\x; iwr https://x -OutFile a').dirs).toEqual(['D:\\x']);
+    expect(writesOf('cd shared/x && curl -o a.jpg https://x/a', 'posix').dirs).toEqual([
+      'shared/x',
+      { unsure: 0 },
+    ]);
+    expect(writesOf('cd && curl -o a.jpg https://x/a', 'posix').dirs).toEqual([null]);
+    expect(writesOf('pushd out && popd && curl -o a https://x', 'posix').dirs).toEqual([
+      'out',
+      null,
+      { unsure: 0 },
+    ]);
+    // PowerShell lines, read as PowerShell runs them
+    const ps = (cmd: string) => downloadWrites(cmd, 'windows', 'powershell').dirs;
+    expect(ps('Push-Location D:\\out; iwr https://x -OutFile a')).toEqual([
+      'D:\\out',
+      { unsure: 0 },
+    ]);
+    expect(ps('Set-Location -Path D:\\x; iwr https://x -OutFile a')).toEqual([
+      'D:\\x',
+      { unsure: 0 },
+    ]);
   });
 
   // Passe 3, P2-3 : une valeur collée à son option courte (`-sLoC:\x`). Une
@@ -538,7 +564,10 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
     expect(paths('curl -o CONOUT$ https://x/a', 'windows')).toEqual([null]);
     // From the folder the line moved into (an `nul` of a POSIX host is a real file).
     expect(paths('cd /etc && curl -o nul https://x/a', 'posix')).toEqual(['nul']);
-    expect(writesOf('cd /etc && curl -o nul https://x/a', 'posix').dirs).toEqual(['/etc']);
+    expect(writesOf('cd /etc && curl -o nul https://x/a', 'posix').dirs).toEqual([
+      '/etc',
+      { unsure: 0 },
+    ]);
     expect(paths('cd /etc && curl -o nul https://x/a', 'windows')).toEqual([]);
   });
 
@@ -551,9 +580,16 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
         '/dev/stdin',
       ]);
       // stdin redirected earlier in the line, the fetcher run from a later folder.
-      expect(
-        writesOf('exec < ../outside.txt; cd sub && curl -o /dev/stdin https://x/a', host),
-      ).toEqual({ dirs: ['sub'], targets: [{ path: '/dev/stdin', after: 1 }] });
+      const read = writesOf(
+        'exec < ../outside.txt; cd sub && curl -o /dev/stdin https://x/a',
+        host,
+      );
+      // One write; on a Windows host cmd's reading, where `;` ends nothing,
+      // finds it too, judged as well (`also`, #717 pass 7).
+      expect(read.targets).toMatchObject([{ path: '/dev/stdin', after: expect.any(Number) }]);
+      // judged from the folder the line is in once in `sub` (cmd also looks
+      // for `exec` and `curl` in the folder, #717)
+      expect(read.dirs.slice(0, read.targets[0]?.after ?? 0)).toContain('sub');
       // Codex, pass 1.
       expect(paths('curl -o /dev/stdin https://x/data < /tmp/outside.txt', host)).toEqual([
         '/dev/stdin',
@@ -569,9 +605,8 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
     expect(paths('curl https://x/a > ../outside.txt 2>/dev/null', 'posix')).toEqual([
       '../outside.txt',
     ]);
-    expect(paths('curl https://x/a &>/dev/null > C:\\Windows\\x', 'posix')).toEqual([
-      'C:\\Windows\\x',
-    ]);
+    // sh takes the backslashes out: the file it writes is `C:Windowsx` (#717 pass 8)
+    expect(paths('curl https://x/a &>/dev/null > C:\\Windows\\x', 'posix')).toEqual(['C:Windowsx']);
     expect(
       paths('curl -s -o /dev/null https://x/a && curl -o /etc/x https://x/b', 'posix'),
     ).toEqual(['/etc/x']);
@@ -594,15 +629,20 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
     it('every write-capable operator yields its target, attached or spaced', () => {
       for (const host of ['posix', 'windows'] as const)
         for (const op of OPERATORS) {
-          expect(paths(`curl https://x/a ${op}../out.txt`, host), `${host}: ${op}`).toEqual([
-            '../out.txt',
-          ]);
-          expect(paths(`curl https://x/a ${op} ../out.txt`, host), `${host}: ${op} `).toEqual([
-            '../out.txt',
-          ]);
-          expect(paths(`curl https://x/a ${op} "my out.txt"`, host), `${host}: ${op} "`).toEqual([
-            'my out.txt',
-          ]);
+          // `&>` is bash's: cmd reads `&` as a separator, then refuses the
+          // redirection alone ("The syntax of the command is incorrect.", no
+          // file written, measured on cmd.exe), and so does PowerShell.
+          const written = (place: string) =>
+            host === 'windows' && op.startsWith('&') ? [] : [place];
+          expect(paths(`curl https://x/a ${op}../out.txt`, host), `${host}: ${op}`).toEqual(
+            written('../out.txt'),
+          );
+          expect(paths(`curl https://x/a ${op} ../out.txt`, host), `${host}: ${op} `).toEqual(
+            written('../out.txt'),
+          );
+          expect(paths(`curl https://x/a ${op} "my out.txt"`, host), `${host}: ${op} "`).toEqual(
+            written('my out.txt'),
+          );
         }
     });
 
@@ -662,10 +702,12 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
       expect(paths('curl https://x/a <in.txt >../o.txt', 'posix')).toEqual(['../o.txt']);
     });
 
-    // Passe 4 : rien n'est lu comme du texte. Un `>` entre guillemets, dans une
-    // charge de `bash -c '…'` ou après un `\"` échappé, est un opérateur comme un
-    // autre : un filet de sécurité peut trop demander, jamais ne rien signaler.
-    it('an operator is an operator wherever it stands: quotes hide nothing', () => {
+    // Passe 4 de #669 lisait chaque `>` du texte, guillemets compris, pour ne
+    // rien perdre d'une charge `bash -c '…'` ni d'une ligne au `\"` échappé.
+    // Passe 8 de #721 : chaque redirection est lue par la grammaire de chaque
+    // shell qui lit la ligne, avec sa commande ; la charge d'un wrapper l'est
+    // par le sien. Ce que le shell écrit est trouvé, et rien d'autre.
+    it('a redirection is read as each shell reads it: in a payload, past an escaped quote, never in quotes', () => {
       // The payload of a shell wrapper, and a quote escaped inside a string.
       expect(paths("bash -c 'wget -O - https://x/a > ../outside.txt'", 'posix')).toEqual([
         '../outside.txt',
@@ -673,25 +715,22 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
       expect(paths('sh -c "curl https://x/a > ../outside.txt"', 'posix')).toEqual([
         '../outside.txt',
       ]);
+      // bash: `"O\"Brien"` is one word, the `>` after it opens ../outside.txt
+      // (measured in Git Bash).
       expect(paths('curl -H "X-Name: O\\"Brien" https://x/a > ../outside.txt', 'posix')).toEqual([
         '../outside.txt',
       ]);
-      expect(paths("curl -H 'X: it\\'s' https://x/a > ../outside.txt", 'posix')).toEqual([
-        '../outside.txt',
-      ]);
-      // The price, stated: a `>` inside a quoted string of a download is read as a
-      // redirection too, a harmless extra place (here a file `2`, `b`, `../x.txt`).
-      expect(paths('curl -s -o out.bin "https://x/a?p=1>2"', 'posix')).toEqual(['out.bin', '2']);
-      expect(paths("curl -s -o out.bin -H 'X: a>b' https://x/a", 'posix')).toEqual([
-        'out.bin',
-        'b',
-      ]);
-      expect(paths('curl -H "a>b" https://x/a > ../o.txt', 'posix')).toEqual(['b', '../o.txt']);
-      expect(paths('curl -H "a >../x.txt" "https://x/a" 2>/dev/null', 'posix')).toEqual([
-        '../x.txt',
-      ]);
-      // A quoted target is one word, spaces included.
+      // bash refuses the line (`unexpected EOF while looking for matching '`):
+      // it writes nothing.
+      expect(paths("curl -H 'X: it\\'s' https://x/a > ../outside.txt", 'posix')).toEqual([]);
+      // A `>` inside a quoted string is a character of it, no redirection.
+      expect(paths('curl -s -o out.bin "https://x/a?p=1>2"', 'posix')).toEqual(['out.bin']);
+      expect(paths("curl -s -o out.bin -H 'X: a>b' https://x/a", 'posix')).toEqual(['out.bin']);
+      expect(paths('curl -H "a>b" https://x/a > ../o.txt', 'posix')).toEqual(['../o.txt']);
+      // A quoted target is one word, spaces included; its pieces are joined.
       expect(paths('curl https://x/a > "my out.txt"', 'posix')).toEqual(['my out.txt']);
+      expect(paths('curl https://x/a > ""../x', 'posix')).toEqual(['../x']);
+      expect(paths('curl https://x/a > "a"/../../x', 'posix')).toEqual(['a/../../x']);
     });
 
     it('the null sink of each host is still nowhere in any operator form', () => {

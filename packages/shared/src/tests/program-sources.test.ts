@@ -27,11 +27,15 @@ function sources(cmd: string, direct = true): Array<Partial<ProgramSource>> {
   // cmd and PowerShell, an escape for sh (a line whose host is not known is
   // read both ways, and both readings are kept).
   const host = /[\\]/.test(cmd) ? 'windows' : 'posix';
-  return programSources(cmd, { direct, host }).sources.map((s) =>
-    s.kind === 'file'
-      ? { kind: s.kind, path: s.path, language: s.language }
-      : { kind: s.kind, code: s.code, language: s.language },
-  );
+  // A word cmd only looks for in the folder (`powershell` → powershell.bat?,
+  // #717) is a file of its own reading, not what these cases are about.
+  return programSources(cmd, { direct, host })
+    .sources.filter((s) => s.kind === 'code' || s.extensions === undefined)
+    .map((s) =>
+      s.kind === 'file'
+        ? { kind: s.kind, path: s.path, language: s.language }
+        : { kind: s.kind, code: s.code, language: s.language },
+    );
 }
 
 describe('programSources: where the code a command runs is (#635) @cap:executer-une-commande/moteur', () => {
@@ -149,8 +153,10 @@ describe('programSources: where the code a command runs is (#635) @cap:executer-
   });
 
   it('a cd before the file moves where it is read from', () => {
-    const read = programSources('cd sub && node build.js');
-    expect(read.dirs).toEqual(['sub']);
+    // On a posix host: cmd would look for node.bat in the folder first (#717).
+    const read = programSources('cd sub && node build.js', { direct: true, host: 'posix' });
+    // (past its chain, the cd may have failed: either folder, #723)
+    expect(read.dirs).toEqual(['sub', { unsure: 0 }]);
     expect(read.sources).toEqual([
       {
         kind: 'file',
@@ -349,9 +355,15 @@ describe('cmd conditions without brackets, and here-docs fed to a program (#683)
   });
 
   it('a file fed on standard input to a shell or an interpreter is its source', () => {
+    // cmd takes `< setup.txt` out of the command (Nodal review of PR #721,
+    // pass 5): read by cmd, the program word alone (`cmd`, `python`) may be a
+    // batch file of the folder, looked for as on a Windows host (`extensions`).
+    // That is no file fed on standard input.
     const files = (cmd: string) =>
       programSources(cmd).sources.flatMap((s) =>
-        s.kind === 'file' ? [{ path: s.path, language: s.language }] : [],
+        s.kind === 'file' && s.extensions === undefined
+          ? [{ path: s.path, language: s.language }]
+          : [],
       );
     expect(files('cmd < setup.txt')).toEqual([{ path: 'setup.txt', language: 'cmd' }]);
     expect(files('python - < tool.py')).toEqual([{ path: 'tool.py', language: 'python' }]);
@@ -365,7 +377,10 @@ describe('cmd conditions without brackets, and here-docs fed to a program (#683)
   // Review pass 5 of #683: as sh reads it, a body fed to anything but a shell
   // is data (but for the substitutions of an unquoted one).
   it('a here-doc fed to anything else is data to sh, and no source', () => {
-    expect(programSources(`cat <<EOF${NL}pip install x${NL}EOF`).sources).toEqual([]);
+    expect(
+      programSources(`cat <<EOF${NL}pip install x${NL}EOF`, { direct: true, host: 'posix' })
+        .sources,
+    ).toEqual([]);
     expect(
       staticShellCategories(
         `cat <<EOF > notes.txt${NL}rm -rf build${NL}pip install x${NL}EOF`,

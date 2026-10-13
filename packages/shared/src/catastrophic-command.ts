@@ -32,6 +32,8 @@ import {
   psSwitch,
   psValues,
   type PsSignature,
+  FOREACH_OBJECT,
+  INVOKE_COMMAND,
 } from './powershell-parameters';
 import { SHELLS } from './shell-programs';
 
@@ -291,7 +293,10 @@ export function isCatastrophicCommand(
   const shell = reader ?? topShell(host);
   // `shutdown --help` prints and exits (Reviewer A, #582 pass 2). Only the
   // long forms and `/?` here: `shutdown -h` HALTS the machine.
-  const units = commandUnits(withoutRedirections(cmd), 0, shell).filter((u) => !runsAnother(u));
+  const units = commandUnits(cmd, 0, shell).filter((u) => !runsAnother(u));
+  // Text no reading follows (`UNFOLLOWED_UNITS`): what it runs is not known, so it
+  // is held as a destroyer may be, whatever the rest of the line reads.
+  if (units.some((u) => UNFOLLOWED_UNITS.has(u))) return true;
   if (
     units.length > 0 &&
     units.every((u) => u.length >= 2 && u.slice(1).every((t) => FLOOR_READ_FLAGS.has(t)))
@@ -310,7 +315,7 @@ export function isCatastrophicCommand(
     DISK_CMDLET,
   ];
   const texts = opts.atCommandPositions
-    ? commandUnits(withoutRedirections(c), 0, shell).map((u) => normalizeSlashes(u.join(' ')))
+    ? commandUnits(c, 0, shell).map((u) => normalizeSlashes(u.join(' ')))
     : [c];
   if (
     FORK_BOMB.test(c) ||
@@ -340,7 +345,7 @@ export function isCatastrophicCommand(
   // passed the floor, its own list of wrappers knew only cmd, powershell, sh,
   // bash and sudo). A quoted mention (`echo "rm -rf /"`) is an argument of
   // `echo`, never a command, so no check can match it.
-  for (const unit of commandUnits(withoutRedirections(c), 0, shell)) {
+  for (const unit of commandUnits(c, 0, shell)) {
     const cmdWord = unit[0] ?? '';
     const args = unit.slice(1);
     const s = unit.join(' ');
@@ -414,7 +419,7 @@ export function isInlineInterpreterEvalCommand(
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
   const c = normalizeSlashes(cmd.trim());
   if (AWK_CODE_EXEC.test(c) || hasPipeIntoBareInterpreter(c, host)) return true;
-  return commandUnits(withoutRedirections(c), 0, reader ?? topShell(host)).some(isInlineEvalUnit);
+  return commandUnits(c, 0, reader ?? topShell(host)).some(isInlineEvalUnit);
 }
 
 // ── Destructive / heavy actions (for the `destructive_gate` autonomy level) ──────
@@ -1592,20 +1597,9 @@ export function staticShellCategories(
   // same way. Quotes and carets are removed by the tokenizer, so `r""m` and
   // `r^m` still read as `rm`.
   const found = new Set<StaticShellCategory>();
-  for (const unit of commandUnits(withoutRedirections(cmd), 0, shell)) {
+  for (const unit of commandUnits(cmd, 0, shell)) {
     for (const category of unitCategories(unit)) found.add(category);
-  }
-  // `curl URL > file` downloads without `-o`: the redirection is dropped by
-  // the tokenizer, so it is read on the text of that segment. `curl --version
-  // > log` is still a read.
-  if (
-    // A wrapper's payload (`sh -c "curl URL > f"`) starts after a quote.
-    /(^|[;&|("'`]\s*)(curl|irm|Invoke-RestMethod)\b(?:[^;&|\n]|&(?=>))*>/i.test(cmd) &&
-    !commandUnits(withoutRedirections(cmd), 0, shell)
-      .filter((u) => /^(curl|irm|invoke-restmethod)$/i.test(u[0] ?? ''))
-      .every(isVersionOrHelpOnly)
-  ) {
-    found.add('download');
+    if (downloadsToItsOutput(unit)) found.add('download');
   }
   if (isInlineInterpreterEvalCommand(cmd, host, reader)) found.add('inline_code');
   return [...found];
@@ -1620,15 +1614,16 @@ export function staticShellCategories(
  *
  * - `dirs`: the folders the line moves into (`cd`, `pushd`, `Push-Location`,
  *   `Set-Location`), in order, `null` when unreadable (`cd` alone, `cd -`,
- *   `popd`, a variable).
+ *   `popd`, a variable); a move made in a child process is undone where it
+ *   ends, and a script run in the line's process leaves it where it ends
+ *   (`FolderMove`, #717).
  * - `targets`: each place a fetcher writes, as written (`'.'` for the working
  *   folder: `curl -O`, `wget URL`, `git clone URL`), or `null` when the text
  *   does not say where (a variable, `~`, a sub-shell): that asks, invariant #4.
  *   `after` is how many of `dirs` come before it in the line: the target is
  *   judged from the folder the line is in at that point (revue passe 2). A
- *   shell redirection (`> file`) is cut from the words before they are read,
- *   so its place in the line is not known: `after` is null, and it is judged
- *   from every folder of the line.
+ *   shell redirection (`> file`) is read with its command, and judged from
+ *   where that command stands (pass 8); null: from every folder of the line.
  *   A program that writes into its own store (`docker pull`, `ollama pull`,
  *   `comfy model download`, `hf download` without `--local-dir`) names no path
  *   and adds none.
@@ -1636,10 +1631,16 @@ export function staticShellCategories(
 export interface DownloadTarget {
   path: string | null;
   after: number | null;
+  /**
+   * The same write as another reading of the line hands it on
+   * (`downloadWrites`): judged too, and named by `path`, the first reading.
+   */
+  also?: DownloadTarget[];
 }
 
 export interface DownloadWrites {
-  dirs: Array<string | null>;
+  /** How the line moves its folder, in order (`lineFolders`). */
+  dirs: FolderMove[];
   targets: DownloadTarget[];
 }
 
@@ -1650,46 +1651,110 @@ export interface DownloadWrites {
  */
 export type ShellHost = 'windows' | 'posix';
 
-export function downloadWrites(command: string, host: ShellHost): DownloadWrites {
+export function downloadWrites(
+  command: string,
+  host: ShellHost,
+  reader?: ScriptShell,
+): DownloadWrites {
   const out: DownloadWrites = { dirs: [], targets: [] };
   if (typeof command !== 'string' || command.trim() === '') return out;
   const cmd = command;
-  // Where a line writes is read ONCE, in order, because each target is judged
-  // from the folders before it (`dirs`, `after`): the two readings of a line
-  // whose shell is not known cannot be merged. It is read with the grammar
-  // that ends a command at `;`, `&` and `|` and keeps a backslash a path
-  // separator, PowerShell's, as the place analysis always did (#669); the
-  // kind of action (`staticShellCategories`) is read per host.
-  const units = commandUnits(withoutRedirections(cmd), 0, 'powershell');
-  // `iwr URL | Set-Content file`: where the fetched bytes land, kept only if
-  // the line downloads.
-  const piped: DownloadTarget[] = [];
+  // Each target is judged from the folders before it (`dirs`, `after`), so a
+  // line is read in order, by one grammar at a time. Two readings: the one
+  // the place analysis always made, PowerShell's, which ends a command at
+  // `;`, `&` and `|` and keeps a backslash a folder separator (#669), and the
+  // one of the shell that runs the line, the script's (`reader`) or the
+  // host's, as it hands each word on (Nodal review of PR #721, pass 7): sh
+  // takes a backslash out, `.\./x` is `../x`. Where they differ, both are
+  // judged, each from where the line starts (`{ save }`, `{ restore }`): a
+  // place outside in either asks, a safety net never reads fewer than it did.
+  // A write the readings both find (the same count of them) is one target,
+  // named as the first reads it, the other reading's place in `also`. Two
+  // readings are alike only when all they report is (pass 8): one that alone
+  // sees a download (`i\wr` in sh) is never dropped.
+  const shell: LineShell = reader ?? (host === 'windows' ? 'cmd' : 'sh');
+  const readings: DownloadWrites[] = [];
+  for (const grammar of new Set<LineShell>(['powershell', shell])) {
+    const read = readWrites(cmd, host, grammar, shell, reader === 'cmd');
+    if (!readings.some((r) => JSON.stringify(r) === JSON.stringify(read))) readings.push(read);
+  }
+  let first = 0;
+  readings.forEach((read, n) => {
+    if (n > 0) out.dirs.push({ restore: true });
+    if (n < readings.length - 1) out.dirs.push({ save: true });
+    const offset = out.dirs.length;
+    out.dirs.push(
+      ...read.dirs.map((d) =>
+        d !== null && typeof d === 'object' && 'unsure' in d ? { unsure: d.unsure + offset } : d,
+      ),
+    );
+    const targets = read.targets.map((t) => ({
+      path: t.path,
+      after: t.after === null ? null : t.after + offset,
+    }));
+    // The first reading's writes, then each other one's: attached to them
+    // when it finds as many, alongside otherwise.
+    if (n === 0) first = targets.length;
+    if (n === 0 || targets.length !== first) out.targets.push(...targets);
+    else
+      targets.forEach((t, k) => {
+        const into = out.targets[k];
+        if (into !== undefined) into.also = [...(into.also ?? []), t];
+      });
+  });
+  return out;
+}
+
+/**
+ * Where a line writes, read with `grammar` (one reading of `downloadWrites`);
+ * which of its commands move the
+ * folder is read for `shell`, the one whose process runs them (#717). On a
+ * line that downloads, what its commands write besides: a pipe writer
+ * (`iwr URL | Set-Content file`) and a redirection (`curl URL > file`), read
+ * with the command by the same grammar (`UNIT_REDIRECTIONS`), from where it
+ * stands in the line (Nodal review of PR #721, pass 8).
+ */
+function readWrites(
+  cmd: string,
+  host: ShellHost,
+  grammar: LineShell,
+  shell: LineShell,
+  batch: boolean,
+): DownloadWrites {
+  const out: DownloadWrites = { dirs: [], targets: [] };
   let downloads = false;
-  for (const unit of units) {
+  const besides: DownloadTarget[] = [];
+  const opened = new Set<Redirection>();
+  const write = (into: DownloadTarget[], t: string | null): void => {
+    if (t === null || !isNullSink(t, host))
+      into.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
+  };
+  const folders = lineFolders(batch);
+  for (const unit of commandUnits(cmd, 0, grammar, shell)) {
     const program = unit[0] ?? '';
     const args = unit.slice(1);
-    const dir = changeDirOf(unit);
-    if (dir !== undefined) {
-      out.dirs.push(dir);
-      continue;
+    const { before, move } = folders.step(unit);
+    out.dirs.push(...before);
+    // What a command writes lands where it starts; a program the shell may
+    // resolve to a script of the folder (`curl`) still writes (#717).
+    for (const t of pipeWriterTargets(program, args)) write(besides, t);
+    // Each redirection once, where the first command it covers stands: the
+    // shell opens it before running that command, a group's before entering
+    // it (`( cd sub; curl URL ) > f` writes f where the line was, measured).
+    for (const r of UNIT_REDIRECTIONS.get(unit) ?? [])
+      if (!opened.has(r)) {
+        opened.add(r);
+        if (r.write) write(besides, r.path);
+      }
+    if (downloadsToItsOutput(unit)) downloads = true;
+    if (unitCategories(unit).includes('download')) {
+      downloads = true;
+      for (const t of fetcherTargets(program, args)) write(out.targets, t);
     }
-    for (const t of pipeWriterTargets(program, args))
-      if (t === null || !isNullSink(t, host))
-        piped.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
-    if (!unitCategories(unit).includes('download')) continue;
-    downloads = true;
-    for (const t of fetcherTargets(program, args))
-      if (t === null || !isNullSink(t, host))
-        out.targets.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
+    if (move !== undefined) out.dirs.push(move);
   }
-  // `curl URL > file`: the bytes land where the shell sends them. Read on a
-  // line that downloads (or reads a URL into a redirection, which
-  // `staticShellCategories` files as a download).
-  if (downloads || staticShellCategories(cmd, host).includes('download')) {
-    out.targets.push(...piped);
-    for (const t of redirectionTargets(cmd))
-      if (!isNullSink(t, host)) out.targets.push({ path: readablePath(t), after: null });
-  }
+  out.dirs.push(...folders.end());
+  if (downloads) out.targets.push(...besides);
   return out;
 }
 
@@ -1952,76 +2017,6 @@ const GIT_CLONE_VALUE_FLAGS = new Set([
   '--bundle-uri',
 ]);
 
-/**
- * Where the shell writes a line's output, read as OPERATORS, each found on its own so that none can hide another (`2>/dev/null>../x`
- * is two): `>`, `>>`, `>|`, `&>`, `&>>`, the same on another descriptor
- * (`2>`, `2>>`, `2>|`: the error log of a download is a write too), and
- * read/write (`<>`, `1<>`: its `>` opens the target for writing). The target is
- * the next word, attached or after spaces. No file is named by a duplication
- * (`2>&1`, `>&2`, `2>&-`, `<&0`: `>&file` is the bash form of `&>file` and does),
- * an input (`< file`), a here-document or here-string, or a process
- * substitution (`<(…)`, `>(…)`).
- *
- * Quotes are NOT read: an operator counts wherever it stands. A quote state
- * would hide the payload of `bash -c '… > f'` and everything after an escaped
- * quote (`"O\"Brien" … > f`), and a safety net may over-ask but never under-
- * report. The price is one harmless extra place when a `>` sits inside a quoted
- * string of a download (`"…?p=1>2"` reads a file `2`).
- */
-function redirectionTargets(cmd: string): string[] {
-  const targets: string[] = [];
-  const delimiter = /[\s;&|()<>]/;
-  let i = 0;
-  /** The word that starts at `i` (after spaces): a quoted one whole, otherwise up to a delimiter. */
-  const word = (): string => {
-    while (i < cmd.length && /\s/.test(cmd[i] ?? '')) i++;
-    const open = cmd[i];
-    if (open === '"' || open === "'") {
-      const end = cmd.indexOf(open, i + 1);
-      if (end >= 0) {
-        const quoted = cmd.slice(i + 1, end);
-        i = end + 1;
-        return quoted;
-      }
-    }
-    const start = i;
-    while (i < cmd.length && !delimiter.test(cmd[i] ?? '')) i++;
-    return stripQuotes(cmd.slice(start, i));
-  };
-  while (i < cmd.length) {
-    const c = cmd[i] ?? '';
-    if (c !== '>' && c !== '<') {
-      i++;
-      continue;
-    }
-    const next = cmd[i + 1] ?? '';
-    if (next === '(') {
-      i += 2; // process substitution
-    } else if (c === '<') {
-      // `<>` (read/write) is an input followed by the `>` that opens its target
-      // for writing: the next turn of the loop reads that `>` on its own.
-      if (next === '<') {
-        i += cmd[i + 2] === '<' ? 3 : 2; // here-string, here-document
-      } else if (next === '&') {
-        i += 2; // input duplication
-        word();
-      } else {
-        i++; // input
-      }
-    } else if (next === '&') {
-      i += 2;
-      const t = word();
-      // `>&2`, `>&-` copy a descriptor; `>&file` (bash) writes both streams to it.
-      if (t !== '' && !/^(\d+|-)$/.test(t)) targets.push(t);
-    } else {
-      i += next === '>' || next === '|' ? 2 : 1;
-      const t = word();
-      if (t !== '') targets.push(t);
-    }
-  }
-  return targets;
-}
-
 /** The cmdlets that write what a pipe hands them. */
 const PIPE_WRITERS: Record<string, PsSignature> = {
   'out-file': OUT_FILE,
@@ -2066,10 +2061,14 @@ function startsWithMatch(re: RegExp, text: string): boolean {
  */
 type LineShell = 'cmd' | 'powershell' | 'sh' | 'exec';
 
-/** What a program that runs another one starts: a line read again, or the words of a program. */
+/**
+ * What a program that runs another one starts: a line read again, or the words
+ * of a program. `sourced`: the words name a file the shell reads itself (sh's
+ * `.` and `source`), whatever its name (#717).
+ */
 type Payload =
   | { line: string; shell: LineShell }
-  | { words: ShellWord[]; shell: LineShell; invoked?: boolean };
+  | { words: ShellWord[]; shell: LineShell; invoked?: boolean; sourced?: boolean };
 
 /**
  * The words after a program's options: `-x`, `--long`, `--long=v`, and for the
@@ -2435,8 +2434,9 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
   },
   // The call and dot-source operators run what they name, even a `$variable`.
   '&': (args, shell) => (args.length > 0 ? [{ words: [...args], shell, invoked: true }] : []),
-  '.': (args, shell) => (args.length > 0 ? [{ words: [...args], shell, invoked: true }] : []),
-  source: (args, shell) => argv(args, shell),
+  '.': (args, shell) =>
+    args.length > 0 ? [{ words: [...args], shell, invoked: true, sourced: true }] : [],
+  source: (args, shell) => (args.length > 0 ? [{ words: [...args], shell, sourced: true }] : []),
   // a POSIX shell's reserved words before a command (`for …; do rm $f; done`)
   do: before,
   then: before,
@@ -2455,6 +2455,49 @@ RUNS_ANOTHER['pwsh'] = RUNS_ANOTHER['powershell'] as (typeof RUNS_ANOTHER)[strin
 RUNS_ANOTHER['invoke-expression'] = RUNS_ANOTHER['iex'] as (typeof RUNS_ANOTHER)[string];
 RUNS_ANOTHER['gtimeout'] = RUNS_ANOTHER['timeout'] as (typeof RUNS_ANOTHER)[string];
 RUNS_ANOTHER['proxychains4'] = RUNS_ANOTHER['proxychains'] as (typeof RUNS_ANOTHER)[string];
+
+/**
+ * Where the programs of `RUNS_ANOTHER` run what they name, per shell that
+ * reads them (#717):
+ * - `own`: in that shell's process, its own builtins and keywords;
+ * - `maybe`: in that process, but only when a condition holds: cmd's `if`
+ *   and `for` (and the `else` and `do` its parentheses leave), whose command
+ *   may never run (Nodal review of PR #721, P1). A folder moved there leaves
+ *   the line in a folder not known. sh's bodies (`then`, `do`…) are read by
+ *   the scan, which sees where they end (`Processes`);
+ * - `not-known`: in its process in one shell the host may be, not in another.
+ *   The posix host's /bin/sh is dash on Debian and Ubuntu, bash elsewhere:
+ *   dash has no `source` and no `builtin`, and its `time` is a program. A
+ *   folder moved there, or a script sourced, leaves the line in a folder the
+ *   text does not establish (invariant #4). `.` is POSIX: `own`.
+ * Any other one starts a process of its own (`cmd /c`, `bash -c`,
+ * `powershell -Command`, `sudo`, `env`, `xargs`, `find -exec`, `start`,
+ * `nohup`, `exec`…), or, named in a shell that does not have it, runs
+ * nothing: either way, a folder it moves into is not the line's. PowerShell's
+ * call operator `&` keeps its runspace; read with PowerShell's grammar for
+ * another shell's line (`downloadWrites`), it only marks where the next
+ * command starts, in the same process.
+ */
+const RUNS_IN_PROCESS: Record<LineShell, ReadonlyMap<string, 'own' | 'maybe' | 'not-known'>> = {
+  sh: new Map([
+    ...['eval', '.', 'command', 'do', 'then', 'else', 'elif', 'if', 'while', 'until', '!', '&'].map(
+      (name) => [name, 'own'] as const,
+    ),
+    ...['source', 'builtin', 'time'].map((name) => [name, 'not-known'] as const),
+  ]),
+  // `do` and `else` start the command of a `for` and an `if` once their
+  // parentheses have cut the line (`for %d in (a) do cd %d`).
+  cmd: new Map([
+    ...['call', '&'].map((name) => [name, 'own'] as const),
+    ...['for', 'if', 'do', 'else'].map((name) => [name, 'maybe'] as const),
+  ]),
+  powershell: new Map(
+    ['iex', 'invoke-expression', '&', '.', 'if', 'else', 'while', 'do', 'until'].map(
+      (name) => [name, 'own'] as const,
+    ),
+  ),
+  exec: new Map(),
+};
 
 /**
  * Words that name a shell's keyword, builtin, alias or cmdlet, not a file:
@@ -2559,7 +2602,7 @@ export function programDecidedAtRunTime(
   reader?: ScriptShell,
 ): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
-  return commandUnits(withoutRedirections(cmd), 0, reader ?? topShell(host)).some(
+  return commandUnits(cmd, 0, reader ?? topShell(host)).some(
     (u) => isDecidedAtRunTime(u[0] ?? '') || redefinesCommand(u),
   );
 }
@@ -2598,42 +2641,270 @@ function runsAnother(unit: readonly string[]): boolean {
  * whose shell is not known (`run_command` uses cmd.exe on Windows and sh
  * elsewhere, `topShell`) is read as both, and every command either would run
  * is kept: a net may over-ask, never under-report.
+ *
+ * `processes` is the shell whose processes the line runs in, when it is not
+ * the one whose grammar splits it (`downloadWrites`): which commands run in
+ * the line's own process, and so move its folder (#717, `lineFolders`).
  */
-export function commandUnits(command: string, depth = 0, shell?: LineShell): string[][] {
+export function commandUnits(
+  command: string,
+  depth = 0,
+  shell?: LineShell,
+  processes?: LineShell,
+): string[][] {
   const cmd = command;
   if (shell === undefined) {
-    const seen = new Set<string>();
-    return [...commandUnits(cmd, depth, 'cmd'), ...commandUnits(cmd, depth, 'sh')].filter(
-      (unit) => {
-        const key = JSON.stringify(unit);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      },
-    );
+    // A command both shells run is kept once. Where they read its folder move
+    // differently (`(cd x)`: a subshell in sh, a block in cmd; `x.bat`: a
+    // batch file of cmd's own process, a program sh starts), the folder after
+    // it is not known (#717).
+    const kept = new Map<string, string[]>();
+    const units: string[][] = [];
+    for (const unit of [...commandUnits(cmd, depth, 'cmd'), ...commandUnits(cmd, depth, 'sh')]) {
+      const key = JSON.stringify(unit);
+      const first = kept.get(key);
+      if (first === undefined) {
+        kept.set(key, unit);
+        units.push(unit);
+      } else {
+        if (folderReading(first) !== folderReading(unit)) FOLDER_UNKNOWN.add(first);
+        // what one reading cannot follow, the kept unit cannot either
+        if (UNFOLLOWED_UNITS.has(unit)) UNFOLLOWED_UNITS.add(first);
+      }
+    }
+    return units;
   }
-  if (depth > 8 || typeof cmd !== 'string' || cmd.trim() === '') return [];
+  if (typeof cmd !== 'string' || cmd.trim() === '') return [];
+  // What no reading follows (Nodal review of PR #721, passes 14 and 15):
+  // payloads and substitutions nested past eight levels, and the text of a
+  // line past `MAX_NESTING` parentheses or braces (ten thousand levels ran
+  // the readers out of stack or memory). It is `unfollowed`, which the floor
+  // holds for a human under any autonomy; what stands within the limits, the
+  // rest of the line, is read as any line.
+  if (depth > MAX_DEPTH) return [unfollowed()];
+  const within = depth === 0 ? withinNesting(cmd) : { text: cmd, cut: false };
+  if (within.cut) return [unfollowed(), ...commandUnits(within.text, depth, shell, processes)];
+  const model = processes ?? shell;
   const units: string[][] = [];
   // Substitutions run even inside double quotes: `$(…)` in sh and PowerShell,
   // backticks in sh (PowerShell's backtick is its escape, cmd has neither).
   if (shell !== 'cmd' && shell !== 'exec') {
-    const substitution = shell === 'sh' ? /\$\(([^()]*)\)|`([^`]*)`/g : /\$\(([^()]*)\)/g;
     // A here-document's body is read by the scan (`scanLine`): its own
     // substitutions run only when its marker is not quoted.
     const text = shell === 'sh' ? withoutHereDocBodies(cmd) : cmd;
-    for (const m of text.matchAll(substitution))
-      units.push(...commandUnits(m[1] ?? m[2] ?? '', depth + 1, shell));
+    for (const inner of substitutionsOf(text, shell)) {
+      const read = commandUnits(inner, depth + 1, shell);
+      // sh runs a substitution in a subshell; cmd has none, its text runs
+      // nothing. PowerShell runs one in its own runspace, but an unquoted one
+      // is read by the scan below as well: its move cannot be counted once.
+      if (model === 'powershell') for (const unit of read) FOLDER_UNKNOWN.add(unit);
+      else runIn(read, [newProcess()]);
+      units.push(...read);
+    }
   }
-  for (const words of splitQuotedShellWords(cmd, shell))
-    units.push(...wordUnits(words, depth, shell));
+  for (const words of splitQuotedShellWords(cmd, shell, model)) {
+    const read = wordUnits(words, depth, shell, { model });
+    const redirections = COMMAND_REDIRECTIONS.get(words);
+    if (redirections !== undefined)
+      for (const unit of read) UNIT_REDIRECTIONS.set(unit, redirections);
+    runIn(read, COMMAND_PROCESS.get(words) ?? []);
+    if (COMMAND_MAY_NOT_RUN.has(words)) for (const unit of read) MAY_NOT_RUN.add(unit);
+    chainIn(read, COMMAND_CHAIN.get(words) ?? []);
+    units.push(...read);
+  }
   return units;
 }
 
 /** The program word of each unit as written (`./build.sh`), for `commandUnitsAsWritten`. */
 const UNIT_HEADS = new WeakMap<readonly string[], string>();
 
-/** The units read as the program a script is named after (`npm.cmd` → npm), for `changeDirOf`. */
+/** A redirection of a command: what it opens, as the shell reads its target. */
+interface Redirection {
+  /** `>`, `>>`, `&>`, `<>`…: the target is written; `<`: it is read. */
+  write: boolean;
+  path: string;
+}
+
+/**
+ * The redirections of each command a scanner reads (`scanLine`,
+ * `cmdCommands`), taken out of its words; then of each unit read from that
+ * command, which share them (`sudo curl URL > f`, `bash -c "curl URL" > f`:
+ * what the units write lands there).
+ */
+const COMMAND_REDIRECTIONS = new WeakMap<readonly ShellWord[], readonly Redirection[]>();
+const UNIT_REDIRECTIONS = new WeakMap<readonly string[], readonly Redirection[]>();
+
+/** The units read as the program a script is named after (`npm.cmd` → npm), for `folderMoveOf`. */
 const NAMED_AFTER_UNITS = new WeakSet<readonly string[]>();
+
+/**
+ * The processes a unit runs in below the line's own one, outermost first
+ * (#717); none for a command of the line's own shell process. Each number is
+ * one process: a `( … )` subshell of sh, a side of a pipe, what `bash -c` or
+ * `sudo` starts… A folder a command moves into stays in its process: it
+ * reaches the commands after it there, never one outside (`lineFolders`).
+ */
+const UNIT_PROCESS = new WeakMap<readonly string[], readonly number[]>();
+
+let processCount = 0;
+/** A process no other has been given: only ever compared with another for equality. */
+const newProcess = (): number => ++processCount;
+
+/** Every unit of `units` runs inside `processes`, around the ones it already runs in. */
+function runIn(units: ReadonlyArray<readonly string[]>, processes: readonly number[]): void {
+  if (processes.length === 0) return;
+  for (const unit of units)
+    UNIT_PROCESS.set(unit, [...processes, ...(UNIT_PROCESS.get(unit) ?? [])]);
+}
+
+/**
+ * The units that run a script in the process of the shell that reads them
+ * (`runsInItsShell`): where the script's body ends is the folder of what comes
+ * after it there, which only that body says (#717).
+ */
+const IN_PROCESS_SCRIPTS = new WeakSet<readonly string[]>();
+
+/**
+ * The units whose folder move the reading cannot tell: a line whose shell is
+ * not known, read as both, where they disagree; a PowerShell subexpression,
+ * read twice; what a program runs whose process depends on which shell the
+ * host has (`source`, `RUNS_IN_PROCESS`) (#717). A folder they would move
+ * into is unknown (null).
+ */
+const FOLDER_UNKNOWN = new WeakSet<readonly string[]>();
+
+/**
+ * The units that may not run whenever the line reaches them (Nodal review of
+ * PR #721, P1): on the right of `&&` / `||`, in the body of an `if`, a loop,
+ * a `case`, a function (`Processes`), in what cmd's `if` and `for` run
+ * (`RUNS_IN_PROCESS`). A folder they would move into may not be the one the
+ * line goes on in: unknown (null) from there.
+ */
+const MAY_NOT_RUN = new WeakSet<readonly string[]>();
+
+/**
+ * The `&&` chains a unit is in, outermost first (Nodal review of PR #721): a
+ * move that may not run is still made for what follows it in its own chain,
+ * which runs only if it ran (`mkdir out && cd out && make`), and leaves the
+ * folder unknown past that chain (`lineFolders`).
+ */
+const UNIT_CHAIN = new WeakMap<readonly string[], readonly number[]>();
+
+/** Every unit of `units` is in `chains` too, around the ones it is already in. */
+function chainIn(units: ReadonlyArray<readonly string[]>, chains: readonly number[]): void {
+  if (chains.length === 0) return;
+  for (const unit of units) UNIT_CHAIN.set(unit, [...chains, ...(UNIT_CHAIN.get(unit) ?? [])]);
+}
+
+/**
+ * The units whose program word the shell may resolve, by adding an extension,
+ * to a script it runs in its own process (Nodal review of PR #721, P2), with
+ * the extensions it tries, in order: cmd a bare name or a path through
+ * PATHEXT's `.com .exe .bat .cmd`, a file of the folder first; PowerShell a
+ * path (`.\env`) to its `.ps1`. Only the gate can look (`{ script, extensions }`):
+ * a batch file or a `.ps1` found is that script, anything else is a program.
+ */
+const MAY_BE_SCRIPT = new WeakMap<readonly string[], readonly string[]>();
+
+/** cmd's own commands: never a file of the folder, whatever is there. */
+const CMD_INTERNAL = new Set([
+  'assoc',
+  'break',
+  'call',
+  'cd',
+  'chdir',
+  'cls',
+  'color',
+  'copy',
+  'date',
+  'del',
+  'dir',
+  'dpath',
+  'echo',
+  'endlocal',
+  'erase',
+  'exit',
+  'for',
+  'ftype',
+  'goto',
+  'if',
+  'keys',
+  'md',
+  'mkdir',
+  'mklink',
+  'move',
+  'path',
+  'pause',
+  'popd',
+  'prompt',
+  'pushd',
+  'rd',
+  'rem',
+  'ren',
+  'rename',
+  'rmdir',
+  'set',
+  'setlocal',
+  'shift',
+  'start',
+  'time',
+  'title',
+  'type',
+  'ver',
+  'verify',
+  'vol',
+  'do',
+  'else',
+]);
+
+/** Windows' reserved device names, which no file of any folder can take (`nul.bat`). */
+const WINDOWS_DEVICE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+/** The extensions `model` tries after a program word that has none (`MAY_BE_SCRIPT`). */
+function scriptExtensions(model: LineShell, word: string): readonly string[] | null {
+  // PowerShell's `&` and `.` read for another shell's line name no file, and
+  // a Windows device (`nul`, `con`, `com1`…) is no file of any folder: no
+  // `nul.bat` can be there.
+  if (!/\w/.test(word) || isDecidedAtRunTime(word) || /\.[^.\\/]+$/.test(word)) return null;
+  if (WINDOWS_DEVICE.test(word.split(/[\\/]/).pop() ?? '')) return null;
+  const path = /[\\/]/.test(word);
+  switch (model) {
+    case 'cmd':
+      return path || !CMD_INTERNAL.has(word.toLowerCase())
+        ? ['.com', '.exe', '.bat', '.cmd']
+        : null;
+    case 'powershell':
+      return path ? ['.ps1'] : null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * True when the shell `model` runs the file a command names in its own process
+ * (#717): cmd a batch file, run directly or with `call`; PowerShell a `.ps1`,
+ * run directly, with `&` or dot-sourced (a script's location is the
+ * runspace's); sh only what `.` and `source` read, a script run directly
+ * being a process of its own. A program the text does not name may be such a
+ * file: cmd's `%S%`, PowerShell's `& $s`.
+ */
+function runsInItsShell(
+  model: LineShell,
+  word: string,
+  invoked: boolean,
+  sourced: boolean,
+): boolean {
+  switch (model) {
+    case 'sh':
+      return sourced;
+    case 'cmd':
+      return /\.(bat|cmd)$/i.test(word) || isDecidedAtRunTime(word);
+    case 'powershell':
+      return /\.ps1$/i.test(word) || (invoked && isDecidedAtRunTime(word));
+    case 'exec':
+      return false;
+  }
+}
 
 /** One command a line runs, as `commandUnits` reads it and as it was written. */
 export interface CommandUnit {
@@ -2665,17 +2936,161 @@ export function commandUnitsAsWritten(
 }
 
 /**
- * For a unit that changes folder (`cd`, `pushd`, `Set-Location`…): where it
- * goes. THE reading of a folder change, for the sources a line runs and for
- * where its downloads land. A unit read as the program a script is named
- * after (`cd.bat decoy`) is a guess: it may add a kind, never move the folder
- * the rest of the line is read from (Codex, PR #710 pass 8).
+ * How a command moves the folder the commands after it run from (#717):
+ * - a folder, as written; null when the text does not say which;
+ * - `{ script }`: the folder a script run in that process ends in, which only
+ *   its body says (the gate reads it, packages/tools); with `extensions`, a
+ *   word the shell may resolve to such a script by adding one of them, in
+ *   order (`MAY_BE_SCRIPT`): the gate looks, and anything else it finds, or
+ *   nothing, is a program that moves nothing;
+ * - `{ save }` / `{ restore }`: the folder is kept, then the one kept comes
+ *   back: around the moves of a child process, and cmd's `setlocal` /
+ *   `endlocal` in a batch file, whose end restores every one it kept.
  */
-export function changeDirOf(unit: readonly string[]): string | null | undefined {
+export type FolderMove =
+  | string
+  | null
+  | { readonly script: string; readonly extensions?: readonly string[] }
+  | { readonly save: true }
+  | { readonly restore: true }
+  /**
+   * The end of the `&&` chain after the move at this index, which runs only
+   * if that move was made. Past it, the move may not have been: a `cd` into a
+   * folder that is not there when it runs fails (#723), a move that may not
+   * run may not have. The line is in the folder it was in before the move or
+   * in the one it entered (the gate keeps both, packages/tools).
+   */
+  | { readonly unsure: number };
+
+/**
+ * How one unit moves the folder of the process it runs in: a `cd`-like
+ * command, a script run in that process, and in a batch file cmd's `setlocal`
+ * and `endlocal` (on a command line they do nothing). A unit read as the
+ * program a script is named after (`cd.bat decoy`) is a guess: it may add a
+ * kind, never move a folder (Codex, PR #710 pass 8). A move the reading
+ * cannot tell is to a folder not known; one that may not run, `lineFolders`.
+ */
+function folderMoveOf(unit: readonly string[], batch: boolean): FolderMove | undefined {
+  if (NAMED_AFTER_UNITS.has(unit)) return undefined;
   const program = unit[0] ?? '';
-  if (!CHANGE_DIR.has(program) || NAMED_AFTER_UNITS.has(unit)) return undefined;
-  const dir = changeDirArg(program, unit.slice(1));
-  return dir === null ? null : readablePath(dir);
+  const extensions = MAY_BE_SCRIPT.get(unit);
+  let move: FolderMove | undefined;
+  if (IN_PROCESS_SCRIPTS.has(unit)) {
+    const path = readablePath(UNIT_HEADS.get(unit) ?? program);
+    move = path === null ? null : { script: path };
+  } else if (extensions !== undefined) {
+    // Only a script found moves the folder: one that may not run is told to
+    // the gate, which knows whether it found one (a program moves nothing).
+    const path = readablePath(UNIT_HEADS.get(unit) ?? program);
+    move = path === null || FOLDER_UNKNOWN.has(unit) ? null : { script: path, extensions };
+  } else if (batch && program === 'setlocal') move = { save: true };
+  else if (batch && program === 'endlocal') move = { restore: true };
+  else if (CHANGE_DIR.has(program)) {
+    const dir = changeDirArg(program, unit.slice(1));
+    move = dir === null ? null : readablePath(dir);
+  }
+  return move !== undefined && FOLDER_UNKNOWN.has(unit) ? null : move;
+}
+
+/** How a unit moves its own process's folder, and whether that process is the line's. */
+function folderReading(unit: readonly string[]): string {
+  return JSON.stringify([
+    (UNIT_PROCESS.get(unit) ?? []).length > 0,
+    MAY_NOT_RUN.has(unit),
+    folderMoveOf(unit, false) ?? 'none',
+  ]);
+}
+
+/** One unit of a line, as `lineFolders` reads it. */
+export interface FolderStep {
+  /** The moves before the unit runs: leaving the processes it is not in, keeping a folder it will change. */
+  before: FolderMove[];
+  /** How the unit itself moves the folder of its process, if it does. */
+  move: FolderMove | undefined;
+}
+
+/**
+ * How a line moves the folder its commands run from, unit by unit, in order
+ * (#717): THE reading of a folder change, for the sources a line runs
+ * (program-sources.ts) and for where its downloads land (`downloadWrites`).
+ * Only a command of the line's own shell process moves the line: one a child
+ * process runs (`cmd /c`, `bash -c`, `( … )` in sh, a side of a pipe…) moves
+ * that child, for its own later commands, and the move is undone where the
+ * child ends (`{ save }` … `{ restore }`). A script run in the line's process
+ * leaves it where the script ends (`{ script }`). A move that may not run
+ * (`MAY_NOT_RUN`) is made for what follows it in its own `&&` chain, which
+ * runs only if it ran; so is any `cd`, which fails into a folder that is not
+ * there when it runs (#723). Past that chain, the line is in the folder before
+ * the move or in the one it entered (`{ unsure }`). `batch`: the line is one
+ * of a batch file, where `setlocal` and `endlocal` keep and restore the
+ * folder.
+ */
+export function lineFolders(batch: boolean): {
+  step(unit: readonly string[]): FolderStep;
+  /** Leaving every child process still open, at the end of the line. */
+  end(): FolderMove[];
+} {
+  // The child processes the reading is in, outermost first: whether a folder
+  // was kept on entering it, which only a move inside it needs.
+  const open: Array<{ process: number; kept: boolean }> = [];
+  const leave = (depth: number, out: FolderMove[]): void => {
+    while (open.length > depth) if (open.pop()?.kept === true) out.push({ restore: true });
+  };
+  // The moves that may not have run (Nodal review of PR #721): where each
+  // stands in the list, and the `&&` chain past which it is unsure.
+  const unsure: Array<{ chain: number | undefined; at: number }> = [];
+  const settle = (chains: readonly number[] | null, out: FolderMove[]): void => {
+    for (let i = unsure.length - 1; i >= 0; i--) {
+      const move = unsure[i];
+      if (move === undefined) continue;
+      if (chains !== null && move.chain !== undefined && chains.includes(move.chain)) continue;
+      out.push({ unsure: move.at });
+      unsure.splice(i, 1);
+    }
+  };
+  // How many moves the list holds so far: the consumers push every one.
+  let count = 0;
+  return {
+    step(unit) {
+      const path = UNIT_PROCESS.get(unit) ?? [];
+      const chains = UNIT_CHAIN.get(unit) ?? [];
+      const before: FolderMove[] = [];
+      // Past the chain of a move that may not have run, the folder is not
+      // known (before leaving a child: its own moves are undone after).
+      settle(chains, before);
+      let shared = 0;
+      while (shared < open.length && open[shared]?.process === path[shared]) shared += 1;
+      leave(shared, before);
+      for (const process of path.slice(shared)) open.push({ process, kept: false });
+      let move = folderMoveOf(unit, batch && path.length === 0);
+      const mayNotRun = move !== undefined && move !== null && MAY_NOT_RUN.has(unit);
+      // A folder kept that may not have been leaves nothing to restore to.
+      if (mayNotRun && typeof move === 'object' && move !== null && !('script' in move))
+        move = null;
+      if (move !== undefined)
+        for (const level of open)
+          if (!level.kept) {
+            level.kept = true;
+            before.push({ save: true });
+          }
+      count += before.length;
+      if (move !== undefined) {
+        // A move that may not run, and a `cd` that may fail (#723): made
+        // for its own chain, either folder past it.
+        if (move !== null && (mayNotRun || typeof move === 'string'))
+          unsure.push({ chain: chains.at(-1), at: count });
+        count += 1;
+      }
+      return { before, move };
+    },
+    end() {
+      const out: FolderMove[] = [];
+      settle(null, out);
+      leave(0, out);
+      count += out.length;
+      return out;
+    },
+  };
 }
 
 /** A shell's `-c LINE` (`sh -c`, `bash -lc`): the line is read as commands, not a script file. */
@@ -2688,14 +3103,20 @@ function topShell(host: ShellHost | undefined): LineShell | undefined {
   return host === undefined ? undefined : host === 'windows' ? 'cmd' : 'sh';
 }
 
-/** The units of one command, given as its words. */
+/**
+ * The units of one command, given as its words. `invoked`: run by PowerShell's
+ * `&` or `.`; `sourced`: a file the shell reads itself (`Payload`); `model`:
+ * the shell whose process runs it, when not `shell` (`commandUnits`).
+ */
 function wordUnits(
   words: readonly ShellWord[],
   depth: number,
   shell: LineShell,
-  invoked = false,
+  how: { invoked?: boolean; sourced?: boolean; model?: LineShell } = {},
 ): string[][] {
-  if (depth > 8) return [];
+  if (depth > MAX_DEPTH) return [unfollowed()];
+  const invoked = how.invoked === true;
+  const model = how.model ?? shell;
   // `FOO=1 rm -rf build`: variables set for the command are not the program
   // (review of PR #476).
   let k = 0;
@@ -2718,7 +3139,7 @@ function wordUnits(
     const units =
       eq < 0 || /^[$'"(@\[\d-]/.test(right) || right === ''
         ? []
-        : commandUnits(right, depth + 1, 'powershell');
+        : commandUnits(right, depth + 1, 'powershell', model);
     // `$function:npm = '…'` writes the function: drive (`redefinesCommand`).
     const drive = /^\$((?:function|alias):[^=]*)/i.exec(head.text)?.[1];
     return drive === undefined ? units : [[drive.toLowerCase()], ...units];
@@ -2744,6 +3165,12 @@ function wordUnits(
   const texts = args.map((a) => a.text);
   const units: string[][] = [[program, ...texts]];
   UNIT_HEADS.set(units[0] as string[], head.text);
+  if (runsInItsShell(model, head.text, invoked, how.sourced === true))
+    IN_PROCESS_SCRIPTS.add(units[0] as string[]);
+  else {
+    const extensions = scriptExtensions(model, head.text);
+    if (extensions !== null) MAY_BE_SCRIPT.set(units[0] as string[], extensions);
+  }
   // `npm.cmd install x`: the script, whose file is read where it lives (the
   // unit above), and the program it is named after, read as that program. A
   // file is never the shell's keyword of its name (`start.bat`, as above).
@@ -2766,15 +3193,36 @@ function wordUnits(
       if (module !== undefined) {
         const unit = [module.toLowerCase(), ...texts.slice(m + 2)];
         UNIT_HEADS.set(unit, module);
+        // The module runs in python's process (#717).
+        runIn([unit], [newProcess()]);
         units.push(unit);
       }
     }
+    // What a program of the shell's own runs stays in its process; any other
+    // program starts one, where what it runs moves no folder of the line. One
+    // whose process depends on which shell the host has moves it to a folder
+    // not known; one that runs it only when a condition holds, too, if it
+    // moves it (#717, `RUNS_IN_PROCESS`).
+    const runs = RUNS_IN_PROCESS[model].get(name);
     for (const payload of RUNS_ANOTHER[name]?.(args, shell) ?? []) {
-      units.push(
-        ...('line' in payload
-          ? commandUnits(payload.line, depth + 1, payload.shell)
-          : wordUnits(payload.words, depth + 1, payload.shell, payload.invoked === true)),
-      );
+      const read =
+        'line' in payload
+          ? commandUnits(payload.line, depth + 1, payload.shell, runs ? model : undefined)
+          : wordUnits(payload.words, depth + 1, payload.shell, {
+              invoked: payload.invoked === true,
+              sourced: payload.sourced === true,
+              ...(runs ? { model } : {}),
+            });
+      if (runs === undefined) runIn(read, [newProcess()]);
+      else if (runs === 'not-known') {
+        for (const unit of read) if (!UNIT_PROCESS.has(unit)) FOLDER_UNKNOWN.add(unit);
+      } else if (runs === 'maybe') {
+        // What it runs is a chain of its own: the `&&` after `if … cd x`
+        // runs whether the cd did or not.
+        for (const unit of read) MAY_NOT_RUN.add(unit);
+        chainIn(read, [newProcess()]);
+      }
+      units.push(...read);
     }
     if (name === namedAfter) for (const unit of units.slice(from)) NAMED_AFTER_UNITS.add(unit);
   }
@@ -2838,15 +3286,23 @@ const POWERSHELL: Grammar = {
   doubledQuote: true,
 };
 
-/** `splitShellWords`, each word saying whether it was quoted, for the shell that reads the line. */
-function splitQuotedShellWords(cmd: string, shell: LineShell): ShellWord[][] {
+/**
+ * `splitShellWords`, each word saying whether it was quoted, for the shell that
+ * reads the line; the processes its commands run in are those of `processes`
+ * (`COMMAND_PROCESS`).
+ */
+function splitQuotedShellWords(
+  cmd: string,
+  shell: LineShell,
+  processes: LineShell = shell,
+): ShellWord[][] {
   switch (shell) {
     case 'sh':
-      return scanLine(cmd, SH);
+      return scanLine(cmd, SH, undefined, processes);
     case 'powershell':
-      return scanLine(cmd, POWERSHELL);
+      return scanLine(cmd, POWERSHELL, undefined, processes);
     case 'cmd':
-      return cmdCommands(cmd).map(windowsArguments);
+      return cmdCommands(cmd);
     case 'exec':
       // A command line handed to a program, no shell: no operator, its words
       // by the Windows argument rules (`runas "prog args"`).
@@ -3029,8 +3485,266 @@ export function stdinReceiver(before: string, after: string): StdinReceiver {
   return doubt(program);
 }
 
-/** Command substitutions, which sh runs in an unquoted here-document's body. */
-const SUBSTITUTION = /\$\(([^()]*)\)|`([^`]*)`/g;
+/**
+ * The units that stand for text no reading follows (`unfollowed`): nobody
+ * knows what they run. Marked by identity, never by text (Nodal review of PR
+ * #721, pass 16): no line can write one, and a line that writes their text
+ * (`$(…)`) is the program decided at run time it always was. To the
+ * checklist they are such a program; to the floor a destroyer not known
+ * (`isCatastrophicCommand`), refused under any autonomy.
+ */
+const UNFOLLOWED_UNITS = new WeakSet<readonly string[]>();
+
+/** A unit for text no reading follows (`UNFOLLOWED_UNITS`). */
+function unfollowed(): string[] {
+  const unit = ['$(…)'];
+  UNFOLLOWED_UNITS.add(unit);
+  return unit;
+}
+
+/** True when `unit` stands for text no reading follows (`unfollowed`). */
+export function isUnfollowedUnit(unit: readonly string[]): boolean {
+  return UNFOLLOWED_UNITS.has(unit);
+}
+
+/**
+ * How deep payloads and substitutions are followed (`commandUnits`,
+ * `wordUnits`, every recursion of a line's reading): past it, `unfollowed`.
+ */
+const MAX_DEPTH = 8;
+
+/**
+ * How deep a line's parentheses and braces nest before the reading stops
+ * following (`withinNesting`): what nests deeper is not read (passes 14, 15).
+ * Within it, no reader below recurses past this depth.
+ */
+const MAX_NESTING = 32;
+
+/**
+ * A line with what its parentheses and braces nest past `MAX_NESTING` taken
+ * out (quotes ignored: never less than any reading nests), and whether any
+ * was: the rest stays, to be read as any line (pass 15).
+ */
+function withinNesting(text: string): { text: string; cut: boolean } {
+  let depth = 0;
+  let kept = '';
+  let cut = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i] ?? '';
+    if ((c === '(' || c === '{') && depth === MAX_NESTING) {
+      // Past the limit: up to the parenthesis or brace that closes this one.
+      let level = 0;
+      let j = i;
+      for (; j < text.length; j++) {
+        const d = text[j];
+        if (d === '(' || d === '{') level += 1;
+        else if ((d === ')' || d === '}') && --level === 0) break;
+      }
+      kept += ' ';
+      cut = true;
+      i = j;
+      continue;
+    }
+    if (c === '(' || c === '{') depth += 1;
+    else if ((c === ')' || c === '}') && depth > 0) depth -= 1;
+    kept += c;
+  }
+  return { text: kept, cut };
+}
+
+/**
+ * The command substitutions of a text, outermost ones: the code of each
+ * `$( … )` (and of each backtick span in sh), read wherever it stands, in
+ * double quotes, in a case pattern, even in single quotes (a safety net may
+ * over-read: `echo '$(…)' | sh` runs it). Each ends where its `(` balances
+ * (`closingParen`). An arithmetic `$(( … ))` is no code; the substitutions in
+ * it are.
+ *
+ * Nothing is ever dropped (Nodal review of PR #721, pass 14): a substitution
+ * whose end is not found is read to the end of the text, as code.
+ */
+function substitutionsOf(text: string, shell: 'sh' | 'powershell'): string[] {
+  const escape = shell === 'sh' ? '\\' : '`';
+  const found: string[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === escape) i += 1;
+    else if (c === '$' && text[i + 1] === '(') {
+      const end = closingParen(text, i + 1, shell);
+      if (end === null) return [...found, text.slice(i + 2)];
+      if (text[i + 2] === '(' && text[end - 1] === ')')
+        found.push(...substitutionsOf(text.slice(i + 3, end - 1), shell));
+      else found.push(text.slice(i + 2, end));
+      i = end;
+    } else if (shell === 'sh' && c === '`') {
+      const end = closingBacktick(text, i);
+      if (end === null) return [...found, text.slice(i + 1)];
+      found.push(text.slice(i + 1, end));
+      i = end;
+    }
+  }
+  return found;
+}
+
+/** The backtick that closes the one at `at`, past escaped ones; null if none. */
+function closingBacktick(text: string, at: number): number | null {
+  for (let j = at + 1; j < text.length; j++) {
+    if (text[j] === '\\') j += 1;
+    else if (text[j] === '`') return j;
+  }
+  return null;
+}
+
+/**
+ * The `)` that balances the `(` at `open`, as `shell` reads the code between
+ * (Nodal review of PR #721, passes 13 and 14): quotes and escapes, sh's
+ * `$'…'` with its escapes, a nested `$( … )` read whole in double quotes,
+ * `${ … }` and `$[ … ]` (whose `)` close nothing), backtick spans, comments
+ * (sh's `#` starting a word, PowerShell's `#` and `<# … #>`), and a `case`'s
+ * patterns. `case` and `esac` are reserved where a command starts only, as
+ * the scan reads them (`shNextCommand`), and a pattern is read by the scan's
+ * pattern reader (`casePatternEnd`). Null when it never balances.
+ */
+function closingParen(text: string, open: number, shell: 'sh' | 'powershell'): number | null {
+  const escape = shell === 'sh' ? '\\' : '`';
+  const startsWord = (at: number): boolean => /^$|[\s;&|()]/.test(text[at - 1] ?? '');
+  let depth = 0;
+  // The cases open: the depth each stands at, and whether a pattern comes next.
+  const cases: Array<{ depth: number; in: boolean; pattern: boolean }> = [];
+  // Whether a command may start here (`case`, `esac` are reserved there only).
+  let command = true;
+  let double = false;
+  for (let j = open; j < text.length; j++) {
+    const c = text[j] ?? '';
+    const next = text[j + 1] ?? '';
+    const top = cases[cases.length - 1];
+    if (c === escape) {
+      j += 1;
+      continue;
+    }
+    if (double) {
+      if (c === '"') double = false;
+      else if (c === '$' && (next === '(' || next === '{' || next === '[')) {
+        const end = skipExpansion(text, j, shell);
+        if (end === null) return null;
+        j = end;
+      } else if (shell === 'sh' && c === '`') {
+        const end = closingBacktick(text, j);
+        if (end === null) return null;
+        j = end;
+      }
+      continue;
+    }
+    if (shell === 'sh' && top?.pattern === true && command && !/[\s;&|)]/.test(c)) {
+      // Where a pattern is expected, `esac` closes the case; anything else is
+      // a pattern, read to its `)` as the scan reads it.
+      if (/^esac(?![^\s;&|()<>])/.test(text.slice(j))) {
+        cases.pop();
+        j += 3;
+        command = false;
+        continue;
+      }
+      const end = casePatternEnd(text, j);
+      if (typeof end !== 'number') return null;
+      top.pattern = false;
+      j = end;
+      command = true;
+      continue;
+    }
+    if (c === '"') double = true;
+    else if (c === "'") {
+      const end = text.indexOf("'", j + 1);
+      if (end < 0) return null;
+      j = end;
+      command = false;
+    } else if (shell === 'sh' && c === '`') {
+      const end = closingBacktick(text, j);
+      if (end === null) return null;
+      j = end;
+      command = false;
+    } else if (shell === 'sh' && c === '$' && next === "'") {
+      j = ansiQuoteEnd(text, j);
+      command = false;
+    } else if (c === '$' && (next === '{' || next === '[' || (next === '(' && shell === 'sh'))) {
+      const end = skipExpansion(text, j, shell);
+      if (end === null) return null;
+      j = end;
+      command = false;
+    } else if (startsWord(j) && c === '#') {
+      // A comment, to the end of its line, which ends the command.
+      const end = text.indexOf('\n', j);
+      if (end < 0) return null;
+      j = end - 1;
+    } else if (shell === 'powershell' && c === '<' && next === '#') {
+      const end = text.indexOf('#>', j + 2);
+      if (end < 0) return null;
+      j = end + 1;
+    } else if (c === '(') {
+      depth += 1;
+      command = true;
+    } else if (c === ')') {
+      depth -= 1;
+      if (depth === 0) return j;
+      command = false;
+    } else if (c === ';' || c === '&' || c === '|' || c === '\n' || c === '{' || c === '}') {
+      // `;;`, `;&`, `;;&` end a clause: a pattern comes next.
+      if (c === ';' && (next === ';' || next === '&') && top !== undefined && top.depth === depth)
+        top.pattern = true;
+      command = true;
+    } else if (!/\s/.test(c)) {
+      // A word: reserved where a command starts, as the scan reads it.
+      const word = /^[^\s;&|()<>'"`$\\]+/.exec(text.slice(j))?.[0] ?? c;
+      if (shell === 'sh' && command && word === 'case')
+        cases.push({ depth, in: false, pattern: false });
+      else if (shell === 'sh' && top !== undefined && !top.in && word === 'in') {
+        top.in = true;
+        top.pattern = true;
+        command = true;
+        j += word.length - 1;
+        continue;
+      }
+      command = command && shNextCommand((k) => (k === 0 ? word : ''), 0) !== null;
+      j += word.length - 1;
+    }
+  }
+  return null;
+}
+
+/**
+ * Where an expansion that starts with `$` at `at` ends: `$( … )` at its
+ * balancing `)` (`closingParen`), `${ … }` at the `}` that closes it, `$[ … ]`
+ * at its `]`, past quotes and escapes; null when it never ends.
+ */
+function skipExpansion(text: string, at: number, shell: 'sh' | 'powershell'): number | null {
+  const open = text[at + 1];
+  if (open === '(') return closingParen(text, at + 1, shell);
+  const close = open === '{' ? '}' : ']';
+  const escape = shell === 'sh' ? '\\' : '`';
+  let depth = 0;
+  for (let j = at + 1; j < text.length; j++) {
+    const c = text[j];
+    if (c === escape) j += 1;
+    else if (c === "'" || c === '"') {
+      const end = text.indexOf(c, j + 1);
+      if (end < 0) return null;
+      j = end;
+    } else if (c === open) depth += 1;
+    else if (c === close) {
+      depth -= 1;
+      if (depth === 0) return j;
+    }
+  }
+  return null;
+}
+
+/** Where sh's `$'…'` that starts at `at` ends: its `'`, past backslash escapes (`\'`). */
+function ansiQuoteEnd(text: string, at: number): number {
+  for (let j = at + 2; j < text.length; j++) {
+    if (text[j] === '\\') j += 1;
+    else if (text[j] === "'") return j;
+  }
+  return text.length - 1;
+}
 
 /**
  * The here-documents of a text, as sh reads it (#635, reviews 4 and 5 of PR
@@ -3078,14 +3792,464 @@ function bodyEnd(
 }
 
 /**
+ * The child processes a scanned command runs in, below the line's own process,
+ * outermost first (#717): `UNIT_PROCESS` for the units read from it.
+ */
+const COMMAND_PROCESS = new WeakMap<readonly ShellWord[], readonly number[]>();
+
+/** The scanned commands that may not run whenever the line reaches them: `MAY_NOT_RUN`. */
+const COMMAND_MAY_NOT_RUN = new WeakSet<readonly ShellWord[]>();
+
+/** The `&&` chains a scanned command is in, outermost first: `UNIT_CHAIN`. */
+const COMMAND_CHAIN = new WeakMap<readonly ShellWord[], readonly number[]>();
+
+/** sh's compound commands: what opens one, where its body starts, what closes it. */
+const SH_OPENS = new Set(['if', 'while', 'until', 'for', 'select', 'case']);
+const SH_BODY = new Set(['then', 'else', 'elif', 'do']);
+const SH_CLOSES = new Set(['fi', 'done', 'esac']);
+/** The compounds whose first word a command follows: their condition. */
+const SH_CONDITIONS = new Set(['if', 'while', 'until']);
+
+/**
+ * Where the next word in command position is, past the reserved word at `i`
+ * that leaves one after it (Nodal review of PR #721, passes 10 to 12): `then`,
+ * `else`, `elif`, `do`, `!`, `if`, `while`, `until`, `time` and its options,
+ * `coproc` and its name before a compound; null for any other word.
+ * `reserved(i)`: the word at `i` when sh may read it as reserved, else ''.
+ */
+function shNextCommand(reserved: (i: number) => string, i: number): number | null {
+  const word = reserved(i);
+  if (SH_BODY.has(word) || SH_CONDITIONS.has(word) || word === '!') return i + 1;
+  if (word === 'time') {
+    let next = i + 1;
+    while (/^-/.test(reserved(next))) next++;
+    return next;
+  }
+  if (word === 'coproc')
+    return !SH_OPENS.has(reserved(i + 1)) && SH_OPENS.has(reserved(i + 2)) ? i + 2 : i + 1;
+  return null;
+}
+
+/** The PowerShell commands that run the block they are given once, in the runspace. */
+const PS_RUNS_BLOCK_ONCE = new Set(['&', '.', 'try', 'finally', 'invoke-command', 'icm']);
+
+/**
+ * Which commands of a line its shell runs in a process of their own (#717),
+ * told operator by operator by the scanner that cuts the line, read with the
+ * process model of the shell that runs it:
+ * - sh: a `( … )` subshell, `$( … )` and `<( … )`, each side of a pipe, and
+ *   a list sent to the background with `&`; `{ …; }` runs in its process;
+ * - cmd: each side of a pipe; its `( … )` blocks run in its process, after an
+ *   `if`, a `for`, an `else` or where a command starts; elsewhere a
+ *   parenthesis, like `$(` and a brace, is text, where nothing runs;
+ * - PowerShell: a pipeline sent to the background with a final `&`, and the
+ *   script block of a command that runs it in another runspace or process
+ *   (`runsBlockApart`); pipes, `( … )`, `$( … )` and any other `{ … }` run in
+ *   its own runspace.
+ *
+ * And which may not run whenever the line reaches them (Nodal review of PR
+ * #721, P1): a command on the right of `&&` or `||` (the head of a list runs);
+ * in sh, the body of an `if`, a loop or a `case`, and a function's; in cmd, the
+ * block of an `if`, an `else` or a `for`; in PowerShell, any script block but
+ * the one `&`, `.`, `try`, `finally` or `Invoke-Command` runs once (`if`, loops,
+ * `ForEach-Object`, `catch`, a function, a block left as a value).
+ */
+class Processes {
+  /**
+   * The groups open: each a child process or not, whether its commands may not
+   * run, the list it is part of, and whether it is a parenthesis after a word.
+   */
+  private readonly groups: Array<{
+    process: number | null;
+    mayNotRun: boolean;
+    start: number;
+    list: number;
+    orElse: boolean;
+    afterWord: boolean;
+    /** The chain the group is an element of, and the one the scan goes on in after it. */
+    chain: number;
+    then: number;
+  }> = [];
+  /** Where the last whole command (simple, or a group) starts: what a pipe takes. */
+  private last = -1;
+  /** Where the current list (`a && b || c`) starts: what `&` sends to the background. */
+  private list = 0;
+  /** The process of the command that comes next: a pipe's right side. */
+  private side: number | null = null;
+  /** Past the head of the current list: after `&&` or `||`. */
+  private orElse = false;
+  /**
+   * sh's compound commands open: whether the scan is in their body, where
+   * each starts, and for a case whether a pattern comes next.
+   */
+  private readonly compounds: Array<{ body: boolean; start: number; pattern?: boolean }> = [];
+  /**
+   * Where the group that just closed starts, while nothing follows it but its
+   * redirections (`( … ) > f`): they are its commands' (Nodal review of PR
+   * #721, pass 9).
+   */
+  private closed: number | null = null;
+  /** sh: `name()` was just written, and the brace that follows is a function's body. */
+  private functionNext = false;
+  /**
+   * The `&&` chain the next command joins (Nodal review of PR #721): what
+   * follows a command through `&&` alone runs only if it ran. `;`, a new
+   * line, `&` and `||` end it; the command right after `||` is in none, for
+   * it is skipped exactly when what came before succeeded, and the `&&` after
+   * it then runs anyway.
+   */
+  private chain = newProcess();
+  /** The next command, right after `||`, joins no chain of the list. */
+  private alone = false;
+
+  constructor(
+    private readonly model: LineShell,
+    private readonly commands: ShellWord[][],
+  ) {}
+
+  /** The child processes open where the scan is. */
+  here(): number[] {
+    return this.groups.flatMap((g) => (g.process === null ? [] : [g.process]));
+  }
+
+  /** The chain the next element of the list joins: its own one, right after `||`. */
+  private joinChain(): number {
+    if (!this.alone) return this.chain;
+    this.alone = false;
+    const own = newProcess();
+    this.chain = newProcess();
+    return own;
+  }
+
+  /** True when what the scan meets now may not run whenever the line reaches it. */
+  private mayNotRun(): boolean {
+    return (
+      this.orElse || this.groups.some((g) => g.mayNotRun) || this.compounds.some((c) => c.body)
+    );
+  }
+
+  /** The scanner pushed a command. */
+  command(): void {
+    const at = this.commands.length - 1;
+    const words = this.commands[at];
+    if (words === undefined) return;
+    COMMAND_PROCESS.set(words, [...this.here(), ...(this.side === null ? [] : [this.side])]);
+    COMMAND_CHAIN.set(words, [...this.groups.map((g) => g.chain), this.joinChain()]);
+    this.side = null;
+    this.last = at;
+    this.closed = null;
+    this.functionNext = false;
+    // sh's reserved words count wherever a command may start, as its grammar
+    // reads them (Nodal review of PR #721, pass 10): at the segment's start,
+    // and after `then`, `else`, `elif`, `do`, `!`, `if`, `while` and `until`,
+    // which a command follows (`do if …`, `else for …`, `if ! curl …`), and
+    // after `time` and its options and `coproc` and its name (pass 11). A
+    // word quoted or escaped in any part is none (`"done"`, `\done`).
+    const reserved = (i: number): string =>
+      this.model === 'sh' && words[i]?.quoted === false ? (words[i]?.text ?? '') : '';
+    let i = 0;
+    for (; SH_BODY.has(reserved(i)); i++) {
+      const open = this.compounds[this.compounds.length - 1];
+      if (open !== undefined) open.body = true;
+    }
+    if (this.mayNotRun()) COMMAND_MAY_NOT_RUN.add(words);
+    // `case … in` is followed by its body at once. The compound that closes
+    // is the whole command (`for … done | x`, `if … fi > f`).
+    while (i < words.length) {
+      const word = reserved(i);
+      if (SH_OPENS.has(word))
+        this.compounds.push({ body: word === 'case', start: at, pattern: word === 'case' });
+      else if (SH_CLOSES.has(word)) {
+        this.last = this.compounds.pop()?.start ?? at;
+        break;
+      }
+      const next = shNextCommand(reserved, i);
+      if (next === null) break;
+      i = next;
+    }
+  }
+
+  /** True when the case the scan is in expects a pattern next. */
+  expectsPattern(): boolean {
+    return this.compounds[this.compounds.length - 1]?.pattern === true;
+  }
+
+  /** The case's pattern was read: its commands come next. */
+  patternRead(): void {
+    const open = this.compounds[this.compounds.length - 1];
+    if (open !== undefined) open.pattern = false;
+  }
+
+  /** `;;`, `;&`, `;;&`: the case's next clause starts with a pattern. */
+  patternNext(): void {
+    const open = this.compounds[this.compounds.length - 1];
+    if (open?.pattern === false) open.pattern = true;
+  }
+
+  /**
+   * The redirections of the command the scanner just pushed: of the whole
+   * compound when it closes one (`if … fi > f`, `for … done > f`, measured
+   * in bash). Every command they cover shares them: the shell opens each
+   * once, before running the first.
+   */
+  redirectCommand(redirections: readonly Redirection[]): void {
+    this.cover(this.last, redirections);
+  }
+
+  /**
+   * Redirections written where no command stands: after a group that just
+   * closed (`( … ) > f`, `{ …; } > f`, cmd's `( … ) > f`, PowerShell's
+   * `( … ) > f`, measured), they are its commands', nested groups included.
+   * Alone (`> f`), they run nothing: bash creates an empty file, cmd refuses
+   * the line (measured). No download lands there.
+   */
+  redirectGroup(redirections: readonly Redirection[]): void {
+    if (this.closed !== null) this.cover(this.closed, redirections);
+  }
+
+  private cover(from: number, redirections: readonly Redirection[]): void {
+    if (from < 0 || redirections.length === 0) return;
+    for (let i = from; i < this.commands.length; i++) {
+      const words = this.commands[i];
+      if (words !== undefined)
+        COMMAND_REDIRECTIONS.set(words, [
+          ...(COMMAND_REDIRECTIONS.get(words) ?? []),
+          ...redirections,
+        ]);
+    }
+  }
+
+  /**
+   * An opening `(` or `{`. `kind`: `$(`, `@(`, `<(`, `>(` are substitutions;
+   * a `(` is at a command's start or after a word. `command`: the words of the
+   * command written before it, as written.
+   */
+  open(kind: 'substitution' | 'start' | 'after-word' | 'brace', command: readonly string[]): void {
+    const head = (command[0] ?? '').toLowerCase();
+    let child: boolean;
+    let mayNotRun: boolean;
+    switch (this.model) {
+      case 'sh':
+        child = kind === 'substitution' || kind === 'start';
+        mayNotRun = kind === 'brace' && (this.functionNext || head === 'function');
+        break;
+      case 'cmd': {
+        const block = ['if', 'for', 'else', 'do'].includes(head);
+        child = kind === 'substitution' || kind === 'brace' || (kind === 'after-word' && !block);
+        mayNotRun = kind === 'after-word' && block;
+        break;
+      }
+      case 'powershell':
+        child = kind === 'brace' && runsBlockApart(command);
+        mayNotRun =
+          kind === 'brace' &&
+          !PS_RUNS_BLOCK_ONCE.has((afterAssignment(command)[0] ?? '').toLowerCase());
+        break;
+      default:
+        child = false;
+        mayNotRun = false;
+    }
+    const process = this.side ?? (child ? newProcess() : null);
+    this.side = null;
+    const chain = this.joinChain();
+    this.groups.push({
+      process,
+      mayNotRun: mayNotRun || this.mayNotRun(),
+      start: this.commands.length,
+      list: this.list,
+      orElse: this.orElse,
+      afterWord: kind === 'after-word',
+      chain,
+      then: this.chain,
+    });
+    this.list = this.commands.length;
+    this.orElse = false;
+    this.functionNext = false;
+    this.chain = newProcess();
+    this.closed = null;
+  }
+
+  /** A closing `)` or `}`: the group is one command of the list around it. */
+  close(): void {
+    const group = this.groups.pop();
+    if (group === undefined) return;
+    this.last = group.start;
+    this.closed = group.start;
+    this.list = group.list;
+    this.orElse = group.orElse;
+    this.chain = group.then;
+    // `name()`: an empty parenthesis after a word names a function.
+    this.functionNext =
+      this.model === 'sh' && group.afterWord && group.start === this.commands.length;
+  }
+
+  /** A pipe: each side is a process of its own, but in PowerShell. */
+  pipe(): void {
+    this.closed = null;
+    if (this.model === 'powershell') return;
+    this.apart(this.last);
+    this.side = newProcess();
+  }
+
+  /** `&&` or `||`: what follows in the list runs only on the result of what came before. */
+  andOr(operator: '&&' | '||'): void {
+    this.closed = null;
+    this.orElse = true;
+    if (operator === '||') {
+      this.chain = newProcess();
+      this.alone = true;
+    }
+  }
+
+  /** `&` alone: what it ends is sent to the background, in sh and PowerShell (`rest`, after it). */
+  ampersand(rest: string): void {
+    const background =
+      this.model === 'sh' || (this.model === 'powershell' && /^[ \t]*($|[;\r\n)}])/.test(rest));
+    if (background) this.apart(this.list);
+    this.next();
+  }
+
+  /** `;` or a new line: a new list starts. */
+  next(): void {
+    this.closed = null;
+    this.list = this.commands.length;
+    this.orElse = false;
+    this.chain = newProcess();
+    this.alone = false;
+  }
+
+  /** The commands from `from` on run in one process of their own. */
+  private apart(from: number): void {
+    if (from < 0) return;
+    const depth = this.here().length;
+    const process = newProcess();
+    for (let i = from; i < this.commands.length; i++) {
+      const words = this.commands[i];
+      if (words === undefined) continue;
+      const path = COMMAND_PROCESS.get(words) ?? [];
+      COMMAND_PROCESS.set(words, [...path.slice(0, depth), process, ...path.slice(depth)]);
+    }
+  }
+}
+
+/** A PowerShell command's words past an assignment of its result (`$j = Start-Job`). */
+function afterAssignment(command: readonly string[]): string[] {
+  const glued = /^\$[\w:]+=(.+)$/.exec(command[0] ?? '');
+  if (glued) return [glued[1] ?? '', ...command.slice(1)];
+  if ((command[0] ?? '').startsWith('$') && command[1] === '=') return command.slice(2);
+  return [...command];
+}
+
+/**
+ * True when a PowerShell command runs the script block it is given in another
+ * runspace or process, where a location it sets is not the line's (#717):
+ * `Start-Job` (`sajb`) and `Start-ThreadJob`, `ForEach-Object` with `-Parallel` or
+ * `-UseNewRunspace` (`%`, `foreach`), and `Invoke-Command` (`icm`) on a computer, a
+ * session, a VM, a container, an SSH host, or as a job; a plain
+ * `ForEach-Object` or `Invoke-Command` runs it in the caller's runspace.
+ * `command`: its words before the block.
+ */
+function runsBlockApart(command: readonly string[]): boolean {
+  const [head = '', ...args] = afterAssignment(command);
+  const bindsOne = (sig: PsSignature, names: readonly string[]): boolean =>
+    bindPsArguments(args, sig).some((b) => b.names?.some((n) => names.includes(n)) === true);
+  switch (head.toLowerCase()) {
+    case 'start-job':
+    case 'sajb':
+    case 'start-threadjob':
+      return true;
+    case 'foreach-object':
+    case '%':
+    case 'foreach':
+      return bindsOne(FOREACH_OBJECT, ['parallel', 'usenewrunspace']);
+    case 'invoke-command':
+    case 'icm':
+      return bindsOne(INVOKE_COMMAND, [
+        'computername',
+        'session',
+        'connectionuri',
+        'vmid',
+        'vmname',
+        'containerid',
+        'hostname',
+        'sshconnection',
+        'asjob',
+        'indisconnectedsession',
+      ]);
+    default:
+      return false;
+  }
+}
+
+/** True when `ch` is one of `set` (never the empty string). */
+const oneOf = (ch: string, set: string): boolean => ch !== '' && set.includes(ch);
+
+/**
+ * What one operator of a line read with sh's or PowerShell's grammar says of
+ * the processes its commands run in (`Processes`). `command`: the words of the
+ * command written before it, none when it starts one.
+ */
+function readOperator(
+  processes: Processes,
+  line: string,
+  at: number,
+  command: readonly string[],
+): void {
+  const ch = line[at] ?? '';
+  const prev = line[at - 1] ?? '';
+  const next = line[at + 1] ?? '';
+  switch (ch) {
+    case '(':
+      processes.open(
+        oneOf(prev, '$@<>') ? 'substitution' : command.length === 0 ? 'start' : 'after-word',
+        command,
+      );
+      return;
+    case '{':
+      processes.open('brace', command);
+      return;
+    case ')':
+    case '}':
+      processes.close();
+      return;
+    case '|':
+      // `||` is a list; `>|` a redirection; `|&` a pipe.
+      if (next === '|') processes.andOr('||');
+      else if (prev !== '|' && prev !== '>') processes.pipe();
+      return;
+    case '&':
+      // `&&` is a list; `>&2`, `<&3`, `&>f` redirections; `|&` a pipe. The
+      // `&` of a case's `;&` sends nothing back: its `;` began a new list.
+      if (next === '&') processes.andOr('&&');
+      else if (prev !== '&' && !oneOf(prev, '<>|') && next !== '>')
+        processes.ampersand(line.slice(at + 1));
+      return;
+    case ';':
+      // `;;`, `;&`, `;;&` end a case clause: a pattern comes next.
+      if (next === ';' || next === '&') processes.patternNext();
+      processes.next();
+      return;
+    default:
+      processes.next();
+  }
+}
+
+/**
  * Read a line with the grammar of sh or PowerShell, words and commands in one
  * pass. In sh, a here-document's body is not script grammar: its lines are
  * read as the commands of the shell it feeds, and, unless its marker is
  * quoted, the substitutions in it run; to any other program it is data. With
- * `hereDocs`, the here-documents met are reported there.
+ * `hereDocs`, the here-documents met are reported there. `model`: the shell
+ * whose processes the commands run in (`Processes`, #717).
  */
-function scanLine(line: string, g: Grammar, hereDocs?: HereDocument[]): ShellWord[][] {
+function scanLine(
+  line: string,
+  g: Grammar,
+  hereDocs?: HereDocument[],
+  model: LineShell = g === SH ? 'sh' : 'powershell',
+): ShellWord[][] {
   const segments: ShellWord[][] = [];
+  const processes = new Processes(model, segments);
   let words: Array<{ text: string; quoted: boolean; start: number }> = [];
   let word = '';
   let inWord = false;
@@ -3106,8 +4270,17 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocument[]): ShellWor
   const pending: Array<
     Omit<HereDocument, 'bodyStart' | 'bodyEnd' | 'end' | 'receiver'> & { before: string }
   > = [];
+  // The redirections of the command being read; `redirect`: the next word is
+  // the target of the one just met (`readRedirection`).
+  let redirects: Redirection[] = [];
+  let redirect: { write: boolean; duplicates: boolean } | null = null;
   const endWord = (): void => {
-    if (inWord) {
+    if (inWord && redirect !== null) {
+      // `>&2`, `>&-` copy a descriptor; `>&file` (bash) writes both streams to it.
+      if (!(redirect.duplicates && !quoted && /^(\d+|-)$/.test(word)))
+        redirects.push({ write: redirect.write, path: word });
+      redirect = null;
+    } else if (inWord) {
       if (!quoted && word === '[[') doubleBracket = true;
       else if (!quoted && word === ']]') doubleBracket = false;
       else if (!quoted && word === 'let' && words.length === 0) letCommand = true;
@@ -3132,11 +4305,18 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocument[]): ShellWor
       }));
       if (piped !== null && segment.length === 1) segment.push(piped);
       segments.push(segment);
+      processes.command();
+      processes.redirectCommand(redirects);
       piped = null;
       if (g === POWERSHELL && separator === '|' && segment.length === 1 && segment[0]?.quoted)
         piped = segment[0];
-    } else piped = null;
+    } else {
+      piped = null;
+      processes.redirectGroup(redirects);
+    }
     words = [];
+    redirects = [];
+    redirect = null;
   };
   for (let at = 0; at < line.length; at++) {
     const ch = line[at] ?? '';
@@ -3155,10 +4335,51 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocument[]): ShellWor
     }
     // sh: a `#` that starts a word starts a comment, to the end of the line
     // (after a separator, `)`, `;`, `|`, a backtick or a space alike).
-    if (g === SH && ch === '#' && (!inWord || line[at - 1] === '`')) {
+    // PowerShell too: `#` starting a word, to the end of the line, and
+    // `<# … #>` (Nodal review of PR #721, pass 14).
+    if (ch === '#' && (!inWord || (g === SH && line[at - 1] === '`'))) {
       const end = line.indexOf('\n', at);
       at = (end < 0 ? line.length : end) - 1;
       continue;
+    }
+    if (g === POWERSHELL && ch === '<' && next === '#' && !inWord) {
+      const end = line.indexOf('#>', at + 2);
+      at = end < 0 ? line.length - 1 : end + 1;
+      continue;
+    }
+    // Where a case expects a pattern (after `in`, `;;`, `;&`, `;;&`), what
+    // comes up to its `)` is one (`done)`, `start|stop)`, `(if)`,
+    // `@(a|b))`): no command and no reserved word (Nodal review of PR #721,
+    // passes 11 and 12, measured in bash). As bash does, `esac` is tested
+    // first: it closes the case (`(case …;; esac)`). Read for a line sh runs,
+    // whatever grammar reads its words (`downloadWrites`).
+    if (model === 'sh' && !inWord && !/[\s;&|)<>]/.test(ch)) {
+      // `case X in`, wherever a command may start (`then case …`, `! case …`):
+      // its first pattern may follow on its line.
+      const reserved = (i: number): string => (words[i]?.quoted === false ? words[i].text : '');
+      let k = 0;
+      for (let next = shNextCommand(reserved, k); next !== null; next = shNextCommand(reserved, k))
+        k = next;
+      if (reserved(k) === 'case' && words.length === k + 3 && reserved(k + 2) === 'in')
+        endCommand(at);
+      const esac = line.startsWith('esac', at) && /^[\s;&|()<>]?$/.test(line[at + 4] ?? '');
+      if (words.length === 0 && processes.expectsPattern() && !esac) {
+        const end = casePatternEnd(line, at);
+        processes.patternRead();
+        if (typeof end === 'number') {
+          at = end;
+          continue;
+        }
+        // A pattern cut by a new line, `;` or `&`: bash refuses the line.
+        // What it runs is not known here: a program decided at run time,
+        // which asks. A text that ends inside one is a piece of a line read
+        // apart (`$(case $x in a)`, cut by the substitution pass), whose
+        // whole the scan reads.
+        if (end === 'cut') {
+          segments.push([{ text: '$(…)', quoted: false }]);
+          processes.command();
+        }
+      }
     }
     if (g === SH) {
       if (line.startsWith('$((', at) || (line.startsWith('((', at) && line[at - 1] !== '$'))
@@ -3190,19 +4411,79 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocument[]): ShellWor
         });
       }
     }
+    // sh's `$'…'` is one quoted word, whose backslash escapes a quote too
+    // (`$'a\'b'` is `a'b`): read as a single-quoted span, the rest of the line
+    // would hide in it (Nodal review of PR #721, pass 14, measured in bash).
+    if (g === SH && ch === '$' && next === "'") {
+      begin(at);
+      quoted = true;
+      const end = ansiQuoteEnd(line, at);
+      word += line.slice(at + 2, end).replace(/\\([\s\S])/g, '$1');
+      at = end;
+      continue;
+    }
     if (g.quotes.includes(ch)) {
       begin(at);
       quote = ch;
       quoted = true;
     } else if (ch === g.escape) {
+      // An escaped word is quoted as much as a quoted one: no reserved word,
+      // no expansion of what is escaped (`\done`, `\$x`).
       begin(at);
       word += next;
+      quoted = true;
       at += 1;
+    } else if (
+      (ch === '>' ||
+        (ch === '<' && next !== '<' && line[at - 1] !== '<') ||
+        (g === SH && ch === '&' && next === '>')) &&
+      next !== '(' &&
+      (g !== SH || (arithmetic === 0 && !doubleBracket && !letCommand))
+    ) {
+      // A redirection (`> f`, `2>>log`, `&>f`, `>|f`, `<in`, `<>f`, `2>&1`,
+      // PowerShell's `*>f`) is no word of the command: the shell opens it
+      // before running it. Its target is the next word, read like any other
+      // (quotes joined, escapes taken out: sh's `.\./out` is `../out`), kept
+      // with the command (`COMMAND_REDIRECTIONS`, Nodal review of PR #721,
+      // pass 8). The descriptor glued before it (`2>`) goes with it; the `&`
+      // of a duplication separates nothing.
+      if (
+        redirect === null &&
+        inWord &&
+        !quoted &&
+        (/^\d+$/.test(word) || (g === POWERSHELL && word === '*'))
+      ) {
+        word = '';
+        inWord = false;
+      } else endWord();
+      let k = at + 1;
+      let write = ch !== '<';
+      if (ch === '&' || (ch === '>' && (line[k] === '>' || line[k] === '|'))) k += 1;
+      if (ch === '&' && line[k] === '>') k += 1;
+      if (ch === '<' && line[k] === '>') {
+        write = true;
+        k += 1;
+      }
+      const duplicates = ch !== '&' && line[k] === '&';
+      if (duplicates) k += 1;
+      redirect = { write, duplicates };
+      at = k - 1;
     } else if (g.separators.includes(ch)) {
+      const command = [...words.map((w) => w.text), ...(inWord ? [word] : [])];
       endCommand(at, ch);
+      readOperator(processes, line, at, command);
       // The line that opened here-documents ends: their bodies follow, each
       // up to its end marker, outside the script's grammar.
       if (ch === '\n' && pending.length > 0) {
+        // What a here-document feeds runs in the program it feeds, and a
+        // substitution in its body in a subshell: neither is the line's process.
+        const runApart = (read: ShellWord[][]): void => {
+          const path = [...processes.here(), newProcess()];
+          for (const words of read) {
+            COMMAND_PROCESS.set(words, [...path, ...(COMMAND_PROCESS.get(words) ?? [])]);
+            segments.push(words);
+          }
+        };
         let from = at + 1;
         for (const { before, ...op } of pending) {
           const ends = bodyEnd(line, from, op.strip, op.marker);
@@ -3216,11 +4497,10 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocument[]): ShellWor
           // place: judged as commands, never taken for data unproven. An
           // interpreter's body is its source (program-sources.ts).
           if (receiver.kind === 'shell' || receiver.kind === 'doubt') {
-            if (receiver.program === 'cmd')
-              segments.push(...cmdCommands(body).map(windowsArguments));
+            if (receiver.program === 'cmd') runApart(cmdCommands(body));
             else
-              segments.push(
-                ...scanLine(
+              runApart(
+                scanLine(
                   body,
                   ['powershell', 'pwsh', 'iex', 'invoke-expression'].includes(
                     receiver.program ?? '',
@@ -3231,8 +4511,7 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocument[]): ShellWor
               );
           }
           if (!op.quotedMarker)
-            for (const m of body.matchAll(SUBSTITUTION))
-              segments.push(...scanLine(m[1] ?? m[2] ?? '', SH));
+            for (const inner of substitutionsOf(body, 'sh')) runApart(scanLine(inner, SH));
           from = doc.end;
         }
         pending.length = 0;
@@ -3241,7 +4520,8 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocument[]): ShellWor
       }
       // PowerShell's call operator starts a command whose program follows it;
       // before a parenthesised expression, that program is decided at run time.
-      if (g === POWERSHELL && ch === '&' && next !== '&') {
+      // The second `&` of `&&` (PowerShell 7's chain) is none.
+      if (g === POWERSHELL && ch === '&' && next !== '&' && line[at - 1] !== '&') {
         const after = line.slice(at + 1).trimStart();
         words.push({ text: '&', quoted: false, start: at });
         if (after.startsWith('(')) words.push({ text: '$(…)', quoted: false, start: at });
@@ -3262,12 +4542,29 @@ function scanLine(line: string, g: Grammar, hereDocs?: HereDocument[]): ShellWor
  * outside quotes; a double quote toggles a quoted span (a single quote is a
  * character, a backslash is a character: cmd has no backslash escape); `^`
  * escapes the next character outside quotes and is removed (`r^m` runs `rm`).
- * Each command keeps its raw text: the program reads its own words.
+ * Each command keeps its raw text: the program reads its own words, by the
+ * Windows argument rules, its redirections taken out as cmd takes them out
+ * (`cmdRedirection`). Which run in a process of their own: `Processes`.
  */
-function cmdCommands(line: string): string[] {
-  const commands: string[] = [];
+function cmdCommands(line: string): ShellWord[][] {
+  const commands: ShellWord[][] = [];
+  const processes = new Processes('cmd', commands);
+  // `@` before a command (`@lpr x`, `& @rd …`) is cmd's echo-off prefix, never
+  // part of the program's name (review of PR #682, pass 6).
+  const text = (c: string): string => c.replace(/^(\s*@)+/, '');
   let current = '';
   let inQuote = false;
+  let redirects: Redirection[] = [];
+  const end = (): void => {
+    const words = text(current).trim() === '' ? [] : windowsArguments(text(current));
+    if (words.length > 0) {
+      commands.push(words);
+      processes.command();
+      processes.redirectCommand(redirects);
+    } else processes.redirectGroup(redirects);
+    current = '';
+    redirects = [];
+  };
   for (let at = 0; at < line.length; at++) {
     const ch = line[at] ?? '';
     if (ch === '"') {
@@ -3278,15 +4575,87 @@ function cmdCommands(line: string): string[] {
     } else if (ch === '^') {
       current += line[at + 1] ?? '';
       at += 1;
+    } else if (ch === '>' || ch === '<') {
+      // A redirection (`>out`, `2>>log`, `<in`, `2>&1`, `<&0`) is no word of
+      // the command: cmd takes it out before running it, the handle glued
+      // before it (`2>`) with it. The `&` of a handle duplication separates
+      // nothing (Nodal review of PR #721, pass 5); with a space before it
+      // (`2> &1`) cmd refuses the line, and it separates nothing either. Its
+      // target is kept with the command (`COMMAND_REDIRECTIONS`, pass 8).
+      current = current.replace(/(^|\s)\d$/, '$1');
+      const read = cmdRedirection(line, at);
+      if (read.path !== null) redirects.push({ write: ch === '>', path: read.path });
+      at = read.end;
+      current += ' ';
     } else if ('&|\n\r()'.includes(ch)) {
-      commands.push(current);
-      current = '';
+      const before = text(current).trim();
+      end();
+      if (ch === '(') processes.open(before === '' ? 'start' : 'after-word', before.split(/\s+/));
+      else if (ch === ')') processes.close();
+      else if ((ch === '&' || ch === '|') && line[at + 1] === ch) {
+        // `&&` and `||`: the next command runs on the result of this one.
+        processes.andOr(ch === '&' ? '&&' : '||');
+        at += 1;
+      } else if (ch === '|') processes.pipe();
+      else processes.next();
     } else current += ch;
   }
-  commands.push(current);
-  // `@` before a command (`@lpr x`, `& @rd …`) is cmd's echo-off prefix, never
-  // part of the program's name (review of PR #682, pass 6).
-  return commands.map((c) => c.replace(/^(\s*@)+/, '')).filter((c) => c.trim() !== '');
+  end();
+  return commands;
+}
+
+/**
+ * Where the case pattern that starts at `at` ends: its first `)` left open,
+ * past an opening `(`, quotes and escapes, `|` between alternatives, and the
+ * parentheses of an extglob, which balance (`@(a|b(c)))`, pass 12); `cut`
+ * when a new line, `;` or `&` comes first, `eof` when the text ends first.
+ */
+function casePatternEnd(line: string, at: number): number | 'cut' | 'eof' {
+  let depth = 0;
+  for (let j = line[at] === '(' ? at + 1 : at; j < line.length; j++) {
+    const c = line[j];
+    if (c === '\\') j += 1;
+    else if (c === '$' && line[j + 1] === "'") j = ansiQuoteEnd(line, j);
+    else if (c === "'" || c === '"') {
+      const close = line.indexOf(c, j + 1);
+      if (close < 0) return 'eof';
+      j = close;
+    } else if (c === '(') depth += 1;
+    else if (c === ')') {
+      if (depth === 0) return j;
+      depth -= 1;
+    } else if (c === '\n' || c === ';' || c === '&') return 'cut';
+  }
+  return 'eof';
+}
+
+/**
+ * The cmd redirection that starts at `at` (its `>` or `<`): where it ends (the
+ * index of its last character) and its target, read as cmd reads a word:
+ * past the spaces, up to the next operator or space outside quotes, quotes
+ * joined and taken out, a caret taking the next character out of any meaning
+ * (`"a"b` is `ab`, `..^\x` is `..\x`); none for a handle (`&1`). The first `>`
+ * of `>>` reads an empty target, the second the real one.
+ */
+function cmdRedirection(line: string, at: number): { end: number; path: string | null } {
+  let i = at + 1;
+  while (line[i] === ' ' || line[i] === '\t') i += 1;
+  if (line[i] === '&') {
+    i += 1;
+    while (/\d/.test(line[i] ?? '')) i += 1;
+    return { end: i - 1, path: null };
+  }
+  let path = '';
+  let inQuote = false;
+  for (; i < line.length; i += 1) {
+    const c = line[i] ?? '';
+    if (c === '"') inQuote = !inQuote;
+    else if (inQuote) path += c;
+    else if (c === '^') path += line[++i] ?? '';
+    else if (/[\s&|()<>]/.test(c)) break;
+    else path += c;
+  }
+  return { end: i - 1, path: path === '' ? null : path };
 }
 
 /**
@@ -3357,7 +4726,7 @@ export function isDestructiveOrHeavyCommand(cmd: string, host?: ShellHost): bool
   // human before running an un-inspectable one-liner.
   if (isCatastrophicCommand(cmd, host) || isInlineInterpreterEvalCommand(cmd, host)) return true;
   // Every program only asked for its version or help: nothing happens.
-  const units = commandUnits(withoutRedirections(cmd), 0, topShell(host));
+  const units = commandUnits(cmd, 0, topShell(host));
   // A wrapper's own words are not work, but a launcher that reaches out is.
   const working = units.filter((u) => !runsAnother(u) || reachesOut(u));
   if (working.length > 0 && working.every(isReadUnit)) return false;
@@ -3386,6 +4755,21 @@ const VERSION_OR_HELP = new Set(['--version', '-V', '--help', '-h', '-?', '/?'])
  */
 function isVersionOrHelpOnly(unit: readonly string[]): boolean {
   return unit.length >= 2 && unit.slice(1).every((t) => VERSION_OR_HELP.has(t));
+}
+
+/**
+ * `curl URL > file` downloads without `-o`: a program that prints what it
+ * fetches, its output written to a file (`UNIT_REDIRECTIONS`). Read on the
+ * unit, the program as the shell resolves its name (`cur\l`, `cu^rl` are
+ * curl, Nodal review of PR #721, pass 8), never on the text. `curl --version
+ * > log` is still a read.
+ */
+function downloadsToItsOutput(unit: readonly string[]): boolean {
+  return (
+    /^(curl|irm|invoke-restmethod)$/i.test(unit[0] ?? '') &&
+    (UNIT_REDIRECTIONS.get(unit) ?? []).some((r) => r.write) &&
+    !isVersionOrHelpOnly(unit)
+  );
 }
 
 /**
@@ -3451,17 +4835,4 @@ function isReadUnit(unit: readonly string[]): boolean {
   if (!isSubcommandHelp(unit)) return false;
   const kinds = patternKinds(unit);
   return kinds.length > 0 && kinds.every((k) => SUBCOMMAND_HELP_EXCUSES.has(k));
-}
-
-/**
- * The command with its redirections removed (`2>&1`, `> /dev/null`, `>> log`,
- * `< in`): they are the shell's, not the program's arguments, and the
- * tokenizer kept their fd and target as words (`wget --version 2>&1` read
- * as `wget --version 2` then `1`).
- */
-function withoutRedirections(cmd: string): string {
-  return cmd.replace(
-    /(^|\s)(?:\d|&|\*)?(?:>>?|<)(?:&\d+|\s*(?:"[^"]*"|'[^']*'|[^\s;&|()<>]+))/g,
-    '$1',
-  );
 }

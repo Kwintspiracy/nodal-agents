@@ -341,6 +341,19 @@ describe('an allowed download asks when it writes outside the workspace (#614, r
       ],
       ['curl -o $HOME/a https://x/a', 'a path decided when the command runs'],
     ] as const) {
+      // On Windows, cmd also looks for `curl` in the folder the line moved
+      // into, which the gate cannot look into: it asks too (#717, pass 4).
+      const lookedUp =
+        process.platform === 'win32' && command.startsWith('cd ')
+          ? [
+              {
+                category: 'inline_code',
+                state: 'ask',
+                details: [command],
+                unread: [{ source: 'curl', why: 'decided_at_run_time' }],
+              },
+            ]
+          : [];
       expect(await asked(command), command).toEqual([
         {
           category: 'download',
@@ -348,6 +361,7 @@ describe('an allowed download asks when it writes outside the workspace (#614, r
           details: [command],
           outside: [{ command, places: [where] }],
         },
+        ...lookedUp,
       ]);
     }
   });
@@ -555,7 +569,9 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     for (const command of [
       `curl -s -o ${outside} https://x/a 2>${NOWHERE}`,
       `curl -s https://x/a 2>${NOWHERE} > ${outside}`,
-      `curl -s https://x/a &>${NOWHERE} > ${outside}`,
+      // bash's `&>`; cmd.exe reads `&` as a separator and refuses the
+      // redirections left alone, writing no file (measured, #717 pass 8).
+      ...(process.platform === 'win32' ? [] : [`curl -s https://x/a &>${NOWHERE} > ${outside}`]),
       `curl -s -o ${NOWHERE} https://x/b && curl -s -o ${outside} https://x/a`,
       `curl -s https://x/a 2>${NOWHERE}>${outside}`,
       `curl -s https://x/a 1<>${outside}`,
@@ -592,11 +608,27 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
   });
 
   it('a redirection inside a wrapper or after an escaped quote still asks (#669)', async () => {
-    const commands = [
-      "bash -c 'wget -O - https://x/a > ../outside.txt'",
-      'curl -s -H "X-Name: O\\"Brien" https://x/a > ../outside.txt',
+    // Read as the host's shell reads it (#717 pass 8). cmd.exe takes the
+    // `>` of `bash -c '… > ../outside.txt'` for its own (single quotes are
+    // characters to it) and writes `../outside.txt'`; the payload's own
+    // reading names `../outside.txt`. Both are judged. cmd.exe sees no
+    // redirection after `"O\"Brien"`: its `>` is inside quotes, nothing is
+    // written (measured); sh reads `\"` as a quote of the word, and writes.
+    const commands: Array<[string, string[]]> = [
+      [
+        "bash -c 'wget -O - https://x/a > ../outside.txt'",
+        process.platform === 'win32' ? ['../outside.txt', "../outside.txt'"] : ['../outside.txt'],
+      ],
+      ...(process.platform === 'win32'
+        ? []
+        : [
+            ['curl -s -H "X-Name: O\\"Brien" https://x/a > ../outside.txt', ['../outside.txt']] as [
+              string,
+              string[],
+            ],
+          ]),
     ];
-    for (const command of commands) {
+    for (const [command, places] of commands) {
       const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
       expect(res.outcome, command).toBe('awaiting_approval');
       if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
@@ -605,7 +637,7 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
           category: 'download',
           state: 'ask',
           details: [command],
-          outside: [{ command, places: ['../outside.txt'] }],
+          outside: [{ command, places }],
         },
       ]);
     }
@@ -646,7 +678,19 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     const command = `cd ${elsewhere} && curl -s -o nul https://x/a`;
     const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
     if (process.platform === 'win32') {
-      expect(res).toMatchObject({ outcome: 'success' });
+      // No download outside: `nul` is the device. cmd looks for `curl` in
+      // the folder outside the workspace, which the gate cannot look into:
+      // that alone asks (#717, pass 4).
+      expect(res.outcome).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      expect(await reasonsOf(res.approvalRequestId)).toEqual([
+        {
+          category: 'inline_code',
+          state: 'ask',
+          details: [command],
+          unread: [{ source: 'curl', why: 'decided_at_run_time' }],
+        },
+      ]);
       return;
     }
     expect(res.outcome).toBe('awaiting_approval');

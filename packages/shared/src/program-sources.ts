@@ -49,11 +49,12 @@ import { POWERSHELL_CLI, bindPsArguments } from './powershell-parameters';
 import {
   stdinReceiver,
   type StdinReceiver,
-  changeDirOf,
   commandUnitsAsWritten,
   interpreterKind,
   isInlineEvalFlag,
+  lineFolders,
   readablePath,
+  type FolderMove,
   shellRunsLine,
   type ScriptShell,
   type ShellHost,
@@ -94,6 +95,13 @@ export type ProgramSource =
        * that is not text cannot be read (review passes 1 and 2 of #683).
        */
       executed: boolean;
+      /**
+       * A name the shell may resolve by adding one of these, in order (cmd's
+       * `prepare` → `prepare.bat`, PowerShell's `.env` → `env.ps1`): the
+       * file is the first of them found in the folder; none, or one that is
+       * not a script (`.exe`), and it is a program (Nodal review of PR #721, P2).
+       */
+      extensions?: readonly string[];
     }
   | {
       kind: 'code';
@@ -108,8 +116,12 @@ export type ProgramSource =
     };
 
 export interface ProgramSources {
-  /** The folders the line moves into, in order (null when unreadable). */
-  dirs: Array<string | null>;
+  /**
+   * How the line moves its folder, in order (`lineFolders`, #717): a folder
+   * (null when unreadable), a script run in the line's process whose body says
+   * where it ends, the folder kept and restored around a child process.
+   */
+  dirs: FolderMove[];
   sources: ProgramSource[];
 }
 
@@ -341,14 +353,32 @@ export function programSources(
 ): ProgramSources {
   const out: ProgramSources = { dirs: [], sources: [] };
   if (typeof cmd !== 'string' || cmd.trim() === '') return out;
+  // A script that runs in the line's process is read from where it starts and
+  // moves the line to where it ends: its source comes before its move (#717).
+  const folders = lineFolders(opts.reader === 'cmd');
   for (const { unit, head } of commandUnitsAsWritten(cmd, opts.host, opts.reader)) {
-    const dir = changeDirOf(unit);
-    if (dir !== undefined) {
-      out.dirs.push(dir);
-      continue;
-    }
+    const { before, move } = folders.step(unit);
+    out.dirs.push(...before);
+    // A word the shell may resolve to a script of the folder is that script
+    // when the gate finds it there (`FolderMove`'s `extensions`).
+    const looked =
+      move !== null && typeof move === 'object' && 'script' in move && move.extensions
+        ? { path: move.script, extensions: move.extensions }
+        : null;
+    if (opts.direct && looked !== null)
+      out.sources.push({
+        kind: 'file',
+        path: looked.path,
+        language: null,
+        after: out.dirs.length,
+        searched: !/[\\/]/.test(looked.path),
+        executed: true,
+        extensions: looked.extensions,
+      });
     out.sources.push(...unitSources(unit, head, out.dirs.length, opts.direct));
+    if (move !== undefined) out.dirs.push(move);
   }
+  out.dirs.push(...folders.end());
   out.sources.push(...fedSources(cmd, out.dirs.length));
   return out;
 }

