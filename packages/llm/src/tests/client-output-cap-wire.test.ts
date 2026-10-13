@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { z } from 'zod';
 
-import { createLlmClient, MIN_ESTIMATED_ROOM } from '../client';
+import { createLlmClient } from '../client';
 import { LLMOutputLimitError, isContextOverflowError } from '../errors';
 import {
   ATTACHMENT_TOKEN_ESTIMATE,
@@ -235,91 +235,115 @@ describe('streamed turns ask for their usage on OpenAI-compatible endpoints @cap
   }
 });
 
-// Revue de #571 (après redécoupage) : le plafond énoncé ignorait la fenêtre de
-// contexte. Un modèle openai-compatible configuré à 8 192 jetons recevait
-// `max_tokens: 65536`, et un serveur qui valide `max_tokens` contre sa fenêtre
-// refusait le tour : un faux rouge pour tout modèle local ou personnalisé. Le
-// plafond énoncé est le plus bas de : plateforme, plafond du modèle, appelant,
-// et ce que la fenêtre CONNUE laisse une fois l'entrée estimée posée.
-describe('the stated cap fits the known context window @cap:suivre-execution/moteur', () => {
+// Revue Nodal de #571, passe 2 (P1) : le plafond était TIRÉ de la fenêtre
+// (fenêtre − entrée estimée). L'estimation compte chaque pièce jointe à un
+// maximum : sur une fenêtre de 16 384 avec deux images, elle annonçait
+// ~6 384 quand la vraie place était ~14 000, et un tour ordinaire de 7 000
+// jetons, coupé par le serveur à ce plafond, était refusé. Sur main, aucun
+// plafond n'est annoncé et ce tour passe. Une estimation ne fixe jamais la
+// valeur du plafond : elle décide seulement, dans le sens prudent, si un
+// plafond CONNU (celui du catalogue) tient dans la fenêtre. Sinon rien n'est
+// annoncé, comme sur main. Le plafond de l'appelant est toujours annoncé.
+describe('a known cap is stated only when the estimated input leaves room for it in the window @cap:suivre-execution/moteur', () => {
   const LOCAL = {
     provider: 'openai-compatible' as const,
     model: 'local-model',
     baseURL: 'http://127.0.0.1:1234/v1',
     contextWindow: 8_192,
   };
+  // deepseek-chat: catalogued, window 128 000, turn cap 65 536.
+  const DEEPSEEK = { provider: 'deepseek' as const, model: 'deepseek-chat', apiKey: 'k' };
   const estimate = async (args: { system?: unknown; messages?: unknown; tools?: unknown }) =>
     estimateContextTokens(args) + (await estimateToolTokens(args.tools));
+  const withImages = (n: number) => ({
+    ...ARGS,
+    messages: [
+      {
+        role: 'user' as const,
+        content: [
+          { type: 'text' as const, text: 'what are these?' },
+          ...Array.from({ length: n }, (_v, i) => ({
+            type: 'image' as const,
+            image: new Uint8Array([137, 80, 78, 71, i % 256]),
+            mediaType: 'image/png',
+          })),
+        ],
+      },
+    ],
+  });
 
-  it('a local model at 8 192: max_tokens is what the window leaves after the input', async () => {
+  it('16 384 on the key and two images: no cap drawn from the window, the request goes as on main', async () => {
+    stubFetch(() => chatCompletion('tool_calls', 7_000));
+    const args = withImages(2);
+
+    const res = await createLlmClient({ ...LOCAL, contextWindow: 16_384 }).generateText(
+      args as unknown as typeof ARGS,
+    );
+
+    // An ordinary 7 000-token turn comes back with its call.
+    expect(res.toolCalls.map((c) => c.toolName)).toEqual(['save_memory']);
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
+  });
+
+  it('a window on the key alone states no cap: the output limit is not known (the 8 192 finding of 28/09)', async () => {
     stubFetch(() => chatCompletion('stop', 20));
 
     await createLlmClient(LOCAL).generateText(ARGS);
 
-    const room = 8_192 - (await estimate(ARGS));
-    expect(bodies[0]?.['max_tokens']).toBe(room);
-    expect(room).toBeGreaterThan(7_000);
-  });
-
-  it('a prompt that leaves less room than the floor: the request goes, with no cap drawn from the estimate', async () => {
-    stubFetch(() => chatCompletion('stop', 20));
-    const big = { ...ARGS, messages: [{ role: 'user' as const, content: 'x'.repeat(5_000 * 4) }] };
-
-    await createLlmClient(LOCAL).generateText(big);
-
-    const room = 8_192 - (await estimate(big));
-    expect(room).toBeGreaterThan(0);
-    expect(room).toBeLessThan(MIN_ESTIMATED_ROOM);
-    expect(bodies).toHaveLength(1);
     expect(bodies[0]).not.toHaveProperty('max_tokens');
   });
 
-  it('a prompt that leaves room above the floor: that room is the stated cap', async () => {
-    stubFetch(() => chatCompletion('stop', 20));
-    const mid = { ...ARGS, messages: [{ role: 'user' as const, content: 'x'.repeat(3_000 * 4) }] };
+  it('a catalogued model with room for its cap states it, and a turn that reaches it is refused (#563)', async () => {
+    stubFetch(() => chatCompletion('tool_calls', 65_536));
 
-    await createLlmClient(LOCAL).generateText(mid);
-
-    const room = 8_192 - (await estimate(mid));
-    expect(room).toBeGreaterThanOrEqual(MIN_ESTIMATED_ROOM);
-    expect(bodies[0]?.['max_tokens']).toBe(room);
-  });
-
-  // Revue Nodal de #571 (P2) : une image comptait 0 dans l'entrée estimée, et
-  // la place laissée par la fenêtre était surestimée d'autant.
-  it('an image in the request takes its allowance out of the room left', async () => {
-    stubFetch(() => chatCompletion('stop', 20));
-    const withImage = {
-      ...ARGS,
-      messages: [
-        {
-          role: 'user' as const,
-          content: [
-            { type: 'text' as const, text: 'what is this?' },
-            {
-              type: 'image' as const,
-              image: new Uint8Array([137, 80, 78, 71]),
-              mediaType: 'image/png',
-            },
-          ],
-        },
-      ],
-    };
-
-    await createLlmClient({ ...LOCAL, contextWindow: 16_384 }).generateText(withImage);
-
-    const room = 16_384 - (await estimate(withImage));
-    expect(await estimate(withImage)).toBeGreaterThan(ATTACHMENT_TOKEN_ESTIMATE);
-    expect(bodies[0]?.['max_tokens']).toBe(room);
-  });
-
-  it('a reply that reaches that stated cap is a cut turn, refused', async () => {
-    const room = 8_192 - (await estimate(ARGS));
-    stubFetch(() => chatCompletion('tool_calls', room));
-
-    await expect(createLlmClient(LOCAL).generateText(ARGS)).rejects.toBeInstanceOf(
+    await expect(createLlmClient(DEEPSEEK).generateText(ARGS)).rejects.toBeInstanceOf(
       LLMOutputLimitError,
     );
+    expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
+  });
+
+  it('a catalogued model whose estimated input leaves less than its cap states none, never a lower one', async () => {
+    stubFetch(() => chatCompletion('tool_calls', 7_000));
+    const big = {
+      ...ARGS,
+      messages: [{ role: 'user' as const, content: 'x'.repeat(70_000 * 4) }],
+    };
+    expect(128_000 - (await estimate(big))).toBeLessThan(TURN_OUTPUT_TOKEN_CAP);
+
+    const res = await createLlmClient(DEEPSEEK).generateText(big);
+
+    expect(res.toolCalls.map((c) => c.toolName)).toEqual(['save_memory']);
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
+  });
+
+  it('attachments count in that decision, at their allowance', async () => {
+    // 12 images leave room for 65 536 in 128 000; 14 do not.
+    stubFetch(() => chatCompletion('stop', 20));
+    await createLlmClient(DEEPSEEK).generateText(withImages(12) as unknown as typeof ARGS);
+    expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
+
+    stubFetch(() => chatCompletion('stop', 20));
+    await createLlmClient(DEEPSEEK).generateText(withImages(14) as unknown as typeof ARGS);
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
+    expect(await estimate(withImages(14))).toBeGreaterThan(14 * ATTACHMENT_TOKEN_ESTIMATE);
+  });
+
+  it("the caller's own cap is always stated and judged, whatever the estimate says", async () => {
+    const big = {
+      ...ARGS,
+      messages: [{ role: 'user' as const, content: 'x'.repeat(70_000 * 4) }],
+      maxOutputTokens: 512,
+    };
+    stubFetch(() => chatCompletion('tool_calls', 512));
+
+    await expect(createLlmClient(DEEPSEEK).generateText(big)).rejects.toBeInstanceOf(
+      LLMOutputLimitError,
+    );
+    expect(bodies[0]?.['max_tokens']).toBe(512);
+
+    stubFetch(() => chatCompletion('stop', 20));
+    await createLlmClient(LOCAL).generateText({ ...ARGS, maxOutputTokens: 512 });
+    expect(bodies[0]?.['max_tokens']).toBe(512);
   });
 
   // Revue Nodal de #571, passe 1 (P1) : une ESTIMATION refusait le tour avant
@@ -512,14 +536,9 @@ describe('a model whose limits are unknown is asked for no invented cap @cap:sui
 // streamText et generateObject partaient sans, chacun sur le défaut du
 // fournisseur. Le client énonce le même plafond sur ses trois chemins.
 describe('every request of the client states its output cap @cap:suivre-execution/moteur', () => {
-  const LOCAL = {
-    provider: 'openai-compatible' as const,
-    model: 'local-model',
-    baseURL: 'http://127.0.0.1:1234/v1',
-    contextWindow: 8_192,
-  };
   const mimo = () =>
     createLlmClient({ provider: 'openrouter', model: 'xiaomi/mimo-v2.6-pro', apiKey: 'k' });
+  const DEEPSEEK = { provider: 'deepseek' as const, model: 'deepseek-chat', apiKey: 'k' };
   const CITY = z.object({ city: z.string(), celsius: z.number() });
   const objectReply = () => ({
     id: 'gen-1',
@@ -568,20 +587,20 @@ describe('every request of the client states its output cap @cap:suivre-executio
     expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
   });
 
-  it('generateObject on a known window states what the window leaves after its prompt', async () => {
+  it('generateObject whose prompt leaves less than the cap in the window states none', async () => {
     stubFetch(objectReply);
-    const prompt = 'x'.repeat(3_000 * 4);
+    const prompt = 'x'.repeat(70_000 * 4);
 
-    await createLlmClient(LOCAL).generateObject({
-      output: 'object',
-      schema: CITY,
-      prompt,
-    } as Parameters<ReturnType<typeof createLlmClient>['generateObject']>[0]);
+    await createLlmClient(DEEPSEEK)
+      .generateObject({
+        output: 'object',
+        schema: CITY,
+        prompt,
+      } as Parameters<ReturnType<typeof createLlmClient>['generateObject']>[0])
+      .catch(() => null);
 
-    const room = 8_192 - estimateContextTokens({ prompt });
-    expect(room).toBeGreaterThanOrEqual(MIN_ESTIMATED_ROOM);
-    expect(room).toBeLessThan(6_000);
-    expect(bodies[0]?.['max_tokens']).toBe(room);
+    expect(128_000 - estimateContextTokens({ prompt })).toBeLessThan(TURN_OUTPUT_TOKEN_CAP);
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
   });
 
   it("streamText states the platform cap, or the caller's when lower", async () => {
@@ -601,19 +620,18 @@ describe('every request of the client states its output cap @cap:suivre-executio
 
   it('a generateText that sends a prompt, not messages, has it counted against the window', async () => {
     stubFetch(() => chatCompletion('stop', 20));
-    const prompt = 'x'.repeat(3_000 * 4);
+    await createLlmClient(DEEPSEEK).generateText({ prompt: 'x'.repeat(1_000 * 4) });
+    expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
 
-    await createLlmClient(LOCAL).generateText({ prompt });
-
-    const room = 8_192 - estimateContextTokens({ prompt });
-    expect(room).toBeLessThan(6_000);
-    expect(bodies[0]?.['max_tokens']).toBe(room);
+    stubFetch(() => chatCompletion('stop', 20));
+    await createLlmClient(DEEPSEEK).generateText({ prompt: 'x'.repeat(70_000 * 4) });
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
   });
 
   it('a streamText prompt beyond the window on paper: the request goes, with no cap drawn from it', async () => {
     stubStream();
 
-    await createLlmClient(LOCAL).streamText({ prompt: 'x'.repeat(9_000 * 4) }).text;
+    await createLlmClient(DEEPSEEK).streamText({ prompt: 'x'.repeat(130_000 * 4) }).text;
 
     expect(bodies).toHaveLength(1);
     expect(bodies[0]).not.toHaveProperty('max_tokens');

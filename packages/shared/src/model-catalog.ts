@@ -1852,32 +1852,23 @@ export function knownContextWindow(
 export const TURN_OUTPUT_TOKEN_CAP = 65_536;
 
 /**
- * The output cap to state on a request to this model, or null when its limits
- * are unknown.
+ * The output cap this model is known to accept, or null when its output limit
+ * is unknown.
  *
  * - A catalogued model: `TURN_OUTPUT_TOKEN_CAP`, or its own lower ceiling when
  *   the catalog records one (`maxOutputTokens`). Every catalogued model was
  *   checked to accept at least the turn cap.
- * - A model outside the catalog whose key states its window
- *   (`storedWindow`, auto-detected or set by the user): the turn cap, which
- *   the client then bounds by what that window leaves after the input.
- * - Otherwise null: nothing tells what the model accepts, and an invented
- *   cap is refused by a server that checks `max_tokens` against the model's
- *   real limit (Nodal review of #571, 2026-09-28). The request states no cap,
- *   as before #563; a SDK that requires one (Anthropic) applies its own
- *   default.
+ * - Any other model: null. A window on the key says how much the model READS,
+ *   not how much it can WRITE (Nodal review of #571, pass 2); an invented cap
+ *   is refused by a server that checks `max_tokens` against the model's real
+ *   limit (review of 2026-09-28). The request states no cap, as before #563.
+ *
+ * The client states it only when the estimated input leaves room for it in
+ * the known window (`packages/llm/src/client.ts`, `statedCapFor`).
  */
-export function modelOutputCap(
-  provider: string,
-  modelId: string,
-  storedWindow?: number | null,
-): number | null {
+export function modelOutputCap(provider: string, modelId: string): number | null {
   const entry = findModelCatalogEntry(provider, modelId);
-  if (entry === undefined) {
-    return knownContextWindow(provider, modelId, storedWindow) === null
-      ? null
-      : TURN_OUTPUT_TOKEN_CAP;
-  }
+  if (entry === undefined) return null;
   const own = entry.maxOutputTokens;
   return own !== undefined && own < TURN_OUTPUT_TOKEN_CAP ? own : TURN_OUTPUT_TOKEN_CAP;
 }

@@ -645,11 +645,12 @@ describe('modelOutputCap @cap:suivre-execution/moteur', () => {
     expect(modelOutputCap('openrouter', 'some/unknown-model')).toBeNull();
     expect(modelOutputCap('ollama', 'llama-local')).toBeNull();
     expect(modelOutputCap('anthropic', 'claude-3-opus-20240229')).toBeNull();
-    expect(modelOutputCap('ollama', 'llama-local', 0)).toBeNull();
   });
 
-  it('a model outside the catalog whose key states its window gets the turn cap (the window bounds it in the client)', () => {
-    expect(modelOutputCap('openai-compatible', 'local-model', 8_192)).toBe(TURN_OUTPUT_TOKEN_CAP);
+  // Revue Nodal de #571, passe 2 : une fenêtre dit combien le modèle LIT, pas
+  // combien il peut ÉCRIRE. Hors catalogue, la limite de sortie reste inconnue.
+  it('a window on the key does not make the output limit known', () => {
+    expect(modelOutputCap('openai-compatible', 'local-model')).toBeNull();
   });
 
   it('a model whose own ceiling is lower is asked for no more than it can write', () => {

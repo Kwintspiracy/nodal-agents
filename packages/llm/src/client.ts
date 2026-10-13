@@ -272,17 +272,6 @@ function prepareMessages<A>(args: A): A {
   return { ...args, messages: replayable };
 }
 
-/**
- * The least room, in estimated tokens, a known window must leave after the
- * input for the client to draw an output cap from it (#563). Below it the
- * estimate cannot tell little room from none: it counts attachments at a
- * ceiling, and a cap of a few hundred tokens would judge an ordinary turn cut.
- * 4 096 is the cap `@ai-sdk/anthropic` applies itself to a model it does not
- * know (read on the wire, `client-output-cap-wire.test.ts`): the smallest
- * output a provider of this stack assumes a request needs.
- */
-export const MIN_ESTIMATED_ROOM = 4_096;
-
 // ─── Factory ───────────────────────────────────────────────────────────────────
 
 /**
@@ -341,41 +330,44 @@ export function createLlmClient(
   const providerModel = { provider: config.provider, model: config.model };
 
   // #563 — the output cap this client states on every request (generateText,
-  // streamText, generateObject) to a model whose limits are KNOWN: the
-  // catalog, else the window the key states. Without it the cap that ends a
-  // runaway turn is the serving provider's default, unknown here. Each client
-  // of a failover chain states its own model's cap.
+  // streamText, generateObject) to a model whose output limit is KNOWN (the
+  // catalog). Without it the cap that ends a runaway turn is the serving
+  // provider's default, unknown here. Each client of a failover chain states
+  // its own model's cap.
   //
-  // A model whose limits are unknown gets none (Nodal review of #571,
+  // A model whose output limit is unknown gets none (Nodal review of #571,
   // 2026-09-28): an invented 65 536 was refused by servers that check
   // `max_tokens` against the model's real limit. Its requests go as before
   // #563; a SDK that requires a cap (Anthropic) applies its own default.
-  const outputCap = modelOutputCap(config.provider, config.model, config.contextWindow);
-  // The window that bounds it too, when known (catalog, else the key's own).
+  const outputCap = modelOutputCap(config.provider, config.model);
+  // The window it must fit in, when known (catalog, else the key's own).
   const contextWindow = knownContextWindow(config.provider, config.model, config.contextWindow);
   /**
-   * The cap a request states, or undefined when none is known: this client's,
-   * or the caller's when LOWER (a caller never raises it, Codex review of
-   * #571), and no more than the known window leaves once the estimated input
-   * is in (review of #571). A caller's own cap is stated even for a model
-   * whose limits are unknown: the caller knows what it asks.
+   * The cap a request states, or undefined:
+   * - the caller's own cap, always (the caller knows what it asks);
+   * - this client's known cap (`outputCap`), only when the estimated input
+   *   leaves at least that much room in the known window, and never above a
+   *   caller's lower one (a caller never raises it, Codex review of #571);
+   * - nothing otherwise, as before #563.
    *
-   * The estimate LOWERS the cap; it never refuses a request (Nodal review of
-   * #571, pass 1). It counts each attachment at a ceiling
-   * (`ATTACHMENT_TOKEN_ESTIMATE`), so two images on an 8 192 window, or ten
-   * replayed on 32k, exceed the window on paper and fit in fact. When the
-   * room it leaves is under `MIN_ESTIMATED_ROOM`, it cannot tell little room
-   * from none: no cap is drawn from this client, and the request goes as
-   * before #563. Whether the input really overflows is the server's count to
-   * make, and its refusal is classified as a context overflow
-   * (`isContextOverflowError`, the job loop's `context_window_exceeded`).
+   * The estimate never SETS the cap (Nodal review of #571, pass 2). A cap
+   * drawn from the room it leaves was too low whenever it overestimated: it
+   * counts each attachment at a ceiling (`ATTACHMENT_TOKEN_ESTIMATE`), so on a
+   * 16 384 window with two images it stated ~6 384 where ~14 000 was free,
+   * and an ordinary 7 000-token turn, cut there by the server, was refused.
+   * Used this way, an overestimate can only make the client state its cap
+   * less often, which falls back on the behaviour before #563, and never
+   * states a cap that a strict server refuses because input plus cap exceed
+   * the window. Nor does it refuse a request (pass 1): whether the input
+   * overflows is the server's count, and its refusal is classified as a
+   * context overflow (`isContextOverflowError`, the job loop's
+   * `context_window_exceeded`).
    */
   const statedCapFor = (estimatedInput: number, callerCap: unknown): number | undefined => {
-    const windowRoom = contextWindow === null ? Infinity : contextWindow - estimatedInput;
-    const platform =
-      windowRoom >= MIN_ESTIMATED_ROOM ? Math.min(outputCap ?? Infinity, windowRoom) : Infinity;
     const own = typeof callerCap === 'number' && callerCap > 0 ? callerCap : Infinity;
-    const cap = Math.min(platform, own);
+    const fits =
+      outputCap !== null && (contextWindow === null || contextWindow - estimatedInput >= outputCap);
+    const cap = Math.min(fits ? outputCap : Infinity, own);
     return Number.isFinite(cap) ? cap : undefined;
   };
   const withStatedCap = <A extends object>(args: A, statedCap: number | undefined): A =>
@@ -523,12 +515,11 @@ export function createLlmClient(
     // LOWER. A caller never raises it (revue Codex de #571): asking 131 072
     // stated a cap the provider cut under, without `length`, as in #563.
     //
-    // And never more than the model's KNOWN context window leaves once the
-    // input is in (review of #571): a custom or local model configured at 8 192
-    // tokens was asked for 65 536, and a server that validates `max_tokens`
-    // against its window refuses the turn. The input is the same estimate the
-    // turn clocks use (characters / 4, tools included, attachments at their
-    // allowance); it lowers the cap, never refuses the request (`statedCapFor`).
+    // And only when the model's KNOWN context window has room for it once the
+    // estimated input is in (`statedCapFor`): the estimate decides whether the
+    // cap is stated, never its value. The input is the same estimate the turn
+    // clocks use (characters / 4, tools included, attachments at their
+    // allowance).
     const callerCap = (args as { maxOutputTokens?: unknown }).maxOutputTokens;
     // Caching path splits on the E1 boundary; non-caching path strips it so the
     // marker never leaks into a non-Anthropic provider's prompt.
