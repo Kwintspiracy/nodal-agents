@@ -105,12 +105,41 @@ export function isLocalEndpoint(config: Pick<ProviderConfig, 'provider' | 'baseU
 // ─── Context size ──────────────────────────────────────────────────────────────
 
 /**
+ * What one attachment (an image or a file, in a message or in a tool result)
+ * counts for in the estimate: 4 784 tokens, the largest per-image cost a
+ * provider we serve documents (Anthropic, platform.claude.com/docs/en/build-
+ * with-claude/vision, read 2026-10-13: "Max visual tokens" 4784 on the
+ * high-resolution tier, images larger than it are downscaled to fit).
+ * OpenAI and Gemini document lower per-image costs, so the allowance is a
+ * ceiling for one image. For a file it is about one to three PDF pages
+ * (Anthropic: 1 500 to 3 000 tokens per page): a document of more pages is
+ * still underestimated, and the server's own refusal of a `max_tokens` too
+ * high for its window remains the backstop (#119). Its bytes are never read
+ * as text: base64 says nothing about what the model sees.
+ */
+export const ATTACHMENT_TOKEN_ESTIMATE = 4_784;
+
+/** The part types of the AI SDK that carry an image or a file, not text. */
+const ATTACHMENT_PART_TYPES = new Set([
+  'image',
+  'file',
+  // Tool-result content (`output: { type: 'content', value: [...] }`).
+  'image-data',
+  'image-url',
+  'image-file-id',
+  'file-data',
+  'file-url',
+  'file-id',
+  'media',
+]);
+
+/**
  * Rough token count of what a call sends: characters / 4 over the system
  * prompt, the `prompt` of a call that sends one instead of messages, and every
- * textual part of the messages. Images and files are not counted — their bytes
- * say nothing about prefill time. It picks a clock tier (50K / 100K) and bounds
- * the stated output cap by the known window (#563), so a rough count is all it
- * needs.
+ * textual part of the messages, tool results included, plus
+ * `ATTACHMENT_TOKEN_ESTIMATE` per image or file. It picks a clock tier
+ * (50K / 100K) and bounds the stated output cap by the known window (#563),
+ * so a rough count is all it needs.
  */
 export function estimateContextTokens(args: {
   system?: unknown;
@@ -118,6 +147,7 @@ export function estimateContextTokens(args: {
   messages?: unknown;
 }): number {
   let chars = 0;
+  let attachments = 0;
   const add = (v: unknown): void => {
     if (typeof v === 'string') {
       chars += v.length;
@@ -129,13 +159,27 @@ export function estimateContextTokens(args: {
     }
     if (v && typeof v === 'object') {
       const part = v as Record<string, unknown>;
-      if (part['type'] === 'image' || part['type'] === 'file') return;
+      if (typeof part['type'] === 'string' && ATTACHMENT_PART_TYPES.has(part['type'])) {
+        attachments += 1;
+        return;
+      }
       if (typeof part['text'] === 'string') {
         chars += part['text'].length;
         return;
       }
       if ('content' in part) {
         add(part['content']);
+        return;
+      }
+      // A tool result: its output, whose content parts may be attachments.
+      if ('output' in part) {
+        add(part['toolName']);
+        add(part['output']);
+        return;
+      }
+      // A tool-result output (`{ type: 'content' | 'text' | 'json', value }`).
+      if ('value' in part && (Array.isArray(part['value']) || typeof part['value'] === 'string')) {
+        add(part['value']);
         return;
       }
       try {
@@ -148,7 +192,7 @@ export function estimateContextTokens(args: {
   add(args.system);
   add(args.prompt);
   add(args.messages);
-  return Math.ceil(chars / 4);
+  return Math.ceil(chars / 4) + attachments * ATTACHMENT_TOKEN_ESTIMATE;
 }
 
 /**

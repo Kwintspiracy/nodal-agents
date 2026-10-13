@@ -15,6 +15,7 @@ import {
   computeTurnClocks,
   consumeUnderClocks,
   estimateContextTokens,
+  ATTACHMENT_TOKEN_ESTIMATE,
   estimateToolTokens,
   isLocalEndpoint,
   BETWEEN_TOKENS_MS,
@@ -579,15 +580,42 @@ describe('computeTurnClocks @cap:organiser-equipe/moteur', () => {
     expect(clocks.firstTokenMs).toBeGreaterThan(FIRST_TOKEN_BASE_MS);
   });
 
-  it('estimates the context from text, not from image bytes', () => {
+  // Revue Nodal de #571 (P2) : une image ou un fichier comptait 0, et la place
+  // laissée dans la fenêtre était surestimée. Chaque pièce jointe compte un
+  // forfait sourcé (ATTACHMENT_TOKEN_ESTIMATE), jamais ses octets.
+  it('estimates the context from text, and each attachment at the flat allowance, not its bytes', () => {
     const est = estimateContextTokens({
       system: 'x'.repeat(4_000),
       messages: [
         { role: 'user', content: [{ type: 'text', text: 'y'.repeat(4_000) }] },
         { role: 'user', content: [{ type: 'image', image: 'z'.repeat(400_000) }] },
+        {
+          role: 'user',
+          content: [{ type: 'file', data: 'p'.repeat(40), mediaType: 'application/pdf' }],
+        },
       ],
     });
-    expect(est).toBe(2_000);
+    expect(ATTACHMENT_TOKEN_ESTIMATE).toBe(4_784);
+    expect(est).toBe(2_000 + 2 * 4_784);
+  });
+
+  it('an attachment inside a tool result counts the same', () => {
+    const est = estimateContextTokens({
+      messages: [
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'c1',
+              toolName: 'screenshot',
+              output: { type: 'content', value: [{ type: 'image-data', data: 'z'.repeat(9_000) }] },
+            },
+          ],
+        },
+      ],
+    });
+    expect(est).toBeGreaterThanOrEqual(4_784);
   });
 });
 

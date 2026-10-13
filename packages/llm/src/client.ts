@@ -15,6 +15,7 @@ import { CAPABILITY_MATRIX } from './providers/registry';
 import { validateMessageStructure, withoutNamelessToolCalls } from './message-structure';
 import { knownContextWindow, modelOutputCap } from '@nodal-agents/shared';
 import { reportedUsage } from './reported-usage';
+import { REPORTS_OUTPUT_USAGE } from './providers/usage-reporting';
 import { withRetry } from './retry';
 import { buildLlmCallObservation, emitLlmCall } from './observe';
 import type { LlmCallObserver, LlmClientMeta } from './observe';
@@ -329,21 +330,28 @@ export function createLlmClient(
   };
   const providerModel = { provider: config.provider, model: config.model };
 
-  // #563 — the output cap this client states on every request: generateText,
-  // streamText and generateObject. Without it the cap that ends a runaway
-  // turn is the serving provider's default, unknown here, and the only sign
-  // of the cut is a finishReason the provider may not report. Each client of
-  // a failover chain states its own model's cap.
-  const outputCap = modelOutputCap(config.provider, config.model);
+  // #563 — the output cap this client states on every request (generateText,
+  // streamText, generateObject) to a model whose limits are KNOWN: the
+  // catalog, else the window the key states. Without it the cap that ends a
+  // runaway turn is the serving provider's default, unknown here. Each client
+  // of a failover chain states its own model's cap.
+  //
+  // A model whose limits are unknown gets none (Nodal review of #571,
+  // 2026-09-28): an invented 65 536 was refused by servers that check
+  // `max_tokens` against the model's real limit. Its requests go as before
+  // #563; a SDK that requires a cap (Anthropic) applies its own default.
+  const outputCap = modelOutputCap(config.provider, config.model, config.contextWindow);
   // The window that bounds it too, when known (catalog, else the key's own).
   const contextWindow = knownContextWindow(config.provider, config.model, config.contextWindow);
   /**
-   * The cap a request states: this client's, or the caller's when LOWER (a
-   * caller never raises it, Codex review of #571), and never more than the
-   * known window leaves once the estimated input is in (review of #571). No
-   * room left: nothing is sent, the error says so (`LLMContextWindowError`).
+   * The cap a request states, or undefined when none is known: this client's,
+   * or the caller's when LOWER (a caller never raises it, Codex review of
+   * #571), and never more than the known window leaves once the estimated
+   * input is in (review of #571). No room left: nothing is sent, the error
+   * says so (`LLMContextWindowError`). A caller's own cap is stated even for
+   * a model whose limits are unknown: the caller knows what it asks.
    */
-  const statedCapFor = (estimatedInput: number, callerCap: unknown): number => {
+  const statedCapFor = (estimatedInput: number, callerCap: unknown): number | undefined => {
     const windowRoom = contextWindow === null ? Infinity : contextWindow - estimatedInput;
     if (windowRoom < 1) {
       throw new LLMContextWindowError(
@@ -353,12 +361,12 @@ export function createLlmClient(
         estimatedInput,
       );
     }
-    return Math.min(
-      outputCap,
-      windowRoom,
-      typeof callerCap === 'number' && callerCap > 0 ? callerCap : Infinity,
-    );
+    const own = typeof callerCap === 'number' && callerCap > 0 ? callerCap : Infinity;
+    const cap = Math.min(outputCap ?? Infinity, windowRoom, own);
+    return Number.isFinite(cap) ? cap : undefined;
   };
+  const withStatedCap = <A extends object>(args: A, statedCap: number | undefined): A =>
+    statedCap === undefined ? args : { ...args, maxOutputTokens: statedCap };
 
   // Anthropic does NOT auto-cache — opt it in by annotating cache_control
   // breakpoints (system + sliding last message). Other providers either cache
@@ -425,15 +433,18 @@ export function createLlmClient(
    *
    * #563 — two signals, the one this client controls being authoritative: the
    * provider's `finishReason === 'length'`, OR output tokens that reach the cap
-   * the request stated (`statedCap`). On 2026-09-28 a 65 536-token, 307-call
-   * turn came back through OpenRouter without `length` and was executed.
+   * the request stated (`statedCap`), when it stated one. On 2026-09-28 a
+   * 65 536-token, 307-call turn came back through OpenRouter without `length`
+   * and was executed. A request that stated no cap (limits unknown) is judged
+   * on `length` alone.
    */
   const refuseCutTurn = (
     args: Parameters<NodalLlmClient['generateText']>[0],
     result: GenerateTextResult,
     startedAt: number,
     inspectOnly: boolean,
-    statedCap: number,
+    statedCap: number | undefined,
+    path: 'oneShot' | 'streamed',
   ): GenerateTextResult => {
     const tools = (args as { tools?: unknown }).tools;
     const offersTools =
@@ -446,19 +457,25 @@ export function createLlmClient(
     // Output tokens NOT reported (usage absent or not finite, Codex review of
     // #571) are not 0: read as 0, the turn looked under the cap, a false green.
     // No other measure in this client bounds the tokens written (characters do
-    // not: a token is one byte or dozens), so a TURN whose completeness cannot
-    // be established is refused too, with its own code
-    // (`output_usage_not_reported`), and the unknown count stays null up to the
-    // caller and the llm_calls row (invariant #4).
+    // not: a token is one byte or dozens). Where the provider reports the count
+    // on every reply of this path (`REPORTS_OUTPUT_USAGE`), its absence is
+    // abnormal and the TURN is refused, with its own code
+    // (`output_usage_not_reported`). Elsewhere an absent count is that
+    // provider's normal behaviour (Nodal review of #571): the turn goes on, and
+    // its unknown count stays null up to the caller and the llm_calls row
+    // (invariant #4), never 0.
     //
     // What "not reported" means, including a 0 that cannot be true, is one
     // rule shared with the runner: `reportedUsage` (pass 3).
     const reported = reportedUsage(result);
     const reportedOutput = reported.outputTokens;
     const cut =
-      result.finishReason === 'length' || (reportedOutput !== null && reportedOutput >= statedCap);
+      result.finishReason === 'length' ||
+      (statedCap !== undefined && reportedOutput !== null && reportedOutput >= statedCap);
     const refusal =
-      offersTools && !inspectOnly && (cut || reportedOutput === null)
+      offersTools &&
+      !inspectOnly &&
+      (cut || (reportedOutput === null && REPORTS_OUTPUT_USAGE[config.provider][path]))
         ? new LLMOutputLimitError(
             config.provider,
             config.model,
@@ -508,7 +525,7 @@ export function createLlmClient(
         unbounded as { system?: unknown; prompt?: unknown; messages?: unknown },
       ) + (await estimateToolTokens((unbounded as { tools?: unknown }).tools));
     const statedCap = statedCapFor(estimatedInput, callerCap);
-    const prepared = { ...unbounded, maxOutputTokens: statedCap };
+    const prepared = withStatedCap(unbounded, statedCap);
     const startedAt = Date.now();
     if (callOpts?.streamed === true && canStreamTurns) {
       // #440: the turn streams under two silence clocks, no working wall clock.
@@ -555,6 +572,7 @@ export function createLlmClient(
         startedAt,
         callOpts.inspectOnly === true,
         statedCap,
+        'streamed',
       );
     }
     let result: GenerateTextResult;
@@ -599,7 +617,14 @@ export function createLlmClient(
       }
       throw err;
     }
-    return refuseCutTurn(args, result, startedAt, callOpts?.inspectOnly === true, statedCap);
+    return refuseCutTurn(
+      args,
+      result,
+      startedAt,
+      callOpts?.inspectOnly === true,
+      statedCap,
+      'oneShot',
+    );
   };
 
   const clientStreamText: NodalLlmClient['streamText'] = (rawArgs) => {
@@ -621,7 +646,7 @@ export function createLlmClient(
       ),
       (args as { maxOutputTokens?: unknown }).maxOutputTokens,
     );
-    return streamText({ ...unbounded, model, maxOutputTokens: statedCap } as Parameters<
+    return streamText({ ...withStatedCap(unbounded, statedCap), model } as Parameters<
       typeof streamText
     >[0]);
   };
@@ -636,7 +661,7 @@ export function createLlmClient(
       ) + (await estimateToolTokens((unbounded as { tools?: unknown }).tools)),
       (args as { maxOutputTokens?: unknown }).maxOutputTokens,
     );
-    const prepared = { ...unbounded, maxOutputTokens: statedCap };
+    const prepared = withStatedCap(unbounded, statedCap);
     const startedAt = Date.now();
     try {
       const result = await withRetry(

@@ -1831,7 +1831,8 @@ export function knownContextWindow(
 }
 
 /**
- * The output-token cap the LLM client states on every request it sends (#563).
+ * The output-token cap the LLM client states on every request to a model whose
+ * limits are known (#563, `modelOutputCap`).
  *
  * Without it, the cap that ends a runaway turn is the serving provider's own
  * default, unknown to the runner: on 2026-09-28 `xiaomi/mimo-v2.6-pro`, served
@@ -1851,12 +1852,33 @@ export function knownContextWindow(
 export const TURN_OUTPUT_TOKEN_CAP = 65_536;
 
 /**
- * The output cap to state on a request to this model: `TURN_OUTPUT_TOKEN_CAP`,
- * or the model's own lower ceiling when the catalog records one
- * (`maxOutputTokens`). Every model gets a cap, catalogued or not.
+ * The output cap to state on a request to this model, or null when its limits
+ * are unknown.
+ *
+ * - A catalogued model: `TURN_OUTPUT_TOKEN_CAP`, or its own lower ceiling when
+ *   the catalog records one (`maxOutputTokens`). Every catalogued model was
+ *   checked to accept at least the turn cap.
+ * - A model outside the catalog whose key states its window
+ *   (`storedWindow`, auto-detected or set by the user): the turn cap, which
+ *   the client then bounds by what that window leaves after the input.
+ * - Otherwise null: nothing tells what the model accepts, and an invented
+ *   cap is refused by a server that checks `max_tokens` against the model's
+ *   real limit (Nodal review of #571, 2026-09-28). The request states no cap,
+ *   as before #563; a SDK that requires one (Anthropic) applies its own
+ *   default.
  */
-export function modelOutputCap(provider: string, modelId: string): number {
-  const own = findModelCatalogEntry(provider, modelId)?.maxOutputTokens;
+export function modelOutputCap(
+  provider: string,
+  modelId: string,
+  storedWindow?: number | null,
+): number | null {
+  const entry = findModelCatalogEntry(provider, modelId);
+  if (entry === undefined) {
+    return knownContextWindow(provider, modelId, storedWindow) === null
+      ? null
+      : TURN_OUTPUT_TOKEN_CAP;
+  }
+  const own = entry.maxOutputTokens;
   return own !== undefined && own < TURN_OUTPUT_TOKEN_CAP ? own : TURN_OUTPUT_TOKEN_CAP;
 }
 

@@ -16,7 +16,11 @@ import { z } from 'zod';
 
 import { createLlmClient } from '../client';
 import { LLMOutputLimitError, LLMContextWindowError, isContextOverflowError } from '../errors';
-import { estimateContextTokens, estimateToolTokens } from '../turn-clocks';
+import {
+  ATTACHMENT_TOKEN_ESTIMATE,
+  estimateContextTokens,
+  estimateToolTokens,
+} from '../turn-clocks';
 import { TURN_OUTPUT_TOKEN_CAP } from '@nodal-agents/shared';
 
 const TOOLS = {
@@ -269,6 +273,34 @@ describe('the stated cap fits the known context window @cap:suivre-execution/mot
     expect(bodies[0]?.['max_tokens']).toBe(room);
   });
 
+  // Revue Nodal de #571 (P2) : une image comptait 0 dans l'entrée estimée, et
+  // la place laissée par la fenêtre était surestimée d'autant.
+  it('an image in the request takes its allowance out of the room left', async () => {
+    stubFetch(() => chatCompletion('stop', 20));
+    const withImage = {
+      ...ARGS,
+      messages: [
+        {
+          role: 'user' as const,
+          content: [
+            { type: 'text' as const, text: 'what is this?' },
+            {
+              type: 'image' as const,
+              image: new Uint8Array([137, 80, 78, 71]),
+              mediaType: 'image/png',
+            },
+          ],
+        },
+      ],
+    };
+
+    await createLlmClient(LOCAL).generateText(withImage);
+
+    const room = 8_192 - (await estimate(withImage));
+    expect(await estimate(withImage)).toBeGreaterThan(ATTACHMENT_TOKEN_ESTIMATE);
+    expect(bodies[0]?.['max_tokens']).toBe(room);
+  });
+
   it('a reply that reaches that stated cap is a cut turn, refused', async () => {
     const room = 8_192 - (await estimate(ARGS));
     stubFetch(() => chatCompletion('tool_calls', room));
@@ -293,13 +325,71 @@ describe('the stated cap fits the known context window @cap:suivre-execution/mot
     expect(isContextOverflowError(err)).toBe(true);
     expect(bodies).toEqual([]);
   });
+});
 
-  it('an uncatalogued model with no known window keeps the platform cap', async () => {
+// Revue Nodal de #571 (28/09, P2) : un modèle dont rien ne dit les limites
+// recevait `max_tokens: 65536`, une limite inventée. Un serveur local strict à
+// petite fenêtre, ou un fournisseur qui valide `max_tokens` contre la vraie
+// sortie maximale du modèle, refusait le tour. Sans limite connue, la requête
+// n'énonce aucun plafond, comme avant #563.
+describe('a model whose limits are unknown is asked for no invented cap @cap:suivre-execution/moteur', () => {
+  const UNKNOWN = {
+    provider: 'openai-compatible' as const,
+    model: 'local-model',
+    baseURL: 'http://127.0.0.1:1234/v1',
+  };
+
+  it('outside the catalog, no window on the key: no max_tokens on the wire', async () => {
     stubFetch(() => chatCompletion('stop', 20));
 
-    await createLlmClient({ ...LOCAL, contextWindow: undefined }).generateText(ARGS);
+    await createLlmClient(UNKNOWN).generateText(ARGS);
 
-    expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
+  });
+
+  it('native Anthropic outside the catalog: the SDK default, as before #563', async () => {
+    stubFetch(() => anthropicMessage('claude-3-opus-20240229', 'tool_use', 1_200));
+
+    await createLlmClient({
+      provider: 'anthropic',
+      model: 'claude-3-opus-20240229',
+      apiKey: 'k',
+    }).generateText(ARGS);
+
+    expect(bodies[0]?.['max_tokens']).toBe(4_096);
+  });
+
+  it("without a stated cap, a long reply is a turn like any other; 'length' still refuses it", async () => {
+    stubFetch(() => chatCompletion('tool_calls', 70_000));
+    const res = await createLlmClient(UNKNOWN).generateText(ARGS);
+    expect(res.toolCalls.map((c) => c.toolName)).toEqual(['save_memory']);
+
+    stubFetch(() => chatCompletion('length', 900));
+    await expect(createLlmClient(UNKNOWN).generateText(ARGS)).rejects.toBeInstanceOf(
+      LLMOutputLimitError,
+    );
+  });
+
+  it("a caller's own cap is stated, and judged", async () => {
+    stubFetch(() => chatCompletion('tool_calls', 512));
+
+    await expect(
+      createLlmClient(UNKNOWN).generateText({ ...ARGS, maxOutputTokens: 512 }),
+    ).rejects.toBeInstanceOf(LLMOutputLimitError);
+    expect(bodies[0]?.['max_tokens']).toBe(512);
+  });
+
+  it('streamText and generateObject state none either', async () => {
+    stubFetch(() => chatCompletion('stop', 20));
+    await createLlmClient(UNKNOWN)
+      .generateObject({
+        output: 'object',
+        schema: z.object({ content: z.string() }),
+        prompt: 'go',
+      } as Parameters<ReturnType<typeof createLlmClient>['generateObject']>[0])
+      .catch(() => null);
+
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
   });
 });
 

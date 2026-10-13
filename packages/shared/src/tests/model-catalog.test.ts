@@ -634,11 +634,22 @@ describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
 
 // #563 — the output cap the LLM client states on every request.
 describe('modelOutputCap @cap:suivre-execution/moteur', () => {
-  it('every model gets a cap: catalogued or not, native or routed', () => {
+  it('a catalogued model gets the turn cap, native or routed', () => {
     expect(modelOutputCap('openrouter', 'xiaomi/mimo-v2.6-pro')).toBe(TURN_OUTPUT_TOKEN_CAP);
     expect(modelOutputCap('anthropic', 'claude-opus-5')).toBe(TURN_OUTPUT_TOKEN_CAP);
-    expect(modelOutputCap('openrouter', 'some/unknown-model')).toBe(TURN_OUTPUT_TOKEN_CAP);
-    expect(modelOutputCap('ollama', 'llama-local')).toBe(TURN_OUTPUT_TOKEN_CAP);
+  });
+
+  // Revue Nodal du 28/09 (P2) : un modèle hors catalogue, sans fenêtre connue,
+  // recevait 65 536, une limite inventée, refusée par un serveur strict.
+  it('a model whose limits are unknown gets no cap: neither in the catalog nor a window on the key', () => {
+    expect(modelOutputCap('openrouter', 'some/unknown-model')).toBeNull();
+    expect(modelOutputCap('ollama', 'llama-local')).toBeNull();
+    expect(modelOutputCap('anthropic', 'claude-3-opus-20240229')).toBeNull();
+    expect(modelOutputCap('ollama', 'llama-local', 0)).toBeNull();
+  });
+
+  it('a model outside the catalog whose key states its window gets the turn cap (the window bounds it in the client)', () => {
+    expect(modelOutputCap('openai-compatible', 'local-model', 8_192)).toBe(TURN_OUTPUT_TOKEN_CAP);
   });
 
   it('a model whose own ceiling is lower is asked for no more than it can write', () => {
@@ -665,7 +676,7 @@ describe('modelOutputCap @cap:suivre-execution/moteur', () => {
       for (const e of entries) {
         for (const budget of Object.values(e.capabilities.reasoningControl?.budgets ?? {})) {
           expect(budget, `${provider}/${e.modelId}`).toBeLessThan(
-            modelOutputCap(provider, e.modelId),
+            modelOutputCap(provider, e.modelId) ?? 0,
           );
         }
       }
