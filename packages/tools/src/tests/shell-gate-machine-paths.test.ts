@@ -559,3 +559,80 @@ describe('a substitution is code wherever it stands, nested ones read whole (#71
     }
   });
 });
+
+describe('a substitution is never dropped, and read with the grammar the scan knows (#717, Nodal review pass 14) @cap:executer-une-commande/moteur', () => {
+  // Measured in bash: each of these runs its `touch` (t1 … t5):
+  // `echo $'a\'b'; touch t1`, `"$(echo case; touch t2)"`,
+  // `"$(touch t3; echo $'a\'b')"`, `"$(echo ${x//)/}; touch t4)"`, and
+  // `"$(echo a # )⏎touch t5)"`.
+  it.each([
+    'echo "$(echo case; rm -rf /)"',
+    'echo "$(grep case x; rm -rf /)"',
+    "echo \"$(rm -rf /; echo $'a\\'b')\"",
+    "echo \"$(echo $'a\\'b'; rm -rf /)\"",
+    "echo $'a\\'b'; rm -rf /",
+    'echo "$(echo ${x//)/}; rm -rf /)"',
+    'echo "$(echo $[1)]; rm -rf /)"',
+    'echo "$(case $x in a) echo esac;; b) rm -rf /;; esac)"',
+    'echo "$(echo a # )\nrm -rf /)"',
+    // a substitution that never closes: what follows is read as code
+    'echo "$(echo hi; rm -rf /"',
+  ])('%s: the floor sees rm -rf /', (command) => {
+    expect(isCatastrophicCommand(command, 'posix')).toBe(true);
+  });
+
+  it.each([
+    'Write-Output "$(Write-Output a # )\nRemove-Item -Recurse build)"',
+    'Write-Output "$(<# ) #> Remove-Item -Recurse build)"',
+  ])('PowerShell: %s, a comment closes nothing', (command) => {
+    expect(staticShellCategories(command, undefined, 'powershell')).toContain('delete_files');
+  });
+
+  it('nested ten thousand deep: no crash, and the line asks', async () => {
+    const n = 10_000;
+    for (const command of [
+      'echo "' + '$(echo "'.repeat(n) + 'x' + '")'.repeat(n) + '"',
+      'echo $((' + '$(('.repeat(n) + '1' + '))'.repeat(n) + '))',
+    ]) {
+      expect(() => isCatastrophicCommand(command, 'posix')).not.toThrow();
+      expect(await judge(command, placeWith('posix', {}))).toContainEqual(
+        expect.objectContaining({ category: 'inline_code' }),
+      );
+    }
+  });
+
+  it.each([
+    ['posix', 'echo $((a+b))'],
+    ['posix', 'echo "$(date)"'],
+    ['posix', 'git commit -m "$(cat msg)"'],
+    ['posix', 'echo "$(case $x in a) echo hi;; esac)"'],
+  ] as const)('%s: %s asks nothing', async (host, command) => {
+    expect(await judge(command, placeWith(host, {}))).toEqual([]);
+  });
+
+  it('PowerShell: "$($x.Name)" is no action', () => {
+    expect(staticShellCategories('Write-Output "$($x.Name)"', undefined, 'powershell')).toEqual([]);
+  });
+
+  // A substitution whose end the reading finds where the shell finds it reads
+  // no more than it holds: the quoted `; rm -rf / ` after it is text (bash
+  // prints it). Read past a wrong end, it would be code: the over-read the
+  // fallback allows.
+  it.each([
+    'echo "$(echo case in x) ; rm -rf / "',
+    "echo \"$(echo $'a\\'b') ; rm -rf / \"",
+    'echo "$(case $x in a) echo hi;; esac) ; rm -rf / "',
+  ])('%s: the floor sees no rm -rf /', (command) => {
+    expect(isCatastrophicCommand(command, 'posix')).toBe(false);
+  });
+
+  it('PowerShell: a comment in the line is no code', () => {
+    expect(
+      staticShellCategories(
+        'Write-Output hi # ; Remove-Item -Recurse build',
+        undefined,
+        'powershell',
+      ),
+    ).toEqual([]);
+  });
+});

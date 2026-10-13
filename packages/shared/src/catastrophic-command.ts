@@ -2668,6 +2668,10 @@ export function commandUnits(
     return units;
   }
   if (depth > 8 || typeof cmd !== 'string' || cmd.trim() === '') return [];
+  // A line nested deeper than any reading follows (Nodal review of PR #721,
+  // pass 14: ten thousand levels ran the readers out of stack or memory) is
+  // not read: it is a program decided at run time, and asks.
+  if (depth === 0 && nestingOf(cmd) > MAX_NESTING) return [[UNFOLLOWED]];
   const model = processes ?? shell;
   const units: string[][] = [];
   // Substitutions run even inside double quotes: `$(…)` in sh and PowerShell,
@@ -3470,31 +3474,58 @@ export function stdinReceiver(before: string, after: string): StdinReceiver {
 }
 
 /**
+ * What a substitution the reading cannot follow stands for (nested past
+ * `MAX_NESTING`): a program decided at run time, which asks.
+ */
+const UNFOLLOWED = '$(…)';
+
+/** How deep substitutions and quotes nest before the reading stops following (pass 14). */
+const MAX_NESTING = 32;
+
+/**
+ * How deep a text's parentheses and braces nest, quotes ignored: more than
+ * any reading of it nests, never less.
+ */
+function nestingOf(text: string): number {
+  let depth = 0;
+  let most = 0;
+  for (const c of text) {
+    if (c === '(' || c === '{') most = Math.max(most, ++depth);
+    else if (c === ')' || c === '}') depth -= 1;
+  }
+  return most;
+}
+
+/**
  * The command substitutions of a text, outermost ones: the code of each
  * `$( … )` (and of each backtick span in sh), read wherever it stands, in
  * double quotes, in a case pattern, even in single quotes (a safety net may
- * over-read: `echo '$(…)' | sh` runs it). Each ends where its `(` balances,
- * past quotes, escapes, nested substitutions and a `case`'s patterns, whose
- * `)` closes nothing (Nodal review of PR #721, pass 13: the regex this
- * replaces read only the innermost one of `$(a $(b) c)`). An arithmetic
- * `$(( … ))` is no code; the substitutions in it are.
+ * over-read: `echo '$(…)' | sh` runs it). Each ends where its `(` balances
+ * (`closingParen`). An arithmetic `$(( … ))` is no code; the substitutions in
+ * it are.
+ *
+ * Nothing is ever dropped (Nodal review of PR #721, pass 14): a substitution
+ * whose end is not found is read to the end of the text, as code; one nested
+ * past `MAX_NESTING` is `UNFOLLOWED`, and asks.
  */
-function substitutionsOf(text: string, shell: 'sh' | 'powershell'): string[] {
+function substitutionsOf(text: string, shell: 'sh' | 'powershell', nesting = 0): string[] {
+  if (nesting > MAX_NESTING) return [UNFOLLOWED];
   const escape = shell === 'sh' ? '\\' : '`';
   const found: string[] = [];
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (c === escape) i += 1;
     else if (c === '$' && text[i + 1] === '(') {
-      const end = closingParen(text, i + 1, shell);
-      if (end === null) continue;
+      const end = closingParen(text, i + 1, shell, nesting);
+      if (end === 'deep') return [...found, UNFOLLOWED];
+      if (end === null) return [...found, text.slice(i + 2)];
       if (text[i + 2] === '(' && text[end - 1] === ')')
-        found.push(...substitutionsOf(text.slice(i + 3, end - 1), shell));
+        found.push(...substitutionsOf(text.slice(i + 3, end - 1), shell, nesting + 1));
       else found.push(text.slice(i + 2, end));
       i = end;
     } else if (shell === 'sh' && c === '`') {
       const end = closingBacktick(text, i);
-      if (end === null) break;
+      if (end === null) return [...found, text.slice(i + 1)];
       found.push(text.slice(i + 1, end));
       i = end;
     }
@@ -3512,54 +3543,166 @@ function closingBacktick(text: string, at: number): number | null {
 }
 
 /**
- * The `)` that balances the `(` at `open`, as `shell` reads the code between:
- * quotes and escapes respected, a nested `$( … )` read whole in double
- * quotes, a backtick span skipped in sh, and in a `case` the `)` of a pattern
- * closing nothing until its `esac`. Null when it never balances.
+ * The `)` that balances the `(` at `open`, as `shell` reads the code between
+ * (Nodal review of PR #721, passes 13 and 14): quotes and escapes, sh's
+ * `$'…'` with its escapes, a nested `$( … )` read whole in double quotes,
+ * `${ … }` and `$[ … ]` (whose `)` close nothing), backtick spans, comments
+ * (sh's `#` starting a word, PowerShell's `#` and `<# … #>`), and a `case`'s
+ * patterns. `case` and `esac` are reserved where a command starts only, as
+ * the scan reads them (`shNextCommand`), and a pattern is read by the scan's
+ * pattern reader (`casePatternEnd`). Null when it never balances; `deep`
+ * past `MAX_NESTING`.
  */
-function closingParen(text: string, open: number, shell: 'sh' | 'powershell'): number | null {
+function closingParen(
+  text: string,
+  open: number,
+  shell: 'sh' | 'powershell',
+  nesting = 0,
+): number | null | 'deep' {
+  if (nesting > MAX_NESTING) return 'deep';
   const escape = shell === 'sh' ? '\\' : '`';
-  const word = (at: number, name: string): boolean =>
-    text.startsWith(name, at) &&
-    /^$|[\s;&|()]/.test(text[at - 1] ?? '') &&
-    /^$|[\s;&|()<>]/.test(text[at + name.length] ?? '');
+  const startsWord = (at: number): boolean => /^$|[\s;&|()]/.test(text[at - 1] ?? '');
   let depth = 0;
-  // The depth each open `case` stands at: a `)` there ends a pattern.
-  const cases: number[] = [];
+  // The cases open: the depth each stands at, and whether a pattern comes next.
+  const cases: Array<{ depth: number; in: boolean; pattern: boolean }> = [];
+  // Whether a command may start here (`case`, `esac` are reserved there only).
+  let command = true;
   let double = false;
   for (let j = open; j < text.length; j++) {
-    const c = text[j];
-    if (c === escape) j += 1;
-    else if (double) {
+    const c = text[j] ?? '';
+    const next = text[j + 1] ?? '';
+    const top = cases[cases.length - 1];
+    if (c === escape) {
+      j += 1;
+      continue;
+    }
+    if (double) {
       if (c === '"') double = false;
-      else if (c === '$' && text[j + 1] === '(') {
-        const end = closingParen(text, j + 1, shell);
+      else if (c === '$' && (next === '(' || next === '{' || next === '[')) {
+        const end = skipExpansion(text, j, shell, nesting + 1);
+        if (end === null || end === 'deep') return end;
+        j = end;
+      } else if (shell === 'sh' && c === '`') {
+        const end = closingBacktick(text, j);
         if (end === null) return null;
         j = end;
       }
-    } else if (c === '"') double = true;
+      continue;
+    }
+    if (shell === 'sh' && top?.pattern === true && command && !/[\s;&|)]/.test(c)) {
+      // Where a pattern is expected, `esac` closes the case; anything else is
+      // a pattern, read to its `)` as the scan reads it.
+      if (/^esac(?![^\s;&|()<>])/.test(text.slice(j))) {
+        cases.pop();
+        j += 3;
+        command = false;
+        continue;
+      }
+      const end = casePatternEnd(text, j);
+      if (typeof end !== 'number') return null;
+      top.pattern = false;
+      j = end;
+      command = true;
+      continue;
+    }
+    if (c === '"') double = true;
     else if (c === "'") {
       const end = text.indexOf("'", j + 1);
       if (end < 0) return null;
       j = end;
+      command = false;
     } else if (shell === 'sh' && c === '`') {
       const end = closingBacktick(text, j);
       if (end === null) return null;
       j = end;
-    } else if (c === '(') depth += 1;
-    else if (c === ')') {
-      if (cases[cases.length - 1] === depth) continue;
+      command = false;
+    } else if (shell === 'sh' && c === '$' && next === "'") {
+      j = ansiQuoteEnd(text, j);
+      command = false;
+    } else if (c === '$' && (next === '{' || next === '[' || (next === '(' && shell === 'sh'))) {
+      const end = skipExpansion(text, j, shell, nesting + 1);
+      if (end === null || end === 'deep') return end;
+      j = end;
+      command = false;
+    } else if (startsWord(j) && c === '#') {
+      // A comment, to the end of its line, which ends the command.
+      const end = text.indexOf('\n', j);
+      if (end < 0) return null;
+      j = end - 1;
+    } else if (shell === 'powershell' && c === '<' && next === '#') {
+      const end = text.indexOf('#>', j + 2);
+      if (end < 0) return null;
+      j = end + 1;
+    } else if (c === '(') {
+      depth += 1;
+      command = true;
+    } else if (c === ')') {
       depth -= 1;
       if (depth === 0) return j;
-    } else if (word(j, 'case')) {
-      cases.push(depth);
-      j += 3;
-    } else if (word(j, 'esac')) {
-      cases.pop();
-      j += 3;
+      command = false;
+    } else if (c === ';' || c === '&' || c === '|' || c === '\n' || c === '{' || c === '}') {
+      // `;;`, `;&`, `;;&` end a clause: a pattern comes next.
+      if (c === ';' && (next === ';' || next === '&') && top !== undefined && top.depth === depth)
+        top.pattern = true;
+      command = true;
+    } else if (!/\s/.test(c)) {
+      // A word: reserved where a command starts, as the scan reads it.
+      const word = /^[^\s;&|()<>'"`$\\]+/.exec(text.slice(j))?.[0] ?? c;
+      if (shell === 'sh' && command && word === 'case')
+        cases.push({ depth, in: false, pattern: false });
+      else if (shell === 'sh' && top !== undefined && !top.in && word === 'in') {
+        top.in = true;
+        top.pattern = true;
+        command = true;
+        j += word.length - 1;
+        continue;
+      }
+      command = command && shNextCommand((k) => (k === 0 ? word : ''), 0) !== null;
+      j += word.length - 1;
     }
   }
   return null;
+}
+
+/**
+ * Where an expansion that starts with `$` at `at` ends: `$( … )` at its
+ * balancing `)` (`closingParen`), `${ … }` at the `}` that closes it, `$[ … ]`
+ * at its `]`, past quotes and escapes; null when it never ends.
+ */
+function skipExpansion(
+  text: string,
+  at: number,
+  shell: 'sh' | 'powershell',
+  nesting: number,
+): number | null | 'deep' {
+  const open = text[at + 1];
+  if (open === '(') return closingParen(text, at + 1, shell, nesting);
+  const close = open === '{' ? '}' : ']';
+  const escape = shell === 'sh' ? '\\' : '`';
+  let depth = 0;
+  for (let j = at + 1; j < text.length; j++) {
+    const c = text[j];
+    if (c === escape) j += 1;
+    else if (c === "'" || c === '"') {
+      const end = text.indexOf(c, j + 1);
+      if (end < 0) return null;
+      j = end;
+    } else if (c === open) depth += 1;
+    else if (c === close) {
+      depth -= 1;
+      if (depth === 0) return j;
+    }
+  }
+  return null;
+}
+
+/** Where sh's `$'…'` that starts at `at` ends: its `'`, past backslash escapes (`\'`). */
+function ansiQuoteEnd(text: string, at: number): number {
+  for (let j = at + 2; j < text.length; j++) {
+    if (text[j] === '\\') j += 1;
+    else if (text[j] === "'") return j;
+  }
+  return text.length - 1;
 }
 
 /**
@@ -4151,9 +4294,16 @@ function scanLine(
     }
     // sh: a `#` that starts a word starts a comment, to the end of the line
     // (after a separator, `)`, `;`, `|`, a backtick or a space alike).
-    if (g === SH && ch === '#' && (!inWord || line[at - 1] === '`')) {
+    // PowerShell too: `#` starting a word, to the end of the line, and
+    // `<# … #>` (Nodal review of PR #721, pass 14).
+    if (ch === '#' && (!inWord || (g === SH && line[at - 1] === '`'))) {
       const end = line.indexOf('\n', at);
       at = (end < 0 ? line.length : end) - 1;
+      continue;
+    }
+    if (g === POWERSHELL && ch === '<' && next === '#' && !inWord) {
+      const end = line.indexOf('#>', at + 2);
+      at = end < 0 ? line.length - 1 : end + 1;
       continue;
     }
     // Where a case expects a pattern (after `in`, `;;`, `;&`, `;;&`), what
@@ -4219,6 +4369,17 @@ function scanLine(
           ].join(' '),
         });
       }
+    }
+    // sh's `$'…'` is one quoted word, whose backslash escapes a quote too
+    // (`$'a\'b'` is `a'b`): read as a single-quoted span, the rest of the line
+    // would hide in it (Nodal review of PR #721, pass 14, measured in bash).
+    if (g === SH && ch === '$' && next === "'") {
+      begin(at);
+      quoted = true;
+      const end = ansiQuoteEnd(line, at);
+      word += line.slice(at + 2, end).replace(/\\(.)/gs, '$1');
+      at = end;
+      continue;
     }
     if (g.quotes.includes(ch)) {
       begin(at);
@@ -4413,6 +4574,7 @@ function casePatternEnd(line: string, at: number): number | 'cut' | 'eof' {
   for (let j = line[at] === '(' ? at + 1 : at; j < line.length; j++) {
     const c = line[j];
     if (c === '\\') j += 1;
+    else if (c === '$' && line[j + 1] === "'") j = ansiQuoteEnd(line, j);
     else if (c === "'" || c === '"') {
       const close = line.indexOf(c, j + 1);
       if (close < 0) return 'eof';
