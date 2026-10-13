@@ -18,12 +18,7 @@ import type {
   LlmCallObserver,
   LlmClientMeta,
 } from '@nodal-agents/llm';
-import {
-  MODEL_CATALOG,
-  findModelCatalogEntry,
-  REASONING_EFFORT_LEVELS,
-  type ReasoningEffort,
-} from '@nodal-agents/shared';
+import { MODEL_CATALOG, REASONING_EFFORT_LEVELS, type ReasoningEffort } from '@nodal-agents/shared';
 import { decrypt } from '@nodal-agents/secrets';
 
 /**
@@ -49,12 +44,6 @@ export type ResolveLlmResult =
       client: NodalLlmClient;
       primaryProvider: string;
       chainLength: number;
-      /**
-       * Whether the primary's model accepts a forced `tool_choice: 'required'`,
-       * read from the model catalog by (provider, agent.model). Unknown/custom
-       * models ⇒ `true` (the runtime tool_choice floor backstops a wrong guess).
-       */
-      primarySupportsForcedToolChoice: boolean;
     }
   | { ok: false; reason: 'agent_no_llm_configured' }
   | { ok: false; reason: 'llm_key_invalid'; detail: string };
@@ -182,12 +171,6 @@ export async function resolveAgentLlmClient(
       client,
       primaryProvider: effectivePrimary.provider,
       chainLength: configs.length,
-      // Capability comes from the model CATALOG (provider, model of the
-      // effective primary), not a stored column. Unknown/custom models default
-      // to true; the runtime tool_choice floor backstops a wrong guess.
-      primarySupportsForcedToolChoice:
-        findModelCatalogEntry(effectivePrimary.provider, effectivePrimary.model)?.capabilities
-          .forcedToolChoice ?? true,
     };
   } catch (err) {
     return {

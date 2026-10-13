@@ -16,6 +16,7 @@
 // runner passes to llmClient.generateText) — not call counts.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { offeredToolNames } from '../offered-tools.ts';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -126,8 +127,7 @@ function makeCapturingLlmClient(
     },
     generateText: (args) => {
       // Capture the tool names the runner handed to the model this turn.
-      const tools = (args as { tools?: Record<string, unknown> }).tools ?? {};
-      toolKeysPerCall.push(Object.keys(tools));
+      toolKeysPerCall.push(offeredToolNames(args));
       return generateText({ ...args, model: mockModel } as Parameters<
         typeof generateText
       >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>;

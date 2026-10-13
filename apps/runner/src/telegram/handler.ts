@@ -7,6 +7,7 @@
 // Group chat triggers — the bot only reacts when the user clearly addressed it:
 //   - `/ask <slug> <text>`         → route to a different agent in the entity
 //   - `/agents` or `/start`        → reserved commands
+//   - `/new`, `/stop` (or `/stop@bot`) → platform commands (channels/turn.ts)
 //   - `@bot_username ...`          → mention with the bot's username
 //   - reply to a previous bot msg  → continuation
 // Anything else in a group is ignored to avoid the bot replying to every line.
@@ -26,17 +27,18 @@ import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { TERMINAL_STATUSES } from '../job/state.ts';
-import {
-  resolveConversation,
-  openNewConversation,
-  touchConversation,
-  parseNewConversationCommand,
-} from '../job/conversation-id.ts';
 import { sanitizeSenderName, escapeRegex } from '../channels/shared.ts';
+import { takeChannelTurn, isPlatformCommand, type ChannelStopResult } from '../channels/turn.ts';
 
 export interface HandleResult {
   /** A job was created — caller should triggerWorker after txn commits. */
   jobId?: string;
+  /**
+   * The message was `/stop` (#602): no job was created, and every live run of
+   * the conversation was stopped. The poller acknowledges it with a reaction on
+   * the message — never with text (invariant #2).
+   */
+  stop?: ChannelStopResult;
   /**
    * Present when the message carried a photo. The DOWNLOAD is network I/O, so it
    * must happen OUTSIDE this DB transaction: the poller takes this, downloads the
@@ -137,13 +139,13 @@ export async function handleTelegramUpdate(args: {
 
   // Group chat: only respond to commands, mentions, or replies to the bot.
   if (isGroup) {
-    // `/new` est une commande au même titre que `/ask` : dans un groupe, ouvrir
-    // une conversation neuve doit passer le filtre sans avoir à mentionner le bot.
+    // `/new` et `/stop` sont des commandes au même titre que `/ask` : dans un groupe,
+    // elles doivent passer le filtre sans avoir à mentionner le bot (#602).
     const isCommand =
       text.startsWith('/ask ') ||
       text.startsWith('/agents') ||
       text === '/start' ||
-      parseNewConversationCommand(text).opensNew;
+      isPlatformCommand(text, receivingAgentBotUsername);
     // F-2: only a reply to THIS bot's own message counts — a reply to some
     // OTHER bot in the group (a different agent, a poll bot, whatever) must
     // not wake this one up.
@@ -239,73 +241,28 @@ export async function handleTelegramUpdate(args: {
     groupPrefix = `[Message from ${senderName}${senderUsername ? ` (@${senderUsername})` : ''}]: `;
   }
 
-  // La CONVERSATION dont ce message est un tour (P6, migration 0094). Clé sur
-  // targetAgentId (pas receivingAgentId) : un `/ask <slug>` route le job vers un
-  // autre agent, et c'est au fil de CET agent qu'il appartient.
-  //
-  // `/new` s'analyse sur le texte que l'utilisateur a TAPÉ — après le retrait de
-  // la mention et après le routage `/ask`, mais AVANT le préfixe de groupe.
-  // Sinon la commande arrive derrière `[Message from …]: ` et n'est plus
-  // reconnue : en groupe, `/new` ne rouvrait rien (revue Codex, passe 28).
-  //
-  // Un `/new` NU garde `/new` comme tâche : c'est le message que l'utilisateur a
-  // écrit, et le runner n'a rien à fabriquer à sa place (invariant #2) — c'est
-  // le bloc `## Conversation` du prompt qui dira au modèle ce que ça veut dire.
-  const { opensNew, rest } = parseNewConversationCommand(taskText);
-  if (opensNew && rest) taskText = rest;
-  // Le préfixe enveloppe ce qui RESTE : en groupe, l'agent doit toujours savoir
-  // qui parle, `/new` ou pas.
-  // Sauf pour un `/new` NU : la tâche reste exactement `/new`, sans préfixe —
-  // c'est à ce texte que `loadConversationContext` reconnaît la commande
-  // (`openedByCommand`), et un message qui ne porte aucune demande n'a pas
-  // besoin de dire qui parle.
-  if (groupPrefix && !(opensNew && !rest)) taskText = groupPrefix + taskText;
-
   // A photo with no caption still becomes a job — give it a neutral task so the
   // agent has context alongside the image (the poller attaches the image next).
   if (!taskText.trim() && hasPhoto) {
     taskText = 'Image envoyée (sans légende).';
   }
 
-  const threadKey = {
-    db: tx,
+  // La fin du parcours est commune aux quatre canaux (channels/turn.ts) : `/new`,
+  // préfixe de groupe, conversation, job — ou `/stop`, que la plateforme traite
+  // elle-même (#602). Clé sur targetAgentId (pas receivingAgentId) : un
+  // `/ask <slug>` route le message vers un autre agent, et c'est au fil de CET
+  // agent qu'il appartient.
+  const turn = await takeChannelTurn({
+    tx,
     entityId: receivingAgentEntityId,
     agentId: targetAgentId,
     channel: 'telegram',
     chatId: String(chatId),
-  };
-  const conversation = opensNew
-    ? await openNewConversation(threadKey)
-    : await resolveConversation(threadKey);
-
-  const [job] = await tx
-    .insert(agentJobs)
-    .values({
-      entityId: receivingAgentEntityId,
-      agentId: targetAgentId,
-      channel: 'telegram',
-      task: taskText,
-      chatId: String(chatId),
-      conversationId: conversation.id,
-      // Le projet courant du fil suit le travail : un job né dans une
-      // conversation ancrée à un projet porte ce projet dès l'insert, sans
-      // attendre qu'une écriture le rattache.
-      projectId: conversation.currentProjectId,
-      status: 'pending',
-      // Text-only at insert; when there's a photo the poller upgrades this to a
-      // multimodal [text + image] message after downloading the file.
-      messages: [{ role: 'user', content: taskText }],
-    })
-    .returning({ id: agentJobs.id });
-
-  if (!job) {
-    // Insert returned no row — the caller's transaction will roll this back
-    // and the offset won't advance, so the next poll re-delivers this update.
-    throw new Error('telegram_job_insert_failed');
-  }
-
-  // La conversation est vivante, et elle prend son nom sur le premier message.
-  await touchConversation(tx, conversation.id, taskText);
+    text: taskText,
+    groupPrefix,
+    botHandle: receivingAgentBotUsername,
+  });
+  if (turn.kind === 'stop') return { stop: turn.stop };
 
   // Atomically record the last-seen chat_id so the dashboard can offer
   // "send result via Telegram" for this agent. F-3: only for PRIVATE chats —
@@ -319,9 +276,9 @@ export async function handleTelegramUpdate(args: {
   }
 
   return {
-    jobId: job.id,
+    jobId: turn.jobId,
     photo: largestPhoto
-      ? { fileId: largestPhoto.file_id, chatId: String(chatId), text: taskText }
+      ? { fileId: largestPhoto.file_id, chatId: String(chatId), text: turn.taskText }
       : undefined,
   };
 }

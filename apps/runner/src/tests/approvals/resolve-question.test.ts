@@ -15,6 +15,7 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
 import { approvalRequests, agentJobs } from '@nodal-agents/db';
+import { FREE_ANSWER_MAX } from '@nodal-agents/shared';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -168,6 +169,96 @@ describe('resolveApprovalDecision — une question', () => {
     expect(await jobStatus()).toBe('awaiting_approval');
   });
 
+  it('#465 — une réponse LIBRE, dite comme telle, est écrite telle quelle et le job repart', async () => {
+    const approval = await insertQuestion();
+    const texte = 'Le fichier est dans D:/ventes, sous un autre nom : ventes-sept.xlsx';
+
+    const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      approvalRequestId: approval.id,
+      decision: 'approve',
+      answer: `  ${texte}  `,
+      free: true,
+      resolvedBy: 'api',
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.answer).toBe(texte);
+    const row = await readBack(approval.id);
+    expect(row.status).toBe('approved');
+    expect(row.answer).toBe(texte);
+    expect(await jobStatus()).toBe('pending');
+  });
+
+  it('#465 — une réponse libre VIDE est refusée, et rien n’a bougé', async () => {
+    const approval = await insertQuestion();
+
+    const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      approvalRequestId: approval.id,
+      decision: 'approve',
+      answer: '   ',
+      free: true,
+      resolvedBy: 'api',
+    });
+
+    expect(result).toEqual({ ok: false, code: 'answer_empty' });
+    expect((await readBack(approval.id)).status).toBe('pending');
+    expect(await jobStatus()).toBe('awaiting_approval');
+  });
+
+  // Revue Nodal de #622, P3 : la borne n'avait pas de test. Elle se lit sur
+  // le texte RETENU (espaces de bord retirés) : pile la borne passe, un
+  // caractère de plus est refusé, et rien ne bouge.
+  it('#465 — une réponse libre au-delà de FREE_ANSWER_MAX est refusée, et rien n’a bougé', async () => {
+    const approval = await insertQuestion();
+
+    const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      approvalRequestId: approval.id,
+      decision: 'approve',
+      answer: 'x'.repeat(FREE_ANSWER_MAX + 1),
+      free: true,
+      resolvedBy: 'api',
+    });
+
+    expect(result).toEqual({ ok: false, code: 'answer_too_long' });
+    const row = await readBack(approval.id);
+    expect(row.status).toBe('pending');
+    expect(row.answer).toBeNull();
+    expect(await jobStatus()).toBe('awaiting_approval');
+  });
+
+  it('#465 — une réponse libre de FREE_ANSWER_MAX caractères pile est acceptée', async () => {
+    const approval = await insertQuestion();
+    const texte = 'y'.repeat(FREE_ANSWER_MAX);
+
+    const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      approvalRequestId: approval.id,
+      decision: 'approve',
+      answer: `  ${texte}  `,
+      free: true,
+      resolvedBy: 'api',
+    });
+
+    expect(result.ok).toBe(true);
+    expect((await readBack(approval.id)).answer).toBe(texte);
+  });
+
+  // Revue Nodal de #622, passe 2 : ce cas portait le nom « sur une
+  // approbation ordinaire », mais il envoie un REFUS sur une question. Il
+  // garde son vrai nom ; le cas de l'approbation ordinaire est plus bas.
+  it('#465 — une réponse libre en DÉCLINANT une question est refusée', async () => {
+    const approval = await insertQuestion();
+
+    const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      approvalRequestId: approval.id,
+      decision: 'reject',
+      answer: 'Autre chose',
+      free: true,
+      resolvedBy: 'api',
+    });
+
+    expect(result).toEqual({ ok: false, code: 'answer_not_expected' });
+  });
+
   it('approuver une question SANS réponse est refusé', async () => {
     const approval = await insertQuestion();
 
@@ -230,6 +321,36 @@ describe('resolveApprovalDecision — une question', () => {
 });
 
 describe('resolveApprovalDecision — une approbation ordinaire', () => {
+  it('#465 — une réponse LIBRE sur une approbation ordinaire est refusée, et rien n’a bougé', async () => {
+    const [approval] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: seed.jobId,
+        agentId: seed.agentId,
+        toolName: 'run_command',
+        toolInput: { command: 'ls' },
+        status: 'pending',
+      })
+      .returning();
+
+    const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      approvalRequestId: approval!.id,
+      decision: 'approve',
+      answer: 'Autre chose',
+      free: true,
+      resolvedBy: 'api',
+    });
+
+    expect(result).toEqual({ ok: false, code: 'answer_not_expected' });
+    const [row] = await db
+      .select({ status: approvalRequests.status, answer: approvalRequests.answer })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, approval!.id));
+    expect(row).toEqual({ status: 'pending', answer: null });
+    expect(await jobStatus()).toBe('awaiting_approval');
+  });
+
   it("refuse une réponse : elle n'a aucune liste où pointer", async () => {
     const [approval] = await db
       .insert(approvalRequests)

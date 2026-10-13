@@ -21,6 +21,16 @@ describe('OpenRouter reasoning effort', () => {
     expect(body.reasoning).toEqual({ enabled: true, effort: 'xhigh' });
   });
 
+  it('catalog entries of 2026-10-09: an onoff model turns Off into enabled:false, a mandatory effort model sends max as xhigh', () => {
+    expect(buildOpenRouterExtraBody('mistralai/mistral-large-4-0', 'off').reasoning).toEqual({
+      enabled: false,
+    });
+    expect(buildOpenRouterExtraBody('anthropic/claude-sonnet-5.5', 'max').reasoning).toEqual({
+      enabled: true,
+      effort: 'xhigh',
+    });
+  });
+
   it("'off' disables reasoning explicitly", () => {
     const body = buildOpenRouterExtraBody('minimax/minimax-m3', 'off');
     expect(body.reasoning).toEqual({ enabled: false });

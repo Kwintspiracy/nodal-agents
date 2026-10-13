@@ -12,13 +12,18 @@
     "bench": "tsx src/cli.ts",
     "lint": "eslint src",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "workflows": "tsx src/workflows/cli.ts",
+    "workflows:schedule": "tsx src/workflows/schedule.ts install",
+    "workflows:unschedule": "tsx src/workflows/schedule.ts remove"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@nodal-agents/db": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
     "@nodal-agents/test-kit": "workspace:*",
     "@nodal-agents/tools": "workspace:*",
+    "exceljs": "^4.4.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

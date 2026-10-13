@@ -73,11 +73,13 @@ describe('buildProviderArgs', () => {
     expect(CLAUDE_READONLY_DISALLOWED).toContain('Write');
   });
 
-  it('claude write: acceptEdits instead of disallowed tools', () => {
+  it('claude write: acceptEdits, and no shell tools in the palette (#494)', () => {
     const args = buildProviderArgs('claude', 'write');
     expect(args).toContain('--permission-mode');
     expect(args).toContain('acceptEdits');
-    expect(args).not.toContain('--disallowedTools');
+    // Pas de réglage shell sur un code_task : Claude n'en a pas, et le sait
+    // dès le départ au lieu de l'apprendre en échouant.
+    expect(args[args.indexOf('--disallowedTools') + 1]).toBe('Bash,PowerShell');
     expect(args).toContain('--strict-mcp-config');
   });
 

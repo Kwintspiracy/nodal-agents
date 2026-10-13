@@ -11,7 +11,15 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { eq } from '@nodal-agents/db';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentSkills, agentSkillAssignments, entities, users } from '@nodal-agents/db';
+import {
+  agents,
+  agentMcpServers,
+  agentSkills,
+  agentSkillAssignments,
+  entities,
+  mcpServers,
+  users,
+} from '@nodal-agents/db';
 import { computeAgentToolNames, findUnavailableToolMentions } from '../../router/tool-availability';
 import type { AgentId, EntityId } from '../../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -152,6 +160,34 @@ describe('computeAgentToolNames', () => {
       hasDeliveryRecipient: false,
     });
     expect(names.has('office_write_docx')).toBe(true);
+  });
+});
+
+describe('computeAgentToolNames — MCP tool names are the ones the runner lends (#661) @cap:assigner-outils/moteur', () => {
+  it('names a server tool with the ONE MCP prefix, even for a pre-#661 slug', async () => {
+    const { entityId, agentId } = await seedEntityWithAgent();
+    // `Guide--Srv` (written before the canonical grammar): the runner lends
+    // `guide_srv__ping`; a hand-made prefix said `Guide__Srv__ping`.
+    const [server] = await db
+      .insert(mcpServers)
+      .values({
+        entityId,
+        name: 'Guide',
+        slug: 'Guide--Srv',
+        transport: 'stdio',
+        command: 'node',
+        availableTools: [{ name: 'ping' }, { name: 'pong' }],
+      })
+      .returning({ id: mcpServers.id });
+    await db
+      .insert(agentMcpServers)
+      .values({ entityId, agentId, mcpServerId: server!.id, enabledTools: ['ping'] });
+
+    const names = await computeAgentToolNames(agentId, entityId, db, {
+      hasDeliveryRecipient: false,
+    });
+
+    expect([...names].filter((n) => n.includes('__'))).toEqual(['guide_srv__ping']);
   });
 });
 

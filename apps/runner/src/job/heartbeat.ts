@@ -22,9 +22,18 @@
 // `pending`, ou terminé par quelqu'un d'autre n'est pas rajeuni par lui — les
 // fenêtres des autres faucheurs gardent leur sens.
 //
-// Un compteur par job : une reprise imbriquée (`return runJob(...)` après une
-// délégation) reprend le même job dans le même processus ; elle rejoint le
-// battement en cours au lieu d'en poser un second.
+// Le battement porte la PRISE qu'il tient (#566, revue Codex de #575 passe
+// 2) : il n'écrit que sous `claim_generation` = cette prise. Sans elle, un run
+// périmé — gelé dans un outil long pendant que le faucheur remettait le job
+// en file et qu'un autre run le reprenait puis mourait — rafraîchissait la
+// ligne du run mort toutes les 60 s, et le faucheur ne le voyait jamais.
+//
+// Une entrée par job, qui compte ses tenues : une reprise imbriquée
+// (`return runJob(...)` après une délégation) reprend le même job dans le même
+// processus, sous la prise SUIVANTE ; elle rejoint l'intervalle en cours, qui
+// bat désormais sous la plus récente des prises tenues. Rendue, l'intervalle
+// revient à la plus récente de celles qui restent — une prise dépassée par la
+// ligne n'écrit plus rien.
 
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { touchJob } from './state.ts';
@@ -33,26 +42,33 @@ import { touchJob } from './state.ts';
 export const RUNNER_HEARTBEAT_MS = 60_000;
 
 interface Battement {
-  tenues: number;
+  /** Les prises tenues sur ce job par ce processus, une par tenue. */
+  prises: number[];
   intervalle: ReturnType<typeof setInterval>;
 }
 
 const battements = new Map<string, Battement>();
 
 /**
- * Le runner prend ce job : son battement tourne jusqu'à ce que la fonction
- * rendue soit appelée. Appelée une seconde fois, la fonction ne fait rien.
+ * Le runner prend ce job sous la prise `claimGeneration` (`claimJob`) : son
+ * battement tourne jusqu'à ce que la fonction rendue soit appelée. Appelée une
+ * seconde fois, la fonction ne fait rien.
  *
  * Le premier battement tombe `RUNNER_HEARTBEAT_MS` après la prise : `claimJob`
  * vient d'écrire `updated_at`.
  */
-export function holdJobHeartbeat(db: AnyDrizzleDb, jobId: string): () => void {
+export function holdJobHeartbeat(
+  db: AnyDrizzleDb,
+  jobId: string,
+  claimGeneration: number,
+): () => void {
   let battement = battements.get(jobId);
   if (!battement) {
-    battement = {
-      tenues: 0,
+    const nouveau: Battement = {
+      prises: [],
       intervalle: setInterval(() => {
-        void touchJob(db, jobId).catch((err: unknown) => {
+        const prise = Math.max(...nouveau.prises);
+        void touchJob(db, jobId, prise).catch((err: unknown) => {
           // Un battement perdu n'arrête rien : le suivant le remplace, et la
           // fenêtre du faucheur en tolère un. Il est DIT, jamais avalé.
           console.warn(
@@ -61,16 +77,17 @@ export function holdJobHeartbeat(db: AnyDrizzleDb, jobId: string): () => void {
         });
       }, RUNNER_HEARTBEAT_MS),
     };
+    battement = nouveau;
     battements.set(jobId, battement);
   }
-  battement.tenues += 1;
+  battement.prises.push(claimGeneration);
   const tenu = battement;
   let lache = false;
   return () => {
     if (lache) return;
     lache = true;
-    tenu.tenues -= 1;
-    if (tenu.tenues > 0) return;
+    tenu.prises.splice(tenu.prises.indexOf(claimGeneration), 1);
+    if (tenu.prises.length > 0) return;
     clearInterval(tenu.intervalle);
     if (battements.get(jobId) === tenu) battements.delete(jobId);
   };

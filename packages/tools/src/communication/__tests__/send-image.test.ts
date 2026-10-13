@@ -61,10 +61,13 @@ function makeDb(telegramBotToken: string | null | undefined) {
   return {
     select: () => ({
       from: () => ({
-        where: () => ({
-          limit: () =>
-            Promise.resolve(telegramBotToken !== undefined ? [{ telegramBotToken }] : []),
-        }),
+        // Awaited without `.limit()`: the descendant-files read of the delivery
+        // guard (#588). This fake db has no delegation tree: no descendant.
+        where: () =>
+          Object.assign(Promise.resolve([]), {
+            limit: () =>
+              Promise.resolve(telegramBotToken !== undefined ? [{ telegramBotToken }] : []),
+          }),
       }),
     }),
   };
@@ -90,6 +93,15 @@ vi.mock('@nodal-agents/db', () => {
   return {
     agents,
     eq,
+    // What the descendant-files read of the delivery guard names (#588). The
+    // fake db answers it with no delegation tree: no descendant.
+    agentJobs: {},
+    constatedWrites: {},
+    jobDeliverableVerificationState: {},
+    and: (...a: unknown[]) => a,
+    inArray: (...a: unknown[]) => a,
+    notInArray: (...a: unknown[]) => a,
+    desc: (a: unknown) => a,
     getBindingCredentials,
     isConversationAllowed: isChatAllowedMock,
     resolveOwnerConversation: resolveOwnerChatIdMock,
@@ -101,6 +113,7 @@ vi.mock('@nodal-agents/db', () => {
 function makeCtx(
   overrides: {
     jobChatId?: string | null;
+    jobChatChannel?: ToolContext['jobChatChannel'];
     db?: unknown;
     workspaces?: ToolContext['workspaces'];
   } = {},
@@ -110,6 +123,7 @@ function makeCtx(
     agentId: 'agent-abc',
     entityId: 'entity-xyz',
     jobChatId: overrides.jobChatId ?? null,
+    jobChatChannel: overrides.jobChatChannel ?? null,
     db: (overrides.db ?? makeDb('bot:TEST_TOKEN')) as unknown as ToolContext['db'],
     workspaces: overrides.workspaces,
   };
@@ -139,7 +153,7 @@ describe('createSendImageTool', () => {
 
   it('(a) resolves chatId from ctx.jobChatId when no chatId arg provided', async () => {
     const tool = createSendImageTool();
-    const ctx = makeCtx({ jobChatId: '99887766' });
+    const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
     const result = await tool.execute({ source: SRC_OUTPUT }, ctx);
 
@@ -154,7 +168,7 @@ describe('createSendImageTool', () => {
 
   it('(b) returns tiny { ok, bytes } with no image data in the result', async () => {
     const tool = createSendImageTool();
-    const ctx = makeCtx({ jobChatId: '12345' });
+    const ctx = makeCtx({ jobChatId: '12345', jobChatChannel: 'telegram' });
 
     const result = await tool.execute({ source: SRC_OUTPUT }, ctx);
 
@@ -180,7 +194,7 @@ describe('createSendImageTool', () => {
 
   it('(d) throws no_bot_token when agent has no telegramBotToken in DB', async () => {
     const tool = createSendImageTool();
-    const ctx = makeCtx({ jobChatId: '12345', db: makeDb(null) });
+    const ctx = makeCtx({ jobChatId: '12345', jobChatChannel: 'telegram', db: makeDb(null) });
 
     await expect(tool.execute({ source: SRC_OUTPUT }, ctx)).rejects.toMatchObject({
       name: 'no_bot_token',
@@ -191,7 +205,7 @@ describe('createSendImageTool', () => {
 
   it('(e) throws image_too_large when file exceeds 10 MB', async () => {
     const tool = createSendImageTool();
-    const ctx = makeCtx({ jobChatId: '12345' });
+    const ctx = makeCtx({ jobChatId: '12345', jobChatChannel: 'telegram' });
 
     // Mock readFile to return a 10 MB + 1 byte buffer
     const bigBuf = Buffer.alloc(10 * 1024 * 1024 + 1, 0x00);
@@ -206,7 +220,7 @@ describe('createSendImageTool', () => {
 
   it('(f) throws fetch_failed on non-2xx URL response', async () => {
     const tool = createSendImageTool();
-    const ctx = makeCtx({ jobChatId: '12345' });
+    const ctx = makeCtx({ jobChatId: '12345', jobChatChannel: 'telegram' });
 
     // Mock global fetch to return 404
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
@@ -221,7 +235,7 @@ describe('createSendImageTool', () => {
 
   it('explicit chatId arg overrides ctx.jobChatId (allowed)', async () => {
     const tool = createSendImageTool();
-    const ctx = makeCtx({ jobChatId: '99887766' });
+    const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
     await tool.execute({ source: SRC_OUT, chatId: '11223344' }, ctx);
 
@@ -237,7 +251,7 @@ describe('createSendImageTool', () => {
   it('(g) throws telegram_chat_not_allowed for an explicit chatId not on the allow-list', async () => {
     isChatAllowedMock.mockResolvedValueOnce(false);
     const tool = createSendImageTool();
-    const ctx = makeCtx({ jobChatId: '99887766' });
+    const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
     await expect(tool.execute({ source: SRC_OUT, chatId: '00000000' }, ctx)).rejects.toMatchObject({
       name: 'telegram_chat_not_allowed',
@@ -248,7 +262,7 @@ describe('createSendImageTool', () => {
 
   it('(g) skips the allow-list lookup when the explicit chatId equals ctx.jobChatId', async () => {
     const tool = createSendImageTool();
-    const ctx = makeCtx({ jobChatId: '99887766' });
+    const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
 
     await tool.execute({ source: SRC_OUT, chatId: '99887766' }, ctx);
 
@@ -271,7 +285,7 @@ describe('createSendImageTool', () => {
 
   it('(h) throws source_path_not_allowed for a local path outside workspaces/skill store/temp dir', async () => {
     const tool = createSendImageTool();
-    const ctx = makeCtx({ jobChatId: '12345' });
+    const ctx = makeCtx({ jobChatId: '12345', jobChatChannel: 'telegram' });
 
     await expect(
       tool.execute({ source: syntheticOutsideSource('outside.png') }, ctx),
@@ -286,6 +300,7 @@ describe('createSendImageTool', () => {
     const tool = createSendImageTool();
     const ctx = makeCtx({
       jobChatId: '12345',
+      jobChatChannel: 'telegram',
       workspaces: [{ label: 'ws', path: wsRoot }],
     });
 
@@ -296,7 +311,7 @@ describe('createSendImageTool', () => {
 
   it('passes caption to the adapter when provided', async () => {
     const tool = createSendImageTool();
-    const ctx = makeCtx({ jobChatId: '12345' });
+    const ctx = makeCtx({ jobChatId: '12345', jobChatChannel: 'telegram' });
 
     await tool.execute({ source: SRC_OUT, caption: 'My image' }, ctx);
 

@@ -136,9 +136,7 @@ describe("surface 'cli-runtime'", () => {
       origin: 'api',
       surface: 'cli-runtime',
     } as never);
-    expect(prompt, 'le bloc des outils integres est present').not.toContain(
-      '## Built-in capabilities',
-    );
+    expect(prompt, "l'index des outils de Nodal est present").not.toContain('## Tools on demand');
   });
 
   it('garde la personnalité de l’agent intacte', async () => {
@@ -151,10 +149,10 @@ describe("surface 'cli-runtime'", () => {
 
   it('ne change RIEN pour un agent ordinaire', async () => {
     // Le contrôle du correctif trop large : la surface par défaut doit garder
-    // le bloc des outils intégrés.
+    // l'index de ses outils différés (#612, à la place des outils intégrés).
     const prompt = await buildSystemPrompt(agent as never, db, { origin: 'api' } as never);
-    expect(prompt, 'la surface par defaut a perdu ses outils integres').toContain(
-      '## Built-in capabilities',
+    expect(prompt, "la surface par defaut a perdu l'index de ses outils").toContain(
+      '## Tools on demand',
     );
   });
 
@@ -163,7 +161,7 @@ describe("surface 'cli-runtime'", () => {
       origin: 'dashboard',
       surface: 'chat',
     } as never);
-    expect(prompt).not.toContain('## Built-in capabilities');
+    expect(prompt).not.toContain('## Tools on demand');
   });
 });
 

@@ -42,6 +42,9 @@ import type { ToolContext } from '../types';
 import { WorkspaceError, resolveAndCheckPath } from '../builtin/file-ops/workspace';
 import { markStateDirty } from './intent';
 import { officeFileDeliverables } from './office-file-key';
+import { descendantFilesUnreadableMessage, fileProducedByDescendant } from '../descendant-files';
+import { realpath } from 'node:fs/promises';
+import { dirname, isAbsolute } from 'node:path';
 
 /** Le type sous lequel un livrable déclaré est rangé — voir l'en-tête. */
 const DECLARED_DELIVERABLE_TYPE = 'document' as const;
@@ -110,7 +113,7 @@ export async function declareDeliverables(
   // voir deux fichiers différents derrière le même chemin.
   const uniques = [...new Set(requested.map((p) => p.trim()).filter((p) => p !== ''))];
   const unresolved: UnresolvedDeclaration[] = [];
-  const resolved: Array<{ requested: string; target: MutationTarget }> = [];
+  const resolved: Array<{ requested: string; target: MutationTarget; root?: string }> = [];
   for (const path of uniques) {
     try {
       const abs = await resolveAndCheckPath(ctx as ToolContext, path);
@@ -119,6 +122,40 @@ export async function declareDeliverables(
         target: { kind: 'file', path: abs, deliverableType: DECLARED_DELIVERABLE_TYPE },
       });
     } catch (err) {
+      // Un fichier dont le contenu actuel est ce qu'un de MES délégués a produit
+      // dans ce run est à moi de le déclarer (#588) : la racine livre l'image de
+      // ComfyArtist sans la recopier. La même règle que la garde d'envoi
+      // (descendant-files.ts), rien de plus large.
+      //
+      // PAR CHEMIN ABSOLU SEULEMENT, et c'est voulu (revue de #589, passe 2). Un
+      // chemin relatif se résout contre MES dossiers ; le fichier d'un délégué
+      // vit par définition hors d'eux, et la seule forme relative qui pourrait
+      // l'atteindre est une remontée (`../`), que le résolveur refuse exprès
+      // et que cette règle ne rouvre pas. La racine nomme le fichier de son
+      // délégué par le chemin absolu que la délégation lui a rendu
+      // (`files_written`) — c'est aussi la seule forme que la garde d'envoi
+      // étend.
+      const reel = isAbsolute(path) ? await realpath(path).catch(() => null) : null;
+      const verdict = reel === null ? null : await fileProducedByDescendant(ctx, reel);
+      if (verdict?.kind === 'unreadable') {
+        // Dit comme tel, jamais comme « pas écrit par ton délégué » (revue de #589, P3).
+        unresolved.push({
+          requested: path,
+          code: 'descendant_files_unreadable',
+          reason: descendantFilesUnreadableMessage(verdict.error),
+        });
+        continue;
+      }
+      if (reel !== null && verdict?.kind === 'produced') {
+        resolved.push({
+          requested: path,
+          target: { kind: 'file', path: reel, deliverableType: DECLARED_DELIVERABLE_TYPE },
+          // Sa clé se calcule comme celle de tout document ; il n'est sous aucun
+          // de MES dossiers, son propre dossier sert de racine.
+          root: dirname(reel),
+        });
+        continue;
+      }
       unresolved.push({
         requested: path,
         code: err instanceof WorkspaceError ? err.code : 'path_unresolvable',
@@ -132,7 +169,10 @@ export async function declareDeliverables(
   const workspaceRoots = (ctx.workspaces ?? []).map((w) => w.path);
   const keyed: Array<{ requested: string; key: string; path: string }> = [];
   for (const r of resolved) {
-    const [file] = officeFileDeliverables([r.target], workspaceRoots);
+    const [file] = officeFileDeliverables(
+      [r.target],
+      r.root === undefined ? workspaceRoots : [...workspaceRoots, r.root],
+    );
     if (file === undefined) {
       // Résolu mais sous aucune racine : impossible après le résolveur, et dit
       // plutôt que rangé sous une clé inventée.

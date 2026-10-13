@@ -4,7 +4,6 @@ import { approvalRequests, toolCalls, jobCheckpoints, and, eq, inArray } from '@
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
 import {
   redactSecretsForAudit,
-  isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
   surfaceForTool,
   explainApprovalRules,
@@ -13,6 +12,7 @@ import {
   type MutationTarget,
   type ChainWorkspace,
   type ShellGateReason,
+  type ShellHost,
 } from '@nodal-agents/shared';
 import type { z } from 'zod';
 import type {
@@ -22,10 +22,28 @@ import type {
   ToolExecutionResult,
   ApprovalGateRequest,
 } from './types';
-import { InvalidInputError } from './errors';
+import { InvalidInputError, ToolFailedWithOutput } from './errors';
 import { refuseWithoutStatedPurpose } from './purpose';
 import { alreadyRejectedInstruction, priorRejectionOfSameCall } from './rejected-call';
-import { judgeShellChecklist, shellChecklistRefusal } from './shell-checklist';
+import {
+  callReachesTheFloor,
+  judgeShellChecklist,
+  readSourceFile,
+  shellChecklistRefusal,
+  type ShellPlace,
+} from './shell-checklist';
+
+/**
+ * The host that runs the commands, and so the shell that reads them:
+ * `run_command` uses cmd.exe on Windows and sh elsewhere (shell-engine.ts).
+ * Where a command ends, and what it runs, follow that shell (#667).
+ */
+const RUN_HOST: ShellHost = process.platform === 'win32' ? 'windows' : 'posix';
+import {
+  followLinks,
+  resolveAndCheckPath,
+  windowsPathViolation,
+} from './builtin/file-ops/workspace';
 import { presentToolResult } from './cards';
 import type { ToolCardPayload } from '@nodal-agents/shared';
 import {
@@ -46,7 +64,12 @@ import {
   dossiersNonConstates,
   snapshotFileTargets,
 } from './verification/observed';
-import { constatedGitWrites, perimetreGit, snapshotGitAvant } from './verification/git-constat';
+import {
+  constatedGitWrites,
+  perimetreGit,
+  releaseGitAvant,
+  snapshotGitAvant,
+} from './verification/git-constat';
 import {
   fusionnerConstats,
   kindSurDisque,
@@ -271,14 +294,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // la finalisation, SANS repasser par une approbation : ce qui n'est pas jugé
   // ici ne le sera jamais. Un outil qui n'exécute aucun shell rend une liste
   // vide, et se juge alors sur son seul `riskLevel`, comme avant.
-  const commandesJugees =
-    tool.name === 'run_command'
-      ? [String((validatedInput as { command?: unknown })?.command ?? '')]
-      : tool.name === 'declare_verification'
-        ? ((validatedInput as { commands?: { command?: unknown }[] })?.commands ?? []).map((c) =>
-            String(c?.command ?? ''),
-          )
-        : [];
+  const commandesJugees = shellCommandsOf(tool.name, validatedInput);
 
   // ── La règle du shell suit la commande déclarée ─────────────────────────────
   //
@@ -400,7 +416,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       // lourd couvrait (le code en ligne compris), et le propriétaire y dit,
       // sorte par sorte, s'il veut qu'on lui demande.
       if (tool.name === 'run_command' || tool.name === 'declare_verification')
-        isHeavy = opts.shellPolicy ? false : commandesJugees.some(isDestructiveOrHeavyCommand);
+        isHeavy = opts.shellPolicy
+          ? false
+          : commandesJugees.some((c) => isDestructiveOrHeavyCommand(c, RUN_HOST));
       // É-2 (audit sécu 2026-07-07): create_mcp with a stdio transport spawns an
       // arbitrary local subprocess (npx/uvx <cmd>) — RCE-equivalent to
       // run_command — so it must stay gated under destructive_gate. Its declared
@@ -462,8 +480,8 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // ── La liste de ce que l'agent n'a pas le droit de faire (#464) ─────────────
   //
   // Chaque commande qui va tourner est lue sorte par sorte (code en ligne,
-  // suppression, installation, téléchargement, arrêt de programmes, réglages
-  // système) et l'état que le propriétaire a donné à chaque sorte s'applique :
+  // suppression, installation, téléchargement, ouvrir/imprimer/envoyer (#667),
+  // arrêt de programmes, réglages système) et l'état que le propriétaire a donné à chaque sorte s'applique :
   // `never` bloque, `ask` retient pour approbation. Une lecture du texte, comme
   // celle de Hermes : elle ne suit pas ce qu'un script fait une fois lancé, et
   // ne garde pas l'agent dans ses dossiers (il faudrait un bac à sable de l'OS).
@@ -476,7 +494,11 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   let gateReasons: ShellGateReason[] = [];
   let shellBlock: ShellGateReason[] | null = null;
   if (opts.shellPolicy && commandesJugees.length > 0 && effectiveAction !== 'block') {
-    gateReasons = judgeShellChecklist(commandesJugees, opts.shellPolicy);
+    gateReasons = await judgeShellChecklist(
+      commandesJugees,
+      opts.shellPolicy,
+      await shellPlace(tool.name, validatedInput, ctx),
+    );
     const never = gateReasons.filter((r) => r.state === 'never');
     if (never.length > 0) {
       effectiveAction = 'block';
@@ -509,7 +531,10 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     commandesJugees.length > 0 &&
     effectiveAction !== 'block' &&
     effectiveAction !== 'require_approval' &&
-    commandesJugees.some(isCatastrophicCommand)
+    // Les commandes de l'appel ET celles du code qu'elles lancent (#635,
+    // revue passe 3 de la PR #683) : un `reboot` dans un script est le même
+    // destructeur qu'un `reboot` tapé.
+    (await callReachesTheFloor(commandesJugees, await shellPlace(tool.name, validatedInput, ctx)))
   ) {
     effectiveAction = 'require_approval';
   }
@@ -695,6 +720,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       agentId: ctx.agentId,
       entityId: ctx.entityId,
       kind: tool.asksUser === true ? 'question' : 'approval',
+      gateReasons,
     };
 
     await opts.onApprovalRequired(gateRequest);
@@ -779,36 +805,6 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   const harnaisAvant = auditTool.reportsHarnessWrites
     ? await lignesDeHarnaisDejaLa(ctx.db, ctx.jobId)
     : new Set<string>();
-  // Et, quand les dossiers visés sont des DÉPÔTS GIT, l'état de leur `git
-  // status` AVANT l'appel (issue #199). C'est le seul constat qui voit ce
-  // qu'un shell écrit sans le nommer : le delta avant/après est la liste des
-  // fichiers que ce run a écrits. Lecture seule, aucun jeton, et un dossier
-  // hors dépôt ne rend rien — ce run sera constaté sur le disque, et le dira.
-  //
-  // LE PÉRIMÈTRE PORTE LES DOSSIERS ATTACHÉS, pas seulement les cibles de
-  // l'outil (revue C de la PR #227, constat 1). `run_command` déclare son `cwd`
-  // ET les dossiers de l'agent, mais `code_task` ne déclare que son `cwd` : un
-  // harnais lancé dans `src/` d'un projet dont le dépôt est à la racine se
-  // voyait refuser SA PROPRE racine, parce qu'elle était au-dessus de tout ce
-  // qu'il avait nommé. Le dossier du projet est ce qui borne ; un `cwd` en
-  // dessous de lui est alors couvert par construction.
-  //
-  // SEULEMENT POUR UN OUTIL QUI VISE UN DOSSIER, et c'est le prix qui décide :
-  // git est sondé deux fois par appel, et les empreintes de l'arbre sale avec.
-  // Un `file_write` NOMME son fichier — il est déjà constaté exactement, par
-  // une empreinte avant/après, sans rien demander à git. Sonder le dépôt pour
-  // lui ferait payer l'arbre entier à chaque édition pour une réponse qu'on a
-  // déjà. Ceux qui écrivent sans nommer sont ceux qui visent un dossier.
-  const dossiersVises = (mutationTargets ?? []).filter((t) => t.kind === 'dir');
-  const gitAvant =
-    dossiersVises.length === 0
-      ? []
-      : await snapshotGitAvant(
-          perimetreGit(
-            dossiersVises.map((t) => t.path),
-            (ctx.workspaces ?? []).map((w) => w.path),
-          ),
-        );
   // Ce que le hook a DÉCLARÉ voyage jusqu'à l'outil, sur un contexte dérivé —
   // celui de l'appelant n'est pas modifié. Un outil qui doit connaître le type
   // de ce qu'il écrit (donc la clé que portera sa carte) relit la décision de
@@ -848,6 +844,48 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         `and a tool that changes something never runs without that record. Call it again.`,
     };
   }
+  // Et, quand les dossiers visés sont des DÉPÔTS GIT, l'état de leur `git
+  // status` AVANT l'appel (issue #199). C'est le seul constat qui voit ce
+  // qu'un shell écrit sans le nommer : le delta avant/après est la liste des
+  // fichiers que ce run a écrits. Lecture seule, aucun jeton, et un dossier
+  // hors dépôt ne rend rien — ce run sera constaté sur le disque, et le dira.
+  //
+  // LE PÉRIMÈTRE PORTE LES DOSSIERS ATTACHÉS, pas seulement les cibles de
+  // l'outil (revue C de la PR #227, constat 1). `run_command` déclare son `cwd`
+  // ET les dossiers de l'agent, mais `code_task` ne déclare que son `cwd` : un
+  // harnais lancé dans `src/` d'un projet dont le dépôt est à la racine se
+  // voyait refuser SA PROPRE racine, parce qu'elle était au-dessus de tout ce
+  // qu'il avait nommé. Le dossier du projet est ce qui borne ; un `cwd` en
+  // dessous de lui est alors couvert par construction.
+  //
+  // SEULEMENT POUR UN OUTIL QUI VISE UN DOSSIER, et c'est le prix qui décide :
+  // git est sondé deux fois par appel, et les empreintes de l'arbre sale avec.
+  // Un `file_write` NOMME son fichier — il est déjà constaté exactement, par
+  // une empreinte avant/après, sans rien demander à git. Sonder le dépôt pour
+  // lui ferait payer l'arbre entier à chaque édition pour une réponse qu'on a
+  // déjà. Ceux qui écrivent sans nommer sont ceux qui visent un dossier.
+  const dossiersVises = (mutationTargets ?? []).filter((t) => t.kind === 'dir');
+  const gitAvant =
+    dossiersVises.length === 0
+      ? []
+      : await snapshotGitAvant(
+          perimetreGit(
+            dossiersVises.map((t) => t.path),
+            (ctx.workspaces ?? []).map((w) => w.path),
+          ),
+          // Un workspace qu'aucun dépôt ne couvre est constaté contre son
+          // instantané de checkpoint, pris juste au-dessus (#590).
+          {
+            store: ctx.checkpointsRoot,
+            workspaces: (ctx.workspaces ?? []).map((w) => w.path),
+            jobId: ctx.jobId,
+          },
+        );
+  // PRIS JUSTE AVANT LE `try` dont le `finally` libère ses copies figées
+  // d'index (#590) : rien ne peut lever entre les deux, donc aucune copie
+  // n'est laissée derrière un marqueur qui lève ou un départ refusé.
+  // Did the error the catch below receives come out of `tool.execute()` itself?
+  let raisedByExecute = false;
   try {
     // ── L'ÉCRITURE MONTE L'ÉPOQUE, elle aussi (issue #101) ──────────────────
     //
@@ -864,9 +902,21 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     let output: TOutput;
     try {
       output = await tool.execute(validatedInput, execCtx);
+    } catch (err) {
+      // Only an exception out of the tool's OWN execute() is the tool's text
+      // (`raisedByTool`, read by the catch below). Everything after — the
+      // epoch bump, the audit row, the constat — is the platform.
+      raisedByExecute = true;
+      throw err;
     } finally {
       if (mutationDeliverables.length > 0) {
-        await bumpEpochsAfterWrite(ctx.db, ctx.entityId, mutationDeliverables);
+        try {
+          await bumpEpochsAfterWrite(ctx.db, ctx.entityId, mutationDeliverables);
+        } catch (bumpErr) {
+          // This failure replaces whatever the tool threw: it is the platform's.
+          raisedByExecute = false;
+          throw bumpErr;
+        }
       }
     }
     const durationMs = Date.now() - startMs;
@@ -954,7 +1004,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
           // Une écriture vue par git vaut une cible constatée : c'est tout le
           // point de #199 — un `run_command` qui écrit pour de bon crédite son
           // projet, au lieu de se faire refuser sa déclaration de preuve.
-          ...git.writes.map((w) => ({
+          ...[...git.writes, ...git.fallbackWrites].map((w) => ({
             kind: 'file' as const,
             path: w.path,
             deliverableType: 'code_project' as const,
@@ -985,7 +1035,12 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       for (const f of fichiersDisque) {
         disque.push({ path: f.path, kind: await kindSurDisque(f.path, filesBefore ?? new Map()) });
       }
-      const lignesDeConstat = fusionnerConstats({ git: git.writes, disque });
+      // Ce que l'instantané de checkpoint a vu dans un workspace hors dépôt
+      // (#590) est un constat DISQUE : ce n'est pas git du projet qui l'a vu.
+      const lignesDeConstat = fusionnerConstats({
+        git: git.writes,
+        disque: [...disque, ...git.fallbackWrites],
+      });
       await recordConstatedWrites({
         db: ctx.db,
         jobId: ctx.jobId,
@@ -1100,6 +1155,12 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     // that matters to the LLM: do NOT resend.
     const mayHaveDelivered =
       err instanceof Error && (err as { mayHaveDelivered?: boolean }).mayHaveDelivered === true;
+    // `raisedByTool`: the text came out of the tool's own execute() (and only
+    // then — `raisedByExecute`), so for a third-party tool it may carry a third
+    // party's words (an MCP server's `isError` result, an API's error body).
+    // The runner frames it like the tool's success (INJECT-001). A failure of
+    // the platform around the call, the gate's own errors, and the
+    // `mayHaveDelivered` instruction below are the product's text: no flag.
     const result: ToolExecutionResult = mayHaveDelivered
       ? {
           outcome: 'error',
@@ -1110,18 +1171,33 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
             'the uncertainty in your final result.',
           mayHaveDelivered: true,
         }
-      : { outcome: 'error', error: errorMsg };
+      : {
+          outcome: 'error',
+          error: errorMsg,
+          ...(raisedByExecute ? { raisedByTool: true as const } : {}),
+        };
+    // A failure that came with a result (ToolFailedWithOutput): the row keeps
+    // that result whole, as a success's row does; the model still reads the
+    // error alone.
+    const rowOutput =
+      raisedByExecute && err instanceof ToolFailedWithOutput
+        ? { ...result, output: err.output }
+        : result;
     await _writeToolCall(
       ctx,
       auditTool,
       validatedInput,
-      JSON.stringify(result),
+      JSON.stringify(rowOutput),
       Date.now() - startMs,
       undefined,
       marque,
       true,
     );
     return result;
+  } finally {
+    // Les copies figées d'index (#590) que l'après n'a pas relues : l'outil a
+    // levé, ou son échec ne se constate pas. Sans effet sur celles déjà relues.
+    await releaseGitAvant(gitAvant);
   }
 }
 
@@ -1356,6 +1432,78 @@ async function takeMutationIntent<TInput extends z.ZodTypeAny, TOutput>(
   // projets (P5) relira les premières après l'exécution, une fois le succès
   // connu, et les seconds y seront marqués `produced` — voir executeTool.
   return { targets, deliverables: outcome.kind === 'written' ? outcome.deliverables : [] };
+}
+
+/**
+ * Where the commands of a shell call run, for the checklist (#614): the folder
+ * they start in, resolved the way the tool resolves it (`run_command`'s `cwd`,
+ * the project of a declared proof), and the job's workspaces through the same
+ * boundary check as the file tools. A folder that does not resolve is null:
+ * nothing relative to it can be shown to be inside, so an allowed download
+ * from there asks.
+ */
+async function shellPlace(
+  toolName: string,
+  input: unknown,
+  ctx: Pick<ToolContext, 'workspaces'>,
+): Promise<ShellPlace> {
+  const from =
+    toolName === 'declare_verification'
+      ? String((input as { project_path?: unknown })?.project_path ?? '.')
+      : String((input as { cwd?: unknown })?.cwd ?? '.');
+  const cwd = await resolveAndCheckPath(ctx, from).catch(() => null);
+  return {
+    cwd,
+    host: RUN_HOST,
+    inWorkspace: (absolutePath) =>
+      resolveAndCheckPath(ctx, absolutePath).then(
+        () => true,
+        () => false,
+      ),
+    // A UNC path is never stat()'d, even to name it (the leak the UNC check guards).
+    leadsTo: (absolutePath) =>
+      windowsPathViolation(absolutePath, absolutePath) !== null
+        ? Promise.resolve(null)
+        : followLinks(absolutePath).then(
+            (f) => f.canonical,
+            () => null,
+          ),
+    // A script the call runs is read only inside the job's workspaces, through
+    // the file tools' boundary check (#635); outside, it asks.
+    readSource: (absolutePath) =>
+      resolveAndCheckPath(ctx, absolutePath).then(readSourceFile, () => ({
+        kind: 'unread' as const,
+        why: 'outside_workspaces' as const,
+      })),
+  };
+}
+
+/**
+ * The shell commands a call will run: `run_command`'s, or the steps of a
+ * declared proof, run later without asking again. Empty for any other tool.
+ */
+function shellCommandsOf(toolName: string, input: unknown): string[] {
+  if (toolName === 'run_command') return [String((input as { command?: unknown })?.command ?? '')];
+  if (toolName === 'declare_verification')
+    return ((input as { commands?: { command?: unknown }[] })?.commands ?? []).map((c) =>
+      String(c?.command ?? ''),
+    );
+  return [];
+}
+
+/**
+ * True when a call reaches the hard floor: a command it runs, typed or read in
+ * the code it runs (#635), is a machine-wide destroyer. The runner asks it
+ * before replaying an approved call, which the floor refuses even approved.
+ */
+export async function isCatastrophicCall(
+  toolName: string,
+  input: unknown,
+  ctx: Pick<ToolContext, 'workspaces'>,
+): Promise<boolean> {
+  const commands = shellCommandsOf(toolName, input);
+  if (commands.length === 0) return false;
+  return callReachesTheFloor(commands, await shellPlace(toolName, input, ctx));
 }
 
 /**

@@ -1,6 +1,7 @@
 // channels/telegram.ts — sendTelegramMessage + bot config helpers via fetch
 
 import { DeliveryError } from '../errors.ts';
+import type { EditResult } from '../channel-adapter.ts';
 
 /** Timeout for admin/read Telegram API calls (getMe, getUpdates, setMyCommands…). */
 const TELEGRAM_TIMEOUT_MS = 10_000;
@@ -86,7 +87,7 @@ interface TelegramGetMeResult {
 }
 
 /** Telegram hard limit per message is 4096 chars; stay under it with a margin. */
-const TELEGRAM_MAX_CHARS = 3900;
+export const TELEGRAM_MAX_CHARS = 3900;
 
 function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff;
@@ -716,6 +717,47 @@ export async function getTelegramBotInfo(botToken: string): Promise<TelegramBotI
   };
 }
 
+/** One entry of a bot's command menu (Bot API `BotCommand`). */
+export interface TelegramBotCommand {
+  command: string;
+  description: string;
+}
+
+/**
+ * Add `commands` to the bot's command menu (default scope), keeping every
+ * command already there: the bot's owner may have set their own in BotFather,
+ * and `setMyCommands` REPLACES the whole list. Returns the commands it added
+ * (empty when the menu already had them all). Throws on an API failure.
+ */
+export async function addTelegramBotCommands(
+  botToken: string,
+  commands: readonly TelegramBotCommand[],
+): Promise<string[]> {
+  const current = await callBotApi<TelegramBotCommand[]>(botToken, 'getMyCommands', {});
+  const have = new Set(current.map((c) => c.command));
+  const missing = commands.filter((c) => !have.has(c.command));
+  if (missing.length === 0) return [];
+  await callBotApi<boolean>(botToken, 'setMyCommands', { commands: [...current, ...missing] });
+  return missing.map((c) => c.command);
+}
+
+/**
+ * Put one emoji reaction on a message (Bot API `setMessageReaction`). Telegram
+ * only accepts emojis from its fixed reaction list. Throws on an API failure.
+ */
+export async function setTelegramMessageReaction(opts: {
+  botToken: string;
+  chatId: string | number;
+  messageId: number;
+  emoji: string;
+}): Promise<void> {
+  await callBotApi<boolean>(opts.botToken, 'setMessageReaction', {
+    chat_id: opts.chatId,
+    message_id: opts.messageId,
+    reaction: [{ type: 'emoji', emoji: opts.emoji }],
+  });
+}
+
 // ─── Long-polling helpers ─────────────────────────────────────────────────────
 //
 // Nodal-Agents runs locally — no public URL — so we receive Telegram updates by
@@ -743,7 +785,9 @@ export interface TelegramUpdate {
     document?: { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
     chat?: { id?: number; type?: string };
     from?: { id?: number; first_name?: string; username?: string; is_bot?: boolean };
-    reply_to_message?: { from?: { is_bot?: boolean; username?: string } };
+    /** The message this one replies to: its author, and its id (a reply to a
+     *  card the bot sent is how a person types a value into it, 0145). */
+    reply_to_message?: { message_id?: number; from?: { is_bot?: boolean; username?: string } };
   };
   callback_query?: {
     id: string;
@@ -779,7 +823,12 @@ export async function answerTelegramCallback(
 /**
  * Edit an existing message's text (and optionally its inline keyboard). Used to
  * turn an approval card into a resolved card ("✅ Approuvé") and strip its
- * buttons so it can't be tapped twice. Best-effort: never throws.
+ * buttons so it can't be tapped twice. Never throws, but RETURNS its outcome
+ * (#637): a failed edit used to vanish, and the card-settlement point declared
+ * a card updated that was not.
+ *
+ * "message is not modified" counts as success: the message already reads the
+ * requested text (an edit whose answer was lost, retried).
  */
 export async function editTelegramMessageText(opts: {
   botToken: string;
@@ -788,7 +837,7 @@ export async function editTelegramMessageText(opts: {
   text: string;
   parseMode?: 'Markdown' | 'MarkdownV2' | 'HTML';
   inlineKeyboard?: TelegramInlineKeyboard;
-}): Promise<void> {
+}): Promise<EditResult> {
   const body: Record<string, unknown> = {
     chat_id: opts.chatId,
     message_id: opts.messageId,
@@ -799,8 +848,11 @@ export async function editTelegramMessageText(opts: {
   body['reply_markup'] = { inline_keyboard: opts.inlineKeyboard ?? [] };
   try {
     await callBotApi<unknown>(opts.botToken, 'editMessageText', body);
-  } catch {
-    /* best-effort — the resolution already happened */
+    return { ok: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    if (error.includes('message is not modified')) return { ok: true };
+    return { ok: false, error };
   }
 }
 

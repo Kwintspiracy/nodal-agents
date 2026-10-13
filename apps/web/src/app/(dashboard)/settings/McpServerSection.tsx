@@ -19,21 +19,26 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import { setMcpServerSwitchAction, type McpServerSwitchView } from '@/lib/actions.ts';
+import {
+  addNodalToClaudeDesktopAction,
+  setMcpServerSwitchAction,
+  type McpServerSwitchView,
+} from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import Switch from '@/components/ui/Switch';
+import PrimaryButton from '@/components/ui/PrimaryButton';
+import CodeBlock from '@/components/ui/CodeBlock';
 import { SetUrl } from '@/components/ui/SetUrl.tsx';
 import { MCP_MAX_JOBS_IN_FLIGHT } from '@nodal-agents/shared';
 
-/**
- * La commande complète, prête à coller. `nodal-agents mcp serve` résout
- * lui-même l'URL de la base depuis ~/.nodalai/config.json — l'utilisateur n'a
- * ni DATABASE_URL à connaître, ni secret à copier dans la config de son client
- * (l'ancienne commande documentée mettait le mot de passe Postgres en clair
- * dans la config MCP, et son `pnpm --filter` n'existait que dans le repo de dev).
- */
-const MCP_CONNECT_COMMAND = 'claude mcp add nodal -- nodal-agents mcp serve';
+// #485 — DEUX CLIENTS À LA FOIS. Le serveur est en stdio : Claude Code et
+// Claude Desktop lancent chacun leur processus contre la même base, et leurs
+// travaux arrivent sur la même page Runs. La carte donne le texte exact de
+// chacun, bâti pour CETTE install à partir de la commande du CLI qui a démarré
+// la stack (`lib/mcp-clients.ts`). `nodal-agents mcp serve` écrit à la main ne
+// marchait ni sur un poste de dev ni sur une install lancée par npx. Aucun
+// secret n'y figure : `mcp serve` relit lui-même ~/.nodalai/config.json.
 
 interface Props {
   initial: McpServerSwitchView;
@@ -42,7 +47,17 @@ interface Props {
 export default function McpServerSection({ initial }: Props) {
   const [enabled, setEnabled] = useState(initial.enabled);
   const [confirming, setConfirming] = useState(false);
+  const [addingDesktop, setAddingDesktop] = useState(false);
   const [pending, startTransition] = useTransition();
+  const clients = initial.clients;
+
+  function addToDesktop() {
+    startTransition(async () => {
+      const res = await addNodalToClaudeDesktopAction();
+      if (res.ok) toast.success('Added to Claude Desktop. Restart it to connect.');
+      else toast.error(res.message);
+    });
+  }
 
   function apply(next: boolean) {
     startTransition(async () => {
@@ -72,12 +87,36 @@ export default function McpServerSection({ initial }: Props) {
             connectors, automations); the runner enforces that, not this switch. At most{' '}
             {MCP_MAX_JOBS_IN_FLIGHT} MCP jobs run at once; a finished one frees its place.
           </p>
-          {enabled && (
+          {enabled && clients === null && (
+            <p className="mt-3 text-body-12 text-ink-4">
+              Start Nodal with nodal-agents up to see the command for your MCP clients.
+            </p>
+          )}
+          {enabled && clients !== null && (
             <>
-              <SetUrl subtitle="Connect a client (Claude Code shown):" url={MCP_CONNECT_COMMAND} />
-              <p className="mt-1.5 text-body-12 text-ink-4">
-                Run it on the machine that hosts Nodal.
+              <p className="mt-3 text-body-12 text-ink-4">
+                Both can be connected at the same time. Set them up on the machine that hosts Nodal.
               </p>
+              <div data-testid="mcp-client-claude-code">
+                <SetUrl subtitle="Claude Code: run this command" url={clients.claudeCode} />
+              </div>
+              <div data-testid="mcp-client-claude-desktop" className="mt-4">
+                <p className="text-body-13 text-ink-2">
+                  Claude Desktop: add this to {clients.claudeDesktopPath}
+                </p>
+                <CodeBlock code={clients.claudeDesktop} lang="json" className="mt-2" />
+                {initial.isOwner && (
+                  <PrimaryButton
+                    variant="neutral"
+                    size="sm"
+                    className="mt-2"
+                    disabled={pending}
+                    onClick={() => setAddingDesktop(true)}
+                  >
+                    Add to Claude Desktop
+                  </PrimaryButton>
+                )}
+              </div>
             </>
           )}
           {!initial.isOwner && (
@@ -113,6 +152,26 @@ export default function McpServerSection({ initial }: Props) {
         }}
         onCancel={() => setConfirming(false)}
       />
+
+      {clients !== null && (
+        <ConfirmDialog
+          open={addingDesktop}
+          title="Add Nodal to Claude Desktop?"
+          message={
+            `This writes the entry below into ${clients.claudeDesktopPath}. Its other servers are ` +
+            'kept, and the file is backed up first. The entry holds no password. Restart Claude ' +
+            'Desktop afterwards to connect it.'
+          }
+          extra={<CodeBlock code={clients.claudeDesktop} lang="json" className="mt-3" />}
+          confirmLabel="Add"
+          destructive={false}
+          onConfirm={() => {
+            setAddingDesktop(false);
+            addToDesktop();
+          }}
+          onCancel={() => setAddingDesktop(false)}
+        />
+      )}
     </div>
   );
 }

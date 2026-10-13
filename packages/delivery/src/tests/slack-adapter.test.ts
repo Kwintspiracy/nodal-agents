@@ -57,6 +57,7 @@ describe('slackAdapter.channel / capabilities', () => {
       threads: true,
       media: true,
       editMessage: true,
+      buttonLimits: { maxRows: 48, maxPerRow: 25 },
     });
   });
 });
@@ -282,22 +283,23 @@ describe('slackAdapter.sendApprovalCard', () => {
 });
 
 describe('slackAdapter.editMessageText', () => {
-  it('calls chat.update with channel + ts + new text', async () => {
+  it('calls chat.update with channel + ts + new text, blocks (buttons) removed', async () => {
     vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce(fakePostMessageResult('42.1'));
 
-    await slackAdapter.editMessageText!(CREDS, CHANNEL_ID, '42.1', 'Resolved ✅');
+    const result = await slackAdapter.editMessageText!(CREDS, CHANNEL_ID, '42.1', 'Resolved ✅');
 
+    expect(result).toEqual({ ok: true });
     const [method, options] = vi.mocked(WebClient.prototype.apiCall).mock.calls[0]!;
     expect(method).toBe('chat.update');
-    expect(options).toEqual({ channel: CHANNEL_ID, ts: '42.1', text: 'Resolved ✅' });
+    expect(options).toEqual({ channel: CHANNEL_ID, ts: '42.1', text: 'Resolved ✅', blocks: [] });
   });
 
-  it('never throws — a failed edit must not undo a decision that already happened', async () => {
+  it('never throws, and RETURNS the failure — a failed edit is not a success (#637)', async () => {
     vi.mocked(WebClient.prototype.apiCall).mockRejectedValueOnce(new Error('boom'));
 
     await expect(
       slackAdapter.editMessageText!(CREDS, CHANNEL_ID, '42.1', 'Resolved ✅'),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ ok: false, error: 'boom' });
   });
 });
 
@@ -417,5 +419,91 @@ describe('slackAdapter.validateCredentials', () => {
     await expect(slackAdapter.validateCredentials(CREDS)).rejects.toSatisfy(
       (err: unknown) => err instanceof DeliveryError && err.code === 'slack_invalid_token',
     );
+  });
+});
+
+// #613 — the prompt's channel line is built from this declaration.
+describe('slackAdapter.text — what a sent text becomes (#613)', () => {
+  it('declares the mrkdwn marks Slack renders, and sends them untouched with rendering on', async () => {
+    expect(slackAdapter.text.renders).toEqual([
+      '*bold*',
+      '_italic_',
+      '~strike~',
+      '`code`',
+      '```code block```',
+      '> quote',
+      '<url|text>',
+    ]);
+    vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce(fakePostMessageResult('1.1'));
+    const text = slackAdapter.text.renders.join('\n');
+    await slackAdapter.sendText(CREDS, CHANNEL_ID, text);
+    const [, options] = vi.mocked(WebClient.prototype.apiCall).mock.calls[0]!;
+    // chat.postMessage renders mrkdwn unless `mrkdwn: false` is sent.
+    expect(options).not.toHaveProperty('mrkdwn');
+    expect((options as { text: string }).text).toBe(text);
+  });
+
+  it('splits exactly at its declared size', async () => {
+    vi.mocked(WebClient.prototype.apiCall).mockImplementation(() =>
+      Promise.resolve(fakePostMessageResult('9.9')),
+    );
+    const max = slackAdapter.text.maxMessageChars;
+    const text = 'y'.repeat(2 * max + 808);
+
+    await slackAdapter.sendText(CREDS, CHANNEL_ID, text);
+
+    const sent = vi
+      .mocked(WebClient.prototype.apiCall)
+      .mock.calls.map(([, options]) => (options as { text: string }).text);
+    expect(sent.map((s) => s.length)).toEqual([max, max, 808]);
+    expect(sent.join('')).toBe(text);
+  });
+});
+
+describe('slackAdapter.sendText — a send that fails partway resumes, never repeats (#615)', () => {
+  it('fails on part 3 of 4 with its progress; resumed, only parts 3 and 4 go out', async () => {
+    const max = slackAdapter.text.maxMessageChars;
+    const text = 'y'.repeat(3 * max + 100);
+    let call = 0;
+    vi.mocked(WebClient.prototype.apiCall).mockImplementation(() => {
+      call += 1;
+      return call === 3
+        ? Promise.reject(new Error('503'))
+        : Promise.resolve(fakePostMessageResult(`${call}.0`));
+    });
+
+    const err = await slackAdapter.sendText(CREDS, CHANNEL_ID, text).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeliveryError);
+    expect((err as DeliveryError).partialProgress).toEqual({ sentChunks: 2, totalChunks: 4 });
+
+    await slackAdapter.sendText(CREDS, CHANNEL_ID, text, { fromChunk: 2 });
+
+    const texts = vi
+      .mocked(WebClient.prototype.apiCall)
+      .mock.calls.map(([, options]) => (options as { text: string }).text);
+    const delivered = texts.filter((_, i) => i !== 2);
+    expect(delivered).toHaveLength(4);
+    expect(delivered.join('')).toBe(text);
+  });
+});
+
+// Revue Codex passe 2 de #664 : un bloc `section` porte au plus 3 000
+// caractères ; la carte en mettait jusqu'à 3 900 dans un seul, et Slack la
+// refusait. Le texte se répartit en sections, sur les fins de ligne.
+describe('slackAdapter.sendCard — le texte d’une carte en sections de 3 000 caractères au plus', () => {
+  it('un texte de 3 500 caractères part en deux sections, entier et dans l’ordre', async () => {
+    vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce(fakePostMessageResult('9.1'));
+    const text = `${'a'.repeat(2000)}\n${'b'.repeat(1499)}`;
+    await slackAdapter.sendCard!(CREDS, CHANNEL_ID, {
+      text,
+      buttons: [[{ label: 'OK', callbackData: 'eli:x:d' }]],
+    });
+    const [, options] = vi.mocked(WebClient.prototype.apiCall).mock.calls[0]!;
+    const blocks = (options as { blocks: Array<{ type: string; text?: { text: string } }> }).blocks;
+    const sections = blocks.filter((b) => b.type === 'section').map((b) => b.text!.text);
+    expect(sections.length).toBe(2);
+    expect(sections.every((s) => s.length <= 3000)).toBe(true);
+    expect(sections.join('\n')).toBe(text);
+    expect(blocks.at(-1)!.type).toBe('actions');
   });
 });

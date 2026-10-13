@@ -11,10 +11,16 @@
 //   3. Absolute paths passed by the LLM must resolve INSIDE exactly one
 //      known workspace root; anything else is path_traversal_blocked.
 
-import { realpath, stat } from 'node:fs/promises';
-import { resolve as resolvePath, sep, isAbsolute } from 'node:path';
+import { lstat, readlink, realpath, stat } from 'node:fs/promises';
+import {
+  resolve as resolvePath,
+  relative as relativePath,
+  sep,
+  isAbsolute,
+  dirname,
+} from 'node:path';
 import type { ToolContext } from '../../types';
-import { currentContentWrittenByJob } from '../../verification/record-constat';
+import { cheminConstate, currentContentWrittenByJob } from '../../verification/record-constat';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -99,7 +105,7 @@ export class WorkspaceError extends Error {
  * Each workspace's path must be absolute (otherwise: workspace_invalid).
  */
 export function assertWorkspacesConfigured(
-  ctx: ToolContext,
+  ctx: Pick<ToolContext, 'workspaces'>,
 ): Array<{ label: string; path: string }> {
   const list = ctx.workspaces;
   if (!list || list.length === 0) {
@@ -152,7 +158,7 @@ export function assertWorkspacesConfigured(
  *      but realpath of the link target reveals the escape.
  */
 export async function resolveAndCheckPath(
-  ctx: ToolContext,
+  ctx: Pick<ToolContext, 'workspaces'>,
   requestedPath: string,
 ): Promise<string> {
   const workspaces = assertWorkspacesConfigured(ctx);
@@ -214,6 +220,107 @@ export async function resolveAndCheckPath(
     `This agent has multiple workspaces. Prefix the path with a workspace label. ` +
       `Valid labels: ${validLabels}. Example: "${ownWorkspaces[0]!.label}/${requestedPath}".`,
   );
+}
+
+// ─── processAddressing ────────────────────────────────────────────────────────
+
+/**
+ * The sentence every tool that starts a process adds to its description (#592).
+ * One wording, so the model reads the same rule wherever it can start one.
+ */
+export const PROCESS_PATHS_RULE =
+  'Workspace labels are NOT folders for a process: the file tools address a file as ' +
+  '"<label>/<path>", but a process resolves its paths against its own working directory, ' +
+  "or takes absolute paths. The result's `paths` says where the process ran and what a " +
+  'file-tool path is called there; reach another workspace by its absolute path (also in `paths`).';
+
+/** `child` is `root` itself or a folder under it (case-insensitive on Windows). */
+function isWithin(root: string, child: string): boolean {
+  const rel = relativeWithin(root, child);
+  return rel !== null;
+}
+
+/**
+ * `child` relative to `root` with forward slashes (`''` when they are the same
+ * folder), or null when `child` is not under `root`. Case-insensitive on Windows.
+ */
+function relativeWithin(root: string, child: string): string | null {
+  const norm = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
+  const rel = relativePath(norm(root), norm(child));
+  if (rel.startsWith('..') || isAbsolute(rel)) return null;
+  return rel.replace(/\\/g, '/');
+}
+
+/**
+ * How a process started by a tool addresses files (#592), for the model to read
+ * in the tool_result. A file has two addresses for an agent with workspaces:
+ * `<label>/<path>` in the file tools, and a path relative to the process's cwd
+ * (or absolute) in a process. On 2026-09-29 ComfyArtist ran
+ * `comfy … --out-dir ComfyArtist/outputs` from the root of its "ComfyArtist"
+ * workspace, and the file landed in ComfyArtist/ComfyArtist/outputs.
+ *
+ * Says the absolute cwd, which workspace it is — the DEEPEST one that contains
+ * it when workspaces are nested — or `outside` when it is none (a skill
+ * folder), what a file-tool path is called THERE (right for a sub-folder too,
+ * never a literal that only holds at a workspace root), and every other
+ * workspace by absolute path.
+ *
+ * The cwd a tool hands in is canonical (`resolveAndCheckPath` realpaths it);
+ * a configured workspace path need not be (junction, symlink, subst, 8.3 name,
+ * case). Both are compared in ONE path space, the real one (`cheminConstate`,
+ * as #589 does for delivered files) — Nodal review of #593.
+ *
+ * Text written for the model. It travels in the tool_result, which the thread
+ * and the Runs page also show; it says nothing the model's own call did not.
+ */
+export async function processAddressing(
+  workspaces: readonly { label: string; path: string }[],
+  cwd: string,
+  outside = 'outside every workspace',
+): Promise<string> {
+  const reelCwd = await cheminConstate(cwd);
+  const reels = await Promise.all(
+    workspaces.map(async (w) => ({ w, root: await cheminConstate(w.path) })),
+  );
+  // Le conteneur le plus PROFOND : des espaces imbriqués nomment celui où l'on est.
+  const home = reels
+    .filter((r) => isWithin(r.root, reelCwd))
+    .sort((x, y) => y.root.length - x.root.length)[0];
+  const rel = home ? relativeWithin(home.root, reelCwd) : null;
+  const where = home
+    ? rel === ''
+      ? `the root of workspace "${home.w.label}"`
+      : `inside workspace "${home.w.label}"`
+    : outside;
+  const parts = [
+    `This process ran in ${cwd}, ${where}.`,
+    'Paths in a process are relative to that folder, or absolute.',
+  ];
+  if (home) {
+    // Juste pour CE dossier : à la racine, `<label>/outputs/x` s'écrit
+    // `outputs/x` ; depuis `<label>/a/b`, `<label>/a/b/x` s'écrit `x`.
+    const ici = rel === '' ? 'outputs/x' : 'x';
+    const outil = `${home.w.label}/${rel ? `${rel}/` : ''}${ici}`;
+    parts.push(
+      `Workspace labels are NOT folders for a process: what the file tools call ${outil} is ${ici} here.`,
+    );
+  } else {
+    const exemple =
+      workspaces.find((w) => w.label !== SHARED_WORKSPACE_LABEL)?.label ?? workspaces[0]?.label;
+    if (exemple !== undefined) {
+      parts.push(
+        `Workspace labels are NOT folders for a process: use a workspace's absolute path, never ${exemple}/x.`,
+      );
+    }
+  }
+  const autres = workspaces.filter((w) => w !== home?.w);
+  if (autres.length > 0) {
+    parts.push(
+      `${home ? 'Other workspaces' : 'Workspaces'}, by absolute path: ` +
+        `${autres.map((w) => `${w.label} = ${w.path}`).join(', ')}.`,
+    );
+  }
+  return parts.join(' ');
 }
 
 // ─── windowsPathViolation ─────────────────────────────────────────────────────
@@ -289,6 +396,107 @@ export function windowsPathViolation(
 
 // ─── resolveUnderRoot (private) ──────────────────────────────────────────────
 
+/** Links followed while resolving one path before it is refused (Linux's own bound is 40). */
+const MAX_LINK_HOPS = 40;
+
+/**
+ * The target of `path` when it is a link (symlink, or a Windows junction,
+ * which lstat reports as one), as a path; null when it is not a link or does
+ * not exist.
+ */
+async function danglingLinkTarget(path: string): Promise<string | null> {
+  const isLink = await lstat(path).then(
+    (s) => s.isSymbolicLink(),
+    () => false,
+  );
+  if (!isLink) return null;
+  return linkTargetAsPath(await readlink(path));
+}
+
+/**
+ * A link target as Windows writes it, turned into the path it names. Windows
+ * returns it with a `\\?\` (or NT `\??\`) prefix: `\\?\C:\x` is the drive
+ * path `C:\x`, but `\\?\UNC\server\share\x` is the SHARE `\\server\share\x`
+ * (revue de la PR #618, passe 4 : retirer le préfixe laissait `UNC\server\…`,
+ * lu comme un chemin relatif sous le dossier du lien). Any other prefixed
+ * form (`\\?\Volume{…}\`, a device) is no drive path either, and is returned
+ * in the `\\` form a UNC check refuses.
+ */
+export function linkTargetAsPath(raw: string): string {
+  const prefixed = /^(?:\\\\\?\\|\\\?\?\\)(.*)$/.exec(raw);
+  if (!prefixed) return raw;
+  const rest = prefixed[1] ?? '';
+  if (/^[A-Za-z]:[\\/]/.test(rest)) return rest;
+  if (/^UNC[\\/]/i.test(rest)) return `\\\\${rest.slice(4)}`;
+  return `\\\\${rest}`;
+}
+
+/**
+ * Where an absolute path really lands on disk: the deepest existing ancestor,
+ * realpath()'d, plus the part that does not exist yet. Links are followed on
+ * the way, dangling ones included (#614, revue Nodal de la PR #618, passe 3):
+ * stat() follows a link whose target does not exist yet and fails, yet a
+ * write to this path goes through it and creates its target. Walking up to
+ * the parent judged the link's NAME lexically, inside the workspace, while the
+ * write landed wherever it points.
+ *
+ * A link to a network share is never stat()'d (that is the SMB leak the UNC
+ * check exists for): the walk stops there and `share` says why, with
+ * `canonical` the share path. Exported so a caller can NAME where a path
+ * leads, not only whether it is inside (the approval card, #618).
+ */
+export async function followLinks(
+  lexical: string,
+  requestedPath: string = lexical,
+): Promise<{ canonical: string; share: string | null }> {
+  // The walk below cuts `path` at the length of `probe`, so both must be the
+  // same text: a rooted path with no drive (`/dev/null`) is walked up as
+  // `D:\dev`, three characters longer than the ancestor it started from, and
+  // the cut landed inside a word (`D:\v/null`, #669). Resolved once, here, for
+  // every caller.
+  let path = resolvePath(lexical);
+  let probe = path;
+  let hops = 0;
+  while (true) {
+    try {
+      await stat(probe);
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw new WorkspaceError(
+          'workspace_invalid',
+          `Failed to stat path while resolving "${requestedPath}": ${(err as Error).message}`,
+        );
+      }
+    }
+    const target = await danglingLinkTarget(probe);
+    if (target !== null) {
+      if (++hops > MAX_LINK_HOPS) {
+        throw new WorkspaceError(
+          'path_traversal_blocked',
+          `Path "${requestedPath}" goes through more than ${MAX_LINK_HOPS} links.`,
+        );
+      }
+      const through = resolvePath(dirname(probe), target);
+      path = through + path.slice(probe.length);
+      const linkViolation = windowsPathViolation(target, through);
+      if (linkViolation) return { canonical: path, share: linkViolation };
+      probe = path;
+      continue;
+    }
+    const parent = resolvePath(probe, '..');
+    if (parent === probe) {
+      throw new WorkspaceError(
+        'path_traversal_blocked',
+        `Cannot resolve "${requestedPath}" — walked past the filesystem root.`,
+      );
+    }
+    probe = parent;
+  }
+  const realProbe = await realpath(probe);
+  return { canonical: realProbe + path.slice(probe.length), share: null };
+}
+
 /**
  * Core boundary-check against a single workspace root. IDENTICAL security
  * logic to the former single-root resolveAndCheckPath — only extracted into
@@ -350,33 +558,9 @@ async function resolveUnderRoot(workspaceRoot: string, requestedPath: string): P
    * site's actual open/write could close — out of scope for this hardening.
    */
   async function probeCanonical(): Promise<string> {
-    let probe = lexical;
-    while (true) {
-      try {
-        await stat(probe);
-        break;
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-          throw new WorkspaceError(
-            'workspace_invalid',
-            `Failed to stat path while resolving "${requestedPath}": ${(err as Error).message}`,
-          );
-        }
-      }
-      const parent = resolvePath(probe, '..');
-      if (parent === probe) {
-        // Reached filesystem root without finding anything — should be impossible
-        // because the workspace root itself exists (verified above via realpath).
-        throw new WorkspaceError(
-          'path_traversal_blocked',
-          `Cannot resolve "${requestedPath}" — walked past the filesystem root.`,
-        );
-      }
-      probe = parent;
-    }
-    const realProbe = await realpath(probe);
-    const remainder = lexical.slice(probe.length);
-    const canonical = realProbe + remainder;
+    const followed = await followLinks(lexical, requestedPath);
+    if (followed.share !== null) throw new WorkspaceError('path_traversal_blocked', followed.share);
+    const canonical = followed.canonical;
 
     if (canonical !== realRoot && !canonical.startsWith(rootWithSep)) {
       throw new WorkspaceError(

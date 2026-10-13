@@ -3,13 +3,16 @@
 //   1. BASELINE  — intrinsic discipline injected into EVERY agent's prompt
 //      (verify-before-done, safe-tool-use, language-mirror). Content comes from
 //      the catalog skills flagged `kind: 'baseline'` — universal, not assignable.
-//   2. CHANNEL   — per-channel etiquette injected when the agent is bound to a
-//      channel (telegram formatting). Catalog skills flagged `kind: 'channel'`.
+//      Its size is held by a budget (tests/baseline-budget.test.ts): it is
+//      sent on every job of every agent.
+//   2. CHANNEL   — gone (#613). It injected hand-written Telegram rules that
+//      contradicted the runner; a channel's facts are now one line of the
+//      `## Job context` block, built from the adapter (system-prompt.ts).
 //   2bis. DISCOVERABILITY — the capability skills + connectors the agent does
 //      NOT have yet, so it can offer them ("I can't search the web, but if you
 //      add a Tavily key we can") instead of pretending or refusing flatly.
 //
-// Reading baseline/channel content from the catalog (not the DB) is deliberate:
+// Reading baseline content from the catalog (not the DB) is deliberate:
 // these are universal, never user-edited, and the catalog is the code's source
 // of truth — so the prompt can never drift from a stale seed.
 
@@ -17,17 +20,7 @@ import { systemSkills, skillKind, skillContentOn } from '@nodal-agents/catalog';
 import type { PromptSurface } from '@nodal-agents/catalog';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { CHANNELS, AUTOMATION_KINDS } from '@nodal-agents/shared';
-
-/**
- * Open/mid models that need firmer execution discipline — weaker instruction-
- * following, a habit of declaring a task done without checking, AND a habit of
- * over-exploring (re-verifying, re-listing, running diagnostic commands, writing
- * their own helper/conversion scripts) instead of using the tools and paths they
- * were given. Both failures observed live on MiniMax M3 / DeepSeek. Frontier
- * models (Claude/GPT) follow the baseline without this and get nothing extra —
- * mirrors how Hermes injects per-model execution guidance.
- */
-const NEEDS_FIRMER_VERIFY = /deepseek|minimax|qwen|glm|gemma|kimi|mistral|llama/i;
+import { toolsNamedIn } from './router/tool-availability';
 
 /**
  * Le texte d'une skill POUR une surface.
@@ -40,7 +33,7 @@ const NEEDS_FIRMER_VERIFY = /deepseek|minimax|qwen|glm|gemma|kimi|mistral|llama/
  * constat 1). Les deux vivent dans le CATALOGUE (invariant #3).
  */
 const contentOfKind = (
-  kind: 'baseline' | 'channel',
+  kind: 'baseline',
   surface: PromptSurface = 'job',
   availableTools?: readonly string[],
 ): string[] =>
@@ -48,7 +41,26 @@ const contentOfKind = (
     .filter((s) => skillKind(s) === kind)
     .filter((s) => hasRequiredBuiltins(s, availableTools))
     .map((s) => skillContentOn(s, surface))
-    .filter((text): text is string => text !== null);
+    .filter((text): text is string => text !== null)
+    .filter((text) => namesOnlyHeldTools(text, availableTools));
+
+/**
+ * Le prompt ne nomme jamais un outil que le job n'a pas (#559).
+ *
+ * `requiredBuiltins` ne couvre que ce qu'une skill DÉCLARE ; le texte, lui,
+ * nomme ce qu'il veut, et rien ne vérifiait l'accord des deux. La skill
+ * Telegram ne déclarait rien et ordonnait `telegram_send_message` : un
+ * Researcher délégué, qui héritait du `chat_id` de son parent sans en avoir
+ * l'outil, a obéi au prompt et a été tué pour `whitelist_violation`. Lire les
+ * noms dans le texte même rend l'oubli impossible, pour toute skill de socle
+ * ou de canal, sur toute surface.
+ *
+ * Liste inconnue : rien n'est retiré par ce filtre, `hasRequiredBuiltins`
+ * reste fermé comme avant. Le prompt d'un job passe toujours sa liste
+ * (`buildSystemPrompt`).
+ */
+const namesOnlyHeldTools = (text: string, availableTools?: readonly string[]): boolean =>
+  availableTools === undefined || toolsNamedIn(text).every((t) => availableTools.includes(t));
 
 /**
  * Une skill de socle peut DÉPENDRE d'un outil — `platform-support` ne dit que
@@ -62,7 +74,7 @@ const contentOfKind = (
  * ont déjà payé une fois. Une skill sans `requiredBuiltins` n'est jamais
  * concernée, donc rien de ce qui existait ne change.
  */
-const hasRequiredBuiltins = (
+export const hasRequiredBuiltins = (
   skill: { requiredBuiltins?: string[] },
   availableTools?: readonly string[],
 ): boolean => {
@@ -83,31 +95,16 @@ const hasRequiredBuiltins = (
  */
 const MEMORY_DISCIPLINE_BLOCK = `## Memory discipline
 
-### Correct what's wrong
+A memory fact that proves false (a missing path, a failing procedure) is corrected, never silently reused: call \`mark_memory_outdated\` with the reason, then \`save_memory\` the verified fact. Save only what is verified and durable (a path, an ID, a stated preference, a procedure that worked). Never save a rule for another agent or a discovery ban ("don't search for X"), and never a log of what you did: the file, the message and the run are their own record. A routine's record of its last run is its routine state.`;
+// « routine state » sans le nom de l'outil (#559) : `save_routine_state` n'est
+// armé que pour un job de routine, et c'est le bloc `## Runtime` de ce job-là
+// qui le nomme (buildRuntimeBlock, état de routine).
 
-If a fact from your Persistent memory block turns out to be false in practice — a file path that doesn't exist, an invalid ID, a procedure that fails the way the memory said it wouldn't — you MUST call \`mark_memory_outdated\` on it with the reason, then \`save_memory\` the corrected fact once you have verified it. Never silently keep reusing a fact you just found to be wrong.
-
-### What's worth saving
-
-A fact you save via \`save_memory\` must describe something VERIFIED — an exact path you confirmed, a real ID, a preference the user stated, a procedure that actually worked. Never save a micromanagement rule for another agent, and never save a discovery ban (e.g. "don't search for X", "don't explore Y") — every agent stays free to check things for itself when what it was given turns out to be wrong.
-
-Memory is what you KNOW, never a log of what you DID. Do not save "I created file X", "I posted the announcement", "run completed" — the file, the message and the run are their own record, and an account of one job is worthless to the next. If you are a scheduled routine and you need to recognise this run against the last one, that is \`save_routine_state\`, not memory.`;
-
-/**
- * La règle de `purpose`, dite UNE fois, pour tout le monde.
- *
- * Générique par construction : aucun nom d'agent, aucun nom d'outil. QUELS
- * outils demandent d'abord se lit dans les schémas que le modèle reçoit
- * (`exposeStatedPurpose`, @nodal-agents/tools) — en poser la liste ici serait
- * de la métadonnée codée en dur (invariant #1), et elle serait fausse dès
- * qu'une règle d'approbation change.
- *
- * Pas sur `chat` : cette surface n'a que `run_task`, que rien ne gate, et une
- * consigne inapplicable y coûte des jetons à chaque tour.
- */
-const APPROVAL_PURPOSE_BLOCK = `## When a call has to be approved
-
-Some of your tools stop and wait for a person before they run. Their input schema carries a \`purpose\` field. Fill it with one sentence written for whoever reads the approval card: what you need this call for, and why. Without it nothing is submitted to anyone and the call comes straight back to you, unrun.`;
+// « When a call has to be approved » n'existe plus (01/10/2026, lot 2) : il
+// redisait ce que le modèle lit au moment où ça sert. Le champ `purpose` porte
+// sa propre consigne dans le schéma de chaque outil (`PURPOSE_DESCRIPTION`,
+// tools/src/purpose.ts), et un appel qui la manque revient non exécuté avec le
+// geste exact qui répare (`missingPurposeInstruction`, même fichier).
 
 /** Worker-only — capitalize durable discoveries before finishing (not the orchestrator's job: it delegates the work, it doesn't do it). */
 const WORKER_DISCOVERY_BLOCK = `## Capitalize what you learn
@@ -151,9 +148,18 @@ const DELEGATION_DISCIPLINE_BLOCK_CHAT = `## Delegation discipline
 
 What you hand off is a brief, and it carries: (1) the PARAMETERS — paths, prompts, values, the user's own words where they matter; (2) the goal and the constraints, never a step-by-step procedure that stops the worker adapting; (3) the expected RESULT rather than the means of getting it. Do not do a worker's prep work in conversation, and never rewrite a shared or template file to carry a run's values.`;
 
-/** Layer 1 — intrinsic discipline for every agent (+ model-aware reinforcement). */
+/**
+ * Layer 1 — intrinsic discipline, the same for every agent on a surface.
+ *
+ * No model parameter any more (01/10/2026, lot 2). A regex over the model name
+ * (`NEEDS_FIRMER_VERIFY`: deepseek, minimax, qwen, glm…) used to append an
+ * "Especially you — execution discipline" paragraph for some providers only
+ * (5887686e, over-exploration seen on MiniMax and DeepSeek). Being decisive
+ * with what you were given is true of every agent, so the rule now lives once
+ * in the catalog (`safe-tool-use`, its "Be decisive" line), on every model:
+ * one text, no per-provider branch (rule #11).
+ */
 export function buildBaselineBlock(
-  model: string,
   opts: {
     role?: 'agent' | 'orchestrator' | 'system';
     /**
@@ -215,31 +221,7 @@ export function buildBaselineBlock(
   }
   const surface = opts.surface ?? 'job';
   const parts = contentOfKind('baseline', surface, opts.availableTools);
-  // Le renforcement nomme `skill_view` et `run_skill_script` : deux outils de
-  // plus que le chat n'a pas, et deux ordres de plus qu'il ne peut pas suivre
-  // (revue Codex de la dette de la PR #73, constat 2). Sa moitié portable —
-  // vérifier avant de dire que c'est fait, ne jamais inventer une sortie
-  // d'outil, être décisif — vaut sur les deux surfaces et reste sur les deux.
-  const reinforcement =
-    parts.length === 0 || !NEEDS_FIRMER_VERIFY.test(model)
-      ? ''
-      : surface === 'chat'
-        ? '\n\n**Especially you — execution discipline:** ' +
-          'Actually check your work before you say something is done, and never write tool output ' +
-          'you did not really get back. Be decisive: once you know what the user is asking for, ' +
-          'hand it over as one job instead of re-asking, re-listing, or narrating what you are ' +
-          'about to do. Take the fewest steps that finish the task.'
-        : '\n\n**Especially you — execution discipline:** ' +
-          'Actually run or check your work before you say a task is done, and never write tool output ' +
-          'you did not really get back. Be decisive: once a check passes (e.g. dependencies report ' +
-          'ready), DO the action — do not keep re-verifying, re-listing, or running diagnostic ' +
-          'commands. Use the tools, scripts, and exact file paths you were given (a skill loaded ' +
-          'with skill_view ships run_skill_script and ready-made workflows/templates) ' +
-          'instead of writing ' +
-          'your own helper or conversion scripts, or rebuilding what already exists. Take the fewest ' +
-          'steps that finish the task, then deliver the result with its output path.';
-  const catalogBlock =
-    parts.length > 0 ? `## How you work (always)\n\n${parts.join('\n\n')}${reinforcement}` : '';
+  const catalogBlock = parts.length > 0 ? `## How you work (always)\n\n${parts.join('\n\n')}` : '';
 
   const roleBlock =
     opts.role === 'orchestrator'
@@ -252,18 +234,7 @@ export function buildBaselineBlock(
 
   // Le chat n'a pas `save_memory` : la discipline qui l'ordonne n'y va pas.
   const memoryBlock = surface === 'chat' ? '' : MEMORY_DISCIPLINE_BLOCK;
-  // Voir APPROVAL_PURPOSE_BLOCK : le chat n'a aucun outil que la porte suspend.
-  const approvalBlock = surface === 'chat' ? '' : APPROVAL_PURPOSE_BLOCK;
-  return [catalogBlock, memoryBlock, approvalBlock, roleBlock].filter(Boolean).join('\n\n');
-}
-
-/** Layer 2 — per-channel etiquette, only when the agent is bound to a channel. */
-export function buildChannelBlock(opts: { channel?: string; telegram?: boolean }): string {
-  const onTelegram = opts.channel === 'telegram' || opts.telegram === true;
-  if (!onTelegram) return '';
-  const parts = contentOfKind('channel');
-  if (parts.length === 0) return '';
-  return `## Channel etiquette\n\n${parts.join('\n\n')}`;
+  return [catalogBlock, memoryBlock, roleBlock].filter(Boolean).join('\n\n');
 }
 
 /**
@@ -338,6 +309,29 @@ export interface DiscoverabilityInput {
    * constat 1).
    */
   nodalTools?: boolean;
+  /**
+   * Les outils de ce job (#559). Le geste d'attacher ne nomme que ceux que le
+   * job a : `attach_connector` / `attach_mcp` sont des outils du ROOT, et un
+   * worker à qui on les nommait n'avait aucun moyen de les appeler. Omis =
+   * inconnu : aucun outil nommé.
+   */
+  availableTools?: readonly string[];
+}
+
+/**
+ * L'outil qui attache CHAQUE type de ressource. Un geste par type (revue Codex
+ * de #570, passe 2) : un seul geste construit sur les outils détenus disait
+ * « attach it yourself with attach_connector » devant un serveur MCP, un outil
+ * détenu qui n'y peut rien.
+ */
+const ATTACH_TOOL = { connector: 'attach_connector', mcp: 'attach_mcp' } as const;
+
+/** Comment une ressource déjà configurée arrive jusqu'à cet agent, dit avec SON outil. */
+function attachGesture(kind: keyof typeof ATTACH_TOOL, availableTools?: readonly string[]): string {
+  const tool = ATTACH_TOOL[kind];
+  return availableTools?.includes(tool)
+    ? `attach it with \`${tool}\`, or ask the user to`
+    : 'ask the user to assign it to you';
 }
 
 /**
@@ -428,12 +422,17 @@ export function buildDiscoverabilityBlock(input: DiscoverabilityInput): string {
             '(NO new API key needed; say so, and the job you hand the task to can do the ' +
             'attaching):'
         : 'ALREADY configured in this workspace — just needs to be assigned to you ' +
-            '(NO new API key needed; if you are the workspace ROOT, use ' +
-            '`attach_connector` / `attach_mcp`, otherwise ask the user to assign it):',
+            '(NO new API key needed):',
     );
+    // Sur une surface sans les builtins, le geste est dit une fois, plus haut.
+    const gesture = (kind: keyof typeof ATTACH_TOOL): string =>
+      input.nodalTools === false ? '' : `; ${attachGesture(kind, input.availableTools)}`;
     for (const c of readyConnectors)
-      lines.push(`- ${labelForConnector(c.slug, c.name)} — connector \`${c.slug}\` (configured)`);
-    for (const m of readyMcps) lines.push(`- ${m.name} — MCP server \`${m.slug}\` (configured)`);
+      lines.push(
+        `- ${labelForConnector(c.slug, c.name)} — connector \`${c.slug}\` (configured${gesture('connector')})`,
+      );
+    for (const m of readyMcps)
+      lines.push(`- ${m.name} — MCP server \`${m.slug}\` (configured${gesture('mcp')})`);
   }
 
   if (notSetUp.length > 0) {

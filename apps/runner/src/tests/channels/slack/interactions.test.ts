@@ -17,7 +17,11 @@ import {
 } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../../deps.ts';
 import type { RunnerEnv } from '../../../env.ts';
-import { routeSlackInteraction } from '../../../channels/slack/interactions.ts';
+import {
+  routeSlackInteraction,
+  SLACK_ACTION_ID_PATTERN,
+} from '../../../channels/slack/interactions.ts';
+import { elicitationCallbackData } from '@nodal-agents/shared';
 import type { SlackInteractionAck } from '../../../channels/slack/types.ts';
 
 // triggerWorker (resolveApprovalDecision's resume path) hits fetch — stub it
@@ -110,7 +114,7 @@ async function insertPendingApproval(toolName = 'run_command'): Promise<string> 
 }
 
 describe('routeSlackInteraction — approval taps (apr:)', () => {
-  it('a tap from the owner conversation resolves the approval and rewrites the card', async () => {
+  it('a tap from the owner conversation resolves the approval without writing the card itself', async () => {
     const approvalId = await insertPendingApproval();
     const ack = makeAck();
 
@@ -125,8 +129,9 @@ describe('routeSlackInteraction — approval taps (apr:)', () => {
     });
 
     expect(result).toMatchObject({ handled: true, kind: 'approval', decision: 'approve' });
-    expect(ack.resolveCalls).toHaveLength(1);
-    expect(ack.resolveCalls[0]).toContain('Approved');
+    // #637 — la carte est réécrite par le point de mise à jour des cartes
+    // (prouvé dans approvals/card-settlement.test.ts), pas par le handler.
+    expect(ack.resolveCalls).toEqual([]);
     expect(ack.ephemeralCalls).toHaveLength(0);
 
     const [approval] = await db
@@ -336,5 +341,59 @@ describe('routeSlackInteraction — cross-agent defense in depth', () => {
       .from(approvalRequests)
       .where(eq(approvalRequests.id, approvalId));
     expect(approval?.status).toBe('pending');
+  });
+});
+
+describe('routeSlackInteraction — la question d’un serveur MCP (0145) @cap:approuver-une-action/moteur', () => {
+  // Elle se répond par un formulaire sur le dashboard : aucun bouton de carte
+  // ne la tranche, la ligne reste ouverte.
+  it('un tap ✅ sur une élicitation est refusé, la ligne reste ouverte', async () => {
+    const [row] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: seed.jobId,
+        agentId: seed.agentId,
+        toolName: 'printer__request_print',
+        toolInput: {
+          server: 'printer',
+          message: 'How should it be printed?',
+          requestedSchema: { type: 'object', properties: {} },
+        },
+        kind: 'elicitation',
+        status: 'pending',
+        executedAt: new Date(),
+      })
+      .returning();
+    const ack = makeAck();
+    const result = await routeSlackInteraction({
+      actionId: `apr:${row!.id}:a`,
+      channelId: OWNER_CHANNEL_ID,
+      channelType: 'im',
+      receivingAgentId: seed.agentId,
+      ack,
+      deps,
+      env,
+    });
+    expect(result).toMatchObject({ handled: false, reason: 'elicitation_answered_on_dashboard' });
+    expect(ack.ephemeralCalls).toEqual(['Answer this one from the dashboard.']);
+    const [after] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, row!.id));
+    expect(after?.status).toBe('pending');
+  });
+});
+
+// Revue Codex passe 2 de #664 : le socket n'enregistrait que `apr:` et
+// `sauth:`. Les boutons `eli:` n'arrivaient jamais au routeur, quoi que ses
+// tests disent. Le socket enregistre désormais la liste du routeur.
+describe('le socket Slack reçoit chaque bouton que le routeur sait router @cap:approuver-une-action/moteur', () => {
+  it('approbation, question de serveur, confirmation d’accès', () => {
+    const id = '0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b';
+    expect(SLACK_ACTION_ID_PATTERN.test(elicitationCallbackData(id, { op: 'decline' }))).toBe(true);
+    expect(SLACK_ACTION_ID_PATTERN.test(`apr:${id}:a`)).toBe(true);
+    expect(SLACK_ACTION_ID_PATTERN.test(`sauth:${id}:allow`)).toBe(true);
+    expect(SLACK_ACTION_ID_PATTERN.test('other:1')).toBe(false);
   });
 });

@@ -98,6 +98,33 @@ program
     }
   });
 
+// ── nodal-agents service ──────────────────────────────────────────────────────
+//
+// #451 — start Nodal with the machine, through its native startup manager
+// (the per-user Run key on Windows, LaunchAgent, systemd user unit). `--json` is what the
+// dashboard's Settings switch reads.
+
+program
+  .command('service <action>')
+  .description('Start Nodal when this machine starts: install | uninstall | status')
+  .option('--json', 'Print the state as JSON (used by the dashboard)')
+  .action(async (action: string, opts: { json?: boolean }) => {
+    if (action !== 'install' && action !== 'uninstall' && action !== 'status') {
+      console.error(
+        chalk.red('Error:'),
+        `unknown action "${action}" (install | uninstall | status)`,
+      );
+      process.exit(1);
+    }
+    const { runService } = await import('./commands/service.ts');
+    try {
+      await runService(action, opts);
+    } catch (err) {
+      console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
 // ── nodal-agentslogs ──────────────────────────────────────────────────────────────
 
 program
@@ -165,7 +192,7 @@ const mcp = program
 mcp
   .command('serve')
   .description(
-    'Start the stdio MCP server (use via: claude mcp add nodal -- nodal-agents mcp serve)',
+    'Start the stdio MCP server (your MCP client launches it: copy its exact command from Settings → Safety → MCP server)',
   )
   .action(async () => {
     const { runMcpServe } = await import('./commands/mcp.ts');

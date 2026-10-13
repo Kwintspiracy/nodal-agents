@@ -20,6 +20,7 @@
 
 import { sendChatMessageAction } from '@/lib/actions.ts';
 import { readSseMessages } from '@/lib/sse.ts';
+import { chatFailureText } from '@/lib/chat-failure.ts';
 
 export type SendResult =
   | {
@@ -98,8 +99,14 @@ export async function sendChatMessage(opts: SendOptions): Promise<SendResult> {
         return { ok: true, reply: full, streamed: payload.streamed === true };
       }
       if (msg.event === 'error') {
-        const error = (JSON.parse(msg.data) as { error?: unknown }).error;
-        return { ok: false, message: failureMessage(typeof error === 'string' ? error : '') };
+        const payload = JSON.parse(msg.data) as { error?: unknown; cutReason?: unknown };
+        return {
+          ok: false,
+          message: chatFailureText(
+            typeof payload.error === 'string' ? payload.error : '',
+            typeof payload.cutReason === 'string' ? payload.cutReason : null,
+          ),
+        };
       }
     }
   } catch {
@@ -107,14 +114,6 @@ export async function sendChatMessage(opts: SendOptions): Promise<SendResult> {
   }
   // Le flux s'est terminé sans `done` : le tour n'a pas rendu de réponse.
   return { ok: false, message: 'The reply was interrupted' };
-}
-
-/** Le même vocabulaire d'erreurs que l'action serveur, en clair. */
-function failureMessage(code: string): string {
-  if (code === 'agent_no_llm_configured') return 'This agent has no model configured';
-  if (code === 'agent_inactive') return 'This conversation’s agent is disabled.';
-  if (code === 'conversation_not_found') return 'Conversation not found';
-  return 'The agent did not reply';
 }
 
 /**

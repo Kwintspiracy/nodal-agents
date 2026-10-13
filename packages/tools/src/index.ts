@@ -15,6 +15,8 @@ export type {
   ApprovalRule,
   ToolExecutionResult,
   MutationTarget,
+  UserInputRequest,
+  UserInputResponse,
 } from './types';
 
 // Intention de mutation (plan « Vérifier & Corriger ») — posée au seam
@@ -91,7 +93,7 @@ export { hasMarker } from './projects/markers';
 
 // RiskLevel (re-exported from @nodal-agents/shared via types.ts) + runtime constant
 export type { RiskLevel } from './types';
-export { RISK_LEVELS } from './types';
+export { RISK_LEVELS, toolOutputForModel } from './types';
 
 // Errors
 export {
@@ -100,6 +102,7 @@ export {
   ToolNotFoundError,
   WhitelistDriftError,
   WebSearchNotConfiguredError,
+  ToolFailedWithOutput,
 } from './errors';
 
 // Registry
@@ -108,6 +111,7 @@ export { createToolRegistry } from './registry';
 // Execution wrapper
 export {
   executeTool,
+  isCatastrophicCall,
   matchApprovalRule,
   namespaceOf,
   namespaceRulePattern,
@@ -155,16 +159,30 @@ export {
   isDestructiveOrHeavyCommand,
   isInlineInterpreterEvalCommand,
 } from '@nodal-agents/shared';
-
-// tool_choice discipline
-export { computeToolChoice } from './tool-choice';
-export type { ToolChoiceConfig, ToolChoice } from './tool-choice';
+export { shellChecklistDeclined } from './shell-checklist';
 
 // Whitelist computation
-export { computeToolWhitelist } from './whitelist';
-export type { WhitelistInput } from './whitelist';
+export { computeToolWhitelist, agentBuiltinToolNames } from './whitelist';
+export type { WhitelistInput, AgentBuiltinInput } from './whitelist';
+export { TOP_LEVEL_JOB, ROUTINE_RUN } from './job-placement';
+export type { JobPlacement } from './job-placement';
 
 // Built-in tools
+export {
+  LOAD_TOOLS_NAME,
+  createLoadToolsTool,
+  deferredToolIndex,
+  isEagerTool,
+  namesAskedToLoad,
+  toolIndexLine,
+  withToolLoader,
+} from './builtin/load-tools';
+export type {
+  LoadToolsInput,
+  LoadToolsOutput,
+  LoadableTool,
+  ToolIndexEntry,
+} from './builtin/load-tools';
 export {
   registerBuiltins,
   ALWAYS_ON_TOOLS,
@@ -207,7 +225,6 @@ export {
   extractClaudeUsage,
   extractClaudeModelUsage,
   CLAUDE_READONLY_DISALLOWED,
-  CLI_RUNTIME_RUNS_SHELL_COMMANDS,
   assertAgentBudget,
   recordCliRun,
   acquireWorkspaceLock,
@@ -219,6 +236,11 @@ export {
   // L'outil par lequel un agent déclare comment on vérifie ce qu'il a produit —
   // exporté pour que le runner puisse l'éprouver de bout en bout.
   declareVerificationTool,
+  // L'arrêt depuis une conversation (#567) — exporté pour que le runner prouve
+  // qu'il atteint aussi un job servi par une CLI.
+  listConversationRunsTool,
+  messageConversationRunTool,
+  stopConversationRunTool,
 } from './builtin/index';
 export type {
   AlwaysOnTool,

@@ -506,6 +506,48 @@ describe('handleApprovalCallback — Toujours autoriser', () => {
     ]);
   });
 
+  // #635 : la carte restaurée relit ce que la porte a retenu (gate_reasons) et
+  // dit ce qu'elle a lu dans le script, comme la carte d'origine.
+  it('annulation (wb) : la carte restaurée dit ce que la porte a lu dans le script (#635)', async () => {
+    const [row] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: seed.jobId,
+        agentId: seed.agentId,
+        toolName: 'run_command',
+        toolInput: { command: 'python shared/scripts/build.py' },
+        status: 'pending',
+        gateReasons: [
+          {
+            category: 'install_software',
+            state: 'ask',
+            details: ['python shared/scripts/build.py'],
+            found: [
+              { source: 'shared/scripts/build.py', line: 5, text: 'os.system("pip install x")' },
+            ],
+          },
+        ],
+      })
+      .returning();
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockClear();
+
+    const r = await handleApprovalCallback({
+      update: callbackUpdate(`apr:${row!.id}:wb`, CHAT_ID),
+      receivingAgentId: seed.agentId,
+      botToken: 'fake-token',
+      deps,
+      env,
+    });
+
+    expect(r.handled && r.decision).toBe('card_restored');
+    const edits = editMessageBodies();
+    expect(edits[0]!.text).toContain(
+      'the code it runs installs software or packages (shared/scripts/build.py, line 5)',
+    );
+    expect(edits[0]!.text).not.toContain('likely read/inspect');
+  });
+
   it('wc depuis un MAUVAIS chat : refusé, AUCUNE règle écrite', async () => {
     const id = await insertPendingApproval('skill_file_write');
 
@@ -534,4 +576,47 @@ describe('handleApprovalCallback — Toujours autoriser', () => {
     const [ap] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
     expect(ap!.status).toBe('pending');
   });
+});
+
+describe('handleApprovalCallback — la question d’un serveur MCP (0145) @cap:approuver-une-action/moteur', () => {
+  // Une élicitation se répond par un FORMULAIRE, sur le dashboard. Aucun
+  // bouton de carte ne la tranche : ✅ l'enverrait sans contenu, ❌ n'est pas
+  // offert ici, et « Toujours » écrirait une règle sur l'outil MCP qui l'a
+  // posée. Chaque geste est refusé, la ligne reste ouverte, aucune règle.
+  for (const suffix of ['a', 'r', 'wc']) {
+    it(`apr:<id>:${suffix} sur une élicitation : refusé, rien n'est écrit`, async () => {
+      const [row] = await db
+        .insert(approvalRequests)
+        .values({
+          entityId: seed.entityId,
+          jobId: seed.jobId,
+          agentId: seed.agentId,
+          toolName: 'printer__request_print',
+          toolInput: {
+            server: 'printer',
+            message: 'How should it be printed?',
+            requestedSchema: { type: 'object', properties: {} },
+          },
+          kind: 'elicitation',
+          status: 'pending',
+          executedAt: new Date(),
+        })
+        .returning();
+      const r = await handleApprovalCallback({
+        update: callbackUpdate(`apr:${row!.id}:${suffix}`, CHAT_ID),
+        receivingAgentId: seed.agentId,
+        botToken: 'fake-token',
+        deps,
+        env,
+      });
+      expect(r).toEqual({ handled: false, reason: 'elicitation_answered_on_dashboard' });
+      const [ap] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, row!.id));
+      expect(ap!.status).toBe('pending');
+      const rules = await db
+        .select()
+        .from(approvalRules)
+        .where(eq(approvalRules.toolName, 'printer__request_print'));
+      expect(rules).toEqual([]);
+    });
+  }
 });

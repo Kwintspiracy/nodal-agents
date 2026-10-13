@@ -31,6 +31,7 @@ import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { executeJob } from '../../job/execute.ts';
+import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 
 type Finish = 'length' | 'tool-calls' | 'stop';
 
@@ -435,6 +436,36 @@ describe('the job row never turns an unknown usage into a number @cap:suivre-exe
       inputTokens: null,
       effectiveInputTokens: null,
       outputTokens: 1_200,
+    });
+  });
+
+  it('a job refused at the chain cap keeps the unknown totals its row carried', async () => {
+    const [row] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'resume after the last delegation',
+        status: 'pending',
+        messages: [],
+        chainCount: DEFAULT_LIMITS.maxChains,
+        inputTokens: null,
+        effectiveInputTokens: null,
+        outputTokens: 4_000,
+        totalCostUsd: null,
+      })
+      .returning({ id: agentJobs.id });
+    const jobId = row!.id;
+
+    const outcome = await executeJob(jobId as JobId, makeDeps(), testEnv);
+
+    expect(outcome).toMatchObject({ status: 'failed', error: 'chain_limit_exceeded' });
+    expect(await jobUsage(jobId)).toEqual({
+      inputTokens: null,
+      effectiveInputTokens: null,
+      outputTokens: 4_000,
+      totalCostUsd: null,
     });
   });
 });

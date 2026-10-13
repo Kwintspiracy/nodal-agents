@@ -1,0 +1,317 @@
+{
+  "scenario": "comfyui-telegram",
+  "version": 1,
+  "facts": {
+    "rootId": "1c8e1edd-59e7-4ea8-8a55-4561e650d915",
+    "entityId": "00000000-0000-0000-0000-000000000002",
+    "jobs": [
+      {
+        "id": "1c8e1edd-59e7-4ea8-8a55-4561e650d915",
+        "parentJobId": null,
+        "agentSlug": "alfred",
+        "status": "completed",
+        "channel": "mcp",
+        "result": "Vérification du fichier puis envoi.",
+        "error": null,
+        "createdMs": 1790746319432.098,
+        "updatedMs": 1790746374859
+      },
+      {
+        "id": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "parentJobId": "1c8e1edd-59e7-4ea8-8a55-4561e650d915",
+        "agentSlug": "director",
+        "status": "completed",
+        "channel": "internal",
+        "result": "Image générée et livrée.\n\n- **Fichier PNG (chemin exact)** : `~\\.nodalai\\workspaces\\00000000-0000-0000-0000-000000000002\\shared\\outputs\\8e113b94_000.png` (1 575 446 octets, vérifié présent dans `shared/outputs/`)\n- **Modèle/workflow** : Z-Image-Turbo, template canonique `ComfyArtist/workflows/z_image_turbo_template.json` (injection par set-slot, 8 steps, cfg 1)\n- **Seed** : 312026 — **prompt_id** : `8e113b94-ad78-4c86-ad0b-d7bee038dcc3` — résolution 1152×896, génération ~9 s\n- **Prompt** : aquarelle d'un phare sur falaise au coucher du soleil — pigments wet-on-wet, texture papier grain fin, lavis orange/corail/doré fondus dans un ciel lavande, soleil bas sur la mer avec reflets, roches à pigment granuleux, embruns — style peinture à la main (pas de negative prompt, le workflow Z-Image-Turbo n'en utilise pas).",
+        "error": null,
+        "createdMs": 1790746321241.719,
+        "updatedMs": 1790746354491
+      }
+    ],
+    "toolCalls": [
+      {
+        "jobId": "1c8e1edd-59e7-4ea8-8a55-4561e650d915",
+        "toolName": "assign_director",
+        "input": "{\"task\": \"Génère avec ComfyUI (local, workflow Z-Image-Turbo opérationnel) une image : un phare sur une falaise au coucher du soleil, style aquarelle (watercolor painting, pigments, paper texture). Écris le fichier PNG dans le workspace shared (dossier outputs/ du shared workspace : ~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared\\\\outputs\\\\). Retourne en résultat le chemin EXACT du fichier PNG généré.\", \"purpose\": \"Générer avec ComfyUI une image aquarelle d'un phare sur une falaise au coucher du soleil, pour livraison ensuite à l'utilisateur sur Telegram.\"}",
+        "output": "{\"outcome\":\"delegation_requested\",\"to\":\"director\"}",
+        "createdMs": 1790746321236.093
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "toolName": "skill_view",
+        "input": "{\"slug\": \"command-execution\", \"purpose\": \"Need to run ComfyUI commands (comfy CLI) to generate a watercolor lighthouse image\"}",
+        "output": "{\"ok\":true,\"name\":\"Command execution\",\"content\":\"## Command execution\\n\\nThis skill unlocks the `run_command` tool, which runs a shell command in the agent's workspace and returns its **stdout**, **stderr** and **exit code**. Use it for anything that needs the shell: installing dependencies (`npm install`, `pip install`), running scripts (`node build.js`, `python gen.py`), build steps, or CLI tools.\\n\\n### How it runs\\n\\n- The command runs via **cmd.exe** on Windows and **/bin/sh** on Unix, so shell features like `&&`, `|` and quoting work.\\n- The working directory defaults to the **workspace root**. Pass `cwd` (a workspace-relative path, e.g. `\\\"scripts/canvas\\\"`) to run somewhere else inside the workspace.\\n- Default timeout is **300 seconds**; pass `timeout_seconds` to change it (e.g. a long native build). On timeout the command and its child processes are killed.\\n\\n### Discipline\\n\\n1. **Run, then finish.** As soon as a command gives you the output you need, STOP — write the result as your answer (or publish it with `dashboard_publish`), signal with `return_result`, and end your turn. The signal carries no content: an empty answer delivers nothing. A successful command (exit 0) is DONE; re-running it, or running another just to \\\"double-check\\\", only re-prompts the user for approval and goes nowhere. Run another command ONLY if the task genuinely requires a different one.\\n2. **Batch multi-step work into ONE call.** A compound command (`npm install && node download_font.js && node draw_text.js`) runs as a single `run_command` — and, in approval mode, is **one approval** instead of three. Prefer this over three separate calls.\\n3. **A non-zero exit code is data, not a crash.** It is returned to you with stderr — read it, fix the cause, and retry a corrected command. Do not silently repeat the same failing command.\\n4. **Stay in the workspace.** Read/write files with the `file_*` tools and target the workspace; `cwd` cannot point outside it.\\n5. **Non-interactive only.** Commands that wait for input (a `y/n` prompt, a password) will hang until the timeout. Use non-interactive flags (e.g. `npm install --yes`, `--no-input`).\\n6. **Output is capped** (~100k characters per stream). If you need full output of a verbose command, redirect it to a file in the workspace and read it back with `file_read`.\\n7. **Never install heavyweight software or reinstall a service on your own initiative.** A multi-gigabyte install (a fresh app, large model downloads, a full toolchain — e.g. `comfy install`, `apt install` of a big package) is a heavy, easily-duplicated action. If a local service or CLI you need is NOT responding — a server on a port, a daemon — that is **not** a licence to install it: it may simply be down, on a different port, or misconfigured. Report that it is unreachable and **ask the user** before installing anything large. This matters most under Yolo / auto-approve, where such a command would otherwise run with no human in the loop. A transient connection failure means \\\"tell the user it's unreachable\\\", never \\\"install a fresh copy\\\".\\n\\n### Approval vs Yolo\\n\\nBy default **every command pauses for human approval**. The user does NOT decide on a raw command first — they decide on the **`purpose`** you provide: a short plain-language sentence, **IN THEIR LANGUAGE**, of what the command does and why. ALWAYS fill `purpose` (it is required). When the command has a real downside — deletes/overwrites files, installs software, downloads from the network, spends money, long-running, hard to undo — also fill **`impact`** (shown to the user as a ⚠️ warning); omit it only when the command is genuinely harmless / read-only. A clear `purpose` gets approved fast; an unexplained wall of shell gets rejected or ignored. If **Yolo mode** is enabled for this agent, commands run immediately without asking — still fill `purpose`/`impact` for the record.\\n\"}",
+        "createdMs": 1790746323417.292
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "toolName": "file_list",
+        "input": "{\"glob\": \"*.json\", \"path\": \"ComfyArtist/workflows\", \"recursive\": false}",
+        "output": "{\"ok\":true,\"entries\":[{\"name\":\"AnimagineXL31_ConceptArt2D.json\",\"type\":\"file\",\"size\":2436,\"modified\":\"2026-09-27T17:32:48.593Z\"},{\"name\":\"Krea2_Turbo.json\",\"type\":\"file\",\"size\":2903,\"modified\":\"2026-08-16T07:31:28.096Z\"},{\"name\":\"Krea2_Turbo_NSFW.json\",\"type\":\"file\",\"size\":20138,\"modified\":\"2026-07-21T00:08:48.086Z\"},{\"name\":\"Krea2_Turbo_SeedVR2.json\",\"type\":\"file\",\"size\":5264,\"modified\":\"2026-08-16T07:32:02.391Z\"},{\"name\":\"upscale_4x_ultrasharp.json\",\"type\":\"file\",\"size\":862,\"modified\":\"2026-09-28T16:45:52.679Z\"},{\"name\":\"z_image_turbo.json\",\"type\":\"file\",\"size\":28857,\"modified\":\"2026-09-28T21:48:45.068Z\"},{\"name\":\"z_image_turbo_base.json\",\"type\":\"file\",\"size\":28399,\"modified\":\"2026-09-29T01:02:34.981Z\"},{\"name\":\"z_image_turbo_template.json\",\"type\":\"file\",\"size\":28552,\"modified\":\"2026-09-29T00:46:28.485Z\"},{\"name\":\"_run_redhead_studio.json\",\"type\":\"file\",\"size\":28518,\"modified\":\"2026-09-28T19:25:23.244Z\"},{\"name\":\"_zimage_ref.json\",\"type\":\"file\",\"size\":28510,\"modified\":\"2026-09-28T17:16:58.971Z\"}],\"truncated\":false}",
+        "createdMs": 1790746323419.188
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "toolName": "load_tools",
+        "input": "{\"names\": [\"run_command\"], \"purpose\": \"Run comfy CLI commands to generate the image\"}",
+        "output": "{\"loaded\":[\"run_command\"],\"alreadyAvailable\":[],\"notHeld\":[],\"message\":\"Loaded: run_command. Their definitions are in your tool list from your next step on; call them directly.\"}",
+        "createdMs": 1790746324569.007
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "toolName": "run_command",
+        "input": "{\"cwd\": \"ComfyArtist\", \"command\": \"comfy --json workflow set-slot \\\"ComfyArtist/workflows/z_image_turbo_template.json\\\" \\\"57.text=A watercolor painting of a lighthouse standing on a rocky cliff at sunset, wet-on-wet watercolor pigments blooming into the paper, visible cold-pressed paper texture, soft washes of warm orange, coral pink and golden yellow melting into a wet lavender-blue sky, the setting sun as a glowing disc low over the sea with shimmering reflections on gentle waves, the white lighthouse tower with red dome and gallery rendered in loose expressive brushstrokes, dark rocks below painted with granulating pigment, spray of salt mist at the cliff base, soft edges, pigment pooling at contours, gentle color gradients, hand-painted traditional watercolor illustration\\\" \\\"57.width=1152\\\" \\\"57.height=896\\\" \\\"57.seed=312026\\\"\", \"purpose\": \"Injecter le prompt aquarelle phare/coucher de soleil dans le template Z-Image-Turbo\"}",
+        "output": "{\"exitCode\":0,\"stdout\":\"{\\\"schema\\\": \\\"envelope/1\\\", \\\"type\\\": \\\"envelope\\\", \\\"ok\\\": true, \\\"command\\\": \\\"workflow set-slot\\\", \\\"version\\\": \\\"1.21.0\\\", \\\"where\\\": \\\"local\\\", \\\"data\\\": {\\\"workflow\\\": \\\"ComfyArtist\\\\\\\\workflows\\\\\\\\z_image_turbo_template.json\\\", \\\"applied\\\": [\\\"57.text\\\", \\\"57.width\\\", \\\"57.height\\\", \\\"57.seed\\\"], \\\"warnings\\\": [], \\\"wrote\\\": \\\"ComfyArtist\\\\\\\\workflows\\\\\\\\z_image_turbo_template.json\\\"}, \\\"error\\\": null, \\\"changed\\\": true}\\n\",\"stderr\":\"\",\"timedOut\":false,\"truncated\":false,\"cwd\":\"~\\\\Documents\\\\Nodal\\\\ComfyArtist\",\"paths\":\"This process ran in ~\\\\Documents\\\\Nodal\\\\ComfyArtist, the root of workspace \\\"ComfyArtist\\\". Paths in a process are relative to that folder, or absolute. Workspace labels are NOT folders for a process: what the file tools call ComfyArtist/outputs/x is outputs/x here. Other workspaces, by absolute path: shared = ~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared.\"}",
+        "createdMs": 1790746328263.232
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "toolName": "run_command",
+        "input": "{\"cwd\": \"ComfyArtist\", \"command\": \"comfy --json run --workflow \\\"ComfyArtist/workflows/z_image_turbo_template.json\\\" --wait\", \"purpose\": \"Lancer la génération de l'image aquarelle du phare dans ComfyUI\", \"timeout_seconds\": 600}",
+        "output": "{\"exitCode\":0,\"stdout\":\"{\\\"schema\\\": \\\"envelope/1\\\", \\\"type\\\": \\\"envelope\\\", \\\"ok\\\": true, \\\"command\\\": \\\"run\\\", \\\"version\\\": \\\"1.21.0\\\", \\\"where\\\": \\\"local\\\", \\\"data\\\": {\\\"workflow\\\": \\\"~\\\\\\\\Documents\\\\\\\\Nodal\\\\\\\\ComfyArtist\\\\\\\\ComfyArtist\\\\\\\\workflows\\\\\\\\z_image_turbo_template.json\\\", \\\"status\\\": \\\"completed\\\", \\\"prompt_id\\\": \\\"8e113b94-ad78-4c86-ad0b-d7bee038dcc3\\\", \\\"client_id\\\": \\\"baa1c41e-edc0-492f-ab66-28db49032496\\\", \\\"outputs\\\": [\\\"~\\\\\\\\Documents\\\\\\\\comfy\\\\\\\\ComfyUI\\\\\\\\output\\\\\\\\z-image-turbo_00016_.png\\\"], \\\"outputs_by_node\\\": {\\\"9\\\": [\\\"~\\\\\\\\Documents\\\\\\\\comfy\\\\\\\\ComfyUI\\\\\\\\output\\\\\\\\z-image-turbo_00016_.png\\\"]}, \\\"outputs_by_item\\\": {}, \\\"cached_node_ids\\\": [], \\\"executed_node_ids\\\": [\\\"57:29\\\", \\\"57:13\\\", \\\"57:30\\\", \\\"57:27\\\", \\\"57:33\\\", \\\"57:28\\\", \\\"57:11\\\", \\\"57:3\\\", \\\"57:8\\\", \\\"9\\\"], \\\"elapsed_seconds\\\": 8.886117696762085, \\\"host\\\": \\\"127.0.0.1\\\", \\\"port\\\": 8188, \\\"state_file\\\": \\\"~\\\\\\\\AppData\\\\\\\\Local\\\\\\\\comfy-cli\\\\\\\\jobs\\\\\\\\8e113b94-ad78-4c86-ad0b-d7bee038dcc3.json\\\"}, \\\"error\\\": null}\\n\",\"stderr\":\"\",\"timedOut\":false,\"truncated\":false,\"cwd\":\"~\\\\Documents\\\\Nodal\\\\ComfyArtist\",\"paths\":\"This process ran in ~\\\\Documents\\\\Nodal\\\\ComfyArtist, the root of workspace \\\"ComfyArtist\\\". Paths in a process are relative to that folder, or absolute. Workspace labels are NOT folders for a process: what the file tools call ComfyArtist/outputs/x is outputs/x here. Other workspaces, by absolute path: shared = ~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared.\"}",
+        "createdMs": 1790746331381.092
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "toolName": "run_command",
+        "input": "{\"command\": \"copy \\\"~\\\\Documents\\\\comfy\\\\ComfyUI\\\\output\\\\z-image-turbo_00016_.png\\\" \\\"~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared\\\\outputs\\\\phare_aquarelle_coucher_soleil.png\\\"\", \"purpose\": \"Copier le PNG généré dans le dossier outputs du workspace shared\"}",
+        "output": "{\"outcome\":\"error\",\"error\":\"Command refused: \\\"copy \\\"~\\\\Documents\\\\comfy\\\\ComfyUI\\\\output\\\\z-image-turbo_00016_.png\\\" \\\"~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared\\\\outputs\\\\phare_aquarelle_coucher_soleil.png\\\"\\\" is not on this agent's command allowlist. Allowed: \\\"comfy\\\".\"}",
+        "createdMs": 1790746345188.455
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "toolName": "run_command",
+        "input": "{\"command\": \"comfy --json download --help\", \"purpose\": \"Vérifier les options de la commande comfy download pour choisir le chemin de sortie\"}",
+        "output": "{\"exitCode\":0,\"stdout\":\"                                                                               \\r\\n Usage: comfy download [OPTIONS] [prompt_id]                                   \\r\\n                                                                               \\r\\n Download outputs from a completed job. Reads prompt_id from argument or piped \\r\\n stdin.                                                                        \\r\\n                                                                               \\r\\n+- Arguments -----------------------------------------------------------------+\\r\\n|   prompt_id      <str>  Prompt ID to download outputs for. Omit to read     |\\r\\n|                         from piped stdin.                                   |\\r\\n+-----------------------------------------------------------------------------+\\r\\n+- Options -------------------------------------------------------------------+\\r\\n| --out-dir   -o      <str>  Directory to save outputs to.                    |\\r\\n|                            [default: ./outputs]                             |\\r\\n| --where             <str>  Routing target: 'local' or 'cloud'.              |\\r\\n| --url-only                 Emit output URLs without downloading files.      |\\r\\n|                            Useful for agents that pass URLs to other tools. |\\r\\n| --help                     Show this message and exit.                      |\\r\\n+-----------------------------------------------------------------------------+\\r\\n\\r\\n\",\"stderr\":\"\",\"timedOut\":false,\"truncated\":false,\"cwd\":\"~\\\\Documents\\\\Nodal\\\\ComfyArtist\",\"paths\":\"This process ran in ~\\\\Documents\\\\Nodal\\\\ComfyArtist, the root of workspace \\\"ComfyArtist\\\". Paths in a process are relative to that folder, or absolute. Workspace labels are NOT folders for a process: what the file tools call ComfyArtist/outputs/x is outputs/x here. Other workspaces, by absolute path: shared = ~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared.\"}",
+        "createdMs": 1790746346857.088
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "toolName": "run_command",
+        "input": "{\"command\": \"comfy --json download 8e113b94-ad78-4c86-ad0b-d7bee038dcc3 --out-dir \\\"~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared\\\\outputs\\\"\", \"purpose\": \"Télécharger le PNG généré dans le dossier outputs du workspace shared\"}",
+        "output": "{\"exitCode\":0,\"stdout\":\"{\\\"schema\\\": \\\"envelope/1\\\", \\\"type\\\": \\\"envelope\\\", \\\"ok\\\": true, \\\"command\\\": \\\"download\\\", \\\"version\\\": \\\"1.21.0\\\", \\\"where\\\": \\\"local\\\", \\\"data\\\": {\\\"prompt_id\\\": \\\"8e113b94-ad78-4c86-ad0b-d7bee038dcc3\\\", \\\"out_dir\\\": \\\"~\\\\\\\\.nodalai\\\\\\\\workspaces\\\\\\\\00000000-0000-0000-0000-000000000002\\\\\\\\shared\\\\\\\\outputs\\\", \\\"files\\\": [{\\\"url\\\": \\\"~\\\\\\\\Documents\\\\\\\\comfy\\\\\\\\ComfyUI\\\\\\\\output\\\\\\\\z-image-turbo_00016_.png\\\", \\\"path\\\": \\\"~\\\\\\\\.nodalai\\\\\\\\workspaces\\\\\\\\00000000-0000-0000-0000-000000000002\\\\\\\\shared\\\\\\\\outputs\\\\\\\\8e113b94_000.png\\\", \\\"size\\\": 1575446}]}, \\\"error\\\": null}\\n\",\"stderr\":\"\",\"timedOut\":false,\"truncated\":false,\"cwd\":\"~\\\\Documents\\\\Nodal\\\\ComfyArtist\",\"paths\":\"This process ran in ~\\\\Documents\\\\Nodal\\\\ComfyArtist, the root of workspace \\\"ComfyArtist\\\". Paths in a process are relative to that folder, or absolute. Workspace labels are NOT folders for a process: what the file tools call ComfyArtist/outputs/x is outputs/x here. Other workspaces, by absolute path: shared = ~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared.\"}",
+        "createdMs": 1790746349457.596
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "toolName": "file_list",
+        "input": "{\"glob\": \"8e113b94_000.png\", \"path\": \"shared/outputs\", \"recursive\": false}",
+        "output": "{\"ok\":true,\"entries\":[{\"name\":\"8e113b94_000.png\",\"type\":\"file\",\"size\":1575446,\"modified\":\"2026-09-30T05:32:30.222Z\"}],\"truncated\":false}",
+        "createdMs": 1790746351777.425
+      },
+      {
+        "jobId": "1c8e1edd-59e7-4ea8-8a55-4561e650d915",
+        "toolName": "load_tools",
+        "input": "{\"names\": [\"send_image\"], \"purpose\": \"Envoyer l'image générée à l'utilisateur sur Telegram.\"}",
+        "output": "{\"loaded\":[\"send_image\"],\"alreadyAvailable\":[],\"notHeld\":[],\"message\":\"Loaded: send_image. Their definitions are in your tool list from your next step on; call them directly.\"}",
+        "createdMs": 1790746356272.763
+      },
+      {
+        "jobId": "1c8e1edd-59e7-4ea8-8a55-4561e650d915",
+        "toolName": "file_read",
+        "input": "{\"path\": \"shared/outputs/8e113b94_000.png\", \"limit\": 1}",
+        "output": "{\"ok\":true,\"content\":\"�PNG\\r\",\"total_lines\":5944,\"start_line\":1,\"end_line\":1,\"truncated\":true}",
+        "createdMs": 1790746356291.971
+      },
+      {
+        "jobId": "1c8e1edd-59e7-4ea8-8a55-4561e650d915",
+        "toolName": "send_image",
+        "input": "{\"source\": \"shared/outputs/8e113b94_000.png\", \"caption\": \"Aquarelle : phare sur une falaise au coucher du soleil — générée avec ComfyUI (Z-Image-Turbo, 1152×896)\", \"purpose\": \"Livrer l'image générée à l'utilisateur sur Telegram.\"}",
+        "output": "{\"ok\":true,\"bytes\":1575446}",
+        "createdMs": 1790746357692.726
+      }
+    ],
+    "llmCalls": [
+      {
+        "jobId": "1c8e1edd-59e7-4ea8-8a55-4561e650d915",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 23567,
+        "outputTokens": 217,
+        "costUsd": 0.006853559985756874,
+        "durationMs": 1581,
+        "error": null,
+        "createdMs": 1790746321231.899
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 14703,
+        "outputTokens": 154,
+        "costUsd": 0.0023803599178791046,
+        "durationMs": 2025,
+        "error": null,
+        "createdMs": 1790746323414.222
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 16207,
+        "outputTokens": 74,
+        "costUsd": 0.0022408401127904654,
+        "durationMs": 1137,
+        "error": null,
+        "createdMs": 1790746324565.634
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 17162,
+        "outputTokens": 225,
+        "costUsd": 0.0029594399966299534,
+        "durationMs": 3171,
+        "error": null,
+        "createdMs": 1790746327746.852
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 17672,
+        "outputTokens": 113,
+        "costUsd": 0.0025726400781422853,
+        "durationMs": 1152,
+        "error": null,
+        "createdMs": 1790746330885.537
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 18326,
+        "outputTokens": 205,
+        "costUsd": 0.003019120078533888,
+        "durationMs": 2426,
+        "error": null,
+        "createdMs": 1790746344707.456
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 18641,
+        "outputTokens": 72,
+        "costUsd": 0.002524920040741563,
+        "durationMs": 1017,
+        "error": null,
+        "createdMs": 1790746346414.675
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 19087,
+        "outputTokens": 97,
+        "costUsd": 0.0026784399524331093,
+        "durationMs": 1477,
+        "error": null,
+        "createdMs": 1790746349010.856
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 19565,
+        "outputTokens": 27,
+        "costUsd": 0.002455800073221326,
+        "durationMs": 1384,
+        "error": null,
+        "createdMs": 1790746351771.169
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 19655,
+        "outputTokens": 347,
+        "costUsd": 0.003746599890291691,
+        "durationMs": 2645,
+        "error": null,
+        "createdMs": 1790746354439.74
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 7817,
+        "outputTokens": 110,
+        "costUsd": 0.011427800171077251,
+        "durationMs": 1687,
+        "error": null,
+        "createdMs": 1790746356187.683
+      },
+      {
+        "jobId": "1c8e1edd-59e7-4ea8-8a55-4561e650d915",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 24271,
+        "outputTokens": 76,
+        "costUsd": 0.004476999863982201,
+        "durationMs": 1581,
+        "error": null,
+        "createdMs": 1790746356269.586
+      },
+      {
+        "jobId": "1c8e1edd-59e7-4ea8-8a55-4561e650d915",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 25355,
+        "outputTokens": 82,
+        "costUsd": 0.02311667986214161,
+        "durationMs": 1388,
+        "error": null,
+        "createdMs": 1790746357690.105
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 8330,
+        "outputTokens": 718,
+        "costUsd": 0.004365099128335714,
+        "durationMs": 3905,
+        "error": null,
+        "createdMs": 1790746360093.544
+      },
+      {
+        "jobId": "4371e8f5-2b75-48c9-a60d-b66091ad6544",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 8967,
+        "outputTokens": 63,
+        "costUsd": 0.002132826019078493,
+        "durationMs": 809,
+        "error": null,
+        "createdMs": 1790746360906.661
+      },
+      {
+        "jobId": "1c8e1edd-59e7-4ea8-8a55-4561e650d915",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 25453,
+        "outputTokens": 32,
+        "costUsd": 0.003841560101136565,
+        "durationMs": 983,
+        "error": null,
+        "createdMs": 1790746374839.662
+      }
+    ],
+    "approvals": []
+  },
+  "observed": {
+    "images": [
+      {
+        "path": "~\\\\Documents\\\\comfy\\\\ComfyUI\\\\output\\\\z-image-turbo_00016_.png",
+        "exists": true,
+        "fresh": true
+      },
+      {
+        "path": "~\\Documents\\comfy\\ComfyUI\\output\\z-image-turbo_00016_.png",
+        "exists": true,
+        "fresh": true
+      },
+      {
+        "path": "~\\.nodalai\\workspaces\\00000000-0000-0000-0000-000000000002\\shared\\outputs\\phare_aquarelle_coucher_soleil.png",
+        "exists": false,
+        "fresh": false
+      },
+      {
+        "path": "~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared\\\\outputs\\\\8e113b94_000.png",
+        "exists": true,
+        "fresh": true
+      },
+      {
+        "path": "/outputs/8e113b94_000.png",
+        "exists": false,
+        "fresh": false
+      }
+    ]
+  }
+}

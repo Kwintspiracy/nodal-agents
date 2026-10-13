@@ -6,13 +6,18 @@ import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { EmbeddingClient, SpeechGenerator } from '@nodal-agents/llm';
 import type {
   ApprovalRuleCondition,
+  ShellGateReason,
   ShellPolicy,
+  ElicitationAttachment,
+  ElicitationActions,
+  ElicitationValue,
   MutationTarget,
   OperationRiskLevel,
   ToolCard,
   ToolCardPayload,
 } from '@nodal-agents/shared';
 import type { ChannelKind } from '@nodal-agents/delivery';
+import type { JobPlacement } from './job-placement';
 
 // RiskLevel is OperationRiskLevel — single source of truth from @nodal-agents/shared
 export type RiskLevel = OperationRiskLevel;
@@ -48,14 +53,24 @@ export interface ToolContext {
    */
   toolCallId?: string;
   /**
-   * The conversationId that originated this job (set by the Telegram inbound
-   * handler today — the name predates multichannel and stays `jobChatId` for
-   * now; renaming it is cleanup-phase work, not S3).
-   * null for jobs started from the dashboard, cron, or API.
-   * Used by the delivery tools as the default reply target when the caller
-   * does not explicitly provide a chatId argument.
+   * The job's chat (`agent_jobs.chat_id`): the conversation a request came
+   * from, or the one its trigger named. null when the job has none (dashboard,
+   * API, a routine that runs silently). Never read alone: a chat id does not
+   * say its platform, so it is a send tool's default target only on
+   * `jobChatChannel` (`jobChatOn`, @nodal-agents/delivery — #649).
    */
   jobChatId: string | null;
+  /**
+   * The channel `jobChatId` was RESOLVED on (`agent_jobs.chat_channel`, set by
+   * `designateChat`). null/absent when nobody knows that platform (an explicit
+   * chat id on a routine left on auto): the send tools then never use
+   * `jobChatId` without an explicit chatId, and an explicit one is
+   * allowlist-checked like any other. It is also the channel they write on
+   * when the agent names none (`defaultSendChannel`); an explicit `channel`
+   * argument still wins. Replaces `notifyChannelOverride` (B1), which carried
+   * the same channel for routines and webhooks only.
+   */
+  jobChatChannel?: ChannelKind | null;
   /**
    * La CONVERSATION dont ce travail est un tour (P6, `conversations.id`).
    * Distinct de `jobChatId`, qui est l'identifiant du fil SUR le canal : une
@@ -93,20 +108,6 @@ export interface ToolContext {
    * resolveTransportChannel falls back to its historical 'telegram' default.
    */
   activeChannels?: readonly ChannelKind[];
-  /**
-   * Explicit notify-channel override (B1, notify-channel-choice plan): set by
-   * the runner from a fired cron job's `triggerContext.notifyChannel` when the
-   * schedule EXPLICITLY chose a delivery channel (agent_schedules.notify_channel
-   * non-null). When present, it wins over the `resolveTransportChannel(jobChannel,
-   * activeChannels)` default that delivery-guard's resolveChannelForJob would
-   * otherwise compute — the schedule's choice is what the job's chatId was
-   * ALSO resolved against (run-schedules.ts), so both must agree. It does NOT
-   * override an EXPLICIT `channel` argument a send tool call itself provides —
-   * that caller-specified target still wins; this only changes the DEFAULT.
-   * Absent for every job that isn't a cron fire with an explicit notify
-   * channel — behavior is unchanged (falls through to the historical default).
-   */
-  notifyChannelOverride?: ChannelKind;
   /**
    * Embedding client for tools that persist or search semantic memory
    * (save_memory generates an embedding at write time). Optional: the runner
@@ -215,7 +216,7 @@ export interface ToolContext {
    * lint is advisory (warn, never block), so a missing capability here must
    * never break schedule creation.
    */
-  resolveAgentToolNames?: (agentId: string) => Promise<Set<string>>;
+  resolveAgentToolNames?: (agentId: string, job?: JobPlacement) => Promise<Set<string>>;
   /**
    * Les cibles que le hook `resolveMutationTargets` de CET APPEL a déclarées,
    * posées par le seam (`executeTool`) sur un contexte DÉRIVÉ, juste avant
@@ -254,7 +255,52 @@ export interface ToolContext {
    * propriété.
    */
   reportWrittenContent?: (absPath: string, sha256: string) => void;
+  /**
+   * Pose une question à une personne PENDANT l'appel en cours, et attend sa
+   * réponse — le chemin de l'élicitation MCP (`elicitation/create`, mode
+   * formulaire). Injecté par le runner, qui écrit la demande, l'envoie là où la
+   * requête est née et sonde la réponse ; l'adaptateur MCP l'appelle depuis le
+   * gestionnaire qu'il enregistre sur sa connexion.
+   *
+   * Le job ne se SUSPEND pas : le serveur garde son appel ouvert, une
+   * suspension tuerait la connexion. La capacité rend `cancel` quand personne
+   * ne répond à temps, quand le job est annulé ou perdu, ou quand `signal`
+   * s'interrompt (le serveur a abandonné sa question).
+   *
+   * Absent hors du runner : l'adaptateur répond alors `cancel` au serveur, et
+   * le journalise.
+   */
+  requestUserInput?: (req: UserInputRequest) => Promise<UserInputResponse>;
 }
+
+/** Une question posée par un serveur MCP pendant un de ses appels. */
+export interface UserInputRequest {
+  /** Le slug du serveur qui demande. */
+  serverSlug: string;
+  /** Le nom de l'outil MCP en cours, tel que l'agent le tient (`printer__request_print`). */
+  toolName: string;
+  /**
+   * L'id de l'appel en cours (`ToolContext.toolCallId`) : la question se range
+   * sous l'appel qui l'a fait naître. null hors d'un appel identifié.
+   */
+  toolCallId: string | null;
+  /** La question, telle quelle (texte tiers). */
+  message: string;
+  /** Le formulaire demandé (`requestedSchema`), brut. */
+  requestedSchema: unknown;
+  /** Les images jointes, déjà validées (`readElicitationAttachments`). */
+  attachments: ElicitationAttachment[];
+  /** Les libellés de ses deux boutons (`nodal/actions`), déjà validés ; null : le défaut. */
+  actions: ElicitationActions;
+  /** S'interrompt quand le serveur abandonne sa question, ou que la connexion se ferme. */
+  signal: AbortSignal;
+}
+
+/** La réponse renvoyée au serveur, aux mots du protocole. */
+export type UserInputResponse =
+  | { action: 'accept'; content: Record<string, ElicitationValue> }
+  | { action: 'decline' }
+  | { action: 'cancel' };
 
 // ─── ToolProvisioning ──────────────────────────────────────────────────────────
 
@@ -301,6 +347,8 @@ export interface ToolProvisioning {
    */
   connectMcp(opts: ProvisionMcpConnect): Promise<{
     tools: ProvisionedMcpTool[];
+    /** The `instructions` the server published at initialize (null: none). */
+    instructions: string | null;
     close: () => Promise<void>;
   }>;
   /** Encrypt a secret value for at-rest storage. */
@@ -343,6 +391,23 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
   summary?: string;
   inputSchema: TInput;
   riskLevel: OperationRiskLevel;
+  /**
+   * Whether the model receives this tool's SCHEMA on every turn (`eager`) or
+   * only once the job has loaded it (`deferred`, issue #612).
+   *
+   * A property of the TOOL, like `riskLevel`, never of an agent (invariant
+   * #1). It never changes what a job MAY call: the whitelist is the same
+   * either way (invariant #9). A deferred tool is named, with one line, in the
+   * prompt's tool index; `load_tools` adds its schema to the following turns,
+   * and a direct call to it runs like any other call of the whitelist.
+   *
+   * Absent means `deferred`. That is the default on purpose: connector, MCP
+   * and meta-tools (built elsewhere, often by the hundred) then stay out of
+   * the request without anyone having to remember them. A built-in is `eager`
+   * only when turns depend on it without asking first: finishing a job,
+   * delivering on the channel, delegating, reading, remembering.
+   */
+  loading?: 'eager' | 'deferred';
   /**
    * How this tool's RESULT is shown — the card the conversation view dispatches
    * on (plan « De la maquette au produit », P1). Declared by the tool, never
@@ -418,6 +483,12 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    * layer that knows (the MCP adapter); absent means the sentence.
    */
   purposeIsArgument?: boolean;
+  /**
+   * Who wrote `description` when the product did not — an external MCP
+   * server. Every place that shows a part of the description (the prompt's
+   * index of tools on demand) says so, whatever the part it keeps.
+   */
+  describedBy?: string;
   /**
    * Optional check that runs BEFORE the approval gate — the only hook that can
    * refuse a call without a human ever being asked about it.
@@ -558,7 +629,37 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
     input: z.infer<TInput>,
     ctx: ToolContext,
   ) => Promise<'require_approval' | undefined>;
+  /**
+   * What the model reads of a successful result, when that is not the result
+   * itself.
+   *
+   * `execute()` returns the RECORD: what `tool_calls.tool_output` keeps and
+   * what every other reader (the conversation screen, the audit, the bench,
+   * `present()`) sees. Most tools hand the model that same value and declare
+   * nothing. A tool whose result carries a form meant for the model next to a
+   * form meant for machines declares this: an MCP tool keeps both channels of
+   * its server's answer on the row, and gives the model the text blocks the
+   * server wrote for it (`packages/adapters/mcp/src/result.ts`).
+   *
+   * Applied by the runner on every path where a success becomes a tool result
+   * (`toolOutputForModel`); the untrusted framing and the context cap still
+   * apply to what this returns.
+   */
+  // Method syntax, like `present`: TOutput sits in a parameter, and a property
+  // arrow would make every ToolDefinition<_, X> unassignable to <_, unknown>.
+  toModelOutput?(output: TOutput): string;
   execute: (input: z.infer<TInput>, ctx: ToolContext) => Promise<TOutput>;
+}
+
+/**
+ * The value the model reads for a successful call of `tool`: its declared
+ * `toModelOutput` rendering, or the output itself.
+ */
+export function toolOutputForModel<TOutput>(
+  tool: { toModelOutput?: (output: TOutput) => string },
+  output: TOutput,
+): unknown {
+  return tool.toModelOutput ? tool.toModelOutput(output) : output;
 }
 
 // ─── ToolRegistry ─────────────────────────────────────────────────────────────
@@ -612,8 +713,18 @@ export interface ApprovalGateRequest {
    * que relue par le notifieur : celui-ci doit choisir entre une carte
    * d'approbation et une carte de question, et une seconde lecture de la ligne
    * pourrait diverger de ce qui a été posé.
+   *
+   * `elicitation` : un serveur MCP demande quelque chose PENDANT un appel en
+   * cours (0145). Jamais posée par la porte : par `ctx.requestUserInput`.
    */
-  kind: 'approval' | 'question';
+  kind: 'approval' | 'question' | 'elicitation';
+  /**
+   * What the shell checklist held the call for, as the gate stored it on the
+   * row (`gate_reasons`): the card on every channel says what the gate read,
+   * in the command and in the code it runs (#635). Empty when the checklist
+   * held nothing.
+   */
+  gateReasons?: readonly ShellGateReason[];
 }
 
 export interface ExecuteOptions {
@@ -678,8 +789,14 @@ export type ToolExecutionResult =
    * have reached the user. The runner's delivery guard treats this as a
    * delivery (no re-send nudge) and the error text tells the LLM not to
    * resend — a blind retry is exactly what duplicates messages.
+   *
+   * `raisedByTool` — the error came out of the tool's own `execute()`, so its
+   * text is the tool's, not the gate's: for a third-party tool it may carry a
+   * third party's words, and the runner frames it as external data like the
+   * tool's success (INJECT-001). Absent on every error the gate writes itself
+   * (invalid input, a `block` rule, a refused approval).
    */
-  | { outcome: 'error'; error: string; mayHaveDelivered?: boolean }
+  | { outcome: 'error'; error: string; mayHaveDelivered?: boolean; raisedByTool?: true }
   | { outcome: 'awaiting_approval'; approvalRequestId: string };
 
 // ─── Constants ────────────────────────────────────────────────────────────────

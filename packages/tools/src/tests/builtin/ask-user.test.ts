@@ -246,8 +246,13 @@ describe('ask_user — la reprise', () => {
     if (result.outcome === 'error') expect(result.error).toContain('question_unanswered');
   });
 
-  it('une réponse HORS options est une incohérence, dite comme telle', async () => {
-    const callId = 'call-ask-invalid';
+  it('#465 — une réponse LIBRE revient dans le résultat de l’outil, texte exact, sans rang', async () => {
+    // La personne a choisi « Something else » et écrit sa réponse : la
+    // résolution l'a validée comme réponse libre (approvals/resolve.ts). L'agent
+    // la relit telle quelle, et `option_index: null` lui dit que ce n'est
+    // aucune de ses options.
+    const callId = 'call-ask-free';
+    const texte = 'Le fichier est dans D:/ventes, sous un autre nom';
     await db.insert(approvalRequests).values({
       entityId: seed.entityId,
       jobId: seed.jobId,
@@ -257,7 +262,7 @@ describe('ask_user — la reprise', () => {
       toolCallId: callId,
       kind: 'question',
       status: 'approved',
-      answer: 'Somewhere else entirely',
+      answer: texte,
       resolvedAt: new Date(),
     });
 
@@ -268,8 +273,12 @@ describe('ask_user — la reprise', () => {
       makeOpts([resumeBypassRule()]),
     );
 
-    expect(result.outcome).toBe('error');
-    if (result.outcome === 'error') expect(result.error).toContain('question_answer_invalid');
+    expect(result.outcome).toBe('success');
+    if (result.outcome === 'success') {
+      expect(result.output).toEqual({ answer: texte, option_index: null });
+    }
+    const calls = await latestToolCall(callId);
+    expect(calls[0]?.presented).toMatchObject({ card: 'question', answer: texte });
   });
 });
 

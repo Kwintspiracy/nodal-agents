@@ -22,6 +22,17 @@ import {
   normalize as pathNormalize,
 } from 'node:path';
 import { homedir } from 'node:os';
+import { execFile } from 'node:child_process';
+import { parseServiceJson, type AutostartStatus, type AutostartView } from './autostart-view.ts';
+import {
+  claudeCodeCommand,
+  claudeDesktopConfigPath,
+  claudeDesktopEntry,
+  DesktopConfigError,
+  MCP_SERVER_NAME,
+  readCliArgv,
+} from './mcp-clients.ts';
+import { DesktopNotInstalledError, writeNodalIntoClaudeDesktop } from './claude-desktop-config.ts';
 import { pathToFileURL } from 'node:url';
 import {
   realpath as fsRealpath,
@@ -138,8 +149,9 @@ import {
   setInstallNotes,
   setSkillScriptsAuthorized,
   setSkillFilesWritable,
-  resolveOwnerChatId,
   resolveOwnerConversation,
+  designateChat,
+  resolveScheduleNotifyChat,
   channelBindings,
   channelAllowedConversations,
   listChannelBindings,
@@ -147,6 +159,7 @@ import {
   encryptChannelCredentials,
   encryptChannelSecret,
   getMcpApprovalContext,
+  attachMcpServerToAgent,
   cliRuns,
   verificationRuns,
   jobDeliverableVerificationState,
@@ -154,6 +167,7 @@ import {
   constatedWrites,
   dropApprovalRulesForDetachedSkill,
   readAgentBudgetState,
+  cancelJobTree,
 } from '@nodal-agents/db';
 import {
   deliverableStatuses,
@@ -167,7 +181,14 @@ import {
 import { selectVerificationRuns } from './verification-runs-query.ts';
 import { lastReviewVerdict } from './review-state.ts';
 import { readJobRoots } from './job-lineage.ts';
-import type { JobTriggerContext, AnyDrizzleDb } from '@nodal-agents/db';
+import { chatFailureText } from './chat-failure.ts';
+import type {
+  JobTriggerContext,
+  AnyDrizzleDb,
+  JobLiveProgress,
+  SkillUpdateDetail as DbSkillUpdateDetail,
+  SkillSourceProblem as DbSkillSourceProblem,
+} from '@nodal-agents/db';
 import {
   DeliveryError,
   getTelegramBotInfo,
@@ -190,6 +211,8 @@ import {
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
 import {
   buildSystemPrompt,
+  resolveBuiltinToolNames,
+  resolveMcpToolNames,
   DEFAULT_LIMITS,
   UNBLOCKABLE_TOOLS,
   INTERNAL_TOOL_DESCRIPTORS,
@@ -247,7 +270,18 @@ import {
 } from './service-logs.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { isValidAvatarUrl } from './avatar-catalog.ts';
-import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
+import {
+  MCP_CATALOG,
+  AgentSlugSchema,
+  FREE_ANSWER_MAX,
+  readElicitationToolInput,
+  validateElicitationContent,
+  describeElicitationErrors,
+  MCP_SERVER_SLUG_PATTERN,
+  MCP_SERVER_SLUG_RULE,
+} from '@nodal-agents/shared';
+import { toElicitationView, type ElicitationView } from './elicitation-view.ts';
+import { readAttachmentViews } from './elicitation-attachments.ts';
 import { isRefusedEffort } from './model-choices.ts';
 import type { ConversationFeed, Step } from './conversation-feed.ts';
 import {
@@ -257,7 +291,7 @@ import {
   isToolCard,
 } from './tool-card-payload.ts';
 import { originOfRun, inTimeOrder, type RunOrigin } from './activity-runs.ts';
-import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
+import { aggregateSpaceCost, costOfCalls, type SpaceCostView } from './space-cost.ts';
 import { assembleJobFeed, collectDescendants } from './job-feed.ts';
 import { redactAuditRow, redactPresented } from './redact-presented.ts';
 import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts';
@@ -266,7 +300,7 @@ import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts
 import { afterJobItems, type ThreadJob } from './conversation-thread.ts';
 import type { ThreadDeclaredDeliverable } from './declared-proof.ts';
 import { classifyProduction, constatedTurnKey } from './chat-or-work.ts';
-import { probeContextWindow } from '@nodal-agents/llm';
+import { probeContextWindow, providerFetch } from '@nodal-agents/llm';
 import {
   systemSkillSlugs,
   skillKindOfSlug,
@@ -674,7 +708,11 @@ export type AgentRow = {
   /** 'nodal' (default) | 'claude-code' | 'codex'. See packages/db/src/schema/agents.ts. */
   runtime: string;
   /** Runtime-agent permission posture (étape E). NULL/absent mode = 'read'. */
-  cliPermissions: { mode?: 'read' | 'write'; extraDisallowed?: string[] } | null;
+  cliPermissions: {
+    mode?: 'read' | 'write';
+    shell?: 'none' | 'auto';
+    extraDisallowed?: string[];
+  } | null;
   /**
    * agents.command_allowlist (migration 0108). NULL = no list, unrestricted;
    * [] = every command refused; entries of one or more words. Optional so list
@@ -2112,13 +2150,13 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
     // Resolve chatId for Telegram delivery.
     // A dashboard send is the OWNER acting, so it must reach the owner's 1:1 —
     // never `agents.lastSeenChatIdTelegram`, which a group message silently
-    // overwrites (see resolveOwnerChatId). The runner reads chatId to populate
+    // overwrites. The runner reads chatId to populate
     // the Job context block in the system_prompt; the agent's personality
     // decides how to use it. task field stays pristine (= exact user input,
     // no suffix injection).
     let resolvedChatId: string | null = null;
     if (parsed.data.sendViaTelegram) {
-      resolvedChatId = await resolveOwnerChatId(db, parsed.data.agentId);
+      resolvedChatId = await resolveOwnerConversation(db, parsed.data.agentId, 'telegram');
       if (!resolvedChatId) {
         return fail(
           'no_telegram_recipient_known',
@@ -2138,7 +2176,9 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
         status: 'pending',
         channel: 'dashboard',
         task: parsed.data.prompt,
-        ...(resolvedChatId ? { chatId: resolvedChatId } : {}),
+        // The owner's Telegram chat, resolved as such: it carries its channel,
+        // so the runner never infers it from the agent's active channels (#649).
+        ...designateChat(resolvedChatId, 'telegram'),
       })
       .returning({ id: agentJobs.id });
     if (!job) return fail('db_error', 'Failed to create job');
@@ -2461,6 +2501,12 @@ export type SpaceConversationView = {
      * l'agent au propriétaire, pas une sortie d'outil.
      */
     result: string | null;
+    /**
+     * #444 — l'appel au modèle EN COURS, tel que le runner le pose pendant
+     * l'appel (`agent_jobs.live_progress`, le flux de #484), NULL entre deux
+     * appels et après. La bande du run ne le montre que pendant `processing`.
+     */
+    liveProgress: JobLiveProgress | null;
   };
   feed: ConversationFeed;
   /** P3 — ce que la preuve a fait pour ce travail et ses délégués (même lecture que le détail Code). */
@@ -2815,6 +2861,9 @@ export async function getSpaceConversationAction(
         toolOutput: r.toolOutput,
         presented: r.presented,
       })),
+      // #508 — le prix du run : les appels de la racine et de sa descendance,
+      // ceux-là mêmes que la barre d'état somme (`cost` ci-dessus).
+      cost: costOfCalls(costRows),
       workspaceRoots,
     };
     const feedWithDelivery: ConversationFeed = {
@@ -2826,6 +2875,7 @@ export async function getSpaceConversationAction(
       job: {
         id: job.id,
         task: displayTask,
+        liveProgress: job.liveProgress ?? null,
         channel: job.channel,
         status: job.status,
         agentName: row.agentName,
@@ -2898,12 +2948,6 @@ export async function getJobStatusAction(
   }
 }
 
-// Terminal job statuses — same set the runner's state machine treats as
-// having no outbound edges (apps/runner/src/job/state.ts). Mirrored here
-// so `cancelJobAction` refuses requests that would be no-ops anyway, and
-// so the UI can hide the Cancel button on jobs that are already done.
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
-
 /**
  * Cancel a job from any non-terminal state.
  *
@@ -2916,15 +2960,17 @@ const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
  *     in-flight LLM/tool calls finish naturally; we don't kill them
  *     mid-flight (interrupting an API call mid-stream tends to leave
  *     half-written DB rows and confused providers).
- *   - completed / failed / cancelled — refuse, nothing to do.
+ *   - completed / failed / cancelled — refuse (`already_terminal`) when
+ *     nothing under it is still alive either; otherwise its live
+ *     descendants are stopped (#567).
  *
  * Descendants cascade: every non-terminal job whose `parent_job_id`
  * chain reaches the target is also flipped to 'cancelled' in the same
- * UPDATE. Without this, a parent that's blocked awaiting a delegated
- * child would still see the child happily burning LLM turns to
- * completion — pointless work the user explicitly stopped wanting. The
- * delegation depth cap is 3 (DEFAULT_LIMITS), so the recursive CTE has
- * a bounded fan-out.
+ * transaction (`cancelJobTree`, @nodal-agents/db — the one cancel path,
+ * shared with the agent tool `stop_conversation_run`). Without this, a
+ * parent that's blocked awaiting a delegated child would still see the
+ * child happily burning LLM turns to completion — pointless work the user
+ * explicitly stopped wanting.
  *
  * Auth: scoped to the caller's entity; cross-entity cancels return
  * 'not_found' (same shape as the lookup actions — don't leak existence).
@@ -2943,61 +2989,26 @@ export async function cancelJobAction(id: string): Promise<ActionResult<{ status
       .where(and(eq(agentJobs.id, id), eq(agentJobs.entityId, session.entityId)));
     if (!row) return fail('not_found', 'Job not found');
 
-    const current = row.status ?? 'pending';
-    if (TERMINAL_STATUSES.has(current)) {
-      return fail('already_terminal', `Job is already ${current}`);
-    }
-
-    // Recursive cascade in ONE atomic statement: the target job + every
-    // non-terminal descendant, PLUS the detached task-board work and pending
-    // approvals hanging off that same set (B2, audit followup). Data-modifying
-    // CTEs always run to completion in Postgres even when the primary query
-    // doesn't read them, so all three writes land together off one descendants
-    // walk. entity_id is re-asserted on every UPDATE so a buggy CTE can never
-    // escape the caller's workspace; status filters spare rows that already
-    // finished before the cancel hit.
+    // La cascade vit dans @nodal-agents/db (`cancelJobTree`), partagée avec
+    // l'arrêt demandé à un agent depuis un canal (#567) : un seul chemin
+    // d'annulation. Elle passe à `cancelled` le job et chacun de ses délégués
+    // non terminés, coupe les tâches du tableau qu'ils ont créées (détachées
+    // du graphe des jobs : sans cela le cron continuerait à lancer leurs
+    // enfants après l'arrêt) et expire les approbations et questions en
+    // attente (un « Approuver » tardif ne ressuscite plus le job).
     //
-    // Why the extra two cascades:
-    //  - agent_tasks: a planner's create_task rows are DETACHED from the job
-    //    graph (they carry root_job_id, not parent_job_id), so the recursive
-    //    walk above never reaches them. Without this, the cron tick keeps
-    //    spawning + running their child jobs AFTER the user cancelled — work
-    //    they explicitly stopped wanting.
-    //  - approval_requests: a still-pending approval is expired so a late
-    //    "Approve" tap (stale Telegram card / reopened tab) can't resurrect the
-    //    job and run its gated tool. ('expired' is the terminal state the
-    //    status CHECK allows — no 'cancelled'.) Belt-and-suspenders with the
-    //    status guard now in approvals/resolve.ts.
-    await db.execute(sql`
-      WITH RECURSIVE descendants AS (
-        SELECT id FROM agent_jobs WHERE id = ${id}
-        UNION ALL
-        SELECT j.id
-        FROM agent_jobs j
-        INNER JOIN descendants d ON j.parent_job_id = d.id
-      ),
-      cancelled_jobs AS (
-        UPDATE agent_jobs
-        SET status = 'cancelled', updated_at = now()
-        WHERE id IN (SELECT id FROM descendants)
-          AND entity_id = ${session.entityId}
-          AND status NOT IN ('completed', 'failed', 'cancelled')
-        RETURNING id
-      ),
-      cancelled_tasks AS (
-        UPDATE agent_tasks
-        SET status = 'cancelled', updated_at = now()
-        WHERE root_job_id IN (SELECT id FROM descendants)
-          AND entity_id = ${session.entityId}
-          AND status IN ('todo', 'in_progress')
-        RETURNING id
-      )
-      UPDATE approval_requests
-      SET status = 'expired', resolved_at = now(), resolved_by = 'system:job_cancelled'
-      WHERE job_id IN (SELECT id FROM descendants)
-        AND entity_id = ${session.entityId}
-        AND status = 'pending'
-    `);
+    // « Déjà terminé » se juge sur ce que la cascade a trouvé de VIVANT, pas
+    // sur le statut de la tête seule : une tête déclarée morte par le faucheur
+    // pendant que son délégué tourne encore est un run vivant, et l'arrêter
+    // arrête ce délégué (incident du 28/09).
+    const cancelled = await cancelJobTree(db, { entityId: session.entityId, jobId: id });
+    if (
+      cancelled.jobIds.length === 0 &&
+      cancelled.taskIds.length === 0 &&
+      cancelled.requestIds.length === 0
+    ) {
+      return fail('already_terminal', `Job is already ${row.status ?? 'finished'}`);
+    }
 
     revalidatePath('/logs');
     revalidatePath(`/jobs/${id}`);
@@ -4909,7 +4920,9 @@ const CreateMcpServerSchema = z.object({
     .string()
     .min(2)
     .max(30)
-    .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase letters, digits, dashes')
+    // The canonical grammar (#661): two such slugs never lend tools under the
+    // same names.
+    .regex(MCP_SERVER_SLUG_PATTERN, MCP_SERVER_SLUG_RULE)
     .optional(),
   /** HTTP custom only — overrides the catalog placeholder. */
   customAuthScheme: z.enum(['header', 'query', 'bearer']).optional(),
@@ -5050,6 +5063,7 @@ export async function createMcpServerFromCatalogAction(
       }
 
       let toolDescriptors: McpToolSummary[] = [];
+      let instructions: string | null = null;
       let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
       try {
         conn = await connectMcp({
@@ -5072,6 +5086,7 @@ export async function createMcpServerFromCatalogAction(
         // not just name/description — the runner's isUsableMcpToolCache
         // requires inputSchema on every entry to take the lazy-connect path.
         toolDescriptors = conn.tools;
+        instructions = conn.instructions;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return fail('mcp_connect_failed', `Could not connect to ${catalog.label}: ${msg}`);
@@ -5094,6 +5109,7 @@ export async function createMcpServerFromCatalogAction(
           authScheme: effectiveAuthScheme,
           authParamName: effectiveAuthParamName,
           availableTools: toolDescriptors,
+          instructions,
           active: true,
         })
         .returning({ id: mcpServers.id });
@@ -5118,6 +5134,7 @@ export async function createMcpServerFromCatalogAction(
     const userEnv = parsed.data.customEnv ?? {};
 
     let stdioToolDescriptors: McpToolSummary[] = [];
+    let stdioInstructions: string | null = null;
     let stdioConn: Awaited<ReturnType<typeof connectMcp>> | null = null;
     try {
       stdioConn = await connectMcp({
@@ -5129,6 +5146,7 @@ export async function createMcpServerFromCatalogAction(
       // Persist the FULL descriptor (inputSchema + annotations included) —
       // see the http path above for why.
       stdioToolDescriptors = stdioConn.tools;
+      stdioInstructions = stdioConn.instructions;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return fail(
@@ -5167,6 +5185,7 @@ export async function createMcpServerFromCatalogAction(
         args,
         envVars: encEnv,
         availableTools: stdioToolDescriptors,
+        instructions: stdioInstructions,
         active: true,
       })
       .returning({ id: mcpServers.id });
@@ -5249,6 +5268,7 @@ export async function updateMcpServerApiKeyAction(
     // is gated on existing.url / authScheme above so we're definitely HTTP
     // here.
     let toolDescriptors: McpToolSummary[] = [];
+    let instructions: string | null = null;
     let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
     try {
       conn = await connectMcp({
@@ -5263,6 +5283,7 @@ export async function updateMcpServerApiKeyAction(
       // second tools/list round-trip that used to strip it down to
       // name/description.
       toolDescriptors = conn.tools;
+      instructions = conn.instructions;
       if (catalog?.verifyToolName) {
         await conn.client.callTool({ name: catalog.verifyToolName, arguments: {} });
       }
@@ -5281,6 +5302,7 @@ export async function updateMcpServerApiKeyAction(
         apiKey: enc,
         apiKeyLast4: last4(apiKey),
         availableTools: toolDescriptors,
+        instructions,
         updatedAt: new Date(),
       })
       .where(eq(mcpServers.id, mcpServerId));
@@ -5458,6 +5480,7 @@ export async function updateMcpServerConfigAction(
       }
 
       let toolDescriptors: McpToolSummary[] = [];
+      let instructions: string | null = null;
       let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
       try {
         conn = await connectMcp({
@@ -5470,6 +5493,7 @@ export async function updateMcpServerConfigAction(
         // Persist the FULL descriptor (inputSchema + annotations included) —
         // see createMcpServerFromCatalogAction above for why.
         toolDescriptors = conn.tools;
+        instructions = conn.instructions;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return fail('mcp_connect_failed', `Could not connect with the new config: ${msg}`);
@@ -5485,6 +5509,7 @@ export async function updateMcpServerConfigAction(
           authScheme: effectiveScheme,
           authParamName: effectiveParam,
           availableTools: toolDescriptors,
+          instructions,
           ...(newKeyProvided
             ? { apiKey: encrypt(apiKeyPlain), apiKeyLast4: last4(apiKeyPlain) }
             : {}),
@@ -5540,6 +5565,7 @@ export async function updateMcpServerConfigAction(
     }
 
     let toolDescriptors: McpToolSummary[] = [];
+    let instructions: string | null = null;
     let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
     try {
       conn = await connectMcp({
@@ -5551,6 +5577,7 @@ export async function updateMcpServerConfigAction(
       // Persist the FULL descriptor (inputSchema + annotations included) —
       // see createMcpServerFromCatalogAction above for why.
       toolDescriptors = conn.tools;
+      instructions = conn.instructions;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return fail(
@@ -5569,6 +5596,7 @@ export async function updateMcpServerConfigAction(
         args: effectiveArgs,
         envVars: encEnv,
         availableTools: toolDescriptors,
+        instructions,
         updatedAt: new Date(),
       })
       .where(eq(mcpServers.id, mcpServerId));
@@ -5700,31 +5728,32 @@ export async function setAgentMcpServerAssignmentAction(
       .from(agents)
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
-    const [server] = await db
-      .select({ id: mcpServers.id })
-      .from(mcpServers)
-      .where(and(eq(mcpServers.id, mcpServerId), eq(mcpServers.entityId, session.entityId)));
-    if (!server) return fail('not_found', 'MCP connector not found');
 
     if (!assigned) {
+      const [server] = await db
+        .select({ id: mcpServers.id })
+        .from(mcpServers)
+        .where(and(eq(mcpServers.id, mcpServerId), eq(mcpServers.entityId, session.entityId)));
+      if (!server) return fail('not_found', 'MCP connector not found');
       await db
         .delete(agentMcpServers)
         .where(
           and(eq(agentMcpServers.agentId, agentId), eq(agentMcpServers.mcpServerId, mcpServerId)),
         );
     } else {
-      await db
-        .insert(agentMcpServers)
-        .values({
-          agentId,
-          mcpServerId,
-          entityId: session.entityId,
-          enabledTools: enabledTools ?? null,
-        })
-        .onConflictDoUpdate({
-          target: [agentMcpServers.agentId, agentMcpServers.mcpServerId],
-          set: { enabledTools: enabledTools ?? null, updatedAt: new Date() },
-        });
+      // The one attach path of every surface (#661): refuses a server whose
+      // tool names would collide with one this agent already holds.
+      const attached = await attachMcpServerToAgent(db, {
+        entityId: session.entityId,
+        agentId,
+        mcpServerId,
+        enabledTools: enabledTools ?? null,
+      });
+      if (!attached.ok) {
+        return attached.reason === 'not_found'
+          ? fail('not_found', 'MCP connector not found')
+          : fail('mcp_namespace_overlap', attached.message);
+      }
     }
 
     revalidatePath('/agents');
@@ -6110,6 +6139,15 @@ export type ApprovalRow = {
    * action it read in it. Empty when the checklist had nothing to do with it.
    */
   gateReasons: ShellGateReason[];
+  /**
+   * La question d'un serveur MCP, quand la ligne est une ÉLICITATION (0145) :
+   * le serveur, son message, le formulaire, la réponse donnée et les images
+   * jointes (sans leurs octets). `null` pour toute autre ligne, et pour une
+   * élicitation dont l'entrée ne se lit pas, que la carte montre alors brute.
+   * C'est ce champ, et non `kind` seul, qui fait dessiner `ElicitationCard` :
+   * une élicitation n'a ni « Approve » ni règle à proposer.
+   */
+  elicitation: ElicitationView | null;
 };
 
 /**
@@ -6132,7 +6170,31 @@ function readGateReasons(approvalId: string, raw: unknown): ShellGateReason[] {
     console.warn(`[listApprovalsAction] unreadable gate_reasons on ${approvalId}`);
     return [];
   }
-  return parsed.data.map((r) => ({ ...r, details: r.details.map(redactSecretsInText) }));
+  return parsed.data.map((r) => ({
+    ...r,
+    details: r.details.map(redactSecretsInText),
+    ...(r.outside
+      ? {
+          outside: r.outside.map((o) => ({
+            command: redactSecretsInText(o.command),
+            places: o.places.map(redactSecretsInText),
+          })),
+        }
+      : {}),
+    // Les lignes d'un script et ses chemins peuvent porter un jeton (#635).
+    ...(r.found
+      ? {
+          found: r.found.map((f) => ({
+            ...f,
+            source: f.source === null ? null : redactSecretsInText(f.source),
+            text: redactSecretsInText(f.text),
+          })),
+        }
+      : {}),
+    ...(r.unread
+      ? { unread: r.unread.map((u) => ({ ...u, source: redactSecretsInText(u.source) })) }
+      : {}),
+  }));
 }
 
 export async function listApprovalsAction(
@@ -6187,6 +6249,7 @@ export async function listApprovalsAction(
         toolInput: approvalRequests.toolInput,
         kind: approvalRequests.kind,
         answer: approvalRequests.answer,
+        response: approvalRequests.response,
         status: approvalRequests.status,
         requestedAt: approvalRequests.requestedAt,
         resolvedAt: approvalRequests.resolvedAt,
@@ -6245,14 +6308,18 @@ export async function listApprovalsAction(
     // computeApprovalImpactLine's catch-all branch — reported live as
     // "je ne comprends pas ce que j'approuve".
     //
-    // Deduplicated by tool name: a page of 100 approvals from one server would
-    // otherwise issue 100 identical queries.
+    // Resolved among the servers the requesting AGENT holds (#661): a
+    // workspace may hold two instances of one server for two agents, under the
+    // same tool names. Deduplicated by (agent, tool): a page of 100 approvals
+    // from one server would otherwise issue 100 identical queries.
+    const mcpKey = (agentId: string | null, toolName: string) => `${agentId ?? ''}|${toolName}`;
     const mcpByTool = new Map<string, Awaited<ReturnType<typeof getMcpApprovalContext>>>();
-    for (const name of new Set(rows.map((r) => r.toolName))) {
-      if (!name.includes('__')) continue;
+    for (const r of rows) {
+      const key = mcpKey(r.agentId, r.toolName);
+      if (!r.toolName.includes('__') || mcpByTool.has(key)) continue;
       mcpByTool.set(
-        name,
-        await getMcpApprovalContext(db, session.entityId, name).catch(() => null),
+        key,
+        await getMcpApprovalContext(db, session.entityId, r.agentId, r.toolName).catch(() => null),
       );
     }
 
@@ -6306,6 +6373,13 @@ export async function listApprovalsAction(
       workspacesByAgent.set(w.agentId, list);
     }
 
+    // Les images des élicitations de la page, en une requête et SANS leurs
+    // octets : la carte les lit par leur route.
+    const attachmentsByRequest = await readAttachmentViews(
+      db,
+      rows.filter((r) => r.kind === 'elicitation').map((r) => r.id),
+    );
+
     return ok(
       rows.map((r) => {
         // NOUVEAU-1: the stored approval row keeps the REAL toolInput (the
@@ -6314,14 +6388,32 @@ export async function listApprovalsAction(
         // env values are masked here, the single loader feeding both the
         // approvals page and the sidebar/NotificationsBell provider.
         const safeInput = redactSecretsForAudit(r.toolInput) as typeof r.toolInput;
-        const ctx = mcpByTool.get(r.toolName) ?? null;
+        const ctx = mcpByTool.get(mcpKey(r.agentId, r.toolName)) ?? null;
         // `jobParentJobId` ne sort PAS de l'action : il n'a servi qu'à remonter
         // la chaîne, et les deux champs de tête disent déjà ce que l'écran en
         // fait.
-        const { jobParentJobId: _chaine, ...rest } = r;
+        const { jobParentJobId: _chaine, response: _reponse, ...rest } = r;
         const root = roots.get(r.jobId) ?? { rootJobId: null, rootChannel: null };
+        // Lues (et masquées) une fois : la carte les liste, et la ligne
+        // d'impact dit ce que la porte a lu dans le code lancé (#635).
+        const gateReasons = readGateReasons(r.id, r.gateReasons);
         return {
           ...rest,
+          elicitation:
+            r.kind === 'elicitation'
+              ? toElicitationView({
+                  id: r.id,
+                  status: r.status,
+                  // L'entrée STOCKÉE : une élicitation ne porte que le serveur,
+                  // sa question et son formulaire, rien que le masquage des
+                  // champs de connecteur viserait.
+                  toolInput: r.toolInput,
+                  response: r.response,
+                  resolvedBy: r.resolvedBy,
+                  expiresAt: r.expiresAt,
+                  attachments: attachmentsByRequest.get(r.id) ?? [],
+                })
+              : null,
           rootJobId: root.rootJobId,
           rootChannel: root.rootChannel,
           toolInput: safeInput,
@@ -6340,6 +6432,7 @@ export async function listApprovalsAction(
                   ...(ctx.readOnlyHint !== undefined ? { readOnlyHint: ctx.readOnlyHint } : {}),
                 }
               : null,
+            gateReasons,
           }),
           // LA MEME fonction que la porte (`matchApprovalRule` en derive) :
           // ce que la carte montre est ce que le moteur a obei, pas une
@@ -6359,7 +6452,7 @@ export async function listApprovalsAction(
           ),
           toolDefault: resolveToolDefaultApproval(r.toolName),
           agentWorkspaces: r.agentId === null ? [] : (workspacesByAgent.get(r.agentId) ?? []),
-          gateReasons: readGateReasons(r.id, r.gateReasons),
+          gateReasons,
         };
       }) as ApprovalRow[],
     );
@@ -6379,7 +6472,19 @@ const ResolveApprovalSchema = z.object({
    * la transporter, et un libellé qui n'est plus une option revient en erreur
    * plutôt que d'être écrit.
    */
-  answer: z.string().max(400).optional(),
+  answer: z.string().max(FREE_ANSWER_MAX).optional(),
+  /**
+   * #465 — `answer` est une réponse LIBRE, écrite par la personne sous
+   * « Something else ». Le runner ne la compare alors à aucune option.
+   */
+  free: z.boolean().optional(),
+  /**
+   * Ce que la personne a rempli, sur une ÉLICITATION (0145) : le formulaire
+   * qu'un serveur MCP a demandé. Obligatoire pour l'envoyer, refusé sur toute
+   * autre ligne. Validé ici contre le formulaire de la ligne pour dire l'erreur
+   * avant l'aller-retour ; le runner le revalide, et c'est lui qui décide.
+   */
+  content: z.record(z.string(), z.unknown()).optional(),
 });
 
 /**
@@ -6408,7 +6513,11 @@ export async function resolveApprovalAction(
     // identically — don't reveal cross-tenant existence.
     const db = getDb();
     const [approval] = await db
-      .select({ id: approvalRequests.id })
+      .select({
+        id: approvalRequests.id,
+        kind: approvalRequests.kind,
+        toolInput: approvalRequests.toolInput,
+      })
       .from(approvalRequests)
       .where(
         and(
@@ -6419,6 +6528,31 @@ export async function resolveApprovalAction(
       .limit(1);
     if (!approval) {
       return fail('not_found', 'Approval not found');
+    }
+
+    // ── Une élicitation n'est pas une approbation (0145) ────────────────────
+    // L'envoyer, c'est envoyer le FORMULAIRE au serveur MCP : sans contenu,
+    // « approuver » ne voudrait rien dire, et le runner le refuserait. Le
+    // contenu est vérifié ici contre le formulaire de la ligne pour que la
+    // personne lise l'erreur sous le champ ; un contenu sur une autre ligne est
+    // refusé plutôt que jeté (invariant #4).
+    const content = parsed.data.content;
+    if (approval.kind === 'elicitation') {
+      if (parsed.data.decision === 'approve') {
+        if (content === undefined) {
+          return fail('content_required', 'Fill in the form before sending it.');
+        }
+        const form = readElicitationToolInput(approval.toolInput);
+        if (!form) return fail('form_unreadable', 'This form cannot be read.');
+        const checked = validateElicitationContent(form.requestedSchema, content);
+        if (!checked.ok) {
+          return fail('content_invalid', describeElicitationErrors(checked.errors));
+        }
+      } else if (content !== undefined) {
+        return fail('content_not_expected', 'Declining sends no answer.');
+      }
+    } else if (content !== undefined) {
+      return fail('content_not_expected', 'This request does not take a form answer.');
     }
 
     if (!env.WORKER_SECRET) {
@@ -6443,8 +6577,16 @@ export async function resolveApprovalAction(
     }
 
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        errors?: Array<{ field: string | null; reason: string }>;
+      };
       const code = body.error ?? `runner_${res.status}`;
+      // Les erreurs de champ d'un formulaire refusé par le runner se lisent
+      // telles quelles : « copies: must be at most 5 » dit quoi corriger.
+      if (code === 'content_invalid' && Array.isArray(body.errors) && body.errors.length > 0) {
+        return fail(code, describeElicitationErrors(body.errors));
+      }
       return fail(code, `Runner rejected: ${code}`);
     }
 
@@ -7532,6 +7674,12 @@ export type ApplyAgentRecipeResult = {
   connectorsAttached: string[];
   /** Recommended connectors the workspace does not have — the user's move. */
   connectorsToSetUp: string[];
+  /**
+   * Recommended connectors the workspace HAS but that were not attached, each
+   * with why: several instances (picking one would be a guess, #661), or a
+   * refusal of the attach rule. Said to the user, never dropped.
+   */
+  connectorsNotAttached: Array<{ slug: string; reason: string }>;
 };
 
 /**
@@ -7633,10 +7781,11 @@ async function applyRecipeToAgent(
     // user's move, and the result repeats it.
     const connectorsAttached: string[] = [];
     const connectorsToSetUp: string[] = [];
+    const connectorsNotAttached: Array<{ slug: string; reason: string }> = [];
     const wantedMcp = (recipe.connectors ?? []).filter((c) => c.kind === 'mcp').map((c) => c.slug);
     if (wantedMcp.length > 0) {
       const rows = await db
-        .select({ id: mcpServers.id, slug: mcpServers.slug })
+        .select({ id: mcpServers.id, slug: mcpServers.slug, name: mcpServers.name })
         .from(mcpServers)
         .where(
           and(
@@ -7645,24 +7794,30 @@ async function applyRecipeToAgent(
             eq(mcpServers.active, true),
           ),
         );
-      const bySlug = new Map<string, string>();
-      for (const r of rows) if (!bySlug.has(r.slug)) bySlug.set(r.slug, r.id);
       for (const slug of wantedMcp) {
-        const mcpServerId = bySlug.get(slug);
-        if (!mcpServerId) {
+        const instances = rows.filter((r) => r.slug === slug);
+        if (instances.length === 0) {
           connectorsToSetUp.push(slug);
           continue;
         }
-        await db
-          .insert(agentMcpServers)
-          .values({
-            entityId: session.entityId,
-            agentId: agent.id,
-            mcpServerId,
-            enabledTools: null,
-          })
-          .onConflictDoNothing();
-        connectorsAttached.push(slug);
+        // Several instances of the server: which one the agent should hold is
+        // the user's call, never a guess (#661).
+        if (instances.length > 1) {
+          connectorsNotAttached.push({
+            slug,
+            reason:
+              `${instances.length} servers are "${slug}" here ` +
+              `(${instances.map((i) => i.name).join(', ')}). Attach the one you want from the agent's Connectors tab.`,
+          });
+          continue;
+        }
+        const attached = await attachMcpServerToAgent(db, {
+          entityId: session.entityId,
+          agentId: agent.id,
+          mcpServerId: instances[0]!.id,
+        });
+        if (attached.ok) connectorsAttached.push(slug);
+        else connectorsNotAttached.push({ slug, reason: attached.message });
       }
     }
 
@@ -7672,6 +7827,7 @@ async function applyRecipeToAgent(
       readOnlyApplied,
       connectorsAttached,
       connectorsToSetUp,
+      connectorsNotAttached,
     };
   }
 }
@@ -8137,26 +8293,28 @@ export async function getAgentModelChoicesAction(
   }
 }
 
-// ─── Runtime-agent permission mode (read / write) ─────────────────────────────
+// ─── Runtime-agent permissions (mode, shell) ──────────────────────────────────
 //
-// agents.cli_permissions.mode: 'read' (default when NULL) hides the CLI's
-// write tools; 'write' allows workspace edits. Merges onto the existing JSONB
-// value — extraDisallowed (not exposed by this UI yet) must survive a mode
-// change untouched, same merge shape as setCliDefaultsAction above.
+// agents.cli_permissions, one JSONB value per agent:
+//   - mode: 'read' (default when NULL) hides the CLI's write tools; 'write'
+//     allows workspace edits;
+//   - shell (#494): 'auto' lets a Claude Code agent run commands without
+//     asking; absent or 'none' removes its shell tools. Read by
+//     cliShellPosture (@nodal-agents/shared), which the runner's
+//     argv and the team block both use.
+// Each action merges ONE key onto the existing value, through the same helper:
+// extraDisallowed (not exposed by this UI) and the other key survive untouched.
 
-const SetCliRuntimeModeSchema = z.object({
-  agentId: z.string().guid(),
-  mode: z.enum(['read', 'write']),
-});
+type CliPermissionsPatch = { mode: 'read' | 'write' } | { shell: 'none' | 'auto' };
 
-export async function setCliRuntimeModeAction(raw: unknown): Promise<ActionResult<void>> {
+async function mergeCliPermissions(
+  agentId: string,
+  patch: CliPermissionsPatch,
+  logTag: string,
+  failMessage: string,
+): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    const parsed = SetCliRuntimeModeSchema.safeParse(raw);
-    if (!parsed.success) {
-      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
-    }
-    const { agentId, mode } = parsed.data;
 
     // Owner-only (non-local-trust) — same gate shape as setAgentBudgetAction.
     if (env.AUTH_MODE !== 'local-trust') {
@@ -8181,7 +8339,21 @@ export async function setCliRuntimeModeAction(raw: unknown): Promise<ActionResul
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    const nextPermissions = { ...(agent.cliPermissions ?? {}), mode };
+    // Back to read only clears the shell setting (review of #494, pass 4). In
+    // read only it cannot run, so the switch shows it off and locked: kept, it
+    // would come back in silence with write mode, whose confirmation speaks of
+    // files only. Turning the shell on again goes through its own confirmation.
+    const cleared = 'mode' in patch && patch.mode === 'read' ? { shell: 'none' as const } : {};
+    const nextPermissions = { ...(agent.cliPermissions ?? {}), ...patch, ...cleared };
+    // And the same rule the other way (Nodal review of #551, pass 3): a shell
+    // exists only in write mode (`cliShellPosture`), so `auto` outside it is a
+    // setting the runner would ignore, stored until write mode lit it silently.
+    if (nextPermissions.shell === 'auto' && (nextPermissions.mode ?? 'read') !== 'write') {
+      return fail(
+        'validation_failed',
+        'Shell commands need write mode. Switch the agent to write mode first.',
+      );
+    }
 
     await db
       .update(agents)
@@ -8191,9 +8363,45 @@ export async function setCliRuntimeModeAction(raw: unknown): Promise<ActionResul
     revalidatePath(`/agents/${agentId}/edit`);
     return ok(undefined);
   } catch (err) {
-    console.error('[setCliRuntimeModeAction]', err);
-    return fail('db_error', 'Failed to save the runtime permission mode');
+    console.error(logTag, err);
+    return fail('db_error', failMessage);
   }
+}
+
+const SetCliRuntimeModeSchema = z.object({
+  agentId: z.string().guid(),
+  mode: z.enum(['read', 'write']),
+});
+
+export async function setCliRuntimeModeAction(raw: unknown): Promise<ActionResult<void>> {
+  const parsed = SetCliRuntimeModeSchema.safeParse(raw);
+  if (!parsed.success) {
+    return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+  }
+  return mergeCliPermissions(
+    parsed.data.agentId,
+    { mode: parsed.data.mode },
+    '[setCliRuntimeModeAction]',
+    'Failed to save the runtime permission mode',
+  );
+}
+
+const SetCliRuntimeShellSchema = z.object({
+  agentId: z.string().guid(),
+  shell: z.enum(['none', 'auto']),
+});
+
+export async function setCliRuntimeShellAction(raw: unknown): Promise<ActionResult<void>> {
+  const parsed = SetCliRuntimeShellSchema.safeParse(raw);
+  if (!parsed.success) {
+    return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+  }
+  return mergeCliPermissions(
+    parsed.data.agentId,
+    { shell: parsed.data.shell },
+    '[setCliRuntimeShellAction]',
+    'Failed to save the shell command setting',
+  );
 }
 
 // ─── LAN Command Yolo (workspace setting) ────────────────────────────────────
@@ -8572,7 +8780,35 @@ export async function setVerificationSurfacesAction(raw: unknown): Promise<Actio
 export type McpServerSwitchView = {
   enabled: boolean;
   isOwner: boolean;
+  /**
+   * #485 — ce qu'il faut coller dans chaque client, bâti pour CETTE install
+   * depuis la commande du CLI qui a démarré la stack (`NODAL_CLI_ARGV`).
+   * `null` quand le web n'a pas été démarré par `nodal-agents up` : l'écran le
+   * dit, plutôt qu'une commande inventée.
+   */
+  clients: {
+    claudeCode: string;
+    /** Le bloc `mcpServers` à coller dans Claude Desktop, en JSON. */
+    claudeDesktop: string;
+    /** Où Claude Desktop range sa config sur cette machine. */
+    claudeDesktopPath: string;
+  } | null;
 };
+
+/** Les commandes des clients MCP pour cette install (#485). */
+function mcpClientsView(): McpServerSwitchView['clients'] {
+  const argv = readCliArgv(process.env['NODAL_CLI_ARGV']);
+  if (argv === null) return null;
+  return {
+    claudeCode: claudeCodeCommand(argv),
+    claudeDesktop: JSON.stringify(
+      { mcpServers: { [MCP_SERVER_NAME]: claudeDesktopEntry(argv) } },
+      null,
+      2,
+    ),
+    claudeDesktopPath: claudeDesktopConfigPath(process.platform, process.env, homedir(), pathJoin),
+  };
+}
 
 /**
  * L'interrupteur maître du serveur MCP (migration 0081, décision Quentin
@@ -8592,10 +8828,142 @@ export async function getMcpServerSwitchAction(): Promise<ActionResult<McpServer
     return ok({
       enabled: entityRow.enabled,
       isOwner: entityRow.userId === session.userId,
+      clients: mcpClientsView(),
     });
   } catch (err) {
     console.error('[getMcpServerSwitchAction]', err);
     return fail('db_error', 'Failed to load MCP server setting');
+  }
+}
+
+/**
+ * #485 — poser l'entrée de Nodal dans la config de Claude Desktop, sur la
+ * machine qui héberge Nodal. Le propriétaire seul, et seulement sur une
+ * install à un compte : ce fichier appartient à l'utilisateur de la machine,
+ * pas à un espace de travail (même garde que la config de l'hôte).
+ */
+export async function addNodalToClaudeDesktopAction(): Promise<
+  ActionResult<{ path: string; backupPath: string | null; replaced: boolean }>
+> {
+  try {
+    const session = await getSession();
+    const guard = await assertMonoUserHostInstall();
+    if (guard) return guard;
+    const db = getDb();
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    if (entityRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the workspace owner can change this setting.');
+    }
+    const argv = readCliArgv(process.env['NODAL_CLI_ARGV']);
+    if (argv === null) {
+      return fail(
+        'cli_argv_missing',
+        'Nodal was not started with `nodal-agents up`, so the command to launch its MCP server is unknown.',
+      );
+    }
+    const file = claudeDesktopConfigPath(process.platform, process.env, homedir(), pathJoin);
+    const written = await writeNodalIntoClaudeDesktop(file, claudeDesktopEntry(argv), new Date());
+    return ok(written);
+  } catch (err) {
+    if (err instanceof DesktopNotInstalledError)
+      return fail('claude_desktop_not_found', err.message);
+    if (err instanceof DesktopConfigError) return fail(err.code, err.message);
+    console.error('[addNodalToClaudeDesktopAction]', err);
+    return fail('write_failed', 'Could not write Claude Desktop’s config file');
+  }
+}
+
+// ─── Start with the machine (#451) ────────────────────────────────────────────
+
+/**
+ * Le CLI tient l'intégration au système (valeur Run de Windows, LaunchAgent, unité
+ * systemd) : le web l'appelle, avec la commande qui a démarré la stack
+ * (`NODAL_CLI_ARGV`, #485), et ne réécrit rien lui-même.
+ */
+async function runServiceCommand(
+  action: 'status' | 'install' | 'uninstall',
+): Promise<{ status: AutostartStatus | null; error: string | null }> {
+  const argv = readCliArgv(process.env['NODAL_CLI_ARGV']);
+  if (argv === null) {
+    return {
+      status: null,
+      error: 'Start Nodal with nodal-agents up to manage how it starts with this machine.',
+    };
+  }
+  const [cmd, ...args] = argv;
+  return new Promise((resolveResult) => {
+    execFile(
+      cmd!,
+      [...args, 'service', action, '--json'],
+      { timeout: 60_000, windowsHide: true },
+      (err, stdout, stderr) => {
+        const status = parseServiceJson(String(stdout));
+        if (status !== null) return resolveResult({ status, error: null });
+        const detail = String(stderr).trim().split(/\r?\n/).pop() ?? '';
+        resolveResult({
+          status: null,
+          error: detail !== '' ? detail : (err?.message ?? 'The CLI gave no answer'),
+        });
+      },
+    );
+  });
+}
+
+/** Lu À CHAQUE affichage, dans le système : jamais un drapeau stocké. */
+export async function getAutostartAction(): Promise<ActionResult<AutostartView>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    const read = await runServiceCommand('status');
+    return ok({ ...read, isOwner: entityRow.userId === session.userId });
+  } catch (err) {
+    console.error('[getAutostartAction]', err);
+    return fail('read_failed', 'Failed to read how Nodal starts with this machine');
+  }
+}
+
+const SetAutostartSchema = z.object({ enabled: z.boolean() });
+
+/**
+ * Inscrire ou retirer Nodal du démarrage de la machine. Il écrit dans la
+ * configuration de démarrage de la MACHINE : le propriétaire de l'install
+ * seulement, jamais un invité d'une install LAN (même garde que la config de
+ * l'hôte). L'état rendu est relu dans le système après le geste.
+ */
+export async function setAutostartAction(raw: unknown): Promise<ActionResult<AutostartView>> {
+  try {
+    const session = await getSession();
+    const guard = await assertMonoUserHostInstall();
+    if (guard) return guard;
+    const parsed = SetAutostartSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    if (entityRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the owner of this installation can change this setting.');
+    }
+    const result = await runServiceCommand(parsed.data.enabled ? 'install' : 'uninstall');
+    if (result.status === null) return fail('service_failed', result.error ?? 'The CLI failed');
+    revalidatePath('/settings');
+    return ok({ ...result, isOwner: true });
+  } catch (err) {
+    console.error('[setAutostartAction]', err);
+    return fail('write_failed', 'Failed to change how Nodal starts with this machine');
   }
 }
 
@@ -8637,21 +9005,13 @@ export type InstalledScript = { path: string; language: string };
 
 /**
  * Result of the runner's periodic diff between an installed community skill
- * and its source (content hash + bundled-script listing). Only meaningful
- * when `isCommunity` — system/custom skills never carry a detail.
+ * and its source (content hash + bundled-script listing), or the reason it
+ * could not compare (`sourceProblem`: the source is gone, or now serves
+ * another skill). Only meaningful when `isCommunity` — system/custom skills
+ * never carry a detail. One definition, the column's own (packages/db).
  */
-export type SkillUpdateDetail = {
-  contentChanged: boolean;
-  scriptsChanged: boolean;
-  /**
-   * Three-way script state from the runner's checker: 'conflict' = upstream
-   * moved AND the local files were patched (applying overwrites the patches);
-   * 'local-only' = only local patched, nothing new upstream (no badge).
-   * Absent on checks run before the three-way checker shipped.
-   */
-  scriptsState?: 'clean' | 'update' | 'conflict' | 'local-only';
-  checkedAt: string;
-};
+export type SkillUpdateDetail = DbSkillUpdateDetail;
+export type SkillSourceProblem = DbSkillSourceProblem;
 
 export type SkillRow = {
   id: string;
@@ -8661,12 +9021,12 @@ export type SkillRow = {
    *  seeded default catalog, shown under Built-in in /skills' Workspace tab.
    *  False for user-authored, agent-learned and community skills. */
   isSystem: boolean;
-  /** Behavior layer of a system skill: 'baseline' | 'channel' | 'capability' |
+  /** Behavior layer of a system skill: 'baseline' | 'capability' |
    *  'agent-internal' (null for custom/community skills). Every kind shows in
    *  /skills' Workspace tab and is editable there (override + reset); the kind
    *  still drives runtime loading, and tool-group skills (isToolGroupSkill)
    *  surface on the agent's Tools tab instead. */
-  systemKind: 'baseline' | 'channel' | 'capability' | 'agent-internal' | null;
+  systemKind: 'baseline' | 'capability' | 'agent-internal' | null;
   content: string;
   defaultContent: string | null;
   contentOverridden: boolean;
@@ -9204,12 +9564,15 @@ export async function acknowledgeSkillUpdateAction(
   }
 }
 
-export type SkillUpdateNotice = { slug: string; name: string };
+/** `problem` is null for a pending update, the code when the source no longer holds the skill. */
+export type SkillUpdateNotice = { slug: string; name: string; problem: SkillSourceProblem | null };
 
 /**
- * Light read for the notifications bell: just the slug + name of every
- * community skill in the active workspace with a pending update. Kept
- * separate from listSkillsAction (which pays joins the bell doesn't need)
+ * Light read for the notifications bell: the slug + name of every community
+ * skill in the active workspace with a pending update OR a source problem
+ * (the last check could not read its source as this skill). A problem is the
+ * owner's to see: a badge that turned into a problem must not just vanish.
+ * Kept separate from listSkillsAction (which pays joins the bell doesn't need)
  * so polling it every 15s stays cheap.
  */
 export async function listSkillUpdatesAction(): Promise<ActionResult<SkillUpdateNotice[]>> {
@@ -9217,17 +9580,30 @@ export async function listSkillUpdatesAction(): Promise<ActionResult<SkillUpdate
     const session = await getSession();
     const db = getDb();
     const rows = await db
-      .select({ slug: agentSkills.slug, name: agentSkills.name })
+      .select({
+        slug: agentSkills.slug,
+        name: agentSkills.name,
+        updateDetail: agentSkills.updateDetail,
+      })
       .from(agentSkills)
       .where(
         and(
           eq(agentSkills.entityId, session.entityId),
           eq(agentSkills.isCommunity, true),
-          eq(agentSkills.updateAvailable, true),
+          or(
+            eq(agentSkills.updateAvailable, true),
+            sql`${agentSkills.updateDetail}->>'sourceProblem' IS NOT NULL`,
+          ),
         ),
       )
       .orderBy(agentSkills.name);
-    return ok(rows);
+    return ok(
+      rows.map((r) => ({
+        slug: r.slug,
+        name: r.name,
+        problem: r.updateDetail?.sourceProblem ?? null,
+      })),
+    );
   } catch (err) {
     console.error('[listSkillUpdatesAction]', err);
     return fail('db_error', 'Failed to load skill updates');
@@ -10668,7 +11044,7 @@ export async function getVersionInfoAction(): Promise<ActionResult<VersionInfo>>
 
 // Channels the "Notify via" selector offers (B1, notify-channel-choice plan).
 // A subset of CHANNEL_ORDER: whatsapp has no outbound send tool registered for
-// a job yet (TOOL_ONLY_DELIVERY_CHANNELS, apps/runner/src/job/execute.ts) —
+// a job yet (TOOL_ONLY_DELIVERY_CHANNELS, apps/runner/src/job/channel-delivery.ts) —
 // picking it as a schedule's notify channel would set triggerWantsConfirmation
 // (chatId resolves fine via resolveOwnerConversation) but then force the agent
 // to deliver via a tool it was never given, deadlocking the run. Kept in the DB
@@ -11098,21 +11474,18 @@ export async function runScheduleNowAction(
     // one (and stays silent when the schedule is silent). An explicit schedule
     // target wins; otherwise fall back to the bot owner's 1:1 — never the
     // agent's lastSeenChatIdTelegram, which a group message can silently
-    // overwrite (see resolveOwnerChatId).
+    // overwrite.
     //
     // B1: an explicit notifyChannel resolves the owner conversation ON THAT
-    // CHANNEL (channel-parametric resolveOwnerConversation) instead of the
-    // telegram-only wrapper — same rule run-schedules.ts's runScheduleTick
+    // CHANNEL (channel-parametric resolveOwnerConversation) — same rule run-schedules.ts's runScheduleTick
     // applies, so "Run now" behaves identically to a real fire. A resolution
     // failure here is surfaced to the user directly (this action returns
     // ActionResult synchronously) rather than via lastStatus — there is no
     // schedule-row status transition to attach it to for a one-off manual run.
-    const resolvedChatId = schedule.notifyOnSuccess
-      ? schedule.notifyChannel
-        ? (schedule.chatId ??
-          (await resolveOwnerConversation(db, schedule.agentId, schedule.notifyChannel)))
-        : (schedule.chatId ?? (await resolveOwnerChatId(db, schedule.agentId)) ?? null)
-      : null;
+    //
+    // The SAME function as the tick and run_schedule (#649): the chat and the
+    // channel it was resolved on, or no channel when nothing says it.
+    const notifyChat = await resolveScheduleNotifyChat(db, schedule);
 
     const [job] = await db
       .insert(agentJobs)
@@ -11123,7 +11496,7 @@ export async function runScheduleNowAction(
         channel: 'cron',
         task: schedule.task,
         messages: [{ role: 'user', content: schedule.task }],
-        ...(resolvedChatId ? { chatId: resolvedChatId } : {}),
+        ...notifyChat,
         scheduleId,
         triggerContext: {
           type: 'cron',
@@ -12437,18 +12810,23 @@ async function assertSsrfSafeUrl(rawUrl: string): Promise<string | null> {
  * same guard, and follows it at most once (an SSRF-blocked or missing
  * Location target throws, which every caller here treats as a connection
  * failure — never followed).
+ *
+ * #608: these are provider calls, so they take the provider transport
+ * (`providerFetch`: its own HTTP/1.1 connections, the environment's proxy),
+ * and a redirect's own body is cancelled before the hop, never left open.
  */
 async function ssrfSafeFetch(url: string, init: RequestInit): Promise<Response> {
-  const res = await fetch(url, { ...init, redirect: 'manual' });
+  const res = await providerFetch(url, { ...init, redirect: 'manual' });
   if (res.status >= 300 && res.status < 400) {
     const location = res.headers.get('location');
     if (!location) return res;
+    await res.body?.cancel().catch(() => {});
     const target = new URL(location, url).toString();
     const ssrfError = await assertSsrfSafeUrl(target);
     if (ssrfError) {
       throw new Error(`Redirect target blocked: ${ssrfError}`);
     }
-    return fetch(target, { ...init, redirect: 'manual' });
+    return providerFetch(target, { ...init, redirect: 'manual' });
   }
   return res;
 }
@@ -12528,7 +12906,11 @@ async function fetchProviderModelIds(
     }
 
     const res = await ssrfSafeFetch(url, { method: 'GET', headers });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      // #608: a body we will not read is cancelled, never left on the connection.
+      await res.body?.cancel().catch(() => {});
+      return [];
+    }
 
     const data = (await res.json()) as Record<string, unknown>;
     const arr = data['data'] ?? data['models'];
@@ -12626,6 +13008,8 @@ export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ mes
 
     const res = await ssrfSafeFetch(url, { method: 'GET', headers });
     if (!res.ok) {
+      // #608: a body we will not read is cancelled, never left on the connection.
+      await res.body?.cancel().catch(() => {});
       // F-1 (audit #2): the remote body is NEVER reflected back to the UI —
       // it could contain anything the endpoint chooses to return, including
       // data from an internal service reached via SSRF. Status code only.
@@ -12968,7 +13352,20 @@ export async function getRootSystemPromptAction(): Promise<ActionResult<string>>
       version: runningNodalVersion(),
     };
 
-    const prompt = await buildSystemPrompt(agent, db, { origin: 'dashboard', deployment });
+    // Les outils intégrés que le job du root tient, par la règle unique du
+    // runner (#636) : sans eux l'aperçu retombait sur les seuls outils
+    // toujours actifs, et cachait chaque bloc qui suit la liste — l'index des
+    // skills d'abord (lot 2, voie H). Plus les outils que ses serveurs MCP lui
+    // prêtent, lus de leurs listes : sans eux, les consignes de ces serveurs,
+    // que le vrai job reçoit, manquaient à l'aperçu (revue Codex passe 4 de
+    // #659). Les connecteurs n'y sont pas.
+    const { names: builtinNames } = await resolveBuiltinToolNames(db, rootAgentId);
+    const availableToolNames = [...builtinNames, ...(await resolveMcpToolNames(db, rootAgentId))];
+    const prompt = await buildSystemPrompt(agent, db, {
+      origin: 'dashboard',
+      deployment,
+      availableToolNames,
+    });
     return ok(prompt);
   } catch (err) {
     console.error('[getRootSystemPromptAction]', err);
@@ -13467,13 +13864,15 @@ export async function sendChatMessageAction(
     const data = (await res.json().catch(() => null)) as {
       reply?: string;
       error?: string;
+      cutReason?: string;
     } | null;
     // An empty reply is NOT a failure: when the agent escalates via run_task it
     // may write no acknowledgment text (the dispatch card + job result carry the
     // info, and the UI refetches messages to render them). Only an HTTP error
     // (e.g. the runner's `empty_reply` glitch → 400) is a real failure.
     if (!res.ok) {
-      return fail('chat_failed', data?.error ?? 'The agent did not reply');
+      // Le même vocabulaire que le flux : une coupure se dit coupée (#484).
+      return fail('chat_failed', chatFailureText(data?.error ?? '', data?.cutReason ?? null));
     }
     revalidatePath('/chat');
     return ok({ reply: data?.reply ?? '' });

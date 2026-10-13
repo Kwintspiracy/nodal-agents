@@ -9,7 +9,7 @@
 // Même discipline que le jumeau Claude : on teste sur ce que la CLI a imprimé,
 // jamais sur ce qu'une page d'aide promet.
 
-import { CLI_RUNTIME_RUNS_SHELL_COMMANDS } from '@nodal-agents/tools';
+import { cliShellPosture } from '@nodal-agents/shared';
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -36,6 +36,7 @@ const BASE: CodexTurnOptions = {
   personality: 'You are Reviewer C.',
   cwd: 'C:/work',
   mode: 'read',
+  shellTools: [],
   timeoutMs: 60_000,
 };
 
@@ -376,7 +377,9 @@ describe('handleCodexLine sur le flux réel enregistré', () => {
         args[0] === 'exec' &&
         (sandbox === 'read-only' || sandbox === 'workspace-write') &&
         !args.includes('--ask-for-approval');
-      expect(runsWithoutHuman).toBe(CLI_RUNTIME_RUNS_SHELL_COMMANDS['codex']);
+      expect(runsWithoutHuman).toBe(
+        cliShellPosture('codex', { mode }, { autoRunPaused: false }).kind === 'shell',
+      );
     },
   );
 

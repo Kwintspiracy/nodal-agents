@@ -20,6 +20,7 @@ import {
   modelOptionLabel,
 } from '@nodal-agents/shared';
 import { prettyProviderName } from '@/lib/provider-names.ts';
+import { recipeOutcomeMessages } from '@/lib/recipe-outcome.ts';
 import { Plus } from '@phosphor-icons/react';
 import PrimaryButton from './ui/PrimaryButton.tsx';
 import Modal, { ModalFooter } from './ui/Modal.tsx';
@@ -214,27 +215,8 @@ export default function AgentForm(props: Props) {
         }
         const applied = result.data.recipe;
         if (applied) {
-          // Fail loud, not silent: an agent missing what its profile promised
-          // is quietly worse than the one asked for.
-          if (applied.skillsMissing.length > 0) {
-            toast.error(
-              `Agent created, but ${applied.skillsMissing.length} skill(s) could not be attached: ${applied.skillsMissing.join(', ')}`,
-            );
-          } else {
-            const parts = [`${applied.skillsAttached.length} skill(s) attached`];
-            if (applied.connectorsAttached.length > 0) {
-              parts.push(`${applied.connectorsAttached.length} connector(s) attached`);
-            }
-            if (applied.readOnlyApplied) parts.push('read-only');
-            toast.success(`Agent created — ${parts.join(', ')}`);
-            if (applied.connectorsToSetUp.length > 0) {
-              // A recommendation, not a failure: the panel said this was the
-              // user's move. Repeated here so it is not forgotten.
-              toast.info(
-                `Still to set up from Connectors: ${applied.connectorsToSetUp.join(', ')} — then attach it to this agent.`,
-              );
-            }
-          }
+          // Every part of the outcome is said, each on its own (#661).
+          for (const m of recipeOutcomeMessages(applied)) toast[m.kind](m.text);
         } else {
           toast.success('Agent created');
         }

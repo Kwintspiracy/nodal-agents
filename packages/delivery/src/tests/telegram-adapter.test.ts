@@ -33,6 +33,7 @@ describe('telegramAdapter.channel / capabilities', () => {
       threads: false,
       media: true,
       editMessage: true,
+      buttonLimits: { maxRows: 100, maxPerRow: 8, maxButtons: 100 },
     });
   });
 });
@@ -207,16 +208,71 @@ describe('telegramAdapter.sendApprovalCard', () => {
 
 describe('telegramAdapter.editMessageText', () => {
   it('calls editMessageText with a numeric message_id and the new text', async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValueOnce(makeFetchResponse(200, { ok: true }));
+    // Telegram answers an edit with the edited Message (or `true` for an
+    // inline message) in `result` — a reply without it is a failure.
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(200, { ok: true, result: true }),
+    );
 
-    await telegramAdapter.editMessageText!(CREDS, FAKE_CHAT_ID, '42', 'Resolved ✅');
+    const result = await telegramAdapter.editMessageText!(CREDS, FAKE_CHAT_ID, '42', 'Resolved ✅');
 
+    expect(result).toEqual({ ok: true });
     const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
     expect(String(url)).toBe(`https://api.telegram.org/bot${FAKE_TOKEN}/editMessageText`);
     const body = JSON.parse(init?.body as string) as Record<string, unknown>;
     expect(body['message_id']).toBe(42);
     expect(body['text']).toBe('Resolved ✅');
     expect(body['reply_markup']).toEqual({ inline_keyboard: [] });
+  });
+
+  it('never throws, and RETURNS the failure — a failed edit is not a success (#637)', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(500, { ok: false, description: 'Internal Server Error' }),
+    );
+
+    await expect(
+      telegramAdapter.editMessageText!(CREDS, FAKE_CHAT_ID, '42', 'Resolved ✅'),
+    ).resolves.toEqual({
+      ok: false,
+      error: 'telegram_request_failed: Internal Server Error',
+    });
+  });
+
+  it('puts the given buttons on the edited message, as an inline keyboard', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(200, { ok: true, result: true }),
+    );
+
+    await telegramAdapter.editMessageText!(CREDS, FAKE_CHAT_ID, '42', 'Sure?', [
+      [
+        { label: 'Yes', callbackData: 'apr:x:wc' },
+        { label: 'Back', callbackData: 'apr:x:wb' },
+      ],
+    ]);
+
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body['reply_markup']).toEqual({
+      inline_keyboard: [
+        [
+          { text: 'Yes', callback_data: 'apr:x:wc' },
+          { text: 'Back', callback_data: 'apr:x:wb' },
+        ],
+      ],
+    });
+  });
+
+  it('"message is not modified" is a success: the message already reads that text', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(400, {
+        ok: false,
+        description: 'Bad Request: message is not modified: specified new message content',
+      }),
+    );
+
+    await expect(
+      telegramAdapter.editMessageText!(CREDS, FAKE_CHAT_ID, '42', 'Resolved ✅'),
+    ).resolves.toEqual({ ok: true });
   });
 });
 
@@ -254,5 +310,77 @@ describe('telegramAdapter.validateCredentials', () => {
     await expect(telegramAdapter.validateCredentials(CREDS)).rejects.toSatisfy(
       (err: unknown) => err instanceof DeliveryError && err.code === 'telegram_invalid_token',
     );
+  });
+});
+
+// #613 — the runner splits, the model never does. The prompt tells the agent
+// "a long text is split automatically" on the strength of this adapter's
+// declaration; this proves the declaration is what sendText does.
+describe('telegramAdapter.text — what a sent text becomes (#613)', () => {
+  it('declares that no mark renders: sendText sets no parse_mode, so markup arrives as typed', async () => {
+    expect(telegramAdapter.text.renders).toEqual([]);
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(200, { ok: true, result: { message_id: 1 } }),
+    );
+    await telegramAdapter.sendText(CREDS, FAKE_CHAT_ID, '**bold** _x_');
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body).toEqual({ chat_id: FAKE_CHAT_ID, text: '**bold** _x_' });
+  });
+
+  it('a 9 000-character text passed to sendText goes out as 3 messages, in order, whole', async () => {
+    vi.mocked(globalThis.fetch).mockImplementation(() =>
+      Promise.resolve(makeFetchResponse(200, { ok: true, result: { message_id: 7 } })),
+    );
+    // 90 lines of 99 characters + newline, minus the last newline: 8 999.
+    const text = Array.from(
+      { length: 90 },
+      (_, i) => `${String(i).padStart(2, '0')}${'x'.repeat(97)}`,
+    ).join('\n');
+    expect(text.length).toBeGreaterThanOrEqual(8999);
+
+    await telegramAdapter.sendText(CREDS, FAKE_CHAT_ID, text);
+
+    const sent = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.map(([, init]) => (JSON.parse(init?.body as string) as { text: string }).text);
+    expect(sent).toHaveLength(3);
+    for (const part of sent)
+      expect(part.length).toBeLessThanOrEqual(telegramAdapter.text.maxMessageChars);
+    expect(sent.join('\n')).toBe(text);
+  });
+});
+
+// #613, review of #615 — without a length cap, one reply is several messages.
+// A failure on the 3rd of 4 used to leave 1 and 2 delivered with nothing to
+// say so: the retry resent all four. The error says how far it got, and a
+// send resumed from there delivers only the rest.
+describe('telegramAdapter.sendText — a send that fails partway resumes, never repeats (#615)', () => {
+  it('fails on part 3 of 4 with its progress; resumed, only parts 3 and 4 go out', async () => {
+    const max = telegramAdapter.text.maxMessageChars;
+    const text = 'y'.repeat(3 * max + 100);
+    let call = 0;
+    vi.mocked(globalThis.fetch).mockImplementation(() => {
+      call += 1;
+      return Promise.resolve(
+        call === 3
+          ? makeFetchResponse(400, { ok: false, error_code: 400, description: 'Bad Request' })
+          : makeFetchResponse(200, { ok: true, result: { message_id: call } }),
+      );
+    });
+
+    const err = await telegramAdapter.sendText(CREDS, FAKE_CHAT_ID, text).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeliveryError);
+    expect((err as DeliveryError).partialProgress).toEqual({ sentChunks: 2, totalChunks: 4 });
+
+    await telegramAdapter.sendText(CREDS, FAKE_CHAT_ID, text, { fromChunk: 2 });
+
+    const bodies = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.map(([, init]) => (JSON.parse(init?.body as string) as { text: string }).text);
+    // Call 3 failed; what reached the user is every other call, in order.
+    const delivered = bodies.filter((_, i) => i !== 2);
+    expect(delivered).toHaveLength(4);
+    expect(delivered.join('')).toBe(text);
   });
 });

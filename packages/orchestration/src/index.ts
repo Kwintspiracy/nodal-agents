@@ -74,6 +74,7 @@ export { detectOrchestratorMode } from './orchestrator-mode';
 // ─── Router: assign tools ─────────────────────────────────────────────────────
 export { generateAssignTools, getChildAgents } from './router/assign-tools';
 export type { AssignInput } from './router/assign-tools';
+export { generateDelegationTools } from './delegation-tools';
 
 // ─── Router: tool availability (B2 brief validation) ─────────────────────────
 export {
@@ -106,7 +107,6 @@ export type {
 
 // ─── Router: le verdict de revue est un livrable (#124) ───────────────────────
 export {
-  readDeliveredReviewVerdict,
   readFinalReviewVerdict,
   parseReviewVerdictOutput,
   // #59 — la règle qui dit si une relecture demande des corrections, et le
@@ -117,6 +117,22 @@ export {
   REVIEW_CHANGES_REQUESTED,
 } from './router/review-verdict';
 export type { ReviewVerdictRecord, ReviewVerdictFinding } from './router/review-verdict';
+
+// ─── Router: ce qu'un job a livré, lu en un seul endroit (#646) ───────────────
+export {
+  readJobDeliverables,
+  readJobDeliverable,
+  readChildDeliverables,
+  deliveredSomething,
+  verdictsBlockDelivery,
+  renderDeliveredVerdicts,
+  appendDeliveredVerdicts,
+} from './router/job-deliverable';
+export type {
+  JobDeliverable,
+  AuthoredReviewVerdict,
+  VerdictAuthor,
+} from './router/job-deliverable';
 
 // ─── Router: pas de seconde revue de la même chose (#173) ─────────────────────
 export {
@@ -144,6 +160,7 @@ export { checkRootJobComplete, getPendingTasksForRoot } from './planner/completi
 // ─── Team block (auto-generated from DB) ─────────────────────────────────────
 export { buildTeamBlock } from './team-block';
 export { resolveBuiltinToolNames } from './builtin-tool-names';
+export { resolveMcpToolNames } from './mcp-tool-names';
 export { holdersOfPath } from './path-holders';
 export type { PathHolders, RosterFolders } from './path-holders';
 export type { BuiltinToolNames } from './builtin-tool-names';
@@ -151,12 +168,20 @@ export type { BuiltinToolNames } from './builtin-tool-names';
 // ─── System prompt assembly ───────────────────────────────────────────────────
 export {
   buildSystemPrompt,
+  buildMcpServerGuidanceBlock,
+  MCP_SERVER_INSTRUCTIONS_PROMPT_CAP,
+  MCP_GUIDANCE_PROMPT_TOTAL_CAP,
+  type McpGuidanceServer,
   buildRuntimeBlock,
   REGISTERED_PROJECTS_IN_PROMPT,
+  RUNNING_WORK_MAX_RUNS,
+  RUNNING_WORK_MAX_JOBS,
+  buildRunningWorkBlock,
 } from './system-prompt';
 export type {
   JobContext,
   DeploymentContext,
   CodeProjectSummary,
   ConversationContext,
+  RunningWork,
 } from './system-prompt';

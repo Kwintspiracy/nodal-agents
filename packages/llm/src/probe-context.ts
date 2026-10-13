@@ -4,6 +4,8 @@
 // LLM-key save time) to pre-fill entity_llm_keys.context_window. Purely
 // best-effort: any failure returns null and the user sets the value by hand.
 
+import { providerFetch } from './transport';
+
 /**
  * Try to read the context window (tokens) of the model served at `baseURL`.
  * Returns null when it can't be determined (endpoint unreachable, non-local
@@ -41,8 +43,12 @@ export async function probeContextWindow(opts: {
   }
 
   try {
-    const res = await fetch(`${origin}/api/v0/models`, signal ? { signal } : {});
-    if (!res.ok) return null;
+    const res = await providerFetch(`${origin}/api/v0/models`, signal ? { signal } : {});
+    if (!res.ok) {
+      // #608: a body we will not read is cancelled, never left on the connection.
+      await res.body?.cancel().catch(() => {});
+      return null;
+    }
     const body = (await res.json()) as
       | { data?: Array<Record<string, unknown>> }
       | Array<Record<string, unknown>>;

@@ -17,6 +17,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { experimental_generateSpeech as generateSpeech } from 'ai';
 import { PROVIDER_PRESETS } from './registry';
 import { ProviderConfigError } from '../errors';
+import { providerFetch } from '../transport';
 
 export interface SpeechRequest {
   /** OpenRouter model id, e.g. `google/gemini-3.8-flash-tts`. */
@@ -113,7 +114,7 @@ export function createOpenRouterSpeech(
 ): SpeechGenerator {
   if (!apiKey) throw new ProviderConfigError('openrouter speech requires an apiKey');
   const baseURL = opts.baseURL ?? PROVIDER_PRESETS.openrouter.defaultBaseURL;
-  const send = opts.fetch ?? fetch;
+  const send = opts.fetch ?? providerFetch;
 
   return async (request) => {
     const styled =

@@ -10,7 +10,8 @@
 //     2. content changed: contentChanged=true, updateAvailable=true
 //     3. scripts changed (same path, different bytes): scriptsChanged=true,
 //        contentChanged=false (the wrapped note only lists paths/counts)
-//     4. 404 upstream: 'not_found', update_available=false, checkedAt stamped
+//     4. 404 upstream: 'source_problem' (source_not_found) recorded, no diff
+//        claimed, checkedAt stamped — lifecycle in the suite below
 //     5. rate limit (403): 'rate_limited', NOTHING written (row untouched)
 //     6. unparseable source: 'unparseable', checkedAt IS stamped (m3, Opus
 //        review) but update_available/update_detail are left untouched
@@ -400,7 +401,7 @@ describe('update-flow', () => {
       });
     });
 
-    it('upstream 404: not_found, update_available stays false, checkedAt is still stamped', async () => {
+    it('upstream 404: source_not_found recorded, no diff claimed, checkedAt is still stamped', async () => {
       const { db } = await spinUpTestDb();
       const seed = await seedMinimal(db);
       const slug = `chk-404-${Date.now()}`;
@@ -428,10 +429,18 @@ describe('update-flow', () => {
         skillStoreDir: store,
       });
 
-      expect(outcome).toEqual({ kind: 'not_found' });
+      expect(outcome).toEqual({
+        kind: 'source_problem',
+        problem: 'source_not_found',
+        reason: expect.stringMatching(/HTTP 404/),
+      });
 
       const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
       expect(after!.updateAvailable).toBe(false);
+      expect(after!.updateDetail).toEqual({
+        sourceProblem: 'source_not_found',
+        checkedAt: expect.any(String),
+      });
       expect(after!.lastUpdateCheckAt).not.toBeNull();
     });
 
@@ -514,6 +523,129 @@ describe('update-flow', () => {
       // last_update_check_at IS stamped — an unparseable source must not
       // re-consume a batch slot on every single tick forever.
       expect(after!.lastUpdateCheckAt).not.toBeNull();
+    });
+  });
+
+  // ── a source that no longer holds the skill ──────────────────────────────
+  //
+  // Codex, PR #548 pass 3: the check used to write the SAME shape as a healthy
+  // "no update" (update_available=false, contentChanged=false,
+  // scriptsChanged=false) when the source was gone or served another skill,
+  // so a real pending badge silently turned into "Installed". The row must
+  // carry the problem instead, claim no diff, and let a later good check
+  // clear it. Both causes, from a real pending update.
+
+  describe('a source that no longer holds the skill @cap:apprendre-une-skill/moteur', () => {
+    async function installWithPendingUpdate(slug: string) {
+      const { db } = await spinUpTestDb();
+      const seed = await seedMinimal(db);
+      mockClawhubSkill(slug, [['SKILL.md', `---\nname: ${slug}\ndescription: d\n---\nHello v1`]]);
+      await installCommunitySkill({
+        db: db as never,
+        source: `https://clawhub.ai/pub/${slug}`,
+        skillStoreDir: store,
+        entityId: seed.entityId,
+      });
+      const [row] = await db.select().from(agentSkills).where(eq(agentSkills.slug, slug));
+      if (!row) throw new Error('fixture not installed');
+      const check = () =>
+        checkSkillUpdate({
+          db: db as never,
+          skill: {
+            id: row.id,
+            slug: row.slug,
+            source: row.source!,
+            defaultContent: row.defaultContent,
+            installedScripts: row.installedScripts,
+          },
+          skillStoreDir: store,
+        });
+      const readRow = async () => {
+        const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
+        return after!;
+      };
+
+      // A real pending update first: upstream moved to v2.
+      mockClawhubSkill(slug, [['SKILL.md', `---\nname: ${slug}\ndescription: d\n---\nHello v2`]]);
+      await check();
+      const pending = await readRow();
+      expect(pending.updateAvailable).toBe(true);
+      expect(pending.updateDetail).toMatchObject({ contentChanged: true });
+      return { check, readRow };
+    }
+
+    it('identity_changed: the badge becomes the problem, with the slug upstream now declares; no "unchanged" claim', async () => {
+      const slug = `chk-identity-${Date.now()}`;
+      const { check, readRow } = await installWithPendingUpdate(slug);
+
+      mockClawhubSkill(slug, [
+        ['SKILL.md', `---\nname: other-skill\ndescription: d\n---\nSomething else`],
+      ]);
+      const outcome = await check();
+      expect(outcome).toEqual({
+        kind: 'source_problem',
+        problem: 'identity_changed',
+        reason: expect.stringMatching(/serves a skill named "other-skill"/),
+      });
+      const after = await readRow();
+      expect(after.updateAvailable).toBe(false);
+      expect(after.updateDetail).toEqual({
+        sourceProblem: 'identity_changed',
+        upstreamSlug: 'other-skill',
+        checkedAt: expect.any(String),
+      });
+      expect(after.updateDetail).not.toHaveProperty('contentChanged');
+      expect(after.updateDetail).not.toHaveProperty('scriptsChanged');
+    });
+
+    it('source_not_found: a 404 after a pending update records the problem, not "no update"', async () => {
+      const slug = `chk-gone-${Date.now()}`;
+      const { check, readRow } = await installWithPendingUpdate(slug);
+
+      mockClawhubStatus(slug, 404);
+      const outcome = await check();
+      expect(outcome).toMatchObject({ kind: 'source_problem', problem: 'source_not_found' });
+      const after = await readRow();
+      expect(after.updateAvailable).toBe(false);
+      expect(after.updateDetail).toEqual({
+        sourceProblem: 'source_not_found',
+        checkedAt: expect.any(String),
+      });
+    });
+
+    it('source_not_found: a source that no longer holds any SKILL.md is the same problem', async () => {
+      const slug = `chk-nomanifest-${Date.now()}`;
+      const { check, readRow } = await installWithPendingUpdate(slug);
+
+      mockClawhubSkill(slug, [['README.md', 'moved elsewhere']]);
+      const outcome = await check();
+      expect(outcome).toMatchObject({ kind: 'source_problem', problem: 'source_not_found' });
+      expect((await readRow()).updateDetail).toEqual({
+        sourceProblem: 'source_not_found',
+        checkedAt: expect.any(String),
+      });
+    });
+
+    it('a later good check clears the problem and reports the real diff again', async () => {
+      const slug = `chk-back-${Date.now()}`;
+      const { check, readRow } = await installWithPendingUpdate(slug);
+
+      mockClawhubSkill(slug, [['SKILL.md', `---\nname: other-skill\ndescription: d\n---\nX`]]);
+      await check();
+      expect((await readRow()).updateDetail).toMatchObject({ sourceProblem: 'identity_changed' });
+
+      // Upstream is this skill again, still at v2.
+      mockClawhubSkill(slug, [['SKILL.md', `---\nname: ${slug}\ndescription: d\n---\nHello v2`]]);
+      const outcome = await check();
+      expect(outcome).toMatchObject({ kind: 'checked', contentChanged: true });
+      const after = await readRow();
+      expect(after.updateAvailable).toBe(true);
+      expect(after.updateDetail).toEqual({
+        contentChanged: true,
+        scriptsChanged: false,
+        scriptsState: 'clean',
+        checkedAt: expect.any(String),
+      });
     });
   });
 

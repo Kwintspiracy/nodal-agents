@@ -12,15 +12,17 @@ import {
   connectors as connectorsTable,
   agentMcpServers,
   mcpServers,
+  entities,
 } from '@nodal-agents/db';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
-import { CLI_RUNTIME_RUNS_SHELL_COMMANDS, resolveRunWorkspaces } from '@nodal-agents/tools';
+import { resolveRunWorkspaces } from '@nodal-agents/tools';
 import { resolveBuiltinToolNames } from './builtin-tool-names';
 import { DEFAULT_LIMITS, remainingDelegationHops } from './chain-counters';
-import { modelCanSeeImages } from '@nodal-agents/shared';
+import { cliShellPosture, modelCanSeeImages, RUNTIME_CLI } from '@nodal-agents/shared';
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
 import { summarizePurpose } from './router/assign-tools';
+import { DELEGATION_SCOPE_RULE } from './router/delegation-scope';
 import { loadWorkspaceReach, describeOutsideAgent } from './reach';
 import type { ReachMeans } from './reach';
 
@@ -29,7 +31,24 @@ import type { ReachMeans } from './reach';
 // No bound on the folders or programs an entry lists (Codex review of #506,
 // pass 2): the roster is declared COMPLETE, and a "+N more" made the
 // orchestrator treat the Nth folder as nobody's. The prompt cost of a long
-// list was a P3; a false "cannot" is worse.
+// list was a P3; a false "cannot" is worse. The same holds for the tools
+// after a connector or MCP server (#611, review of #653 pass 2): a bound hid
+// the one that mattered (Send email 21st of Gmail, the print request 12th of
+// its server).
+
+/** Record that `agentId` holds `names` through `slug`, merged with any earlier instance. */
+function addHeld(
+  map: Map<string, Map<string, Set<string>>>,
+  agentId: string,
+  slug: string,
+  names: readonly string[],
+): void {
+  const bySlug = map.get(agentId) ?? new Map<string, Set<string>>();
+  const held = bySlug.get(slug) ?? new Set<string>();
+  for (const n of names) held.add(n);
+  bySlug.set(slug, held);
+  map.set(agentId, bySlug);
+}
 
 /**
  * Build the `## Your team` section for an orchestrator's system prompt.
@@ -106,6 +125,7 @@ export async function buildTeamBlock(
       agentModel: agents.model,
       agentRuntime: agents.runtime,
       agentCommandAllowlist: agents.commandAllowlist,
+      agentCliPermissions: agents.cliPermissions,
     })
     .from(agentAssignments)
     .innerJoin(agents, eq(agentAssignments.subAgentId, agents.id))
@@ -135,6 +155,18 @@ export async function buildTeamBlock(
 
   const parent = parentRow[0];
   if (!parent) return '';
+
+  // The workspace's emergency brake: it takes the shell from a CLI turn (#494),
+  // so the roster says what a delegated turn would get NOW.
+  // An agent with no workspace has no brake to read.
+  const [entityRow] = parent.entityId
+    ? await db
+        .select({ autoRunPaused: entities.autoRunPaused })
+        .from(entities)
+        .where(eq(entities.id, parent.entityId))
+        .limit(1)
+    : [];
+  const autoRunPaused = entityRow?.autoRunPaused ?? false;
 
   const childrenForMode = childRows.map((r) => ({
     role: r.agentRole as 'agent' | 'orchestrator' | 'system',
@@ -186,9 +218,10 @@ export async function buildTeamBlock(
   // `agent_workspaces` alone and said "Folders: none" of an agent that reads
   // and writes the shared folder (Codex review of #506, P1).
   const folderMap = new Map<string, string[]>();
-  // Whether each agent's job whitelist carries `run_command` — the very
-  // computation the runner makes (`resolveBuiltinToolNames`), orchestrators
-  // included: their branch never adds skill-required builtins (Codex, P1).
+  // Whether each agent's job whitelist carries `run_command` — the very rule
+  // the runner's whitelist applies (`agentBuiltinToolNames`, read here through
+  // `resolveBuiltinToolNames`), the same for an orchestrator teammate as for a
+  // worker (#636).
   const runCommandMap = new Map<string, boolean>();
   await Promise.all(
     childRows.map(async (r) => {
@@ -221,8 +254,9 @@ export async function buildTeamBlock(
     ),
   );
 
-  // For each child: list of (slug, tool names enabled)
-  const connectorMap = new Map<string, { slug: string; toolNames: string[] }[]>();
+  // For each child: connector slug → the operations it holds. Two instances of
+  // one connector give the union of what they enable.
+  const connectorMap = new Map<string, Map<string, Set<string>>>();
   for (const batch of connectorRows) {
     for (const r of batch) {
       const entry = ADAPTER_REGISTRY[r.slug];
@@ -233,9 +267,7 @@ export async function buildTeamBlock(
           ? allToolNames
           : allToolNames.filter((n) => r.enabledOperations!.includes(n));
       if (toolNames.length === 0) continue;
-      const existing = connectorMap.get(r.agentId) ?? [];
-      existing.push({ slug: r.slug, toolNames });
-      connectorMap.set(r.agentId, existing);
+      addHeld(connectorMap, r.agentId, r.slug, toolNames);
     }
   }
 
@@ -261,15 +293,13 @@ export async function buildTeamBlock(
     ),
   );
 
-  // For each child: list of (server-slug, namespaced tool names enabled).
-  // Tool names match the runtime convention `<sanitized-slug>__<original-name>`
-  // (see packages/adapters/mcp/src/tools.ts) so the orchestrator sees the
-  // exact tool identifier the child agent has at runtime.
-  const mcpMap = new Map<string, { slug: string; toolNames: string[] }[]>();
+  // For each child: server slug → the tools it holds (enabled ∩ available), by
+  // the name the server gives them. The runtime prefix `<slug>__` would repeat
+  // the server slug the entry already starts with.
+  const mcpMap = new Map<string, Map<string, Set<string>>>();
   for (const batch of mcpRows) {
     for (const r of batch) {
       if (r.serverActive === false) continue;
-      const prefix = r.serverSlug.replace(/-/g, '_');
       const available = Array.isArray(r.availableTools)
         ? (r.availableTools as Array<{ name?: unknown }>)
             .map((t) => (t && typeof t.name === 'string' ? t.name : null))
@@ -281,50 +311,75 @@ export async function buildTeamBlock(
         : null;
       const kept = enabled === null ? available : available.filter((n) => enabled.has(n));
       if (kept.length === 0) continue;
-      const toolNames = kept.map((n) => `${prefix}__${n}`);
-      const existing = mcpMap.get(r.agentId) ?? [];
-      existing.push({ slug: r.serverSlug, toolNames });
-      mcpMap.set(r.agentId, existing);
+      addHeld(mcpMap, r.agentId, r.serverSlug, kept);
     }
   }
 
-  // Capability hint = the connector/MCP NAMES the child can use (not the full
-  // per-operation list, which was noise the orchestrator couldn't route on). The
-  // name conveys the capability so the orchestrator won't think the child lacks
-  // an integration.
+  // Each entry says what the teammate can DO with it (#611). A bare slug does
+  // not: job 465446e7 was asked to print, the only teammate that could showed
+  // its printing server as a slug that says nothing of printing, and nothing
+  // was printed.
+  // One form for every connector and every MCP server, and the words come from
+  // the data alone (invariant #1): what this teammate holds, one name per
+  // operation or tool. No label written for the roster, which would also speak
+  // for a whole connector the teammate may hold only in part (Codex review of
+  // #653, pass 1).
+  // A connector operation is named by its adapter's own name for it ("Web
+  // search"), not its tool id (`tavily_search`): that id is a tool of the
+  // platform, and this prompt names only the tools its reader holds (#559).
+  // An MCP tool's stored name is not a tool id here: at run time it carries
+  // the `<slug>__` prefix.
   function formatConnectorsTag(subAgentId: string): string {
-    const conn = connectorMap.get(subAgentId);
-    const mcp = mcpMap.get(subAgentId);
-    const names: string[] = [];
-    if (conn) names.push(...conn.map((c) => c.slug));
-    if (mcp) names.push(...mcp.map((c) => c.slug));
-    if (names.length === 0) return '';
-    return `\n  Connectors: ${[...new Set(names)].join(', ')}`;
+    const entries: string[] = [];
+    for (const [slug, held] of connectorMap.get(subAgentId) ?? []) {
+      // In the adapter's order, whichever instance gave each operation.
+      const names = ADAPTER_REGISTRY[slug]!.operations.filter((o) => held.has(o.slug)).map(
+        (o) => o.name,
+      );
+      entries.push(`${slug} (${names.join(', ')})`);
+    }
+    for (const [slug, held] of mcpMap.get(subAgentId) ?? []) {
+      entries.push(`${slug} (${[...held].join(', ')})`);
+    }
+    if (entries.length === 0) return '';
+    return `\n  Connectors: ${entries.join('; ')}`;
   }
 
   // Whether the agent can run a shell command (#506), from the database and
   // the same way for every agent. On the Nodal runtime it is the `run_command`
   // tool, unlocked by a skill and narrowed by `command_allowlist` (an EMPTY
   // list refuses everything). On a CLI runtime that tool does not exist: the
-  // CLI's own posture decides, which `CLI_RUNTIME_RUNS_SHELL_COMMANDS` states
-  // next to the argv that produces it. Run 8dfe4684 sent a render to an agent
-  // on the claude-code runtime, which refuses every command.
+  // turn's shell posture decides (#494), from the agent's own `cli_permissions`
+  // and the workspace brake, through `cliShellPosture`: the very rule the
+  // runner applies to the argv of that agent's turn. Run 8dfe4684 sent a
+  // render to an agent on the claude-code runtime, which refused every command.
   function formatShellTag(
     subAgentId: string,
     runtime: string,
     allowlist: readonly string[] | null,
+    cliPermissions: Parameters<typeof cliShellPosture>[1],
   ): string {
     let canRun: boolean;
     if (runtime === 'nodal') {
       canRun = (runCommandMap.get(subAgentId) ?? false) && allowlist?.length !== 0;
     } else {
-      const cli = CLI_RUNTIME_RUNS_SHELL_COMMANDS[runtime];
+      const cli = RUNTIME_CLI[runtime];
       // The DB check constraint admits no other value; a newer base that
       // does must be taught here, never guessed (invariant #4).
       if (cli === undefined) {
         throw new Error(`buildTeamBlock: unknown agent runtime "${runtime}" for ${subAgentId}`);
       }
-      canRun = cli;
+      const posture = cliShellPosture(cli, cliPermissions, { autoRunPaused });
+      // Every posture is said as the runner applies it: a REFUSED turn (a
+      // runtime that cannot drop its shell, under the brake) does not start
+      // at all, so "no shell" alone would send it work it will refuse.
+      if (posture.kind === 'refused') {
+        return (
+          '\n  Shell commands: no' +
+          '\n  Unavailable: the workspace emergency brake is on, and this runtime cannot start a turn without a shell.'
+        );
+      }
+      canRun = posture.kind === 'shell';
     }
     if (!canRun) return '\n  Shell commands: no';
     if (runtime === 'nodal' && allowlist && allowlist.length > 0) {
@@ -423,6 +478,10 @@ export async function buildTeamBlock(
     lines.push(
       'Pick ONE style per request — do not mix them in the same job. ' + defaultLean + '\n',
     );
+    // What a brief may ask of a teammate, whichever route carries it: said
+    // once, here, where every job holding a delegation tool reads it (this
+    // branch follows the whitelist's own rule). See delegation-scope.ts.
+    lines.push(DELEGATION_SCOPE_RULE + '\n');
     // Une règle « ne dicte pas de chemin en déléguant » a vécu ici quelques
     // heures le 26/08. Retirée : c'est une INSTRUCTION D'AGENT, pas une loi du
     // harnais (invariant #3 — « fix at agent layer, never patch the runtime »).
@@ -450,6 +509,7 @@ export async function buildTeamBlock(
       agentModel,
       agentRuntime,
       agentCommandAllowlist,
+      agentCliPermissions,
     } = row;
     const toolSlug = agentSlug.replace(/-/g, '_');
     // What the agent is FOR (summary of its personality) — drives correct routing.
@@ -476,7 +536,12 @@ export async function buildTeamBlock(
     const folders = folderMap.get(subAgentId);
     const foldersTag = `\n  Folders: ${folders && folders.length > 0 ? folders.join('; ') : 'none'}`;
     const runtimeTag = `\n  Runtime: ${agentRuntime}`;
-    const shellTag = formatShellTag(subAgentId, agentRuntime, agentCommandAllowlist);
+    const shellTag = formatShellTag(
+      subAgentId,
+      agentRuntime,
+      agentCommandAllowlist,
+      agentCliPermissions,
+    );
     const capabilityTags = `${connectorsTag}${foldersTag}${runtimeTag}${shellTag}`;
     const roleTag = agentRole === 'orchestrator' ? ' (orchestrator)' : '';
     const instrTag = instructions ? `\n  Instructions: ${instructions}` : '';
@@ -509,18 +574,50 @@ export async function buildTeamBlock(
   // (Codex review of #473, pass 4): delegate only where a delegation tool
   // exists; through the run_task job on chat; otherwise do what your own tools
   // cover, and name the agent that would have the means in a blocked result.
-  const footerRoute =
+  //
+  // Wherever a hand-off exists, the same two triggers lead to it (#601): a
+  // request this agent cannot serve, and an EXPLICIT request for the work a
+  // teammate's entry announces as its specialty — which goes to that teammate
+  // even when one of this agent's own tools could do a thin version of it. Run
+  // 4ca78b68 answered "do a research …" from memory, ace9212a ran one
+  // web_search itself, with a research agent on the team. The rule names no
+  // agent and no domain: the specialty is whatever the roster above says. A
+  // Purpose alone is not enough: the entry must show the means (a teammate
+  // announcing test runs with "Shell commands: no" is not one), the wording
+  // the failed-delegation fallback above already uses (#603, pass 4).
+  //
+  // What decides is whether the user asks for the WORK, not the politeness of
+  // the form: "can you do a … on X?" asks for the work, "what is …?" only for
+  // an answer (Reviewer A on #603, P2). On Nodal itself the line is the one the
+  // "A question about Nodal is yours" baseline rule draws (#455, catalog
+  // platform-questions.ts, in the same prompt), in its own words: work AROUND
+  // it (a code review, a fix, a skill) is work like any other; knowledge OF it
+  // stays with the orchestrator even asked for as work — run 6f08b1b8 spent
+  // 192,074 tokens researching a changelog through a teammate (#603, passes
+  // 1 to 3).
+  const routeToMatch =
     reachMeans === 'delegate'
       ? 'A request that needs a shell command goes only to an agent whose Shell commands is ' +
         'yes. Before saying you cannot do something, scan the list: if any agent’s ' +
         'skills/connectors match the request, delegate to it.'
-      : reachMeans === 'escalate'
-        ? 'Before saying you cannot do something, scan the list: if any agent’s ' +
-          'skills/connectors match the request, start the work with `run_task` and name that ' +
-          'agent in the instruction; the job it starts is the one that hands it on.'
-        : 'You cannot hand work to these agents from here. Do yourself what your own tools ' +
-          'cover; for the rest, call return_result with a blocked status that names the agent ' +
-          'whose skills, connectors, folders or Shell commands would have the means.';
+      : 'Before saying you cannot do something, scan the list: if any agent’s ' +
+        'skills/connectors match the request, start the work with `run_task` and name that ' +
+        'agent in the instruction; the job it starts is the one that hands it on.';
+  const footerRoute =
+    reachMeans === 'none'
+      ? 'You cannot hand work to these agents from here. Do yourself what your own tools ' +
+        'cover; for the rest, call return_result with a blocked status that names the agent ' +
+        'whose skills, connectors, folders or Shell commands would have the means.'
+      : routeToMatch +
+        ' When the user asks you to DO a kind of work that an agent’s entry above announces ' +
+        'as its specialty (its Purpose or Skills) and whose entry shows the means that work ' +
+        'needs, do the same with that agent, even when one ' +
+        'of your own tools could do a thin version of it and even when you believe you already ' +
+        'know the answer. The words decide, not the politeness: “do a … on X” or “can you do a ' +
+        '… on X?” asks for the work; a question that only wants an answer (“what is …?”) stays ' +
+        'yours. A teammate can be asked for work AROUND Nodal like any other work (reviewing ' +
+        'its code, for one), never for knowledge OF the platform, even asked for as work (a ' +
+        'research on its changelog, for one): that stays yours.';
   lines.push(
     '\n⚠️ The roster above is the COMPLETE, GROUND-TRUTH list of your team and their ' +
       'capabilities. ONLY ever reference agents, skills, connectors, tools, or folders that ' +

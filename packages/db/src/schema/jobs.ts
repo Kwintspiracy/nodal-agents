@@ -13,7 +13,7 @@ import {
   check,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import type { JobResultKind } from '@nodal-agents/shared';
+import type { InboxEntry, JobResultKind } from '@nodal-agents/shared';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
 import { agentSchedules } from './schedules.ts';
@@ -32,6 +32,19 @@ import { agentSchedules } from './schedules.ts';
  * the human-readable name at fire time; `triggeredAt` is the ISO timestamp the
  * runner received the request.
  */
+/** #444 — l'appel au modèle en cours, tel que son flux le rapporte (#484). */
+export type JobLiveProgress = {
+  turn: number;
+  textChars: number;
+  reasoningChars: number;
+  toolInputChars: number;
+  toolName: string | null;
+  /** ISO : début de l'appel. */
+  callStartedAt: string;
+  /** ISO : dernier morceau reçu ; `null` tant que rien n'est venu. */
+  lastProgressAt: string | null;
+};
+
 export type JobTriggerContext =
   | {
       type: 'cron';
@@ -99,6 +112,19 @@ export const agentJobs = pgTable(
     originalTask: text('original_task'),
     chatId: text('chat_id'),
     /**
+     * Le canal sur lequel `chat_id` a été RÉSOLU (#649, migration 0143), posé
+     * avec lui par `designateChat` (queries/designated-chat.ts) : le canal
+     * d'une demande venue d'un chat, celui de la routine (son canal de
+     * notification, ou Telegram en « auto »), du webhook, de « Send via
+     * Telegram », celui du parent pour un délégué. Un chat id ne dit pas à
+     * quelle plateforme il appartient : sans ce canal, le runner le devinait
+     * (premier canal actif de l'agent) et envoyait un chat Telegram sur
+     * Discord. NULL quand aucun chat n'est posé, ou que personne ne connaît sa
+     * plateforme (un chat explicite sur une routine en « auto ») : aucun
+     * lecteur ne l'utilise alors comme cible (designated-chat-readers.test.ts).
+     */
+    chatChannel: text('chat_channel'),
+    /**
      * La conversation dont ce job est un tour (migration 0059, redéfinie par
      * 0094 — P6). Ce n'est plus un uuid frappé à la volée : depuis P6, la
      * valeur RÉFÉRENCE une ligne `conversations`, et l'identité d'un fil est
@@ -132,7 +158,55 @@ export const agentJobs = pgTable(
      */
     triggerContext: jsonb('trigger_context').$type<JobTriggerContext>(),
     systemPrompt: text('system_prompt'),
+    /**
+     * Les noms (triés) des outils pour lesquels `systemPrompt` a été écrit
+     * (#559, migration 0136). Une reprise réutilise le prompt stocké — cache de
+     * préfixe — seulement si la liste recalculée est la même ; sinon le prompt
+     * est réécrit, pour ne jamais nommer un outil retiré pendant l'attente.
+     * NULL : prompt écrit avant cette colonne, réécrit à la reprise.
+     */
+    systemPromptTools: text('system_prompt_tools').array(),
+    /**
+     * La version de Nodal qui a écrit `systemPrompt` (migration 0142), celle
+     * que le lanceur passe au runner (NODAL_VERSION). Une reprise sous une autre
+     * version réécrit le prompt : il a été construit par un autre code. NULL :
+     * prompt écrit avant cette colonne, ou version inconnue du runner.
+     */
+    systemPromptVersion: text('system_prompt_version'),
+    /**
+     * Les outils différés que ce job a chargés, dans l'ordre (#612, migration
+     * 0138) : par `load_tools` ou par un appel direct. Le tour envoie les schémas
+     * `eager` puis ceux-ci. Hors de la transcription parce que la compaction en
+     * élague les entrées ; relue à chaque reprise, elle ne fait que croître.
+     */
+    loadedTools: text('loaded_tools').array(),
     messages: jsonb('messages').default(sql`'[]'::jsonb`),
+    /**
+     * Les messages transmis à ce job pendant qu'il vit (#531, migration 0141),
+     * par un tour de réponse (`message_conversation_run`). La boucle les vide
+     * en haut de chaque tour et avant de conclure sur une réponse en texte :
+     * ils entrent alors dans `messages`, marqués (`isInboxMessage`). Ce qui
+     * reste à la fin d'une TÊTE devient une nouvelle tête de la conversation
+     * (déclencheur `agent_jobs_inbox_relaunch`, sur la transition elle-même) ;
+     * ce qui reste à la fin d'un délégué est lu par son parent.
+     */
+    inbox: jsonb('inbox')
+      .$type<InboxEntry[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    /**
+     * La tête dont la file a fait naître celle-ci (#531, migration 0141) : la
+     * SUITE du même travail. `cancelJobTree` descend par ce lien comme par
+     * `parent_job_id`. NULL pour toute tête née d'un message.
+     */
+    relaunchedFromJobId: uuid('relaunched_from_job_id'),
+    /**
+     * Le travail pendant lequel ce job est né (#531, migration 0141) : un TOUR
+     * DE RÉPONSE, lancé par un message arrivé pendant que cette tête vivait. Il
+     * voit ce qui tourne et répond toujours. NULL pour une tête née dans une
+     * conversation au repos.
+     */
+    answersWhileJobId: uuid('answers_while_job_id'),
     /**
      * Flattened plain-text transcript (task + assistant text + tool outputs +
      * result) for full-text episodic search. Populated at job completion by
@@ -166,6 +240,15 @@ export const agentJobs = pgTable(
      * disent.
      */
     resultKind: text('result_kind').$type<JobResultKind>(),
+    /**
+     * Les lignes que le RUNNER a ajoutées au résultat, à part du texte de
+     * l'agent (#562, migration 0137) — aujourd'hui l'avis d'échec de
+     * délégation. `result` les porte toujours pour les écrans (#108) ; ce
+     * champ dit lesquelles sont du runner, et la relecture du fil les range
+     * dans le relevé du runner au lieu de les laisser dans la bouche de
+     * l'agent. NULL : rien d'ajouté.
+     */
+    runnerNotes: text('runner_notes').array(),
     error: text('error'),
     /**
      * LE GESTE que cet échec appelle, dit par le runner lui-même (#193).
@@ -239,6 +322,12 @@ export const agentJobs = pgTable(
      * identity (Anthropic, Ollama, etc.) or when the field was absent.
      */
     servedProvider: text('served_provider'),
+    /**
+     * #444 — ce que l'appel au modèle EN COURS a produit (le flux de #484),
+     * posé par le runner pendant l'appel et remis à NULL à sa fin. La page
+     * d'un run le montre tant que le job est `processing`. Migration 0134.
+     */
+    liveProgress: jsonb('live_progress').$type<JobLiveProgress>(),
     delegationDepth: integer('delegation_depth').default(0),
     /**
      * The slug of the last delegated child that failed on this parent job.
@@ -306,6 +395,13 @@ export const agentJobs = pgTable(
     resumedFromTurn: integer('resumed_from_turn'),
     /** Combien de fois ce job a été repris après un redémarrage (#443) — la borne anti-boucle. */
     restartResumes: integer('restart_resumes').notNull().default(0),
+    /**
+     * Le numéro de la prise en cours (#566, migration 0135) : `claimJob` le
+     * monte à chaque passage `pending → processing`. Le run qui a pris le job
+     * garde le sien et le relit avant chaque effet ; un autre numéro veut dire
+     * qu'un autre run tient ce job, et celui-ci n'a plus le droit d'agir.
+     */
+    claimGeneration: integer('claim_generation').notNull().default(0),
     /**
      * Les outils que le tour interrompu par la mort du runner avait déjà
      * exécutés et qui ne font pas que lire (#443) : rejouer ce tour les
@@ -408,6 +504,11 @@ export const agentJobs = pgTable(
     // tableau de bord. PARTIEL : la colonne est NULL sur presque tous les
     // jobs, et elle le redevient dès que la personne a regardé — l'index reste
     // donc de la taille de ce qui attend, pas de celle de la table.
+    // 0141 (#531) : la descente de l'arrêt par la tête relancée — partiel, la
+    // colonne est NULL sur presque tous les jobs.
+    index('idx_agent_jobs_relaunched_from')
+      .on(table.relaunchedFromJobId)
+      .where(sql`${table.relaunchedFromJobId} IS NOT NULL`),
     index('idx_agent_jobs_deliverable_check_due')
       .on(table.entityId)
       .where(sql`${table.deliverableCheckDueAt} IS NOT NULL`),

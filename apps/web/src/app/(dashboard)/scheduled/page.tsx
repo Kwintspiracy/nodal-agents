@@ -13,8 +13,8 @@ import { permanentRedirect } from 'next/navigation';
  * déjà envoyés. Une redirection permanente, parce que ce déménagement est
  * définitif — rien ne reviendra vivre ici.
  *
- * Les pages de run gardent leur adresse (`/scheduled/<id>`, le dossier voisin) :
- * ce sont elles que les notifications et les fils pointent.
+ * `/scheduled/<id>`, le dossier voisin, n'est plus une page de run : elle
+ * redirige vers `/runs/<id>`, qui range le run dans sa section (#501).
  */
 export default function ScheduledPage(): never {
   permanentRedirect('/automations');

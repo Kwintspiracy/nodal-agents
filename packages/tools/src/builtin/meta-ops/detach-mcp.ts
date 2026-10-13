@@ -26,9 +26,13 @@ export const detachMcpTool: ToolDefinition<typeof DetachMcpInput, DetachMcpOutpu
   card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
-    const mcpId = await resolveMcpServerId(ctx.db, ctx.entityId, input.mcpSlug);
-    if (!mcpId)
-      return { ok: false, error: `MCP server "${input.mcpSlug}" not found in this workspace.` };
+    const resolved = await resolveMcpServerId(ctx.db, ctx.entityId, input.mcpSlug);
+    if (!resolved.ok) {
+      return resolved.reason === 'ambiguous'
+        ? { ok: false, error: resolved.error }
+        : { ok: false, error: `MCP server "${input.mcpSlug}" not found in this workspace.` };
+    }
+    const mcpId = resolved.id;
     const agentId = await resolveAgentId(ctx.db, ctx.entityId, input.agentSlug);
     if (!agentId)
       return { ok: false, error: `Agent "${input.agentSlug}" not found in this workspace.` };

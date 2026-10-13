@@ -31,6 +31,8 @@ import { redactTranscriptForDisplay, redactSecretsInText } from '@nodal-agents/s
 import type { JobTriggerContext } from '@nodal-agents/db';
 import { buildConversationFeed } from './conversation-feed.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
+import { toElicitationView, type ElicitationView } from './elicitation-view.ts';
+import { readAttachmentViews } from './elicitation-attachments.ts';
 import { ROLLUP_MAX_DEPTH } from './coding-rollup.ts';
 import { redactAuditRow, redactReviewVerdict } from './redact-presented.ts';
 import type { getDb } from './server.ts';
@@ -258,7 +260,7 @@ export async function assembleJobFeeds(
   if (inputs.length === 0) return [];
   const ids = inputs.map((i) => i.job.id);
 
-  const [childRows, toolRows, llmRows, questionRows] = await Promise.all([
+  const [childRows, toolRows, llmRows, questionRows, elicitationRows] = await Promise.all([
     db
       .select({
         parentJobId: agentJobs.parentJobId,
@@ -335,6 +337,29 @@ export async function assembleJobFeeds(
         ),
       )
       .orderBy(approvalRequests.requestedAt),
+    // 0145 — les questions des SERVEURS MCP de ces travaux (élicitations), en
+    // attente et tranchées : la carte en attente est la seule surface du fil
+    // qui y répond, la tranchée garde ce qui a été envoyé. Filtrées en SQL sur
+    // `kind`, comme les questions : une approbation n'a rien à faire ici.
+    db
+      .select({
+        id: approvalRequests.id,
+        jobId: approvalRequests.jobId,
+        status: approvalRequests.status,
+        toolInput: approvalRequests.toolInput,
+        response: approvalRequests.response,
+        resolvedBy: approvalRequests.resolvedBy,
+        expiresAt: approvalRequests.expiresAt,
+      })
+      .from(approvalRequests)
+      .where(
+        and(
+          inArray(approvalRequests.jobId, ids),
+          eq(approvalRequests.entityId, entityId),
+          eq(approvalRequests.kind, 'elicitation'),
+        ),
+      )
+      .orderBy(approvalRequests.requestedAt),
   ]);
 
   /** Range les lignes sous leur job, en gardant l'ordre de la requête. */
@@ -404,6 +429,21 @@ export async function assembleJobFeeds(
   const toolsByJob = groupBy(toolRows, (r) => r.jobId);
   const llmByJob = groupBy(llmRows, (r) => r.jobId);
   const questionsByJob = groupBy(questionRows, (r) => r.jobId);
+  // Les images des élicitations, sans leurs octets, en une requête pour tous.
+  const attachmentsByRequest = await readAttachmentViews(
+    db,
+    elicitationRows.map((r) => r.id),
+  );
+  const elicitationsByJob = new Map<string, ElicitationView[]>();
+  for (const r of elicitationRows) {
+    const view = toElicitationView({ ...r, attachments: attachmentsByRequest.get(r.id) ?? [] });
+    // Une entrée illisible ne devient pas une carte : elle reste sur /approvals,
+    // où la ligne se montre brute (invariant #4, rien d'inventé).
+    if (view === null) continue;
+    const list = elicitationsByJob.get(r.jobId) ?? [];
+    list.push(view);
+    elicitationsByJob.set(r.jobId, list);
+  }
 
   return inputs.map((input) => {
     const { job } = input;
@@ -480,6 +520,7 @@ export async function assembleJobFeeds(
         answer: q.answer,
         notes: q.notes,
       })),
+      elicitationsByJob.get(job.id) ?? [],
     );
 
     return { feed, displayTask, scheduleName };

@@ -1,12 +1,27 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import type { ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { CaretRight, PencilSimple } from '@phosphor-icons/react';
 import { resolveApprovalAction } from '@/lib/actions.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import ChoiceTile from '@/components/ui/ChoiceTile';
+import TextArea from '@/components/ui/TextArea';
 import { useApprovals } from '@/components/ApprovalsProvider';
+import { FREE_ANSWER_MAX } from '@nodal-agents/shared';
+
+/**
+ * La ligne de la PLATEFORME (#465), sous celles de l'agent : répondre dans ses
+ * propres mots. Copie d'écran, côté web : l'agent n'écrit plus cette option,
+ * et « Autre chose, je t'explique » cliqué renvoyait jusqu'ici ce libellé seul,
+ * sans endroit où expliquer quoi que ce soit (job 30e00821, 23/09).
+ */
+export const SOMETHING_ELSE_LABEL = "Something else, I'll explain";
+
+/** La raison d'un refus, facultative : une phrase pour l'agent, pas un document. */
+const DECLINE_NOTES_MAX = 500;
 
 export interface QuestionCardProps {
   /**
@@ -40,10 +55,16 @@ export interface QuestionCardProps {
  * ressembler aux cartes de résultat qui l'entourent alors qu'elle est la seule
  * chose du fil qui attend le lecteur.
  *
- * Trois états, et un seul est interactif. En attente : la question, ses
- * options en boutons, et la pastille qui dit qu'on attend. Répondue : l'option
- * retenue en pastille, les autres en retrait. Déclinée : dit comme tel, avec
- * la raison si elle a été donnée.
+ * Trois états, et un seul est interactif. En attente : la question, UNE LIGNE
+ * par option de l'agent, puis la ligne de la plateforme qui ouvre un champ en
+ * place (#465), et « Decline » pour ne répondre ni l'un ni l'autre (revue de
+ * #622 : sans lui, le job restait suspendu) ; et la pastille qui dit qu'on
+ * attend. Répondue : la réponse
+ * retenue en pastille (une option, ou le texte écrit), les options en retrait.
+ * Déclinée : dit comme tel, avec la raison si elle a été donnée.
+ *
+ * C'est la SEULE surface qui répond à une question : le fil et la page du run
+ * la portent, la page Approvals et le rail renvoient ici (#465).
  */
 export default function QuestionCard({ prompt, options, question }: QuestionCardProps) {
   const [isPending, startTransition] = useTransition();
@@ -57,24 +78,55 @@ export default function QuestionCard({ prompt, options, question }: QuestionCard
   const status = question?.status ?? null;
   const answer = question?.answer ?? null;
   const waiting = status === 'pending' && question !== null;
+  const [explaining, setExplaining] = useState(false);
+  const [text, setText] = useState('');
+  const [declining, setDeclining] = useState(false);
+  const [notes, setNotes] = useState('');
 
-  function answerWith(option: string) {
+  /** `free` : la personne a écrit sa réponse, ce n'est aucune option (#465). */
+  function answerWith(answer: string, free: boolean) {
     if (!question) return;
     startTransition(async () => {
       const r = await resolveApprovalAction({
         approvalRequestId: question.approvalRequestId,
         decision: 'approve',
-        answer: option,
+        answer,
+        ...(free ? { free: true } : {}),
       });
       if (!r.ok) {
         toast.error(r.message);
         return;
       }
-      toast.success(`Answered: ${option}`);
+      toast.success(free ? 'Answered' : `Answered: ${answer}`);
       // Le fil est rendu côté serveur : sans ce rafraîchissement, la carte
       // resterait en attente jusqu'au prochain passage de LiveRefresh.
       router.refresh();
       // Et la barre, qui compte les attentes côté client.
+      await refresh();
+    });
+  }
+
+  /**
+   * Refuser la question : aucune réponse, et la raison si elle est donnée.
+   * Le job repart par le chemin ordinaire du refus, et l'agent le lit.
+   */
+  function decline() {
+    if (!question) return;
+    const reason = notes.trim();
+    startTransition(async () => {
+      const r = await resolveApprovalAction({
+        approvalRequestId: question.approvalRequestId,
+        decision: 'reject',
+        ...(reason !== '' ? { notes: reason } : {}),
+      });
+      if (!r.ok) {
+        toast.error(r.message);
+        return;
+      }
+      toast.success('Declined');
+      setDeclining(false);
+      setNotes('');
+      router.refresh();
       await refresh();
     });
   }
@@ -96,21 +148,106 @@ export default function QuestionCard({ prompt, options, question }: QuestionCard
       </div>
 
       {waiting ? (
-        <div className="mt-3.5 flex flex-wrap gap-2">
-          {options.map((option) => (
-            <PrimaryButton
-              key={option}
-              variant="neutral"
-              size="sm"
-              onClick={() => answerWith(option)}
-              disabled={isPending}
-            >
-              {option}
-            </PrimaryButton>
-          ))}
-        </div>
+        <>
+          <ul className="mt-3.5 flex flex-col gap-2">
+            {options.map((option) => (
+              <li key={option} data-testid="question-answer-row">
+                <ChoiceTile
+                  icon={<CaretRight size={14} className="text-ink-3" />}
+                  label={option}
+                  onClick={() => answerWith(option, false)}
+                  disabled={isPending}
+                  className="w-full"
+                />
+              </li>
+            ))}
+            <li data-testid="question-answer-row">
+              <ChoiceTile
+                icon={<PencilSimple size={14} className="text-ink-3" />}
+                label={SOMETHING_ELSE_LABEL}
+                onClick={() => {
+                  setDeclining(false);
+                  setExplaining(true);
+                }}
+                disabled={isPending}
+                className="w-full"
+              />
+            </li>
+          </ul>
+          {explaining && (
+            <div className="mt-2 flex flex-col gap-2">
+              <TextArea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                rows={3}
+                maxLength={FREE_ANSWER_MAX}
+                autoFocus
+                aria-label="Your answer"
+              />
+              <div className="flex justify-end">
+                <PrimaryButton
+                  variant="ink"
+                  size="sm"
+                  onClick={() => answerWith(text.trim(), true)}
+                  disabled={isPending || text.trim() === ''}
+                >
+                  Send
+                </PrimaryButton>
+              </div>
+            </div>
+          )}
+          {/* Le refus, en retrait sous les réponses : le geste rare, qui
+              demande confirmation et laisse dire pourquoi. */}
+          {declining ? (
+            <div className="mt-2 flex flex-col gap-2">
+              <TextArea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={2}
+                maxLength={DECLINE_NOTES_MAX}
+                placeholder="Why none of these fits (optional, sent to the agent)"
+                aria-label="Why you decline"
+              />
+              <div className="flex justify-end gap-2">
+                <PrimaryButton
+                  variant="neutral"
+                  size="sm"
+                  onClick={() => {
+                    setDeclining(false);
+                    setNotes('');
+                  }}
+                  disabled={isPending}
+                >
+                  Cancel
+                </PrimaryButton>
+                <PrimaryButton variant="danger" size="sm" onClick={decline} disabled={isPending}>
+                  Confirm decline
+                </PrimaryButton>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-2 flex justify-end">
+              <PrimaryButton
+                variant="neutral"
+                size="sm"
+                onClick={() => {
+                  setExplaining(false);
+                  setDeclining(true);
+                }}
+                disabled={isPending}
+              >
+                Decline
+              </PrimaryButton>
+            </div>
+          )}
+        </>
       ) : (
         <div className="mt-3.5 flex flex-wrap items-center gap-2">
+          {answer !== null && !options.includes(answer) && (
+            <span className="inline-flex min-h-[30px] items-center rounded-lg bg-ok-bg px-3.5 py-1 text-medium-13 text-ok">
+              ✓ {answer}
+            </span>
+          )}
           {options.map((option) =>
             option === answer ? (
               <span
@@ -134,7 +271,7 @@ export default function QuestionCard({ prompt, options, question }: QuestionCard
         </p>
       )}
       {question === null && (
-        <p className="mt-3 text-body-12 text-ink-4">Answer it from the Approvals page.</p>
+        <p className="mt-3 text-body-12 text-ink-4">Open the run that asked it to answer.</p>
       )}
     </div>
   );

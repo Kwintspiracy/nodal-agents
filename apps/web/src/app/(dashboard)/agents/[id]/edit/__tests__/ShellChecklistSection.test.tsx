@@ -1,9 +1,9 @@
 // ShellChecklistSection.test.tsx — what an agent may NOT do with a shell (#464).
 //
 // What this proves, rendered in jsdom and CLICKED: an agent nobody configured
-// shows "Ask me" on every row; a click sends the action the kind of action and
-// the state the owner chose (the ARGUMENT, invariant #5), and the row shows
-// it; a refused save puts the row back; a non-owner sees the rows and cannot
+// shows "Allowed" for downloads and inline code, "Ask me" on the rest (#614); a
+// click sends the action the kind of action and the state the owner chose (the
+// ARGUMENT, invariant #5), and the row shows it; a refused save puts the row back; a non-owner sees the rows and cannot
 // change them. What the engine does with those states is proven in
 // packages/tools/src/tests/shell-checklist-gate.test.ts.
 
@@ -63,27 +63,92 @@ beforeEach(() => {
 });
 
 describe('ShellChecklistSection @cap:regler-autonomie/ecran', () => {
-  it('an agent nobody configured asks for every kind of action', async () => {
+  it('an agent nobody configured downloads and runs inline code without asking, and asks for the rest (#614)', async () => {
     await render(null);
-    expect(SHELL_CATEGORIES.map(pressed)).toEqual(SHELL_CATEGORIES.map(() => 'ask'));
+    expect(SHELL_CATEGORIES.map((c) => [c, pressed(c)])).toEqual([
+      ['inline_code', 'allow'],
+      ['delete_files', 'ask'],
+      ['install_software', 'ask'],
+      ['download', 'allow'],
+      ['open_or_send', 'ask'],
+      ['stop_programs', 'ask'],
+      ['system_settings', 'ask'],
+    ]);
     expect(container.textContent).toContain('Run code written into a command');
     expect(container.textContent).toContain('Delete files or discard changes');
     expect(container.textContent).not.toContain('outside its folders');
   });
 
-  it('says what a reading can promise: a script run from a file is not read (review of PR #474)', async () => {
+  // Revue de la PR #618, passe 3 : « Allowed » pour les téléchargements a un
+  // périmètre, et les magasins des programmes de modèles en font partie. Il
+  // est dit sur la ligne, pas caché.
+  it('the download row says where Allowed reaches, the model stores included (#614)', async () => {
     await render(null);
-    // A reading of the command is not a sandbox, and the screen does not
-    // pretend the agent stays in its folders.
-    expect(container.textContent).toContain(
-      'Nodal reads each command, then runs it, asks you first, or refuses it, at every autonomy level. A script run from a file is not read: it can do any of these unseen.',
+    const row = container.querySelector('[data-testid="shell-row-download"]');
+    expect(row?.textContent).toContain(
+      'Allowed: into its folders and the model and image stores (comfy, ollama, docker, hf).',
+    );
+    // Passe 4 : la lecture de la cible est un filet, pas une frontière (#628).
+    expect(row?.textContent).toContain(
+      'A target it reads elsewhere (curl -o, wget -O…) asks. Not watertight: what programs write on their own (cp, config files) is not bounded, that takes a sandbox.',
     );
   });
 
+  it('says what a reading can promise: a script is read, one it cannot read is code written into a command (#635)', async () => {
+    await render(null);
+    // A reading of the command is not a sandbox, and the screen does not
+    // pretend the agent stays in its folders. Since #635 the scripts a command
+    // runs are read too; one that cannot be read follows the inline-code row.
+    expect(container.textContent).toContain(
+      'Nodal reads each command and the scripts it runs, then runs it, asks you first, or refuses it, at every autonomy level. A script it cannot read counts as code written into a command.',
+    );
+  });
+
+  // #667 : un agent a imprimé par le shell sans que personne soit consulté.
+  // Ce qui atteint l'écran, une imprimante ou quelqu'un a sa ligne, demandée
+  // par défaut, y compris pour une liste enregistrée avant elle.
+  it('the row for what reaches the screen, a printer or someone asks by default, even on a policy stored before it (#667)', async () => {
+    await render({
+      inline_code: 'allow',
+      delete_files: 'allow',
+      install_software: 'allow',
+      download: 'allow',
+      stop_programs: 'allow',
+      system_settings: 'allow',
+    });
+    const row = container.querySelector('[data-testid="shell-row-open_or_send"]');
+    expect(row?.textContent).toContain('Open programs, print or send');
+    expect(row?.textContent).toContain(
+      'start, open, xdg-open, Start-Process, lp, Out-Printer, sendmail…',
+    );
+    expect(pressed('open_or_send')).toBe('ask');
+    expect(pressed('delete_files')).toBe('allow');
+  });
+
+  it('a click on Never for it saves that kind with that state (#667)', async () => {
+    setAgentShellPolicyAction.mockImplementation(async () => ({
+      ok: true,
+      data: { ...DEFAULT_SHELL_POLICY, open_or_send: 'never' },
+    }));
+    await render(null);
+
+    await act(async () => {
+      button('open_or_send', 'never').click();
+    });
+
+    expect(setAgentShellPolicyAction.mock.calls[0]?.[0]).toEqual({
+      agentId: AGENT_ID,
+      category: 'open_or_send',
+      state: 'never',
+    });
+    expect(pressed('open_or_send')).toBe('never');
+  });
+
   it('shows what is stored', async () => {
-    await render({ delete_files: 'never', download: 'allow' });
+    await render({ delete_files: 'never', download: 'ask', inline_code: 'ask' });
     expect(pressed('delete_files')).toBe('never');
-    expect(pressed('download')).toBe('allow');
+    // A stored state wins over the default (#614: both default to allowed).
+    expect(pressed('download')).toBe('ask');
     expect(pressed('inline_code')).toBe('ask');
   });
 

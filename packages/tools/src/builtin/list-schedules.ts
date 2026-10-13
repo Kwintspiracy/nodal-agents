@@ -43,6 +43,7 @@ export const listSchedulesTool: ToolDefinition<
     "schedule's name before update_schedule / toggle_schedule / run_schedule.",
   inputSchema: ListSchedulesInputSchema,
   riskLevel: 'read',
+  loading: 'eager',
   card: 'text',
   execute: async (input, ctx) => {
     const rows = await ctx.db

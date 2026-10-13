@@ -12,6 +12,7 @@ import {
   agentWorkspaces,
 } from '@nodal-agents/db';
 import { buildTeamBlock } from '../team-block';
+import { buildSystemPrompt } from '../system-prompt';
 import { holdersOfPath } from '../path-holders';
 import { resolveRunWorkspaces } from '@nodal-agents/tools';
 import type { AgentId } from '../types';
@@ -282,8 +283,9 @@ describe('buildTeamBlock @cap:organiser-equipe/moteur', () => {
     });
 
     const block = await buildTeamBlock(orch.id as AgentId, db);
-    // Block must surface the connector slug so the orchestrator's LLM knows the
-    // worker can do this work (the connector NAME conveys the capability).
+    // Block must surface the connector slug, followed by every operation the
+    // worker holds, with no bound (#611): the slug alone does not say what the
+    // connector can do. The exact entry is asserted in team-block-connectors.test.ts.
     expect(block).toContain('Connectors:');
     expect(block).toContain('notion-oauth');
   });
@@ -335,8 +337,9 @@ describe('buildTeamBlock @cap:organiser-equipe/moteur', () => {
     });
 
     const block = await buildTeamBlock(orch.id as AgentId, db);
-    // Block must surface the MCP server slug so the orchestrator knows the
-    // worker has this capability (the connector/MCP NAME, not every operation).
+    // Block must surface the MCP server slug, followed by every tool the worker
+    // holds (enabled ∩ available), with no bound (#611). The exact entry is
+    // asserted in team-block-connectors.test.ts.
     expect(block).toContain('Connectors:');
     expect(block).toContain('stripe');
   });
@@ -525,10 +528,16 @@ describe('buildTeamBlock — ce que chaque agent peut réellement faire (#506) @
     const nodalEmptyList = await seedAgent(db, entityId, `test-nodal-empty-${Date.now()}`, 'agent');
     const claudeCode = await seedAgent(db, entityId, `test-cc-${Date.now()}`, 'agent');
     const codex = await seedAgent(db, entityId, `test-codex-${Date.now()}`, 'agent');
-    // Un sous-orchestrateur qui porte la skill : la branche orchestrateur de la
-    // whitelist n'ajoute jamais les builtins requis par les skills, il n'a donc
-    // PAS `run_command` (revue Codex de #506, P1).
+    // Deux sous-orchestrateurs : la règle est celle d'un agent (#636). Celui
+    // qui porte la skill a `run_command`, l'autre non — le rôle ajoute la
+    // délégation, il ne retire ni n'ajoute de shell.
     const subOrch = await seedAgent(db, entityId, `test-suborch-${Date.now()}`, 'orchestrator');
+    const subOrchNone = await seedAgent(
+      db,
+      entityId,
+      `test-suborch-none-${Date.now()}`,
+      'orchestrator',
+    );
 
     for (const a of [
       nodalShell,
@@ -538,6 +547,7 @@ describe('buildTeamBlock — ce que chaque agent peut réellement faire (#506) @
       claudeCode,
       codex,
       subOrch,
+      subOrchNone,
     ]) {
       await assignChild(db, orch.id, a.id, entityId);
     }
@@ -575,7 +585,68 @@ describe('buildTeamBlock — ce que chaque agent peut réellement faire (#506) @
     expect(entryOf(block, claudeCode.name)).toContain('Shell commands: no');
     expect(entryOf(block, codex.name)).toContain('Runtime: codex');
     expect(entryOf(block, codex.name)).toContain('Shell commands: yes');
-    expect(entryOf(block, subOrch.name)).toContain('Shell commands: no');
+    expect(entryOf(block, subOrch.name)).toContain('Shell commands: yes');
+    expect(entryOf(block, subOrchNone.name)).toContain('Shell commands: no');
+  });
+
+  // #494 : un agent en runtime CLI a le shell que SON réglage lui donne, et le
+  // frein d'urgence le lui retire. Le bloc le dit comme le runner le fera : le
+  // routeur ne doit ni envoyer une commande à qui la refusera, ni écarter un
+  // agent que son propriétaire a autorisé.
+  it('CLI runtime: the shell announced is the one the agent row and the brake give its turn @cap:executer-une-commande/moteur', async () => {
+    const { entityId } = await seedContext(db);
+    const { entities } = await import('@nodal-agents/db');
+    const orch = await seedAgent(db, entityId, `test-orch-cli-${Date.now()}`, 'orchestrator');
+    const rows: [string, 'claude-code' | 'codex', Record<string, unknown> | null, string][] = [
+      ['cc-default', 'claude-code', null, 'no'],
+      ['cc-read-auto', 'claude-code', { mode: 'read', shell: 'auto' }, 'no'],
+      ['cc-write', 'claude-code', { mode: 'write' }, 'no'],
+      ['cc-write-auto', 'claude-code', { mode: 'write', shell: 'auto' }, 'yes'],
+      [
+        'cc-auto-banned',
+        'claude-code',
+        { mode: 'write', shell: 'auto', extraDisallowed: ['Bash', 'PowerShell'] },
+        'no',
+      ],
+      ['codex-read', 'codex', { mode: 'read' }, 'yes'],
+    ];
+    const byLabel = new Map<string, { name: string; expected: string }>();
+    for (const [label, runtime, cliPermissions, expected] of rows) {
+      const a = await seedAgent(db, entityId, `test-${label}-${Date.now()}`, 'agent');
+      await assignChild(db, orch.id, a.id, entityId);
+      await db
+        .update(agents)
+        .set({ runtime, cliPermissions: cliPermissions as never })
+        .where(eq(agents.id, a.id));
+      byLabel.set(label, { name: a.name, expected });
+    }
+
+    const block = await buildTeamBlock(orch.id as AgentId, db);
+    for (const [label, { name, expected }] of byLabel) {
+      expect(entryOf(block, name), label).toContain(`Shell commands: ${expected}`);
+    }
+
+    // Frein serré : aucun tour CLI n'a de shell (Claude le perd, Codex ne part pas).
+    await db.update(entities).set({ autoRunPaused: true }).where(eq(entities.id, entityId));
+    try {
+      const braked = await buildTeamBlock(orch.id as AgentId, db);
+      for (const [label, { name }] of byLabel) {
+        const entry = entryOf(braked, name);
+        expect(entry, `${label} under the brake`).toContain('Shell commands: no');
+        // Ce que la posture dit pour CHAQUE runtime (revue Nodal de #551,
+        // passe 3) : Claude répond sans shell, Codex ne part pas du tout, et
+        // le bloc ne doit pas lui envoyer un travail qu'il refusera.
+        if (label.startsWith('codex')) {
+          expect(entry, label).toContain(
+            'Unavailable: the workspace emergency brake is on, and this runtime cannot start a turn without a shell.',
+          );
+        } else {
+          expect(entry, label).not.toContain('Unavailable');
+        }
+      }
+    } finally {
+      await db.update(entities).set({ autoRunPaused: false }).where(eq(entities.id, entityId));
+    }
   });
 });
 
@@ -721,4 +792,207 @@ describe('buildTeamBlock — à la profondeur maximale, aucune délégation anno
     expect(block).not.toMatch(/assign_[a-z0-9_]+/);
     expect(block).not.toContain('`create_task`');
   });
+});
+
+// #601 — le root répondait de mémoire, ou faisait lui-même UN web_search, quand
+// le propriétaire écrivait « Fais une recherche … » et qu'un agent de recherche
+// était dans son équipe. Règle produit (Quentin, 29/09) : une demande EXPLICITE
+// du travail qu'un coéquipier a pour spécialité se délègue à ce coéquipier ; une
+// question qui attend une réponse immédiate, l'orchestrateur peut y répondre.
+// La règle est UNE phrase du pied de bloc, la même pour toute équipe : elle ne
+// nomme aucun agent ni aucun domaine, la spécialité vient de l'entrée du roster.
+// The rule runs up to the footer's last sentence.
+const SPECIALTY_RULE =
+  /When the user asks you to DO a kind of work[^]*?(?= If genuinely none match)/;
+
+// What the rule itself must settle, on every surface that carries it (revue
+// Reviewer A de #603). Passe 1, P2 : la FORME départage — une demande polie du
+// travail reste une demande du travail. Passe 2, P1 : le SUJET l'emporte sur la
+// forme pour Nodal — « Fais une recherche sur le changelog de Nodal 0.9.3 »
+// avec un chercheur dans l'équipe (run 6f08b1b8, #455) : le texte PRODUIT doit
+// le trancher, pas un commentaire de code que le modèle ne voit jamais.
+function expectRuleSettlesBothAxes(rule: string): void {
+  expect(rule, 'the specialty rule is missing').not.toBe('');
+  // Form: the words decide, not the politeness.
+  const form = rule.indexOf('The words decide, not the politeness');
+  expect(form, 'the form tie-break is missing').toBeGreaterThan(-1);
+  expect(rule).toContain('“can you do a … on X?” asks for the work');
+  expect(rule).toContain('a question that only wants an answer (“what is …?”) stays yours');
+  // Subject (passe 3) : la distinction de #455, CONNAISSANCE / PRODUCTION,
+  // dans ses propres mots. Les deux côtés, chacun après le départage de forme
+  // qu'il précise : un travail qui produit quelque chose autour de Nodal (une
+  // revue de code, un correctif) suit la règle ; la connaissance de Nodal reste
+  // à l'orchestrateur même demandée comme un travail (le changelog de 6f08b1b8).
+  const around = rule.search(/work AROUND Nodal like any other work[^.]*reviewing its code/);
+  expect(around, 'the AROUND side (production goes to the specialist) is missing').toBeGreaterThan(
+    form,
+  );
+  const of = rule.search(
+    /never for knowledge OF the platform, even asked for as work[^.]*a research on its changelog[^.]*that stays yours/,
+  );
+  expect(of, 'the OF side (Nodal knowledge stays) is missing').toBeGreaterThan(form);
+}
+
+describe('buildTeamBlock — une demande explicite de la spécialité d’un coéquipier va à ce coéquipier (#601) @cap:organiser-equipe/moteur', () => {
+  const RULE = SPECIALTY_RULE;
+
+  async function seedTeam(specialistSlug: string, purpose: string) {
+    const { entityId } = await seedContext(db);
+    const t = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const orch = await seedAgent(db, entityId, `test-root-spec-${t}`, 'orchestrator');
+    const specialist = await seedAgent(db, entityId, `${specialistSlug}-${t}`, 'agent');
+    await db.update(agents).set({ personality: purpose }).where(eq(agents.id, specialist.id));
+    await assignChild(db, orch.id, specialist.id, entityId);
+    return { orch, specialist };
+  }
+  // An entry spans its first line and the indented lines under it.
+  const entryOf = (block: string, name: string): string => {
+    const lines = block.split('\n');
+    const start = lines.findIndex((l) => l.includes(`**${name}**`));
+    if (start === -1) return '';
+    const rest = lines.slice(start + 1);
+    const end = rest.findIndex((l) => !l.startsWith('  '));
+    return [lines[start], ...(end === -1 ? rest : rest.slice(0, end))].join('\n');
+  };
+
+  const TEAMS = [
+    {
+      slug: 'test-deep-research',
+      purpose: 'You are a deep research specialist. Every research task is a full investigation.',
+    },
+    {
+      slug: 'test-legal-translator',
+      purpose: 'You translate legal contracts between French and German, clause by clause.',
+    },
+  ];
+
+  it('on a job that can delegate: the specialty rule, with the delegation route, for any team', async () => {
+    const rules: string[] = [];
+    for (const team of TEAMS) {
+      const { orch, specialist } = await seedTeam(team.slug, team.purpose);
+      const block = await buildTeamBlock(orch.id as AgentId, db);
+      // The specialty is visible in the entry, from the database.
+      expect(entryOf(block, specialist.name)).toContain(`Purpose: ${team.purpose}`);
+      const rule = RULE.exec(block)?.[0] ?? '';
+      expect(rule, 'the specialty rule is missing from the team block').not.toBe('');
+      expect(rule).toContain('even when one of your own tools could do a thin version');
+      expect(rule).toContain('even when you believe you already know the answer');
+      expectRuleSettlesBothAxes(rule);
+      // The rule follows the delegation route of this surface.
+      const footer = block.slice(block.indexOf('⚠️ The roster above'));
+      expect(footer).toContain('delegate to it');
+      expect(footer).toContain(rule);
+      // Nothing in it names this team's agent.
+      expect(rule).not.toContain(specialist.name);
+      expect(rule).not.toContain(specialist.slug);
+      rules.push(rule);
+    }
+    // The same sentence for both teams: no domain in it.
+    expect(rules[0]).toBe(rules[1]);
+  });
+
+  it('on the chat (run_task): the same rule, and the teammate is named in the run_task instruction', async () => {
+    for (const team of TEAMS) {
+      const { orch, specialist } = await seedTeam(team.slug, team.purpose);
+      const chat = await buildTeamBlock(orch.id as AgentId, db, {
+        delegation: false,
+        escalation: true,
+      });
+      expect(entryOf(chat, specialist.name)).toContain(`Purpose: ${team.purpose}`);
+      const rule = RULE.exec(chat)?.[0] ?? '';
+      expect(rule, 'the specialty rule is missing from the chat team block').not.toBe('');
+      expectRuleSettlesBothAxes(rule);
+      const footer = chat.slice(chat.indexOf('⚠️ The roster above'));
+      expect(footer).toContain('name that agent in the instruction');
+      expect(footer).toContain(rule);
+      // Never an order to delegate from a surface that has no delegation tool.
+      expect(chat).not.toContain('delegate to it');
+    }
+  });
+
+  // Revue passe 4 (mineur) : un Purpose qui correspond ne suffit pas. Un
+  // coéquipier qui annonce « écrire et lancer des suites de tests » mais dont
+  // l'entrée dit « Shell commands: no » n'a pas les moyens : la règle ne vise
+  // qu'un agent dont l'entrée montre les moyens, comme la règle de repli sur
+  // échec (« only when its entry shows what the task needs »).
+  it('names only a teammate whose entry shows the means, not one whose Purpose alone matches', async () => {
+    const { orch, specialist } = await seedTeam(
+      'test-suite-runner',
+      'You write and run test suites for the repository.',
+    );
+    for (const opts of [{}, { delegation: false, escalation: true }]) {
+      const block = await buildTeamBlock(orch.id as AgentId, db, opts);
+      // The entry says the Purpose matches and the means are missing.
+      const entry = entryOf(block, specialist.name);
+      expect(entry).toContain('Purpose: You write and run test suites');
+      expect(entry).toContain('Shell commands: no');
+      // The rule is bound to the means, in the text the model reads.
+      const rule = SPECIALTY_RULE.exec(block)?.[0] ?? '';
+      expect(rule).toMatch(
+        /announces as its specialty \(its Purpose or Skills\) and whose entry shows the means that work needs, do the same with that agent/,
+      );
+    }
+  });
+
+  it('where no hand-off exists (CLI session, maximum depth): no specialty rule', async () => {
+    for (const team of TEAMS) {
+      const { orch } = await seedTeam(team.slug, team.purpose);
+      const cli = await buildTeamBlock(orch.id as AgentId, db, { delegation: false });
+      expect(cli).toContain('You cannot hand work to these agents from here');
+      expect(cli).not.toMatch(RULE);
+      const deepest = await buildTeamBlock(orch.id as AgentId, db, { delegationDepth: 3 });
+      expect(deepest).toContain('maximum delegation depth');
+      expect(deepest).not.toMatch(RULE);
+    }
+  });
+});
+
+// Revue Reviewer A de #603, passe 1, P1 : la règle de spécialité cohabite dans
+// le MÊME prompt avec « A question about Nodal is yours » (#455, run 6f08b1b8 :
+// 192 074 jetons pour un changelog confié à un Researcher). « Fais une recherche
+// sur le changelog de Nodal 0.9.3 » avec un chercheur dans l'équipe : les deux
+// règles doivent dire la même chose. On le prouve sur le prompt réellement
+// construit, pas sur le seul bloc d'équipe.
+describe('buildSystemPrompt — la règle de spécialité et « A question about Nodal is yours » disent la même chose (#601, revue #603 P1) @cap:organiser-equipe/moteur', () => {
+  const RULE = SPECIALTY_RULE;
+
+  for (const surface of ['job', 'chat'] as const) {
+    it(`on the ${surface} surface, both rules are in the prompt and the specialty rule leaves platform knowledge to the orchestrator`, async () => {
+      const { entityId } = await seedContext(db);
+      const t = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const orch = await seedAgent(db, entityId, `test-root-np-${t}`, 'orchestrator');
+      const specialist = await seedAgent(db, entityId, `test-deep-research-np-${t}`, 'agent');
+      await db
+        .update(agents)
+        .set({ personality: 'You are a deep research specialist.' })
+        .where(eq(agents.id, specialist.id));
+      await assignChild(db, orch.id, specialist.id, entityId);
+      const [row] = await db.select().from(agents).where(eq(agents.id, orch.id)).limit(1);
+
+      const prompt = await buildSystemPrompt(row as never, db, {
+        origin: 'api',
+        ...(surface === 'chat' ? { surface: 'chat' } : {}),
+      } as never);
+
+      expect(prompt).toContain('### A question about Nodal is yours');
+      expect(prompt).toContain('never delegate it to a teammate');
+      const rule = RULE.exec(prompt)?.[0] ?? '';
+      expect(rule, 'the specialty rule is missing from the built prompt').not.toBe('');
+      // The specialty rule itself settles the case #455 keeps: a request for
+      // knowledge of the platform is not handed on, even worded as work.
+      expectRuleSettlesBothAxes(rule);
+      // And it says it in #455's own words: both rules draw the same line,
+      // work AROUND a feature for a teammate, knowledge OF the platform never.
+      const start = prompt.indexOf('### A question about Nodal is yours');
+      // The heading, a blank line, then the rule's one paragraph.
+      const platformRule = prompt.slice(
+        start,
+        prompt.indexOf('\n\n', prompt.indexOf('\n\n', start) + 2),
+      );
+      for (const words of ['work AROUND', 'never for knowledge OF the platform']) {
+        expect(platformRule, `platform-questions no longer says "${words}"`).toContain(words);
+        expect(rule, `the specialty rule no longer says "${words}"`).toContain(words);
+      }
+    });
+  }
 });

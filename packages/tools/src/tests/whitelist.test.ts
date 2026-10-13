@@ -3,7 +3,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { z } from 'zod';
 import { createToolRegistry } from '../registry';
-import { computeToolWhitelist } from '../whitelist';
+import { computeToolWhitelist, agentBuiltinToolNames } from '../whitelist';
+import { registerBuiltins, ALWAYS_ON_TOOLS } from '../builtin/index';
 import { WhitelistDriftError } from '../errors';
 import type { ToolRegistry, ToolDefinition, ToolContext } from '../types';
 
@@ -208,5 +209,77 @@ describe('computeToolWhitelist @cap:assigner-outils/moteur', () => {
         [capTool],
       ),
     ).not.toThrow();
+  });
+});
+
+// ─── agentBuiltinToolNames — one rule for every role (#636) ──────────────────
+
+describe('agentBuiltinToolNames @cap:assigner-outils/moteur', () => {
+  const real = (): ToolRegistry => {
+    const r = createToolRegistry();
+    registerBuiltins(r);
+    return r;
+  };
+  const topLevel = { delegated: false, routine: false, inConversation: false };
+  const base = {
+    requiredBuiltins: [] as string[],
+    scriptsAuthorized: false,
+    filesWritable: false,
+    metaToolNames: [] as string[],
+    job: topLevel,
+  };
+
+  it('always-on first, then the groups, then the gated builtins, without duplicates', () => {
+    const names = agentBuiltinToolNames(
+      {
+        ...base,
+        requiredBuiltins: ['xlsx_create', 'run_command', 'nodal_docs', 'xlsx_create'],
+        metaToolNames: ['create_schedule'],
+        scriptsAuthorized: true,
+        filesWritable: true,
+        job: { delegated: false, routine: true, inConversation: true },
+      },
+      real(),
+    );
+    expect(names).toEqual([
+      ...ALWAYS_ON_TOOLS,
+      'xlsx_create',
+      'run_command',
+      'create_schedule',
+      'run_skill_script',
+      'skill_file_write',
+      'save_routine_state',
+      'list_conversation_runs',
+      'stop_conversation_run',
+      'message_conversation_run',
+    ]);
+  });
+
+  it('a group naming a builtin this build does not register adds nothing for it', () => {
+    const names = agentBuiltinToolNames(
+      { ...base, requiredBuiltins: ['xlsx_create', 'not_a_builtin'] },
+      real(),
+    );
+    expect(names).toContain('xlsx_create');
+    expect(names).not.toContain('not_a_builtin');
+  });
+
+  it('a delegated job loses dashboard_publish and the conversation tools, keeps its groups', () => {
+    const names = agentBuiltinToolNames(
+      {
+        ...base,
+        requiredBuiltins: ['xlsx_create'],
+        job: { delegated: true, routine: false, inConversation: true },
+      },
+      real(),
+    );
+    expect(names).not.toContain('dashboard_publish');
+    expect(names).not.toContain('list_conversation_runs');
+    expect(names).not.toContain('message_conversation_run');
+    expect(names).toContain('xlsx_create');
+    expect(names).toEqual([
+      ...ALWAYS_ON_TOOLS.filter((n) => n !== 'dashboard_publish'),
+      'xlsx_create',
+    ]);
   });
 });

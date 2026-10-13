@@ -25,6 +25,7 @@
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import { Trash } from '@phosphor-icons/react';
+import { mcpToolPrefix } from '@nodal-agents/shared';
 import { createMcpServerFromCatalogAction, type McpCatalogItem } from '@/lib/actions.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
@@ -33,6 +34,11 @@ import TextArea from '@/components/ui/TextArea';
 import FieldLabel from '@/components/ui/FieldLabel';
 import McpAuthSchemePicker from '@/components/ui/McpAuthSchemePicker';
 import { ModalFooter } from '@/components/ui/Modal.tsx';
+import {
+  MCP_SERVER_SLUG_HTML_PATTERN,
+  MCP_SERVER_SLUG_PATTERN,
+  MCP_SERVER_SLUG_RULE,
+} from '@nodal-agents/shared';
 
 interface Props {
   catalogItem: McpCatalogItem;
@@ -150,9 +156,7 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
       const slug = customSlug.trim();
       const cmd = customCommand.trim();
       if (!slug) return toast.error('Server slug is required');
-      if (!/^[a-z0-9-]+$/.test(slug)) {
-        return toast.error('Slug must be lowercase letters, digits, dashes');
-      }
+      if (!MCP_SERVER_SLUG_PATTERN.test(slug)) return toast.error(MCP_SERVER_SLUG_RULE);
       if (!cmd) return toast.error('Command is required');
       const argList = customArgsText
         .split('\n')
@@ -199,9 +203,7 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
     if (isCustomHttp) {
       const slug = customSlug.trim();
       if (!slug) return toast.error('Server slug is required');
-      if (!/^[a-z0-9-]+$/.test(slug)) {
-        return toast.error('Slug must be lowercase letters, digits, dashes');
-      }
+      if (!MCP_SERVER_SLUG_PATTERN.test(slug)) return toast.error(MCP_SERVER_SLUG_RULE);
       if (customAuthScheme !== 'bearer' && !customAuthParamName.trim()) {
         return toast.error('Auth param name is required for this scheme');
       }
@@ -242,10 +244,10 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
     setEnvRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
   }
 
-  // Tool-prefix preview shown under the slug input. Mirrors
-  // `slugToPrefix` in packages/adapters/mcp/src/tools.ts (hyphens → underscores).
+  // Tool-prefix preview shown under the slug input: the very prefix the
+  // adapter gives the server's tools.
   const slugPreview = customSlug.trim()
-    ? `${customSlug.trim().replace(/-/g, '_')}__list_things`
+    ? `${mcpToolPrefix(customSlug.trim())}__list_things`
     : 'my_slug__list_things';
 
   return (
@@ -280,12 +282,12 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
             value={customSlug}
             onChange={(e) => setCustomSlug(e.target.value)}
             placeholder="my-server"
-            pattern="[a-z0-9-]+"
+            pattern={MCP_SERVER_SLUG_HTML_PATTERN}
             className="font-mono"
           />
           <p className="text-body-12 text-ink-4 mt-1">
             Tools will be named like <span className="font-mono text-ink-3">{slugPreview}</span>.
-            Lowercase letters, digits, dashes.
+            Lowercase letters and digits, joined by single dashes.
           </p>
         </div>
       )}

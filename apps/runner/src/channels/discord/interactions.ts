@@ -10,10 +10,14 @@ import {
   handleDiscordApprovalInteraction,
 } from './approval-callback.ts';
 import { parseDiscordAuthCallbackData, handleDiscordAuthInteraction } from './auth-callback.ts';
+import { parseElicitationCallbackData } from '@nodal-agents/shared';
+import { handleElicitationTap } from '../../approvals/elicitation-channel.ts';
 
 export type DiscordInteractionResult =
   | { handled: true; kind: 'approval'; decision: 'approve' | 'reject' | 'answer'; jobId: string }
   | { handled: true; kind: 'auth'; decision: 'allow' | 'deny'; conversationId: string }
+  /** 0145 — a gesture on the card of an MCP server's question. */
+  | { handled: true; kind: 'elicitation' }
   | { handled: false; reason: string };
 
 export async function routeDiscordInteraction(args: {
@@ -41,6 +45,23 @@ export async function routeDiscordInteraction(args: {
     return result.handled
       ? { handled: true, kind: 'approval', decision: result.decision, jobId: result.jobId }
       : result;
+  }
+
+  // `eli:` — a gesture on the card of an MCP server's question (0145). Acked
+  // first (Discord wants an answer within 3 s), the card is redrawn by the
+  // core, and its notice is shown to the tapper alone.
+  if (parseElicitationCallbackData(customId)) {
+    await ack.acknowledge();
+    const result = await handleElicitationTap({
+      deps,
+      env,
+      origin: { channel: 'discord', receivingAgentId, conversationId: channelId },
+      data: customId,
+    });
+    if (result.notice) await ack.ephemeralReply(result.notice);
+    return result.handled
+      ? { handled: true, kind: 'elicitation' }
+      : { handled: false, reason: result.reason };
   }
 
   const authParsed = parseDiscordAuthCallbackData(customId);

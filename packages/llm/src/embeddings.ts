@@ -3,6 +3,7 @@
 import { embed } from 'ai';
 import { createOllama } from 'ollama-ai-provider-v2';
 import { createOpenAI } from '@ai-sdk/openai';
+import { providerFetch } from './transport';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -86,7 +87,7 @@ export function createEmbeddingClient(config: EmbeddingProviderConfig): Embeddin
   if (config.provider === 'ollama') {
     const model = config.model ?? OLLAMA_DEFAULT_MODEL;
     const baseURL = config.baseURL ?? OLLAMA_DEFAULT_BASE_URL;
-    const ollamaProvider = createOllama({ baseURL });
+    const ollamaProvider = createOllama({ baseURL, fetch: providerFetch });
     const embeddingModel = ollamaProvider.embedding(model);
 
     return {
@@ -111,6 +112,7 @@ export function createEmbeddingClient(config: EmbeddingProviderConfig): Embeddin
     const openaiProvider = createOpenAI({
       apiKey: config.apiKey,
       ...(config.baseURL ? { baseURL: config.baseURL } : {}),
+      fetch: providerFetch,
     });
     const embeddingModel = openaiProvider.embedding(model);
 

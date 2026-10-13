@@ -7,6 +7,7 @@
 //  - enabledOperations=null (all tools available) — job succeeds with drive tool called.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { offeredToolNames } from './offered-tools.ts';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { randomBytes } from 'node:crypto';
@@ -127,8 +128,7 @@ function makeMockLlmClient(
     },
     generateText: (args) => {
       if (capturedToolKeysPerCall) {
-        const tools = (args as { tools?: Record<string, unknown> }).tools ?? {};
-        capturedToolKeysPerCall.push(Object.keys(tools));
+        capturedToolKeysPerCall.push(offeredToolNames(args));
       }
       return generateText({ ...args, model: mockModel } as Parameters<
         typeof generateText

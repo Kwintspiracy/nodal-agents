@@ -131,7 +131,7 @@ couverture — ils ont une preuve, pas deux classes.
 |---|---|---|---|---|
 | HARNESS-01..12 | 12 providers × 9 dimensions | BLOCKED (×10), PARTIAL (×2) | [A] `registry.ts` lu : `promptCaching` relevé pour les 12 | Les 8 autres dimensions (tool-calling réel, streaming, JSON mode, raisonnement, contexte, taxonomie d'erreurs, tarification, épinglage) **non instruites** faute de clés |
 | HARNESS-13 | `tool-call-middleware` / `parsers` sur appel malformé | BLOCKED | — | Non instruit |
-| HARNESS-14 | `tool-choice-floor` | BLOCKED | — | Non instruit |
+| HARNESS-14 | `tool-choice-floor` | BLOCKED | — | Non instruit. 29/09/2026 : sans objet, le fichier a été retiré par la PR #604 (issue #600), plus aucun `tool_choice` forcé n'est envoyé |
 | HARNESS-15 | `tolerant-fetch` : quelles malformations acceptées | BLOCKED | — | Non instruit |
 | HARNESS-16 | `retry` : backoff, jitter, plafond | BLOCKED | — | Non instruit |
 | HARNESS-17 | `failover` : déclenchement, boucle | BLOCKED | — | Non instruit |

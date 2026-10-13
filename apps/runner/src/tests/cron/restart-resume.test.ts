@@ -837,3 +837,49 @@ describe('un appel refusé par la porte n’est pas un effet (#443) @cap:organis
     expect(r.result ?? '').not.toContain('had already run');
   });
 });
+
+// Revue Codex passe 3 de #660 : une question d'un serveur MCP en attente
+// n'est pas un effet. La compter comme une demande d'approbation faisait
+// échouer en `restart_after_side_effect` un job qui pouvait reprendre ; ce que
+// l'appel MCP a fait se lit, lui, à sa propre marque (tool_calls).
+describe('une question d’un serveur en attente n’empêche pas la reprise @cap:organiser-equipe/moteur', () => {
+  it('le job reprend à son tour sauvegardé, et la question meurt avec l’appel', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal',
+        task: TACHE,
+        status: 'processing',
+        turn: 4,
+        messages: [{ role: 'user', content: TACHE }],
+        updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000),
+      })
+      .returning({ id: agentJobs.id });
+    const [question] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: job!.id,
+        agentId: seed.agentId,
+        toolName: 'printer__order',
+        toolInput: { server: 'printer', message: 'How?', requestedSchema: { type: 'object' } },
+        kind: 'elicitation',
+        status: 'pending',
+        executedAt: new Date(),
+      })
+      .returning({ id: approvalRequests.id });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const reprise = await reclaimJobsOfDeadRunners(db).finally(() => warn.mockRestore());
+
+    expect(reprise.resumedJobIds).toContain(job!.id);
+    expect(await row(job!.id)).toMatchObject({ status: 'pending', resumedFromTurn: 4 });
+    const [q] = await db
+      .select({ status: approvalRequests.status, resolvedBy: approvalRequests.resolvedBy })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, question!.id));
+    expect(q).toEqual({ status: 'expired', resolvedBy: 'system:runner_restarted' });
+  });
+});

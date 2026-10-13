@@ -89,8 +89,14 @@ export default function ProjectShelf({
   const shown = expanded ? files.entries : files.entries.slice(0, FOLDED_AT);
   const foldable = files.entries.length > FOLDED_AT;
 
+  // `w-full` : sans lui, dans la colonne flex du panneau « Files & proof »,
+  // `mx-auto` rend la boîte « à la taille de son contenu », et ce contenu compte
+  // des lignes insécables — le chemin du dossier et la ligne de preuve, en
+  // `truncate`. La boîte s'élargissait jusqu'à elles, le panneau défilait à
+  // l'horizontale et coupait le bord droit : le constat de Quentin du 19/09,
+  // que le cas G de code-verification.spec.ts n'a jamais vu vert.
   return (
-    <div className="mx-auto max-w-[840px] space-y-6">
+    <div className="mx-auto w-full max-w-[840px] space-y-6">
       {/* Le dossier — ce qu'un projet EST. */}
       <section className="rounded-xl border border-rule-2 bg-paper p-4">
         <div className="mb-3 flex flex-wrap items-center gap-2">

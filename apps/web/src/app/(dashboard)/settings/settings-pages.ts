@@ -51,8 +51,8 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
   {
     key: 'install',
     label: 'Install',
-    lede: 'Notes every agent reads about this machine.',
-    ids: ['install-notes'],
+    lede: 'How Nodal starts on this machine, and the notes every agent reads about it.',
+    ids: ['autostart', 'install-notes'],
   },
 ];
 

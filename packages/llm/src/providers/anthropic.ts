@@ -17,6 +17,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import type { LanguageModel } from 'ai';
 import { findModelCatalogEntry, type ReasoningControl } from '@nodal-agents/shared';
 import type { ProviderConfig } from '../types';
+import { providerFetch } from '../transport';
 
 /** Output headroom required ON TOP of the thinking budget (max_tokens > budget_tokens). */
 const ANTHROPIC_OUTPUT_HEADROOM = 4096;
@@ -61,7 +62,7 @@ export function injectAnthropicReasoning(
 function createAnthropicReasoningFetch(
   control: ReasoningControl,
   effort: 'low' | 'medium' | 'high' | 'max',
-  baseFetch: typeof globalThis.fetch = globalThis.fetch,
+  baseFetch: typeof globalThis.fetch = providerFetch,
 ): typeof globalThis.fetch {
   return async (
     input: Parameters<typeof globalThis.fetch>[0],
@@ -92,7 +93,7 @@ export function buildAnthropicModel(config: ProviderConfig): LanguageModel {
   const provider = createAnthropic({
     apiKey: config.apiKey,
     ...(config.baseURL ? { baseURL: config.baseURL } : {}),
-    ...(reasoningFetch ? { fetch: reasoningFetch } : {}),
+    fetch: reasoningFetch ?? providerFetch,
   });
 
   // AI SDK v6 controls prompt caching per-message via providerOptions, not at

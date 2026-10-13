@@ -596,6 +596,8 @@ describe('deliverCompletedRoots', () => {
         status: 'processing',
         channel: 'cron',
         chatId: 'discord-chat-1',
+        // What the tick writes for a routine that chose Discord (#649).
+        chatChannel: 'discord',
         triggerContext: {
           type: 'cron',
           scheduleName: 'notify via discord',

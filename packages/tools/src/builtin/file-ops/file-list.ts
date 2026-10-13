@@ -85,6 +85,7 @@ export const fileListTool: ToolDefinition<typeof FileListInputSchema, FileListOu
     'Pass `recursive:true` to walk subdirectories. Caps at 500 entries.',
   inputSchema: FileListInputSchema,
   riskLevel: 'read',
+  loading: 'eager',
   card: 'files',
   present: ({ output }) =>
     output.ok

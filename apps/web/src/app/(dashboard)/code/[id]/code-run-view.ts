@@ -238,6 +238,9 @@ export function codeDelivery(detail: CodingProcessDetail): DeliverySummary | nul
     tests: commands.length > 0 ? { passed, total: commands.length } : null,
     durationMs: header.durationMs,
     costUsd: header.costUsd > 0 ? header.costUsd : null,
+    // Cette surface somme les coûts connus sans compter les appels qui n'en
+    // ont pas : elle ne sait pas si le prix est partiel, et ne le dit pas (#508).
+    unpricedCalls: null,
     reviews: [],
     // La MÊME conclusion que le fil et la page d'un run : un fichier PROMIS
     // non vert interdit « Verified » et se nomme (#509).

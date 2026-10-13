@@ -4,11 +4,15 @@
 // workspaces and on the disk", and it ran scripts over Downloads and another
 // folder attached to nobody. A delegation had widened the teammate's scope.
 //
-// It is a rule of DELEGATION, so it rides on the delegation tools themselves
-// (`assign_*`, `create_task`): every agent that can delegate reads it where it
-// delegates, whatever its runtime or channel. It first lived in the
-// `platform-support` skill, which only a job agent holding `nodal_docs` sees
-// (Codex review of #455, P2). LLM-channel text (invariant #2).
+// It is a rule of DELEGATION, so every agent that can delegate reads it,
+// whatever its runtime or channel. It first lived in the `platform-support`
+// skill, which only a job agent holding `nodal_docs` sees (Codex review of
+// #455, P2). It then rode in the description of every delegation tool, once
+// per `assign_*` plus `create_task`: eleven copies on a root with ten
+// teammates. It is now said ONCE, in the delegation manual of `## Your team`
+// (team-block.ts), whose branch is the whitelist's own rule: the manual is
+// written exactly for the jobs that hold `assign_*` and `create_task` (lot 2,
+// PR C2). LLM-channel text (invariant #2).
 
 // Pass 2 of the same review: the first wording ("never look or act beyond the
 // folders it has") also forbade sending an e-mail, writing a Notion page or

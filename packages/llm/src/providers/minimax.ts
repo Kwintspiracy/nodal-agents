@@ -23,6 +23,7 @@ import { findModelCatalogEntry } from '@nodal-agents/shared';
 import type { ProviderConfig } from '../types';
 import { ProviderConfigError } from '../errors';
 import { PROVIDER_PRESETS } from './registry';
+import { providerFetch } from '../transport';
 
 // ─── Beta flags MiniMax rejects ───────────────────────────────────────────────
 
@@ -89,7 +90,7 @@ export function injectMiniMaxThinking(
 function createMiniMaxFetch(
   apiKey: string,
   opts: { injectThinking: boolean; budgetTokens?: number } = { injectThinking: false },
-  baseFetch: typeof globalThis.fetch = globalThis.fetch,
+  baseFetch: typeof globalThis.fetch = providerFetch,
 ): typeof globalThis.fetch {
   return async (
     input: Parameters<typeof globalThis.fetch>[0],

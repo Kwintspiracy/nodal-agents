@@ -5,10 +5,20 @@ import { eq, and } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import type { JobFailureHint } from '@nodal-agents/shared';
 import { OrchestrationError } from '../errors';
-import { reviewBlocksDelivery, REVIEW_CHANGES_REQUESTED } from '@nodal-agents/shared';
+import {
+  REVIEW_CHANGES_REQUESTED,
+  TOOL_RESULT_MODEL_CHARS,
+  cutForContext,
+  fitToolResult,
+  reviewBlocksDelivery,
+} from '@nodal-agents/shared';
 import { nextFailedDelegationState, failedDelegationGuidance } from './failed-delegation';
-import { readDeliveredReviewVerdict } from './review-verdict';
-import type { ReviewVerdictRecord } from './review-verdict';
+import {
+  readJobDeliverable,
+  renderDeliveredVerdicts,
+  verdictsBlockDelivery,
+} from './job-deliverable';
+import type { AuthoredReviewVerdict } from './job-deliverable';
 import { filesTheChildWrote, readFilesWrittenBy } from './delegated-files';
 import type { DelegatedFile } from './delegated-files';
 import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types';
@@ -34,20 +44,25 @@ export interface DelegationOutcomeRecord {
   /** Tools the child actually ran, so the parent can see what was attempted. */
   tools_used?: string[];
   /**
-   * Le verdict de revue que l'enfant a ENREGISTRÉ, quand il en a enregistré un
-   * (issue #124). `summary` reste la dernière phrase du modèle ; ce champ, lui,
-   * porte ce que l'outil `review_verdict` a validé — verdict, résumé, constats.
-   * `null` sur l'immense majorité des délégations, qui ne sont pas des revues.
+   * Les verdicts de revue livrés dans le SOUS-ARBRE de l'enfant, chacun avec
+   * son auteur — slug d'agent et id de job (issues #124, #646). `summary` reste
+   * la dernière phrase du modèle ; ce champ porte ce que l'outil
+   * `review_verdict` a validé. Celui de l'enfant s'il en a enregistré un, ET
+   * ceux de sa descendance : un intermédiaire qui relaie (root → Lead →
+   * relecteur) ou qui juge à son tour ne fait plus disparaître le verdict d'en
+   * dessous — aucun verdict d'un job n'en remplace un autre. Lus par
+   * `readJobDeliverables`, seul lecteur de « ce qu'un job a livré ».
+   * `[]` sur l'immense majorité des délégations, qui ne sont pas des revues.
    */
-  review_verdict?: ReviewVerdictRecord | null;
+  review_verdicts?: AuthoredReviewVerdict[];
   /**
-   * Ce que la relecture INTERDIT (#59). `review_changes_requested` quand
-   * l'enfant a enregistré un verdict `request_changes` : le parent ne peut pas
-   * conclure que le travail est livré, et il reçoit ce fait typé plutôt qu'une
-   * phrase à interpréter dans le résumé.
+   * Ce que la relecture INTERDIT (#59). `review_changes_requested` dès qu'UN
+   * des verdicts portés demande des corrections (`verdictsBlockDelivery`) : le
+   * parent ne peut pas conclure que le travail est livré, et il reçoit ce fait
+   * typé plutôt qu'une phrase à interpréter dans le résumé.
    *
-   * `null` partout ailleurs — une délégation ordinaire, ou une relecture qui
-   * approuve, n'interdit rien.
+   * `null` partout ailleurs — une délégation ordinaire, ou des relectures qui
+   * approuvent toutes, n'interdisent rien.
    */
   delivery_blocked?: typeof REVIEW_CHANGES_REQUESTED | null;
   /**
@@ -79,6 +94,15 @@ export interface DelegationOutcomeRecord {
    * jamais par une réparation faite ailleurs dans l'arbre.
    */
   sub_delegations?: SubDelegationOutcome[];
+  /**
+   * `true` quand `sub_delegations` ne nomme pas tous les échecs du sous-arbre
+   * (revue Codex de la PR #712, passes 3 et 4) ; absent sinon, ce qui est le
+   * cas ordinaire. Il naît à un seul endroit : le rendu borné de
+   * `renderDelegationOutcome`, quand des entrées `failed` n'y tiennent plus.
+   * Un parent qui le relit le porte à son tour, si bien qu'une liste partielle
+   * ne se lit jamais, à aucun étage, comme le sous-arbre entier.
+   */
+  sub_delegations_incomplete?: boolean;
   /**
    * Les fichiers que l'enfant a ÉCRITS ou DÉCLARÉS, relus par `resumeDelegated`
    * sur les lignes d'état de vérification de l'enfant (issue #491) — jamais
@@ -145,33 +169,263 @@ export function normalizeDelegationOutcome(outcome: DelegationOutcome): Delegati
 }
 
 /**
+ * Valeur du `summary` d'un résultat de délégation qui dépasse le budget : le
+ * texte n'est pas vide, il est APRÈS l'objet JSON, avec les constats.
+ */
+export const DELEGATION_TEXT_AFTER_OBJECT = '[after this object]';
+
+/**
  * Render the typed outcome as the tool-result payload the parent's model reads.
  * JSON, deliberately: the fields are the contract, and a model that sees
  * `"status": "failed"` cannot mistake it for a specialist that answered.
+ *
+ * Un résultat de délégation EST un résultat d'outil : il tient dans le même
+ * budget (`TOOL_RESULT_MODEL_CHARS`), coupé par la même fonction
+ * (`cutForContext`, `@nodal-agents/shared`) que tous les autres (revue Codex de
+ * la PR #712, passe 2 : un arbre large de relecteurs, chacun jusqu'à 50
+ * constats, rendait un `tool_result` sans borne dans le contexte du parent).
+ *
+ * Le rendu entier n'est écrit que s'il porte TOUT et tient dans `room` : il est
+ * alors tel qu'avant, octet pour octet. Sinon, c'est le rendu borné :
+ *  1. un objet JSON VALIDE et COMPLET, qui tient par construction — jamais
+ *     coupé comme du texte (revue Codex de la PR #712, passe 3 : un objet trop
+ *     grand à lui seul était tranché, `parseDelegationOutcomePayload` rendait
+ *     `null`, et le runner perdait en silence les échecs du sous-arbre). Voir
+ *     `decisionsBornees` ;
+ *  2. puis le texte long : le `summary` de l'enfant, puis chaque verdict mis en
+ *     page (`renderDeliveredVerdicts`) avec son résumé et ses constats. C'est
+ *     lui, et lui seul, que la coupe peut atteindre.
+ * La marque de troncature dit combien a été retiré. Les constats complets
+ * restent en base, dans les `tool_calls` de chaque job relecteur, que les ids
+ * affichés désignent.
  */
-export function renderDelegationOutcome(result: DelegationOutcomeRecord): string {
-  return JSON.stringify(
+export function renderDelegationOutcome(
+  result: DelegationOutcomeRecord,
+  room: number = TOOL_RESULT_MODEL_CHARS,
+): string {
+  const entier = JSON.stringify(
     {
       status: result.status,
       summary: result.summary,
       error: result.error ?? null,
       exit_reason: result.exit_reason ?? null,
       tools_used: result.tools_used ?? [],
-      // Tous TOUJOURS présents, `null` quand il n'y a pas eu de revue, que
-      // rien n'est interdit ou qu'aucun geste n'est nommé : un champ qui
+      // Tous TOUJOURS présents, `[]` / `null` quand il n'y a pas eu de revue,
+      // que rien n'est interdit ou qu'aucun geste n'est nommé : un champ qui
       // apparaît et disparaît se lit comme une absence de contrat.
-      review_verdict: result.review_verdict ?? null,
+      review_verdicts: result.review_verdicts ?? [],
       delivery_blocked: result.delivery_blocked ?? null,
       hint: result.hint ?? null,
       // Toujours présent, `[]` quand le sous-arbre n'a rien à dire — même
       // raison que les deux champs ci-dessus (#116).
       sub_delegations: result.sub_delegations ?? [],
+      // Présent SEULEMENT quand il dit vrai : une liste complète, le cas
+      // ordinaire, garde son rendu d'avant octet pour octet.
+      ...(result.sub_delegations_incomplete === true ? { sub_delegations_incomplete: true } : {}),
       // Toujours présent, `[]` quand l'enfant n'a rien écrit (#491).
       files_written: result.files_written ?? [],
     },
     null,
     2,
   );
+  if (entier.length <= room) return entier;
+
+  // Ce que chaque liste garde D'ABORD quand elle doit laisser des entrées : ce
+  // sur quoi quelqu'un agit. L'ordre d'origine tient à l'intérieur de chaque
+  // groupe. Les comptes, eux, portent sur toutes les entrées.
+  //  - verdicts : ceux qui demandent des corrections, puisque ce sont eux qui
+  //    bloquent la livraison ;
+  //  - sous-délégations : les échecs, puisque ce sont eux que le runner dit à
+  //    la personne (`[delegation stopped: …]`) ;
+  //  - fichiers : ceux que l'enfant a écrits et qui sont là, puisque ce sont
+  //    eux que le parent ne doit pas refaire (#491) ;
+  //  - outils : l'ordre d'origine, aucun n'emporte de décision.
+  const verdicts = gardeDAbord(result.review_verdicts ?? [], (v) => reviewBlocksDelivery(v));
+  const texteLong = [
+    result.summary === '' ? '' : `[summary]\n${result.summary}`,
+    renderDeliveredVerdicts({ review_verdicts: verdicts, unreadable_review_verdicts: [] }),
+  ]
+    .filter((t) => t !== '')
+    .join('\n\n');
+  const decisions = decisionsBornees(
+    result,
+    {
+      review_verdicts: verdicts.map((v) => ({
+        author: v.author,
+        verdict: v.verdict,
+        counts: v.counts,
+      })),
+      sub_delegations: gardeDAbord(result.sub_delegations ?? [], (s) => s.status === 'failed'),
+      files_written: gardeDAbord(
+        result.files_written ?? [],
+        (f) => filesTheChildWrote([f]).length > 0,
+      ),
+      tools_used: result.tools_used ?? [],
+    },
+    // Ni les listes ni le texte n'affament l'autre : l'objet prend au plus la
+    // moitié de la place quand le texte long en veut davantage, et tout ce que
+    // le texte laisse sinon.
+    Math.max(Math.floor(room / 2), room - (texteLong === '' ? 0 : texteLong.length + 2)),
+  );
+  // L'objet tient dans sa place, elle-même dans `room` : la coupe ne peut
+  // tomber que dans le texte long.
+  if (texteLong === '') return decisions;
+  return cutForContext(`${decisions}\n\n${texteLong}`, room);
+}
+
+/** Les entrées qui vérifient `dAbord` en tête, l'ordre d'origine gardé dans chaque groupe. */
+function gardeDAbord<T>(entrees: readonly T[], dAbord: (e: T) => boolean): T[] {
+  return [...entrees.filter(dAbord), ...entrees.filter((e) => !dAbord(e))];
+}
+
+/** Les listes de l'objet borné, chacune déjà dans l'ordre où elle garde ses entrées. */
+interface ListesBornables {
+  review_verdicts: Array<Pick<AuthoredReviewVerdict, 'author' | 'verdict' | 'counts'>>;
+  sub_delegations: SubDelegationOutcome[];
+  files_written: DelegatedFile[];
+  tools_used: string[];
+}
+
+type NomDeListe = keyof ListesBornables;
+
+const LISTES: readonly NomDeListe[] = [
+  'review_verdicts',
+  'sub_delegations',
+  'files_written',
+  'tools_used',
+];
+
+/** Les textes libres de l'objet borné : ceux dont la longueur ne dépend que de l'enfant. */
+type TextesLibres = Record<'error' | 'exit_reason', string | null>;
+
+/**
+ * L'objet de décision d'un résultat borné : du JSON valide, complet, d'au plus
+ * `place` caractères — par CONSTRUCTION, jamais par une coupe de texte.
+ *
+ * Une seule forme pour toutes les listes : `<liste>` porte les entrées gardées,
+ * `<liste>_omitted` dit combien n'y sont pas. Le total est leur somme.
+ *
+ * Ce qui ne s'omet JAMAIS : `status`, `error`, `exit_reason`,
+ * `delivery_blocked` (calculé en amont sur tous les verdicts), `hint`, et
+ * `sub_delegations_incomplete` dès qu'un échec du sous-arbre n'est plus nommé,
+ * ici ou déjà plus bas.
+ *
+ * Chaque texte libre (`error`, `exit_reason`) a sa part FIXE de ce que le
+ * squelette laisse, la moitié chacun, et y est coupé avec la marque de
+ * troncature (revue Codex de la PR #712, passe 4) ; le reste n'est que codes.
+ * L'objet aux listes vides tient donc dans toute `room` d'au moins 1 500
+ * (mesuré : 1 120 avec des centaines de milliers d'entrées omises), quand
+ * `fitToolResult` n'en donne jamais moins de 20 000. Sous ce plancher,
+ * `delegation_outcome_no_room` plutôt qu'un résultat hors budget (invariant #4).
+ *
+ * Les listes se remplissent à tour de rôle, une entrée chacune, dans l'ordre où
+ * elles gardent leurs entrées : aucune ne prend toute la place aux autres. Une
+ * liste dont l'entrée suivante ne tient plus s'arrête là — ce qu'elle garde est
+ * toujours un début de son ordre.
+ */
+function decisionsBornees(
+  result: DelegationOutcomeRecord,
+  listes: ListesBornables,
+  place: number,
+): string {
+  const echouees = listes.sub_delegations.filter((s) => s.status === 'failed').length;
+  const rendre = (gardes: Record<NomDeListe, number>, libres: TextesLibres): string =>
+    JSON.stringify(
+      {
+        status: result.status,
+        error: libres.error,
+        exit_reason: libres.exit_reason,
+        delivery_blocked: result.delivery_blocked ?? null,
+        hint: result.hint ?? null,
+        review_verdicts: listes.review_verdicts.slice(0, gardes.review_verdicts),
+        review_verdicts_omitted: listes.review_verdicts.length - gardes.review_verdicts,
+        sub_delegations: listes.sub_delegations.slice(0, gardes.sub_delegations),
+        sub_delegations_omitted: listes.sub_delegations.length - gardes.sub_delegations,
+        // Les échecs passent en tête : il en manque un dès que la liste garde
+        // moins d'entrées qu'il n'y a d'échecs.
+        ...(result.sub_delegations_incomplete === true || gardes.sub_delegations < echouees
+          ? { sub_delegations_incomplete: true }
+          : {}),
+        files_written: listes.files_written.slice(0, gardes.files_written),
+        files_written_omitted: listes.files_written.length - gardes.files_written,
+        tools_used: listes.tools_used.slice(0, gardes.tools_used),
+        tools_used_omitted: listes.tools_used.length - gardes.tools_used,
+        summary: result.summary === '' ? '' : DELEGATION_TEXT_AFTER_OBJECT,
+      },
+      null,
+      2,
+    );
+
+  const gardes: Record<NomDeListe, number> = {
+    review_verdicts: 0,
+    sub_delegations: 0,
+    files_written: 0,
+    tools_used: 0,
+  };
+  const part = Math.floor((place - rendre(gardes, { error: null, exit_reason: null }).length) / 2);
+  const libres: TextesLibres = {
+    error: texteLibreBorne(result.error ?? null, part),
+    exit_reason: texteLibreBorne(result.exit_reason ?? null, part),
+  };
+  // Mesuré avec toutes les listes vides, donc avec les comptes `_omitted` au
+  // plus grand et `sub_delegations_incomplete` présent s'il peut l'être :
+  // ajouter une entrée ne fait que les réduire, si bien que `longueur` reste
+  // une borne HAUTE de la longueur réelle.
+  let longueur = rendre(gardes, libres).length;
+  const ouvertes = new Set<NomDeListe>(LISTES);
+  while (ouvertes.size > 0) {
+    for (const nom of LISTES) {
+      if (!ouvertes.has(nom)) continue;
+      const liste: readonly unknown[] = listes[nom];
+      const deja = gardes[nom];
+      if (deja >= liste.length) {
+        ouvertes.delete(nom);
+        continue;
+      }
+      const cout = coutDansUneListe(liste[deja], deja === 0);
+      if (longueur + cout > place) {
+        ouvertes.delete(nom);
+        continue;
+      }
+      gardes[nom] = deja + 1;
+      longueur += cout;
+    }
+  }
+  return rendre(gardes, libres);
+}
+
+/**
+ * `valeur` coupée par `cutForContext` pour que sa forme JSON (guillemets et
+ * échappements compris) tienne en `part` caractères ; telle quelle si elle y
+ * tient déjà. Quand même la seule marque de coupe n'y tient pas, la place est
+ * sous le plancher : erreur nommée, jamais un objet qui dépasse.
+ */
+function texteLibreBorne(valeur: string | null, part: number): string | null {
+  if (valeur === null || JSON.stringify(valeur).length <= part) return valeur;
+  for (let garde = Math.max(0, part); ; ) {
+    const coupe = cutForContext(valeur, garde);
+    const exces = JSON.stringify(coupe).length - part;
+    if (exces <= 0) return coupe;
+    if (garde === 0) {
+      throw new OrchestrationError(
+        'delegation_outcome_no_room',
+        `${part} chars for a text field of a bounded delegation outcome, fewer than its truncation marker`,
+      );
+    }
+    garde = Math.max(0, garde - exces);
+  }
+}
+
+/**
+ * Ce qu'une entrée ajoute à un tableau de second niveau dans
+ * `JSON.stringify(_, null, 2)` : chacune de ses lignes indentée de quatre
+ * espaces, plus `\n` … `\n  ` autour de la première (le `[]` vide avait déjà
+ * ses crochets), ou `,\n` devant les suivantes.
+ */
+function coutDansUneListe(entree: unknown, premiere: boolean): number {
+  const brut = JSON.stringify(entree, null, 2);
+  const lignes = brut.split('\n').length;
+  return brut.length + 4 * lignes + (premiere ? 4 : 2);
 }
 
 /**
@@ -186,6 +440,9 @@ export function renderDelegationOutcome(result: DelegationOutcomeRecord): string
  *   - un succès, qui EST le JSON ;
  *   - un échec, `DELEGATION_FAILED_MARKER`, l'objet JSON, puis les consignes
  *     que le parent lit.
+ * Dans les deux, l'objet peut être le rendu entier ou le rendu borné, suivi de
+ * son texte long : l'objet borné est toujours du JSON complet, et
+ * `sub_delegations_incomplete` est relu avec lui.
  *
  * Rend `null` sur tout le reste — un report, un texte posé par la compaction,
  * une ligne d'une version antérieure. `null` veut dire « je ne sais pas », pas
@@ -252,65 +509,48 @@ export function parseDelegationOutcomePayload(payload: string): DelegationOutcom
     }
     record.sub_delegations = issues;
   }
+  // Sans lui, une liste bornée se lirait comme le sous-arbre entier (revue
+  // Codex de la PR #712, passe 3).
+  if (objet['sub_delegations_incomplete'] === true) record.sub_delegations_incomplete = true;
   return record;
 }
 
 /**
- * Attache au record le verdict que l'enfant a enregistré, s'il en a enregistré
- * un. Le verdict déjà porté par l'appelant l'emporte — il l'a lu de plus près.
+ * Pose sur le record les verdicts livrés dans le sous-arbre de l'enfant, et ce
+ * qu'ils interdisent (#59) — lus par `readJobDeliverable`, le lecteur unique de
+ * « ce qu'un job a livré » (#646). Toujours relus ici : aucun appelant ne les
+ * fournit, et une seconde source serait une seconde réponse.
  *
- * Une ligne illisible ne remonte PAS en exception : elle deviendrait une sortie
- * de `resumeDelegated` AVANT la mise à jour du parent, qui resterait
- * `awaiting_delegation` avec un appel d'outil sans réponse, et personne ne
- * serait prévenu (revue de la PR #170, constat 2). La délégation devient donc
- * un ÉCHEC nommé : le parent reçoit le `error-text` des délégations ratées,
- * avec le code, et peut agir. Fort et à la bonne place.
- *
- * Le verdict lu POSE AUSSI ce qu'il interdit (#59) : un `request_changes`
- * remplit `delivery_blocked`, si bien que le parent lit dans un CHAMP — et non
- * entre les lignes d'un résumé — qu'il ne peut pas conclure à une livraison.
+ * Une ligne illisible dans le sous-arbre ne remonte PAS en exception : elle
+ * deviendrait une sortie de `resumeDelegated` AVANT la mise à jour du parent,
+ * qui resterait `awaiting_delegation` avec un appel d'outil sans réponse, et
+ * personne ne serait prévenu (revue de la PR #170, constat 2). La délégation
+ * devient donc un ÉCHEC nommé : le parent reçoit le `error-text` des
+ * délégations ratées, avec le code, et peut agir. Fort et à la bonne place.
  */
-async function withDeliveredReviewVerdict(
+async function withDeliveredReviewVerdicts(
   outcome: DelegationOutcomeRecord,
   childJobId: JobId,
   db: AnyDrizzleDb,
 ): Promise<DelegationOutcomeRecord> {
-  if (outcome.review_verdict) return withDeliveryBlock(outcome);
-  try {
-    return withDeliveryBlock({
-      ...outcome,
-      review_verdict: await readDeliveredReviewVerdict(db, childJobId),
-    });
-  } catch (err) {
-    if (!(err instanceof OrchestrationError) || err.code !== 'review_verdict_malformed') throw err;
-    console.error(
-      `[resume] child ${childJobId} recorded an unreadable review_verdict — the delegation is reported as failed:`,
-      err,
-    );
+  const delivered = await readJobDeliverable(db, childJobId as string);
+  if (delivered && delivered.unreadable_review_verdicts.length > 0) {
     return {
       ...outcome,
       status: 'failed',
       error: 'review_verdict_malformed',
-      review_verdict: null,
+      review_verdicts: [],
       delivery_blocked: null,
     };
   }
-}
-
-/**
- * Pose sur le record ce que sa relecture interdit — une seule lecture de la
- * règle (`reviewBlocksDelivery`), partagée avec l'écran.
- *
- * Le champ est TOUJOURS écrit, `null` compris : un parent qui reçoit un
- * résultat sans ce champ ne saurait pas s'il n'y a rien à dire ou si personne
- * ne l'a regardé.
- */
-function withDeliveryBlock(outcome: DelegationOutcomeRecord): DelegationOutcomeRecord {
+  const verdicts = delivered?.review_verdicts ?? [];
   return {
     ...outcome,
-    delivery_blocked: reviewBlocksDelivery(outcome.review_verdict)
-      ? REVIEW_CHANGES_REQUESTED
-      : null,
+    review_verdicts: verdicts,
+    // Le champ est TOUJOURS écrit, `null` compris : un parent qui reçoit un
+    // résultat sans ce champ ne saurait pas s'il n'y a rien à dire ou si
+    // personne ne l'a regardé.
+    delivery_blocked: verdictsBlockDelivery(verdicts) ? REVIEW_CHANGES_REQUESTED : null,
   };
 }
 
@@ -342,8 +582,8 @@ function childSlugFromToolName(toolName: string): string | null {
  * 5. Set parent.status = 'pending', clear pending_delegation
  *
  * @param parentJobId  The ID of the waiting parent job
- * @param childJobId   The ID of the completed child job — read for its
- *                     `review_verdict` rows (#124), and for logging/audit
+ * @param childJobId   The ID of the completed child job — read for the
+ *                     verdicts of its subtree (#124, #646), and for logging/audit
  * @param childOutcome The child's text result, OR `{error}` if the child failed
  * @param db           Drizzle DB handle
  * @returns            Updated parent job row
@@ -463,12 +703,17 @@ export async function resumeDelegated(
   // results (string) and 'error-text' for the deferred-sibling markers (which
   // carry is_error=true so the LLM treats them as failures, not normal results).
   type ToolResultOutput = { type: 'text'; value: string } | { type: 'error-text'; value: string };
-  // Le livrable d'une revue est le verdict que l'enfant a enregistré, pas la
-  // phrase par laquelle il l'annonce (issue #124). On le lit sur ses lignes
-  // `tool_calls` et on le met dans le record TYPÉ, seul objet que le parent
-  // reçoive : sans cela le parent redélègue la même revue.
+  // Le livrable d'une revue est le verdict enregistré, pas la phrase par
+  // laquelle on l'annonce (issue #124), et il traverse les relais (#646). On le
+  // lit sur les lignes `tool_calls` du sous-arbre et on le met dans le record
+  // TYPÉ, seul objet que le parent reçoive : sans cela le parent redélègue la
+  // même revue.
   const outcome = {
-    ...(await withDeliveredReviewVerdict(normalizeDelegationOutcome(childOutcome), childJobId, db)),
+    ...(await withDeliveredReviewVerdicts(
+      normalizeDelegationOutcome(childOutcome),
+      childJobId,
+      db,
+    )),
     // Relu ICI, point de passage de toute issue de délégation qu'un parent
     // ATTEND — l'enfant exécuté en ligne, celui qu'un runner mort laisse au
     // faucheur, celui qu'une approbation reprend plus tard : un seul endroit,
@@ -526,16 +771,32 @@ export async function resumeDelegated(
   // The moves themselves, and their order, live in failed-delegation.ts
   // (#510), which also says what the child left.
   const fichiersDeLEnfant = filesTheChildWrote(outcome.files_written);
+  //
+  // The whole block — marker and guidance included — fits the one tool-result
+  // budget (`fitToolResult`): only the outcome's long text gives way, never the
+  // moves the parent must read (Codex review of #712, pass 2).
+  const consignes = failedDelegationGuidance(nextFailedState, {
+    childLeftFiles: fichiersDeLEnfant.length > 0,
+  });
   const errorValue = isFailure
-    ? `${DELEGATION_FAILED_MARKER}
-${renderDelegationOutcome(outcome)}
+    ? fitToolResult(
+        (room) => `${DELEGATION_FAILED_MARKER}
+${renderDelegationOutcome(outcome, room)}
 
-${failedDelegationGuidance(nextFailedState, { childLeftFiles: fichiersDeLEnfant.length > 0 })}`
+${consignes}`,
+        (t) => t.length,
+      )
     : '';
 
   const primaryOutput: ToolResultOutput = isFailure
     ? { type: 'error-text', value: errorValue }
-    : { type: 'text', value: renderDelegationOutcome(outcome) };
+    : {
+        type: 'text',
+        value: fitToolResult(
+          (room) => renderDelegationOutcome(outcome, room),
+          (t) => t.length,
+        ),
+      };
 
   const toolResultParts: Array<{
     type: 'tool-result';
@@ -590,6 +851,7 @@ ${failedDelegationGuidance(nextFailedState, { childLeftFiles: fichiersDeLEnfant.
   // 'pending' and re-trigger it. Guarding the write closes that TOCTOU — cancel
   // wins, 0 rows land, and we return the terminal no-op snapshot exactly like
   // the read-time terminal branch does.
+  // agent_jobs-write: delegation-resume — gardée sur `awaiting_delegation`.
   const [updated] = await db
     .update(agentJobs)
     .set({

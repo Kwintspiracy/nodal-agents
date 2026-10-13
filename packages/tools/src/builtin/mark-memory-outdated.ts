@@ -46,6 +46,7 @@ export const markMemoryOutdatedTool: ToolDefinition<
     'is appropriate.',
   inputSchema: MarkMemoryOutdatedInputSchema,
   riskLevel: 'write',
+  loading: 'eager',
   card: 'text',
   execute: async (input, ctx) => {
     try {

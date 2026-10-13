@@ -56,11 +56,13 @@ function getLanAddresses(): string[] {
  *
  * Reads env via process.env directly (see module-level CRITICAL note).
  * Performs a single DB read for operator install notes.
+ * `timezone` is always resolved (stored zone, else the server's): the prompt's
+ * "now" and the dates of the replayed turns (#650) are read in it.
  */
 export async function getDeploymentContext(
   db: AnyDrizzleDb,
   entityId?: string,
-): Promise<DeploymentContext> {
+): Promise<DeploymentContext & { timezone: string; localTime: string }> {
   // Determine network mode from BIND env var. '0.0.0.0' or '::' = LAN.
   const bind = process.env['BIND'] ?? '127.0.0.1';
   const networkMode: 'loopback' | 'lan' = bind === '0.0.0.0' || bind === '::' ? 'lan' : 'loopback';

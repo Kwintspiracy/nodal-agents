@@ -12,6 +12,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import type { LanguageModel } from 'ai';
 import { findModelCatalogEntry } from '@nodal-agents/shared';
 import type { ProviderConfig } from '../types';
+import { providerFetch } from '../transport';
 
 /**
  * Set `reasoning_effort` on an outgoing OpenAI body unless already present.
@@ -27,7 +28,7 @@ export function injectOpenAIReasoningEffort(body: unknown, effort: string): unkn
 
 function createOpenAIReasoningFetch(
   effort: string,
-  baseFetch: typeof globalThis.fetch = globalThis.fetch,
+  baseFetch: typeof globalThis.fetch = providerFetch,
 ): typeof globalThis.fetch {
   return async (
     input: Parameters<typeof globalThis.fetch>[0],
@@ -56,7 +57,7 @@ export function buildOpenAIModel(config: ProviderConfig): LanguageModel {
   const provider = createOpenAI({
     apiKey: config.apiKey,
     ...(config.baseURL ? { baseURL: config.baseURL } : {}),
-    ...(wire ? { fetch: createOpenAIReasoningFetch(wire) } : {}),
+    fetch: wire ? createOpenAIReasoningFetch(wire) : providerFetch,
   });
 
   return provider(config.model);

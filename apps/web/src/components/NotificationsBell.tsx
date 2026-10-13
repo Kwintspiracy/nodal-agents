@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { useLayer } from '@/lib/layers.ts';
 import Link from 'next/link';
-import { Bell, ArrowClockwise } from '@phosphor-icons/react';
+import { Bell, ArrowClockwise, Warning } from '@phosphor-icons/react';
 import { toast } from 'sonner';
 import { resolveApprovalAction } from '@/lib/actions';
 import IconButton from '@/components/ui/IconButton';
@@ -11,6 +11,9 @@ import RowActionButton from '@/components/ui/RowActionButton';
 import { useApprovals, type PendingApproval } from './ApprovalsProvider';
 import { useSkillUpdates, type SkillUpdateNotice } from './SkillUpdatesProvider';
 import { relativeTime } from '@/lib/format-time';
+import { sourceProblemLabel } from '@/lib/skill-source-problem.ts';
+import { openRunHref, questionHref } from '@/lib/run-page.ts';
+import { readElicitationToolInput } from '@nodal-agents/shared';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -30,6 +33,17 @@ function inputSnippet(toolInput: Record<string, unknown> | null | undefined): st
   }
   const raw = JSON.stringify(toolInput);
   return raw.length > 60 ? raw.slice(0, 57) + '…' : raw;
+}
+
+/**
+ * Ce qui se RÉPOND au lieu de s'approuver : la question d'un agent (#465) et
+ * celle d'un serveur MCP (élicitation, 0145). Ni l'une ni l'autre n'a de sens
+ * avec un bouton « Approve » : le runner refuse d'approuver une question sans
+ * réponse, et un formulaire sans contenu. La ligne mène là où la carte se
+ * répond, le fil de sa conversation ou la page de son run.
+ */
+function isAnswered(item: PendingApproval): boolean {
+  return item.kind === 'question' || item.kind === 'elicitation';
 }
 
 // ─── Approve button inside the dropdown ───────────────────────────────────────
@@ -72,6 +86,39 @@ function ApproveButton({
         {isPending ? '…' : 'Approve'}
       </RowActionButton>
     </span>
+  );
+}
+
+/**
+ * Les deux premières lignes d'une attente. Une élicitation y dit QUI demande —
+ * le serveur — et sa question, citée : l'outil MCP en cours n'est pas ce qu'on
+ * vous demande d'approuver.
+ */
+function ItemTitle({ item }: { item: PendingApproval }) {
+  const asked = item.kind === 'elicitation' ? readElicitationToolInput(item.toolInput) : null;
+  if (asked) {
+    return (
+      <>
+        <p className="truncate text-medium-13 text-ink" data-testid="bell-elicitation-title">
+          {asked.server} asks for an answer
+        </p>
+        <p className="mt-0.5 truncate text-body-12 text-ink-3">{asked.message}</p>
+      </>
+    );
+  }
+  return (
+    <>
+      <p className="truncate text-medium-13 text-ink">
+        {item.agentName ?? 'Agent'}
+        <span className="mx-1 text-ink-4">·</span>
+        <code className="rounded bg-canvas px-1 py-0.5 text-mono-12 text-ink-2">
+          {item.toolName}
+        </code>
+      </p>
+      <p className="mt-0.5 truncate text-body-12 text-ink-3">
+        {inputSnippet(item.toolInput as Record<string, unknown> | null)}
+      </p>
+    </>
   );
 }
 
@@ -125,28 +172,26 @@ function ApprovalsDropdown({
         <ul className="max-h-[340px] divide-y divide-rule-2 overflow-y-auto">
           {items.map((item) => (
             <li key={item.id}>
-              {/* The item body is a link to the job; Approve button stops propagation */}
+              {/* The item body is a link to the job; Approve button stops propagation.
+                  #465 — a QUESTION is not approved from here: approving without
+                  an answer is refused by the runner. The row leads to where it is
+                  answered (its conversation, or its run), like the Approvals card. */}
               <Link
-                href={`/jobs/${item.jobId}`}
+                href={isAnswered(item) ? questionHref(item) : openRunHref(item.jobId)}
                 onClick={onClose}
                 className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-hover"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-medium-13 text-ink">
-                    {item.agentName ?? 'Agent'}
-                    <span className="mx-1 text-ink-4">·</span>
-                    <code className="rounded bg-canvas px-1 py-0.5 text-mono-12 text-ink-2">
-                      {item.toolName}
-                    </code>
-                  </p>
-                  <p className="mt-0.5 truncate text-body-12 text-ink-3">
-                    {inputSnippet(item.toolInput as Record<string, unknown> | null)}
-                  </p>
+                  <ItemTitle item={item} />
                   <p className="mt-0.5 text-legacy-11 text-ink-4">
                     {relativeTime(item.requestedAt)}
                   </p>
                 </div>
-                <ApproveButton item={item} onApproved={onApproved} />
+                {isAnswered(item) ? (
+                  <span className="shrink-0 text-mono-11-caps text-run">Answer</span>
+                ) : (
+                  <ApproveButton item={item} onApproved={onApproved} />
+                )}
               </Link>
             </li>
           ))}
@@ -167,9 +212,15 @@ function ApprovalsDropdown({
                   onClick={onClose}
                   className="flex items-center gap-2.5 px-4 py-3 transition-colors hover:bg-hover"
                 >
-                  <ArrowClockwise size={14} className="shrink-0 text-warn" />
+                  {u.problem ? (
+                    <Warning size={14} className="shrink-0 text-warn" />
+                  ) : (
+                    <ArrowClockwise size={14} className="shrink-0 text-warn" />
+                  )}
                   <span className="min-w-0 flex-1 truncate text-medium-13 text-ink">
-                    {u.name} has an update
+                    {u.problem
+                      ? `${u.name}: ${sourceProblemLabel(u.problem).toLowerCase()}`
+                      : `${u.name} has an update`}
                   </span>
                 </Link>
               </li>

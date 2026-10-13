@@ -115,6 +115,116 @@ The runner maps MCP tool annotations to its own risk model:
 | `destructiveHint: true` | `destructive`                                                     |
 | no annotation           | `write` (conservative default — passes through the approval gate) |
 
+### What the agent reads of a tool result
+
+A `tools/call` result has two channels: `content` (blocks meant for the model)
+and `structuredContent` (the machine form). The agent reads both:
+
+- every `text` block, in the order the server wrote them;
+- then `structuredContent`, serialized, so the agent keeps what its next call
+  needs (an id, a status). It is not repeated when a text block already is its
+  serialization (compared as JSON: indentation and key order do not matter);
+- a server on the 2024-10-07 protocol (`toolResult`) is read the same way;
+- images, audio, embedded binary resources and resource links are each named in
+  one line (type, size, link) — the agent is told they exist, it does not
+  receive their bytes;
+- `isError: true` reaches the agent as a failed call, with the server's text
+  framed as external data, like a successful result;
+- the tool call's log keeps the whole result, `structuredContent` included.
+
+The agent reads at most 25,000 characters of one tool result, the same budget
+for every tool, counted on what it actually reads: the frame around external
+data included. Within it, the structured payload has priority — also when a
+text block is its serialization: a long text is cut to the room left, and the
+cut is said. A structured payload that alone exceeds the budget is reduced, not
+cut at its end: its longest strings and lists give way first, each cut said
+where it happened, so its short fields (an id, a status) are kept. The text it
+pushed out is named.
+
+The tool call's log keeps more: up to 50,000 characters (`MCP_RESULT_CHAR_CAP`)
+for all the content blocks together, and as much again for the structured
+payload, reduced the same way. Blocks past that are counted, never dropped in
+silence.
+
+### When a server asks a question
+
+A server can ask a person something in the middle of one of its tool calls —
+"how many copies?", "print it now?" — with MCP **elicitation** in form mode.
+Nodal announces that it supports forms (`{ "elicitation": { "form": {} } }`)
+and puts the question in front of a person:
+
+- The run keeps going while it waits: the server keeps its call open, and the
+  call's own time limit is paused for as long as the person thinks.
+- The question shows on the run, in its conversation thread, on the
+  **Approvals** page and in the bell. A request made on the web, by an MCP
+  client, the API or a schedule keeps its question there.
+- A request made on a messaging channel gets its question **in the same
+  conversation**, never in the owner's: the images first, then a card to fill
+  in place.
+  - **Telegram, Discord, Slack**: a button per choice, Yes / No per switch,
+    and ✏️ next to a number or a text field. Tap ✏️, then reply to the card
+    with the value (on Slack, in the card's thread). The card shows the values
+    so far and is redrawn after each step. Its accept and decline buttons come
+    first, above the settings, and settle it.
+    A value outside the form is refused, and the reason is posted.
+  - A form with more buttons than the channel can show (Discord: 5 rows of 5)
+    gets the question and a pointer to the dashboard, with the reason.
+  - **WhatsApp** has no buttons: the question and a pointer to the dashboard.
+- The form is drawn from the server's `requestedSchema`: choices, numbers with
+  their bounds, switches, text. The answer is checked against it before it
+  leaves. The accept button returns `accept` with the values, the decline
+  button returns `decline` (their labels: see below). The server reads
+  `cancel` when nobody answers in time (10 minutes,
+  `NODALAI_ELICITATION_TIMEOUT_MS`), when the run stops, or when the server
+  withdraws its question.
+- The server's own wait must be at least as long. The MCP SDK gives up after
+  60 seconds unless told otherwise: `elicitInput(params, { timeout })`.
+- URL mode is not supported yet.
+
+A tool that needs approval (the default for MCP tools) and then asks its own
+question asks twice. **Always allow** on that tool removes the first one.
+
+#### Button labels
+
+A button should say what it does. A server names its two buttons in
+`params._meta` under the key `nodal/actions`:
+
+```json
+{
+  "message": "Print 1 page on A4?",
+  "requestedSchema": { "type": "object", "properties": {} },
+  "_meta": { "nodal/actions": { "accept": "Print", "decline": "Cancel" } }
+}
+```
+
+- Both keys are optional. Without a label the buttons read **✅ Confirm** and
+  **Decline**.
+- A label is plain text, at most 32 characters once line breaks and invisible
+  formatting characters are removed. A label that breaks the rule is ignored
+  and logged; its button keeps the default, and the question is still asked.
+
+#### Images with a question
+
+A server can show images with its question, a print preview for instance, by
+adding them to `params._meta` under the key `nodal/attachments`:
+
+```json
+{
+  "message": "Print 1 page on A4?",
+  "requestedSchema": { "type": "object", "properties": {} },
+  "_meta": {
+    "nodal/attachments": [{ "mimeType": "image/png", "data": "<base64>", "caption": "Page 1" }]
+  }
+}
+```
+
+- Accepted types: PNG, JPEG, WebP and GIF, and the bytes must start like the
+  declared type.
+- At most 4 images, 5 MB each once decoded. A caption longer than 300
+  characters is cut.
+- An image that breaks a rule is dropped and logged. The question is still
+  asked.
+
 ### Adding an MCP server
 
 **From the catalog:**
@@ -152,12 +262,25 @@ The direction also works in reverse: Nodal can expose **itself** as an MCP
 server, so an external client — your terminal, a coding agent like Claude Code
 — hands work to your agents instead of the other way around.
 
-Enable the **MCP server** switch in **Settings → Safety** (off by default), then
-register the server in your client, on the machine that hosts Nodal:
+Enable the **MCP server** switch in **Settings → Safety** (off by default). The
+same section then gives, for the machine that hosts Nodal:
 
-```bash
-claude mcp add nodal -- nodal-agents mcp serve
-```
+- **Claude Code**: the exact command to run. It is built from the Node and the
+  script that started this install, so it works whether Nodal was installed
+  globally, launched with `npx`, or run from source. Its shape:
+
+  ```bash
+  claude mcp add nodal -- "<path to node>" "<path to the nodal-agents CLI>" mcp serve
+  ```
+
+- **Claude Desktop**: the `mcpServers` entry for its configuration file, and an
+  **Add to Claude Desktop** button that writes it for you. The button keeps your
+  other servers and saves a copy of the previous file first.
+
+Both clients can be connected at the same time; their runs land on the same
+page. If the section asks you to start Nodal with `nodal-agents up`, the web
+was started some other way and does not know the command: it shows none rather
+than a guess.
 
 The client gets exactly one tool, `run_task`: it creates a **tracked job** for
 your workspace's root agent (or a chosen agent by slug) and returns the job id

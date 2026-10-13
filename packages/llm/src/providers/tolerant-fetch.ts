@@ -31,12 +31,14 @@
 // Scope: applied only to chat-completions endpoints (`/chat/completions` in the
 // URL). Streaming, embeddings, other endpoints pass through unchanged.
 
+import { providerFetch } from '../transport';
+
 // Matches `FetchFunction` from `@ai-sdk/provider-utils` (= `typeof globalThis.fetch`).
 // We type it locally to avoid pulling a direct dep just for the alias.
 type FetchLike = typeof globalThis.fetch;
 
 /** Wraps fetch to normalise OpenAI-compatible chat responses. */
-export function createTolerantFetch(baseFetch: FetchLike = globalThis.fetch): FetchLike {
+export function createTolerantFetch(baseFetch: FetchLike = providerFetch): FetchLike {
   return async (input: Parameters<FetchLike>[0], init?: Parameters<FetchLike>[1]) => {
     const response = await baseFetch(input, init);
 

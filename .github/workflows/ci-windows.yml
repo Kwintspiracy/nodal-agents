@@ -61,9 +61,11 @@ jobs:
       # Linux and Windows artefacts are not interchangeable. The key carries
       # the SHA so each run writes its own entry; restore-keys falls back to
       # the most recent one, which is what makes an unchanged package a cache
-      # hit. ~100 KB on Windows (typecheck/test declare no outputs, so only
+      # hit. ~100 KB on Windows (typecheck declares no outputs, so only
       # logs and the up-to-date markers are stored — all that is needed to
-      # SKIP them).
+      # SKIP them). `test` is never cached (`turbo.json`, issue #698): a
+      # replayed log hid a failing test. Measured before that change, on run
+      # 37378259596: 4 of 34 test tasks were cache hits, 36 min 20 s.
       - uses: actions/cache@v4
         with:
           path: .turbo/cache

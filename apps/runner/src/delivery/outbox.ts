@@ -58,15 +58,9 @@ import {
   jobDeliveries,
   getBindingCredentials,
   isConversationAllowed,
-  resolveOwnerConversation,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import {
-  DeliveryError,
-  getAdapter,
-  listActiveChannelsForAgent,
-  resolveTransportChannel,
-} from '@nodal-agents/delivery';
+import { DeliveryError, getAdapter, resolveOwnerNoticeTarget } from '@nodal-agents/delivery';
 import type { ChannelAdapter, ChannelKind } from '@nodal-agents/delivery';
 import { runnerInstanceId } from '../runner-identity.ts';
 
@@ -610,13 +604,15 @@ async function alertOwnerOfRejection(db: AnyDrizzleDb, alert: RejectionAlert): P
     // Même règle que les autres notifications adressées au propriétaire : un
     // déclencheur n'est pas un transport, le canal se résout depuis les canaux
     // réellement actifs de l'agent. Le CANAL D'ABORD, puis la conversation du
-    // propriétaire SUR CE CANAL — jamais `resolveOwnerChatId`, épinglé
-    // Telegram : un agent dont le token Telegram a été effacé et dont seul
-    // Discord est actif enverrait sinon un chat id Telegram vers Discord
-    // (trou relevé en revue de T08 ; run-schedules.ts le porte encore).
-    const activeChannels = await listActiveChannelsForAgent(db, agentId);
-    const alertChannel = resolveTransportChannel('cron', activeChannels);
-    const ownerChatId = await resolveOwnerConversation(db, agentId, alertChannel);
+    // propriétaire SUR CE CANAL — jamais un chat propriétaire Telegram : un
+    // agent dont le token Telegram a été effacé et dont seul Discord est actif
+    // enverrait sinon un chat id Telegram vers Discord (trou relevé en revue de
+    // T08). Une seule règle, partagée avec l'avis de budget des routines
+    // (`resolveOwnerNoticeTarget`, revue passe 5 de #657).
+    const { channel: alertChannel, chatId: ownerChatId } = await resolveOwnerNoticeTarget(
+      db,
+      agentId,
+    );
     if (!ownerChatId) {
       console.error(
         `[outbox] ${CODE_NO_OWNER_CHAT} ${body} cause=no_owner channel=${alertChannel}`,

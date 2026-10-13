@@ -110,7 +110,7 @@ This tool keeps the LLM context tiny: the return value is just
 Size cap: 50 MB (Telegram document limit). Larger files throw \`file_too_large\`.
 
 Fail conditions:
-- No chatId provided and the job has no origin chat → throws \`no_recipient\`.
+- No chatId provided, the job has no chat and no owner conversation is on record → throws \`no_recipient\`.
 - Agent has no configured Telegram bot token → throws \`no_bot_token\`.
 - Explicit chatId is not an approved chat → throws \`telegram_chat_not_allowed\`.
 - Local source path is outside your workspaces/skill store/temp dir → throws

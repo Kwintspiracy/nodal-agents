@@ -19,7 +19,7 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, chatMessages, conversations, llmCalls } from '@nodal-agents/db';
+import { eq, agentJobs, chatMessages, conversations, llmCalls } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import { runChatTurn } from '../../chat/run-chat-turn.ts';
 import { cutReplyNote } from '../../chat/turn-stop.ts';
@@ -207,5 +207,169 @@ describe('la réponse du chat sous les horloges des jobs (#458) @cap:parler-a-un
     await playTurn(conv);
     const prompt = JSON.stringify(next.doStreamCalls[0]!.prompt);
     expect(prompt).toContain(JSON.stringify(cutReplyNote()).slice(1, -1));
+    // #562 — la note est au runner : jamais dans la bouche de l'agent. Sa
+    // réponse rejouée est ce qu'il avait écrit, et rien d'autre.
+    const messages = next.doStreamCalls[0]!.prompt as Array<{ role: string; content: unknown }>;
+    const texts = (role: string): string[] =>
+      messages
+        .filter((m) => m.role === role)
+        .flatMap((m) =>
+          typeof m.content === 'string'
+            ? [m.content]
+            : (m.content as Array<{ type: string; text?: string }>)
+                .filter((p) => p.type === 'text')
+                .map((p) => p.text ?? ''),
+        );
+    expect(texts('assistant')).toEqual(['Le cylindre reçoit la vapeur']);
+    expect(texts('user')).toContain(cutReplyNote());
+  });
+});
+
+// #484, revue Codex (invariant #11) — le chat en flux dit lui aussi, par le
+// MÊME battement que la boucle des jobs, ce que son appel produit.
+describe('le battement de l’appel du chat (#484) @cap:parler-a-un-agent/moteur', () => {
+  it('au-delà de 60 s, une ligne llm_call_progress porte la production de la réponse', async () => {
+    const model = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: 'z-ai/glm-5.2',
+      doStream: async () => ({
+        stream: new ReadableStream({
+          async start(controller) {
+            controller.enqueue({ type: 'stream-start', warnings: [] });
+            controller.enqueue({ type: 'reasoning-start', id: 'r' });
+            controller.enqueue({ type: 'reasoning-delta', id: 'r', delta: 'hmmm' });
+            // Le modèle réfléchit une minute : le battement tombe pendant l'appel.
+            await new Promise((r) => setTimeout(r, 50));
+            vi.advanceTimersByTime(61_000);
+            controller.enqueue({ type: 'reasoning-end', id: 'r' });
+            for (const p of text('t', 'La vapeur.')) controller.enqueue(p);
+            controller.enqueue({ type: 'text-end', id: 't' });
+            controller.enqueue({
+              type: 'finish',
+              finishReason: { unified: 'stop', raw: 'stop' },
+              usage: USAGE(5, 5),
+            });
+            controller.close();
+          },
+        }) as never,
+      }),
+      doGenerate: async () => ({
+        content: [{ type: 'text' as const, text: '' }],
+        finishReason: { unified: 'stop' as const, raw: 'stop' },
+        usage: USAGE(3, 1),
+        warnings: [],
+      }),
+    });
+    mockModel.current = model;
+    const conv = await newConversation();
+    const lignes: string[] = [];
+    const espion = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
+      lignes.push(a.map(String).join(' '));
+    });
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    try {
+      const result = await playTurn(conv);
+      expect(result).toMatchObject({ ok: true, reply: 'La vapeur.' });
+    } finally {
+      vi.useRealTimers();
+      espion.mockRestore();
+    }
+
+    const battement = lignes.find((l) => l.includes('llm_call_progress'));
+    expect(battement).toBeDefined();
+    const faits = JSON.parse(battement!.slice(battement!.indexOf('{'))) as Record<string, unknown>;
+    expect(faits).toMatchObject({ reasoningChars: 4, textChars: 0, toolName: null });
+    expect(faits['elapsedMs']).toBeGreaterThanOrEqual(60_000);
+  });
+});
+
+// Revue Codex de #484, passe 3 : une coupure SANS texte visible tombait dans le
+// chemin « un outil a échoué », qui relance SANS outils. Le modèle avait fini
+// un `run_task` dans le flux, puis la coupure : l'appel est jeté (voulu), et la
+// relance sans outils ne pouvait pas le recréer — elle pouvait seulement dire
+// « c'est lancé » alors qu'aucun job n'existait. Une coupure n'est pas un échec
+// d'outil : le tour échoue par son chemin d'échec, en disant la coupure.
+describe('une coupure sans texte n’est pas un échec d’outil (#484) @cap:parler-a-un-agent/moteur', () => {
+  it('run_task terminé puis coupure : aucune réponse « lancé », aucun job, et le tour dit la coupure', async () => {
+    const model = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: 'z-ai/glm-5.2',
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'tool-input-start', id: 'rt', toolName: 'run_task' },
+            { type: 'tool-input-delta', id: 'rt', delta: '{"instruction":"monte la vidéo"}' },
+            { type: 'tool-input-end', id: 'rt' },
+            {
+              type: 'tool-call',
+              toolCallId: 'rt',
+              toolName: 'run_task',
+              input: '{"instruction":"monte la vidéo"}',
+            },
+            { type: 'reasoning-start', id: 'r' },
+            { type: 'reasoning-delta', id: 'r', delta: 'je réfléchis encore' },
+            { type: 'error', error: new Error('connection reset by peer') },
+          ] as StreamPart[],
+        }) as never,
+      }),
+      // La relance sans outils, si elle avait lieu, promettrait ce qui n'existe pas.
+      doGenerate: async () => ({
+        content: [{ type: 'text' as const, text: 'C’est lancé, je reviens vers toi.' }],
+        finishReason: { unified: 'stop' as const, raw: 'stop' },
+        usage: USAGE(3, 5),
+        warnings: [],
+      }),
+    });
+    mockModel.current = model;
+    const conv = await newConversation();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await playTurn(conv).finally(() => warn.mockRestore());
+
+    expect(result).toEqual({ ok: false, error: 'llm_cut', cutReason: 'stream_error' });
+    expect(model.doGenerateCalls).toHaveLength(0);
+    const jobs = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.conversationId, conv));
+    expect(jobs).toEqual([]);
+    const repliques = await db
+      .select({ content: chatMessages.content })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv));
+    expect(repliques.some((r) => r.content.includes('lancé'))).toBe(false);
+  });
+});
+
+// Revue Nodal de #623 : la relance sans outils (6b) disait toute panne
+// `llm_error`, coupure comprise. Le même tour, coupé au premier appel, disait
+// `llm_cut` et sa raison : deux mots pour un même fait, et un écran qui peint
+// « l'agent n'a pas répondu » là où l'appel a été coupé. Une coupure se dit
+// par UN vocabulaire, quel que soit l'appel du tour qu'elle frappe.
+describe('une coupure de la relance sans outils se dit comme les autres (#484) @cap:parler-a-un-agent/moteur', () => {
+  it('outil fantôme, puis la relance sans outils coupée par son horloge : `llm_cut`, jamais `llm_error`', async () => {
+    const timeout = (): Error =>
+      Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+    const model = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: 'z-ai/glm-5.2',
+      // Le fournisseur jette l'appel d'un outil absent de cette surface, avant
+      // tout contenu : c'est le chemin qui mène à la relance sans outils.
+      doStream: async () => {
+        throw new Error("Model tried to call unavailable tool 'web_search'");
+      },
+      // La relance sans outils ne répond jamais dans son temps.
+      doGenerate: async () => {
+        throw timeout();
+      },
+    });
+    mockModel.current = model;
+    const conv = await newConversation();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await playTurn(conv).finally(() => warn.mockRestore());
+
+    expect(result).toEqual({ ok: false, error: 'llm_cut', cutReason: 'wall' });
   });
 });

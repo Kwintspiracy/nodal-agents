@@ -20,7 +20,7 @@ import Table, { THead, Th, Tr, Td, CellAgent, CellMono } from '@/components/ui/T
 import TextButton from '@/components/ui/TextButton';
 import RowActionButton from '@/components/ui/RowActionButton';
 import type { SpaceCostView } from '@/lib/space-cost.ts';
-import { formatCost, formatMs, formatTokens } from './format.ts';
+import { formatCallsCost, formatCost, formatMs, formatTokens } from './format.ts';
 
 export type StatusBarProps = {
   cost: SpaceCostView;
@@ -121,8 +121,7 @@ export default function StatusBar({
                 {cacheShare !== null ? ` · ${cacheShare} cached` : ''}
               </Seg>
               <Seg onClick={() => setOpen((v) => !v)} active={open} strong>
-                {formatCost(t.costUsd)}
-                {t.unpricedCalls > 0 ? ' · partial' : ''}
+                {formatCallsCost(t.costUsd, t.unpricedCalls)}
               </Seg>
               {lostLabel !== null && (
                 <Seg title="Input tokens re-billed at full price because the provider's cache expired while a delegate was working">
@@ -219,8 +218,11 @@ function sentences(cost: SpaceCostView): string[] {
   // #442 — le plafond que le runner oppose à ce run, là où l'on lit ce qu'il a coûté.
   if (cost.runBudget) out.push(runBudgetLine(cost.runBudget));
   if (t.humanWaitMs > 0) {
+    // Toute ligne `approval_requests` tranchée compte ici : une approbation,
+    // une question d'agent, ou la question d'un serveur MCP (0145). « approve
+    // something » n'en disait qu'une sur trois.
     out.push(
-      `${formatMs(t.humanWaitMs)} of it was spent waiting for you to approve something, not working.`,
+      `${formatMs(t.humanWaitMs)} of it was spent waiting for your answer or approval, not working.`,
     );
   }
   if (t.proofMs > 0) {

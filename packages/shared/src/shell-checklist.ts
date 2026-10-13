@@ -7,11 +7,13 @@
 // one gets a state per agent: allowed, ask me, never.
 //
 // Every kind here is read from the command TEXT (`staticShellCategories`,
-// catastrophic-command.ts): the programs it runs, as Hermes Agent reads them.
-// A text reading cannot follow what a script does once it runs, nor where a
-// path built at run time leads; the reviews of PR #474 showed that trying to
-// only moves the hole. Keeping an agent inside its folders is the job of an
-// OS-level sandbox, not of this list, and the screen says so.
+// catastrophic-command.ts): the programs it runs, as Hermes Agent reads them,
+// and the code the command runs, a script it names or code written into it,
+// read with the same classifier (program-sources.ts, #635). A text reading
+// cannot follow where a path built at run time leads, nor code fetched or
+// assembled while the program runs; the reviews of PR #474 showed that trying
+// to only moves the hole. Keeping an agent inside its folders is the job of an
+// OS-level sandbox (#628), not of this list, and the screen says so.
 //
 // Pure: no filesystem, no `node:path` (the web imports this module too).
 
@@ -24,6 +26,7 @@ export const SHELL_CATEGORIES = [
   'delete_files',
   'install_software',
   'download',
+  'open_or_send',
   'stop_programs',
   'system_settings',
 ] as const satisfies readonly StaticShellCategory[];
@@ -37,15 +40,32 @@ export type ShellCategoryState = (typeof SHELL_CATEGORY_STATES)[number];
 export type ShellPolicy = Record<ShellCategory, ShellCategoryState>;
 
 /**
- * An agent nobody configured asks before every kind of action on the list:
- * what `destructive_gate` has always asked about. A false "ask" is cheap; a
- * silent `rm` is not.
+ * What an agent nobody configured may do without asking. An autonomous agent
+ * asks only for what leaves its workspace or cannot be undone (#614, the
+ * owner's rule of 29/09: three runs that day stopped on a card asking whether
+ * an agent could download a picture into its own folder).
+ *
+ * - `download` runs, when it writes into the job's workspaces; a target
+ *   outside them (or one the text cannot read) asks.
+ * - `inline_code` runs: code written into a command is the same power as a
+ *   script the agent writes and runs, which never asked. Telling "code from
+ *   the web" apart by reading the text is not a boundary (the owner's
+ *   explicit decision of 29/09); keeping an agent's code in bounds is an OS
+ *   sandbox's job, as the top of this file says.
+ * - Deleting, installing, stopping programs and system settings ask: they
+ *   reach the machine beyond the agent, or cannot be undone from the screen
+ *   yet (#617).
+ * - `open_or_send` asks: a window on the person's screen, a page on their
+ *   printer or a mail to someone leaves the computer's files, and a tool that
+ *   does it may have asked the person first (#667: an agent printed through
+ *   the shell past a print tool that asks).
  */
 export const DEFAULT_SHELL_POLICY: ShellPolicy = {
-  inline_code: 'ask',
+  inline_code: 'allow',
   delete_files: 'ask',
   install_software: 'ask',
-  download: 'ask',
+  download: 'allow',
+  open_or_send: 'ask',
   stop_programs: 'ask',
   system_settings: 'ask',
 };
@@ -58,6 +78,8 @@ export const StoredShellPolicySchema = z
     delete_files: StateSchema,
     install_software: StateSchema,
     download: StateSchema,
+    // Absent from every policy stored before #667: it reads the default, no migration.
+    open_or_send: StateSchema,
     stop_programs: StateSchema,
     system_settings: StateSchema,
   } satisfies Record<ShellCategory, typeof StateSchema>)
@@ -88,6 +110,50 @@ export interface ShellGateReason {
   state: Exclude<ShellCategoryState, 'allow'>;
   /** The commands of the call that did it, as written. */
   details: string[];
+  /**
+   * For a download the agent may do without asking: per command, the places it
+   * would write that are not inside one of the job's workspaces (#614). Only
+   * then does an allowed download ask, and this says why.
+   */
+  outside?: Array<{ command: string; places: string[] }>;
+  /**
+   * Where this kind was found in the code the call runs (#635): a script it
+   * names (`source`, as written) or the code written into the command
+   * (`source: null`), the line, and that line as written.
+   */
+  found?: ShellSourceFinding[];
+  /**
+   * The scripts the call runs that could not be read, and why (#635). Code
+   * nobody could read ahead: carried by an `inline_code` reason, under that
+   * kind's state.
+   */
+  unread?: ShellUnreadSource[];
+}
+
+export interface ShellSourceFinding {
+  source: string | null;
+  line: number;
+  text: string;
+}
+
+/** Why a script a command runs could not be read (#635). */
+export const SHELL_UNREAD_REASONS = [
+  'outside_workspaces',
+  'not_found',
+  'too_large',
+  'decided_at_run_time',
+  'not_a_file',
+  'unreadable',
+  /** A file an interpreter reads that is not text (review of #683, P1). */
+  'not_text',
+  /** Past what the gate reads for one call: files, bytes or depth (review of #683). */
+  'over_budget',
+] as const;
+
+export interface ShellUnreadSource {
+  /** As written in the command, or the text standing for it. */
+  source: string;
+  why: (typeof SHELL_UNREAD_REASONS)[number];
 }
 
 /** `approval_requests.gate_reasons` as stored, read back for the approval card. */
@@ -96,5 +162,10 @@ export const ShellGateReasonsSchema = z.array(
     category: z.enum(SHELL_CATEGORIES),
     state: z.enum(['ask', 'never']),
     details: z.array(z.string()),
+    outside: z.array(z.object({ command: z.string(), places: z.array(z.string()) })).optional(),
+    found: z
+      .array(z.object({ source: z.string().nullable(), line: z.number().int(), text: z.string() }))
+      .optional(),
+    unread: z.array(z.object({ source: z.string(), why: z.enum(SHELL_UNREAD_REASONS) })).optional(),
   }),
 );

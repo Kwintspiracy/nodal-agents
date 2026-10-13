@@ -17,6 +17,8 @@ import type { SystemSkill, SkillKind, PromptSurface } from './types';
 
 import { obsidianSkill } from './skills/obsidian';
 import { researchScopeDisciplineSkill } from './skills/research-scope-discipline';
+import { printRequestSkill } from './skills/print-request';
+import { magazinePageSkill } from './skills/magazine-page';
 import { resultsDeliverySkill } from './skills/results-delivery';
 import { telegramResponderSkill } from './skills/telegram-responder';
 import { claudeHtmlDesignSkill } from './skills/claude-html-design';
@@ -47,6 +49,7 @@ import { toolAttachConnectorSkill } from './skills/tool-attach-connector';
 import { toolSchedulesSkill } from './skills/tool-schedules';
 
 export { officeEditingSkill } from './skills/office-editing';
+export { SHARED_WORKSPACE_FOLDERS } from './skills/workspace-hygiene';
 export { spreadsheetEditingSkill } from './skills/spreadsheet-editing';
 export { documentEditingSkill } from './skills/document-editing';
 export { presentationEditingSkill } from './skills/presentation-editing';
@@ -60,6 +63,8 @@ export { requestReviewSkill } from './skills/request-review';
 export const systemSkills: SystemSkill[] = [
   obsidianSkill,
   researchScopeDisciplineSkill,
+  printRequestSkill,
+  magazinePageSkill,
   resultsDeliverySkill,
   telegramResponderSkill,
   claudeHtmlDesignSkill,
@@ -144,12 +149,6 @@ const slugsOfKind = (k: SkillKind): string[] =>
  * (verify-before-done, safe-tool-use, language-mirror). Not assignable.
  */
 export const baselineSkillSlugs: string[] = slugsOfKind('baseline');
-
-/**
- * CHANNEL skills — injected automatically when the agent is bound to a channel
- * (telegram etiquette, markdown). Not assignable.
- */
-export const channelSkillSlugs: string[] = slugsOfKind('channel');
 
 /**
  * CAPABILITY skills — opt-in, shown in the dashboard library AND advertised to

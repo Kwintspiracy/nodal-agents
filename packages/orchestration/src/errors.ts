@@ -81,7 +81,11 @@ export type OrchestrationErrorCode =
   // Une ligne `review_verdict` qui s'annonce réussie mais ne respecte pas le
   // contrat de l'outil : le contrat est rompu entre l'outil et son lecteur, et
   // livrer au parent un verdict tronqué serait pire que s'arrêter (#124).
-  | 'review_verdict_malformed';
+  | 'review_verdict_malformed'
+  // Le rendu borné d'un résultat de délégation n'a pas la place de son objet
+  // de décision, même aux textes coupés : le rendre quand même dépasserait le
+  // budget d'un résultat d'outil (revue Codex de la PR #712, passe 4).
+  | 'delegation_outcome_no_room';
 
 export class OrchestrationError extends Error {
   constructor(

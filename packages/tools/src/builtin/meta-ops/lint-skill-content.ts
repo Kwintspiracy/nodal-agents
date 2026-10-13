@@ -19,15 +19,9 @@
 import { eq, and } from '@nodal-agents/db';
 import { mcpServers } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { mcpToolPrefix } from '@nodal-agents/shared';
 
 export type SkillLintResult = { ok: true } | { ok: false; error: string };
-
-/** Mirror of slugToPrefix in @nodal-agents/adapter-mcp — replicated here
- *  because packages/tools cannot import adapter-mcp (would create an import
- *  cycle: adapter-mcp already depends on @nodal-agents/tools). */
-function slugToPrefix(slug: string): string {
-  return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
-}
 
 /**
  * The real `<slug>__<tool>` MCP tool names available in a workspace — the set
@@ -47,7 +41,7 @@ export async function listWorkspaceMcpToolNames(
 
   const names: string[] = [];
   for (const r of rows) {
-    const prefix = slugToPrefix(r.slug);
+    const prefix = mcpToolPrefix(r.slug);
     const tools = Array.isArray(r.availableTools) ? r.availableTools : [];
     for (const t of tools) {
       const name =

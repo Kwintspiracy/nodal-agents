@@ -290,9 +290,27 @@ describe('la page montre les deux dates, en UTC', () => {
     const app = join(bac, 'apps', 'qa');
     const data = join(app, 'data');
     mkdirSync(data, { recursive: true });
-    for (const f of ['build.mjs', 'lib.mjs', 'capacites.mjs', 'explications.mjs', 'depot.mjs']) {
+    for (const f of [
+      'build.mjs',
+      'lib.mjs',
+      'capacites.mjs',
+      'explications.mjs',
+      'depot.mjs',
+      'workflows.mjs',
+      'polices.mjs',
+    ]) {
       cpSync(new URL(`./${f}`, import.meta.url), join(app, f));
     }
+    // Les polices du portail vivent dans le dossier du site de docs (#688).
+    cpSync(
+      new URL('../docs/app/fonts/', import.meta.url),
+      join(app, '..', 'docs', 'app', 'fonts'),
+      {
+        recursive: true,
+        filter: (src) =>
+          /fonts$|fonts\.css$|-latin-wght-normal\.woff2$/.test(src.replace(/[\\/]$/, '')),
+      },
+    );
     // La VRAIE mesure committée, avec les deux seules dates changées : `build.mjs`
     // rend la page entière et lit bien plus que ce qu'un instantané de test
     // porterait. Le cas montré est celui que les deux dates existent pour dire —

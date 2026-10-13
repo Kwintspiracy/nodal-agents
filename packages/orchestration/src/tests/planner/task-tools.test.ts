@@ -100,8 +100,10 @@ describe('generateTaskTools', () => {
     // registre de `tools`, donc hors de `cards.test.ts`. Leur carte se garde ici.
     expect(tools[0]?.card).toBe('text');
     expect(tools[1]?.card).toBe('text');
-    // Codex review of #455, P2: the same scope rule as assign_*.
-    expect(tools[0]?.description).toContain(DELEGATION_SCOPE_RULE);
+    // The scope rule (Codex review of #455, P2) is said once, in the
+    // delegation manual of the team block, not in each delegation tool
+    // (router/delegation-said-once.test.ts).
+    expect(tools[0]?.description).not.toContain(DELEGATION_SCOPE_RULE);
   });
 
   describe('create_task', () => {

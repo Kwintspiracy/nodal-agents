@@ -30,7 +30,7 @@ const registry = createToolRegistry();
 registerBuiltins(registry);
 const builtinNames = new Set(registry.list().map((t) => t.name));
 
-const KINDS = ['baseline', 'channel', 'capability', 'agent-internal'] as const;
+const KINDS = ['baseline', 'capability', 'agent-internal'] as const;
 
 describe('catalogue de skills — forme de chaque entrée', () => {
   it('slug, nom, description et contenu sont tous renseignés', () => {

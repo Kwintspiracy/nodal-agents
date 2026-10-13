@@ -99,6 +99,7 @@ export const registerProjectTool: ToolDefinition<
     'shows the folder.',
   inputSchema: RegisterProjectInputSchema,
   riskLevel: 'write',
+  loading: 'eager',
   // Carte `text` : la sortie est une ligne de DONNÉES (un id, un chemin, un
   // nom), pas une structure à dessiner — il n'y a ni fichier écrit, ni table,
   // ni terminal à montrer.

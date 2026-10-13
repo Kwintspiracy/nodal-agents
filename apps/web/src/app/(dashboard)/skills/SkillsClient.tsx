@@ -15,7 +15,7 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import EmptyState from '@/components/ui/EmptyState';
 import Modal from '@/components/ui/Modal.tsx';
 import SkillsAssignedTable from './SkillsAssignedTable.tsx';
-import CommunitySkillsGrid from './CommunitySkillsGrid.tsx';
+import CommunitySkillsGrid, { toCatalogCardSkills } from './CommunitySkillsGrid.tsx';
 import InstallCommunitySkillModal from './InstallCommunitySkillModal.tsx';
 import SkillForm from './SkillForm.tsx';
 
@@ -46,18 +46,7 @@ type Props = {
  */
 export default function SkillsClient({ skills, agents }: Props) {
   const workspaceSkills = useMemo(() => skills.filter((s) => !isToolGroupSkill(s)), [skills]);
-  const installedCommunitySkills = useMemo(
-    () =>
-      skills
-        .filter((s) => s.isCommunity)
-        .map((s) => ({
-          slug: s.slug,
-          updateAvailable: s.updateAvailable,
-          updateDetail: s.updateDetail,
-          hasScripts: Boolean(s.installedScripts && s.installedScripts.length > 0),
-        })),
-    [skills],
-  );
+  const catalogCardSkills = useMemo(() => toCatalogCardSkills(skills), [skills]);
 
   const [tab, setTab] = useState<Tab>('workspace');
   const [category, setCategory] = useState('All');
@@ -160,7 +149,7 @@ export default function SkillsClient({ skills, agents }: Props) {
         )
       ) : (
         <CommunitySkillsGrid
-          installedSkills={installedCommunitySkills}
+          installedSkills={catalogCardSkills}
           query={query}
           category={category}
         />

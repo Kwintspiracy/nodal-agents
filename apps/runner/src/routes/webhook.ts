@@ -14,7 +14,7 @@
 // warning so the agent's approval rules still gate anything it does in response.
 
 import type { Context } from 'hono';
-import { eq, sql, resolveOwnerConversation } from '@nodal-agents/db';
+import { eq, sql, resolveOwnerConversation, designateChat } from '@nodal-agents/db';
 import { webhookTriggers, agentJobs, decryptChannelSecret } from '@nodal-agents/db';
 import { resolveTransportChannel, listActiveChannelsForAgent } from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
@@ -299,7 +299,7 @@ export async function webhookRoute(
     } else {
       // Auto: whatsapp excluded from the candidate set — no outbound send
       // tool is registered for it yet (TOOL_ONLY_DELIVERY_CHANNELS,
-      // execute.ts), and this job's chatId being non-null forces
+      // channel-delivery.ts), and this job's chatId being non-null forces
       // requiresToolDelivery — auto-landing on whatsapp here (e.g. an agent
       // whose only active channel happens to be whatsapp) would deadlock the
       // run on a tool it doesn't have. An EXPLICIT trigger.notifyChannel is
@@ -329,7 +329,8 @@ export async function webhookRoute(
       channel: 'webhook',
       task,
       status: 'pending',
-      chatId: notifyChatId,
+      // The owner conversation of the notify channel, with that channel (#649).
+      ...designateChat(notifyChatId, notifyChannel),
       messages: [{ role: 'user', content: task }],
       triggerContext: {
         type: 'webhook',

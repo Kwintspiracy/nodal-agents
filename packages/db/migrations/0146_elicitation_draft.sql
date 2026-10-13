@@ -1,0 +1,13 @@
+-- La question d'un serveur MCP (élicitation, 0145) répondue DEPUIS UN CANAL.
+--
+-- Sur Telegram, Discord ou Slack, la personne remplit le formulaire geste par
+-- geste sur la carte : un bouton par choix, « Yes / No » par interrupteur, et
+-- la valeur d'un nombre ou d'un texte tapée EN RÉPONSE à la carte. Ce qui a
+-- été rempli jusque-là vit ici, pas en mémoire : un geste relit la ligne,
+-- applique une opération, réécrit la carte — un runner redémarré ne perd rien.
+--
+-- `draft` = { "values": { <clé>: <valeur> }, "awaiting": <clé> | null }.
+-- `awaiting` : le champ qui attend une valeur tapée en réponse à la carte.
+-- NULL tant que personne n'a touché la carte, et sur toute ligne qui n'est
+-- pas une élicitation. La réponse ENVOYÉE reste dans `response` (0145).
+ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS draft jsonb;

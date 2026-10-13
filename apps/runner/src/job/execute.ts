@@ -6,7 +6,18 @@
 //   8: anti-loop guards (ChainCounters from @nodal-agents/orchestration)
 //   9: tool whitelist explicit per agent (computeToolWhitelist)
 
-import { eq, and, isNull } from '@nodal-agents/db';
+import {
+  eq,
+  and,
+  isNull,
+  isNotNull,
+  withinRunScope,
+  recordClaim,
+  heldClaim,
+  ownJobRow,
+  drainJobInbox,
+  pendingHeadsOfConversation,
+} from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
@@ -23,20 +34,30 @@ import {
   getChannelBinding,
   readScheduleState,
   readAgentBudgetState,
+  gatesACall,
 } from '@nodal-agents/db';
-import type { ApprovalRequestRow, JobTriggerContext } from '@nodal-agents/db';
+import type { ApprovalRequestRow } from '@nodal-agents/db';
 import {
   metaToolsForAgent,
   parseRootGrants,
   resolveShellPolicy,
+  ShellGateReasonsSchema,
   serverTimezone,
   modelContextWindow,
   modelCanSeeImages,
   estimateCallCostUsd,
   isUntrustedTool,
-  wrapUntrusted,
+  TOOL_RESULT_MODEL_CHARS,
+  framedForModel,
+  fitToolResult,
+  elideBinary,
+  cutForContext,
+  truncateForContext,
+  raisedErrorBlockLength,
   PROVIDER_REJECTED,
   PROVIDER_REJECTED_PREFIX,
+  findMcpToolNameCollision,
+  mcpToolNameCollisionMessage,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
@@ -44,7 +65,7 @@ import {
   createLazyMcpTools,
   slugToPrefix,
   connectMcp,
-  type McpToolDescriptor,
+  type McpServerDiscovery,
   type McpToolset,
 } from '@nodal-agents/adapter-mcp';
 import { isUsableMcpToolCache } from './mcp-tool-cache.ts';
@@ -63,17 +84,21 @@ import {
   estimateToolTokens,
 } from '@nodal-agents/llm';
 import type { NodalLlmClient } from '@nodal-agents/llm';
+import { liveCallProgress, watchCallProgress } from './call-progress.ts';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
 import { resolveSpeechGenerator } from './resolve-speech.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
+import { recheckNarratedAction } from '../llm/action-recheck.ts';
 import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
+import { deferredToolNames, toolsLoadedByCalls, toolsSentThisTurn } from './tool-loading.ts';
 import { resolveAgentToolNames } from './resolve-agent-tools.ts';
+import { createHumanWaitClock } from './human-wait.ts';
 import { loadApprovalRules } from './approval-rules.ts';
 import {
   computeToolWhitelist,
-  computeToolChoice,
   executeTool,
-  ALWAYS_ON_TOOLS,
+  agentBuiltinToolNames,
+  type JobPlacement,
   createTelegramSendMessageTool,
   createSendImageTool,
   createSendFileTool,
@@ -82,7 +107,7 @@ import {
   createSendVoiceTool,
   createListConversationsTool,
   listWorkspaceMcpToolNames,
-  isCatastrophicCommand,
+  isCatastrophicCall,
   matchApprovalRule,
   DELIVERY_TOOL_NAMES as DELIVERY_TOOL_NAME_LIST,
   toolsNamedButAbsent,
@@ -91,19 +116,23 @@ import {
   resolveRunWorkspaces,
   withJobFolder,
   isExistingDirectory,
+  deferredToolIndex,
+  withToolLoader,
+  toolOutputForModel,
+  shellChecklistDeclined,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
   ApprovalRule,
   ToolProvisioning,
   ApprovalGateRequest,
+  ToolExecutionResult,
 } from '@nodal-agents/tools';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import {
   ChainCounters,
   DEFAULT_LIMITS,
-  generateAssignTools,
-  generateTaskTools,
+  generateDelegationTools,
   handleDelegation,
   findDeliveredReviewForTarget,
   describeDuplicateReview,
@@ -129,10 +158,13 @@ import {
   CANCEL_UNDO_INTENT_SCAN_CHARS,
   VERIFY_BEFORE_ASSERT_NUDGE,
   readFinalReviewVerdict,
+  readChildDeliverables,
+  deliveredSomething,
   isSameAgentRetryBlocked,
   retryBlockedMessage,
   remainingDelegationHops,
   delegationDepthExceededMessage,
+  assertTurnToolCallBudget,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {
@@ -156,11 +188,24 @@ import {
   setJobStatus,
   saveCheckpoint,
   claimJob,
+  readJobAuthority,
+  watchJobRow,
+  JOB_ROW_UNREADABLE,
   currentTurnMessages,
   findTaskBoundary,
 } from './state.ts';
 import { holdJobHeartbeat } from './heartbeat.ts';
 import { unansweredToolCalls } from './close-transcript.ts';
+import {
+  APPROVED_CALL_OUTCOME_UNKNOWN,
+  APPROVAL_REQUEST_MISSING,
+  reserveApprovedExecution,
+  recordApprovedExecution,
+  closeUnknownApprovedExecution,
+  recordApprovalWithoutEffect,
+} from './approval-execution.ts';
+import type { ApprovedExecution } from './approval-execution.ts';
+import type { JobAuthority } from './state.ts';
 // LA porte terminale de succès (plan « Vérifier & Corriger », T09/T10) : les
 // deux chemins de succès de cette boucle passent par elle, jamais par
 // completeJob directement — c'est elle qui calcule et journalise la décision
@@ -172,8 +217,15 @@ import {
   finalizeJobSuccess,
 } from './finalize.ts';
 import type { DeclaredDeliverableFailure } from './finalize.ts';
+import { runnerNotesValue } from './transcript-text.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
+import {
+  channelDeliveryFacts,
+  telegramChatOf,
+  replyDestination,
+  triggerWantsConfirmation as triggerWantsConfirmationOf,
+} from './channel-delivery.ts';
 import { loadConversationContext } from './conversation-id.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { buildSharedWorkspaceInventory, inventoryForContext } from '../lib/workspace-inventory.ts';
@@ -183,6 +235,7 @@ import { checkpointsRoot } from '@nodal-agents/checkpoints';
 import { readFile } from 'node:fs/promises';
 import type { RunnerDeps } from '../deps.ts';
 import { notifyApprovalCreated } from '../approvals/notify.ts';
+import { createRequestUserInput, elicitationTimeoutMs } from '../approvals/elicitation.ts';
 import { notifyCodeTransition } from '../notify/code-transitions.ts';
 import {
   recordReviewerVerificationRuns,
@@ -193,16 +246,13 @@ import { skillStoreDir } from '../skills/index.ts';
 import { maybeRunReflection } from '../reflection/index.ts';
 import { getDeploymentContext } from './deployment.ts';
 
-// Per-result char budget for tool outputs entering the conversation. A single
-// tool (e.g. firecrawl_scrape returning a full web page) can otherwise inject
-// 100K+ tokens into `messages`, which every subsequent turn re-sends to the
-// LLM — the cost multiplier behind runaway jobs. We truncate to a fixed budget
-// with an explicit marker so the model knows content was cut and can re-scrape
-// a narrower target. 25K chars ≈ ~6.5K tokens — lowered from 50K (perf/tokens
-// audit): several parallel tool calls in one turn (e.g. 6 tool-calls × 50K)
-// were injecting ~78K tokens into a single message. Not env-overridable —
-// hardcoded like the other truncation constants in this file.
-const MAX_TOOL_RESULT_CHARS = 25_000;
+// Per-result char budget for tool outputs entering the conversation: the
+// model reads at most this much of one result, and we truncate to it with an
+// explicit marker so the model knows content was cut and can re-scrape a
+// narrower target. ONE source (`@nodal-agents/shared`, tool-result-budget.ts),
+// so a tool that shapes its own model text (`toModelOutput`) fits it exactly
+// and keeps what must survive, instead of this cut taking its tail.
+const MAX_TOOL_RESULT_CHARS = TOOL_RESULT_MODEL_CHARS;
 
 // Capabilities injected into ROOT meta-tools (create_mcp) via ToolContext.
 // Verify-then-write: connectMcp throws on any connect/auth/spawn failure, so the
@@ -225,6 +275,7 @@ const TOOL_PROVISIONING: ToolProvisioning = {
         inputSchema: t.inputSchema,
         annotations: t.annotations,
       })),
+      instructions: conn.instructions,
       close: conn.close,
     };
   },
@@ -408,39 +459,59 @@ const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
   ...DELIVERY_TOOL_NAME_LIST,
 ]);
 
-// Channels whose ONLY path to the user is a delivery tool call (telegram_send_message,
-// which dispatches through the job's own ChannelAdapter — see CHANNEL_SEND_TOOL in
-// thread-history.ts). For these, a job that completes without ever delivering is a
-// silent black hole — the delivery guard re-prompts the agent before letting such a
-// job finish. Other channels (api, dashboard, cron, internal, …) expose agent_jobs.result
-// directly, so a text-only completion is fine there.
-// Live incident: job 4eefb5bf (2026-07-12) completed on discord with tools_used=[] —
-// the guard already existed but only listed 'telegram', so a discord job's plain-text
-// reply silently never reached the channel. discord/slack register the SAME send tools
-// as telegram (gate at the capabilityTools.push call above keys off
-// deliveryBotToken || hasDiscordBinding || hasSlackBinding), so they belong in this set
-// too. whatsapp does NOT: hasWhatsappBinding is not part of that gate yet (no outbound
-// send tool is registered for a whatsapp job today), so adding it here would nudge the
-// agent to call a tool it doesn't have — join it once whatsapp's outbound tooling ships.
-const TOOL_ONLY_DELIVERY_CHANNELS: ReadonlySet<string> = new Set(['telegram', 'discord', 'slack']);
+// TOOL_ONLY_DELIVERY_CHANNELS and the rule that reads it live in channel-delivery.ts.
 
-/** Truncate an oversized tool-result string with an explicit, model-readable marker. */
-export function truncateForContext(value: string): string {
-  // Elide long base64/binary runs FIRST. They're useless to the model as text,
-  // and they're the dominant re-sent-every-turn bloat: a generated image comes
-  // back as ~50K of base64, and the runner re-sends the whole history each turn,
-  // so over ~10 turns one job burns ~700K input tokens (observed live, 7c78bf2c,
-  // $2.14). Files belong on disk — reference them by path/URL, not inline bytes.
-  const v = value.replace(
-    /[A-Za-z0-9+/]{256,}={0,2}/g,
-    (m) => `[binary elided: ${m.length} chars — reference the file by path/URL, not inline]`,
+/**
+ * Was the stored prompt written for this exact tool list? Both sides sorted;
+ * `null` (a prompt stored before `system_prompt_tools` existed) never matches.
+ */
+export function sameToolList(
+  stored: readonly string[] | null,
+  current: readonly string[],
+): boolean {
+  if (stored === null) return false;
+  const a = [...stored].sort();
+  return a.length === current.length && a.every((name, i) => name === current[i]);
+}
+
+/**
+ * The framed text the model reads of a third party's result (INJECT-001),
+ * within the one budget.
+ *
+ * The content is cut to fit, THEN framed — never framed then cut: a cut after
+ * the frame could remove the closing delimiter, and a payload framed with an
+ * opening tag and no closing one is worse than an unframed one, because
+ * everything after it reads as inside the boundary. The budget is measured on
+ * the framed block (`fitToolResult`), so the frame's own length and the
+ * neutralization of delimiter tokens inside the content are counted.
+ */
+export function framedToolResult(toolName: string, text: string): string {
+  const content = elideBinary(text);
+  return framedForModel(
+    toolName,
+    fitToolResult(
+      (room) => cutForContext(content, room),
+      (t) => framedForModel(toolName, t).length,
+    ),
   );
-  if (v.length <= MAX_TOOL_RESULT_CHARS) return v;
-  const dropped = v.length - MAX_TOOL_RESULT_CHARS;
-  return (
-    v.slice(0, MAX_TOOL_RESULT_CHARS) +
-    `\n\n[... truncated: ${dropped} chars dropped (total ${v.length}) ...]`
+}
+
+/**
+ * The `{ error }` block of a failure a third party's tool raised: its text cut,
+ * THEN framed inside the object, the whole block — frame and JSON escaping
+ * included — within the one budget.
+ */
+export function raisedErrorBlock(
+  toolName: string,
+  error: string,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const content = elideBinary(error);
+  const fitted = fitToolResult(
+    (room) => cutForContext(content, room),
+    (t) => raisedErrorBlockLength(toolName, t, extra),
   );
+  return { error: framedForModel(toolName, fitted), ...extra };
 }
 
 const EVICTED_TOOL_RESULT_MARKER =
@@ -643,6 +714,7 @@ export type ExecuteJobResult =
       toolsUsed?: string[];
       exitReason?: string;
       subDelegations?: SubDelegationOutcome[];
+      subDelegationsIncomplete?: boolean;
     }
   // `result` carries a user-facing explanation when one exists (e.g. a blocked
   // agent's reason). It lets a delegating parent relay WHY a child stopped,
@@ -659,6 +731,12 @@ export type ExecuteJobResult =
       exitReason?: string;
       hint?: JobFailureHint;
       subDelegations?: SubDelegationOutcome[];
+      /**
+       * `true` quand `subDelegations` ne nomme pas tous les échecs du
+       * sous-arbre : le dernier enregistrement d'une délégation de ce run le
+       * disait (revue Codex de la PR #712, passes 3 et 4).
+       */
+      subDelegationsIncomplete?: boolean;
     }
   | { status: 'cancelled' }
   | { status: 'awaiting_approval' }
@@ -690,6 +768,7 @@ export function delegationRecordFromOutcome(
       // d'un petit-enfant n'atteignait le grand-parent que dans la prose du
       // livrable, donc dans un texte qu'un modèle peut écrire lui-même.
       sub_delegations: outcome.subDelegations ?? [],
+      ...(outcome.subDelegationsIncomplete ? { sub_delegations_incomplete: true } : {}),
     };
   }
   return {
@@ -702,6 +781,7 @@ export function delegationRecordFromOutcome(
     // relaierait un échec sans savoir qu'un autre modèle le réglerait (#119).
     hint: outcome.hint ?? null,
     sub_delegations: outcome.subDelegations ?? [],
+    ...(outcome.subDelegationsIncomplete ? { sub_delegations_incomplete: true } : {}),
   };
 }
 
@@ -727,17 +807,26 @@ export const UNAVAILABLE_TOOL_MARK = '[système:outil-indisponible:\u0001]';
  * truncated/abbreviated form of a real one (the classic "dropped the MCP
  * prefix" slip), surfaces a "did you mean" hint so the model can self-correct.
  * Carries `UNAVAILABLE_TOOL_MARK`, which the budget counts on resume.
+ * A call without a name is told so: no tool is named "" and every name
+ * "includes" the empty string, so the hint would list arbitrary tools.
  * Pure — unit-tested in isolation.
  */
 export function describeUnavailableTool(badName: string, available: readonly string[]): string {
-  const lower = badName.toLowerCase();
-  const suggestions = available.filter((t) => {
-    const tl = t.toLowerCase();
-    return tl !== lower && (tl.endsWith(lower) || tl.includes(lower));
-  });
+  const lower = badName.trim().toLowerCase();
+  const suggestions =
+    lower === ''
+      ? []
+      : available.filter((t) => {
+          const tl = t.toLowerCase();
+          return tl !== lower && (tl.endsWith(lower) || tl.includes(lower));
+        });
   const hint = suggestions.length ? ` Did you mean: ${suggestions.slice(0, 3).join(' or ')}?` : '';
+  const mistake =
+    lower === ''
+      ? 'The tool call had no tool name: call a tool by its exact name.'
+      : `The tool "${badName}" is not available to you.`;
   return (
-    `${UNAVAILABLE_TOOL_MARK} The tool "${badName}" is not available to you.${hint} ` +
+    `${UNAVAILABLE_TOOL_MARK} ${mistake}${hint} ` +
     `Your available tools are: ${available.join(', ')}. ` +
     `Use one of those EXACT names — do not invent, abbreviate, or drop prefixes from tool names.`
   );
@@ -1267,19 +1356,58 @@ export async function executeJob(
   runnerEnv?: RunnerEnv,
   opts?: ExecuteJobOpts,
 ): Promise<ExecuteJobResult> {
+  // Une erreur levée par le run est rattrapée DANS le run (`runJob`), sous sa
+  // prise (#566) : son échec ne peut pas écraser un job repris ailleurs. Si ce
+  // filet lève lui-même (la base ne répondait plus pendant qu'il écrivait),
+  // l'issue est ce que la ligne dit maintenant — et la remontée au parent a
+  // lieu quelle que soit l'issue (revue Nodal de #575, P2).
   let result: ExecuteJobResult;
   try {
     result = await runJob(jobId, deps, runnerEnv, opts);
   } catch (err) {
-    result = await failOnUncaughtError(deps, jobId, err);
+    console.error(
+      `[exec ${jobId}] RUN_NET_FAILED — reading the row for the outcome: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    result = await outcomeFromRow(deps, jobId);
   }
   if (
     !opts?.inlineDelegation &&
     (result.status === 'completed' || result.status === 'failed' || result.status === 'cancelled')
   ) {
     await maybeResumeParent(jobId, result, deps, runnerEnv);
+    await wakeRelaunchedHeads(jobId, deps, runnerEnv);
   }
   return result;
+}
+
+/**
+ * Réveille tout de suite la tête que la fin de ce job a pu faire naître de sa
+ * file (#531, déclencheur de la migration 0141) : les messages qui y restaient
+ * n'attendent pas le prochain passage du cron. Toute tête `pending` de la
+ * conversation est réveillée — la prise (`claimJob`) est atomique, un réveil
+ * de trop ne lance rien deux fois. Sans `runnerEnv` (chemins du cron), la
+ * reprise des jobs en attente du cron la prend (`findPendingJobsToRecover`).
+ * Un échec de lecture ne change rien à l'issue de CE job : il est dit.
+ */
+async function wakeRelaunchedHeads(
+  jobId: JobId,
+  deps: Pick<RunnerDeps, 'db'>,
+  runnerEnv?: RunnerEnv,
+): Promise<void> {
+  if (!runnerEnv) return;
+  try {
+    for (const id of await pendingHeadsOfConversation(deps.db, jobId as string)) {
+      void triggerWorker(id, runnerEnv);
+    }
+  } catch (err) {
+    console.error(
+      `[exec ${jobId}] RELAUNCHED_HEADS_WAKE_FAILED — the cron will pick them up: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
 }
 
 /**
@@ -1385,11 +1513,15 @@ export async function maybeResumeParent(
   if (parent?.status !== 'awaiting_delegation') return;
 
   if (outcome.status === 'cancelled') {
-    // Cascade: the parent's only outstanding work was this child.
+    // Cascade: the parent's only outstanding work was this child. Guarded on
+    // `awaiting_delegation` (Nodal review of #575): read above, it may have
+    // been resumed to `pending` since by resumeDelegated — a live parent is
+    // never cancelled by a stale read.
+    // agent_jobs-write: parent-cascade — la ligne d'un AUTRE job, gardée.
     await db
       .update(agentJobs)
       .set({ status: 'cancelled', updatedAt: new Date() })
-      .where(eq(agentJobs.id, parentJobId));
+      .where(and(eq(agentJobs.id, parentJobId), eq(agentJobs.status, 'awaiting_delegation')));
     return;
   }
 
@@ -1441,7 +1573,11 @@ export async function reviveJobIfApprovalResolvedDuringSuspend(
   const openRows = await db
     .select({ status: approvalRequests.status })
     .from(approvalRequests)
-    .where(and(eq(approvalRequests.jobId, jobId), isNull(approvalRequests.executedAt)));
+    // Une élicitation tranchée n'est pas un appel qui attend (0145) : elle ne
+    // réveille rien.
+    .where(
+      and(eq(approvalRequests.jobId, jobId), isNull(approvalRequests.executedAt), gatesACall()),
+    );
   const hasResolved = openRows.some(
     (r) => r.status === 'approved' || r.status === 'rejected' || r.status === 'expired',
   );
@@ -1450,7 +1586,7 @@ export async function reviveJobIfApprovalResolvedDuringSuspend(
   const flipped = await db
     .update(agentJobs)
     .set({ status: 'pending', updatedAt: new Date() })
-    .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'awaiting_approval')))
+    .where(and(ownJobRow(jobId, ['awaiting_approval']), eq(agentJobs.status, 'awaiting_approval')))
     .returning({ id: agentJobs.id });
   if (flipped.length > 0 && runnerEnv) {
     void triggerWorker(jobId, runnerEnv);
@@ -1467,6 +1603,16 @@ export async function reviveJobIfApprovalResolvedDuringSuspend(
  * effacer un échec propagé.
  */
 type DelegationOutcomeMap = Map<string, 'failed' | 'delivered'>;
+
+/**
+ * Vrai dès qu'UN enregistrement de la transcription de ce run a dit que sa
+ * liste `sub_delegations` ne nomme pas tous les échecs du sous-arbre (revue
+ * Codex de la PR #712, passes 3 à 5). Collant pour tout le run : un échec omis
+ * n'a pas de nom, donc rien de plus tard ne peut prouver qu'il a été réparé.
+ */
+interface IncompleteDelegations {
+  value: boolean;
+}
 
 /** Les noms qui n'ont RIEN rendu, triés — ce que la notice nomme. */
 function failedDelegationNames(carte: DelegationOutcomeMap): string[] {
@@ -1498,20 +1644,80 @@ async function runJob(
   runnerEnv?: RunnerEnv,
   opts?: ExecuteJobOpts,
 ): Promise<ExecuteJobResult> {
-  const delegationOutcomes: DelegationOutcomeMap = new Map();
-  // Le battement du job (#565) : posé par `runJobTracked` dès que la prise
-  // réussit, rendu ici quand le run rend la main — fini, suspendu, perdu ou
-  // levé. Aucune autre partie du run ne bat.
-  const tenue: JobHold = { lacher: () => {} };
-  let result: ExecuteJobResult;
-  try {
-    result = await runJobTracked(jobId, deps, runnerEnv, opts, delegationOutcomes, tenue);
-  } finally {
-    tenue.lacher();
-  }
+  // Chaque run a SA prise (#566) : ses écritures sur ce job la portent
+  // (job/claim-scope.ts). Une reprise imbriquée du même job, un enfant délégué
+  // en ligne, ouvrent la leur.
+  return withinRunScope(jobId as string, async () => {
+    const delegationOutcomes: DelegationOutcomeMap = new Map();
+    const incompleteDelegations: IncompleteDelegations = { value: false };
+    // Le battement du job (#565) : posé par `runJobTracked` dès que la prise
+    // réussit, rendu ici quand le run rend la main — fini, suspendu, perdu ou
+    // levé. Aucune autre partie du run ne bat.
+    const tenue: JobHold = { lacher: () => {} };
+    // TOUT ce que le run fait après la prise est sous le même filet — le
+    // rapprochement avec la ligne compris (revue Nodal de #575, P2) : une
+    // erreur levée n'importe où finit le job par le chemin d'échec normal, et
+    // `executeJob` remonte alors au parent comme pour toute autre issue.
+    try {
+      const result = await runJobTracked(
+        jobId,
+        deps,
+        runnerEnv,
+        opts,
+        delegationOutcomes,
+        incompleteDelegations,
+        tenue,
+      );
+      if (result.status !== 'completed' && result.status !== 'failed') return result;
+      // Un résultat qui porte déjà sa carte vient d'une reprise imbriquée
+      // (`return runJob(...)`), sous SA prise : elle l'a déjà rapprochée de la ligne.
+      if (result.subDelegations !== undefined) return result;
+      const rapproche = await issueTelleQueLaLigneLaDit(deps, jobId, result);
+      if (rapproche.status !== 'completed' && rapproche.status !== 'failed') return rapproche;
+      return {
+        ...rapproche,
+        subDelegations: subDelegationList(delegationOutcomes),
+        subDelegationsIncomplete: incompleteDelegations.value,
+      };
+    } catch (err) {
+      // Lit déjà la ligne quand son écriture est refusée.
+      return await failOnUncaughtError(deps, jobId, err);
+    } finally {
+      tenue.lacher();
+    }
+  });
+}
+
+/**
+ * L'issue qu'un run propage est celle que SA ligne porte (#566). Les écritures
+ * terminales du run sont conditionnelles à sa prise : quand l'une a été
+ * refusée — le job a été terminé, remis en attente ou repris ailleurs entre la
+ * dernière vérification et l'écriture —, le run ne propage pas au parent un
+ * `failed` / `completed` que la ligne ne dit pas.
+ */
+async function issueTelleQueLaLigneLaDit(
+  deps: Pick<RunnerDeps, 'db'>,
+  jobId: JobId,
+  result: ExecuteJobResult,
+): Promise<ExecuteJobResult> {
   if (result.status !== 'completed' && result.status !== 'failed') return result;
-  if (result.subDelegations !== undefined) return result;
-  return { ...result, subDelegations: subDelegationList(delegationOutcomes) };
+  const prise = heldClaim(jobId as string);
+  if (prise === null) return result;
+  const [ligne] = await deps.db
+    .select({
+      status: agentJobs.status,
+      error: agentJobs.error,
+      claimGeneration: agentJobs.claimGeneration,
+    })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId as string))
+    .limit(1);
+  const conforme =
+    ligne !== undefined &&
+    ligne.claimGeneration === prise &&
+    ligne.status === result.status &&
+    (result.status !== 'failed' || ligne.error === result.error);
+  return conforme ? result : outcomeFromRow(deps, jobId);
 }
 
 /** Ce que le run rend quand il lâche le job : son battement (#565). */
@@ -1525,6 +1731,7 @@ async function runJobTracked(
   runnerEnv: RunnerEnv | undefined,
   opts: ExecuteJobOpts | undefined,
   delegationOutcomes: DelegationOutcomeMap,
+  incompleteDelegations: IncompleteDelegations,
   tenue: JobHold,
 ): Promise<ExecuteJobResult> {
   const { db, registry } = deps;
@@ -1565,12 +1772,13 @@ async function runJobTracked(
       userMessage,
       hint,
     );
-  const cancelJob: typeof cancelJobRow = (base, id, stats, msgs) =>
+  const cancelJob: typeof cancelJobRow = (base, id, stats, msgs, partialResult) =>
     cancelJobRow(
       base,
       id,
       stats,
       msgs === undefined ? undefined : transcriptionFermee(msgs as ModelMessage[]),
+      partialResult,
     );
   // llmClient is resolved per-job from the agent's llmKeyId (Brique 24/25).
   // Agents MUST have an llmKeyId — if absent we fail loud (invariant 4).
@@ -1579,9 +1787,6 @@ async function runJobTracked(
   // Definite assignment: llmClient is set unconditionally in the resolution
   // block below (or the function returns early with a failed status).
   let llmClient!: NodalLlmClient;
-  // Per-model capability of the primary key (T2): drives computeToolChoice so we
-  // don't force tool_choice:'required' on a model that rejects it.
-  let modelSupportsForcedToolChoice = true;
 
   // Chronomètre du SEGMENT en cours. Capturé à l'entrée de la fonction pour
   // couvrir le chargement du job et de l'agent, pas seulement la boucle LLM.
@@ -1618,24 +1823,32 @@ async function runJobTracked(
   // executeJob, so this predicate never blocks a real resume. A second
   // concurrent caller or a post-reap duplicate gets false → already_handled.
   const claimed = await claimJob(db, jobId as string);
-  if (!claimed) {
+  if (claimed === null) {
     trace('claim_lost', { status: job.status ?? 'unknown' });
     return { status: 'already_handled' };
   }
-  // Le job est à nous : il bat jusqu'à ce que `runJob` le lâche, quoi qu'il
-  // fasse entre les deux — préparation, appel modèle, outils, attente (#565).
-  tenue.lacher = holdJobHeartbeat(db, jobId as string);
+  // Le numéro de CETTE prise (#566) : relu avec le statut avant chaque effet,
+  // et porté par chaque écriture du run sur sa ligne (job/claim-scope.ts) —
+  // battement compris.
+  const prise: number = claimed;
+  recordClaim(jobId as string, prise);
+  // Le job est à nous : il bat, sous cette prise, jusqu'à ce que `runJob` le
+  // lâche, quoi qu'il fasse entre les deux — préparation, appel modèle,
+  // outils, attente (#565).
+  tenue.lacher = holdJobHeartbeat(db, jobId as string, prise);
 
   // Invariant 8: chain_count is bumped on every resume from awaiting_delegation
   // (and would also be bumped on awaiting_approval resume once that path ships).
   // Cap at maxChains so a runaway orchestrator that delegates forever instead
   // of calling return_result fails loud rather than spinning indefinitely.
   if ((job.chainCount ?? 0) >= DEFAULT_LIMITS.maxChains) {
+    // Les totaux tels que la ligne les porte : un total inconnu (null) le
+    // reste, il ne devient pas 0 sur ce chemin non plus (#563).
     await failJob(db, jobId as string, 'chain_limit_exceeded', {
-      inputTokens: job.inputTokens ?? 0,
-      outputTokens: job.outputTokens ?? 0,
-      effectiveInputTokens: job.effectiveInputTokens ?? job.inputTokens ?? 0,
-      totalCostUsd: job.totalCostUsd ?? 0,
+      inputTokens: job.inputTokens,
+      outputTokens: job.outputTokens,
+      effectiveInputTokens: job.effectiveInputTokens,
+      totalCostUsd: job.totalCostUsd,
       turn: job.turn ?? 0,
       // Ce refus tombe à l'entrée, avant tout travail : le segment vaut zéro,
       // mais les précédents comptent. Écrire 0 effaçait le cumul — la même
@@ -1705,7 +1918,11 @@ async function runJobTracked(
   // avant délégation) sont précisément ceux qui l'omettaient. Constat de la
   // revue Codex sur cette PR, fermé par un test qui suspend pour de vrai au
   // lieu de précharger la colonne.
-  const dureeCumuleeMs = (): number => dejaCompteMs + (Date.now() - startedAt);
+  // Sans le temps passé à attendre une personne SANS suspendre (fenêtre de
+  // grâce d'une approbation, question d'un serveur MCP) : human-wait.ts.
+  const attenteHumaine = createHumanWaitClock();
+  const dureeCumuleeMs = (): number =>
+    dejaCompteMs + (Date.now() - startedAt) - attenteHumaine.ms();
 
   const runStats = (): {
     inputTokens: number | null;
@@ -1724,6 +1941,71 @@ async function runJobTracked(
     turn,
     totalDurationMs: dureeCumuleeMs(),
   });
+
+  // Un appel refusé par le client parce qu'il est coupé ou que sa sortie n'est
+  // pas rapportée (#555, #563) a été servi et facturé : il compte, qu'il soit le
+  // tour ou sa relance (#600). Un compte inconnu, d'entrée ou de sortie, n'est
+  // pas 0 : le total correspondant du job, et son coût estimé, deviennent
+  // inconnus (null sur la ligne).
+  const compterAppelRefuse = (err: LLMOutputLimitError): void => {
+    const entree = err.usage.inputTokens;
+    const sortie = err.usage.outputTokens;
+    if (entree === null) inputTokensUnknown = true;
+    else {
+      inputTokens += entree;
+      effectiveInputTokens += entree;
+    }
+    if (sortie === null) outputTokensUnknown = true;
+    else outputTokens += sortie;
+    if (entree === null || sortie === null) costUnknown = true;
+    else {
+      totalCostUsd += estimateCallCostUsd(err.provider, err.model, {
+        inputTokens: entree,
+        outputTokens: sortie,
+        cachedTokens: 0,
+        cacheCreationTokens: 0,
+      });
+    }
+  };
+
+  // ── Le droit d'agir (#566) ──────────────────────────────────────────────────
+  // La ligne du job fait autorité : ce run n'agit que tant qu'elle dit
+  // `processing` sous SA prise. Relue avant chaque effet — chaque appel
+  // d'outil (pré-passe comprise), chaque délégation, chaque outil approuvé
+  // rejoué, la finalisation —, en tête de tour et pendant l'appel au modèle.
+  // Tout autre état arrête le run : annulé, échoué par le faucheur, fini par un
+  // autre écrivain, remis en `pending`, ou repris par un autre run. Le statut
+  // posé par l'autre écrivain reste celui de la ligne : ce run n'écrit que la
+  // transcription d'un job annulé qu'il tient encore (sa prise), rien sinon.
+  const droitPerdu = async (): Promise<Extract<JobAuthority, { kind: 'lost' }> | null> => {
+    const autorite = await readJobAuthority(db, jobId as string, prise);
+    return autorite.kind === 'lost' ? autorite : null;
+  };
+  const lacherLeJob = async (
+    perte: Extract<JobAuthority, { kind: 'lost' }>,
+    moment: string,
+    // #444 — ce que l'appel arrêté avait écrit devient le résultat du run annulé.
+    partiel?: string,
+  ): Promise<ExecuteJobResult> => {
+    trace('authority_lost', { turn, moment, status: perte.status, ownClaim: perte.ownClaim });
+    if (perte.ownClaim && perte.status === 'cancelled') {
+      await cancelJob(db, jobId as string, runStats(), messages, partiel);
+      return { status: 'cancelled' };
+    }
+    return { status: 'already_handled' };
+  };
+  // Une écriture du run sur sa ligne a été REFUSÉE (#566) : la ligne n'est
+  // plus à lui. Il s'arrête comme sur toute perte du droit d'agir — celle que
+  // la ligne CONFIRME, jamais une perte fabriquée (revue Nodal de #575, P3).
+  const ecritureRefusee = async (moment: string): Promise<ExecuteJobResult> => {
+    const perte = await droitPerdu();
+    if (!perte) {
+      throw new Error(
+        `write_refused_while_held: ${moment} was refused while this run holds the job`,
+      );
+    }
+    return lacherLeJob(perte, `write_refused:${moment}`);
+  };
 
   // ── 3. Load agent ─────────────────────────────────────────────────────────────
   // (Leg 1: status was atomically set to 'processing' by claimJob above.)
@@ -1802,10 +2084,12 @@ async function runJobTracked(
       job: {
         entityId: job.entityId ?? null,
         chatId: job.chatId ?? null,
+        chatChannel: job.chatChannel ?? null,
         channel: job.channel ?? null,
         conversationId: job.conversationId ?? null,
         task: job.task ?? null,
         triggerContext: job.triggerContext ?? null,
+        answersWhileJobId: job.answersWhileJobId ?? null,
       },
       // Spread the `agent` already normalised above (line ~856) rather than
       // re-deriving fields here — a second conversion is a second thing to
@@ -1817,6 +2101,7 @@ async function runJobTracked(
         cliDefaults: agentRow.cliDefaults ?? null,
       },
       workspaces: agentWorkspacesList,
+      claimGeneration: prise,
     });
   }
 
@@ -1825,16 +2110,15 @@ async function runJobTracked(
   // skill_file_* builtins can read an installed (community) skill's bundled
   // files — and only the bundles of skills this agent actually holds.
   //
-  // This ONE query also serves the worker tool-whitelist branch below (was a
-  // separate `agent_skill_assignments ⨝ agent_skills` query on the exact same
+  // This ONE query also serves the tool whitelist below (was a separate
+  // `agent_skill_assignments ⨝ agent_skills` query on the exact same
   // join/where, re-run per job — perf audit N+1 fix). Columns are the union
   // needed by both call sites: slug/scriptsAuthorized/filesWritable feed the
-  // skill-file context here; skillId/requiredBuiltins feed the worker
-  // whitelist further down. name/description are included for the audit's
-  // specified column union but are not consumed in this file.
+  // skill-file context here; requiredBuiltins feed the whitelist of every
+  // agent, whatever its role (#636). name/description are included for the
+  // audit's specified column union but are not consumed in this file.
   const assignedSkillRows = await db
     .select({
-      skillId: agentSkillAssignments.skillId,
       slug: agentSkills.slug,
       name: agentSkills.name,
       description: agentSkills.description,
@@ -1907,11 +2191,9 @@ async function runJobTracked(
       return { status: 'failed', error: code };
     }
     llmClient = resolved.client;
-    modelSupportsForcedToolChoice = resolved.primarySupportsForcedToolChoice;
     trace('llm_client_from_key', {
       provider: resolved.primaryProvider,
       chainLength: resolved.chainLength,
-      forcedToolChoice: modelSupportsForcedToolChoice,
     });
   }
 
@@ -1946,21 +2228,11 @@ async function runJobTracked(
   // chat_id when the trigger's notify_on_success is on). Surface that intent to
   // the agent so it ends with a confirmation, and engage the delivery guard
   // below so the send is actually enforced.
-  const triggerWantsConfirmation =
-    (job.channel === 'cron' || job.channel === 'webhook') && job.chatId != null;
-  // B1/B2 (notify-channel-choice): a cron or webhook fire whose trigger chose
-  // an EXPLICIT notify channel carries it in triggerContext (run-schedules.ts /
-  // routes/webhook.ts) — surfaced here as the ToolContext override so every
-  // delivery-guard call this job makes (the 6 send tools AND
-  // deliver-results.ts's own return-channel pick, via its own triggerContext
-  // read) defaults to the SAME channel the chatId above was resolved against,
-  // instead of resolveTransportChannel's priority order. Undefined for every
-  // other job, and for a cron/webhook fire left on auto.
-  const jobTriggerContext = job.triggerContext as JobTriggerContext | null;
-  const notifyChannelOverride: ChannelKind | undefined =
-    jobTriggerContext?.type === 'cron' || jobTriggerContext?.type === 'webhook'
-      ? (jobTriggerContext.notifyChannel ?? undefined)
-      : undefined;
+  const triggerWantsConfirmation = triggerWantsConfirmationOf(job);
+  // The job's chat travels with the channel it was recorded on (#649, review
+  // of #657 pass 4): every send tool reads `jobChatId` ON `jobChatChannel`
+  // only (`jobChatOn`, @nodal-agents/delivery), never on another channel.
+  const jobChatChannel = (job.chatChannel as ChannelKind | null) ?? null;
   const deployment = await getDeploymentContext(db, job.entityId ?? undefined);
   // Shared-workspace inventory — gives the agent sight of what already exists
   // so it reuses artifacts instead of recreating them (see workspace-inventory.ts).
@@ -1988,6 +2260,8 @@ async function runJobTracked(
         excludeJobId: jobId as string,
         // La tâche sert à reconnaître un `/new` nu — voir openedByCommand.
         task: job.task,
+        // Un tour de réponse voit ce qui tourne (#531).
+        answersWhileJobId: job.answersWhileJobId,
       })
     : null;
   // L'état de la routine dont ce job est une exécution — relu tel quel, jamais
@@ -2017,8 +2291,9 @@ async function runJobTracked(
     // contient pas : il annonçait un dossier là où l'agent en avait deux.
     workspaces: agentWorkspacesList,
     ...(job.task ? { task: job.task } : {}),
-    ...(job.chatId ? { telegramChatId: job.chatId } : {}),
-    ...(triggerWantsConfirmation ? { notifyOnSuccess: true } : {}),
+    ...telegramChatOf({ id: job.chatId, channel: job.chatChannel ?? null }),
+    // `notifyOnSuccess` joins at the prompt build below, once `replyTo` says
+    // whether a send tool can carry the confirmation (#649).
     ...(job.parentJobId ? { isDelegated: true } : {}),
     ...(job.triggerContext ? { triggerContext: job.triggerContext } : {}),
     // La règle et son pourquoi vivent dans `inventoryForContext`.
@@ -2034,57 +2309,10 @@ async function runJobTracked(
     ...(routineState !== null ? { routineState } : {}),
     deployment,
   };
-
-  let systemPrompt = job.systemPrompt;
-  if (!systemPrompt) {
-    systemPrompt = await buildSystemPrompt(agent, db, jobContext);
-    await db
-      .update(agentJobs)
-      .set({ systemPrompt, updatedAt: new Date() })
-      .where(eq(agentJobs.id, jobId as string));
-  }
+  // The prompt itself is built at §7, once the tool list exists (#559).
 
   // ── 6. Build tool set ─────────────────────────────────────────────────────────
   let toolDefs: AnyToolDef[];
-
-  // Always-on built-ins (excluding return_result, which is handled per-branch
-  // because orchestrators add it after their orchestration tools and workers
-  // pull it via computeToolWhitelist's alwaysOn). The system prompt advertises
-  // these to every agent — they MUST be in the runtime toolset too, otherwise
-  // the LLM sees them in its prompt and trips AI_NoSuchToolError.
-  const memoryBuiltins = ALWAYS_ON_TOOLS.filter((n) => n !== 'return_result')
-    .map((n) => registry.get(n))
-    .filter((t): t is AnyToolDef => t !== undefined);
-
-  // run_skill_script — offered ONLY to agents with ≥1 owner-authorized
-  // script-skill (agent_skill_assignments.scripts_authorized). Gated here at the
-  // whitelist (availability) AND in the builtin via scriptAuthorizedSkillSlugs
-  // (execution). Name for the worker whitelist, def for the orchestrator branch.
-  const scriptToolNames: string[] =
-    scriptAuthorizedSkillSlugs.length > 0 ? ['run_skill_script'] : [];
-  const scriptToolDefs: AnyToolDef[] = scriptToolNames
-    .map((n) => registry.get(n))
-    .filter((t): t is AnyToolDef => t !== undefined);
-
-  // skill_file_write — offered ONLY to agents with ≥1 owner-authorized
-  // file-writable skill (agent_skill_assignments.files_writable). Gated here at
-  // the whitelist (availability) AND in the builtin via fileWritableSkillSlugs
-  // (execution). Mirrors scriptToolNames/scriptToolDefs.
-  const fileWriteToolNames: string[] =
-    fileWritableSkillSlugs.length > 0 ? ['skill_file_write'] : [];
-  const fileWriteToolDefs: AnyToolDef[] = fileWriteToolNames
-    .map((n) => registry.get(n))
-    .filter((t): t is AnyToolDef => t !== undefined);
-
-  // save_routine_state — offert UNIQUEMENT quand ce job vient d'une routine.
-  // C'est la contrepartie du bloc `## Routine state` du prompt : la routine
-  // relit son état au début du run et le repose à la fin, sans passer par la
-  // mémoire (voir packages/db/src/schema/schedule-state.ts pour le doublon
-  // Discord qui a rendu cette table nécessaire).
-  const routineStateToolNames: string[] = job.scheduleId ? ['save_routine_state'] : [];
-  const routineStateToolDefs: AnyToolDef[] = routineStateToolNames
-    .map((n) => registry.get(n))
-    .filter((t): t is AnyToolDef => t !== undefined);
 
   // Capability tools: computed from agent's configured integrations.
   // These are instantiated per-job and merged directly into toolDefs/toolMap.
@@ -2148,7 +2376,7 @@ async function runJobTracked(
   // default a non-transport job origin (cron, webhook, dashboard, api, …) to
   // THIS agent's own channel instead of unconditionally 'telegram'. whatsapp
   // is intentionally excluded: no outbound send tool is registered for it yet
-  // (see TOOL_ONLY_DELIVERY_CHANNELS above), so it isn't a real send-tool
+  // (see TOOL_ONLY_DELIVERY_CHANNELS, channel-delivery.ts), so it isn't a real send-tool
   // target for this ToolContext even when a whatsapp binding exists.
   const activeChannels: ChannelKind[] = [
     ...(deliveryBotToken ? (['telegram'] as const) : []),
@@ -2161,12 +2389,13 @@ async function runJobTracked(
   const mcpClosers: Array<() => Promise<void>> = [];
 
   try {
-    // ── Root-agent meta-tool gating (applies to BOTH branches) ────────────────
-    // The ROOT is always an orchestrator, so this MUST be computed before the
-    // orchestrator/worker split — otherwise the ROOT (orchestrator branch) would
-    // never receive its meta-tools. Approval-gate (autonomy level) is handled by
-    // the existing approval_rules mechanism in executeTool; here we only make the
-    // tools AVAILABLE to the designated ROOT, per its enabled grants.
+    // ── Root-agent meta-tool gating (every role) ─────────────────────────────
+    // Fed to the one whitelist rule below, whatever the agent's role: when an
+    // orchestrator branch rebuilt its own list, the ROOT (always an
+    // orchestrator) once received no meta-tools at all. Approval-gate
+    // (autonomy level) is handled by the existing approval_rules mechanism in
+    // executeTool; here we only make the tools AVAILABLE to the designated
+    // ROOT, per its enabled grants.
     const [rootEntityRow] = await db
       .select({
         rootAgentId: entitiesTable.rootAgentId,
@@ -2207,18 +2436,12 @@ async function runJobTracked(
             mayChangeTeam: agentRow.mayChangeTeam,
           }).filter((name) => registry.get(name) !== undefined)
         : [];
-    const metaToolDefs: AnyToolDef[] = metaToolNames
-      .map((name) => registry.get(name))
-      .filter((t): t is AnyToolDef => t !== undefined);
 
-    // Capability tools (connector adapters + MCP servers) are resolved here —
-    // BEFORE the orchestrator/worker split below — so an explicit user
-    // assignment materializes for EITHER role. Orchestrators stay lean when
-    // nothing is assigned (capabilityTools stays empty; merged in via
-    // `...capabilityTools` in the orchestrator branch below), but an assigned
-    // connector/MCP now reaches an orchestrator's toolset exactly as it does a
-    // worker's — it used to only populate inside the worker branch, so an
-    // orchestrator with an assigned MCP server silently never saw its tools.
+    // Capability tools (connector adapters + MCP servers) are resolved here,
+    // for EITHER role: an assigned connector/MCP reaches an orchestrator's
+    // toolset exactly as it does a worker's — it used to only populate inside
+    // the worker branch, so an orchestrator with an assigned MCP server
+    // silently never saw its tools.
     // ── Connector adapter tools ──────────────────────────────────────────────
     // Fetch agent's connector assignments (with per-operation whitelist).
     // Each assignment instantiates its adapter's tools using a bearer token
@@ -2335,6 +2558,7 @@ async function runJobTracked(
       .select({
         id: mcpServersTable.id,
         slug: mcpServersTable.slug,
+        name: mcpServersTable.name,
         transport: mcpServersTable.transport,
         url: mcpServersTable.url,
         apiKey: mcpServersTable.apiKey,
@@ -2350,26 +2574,36 @@ async function runJobTracked(
       .innerJoin(mcpServersTable, eq(mcpServersTable.id, agentMcpServersTable.mcpServerId))
       .where(eq(agentMcpServersTable.agentId, agentRow.id));
 
-    // Best-effort write-back of freshly-discovered descriptors into
-    // mcp_servers.available_tools. Never let a refresh failure break the
-    // job (or the tool call, for the lazy onConnected hook) that
+    // Best-effort write-back of what a connection learned — the tool
+    // descriptors AND the server's instructions, together: both describe the
+    // server as it answered this connection, and a value the server stopped
+    // publishing is cleared, never kept. Never let a refresh failure break
+    // the job (or the tool call, for the lazy onConnected hook) that
     // triggered it — logged loud (invariant #4), always swallowed.
-    const refreshMcpToolCache = async (
+    //
+    // The eager write lands BEFORE the prompt is built (§7), so the first job
+    // reads the instructions; a lazy one lands at the first tool call, so the
+    // next job does — a job's prompt is only rebuilt when its tools or the
+    // Nodal version change.
+    const recordMcpDiscovery = async (
       mcpServerId: string,
-      liveTools: McpToolDescriptor[],
+      live: McpServerDiscovery,
     ): Promise<void> => {
       try {
         await db
           .update(mcpServersTable)
-          .set({ availableTools: liveTools })
+          .set({ availableTools: live.tools, instructions: live.instructions })
           .where(eq(mcpServersTable.id, mcpServerId));
       } catch (err) {
         console.error(
-          `[execute] failed to refresh available_tools cache for MCP server ` +
+          `[execute] failed to refresh available_tools / instructions for MCP server ` +
             `'${mcpServerId}': ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     };
+
+    // What each server lends THIS job, for the one-name-one-server check below.
+    const lentByServer: Array<{ slug: string; name: string; exposed: string[] }> = [];
 
     for (const ms of mcpAssignments) {
       try {
@@ -2404,15 +2638,19 @@ async function runJobTracked(
           };
           if (isUsableMcpToolCache(availableTools)) {
             toolset = createLazyMcpTools(connectOpts, availableTools, {
-              onConnected: (liveTools) => refreshMcpToolCache(ms.id, liveTools),
+              onConnected: (live) => recordMcpDiscovery(ms.id, live),
             });
           } else {
-            toolset = await createMcpTools(connectOpts);
+            const connected = await createMcpTools(connectOpts);
+            toolset = connected;
             // Auto-upgrade v1→v2: real descriptors are always non-empty
             // when createMcpTools succeeds (guarded here so a test double
             // that omits `descriptors` doesn't write a bogus cache).
-            if (toolset.descriptors?.length) {
-              await refreshMcpToolCache(ms.id, toolset.descriptors);
+            if (connected.descriptors?.length) {
+              await recordMcpDiscovery(ms.id, {
+                tools: connected.descriptors,
+                instructions: connected.instructions ?? null,
+              });
             }
           }
         } else {
@@ -2442,15 +2680,19 @@ async function runJobTracked(
           };
           if (isUsableMcpToolCache(availableTools)) {
             toolset = createLazyMcpTools(connectOpts, availableTools, {
-              onConnected: (liveTools) => refreshMcpToolCache(ms.id, liveTools),
+              onConnected: (live) => recordMcpDiscovery(ms.id, live),
             });
           } else {
-            toolset = await createMcpTools(connectOpts);
+            const connected = await createMcpTools(connectOpts);
+            toolset = connected;
             // Auto-upgrade v1→v2: real descriptors are always non-empty
             // when createMcpTools succeeds (guarded here so a test double
             // that omits `descriptors` doesn't write a bogus cache).
-            if (toolset.descriptors?.length) {
-              await refreshMcpToolCache(ms.id, toolset.descriptors);
+            if (connected.descriptors?.length) {
+              await recordMcpDiscovery(ms.id, {
+                tools: connected.descriptors,
+                instructions: connected.instructions ?? null,
+              });
             }
           }
         }
@@ -2464,6 +2706,7 @@ async function runJobTracked(
             ? toolset.tools
             : toolset.tools.filter((t) => enabled.includes(t.name.slice(prefixLen)));
         capabilityTools.push(...filtered);
+        lentByServer.push({ slug: ms.slug, name: ms.name, exposed: filtered.map((t) => t.name) });
       } catch (err) {
         // MCP server unreachable / auth failed / spawn failed — must not
         // fail an unrelated job, so we still `continue`. But swallowing
@@ -2477,107 +2720,72 @@ async function runJobTracked(
         continue;
       }
     }
-    // ────────────────────────────────────────────────────────────────────────
 
-    if (isOrchestrator) {
-      // Unified orchestrator: expose BOTH delegation styles and let the model
-      // pick per request. assign_* (router) for a SINGLE or reactive/dependent
-      // delegation where it needs a result before deciding the next step;
-      // create_task (planner) for INDEPENDENT parallel fan-out (the task board
-      // runs them concurrently and compiles). A job commits to its first style
-      // — once it has created tasks, the assign_ block below defers, so the two
-      // completion models never run on the same job. `orchestratorMode` is now a
-      // soft preference surfaced in the prompt, not a hard XOR on the toolset.
-      // At the maximum delegation depth, no delegation tool at all: the same
-      // rule (remainingDelegationHops) decides the whitelist, the refusal
-      // below and the team block, so the model is never offered a route that
-      // is refused (Codex review of #473, pass 3).
-      const delegationTools: AnyToolDef[] =
-        remainingDelegationHops(job.delegationDepth ?? 0) > 0
-          ? [
-              ...((await generateAssignTools(agent.id, db)) as unknown as AnyToolDef[]),
-              ...(generateTaskTools(agent.id, db) as unknown as AnyToolDef[]),
-            ]
-          : [];
-      const returnResult = registry.get('return_result');
-      toolDefs = [
-        ...delegationTools,
-        ...memoryBuiltins,
-        ...(returnResult ? [returnResult] : []),
-        ...metaToolDefs,
-        ...scriptToolDefs,
-        ...fileWriteToolDefs,
-        ...routineStateToolDefs,
-        ...capabilityTools,
-      ];
-    } else {
-      // Worker: whitelist from skill assignments + always-on tools + capability tools
-      // requiredBuiltins for each assigned skill are unioned into the alwaysOn
-      // list so that office tools (and any future gated builtins) are unlocked
-      // only for agents holding the relevant skill — not globally. This is the
-      // gating mechanism for invariant #9. Reuses `assignedSkillRows` fetched
-      // above (§3.6) instead of re-running the same
-      // `agent_skill_assignments ⨝ agent_skills` query (perf audit N+1 fix).
-
-      // Collect all requiredBuiltins from assigned skills (deduplicated).
-      const skillRequiredBuiltins: string[] = Array.from(
-        new Set(assignedSkillRows.flatMap((r) => r.requiredBuiltins ?? [])),
-      );
-
-      // For workers without adapter registrations, only always-on tools are available.
-      // Adapters will be registered in the registry when adapter packages are loaded.
-      const configuredToolNames = assignedSkillRows
-        .map((r) => r.skillId)
-        .filter((name): name is string => name !== null);
-
-      // Filter configured tools to only those that exist in the registry
-      // (avoids WhitelistDriftError for unregistered adapter tools)
-      const registeredConfigured = configuredToolNames.filter(
-        (name) => registry.get(name) !== undefined,
-      );
-
-      // skillRequiredBuiltins: union of requiredBuiltins from all assigned skills.
-      // Only add builtins that actually exist in the registry to avoid WhitelistDriftError
-      // if a skill references a tool name that hasn't been registered yet.
-      const registeredSkillBuiltins = skillRequiredBuiltins.filter(
-        (name) => registry.get(name) !== undefined,
-      );
-
-      // P5 (causality study, 2026-07-22): a delegated worker (job.parentJobId
-      // set) delivers NOTHING to the user directly — the orchestrator that
-      // owns the channel binding is the sole delivery path. B3 removal
-      // (above, 2026-07-21) already keeps the channel-send tools off a
-      // worker's whitelist by not inheriting the root's token, but
-      // dashboard_publish is unconditionally ALWAYS_ON and slipped through
-      // that gate — ComfyArtist (a delegated worker) called it to self-
-      // publish a status card the orchestrator should have delivered.
-      // Stripped here, at the same branch that decides a worker's tool
-      // whitelist, so the rule reads coherently: channel sends AND
-      // dashboard_publish are both the orchestrator's job. A non-delegated
-      // agent (job.parentJobId null — always true for the root/orchestrator,
-      // which never reaches this branch, but also true for a standalone
-      // single-agent workspace) keeps the full always-on set.
-      const workerAlwaysOnTools = job.parentJobId
-        ? ALWAYS_ON_TOOLS.filter((n) => n !== 'dashboard_publish')
-        : ALWAYS_ON_TOOLS;
-
-      toolDefs = computeToolWhitelist(
-        {
-          agentId: agentRow.id,
-          configuredTools: registeredConfigured,
-          alwaysOn: [
-            ...workerAlwaysOnTools,
-            ...registeredSkillBuiltins,
-            ...metaToolNames,
-            ...scriptToolNames,
-            ...fileWriteToolNames,
-            ...routineStateToolNames,
-          ],
-        },
-        registry,
-        capabilityTools,
+    // One tool name, one server (#661). Every attach path refuses a server
+    // whose namespace overlaps one the agent holds; an attachment written
+    // before that rule still runs while no name is lent twice — each name
+    // reaches, and is attributed to, the one server that lends it. When two
+    // servers lend the SAME name, no reader can tell them apart: the job is
+    // refused here, loud, naming both and the tool — never routed to
+    // whichever server happens to come last.
+    const nameCollision = findMcpToolNameCollision(lentByServer);
+    if (nameCollision) {
+      throw new Error(
+        mcpToolNameCollisionMessage(nameCollision.toolName, ...nameCollision.servers),
       );
     }
+    // ────────────────────────────────────────────────────────────────────────
+
+    // ONE list for every agent (#636): always-on, the builtins of the tool
+    // groups it holds (the Tools tab switches, invariant #9), its root
+    // meta-tools, the gated builtins, then its connectors / MCP servers /
+    // delivery tools. The rule lives in `agentBuiltinToolNames` (tools), which
+    // the roster and resolveAgentToolNames read too. The orchestrator branch
+    // used to rebuild the list by hand and skipped the groups: a root with
+    // "Spreadsheet editing" ON held no xlsx_* tool, in silence.
+    const builtinToolDefs = computeToolWhitelist(
+      {
+        agentId: agentRow.id,
+        configuredTools: [],
+        alwaysOn: agentBuiltinToolNames(
+          {
+            requiredBuiltins: assignedSkillRows.flatMap((r) => r.requiredBuiltins ?? []),
+            scriptsAuthorized: scriptAuthorizedSkillSlugs.length > 0,
+            filesWritable: fileWritableSkillSlugs.length > 0,
+            metaToolNames,
+            job: {
+              delegated: job.parentJobId != null,
+              routine: job.scheduleId != null,
+              inConversation: job.conversationId != null,
+            },
+          },
+          registry,
+        ),
+      },
+      registry,
+      capabilityTools,
+    );
+
+    // The orchestrator role ADDS delegation; it never removes anything.
+    // Both delegation styles, and the model picks per request: assign_*
+    // (router) for a SINGLE or reactive/dependent delegation where it needs a
+    // result before deciding the next step; create_task (planner) for
+    // INDEPENDENT parallel fan-out (the task board runs them concurrently and
+    // compiles). A job commits to its first style — once it has created tasks,
+    // the assign_ block below defers, so the two completion models never run
+    // on the same job. `orchestratorMode` is a soft preference surfaced in the
+    // prompt, not a hard XOR on the toolset. At the maximum delegation depth,
+    // no delegation tool at all: the same rule (remainingDelegationHops)
+    // decides the whitelist, the refusal below and the team block, so the
+    // model is never offered a route that is refused (Codex review of #473,
+    // pass 3). With no active teammate, no delegation tool either: neither
+    // route has anyone to reach. One function decides, for this whitelist, the
+    // Tools tab and the team block's conditions (generateDelegationTools).
+    const delegationTools = (await generateDelegationTools(agent.id, db, {
+      isOrchestrator,
+      delegationDepth: job.delegationDepth ?? 0,
+    })) as unknown as AnyToolDef[];
+    toolDefs = [...delegationTools, ...builtinToolDefs];
   } catch (err) {
     const errorCode = err instanceof Error ? err.message : 'whitelist_computation_failed';
     await failJob(db, jobId as string, errorCode, runStats(), messages);
@@ -2607,6 +2815,99 @@ async function runJobTracked(
     console.warn(
       `[execute] PERSONALITY_NAMES_ABSENT_TOOLS agent=${agentRow.slug} job=${jobId} tools=${namedButAbsent.join(',')}`,
     );
+  }
+
+  // ── 7. Build system prompt (from the job context of §5) ─────────────────────
+  // AFTER the tool set, from its names (#559). Built before it, the prompt
+  // guessed the list: a delegated worker inherits its parent's chat_id but not
+  // its send tools, and its prompt ordered `telegram_send_message` all the
+  // same — the job obeyed and was killed for whitelist_violation. Every block
+  // that names a tool now reads the list this job actually runs with.
+  //
+  // A resume (approval, delegation, restart) reuses the stored prompt — the
+  // prefix cache depends on it — but only while it was written for the SAME
+  // tool list. A skill or connector withdrawn during the wait changes the list,
+  // and the stored prompt would order a tool the whitelist now refuses: it is
+  // rewritten (Codex review of #570, pass 1). A prompt stored before the list
+  // was recorded (NULL) is rewritten too — its list is unknown.
+  //
+  // And only while it was written by the SAME version of Nodal (review of
+  // #655): a job waiting through an update resumed with the old build's prompt
+  // and the new build's tools, and what the update had moved between the two
+  // (a rule said in a tool, now in the prompt) was said nowhere. The version is
+  // the one the launcher reads from the installed package, the one the
+  // prompt's own Runtime block states: every change of the code reaches an
+  // install through a new version, with no constant to remember to bump.
+  // A runner that does not know its version (started without the launcher)
+  // decides nothing with it and writes nothing over a known one (review of
+  // #655, pass 2): it would rewrite a prompt for nothing, then store NULL and
+  // make the next resume under the real version rewrite it again.
+  //
+  // #612 — the whitelist stays whole; only the SCHEMAS the model reads are
+  // chosen per turn (./tool-loading.ts). A job that holds deferred tools gets
+  // their index in the prompt and `load_tools` to load them, built from this
+  // same list: it cannot load a tool the job does not hold (invariant #9).
+  // `load_tools` is recorded with the rest (system_prompt_tools = every tool
+  // the job may call), and `toolDefs` itself is left as computed.
+  const toolIndex = deferredToolIndex(toolDefs);
+  let jobTools: AnyToolDef[];
+  try {
+    jobTools = withToolLoader(toolDefs as AnyToolDef[]) as AnyToolDef[];
+  } catch (err) {
+    // A tool of the job carries the loader's reserved name (#616 review, P3-4).
+    const errorCode = err instanceof Error ? err.message : 'tool_name_reserved';
+    await failJob(db, jobId as string, errorCode, runStats(), messages);
+    return { status: 'failed', error: errorCode };
+  }
+  // The deferred tools this job has loaded, read back from its row: a resume
+  // sends what the model last saw. A tool withdrawn meanwhile drops out.
+  const deferredNames = deferredToolNames(jobTools);
+  let loadedTools: string[] = (job.loadedTools ?? []).filter((n) => deferredNames.has(n));
+  const promptTools = [...new Set(jobTools.map((t) => t.name))].sort();
+  // Où va la réponse de ce job (#649) — calculé une fois, sur la liste FINALE
+  // de ses outils, et lu par la ligne `delivery:` du prompt, la garde de
+  // livraison et la cible des notices du harnais. Jamais le canal de repli
+  // d'une origine sans chat.
+  const replyInputs = {
+    job: {
+      channel: job.channel,
+      chatId: job.chatId,
+      chatChannel: job.chatChannel ?? null,
+      parentJobId: job.parentJobId,
+    },
+    activeChannels,
+    heldTools: new Set(promptTools),
+  };
+  const replyTo = replyDestination(replyInputs);
+  const promptVersion = deployment.version;
+  let systemPrompt = job.systemPrompt;
+  if (
+    !systemPrompt ||
+    !sameToolList(job.systemPromptTools, promptTools) ||
+    (promptVersion !== undefined && job.systemPromptVersion !== promptVersion)
+  ) {
+    // The channel's facts (#613): the channel the send tool will resolve —
+    // `activeChannels` is known only from §6 — and what its adapter does
+    // with a text.
+    const channelDelivery = channelDeliveryFacts(replyInputs, replyTo);
+    systemPrompt = await buildSystemPrompt(agent, db, {
+      ...jobContext,
+      ...(channelDelivery ? { channelDelivery } : {}),
+      ...(triggerWantsConfirmation && replyTo.to === 'channel' ? { notifyOnSuccess: true } : {}),
+      availableToolNames: promptTools,
+      toolIndex,
+    });
+    await db
+      .update(agentJobs)
+      .set({
+        systemPrompt,
+        systemPromptTools: promptTools,
+        systemPromptVersion: promptVersion ?? job.systemPromptVersion,
+        updatedAt: new Date(),
+      })
+      // Sous la prise du run (#566) : un run repris ailleurs pendant sa
+      // préparation n'écrase pas le prompt de la prise suivante.
+      .where(ownJobRow(jobId as string));
   }
 
   // ── 8. Load approval rules ────────────────────────────────────────────────────
@@ -2653,7 +2954,6 @@ async function runJobTracked(
 
   // ── 9. Initialize ChainCounters ───────────────────────────────────────────────
   const counters = new ChainCounters(DEFAULT_LIMITS);
-  const hasAdapterTools = !isOrchestrator && toolDefs.length > ALWAYS_ON_TOOLS.length;
 
   // ── 10. Build tool map ────────────────────────────────────────────────────────
   //
@@ -2670,7 +2970,7 @@ async function runJobTracked(
   // invaliderait le cache de prompt, et l'écart est sans danger — le champ reste
   // demandé alors qu'il aurait pu devenir optionnel, et le gate refuse de toute
   // façon une demande sans phrase.
-  const outilsAvecRaison = exposeStatedPurpose(toolDefs as AnyToolDef[], {
+  const outilsAvecRaison = exposeStatedPurpose(jobTools, {
     approvalRules: approvalRuleList,
     agentId: agentRow.id,
     entityId: job.entityId ?? '',
@@ -2723,6 +3023,8 @@ async function runJobTracked(
         conversationId: job.conversationId ?? null,
         channel: job.channel,
         excludeJobId: jobId as string,
+        // Le fuseau où le prompt dit « maintenant » : chaque tour rejoué y est daté (#650).
+        timezone: deployment.timezone,
       });
       if (history.length > 0) {
         trace('thread_history_loaded', { messages: history.length });
@@ -2746,24 +3048,67 @@ async function runJobTracked(
   // `[DEFERRED]`, `[REJECTED]`, whitelist refusals — which are not third-party
   // content and must not be framed as if they were. Safe by omission.
   //
-  // Framing happens BEFORE truncation so the closing delimiter cannot be cut
-  // off: a payload framed with an opening tag and no closing one is worse than
-  // an unframed one, because everything after it reads as inside the boundary.
+  // A third party's result is cut to fit, THEN framed (`framedToolResult`).
   const toResultOutput = (raw: unknown, toolName?: string): ToolResultOutput => {
-    const frame = (text: string): string =>
-      isUntrustedTool(toolName) ? wrapUntrusted(toolName as string, text) : text;
-
-    if (typeof raw === 'string') return { type: 'text', value: truncateForContext(frame(raw)) };
+    if (typeof raw === 'string') {
+      return {
+        type: 'text',
+        value: isUntrustedTool(toolName)
+          ? framedToolResult(toolName as string, raw)
+          : truncateForContext(raw),
+      };
+    }
     const json: unknown = JSON.parse(JSON.stringify(raw ?? null));
     // A framed result is text by necessity — the frame is prose around the
     // payload, and there is no way to express it in the `json` variant.
     if (isUntrustedTool(toolName)) {
-      return { type: 'text', value: truncateForContext(frame(JSON.stringify(json))) };
+      return { type: 'text', value: framedToolResult(toolName as string, JSON.stringify(json)) };
     }
     const serialized = JSON.stringify(json);
     if (serialized.length <= MAX_TOOL_RESULT_CHARS) return { type: 'json', value: json };
     return { type: 'text', value: truncateForContext(serialized) };
   };
+
+  // INJECT-001 for failures. An error the TOOL raised (`raisedByTool`) is the
+  // tool's own text — for a third-party tool, a third party's words (an MCP
+  // server's `isError` result, an API's error body) — and is framed like the
+  // tool's success. Errors the gate writes (invalid input, a rule, a refusal)
+  // are the product's own words and stay bare.
+  //
+  // The frame goes INSIDE the `{ error }` object, never around it: the readers
+  // of a turn's blocks (`isToolErrorBlock`, the delegation outcome) recognise a
+  // failed call by that shape, and a frame around the block would hide the
+  // failure from them. The text is cut BEFORE it is framed, and the whole
+  // `{ error }` block fits the same budget as a success (`raisedErrorBlock`).
+  const toErrorOutput = (
+    error: string,
+    opts: { raisedBy?: string | undefined; mayHaveDelivered?: boolean } = {},
+  ): ToolResultOutput => {
+    const extra = opts.mayHaveDelivered ? { mayHaveDelivered: true } : {};
+    if (!isUntrustedTool(opts.raisedBy)) return toResultOutput({ error, ...extra });
+    return { type: 'json', value: raisedErrorBlock(opts.raisedBy as string, error, extra) };
+  };
+
+  // ONE conversion of a call that ran into what the model reads, for every path
+  // that runs a tool — inline in the loop, and on resume after a human approved
+  // it — so the two can never frame, flag or render differently:
+  //   - a success: what the tool says the model reads (`toModelOutput`),
+  //     framed when the tool is a third party's (INJECT-001);
+  //   - a failure: framed only when the TOOL raised it (`raisedByTool`), with
+  //     `mayHaveDelivered` kept in the block — the sibling-error guard reads
+  //     it to let a same-turn return_result through instead of deferring it
+  //     (deferral invites the duplicate re-send that flag exists to prevent).
+  const executedCallOutput = (
+    tool: ToolDefinition<z.ZodTypeAny, unknown>,
+    toolName: string,
+    result: Exclude<ToolExecutionResult, { outcome: 'awaiting_approval' }>,
+  ): ToolResultOutput =>
+    result.outcome === 'success'
+      ? toResultOutput(toolOutputForModel(tool, result.output), toolName)
+      : toErrorOutput(result.error, {
+          raisedBy: result.raisedByTool ? toolName : undefined,
+          mayHaveDelivered: result.mayHaveDelivered === true,
+        });
 
   // ── 11.6.5 Shared: execute already-resolved approval requests in-process ─────
   // Runs an approved tool (bypassing its gate — a human already reviewed this
@@ -2782,17 +3127,57 @@ async function runJobTracked(
   // when a resolved approval turned out to be a machine-wide-destructive
   // command (Fix #29) — the caller must fail the job loud with that message
   // instead of feeding the marker to the LLM.
+  // 0145 — la QUESTION qu'un serveur MCP pose pendant un de ses appels
+  // (élicitation) : écrite, livrée par le notifieur des approbations et
+  // attendue SANS suspendre le job (le serveur garde son appel ouvert). Donnée
+  // à chaque appel d'outil de ce run, appels approuvés rejoués compris : c'est
+  // souvent là qu'un outil gaté pose sa question.
+  const askPerson = createRequestUserInput(
+    deps,
+    { jobId: jobId as string, agentId: agentRow.id, entityId: job.entityId ?? '' },
+    {
+      isLost: async () => (await droitPerdu()) !== null,
+      timeoutMs: elicitationTimeoutMs(
+        runnerEnv?.NODALAI_ELICITATION_TIMEOUT_MS ?? process.env['NODALAI_ELICITATION_TIMEOUT_MS'],
+      ),
+    },
+  );
+  // Le temps où la personne réfléchit n'est pas du temps travaillé.
+  const requestUserInput: typeof askPerson = (req) => attenteHumaine.during(() => askPerson(req));
+
   const executeResolvedApprovals = async (
     resolvedRows: ApprovalRequestRow[],
     msgsIn: ModelMessage[],
-  ): Promise<{ messages: ModelMessage[]; catastrophicRefusalMessage: string | null }> => {
+  ): Promise<{
+    messages: ModelMessage[];
+    catastrophicRefusalMessage: string | null;
+    /** Le droit d'agir perdu avant une exécution (#566) : l'appelant s'arrête. */
+    perdu: Extract<JobAuthority, { kind: 'lost' }> | null;
+  }> => {
     let msgs = msgsIn;
     let catastrophicRefusalMessage: string | null = null;
 
     for (const req of resolvedRows) {
-      let replacementOutput: ToolResultOutput;
+      // Rejouer un outil approuvé est un effet (#566) : la ligne est relue
+      // avant chacun, et ce qui reste n'est pas exécuté.
+      const perdu = await droitPerdu();
+      if (perdu) return { messages: msgs, catastrophicRefusalMessage, perdu };
 
-      if (req.status === 'approved') {
+      let replacementOutput: ToolResultOutput;
+      // La demande est close — son résultat consigné sur SA ligne (#566) —
+      // par l'exécution réservée ci-dessous, ou par un run précédent.
+      let close = false;
+
+      if (req.executedAt !== null) {
+        // Close par un run PRÉCÉDENT de ce job, qui a été remplacé avant que
+        // sa transcription ne l'enregistre (#566) : son résultat consigné est
+        // repris tel quel, rien n'est rejoué.
+        replacementOutput =
+          (req.executionOutput as ToolResultOutput | null) ??
+          toResultOutput({ error: APPROVED_CALL_OUTCOME_UNKNOWN });
+        close = true;
+        trace('resume_recorded_approval_reused', { toolName: req.toolName });
+      } else if (req.status === 'approved') {
         // Hardline floor, UX surfacing (Fix #29). A machine-wide-destructive
         // shell command can NEVER auto-run — not even after an explicit human
         // approval (packages/tools/src/execute.ts re-trips this floor
@@ -2807,16 +3192,13 @@ async function runJobTracked(
         // either way.
         // `run_command` porte UNE commande, `declare_verification` en porte une
         // liste qui s'exécutera plus tard : les deux se jugent ici, sinon la
-        // seconde contournerait le refus (revue Codex, PR #49).
-        const resumeCommands =
-          req.toolName === 'run_command'
-            ? [String((req.toolInput as { command?: unknown } | null)?.command ?? '')]
-            : req.toolName === 'declare_verification'
-              ? (
-                  (req.toolInput as { commands?: { command?: unknown }[] } | null)?.commands ?? []
-                ).map((c) => String(c?.command ?? ''))
-              : [];
-        const isCatastrophicResume = resumeCommands.some(isCatastrophicCommand);
+        // seconde contournerait le refus (revue Codex, PR #49). Avec elles, le
+        // code qu'elles lancent, relu MAINTENANT, au moment de tourner (#635,
+        // revue passe 3 de la PR #683) : la même lecture que la porte, par la
+        // même fonction, dans les mêmes espaces.
+        const isCatastrophicResume = await isCatastrophicCall(req.toolName, req.toolInput, {
+          workspaces: agentWorkspacesList,
+        });
 
         if (isCatastrophicResume) {
           // Only machine-wide destroyers (`rm -rf /`, `mkfs`, `shutdown`, …)
@@ -2843,6 +3225,52 @@ async function runJobTracked(
               error: `approved_tool_not_found:${req.toolName}`,
             });
           } else {
+            // L'exécution est RÉSERVÉE par ce run, sous sa prise, avant de
+            // tourner (#566, job/approval-execution.ts) : un appel approuvé
+            // ne tourne qu'une fois, même quand le job change de run.
+            let reservation: ApprovedExecution = await reserveApprovedExecution(
+              db,
+              req.id,
+              jobId as string,
+              prise,
+            );
+            if (reservation.kind === 'started_elsewhere') {
+              // Un run remplacé l'a commencée sans en consigner la fin : elle a
+              // peut-être eu lieu. La rejouer la doublerait — la demande est
+              // close avec un résultat qui le DIT au modèle.
+              const inconnu = toResultOutput({ error: APPROVED_CALL_OUTCOME_UNKNOWN });
+              if (
+                await closeUnknownApprovedExecution(
+                  db,
+                  req.id,
+                  jobId as string,
+                  reservation.claim,
+                  prise,
+                  inconnu,
+                )
+              ) {
+                reservation = { kind: 'recorded', output: inconnu };
+                trace('resume_approved_outcome_unknown', { toolName: req.toolName });
+              } else {
+                // Sa fin vient d'être consignée, la demande a disparu, ou le
+                // job n'est plus à nous : la relecture le dit.
+                reservation = await reserveApprovedExecution(db, req.id, jobId as string, prise);
+                if (reservation.kind === 'started_elsewhere') reservation = { kind: 'job_lost' };
+              }
+            }
+            if (reservation.kind === 'job_lost') {
+              // La réservation a été refusée parce que le job n'est plus à ce
+              // run : la ligne le confirme, jamais une perte fabriquée (revue
+              // Nodal de #575, P3). Si elle dit le contraire, c'est une
+              // incohérence, dite fort.
+              const perdu = await droitPerdu();
+              if (!perdu) {
+                throw new Error(
+                  `approval_reservation_refused: request ${req.id} could not be reserved while this run holds the job`,
+                );
+              }
+              return { messages: msgs, catastrophicRefusalMessage, perdu };
+            }
             // Synthesize an explicit auto_approve rule for this tool so that
             // tools with defaultApproval:'require_approval' (e.g. run_command)
             // bypass their own gate during the resume-execution step. The human
@@ -2860,64 +3288,88 @@ async function runJobTracked(
             // An approved long tool (a 10-minute code_task, a slow
             // run_command) keeps the job alive through the job's own heartbeat
             // (#565), held from the claim above — no per-call interval here.
-            const execResult = await executeTool(
-              toolDef,
-              req.toolInput,
-              {
-                jobId: jobId as string,
-                agentId: agentRow.id,
-                entityId: job.entityId ?? '',
-                db,
-                // étape D: the replayed call keeps its ORIGINAL tool_use id
-                // (stamped on the approval_requests row at gate time) so the
-                // audit row joins back to the transcript block it answers.
-                turn,
-                toolCallId: req.toolCallId ?? undefined,
-                jobChatId: job.chatId ?? null,
-                // P6 : la conversation du fil, pour que le registre des projets y pose
-                // le projet courant.
-                conversationId: job.conversationId ?? null,
-                jobChannel: job.channel,
-                activeChannels,
-                notifyChannelOverride,
-                embeddingClient: deps.embeddingClient,
-                workspaces: agentWorkspacesList,
-                commandAllowlist: agentRow.commandAllowlist ?? null,
-                skillStoreDir: skillStore,
-                checkpointsRoot: checkpointsRoot(),
-                assignedSkillSlugs,
-                scriptAuthorizedSkillSlugs,
-                fileWritableSkillSlugs,
-                provisioning: TOOL_PROVISIONING,
-                searchBackend,
-                ...(speechGenerator ? { speechGenerator } : {}),
-                resolveAgentToolNames: (targetAgentId: string) =>
-                  resolveAgentToolNames(db, targetAgentId),
-              },
-              {
-                approvalRules: resumeApprovalRules,
-                autonomy: workspaceAutonomy,
-                onApprovalRequired: (r: ApprovalGateRequest) => notifyApprovalCreated(deps, r),
-              },
-            );
-            if (execResult.outcome === 'success') {
-              // INJECT-001: the resume path executes the SAME tool the gate
-              // suspended, so it needs the same framing. A boundary that is
-              // framed on first call and bare after a human approval would be
-              // framed exactly when nobody is looking at it.
-              replacementOutput = toResultOutput(execResult.output, req.toolName);
-            } else if (execResult.outcome === 'error') {
-              replacementOutput = toResultOutput({ error: execResult.error });
+            if (reservation.kind === 'reserved') {
+              const execResult = await executeTool(
+                toolDef,
+                req.toolInput,
+                {
+                  jobId: jobId as string,
+                  agentId: agentRow.id,
+                  entityId: job.entityId ?? '',
+                  db,
+                  // étape D: the replayed call keeps its ORIGINAL tool_use id
+                  // (stamped on the approval_requests row at gate time) so the
+                  // audit row joins back to the transcript block it answers.
+                  turn,
+                  toolCallId: req.toolCallId ?? undefined,
+                  jobChatId: job.chatId ?? null,
+                  jobChatChannel,
+                  // P6 : la conversation du fil, pour que le registre des projets y pose
+                  // le projet courant.
+                  conversationId: job.conversationId ?? null,
+                  jobChannel: job.channel,
+                  activeChannels,
+                  embeddingClient: deps.embeddingClient,
+                  workspaces: agentWorkspacesList,
+                  commandAllowlist: agentRow.commandAllowlist ?? null,
+                  skillStoreDir: skillStore,
+                  checkpointsRoot: checkpointsRoot(),
+                  assignedSkillSlugs,
+                  scriptAuthorizedSkillSlugs,
+                  fileWritableSkillSlugs,
+                  provisioning: TOOL_PROVISIONING,
+                  searchBackend,
+                  ...(speechGenerator ? { speechGenerator } : {}),
+                  resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
+                    resolveAgentToolNames(db, targetAgentId, placement),
+                  requestUserInput,
+                },
+                {
+                  approvalRules: resumeApprovalRules,
+                  autonomy: workspaceAutonomy,
+                  onApprovalRequired: (r: ApprovalGateRequest) => notifyApprovalCreated(deps, r),
+                },
+              );
+              if (execResult.outcome === 'success' || execResult.outcome === 'error') {
+                // INJECT-001: the resume path executes the SAME tool the gate
+                // suspended, so it goes through the SAME conversion as the
+                // first call (`executedCallOutput`). A boundary that is framed
+                // on first call and bare after a human approval would be framed
+                // exactly when nobody is looking at it.
+                replacementOutput = executedCallOutput(toolDef, req.toolName, execResult);
+              } else {
+                // outcome === 'awaiting_approval' should never occur here — we
+                // passed a synthetic auto_approve rule that overrides any
+                // defaultApproval, and the one case that DOES still re-gate
+                // (the catastrophic floor) was already handled above.
+                replacementOutput = toResultOutput({ error: 'unexpected_gate_on_approved_tool' });
+              }
+              // La fin est consignée sous la RÉSERVATION, avec son résultat :
+              // repris par un autre run entre-temps, le job le retrouve au lieu
+              // de le perdre (#566).
+              if (!(await recordApprovedExecution(db, req.id, prise, replacementOutput))) {
+                console.warn(
+                  `[exec ${jobId}] APPROVED_RESULT_NOT_RECORDED request=${req.id} tool=${req.toolName} — ` +
+                    'closed by a later run of this job, which told the model the outcome is unknown',
+                );
+              }
+              close = true;
+              trace('resume_approved_tool_executed', { toolName: req.toolName });
+            } else if (reservation.kind === 'missing') {
+              // La demande n'existe plus : un fait à part (revue Nodal de #575,
+              // P3). L'appel ne tourne pas, le modèle le lit, le job continue.
+              replacementOutput = toResultOutput({ error: APPROVAL_REQUEST_MISSING });
+              close = true;
+              trace('resume_approval_request_missing', { toolName: req.toolName });
             } else {
-              // outcome === 'awaiting_approval' should never occur here — we
-              // passed a synthetic auto_approve rule that overrides any
-              // defaultApproval, and the one case that DOES still re-gate
-              // (the catastrophic floor) was already handled above.
-              replacementOutput = toResultOutput({ error: 'unexpected_gate_on_approved_tool' });
+              // Close ailleurs (ou issue inconnue, dite) : son résultat consigné.
+              replacementOutput =
+                (reservation.output as ToolResultOutput | null) ??
+                toResultOutput({ error: APPROVED_CALL_OUTCOME_UNKNOWN });
+              close = true;
             }
           }
         }
-        trace('resume_approved_tool_executed', { toolName: req.toolName });
       } else if (req.status === 'expired') {
         // Nobody answered before the deadline and the TTL sweep closed the
         // request (cron/reset-orphans.ts, issue #349). The job resumes the same
@@ -2931,8 +3383,19 @@ async function runJobTracked(
       } else {
         // Rejected: replace marker with a [REJECTED] explanation.
         const reason = req.notes ?? 'no reason provided';
+        // Held by the shell checklist (#667): the model also reads which kinds
+        // held it and where such an action goes instead (a tool that asks the
+        // person), or it tries the shell again another way. Unreadable reasons
+        // are said in the log, as the approval card does.
+        const held =
+          req.gateReasons === null ? null : ShellGateReasonsSchema.safeParse(req.gateReasons);
+        if (held && !held.success)
+          console.warn(`[exec ${jobId}] unreadable gate_reasons on approval ${req.id}`);
+        const heldNote =
+          held?.success && held.data.length > 0 ? ` ${shellChecklistDeclined(held.data)}` : '';
         replacementOutput = toResultOutput(
-          `[REJECTED] Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.`,
+          `[REJECTED] Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.` +
+            heldNote,
         );
         trace('resume_rejected_tool_marker_replaced', { toolName: req.toolName });
       }
@@ -2968,7 +3431,10 @@ async function runJobTracked(
             output: ToolResultOutput;
           };
           // Match: same toolName and output contains the [AWAITING_APPROVAL] marker.
+          // A request closed by an earlier run of this job answers only ITS
+          // call (#566): a later request of the same tool must keep its marker.
           if (tb.toolName !== req.toolName) return block;
+          if (req.executedAt !== null && tb.toolCallId !== req.toolCallId) return block;
           const outputText =
             tb.output.type === 'text' ? tb.output.value : JSON.stringify(tb.output.value);
           if (!outputText.includes('[AWAITING_APPROVAL]')) return block;
@@ -2979,14 +3445,14 @@ async function runJobTracked(
         return { ...toolMsg, content: updatedContent };
       }) as typeof msgs;
 
-      // Stamp executed_at so this request is never re-processed.
-      await db
-        .update(approvalRequests)
-        .set({ executedAt: new Date() })
-        .where(eq(approvalRequests.id, req.id));
+      // Close the request so it is never re-processed. The approved paths
+      // above closed theirs under their reservation; what is left runs
+      // nothing (rejected, expired, refused by the floor, tool gone), and its
+      // result is recorded the same way for the run that may read it next.
+      if (!close) await recordApprovalWithoutEffect(db, req.id, replacementOutput);
     }
 
-    return { messages: msgs, catastrophicRefusalMessage };
+    return { messages: msgs, catastrophicRefusalMessage, perdu: null };
   };
 
   // ── 11.7 Execute-on-resume (Bugs B+C fix) ────────────────────────────────────
@@ -2999,21 +3465,60 @@ async function runJobTracked(
   // Gate: only runs when there are resolved-but-not-yet-executed requests.
   // Idempotent: executed_at IS NULL guards against double-execution.
   {
+    // Seules les lignes qui RETIENNENT un appel (0145, `gatesACall`) : une
+    // élicitation acceptée relue ici serait prise pour un appel approuvé, et
+    // l'outil MCP qui l'a posée serait réexécuté.
     const pendingExecRows = await db
       .select()
       .from(approvalRequests)
-      .where(and(eq(approvalRequests.jobId, jobId as string), isNull(approvalRequests.executedAt)))
+      .where(
+        and(
+          eq(approvalRequests.jobId, jobId as string),
+          isNull(approvalRequests.executedAt),
+          gatesACall(),
+        ),
+      )
       .orderBy(approvalRequests.requestedAt);
+
+    // A request an EARLIER run of this job closed — it ran the call and
+    // recorded the result, then lost the job before its transcript was saved
+    // (#566) — still has its marker in the transcript this run loaded: its
+    // recorded result is taken back, never replayed and never lost.
+    const marqueursEnAttente = new Set(
+      (messages as Array<{ role?: string; content?: unknown }>)
+        .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+        .flatMap((m) => m.content as Array<{ toolCallId?: string; output?: unknown }>)
+        .filter((p) => JSON.stringify(p.output ?? null).includes('[AWAITING_APPROVAL]'))
+        .map((p) => p.toolCallId),
+    );
+    const closedElsewhere =
+      marqueursEnAttente.size === 0
+        ? []
+        : (
+            await db
+              .select()
+              .from(approvalRequests)
+              .where(
+                and(
+                  eq(approvalRequests.jobId, jobId as string),
+                  isNotNull(approvalRequests.executedAt),
+                  isNotNull(approvalRequests.executionOutput),
+                  gatesACall(),
+                ),
+              )
+              .orderBy(approvalRequests.requestedAt)
+          ).filter((r) => r.toolCallId !== null && marqueursEnAttente.has(r.toolCallId));
 
     // Filter to resolved (approved or rejected) rows; anything still 'pending'
     // means the human hasn't acted yet — we'll handle those at suspend time.
-    const resolvedRows = pendingExecRows.filter(
+    const resolvedRows = [...closedElsewhere, ...pendingExecRows].filter(
       (r) => r.status === 'approved' || r.status === 'rejected' || r.status === 'expired',
     );
 
     if (resolvedRows.length > 0) {
       const executed = await executeResolvedApprovals(resolvedRows, messages);
       messages = executed.messages;
+      if (executed.perdu) return await lacherLeJob(executed.perdu, 'approved_tool');
 
       // Fix #29: a catastrophic run_command was approved but the hardline floor
       // refuses it regardless — fail the job loud NOW, with the clear message,
@@ -3038,13 +3543,14 @@ async function runJobTracked(
       }
 
       // Persist the updated messages before entering the LLM loop.
-      await saveCheckpoint(db, jobId as string, {
+      const sauve = await saveCheckpoint(db, jobId as string, {
         messages,
         chainCount: job.chainCount ?? 0,
         toolsUsed,
         // Les totaux lus comme la ligne du job les porte : null quand inconnus.
         ...runStats(),
       });
+      if (!sauve) return await ecritureRefusee('approval_replay_checkpoint');
 
       // Issue #370: a decision can WRITE a rule ("Approve for this project" /
       // "Change" on the approval card). Re-read before the job goes on, so the
@@ -3059,7 +3565,9 @@ async function runJobTracked(
     const stillPending = pendingExecRows.filter((r) => r.status === 'pending');
     if (stillPending.length > 0) {
       trace('resume_still_pending', { count: stillPending.length });
-      await setJobStatus(db, jobId as string, 'awaiting_approval');
+      if (!(await setJobStatus(db, jobId as string, 'awaiting_approval'))) {
+        return await ecritureRefusee('resuspend_for_approval');
+      }
       return { status: 'awaiting_approval' };
     }
   }
@@ -3082,26 +3590,22 @@ async function runJobTracked(
   // is reached while still false, we re-prompt the agent (bounded) before letting
   // it finish. In-memory/intra-run: in the router/delegation case the parent makes
   // its final send in the same run it finalizes, so the flag is evaluated correctly.
-  // Tool-only channels (Telegram) always require a tool delivery. A cron or
-  // webhook job that opted into a success confirmation (chat_id set by the
-  // tick / route) is held to the same bar: the agent must deliver before
-  // completing, otherwise the user never gets the "done" message they asked
-  // for.
-  const requiresToolDelivery =
-    TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '') || triggerWantsConfirmation;
-  // Human-readable capitalization for the nudges below. `job.channel` is one of
-  // TOOL_ONLY_DELIVERY_CHANNELS (telegram/discord/slack) here, OR 'cron'/'webhook'
-  // via triggerWantsConfirmation — B1/B2 made both multi-channel (see
-  // notifyChannelOverride above the comment over triggerWantsConfirmation), but
-  // this display name is only used for an in-agent nudge (never user-facing,
-  // invariant #2), so an unrecognized channel falls back to 'Telegram' rather
-  // than guessing.
+  // The bar is the reply's destination (#649, `replyTo`): a request that
+  // carries a chat to answer on — it came from one, or its trigger named one
+  // (a routine's confirmation, a webhook, the dashboard's "send via
+  // Telegram") — must be answered there before completing, otherwise the
+  // user never gets the answer they asked for. A request with no chat (MCP,
+  // API, the web) is answered by its result: no send is required.
+  const requiresToolDelivery = replyTo.to === 'channel';
+  // Human-readable capitalization for the nudges below: the channel the reply
+  // goes to. Only used for an in-agent nudge (never user-facing, invariant #2).
   const CHANNEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
     telegram: 'Telegram',
     discord: 'Discord',
     slack: 'Slack',
   };
-  const channelDisplayName = CHANNEL_DISPLAY_NAMES[job.channel ?? ''] ?? 'Telegram';
+  const channelDisplayName =
+    CHANNEL_DISPLAY_NAMES[replyTo.to === 'channel' ? replyTo.channel : ''] ?? 'Telegram';
   const MAX_REDELIVERY_NUDGES = 2;
   let redeliveryNudges = 0;
   let toolDelivered = false;
@@ -3145,7 +3649,13 @@ async function runJobTracked(
    * — une redite vaut mieux qu'un silence, et elle nomme le spécialiste.
    */
   const failedDelegationNotice = (): string => {
-    const noms = failedDelegationNames(delegationOutcomes);
+    // Une liste partielle ne fait jamais conclure que rien d'autre n'a
+    // échoué : `…` à la suite des noms dit qu'il en manque (revue Codex de la
+    // PR #712, passes 3 et 4).
+    const noms = [
+      ...failedDelegationNames(delegationOutcomes),
+      ...(incompleteDelegations.value ? ['…'] : []),
+    ];
     return noms.length === 0 ? '' : `[delegation stopped: ${noms.join(', ')} — no deliverable]`;
   };
 
@@ -3180,14 +3690,11 @@ async function runJobTracked(
    * Le descripteur de livraison à poser DANS la transaction terminale, ou
    * `null` quand il n'y a rien à dire ou aucun canal à outil pour le dire.
    */
-  // Où part une notice du harnais : le canal à outil du job, ou celui que la
-  // routine a choisi pour sa confirmation. `null` : aucun canal à outil.
+  // Où part une notice du harnais : là où va la réponse (#649), quand c'est un
+  // chat. `null` : la réponse est le résultat du job, ou celui d'un parent.
   const harnessNoticeTarget = (): { channel: string; chatId: string } | null => {
-    const canal = TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '')
-      ? (job.channel ?? '')
-      : (notifyChannelOverride ?? '');
-    if (!TOOL_ONLY_DELIVERY_CHANNELS.has(canal) || !job.chatId) return null;
-    return { channel: canal, chatId: job.chatId };
+    if (replyTo.to !== 'channel' || !job.chatId) return null;
+    return { channel: replyTo.channel, chatId: job.chatId };
   };
   const harnessNoticeDelivery = (
     payload: string,
@@ -3208,8 +3715,8 @@ async function runJobTracked(
    * C'est exactement la couture que `finalizeJobSuccess` tient du côté succès
    * depuis #108 ; elle tient les deux côtés maintenant.
    *
-   * Le canal est celui des gardes de livraison : le canal du job, ou celui que
-   * la routine a choisi pour sa confirmation (`notifyChannelOverride`). Rien à
+   * Le canal est celui où va la réponse (`replyDestination`) : le canal du
+   * job, ou celui sur lequel le chat désigné a été résolu. Rien à
    * dire, pas de canal à outil, pas de destinataire ⇒ l'échec s'écrit seul.
    */
   const failJobWithHarnessNotice = async (
@@ -3218,6 +3725,8 @@ async function runJobTracked(
     suffixeCle: string,
     userMessage?: string,
     replaceResult = false,
+    /** Les lignes de `userMessage` écrites par le runner (#562). */
+    runnerNotes?: readonly string[],
   ): Promise<void> => {
     const notice = harnessNoticeDelivery(payload);
     await finalizeJobFailure(
@@ -3228,6 +3737,7 @@ async function runJobTracked(
         stats: runStats(),
         messages: transcriptionFermee(messages),
         ...(userMessage !== undefined ? { userMessage, replaceResult } : {}),
+        ...(runnerNotes ? { runnerNotes } : {}),
         ...(notice
           ? { delivery: { ...notice, idempotencyKey: `${jobId}:harness:${suffixeCle}` } }
           : {}),
@@ -3295,6 +3805,7 @@ async function runJobTracked(
       DELIVERABLE_NOT_VERIFIED,
       livrable,
       true,
+      [line],
     );
     return {
       status: 'failed',
@@ -3306,19 +3817,27 @@ async function runJobTracked(
   };
 
   const stampFailedDelegations = async (): Promise<void> => {
-    if (failedDelegationNames(delegationOutcomes).length === 0) return;
+    if (failedDelegationNotice() === '') return;
     const [row] = await db
-      .select({ result: agentJobs.result })
+      .select({ result: agentJobs.result, runnerNotes: agentJobs.runnerNotes })
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId as string))
       .limit(1);
     const actuel = row?.result ?? '';
     const avec = withFailedDelegationNotice(actuel);
     if (avec === actuel) return;
+    // La ligne est du HARNAIS : elle est dite comme telle, à part du texte de
+    // l'agent (#562). Les écrans la lisent dans `result` (#108) ; la relecture
+    // du fil lit `runner_notes` pour ne pas la mettre dans la bouche de
+    // l'agent au tour suivant.
     await db
       .update(agentJobs)
-      .set({ result: avec })
-      .where(eq(agentJobs.id, jobId as string));
+      .set({
+        result: avec,
+        runnerNotes: runnerNotesValue([...(row?.runnerNotes ?? []), failedDelegationNotice()]),
+      })
+      // Juste après la ligne `completed` que CE run vient de poser (#566).
+      .where(ownJobRow(jobId as string, ['completed']));
 
     // La LIVRAISON de cette ligne, elle, est posée dans la transaction
     // terminale (T08, voir `harnessNoticeDelivery`) : ici on ne fait plus que
@@ -3388,25 +3907,25 @@ async function runJobTracked(
       // The wait on a human stays fresh to the reapers through the job's own
       // heartbeat (#565), held from the claim — nothing to start here.
       while (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        // Waiting for the person's decision: not worked time (human-wait.ts).
+        await attenteHumaine.during(
+          () => new Promise((resolve) => setTimeout(resolve, pollIntervalMs)),
+        );
 
-        // Cancel wins even mid-window: execute nothing, touch no status —
-        // mirrors the top-of-turn cancellation check (Leg 2).
-        const [statusRow] = await db
-          .select({ status: agentJobs.status })
-          .from(agentJobs)
-          .where(eq(agentJobs.id, jobId as string));
-        if (statusRow?.status === 'cancelled') {
-          trace('grace_window_cancelled');
-          await cancelJob(db, jobId as string, runStats(), messages);
-          return { status: 'cancelled' };
-        }
+        // A lost right to act wins even mid-window (#566): execute
+        // nothing, touch no status — the top-of-turn check (Leg 2).
+        const perteEnAttente = await droitPerdu();
+        if (perteEnAttente) return await lacherLeJob(perteEnAttente, 'grace_window');
 
         const openRows = await db
           .select()
           .from(approvalRequests)
           .where(
-            and(eq(approvalRequests.jobId, jobId as string), isNull(approvalRequests.executedAt)),
+            and(
+              eq(approvalRequests.jobId, jobId as string),
+              isNull(approvalRequests.executedAt),
+              gatesACall(),
+            ),
           )
           .orderBy(approvalRequests.requestedAt);
         if (openRows.length === 0 || openRows.some((r) => r.status === 'pending')) {
@@ -3419,6 +3938,7 @@ async function runJobTracked(
         trace('grace_window_resolved_inline', { count: openRows.length });
         const executed = await executeResolvedApprovals(openRows, messages);
         messages = executed.messages;
+        if (executed.perdu) return await lacherLeJob(executed.perdu, 'approved_tool');
 
         // Issue #370: same re-read as the worker-driven resume above. This is
         // the path the incident took — the decision landed inside the grace
@@ -3447,15 +3967,19 @@ async function runJobTracked(
     }
 
     // Grace disabled, or the window expired with ≥1 request still pending —
-    // suspend as before.
-    await saveCheckpoint(db, jobId as string, {
+    // suspend as before. Both writes carry this run's claim (#566): a job
+    // ended or taken elsewhere while its gated tool ran is never turned back
+    // into `awaiting_approval`, and so never revived by the approval.
+    const pointSauve = await saveCheckpoint(db, jobId as string, {
       messages,
       chainCount: job.chainCount ?? 0,
       toolsUsed,
       // Les totaux lus comme la ligne du job les porte : null quand inconnus.
       ...runStats(),
     });
-    await setJobStatus(db, jobId as string, 'awaiting_approval');
+    if (!pointSauve || !(await setJobStatus(db, jobId as string, 'awaiting_approval'))) {
+      return await ecritureRefusee('suspend_for_approval');
+    }
 
     // Race T-ε: a resolution can land between the last poll above (or, with
     // grace disabled, between the gate firing and this very write) and this
@@ -3764,6 +4288,9 @@ async function runJobTracked(
       for (const issue of record?.sub_delegations ?? []) {
         delegationOutcomes.set(issue.tool, issue.status);
       }
+      // Un enregistrement BORNÉ peut ne plus nommer tous ses échecs ; il le
+      // dit, et ce fait ne s'efface plus (voir `IncompleteDelegations`).
+      if (record?.sub_delegations_incomplete) incompleteDelegations.value = true;
 
       // Une délégation qui n'a RIEN rendu porte le marqueur d'échec. Les autres
       // `error-text` sont des REPORTS (« un autre transfert a la priorité,
@@ -3923,47 +4450,51 @@ async function runJobTracked(
   let reprisesCeTour = 0;
   let partielCeTour = '';
 
+  // #531 — la FILE de ce job : ce qu'un tour de réponse lui a transmis pendant
+  // qu'il vivait (`message_conversation_run`), et ce qui restait dans la file
+  // de ses délégués finis. Elle entre ici dans la transcription, telle quelle
+  // et marquée (`isInboxMessage`), et c'est le modèle qui juge. Lue en haut de
+  // chaque tour, et avant de conclure sur une réponse en texte : un message
+  // arrivé pendant le dernier appel est lu par ce run au lieu d'attendre la
+  // suite. Ce qui arrive après la dernière lecture d'une tête devient une
+  // nouvelle tête à la transition terminale (déclencheur de la migration
+  // 0141) : jamais perdu.
+  //
+  // Un message remet la livraison à faire : sur un canal à outil, ce qui vient
+  // d'arriver n'a encore reçu aucune réponse, quoi que le run ait envoyé avant.
+  // Le budget de rappels repart avec lui.
+  const lireLaFile = async (moment: 'turn_start' | 'before_final_text'): Promise<boolean> => {
+    const arrives = await drainJobInbox(db, jobId as string);
+    if (arrives.length === 0) return false;
+    messages = [...messages, ...(arrives as unknown as ModelMessage[])];
+    toolDelivered = false;
+    redeliveryNudges = 0;
+    trace('inbox_drained', { turn, count: arrives.length, at: moment });
+    return true;
+  };
+
   try {
     while (true) {
       turn += 1;
       // Un nouveau tour n'a pas encore de message d'outils en construction (#561).
       tourOuvert = null;
 
-      // Leg 2 — Top-of-turn terminal check (primary zombie-stopper).
+      // Leg 2 — Top-of-turn authority check (primary zombie-stopper).
       //
-      // Checks DB status BEFORE every LLM call. If the row has been set to ANY
-      // terminal status by an external writer (orphan reaper, cancellation,
-      // another concurrent runner), we stop immediately without calling
-      // completeJob/failJob — the row is already terminal and we must not race
-      // to overwrite it. `cancelJob` is still called for 'cancelled' so it
-      // persists the partial transcript + stats.
-      //
-      // Previously this only checked for 'cancelled'. The extension to 'failed'
-      // and 'completed' is the fix for the zombie-execution bug (F1): the orphan
-      // reaper can flip a slow job to 'failed' while the original loop is still
-      // running; without this check the loop would continue and completeJob would
-      // later overwrite 'failed' → 'completed'. The conditional writers (Leg 3)
-      // are a second line of defence; this check is the primary stopper.
-      const [statusRow] = await db
-        .select({ status: agentJobs.status })
-        .from(agentJobs)
-        .where(eq(agentJobs.id, jobId as string));
-      const currentTurnStatus = statusRow?.status;
-      if (currentTurnStatus === 'cancelled') {
-        trace('cancellation_observed', { turn });
-        // Un tour en cours de reprise (#441) a déjà écrit du texte : il fait
-        // partie du travail que l'annulation garde (revue Codex de #449).
+      // The row is read BEFORE every LLM call (#566, `droitPerdu`): any status
+      // but `processing` under this run's claim stops the run without calling
+      // completeJob/failJob — the other writer's status stands. A job
+      // cancelled while this run still holds it keeps its transcript (and a
+      // turn being resumed after a cut, #441, keeps what it had written).
+      const perteEnTete = await droitPerdu();
+      if (perteEnTete) {
         if (partielCeTour !== '') {
           messages = [...messages, { role: 'assistant', content: partielCeTour } as ModelMessage];
           partielCeTour = '';
         }
-        await cancelJob(db, jobId as string, runStats(), messages);
-        return { status: 'cancelled' };
+        return await lacherLeJob(perteEnTete, 'turn_start');
       }
-      if (currentTurnStatus === 'failed' || currentTurnStatus === 'completed') {
-        trace('terminal_observed_mid_loop', { turn, status: currentTurnStatus });
-        return { status: 'already_handled' };
-      }
+      await lireLaFile('turn_start');
 
       // Invariant 8: hard turn cap. `turn` is cumulative across resumes (it's
       // seeded from job.turn), so a job that loops — or resumes — without ever
@@ -4017,19 +4548,14 @@ async function runJobTracked(
       // a. Validate message structure
       validateMessageStructure(messages);
 
-      // b. Tool choice
-      const toolChoice = computeToolChoice({
-        isOrchestrator,
-        turn,
-        hasAdapterTools,
-        modelSupportsForcedToolChoice,
-      });
-
       // c. Convert tools to AI SDK format. For the skill-authoring meta-tools,
       // append the live workspace tool list so the model has the real tool names
       // in front of it as it decides to author a skill (see step 10).
+      // #612: the eager schemas, then those the transcript loaded — never the
+      // whole map, which stays the whitelist every call is checked against.
       const aiSdkTools: Record<string, { description: string; inputSchema: z.ZodTypeAny }> = {};
-      for (const [name, toolDef] of toolMap) {
+      for (const toolDef of toolsSentThisTurn(outilsAvecRaison, loadedTools, messages)) {
+        const name = toolDef.name;
         const description =
           authoringToolsSuffix && (name === 'create_skill' || name === 'update_skill')
             ? toolDef.description + authoringToolsSuffix
@@ -4041,28 +4567,34 @@ async function runJobTracked(
       // A long call (a reasoning model thinking for minutes) stays fresh to the
       // reapers through the job's own heartbeat (#565), held from the claim.
       trace('llm_call_start', { turn, msgCount: messages.length });
+      // #484 : l'appel dit CE QU'IL produit pendant qu'il le produit — texte,
+      // raisonnement, arguments d'outil et l'outil rempli. Un appel qui écrit
+      // vingt minutes sans un mot de texte n'était visible qu'à sa fin.
+      const productionDeLAppel = watchCallProgress((faits) =>
+        trace('llm_call_progress', { turn, ...faits }),
+      );
+      // #444 — la MÊME mesure, lisible par la page du run tant que l'appel tourne.
+      // Sous la prise de ce run, quel que soit le statut (#566) : l'effacement
+      // final tombe après un Stop, sur une ligne déjà `cancelled` qu'il tient.
+      const progresEnDirect = liveCallProgress(
+        (valeur) =>
+          db
+            .update(agentJobs)
+            .set({ liveProgress: valeur })
+            .where(ownJobRow(jobId as string, null))
+            .then(() => undefined),
+        { turn },
+      );
       // Stop arrête l'appel EN COURS. Le bouton n'écrit que `cancelled` en
       // base ; sans cette lecture pendant l'appel, un tour streamé qui écrit
       // sans s'arrêter ignorait le Stop jusqu'à sa fin (une heure au plus) et
       // exécutait ensuite ses outils. Relu toutes les 2 s, comme la fenêtre
       // d'approbation plus haut.
-      const arret = new AbortController();
-      let lectureArretEnCours = false;
-      const surveilleArret = setInterval(() => {
-        if (lectureArretEnCours || arret.signal.aborted) return;
-        lectureArretEnCours = true;
-        void db
-          .select({ status: agentJobs.status })
-          .from(agentJobs)
-          .where(eq(agentJobs.id, jobId as string))
-          .then(([row]) => {
-            if (row?.status === 'cancelled') arret.abort();
-          })
-          .catch(() => {})
-          .finally(() => {
-            lectureArretEnCours = false;
-          });
-      }, STOP_POLL_MS);
+      // La MÊME veille que le tour d'une CLI (#566, #567, `watchJobRow`) : la
+      // ligne est relue sous la prise de ce run ; toute perte du droit d'agir
+      // coupe l'appel, et une ligne illisible JOB_ROW_UNREADABLE_MAX fois
+      // d'affilée aussi (invariant #4 : illisible ne vaut pas autorisation).
+      const veille = watchJobRow(db, jobId as string, prise, STOP_POLL_MS);
       let response: Awaited<ReturnType<typeof llmClient.generateText>>;
       const appelCommenceA = Date.now();
       // Un appel interrompu (coupé, ou arrêté par Stop) après que le
@@ -4111,13 +4643,24 @@ async function runJobTracked(
               imageCache,
             ),
             tools: aiSdkTools,
-            toolChoice,
+            // The model decides, on every turn, for every model (#600). Forcing
+            // a tool call on turn 1 made a thinking model plan a whole
+            // trajectory in one response (64 to 546 calls, or the output cap),
+            // and left an orchestrator unable to answer a direct question.
+            // A turn that answers in text is judged after it, by the guards
+            // that already read it (delivery on a tool-only channel, stuck
+            // delegations, declared deliverables, the empty turn).
+            toolChoice: 'auto',
           },
           // #440 : le tour est streamé sous deux horloges de silence, jamais
           // coupé tant qu'il écrit (packages/llm/src/turn-clocks.ts).
           {
             streamed: true,
-            abortSignal: arret.signal,
+            abortSignal: veille.signal,
+            onProgress: (progres) => {
+              productionDeLAppel.onProgress(progres);
+              progresEnDirect.onProgress(progres);
+            },
             // #442 : l'attente du premier jeton posée pour l'agent, et ce
             // qu'il reste du budget de temps du run.
             ...(agentFirstTokenMs !== undefined ? { firstTokenTimeoutMs: agentFirstTokenMs } : {}),
@@ -4151,8 +4694,30 @@ async function runJobTracked(
           if (ecrit !== '') {
             messages = [...messages, { role: 'assistant', content: ecrit } as ModelMessage];
           }
-          trace('cancellation_observed', { turn, during: 'llm_call', partialChars: ecrit.length });
-          await cancelJob(db, jobId as string, runStats(), messages);
+          const coupe = veille.observed();
+          if (coupe?.kind === 'unreadable') {
+            trace('job_row_unreadable', { turn, during: 'llm_call' });
+            try {
+              await failJob(db, jobId as string, JOB_ROW_UNREADABLE, runStats(), messages);
+            } catch (err) {
+              // La base ne répond plus : l'échec est DIT, et le run s'arrête
+              // quand même — le faucheur finira la ligne.
+              console.error(
+                `[exec ${jobId}] JOB_ROW_UNREADABLE — failJob failed too: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              );
+            }
+            return { status: 'failed', error: JOB_ROW_UNREADABLE };
+          }
+          trace('cancellation_observed', {
+            turn,
+            during: 'llm_call',
+            partialChars: ecrit.length,
+            produced: productionDeLAppel.produced(),
+          });
+          if (coupe) return await lacherLeJob(coupe, 'llm_call', ecrit);
+          await cancelJob(db, jobId as string, runStats(), messages, ecrit);
           return { status: 'cancelled' };
         }
         const expiration = timeoutOfTurn(genErr);
@@ -4162,20 +4727,17 @@ async function runJobTracked(
           // l'emporte. Sans cette lecture, un plafond ou un budget d'expiration
           // épuisé écrivait `failed` par-dessus l'annulation de la personne
           // (revue Codex de #449, passe 9). L'appel coupé est compté, et ce
-          // qu'il avait écrit est gardé, comme au Stop pendant l'appel.
-          const [statutALExpiration] = await db
-            .select({ status: agentJobs.status })
-            .from(agentJobs)
-            .where(eq(agentJobs.id, jobId as string));
-          if (statutALExpiration?.status === 'cancelled') {
+          // qu'il avait écrit est gardé, comme au Stop pendant l'appel. Toute
+          // autre perte du droit d'agir l'emporte de même (#566) : le statut
+          // posé par l'autre écrivain n'est jamais réécrit.
+          const perteALExpiration = await droitPerdu();
+          if (perteALExpiration) {
             if (expiration.served) await compterAppelInterrompu(expiration);
             const ecrit = (partielCeTour + expiration.partialText).trim();
             if (ecrit !== '') {
               messages = [...messages, { role: 'assistant', content: ecrit } as ModelMessage];
             }
-            trace('cancellation_observed', { turn, during: 'llm_timeout' });
-            await cancelJob(db, jobId as string, runStats(), messages);
-            return { status: 'cancelled' };
+            return await lacherLeJob(perteALExpiration, 'llm_timeout', ecrit);
           }
           // Un appel coupé EN ÉCRIVANT a été servi : le fournisseur a lu tout le
           // prompt et produit ce texte, et il le facture. Aucun décompte ne
@@ -4255,7 +4817,11 @@ async function runJobTracked(
           ]
             .filter((t) => t !== '')
             .join('\n\n');
-          trace('llm_timeout_exhausted', { turn, elapsedMs: msExpiresCeTour });
+          trace('llm_timeout_exhausted', {
+            turn,
+            elapsedMs: msExpiresCeTour,
+            produced: productionDeLAppel.produced(),
+          });
           await failJob(db, jobId as string, code, runStats(), messages, livrable);
           return {
             status: 'failed',
@@ -4304,7 +4870,9 @@ async function runJobTracked(
         }
         throw genErr; // not this error, or budget spent → outer catch fails loud
       } finally {
-        clearInterval(surveilleArret);
+        veille.stop();
+        productionDeLAppel.stop();
+        await progresEnDirect.stop();
       }
       // Le tour a répondu : son budget d'expiration repart à zéro, et le temps
       // perdu avec. Ce qui est compté plus bas est CE tour-ci, pas la mémoire
@@ -4336,151 +4904,230 @@ async function runJobTracked(
       // completionTokens → outputTokens. Both can be `undefined` when the
       // provider doesn't report usage (local providers like LM Studio /
       // Ollama sometimes omit it) — Number(undefined) is NaN, hence the
-      // isFinite guard below.
-      const usage = response.usage;
-      // Ce que l'appel a RAPPORTÉ, lu par la même règle que le client : un
-      // compte absent, ou un 0 qui ne peut pas être vrai, vaut null. Il compte
-      // pour 0 dans les gardes (borne basse), et rend le total du job inconnu.
-      const rapporte = reportedUsage(response);
-      if (rapporte.inputTokens === null) inputTokensUnknown = true;
-      if (rapporte.outputTokens === null) outputTokensUnknown = true;
-      const promptT = rapporte.inputTokens ?? 0;
-      const completionT = rapporte.outputTokens ?? 0;
-      // Prompt-cached reads: the portion of this turn's input served from the
-      // provider's cache (Anthropic cache_read, OpenRouter/DeepSeek cached_tokens).
-      // The AI SDK reports `inputTokens` as the TOTAL (incl. cached) and
-      // `cachedInputTokens` as the cached subset — verified for @ai-sdk/anthropic
-      // and @openrouter/ai-sdk-provider. For Anthropic the total ALSO includes
-      // cache WRITES (providerMetadata.anthropic.cacheCreationInputTokens,
-      // verified on @ai-sdk/anthropic 3.0.76) — effective (fresh) input =
-      // total − cache reads − cache writes (review 2026-08-20: without the
-      // writes term, a cache-priming turn inflated effective input by its
-      // entire system prompt).
-      const cachedT = Number(usage?.cachedInputTokens ?? 0);
-      const antMeta = (
-        response.providerMetadata as Record<string, Record<string, unknown> | undefined> | undefined
-      )?.['anthropic'];
-      const cacheWriteRaw = antMeta?.['cacheCreationInputTokens'];
-      const cacheWriteT =
-        typeof cacheWriteRaw === 'number' && Number.isFinite(cacheWriteRaw) ? cacheWriteRaw : 0;
-      const promptTok = Number.isFinite(promptT) ? promptT : 0;
-      const effectiveT = Math.max(
-        0,
-        promptTok - (Number.isFinite(cachedT) ? cachedT : 0) - cacheWriteT,
-      );
-      inputTokens += promptTok;
-      outputTokens += Number.isFinite(completionT) ? completionT : 0;
-      effectiveInputTokens += effectiveT;
+      // isFinite guard below. Une closure : le tour ET sa relance (#600, plus
+      // bas) sont des appels servis, comptés de la même façon.
+      const compterAppel = (res: typeof response) => {
+        const usage = res.usage;
+        // Ce que l'appel a RAPPORTÉ, lu par la même règle que le client : un
+        // compte absent, ou un 0 qui ne peut pas être vrai, vaut null. Il compte
+        // pour 0 dans les gardes (borne basse), et rend le total du job inconnu.
+        const rapporte = reportedUsage(res);
+        if (rapporte.inputTokens === null) inputTokensUnknown = true;
+        if (rapporte.outputTokens === null) outputTokensUnknown = true;
+        const promptT = rapporte.inputTokens ?? 0;
+        const completionT = rapporte.outputTokens ?? 0;
+        // Prompt-cached reads: the portion of this turn's input served from the
+        // provider's cache (Anthropic cache_read, OpenRouter/DeepSeek cached_tokens).
+        // The AI SDK reports `inputTokens` as the TOTAL (incl. cached) and
+        // `cachedInputTokens` as the cached subset — verified for @ai-sdk/anthropic
+        // and @openrouter/ai-sdk-provider. For Anthropic the total ALSO includes
+        // cache WRITES (providerMetadata.anthropic.cacheCreationInputTokens,
+        // verified on @ai-sdk/anthropic 3.0.76) — effective (fresh) input =
+        // total − cache reads − cache writes (review 2026-08-20: without the
+        // writes term, a cache-priming turn inflated effective input by its
+        // entire system prompt).
+        const cachedT = Number(usage?.cachedInputTokens ?? 0);
+        const antMeta = (
+          res.providerMetadata as Record<string, Record<string, unknown> | undefined> | undefined
+        )?.['anthropic'];
+        const cacheWriteRaw = antMeta?.['cacheCreationInputTokens'];
+        const cacheWriteT =
+          typeof cacheWriteRaw === 'number' && Number.isFinite(cacheWriteRaw) ? cacheWriteRaw : 0;
+        const promptTok = Number.isFinite(promptT) ? promptT : 0;
+        const effectiveT = Math.max(
+          0,
+          promptTok - (Number.isFinite(cachedT) ? cachedT : 0) - cacheWriteT,
+        );
+        inputTokens += promptTok;
+        outputTokens += Number.isFinite(completionT) ? completionT : 0;
+        effectiveInputTokens += effectiveT;
 
-      // Accumulate real dollar cost for this call (Guard 1e).
-      // OpenRouter reports per-call cost in providerMetadata.openrouter.usage.cost
-      // when `usage:{include:true}` is passed (set unconditionally in
-      // buildOpenRouterModel). Other providers don't populate this path — the
-      // guard below simply won't fire for them (cost stays 0).
-      // Safe access: providerMetadata is Record<string, JSONObject>; we read
-      // through the chain and coerce to number, guarding NaN and negative values.
-      // orMeta: the openrouter sub-object from providerMetadata. Typed as
-      // Record<string, unknown> so all child accesses are safe regardless of the
-      // upstream's payload shape.
-      const orMeta = (
-        response.providerMetadata as Record<string, Record<string, unknown> | undefined> | undefined
-      )?.['openrouter'] as Record<string, unknown> | undefined;
-      const rawCost = (orMeta?.['usage'] as Record<string, unknown> | undefined)?.['cost'];
-      const reportedCostUsd =
-        typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost >= 0
-          ? rawCost
-          : undefined;
-      // Fix #21: OpenRouter is the only provider that self-reports cost above.
-      // Every native/BYOK provider (DeepSeek/MiniMax/Anthropic-direct/OpenAI/
-      // Google/Groq/Mistral/Ollama) leaves it unset — without this fallback
-      // totalCostUsd stays 0 forever for those and Guard 1e never fires.
-      // Derive from tokens × catalog list price instead; 0 (documented debt)
-      // for a model with no catalogued price yet.
-      // Sans coût rapporté, l'estimation part des jetons : inconnus, elle
-      // l'est aussi.
-      if (
-        reportedCostUsd === undefined &&
-        (rapporte.inputTokens === null || rapporte.outputTokens === null)
-      ) {
-        costUnknown = true;
-      }
-      const callCostUsd =
-        reportedCostUsd ??
-        estimateCallCostUsd(llmClient.config.provider, llmClient.config.model, {
-          inputTokens: promptTok,
-          outputTokens: completionT,
-          cachedTokens: Number.isFinite(cachedT) ? cachedT : 0,
-          cacheCreationTokens: cacheWriteT,
-        });
-      totalCostUsd += callCostUsd;
-      // Capture the upstream provider name (P0-B: served-upstream observability).
-      // OpenRouter sets providerMetadata.openrouter.provider to the upstream that
-      // actually served the request (e.g. 'DeepSeek', 'Anthropic'). We keep the
-      // last non-empty value across the job so the DB row reflects which upstream
-      // handled the bulk of the work.
-      const rawProvider = orMeta?.['provider'];
-      if (typeof rawProvider === 'string' && rawProvider.length > 0) {
-        servedProvider = rawProvider;
-      }
-
-      // Dernière lecture avant d'agir : un Stop arrivé entre deux lectures, ou
-      // pendant que la réponse se terminait, n'exécute aucun des outils
-      // qu'elle demande. Le texte du tour est gardé. Lue AVANT les plafonds
-      // (revue Codex de #449, passe 7) : un Stop suivi d'un débordement rend
-      // `cancelled`, pas `failed` — le parent et la tâche lisent ce statut.
-      const [statutApresAppel] = await db
-        .select({ status: agentJobs.status })
-        .from(agentJobs)
-        .where(eq(agentJobs.id, jobId as string));
-      if (statutApresAppel?.status === 'cancelled') {
-        if (texteDuTour.trim() !== '') {
-          messages = [
-            ...messages,
-            { role: 'assistant', content: texteDuTour.trim() } as ModelMessage,
-          ];
+        // Accumulate real dollar cost for this call (Guard 1e).
+        // OpenRouter reports per-call cost in providerMetadata.openrouter.usage.cost
+        // when `usage:{include:true}` is passed (set unconditionally in
+        // buildOpenRouterModel). Other providers don't populate this path — the
+        // guard below simply won't fire for them (cost stays 0).
+        // Safe access: providerMetadata is Record<string, JSONObject>; we read
+        // through the chain and coerce to number, guarding NaN and negative values.
+        // orMeta: the openrouter sub-object from providerMetadata. Typed as
+        // Record<string, unknown> so all child accesses are safe regardless of the
+        // upstream's payload shape.
+        const orMeta = (
+          res.providerMetadata as Record<string, Record<string, unknown> | undefined> | undefined
+        )?.['openrouter'] as Record<string, unknown> | undefined;
+        const rawCost = (orMeta?.['usage'] as Record<string, unknown> | undefined)?.['cost'];
+        const reportedCostUsd =
+          typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost >= 0
+            ? rawCost
+            : undefined;
+        // Fix #21: OpenRouter is the only provider that self-reports cost above.
+        // Every native/BYOK provider (DeepSeek/MiniMax/Anthropic-direct/OpenAI/
+        // Google/Groq/Mistral/Ollama) leaves it unset — without this fallback
+        // totalCostUsd stays 0 forever for those and Guard 1e never fires.
+        // Derive from tokens × catalog list price instead; 0 (documented debt)
+        // for a model with no catalogued price yet.
+        // Sans coût rapporté, l'estimation part des jetons : inconnus, elle
+        // l'est aussi.
+        if (
+          reportedCostUsd === undefined &&
+          (rapporte.inputTokens === null || rapporte.outputTokens === null)
+        ) {
+          costUnknown = true;
         }
-        trace('cancellation_observed', { turn, during: 'before_tools' });
-        await cancelJob(db, jobId as string, runStats(), messages);
-        return { status: 'cancelled' };
-      }
+        const callCostUsd =
+          reportedCostUsd ??
+          estimateCallCostUsd(llmClient.config.provider, llmClient.config.model, {
+            inputTokens: promptTok,
+            outputTokens: completionT,
+            cachedTokens: Number.isFinite(cachedT) ? cachedT : 0,
+            cacheCreationTokens: cacheWriteT,
+          });
+        totalCostUsd += callCostUsd;
+        // Capture the upstream provider name (P0-B: served-upstream observability).
+        // OpenRouter sets providerMetadata.openrouter.provider to the upstream that
+        // actually served the request (e.g. 'DeepSeek', 'Anthropic'). We keep the
+        // last non-empty value across the job so the DB row reflects which upstream
+        // handled the bulk of the work.
+        const rawProvider = orMeta?.['provider'];
+        if (typeof rawProvider === 'string' && rawProvider.length > 0) {
+          servedProvider = rawProvider;
+        }
+        return { promptT, promptTok, cachedT, effectiveT, completionT, callCostUsd };
+      };
+      const { promptT, promptTok, cachedT, effectiveT, completionT, callCostUsd } =
+        compterAppel(response);
 
-      // Guard 1a — token budget, CACHE-AWARE. We charge EFFECTIVE (non-cached)
-      // input + output, not raw input. A job that re-sends a prompt-cached
-      // history (the common long-running pattern: the growing transcript is read
-      // from cache each turn, ~10x cheaper) accrues budget at its real cost, so
-      // it no longer dies at the wall like an uncached runaway would. A genuine
-      // runaway (fresh tokens every turn) still trips. Fail loud BEFORE acting on
-      // this turn's output so a runaway never bleeds the provider's credit dry.
-      // Agnostic: no per-agent knowledge. Runaway coverage is unchanged —
-      // maxTurns + the no-progress detector remain the loop backstops.
-      if (effectiveInputTokens + outputTokens > maxTotalTokensPerJob) {
-        messages = avecTourRepris();
-        // #442 : ce que le run a écrit, ce tour compris, est livré.
-        return await arreterSurBudget(
-          {
-            kind: 'tokens',
-            spent: effectiveInputTokens + outputTokens,
-            limit: maxTotalTokensPerJob,
+      // Les gardes avant d'agir, lues sur ce que le run a dépensé JUSQU'ICI :
+      // après le tour, puis de nouveau après sa relance quand elle a été
+      // servie (#600). Rendent l'arrêt du run, ou null pour continuer.
+      const avantDAgir = async (): Promise<ExecuteJobResult | null> => {
+        // Dernière lecture avant d'agir : un Stop arrivé entre deux lectures, ou
+        // pendant que la réponse se terminait, n'exécute aucun des outils
+        // qu'elle demande. Le texte du tour est gardé. Lue AVANT les plafonds
+        // (revue Codex de #449, passe 7) : un Stop suivi d'un débordement rend
+        // `cancelled`, pas `failed` — le parent et la tâche lisent ce statut.
+        // Toute perte du droit d'agir compte ici, pas seulement Stop (#566).
+        const perteApresAppel = await droitPerdu();
+        if (perteApresAppel) {
+          if (texteDuTour.trim() !== '') {
+            messages = [
+              ...messages,
+              { role: 'assistant', content: texteDuTour.trim() } as ModelMessage,
+            ];
+          }
+          return await lacherLeJob(perteApresAppel, 'before_tools');
+        }
+
+        // Guard 1a — token budget, CACHE-AWARE. We charge EFFECTIVE (non-cached)
+        // input + output, not raw input. A job that re-sends a prompt-cached
+        // history (the common long-running pattern: the growing transcript is read
+        // from cache each turn, ~10x cheaper) accrues budget at its real cost, so
+        // it no longer dies at the wall like an uncached runaway would. A genuine
+        // runaway (fresh tokens every turn) still trips. Fail loud BEFORE acting on
+        // this turn's output so a runaway never bleeds the provider's credit dry.
+        // Agnostic: no per-agent knowledge. Runaway coverage is unchanged —
+        // maxTurns + the no-progress detector remain the loop backstops.
+        if (effectiveInputTokens + outputTokens > maxTotalTokensPerJob) {
+          messages = avecTourRepris();
+          // #442 : ce que le run a écrit, ce tour compris, est livré.
+          return await arreterSurBudget(
+            {
+              kind: 'tokens',
+              spent: effectiveInputTokens + outputTokens,
+              limit: maxTotalTokensPerJob,
+              turn,
+            },
+            texteDuTour,
+          );
+        }
+
+        // Guard 1e — real dollar cost cap. Checked right after Guard 1a so both
+        // guards are evaluated before any of the turn's output is acted on.
+        // Fires only when the provider actually reported a non-zero cost (i.e.
+        // OpenRouter with usage:{include:true}); providers that don't report cost
+        // leave totalCostUsd at 0 and this guard never trips — Guard 1a is the
+        // fallback for those. Fail loud with cost details for observability.
+        if (totalCostUsd > maxCostPerJobUsd) {
+          messages = avecTourRepris();
+          // #442 : ce que le run a écrit, ce tour compris, est livré.
+          return await arreterSurBudget(
+            { kind: 'cost', spent: totalCostUsd, limit: maxCostPerJobUsd, turn },
+            texteDuTour,
+          );
+        }
+        return null;
+      };
+      const arretApresTour = await avantDAgir();
+      if (arretApresTour) return arretApresTour;
+
+      // Relecture d'une réponse qui promettait une action (#600). Le modèle
+      // décide seul d'appeler un outil, à chaque tour : un tour qui finit en
+      // prose ANNONÇANT une action (« Je délègue à Dev-C. ») sans l'appel qui
+      // la fait n'a rien fait, et finissait `completed` sur un travail jamais
+      // lancé. Le MÊME mécanisme que le chat (llm/action-recheck.ts) : une
+      // relance locale et courte (la tâche, la réponse, la consigne, les
+      // outils du job), jamais le tour rejoué. Si le modèle appelle un outil,
+      // ses appels deviennent ceux de CE tour, sous les mêmes gardes (Stop,
+      // plafonds de jetons et de coût, 50 appels par tour). Sinon la prose
+      // reste la réponse, jugée plus bas comme avant.
+      //
+      // Elle part APRÈS les gardes : un tour déjà au-dessus d'un plafond
+      // s'arrête sans payer de relance. Et les gardes sont relues après elle.
+      //
+      // Un tour qui attend une approbation se suspend sans finir (branche g) :
+      // rien à relire. Un tour vide non plus.
+      //
+      // Limite connue : si la relance DÉCLINE (le modèle n'appelle rien), une
+      // annonce finit `completed` avec l'annonce pour réponse. Aucune lecture
+      // du texte ne tranche à sa place (invariants #2 et #4).
+      let relecture: typeof response | null = null;
+      if (
+        (response.toolCalls ?? []).length === 0 &&
+        texteDuTour.trim() !== '' &&
+        !approvalPending
+      ) {
+        const veilleRelecture = watchJobRow(db, jobId as string, prise, STOP_POLL_MS);
+        try {
+          relecture = await recheckNarratedAction(llmClient, {
+            request: job.task,
+            reply: texteDuTour.trim(),
+            tools: aiSdkTools,
+            abortSignal: veilleRelecture.signal,
+          });
+          compterAppel(relecture);
+          // Une relance dégénérée (plus d'appels que la règle du tour n'en
+          // admet) est ABANDONNÉE : aucun de ses appels ne s'exécute, et la
+          // prose du tour reste la réponse. Le tour lui-même garde la règle
+          // #564 (`counters.admitTurn` plus bas) : seul le filet change.
+          assertTurnToolCallBudget((relecture.toolCalls ?? []).length);
+          trace('action_recheck', {
             turn,
-          },
-          texteDuTour,
-        );
+            toolCalls: (relecture.toolCalls ?? []).map((tc) => tc.toolName),
+          });
+        } catch (err) {
+          // Une relance coupée au plafond de sortie est ABANDONNÉE, comme toute
+          // autre panne de relance : sa sortie tronquée n'est jamais exécutée,
+          // et la prose du tour, complète, reste la réponse. Elle a été servie :
+          // ce qu'elle a facturé compte, comme pour un tour coupé.
+          if (err instanceof LLMOutputLimitError) compterAppelRefuse(err);
+          // Stop pendant la relance : la relecture des gardes juste en dessous
+          // arrête le run, avec le texte du tour.
+          // Toute autre panne : la relance est un filet, la prose reste la
+          // réponse, et la panne est dite.
+          relecture = null;
+          const detail = err instanceof Error ? err.message.slice(0, 200) : String(err);
+          if (!(err instanceof LLMCallCancelledError)) {
+            console.warn(`[exec ${jobId}] action recheck failed on turn ${turn}: ${detail}`);
+          }
+          trace('action_recheck_failed', { turn, error: detail });
+        } finally {
+          veilleRelecture.stop();
+        }
+        const arretApresRelance = await avantDAgir();
+        if (arretApresRelance) return arretApresRelance;
       }
-
-      // Guard 1e — real dollar cost cap. Checked right after Guard 1a so both
-      // guards are evaluated before any of the turn's output is acted on.
-      // Fires only when the provider actually reported a non-zero cost (i.e.
-      // OpenRouter with usage:{include:true}); providers that don't report cost
-      // leave totalCostUsd at 0 and this guard never trips — Guard 1a is the
-      // fallback for those. Fail loud with cost details for observability.
-      if (totalCostUsd > maxCostPerJobUsd) {
-        messages = avecTourRepris();
-        // #442 : ce que le run a écrit, ce tour compris, est livré.
-        return await arreterSurBudget(
-          { kind: 'cost', spent: totalCostUsd, limit: maxCostPerJobUsd, turn },
-          texteDuTour,
-        );
-      }
+      const reponseQuiAgit =
+        relecture !== null && (relecture.toolCalls ?? []).length > 0 ? relecture : null;
 
       // Guard 1c — compact when THIS turn's prompt crossed the threshold. Evicting
       // OLD tool-result bodies (keeping the last N turns) shrinks every subsequent
@@ -4499,7 +5146,7 @@ async function runJobTracked(
         }
       }
 
-      const rawToolCalls = response.toolCalls ?? [];
+      const rawToolCalls = (reponseQuiAgit ?? response).toolCalls ?? [];
       trace('llm_call_done', {
         turn,
         toolCalls: rawToolCalls.map((tc) => tc.toolName),
@@ -4568,7 +5215,12 @@ async function runJobTracked(
       // providerMetadata into providerOptions so the signature lands where the
       // SDK looks. Each provider reads only its own namespaced key (anthropic /
       // openrouter / …), so this is a safe no-op for models that don't need it.
-      const reasoningParts = (response.reasoning ?? []).map((p) => {
+      // La relance qui agit apporte son propre raisonnement : c'est lui qui
+      // accompagne ses appels d'outils, et qu'un modèle de raisonnement relit.
+      const reasoningParts = [
+        ...(response.reasoning ?? []),
+        ...(reponseQuiAgit?.reasoning ?? []),
+      ].map((p) => {
         const part = p as { providerMetadata?: unknown; providerOptions?: unknown };
         return part.providerMetadata != null && part.providerOptions == null
           ? { ...p, providerOptions: part.providerMetadata }
@@ -4724,6 +5376,13 @@ async function runJobTracked(
           // job fini sans ligne d'outbox, donc une notice perdue pour toujours
           // (passe ciblée sur la livraison, constat 2). Le point d'extension
           // existait et n'était branché nulle part.
+          // Un message arrivé pendant le dernier appel (#531) : la réponse en
+          // texte ne l'a pas lu. Il entre dans la transcription, et le tour
+          // suivant y répond — le run ne conclut pas par-dessus.
+          if (await lireLaFile('before_final_text')) continue;
+          // La finalisation est un effet : elle livre et pose `completed` (#566).
+          const perteAvantFin = await droitPerdu();
+          if (perteAvantFin) return await lacherLeJob(perteAvantFin, 'finalize');
           const noticeALivrer = harnessNoticeDelivery(failedDelegationNotice());
           const cibleNotice = harnessNoticeTarget();
           const finalized = await finalizeJobSuccess(
@@ -4899,6 +5558,20 @@ async function runJobTracked(
         });
       }
 
+      // #612 — what this turn loads: the names its `load_tools` calls ask for,
+      // and the deferred tools it calls directly. Recorded on the job row
+      // BEFORE any call runs, so a suspension inside this turn resumes with
+      // them, and never in the transcript alone, which compaction elides.
+      const loadedNow = toolsLoadedByCalls(callsToProcess, deferredNames, loadedTools);
+      if (loadedNow.length > 0) {
+        loadedTools = [...loadedTools, ...loadedNow];
+        await db
+          .update(agentJobs)
+          .set({ loadedTools, updatedAt: new Date() })
+          .where(ownJobRow(jobId as string));
+        trace('tools_loaded', { turn, tools: loadedNow });
+      }
+
       // i. Process tool calls. AI SDK v6 ToolResultPart shape:
       //   { type: 'tool-result', toolCallId, toolName, output: ToolResultOutput }
       // where ToolResultOutput is the discriminated union defined at step 11.6.
@@ -5010,12 +5683,12 @@ async function runJobTracked(
         // number; the per-call toolCallId is spread at each executeTool site.
         turn,
         jobChatId: job.chatId ?? null,
+        jobChatChannel,
         // P6 : la conversation du fil, pour que le registre des projets y pose
         // le projet courant.
         conversationId: job.conversationId ?? null,
         jobChannel: job.channel,
         activeChannels,
-        notifyChannelOverride,
         embeddingClient: deps.embeddingClient,
         workspaces: agentWorkspacesList,
         commandAllowlist: agentRow.commandAllowlist ?? null,
@@ -5027,7 +5700,9 @@ async function runJobTracked(
         provisioning: TOOL_PROVISIONING,
         searchBackend,
         ...(speechGenerator ? { speechGenerator } : {}),
-        resolveAgentToolNames: (targetAgentId: string) => resolveAgentToolNames(db, targetAgentId),
+        resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
+          resolveAgentToolNames(db, targetAgentId, placement),
+        requestUserInput,
       };
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
@@ -5073,6 +5748,10 @@ async function runJobTracked(
         // A slow wave (an Apify run up to 30 min, a slow MCP or scrape) stays
         // fresh to the reapers through the job's own heartbeat (#565).
         for (let i = 0; i < batch.length; i += toolConcurrency) {
+          // Chaque vague est un effet (#566) : une vague perdue n'est pas
+          // lancée, et la boucle série ci-dessous arrête le tour au premier
+          // appel qui n'a pas tourné.
+          if (i > 0 && (await droitPerdu())) break;
           const wave = batch.slice(i, i + toolConcurrency);
           const results = await Promise.all(
             wave.map(async (c) => {
@@ -5109,6 +5788,17 @@ async function runJobTracked(
             ),
           });
           continue;
+        }
+
+        // Le droit d'agir, relu avant CHAQUE appel qui n'a pas déjà tourné
+        // dans la pré-passe — délégation comprise (#566). Perdu : aucun appel
+        // de ce tour ne tourne plus. La transcription qu'un job annulé garde
+        // est fermée par la règle du tour (#561, `transcriptionFermee`) : les
+        // appels qui ont tourné gardent leur résultat, les autres disent
+        // qu'ils n'ont pas tourné.
+        if (!preExecuted.has(call.id)) {
+          const perteAvantAppel = await droitPerdu();
+          if (perteAvantAppel) return await lacherLeJob(perteAvantAppel, 'before_tool_call');
         }
 
         toolsUsed = [...new Set([...toolsUsed, call.name])];
@@ -5312,12 +6002,12 @@ async function runJobTracked(
                 turn,
                 toolCallId: call.id,
                 jobChatId: job.chatId ?? null,
+                jobChatChannel,
                 // P6 : la conversation du fil, pour que le registre des projets y pose
                 // le projet courant.
                 conversationId: job.conversationId ?? null,
                 jobChannel: job.channel,
                 activeChannels,
-                notifyChannelOverride,
                 embeddingClient: deps.embeddingClient,
                 workspaces: agentWorkspacesList,
                 commandAllowlist: agentRow.commandAllowlist ?? null,
@@ -5329,8 +6019,8 @@ async function runJobTracked(
                 provisioning: TOOL_PROVISIONING,
                 searchBackend,
                 ...(speechGenerator ? { speechGenerator } : {}),
-                resolveAgentToolNames: (targetAgentId: string) =>
-                  resolveAgentToolNames(db, targetAgentId),
+                resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
+                  resolveAgentToolNames(db, targetAgentId, placement),
               },
               {
                 approvalRules: approvalRuleList,
@@ -5350,13 +6040,14 @@ async function runJobTracked(
               // Persist run-state (turn, tokens, toolsUsed) before transitioning
               // to awaiting_delegation. handleDelegation persists messages +
               // status atomically; this complements it for observability.
-              await saveCheckpoint(db, jobId as string, {
+              const avantDelegation = await saveCheckpoint(db, jobId as string, {
                 messages,
                 chainCount: job.chainCount ?? 0,
                 toolsUsed,
                 // Les totaux lus comme la ligne du job les porte : null quand inconnus.
                 ...runStats(),
               });
+              if (!avantDelegation) return await ecritureRefusee('delegation_checkpoint');
 
               const jobShape = {
                 id: jobId,
@@ -5404,10 +6095,10 @@ async function runJobTracked(
                 {
                   task: (call.input['task'] as string) ?? '',
                   data: call.input['data'] as string | undefined,
-                  chatId: job.chatId,
                 },
                 preAssignSideResults,
                 db,
+                prise,
               );
 
               // Drive the child synchronously, then resume the parent. In
@@ -5446,10 +6137,10 @@ async function runJobTracked(
                 // still be 'processing' since cancellation was scoped to the
                 // child); orphan-cleanup would catch it eventually but
                 // surfacing it now matches user intent.
-                await db
-                  .update(agentJobs)
-                  .set({ status: 'cancelled', updatedAt: new Date() })
-                  .where(eq(agentJobs.id, jobId as string));
+                // Under this run's claim (#566), like every write of the run.
+                if (!(await setJobStatus(db, jobId as string, 'cancelled'))) {
+                  return await ecritureRefusee('cascade_cancel');
+                }
                 await cancelJob(db, jobId as string, runStats(), messages);
                 return { status: 'cancelled' };
               }
@@ -5591,23 +6282,8 @@ async function runJobTracked(
           type: 'tool-result',
           toolCallId: call.id,
           toolName: call.name,
-          output: toResultOutput(
-            toolResult.outcome === 'success'
-              ? toolResult.output
-              : toolResult.mayHaveDelivered === true
-                ? // Keep the flag in the block so the sibling-error guard below
-                  // can recognize this as "probably delivered" and let a
-                  // same-turn return_result through instead of deferring it
-                  // (deferral invites the duplicate re-send this flag exists
-                  // to prevent).
-                  { error: toolResult.error, mayHaveDelivered: true }
-                : { error: toolResult.error },
-            // INJECT-001. The name is passed ONLY on the success path: an
-            // error string is the product's own text, and framing it as
-            // untrusted third-party data would be a lie the model has to
-            // reason about.
-            toolResult.outcome === 'success' ? call.name : undefined,
-          ),
+          // The same conversion as the resume path (`executedCallOutput`).
+          output: executedCallOutput(toolDef, call.name, toolResult),
         });
 
         // Guard 1f (S2) — error streak, across the whole job. Checked once this
@@ -6054,12 +6730,12 @@ async function runJobTracked(
           // texte d'assistant, et `completeJob` sait le compiler. Échouer ici
           // rendait un « vide » sur du contenu qui existe, et empêchait
           // précisément la compilation d'avoir lieu (revue Codex de la PR #108,
-          // constat 5). On demande donc à la base, pas à la transcription.
-          const childDeliverables = await db
-            .select({ result: agentJobs.result })
-            .from(agentJobs)
-            .where(eq(agentJobs.parentJobId, jobId as string));
-          const aChildDelivered = childDeliverables.some((r) => (r.result ?? '').trim() !== '');
+          // constat 5). On demande donc à la base, pas à la transcription — et
+          // au lecteur unique de « ce qu'un job a livré » (#646), le même que
+          // la compilation : un enfant qui n'a livré qu'un verdict a livré.
+          const aChildDelivered = (await readChildDeliverables(db, jobId as string)).some(
+            deliveredSomething,
+          );
           // Un verdict de revue ENREGISTRÉ est un livrable (issue #124) : il est
           // validé par le schéma de l'outil, il voyage dans le record typé de la
           // délégation, et il est plus précis que la phrase que l'agent aurait
@@ -6247,19 +6923,23 @@ async function runJobTracked(
         // it to 'completed'.
         if (taskRows.length > 0) {
           trace('return_result_with_tasks', { taskCount: taskRows.length });
-          await saveCheckpoint(db, jobId as string, {
+          const confie = await saveCheckpoint(db, jobId as string, {
             messages,
             chainCount: job.chainCount ?? 0,
             toolsUsed,
             // Les totaux lus comme la ligne du job les porte : null quand inconnus.
             ...runStats(),
           });
+          if (!confie) return await ecritureRefusee('awaiting_tasks_checkpoint');
           return { status: 'awaiting_tasks' };
         }
 
         trace('finalize_call', { turn, toolsUsed, stats: runStats() });
         // SANS `delivery` — même raison que le chemin texte : le canal a été
         // servi par l'outil de livraison pendant le run.
+        // La finalisation est un effet : elle livre et pose `completed` (#566).
+        const perteAvantFin = await droitPerdu();
+        if (perteAvantFin) return await lacherLeJob(perteAvantFin, 'finalize');
         const noticeALivrer = harnessNoticeDelivery(failedDelegationNotice());
         const cibleNotice = harnessNoticeTarget();
         const finalized = await finalizeJobSuccess(
@@ -6521,13 +7201,14 @@ async function runJobTracked(
       // `messages`, so the dashboard shows only the user task and tools_used
       // stays empty. Live regression: job 8b66b21d (2026-05-17) lost 9 turns
       // of CMB research when turn-10 hit Retry exhausted.
-      await saveCheckpoint(db, jobId as string, {
+      const tourSauve = await saveCheckpoint(db, jobId as string, {
         messages,
         chainCount: job.chainCount ?? 0,
         toolsUsed,
         // Les totaux lus comme la ligne du job les porte : null quand inconnus.
         ...runStats(),
       });
+      if (!tourSauve) return await ecritureRefusee('turn_checkpoint');
     }
   } catch (err) {
     trace('catch', {
@@ -6594,28 +7275,11 @@ async function runJobTracked(
     // inconnu, d'entrée ou de sortie, n'est pas 0 : le total correspondant du
     // job, et son coût estimé, deviennent inconnus (null sur la ligne).
     if (err instanceof LLMOutputLimitError) {
-      const entree = err.usage.inputTokens;
-      const sortie = err.usage.outputTokens;
-      if (entree === null) inputTokensUnknown = true;
-      else {
-        inputTokens += entree;
-        effectiveInputTokens += entree;
-      }
-      if (sortie === null) outputTokensUnknown = true;
-      else outputTokens += sortie;
-      if (entree === null || sortie === null) costUnknown = true;
-      else {
-        totalCostUsd += estimateCallCostUsd(err.provider, err.model, {
-          inputTokens: entree,
-          outputTokens: sortie,
-          cachedTokens: 0,
-          cacheCreationTokens: 0,
-        });
-      }
+      compterAppelRefuse(err);
       const code = outputLimitErrorCode(err, turn);
       trace(err.code, {
         turn,
-        outputTokens: sortie,
+        outputTokens: err.usage.outputTokens,
         toolCallsNotExecuted: err.toolCallCount,
       });
       await failJob(db, jobId as string, code, runStats(), messages);

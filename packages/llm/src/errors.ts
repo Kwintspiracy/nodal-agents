@@ -129,10 +129,16 @@ export type LlmTimeoutReason =
   | 'idle_before_first_token'
   | 'idle_between_tokens'
   | 'absolute'
+  /** Only reasoning or tool arguments for too long, nothing delivered (#484). */
+  | 'invisible_production'
   /**
-   * Not a clock: the stream broke with an error AFTER writing text. Carried
-   * on the same error so the whole cut path (no replay from scratch, no
-   * failover, resume from the text) applies to it unchanged.
+   * Not a clock: the stream broke with an error after the model had sent
+   * ANYTHING, visible text, reasoning or a tool call (`consumeUnderClocks`,
+   * turn-clocks.ts). The call was served, so it takes the cut path (counted,
+   * no replay from scratch, no failover). It is resumable only when visible
+   * text was written and no tool call was on the wire; a break after
+   * reasoning alone carries an empty `partialText`. A break before the model
+   * sent anything is not this reason: the raw error is thrown.
    */
   | 'stream_error';
 

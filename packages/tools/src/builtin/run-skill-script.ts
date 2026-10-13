@@ -29,7 +29,11 @@ import type { ToolDefinition, ToolContext } from '../types';
 import { terminalCard } from '../presenters';
 import { resolveSkillRoot, resolveWithinSkill } from './skill-ops/skill-files';
 import { buildChildEnv } from './child-env';
-import { SHARED_WORKSPACE_LABEL } from './file-ops/workspace';
+import {
+  SHARED_WORKSPACE_LABEL,
+  processAddressing,
+  PROCESS_PATHS_RULE,
+} from './file-ops/workspace';
 import { runShellCommand } from './shell-engine';
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
@@ -163,6 +167,8 @@ export interface RunSkillScriptOutput {
   bundleWrites?: string[];
   /** Loud, actionable notice accompanying `bundleWrites`. */
   warning?: string;
+  /** How the script's paths are addressed (#592) — for the model. */
+  paths?: string;
 }
 
 /** Thrown when the owner has not authorized this skill's scripts for this agent. */
@@ -191,16 +197,18 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
       'its logic inline. Pass the script path relative to the skill folder (find it with ' +
       'skill_file_list) and any arguments as an array. The script runs from the skill folder, so ' +
       'its bundled files (workflows/, references/) are reachable by relative path. Returns stdout, ' +
-      'stderr and the exit code — read the stdout (often JSON) for the result, e.g. an output ' +
-      'filename to deliver with send_image. When the script produces artifacts (images, exports), ' +
+      'stderr and the exit code — read the stdout (often JSON) for the result, e.g. the name of ' +
+      'the file it produced. When the script produces artifacts (images, exports), ' +
       'point its output argument at the SHARED WORKSPACE — its absolute path is exposed to the ' +
       'script as the NODAL_SHARED_WORKSPACE environment variable — never at the skill folder ' +
       '(a `warning` comes back if bundle writes are detected). By DEFAULT every run requires human approval; the user ' +
       'can enable auto-run ("Yolo") per agent. A non-zero exit code is returned to you (not an error) ' +
       '— read stderr and adapt. Only runs scripts of a skill the owner has authorized for you; ' +
-      'if it returns scripts_not_authorized, ask the user to enable it rather than retrying.',
+      'if it returns scripts_not_authorized, ask the user to enable it rather than retrying. ' +
+      PROCESS_PATHS_RULE,
     inputSchema: runSkillScriptSchema,
     riskLevel: 'destructive',
+    loading: 'eager',
     card: 'terminal',
     present: ({ output }) =>
       terminalCard({
@@ -282,6 +290,12 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
         timeoutMs,
         input.script,
         sharedWorkspace ? { NODAL_SHARED_WORKSPACE: sharedWorkspace } : undefined,
+      );
+
+      result.paths = await processAddressing(
+        ctx.workspaces ?? [],
+        realRoot,
+        `the folder of skill "${input.skill}" (no workspace)`,
       );
 
       const after = await listBundleFiles(realRoot);

@@ -18,31 +18,5 @@ export const languageMirrorSkill: SystemSkill = {
   surfaces: ['job', 'chat'],
   content: `## Language mirror
 
-Detect the language of each user message and reply in that same language throughout the conversation.
-
-### Detection rules
-
-- Default to English when the language is ambiguous (e.g. very short messages, greetings, single words).
-- Switch immediately when the user switches language mid-conversation — do not carry the previous language into the new message.
-- If the user mixes two languages in one message, use whichever language dominates (more words / main sentence structure).
-
-### What to mirror, and what to keep intact
-
-Mirror the natural language (French ↔ English ↔ Spanish, etc.).
-
-**Never translate:**
-- Code, identifiers, variable names, function names, class names.
-- CLI commands, terminal output, file paths, URLs.
-- Proper nouns: product names, brand names, library names (e.g. "Drizzle ORM", "Vercel", "Hono").
-- Technical terms that are conventionally used in English in the target language (e.g. "middleware", "payload", "pipeline" are commonly used as-is in French technical writing — do not force-translate them unless the user does so themselves).
-- Quoted strings, error messages, and log lines that come from external systems.
-
-### Tone consistency
-
-Mirror tone as well as language: if the user writes formally, stay formal; if they write casually, stay casual. Language detection does not reset tone.
-
-### When you cannot comply
-
-If the user writes in a language you cannot reliably produce (rare edge case), acknowledge it in the language you detected, explain the limitation, and offer to respond in English or in the closest language you can manage well. Do not silently degrade quality.
-`,
+Reply in the language of the user's latest message; when it is ambiguous, keep the conversation's language, or English if there is none yet. Mirror the tone too. Never translate code, identifiers, commands, paths, URLs, product names, quoted errors or technical terms used as-is (payload, middleware).`,
 };

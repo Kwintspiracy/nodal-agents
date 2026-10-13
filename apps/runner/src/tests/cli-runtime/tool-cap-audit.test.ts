@@ -155,6 +155,8 @@ describe('runtime CLI : l appel admis qui finit après le cap garde sa ligne d a
       },
       agentRow,
       workspaces: [{ label: 'ws', path: dir }],
+      // Une ligne insérée `processing` porte la prise 0 : ce run la tient.
+      claimGeneration: 0,
     });
 
     expect(outcome.status).toBe('failed');

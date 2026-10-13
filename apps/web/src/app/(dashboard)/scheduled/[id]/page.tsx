@@ -1,37 +1,24 @@
-// /scheduled/[id] — LE RUN D'UNE AUTOMATISATION (P2-P4, déménagé ici par P8).
+// /scheduled/[id] — UNE PORTE QUI NE DÉCIDE RIEN (#501).
 //
-// Cette page était /spaces/[id] tant que Spaces listait des jobs. Spaces liste
-// maintenant des PROJETS, et /spaces/[id] est la page d'un projet : le run d'un
-// TRAVAIL n'a plus qu'un point d'entrée, celui d'une automatisation qui
-// « ouvre son run » (garde de P9).
+// Cette route rendait la page de n'importe quel run : un run d'automatisation
+// (P8), mais aussi celui d'une conversation, puisque « Open run » d'un fil Work
+// y menait. Le rail lit sa section de l'adresse seule : ouvrir un run par ici
+// l'aurait allumé sur Scheduled, quel que soit le run (revue Nodal de #621).
 //
-// 18/09 — la route ne dessine plus rien elle-même : elle charge et rend
-// `RunPage`, la page partagée avec /jobs/[id]. Un run est un tableau de bord,
-// pas un fil (décision Quentin) ; l'ordre des blocs vit dans `runs/RunPage.tsx`.
+// Aucun écran ne l'écrit plus : l'adresse d'un run vient de `lib/run-page.ts`.
+// Elle reste pour les liens déjà envoyés et les favoris, et elle REDIRIGE vers
+// `/runs/<id>`, qui range le run par la tête de sa chaîne. Elle ne dessine rien.
+// Quand cette chaîne ne se lit pas, `/runs/<id>` le dit et garde un lien vers
+// la page du run : un run que `/jobs/<id>` ouvrait reste accessible par ici.
 
-import { notFound } from 'next/navigation';
-import { getSpaceConversationAction } from '@/lib/actions.ts';
-import PageShell from '@/components/ui/PageShell';
-import RunPage from '@/app/(dashboard)/runs/RunPage.tsx';
+import { redirect } from 'next/navigation';
+import { openRunHref } from '@/lib/run-page.ts';
 
-// Force dynamic — the feed is read per request, and re-read while the job runs.
-export const dynamic = 'force-dynamic';
-
-export default async function ScheduledRunPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ScheduledRunPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<never> {
   const { id } = await params;
-  const result = await getSpaceConversationAction(id);
-  if (!result.ok) {
-    if (result.code === 'not_found') notFound();
-    return (
-      <PageShell title="Run">
-        <p className="text-sm text-err">{result.message}</p>
-      </PageShell>
-    );
-  }
-
-  // Le retour ramène là d'où le run s'ouvre : SON automatisation pour un run
-  // de cron (#202 — la page Scheduled où il ramenait n'existe plus), la
-  // conversation pour son run, Activity pour le reste (Quentin, 17/09 : « ce
-  // problème est à plusieurs endroits »).
-  return <RunPage data={result.data} />;
+  redirect(openRunHref(id));
 }

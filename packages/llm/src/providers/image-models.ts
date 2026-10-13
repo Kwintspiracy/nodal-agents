@@ -18,6 +18,7 @@ import type { ImageModel } from 'ai';
 import type { ProviderConfig } from '../types';
 import { PROVIDER_PRESETS } from './registry';
 import { ProviderConfigError } from '../errors';
+import { providerFetch } from '../transport';
 
 /** Providers that expose image models through their installed AI SDK adapter. */
 export const IMAGE_CAPABLE_PROVIDERS = ['openai', 'openrouter'] as const;
@@ -38,12 +39,13 @@ export function buildImageModel(config: ProviderConfig): ImageModel {
       const provider = createOpenAI({
         apiKey: config.apiKey,
         ...(config.baseURL ? { baseURL: config.baseURL } : {}),
+        fetch: providerFetch,
       });
       return provider.imageModel(config.model);
     }
     case 'openrouter': {
       const baseURL = config.baseURL ?? PROVIDER_PRESETS.openrouter.defaultBaseURL;
-      const provider = createOpenRouter({ apiKey: config.apiKey, baseURL });
+      const provider = createOpenRouter({ apiKey: config.apiKey, baseURL, fetch: providerFetch });
       return provider.imageModel(config.model);
     }
     default:

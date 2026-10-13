@@ -59,6 +59,7 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
     'even with offset/limit — use `file_search` to locate content, or split the file.',
   inputSchema: FileReadInputSchema,
   riskLevel: 'read',
+  loading: 'eager',
   card: 'read',
   present: ({ input, output }) =>
     output.ok

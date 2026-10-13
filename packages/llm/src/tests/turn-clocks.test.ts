@@ -21,10 +21,11 @@ import {
   FIRST_TOKEN_BASE_MS,
   FIRST_TOKEN_OVER_50K_MS,
   FIRST_TOKEN_OVER_100K_MS,
-  FIRST_TOKEN_HIGH_EFFORT_MS,
   ABSOLUTE_CALL_MS,
+  INVISIBLE_PRODUCTION_MS,
 } from '../turn-clocks';
 import type { TurnClocks } from '../turn-clocks';
+import type { CallProgress } from '../types';
 import { LLMTimeoutError, LLMCallCancelledError, LLMStreamPartError } from '../errors';
 
 // ─── A stream the fake clock drives ───────────────────────────────────────────
@@ -157,7 +158,7 @@ describe('streamed turn clocks @cap:organiser-equipe/moteur', () => {
       timedModel([
         textStart(FIRST_TOKEN_BASE_MS + 10_000),
         text(FIRST_TOKEN_BASE_MS + 10_000, 'late'),
-        ...end(200_000),
+        ...end(FIRST_TOKEN_BASE_MS + 20_000),
       ]),
     );
 
@@ -168,6 +169,36 @@ describe('streamed turn clocks @cap:organiser-equipe/moteur', () => {
     const err = state.error as LLMTimeoutError;
     expect(err).toBeInstanceOf(LLMTimeoutError);
     expect(err.reason).toBe('idle_before_first_token');
+    expect(err.partialText).toBe('');
+  });
+
+  // #583 : des modèles hébergés qui réfléchissent en silence (mimo, glm via
+  // OpenRouter) étaient coupés à 120 s, 0 caractère reçu, alors que leurs
+  // appels réussis durent jusqu'à 408 s. Deux coupures de suite faisaient
+  // échouer le job. Le délai avant le premier jeton d'un modèle hébergé couvre
+  // la réflexion silencieuse, à tout effort.
+  it('a hosted model silent for 200 s before its first token, at no particular effort, completes', async () => {
+    const state = run(
+      timedModel([textStart(200_000), text(200_000, 'done'), textEnd(200_000), ...end(200_000)]),
+    );
+
+    await vi.advanceTimersByTimeAsync(200_001);
+
+    expect(state.error).toBeUndefined();
+    expect(state.value?.text).toBe('done');
+  });
+
+  it('silent past the first-token clock of a hosted model: cut, with the same reason', async () => {
+    const state = run(timedModel([textStart(310_000), text(310_000, 'late'), ...end(310_000)]));
+
+    await vi.advanceTimersByTimeAsync(300_000 - 1);
+    expect(state.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+
+    const err = state.error as LLMTimeoutError;
+    expect(err).toBeInstanceOf(LLMTimeoutError);
+    expect(err.reason).toBe('idle_before_first_token');
+    expect(err.timeoutMs).toBe(300_000);
     expect(err.partialText).toBe('');
   });
 
@@ -440,10 +471,18 @@ describe('computeTurnClocks @cap:organiser-equipe/moteur', () => {
     );
   });
 
-  it('floors the first-token clock on a high reasoning effort', () => {
-    const c = computeTurnClocks({ provider: 'anthropic', reasoningEffort: 'high' }, 1_000);
-    expect(c.firstTokenMs).toBe(FIRST_TOKEN_HIGH_EFFORT_MS);
-    expect(c.betweenTokensMs).toBe(BETWEEN_TOKENS_MS);
+  it('a hosted model waits the hidden-thinking floor at every effort, only max raises it (#583)', () => {
+    for (const reasoningEffort of [undefined, 'off', 'low', 'medium', 'high'] as const) {
+      const c = computeTurnClocks(
+        { provider: 'openrouter', ...(reasoningEffort ? { reasoningEffort } : {}) },
+        1_000,
+      );
+      expect(c.firstTokenMs, String(reasoningEffort)).toBe(300_000);
+      expect(c.betweenTokensMs).toBe(BETWEEN_TOKENS_MS);
+    }
+    expect(
+      computeTurnClocks({ provider: 'anthropic', reasoningEffort: 'max' }, 1_000).firstTokenMs,
+    ).toBe(600_000);
   });
 
   // #442 : trois niveaux, l'explicite gagne toujours sur l'implicite.
@@ -467,11 +506,16 @@ describe('computeTurnClocks @cap:organiser-equipe/moteur', () => {
   });
 
   it('the run budget caps an IMPLICIT clock at half of what remains, never below 60 s', () => {
-    // Reste 4 min : l'implicite de 120 s tient déjà sous la moitié (120 s).
+    // Reste 10 min : l'implicite de 300 s tient déjà sous la moitié (300 s).
+    expect(
+      computeTurnClocks({ provider: 'openrouter' }, 1_000, { remainingRunMs: 600_000 })
+        .firstTokenMs,
+    ).toBe(FIRST_TOKEN_BASE_MS);
+    // Reste 4 min : la moitié, 120 s, sous l'implicite de 300 s.
     expect(
       computeTurnClocks({ provider: 'openrouter' }, 1_000, { remainingRunMs: 240_000 })
         .firstTokenMs,
-    ).toBe(FIRST_TOKEN_BASE_MS);
+    ).toBe(120_000);
     // Reste 3 min sur un effort max (600 s) : la moitié, 90 s.
     expect(
       computeTurnClocks({ provider: 'anthropic', reasoningEffort: 'max' }, 1_000, {
@@ -544,5 +588,227 @@ describe('computeTurnClocks @cap:organiser-equipe/moteur', () => {
       ],
     });
     expect(est).toBe(2_000);
+  });
+});
+
+// #484 — job 82ecec67 : vingt et une minutes de production, 12 030 jetons, et
+// rien ne disait ce qui s'écrivait — ni texte, ni appel d'outil terminé. Le
+// flux dit désormais, pendant qu'il tourne, ce que le modèle produit : son
+// raisonnement, les arguments de l'outil qu'il remplit (et lequel), son texte.
+describe('what a streamed call is producing, while it produces it (#484)', () => {
+  it('reports reasoning, the tool being filled and its argument size before the call ends', async () => {
+    const seen: CallProgress[] = [];
+    const model = timedModel([
+      { atMs: 0, part: { type: 'reasoning-start', id: 'r' } },
+      reasoning(1_000, 'r'.repeat(300)),
+      { atMs: 1_000, part: { type: 'reasoning-end', id: 'r' } },
+      { atMs: 2_000, part: { type: 'tool-input-start', id: 'c1', toolName: 'file_write' } },
+      { atMs: 2_000, part: { type: 'tool-input-delta', id: 'c1', delta: 'x'.repeat(40) } },
+      { atMs: 3_000, part: { type: 'tool-input-delta', id: 'c1', delta: 'y'.repeat(60) } },
+    ]);
+    void consumeUnderClocks(
+      (signal) =>
+        streamText({
+          model,
+          prompt: 'write',
+          abortSignal: signal,
+          maxRetries: 0,
+          onError: () => {},
+        }),
+      CLOUD,
+      PM,
+      undefined,
+      undefined,
+      (p) => seen.push(p),
+    ).catch(() => {});
+
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    // Toujours en cours : aucune horloge n'a coupé, et on sait déjà ce qu'il écrit.
+    expect(seen.at(-1)).toEqual({
+      textChars: 0,
+      reasoningChars: 300,
+      toolInputChars: 100,
+      toolName: 'file_write',
+    });
+    expect(seen[0]).toEqual({
+      textChars: 0,
+      reasoningChars: 300,
+      toolInputChars: 0,
+      toolName: null,
+    });
+  });
+});
+
+// #484, revue Codex — le plafond d'une production INVISIBLE. Chaque delta remet
+// l'horloge de silence à zéro : un fournisseur qui envoie un caractère toutes
+// les 59 s, ou un modèle qui ne fait que raisonner, tournait jusqu'au filet
+// absolu d'une heure. Un texte ou un appel d'outil TERMINÉ relance le compte ;
+// un rédacteur lent de TEXTE n'est jamais coupé par lui (test du haut).
+describe('the ceiling on production that delivers nothing (#484) @cap:organiser-equipe/moteur', () => {
+  it('reasoning only, one delta every 30 s, is cut at the ceiling, not at the hour', async () => {
+    const deltas = Array.from({ length: 80 }, (_, i) => reasoning(30_000 * (i + 1), 'hmm '));
+    const state = run(
+      timedModel([{ atMs: 0, part: { type: 'reasoning-start', id: 'r' } }, ...deltas]),
+    );
+
+    await vi.advanceTimersByTimeAsync(INVISIBLE_PRODUCTION_MS - 1);
+    expect(state.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+
+    const err = state.error as LLMTimeoutError;
+    expect(err).toBeInstanceOf(LLMTimeoutError);
+    expect(err.reason).toBe('invisible_production');
+    expect(err.timeoutMs).toBe(INVISIBLE_PRODUCTION_MS);
+    expect(err.served).toBe(true);
+    expect(err.resumable).toBe(false);
+  });
+
+  it('tool arguments trickling one character every 59 s are cut at the ceiling', async () => {
+    const deltas = Array.from({ length: 70 }, (_, i) => ({
+      atMs: 59_000 * (i + 1),
+      part: { type: 'tool-input-delta' as const, id: 'c1', delta: 'x' },
+    }));
+    const state = run(
+      timedModel([
+        { atMs: 0, part: { type: 'tool-input-start', id: 'c1', toolName: 'file_write' } },
+        ...deltas,
+      ]),
+    );
+
+    await vi.advanceTimersByTimeAsync(INVISIBLE_PRODUCTION_MS + 1);
+
+    const err = state.error as LLMTimeoutError;
+    expect(err.reason).toBe('invisible_production');
+    expect(err.generatedChars).toBe(Math.floor(INVISIBLE_PRODUCTION_MS / 59_000));
+  });
+
+  it('text resets it: 15 minutes of reasoning, text, 15 more of reasoning, then the answer completes', async () => {
+    const avant = Array.from({ length: 30 }, (_, i) => reasoning(30_000 * (i + 1), 'a '));
+    const apres = Array.from({ length: 30 }, (_, i) => reasoning(900_000 + 30_000 * (i + 1), 'b '));
+    const state = run(
+      timedModel([
+        { atMs: 0, part: { type: 'reasoning-start', id: 'r' } },
+        ...avant,
+        textStart(900_000),
+        text(900_000, 'Plan: '),
+        ...apres,
+        text(1_800_000, 'done.'),
+        textEnd(1_800_000),
+        ...end(1_800_000),
+      ]),
+    );
+
+    await vi.advanceTimersByTimeAsync(1_800_001);
+
+    expect(state.error).toBeUndefined();
+    expect(state.value?.text).toBe('Plan: done.');
+  });
+
+  it('a local endpoint has no such ceiling: 25 minutes of reasoning, then the answer', async () => {
+    const clocks = computeTurnClocks({ provider: 'ollama' }, 10);
+    expect(clocks.invisibleProductionMs).toBe(Infinity);
+    const deltas = Array.from({ length: 50 }, (_, i) => reasoning(30_000 * (i + 1), 'r '));
+    const state = run(
+      timedModel([
+        { atMs: 0, part: { type: 'reasoning-start', id: 'r' } },
+        ...deltas,
+        textStart(1_500_000),
+        text(1_500_000, 'ok'),
+        textEnd(1_500_000),
+        ...end(1_500_000),
+      ]),
+      clocks,
+    );
+
+    await vi.advanceTimersByTimeAsync(1_500_001);
+
+    expect(state.error).toBeUndefined();
+    expect(state.value?.text).toBe('ok');
+  });
+
+  it('the tool being filled is forgotten once its arguments end (progress)', async () => {
+    const seen: CallProgress[] = [];
+    const model = timedModel([
+      { atMs: 1_000, part: { type: 'tool-input-start', id: 'c1', toolName: 'file_write' } },
+      { atMs: 1_000, part: { type: 'tool-input-delta', id: 'c1', delta: '{}' } },
+      { atMs: 2_000, part: { type: 'tool-input-end', id: 'c1' } },
+      { atMs: 3_000, part: { type: 'reasoning-delta', id: 'r', delta: 'next' } },
+    ]);
+    void consumeUnderClocks(
+      (signal) =>
+        streamText({ model, prompt: 'w', abortSignal: signal, maxRetries: 0, onError: () => {} }),
+      CLOUD,
+      PM,
+      undefined,
+      undefined,
+      (p) => seen.push(p),
+    ).catch(() => {});
+
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(seen.some((p) => p.toolName === 'file_write')).toBe(true);
+    expect(seen.at(-1)?.toolName).toBeNull();
+    expect(seen.at(-1)?.reasoningChars).toBe(4);
+  });
+});
+
+// Revue Codex de #484, passe 2 : un appel d'outil terminé EN FLUX n'est pas
+// livré. Il n'est rendu qu'à la fin du flux, exécuté ensuite, et jeté si le
+// flux est coupé. Il ne réarme donc pas le plafond : sinon un modèle qui émet
+// un appel toutes les 19 min et raisonne entre les deux tournait une heure
+// sans qu'aucun outil ne soit exécuté ni gardé.
+describe('a tool call finished IN the stream does not reset the ceiling (#484) @cap:organiser-equipe/moteur', () => {
+  it('a finished tool call, then more reasoning: the stream is cut at the ceiling from the start', async () => {
+    const { z } = await import('zod');
+    const { tool } = await import('ai');
+    const args = Array.from({ length: 30 }, (_, i) => ({
+      atMs: 30_000 * (i + 1),
+      part: { type: 'tool-input-delta' as const, id: 'c1', delta: ' ' },
+    }));
+    const suite = Array.from({ length: 60 }, (_, i) => reasoning(900_000 + 30_000 * (i + 1), 'r'));
+    const model = timedModel([
+      { atMs: 0, part: { type: 'tool-input-start', id: 'c1', toolName: 'note' } },
+      ...args,
+      { atMs: 900_000, part: { type: 'tool-input-end', id: 'c1' } },
+      {
+        atMs: 900_000,
+        part: { type: 'tool-call', toolCallId: 'c1', toolName: 'note', input: '{}' },
+      },
+      { atMs: 900_000, part: { type: 'reasoning-start', id: 'r' } },
+      ...suite,
+      ...end(2_700_000),
+    ]);
+    const state: { error?: unknown; done: boolean } = { done: false };
+    consumeUnderClocks(
+      (signal) =>
+        streamText({
+          model,
+          prompt: 'w',
+          tools: { note: tool({ inputSchema: z.object({}) }) },
+          abortSignal: signal,
+          maxRetries: 0,
+          onError: () => {},
+          // Le client appelle `streamText` avec ses propres outils ; le type
+          // d'un jeu d'outils précis n'est pas celui de `ToolSet`.
+        }) as unknown as ReturnType<typeof streamText>,
+      CLOUD,
+      PM,
+    ).then(
+      () => (state.done = true),
+      (e: unknown) => {
+        state.error = e;
+        state.done = true;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(INVISIBLE_PRODUCTION_MS - 1);
+    expect(state.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+
+    const err = state.error as LLMTimeoutError;
+    expect(err).toBeInstanceOf(LLMTimeoutError);
+    expect(err.reason).toBe('invisible_production');
+    expect(err.timeoutMs).toBe(INVISIBLE_PRODUCTION_MS);
   });
 });

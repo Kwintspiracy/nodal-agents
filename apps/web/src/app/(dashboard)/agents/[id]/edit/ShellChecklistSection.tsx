@@ -88,7 +88,7 @@ export default function ShellChecklistSection({
         // Honest about what a reading can promise (review of PR #474): Nodal
         // reads the command, not what a script does once it runs. Keeping an
         // agent inside its folders would take an OS sandbox.
-        hint="Nodal reads each command, then runs it, asks you first, or refuses it, at every autonomy level. A script run from a file is not read: it can do any of these unseen."
+        hint="Nodal reads each command and the scripts it runs, then runs it, asks you first, or refuses it, at every autonomy level. A script it cannot read counts as code written into a command."
       />
       {policy === null ? (
         <p className="text-body-13 text-err" data-testid="shell-checklist-unreadable">

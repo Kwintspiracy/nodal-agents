@@ -7,11 +7,13 @@
 //                         no recent activity → marked `failed`
 
 import { and, eq, gte, inArray, isNull, lt, or } from '@nodal-agents/db';
-import { agentJobs, agentTasks, approvalRequests } from '@nodal-agents/db';
+import { agentJobs, agentTasks, approvalRequests, CALL_GATE_KINDS } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { appendDeliveredVerdicts, readJobDeliverable } from '@nodal-agents/orchestration';
 import { sendTelegramMessage } from '@nodal-agents/delivery';
 import { failJob } from '../job/state.ts';
 import { resumeJobAfterApprovalResolution } from '../approvals/resume.ts';
+import { closeElicitationsOfLostJobs } from '../approvals/elicitation.ts';
 import { resolveTelegramDeliveryTarget } from '../approvals/notify.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
@@ -101,6 +103,7 @@ export async function resetOrphanedTasks(db: AnyDrizzleDb, staleMinutes = 5): Pr
   const inProgressTasks = await db
     .select({
       taskId: agentTasks.id,
+      jobId: agentJobs.id,
       jobStatus: agentJobs.status,
       jobResult: agentJobs.result,
       jobError: agentJobs.error,
@@ -113,10 +116,17 @@ export async function resetOrphanedTasks(db: AnyDrizzleDb, staleMinutes = 5): Pr
   for (const t of inProgressTasks) {
     if (!t.jobStatus || !TERMINAL_JOB_STATUSES.includes(t.jobStatus)) continue;
     const taskStatus = t.jobStatus === 'completed' ? 'done' : 'blocked';
+    // Le texte du job, suivi des verdicts que son sous-arbre a livrés — le
+    // lecteur unique de « ce qu'un job a livré » (#646), le même que celui de
+    // `markTaskFromResult`. Un job annulé n'a rien livré à recopier.
+    const delivered = t.jobStatus === 'cancelled' ? null : await readJobDeliverable(db, t.jobId);
     const taskResult =
       t.jobStatus === 'completed'
-        ? (t.jobResult ?? '')
-        : (t.jobResult ?? t.jobError ?? 'job ended without a result');
+        ? appendDeliveredVerdicts(t.jobResult ?? '', delivered)
+        : appendDeliveredVerdicts(
+            t.jobResult ?? t.jobError ?? 'job ended without a result',
+            delivered,
+          );
     const updated = await db
       .update(agentTasks)
       .set({
@@ -256,6 +266,7 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
     );
     if (landed) {
       reset += 1;
+      await closeElicitationsOfLostJobs(db, [jobId]);
       await notifyJobFailure(db, jobId, ORPHAN_RESET_NOTICE);
     }
   }
@@ -399,12 +410,18 @@ export async function expireStaleApprovals(
     .update(approvalRequests)
     .set({ status: 'expired', resolvedAt: now, resolvedBy: 'system:ttl_expired' })
     .where(and(eq(approvalRequests.status, 'pending'), lt(approvalRequests.expiresAt, now)))
-    .returning({ jobId: approvalRequests.jobId });
+    .returning({ jobId: approvalRequests.jobId, kind: approvalRequests.kind });
 
   // Une demande par job suffit à le réveiller : le job relit TOUTES ses lignes
   // ouvertes à la reprise (execute.ts, 11.7). Deux demandes échues sur le même
   // job ne le reprennent donc qu'une fois.
-  for (const jobId of new Set(expired.map((r) => r.jobId))) {
+  //
+  // Une ÉLICITATION échue (0145) ne réveille rien : le job n'a jamais été
+  // suspendu pour elle — son run la sonde lui-même et rend `cancel` au serveur
+  // MCP. La reprendre ferait repartir un job suspendu pour une AUTRE raison
+  // sur une décision qui n'est pas la sienne.
+  const toResume = expired.filter((r) => (CALL_GATE_KINDS as readonly string[]).includes(r.kind));
+  for (const jobId of new Set(toResume.map((r) => r.jobId))) {
     // A job that already moved on (approved elsewhere, cancelled, completed)
     // is left alone: the conditional flip inside the shared resume is what
     // decides, and it reports rather than forcing.

@@ -932,6 +932,90 @@
       "when": 1786002500000,
       "tag": "0133_job_restart_resume",
       "breakpoints": true
+    },
+    {
+      "idx": 134,
+      "version": "7",
+      "when": 1786002600000,
+      "tag": "0134_job_live_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "7",
+      "when": 1786002700000,
+      "tag": "0135_job_claim_generation",
+      "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "7",
+      "when": 1786002800000,
+      "tag": "0136_system_prompt_tools",
+      "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "7",
+      "when": 1786002900000,
+      "tag": "0137_runner_notes",
+      "breakpoints": true
+    },
+    {
+      "idx": 138,
+      "version": "7",
+      "when": 1786003000000,
+      "tag": "0138_job_loaded_tools",
+      "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "7",
+      "when": 1786003200000,
+      "tag": "0140_approval_card_messages",
+      "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "7",
+      "when": 1786003300000,
+      "tag": "0141_job_inbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 142,
+      "version": "7",
+      "when": 1786003400000,
+      "tag": "0142_system_prompt_version",
+      "breakpoints": true
+    },
+    {
+      "idx": 143,
+      "version": "7",
+      "when": 1786003500000,
+      "tag": "0143_job_chat_channel",
+      "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "7",
+      "when": 1786003600000,
+      "tag": "0144_mcp_server_instructions",
+      "breakpoints": true
+    },
+    {
+      "idx": 145,
+      "version": "7",
+      "when": 1786003700000,
+      "tag": "0145_mcp_elicitation",
+      "breakpoints": true
+    },
+    {
+      "idx": 146,
+      "version": "7",
+      "when": 1786003800000,
+      "tag": "0146_elicitation_draft",
+      "breakpoints": true
     }
   ]
 }

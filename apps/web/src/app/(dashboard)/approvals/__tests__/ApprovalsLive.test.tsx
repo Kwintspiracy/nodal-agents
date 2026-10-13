@@ -46,6 +46,8 @@ function attente(id: string): PendingApproval {
     requestedAt: null,
     jobChannel: 'dashboard',
     conversationChannel: 'dashboard',
+    kind: 'approval',
+    conversationId: null,
   };
 }
 

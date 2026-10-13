@@ -156,6 +156,15 @@ const envSchema = z.object({
   // keeps looping — no suspend, no restart. 0 = disabled (suspend immediately,
   // the pre-existing behavior).
   NODALAI_APPROVAL_GRACE_MS: z.coerce.number().min(0).default(120_000),
+
+  // ─── MCP server questions (elicitation, 0145) ─────────────────────────────────
+  // How long a question an MCP server asks DURING one of its calls waits for a
+  // person before the server reads `cancel`. The job does not suspend meanwhile
+  // (the server keeps its call open). 10 min by default, what the server spec
+  // suggests; the server's own timeout must be at least as long. Optional here,
+  // defaulted where it is read (`elicitationTimeoutMs`), like the cron paths
+  // that run without a RunnerEnv.
+  NODALAI_ELICITATION_TIMEOUT_MS: z.coerce.number().positive().optional(),
 });
 
 export type RunnerEnv = z.infer<typeof envSchema>;

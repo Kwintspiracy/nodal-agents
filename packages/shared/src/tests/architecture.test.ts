@@ -15,6 +15,7 @@ import {
   scanForUserFacingStrings,
   assertNoViolations,
   scanForProjectKeyCopies,
+  scanForMcpToolPrefixCopies,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
@@ -34,6 +35,22 @@ describe('architecture invariants', () => {
 
   it('no hardcoded user-facing prose (invariant #2)', () => {
     assertNoViolations('texte utilisateur en dur', scanForUserFacingStrings({ srcDir }));
+  });
+
+  it('hosts the ONE MCP tool prefix — no copy anywhere in apps/ or packages/ (#661)', () => {
+    // Repo-wide on purpose: the copies lived in five packages, and a new
+    // package would bring its own architecture test only if someone thought of it.
+    const repo = join(srcDir, '..', '..', '..');
+    for (const root of ['apps', 'packages']) {
+      assertNoViolations(
+        'copie du préfixe d’outil MCP',
+        scanForMcpToolPrefixCopies({
+          srcDir: join(repo, root),
+          skipDirs: ['node_modules', 'tests', '__tests__', 'dist', '.next', '.turbo', 'coverage'],
+          skipFiles: ['packages/shared/src/mcp-tool-prefix.ts'],
+        }),
+      );
+    }
   });
 
   it('hosts the ONE path identity rule — no second copy even inside this package', () => {

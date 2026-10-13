@@ -5,12 +5,17 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { DownloadSimple, ArrowClockwise } from '@phosphor-icons/react';
 import { COMMUNITY_SKILL_CATALOG, type CommunitySkillCatalogEntry } from '@nodal-agents/shared';
-import { installCommunitySkillAction, type SkillUpdateDetail } from '@/lib/actions.ts';
+import {
+  installCommunitySkillAction,
+  type SkillRow,
+  type SkillUpdateDetail,
+} from '@/lib/actions.ts';
 import MarketplaceCard from '@/components/ui/MarketplaceCard';
 import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
 import StatusPill from '@/components/ui/StatusPill';
 import EmptyState from '@/components/ui/EmptyState';
 import SkillUpdateAction from './SkillUpdateAction.tsx';
+import SkillSourceProblemPill from './SkillSourceProblemPill.tsx';
 
 /** Per-installed-skill update state, keyed by slug — just enough to drive the
  *  "Update available" badge/CTA without pulling in the full SkillRow. */
@@ -23,9 +28,24 @@ export type InstalledSkillInfo = {
   hasScripts: boolean;
 };
 
+/**
+ * What the catalog cards read from the workspace: EVERY skill, whatever its
+ * origin. A card is installed when its slug is in the workspace, and that is
+ * the whole rule: not the source, not is_community (screen 8, 29/09: two
+ * skills already in the workspace were offered for install).
+ */
+export function toCatalogCardSkills(skills: SkillRow[]): InstalledSkillInfo[] {
+  return skills.map((s) => ({
+    slug: s.slug,
+    updateAvailable: s.updateAvailable,
+    updateDetail: s.updateDetail,
+    hasScripts: Boolean(s.installedScripts && s.installedScripts.length > 0),
+  }));
+}
+
 type Props = {
-  /** Community skills already installed in this workspace — drives the
-   *  "Installed" / "Update available" states. */
+  /** Every skill of this workspace (toCatalogCardSkills): a slug present
+   *  means "Installed", plus the "Update available" / source-problem states. */
   installedSkills: InstalledSkillInfo[];
   /** Optional search query — filters by name/description/category. */
   query?: string;
@@ -152,7 +172,15 @@ function CommunitySkillCard({
             </SkillUpdateAction>
           ) : (
             <>
-              <span className="min-w-0 flex-1 truncate">{badge}</span>
+              {/* A source that no longer holds this skill is not a healthy
+                  install: the warning takes the host badge's place. */}
+              <span className="min-w-0 flex-1 truncate">
+                {installed?.updateDetail?.sourceProblem ? (
+                  <SkillSourceProblemPill detail={installed.updateDetail} />
+                ) : (
+                  badge
+                )}
+              </span>
               <span className="inline-flex h-[30px] shrink-0 items-center rounded-[7px] border border-rule bg-paper px-3 text-medium-13 text-ink-4">
                 Installed
               </span>

@@ -306,10 +306,12 @@ export const VERIFY_BEFORE_ASSERT_NUDGE =
  * calls in one turn than `limits.maxToolCallsPerTurn`. Every place where the
  * runner acts on the tool calls of a model response calls it before acting on
  * any: the job loop (through `ChainCounters.admitTurn`), the reflection and
- * the two curator passes, and the three calls of a chat turn (reply,
- * escalation recheck, reply after a refused `run_task`: `runTaskOf` in
+ * the two curator passes, and the calls of a chat turn (`runTaskOf` in
  * `apps/runner/src/chat/run-chat-turn.ts`, which acts on the first
- * `run_task` only, and still refuses a turn over the budget). Incident
+ * `run_task` only, and still refuses a turn over the budget). The re-read of
+ * a prose turn (`apps/runner/src/llm/action-recheck.ts`, job and chat) runs
+ * the same check, but an over-budget re-read is ABANDONED, not the turn: it is
+ * only a safety net, and the turn's prose stands (PR #604). Incident
  * 2026-09-28: a 307-call turn was executed call by call up to the 50th.
  *
  * Not the CLI runtimes (Claude Code, Codex): the CLI runs its own tools inside

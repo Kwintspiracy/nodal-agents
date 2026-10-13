@@ -46,6 +46,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { importEmbeddedPostgresBinaries } from './embedded-postgres-module.ts';
 
 /** Un lien que `hydrate-symlinks.js` recrée, tel que le manifeste l'écrit. */
 export interface SymlinkEntry {
@@ -245,23 +246,15 @@ export function readSymlinkManifest(packageDir: string): readonly SymlinkEntry[]
 /**
  * Les trois chemins du paquet de plateforme, lus par le paquet lui-même.
  *
- * Même chemin que `resolvePgCtl` dans postgres.ts, et pour la même raison :
- * `embedded-postgres` n'exporte que `./dist/index.js`, donc `binary.js` se
- * charge PAR CHEMIN, à côté de l'entrée résolue. C'est ce module qui importe
- * `@embedded-postgres/<plateforme>` depuis SA propre position — indispensable
- * ici, où le paquet est une dépendance optionnelle que le dépôt pnpm ne hisse
- * pas jusqu'à `apps/cli/node_modules`.
+ * Même chemin que `resolvePgCtl` dans postgres.ts : `binary.js`, chargé par
+ * `importEmbeddedPostgresBinaries` (embedded-postgres-module.ts). C'est ce
+ * module qui importe `@embedded-postgres/<plateforme>` depuis SA propre
+ * position — indispensable ici, où le paquet est une dépendance optionnelle
+ * que le dépôt pnpm ne hisse pas jusqu'à `apps/cli/node_modules`.
  */
 export async function loadPlatformBinaries(): Promise<PlatformBinaries | null> {
   try {
-    const { createRequire } = await import('node:module');
-    const { pathToFileURL } = await import('node:url');
-    const require = createRequire(import.meta.url);
-    const entry = require.resolve('embedded-postgres');
-    const module = (await import(pathToFileURL(join(dirname(entry), 'binary.js')).href)) as {
-      default?: () => Promise<Partial<PlatformBinaries>>;
-    };
-    const binaries = await module.default?.();
+    const binaries = await importEmbeddedPostgresBinaries();
     if (
       binaries === undefined ||
       typeof binaries.pg_ctl !== 'string' ||

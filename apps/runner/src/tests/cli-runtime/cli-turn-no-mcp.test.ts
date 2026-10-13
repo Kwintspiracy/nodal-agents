@@ -44,6 +44,7 @@ describe('un tour CLI n’a aucun serveur MCP (#453, revue Codex passe 3) @cap:p
             personality: 'Tu es Alfred.',
             cwd: 'D:\\ws',
             mode,
+            shellTools: [],
             timeoutMs: 1000,
             ...(resumeSessionId ? { resumeSessionId } : {}),
           },
@@ -63,6 +64,7 @@ describe('un tour CLI n’a aucun serveur MCP (#453, revue Codex passe 3) @cap:p
           personality: 'You are Alfred.',
           cwd: 'C:/work',
           mode,
+          shellTools: [],
           timeoutMs: 1000,
           ...(resumeSessionId ? { resumeSessionId } : {}),
         });

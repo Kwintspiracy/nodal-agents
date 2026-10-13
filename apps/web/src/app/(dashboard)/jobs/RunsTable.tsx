@@ -14,6 +14,7 @@ import TextInput from '@/components/ui/TextInput';
 import Table, { THead, Th, Tr, Td, CellAgent, CellText, CellMono } from '@/components/ui/Table';
 import { MagnifyingGlass } from '@phosphor-icons/react';
 import { formatDate, truncate } from '@/lib/format-time';
+import { openRunHref } from '@/lib/run-page.ts';
 
 type Tab = 'All' | 'Running' | 'Failed';
 
@@ -142,7 +143,7 @@ export default function RunsTable({ jobs, agents, agentId }: Props) {
                     />
                   </Td>
                   <Td className="max-w-[320px]">
-                    <CellText href={`/jobs/${job.id}`} title={job.task} clamp>
+                    <CellText href={openRunHref(job.id)} title={job.task} clamp>
                       {truncate(job.task, 72)}
                     </CellText>
                   </Td>

@@ -6,7 +6,7 @@
 // parent redélègue la même revue au même spécialiste — trente à quarante
 // minutes de modèle payées deux fois pour rendre le verdict déjà rendu. La
 // PR #170 a fait VOYAGER le verdict jusqu'au parent (`DelegationOutcomeRecord.
-// review_verdict`) : c'est de l'information pour le modèle, pas une garde. Un
+// review_verdicts` depuis #646) : c'est de l'information pour le modèle, pas une garde. Un
 // modèle qui redemande quand même repart pour un tour.
 //
 // La règle posée ici ne connaît aucun agent (invariant #3) et ne juge aucun
@@ -112,7 +112,7 @@ export interface DeliveredReviewMatch {
  *  - les enfants directs du parent, joints à leur agent (pour le slug) et à
  *    leurs lignes `review_verdict`. Le verdict retenu par enfant est celui de
  *    sa DERNIÈRE ligne (`seq` décroissant) — la même lecture que
- *    `readDeliveredReviewVerdict`, qui fait foi quand un relecteur a corrigé
+ *    `readJobDeliverables` (job-deliverable.ts), qui fait foi quand un relecteur a corrigé
  *    un appel refusé. Le tri par `seq` vaut aussi entre enfants : à cible
  *    égale, c'est le verdict écrit en dernier qui est nommé dans le refus ;
  *  - la fenêtre depuis ce verdict : un AUTRE enfant du même parent, passé à

@@ -18,15 +18,13 @@
  * - `baseline`: intrinsic discipline injected into EVERY agent's base prompt
  *   (e.g. verify-before-done, safe-tool-use, language-mirror). Not assignable,
  *   hidden from the library — it is part of every agent by default.
- * - `channel`: injected automatically when the agent is bound to a channel
- *   (e.g. telegram formatting etiquette). Not assignable.
  * - `capability`: opt-in capability/domain skill the user assigns when relevant
  *   (obsidian, office-editing, …). Shown in the library + discoverable by the
  *   agent (it knows the skill exists even when unassigned).
  * - `agent-internal`: loaded on demand via skill_view (the per-meta-tool usage
  *   guides). Hidden from the library, still documented.
  */
-export type SkillKind = 'baseline' | 'channel' | 'capability' | 'agent-internal';
+export type SkillKind = 'baseline' | 'capability' | 'agent-internal';
 
 /**
  * Où un prompt s'exécute : un JOB (tous les outils de l'agent), le CHAT

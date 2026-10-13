@@ -31,6 +31,13 @@ const ARGS = {
   tools: TOOLS,
 };
 
+// Every provider call goes through `providerFetch` (#608). Routed to the global
+// fetch here, so the stub below is the network boundary and nothing leaves the
+// machine.
+vi.mock('../transport', () => ({
+  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
+
 let bodies: Array<Record<string, unknown>> = [];
 
 function stubFetch(reply: () => unknown): void {
@@ -293,5 +300,117 @@ describe('the stated cap fits the known context window @cap:suivre-execution/mot
     await createLlmClient({ ...LOCAL, contextWindow: undefined }).generateText(ARGS);
 
     expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
+  });
+});
+
+// Rebase de #571 sur main (13/10) : generateText énonçait le plafond, mais
+// streamText et generateObject partaient sans, chacun sur le défaut du
+// fournisseur. Le client énonce le même plafond sur ses trois chemins.
+describe('every request of the client states its output cap @cap:suivre-execution/moteur', () => {
+  const LOCAL = {
+    provider: 'openai-compatible' as const,
+    model: 'local-model',
+    baseURL: 'http://127.0.0.1:1234/v1',
+    contextWindow: 8_192,
+  };
+  const mimo = () =>
+    createLlmClient({ provider: 'openrouter', model: 'xiaomi/mimo-v2.6-pro', apiKey: 'k' });
+  const CITY = z.object({ city: z.string(), celsius: z.number() });
+  const objectReply = () => ({
+    id: 'gen-1',
+    model: 'xiaomi/mimo-v2.6-pro',
+    choices: [
+      {
+        index: 0,
+        message: { role: 'assistant', content: '{"city":"Lyon","celsius":21}' },
+        finish_reason: 'stop',
+      },
+    ],
+    usage: { prompt_tokens: 20, completion_tokens: 12, total_tokens: 32 },
+  });
+
+  function stubStream(): void {
+    bodies = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        bodies.push(JSON.parse(init?.body as string) as Record<string, unknown>);
+        const chunks = [
+          { id: 'c', choices: [{ index: 0, delta: { role: 'assistant', content: '1 2 3' } }] },
+          {
+            id: 'c',
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          },
+        ];
+        const sse =
+          chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n';
+        return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+      }),
+    );
+  }
+
+  it('generateObject states the platform cap', async () => {
+    stubFetch(objectReply);
+
+    const res = await mimo().generateObject({
+      output: 'object',
+      schema: CITY,
+      prompt: 'Lyon is at 21 degrees.',
+    } as Parameters<ReturnType<typeof mimo>['generateObject']>[0]);
+
+    expect(res.object).toEqual({ city: 'Lyon', celsius: 21 });
+    expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
+  });
+
+  it('generateObject on a known window states what the window leaves after its prompt', async () => {
+    stubFetch(objectReply);
+    const prompt = 'x'.repeat(8_000 * 4);
+
+    await createLlmClient(LOCAL).generateObject({
+      output: 'object',
+      schema: CITY,
+      prompt,
+    } as Parameters<ReturnType<typeof createLlmClient>['generateObject']>[0]);
+
+    const room = 8_192 - estimateContextTokens({ prompt });
+    expect(room).toBeGreaterThan(0);
+    expect(room).toBeLessThan(200);
+    expect(bodies[0]?.['max_tokens']).toBe(room);
+  });
+
+  it("streamText states the platform cap, or the caller's when lower", async () => {
+    const stated: unknown[] = [];
+    for (const maxOutputTokens of [undefined, 512, 131_072]) {
+      stubStream();
+      const res = mimo().streamText({
+        prompt: 'count',
+        ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+      });
+      expect(await res.text).toBe('1 2 3');
+      stated.push(bodies[0]?.['max_tokens']);
+    }
+
+    expect(stated).toEqual([TURN_OUTPUT_TOKEN_CAP, 512, TURN_OUTPUT_TOKEN_CAP]);
+  });
+
+  it('a generateText that sends a prompt, not messages, has it counted against the window', async () => {
+    stubFetch(() => chatCompletion('stop', 20));
+    const prompt = 'x'.repeat(8_000 * 4);
+
+    await createLlmClient(LOCAL).generateText({ prompt });
+
+    const room = 8_192 - estimateContextTokens({ prompt });
+    expect(room).toBeLessThan(200);
+    expect(bodies[0]?.['max_tokens']).toBe(room);
+  });
+
+  it('a streamText prompt beyond the window: nothing is sent, the error says context window', () => {
+    stubStream();
+
+    expect(() => createLlmClient(LOCAL).streamText({ prompt: 'x'.repeat(9_000 * 4) })).toThrow(
+      LLMContextWindowError,
+    );
+    expect(bodies).toEqual([]);
   });
 });

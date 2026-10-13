@@ -68,6 +68,18 @@ export function toDbSafeString(s: string): string {
 }
 
 /**
+ * The value of `agent_jobs.runner_notes` for these lines: the ONE way it is
+ * written (#562, Codex review of #576, pass 4). A runner line embeds text it
+ * did not write \u2014 a checker's stderr tail, an error code's detail \u2014 and the
+ * same bytes Postgres refuses in `result` are refused in `text[]`, with the
+ * whole terminal UPDATE. Each line gets the normalization `result` gets, so a
+ * note stays the exact suffix of the result the replay removes it from.
+ */
+export function runnerNotesValue(lines: readonly string[]): string[] {
+  return lines.map(toDbSafeString);
+}
+
+/**
  * Deep-clone `value` with every string passed through {@link toDbSafeString}.
  * Used on the `messages` transcript before it is written to the jsonb column —
  * the same poisoned bytes reject the whole UPDATE there too. Depth-guarded like

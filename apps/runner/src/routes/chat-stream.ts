@@ -111,7 +111,7 @@ export async function chatStreamRoute(
             ),
           );
           if (!result.ok) {
-            send('error', { error: result.error });
+            send('error', { error: result.error, cutReason: result.cutReason ?? null });
             return;
           }
           send('done', {

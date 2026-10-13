@@ -92,6 +92,15 @@ export async function detectScripts(
 
       const extLang = EXT_LANGUAGE[ext];
       if (extLang) {
+        // An EMPTY file runs nothing, so it is not a script to consent to. A
+        // Python package marker (`__init__.py`, 0 bytes) is the common case:
+        // Comfy's official skills ship one, and counting it asked the owner to
+        // allow a script that does not exist.
+        try {
+          if ((await stat(abs)).size === 0) continue;
+        } catch {
+          // unreadable: keep the conservative answer, it is a script
+        }
         found.set(rel, extLang);
         continue;
       }

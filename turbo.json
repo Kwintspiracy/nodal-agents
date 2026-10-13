@@ -1,6 +1,13 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalDependencies": ["apps/qa/data/snapshot.json", "CHANGELOG.md"],
+  "globalDependencies": [
+    "apps/qa/data/snapshot.json",
+    "CHANGELOG.md",
+    "tsconfig.base.json",
+    "eslint.config.js",
+    "eslint.shared.mjs",
+    "apps/web/eslint.config.mjs"
+  ],
   "concurrency": "3",
   "tasks": {
     "build": {
@@ -11,7 +18,8 @@
       "dependsOn": ["^build"]
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "cache": false
     },
     "typecheck": {
       "dependsOn": ["^build"]

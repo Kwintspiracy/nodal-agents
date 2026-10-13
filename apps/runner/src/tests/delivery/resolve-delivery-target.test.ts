@@ -62,6 +62,8 @@ describe('resolveDeliveryTarget', () => {
       chatId: 'chat-cron-1',
       agentId: seed.agentId,
       channel: 'cron',
+      // Ce que le tick écrit en auto : le chat propriétaire Telegram (#649).
+      chatChannel: 'telegram',
       triggerContext: null,
     });
 
@@ -83,8 +85,9 @@ describe('resolveDeliveryTarget', () => {
       chatId: 'chat-cron-2',
       agentId: seed.agentId,
       channel: 'cron',
-      // Telegram est premier dans l'ordre de priorité ET actif : sans
-      // l'override, ce job partirait sur Telegram.
+      // Telegram est premier dans l'ordre de priorité ET actif : sans le
+      // canal enregistré avec le chat, ce job partirait sur Telegram.
+      chatChannel: 'discord',
       triggerContext: { type: 'cron', notifyChannel: 'discord' },
     });
 
@@ -138,10 +141,44 @@ describe('resolveDeliveryTarget', () => {
     const outcome = await resolveDeliveryTarget(db as unknown as AnyDrizzleDb, {
       chatId: 'chat-orphan',
       agentId: seed.agentId,
-      channel: 'cron',
+      channel: 'telegram',
       triggerContext: null,
     });
 
     expect(outcome).toEqual({ refused: 'channel_inactive' });
+  });
+
+  // #649, revue de #657 passe 3 : un chat désigné sans canal enregistré
+  // (un id explicite sur une routine en auto, un /api/agent hors transport)
+  // tombait sur le premier canal actif. Il est refusé par son nom.
+  it('un chat désigné dont personne ne connaît la plateforme ⇒ refus channel_unknown, jamais deviné', async () => {
+    await clearChannels();
+    await giveTelegramBinding();
+    await giveDiscordBinding();
+    for (const channel of ['cron', 'dashboard', 'api', 'webhook']) {
+      const outcome = await resolveDeliveryTarget(db as unknown as AnyDrizzleDb, {
+        chatId: 'team-group-999',
+        agentId: seed.agentId,
+        channel,
+        chatChannel: null,
+        triggerContext: null,
+      });
+      expect({ channel, outcome }).toEqual({ channel, outcome: { refused: 'channel_unknown' } });
+    }
+  });
+
+  it('un chat Telegram désigné, jeton retiré, Discord actif ⇒ Telegram, jamais Discord', async () => {
+    await clearChannels();
+    await giveDiscordBinding();
+    const outcome = await resolveDeliveryTarget(db as unknown as AnyDrizzleDb, {
+      chatId: '199791464',
+      agentId: seed.agentId,
+      channel: 'dashboard',
+      chatChannel: 'telegram',
+      triggerContext: null,
+    });
+    // La cible reste le canal du chat ; le drain relit la credential et échoue
+    // fort s'il n'y en a pas — jamais un chat id Telegram envoyé sur Discord.
+    expect(outcome).toEqual({ channel: 'telegram', chatId: '199791464' });
   });
 });

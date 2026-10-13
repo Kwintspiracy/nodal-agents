@@ -112,9 +112,12 @@ function printLogTail(service: 'runner' | 'web' | string, lines: number): void {
  * vérifier que chaque migration manquante est NOMMÉE et que la commande de
  * réparation REND LE DÉMARRAGE QU'ON AVAIT. Les deux drapeaux comptent :
  * `--dev` pour ne pas renvoyer un poste de développement sur un build de
- * production, et `--detach` parce que le planificateur de tâches qui relance
- * Nodal après un redémarrage appelle précisément `up --detach` — une commande
- * sans lui rendrait la stack au terminal, et elle mourrait avec lui.
+ * production, et `--detach` parce qu'une commande sans lui rendrait au
+ * terminal une stack qu'on avait détachée, et elle mourrait avec lui. Le
+ * démarrage avec la machine (#451 : valeur Run sous Windows, LaunchAgent,
+ * unité systemd) lance `up` au PREMIER PLAN, jamais `--detach` : détaché, le
+ * lanceur sortirait et launchd ou systemd n'auraient plus rien à relancer
+ * (`autostart.ts`).
  */
 export function migrationGapRefusal(
   gaps: readonly { tag: string }[],
@@ -152,8 +155,9 @@ export interface RunUpOptions {
    * exist and are correct; they simply never got to run overnight.
    *
    * Not a service manager. It survives the terminal, not the reboot; the
-   * machine's own supervisor (Task Scheduler, systemd, launchd) is still what
-   * puts Nodal back after a restart, and it can call `up --detach` to do it.
+   * machine's own startup manager (the Windows Run key, launchd, systemd) is
+   * what puts Nodal back after a restart, and it runs `up` in the foreground,
+   * never `--detach`, so it has a process to watch (#451, `autostart.ts`).
    */
   detach?: boolean;
   /**

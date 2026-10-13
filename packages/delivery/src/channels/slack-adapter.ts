@@ -22,9 +22,13 @@ import type {
   OutboundMedia,
   ApprovalCard,
   QuestionCard,
+  ButtonCard,
   SendResult,
+  EditResult,
+  CardButton,
   BotIdentity,
   TextFormat,
+  SendTextOpts,
 } from '../channel-adapter.ts';
 
 function requireBotToken(creds: ChannelCredentials): string {
@@ -197,7 +201,7 @@ async function sendText(
   creds: ChannelCredentials,
   conversationId: string,
   text: string,
-  opts?: { format?: TextFormat },
+  opts?: SendTextOpts,
 ): Promise<SendResult> {
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
@@ -205,12 +209,19 @@ async function sendText(
   const client = makeClient(botToken);
 
   let lastTs: string | undefined;
-  for (const chunk of chunkForSlack(rendered)) {
+  const parts = chunkForSlack(rendered);
+  for (let i = opts?.fromChunk ?? 0; i < parts.length; i += 1) {
     try {
-      const result = await client.chat.postMessage({ channel: channelId, text: chunk });
+      const result = await client.chat.postMessage({
+        channel: channelId,
+        text: parts[i] as string,
+      });
       lastTs = result.ts;
     } catch (err) {
-      throw toDeliveryError(err, botToken);
+      const e = toDeliveryError(err, botToken);
+      // Ce qui est déjà parti ne repart pas : l'appelant reprend ici (#615).
+      e.partialProgress = { sentChunks: i, totalChunks: parts.length };
+      throw e;
     }
   }
   if (!lastTs) {
@@ -287,10 +298,7 @@ async function sendApprovalCard(
   const channelId = requireChannelId(conversationId);
   const client = makeClient(botToken);
 
-  const sectionBlock: SectionBlock = {
-    type: 'section',
-    text: { type: 'mrkdwn', text: card.text },
-  };
+  const sectionBlocks = toSectionBlocks(card.text);
   const approveButton: Button = {
     type: 'button',
     style: 'primary',
@@ -310,7 +318,7 @@ async function sendApprovalCard(
     const result = await client.chat.postMessage({
       channel: channelId,
       text: card.text,
-      blocks: [sectionBlock, actionsBlock],
+      blocks: [...sectionBlocks, actionsBlock],
     });
     ts = result.ts;
   } catch (err) {
@@ -340,10 +348,7 @@ async function sendQuestionCard(
   const channelId = requireChannelId(conversationId);
   const client = makeClient(botToken);
 
-  const sectionBlock: SectionBlock = {
-    type: 'section',
-    text: { type: 'mrkdwn', text: card.text },
-  };
+  const sectionBlocks = toSectionBlocks(card.text);
   const buttons: Button[] = card.options.map((label, i) => ({
     type: 'button',
     ...(i === 0 ? { style: 'primary' as const } : {}),
@@ -357,7 +362,7 @@ async function sendQuestionCard(
     const result = await client.chat.postMessage({
       channel: channelId,
       text: card.text,
-      blocks: [sectionBlock, actionsBlock],
+      blocks: [...sectionBlocks, actionsBlock],
     });
     ts = result.ts;
   } catch (err) {
@@ -373,24 +378,151 @@ async function sendQuestionCard(
 }
 
 /**
+ * A card's `text` (notifications, the fallback when blocks cannot show) is
+ * read as mrkdwn, where <!channel>, <@U…> and <#C…> are live. It carries a
+ * third party's words (an MCP server's question): the three characters Slack
+ * escapes are escaped (review of #664, pass 4).
+ */
+function escapeSlackText(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** Slack refuses a `section` block whose text is longer than this. */
+const SLACK_SECTION_MAX = 3000;
+
+/**
+ * A card's text as `section` blocks of at most SLACK_SECTION_MAX characters,
+ * split on line boundaries: one block alone would be refused past it.
+ */
+function toSectionBlocks(text: string, as: 'mrkdwn' | 'plain_text' = 'mrkdwn'): SectionBlock[] {
+  return chunkForSlack(text, SLACK_SECTION_MAX).map(
+    (part): SectionBlock => ({
+      type: 'section',
+      text:
+        as === 'plain_text'
+          ? { type: 'plain_text', text: part, emoji: true }
+          : { type: 'mrkdwn', text: part },
+    }),
+  );
+}
+
+/**
+ * What a Slack message carries: 50 blocks, and 25 elements per actions block.
+ * The text takes up to two of them: a card fits one message
+ * (SLACK_MAX_CHARS, 3,900), in sections of 3,000 at most.
+ */
+const SLACK_BUTTON_LIMITS = { maxRows: 48, maxPerRow: 25 } as const;
+/** Slack refuses a button text longer than 75 characters. */
+const SLACK_LABEL_MAX = 75;
+
+/**
+ * The text as a section block, then one actions block per row of buttons —
+ * or the reason they do not fit (`SLACK_BUTTON_LIMITS`). Never cut.
+ */
+function toSlackBlocks(
+  text: string,
+  buttons: readonly (readonly CardButton[])[],
+): Array<SectionBlock | ActionsBlock> | string {
+  const rows = buttons.filter((row) => row.length > 0);
+  // A ButtonCard's text carries a third party's words (an MCP server's
+  // question): plain text, so no mrkdwn, no <!channel>, no <@user> takes
+  // effect (review of #664, pass 3).
+  const sections = toSectionBlocks(text, 'plain_text');
+  // 50 blocks in all: what the text does not take, the rows may.
+  const maxRows = 50 - sections.length;
+  if (rows.length > maxRows) {
+    return `the card needs ${rows.length} rows of buttons and Slack shows at most ${maxRows}`;
+  }
+  if (rows.some((row) => row.length > SLACK_BUTTON_LIMITS.maxPerRow)) {
+    return `a row of the card has more than ${SLACK_BUTTON_LIMITS.maxPerRow} buttons`;
+  }
+  return [
+    ...sections,
+    ...rows.map(
+      (row): ActionsBlock => ({
+        type: 'actions',
+        elements: row.map(
+          (b): Button => ({
+            type: 'button',
+            text: {
+              type: 'plain_text',
+              text:
+                b.label.length > SLACK_LABEL_MAX
+                  ? `${b.label.slice(0, SLACK_LABEL_MAX - 1)}…`
+                  : b.label,
+            },
+            action_id: b.callbackData,
+          }),
+        ),
+      }),
+    ),
+  ];
+}
+
+/** ButtonCard → a section block plus one actions block per row of buttons. */
+async function sendCard(
+  creds: ChannelCredentials,
+  conversationId: string,
+  card: ButtonCard,
+): Promise<SendResult> {
+  const botToken = requireBotToken(creds);
+  const channelId = requireChannelId(conversationId);
+  const blocks = toSlackBlocks(card.text, card.buttons);
+  if (typeof blocks === 'string') throw new DeliveryError('card_too_large', blocks);
+  const client = makeClient(botToken);
+  let ts: string | undefined;
+  try {
+    const result = await client.chat.postMessage({
+      channel: channelId,
+      text: escapeSlackText(card.text),
+      blocks,
+    });
+    ts = result.ts;
+  } catch (err) {
+    throw toDeliveryError(err, botToken);
+  }
+  if (!ts) {
+    throw new DeliveryError(
+      'send_failed',
+      'send_failed: chat.postMessage returned no ts to identify the sent card',
+    );
+  }
+  return { messageId: ts };
+}
+
+/**
  * Edit a previously-sent message's text. Best-effort like Telegram's and
  * Discord's edit: this is used to turn a resolved approval card into its
  * resolved state, and a failed edit must not undo a decision that already
- * happened — so, deliberately, this never throws.
+ * happened — so it never throws, but it RETURNS its outcome (#637).
  */
 async function editMessageText(
   creds: ChannelCredentials,
   conversationId: string,
   messageId: string,
   text: string,
-): Promise<void> {
+  buttons?: readonly (readonly CardButton[])[],
+): Promise<EditResult> {
+  // Avec des boutons : la carte est réécrite avec eux (un formulaire rempli
+  // geste par geste). Sans : `blocks: []` les retire, comme l'édition
+  // Telegram (#637) — sans lui, Slack GARDE les blocs d'origine et la carte
+  // reste cliquable.
+  const withButtons = buttons !== undefined && buttons.some((row) => row.length > 0);
+  const blocks = withButtons ? toSlackBlocks(text, buttons) : [];
+  if (typeof blocks === 'string') return { ok: false, error: blocks };
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
   const client = makeClient(botToken);
   try {
-    await client.chat.update({ channel: channelId, ts: messageId, text });
-  } catch {
-    /* best-effort — the resolution already happened */
+    await client.chat.update({
+      channel: channelId,
+      ts: messageId,
+      text: withButtons ? escapeSlackText(text) : text,
+      blocks,
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -479,11 +611,33 @@ async function validateCredentials(creds: ChannelCredentials): Promise<BotIdenti
 
 export const slackAdapter: ChannelAdapter = {
   channel: 'slack',
-  capabilities: { buttons: true, threads: true, media: true, editMessage: true },
+  capabilities: {
+    buttons: true,
+    threads: true,
+    media: true,
+    editMessage: true,
+    buttonLimits: SLACK_BUTTON_LIMITS,
+  },
+  // Sans `format`, aucune conversion, et chat.postMessage part sans
+  // `mrkdwn: false` : Slack rend son propre mrkdwn, pas le markdown — titres,
+  // tableaux, `**gras**` et `[lien](url)` s'y affichent tels quels.
+  text: {
+    renders: [
+      '*bold*',
+      '_italic_',
+      '~strike~',
+      '`code`',
+      '```code block```',
+      '> quote',
+      '<url|text>',
+    ],
+    maxMessageChars: SLACK_MAX_CHARS,
+  },
   sendText,
   sendMedia,
   sendApprovalCard,
   sendQuestionCard,
+  sendCard,
   editMessageText,
   listConversations,
   validateCredentials,

@@ -319,24 +319,18 @@ export function registeredTestClusters(): readonly TestClusterEntry[] {
 /**
  * Le `pg_ctl` qui accompagne le binaire embarqué, ou `null`.
  *
- * `embedded-postgres` n'exporte que `./dist/index.js`, donc son `binary.js`
- * n'est pas atteignable par spécificateur : il est chargé par CHEMIN, à côté du
- * point d'entrée résolu. Tout est vérifié plutôt que supposé — une disposition
- * qui cesse d'exposer `pg_ctl` rend `null`, et l'arrêt tombe sur le signal.
+ * Lu par le `binary.js` du paquet, chargé par la porte d'apps/cli
+ * (`cli-embedded-postgres.ts`, issue #698). Tout est vérifié plutôt que
+ * supposé — une disposition qui cesse d'exposer `pg_ctl` rend `null`, et
+ * l'arrêt tombe sur le signal.
  */
-export async function resolvePgCtlFrom(anchorPackageJson: string): Promise<string | null> {
+export async function resolveTestPgCtl(): Promise<string | null> {
   try {
-    const { createRequire } = await import('node:module');
-    const { pathToFileURL } = await import('node:url');
-    const { dirname, join: joinPath } = await import('node:path');
     const { existsSync } = await import('node:fs');
-    const entry = createRequire(anchorPackageJson).resolve('embedded-postgres');
-    const mod = (await import(pathToFileURL(joinPath(dirname(entry), 'binary.js')).href)) as {
-      default?: () => Promise<{ pg_ctl?: string }>;
-    };
-    const binaries = await mod.default?.();
-    const pgCtl = binaries?.pg_ctl;
-    return pgCtl !== undefined && existsSync(pgCtl) ? pgCtl : null;
+    const { cliEmbeddedPostgres } = await import('./cli-embedded-postgres');
+    const binaries = await (await cliEmbeddedPostgres()).importEmbeddedPostgresBinaries();
+    const pgCtl = binaries?.['pg_ctl'];
+    return typeof pgCtl === 'string' && existsSync(pgCtl) ? pgCtl : null;
   } catch {
     return null;
   }

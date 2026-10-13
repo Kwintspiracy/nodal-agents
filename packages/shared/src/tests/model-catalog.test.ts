@@ -13,6 +13,7 @@ import {
   modelCanSeeImages,
   modelOutputCap,
   TURN_OUTPUT_TOKEN_CAP,
+  modelGroupLabel,
 } from '../model-catalog';
 
 describe('knownContextWindow — the window the output cap may rely on (review of #571)', () => {
@@ -108,14 +109,13 @@ describe('modelToolsSupport', () => {
 
   it('is "no" for a tools:false catalog entry', () => {
     // No catalogued model is tools:false today (deliberate curation — MiniMax/
-    // Moonshot/GLM etc. all support tools, just not a FORCED tool_choice). The
-    // mechanism must still work when one is added, so exercise it with a
+    // Moonshot/GLM etc. all support tools). The mechanism must still work when one is added, so exercise it with a
     // throwaway fixture provider rather than skipping the branch.
     MODEL_CATALOG['__fixture_no_tools__'] = [
       {
         modelId: 'fixture-no-tools',
         label: 'Fixture (no tools)',
-        capabilities: { tools: false, forcedToolChoice: false },
+        capabilities: { tools: false },
       },
     ];
     try {
@@ -135,13 +135,12 @@ describe('google native catalog', () => {
     expect(findModelCatalogEntry('google', 'gemini-2.5-pro')).toBeUndefined();
   });
 
-  it('gemini-3.5-flash and gemini-3.1-pro-preview are reasoning + vision + forcedToolChoice:false', () => {
+  it('gemini-3.5-flash and gemini-3.1-pro-preview are reasoning + vision', () => {
     for (const modelId of ['gemini-3.5-flash', 'gemini-3.1-pro-preview']) {
       const entry = findModelCatalogEntry('google', modelId);
       expect(entry, modelId).toBeDefined();
       expect(entry?.capabilities.reasoning, modelId).toBe(true);
       expect(entry?.capabilities.tools, modelId).toBe(true);
-      expect(entry?.capabilities.forcedToolChoice, modelId).toBe(false);
       expect(entry?.capabilities.vision, modelId).toBe(true);
       expect(entry?.contextWindow, modelId).toBe(1_048_576);
     }
@@ -160,9 +159,6 @@ describe('openrouter google reasoning flags', () => {
       const entry = findModelCatalogEntry('openrouter', modelId);
       expect(entry, modelId).toBeDefined();
       expect(entry?.capabilities.reasoning, modelId).toBe(true);
-      // Unlike the M-series/Kimi/GLM reasoning entries, these keep a forced
-      // tool_choice — no evidence Gemini's OpenRouter routes reject it.
-      expect(entry?.capabilities.forcedToolChoice, modelId).toBe(true);
     }
   });
 
@@ -264,7 +260,7 @@ describe('modelOptionLabel', () => {
     const fixture = {
       modelId: 'fixture-no-tools',
       label: 'Fixture Model',
-      capabilities: { tools: false, forcedToolChoice: false },
+      capabilities: { tools: false },
     };
     expect(modelOptionLabel(fixture)).toBe('Fixture Model (no tools)');
   });
@@ -301,7 +297,6 @@ describe('GLM 5.3 Flash', () => {
 
   it('supports tools, and reasoning WITHOUT the family mandatory flag', () => {
     expect(flash?.capabilities.tools).toBe(true);
-    expect(flash?.capabilities.forcedToolChoice).toBe(false);
     expect(flash?.capabilities.reasoning).toBe(true);
     // 5.2/5.3 are mandatory:true (they always think). Nothing upstream says
     // Flash does, so 'off' must remain offered — no guessed mandatory flag.
@@ -341,8 +336,98 @@ describe('Claude Fable 5.1 on OpenRouter (2026-09-22)', () => {
       levels: ['low', 'medium', 'high', 'max'],
       mandatory: true,
     });
-    expect(fable?.capabilities.forcedToolChoice).toBe(true);
     expect(modelCanSeeImages('anthropic/claude-fable-5.1')).toBe(true);
+  });
+});
+
+describe('OpenRouter models read on 2026-10-09', () => {
+  // Each figure below was read off /api/v1/models on 2026-10-09: a wrong
+  // window mis-sizes compaction, a wrong price mis-reports every job.
+  const entry = (id: string) => findModelCatalogEntry('openrouter', id);
+
+  it('Claude Sonnet 5.5 is mandatory-effort with the upstream prices', () => {
+    const e = entry('anthropic/claude-sonnet-5.5');
+    expect(e?.label).toBe('Claude Sonnet 5.5');
+    expect(e?.contextWindow).toBe(1_000_000);
+    expect(e?.pricing).toEqual({
+      inputPerMillionUsd: 2,
+      outputPerMillionUsd: 10,
+      cacheReadPerMillionUsd: 0.1,
+      cacheWritePerMillionUsd: 2.5,
+    });
+    expect(e?.capabilities.reasoning).toBeUndefined();
+    expect(e?.capabilities.reasoningControl).toEqual({
+      kind: 'effort',
+      levels: ['low', 'medium', 'high', 'max'],
+      mandatory: true,
+    });
+  });
+
+  it('Claude Haiku 5.5 keeps Off (mandatory:false upstream) and the STANDARD price tier', () => {
+    const e = entry('anthropic/claude-haiku-5.5');
+    expect(e?.pricing).toEqual({
+      inputPerMillionUsd: 0.1,
+      outputPerMillionUsd: 0.5,
+      cacheReadPerMillionUsd: 0.01,
+      cacheWritePerMillionUsd: 0.125,
+    });
+    expect(e?.capabilities.reasoningControl).toEqual({
+      kind: 'effort',
+      levels: ['low', 'medium', 'high', 'max'],
+    });
+  });
+
+  it('Mistral Large 4 and Qwen 3.8 Flash expose on/off only, Max Prime a mandatory scale', () => {
+    expect(entry('mistralai/mistral-large-4-0')?.capabilities.reasoningControl).toEqual({
+      kind: 'onoff',
+    });
+    expect(entry('qwen/qwen3.8-flash')?.capabilities.reasoningControl).toEqual({ kind: 'onoff' });
+    expect(entry('qwen/qwen3.8-max-prime')?.capabilities.reasoningControl).toEqual({
+      kind: 'effort',
+      levels: ['low', 'medium', 'high', 'max'],
+      mandatory: true,
+    });
+    expect(modelContextWindow('openrouter', 'mistralai/mistral-large-4-0')).toBe(1_048_576);
+    expect(entry('mistralai/mistral-large-4-0')?.pricing).toEqual({
+      inputPerMillionUsd: 0.68,
+      outputPerMillionUsd: 2.09,
+      cacheReadPerMillionUsd: 0.07,
+    });
+    expect(entry('qwen/qwen3.8-max-prime')?.pricing).toEqual({
+      inputPerMillionUsd: 4,
+      outputPerMillionUsd: 12,
+      cacheReadPerMillionUsd: 0.5,
+    });
+    expect(entry('qwen/qwen3.8-flash')?.pricing).toEqual({
+      inputPerMillionUsd: 0.15,
+      outputPerMillionUsd: 0.47,
+      cacheReadPerMillionUsd: 0.016,
+      cacheWritePerMillionUsd: 0.2,
+    });
+  });
+
+  it('all five accept tools and images', () => {
+    for (const id of [
+      'anthropic/claude-sonnet-5.5',
+      'anthropic/claude-haiku-5.5',
+      'mistralai/mistral-large-4-0',
+      'qwen/qwen3.8-max-prime',
+      'qwen/qwen3.8-flash',
+    ]) {
+      expect(entry(id)?.capabilities.tools, id).toBe(true);
+      expect(modelCanSeeImages(id), id).toBe(true);
+    }
+  });
+});
+
+describe('modelGroupLabel', () => {
+  it("labels OpenRouter's mistralai/ namespace as Mistral, not Mistralai", () => {
+    expect(modelGroupLabel('mistralai/mistral-large-4-0')).toBe('Mistral');
+  });
+
+  it('title-cases a namespace it has no label for, and leaves flat ids ungrouped', () => {
+    expect(modelGroupLabel('newvendor/some-model')).toBe('Newvendor');
+    expect(modelGroupLabel('gpt-5')).toBeNull();
   });
 });
 
@@ -404,7 +489,7 @@ describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
     }
   });
 
-  it('Xiaomi MiMo V2.6: 1.05M window, upstream pricing, on/off thinking, forced tool_choice', () => {
+  it('Xiaomi MiMo V2.6: 1.05M window, upstream pricing, on/off thinking', () => {
     for (const id of [
       'xiaomi/mimo-v2.6-flash',
       'xiaomi/mimo-v2.6-pro',
@@ -438,8 +523,6 @@ describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
       // no effort scale exists, thinking is on or off. No always-on flag.
       expect(entry(id)?.capabilities.reasoning, id).toBeUndefined();
       expect(entry(id)?.capabilities.reasoningControl, id).toEqual({ kind: 'onoff' });
-      // supports_tool_choice.required:true on every MiMo endpoint.
-      expect(entry(id)?.capabilities.forcedToolChoice, id).toBe(true);
       expect(modelCanSeeImages(id), id).toBe(true);
     }
   });
@@ -460,7 +543,6 @@ describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
       levels: ['low', 'high', 'max'],
       mandatory: true,
     });
-    expect(x?.capabilities.forcedToolChoice).toBe(false);
     expect(modelCanSeeImages('z-ai/glm-5.3-flashx')).toBe(true);
   });
 
@@ -503,10 +585,6 @@ describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
       expect(entry(id)?.capabilities.reasoningControl?.levels, id).toEqual(['low', 'high', 'max']);
       expect(entry(id)?.capabilities.reasoningControl?.mandatory, id).toBeUndefined();
     }
-    // supports_tool_choice.required is true on DeepSeek's V4 Pro endpoint and
-    // false on DeepSeek's V4.1 Flash endpoint (the one providerOrder prefers).
-    expect(entry('deepseek/deepseek-v4-pro-0813')?.capabilities.forcedToolChoice).toBe(true);
-    expect(entry('deepseek/deepseek-v4.1-flash')?.capabilities.forcedToolChoice).toBe(false);
     expect(entry('deepseek/deepseek-v4-pro-0813')?.pricing).toEqual({
       inputPerMillionUsd: 0.66,
       outputPerMillionUsd: 1.98,
@@ -538,7 +616,6 @@ describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
         cacheWritePerMillionUsd: cw,
       });
       expect(modelContextWindow('openrouter', id), id).toBe(1_050_000);
-      expect(entry(id)?.capabilities.forcedToolChoice, id).toBe(true);
       expect(entry(id)?.capabilities.reasoningControl?.levels, id).toEqual([
         'low',
         'medium',

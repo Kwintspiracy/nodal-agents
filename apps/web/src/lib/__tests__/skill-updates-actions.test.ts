@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentSkills } from '@nodal-agents/db';
+import { agentSkills, type SkillUpdateDetail } from '@nodal-agents/db';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -61,6 +61,7 @@ async function insertCommunitySkill(overrides: {
   slug: string;
   name: string;
   updateAvailable?: boolean;
+  updateDetail?: SkillUpdateDetail | null;
 }) {
   const [row] = await testDb
     .insert(agentSkills)
@@ -72,6 +73,7 @@ async function insertCommunitySkill(overrides: {
       isCommunity: true,
       source: `owner/${overrides.slug}`,
       updateAvailable: overrides.updateAvailable ?? false,
+      updateDetail: overrides.updateDetail ?? null,
     })
     .returning();
   if (!row) throw new Error('failed to seed community skill');
@@ -184,7 +186,44 @@ describe('listSkillUpdatesAction', () => {
     expect(slugs).not.toContain('skill-up-to-date');
 
     const notice = result.data.find((r) => r.slug === 'skill-with-update');
-    expect(notice).toEqual({ slug: 'skill-with-update', name: 'Skill With Update' });
+    expect(notice).toEqual({ slug: 'skill-with-update', name: 'Skill With Update', problem: null });
+  });
+
+  // A pending badge that turns into a source problem must not leave the bell
+  // in silence (Codex, PR #548 pass 3): the problem is listed with its code.
+  it('also lists community skills whose source has a problem, with the code @cap:apprendre-une-skill/moteur', async () => {
+    const { listSkillUpdatesAction } = await import('../actions.ts');
+    const checkedAt = '2026-09-28T00:00:00.000Z';
+    await insertCommunitySkill({
+      slug: 'skill-renamed-upstream',
+      name: 'Skill Renamed Upstream',
+      updateDetail: { sourceProblem: 'identity_changed', upstreamSlug: 'other', checkedAt },
+    });
+    await insertCommunitySkill({
+      slug: 'skill-gone-upstream',
+      name: 'Skill Gone Upstream',
+      updateDetail: { sourceProblem: 'source_not_found', checkedAt },
+    });
+    await insertCommunitySkill({
+      slug: 'skill-checked-healthy',
+      name: 'Skill Checked Healthy',
+      updateDetail: { contentChanged: false, scriptsChanged: false, checkedAt },
+    });
+
+    const result = await listSkillUpdatesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.find((r) => r.slug === 'skill-renamed-upstream')).toEqual({
+      slug: 'skill-renamed-upstream',
+      name: 'Skill Renamed Upstream',
+      problem: 'identity_changed',
+    });
+    expect(result.data.find((r) => r.slug === 'skill-gone-upstream')).toEqual({
+      slug: 'skill-gone-upstream',
+      name: 'Skill Gone Upstream',
+      problem: 'source_not_found',
+    });
+    expect(result.data.map((r) => r.slug)).not.toContain('skill-checked-healthy');
   });
 });
 

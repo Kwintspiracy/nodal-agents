@@ -31,7 +31,7 @@
 
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, rm, utimes, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -573,6 +573,165 @@ async function takeSnapshot(
   await git(store, workspace, ['update-ref', ref, sha], undefined, limitMs);
 
   return { sha, workspace, at, label };
+}
+
+/**
+ * Ce qu'un instantané ne photographie jamais, en plus du `.gitignore` du
+ * workspace : les exclusions du magasin. Exporté pour que le constat des
+ * écritures qui lit un instantané (#590) puisse DIRE ce qu'il ne voit pas.
+ */
+export const SNAPSHOT_EXCLUDES: readonly string[] = EXCLUDES;
+
+/**
+ * Une copie FIGÉE de l'index de l'instantané d'un workspace (#590).
+ *
+ * Le constat des écritures (`packages/tools`, git-constat.ts) ne voyait que les
+ * dossiers qui sont eux-mêmes la racine d'un dépôt git. Un workspace hors de
+ * tout dépôt, ou dans un dépôt enraciné AU-DESSUS de lui (une maison
+ * versionnée), ne constatait rien de ce qu'un shell y écrivait. L'instantané,
+ * pris avant tout outil qui écrit, est justement un état d'avant de ce
+ * workspace : son index EST cet état, avec les stats de chaque fichier.
+ *
+ * POURQUOI UNE COPIE, et pas l'index lui-même (revue A de #591) : l'index est
+ * PARTAGÉ par tous les jobs de ce workspace, et chaque instantané le restage
+ * (`add -A`). Un instantané d'un autre job pris entre l'avant et l'après d'un
+ * appel y faisait entrer les fichiers que cet appel venait d'écrire : ils
+ * sortaient des deux lectures, et l'écriture était perdue. La copie ne bouge
+ * plus ; les deux lectures d'un appel se font contre elle.
+ *
+ * POURQUOI L'INDEX, et pas l'arbre du commit : un index porte les stats de
+ * chaque fichier, donc git ne relit que ceux qui ont bougé. Un index refait
+ * depuis l'arbre (`read-tree`) n'en a pas, et chaque lecture rehacherait tout
+ * le dossier — un dossier d'images de plusieurs gigaoctets, deux fois par
+ * appel. La date de la copie est celle de l'original, pour que git juge les
+ * fichiers « modifiés dans la même seconde » exactement comme sur l'original.
+ *
+ * Rangée à côté de l'index, comme l'index jetable de `diffFile`, et retirée par
+ * `releaseFrozenIndex`. Chaque absence a sa raison : pas de magasin, jamais
+ * photographié, copie impossible.
+ *
+ * LA COPIE EST UNE SEULE LECTURE (revue A de #591, passe 2). `stat` puis
+ * `copyFile` lisaient la date et le contenu à deux moments, et un instantané
+ * concurrent pouvait remplacer l'index entre les deux. Et sous Windows
+ * `copyFile` (CopyFileW) tient la source ouverte sans partage de suppression :
+ * le renommage `index.lock` → `index` de l'autre job pouvait échouer, donc son
+ * instantané, donc son écriture. Ici l'index est ouvert UNE fois, par libuv,
+ * qui partage lecture, écriture ET suppression. Git écrit l'index par
+ * `index.lock` puis renommage : la poignée lit donc l'ancien fichier en entier,
+ * jamais un index à moitié écrit, et le renommage de l'autre job passe. La date
+ * vient de la même poignée (`fstat`), puis la poignée est fermée. Une lecture
+ * qui échoue quand même est retentée deux fois, 50 ms plus tard, et au bout de
+ * ces trois essais c'est `freeze_failed`.
+ */
+export type FrozenSnapshotIndex =
+  | { readonly kind: 'frozen'; readonly indexFile: string }
+  | {
+      readonly kind: 'none';
+      readonly reason: 'no_store' | 'never_snapshotted' | 'freeze_failed';
+    };
+
+const FREEZE_ATTEMPTS = 3;
+const FREEZE_RETRY_MS = 50;
+
+export async function freezeSnapshotIndex(
+  store: string,
+  workspace: string,
+): Promise<FrozenSnapshotIndex> {
+  if (!existsSync(join(store, 'store', 'HEAD'))) return { kind: 'none', reason: 'no_store' };
+  const source = join(store, 'indexes', workspaceKey(workspace));
+  if (!existsSync(source)) return { kind: 'none', reason: 'never_snapshotted' };
+  const indexFile = `${source}.constat-${randomBytes(6).toString('hex')}`;
+  for (let essai = 1; essai <= FREEZE_ATTEMPTS; essai++) {
+    try {
+      const lu = await open(source, 'r');
+      let contenu: Buffer;
+      let date: number;
+      try {
+        date = (await lu.stat()).mtimeMs;
+        contenu = await lu.readFile();
+      } finally {
+        await lu.close();
+      }
+      await writeFile(indexFile, contenu);
+      // Arrondie VERS LE BAS à la milliseconde (`utimes` ne garde pas mieux) :
+      // une copie datée un rien plus tôt fait juger « modifié dans la même
+      // seconde » un fichier de plus, donc relu — jamais un de moins, donc manqué.
+      const secondes = Math.floor(date) / 1000;
+      await utimes(indexFile, secondes, secondes);
+      return { kind: 'frozen', indexFile };
+    } catch {
+      await rm(indexFile, { force: true }).catch(() => undefined);
+      if (essai < FREEZE_ATTEMPTS) await new Promise((r) => setTimeout(r, FREEZE_RETRY_MS));
+    }
+  }
+  return { kind: 'none', reason: 'freeze_failed' };
+}
+
+/**
+ * Le statut contre une copie figée, ou la cause pour laquelle il n'y en a pas.
+ * Chaque cause a son nom, comme dans `gitAllowingMiss` (revue #262) : un git
+ * absent, une borne de temps dépassée, une sortie trop longue et un refus de
+ * git (index illisible) ne se réparent pas du même geste.
+ */
+export type FrozenIndexStatus =
+  | { readonly kind: 'status'; readonly stdout: string }
+  | {
+      readonly kind: 'failed';
+      readonly reason:
+        | 'git_missing'
+        | 'snapshot_status_timeout'
+        | 'snapshot_status_too_large'
+        | 'snapshot_status_failed';
+    };
+
+/** La sortie de `git status` au-delà de laquelle la lecture est abandonnée. */
+const FROZEN_STATUS_MAX_BUFFER = 16 * 1024 * 1024;
+
+/**
+ * `git status --porcelain -z --untracked-files=all` du workspace contre une
+ * copie figée (`freezeSnapshotIndex`). Mêmes exclusions que l'instantané.
+ *
+ * Seule la colonne de DROITE (index ↔ arbre de travail) et les `??` disent
+ * quelque chose : le magasin n'a jamais de HEAD, donc la colonne de gauche
+ * marque `A` chaque fichier photographié. C'est à l'appelant de la lire ainsi.
+ *
+ * `GIT_OPTIONAL_LOCKS=0` : une lecture ne réécrit pas la copie.
+ */
+export async function statusAgainstFrozenIndex(
+  store: string,
+  workspace: string,
+  indexFile: string,
+): Promise<FrozenIndexStatus> {
+  try {
+    const { stdout } = await run(
+      await gitBinary(),
+      ['status', '--porcelain', '-z', '--untracked-files=all'],
+      {
+        timeout: storeTimeoutMs(),
+        windowsHide: true,
+        maxBuffer: FROZEN_STATUS_MAX_BUFFER,
+        env: { ...gitEnv(store, workspace, indexFile), GIT_OPTIONAL_LOCKS: '0' },
+      },
+    );
+    return { kind: 'status', stdout };
+  } catch (err) {
+    // La sortie trop longue AVANT la borne de temps : Node tue aussi l'enfant
+    // dans ce cas (`killed`), et le lire comme un délai dirait le mauvais geste.
+    const code = (err as { code?: unknown } | null)?.code;
+    const reason = isGitMissingError(err)
+      ? 'git_missing'
+      : code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+        ? 'snapshot_status_too_large'
+        : isTimeoutError(err)
+          ? 'snapshot_status_timeout'
+          : 'snapshot_status_failed';
+    return { kind: 'failed', reason };
+  }
+}
+
+/** Retire une copie figée. Sans effet si elle n'est déjà plus là. */
+export async function releaseFrozenIndex(indexFile: string): Promise<void> {
+  await rm(indexFile, { force: true }).catch(() => undefined);
 }
 
 /**

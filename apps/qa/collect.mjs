@@ -44,6 +44,7 @@ import {
   revuesEnCours,
   releaseCheckEnCours,
   cequiTourne,
+  domainesDesFichiers,
 } from './lib.mjs';
 import { ciDuDepot, parcoursDuDepot } from './depot.mjs';
 import { CAPACITES } from './capacites.mjs';
@@ -603,6 +604,49 @@ function memoire(essais, le, execution) {
   };
 }
 
+// ─── 6 bis. CE QUI EST TESTÉ : chaque fichier de la mémoire, rangé ────────────
+//
+// La règle vit dans `lib.mjs` (`domaineDuTest`) et lit le code du DÉPÔT : le
+// nom du fichier de test, ses dossiers, ses imports. Elle tourne ici, pas au
+// rendu, parce que le rendu ne lit que `data/` ; et elle tourne à la mesure
+// complète ET au rafraîchissement de chaque déploiement (`--github-only`), qui
+// part lui aussi d'un checkout de main : un fichier de test ajouté hier est
+// rangé dès le déploiement suivant, sans attendre la nuit.
+//
+// La liste des fichiers est celle de la MÉMOIRE (`tests.ndjson`), pas celle
+// du disque : la page montre les tests qu'on a vus tourner. Un fichier que git
+// ne suit plus est lu comme absent — son rangement se fait sur son seul chemin,
+// et la page le marque « no longer in the repository ».
+
+function rangementDesTests(fichiers, listePaquets) {
+  const chemin = join(DATA, 'tests.ndjson');
+  if (!existsSync(chemin)) return null;
+  const memoire = readFileSync(chemin, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => {
+      try {
+        return JSON.parse(l).fichier ?? null;
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+  const suivi = new Set(fichiers);
+  const lire = (f) => {
+    if (!suivi.has(f)) return null;
+    try {
+      return readFileSync(join(RACINE, f), 'utf8');
+    } catch {
+      return null;
+    }
+  };
+  return {
+    le: new Date().toISOString(),
+    fichiers: domainesDesFichiers(memoire, lire, listePaquets),
+  };
+}
+
 // ─── 7 quinquies. Ce qui TOURNE en ce moment (#296) ───────────────────────────
 //
 // Trois lectures, trois sources qui n'ont rien en commun sauf ceci : chacune
@@ -692,6 +736,8 @@ function rafraichirGitHub() {
     // bande qui daterait de la mesure nocturne dirait ce que la machine faisait
     // à 03:17, ce qui est exactement l'inverse de ce qu'on lui demande.
     enVol: enVol(),
+    // Ce qui est testé, rangé sur le checkout qu'on déploie (voir 6 bis).
+    rangement: rangementDesTests(suivis(), paquets()),
     le: new Date().toISOString(),
   };
   const snapshot = fusionnerTableauGitHub(lireJson(chemin), frais);
@@ -817,6 +863,9 @@ function main() {
     enVol: enVol(),
     // Le dépôt que la page fera lire au navigateur (#363).
     depotNom: nomDuDepot(),
+    // Chaque fichier de la mémoire, rangé dans une partie du produit (6 bis).
+    // APRÈS `memoire()`, qui vient de réécrire `tests.ndjson`.
+    rangement: rangementDesTests(fichiers, listePaquets),
   };
 
   writeFileSync(join(DATA, 'snapshot.json'), JSON.stringify(snapshot, null, 2));

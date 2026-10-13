@@ -12,6 +12,8 @@ export {
   getTelegramFile,
   answerTelegramCallback,
   editTelegramMessageText,
+  addTelegramBotCommands,
+  setTelegramMessageReaction,
 } from './channels/telegram.ts';
 export type {
   TelegramSendOpts,
@@ -20,6 +22,7 @@ export type {
   TelegramFileDownload,
   TelegramInlineButton,
   TelegramInlineKeyboard,
+  TelegramBotCommand,
 } from './channels/telegram.ts';
 
 export { sendEmail } from './channels/email.ts';
@@ -42,9 +45,13 @@ export type {
   ApprovalCard,
   QuestionCard,
   SendResult,
+  EditResult,
+  CardButton,
+  ButtonCard,
   BotIdentity,
   ChannelCapabilities,
   ChannelAdapter,
+  TextDelivery,
   DiscoveredConversation,
 } from './channel-adapter.ts';
 
@@ -65,6 +72,14 @@ export type {
   WhatsAppEventEmitter,
 } from './channels/whatsapp/socket-manager.ts';
 
-export { getAdapter } from './registry.ts';
+export { getAdapter, textDeliveryOf } from './registry.ts';
 
-export { resolveTransportChannel, listActiveChannelsForAgent } from './transport-channel.ts';
+export {
+  resolveTransportChannel,
+  listActiveChannelsForAgent,
+  isTransportChannel,
+  defaultSendChannel,
+  jobChatOn,
+  resolveOwnerNoticeTarget,
+} from './transport-channel.ts';
+export type { JobChat } from './transport-channel.ts';

@@ -261,6 +261,7 @@ const SOURCES_DE_COPIE = [
   'lib.mjs',
   'alerte.mjs',
   'collect.mjs',
+  'workflows.mjs',
 ];
 
 describe('le portail n’écrit pas de tiret cadratin', () => {

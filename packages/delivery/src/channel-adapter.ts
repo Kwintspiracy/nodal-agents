@@ -30,6 +30,13 @@ export type TextFormat = 'plain' | 'markdown' | 'html';
 
 export interface SendTextOpts {
   format?: TextFormat;
+  /**
+   * Reprendre un envoi découpé au morceau `fromChunk` (compté depuis 0) : les
+   * précédents sont déjà partis. C'est le `partialProgress.sentChunks` de la
+   * `DeliveryError` que l'essai précédent a levée (#615). Le découpage d'un
+   * même texte est déterministe, donc les morceaux sont les mêmes.
+   */
+  fromChunk?: number;
 }
 
 /** A file to deliver as chat media. `kind` picks the platform's native
@@ -80,8 +87,40 @@ export interface QuestionCard {
   callbackId: string;
 }
 
+/**
+ * Une carte à boutons LIBRES : un texte et des rangées de boutons dont le
+ * `callbackData` est opaque à l'adaptateur. La forme générale des deux cartes
+ * ci-dessus ; ce qu'il faut à un formulaire rempli geste par geste (la question
+ * d'un serveur MCP, 0145), dont chaque geste réécrit la carte avec
+ * `editMessageText` et les mêmes rangées.
+ */
+export interface ButtonCard {
+  text: string;
+  buttons: readonly (readonly CardButton[])[];
+}
+
 export interface SendResult {
   messageId: string;
+}
+
+/**
+ * L'issue d'une réécriture de message (#637). Rendue, jamais avalée : un
+ * appelant qui doit savoir si la carte a vraiment changé (la mise à jour des
+ * cartes d'approbation, qui reprend un échec au tick suivant) le peut ; un
+ * appelant que l'issue n'intéresse pas l'ignore. Jamais levée : une édition
+ * ratée ne doit pas défaire la décision qu'elle raconte.
+ */
+export type EditResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Un bouton d'une carte réécrite (#637) — la forme neutre, par rangées. Seul
+ * l'affichage interactif d'une carte encore ouverte en porte (la question
+ * « Always allow? » de Telegram et son retour) ; une carte tranchée n'en a
+ * aucun.
+ */
+export interface CardButton {
+  label: string;
+  callbackData: string;
 }
 
 /** Result of validating a channel's credentials (Telegram: getMe). */
@@ -100,6 +139,12 @@ export interface ChannelCapabilities {
   media: boolean;
   /** Can rewrite a previously-sent message's text (editMessageText is implemented). */
   editMessage: boolean;
+  /**
+   * What a card can carry on this channel, when the platform bounds it
+   * (Discord: 5 rows of 5). Absent: no bound the caller must plan for. A card
+   * beyond it is refused by `sendCard` / `editMessageText`, never cut.
+   */
+  buttonLimits?: { maxRows: number; maxPerRow: number; maxButtons?: number };
 }
 
 /** One conversation a bot/session can send into, as surfaced by a channel's
@@ -115,9 +160,43 @@ export type DiscoveredConversation = {
   groupName?: string;
 };
 
+/**
+ * Ce que devient un texte envoyé par `sendText` SANS `format` — le seul fait
+ * sur le canal dont un agent a besoin pour écrire sa réponse (#613).
+ *
+ * Le prompt d'un job sur canal portait 6 300 caractères de consignes écrites
+ * à la main pour Telegram : échapper en MarkdownV2 alors que l'outil envoie
+ * sans `parse_mode`, poser titres et tableaux sur un canal qui les affiche
+ * tels quels, découper soi-même à 4 096 alors que `sendText` découpe déjà.
+ * Trois consignes fausses, parce qu'écrites loin du code qui envoie. Ici,
+ * l'adaptateur DÉCLARE ce qu'il fait, et les tests de chaque adaptateur
+ * prouvent que la déclaration est ce que `sendText` fait.
+ */
+export interface TextDelivery {
+  /**
+   * Les marques que la plateforme REND dans un texte envoyé sans `format`,
+   * écrites comme l'expéditeur les tape (`*bold*` pour Slack, `**bold**` pour
+   * Discord). Tout le reste s'affiche tel quel. Vide : rien n'est rendu.
+   *
+   * Une liste, pas « plain » ou « markdown » : Slack et WhatsApp ne rendent
+   * pas le markdown, mais leur propre balisage léger — les déclarer « plain »
+   * faisait dire au prompt que `*gras*` s'afficherait avec ses astérisques,
+   * alors qu'il s'affiche en gras (revue de #615). Le modèle écrit ce que le
+   * canal rend, l'utilisateur lit un texte mis en forme.
+   */
+  renders: readonly string[];
+  /**
+   * Le plus long message que l'adaptateur envoie d'un bloc. Au-delà,
+   * `sendText` découpe sur les fins de ligne et envoie les morceaux dans
+   * l'ordre : l'appelant ne découpe jamais.
+   */
+  maxMessageChars: number;
+}
+
 export interface ChannelAdapter {
   readonly channel: ChannelKind;
   readonly capabilities: ChannelCapabilities;
+  readonly text: TextDelivery;
 
   sendText(
     creds: ChannelCredentials,
@@ -151,13 +230,32 @@ export interface ChannelAdapter {
     card: QuestionCard,
   ): Promise<SendResult>;
 
-  /** Optional: only channels with `capabilities.editMessage` implement this. */
+  /**
+   * Optional: only channels with `capabilities.buttons` implement this. A text
+   * and free rows of buttons (`ButtonCard`); refused (thrown) when the card
+   * exceeds `capabilities.buttonLimits`.
+   */
+  sendCard?(
+    creds: ChannelCredentials,
+    conversationId: string,
+    card: ButtonCard,
+  ): Promise<SendResult>;
+
+  /**
+   * Optional: only channels with `capabilities.editMessage` implement this.
+   * Rewrites the message's text and REPLACES its buttons with `buttons` — none
+   * when absent or empty (a settled card). The only caller is the one function
+   * that owns an approval card's display (runner approvals/card-settlement.ts,
+   * #637). A channel that cannot put buttons on an edited message returns a
+   * failure for a non-empty `buttons`, never a silent text-only edit.
+   */
   editMessageText?(
     creds: ChannelCredentials,
     conversationId: string,
     messageId: string,
     text: string,
-  ): Promise<void>;
+    buttons?: readonly (readonly CardButton[])[],
+  ): Promise<EditResult>;
 
   /** Optional: only channels whose platform can enumerate what a bot/session
    *  could send into implement this (Telegram's Bot API has no such

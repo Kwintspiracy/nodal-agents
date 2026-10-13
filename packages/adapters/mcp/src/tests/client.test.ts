@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const h = vi.hoisted(() => ({
   connect: vi.fn(async () => {}),
   listTools: vi.fn(),
+  getInstructions: vi.fn((): string | undefined => undefined),
   close: vi.fn(async () => {}),
   transportClose: vi.fn(async () => {}),
   agentClose: vi.fn(async () => {}),
@@ -12,6 +13,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   Client: class {
     connect = h.connect;
     listTools = h.listTools;
+    getInstructions = h.getInstructions;
     close = h.close;
   },
 }));
@@ -37,6 +39,10 @@ vi.mock('undici', () => ({
     this.close = h.agentClose;
   }),
   fetch: vi.fn(async () => new Response(null)),
+  // The provider transport of @nodal-agents/llm, reached through the tools
+  // package, builds its own dispatcher at import (#608): inert here too.
+  EnvHttpProxyAgent: vi.fn(),
+  Dispatcher: class {},
 }));
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
   // Capturing the constructor args lets the stdio test inspect what the

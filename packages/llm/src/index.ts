@@ -20,7 +20,7 @@ export {
   describeThrown,
 } from './errors';
 export type { MessageStructureErrorCode, LlmTimeoutReason } from './errors';
-export type { GenerateTextCallOptions } from './types';
+export type { GenerateTextCallOptions, CallProgress } from './types';
 export {
   computeTurnClocks,
   isLocalEndpoint,
@@ -34,6 +34,7 @@ export { createLlmClient } from './client';
 export { reportedUsage, type ReportedUsage } from './reported-usage';
 
 export { probeContextWindow } from './probe-context';
+export { providerFetch } from './transport';
 
 // Provider failover (opt-in chain: primary + fallbacks)
 export { createFailoverLlmClient } from './failover';
@@ -41,7 +42,7 @@ export { buildLlmCallObservation, emitLlmCall } from './observe';
 export type { LlmCallObservation, LlmCallObserver, LlmClientMeta } from './observe';
 
 // Message structure validation
-export { validateMessageStructure } from './message-structure';
+export { validateMessageStructure, withoutNamelessToolCalls } from './message-structure';
 
 // Retry utility
 export { withRetry } from './retry';

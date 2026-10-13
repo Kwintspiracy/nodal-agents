@@ -159,8 +159,13 @@ export async function POST(req: Request): Promise<Response> {
             continue;
           }
           if (msg.event === 'error') {
-            const error = (JSON.parse(msg.data) as { error?: unknown }).error;
-            write('error', { error: typeof error === 'string' ? error : 'chat_failed' });
+            const payload = JSON.parse(msg.data) as { error?: unknown; cutReason?: unknown };
+            write('error', {
+              error: typeof payload.error === 'string' ? payload.error : 'chat_failed',
+              // Une horloge a coupé l'appel avant tout texte (#484) : la raison
+              // voyage jusqu'à l'écran, qui la dit.
+              ...(typeof payload.cutReason === 'string' ? { cutReason: payload.cutReason } : {}),
+            });
           }
         }
       } catch (err) {

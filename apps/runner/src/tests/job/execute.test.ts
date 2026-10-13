@@ -6,14 +6,19 @@
 //   - awaiting_approval does NOT bump chain_count
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { offeredToolNames } from '../offered-tools.ts';
+import { unconditionalSendOrders } from '../send-orders.ts';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, and, sql } from '@nodal-agents/db';
+import type { AnyDrizzleDb, JobTriggerContext } from '@nodal-agents/db';
+import { resolveScheduleNotifyChat } from '@nodal-agents/db';
 import {
   agentJobs,
   jobDeliveries,
@@ -52,6 +57,7 @@ import {
   shortBlockReason,
   BLOCK_NO_REASON,
 } from '../../job/execute.ts';
+import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 import { VERIFY_BEFORE_ASSERT_NUDGE } from '@nodal-agents/orchestration';
 
@@ -195,6 +201,12 @@ function makeMockLlmClient(
   configOverride?: { provider: string; model: string },
   /** The keys of the `tools` object handed to the model each turn — the REAL whitelist. */
   capturedToolKeysPerCall?: string[][],
+  /** What the re-read of a prose turn answers, in order; absent = no action. */
+  recheckResponses?: Array<{
+    toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+  }>,
+  /** The description of every tool handed to the model each turn, by name. */
+  capturedToolDescriptions?: Array<Record<string, string>>,
 ): RunnerDeps['llmClient'] {
   let callIndex = 0;
 
@@ -202,6 +214,33 @@ function makeMockLlmClient(
     provider: 'mock',
     modelId: 'mock',
     doGenerate: async (options) => {
+      // The re-read of a prose turn (#600, llm/action-recheck.ts) is not a turn
+      // of the script: it answers "no action" (no tool call, plain usage) and
+      // leaves the scripted turns aligned. A test that scripts the re-read
+      // itself says so in `recheckResponses`.
+      const last = options.prompt[options.prompt.length - 1];
+      const isRecheck =
+        last?.role === 'user' &&
+        last.content.some((part) => part.type === 'text' && part.text === ACTION_RECHECK);
+      if (isRecheck) {
+        const scripted = recheckResponses?.shift();
+        return {
+          content: (scripted?.toolCalls ?? []).map((tc) => ({
+            type: 'tool-call' as const,
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            input: JSON.stringify(tc.args),
+          })),
+          finishReason: scripted?.toolCalls?.length
+            ? { unified: 'tool-calls' as const, raw: 'tool-calls' }
+            : { unified: 'stop' as const, raw: 'stop' },
+          usage: {
+            inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+            outputTokens: { total: 5, text: 5, reasoning: undefined },
+          },
+          warnings: [],
+        };
+      }
       // Record the prompt each call receives so a test can assert what actually
       // reached the provider (e.g. reasoning round-tripped from a prior turn).
       if (capturedPrompts) capturedPrompts.push(options.prompt);
@@ -289,9 +328,15 @@ function makeMockLlmClient(
       streaming: false,
     },
     generateText: (args) => {
-      if (capturedToolKeysPerCall) {
-        const tools = (args as { tools?: Record<string, unknown> }).tools ?? {};
-        capturedToolKeysPerCall.push(Object.keys(tools));
+      const msgs = (args as { messages?: Array<{ content?: unknown }> }).messages ?? [];
+      if (capturedToolKeysPerCall && msgs[msgs.length - 1]?.content !== ACTION_RECHECK) {
+        capturedToolKeysPerCall.push(offeredToolNames(args));
+      }
+      if (capturedToolDescriptions && msgs[msgs.length - 1]?.content !== ACTION_RECHECK) {
+        const tools = (args as { tools?: Record<string, { description?: string }> }).tools ?? {};
+        capturedToolDescriptions.push(
+          Object.fromEntries(Object.entries(tools).map(([n, t]) => [n, t.description ?? ''])),
+        );
       }
       return generateText({ ...args, model: mockModel } as Parameters<
         typeof generateText
@@ -428,6 +473,18 @@ describe('describeUnavailableTool', () => {
     expect(msg).not.toContain('Did you mean');
     expect(msg).toContain('get_feed, return_result');
   });
+
+  it.each(['', '   '])(
+    'a call without a name (%j) is told so, with the real names and no arbitrary hint',
+    (bad) => {
+      const msg = describeUnavailableTool(bad, ['get_feed', 'return_result']);
+      expect(msg).toContain('The tool call had no tool name: call a tool by its exact name.');
+      // Every name "includes" the empty string: no tool may be suggested for it.
+      expect(msg).not.toContain('Did you mean');
+      expect(msg).not.toContain('The tool ""');
+      expect(msg).toContain('get_feed, return_result');
+    },
+  );
 });
 
 describe('shortBlockReason', () => {
@@ -1084,9 +1141,11 @@ describe('executeJob', () => {
 
     expect(rows[0]?.status).toBe('completed');
     expect(rows[0]?.result).toBe('Here is my answer to the task.');
-    expect(rows[0]?.inputTokens).toBe(10);
-    expect(rows[0]?.outputTokens).toBe(5);
-    expect(rows[0]?.turn).toBe(1); // single LLM call → turn 1
+    // The prose turn is re-read once (#600, llm/action-recheck.ts), and that
+    // call is billed too: 10/5 for the turn + 10/5 for the re-read.
+    expect(rows[0]?.inputTokens).toBe(20);
+    expect(rows[0]?.outputTokens).toBe(10);
+    expect(rows[0]?.turn).toBe(1); // one turn: the re-read is not a turn of its own
     // Wall-clock timer: should have elapsed time (>= 0, often > 0). On very
     // fast runs Date.now() can resolve to the same ms, so assert non-null.
     expect(rows[0]?.totalDurationMs).not.toBeNull();
@@ -1261,6 +1320,7 @@ describe('executeJob', () => {
         agentId: seed.agentId,
         channel: 'telegram',
         chatId: '12345',
+        chatChannel: 'telegram',
         task: 'Say hi on Telegram',
         status: 'pending',
         messages: [],
@@ -1310,6 +1370,295 @@ describe('executeJob', () => {
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 
+  // #559 — run 806a2218: a delegated Researcher (channel `internal`) inherited
+  // its parent's chat_id, never its send tools, and its prompt ordered
+  // `telegram_send_message` all the same. The prompt is now built from the
+  // tool list the job runs with: the stored system_prompt is the proof.
+  it('the stored prompt names telegram_send_message only for the job that holds it (#559) @cap:assigner-outils/moteur', async () => {
+    const [parent] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '199791464',
+        chatChannel: 'telegram',
+        task: 'Parent run',
+        status: 'completed',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    const [child] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        parentJobId: parent!.id,
+        delegationDepth: 1,
+        channel: 'internal',
+        chatId: '199791464',
+        task: 'Research something and report back',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+
+    await executeJob(
+      child!.id as JobId,
+      makeDeps(makeMockLlmClient([{ text: 'Findings: none.' }])),
+      testEnv,
+    );
+    const [childRow] = await db
+      .select({ systemPrompt: agentJobs.systemPrompt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, child!.id));
+    expect(childRow?.systemPrompt).toContain('## Delegated sub-task');
+    expect(childRow?.systemPrompt).not.toContain('telegram_send_message');
+    expect(childRow?.systemPrompt).not.toContain('SAME-TURN MULTI-CALL REQUIRED');
+    expect(childRow?.systemPrompt).not.toContain('- delivery:');
+
+    // The same agent, holding its own token on a Telegram job: the channel's
+    // facts are there, because the tool is — built from the Telegram adapter's
+    // declaration (#613), and no hand-written channel rule.
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+    try {
+      const [tgJob] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '199791464',
+          chatChannel: 'telegram',
+          task: 'Say hi',
+          status: 'pending',
+          messages: [],
+          chainCount: 0,
+        })
+        .returning();
+      await executeJob(
+        tgJob!.id as JobId,
+        makeDeps(
+          makeMockLlmClient([
+            {
+              toolCalls: [
+                { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'hi' } },
+                { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+              ],
+            },
+          ]),
+        ),
+        testEnv,
+      );
+      const [tgRow] = await db
+        .select({ systemPrompt: agentJobs.systemPrompt })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, tgJob!.id));
+      expect(tgRow?.systemPrompt).toContain(
+        '- delivery: `telegram_send_message` reaches the user on telegram, the only way your ' +
+          'replies reach them. Text arrives exactly as typed: no markup renders, so markdown ' +
+          '(headings, tables, **bold**, escapes) shows literally. A long text is split into ' +
+          'several messages automatically, ' +
+          'so send each reply once, whole.',
+      );
+      for (const gone of ['## Channel etiquette', 'MarkdownV2', '4096']) {
+        expect({ gone, found: tgRow?.systemPrompt?.includes(gone) }).toEqual({
+          gone,
+          found: false,
+        });
+      }
+    } finally {
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    }
+  });
+
+  // #559, revue Codex passe 1, P1 2 — une reprise (approbation, délégation,
+  // redémarrage) réutilisait `job.systemPrompt` tel quel. Écrit pour la liste
+  // d'outils du premier passage, il pouvait nommer un outil retiré pendant
+  // l'attente. Le prompt stocké porte maintenant sa liste : même liste, il est
+  // gardé mot pour mot (cache de préfixe) ; liste changée, il est réécrit.
+  it('a resumed job keeps its stored prompt when its tools are unchanged, and rewrites it when a tool was withdrawn (#559) @cap:assigner-outils/moteur', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+    try {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '199791464',
+          chatChannel: 'telegram',
+          task: 'Say hi',
+          status: 'pending',
+          messages: [],
+          chainCount: 0,
+        })
+        .returning();
+      const sendAndFinish = () =>
+        makeMockLlmClient([
+          {
+            toolCalls: [
+              { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'hi' } },
+              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ]);
+      await executeJob(job!.id as JobId, makeDeps(sendAndFinish()), testEnv);
+      const [first] = await db
+        .select({ systemPrompt: agentJobs.systemPrompt, tools: agentJobs.systemPromptTools })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job!.id));
+      expect(first?.systemPrompt).toContain('- delivery: `telegram_send_message` reaches the user');
+      expect(first?.tools).toContain('telegram_send_message');
+
+      // Resume with the SAME tools: the stored prompt is reused verbatim. A
+      // sentinel stands in for it so a rebuild could not pass unnoticed.
+      const SENTINEL = 'STORED PROMPT, SAME TOOLS';
+      await db
+        .update(agentJobs)
+        .set({ systemPrompt: SENTINEL, status: 'pending' })
+        .where(eq(agentJobs.id, job!.id));
+      const samePrompts: unknown[] = [];
+      await executeJob(
+        job!.id as JobId,
+        makeDeps(makeMockLlmClient([{ text: 'Done.' }], samePrompts)),
+        testEnv,
+      );
+      expect(JSON.stringify(samePrompts[0])).toContain(SENTINEL);
+
+      // The owner withdraws the credential while the job waits: the send tools
+      // are gone from the recalculated list, so the prompt is rewritten.
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+      await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, job!.id));
+      const afterPrompts: unknown[] = [];
+      await executeJob(
+        job!.id as JobId,
+        makeDeps(makeMockLlmClient([{ text: 'Done.' }], afterPrompts)),
+        testEnv,
+      );
+      const seen = JSON.stringify(afterPrompts[0]);
+      expect(seen).not.toContain(SENTINEL);
+      expect(seen).not.toContain('- delivery:');
+      const [after] = await db
+        .select({ systemPrompt: agentJobs.systemPrompt, tools: agentJobs.systemPromptTools })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job!.id));
+      expect(after?.systemPrompt).not.toContain('telegram_send_message');
+      expect(after?.tools).not.toContain('telegram_send_message');
+    } finally {
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    }
+  });
+
+  // Revue de #655 — un job en attente pendant une mise à jour reprenait avec
+  // le prompt écrit par l'ANCIENNE version et les outils de la nouvelle : ce
+  // que la mise à jour avait déplacé entre les deux n'était plus dit nulle
+  // part. Le prompt stocké porte la version qui l'a écrit ; même version et
+  // mêmes outils, il est gardé mot pour mot (cache de préfixe) ; écrit par une
+  // autre version, ou avant que la version soit notée, il est réécrit.
+  it('a resumed job keeps its stored prompt under the same version, and rewrites one written by another version @cap:configurer-agent/moteur', async () => {
+    const previous = process.env['NODAL_VERSION'];
+    process.env['NODAL_VERSION'] = '9.9.1';
+    try {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'api',
+          task: 'Say hi',
+          status: 'pending',
+          messages: [],
+          chainCount: 0,
+        })
+        .returning();
+      const run = async (): Promise<string> => {
+        const prompts: unknown[] = [];
+        await executeJob(
+          job!.id as JobId,
+          makeDeps(makeMockLlmClient([{ text: 'Done.' }], prompts)),
+          testEnv,
+        );
+        return JSON.stringify(prompts[0]);
+      };
+      const stored = async () =>
+        (
+          await db
+            .select({
+              prompt: agentJobs.systemPrompt,
+              version: agentJobs.systemPromptVersion,
+            })
+            .from(agentJobs)
+            .where(eq(agentJobs.id, job!.id))
+        )[0]!;
+      const pendWith = (systemPrompt: string, systemPromptVersion: string | null) =>
+        db
+          .update(agentJobs)
+          .set({ systemPrompt, systemPromptVersion, status: 'pending' })
+          .where(eq(agentJobs.id, job!.id));
+
+      await run();
+      expect((await stored()).version).toBe('9.9.1');
+
+      // A sentinel stands in for the stored prompt, so a rebuild cannot pass unnoticed.
+      const SENTINEL = 'STORED PROMPT OF THIS JOB';
+      const cases: Array<{ label: string; version: string | null; kept: boolean }> = [
+        { label: 'same version, same tools', version: '9.9.1', kept: true },
+        { label: 'written by the previous version', version: '9.9.0', kept: false },
+        { label: 'written before the version was recorded', version: null, kept: false },
+      ];
+      const seen: Record<string, { kept: boolean; version: string | null }> = {};
+      const want: Record<string, { kept: boolean; version: string | null }> = {};
+      for (const c of cases) {
+        await pendWith(SENTINEL, c.version);
+        const sent = await run();
+        const after = await stored();
+        seen[c.label] = { kept: sent.includes(SENTINEL), version: after.version };
+        want[c.label] = { kept: c.kept, version: '9.9.1' };
+        if (!c.kept) expect(after.prompt).toContain('9.9.1');
+      }
+      // A runner that does not know its version (revue de #655, passe 2) :
+      // l'inconnu ne décide rien et n'écrit rien. Le prompt stocké sous 0.9.4
+      // est gardé, et sa version n'est pas écrasée par NULL — sinon la reprise
+      // suivante sous 0.9.4 le réécrirait encore.
+      delete process.env['NODAL_VERSION'];
+      await pendWith(SENTINEL, '0.9.4');
+      const sentUnknown = await run();
+      const afterUnknown = await stored();
+      seen['runner without a known version'] = {
+        kept: sentUnknown.includes(SENTINEL) && afterUnknown.prompt === SENTINEL,
+        version: afterUnknown.version,
+      };
+      want['runner without a known version'] = { kept: true, version: '0.9.4' };
+      // Its tool list changed: the prompt is rewritten (the tools decide), and
+      // the known version stored is still not overwritten by NULL.
+      await pendWith(SENTINEL, '0.9.4');
+      await db
+        .update(agentJobs)
+        .set({ systemPromptTools: ['a_tool_withdrawn_meanwhile'] })
+        .where(eq(agentJobs.id, job!.id));
+      const sentTools = await run();
+      const afterTools = await stored();
+      seen['runner without a known version, tools changed'] = {
+        kept: sentTools.includes(SENTINEL),
+        version: afterTools.version,
+      };
+      want['runner without a known version, tools changed'] = { kept: false, version: '0.9.4' };
+      expect(seen).toEqual(want);
+    } finally {
+      if (previous === undefined) delete process.env['NODAL_VERSION'];
+      else process.env['NODAL_VERSION'] = previous;
+    }
+  });
+
   // ─── Anti-spam guard: consecutive delivery-only turns ─────────────────────
 
   it('anti-spam: caps consecutive delivery-only turns at maxConsecutiveDeliveryTurns and fails loud', async () => {
@@ -1328,6 +1677,7 @@ describe('executeJob', () => {
         agentId: seed.agentId,
         channel: 'telegram',
         chatId: '12345',
+        chatChannel: 'telegram',
         task: 'Reply on Telegram',
         status: 'pending',
         messages: [],
@@ -1405,6 +1755,7 @@ describe('executeJob', () => {
         agentId: seed.agentId,
         channel: 'telegram',
         chatId: '12345',
+        chatChannel: 'telegram',
         task: 'Reply on Telegram',
         status: 'pending',
         messages: [],
@@ -1469,6 +1820,8 @@ describe('executeJob', () => {
         agentId: seed.agentId,
         channel: 'cron',
         chatId: '12345',
+        // What the tick writes on auto: the owner's Telegram chat (#649).
+        chatChannel: 'telegram',
         task: 'Nettoyage quotidien',
         status: 'pending',
         messages: [{ role: 'user', content: 'Nettoyage quotidien' }],
@@ -1553,6 +1906,291 @@ describe('executeJob', () => {
     expect(sendTelegramMessageMock).not.toHaveBeenCalled();
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  // #649 — bench runs 06a4ab7d / 12f2972f: a request that came through the MCP
+  // server (`run_task`, no chat) read « `telegram_send_message` reaches the user
+  // on telegram », the agent's FALLBACK channel stated as the path of its
+  // answer. The answer went to the owner's Telegram, and the MCP caller read
+  // the narration line the job ended on. Where the answer goes is computed once
+  // from the job's origin, and the prompt the model receives states it.
+  it('the answer goes back where the request came from: an MCP job is answered by its result, a chat or a routine that named one by the send tool (#649) @cap:parler-par-canal-externe/moteur', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+    try {
+      const run = async (
+        values: {
+          channel: string;
+          chatId: string | null;
+          chatChannel?: string | null;
+          triggerContext?: JobTriggerContext;
+        },
+        turns: Parameters<typeof makeMockLlmClient>[0],
+      ) => {
+        const [job] = await db
+          .insert(agentJobs)
+          .values({
+            entityId: seed.entityId,
+            agentId: seed.agentId,
+            task: 'What is 1388 divided by 5?',
+            status: 'pending',
+            messages: [{ role: 'user', content: 'What is 1388 divided by 5?' }],
+            chainCount: 0,
+            ...values,
+          })
+          .returning();
+        const prompts: unknown[] = [];
+        const toolDescriptions: Array<Record<string, string>> = [];
+        sendTelegramMessageMock.mockClear();
+        await executeJob(
+          job!.id as JobId,
+          makeDeps(
+            makeMockLlmClient(turns, prompts, undefined, undefined, undefined, toolDescriptions),
+          ),
+          testEnv,
+        );
+        const [row] = await db
+          .select({
+            systemPrompt: agentJobs.systemPrompt,
+            result: agentJobs.result,
+            status: agentJobs.status,
+          })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, job!.id));
+        const deliveryLine =
+          (row?.systemPrompt ?? '').split('\n').find((l) => l.startsWith('- delivery:')) ?? '';
+        return {
+          row,
+          deliveryLine,
+          firstRequest: JSON.stringify(prompts[0]),
+          firstTools: toolDescriptions[0] ?? {},
+        };
+      };
+
+      // MCP: the reply is the result the caller reads; the send tool is not its path.
+      const mcp = await run(
+        {
+          channel: 'mcp',
+          chatId: null,
+          triggerContext: { type: 'mcp', caller: 'bench', triggeredAt: new Date().toISOString() },
+        },
+        [{ text: '277.6' }],
+      );
+      expect(
+        mcp.deliveryLine.startsWith(
+          "- delivery: your reply is this job's result, returned to where the request came from. " +
+            '`telegram_send_message` sends a separate message to your owner on telegram. ',
+        ),
+      ).toBe(true);
+      expect(mcp.deliveryLine).not.toContain('reaches the user');
+      // What the model was actually sent, not only what was stored.
+      expect(mcp.firstRequest).toContain("your reply is this job's result");
+      expect(mcp.firstRequest).not.toContain('reaches the user on telegram');
+      // Nothing the model received orders the answer through a send tool: not
+      // the prompt, not one of the tool definitions it was handed (review of
+      // #657, pass 1). The send tool is there, its description is read.
+      expect(Object.keys(mcp.firstTools)).toContain('telegram_send_message');
+      expect(Object.keys(mcp.firstTools)).toContain('return_result');
+      expect({
+        prompt: unconditionalSendOrders(mcp.row?.systemPrompt ?? ''),
+        tools: Object.entries(mcp.firstTools)
+          .map(([tool, d]) => ({ tool, orders: unconditionalSendOrders(d) }))
+          .filter((t) => t.orders.length > 0),
+      }).toEqual({ prompt: [], tools: [] });
+      expect({ status: mcp.row?.status, result: mcp.row?.result }).toEqual({
+        status: 'completed',
+        result: '277.6',
+      });
+      expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+
+      // A Telegram request: unchanged, the send tool is the only path.
+      const tg = await run({ channel: 'telegram', chatId: '199791464', chatChannel: 'telegram' }, [
+        {
+          toolCalls: [
+            { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: '277.6' } },
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]);
+      expect(
+        tg.deliveryLine.startsWith(
+          '- delivery: `telegram_send_message` reaches the user on telegram, the only way your replies reach them. ',
+        ),
+      ).toBe(true);
+
+      // A routine that asked for its confirmation on Telegram: unchanged.
+      const cron = await run(
+        {
+          channel: 'cron',
+          chatId: '12345',
+          chatChannel: 'telegram',
+          triggerContext: {
+            type: 'cron',
+            scheduleName: 'daily',
+            prevRunAt: null,
+            notifyChannel: 'telegram',
+          },
+        },
+        [
+          {
+            toolCalls: [
+              { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'Done.' } },
+              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+      );
+      expect(
+        cron.deliveryLine.startsWith(
+          '- delivery: `telegram_send_message` reaches the user on telegram, the only way your replies reach them. ',
+        ),
+      ).toBe(true);
+      expect(sendTelegramMessageMock).toHaveBeenCalledWith(
+        expect.objectContaining({ chatId: '12345', text: 'Done.' }),
+      );
+
+      // A dashboard task sent with "send via Telegram": the requester named the
+      // chat, so the reply goes there, and the delivery guard holds it to it
+      // (the same rule as a routine's confirmation).
+      const dash = await run(
+        { channel: 'dashboard', chatId: '199791464', chatChannel: 'telegram' },
+        [
+          { text: '277.6' },
+          {
+            toolCalls: [
+              { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: '277.6' } },
+              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+      );
+      expect(
+        dash.deliveryLine.startsWith(
+          '- delivery: `telegram_send_message` reaches the user on telegram, the only way your replies reach them. ',
+        ),
+      ).toBe(true);
+      expect(sendTelegramMessageMock).toHaveBeenCalledWith(
+        expect.objectContaining({ chatId: '199791464', text: '277.6' }),
+      );
+
+      // Review of #657, pass 3: a routine's chat comes from THE function every
+      // routine writer calls (tick, "Run now", run_schedule). On auto with the
+      // owner's Telegram chat, it carries Telegram and the confirmation goes
+      // out; with an explicit id on auto, nothing says its platform, so the
+      // reply is the result and nothing is sent anywhere.
+      await db.insert(telegramAllowedChats).values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        chatId: 'owner-649',
+        role: 'owner',
+        status: 'active',
+      });
+      try {
+        const routine = { agentId: seed.agentId, notifyOnSuccess: true, notifyChannel: null };
+        const ownerChat = await resolveScheduleNotifyChat(db as unknown as AnyDrizzleDb, {
+          ...routine,
+          chatId: null,
+        });
+        expect(ownerChat).toEqual({ chatId: 'owner-649', chatChannel: 'telegram' });
+        const confirmed = await run({ channel: 'cron', ...ownerChat }, [
+          { text: 'Done.' },
+          {
+            toolCalls: [
+              { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'Done.' } },
+              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ]);
+        expect({
+          status: confirmed.row?.status,
+          sent: sendTelegramMessageMock.mock.calls.map((c) => (c[0] as { chatId: string }).chatId),
+        }).toEqual({ status: 'completed', sent: ['owner-649'] });
+
+        const explicitChat = await resolveScheduleNotifyChat(db as unknown as AnyDrizzleDb, {
+          ...routine,
+          chatId: 'team-group-999',
+        });
+        expect(explicitChat).toEqual({ chatId: 'team-group-999', chatChannel: null });
+        const explicit = await run({ channel: 'cron', ...explicitChat }, [{ text: 'Done.' }]);
+        expect({
+          status: explicit.row?.status,
+          result: explicit.row?.result,
+          sends: sendTelegramMessageMock.mock.calls.length,
+        }).toEqual({ status: 'completed', result: 'Done.', sends: 0 });
+      } finally {
+        await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
+      }
+
+      // The same task once the bot token is withdrawn: no send tool is armed,
+      // so nothing can reach the named chat. The reply is the result, and the
+      // job is not failed for a send it could not make (review of #657, pass 1).
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+      const unarmed = await run(
+        { channel: 'dashboard', chatId: '199791464', chatChannel: 'telegram' },
+        [{ text: '277.6' }],
+      );
+      expect({
+        status: unarmed.row?.status,
+        result: unarmed.row?.result,
+        sends: sendTelegramMessageMock.mock.calls.length,
+      }).toEqual({ status: 'completed', result: '277.6', sends: 0 });
+
+      // Review of #657, pass 2 (blocker): the same Telegram chat, token still
+      // withdrawn, but a Discord binding is active. The fallback channel is now
+      // Discord and the send tool is armed for it; the named chat is still a
+      // Telegram chat. Nothing may go to Discord with a Telegram chat id: the
+      // reply is the result. The fake adapter forwards every channel into
+      // sendTelegramMessageMock, so zero calls means zero sends anywhere.
+      await db.insert(channelBindings).values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'discord',
+        credentials: JSON.stringify({ botToken: 'discord-tok' }),
+        enabled: true,
+      });
+      try {
+        for (const values of [
+          { channel: 'dashboard', chatId: '199791464', chatChannel: 'telegram' },
+          // A routine left on auto: its chat is the owner's Telegram 1:1.
+          {
+            channel: 'cron',
+            chatId: '199791464',
+            chatChannel: 'telegram',
+            triggerContext: {
+              type: 'cron',
+              scheduleName: 'daily',
+              prevRunAt: null,
+              notifyChannel: null,
+            } as JobTriggerContext,
+          },
+        ]) {
+          const other = await run(values, [{ text: '277.6' }]);
+          expect({
+            channel: values.channel,
+            status: other.row?.status,
+            result: other.row?.result,
+            sends: sendTelegramMessageMock.mock.calls.length,
+            line: other.deliveryLine.includes('reaches the user on'),
+          }).toEqual({
+            channel: values.channel,
+            status: 'completed',
+            result: '277.6',
+            sends: 0,
+            line: false,
+          });
+        }
+      } finally {
+        await db
+          .delete(channelBindings)
+          .where(
+            and(eq(channelBindings.agentId, seed.agentId), eq(channelBindings.channel, 'discord')),
+          );
+      }
+    } finally {
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    }
   });
 
   // ─── Conversation-first chat: runChatTurn never creates a job ─────────────
@@ -1674,18 +2312,23 @@ describe('executeJob', () => {
 
     // Turn 1: the model NARRATES ("Je lance X") with NO tool call — the MiniMax
     // slip (~1 in 5). The escalation-recovery re-prompt then yields run_task.
-    const llmClient = makeMockLlmClient([
-      { text: 'Je lance Displacer dans le Cortex.' },
-      {
-        toolCalls: [
-          {
-            toolCallId: 'tc-recheck',
-            toolName: 'run_task',
-            args: { instruction: 'Lancer Displacer dans le Cortex' },
-          },
-        ],
-      },
-    ]);
+    const llmClient = makeMockLlmClient(
+      [{ text: 'Je lance Displacer dans le Cortex.' }],
+      undefined,
+      undefined,
+      undefined,
+      [
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-recheck',
+              toolName: 'run_task',
+              args: { instruction: 'Lancer Displacer dans le Cortex' },
+            },
+          ],
+        },
+      ],
+    );
     const { runChatTurn } = await import('../../chat/run-chat-turn.ts');
     const result = await runChatTurn({
       deps: makeDeps(llmClient),
@@ -1829,6 +2472,125 @@ describe('executeJob', () => {
     expect(flat).toContain('DISPLACER-REPORT');
     // …and the blind static placeholder is gone.
     expect(flat).not.toContain('Task dispatched');
+  });
+
+  // #562, revue Codex de #576 passe 1, P1 (a). `failJob` remplit un résultat
+  // vide avec la compilation des enfants — le texte d'AUTRES jobs, recompilé
+  // par le runner. Le tour suivant du fil le rejouait comme ce que l'agent
+  // avait envoyé. Par le VRAI producteur, jusqu'au prompt réellement envoyé.
+  it('a parent failed by failJob: its children compiled into result never reach the next turn as the agent reply (#562) @cap:reprendre-conversation/moteur', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: 'fail-relay-chat',
+        origin: 'user',
+      })
+      .returning({ id: conversations.id });
+    const [parent] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        status: 'processing',
+        channel: 'telegram',
+        chatId: 'fail-relay-chat',
+        chatChannel: 'telegram',
+        conversationId: conv!.id,
+        task: 'recherche la longueur de Planck',
+        messages: [
+          { role: 'user', content: 'recherche la longueur de Planck' },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId: 'tc-1',
+                toolName: 'telegram_send_message',
+                input: { text: 'Je lance la recherche.' },
+              },
+            ],
+          },
+        ],
+      })
+      .returning({ id: agentJobs.id });
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      parentJobId: parent!.id,
+      status: 'completed',
+      channel: 'internal',
+      task: 'Recherche web : longueur de Planck',
+      result: 'CHILD-FINDINGS: 1.616e-35 m',
+      completedAt: new Date(),
+    });
+    const { failJob } = await import('../../job/state.ts');
+    await failJob(db as Parameters<typeof failJob>[0], parent!.id, 'turn_limit');
+    const [failed] = await db
+      .select({ result: agentJobs.result, resultKind: agentJobs.resultKind })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent!.id));
+    // The producer states what it wrote: other jobs' text, recompiled.
+    expect(failed?.result).toContain('CHILD-FINDINGS');
+    expect(failed?.resultKind).toBe('relay');
+
+    const [next] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: 'fail-relay-chat',
+        chatChannel: 'telegram',
+        conversationId: conv!.id,
+        task: 'et alors ?',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+    const prompts: unknown[] = [];
+    await executeJob(
+      next!.id as JobId,
+      makeDeps(makeMockLlmClient([{ text: 'ok' }], prompts)),
+      testEnv,
+    );
+    const sent = prompts[0] as Array<{ role: string; content: unknown }>;
+    const said = (role: string) =>
+      JSON.stringify(sent.filter((m) => m.role === role).map((m) => m.content));
+    expect(said('assistant')).toContain('Je lance la recherche.');
+    expect(said('assistant')).not.toContain('CHILD-FINDINGS');
+    expect(said('user')).toContain('CHILD-FINDINGS');
+  });
+
+  // Revue Codex de #576, passe 2 : NULL ne dit pas « écrit par le runner ».
+  // L'explication générique de failJob est du runner : il le dit lui-même.
+  it('failJob with nothing to say records its generic explanation as the runner’s (#562)', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        status: 'processing',
+        channel: 'api',
+        task: 'nothing to compile',
+      })
+      .returning({ id: agentJobs.id });
+    const { failJob } = await import('../../job/state.ts');
+    await failJob(db as Parameters<typeof failJob>[0], job!.id, 'turn_limit');
+    const [row] = await db
+      .select({
+        result: agentJobs.result,
+        resultKind: agentJobs.resultKind,
+        runnerNotes: agentJobs.runnerNotes,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job!.id));
+    expect(row?.result).toContain('could not be completed (turn_limit)');
+    expect(row?.resultKind).toBeNull();
+    expect(row?.runnerNotes).toEqual([row?.result]);
   });
 
   it('runChatTurn: a completed escalation surfaces the delegated child output (completeJob fills the parent, chat reflects it)', async () => {
@@ -2126,6 +2888,7 @@ describe('executeJob', () => {
         agentId: seed.agentId,
         channel: 'telegram',
         chatId: '12345',
+        chatChannel: 'telegram',
         task: 'Reply on Telegram',
         status: 'pending',
         messages: [],
@@ -2170,6 +2933,7 @@ describe('executeJob', () => {
         agentId: seed.agentId,
         channel: 'telegram',
         chatId: '12345',
+        chatChannel: 'telegram',
         task: 'Reply on Telegram',
         status: 'pending',
         messages: [],
@@ -2227,6 +2991,7 @@ describe('executeJob', () => {
         agentId: seed.agentId,
         channel: 'telegram',
         chatId: '12345',
+        chatChannel: 'telegram',
         task: 'Reply on Telegram',
         status: 'pending',
         messages: [],
@@ -2273,6 +3038,7 @@ describe('executeJob', () => {
         agentId: seed.agentId,
         channel: 'telegram',
         chatId: '12345',
+        chatChannel: 'telegram',
         task: 'Reply on Telegram (API will time out)',
         status: 'pending',
         messages: [],
@@ -2341,6 +3107,7 @@ describe('executeJob', () => {
         agentId: seed.agentId,
         channel: 'discord',
         chatId: 'discord-chan-42',
+        chatChannel: 'discord',
         task: 'Reply on Discord',
         status: 'pending',
         messages: [],
@@ -2425,6 +3192,7 @@ describe('executeJob', () => {
         agentId: seed.agentId,
         channel: 'slack',
         chatId: 'slack-chan-7',
+        chatChannel: 'slack',
         task: 'Reply on Slack',
         status: 'pending',
         messages: [],
@@ -2592,6 +3360,7 @@ describe('executeJob', () => {
         agentId: seed.agentId,
         channel: 'telegram',
         chatId: '12345',
+        chatChannel: 'telegram',
         task: 'Send telegram message with retry',
         status: 'pending',
         messages: [],
@@ -2657,6 +3426,7 @@ describe('executeJob', () => {
         agentId: seed.agentId,
         channel: 'telegram',
         chatId: '12345',
+        chatChannel: 'telegram',
         task: 'Send and finalize',
         status: 'pending',
         messages: [],
@@ -2712,7 +3482,8 @@ describe('executeJob', () => {
     const job = await createTestJob(db, seed);
 
     // Two-turn scenario: first calls save_memory, second returns final text.
-    // Mock returns 10/5 per call → expected 20/10 totals after 2 calls.
+    // Mock returns 10/5 per call → 30/15 after 3 calls: the two turns and the
+    // re-read of the final prose turn (#600).
     const llmClient = makeMockLlmClient([
       {
         toolCalls: [
@@ -2738,9 +3509,9 @@ describe('executeJob', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
 
-    expect(rows[0]?.inputTokens).toBe(20);
-    expect(rows[0]?.outputTokens).toBe(10);
-    expect(rows[0]?.turn).toBe(2); // two LLM calls → turn 2
+    expect(rows[0]?.inputTokens).toBe(30);
+    expect(rows[0]?.outputTokens).toBe(15);
+    expect(rows[0]?.turn).toBe(2); // two turns; the re-read is not a turn
   });
 
   it('completes when LLM calls dashboard_publish + return_result (Brique 33)', async () => {
@@ -3480,6 +4251,177 @@ describe('executeJob', () => {
     expect(stored?.systemPrompt).not.toContain('Routine state');
   });
 
+  // ─── #567 : un « arrête » envoyé sur un canal atteint le run lancé par un
+  // message PRÉCÉDENT de la même conversation.
+  //
+  // Chaque message d'un canal crée un job de tête neuf. Le job de tête d'une
+  // conversation reçoit donc list_conversation_runs / stop_conversation_run, et
+  // eux seuls : un délégué ou un job sans conversation ne les voit pas. Vérifié
+  // sur la liste RÉELLE remise au modèle, puis sur les lignes en base après
+  // l'appel du modèle.
+
+  it('#567: the head job of a conversation stops the delegate an earlier message started @cap:parler-par-canal-externe/moteur', async () => {
+    const conversationId = randomUUID();
+    const insertJob = async (values: Partial<typeof agentJobs.$inferInsert>) => {
+      const [row] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          // WhatsApp : un canal dont la réponse n'exige pas d'outil de livraison,
+          // la relance « livre sur Telegram » n'est pas le sujet ici.
+          channel: 'whatsapp',
+          conversationId,
+          task: 'x',
+          messages: [],
+          chainCount: 0,
+          ...values,
+        })
+        .returning({ id: agentJobs.id });
+      if (!row) throw new Error('failed to insert job');
+      return row.id;
+    };
+    // Message 1 : un run qui a délégué ; le délégué attend une approbation.
+    const earlierHead = await insertJob({
+      status: 'awaiting_delegation',
+      task: 'Fais un portrait',
+    });
+    const delegate = await insertJob({
+      status: 'awaiting_approval',
+      task: 'Generate the portrait',
+      parentJobId: earlierHead,
+    });
+    const [approval] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: delegate,
+        agentId: seed.agentId,
+        toolName: 'run_command',
+        toolInput: { command: 'python main.py' },
+      })
+      .returning({ id: approvalRequests.id });
+    // Message 2 : « Arrête !!! », un job de tête neuf.
+    const stopJob = await insertJob({ status: 'pending', task: 'Arrête !!!' });
+
+    const toolKeysPerCall: string[][] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          toolCalls: [{ toolCallId: 'tc-list', toolName: 'list_conversation_runs', args: {} }],
+        },
+        {
+          toolCalls: [{ toolCallId: 'tc-stop', toolName: 'stop_conversation_run', args: {} }],
+        },
+        {
+          text: 'Arrêté.',
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      undefined,
+      undefined,
+      toolKeysPerCall,
+    );
+
+    const result = await executeJob(stopJob as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+    expect(toolKeysPerCall[0]).toEqual(
+      expect.arrayContaining(['list_conversation_runs', 'stop_conversation_run']),
+    );
+
+    // Ce que le modèle a lu : le run du message précédent, avec son délégué.
+    const [listed] = await db
+      .select({ toolOutput: toolCalls.toolOutput })
+      .from(toolCalls)
+      .where(and(eq(toolCalls.jobId, stopJob), eq(toolCalls.toolName, 'list_conversation_runs')));
+    expect(listed?.toolOutput).toContain(earlierHead);
+    expect(listed?.toolOutput).toContain(delegate);
+    expect(listed?.toolOutput).toContain(approval!.id);
+
+    // Ce qui a changé en base : le run arrêté, son approbation close.
+    const rows = await db
+      .select({ id: agentJobs.id, status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.conversationId, conversationId));
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.status]))).toEqual({
+      [earlierHead]: 'cancelled',
+      [delegate]: 'cancelled',
+      [stopJob]: 'completed',
+    });
+    const [req] = await db
+      .select({ status: approvalRequests.status, resolvedBy: approvalRequests.resolvedBy })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, approval!.id));
+    expect(req).toEqual({ status: 'expired', resolvedBy: 'system:job_cancelled' });
+  });
+
+  it('#567: a delegated job and a job outside any conversation do NOT get the conversation-run tools', async () => {
+    const conversationId = randomUUID();
+    const [head] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'whatsapp',
+        conversationId,
+        task: 'head',
+        status: 'completed',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+    const [delegated] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'whatsapp',
+        conversationId,
+        parentJobId: head!.id,
+        task: 'delegated work',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+    const [cron] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'cron',
+        task: 'nightly digest',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+
+    for (const jobId of [delegated!.id, cron!.id]) {
+      const toolKeysPerCall: string[][] = [];
+      const llmClient = makeMockLlmClient(
+        [
+          {
+            text: 'Done.',
+            toolCalls: [
+              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+        undefined,
+        undefined,
+        toolKeysPerCall,
+      );
+      const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('completed');
+      const tools = new Set(toolKeysPerCall[0]);
+      expect(tools.has('list_conversation_runs')).toBe(false);
+      expect(tools.has('stop_conversation_run')).toBe(false);
+    }
+  });
+
   // ─── P5 (causality study, 2026-07-22): dashboard_publish is a delivery
   // tool too — a delegated worker (job.parentJobId set) must not get it,
   // consistent with the channel-send tools B3 already strips from workers.
@@ -3619,6 +4561,8 @@ describe('executeJob', () => {
         agentId: seed.agentId,
         channel: 'telegram',
         chatId: '12345',
+        // As channels/turn.ts writes it: the chat with its channel (#649).
+        chatChannel: 'telegram',
         task: 'Context test',
         status: 'pending',
         messages: [],
@@ -5191,6 +6135,7 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
         agentId: approvalSeed.agentId,
         channel: 'telegram',
         chatId: '199791464',
+        chatChannel: 'telegram',
         task: 'Mémorise un truc important',
         status: 'pending',
         messages: [],
@@ -5653,7 +6598,8 @@ describe('reliability guards', () => {
     });
 
     // Real DB row: raw input persisted as 1000, but the budgeted EFFECTIVE input
-    // is only the 5 non-cached tokens.
+    // is only the 5 non-cached tokens. The re-read of the prose turn (#600)
+    // adds its own 10 uncached input tokens to both.
     const [row] = await db
       .select({
         status: agentJobs.status,
@@ -5665,8 +6611,8 @@ describe('reliability guards', () => {
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('completed');
     expect(row?.error).toBeNull();
-    expect(row?.inputTokens).toBe(1000);
-    expect(row?.effectiveInputTokens).toBe(5);
+    expect(row?.inputTokens).toBe(1010);
+    expect(row?.effectiveInputTokens).toBe(15);
   });
 
   it('Guard 1a still trips on FRESH tokens: same raw input, zero cache ⇒ token_budget_exceeded', async () => {
@@ -7373,6 +8319,7 @@ describe('Guard 1f: non-progress detector', () => {
         agentId: seed.agentId,
         channel: 'telegram',
         chatId: '12345',
+        chatChannel: 'telegram',
         task: 'Guard 1f S1 exemption test',
         status: 'pending',
         messages: [],
@@ -7455,6 +8402,7 @@ describe('Guard 1g — verify-before-assert nudge (cancel/undo intent)', () => {
         agentId: seed.agentId,
         channel: 'telegram',
         chatId: '12345',
+        chatChannel: 'telegram',
         task,
         status: 'pending',
         messages: [],
@@ -8034,8 +8982,12 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
       .values({
         entityId: entity!.id,
         agentId: orch!.id,
-        channel: 'api',
+        // As "Send via Telegram" records it (#649): a chat with its channel.
+        // An `/api/agent` chat on a non-transport channel has none, and no
+        // send tool would use it.
+        channel: 'dashboard',
         chatId: '555000333',
+        chatChannel: 'telegram',
         task: 'delegate the chart delivery',
         status: 'pending',
         messages: [],

@@ -33,6 +33,7 @@
 import { chatLabel, type ChannelChatRow } from '@/lib/chat-list.ts';
 import type { ConversationListRow } from '@/lib/conversation-actions.ts';
 import { formatClock, truncate } from '@/lib/format-time';
+import { conversationOf } from '@/lib/run-page.ts';
 
 /**
  * Une borne au titre d'une conversation du dashboard, et rien de plus.
@@ -145,8 +146,10 @@ export function conversationTimeLabel(at: Date | null, now: Date = new Date()): 
  * qu'elle peut laisser fermée. Montrer l'une des deux, c'est montrer celle qui
  * la fait revenir.
  */
-function strongestWaiting(kinds: readonly string[]): RowWaiting {
-  if (kinds.includes('question')) return 'question';
+export function strongestWaiting(kinds: readonly string[]): RowWaiting {
+  // La question d'un serveur MCP (élicitation, 0145) est une QUESTION adressée
+  // à la personne, pas une porte : elle se dit « Question asked ».
+  if (kinds.includes('question') || kinds.includes('elicitation')) return 'question';
   if (kinds.includes('approval')) return 'approval';
   // Un `kind` que le produit ne connaît pas ne devient PAS une pastille au
   // hasard : la ligne se tait, et la demande reste entière sur /approvals.
@@ -160,10 +163,11 @@ function waitingByConversation(waiting: readonly WaitingRequest[]): Map<string, 
     // Une demande sans conversation ne se pose sur AUCUNE ligne. Elle vient
     // d'une tâche de l'API ou d'une automation : lui choisir une ligne serait
     // inventer sa provenance.
-    if (w.conversationId === null || w.conversationId === '') continue;
-    const seen = byConv.get(w.conversationId);
+    const conversation = conversationOf(w.conversationId);
+    if (conversation === null) continue;
+    const seen = byConv.get(conversation);
     if (seen) seen.push(w.kind);
-    else byConv.set(w.conversationId, [w.kind]);
+    else byConv.set(conversation, [w.kind]);
   }
   return byConv;
 }

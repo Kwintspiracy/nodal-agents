@@ -226,22 +226,22 @@ describe('homepage rendering', () => {
     expect(markup).toContain(`v${VERSION} · ${HERO.pillSuffix}`);
   });
 
-  // The redesign names Instrument Sans and IBM Plex Mono outright. They are
-  // loaded through `next/font`, which a statically rendered page cannot show,
-  // so this reads the two files that have to agree: the layout declares the
-  // variable, the stylesheet uses it.
+  // The redesign names Instrument Sans and IBM Plex Mono outright. A statically
+  // rendered page cannot show a typeface, so this reads the files that have to
+  // agree: the layout imports the self-hosted stylesheet, the stylesheet
+  // declares the family over a committed woff2 file and defines the variable,
+  // and home.css uses it.
   it('loads the two hero typefaces and uses them in the hero only', () => {
     const layout = readFileSync(join(docsRoot, 'app', 'layout.tsx'), 'utf8');
+    const fonts = readFileSync(join(docsRoot, 'app', 'fonts', 'fonts.css'), 'utf8');
     const css = readFileSync(join(docsRoot, 'app', 'home.css'), 'utf8');
-    for (const [font, variable] of [
-      ['Instrument_Sans', '--font-instrument'],
-      ['IBM_Plex_Mono', '--font-plexmono'],
+    expect(layout).toContain("import './fonts/fonts.css';");
+    for (const [family, variable] of [
+      ['Instrument Sans', '--font-instrument'],
+      ['IBM Plex Mono', '--font-plexmono'],
     ]) {
-      expect(layout).toContain(font);
-      expect(layout).toContain(`variable: '${variable}'`);
-      expect(layout).toContain(
-        `\${${font === 'Instrument_Sans' ? 'instrumentSans' : 'plexMono'}.variable}`,
-      );
+      expect(fonts).toContain(`font-family: '${family}';`);
+      expect(fonts).toContain(`${variable}: '${family}', '${family} Fallback';`);
       expect(css).toContain(`var(${variable})`);
     }
     // Scoped to the hero: the docs pages and the rest of the homepage keep

@@ -30,6 +30,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import type { LanguageModel } from 'ai';
 import { findModelCatalogEntry } from '@nodal-agents/shared';
 import type { ProviderConfig } from '../types';
+import { providerFetch } from '../transport';
 
 const GOOGLE_HOSTS = new Set(['generativelanguage.googleapis.com']);
 
@@ -76,7 +77,7 @@ export function injectGoogleThinking(body: unknown, thinkingLevel?: string): unk
  */
 function createGoogleFetch(
   opts: { injectThinking: boolean; thinkingLevel?: string },
-  baseFetch: typeof globalThis.fetch = globalThis.fetch,
+  baseFetch: typeof globalThis.fetch = providerFetch,
 ): typeof globalThis.fetch {
   return async (
     input: Parameters<typeof globalThis.fetch>[0],

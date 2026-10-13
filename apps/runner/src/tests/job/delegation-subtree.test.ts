@@ -39,10 +39,15 @@ import {
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
+import {
+  parseDelegationOutcomePayload,
+  renderDelegationOutcome,
+  resumeDelegated,
+} from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
-import { executeJob } from '../../job/execute.ts';
+import { delegationRecordFromOutcome, executeJob } from '../../job/execute.ts';
 
 // ─── Interception du LLM ────────────────────────────────────────────────────
 
@@ -454,7 +459,9 @@ describe('le SUCCÈS pose sa livraison dans la transaction terminale @cap:organi
     const jobId = await insertJob({
       agentId: agentQuiLivre,
       channel: 'telegram',
+      // As channels/turn.ts writes it: the chat with the channel it came from.
       chatId: '4242',
+      chatChannel: 'telegram',
     });
     const deps = makeDeps(
       makeMockLlmClient([
@@ -497,5 +504,196 @@ describe('le SUCCÈS pose sa livraison dans la transaction terminale @cap:organi
     // Et elle PART : le drain qui suit le commit l'a remise à l'adaptateur.
     expect(envois.map((e) => e.text).join('\n')).toContain('no deliverable');
     expect(envois.every((e) => e.chatId === '4242')).toBe(true);
+
+    // The delegate holds its parent's chat WITH the channel it was recorded on
+    // (#649, review of #657 pass 4): the runner used to hand the parent's chat
+    // id to the delegation as an id "the orchestrator named itself", and the
+    // child was born with a chat and no channel.
+    const enfants = await db
+      .select({ chatId: agentJobs.chatId, chatChannel: agentJobs.chatChannel })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, jobId));
+    expect(enfants.length).toBeGreaterThan(0);
+    expect(enfants).toEqual(enfants.map(() => ({ chatId: '4242', chatChannel: 'telegram' })));
+  });
+});
+
+describe('un enregistrement BORNÉ ne fait jamais conclure « rien n’a échoué » @cap:organiser-equipe/moteur', () => {
+  // Revue Codex de la PR #712, passes 3 et 4. Un objet de décision trop grand
+  // était coupé comme du texte (passe 3) ; il est borné par construction, et
+  // quand sa liste ne nomme plus tous les échecs il le DIT
+  // (`sub_delegations_incomplete`). La passe 4 avait trouvé que le COMPTE des
+  // échecs sans nom, tenu par délégation rapporteuse alors que les issues
+  // nommées sont globales, comptait un échec deux fois et le gardait après sa
+  // réparation. Il n'y a plus de compte : un drapeau par délégation, que son
+  // dernier enregistrement remplace.
+
+  /** 300 issues aux noms longs, dont 200 échouées. */
+  const issuesLongues = (): Array<{ tool: string; status: 'failed' | 'delivered' }> =>
+    Array.from({ length: 300 }, (_, i) => ({
+      tool: `assign_specialiste_${String(i).padStart(3, '0')}_${'n'.repeat(60)}`,
+      status: i % 3 === 2 ? ('delivered' as const) : ('failed' as const),
+    }));
+
+  /**
+   * Le parent appelle `toolName`, l'enfant finit, et `resumeDelegated` — le
+   * point de passage de production — injecte son record chez le parent.
+   */
+  async function injecter(
+    parentId: string,
+    toolName: string,
+    callId: string,
+    outcome: Parameters<typeof resumeDelegated>[2],
+  ): Promise<void> {
+    const [avant] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentId));
+    await db
+      .update(agentJobs)
+      .set({
+        status: 'awaiting_delegation',
+        messages: [
+          ...(avant!.messages as unknown[]),
+          {
+            role: 'assistant',
+            content: [
+              { type: 'tool-call', toolCallId: callId, toolName, input: { task: 'fais-le' } },
+            ],
+          },
+        ],
+        pendingDelegation: { toolUseId: callId, toolName },
+      } as never)
+      .where(eq(agentJobs.id, parentId));
+    const childId = await insertJob({
+      channel: 'internal',
+      status: 'completed',
+      parentJobId: parentId,
+    });
+    await resumeDelegated(parentId as JobId, childId as JobId, outcome, db);
+  }
+
+  /** Le dernier `tool_result` injecté chez le parent, tel que son modèle le lit. */
+  async function dernierBloc(parentId: string): Promise<string> {
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentId));
+    return (
+      (row!.messages as Array<{ content: unknown }>).at(-1)!.content as Array<{
+        output: { value: string };
+      }>
+    )[0]!.output.value;
+  }
+
+  /** La DERNIÈRE ligne du harnais dans le résultat du job : celle de ce run. */
+  const derniereLigne = async (jobId: string): Promise<string> => {
+    const result = (await jobRow(jobId)).result ?? '';
+    return result.slice(result.lastIndexOf('[delegation stopped: '));
+  };
+
+  const nouveauParent = (): Promise<string> =>
+    insertJob({
+      status: 'awaiting_delegation',
+      messages: [{ role: 'user', content: 'Synthèse.' }],
+    });
+
+  it('300 sous-délégations dont 200 échouées : les noms gardés sont dits, `…` dit qu’il en manque, et le drapeau remonte', async () => {
+    const parentId = await nouveauParent();
+    await injecter(parentId, outilEnfant, 'borne-a', {
+      status: 'completed',
+      summary: 'Rapport de l’enfant.',
+      sub_delegations: issuesLongues(),
+    });
+    const relu = parseDelegationOutcomePayload(await dernierBloc(parentId));
+    expect(relu).not.toBeNull();
+    const nommes = (relu!.sub_delegations ?? []).filter((s) => s.status === 'failed');
+    // Le scénario est bien celui de la passe 3 : des échecs ont quitté la liste.
+    expect(nommes.length).toBeLessThan(200);
+    expect(relu!.sub_delegations_incomplete).toBe(true);
+
+    const deps = makeDeps(makeMockLlmClient([livre('borne', 'Voici la synthèse.')]));
+    const outcome = await executeJob(parentId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    const row = await jobRow(parentId);
+    expect(row.result ?? '').toContain(nommes[0]!.tool);
+    expect(row.result ?? '').toContain(', … — no deliverable]');
+
+    // Et le drapeau remonte : le record que le grand-parent recevrait le porte.
+    if (outcome.status !== 'completed') throw new Error('unreachable');
+    expect(outcome.subDelegationsIncomplete).toBe(true);
+    const record = delegationRecordFromOutcome(outcome);
+    expect(record.sub_delegations_incomplete).toBe(true);
+    const releGrandParent = parseDelegationOutcomePayload(renderDelegationOutcome(record));
+    expect(releGrandParent?.sub_delegations_incomplete).toBe(true);
+  });
+
+  /**
+   * La collision de la passe 4, chez un parent neuf : le Lead (outilEnfant)
+   * rend un record borné d'où l'échec du rédacteur (outilPetitEnfant), dernier
+   * de ses échecs, est sorti ; un record plus récent NOMME le rédacteur en
+   * échec, le sien ; puis le rédacteur livre.
+   */
+  async function collision(): Promise<string> {
+    const parentId = await nouveauParent();
+    await injecter(parentId, outilEnfant, 'col-lead', {
+      status: 'completed',
+      summary: 'Rapport du Lead.',
+      sub_delegations: [...issuesLongues(), { tool: outilPetitEnfant, status: 'failed' }],
+    });
+    const duLead = parseDelegationOutcomePayload(await dernierBloc(parentId));
+    expect(duLead!.sub_delegations_incomplete).toBe(true);
+    expect((duLead!.sub_delegations ?? []).map((s) => s.tool)).not.toContain(outilPetitEnfant);
+    await injecter(parentId, outilPetitEnfant, 'col-red-1', {
+      status: 'failed',
+      summary: '',
+      error: 'empty_deliverable',
+    });
+    await injecter(parentId, outilPetitEnfant, 'col-red-2', {
+      status: 'completed',
+      summary: 'Le texte demandé.',
+    });
+    return parentId;
+  }
+
+  it('collision de la passe 4 : l’échec retiré par le Lead, puis nommé, puis réparé, n’est jamais dit deux fois ni gardé', async () => {
+    const parentId = await collision();
+
+    const deps = makeDeps(makeMockLlmClient([livre('col', 'Voici la synthèse.')]));
+    const outcome = await executeJob(parentId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    const ligne = await derniereLigne(parentId);
+    // Réparé : le rédacteur n'est plus dit, ni par son nom ni par un compte.
+    expect(ligne).not.toContain(outilPetitEnfant);
+    expect(ligne).not.toMatch(/\+\d+/);
+    // Chaque échec nommé l'est une fois.
+    const noms = ligne.match(/assign_\w+/g) ?? [];
+    expect(noms.length).toBeGreaterThan(0);
+    expect(new Set(noms).size).toBe(noms.length);
+    // Le dernier record du Lead est partiel : la ligne le dit.
+    expect(ligne).toContain(', … — no deliverable]');
+  });
+
+  it('passe 5 : un record complet plus récent du Lead ne fait pas tomber `…` — les échecs omis n’ont pas de nom, rien ne prouve leur réparation', async () => {
+    const parentId = await collision();
+    await injecter(parentId, outilEnfant, 'col-lead-2', {
+      status: 'completed',
+      summary: 'Rapport du Lead, repris.',
+      sub_delegations: [],
+    });
+
+    const deps = makeDeps(makeMockLlmClient([livre('col2', 'Synthèse reprise.')]));
+    const outcome = await executeJob(parentId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    const ligne = await derniereLigne(parentId);
+    expect(ligne).not.toContain(outilPetitEnfant);
+    expect(ligne).toMatch(/, … — no deliverable\]$/);
+    if (outcome.status !== 'completed') throw new Error('unreachable');
+    expect(outcome.subDelegationsIncomplete).toBe(true);
+    // Ce que le grand-parent reçoit.
+    expect(delegationRecordFromOutcome(outcome).sub_delegations_incomplete).toBe(true);
   });
 });

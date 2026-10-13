@@ -20,11 +20,13 @@ import {
   codeProjects,
   conversations,
   chatMessages,
+  entities,
 } from '@nodal-agents/db';
-import { projectKey } from '@nodal-agents/shared';
+import { formatLocalTime, projectKey } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import { chatSurfaceToolNames } from '@nodal-agents/catalog';
 import { CHAT_TOOLS, runChatTurn } from '../../chat/run-chat-turn.ts';
+import { actionRecheckMessages } from '../../llm/action-recheck.ts';
 import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
 
 // ─── Intercept createLlmClient (same pattern as execute.test.ts) ──────────────
@@ -352,6 +354,12 @@ describe('runChatTurn — delegated-task visibility', () => {
       'Delegated to',
     );
     expect(seenByModel).toContain('file_write');
+    // #562 — et la ligne est au RUNNER, jamais dans la bouche de l'agent : elle
+    // voyage dans le résultat de `run_task`, aucune part assistant ne la porte.
+    const spoken = flattenText(capturedCalls[0]!.filter((m) => m.role === 'assistant'));
+    expect(spoken).not.toContain('Delegated to');
+    const fromTools = flattenText(capturedCalls[0]!.filter((m) => m.role === 'tool'));
+    expect(fromTools).toContain('Delegated to');
   });
 
   it('does NOT surface a delegated task that has not finished yet', async () => {
@@ -916,7 +924,8 @@ describe('runChatTurn — le projet courant de la conversation (P6)', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, spawnedJobId!));
     expect(job?.projectId).toBeNull();
-    expect(capturedSystem[0]).toContain('- Current project: none yet.');
+    // P10b retirée (02/10/2026) : sans projet, le prompt ne dit plus rien du rangement.
+    expect(capturedSystem[0]).not.toContain('Current project: none yet');
     // Premier message du fil : le modèle doit le savoir.
     expect(capturedSystem[0]).toContain('This is the first turn of this conversation');
   });
@@ -1158,6 +1167,11 @@ describe('runChatTurn — la relance d’escalade (coût d’un tour, 09/09)', (
     expect(relance?.messages[1]?.content).toBe('Bonjour Quentin, je suis là.');
     expect(relance?.messages[2]?.role).toBe('user');
     expect(String(relance?.messages[2]?.content)).toContain('Re-read your previous reply');
+    // Le MÊME mécanisme que la boucle de job (#600) : la relance du chat est
+    // exactement celle que construit llm/action-recheck.ts, consigne comprise.
+    expect(relance?.messages).toEqual(
+      actionRecheckMessages('Bonjour, tu es là ?', 'Bonjour Quentin, je suis là.'),
+    );
   });
 
   it('la relance est un ORDRE DE GRANDEUR plus petite que la réponse', async () => {
@@ -1209,6 +1223,145 @@ describe('la liste des outils du chat n’existe qu’à un seul endroit', () =>
       const outil = CHAT_TOOLS[nom];
       expect(outil.description.length, `${nom} sans description`).toBeGreaterThan(0);
       expect(outil.inputSchema, `${nom} sans schéma`).toBeDefined();
+    }
+  });
+});
+
+describe('runChatTurn — chaque tour rejoué porte sa date (#650) @cap:reprendre-conversation/moteur', () => {
+  // Le chat web rejoue ses `chat_messages` par son propre chemin : sans date, le
+  // modèle y prend un fait d'hier pour un fait présent exactement comme sur
+  // Telegram (thread-history-dated.test.ts). Heures fixes dans le passé, pour
+  // que le message du tour courant (écrit « maintenant ») vienne toujours après.
+  const DAY_ONE = new Date('2026-09-28T06:21:00Z'); // 14:21 à Singapour
+  const DAY_TWO = new Date('2026-09-29T15:07:00Z'); // 23:07 à Singapour
+
+  it('deux jours de conversation : chaque message de la personne porte son jour et son heure, le tour courant aussi', async () => {
+    await db
+      .update(entities)
+      .set({ timezone: 'Asia/Singapore' })
+      .where(eq(entities.id, seed.entityId));
+    try {
+      const [conv] = await db
+        .insert(conversations)
+        .values({ entityId: seed.entityId, agentId: seed.agentId, title: 'Deux jours' })
+        .returning();
+      if (!conv) throw new Error('conversation insert failed');
+      const row = (role: 'user' | 'assistant', content: string, at: Date) => ({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role,
+        content,
+        createdAt: at,
+      });
+      await db
+        .insert(chatMessages)
+        .values([
+          row('user', 'Le Researcher marche ?', DAY_ONE),
+          row(
+            'assistant',
+            'Le Researcher est bloqué (son LLM timeoute).',
+            new Date(DAY_ONE.getTime() + 60_000),
+          ),
+          row('user', 'Et Sputnik ?', DAY_TWO),
+          row('assistant', 'Sputnik répond.', new Date(DAY_TWO.getTime() + 60_000)),
+        ]);
+
+      const capturedCalls: ModelMessage[][] = [];
+      setActiveLlmClient(makeMockLlmClient('Oui.', capturedCalls));
+      const result = await runChatTurn({
+        deps,
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        message: 'Tu es sûr ?',
+      });
+      expect(result.ok).toBe(true);
+
+      const [current] = await db
+        .select({ createdAt: chatMessages.createdAt })
+        .from(chatMessages)
+        .where(eq(chatMessages.content, 'Tu es sûr ?'));
+      if (!current?.createdAt) throw new Error('current user message not persisted');
+
+      const seen = capturedCalls[0]!;
+      const userTexts = seen.filter((m) => m.role === 'user').map((m) => m.content);
+      expect(userTexts).toEqual([
+        `[${formatLocalTime('Asia/Singapore', DAY_ONE)}] Le Researcher marche ?`,
+        `[${formatLocalTime('Asia/Singapore', DAY_TWO)}] Et Sputnik ?`,
+        `[${formatLocalTime('Asia/Singapore', current.createdAt)}] Tu es sûr ?`,
+      ]);
+      expect(userTexts[0]).toMatch(/^\[[^\]]*28[^\]]*2026, 14:21\] /);
+      expect(userTexts[1]).toMatch(/^\[[^\]]*29[^\]]*2026, 23:07\] /);
+      // Les mots de l'agent restent les siens, sans date.
+      expect(seen.filter((m) => m.role === 'assistant').map((m) => m.content)).toEqual([
+        'Le Researcher est bloqué (son LLM timeoute).',
+        'Sputnik répond.',
+      ]);
+    } finally {
+      await db.update(entities).set({ timezone: null }).where(eq(entities.id, seed.entityId));
+    }
+  });
+
+  it('le tour suivant rejoue les tours passés au caractère près : le préfixe ne bouge pas', async () => {
+    await db
+      .update(entities)
+      .set({ timezone: 'Europe/Paris' })
+      .where(eq(entities.id, seed.entityId));
+    try {
+      const [conv] = await db
+        .insert(conversations)
+        .values({ entityId: seed.entityId, agentId: seed.agentId, title: 'Stable' })
+        .returning();
+      if (!conv) throw new Error('conversation insert failed');
+      await db.insert(chatMessages).values([
+        {
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          conversationId: conv.id,
+          role: 'user',
+          content: 'bonjour',
+          createdAt: DAY_ONE,
+        },
+        {
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          conversationId: conv.id,
+          role: 'assistant',
+          content: 'Bonjour !',
+          createdAt: new Date(DAY_ONE.getTime() + 60_000),
+        },
+      ]);
+
+      const firstCalls: ModelMessage[][] = [];
+      setActiveLlmClient(makeMockLlmClient('Première réponse.', firstCalls));
+      await runChatTurn({
+        deps,
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        message: 'un',
+      });
+      const secondCalls: ModelMessage[][] = [];
+      setActiveLlmClient(makeMockLlmClient('Deuxième réponse.', secondCalls));
+      await runChatTurn({
+        deps,
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        message: 'deux',
+      });
+
+      const first = firstCalls[0]!;
+      const second = secondCalls[0]!;
+      expect(first[0]).toEqual({
+        role: 'user',
+        content: `[${formatLocalTime('Europe/Paris', DAY_ONE)}] bonjour`,
+      });
+      expect(JSON.stringify(second.slice(0, first.length))).toBe(JSON.stringify(first));
+      expect(second.length).toBe(first.length + 2);
+    } finally {
+      await db.update(entities).set({ timezone: null }).where(eq(entities.id, seed.entityId));
     }
   });
 });

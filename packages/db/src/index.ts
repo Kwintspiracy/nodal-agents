@@ -16,10 +16,11 @@ export {
 export type { DecryptedCredential, OauthPayload, Db } from './queries/credentials.ts';
 export { assertMasterKeyRestorable } from './queries/master-key-guard.ts';
 export type { AssertMasterKeyRestorableOptions } from './queries/master-key-guard.ts';
-export { resolveOwnerChatId } from './queries/telegram-owner.ts';
+export { designateChat, resolveScheduleNotifyChat } from './queries/designated-chat.ts';
+export type { DesignatedChat } from './queries/designated-chat.ts';
 export { isChatAllowed } from './queries/telegram-allowed.ts';
 export { dropApprovalRulesForDetachedSkill } from './queries/skill-approval-rules.ts';
-export { getMcpApprovalContext, splitMcpToolName } from './queries/mcp-approval-context.ts';
+export { getMcpApprovalContext } from './queries/mcp-approval-context.ts';
 export type { McpApprovalContext } from './queries/mcp-approval-context.ts';
 export {
   resolveOwnerConversation,
@@ -38,6 +39,8 @@ export type { AllowedConversationSummary } from './queries/channel-identity.ts';
 
 // ─── Repos ─────────────────────────────────────────────────────────────────────
 export { createAgentRepo, attachAgentToOrchestrator } from './repos/agents.ts';
+export { attachMcpServerToAgent } from './repos/agent-mcp-servers.ts';
+export type { AttachMcpServerInput, AttachMcpServerResult } from './repos/agent-mcp-servers.ts';
 export type { CreateAgentInput, CreateAgentResult, AttachAgentResult } from './repos/agents.ts';
 export {
   createSkillRepo,
@@ -69,6 +72,55 @@ export {
   INSTALL_NOTES_KEY,
 } from './repos/app-settings.ts';
 export { getVerificationSurfaces } from './repos/verification-surfaces.ts';
+export {
+  recordApprovalCardMessage,
+  claimSettledApprovalCards,
+  finishApprovalCard,
+  releaseApprovalCardAfterFailure,
+  adoptApprovalCard,
+  claimApprovalCardForDisplay,
+  releaseApprovalCardClaim,
+  requeueApprovalCards,
+  APPROVAL_CARD_CLAIM_LEASE_MS,
+} from './repos/approval-cards.ts';
+export type {
+  ApprovalCardMessageInput,
+  SettledApprovalCard,
+  ApprovalCardFinalOutcome,
+  ApprovalCardLocation,
+} from './repos/approval-cards.ts';
+export {
+  cancelJobTree,
+  insertChildJob,
+  listConversationRuns,
+  stopRuns,
+  stopConversationRuns,
+} from './repos/conversation-runs.ts';
+export {
+  startConversationTurn,
+  deliverToConversationJob,
+  drainJobInbox,
+  pendingHeadsOfConversation,
+} from './repos/conversation-inbox.ts';
+export type { ConversationTurn, ConversationJobDelivery } from './repos/conversation-inbox.ts';
+export {
+  withinRunScope,
+  recordClaim,
+  heldClaim,
+  claimCondition,
+  heldBy,
+  ownJobRow,
+  RUN_ACTS_WHILE,
+  RUN_WRITES_WHILE,
+} from './repos/run-claim.ts';
+export type {
+  ChildJobRefusal,
+  CancelledTree,
+  ConversationRun,
+  ConversationRunJob,
+  StoppedRun,
+  StoppedRuns,
+} from './repos/conversation-runs.ts';
 export type {
   CreateSkillInput,
   CreateSkillResult,

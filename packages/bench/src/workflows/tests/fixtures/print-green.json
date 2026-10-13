@@ -1,0 +1,105 @@
+{
+  "scenario": "print",
+  "version": 1,
+  "facts": {
+    "rootId": "5dfa7a6c-ee9d-4cdc-bb68-efc67fc4e0ee",
+    "entityId": "00000000-0000-0000-0000-000000000002",
+    "jobs": [
+      {
+        "id": "5dfa7a6c-ee9d-4cdc-bb68-efc67fc4e0ee",
+        "parentJobId": null,
+        "agentSlug": "alfred",
+        "status": "completed",
+        "channel": "mcp",
+        "result": "La demande d'impression est prête, mais elle attend votre confirmation.\n\nDemande « Test d'impression Nodal bench » (pr-munndhkm-1) :\n- Texte : « Nodal bench — test d'impression. » puis « 2 + 2 = 4 »\n- 1 page, noir & blanc, recto, sur la HP Smart Tank 7600 (l'OfficeJet Pro 9130e est indisponible : encres couleur vides)\n- Tous les contrôles passent : papier A4 chargé, Validate-Job accepté par l'imprimante\n\n⚠️ Ce canal ne montre pas la carte d'aperçu avec le bouton « Imprimer », donc je ne peux pas finaliser l'impression depuis ici : la demande reste en attente. Pour la lancer, confirmez-la depuis une interface qui affiche l'aperçu (le dashboard Nodal-Agents), ou dites-moi si vous préférez que j'annule la demande.",
+        "error": null,
+        "createdMs": 1790745040918.467,
+        "updatedMs": 1790745067002
+      }
+    ],
+    "toolCalls": [
+      {
+        "jobId": "5dfa7a6c-ee9d-4cdc-bb68-efc67fc4e0ee",
+        "toolName": "load_tools",
+        "input": "{\"names\": [\"hp_connector__list_printers\", \"hp_connector__request_print\", \"hp_connector__get_print_request\"], \"purpose\": \"Imprimer un court texte sur le connecteur d'imprimante HP.\"}",
+        "output": "{\"loaded\":[\"hp_connector__list_printers\",\"hp_connector__request_print\",\"hp_connector__get_print_request\"],\"alreadyAvailable\":[],\"notHeld\":[],\"message\":\"Loaded: hp_connector__list_printers, hp_connector__request_print, hp_connector__get_print_request. Their definitions are in your tool list from your next step on; call them directly.\"}",
+        "createdMs": 1790745044251.434
+      },
+      {
+        "jobId": "5dfa7a6c-ee9d-4cdc-bb68-efc67fc4e0ee",
+        "toolName": "hp_connector__list_printers",
+        "input": "{\"purpose\": \"Vérifier quelle imprimante peut imprimer avant d'envoyer la demande.\"}",
+        "output": "{\"printers\":[{\"id\":\"smart-tank-7600\",\"label\":\"HP Smart Tank 7600\",\"isDefault\":true,\"online\":true,\"model\":\"HP Smart Tank 7600 series\",\"canPrint\":true,\"reasons\":[],\"host\":\"192.168.50.120\",\"default\":true},{\"id\":\"officejet-pro-9130e\",\"label\":\"HP OfficeJet Pro 9130e\",\"isDefault\":false,\"online\":true,\"model\":\"HP OfficeJet Pro 9130e Series\",\"canPrint\":false,\"reasons\":[\"Ink/toner supply empty: cyan, magenta, yellow\"],\"host\":\"192.168.50.119\",\"default\":false}],\"recommended\":\"smart-tank-7600\"}",
+        "createdMs": 1790745051573.815
+      },
+      {
+        "jobId": "5dfa7a6c-ee9d-4cdc-bb68-efc67fc4e0ee",
+        "toolName": "hp_connector__request_print",
+        "input": "{\"text\": \"Nodal bench — test d'impression.\\n\\n2 + 2 = 4\", \"title\": \"Test d'impression Nodal bench\", \"purpose\": \"Imprimer votre court texte de test sur une page.\"}",
+        "output": "{\"id\":\"pr-munndhkm-1\",\"createdAt\":\"2026-09-30T05:11:02.710Z\",\"updatedAt\":\"2026-09-30T05:11:02.710Z\",\"status\":\"pending\",\"requestedBy\":\"nodal-agents\",\"revision\":1,\"title\":\"Test d'impression Nodal bench\",\"preview\":{\"pages\":1,\"totalPages\":1,\"copies\":1,\"sheets\":1,\"colorMode\":\"monochrome\",\"sides\":\"one-sided\",\"documentFormat\":\"image/jpeg\",\"sourceKind\":\"text\"},\"checks\":[{\"level\":\"ok\",\"text\":\"Within limits: 1 page(s) ≤ 5 per job; 0 printed today out of 20.\"},{\"level\":\"ok\",\"text\":\"Black & white.\"},{\"level\":\"ok\",\"text\":\"Paper: Tray 1 A4 loaded.\"},{\"level\":\"ok\",\"text\":\"Dry check (Validate-Job) accepted by the printer.\"}],\"blocked\":false,\"printer\":{\"id\":\"smart-tank-7600\",\"label\":\"HP Smart Tank 7600\",\"model\":\"HP Smart Tank 7600 series\",\"stateLabel\":\"idle\",\"messageEn\":\"No issues reported.\",\"supplies\":[{\"name\":\"cyan cartridge\",\"color\":\"#00FFFF\",\"level\":100,\"lowLevel\":2,\"type\":\"ink-cartridge\"},{\"name\":\"magenta cartridge\",\"color\":\"#FF00FF\",\"level\":100,\"lowLevel\":2,\"type\":\"ink-cartridge\"},{\"name\":\"yellow cartridge\",\"color\":\"#FFFF00\",\"level\":100,\"lowLevel\":2,\"type\":\"ink-cartridge\"},{\"name\":\"black cartridge\",\"color\":\"#000000\",\"level\":100,\"lowLevel\":2,\"type\":\"ink-cartridge\"}],\"paper\":\"Tray 1 A4 48 %\",\"canPrint\":true},\"printerChoices\":[{\"id\":\"smart-tank-7600\",\"label\":\"HP Smart Tank 7600\",\"model\":\"HP Smart Tank 7600 series\"},{\"id\":\"officejet-pro-9130e\",\"label\":\"HP OfficeJet Pro 9130e\",\"model\":\"HP OfficeJet Pro 9130e Series\"}],\"alternatives\":[],\"ink\":{\"channels\":[{\"color\":\"black\",\"percent\":0.00013942585279105976,\"textPages\":0.008365551167463585,\"printsLeft\":717227,\"level\":100,\"enough\":true}],\"averageCoverage\":0.04182775583731793,\"yieldSource\":\"model\",\"note\":\"Estimate from page coverage and published cartridge yields (±30-50 %); head cleaning not included.\"},\"recommendations\":[],\"realPrint\":true,\"allowColor\":true,\"adjustable\":[\"copies\",\"sides\",\"quality\",\"color\",\"orientation\",\"printer\"],\"input\":{\"title\":\"Test d'impression Nodal bench\",\"requestedBy\":\"nodal-agents\",\"printer\":\"smart-tank-7600\",\"textLength\":43},\"choices\":[{\"id\":\"print\",\"label\":\"Print on HP Smart Tank 7600\"},{\"id\":\"change_settings\",\"label\":\"Change settings (printer, copies, two-sided, orientation, pages, color)\",\"tool\":\"change_print_options\",\"args\":{\"requestId\":\"pr-munndhkm-1\"}},{\"id\":\"cancel\",\"label\":\"Cancel\",\"tool\":\"cancel_print_request\",\"args\":{\"requestId\":\"pr-munndhkm-1\"}}],\"approvalCard\":{\"version\":1,\"requestId\":\"pr-munndhkm-1\",\"revision\":1,\"status\":\"pending\",\"title\":\"Test d'impression Nodal bench\",\"summary\":\"Test d'impression Nodal bench · 1 page · B&W · one-sided · HP Smart Tank 7600\",\"requestedBy\":\"nodal-agents\",\"mode\":\"real\",\"printer\":{\"id\":\"smart-tank-7600\",\"label\":\"HP Smart Tank 7600\",\"model\":\"HP Smart Tank 7600 series\",\"canPrint\":true,\"inks\":[{\"color\":\"cyan\",\"level\":100},{\"color\":\"magenta\",\"level\":100},{\"color\":\"yellow\",\"level\":100},{\"color\":\"black\",\"level\":100}],\"paper\":\"Tray 1 A4 48 %\"},\"document\":{\"pages\":1,\"totalPages\":1,\"copies\":1,\"sheets\":1,\"color\":false,\"sides\":\"one-sided\",\"orientation\":null,\"source\":\"text\",\"url\":null,\"pictures\":{\"embedded\":0,\"failed\":0}},\"preview\":{\"pageCount\":1,\"moreTool\":\"get_print_preview\"},\"checks\":[{\"level\":\"ok\",\"text\":\"Within limits: 1 page(s) ≤ 5 per job; 0 printed today out of 20.\"},{\"level\":\"ok\",\"text\":\"Black & white.\"},{\"level\":\"ok\",\"text\":\"Paper: Tray 1 A4 loaded.\"},{\"level\":\"ok\",\"text\":\"Dry check (Validate-Job) accepted by the printer.\"}],\"settings\":[{\"key\":\"printer\",\"label\":\"Printer\",\"type\":\"select\",\"value\":\"smart-tank-7600\",\"options\":[{\"value\":\"smart-tank-7600\",\"label\":\"HP Smart Tank 7600\"},{\"value\":\"officejet-pro-9130e\",\"label\":\"HP OfficeJet Pro 9130e\",\"disabled\":true,\"note\":\"cannot print now\"}]},{\"key\":\"copies\",\"label\":\"Copies\",\"type\":\"number\",\"value\":1,\"min\":1,\"max\":10},{\"key\":\"sides\",\"label\":\"Sides\",\"type\":\"select\",\"value\":\"one-sided\",\"options\":[{\"value\":\"one-sided\",\"label\":\"One-sided\"},{\"value\":\"two-sided-long-edge\",\"label\":\"Two-sided (long edge)\"},{\"value\":\"two-sided-short-edge\",\"label\":\"Two-sided (short edge)\"}]},{\"key\":\"orientation\",\"label\":\"Orientation\",\"type\":\"select\",\"value\":\"portrait\",\"options\":[{\"value\":\"portrait\",\"label\":\"Portrait\"},{\"value\":\"landscape\",\"label\":\"Landscape\"}]},{\"key\":\"color\",\"label\":\"Color\",\"type\":\"boolean\",\"value\":false},{\"key\":\"quality\",\"label\":\"Quality\",\"type\":\"select\",\"value\":\"normal\",\"options\":[{\"value\":\"draft\",\"label\":\"Draft (saves ink)\"},{\"value\":\"normal\",\"label\":\"Normal\"},{\"value\":\"high\",\"label\":\"High\"}]}],\"actions\":[{\"id\":\"print\",\"label\":\"Print\",\"style\":\"primary\",\"enabled\":false,\"disabledReason\":\"Print is confirmed on a preview card or a dialog, which this client does not show.\",\"via\":\"none\"},{\"id\":\"settings\",\"label\":\"Settings\",\"style\":\"secondary\",\"enabled\":true,\"tool\":\"change_print_options\",\"args\":{\"requestId\":\"pr-munndhkm-1\"}},{\"id\":\"cancel\",\"label\":\"Cancel\",\"style\":\"danger\",\"enabled\":true,\"tool\":\"cancel_print_request\",\"args\":{\"requestId\":\"pr-munndhkm-1\"}}],\"ink\":[{\"color\":\"black\",\"percent\":0,\"label\":\"<0.01 % · ≈ 0 text page · 717 200 more like this\",\"textPages\":0,\"printsLeft\":717227,\"level\":100,\"enough\":true}],\"recommendations\":[],\"approval\":{\"required\":true,\"via\":\"none\",\"note\":\"This client shows neither the preview card nor a dialog: the final Print click cannot happen here yet. Never point the user to a button that is not shown.\"}}}",
+        "createdMs": 1790745061539.692
+      },
+      {
+        "jobId": "5dfa7a6c-ee9d-4cdc-bb68-efc67fc4e0ee",
+        "toolName": "hp_connector__get_print_request",
+        "input": "{\"purpose\": \"Vérifier si la demande d'impression a été confirmée ou est toujours en attente.\", \"requestId\": \"pr-munndhkm-1\"}",
+        "output": "{\"id\":\"pr-munndhkm-1\",\"createdAt\":\"2026-09-30T05:11:02.710Z\",\"updatedAt\":\"2026-09-30T05:11:02.710Z\",\"status\":\"pending\",\"requestedBy\":\"nodal-agents\",\"revision\":1,\"title\":\"Test d'impression Nodal bench\",\"preview\":{\"pages\":1,\"totalPages\":1,\"copies\":1,\"sheets\":1,\"colorMode\":\"monochrome\",\"sides\":\"one-sided\",\"documentFormat\":\"image/jpeg\",\"sourceKind\":\"text\"},\"checks\":[{\"level\":\"ok\",\"text\":\"Within limits: 1 page(s) ≤ 5 per job; 0 printed today out of 20.\"},{\"level\":\"ok\",\"text\":\"Black & white.\"},{\"level\":\"ok\",\"text\":\"Paper: Tray 1 A4 loaded.\"},{\"level\":\"ok\",\"text\":\"Dry check (Validate-Job) accepted by the printer.\"}],\"blocked\":false,\"printer\":{\"id\":\"smart-tank-7600\",\"label\":\"HP Smart Tank 7600\",\"model\":\"HP Smart Tank 7600 series\",\"stateLabel\":\"idle\",\"messageEn\":\"No issues reported.\",\"supplies\":[{\"name\":\"cyan cartridge\",\"color\":\"#00FFFF\",\"level\":100,\"lowLevel\":2,\"type\":\"ink-cartridge\"},{\"name\":\"magenta cartridge\",\"color\":\"#FF00FF\",\"level\":100,\"lowLevel\":2,\"type\":\"ink-cartridge\"},{\"name\":\"yellow cartridge\",\"color\":\"#FFFF00\",\"level\":100,\"lowLevel\":2,\"type\":\"ink-cartridge\"},{\"name\":\"black cartridge\",\"color\":\"#000000\",\"level\":100,\"lowLevel\":2,\"type\":\"ink-cartridge\"}],\"paper\":\"Tray 1 A4 48 %\",\"canPrint\":true},\"printerChoices\":[{\"id\":\"smart-tank-7600\",\"label\":\"HP Smart Tank 7600\",\"model\":\"HP Smart Tank 7600 series\"},{\"id\":\"officejet-pro-9130e\",\"label\":\"HP OfficeJet Pro 9130e\",\"model\":\"HP OfficeJet Pro 9130e Series\"}],\"alternatives\":[],\"ink\":{\"channels\":[{\"color\":\"black\",\"percent\":0.00013942585279105976,\"textPages\":0.008365551167463585,\"printsLeft\":717227,\"level\":100,\"enough\":true}],\"averageCoverage\":0.04182775583731793,\"yieldSource\":\"model\",\"note\":\"Estimate from page coverage and published cartridge yields (±30-50 %); head cleaning not included.\"},\"recommendations\":[],\"realPrint\":true,\"allowColor\":true,\"adjustable\":[\"copies\",\"sides\",\"quality\",\"color\",\"orientation\",\"printer\"],\"input\":{\"title\":\"Test d'impression Nodal bench\",\"requestedBy\":\"nodal-agents\",\"printer\":\"smart-tank-7600\",\"textLength\":43},\"choices\":[{\"id\":\"print\",\"label\":\"Print on HP Smart Tank 7600\"},{\"id\":\"change_settings\",\"label\":\"Change settings (printer, copies, two-sided, orientation, pages, color)\",\"tool\":\"change_print_options\",\"args\":{\"requestId\":\"pr-munndhkm-1\"}},{\"id\":\"cancel\",\"label\":\"Cancel\",\"tool\":\"cancel_print_request\",\"args\":{\"requestId\":\"pr-munndhkm-1\"}}],\"approvalCard\":{\"version\":1,\"requestId\":\"pr-munndhkm-1\",\"revision\":1,\"status\":\"pending\",\"title\":\"Test d'impression Nodal bench\",\"summary\":\"Test d'impression Nodal bench · 1 page · B&W · one-sided · HP Smart Tank 7600\",\"requestedBy\":\"nodal-agents\",\"mode\":\"real\",\"printer\":{\"id\":\"smart-tank-7600\",\"label\":\"HP Smart Tank 7600\",\"model\":\"HP Smart Tank 7600 series\",\"canPrint\":true,\"inks\":[{\"color\":\"cyan\",\"level\":100},{\"color\":\"magenta\",\"level\":100},{\"color\":\"yellow\",\"level\":100},{\"color\":\"black\",\"level\":100}],\"paper\":\"Tray 1 A4 48 %\"},\"document\":{\"pages\":1,\"totalPages\":1,\"copies\":1,\"sheets\":1,\"color\":false,\"sides\":\"one-sided\",\"orientation\":null,\"source\":\"text\",\"url\":null,\"pictures\":{\"embedded\":0,\"failed\":0}},\"preview\":{\"pageCount\":1,\"moreTool\":\"get_print_preview\"},\"checks\":[{\"level\":\"ok\",\"text\":\"Within limits: 1 page(s) ≤ 5 per job; 0 printed today out of 20.\"},{\"level\":\"ok\",\"text\":\"Black & white.\"},{\"level\":\"ok\",\"text\":\"Paper: Tray 1 A4 loaded.\"},{\"level\":\"ok\",\"text\":\"Dry check (Validate-Job) accepted by the printer.\"}],\"settings\":[{\"key\":\"printer\",\"label\":\"Printer\",\"type\":\"select\",\"value\":\"smart-tank-7600\",\"options\":[{\"value\":\"smart-tank-7600\",\"label\":\"HP Smart Tank 7600\"},{\"value\":\"officejet-pro-9130e\",\"label\":\"HP OfficeJet Pro 9130e\",\"disabled\":true,\"note\":\"cannot print now\"}]},{\"key\":\"copies\",\"label\":\"Copies\",\"type\":\"number\",\"value\":1,\"min\":1,\"max\":10},{\"key\":\"sides\",\"label\":\"Sides\",\"type\":\"select\",\"value\":\"one-sided\",\"options\":[{\"value\":\"one-sided\",\"label\":\"One-sided\"},{\"value\":\"two-sided-long-edge\",\"label\":\"Two-sided (long edge)\"},{\"value\":\"two-sided-short-edge\",\"label\":\"Two-sided (short edge)\"}]},{\"key\":\"orientation\",\"label\":\"Orientation\",\"type\":\"select\",\"value\":\"portrait\",\"options\":[{\"value\":\"portrait\",\"label\":\"Portrait\"},{\"value\":\"landscape\",\"label\":\"Landscape\"}]},{\"key\":\"color\",\"label\":\"Color\",\"type\":\"boolean\",\"value\":false},{\"key\":\"quality\",\"label\":\"Quality\",\"type\":\"select\",\"value\":\"normal\",\"options\":[{\"value\":\"draft\",\"label\":\"Draft (saves ink)\"},{\"value\":\"normal\",\"label\":\"Normal\"},{\"value\":\"high\",\"label\":\"High\"}]}],\"actions\":[{\"id\":\"print\",\"label\":\"Print\",\"style\":\"primary\",\"enabled\":false,\"disabledReason\":\"Print is confirmed on a preview card or a dialog, which this client does not show.\",\"via\":\"none\"},{\"id\":\"settings\",\"label\":\"Settings\",\"style\":\"secondary\",\"enabled\":true,\"tool\":\"change_print_options\",\"args\":{\"requestId\":\"pr-munndhkm-1\"}},{\"id\":\"cancel\",\"label\":\"Cancel\",\"style\":\"danger\",\"enabled\":true,\"tool\":\"cancel_print_request\",\"args\":{\"requestId\":\"pr-munndhkm-1\"}}],\"ink\":[{\"color\":\"black\",\"percent\":0,\"label\":\"<0.01 % · ≈ 0 text page · 717 200 more like this\",\"textPages\":0,\"printsLeft\":717227,\"level\":100,\"enough\":true}],\"recommendations\":[],\"approval\":{\"required\":true,\"via\":\"none\",\"note\":\"This client shows neither the preview card nor a dialog: the final Print click cannot happen here yet. Never point the user to a button that is not shown.\"}}}",
+        "createdMs": 1790745064708.119
+      }
+    ],
+    "llmCalls": [
+      {
+        "jobId": "5dfa7a6c-ee9d-4cdc-bb68-efc67fc4e0ee",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 23498,
+        "outputTokens": 79,
+        "costUsd": 0.03324479982256889,
+        "durationMs": 3109,
+        "error": null,
+        "createdMs": 1790745044248.187
+      },
+      {
+        "jobId": "5dfa7a6c-ee9d-4cdc-bb68-efc67fc4e0ee",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 24922,
+        "outputTokens": 32,
+        "costUsd": 0.006732408422976732,
+        "durationMs": 7311,
+        "error": null,
+        "createdMs": 1790745051571.306
+      },
+      {
+        "jobId": "5dfa7a6c-ee9d-4cdc-bb68-efc67fc4e0ee",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 25254,
+        "outputTokens": 58,
+        "costUsd": 0.02286968007683754,
+        "durationMs": 2155,
+        "error": null,
+        "createdMs": 1790745061534.209
+      },
+      {
+        "jobId": "5dfa7a6c-ee9d-4cdc-bb68-efc67fc4e0ee",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 26881,
+        "outputTokens": 131,
+        "costUsd": 0.00643764017149806,
+        "durationMs": 1973,
+        "error": null,
+        "createdMs": 1790745064705.461
+      },
+      {
+        "jobId": "5dfa7a6c-ee9d-4cdc-bb68-efc67fc4e0ee",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 28582,
+        "outputTokens": 228,
+        "costUsd": 0.007068559993058443,
+        "durationMs": 2266,
+        "error": null,
+        "createdMs": 1790745066991.933
+      }
+    ],
+    "approvals": []
+  },
+  "observed": null
+}

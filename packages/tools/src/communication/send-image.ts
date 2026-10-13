@@ -101,7 +101,7 @@ Typical usage right after an image-gen tool produces an output:
 Size cap: 10 MB (Telegram photo limit). Larger files throw \`image_too_large\`.
 
 Fail conditions:
-- No chatId provided and the job has no origin chat → throws \`no_recipient\`.
+- No chatId provided, the job has no chat and no owner conversation is on record → throws \`no_recipient\`.
 - Agent has no configured Telegram bot token → throws \`no_bot_token\`.
 - Explicit chatId is not an approved chat → throws \`telegram_chat_not_allowed\`.
 - Local source path is outside your workspaces/skill store/temp dir → throws

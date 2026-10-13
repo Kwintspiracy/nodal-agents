@@ -501,6 +501,7 @@ async function markJob(
   // UNE instruction pour la règle « le premier gagne » : le `WHERE
   // project_id IS NULL` échoue à s'appliquer si un autre appel a déjà
   // rattaché ce job, sans qu'aucune lecture n'ait eu à le constater.
+  // agent_jobs-write: project-record — un fait posé une fois (le premier gagne).
   const applied = await db
     .update(agentJobs)
     .set({ projectId })

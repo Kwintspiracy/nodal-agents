@@ -22,7 +22,7 @@
 // Each skill's check is wrapped in its own try/catch (M1(b), Opus review): an
 // unexpected error (anything checkSkillUpdate doesn't already turn into a
 // typed outcome — e.g. a bug, or a SkillFetchError shape neither
-// rate_limited nor not_found matches) is logged and the skill is stamped
+// rate_limited nor source_problem matches) is logged and the skill is stamped
 // checked-now so it doesn't dominate every future tick's batch, then the loop
 // moves on to the next skill instead of losing the rest of the batch.
 //
@@ -45,12 +45,12 @@ import { checkSkillUpdate } from '../skills/check-updates.ts';
 import { skillStoreDir } from '../skills/store-dir.ts';
 
 export interface SkillUpdateCheckTickResult {
-  /** Skills whose check completed (columns written) — includes `notFound`. */
+  /** Skills whose check completed (columns written) — includes `sourceProblems`. */
   checked: number;
   /** Of `checked`, how many turned up an actual content/script change. */
   updatesFound: number;
-  /** Of `checked`, how many had a vanished upstream source (404-shaped). */
-  notFound: number;
+  /** Of `checked`, how many skills' sources no longer hold them (gone, or another skill there). */
+  sourceProblems: number;
   /** Skills whose check threw an unexpected error — stamped and skipped. */
   errored: number;
   /** True if a rate limit was hit and the rest of the batch was skipped. */
@@ -90,7 +90,7 @@ export async function runSkillUpdateCheckTick(
 
   let checked = 0;
   let updatesFound = 0;
-  let notFound = 0;
+  let sourceProblems = 0;
   let errored = 0;
   let rateLimited = false;
 
@@ -146,15 +146,15 @@ export async function runSkillUpdateCheckTick(
     }
 
     checked += 1;
-    if (outcome.kind === 'not_found') {
-      notFound += 1;
+    if (outcome.kind === 'source_problem') {
+      sourceProblems += 1;
       console.warn(
-        `[skill-update-check] skill "${row.slug}" (${row.id}) source no longer resolves upstream.`,
+        `[skill-update-check] skill "${row.slug}" (${row.id}) — ${outcome.problem}: ${outcome.reason}`,
       );
       continue;
     }
     if (outcome.contentChanged || outcome.scriptsChanged) updatesFound += 1;
   }
 
-  return { checked, updatesFound, notFound, errored, rateLimited };
+  return { checked, updatesFound, sourceProblems, errored, rateLimited };
 }

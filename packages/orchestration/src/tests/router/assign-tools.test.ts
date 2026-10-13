@@ -127,49 +127,11 @@ describe('generateAssignTools', () => {
     });
   });
 
-  it('tool description is data-driven (not hardcoded)', async () => {
+  it('tool description names the teammate from DB and nothing the roster describes', async () => {
     const { entityId } = await seedEntity(db);
     const orch = await seedOrchestrator(db, entityId, `orch-desc-${Date.now()}`);
     const w = await seedWorker(db, entityId, `test-data-bot-${Date.now()}`);
     await assignChild(db, orch.id, w.id, entityId, 'Always check duplicates first');
-
-    const tools = await generateAssignTools(orch.id as AgentId, db);
-    const tool = tools[0]!;
-
-    // Description must reference the agent name from DB
-    expect(tool.description).toContain('Worker test-data-bot');
-    // Instructions from DB must appear
-    expect(tool.description).toContain('Always check duplicates first');
-  });
-
-  // Codex review of #455, P2 — run 06a949cb: a brief saying "and on the disk"
-  // sent a teammate outside its folders. The rule belongs to delegation itself,
-  // so it is in the description of every delegation tool.
-  it('tool description says a delegation never widens where the teammate works (#455)', async () => {
-    const { entityId } = await seedEntity(db);
-    const orch = await seedOrchestrator(db, entityId, `orch-scope-${Date.now()}`);
-    const w = await seedWorker(db, entityId, `test-scope-${Date.now()}`);
-    await assignChild(db, orch.id, w.id, entityId);
-    const [tool] = await generateAssignTools(orch.id as AgentId, db);
-    expect(tool?.description).toContain(DELEGATION_SCOPE_RULE);
-  });
-
-  // Codex review of #455, pass 2 (P1): "never look or act beyond the folders"
-  // also forbade an e-mail, a Notion page or a web search. The rule is about
-  // the FILE SYSTEM only, and says so.
-  it('the scope rule is about files and folders only, never connectors or the web', () => {
-    expect(DELEGATION_SCOPE_RULE).toMatch(/folders? .*reads? or writes?|files/i);
-    expect(DELEGATION_SCOPE_RULE).toMatch(/connectors?.*web|web.*connectors?/i);
-    expect(DELEGATION_SCOPE_RULE).not.toMatch(/look or act beyond/i);
-  });
-
-  it('tool description includes skill names from DB', async () => {
-    const { entityId } = await seedEntity(db);
-    const orch = await seedOrchestrator(db, entityId, `orch-skills-${Date.now()}`);
-    const w = await seedWorker(db, entityId, `test-sheet-worker-${Date.now()}`);
-    await assignChild(db, orch.id, w.id, entityId);
-
-    // Add a skill
     const [skill] = await db
       .insert(agentSkills)
       .values({
@@ -179,98 +141,28 @@ describe('generateAssignTools', () => {
         content: 'skill content',
       })
       .returning();
-    await db.insert(agentSkillAssignments).values({
-      entityId,
-      agentId: w.id,
-      skillId: skill!.id,
-    });
+    await db.insert(agentSkillAssignments).values({ entityId, agentId: w.id, skillId: skill!.id });
 
     const tools = await generateAssignTools(orch.id as AgentId, db);
-    expect(tools[0]?.description).toContain('My Custom Skill');
+    const tool = tools[0]!;
+
+    // The name comes from DB.
+    expect(tool.description).toBe(`Assign a task to ${w.name}.`);
+    // Purpose, skills, connectors, the owner's instructions and the delegation
+    // scope rule are said once, in `## Your team` (team-block.ts) — see
+    // delegation-said-once.test.ts for the whole prompt + tools of a real team.
+    expect(tool.description).not.toContain('Always check duplicates first');
+    expect(tool.description).not.toContain('My Custom Skill');
+    expect(tool.description).not.toContain(DELEGATION_SCOPE_RULE);
   });
 
-  it('tool description includes sub-agent MCP server tools (Stripe/Cogni/etc)', async () => {
-    // Regression for the Stripe/Conciergus pattern (2026-05-26): without this
-    // the `assign_<child>` tool description omits MCP capabilities and the
-    // orchestrator's LLM refuses to delegate. Symmetric with team-block.ts.
-    const { entityId } = await seedEntity(db);
-    const orch = await seedOrchestrator(db, entityId, `orch-mcp-desc-${Date.now()}`);
-    const w = await seedWorker(db, entityId, `test-mcp-desc-worker-${Date.now()}`);
-    await assignChild(db, orch.id, w.id, entityId);
-
-    const { mcpServers, agentMcpServers } = await import('@nodal-agents/db');
-    const [server] = await db
-      .insert(mcpServers)
-      .values({
-        entityId,
-        name: 'Stripe Test',
-        slug: 'stripe',
-        transport: 'http',
-        url: 'https://mcp.stripe.com',
-        // See note in team-block.test.ts — auth scheme irrelevant here.
-        authScheme: 'header',
-        authParamName: 'x-api-key',
-        availableTools: [
-          { name: 'list_customers', description: 'List recent customers' },
-          { name: 'retrieve_balance', description: 'Read account balance' },
-        ],
-        active: true,
-      })
-      .returning();
-    await db.insert(agentMcpServers).values({
-      entityId,
-      agentId: w.id,
-      mcpServerId: server!.id,
-      enabledTools: null,
-    });
-
-    const tools = await generateAssignTools(orch.id as AgentId, db);
-    const desc = tools[0]?.description ?? '';
-    // The assign description surfaces the connector/MCP NAME (the capability),
-    // not the full per-operation tool list.
-    expect(desc).toContain('Connectors:');
-    expect(desc).toContain('stripe');
-  });
-
-  it('surfaces the MCP server name (capability) to the orchestrator', async () => {
-    // The orchestrator routes by capability (the connector/MCP NAME), not by the
-    // per-operation tool list. Per-agent enabled_tools still filter what the
-    // child can run at runtime; the assign description just names the capability.
-    const { entityId } = await seedEntity(db);
-    const orch = await seedOrchestrator(db, entityId, `orch-mcp-filter-${Date.now()}`);
-    const w = await seedWorker(db, entityId, `test-mcp-filter-worker-${Date.now()}`);
-    await assignChild(db, orch.id, w.id, entityId);
-
-    const { mcpServers, agentMcpServers } = await import('@nodal-agents/db');
-    const [server] = await db
-      .insert(mcpServers)
-      .values({
-        entityId,
-        name: 'Cogni Cortex Test',
-        slug: 'cogni-cortex',
-        transport: 'http',
-        url: 'https://cogni-web-psi.vercel.app/api/mcp',
-        authScheme: 'header',
-        authParamName: 'x-api-key',
-        availableTools: [
-          { name: 'get_home', description: null },
-          { name: 'post', description: null },
-          { name: 'delete_post', description: null },
-        ],
-        active: true,
-      })
-      .returning();
-    await db.insert(agentMcpServers).values({
-      entityId,
-      agentId: w.id,
-      mcpServerId: server!.id,
-      enabledTools: ['get_home', 'post'], // delete_post disabled
-    });
-
-    const tools = await generateAssignTools(orch.id as AgentId, db);
-    const desc = tools[0]?.description ?? '';
-    expect(desc).toContain('Connectors:');
-    expect(desc).toContain('cogni-cortex');
+  // Codex review of #455, pass 2 (P1): "never look or act beyond the folders"
+  // also forbade an e-mail, a Notion page or a web search. The rule is about
+  // the FILE SYSTEM only, and says so.
+  it('the scope rule is about files and folders only, never connectors or the web', () => {
+    expect(DELEGATION_SCOPE_RULE).toMatch(/folders? .*reads? or writes?|files/i);
+    expect(DELEGATION_SCOPE_RULE).toMatch(/connectors?.*web|web.*connectors?/i);
+    expect(DELEGATION_SCOPE_RULE).not.toMatch(/look or act beyond/i);
   });
 
   it('tool execute() throws DelegationPendingError (sentinel for runner)', async () => {

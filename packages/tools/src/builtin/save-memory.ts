@@ -50,6 +50,7 @@ export const saveMemoryTool: ToolDefinition<typeof SaveMemoryInputSchema, SaveMe
     "facts. Skip ephemeral details (today's weather, transient calculation results).",
   inputSchema: SaveMemoryInputSchema,
   riskLevel: 'write',
+  loading: 'eager',
   card: 'text',
   execute: async (input, ctx) => {
     try {

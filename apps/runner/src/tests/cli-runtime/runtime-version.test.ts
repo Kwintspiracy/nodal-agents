@@ -142,6 +142,7 @@ describe('a CLI-runtime agent knows which Nodal-Agents version it runs (#454)', 
         },
         agentRow,
         workspaces: [{ label: 'ws', path: ws }],
+        claimGeneration: 0,
       });
       expect(fakeRun).toHaveBeenCalled();
       expect(fakeRun.mock.calls[0]![0].personality).toContain(

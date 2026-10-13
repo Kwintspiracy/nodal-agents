@@ -11,7 +11,7 @@ import { telegramAdapter } from './channels/telegram-adapter.ts';
 import { discordAdapter } from './channels/discord-adapter.ts';
 import { slackAdapter } from './channels/slack-adapter.ts';
 import { whatsappAdapter } from './channels/whatsapp-adapter.ts';
-import type { ChannelAdapter, ChannelKind } from './channel-adapter.ts';
+import type { ChannelAdapter, ChannelKind, TextDelivery } from './channel-adapter.ts';
 
 const adapters: ReadonlyMap<ChannelKind, ChannelAdapter> = new Map([
   ['telegram', telegramAdapter],
@@ -31,4 +31,15 @@ export function getAdapter(channel: ChannelKind): ChannelAdapter {
     );
   }
   return adapter;
+}
+
+/**
+ * Ce que l'adaptateur de `channel` fait d'un texte (#613). Une LECTURE de sa
+ * déclaration, jamais un envoi : le prompt d'un job la cite, et c'est ici
+ * qu'elle se lit plutôt que par `getAdapter` chez l'appelant, où tout usage
+ * se range parmi les envois (architecture du runner : un envoi terminal ne
+ * part que par l'outbox).
+ */
+export function textDeliveryOf(channel: ChannelKind): TextDelivery {
+  return getAdapter(channel).text;
 }

@@ -58,7 +58,12 @@ async function createSchedule(overrides: {
 
 async function lastJobFor(name: string) {
   const jobs = await db
-    .select({ id: agentJobs.id, chatId: agentJobs.chatId, channel: agentJobs.channel })
+    .select({
+      id: agentJobs.id,
+      chatId: agentJobs.chatId,
+      chatChannel: agentJobs.chatChannel,
+      channel: agentJobs.channel,
+    })
     .from(agentJobs)
     .where(and(eq(agentJobs.agentId, seed.agentId), eq(agentJobs.task, 'Do the thing')));
   // Isolate by insertion order — most recent row for this test's call.
@@ -84,6 +89,9 @@ describe('run_schedule', () => {
     expect(job).toBeDefined();
     expect(job!.channel).toBe('cron');
     expect(job!.chatId).toBe('owner-111');
+    // The owner's Telegram chat, resolved as such: it carries its channel
+    // (#649), so the runner holds the job to its confirmation there.
+    expect(job!.chatChannel).toBe('telegram');
 
     await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
   });
@@ -107,6 +115,9 @@ describe('run_schedule', () => {
 
     const job = await lastJobFor('run-sched-explicit');
     expect(job!.chatId).toBe('team-group-999');
+    // An explicit id on a schedule left on auto: nothing says its platform, so
+    // it carries NO channel (#649) — never guessed as Telegram.
+    expect(job!.chatChannel).toBeNull();
 
     await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
   });

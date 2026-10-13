@@ -23,6 +23,8 @@ const expectedTables = [
   'connectors',
   'tool_calls',
   'approval_requests',
+  // #637 — où chaque carte d'approbation a été livrée (migration 0140).
+  'approval_card_messages',
   'approval_rules',
   'agent_memory',
   'webhook_triggers',

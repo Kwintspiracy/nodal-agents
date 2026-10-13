@@ -24,6 +24,7 @@ const summary = (over: Partial<RunSummary> = {}): RunSummary => ({
   modelCalls: 2,
   durationMs: 12_000,
   costUsd: 0.04,
+  unpricedCalls: 0,
   ...over,
 });
 
@@ -78,6 +79,18 @@ describe('runSummaryParts @cap:suivre-execution/ecran', () => {
   });
 });
 
+describe('la ligne de résumé dit un coût partiel comme la barre (#508) @cap:voir-le-cout/ecran', () => {
+  it('des appels sans prix : « partial » après le montant', () => {
+    expect(runSummaryParts(summary({ costUsd: 1.2, unpricedCalls: 1 }))).toContain(
+      '$1.20 · partial',
+    );
+    expect(runSummaryParts(summary({ costUsd: null, unpricedCalls: 1 }))).toContain(
+      'n/a · partial',
+    );
+    expect(runSummaryParts(summary()).join(' · ')).not.toContain('partial');
+  });
+});
+
 describe('RunSummaryRow @cap:suivre-execution/ecran', () => {
   it('replié, le travail n’est PAS dans la page', () => {
     const html = markup(
@@ -121,7 +134,14 @@ describe('RunSummaryRow @cap:suivre-execution/ecran', () => {
     const html = markup(
       <RunSummaryRow
         jobId="j1"
-        summary={{ tools: 0, delegations: 0, modelCalls: 0, durationMs: null, costUsd: null }}
+        summary={{
+          tools: 0,
+          delegations: 0,
+          modelCalls: 0,
+          durationMs: null,
+          costUsd: null,
+          unpricedCalls: 0,
+        }}
       >
         <p>{WORK}</p>
       </RunSummaryRow>,
@@ -138,6 +158,7 @@ describe('RunSummaryRow @cap:suivre-execution/ecran', () => {
         modelCalls: 0,
         durationMs: null,
         costUsd: null,
+        unpricedCalls: 0,
       }),
     ).toEqual([]);
   });

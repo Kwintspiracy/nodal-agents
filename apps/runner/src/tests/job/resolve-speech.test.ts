@@ -11,6 +11,21 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { entityLlmKeys, eq } from '@nodal-agents/db';
 import { resolveSpeechGenerator } from '../../job/resolve-speech.ts';
 
+// Provider calls take packages/llm's own transport, not the global fetch
+// (#608). The generator is handed the global fetch here, read at call time, so
+// the stub below still catches the request and nothing leaves the machine.
+vi.mock('@nodal-agents/llm', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@nodal-agents/llm')>();
+  return {
+    ...actual,
+    createOpenRouterSpeech: (...[apiKey, opts]: Parameters<typeof actual.createOpenRouterSpeech>) =>
+      actual.createOpenRouterSpeech(apiKey, {
+        ...opts,
+        fetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+      }),
+  };
+});
+
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
 

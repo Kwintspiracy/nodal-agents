@@ -5,6 +5,12 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { probeContextWindow } from '../probe-context';
 import { isContextOverflowError } from '../errors';
 
+// Every provider call goes through `providerFetch` (#608). Routed to the global
+// fetch here, so these tests stub `fetch` as they always did.
+vi.mock('../transport', () => ({
+  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
+
 function mockFetchOnce(body: unknown, ok = true) {
   vi.stubGlobal(
     'fetch',

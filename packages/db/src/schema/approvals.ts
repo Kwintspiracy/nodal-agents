@@ -1,6 +1,16 @@
 // approval_requests + approval_rules tables
 
-import { pgTable, text, uuid, jsonb, timestamp, index, check, unique } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  text,
+  uuid,
+  jsonb,
+  timestamp,
+  integer,
+  index,
+  check,
+  unique,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
@@ -27,7 +37,11 @@ export const approvalRequests = pgTable(
     /**
      * Ce que cette ligne DEMANDE (0098, P10a) : 'approval' — approuver ou
      * refuser une action — ou 'question' — choisir une option parmi celles que
-     * l'agent propose (`ask_user`).
+     * l'agent propose (`ask_user`) — ou 'elicitation' (0145) — remplir le
+     * formulaire qu'un serveur MCP demande PENDANT un de ses appels.
+     *
+     * Une élicitation n'est jamais un appel à rejouer : voir
+     * `CALL_GATE_KINDS`, le filtre de tout lecteur qui rejoue ou reprend.
      *
      * POSÉE par la porte à la création, depuis ce que l'outil déclare
      * (`ToolDefinition.asksUser`), jamais devinée après coup par le nom de
@@ -44,6 +58,23 @@ export const approvalRequests = pgTable(
      * personne n'a répondu, et sur un refus.
      */
     answer: text('answer'),
+    /**
+     * Ce qu'une personne a rempli en réponse à une ÉLICITATION (0145) : le
+     * formulaire qu'un serveur MCP a demandé pendant un de ses appels, validé
+     * contre `tool_input.requestedSchema` (`validateElicitationContent`,
+     * `@nodal-agents/shared`) avant d'être écrit. NULL tant que personne n'a
+     * répondu, sur un refus, et sur toute ligne qui n'est pas une élicitation.
+     */
+    response: jsonb('response'),
+    /**
+     * Le BROUILLON d'une élicitation remplie depuis un canal (0146) : ce que la
+     * personne a posé geste par geste sur la carte Telegram, Discord ou Slack,
+     * `{ values, awaiting }` (`readElicitationDraft`, `@nodal-agents/shared`).
+     * `awaiting` : le champ qui attend une valeur tapée en réponse à la carte.
+     * NULL tant que personne n'a touché la carte ; la réponse envoyée, elle,
+     * va dans `response`.
+     */
+    draft: jsonb('draft'),
     /**
      * Why the autonomy checklist held this command (#464): one entry per kind
      * of action — `{ category, state, details }`, the details being the
@@ -64,6 +95,19 @@ export const approvalRequests = pgTable(
      * Guards against double-execution on duplicate resume triggers.
      */
     executedAt: timestamp('executed_at', { withTimezone: true }),
+    /**
+     * La prise du job (`agent_jobs.claim_generation`) du run qui a RÉSERVÉ
+     * l'exécution de cet appel approuvé (#566, migration 0135). NULL : pas
+     * réservée. Posée atomiquement avant l'exécution, sous la prise du job :
+     * un appel approuvé ne tourne qu'une fois, même quand le job change de run.
+     */
+    executionClaim: integer('execution_claim'),
+    /**
+     * Le tool_result de cet appel, consigné avec `executed_at` (#566) : un run
+     * qui reprend le job après celui qui l'a exécuté le reprend tel quel au
+     * lieu de le perdre. NULL pour une demande close avant cette colonne.
+     */
+    executionOutput: jsonb('execution_output'),
   },
   (table) => [
     index('idx_approval_requests_entity_id').on(table.entityId),
@@ -74,12 +118,138 @@ export const approvalRequests = pgTable(
       'approval_requests_status_check',
       sql`${table.status} IN ('pending','approved','rejected','expired')`,
     ),
-    check('approval_requests_kind_check', sql`${table.kind} IN ('approval','question')`),
+    check(
+      'approval_requests_kind_check',
+      sql`${table.kind} IN ('approval','question','elicitation')`,
+    ),
   ],
 );
 
 export type ApprovalRequestRow = typeof approvalRequests.$inferSelect;
 export type ApprovalRequestInsert = typeof approvalRequests.$inferInsert;
+
+/**
+ * Les sortes de lignes qui retiennent un APPEL d'outil (0145) : une approbation
+ * — l'appel attend son feu vert — et une question d'`ask_user` — l'appel EST la
+ * question, rejouée à la reprise pour lire la réponse.
+ *
+ * Une élicitation n'en fait pas partie : c'est un serveur MCP qui demande
+ * quelque chose PENDANT un appel déjà en cours. La relire comme un appel
+ * approuvé ferait RÉEXÉCUTER l'outil MCP (une impression en double). Tout
+ * lecteur qui rejoue, reprend ou réveille un job à partir de ces lignes filtre
+ * donc sur cette liste — positive, pour qu'une sorte future soit exclue tant
+ * que personne n'a décidé qu'elle retient un appel.
+ */
+export const CALL_GATE_KINDS = ['approval', 'question'] as const;
+
+/** Le filtre SQL de `CALL_GATE_KINDS` — la forme que lisent les requêtes. */
+export function gatesACall() {
+  return sql`${approvalRequests.kind} IN ('approval','question')`;
+}
+
+// ─── approval_request_attachments ─────────────────────────────────────────────
+
+/**
+ * Les images qu'un serveur MCP joint à sa question (0145), lues dans
+ * `_meta["nodal/attachments"]` de `elicitation/create` et validées avant
+ * l'écriture (`readElicitationAttachments`, `@nodal-agents/shared` : images
+ * seulement, taille et nombre plafonnés). `data` est le base64 reçu, tel quel.
+ *
+ * À part de `approval_requests` pour qu'aucune lecture de la demande (listes,
+ * cloche, reprise d'un job) ne charge des Mo qu'elle n'affiche pas.
+ */
+export const approvalRequestAttachments = pgTable(
+  'approval_request_attachments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    approvalRequestId: uuid('approval_request_id')
+      .notNull()
+      .references(() => approvalRequests.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    mimeType: text('mime_type').notNull(),
+    data: text('data').notNull(),
+    byteSize: integer('byte_size').notNull(),
+    caption: text('caption'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique('approval_request_attachments_position_unique').on(
+      table.approvalRequestId,
+      table.position,
+    ),
+    check(
+      'approval_request_attachments_mime_check',
+      sql`${table.mimeType} IN ('image/png','image/jpeg','image/webp','image/gif')`,
+    ),
+  ],
+);
+
+export type ApprovalRequestAttachmentRow = typeof approvalRequestAttachments.$inferSelect;
+
+// ─── approval_card_messages ───────────────────────────────────────────────────
+
+/**
+ * Chaque carte d'approbation (ou de question) livrée sur un canal (0140, #637) :
+ * où elle est — canal, agent dont le binding l'a envoyée, conversation, id du
+ * message — pour que la carte suive le sort de sa demande.
+ *
+ * Avant, l'id du message était jeté à l'envoi : seul un clic SUR la carte
+ * pouvait la réécrire. Une demande tranchée ailleurs (dashboard, autre canal),
+ * expirée par le balayage ou close par l'annulation de son job laissait une
+ * carte morte, boutons actifs, dans la conversation du propriétaire.
+ *
+ * La mise à jour (`approvals/card-settlement.ts` du runner) :
+ * - `claimed_at` : un appelant a pris la carte et l'édite en ce moment. Un
+ *   bail, pas un verrou : passé `APPROVAL_CARD_CLAIM_LEASE_MS`, un autre la
+ *   reprend (le processus qui la tenait est mort).
+ * - `attempts` / `last_error` : combien d'éditions ont été tentées, et pourquoi
+ *   la dernière a échoué. Un échec est repris au tick suivant, un nombre borné
+ *   de fois.
+ * - `settled_at` + `outcome` : posés UNE fois, quand c'est fini — `edited`
+ *   (l'édition a réussi), `cannot_edit` (le canal ne sait pas éditer) ou
+ *   `gave_up` (échecs répétés, abandon dit dans les logs). NULL : pas fini.
+ */
+export const approvalCardMessages = pgTable(
+  'approval_card_messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    approvalRequestId: uuid('approval_request_id')
+      .notNull()
+      .references(() => approvalRequests.id, { onDelete: 'cascade' }),
+    channel: text('channel').notNull(),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id, { onDelete: 'cascade' }),
+    conversationId: text('conversation_id').notNull(),
+    messageId: text('message_id').notNull(),
+    sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    settledAt: timestamp('settled_at', { withTimezone: true }),
+    outcome: text('outcome'),
+  },
+  (table) => [
+    index('idx_approval_card_messages_request').on(table.approvalRequestId),
+    // Un message est UNE carte : l'adoption d'une carte non consignée ne la dédouble jamais.
+    unique('approval_card_messages_message_unique').on(
+      table.approvalRequestId,
+      table.channel,
+      table.conversationId,
+      table.messageId,
+    ),
+    check(
+      'approval_card_messages_channel_check',
+      sql`${table.channel} IN ('telegram','discord','slack','whatsapp')`,
+    ),
+    check(
+      'approval_card_messages_outcome_check',
+      sql`${table.outcome} IS NULL OR ${table.outcome} IN ('edited','cannot_edit','gave_up')`,
+    ),
+  ],
+);
+
+export type ApprovalCardMessageRow = typeof approvalCardMessages.$inferSelect;
 
 // ─── approval_rules ───────────────────────────────────────────────────────────
 

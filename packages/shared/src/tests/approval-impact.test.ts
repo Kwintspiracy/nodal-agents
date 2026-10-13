@@ -29,6 +29,27 @@ describe('computeApprovalImpactLine — run_command', () => {
     expect(line).toContain('destructive or heavy');
   });
 
+  // Reviewer A, #582 : la carte décrivait toute commande lourde par « deletes/moves
+  // files, installs software, or changes system state » ; un téléchargement de
+  // modèle se lisait comme une installation. La carte dit la sorte d'action que
+  // la grille a lue.
+  it('names the kind of action the checklist reads: a download reads as a download', () => {
+    const line = computeApprovalImpactLine('run_command', {
+      command: 'comfy --json model download --url https://huggingface.co/x/y.safetensors',
+    });
+    expect(line).toContain('destructive or heavy: downloads files from the internet');
+    expect(line).not.toContain('installs');
+  });
+
+  it('names every kind a chained command performs, and only those', () => {
+    const line = computeApprovalImpactLine('run_command', {
+      command: 'pip install pandas && rm -rf build',
+    });
+    expect(line).toContain('installs software or packages');
+    expect(line).toContain('deletes files or discards changes');
+    expect(line).not.toContain('downloads');
+  });
+
   it('flags inline interpreter eval', () => {
     const line = computeApprovalImpactLine('run_command', {
       command: `python -c "import json; print(json.dumps({'a': 1}))"`,
@@ -64,6 +85,91 @@ describe('computeApprovalImpactLine — run_command', () => {
 
   it('falls back to the generic sentence when command is missing', () => {
     expect(computeApprovalImpactLine('run_command', {})).toBe('Runs a shell command on the host.');
+  });
+});
+
+// #635 : la porte juge une commande aussi sur le code qu'elle lance. La ligne
+// d'impact ne peut plus dire « likely read/inspect » d'une commande retenue
+// pour ce que fait son script : elle dit ce que la porte a lu, et où.
+describe('computeApprovalImpactLine — what the gate read in the code a command runs (#635) @cap:approuver-une-action/moteur', () => {
+  const found = (
+    category: 'install_software' | 'delete_files',
+    source: string | null,
+    line: number,
+  ) => ({
+    category,
+    state: 'ask' as const,
+    details: ['x'],
+    found: [{ source, line, text: 'whatever' }],
+  });
+
+  it('a script that installs: said with the file and the line, never "likely read"', () => {
+    const line = computeApprovalImpactLine(
+      'run_command',
+      { command: 'python shared/scripts/build.py' },
+      [found('install_software', 'shared/scripts/build.py', 5)],
+    );
+    expect(line).toBe(
+      'Runs `python` — the code it runs installs software or packages (shared/scripts/build.py, line 5).',
+    );
+  });
+
+  it('what the text shows and what the code does are both said', () => {
+    const line = computeApprovalImpactLine(
+      'run_command',
+      { command: 'pip install pandas && node clean.js' },
+      [
+        { category: 'install_software', state: 'ask', details: ['x'] },
+        found('delete_files', 'clean.js', 3),
+      ],
+    );
+    expect(line).toBe(
+      'Runs `pip` → `node` — destructive or heavy: installs software or packages; ' +
+        'the code it runs deletes files or discards changes (clean.js, line 3).',
+    );
+  });
+
+  it('code written into the command, and a script it could not read', () => {
+    expect(
+      computeApprovalImpactLine('run_command', { command: 'node -e "x()"' }, [
+        found('install_software', null, 1),
+      ]),
+    ).toContain('the code it runs installs software or packages (code in the command, line 1)');
+    expect(
+      computeApprovalImpactLine('run_command', { command: 'python tools/cleanup.py' }, [
+        {
+          category: 'inline_code',
+          state: 'ask',
+          details: ['python tools/cleanup.py'],
+          unread: [{ source: 'tools/cleanup.py', why: 'not_found' }],
+        },
+      ]),
+    ).toBe('Runs `python` — runs a script it could not read (tools/cleanup.py).');
+  });
+
+  it('a declared proof says it too', () => {
+    const line = computeApprovalImpactLine(
+      'declare_verification',
+      { project_path: 'app', commands: [{ command: 'python check.py' }] },
+      [found('install_software', 'check.py', 2)],
+    );
+    expect(line).toContain(
+      'without asking again; the code it runs installs software or packages (check.py, line 2).',
+    );
+  });
+
+  it('without reasons, the line reads the text as before', () => {
+    expect(computeApprovalImpactLine('run_command', { command: 'python build.py' })).toContain(
+      'no destructive pattern detected',
+    );
+  });
+
+  it('a token in a path is masked', () => {
+    const secret = 'sk-ant-api03-QRSTUVWXYZ0123456789ABCDEFGHIJ'; // secrets:allow (fixture : clé factice)
+    const line = computeApprovalImpactLine('run_command', { command: 'python x.py' }, [
+      found('install_software', `/tmp/${secret}.py`, 1),
+    ]);
+    expect(line).not.toContain(secret);
   });
 });
 
@@ -172,6 +278,15 @@ describe('computeApprovalImpactLine — declare_verification (revue Codex PR #49
       commands: [{ command: 'node --check app.js' }, { command: 'npm install' }],
     });
     expect(line).toContain('installs software');
+  });
+
+  it('names the kind of a heavy proof command: a download, not an install (#581)', () => {
+    const line = computeApprovalImpactLine('declare_verification', {
+      project_path: 'C:/p',
+      commands: [{ command: 'node --check app.js' }, { command: 'comfy model download --url x' }],
+    });
+    expect(line).toContain('at least one downloads files from the internet');
+    expect(line).not.toContain('installs');
   });
 
   it('une déclaration VIDE le dit : rien ne tournera', () => {

@@ -38,6 +38,13 @@ afterAll(() => {
 
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 
+// Provider calls take the provider transport (#608). Routed to the global
+// fetch the key-test cases stub, so nothing leaves the machine.
+vi.mock('@nodal-agents/llm', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@nodal-agents/llm')>()),
+  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
+
 /**
  * Read back what a channel writer actually persisted into
  * `channel_bindings.credentials`.
@@ -183,6 +190,18 @@ vi.mock('../src/lib/server.ts', async () => {
   };
 });
 
+// ─── Mock cancelJobTree (@nodal-agents/db) ────────────────────────────────────
+// La cascade d'annulation est UNE fonction partagée par le bouton Stop et
+// l'outil `stop_conversation_run` (#567). Ce qu'elle écrit est prouvé sur une
+// vraie base (packages/db/src/tests/cancel-job-tree.test.ts,
+// packages/tools/src/tests/conversation-runs.test.ts) ; ici on prouve ce que
+// l'ACTION fait de son résultat, que la maquette chaînable ne sait pas jouer.
+const cancelJobTreeMock = vi.fn();
+vi.mock('@nodal-agents/db', async () => {
+  const actual = await vi.importActual<typeof import('@nodal-agents/db')>('@nodal-agents/db');
+  return { ...actual, cancelJobTree: (...args: unknown[]) => cancelJobTreeMock(...args) };
+});
+
 // ─── Mock @nodal-agents/memory ─────────────────────────────────────────────────────
 // The memory package's chained queries don't fit our simple chainable mock
 // (count + items in two distinct selects); we stub the public API directly.
@@ -265,7 +284,7 @@ vi.mock('@nodal-agents/shared', async () => {
         return {
           modelId,
           label: 'Test No-Tools Model',
-          capabilities: { tools: false, forcedToolChoice: false },
+          capabilities: { tools: false },
         };
       }
       return actual.findModelCatalogEntry(provider, modelId);
@@ -390,87 +409,55 @@ describe('cancelJobAction', () => {
     if (!r.ok) expect(r.code).toBe('not_found');
   });
 
-  it('refuses already-terminal jobs (completed)', async () => {
-    currentDb = makeDb([{ status: 'completed' }]) as typeof currentDb;
-    const { cancelJobAction } = await import('../src/lib/actions.ts');
-    const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('already_terminal');
-  });
+  const NOTHING = { jobIds: [], taskIds: [], requestIds: [], discardedMessages: [] };
 
-  it('refuses already-terminal jobs (failed)', async () => {
-    currentDb = makeDb([{ status: 'failed' }]) as typeof currentDb;
-    const { cancelJobAction } = await import('../src/lib/actions.ts');
-    const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('already_terminal');
-  });
-
-  it('refuses already-terminal jobs (cancelled — re-cancel is a no-op)', async () => {
-    currentDb = makeDb([{ status: 'cancelled' }]) as typeof currentDb;
-    const { cancelJobAction } = await import('../src/lib/actions.ts');
-    const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('already_terminal');
-  });
-
-  it('flips status to cancelled for pending / processing / awaiting_*', async () => {
-    for (const status of ['pending', 'processing', 'awaiting_approval', 'awaiting_delegation']) {
+  it.each(['completed', 'failed', 'cancelled'])(
+    'refuses a %s job when nothing under it is still alive',
+    async (status) => {
       currentDb = makeDb([{ status }]) as typeof currentDb;
+      cancelJobTreeMock.mockResolvedValueOnce(NOTHING);
       const { cancelJobAction } = await import('../src/lib/actions.ts');
       const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
-      expect(r.ok, `should cancel from ${status}`).toBe(true);
-      if (r.ok) expect(r.data.status).toBe('cancelled');
+      expect(r).toMatchObject({ ok: false, code: 'already_terminal' });
+    },
+  );
 
-      // The action must have issued the cascade UPDATE via the raw-SQL
-      // escape hatch (WITH RECURSIVE). Drift catch: if the action ever
-      // forgets to actually run it, this assertion fails.
-      const executeSpy = (currentDb as unknown as { execute: ReturnType<typeof vi.fn> }).execute;
-      expect(executeSpy).toHaveBeenCalled();
+  it('runs the shared cascade on the job, scoped to the caller’s workspace', async () => {
+    for (const status of ['pending', 'processing', 'awaiting_approval', 'awaiting_delegation']) {
+      currentDb = makeDb([{ status }]) as typeof currentDb;
+      cancelJobTreeMock.mockReset();
+      cancelJobTreeMock.mockResolvedValueOnce({
+        jobIds: ['aaaaaaaa-0000-0000-0000-000000000001'],
+        taskIds: [],
+        requestIds: [],
+        discardedMessages: [],
+      });
+      const { cancelJobAction } = await import('../src/lib/actions.ts');
+      const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
+      expect(r, `should cancel from ${status}`).toEqual({
+        ok: true,
+        data: { status: 'cancelled' },
+      });
+      expect(cancelJobTreeMock.mock.calls[0]?.[1]).toEqual({
+        entityId: expect.any(String) as string,
+        jobId: 'aaaaaaaa-0000-0000-0000-000000000001',
+      });
     }
   });
 
-  it('cascade UPDATE includes a recursive CTE over descendants', async () => {
-    // Smoke check on the raw SQL — the cascade is correctness-critical
-    // and we want to catch a regression that silently strips the
-    // WITH RECURSIVE part (would leave child jobs running).
-    currentDb = makeDb([{ status: 'processing' }]) as typeof currentDb;
+  it('a failed head whose delegate still runs is stopped, not refused (#567)', async () => {
+    // Le faucheur a déclaré la tête morte ; son délégué tourne encore. La
+    // cascade l'a trouvé vivant et l'a annulé : ce n'est pas « déjà terminé ».
+    currentDb = makeDb([{ status: 'failed' }]) as typeof currentDb;
+    cancelJobTreeMock.mockResolvedValueOnce({
+      jobIds: ['bbbbbbbb-0000-0000-0000-000000000002'],
+      taskIds: [],
+      requestIds: ['cccccccc-0000-0000-0000-000000000003'],
+      discardedMessages: [],
+    });
     const { cancelJobAction } = await import('../src/lib/actions.ts');
     const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
-    expect(r.ok).toBe(true);
-
-    const executeSpy = (currentDb as unknown as { execute: ReturnType<typeof vi.fn> }).execute;
-    expect(executeSpy).toHaveBeenCalledTimes(1);
-    // The sql template is opaque from the mock side, but it stringifies
-    // to its query text + params layout; we just sanity-check that the
-    // recursive CTE keyword reached the executor.
-    const callArg = executeSpy.mock.calls[0]?.[0];
-    const text = JSON.stringify(callArg);
-    expect(text).toContain('RECURSIVE');
-    expect(text).toContain('descendants');
-    expect(text).toContain('parent_job_id');
-  });
-
-  it('cascade also stops detached tasks and expires pending approvals (B2)', async () => {
-    // The same statement must cascade off the descendants set into agent_tasks
-    // (a planner's create_task children are detached — root_job_id, not
-    // parent_job_id — so the recursive walk alone never reaches them) and into
-    // approval_requests (a pending approval is expired so a late tap can't
-    // resurrect the job). A regression stripping either leaves the cancel
-    // half-honored: work keeps spawning or an approval can still resume.
-    currentDb = makeDb([{ status: 'processing' }]) as typeof currentDb;
-    const { cancelJobAction } = await import('../src/lib/actions.ts');
-    const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
-    expect(r.ok).toBe(true);
-
-    const executeSpy = (currentDb as unknown as { execute: ReturnType<typeof vi.fn> }).execute;
-    const text = JSON.stringify(executeSpy.mock.calls[0]?.[0]);
-    // Tasks cascade: detached children off the same descendants set.
-    expect(text).toContain('agent_tasks');
-    expect(text).toContain('root_job_id');
-    // Approvals cascade: pending approvals expired so a late tap can't resurrect.
-    expect(text).toContain('approval_requests');
-    expect(text).toContain('expired');
+    expect(r).toEqual({ ok: true, data: { status: 'cancelled' } });
   });
 });
 
@@ -3613,6 +3600,8 @@ describe('runScheduleNowAction', () => {
     // notify_on_success is ON → chatId carries the resolved owner chat
     // so the runner enforces a confirmation.
     expect(insertValues?.['chatId']).toBe('12345');
+    // Auto: the owner chat resolveOwnerChatId gives is Telegram's (#649).
+    expect(insertValues?.['chatChannel']).toBe('telegram');
     expect(insertValues?.['messages']).toEqual([{ role: 'user', content: 'Summarize the inbox' }]);
 
     // A manual run must NOT reschedule the cron — no UPDATE on agent_schedules.
@@ -3657,7 +3646,14 @@ describe('runScheduleNowAction', () => {
     const insertValues = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
     // notify_on_success is OFF → no delivery target, and resolveOwnerChatId is
     // never even called (short-circuited). The runner won't force a confirmation.
-    expect('chatId' in (insertValues ?? {})).toBe(false);
+    // No chat: designateChat writes both columns as NULL (#649).
+    expect({
+      chatId: insertValues?.['chatId'],
+      chatChannel: insertValues?.['chatChannel'],
+    }).toEqual({
+      chatId: null,
+      chatChannel: null,
+    });
     fetchSpy.mockRestore();
   });
 
@@ -4834,6 +4830,8 @@ describe('sendTaskAction — Telegram delivery channel', () => {
     expect(jobValues?.['task'] as string).not.toContain('## Delivery channels');
     // chatId is set on the job row (runner will build Job context block in system_prompt)
     expect(jobValues?.['chatId']).toBe('12345');
+    // The chat carries its channel (#649): the owner's Telegram chat.
+    expect(jobValues?.['chatChannel']).toBe('telegram');
     // 'dashboard' depuis le 18/09 : la boîte écrit l'endroit d'où la demande
     // part. Avec 'api', ses tâches se mêlaient aux runs venus de dehors.
     expect(jobValues?.['channel']).toBe('dashboard');
@@ -4864,7 +4862,11 @@ describe('sendTaskAction — Telegram delivery channel', () => {
     expect(jobValues?.['task']).toBe('Plain prompt');
     expect(jobValues?.['task'] as string).not.toContain('## Delivery channels');
     // chatId not set (key absent or undefined — no spread)
-    expect(jobValues?.['chatId']).toBeUndefined();
+    // No chat: designateChat writes both columns as NULL (#649).
+    expect({ chatId: jobValues?.['chatId'], chatChannel: jobValues?.['chatChannel'] }).toEqual({
+      chatId: null,
+      chatChannel: null,
+    });
     expect(jobValues?.['channel']).toBe('dashboard');
   });
 
@@ -5090,12 +5092,14 @@ describe('resetSkillToDefaultAction', () => {
 
 function mockMcpConnection(
   tools: Array<{ name: string; description?: string; inputSchema?: unknown }>,
+  instructions: string | null = null,
 ) {
   return {
     client: {
       callTool: vi.fn().mockResolvedValue({ content: [], isError: false }),
     },
     tools,
+    instructions,
     close: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -5169,10 +5173,13 @@ describe('createMcpServerFromCatalogAction', () => {
   it('happy path — encrypts the key, caches discovered tools (full descriptor, inputSchema included), inserts the row', async () => {
     mcpAdapterMocks.connectMcp.mockReset();
     mcpAdapterMocks.connectMcp.mockResolvedValue(
-      mockMcpConnection([
-        { name: 'get_home', description: 'home view', inputSchema: { type: 'object' } },
-        { name: 'get_feed', inputSchema: { type: 'object' } },
-      ]),
+      mockMcpConnection(
+        [
+          { name: 'get_home', description: 'home view', inputSchema: { type: 'object' } },
+          { name: 'get_feed', inputSchema: { type: 'object' } },
+        ],
+        'Read get_home before get_feed.',
+      ),
     );
     currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-0000000003a1' }]) as typeof currentDb;
     const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
@@ -5201,6 +5208,9 @@ describe('createMcpServerFromCatalogAction', () => {
       { name: 'get_home', description: 'home view', inputSchema: { type: 'object' } },
       { name: 'get_feed', inputSchema: { type: 'object' } },
     ]);
+    // The server's guidance, from the same connection, for the prompt of the
+    // agents that will hold it.
+    expect(values?.['instructions']).toBe('Read get_home before get_feed.');
   });
 
   // ── Custom HTTP MCP ───────────────────────────────────────────────────────
@@ -5305,7 +5315,10 @@ describe('createMcpServerFromCatalogAction', () => {
   it('custom-stdio-mcp — spawns the subprocess, encrypts env values, persists transport=stdio', async () => {
     mcpAdapterMocks.connectMcp.mockReset();
     mcpAdapterMocks.connectMcp.mockResolvedValue(
-      mockMcpConnection([{ name: 'read_file', description: 'read a file' }]),
+      mockMcpConnection(
+        [{ name: 'read_file', description: 'read a file' }],
+        'Paths are relative to /tmp.',
+      ),
     );
     currentDb = makeDbMixed({
       // HIGH-2: owner-gate SELECT (entities) resolves to the owner, THEN the
@@ -5348,6 +5361,7 @@ describe('createMcpServerFromCatalogAction', () => {
     // Env value is encrypted, not plaintext.
     expect(isEncrypted(envVars['GITHUB_TOKEN']!)).toBe(true);
     expect(envVars['GITHUB_TOKEN']).not.toBe('ghp_secret_value');
+    expect(values?.['instructions']).toBe('Paths are relative to /tmp.');
   });
 
   it('custom-stdio-mcp — refuses a non-owner (HIGH-2 owner-gate, never spawns)', async () => {
@@ -5458,7 +5472,10 @@ describe('updateMcpServerConfigAction', () => {
     ]) as typeof currentDb;
     mcpAdapterMocks.connectMcp.mockReset();
     mcpAdapterMocks.connectMcp.mockResolvedValue(
-      mockMcpConnection([{ name: 'do_thing', inputSchema: { type: 'object' } }]),
+      mockMcpConnection(
+        [{ name: 'do_thing', inputSchema: { type: 'object' } }],
+        'do_thing is idempotent.',
+      ),
     );
 
     const { updateMcpServerConfigAction } = await import('../src/lib/actions.ts');
@@ -5485,6 +5502,7 @@ describe('updateMcpServerConfigAction', () => {
     expect(set?.['availableTools']).toEqual([
       { name: 'do_thing', inputSchema: { type: 'object' } },
     ]);
+    expect(set?.['instructions']).toBe('do_thing is idempotent.');
   });
 
   it('stdio: a new env value REPLACES with a fresh ciphertext and verifies with the plaintext', async () => {
@@ -5561,6 +5579,10 @@ describe('updateMcpServerConfigAction', () => {
     expect(set?.['url']).toBe('https://new.example.com/mcp');
     expect(set?.['name']).toBe('API v2');
     expect('apiKey' in (set ?? {})).toBe(false); // key untouched
+    // The server publishes no guidance on this connection: whatever an earlier
+    // one stored is cleared, never kept.
+    expect('instructions' in (set ?? {})).toBe(true);
+    expect(set?.['instructions']).toBeNull();
   });
 
   it('fails loud and writes nothing when the new config cannot connect', async () => {
@@ -5595,6 +5617,38 @@ describe('updateMcpServerConfigAction', () => {
   });
 });
 
+describe('updateMcpServerApiKeyAction', () => {
+  it('the verifying connection refreshes the tools AND the guidance the server publishes', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-0000000005c1',
+        slug: 'my-api',
+        url: 'https://api.example.com/mcp',
+        authScheme: 'header',
+        authParamName: 'x-api-key',
+      },
+    ]) as typeof currentDb;
+    mcpAdapterMocks.connectMcp.mockReset();
+    mcpAdapterMocks.connectMcp.mockResolvedValue(
+      mockMcpConnection([{ name: 'ping', inputSchema: { type: 'object' } }], 'Ping first.'),
+    );
+
+    const { updateMcpServerApiKeyAction } = await import('../src/lib/actions.ts');
+    const r = await updateMcpServerApiKeyAction(
+      'aaaaaaaa-0000-0000-0000-0000000005c1',
+      'sk_live_rotated',
+    );
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setFn = (updateSpy.mock.results[0]?.value as { set?: ReturnType<typeof vi.fn> }).set;
+    const set = setFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(decrypt(set?.['apiKey'] as string)).toBe('sk_live_rotated');
+    expect(set?.['availableTools']).toEqual([{ name: 'ping', inputSchema: { type: 'object' } }]);
+    expect(set?.['instructions']).toBe('Ping first.');
+  });
+});
+
 describe('deleteMcpServerAction', () => {
   it('rejects a non-uuid id', async () => {
     const { deleteMcpServerAction } = await import('../src/lib/actions.ts');
@@ -5626,22 +5680,10 @@ describe('setAgentMcpServerAssignmentAction', () => {
     if (!r.ok) expect(r.code).toBe('not_found');
   });
 
-  it('assigned=true upserts an agent_mcp_servers row with the enabledTools whitelist', async () => {
-    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-0000000003d1' }]) as typeof currentDb;
-    const { setAgentMcpServerAssignmentAction } = await import('../src/lib/actions.ts');
-    const r = await setAgentMcpServerAssignmentAction(
-      'aaaaaaaa-0000-0000-0000-0000000003d1',
-      'aaaaaaaa-0000-0000-0000-0000000003d2',
-      true,
-      ['get_home'],
-    );
-    expect(r.ok).toBe(true);
-    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
-    const valuesFn = (insertSpy.mock.results[0]?.value as { values?: ReturnType<typeof vi.fn> })
-      .values;
-    const values = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
-    expect(values?.['enabledTools']).toEqual(['get_home']);
-  });
+  // assigned=true goes through attachMcpServerToAgent (packages/db), which
+  // reads the servers the agent already holds: proven against real rows,
+  // whitelist included, in src/lib/__tests__/mcp-attach-namespace.test.ts
+  // (#661) — a mock answering every read with one row cannot express it.
 
   it('assigned=false deletes the assignment row', async () => {
     currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-0000000003e1' }]) as typeof currentDb;

@@ -45,6 +45,7 @@ import { concludeProof, type ThreadDeclaredDeliverable } from './declared-proof.
 import { fileChangesOfAuditRows } from './file-change-groups.ts';
 import { callHappened, outcomeOfToolOutput } from './tool-card-payload.ts';
 import type { ProducedItem, ProductionVerdict } from './chat-or-work.ts';
+import type { CallsCost } from './space-cost.ts';
 // La règle « une relecture interdit-elle d'annoncer livré ? » vit dans
 // `@nodal-agents/shared` (#59) : l'orchestration la lit pour poser son champ
 // typé, l'écran pour choisir son mot. Une seule écriture, deux lecteurs.
@@ -92,6 +93,20 @@ export const STOPPED_ANSWER_NOTE = 'You stopped this answer.';
 
 /** Ce que le fil dit sous une réponse coupée avant sa fin (#458). */
 export const CUT_ANSWER_NOTE = 'This answer was cut off: the model stopped responding.';
+
+/**
+ * La note d'une réponse coupée, selon ce qui l'a coupée : une horloge du
+ * modèle (la note ci-dessus), ou le frein d'urgence sur un tour de CLI (#494).
+ */
+const CUT_ANSWER_NOTE_BY_REASON: Readonly<Record<string, string>> = {
+  auto_run_paused: 'This answer was cut off: the workspace emergency brake was engaged.',
+  auto_run_state_unreadable:
+    'This answer was cut off: the emergency brake state could not be read.',
+};
+
+function cutAnswerNote(reason: string): string {
+  return CUT_ANSWER_NOTE_BY_REASON[reason] ?? CUT_ANSWER_NOTE;
+}
 
 /** Une commande de preuve d'un job (ou d'un de ses délégués) et son verdict. */
 export type ThreadProofRun = { command: string; verdict: string };
@@ -178,6 +193,14 @@ export type ThreadJob = {
    */
   audit: readonly ThreadAuditRow[];
   /**
+   * Ce que CE travail et TOUTE sa descendance ont coûté : les `llm_calls` de
+   * l'arbre, sommés par `costOfCalls` — la règle et les lignes de la barre
+   * d'état (#508). La carte « Delivered » listait le travail des délégués et
+   * ne comptait que la part de la tête ; la barre montait, la carte restait
+   * figée, et la même personne lisait deux prix pour un seul run.
+   */
+  cost: CallsCost;
+  /**
    * Les racines des dossiers de travail de l'entité : un chemin absolu d'une
    * carte (`file_write` présente le chemin résolu) se ramène au relatif avant
    * d'être compté, et le même fichier sous deux orthographes compte une fois
@@ -242,9 +265,11 @@ function jobItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
 /**
  * Ce que la ligne de résumé dit du run (#135, #132).
  *
- * Les outils et le coût se lisent sur les TOTAUX du job — la même source que
- * la barre d'état — plus ceux des délégués dont le fil est assemblé dans le
- * groupe, puisque le dépliage les montre.
+ * Les outils se lisent sur les TOTAUX du job, plus ceux des délégués dont le
+ * fil est assemblé dans le groupe, puisque le dépliage les montre. Le COÛT est
+ * celui de l'arbre entier (`job.cost`, #508) : la ligne et la carte
+ * « Delivered » juste dessous disent le même prix que la barre d'état, petits-
+ * enfants compris, que le fil n'assemble pas.
  * Les délégations et les appels de modèle se comptent sur les items du GROUPE,
  * après le retrait de la réponse : la ligne promet ce que le dépliage montre,
  * et un tour dont la prose est sortie ne compte plus sa ligne de modèle deux
@@ -253,15 +278,12 @@ function jobItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
  */
 function runSummary(job: ThreadJob, work: readonly FeedItem[]): RunSummary {
   // Le travail d'un délégué dont le fil est assemblé DANS le groupe se déplie
-  // avec lui : ses outils et son coût comptent dans la ligne, sinon elle
-  // promettrait moins que ce que le dépliage montre (Reviewer C, passe 1).
+  // avec lui : ses outils comptent dans la ligne, sinon elle promettrait moins
+  // que ce que le dépliage montre (Reviewer C, passe 1).
   let tools = job.feed.totals.toolCalls;
-  let costUsd = job.feed.totals.costUsd;
   for (const item of work) {
     if (item.kind !== 'child' || item.job.feed === undefined) continue;
     tools += item.job.feed.totals.toolCalls;
-    const childCost = item.job.feed.totals.costUsd;
-    if (childCost !== null) costUsd = (costUsd ?? 0) + childCost;
   }
   return {
     tools,
@@ -271,7 +293,8 @@ function runSummary(job: ThreadJob, work: readonly FeedItem[]): RunSummary {
       job.completedAt !== null && job.createdAt !== null
         ? job.completedAt.getTime() - job.createdAt.getTime()
         : null,
-    costUsd,
+    costUsd: job.cost.costUsd,
+    unpricedCalls: job.cost.unpricedCalls,
   };
 }
 
@@ -415,6 +438,10 @@ function jobThreadItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
   const lead: FeedItem[] = [];
   const notes: FeedItem[] = [];
   const work: FeedItem[] = [];
+  // Les questions des serveurs MCP (0145) restent HORS du groupe : une
+  // question en attente sous un run replié serait une question que personne
+  // ne voit, et le serveur garde son appel ouvert en l'attendant.
+  const asked: FeedItem[] = [];
   let answer: FeedItem | null = null;
   let failure: FeedItem | null = null;
   for (const item of own) {
@@ -422,6 +449,7 @@ function jobThreadItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
     else if (item.kind === 'note') notes.push(item);
     else if (item.kind === 'answer') answer = item;
     else if (item.kind === 'failure') failure = item;
+    else if (item.kind === 'elicitation') asked.push(item);
     else work.push(item);
   }
   // Un travail qui a ÉCHOUÉ ne se relit pas par sa dernière phrase : ce qu'il a
@@ -443,6 +471,7 @@ function jobThreadItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
       items: work,
     });
   }
+  out.push(...asked);
   if (failure !== null) out.push(failure);
   return out;
 }
@@ -548,7 +577,10 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
       job.completedAt !== null && job.createdAt !== null
         ? job.completedAt.getTime() - job.createdAt.getTime()
         : null,
-    costUsd: job.feed.totals.costUsd,
+    // L'arbre entier, par la règle de la barre d'état (#508) : la carte liste
+    // le travail des délégués, son prix le compte.
+    costUsd: job.cost.costUsd,
+    unpricedCalls: job.cost.unpricedCalls,
     reviews,
     // Un `infra_error` n'est pas un succès : tout ce qui n'est pas vert fait
     // « Checks failed ». La section « Checks » montre laquelle a lâché. Et un
@@ -795,7 +827,7 @@ export function buildConversationThread(input: {
     if (message.stopped === true) {
       items.push({ kind: 'note', text: STOPPED_ANSWER_NOTE, origin: 'thread' });
     } else if (message.cutReason) {
-      items.push({ kind: 'note', text: CUT_ANSWER_NOTE, origin: 'thread' });
+      items.push({ kind: 'note', text: cutAnswerNote(message.cutReason), origin: 'thread' });
     }
 
     if (message.jobId === null) continue;

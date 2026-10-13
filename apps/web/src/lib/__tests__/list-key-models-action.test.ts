@@ -49,6 +49,13 @@ vi.mock('@nodal-agents/secrets', () => ({
   last4: (v: string) => v.slice(-4),
 }));
 
+// Provider calls take the provider transport (#608). Routed to the global
+// fetch the cases below stub, so nothing leaves the machine.
+vi.mock('@nodal-agents/llm', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@nodal-agents/llm')>()),
+  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
+
 beforeAll(async () => {
   const result = await spinUpTestDb();
   testDb = result.db;

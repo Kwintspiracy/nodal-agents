@@ -2,9 +2,14 @@
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildEnvForRunner, buildEnvForWeb } from '../lib/env.ts';
+import {
+  buildEnvForRunner,
+  buildEnvForWeb,
+  cliLaunchArgv,
+  currentCliLaunchArgv,
+} from '../lib/env.ts';
 import type { Config } from '../lib/config.ts';
 
 const BASE_CONFIG: Config = {
@@ -255,5 +260,86 @@ describe('resolveAuthMode', () => {
         auth: { mode: 'local-auth' },
       }),
     ).toThrow(/bearerToken/);
+  });
+});
+
+// ── NODAL_CLI_ARGV (#485) ─────────────────────────────────────────────────────
+
+describe('cliLaunchArgv — comment relancer CE CLI (#485)', () => {
+  it('rend le node, ses options de chargement et le script : ce qui a lancé la stack', () => {
+    // Un poste de dev : tsx charge les sources par deux options de node.
+    expect(
+      cliLaunchArgv({
+        execPath: 'C:\\Program Files\\nodejs\\node.exe',
+        execArgv: [
+          '--require',
+          'D:/repo/tsx/preflight.cjs',
+          '--import',
+          'file:///D:/repo/tsx/loader.mjs',
+        ],
+        scriptPath: 'D:/repo/apps/cli/src/index.ts',
+      }),
+    ).toEqual([
+      'C:\\Program Files\\nodejs\\node.exe',
+      '--require',
+      'D:/repo/tsx/preflight.cjs',
+      '--import',
+      'file:///D:/repo/tsx/loader.mjs',
+      'D:/repo/apps/cli/src/index.ts',
+    ]);
+  });
+
+  it('écarte un débogueur : un client MCP ne doit pas ouvrir de port d’inspection', () => {
+    expect(
+      cliLaunchArgv({
+        execPath: '/usr/bin/node',
+        execArgv: ['--inspect=9229', '--inspect-brk', '--no-warnings'],
+        scriptPath: '/usr/lib/node_modules/nodal-agents/dist/index.js',
+      }),
+    ).toEqual([
+      '/usr/bin/node',
+      '--no-warnings',
+      '/usr/lib/node_modules/nodal-agents/dist/index.js',
+    ]);
+  });
+
+  it('le web la reçoit en JSON dans NODAL_CLI_ARGV', () => {
+    const env = buildEnvForWeb(BASE_CONFIG, DB_URL);
+    const argv = JSON.parse(env['NODAL_CLI_ARGV'] ?? 'null') as unknown;
+    expect(Array.isArray(argv)).toBe(true);
+    expect((argv as string[])[0]).toBe(process.execPath);
+    expect((argv as string[]).at(-1)).toBe(resolve(process.argv[1]!));
+  });
+
+  // Sans script connu, aucune commande n'est inventée : `resolve('')` rendrait
+  // le dossier courant, et l'écran proposerait de lancer un dossier. La clé est
+  // RETIRÉE (pas laissée à hériter), et l'écran dit qu'il ne sait pas.
+  it.each([
+    ['absent', undefined],
+    ['vide', ''],
+  ])('script %s : pas de commande, ni ici ni dans NODAL_CLI_ARGV', (_label, script) => {
+    expect(cliLaunchArgv({ execPath: '/usr/bin/node', execArgv: [], scriptPath: script })).toBe(
+      null,
+    );
+    const saved = process.argv;
+    process.argv = script === undefined ? [saved[0]!] : [saved[0]!, script];
+    try {
+      expect(currentCliLaunchArgv()).toBeNull();
+      const env = buildEnvForWeb(BASE_CONFIG, DB_URL);
+      expect('NODAL_CLI_ARGV' in env).toBe(true);
+      expect(env['NODAL_CLI_ARGV']).toBeUndefined();
+    } finally {
+      process.argv = saved;
+    }
+  });
+
+  it('le script de CE processus est rendu absolu, pour être relancé de n’importe où', () => {
+    const saved = process.argv;
+    process.argv = [saved[0]!, join('apps', 'cli', 'src', 'index.ts')];
+    try {
+      expect(currentCliLaunchArgv()?.at(-1)).toBe(resolve('apps', 'cli', 'src', 'index.ts'));
+    } finally {
+      process.argv = saved;
+    }
   });
 });

@@ -6,6 +6,7 @@
 // its credential is missing. createMcpTools is mocked — no live MCP server.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { offeredToolNames } from './offered-tools.ts';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { randomBytes } from 'node:crypto';
@@ -127,8 +128,7 @@ function makeMockLlmClient(
     },
     generateText: (args) => {
       if (capturedToolKeysPerCall) {
-        const tools = (args as { tools?: Record<string, unknown> }).tools ?? {};
-        capturedToolKeysPerCall.push(Object.keys(tools));
+        capturedToolKeysPerCall.push(offeredToolNames(args));
       }
       return generateText({ ...args, model: mockModel } as Parameters<
         typeof generateText
@@ -755,11 +755,13 @@ describe('job-with-mcp-server: orchestrator role (HIGH fix regression)', () => {
     expect(result.status).toBe('completed');
 
     // Exact expected whitelist for a childless, non-root orchestrator with no
-    // capability assignments: create_task + list_tasks (unified orchestrator's
-    // own delegation tools, no children ⇒ zero assign_* tools) + every
-    // always-on builtin (return_result included). No adapter/MCP tool leaks
-    // in — this is the "stays lean" half of the fix.
-    const expected = ['create_task', 'list_tasks', ...ALWAYS_ON_TOOLS].slice().sort();
+    // capability assignments: every always-on builtin (return_result
+    // included), and no delegation tool — no teammate, so neither assign_* nor
+    // create_task / list_tasks has anyone to reach (generateDelegationTools,
+    // review of #655). No adapter/MCP tool leaks in — this is the "stays lean"
+    // half of the fix. `load_tools` (#612) comes with any job that holds a
+    // deferred tool: it loads only from this list.
+    const expected = ['load_tools', ...ALWAYS_ON_TOOLS].slice().sort();
     expect(capturedToolKeysPerCall[0]?.slice().sort()).toEqual(expected);
   });
 });

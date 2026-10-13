@@ -80,6 +80,7 @@ Nodal-Agents = monorepo **all-Node** (pnpm workspaces + Turborepo, TypeScript st
   - `message-structure.ts` : validité de structure (Anthropic/OpenAI), reasoning round-trip, `tool-choice-floor`.
   - Classification d'erreurs (`describeLlmError`) — pas d'erreur opaque (invariant #4).
   - Extraction coût par provider ; embeddings (opt-in, dégradation en keyword).
+- 29/09/2026 : `tool-choice-floor.ts` a été retiré par la PR #604 (issue #600). Le runner n'envoie plus jamais de `tool_choice` forcé ; le filet qui relâchait un `required` refusé n'avait plus rien à rattraper.
 
 ### F. Outils & sécurité d'exécution (`packages/tools`) — **CRITIQUE (surface d'exécution du code)**
 - **Rôle** : builtins exposés aux agents.

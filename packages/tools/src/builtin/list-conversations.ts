@@ -92,6 +92,7 @@ Fail conditions:
     inputSchema: ListConversationsInput,
 
     riskLevel: 'read',
+    loading: 'eager',
     card: 'text',
 
     async execute(

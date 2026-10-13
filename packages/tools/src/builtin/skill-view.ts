@@ -81,6 +81,7 @@ export const skillViewTool: ToolDefinition<typeof SkillViewInputSchema, SkillVie
     'Follow what it returns instead of reimplementing the skill yourself.',
   inputSchema: SkillViewInputSchema,
   riskLevel: 'read',
+  loading: 'eager',
   card: 'read',
   present: ({ output }) =>
     output.ok ? readCard({ path: output.name, text: output.content }) : failureText(output.error),

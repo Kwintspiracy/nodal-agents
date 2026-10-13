@@ -11,6 +11,7 @@ import Modal, { ModalFooter } from '@/components/ui/Modal';
 import TextArea from '@/components/ui/TextArea';
 import Select from '@/components/ui/Select';
 import Checkbox from '@/components/ui/Checkbox';
+import { openRunHref } from '@/lib/run-page.ts';
 
 /**
  * SendTaskForm — the "New task" CTA for the Runs page. A neutral (white) toolbar
@@ -35,7 +36,7 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
       }
       toast.success('Task sent, job created');
       setOpen(false);
-      router.push(`/jobs/${result.data.jobId}`);
+      router.push(openRunHref(result.data.jobId));
     });
   }
 

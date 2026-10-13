@@ -39,10 +39,9 @@
 // chain-counters.ts Guard 1g for the incident write-up): a prior job's OWN
 // prose is not a reliable record of what it actually did. When a prior job in
 // this thread used a STATE-CHANGING tool (create_schedule, attach_mcp, ...),
-// its rendered assistant turn gets a trailing `[Actions performed in this
-// exchange: ...]` line naming the REAL tool calls from `agent_jobs.tools_used`
-// — a structural fact the LLM can't override with confabulated prose on a
-// later turn.
+// its exchange gets an `[Actions performed in this exchange: ...]` line naming
+// the REAL tool calls from `agent_jobs.tools_used` — a structural fact the LLM
+// can't override with confabulated prose on a later turn.
 //
 // Delegated-task ledger (2026-07-12 incident — see task-ledger.ts): the line
 // above only covers the prior job's OWN tools_used. A prior job that instead
@@ -51,6 +50,25 @@
 // visibility into. Each prior job's delegated tasks (if any) get their own
 // `[Task "..." completed: actions — ...; result: ...]` line(s), sourced from
 // the CHILD job's tools_used, not the parent's prose summary.
+//
+// WHERE those lines go (#562): in a runner record AFTER the exchange — a user
+// message marked `[système]` (runnerRecord) — never in an assistant part. They
+// used to ride as text parts of the replayed assistant turn, and a model that
+// reads its own turns ending in `[Delegated to X (completed) …]` writes one:
+// run b7ecc59a forged a delegation outcome that way. Same for a `relay`
+// result (children recompiled by the runner): it is the runner's, not the
+// agent's reply.
+//
+// WHEN each turn happened (#650, 30/09): every replayed message the person
+// sent carries the time they sent it, `[Wed, 30 Sept 2026, 23:07] …`, in the
+// user's timezone and with the formatter the system prompt uses for "now"
+// (`formatLocalTime`). Replayed undated, a root agent's reply of 29/09 14:21
+// ("that sub-agent is down") was read on 30/09 at 23:07 as a present fact. The date
+// is a fact about the turn, not a rule: the prompt adds nothing. It sits on
+// the person's messages only — a stamp in an assistant part is a pattern the
+// model would continue in its own replies — and it never changes once the turn
+// is past, so the replayed prefix stays byte-identical from one turn to the
+// next. `datedTurn` is the one form, shared with the web chat (run-chat-turn.ts).
 
 import { eq, and, ne, desc, inArray, isNull } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
@@ -62,6 +80,13 @@ import {
   loadInlineDelegationLedger,
   formatInlineDelegationLines,
 } from './task-ledger.ts';
+import {
+  formatLocalTime,
+  inboxMessageReceivedAt,
+  isInboxMessage,
+  runnerRecordMessage,
+} from '@nodal-agents/shared';
+import { messageText } from './state.ts';
 
 /**
  * Channels that represent ongoing conversations. Others (`api`, `cron`,
@@ -159,6 +184,12 @@ export interface LoadThreadHistoryOptions {
   channel: string;
   /** Current job's id — excluded from the prior-history query. */
   excludeJobId: string;
+  /**
+   * The user's IANA timezone, the one the system prompt states "now" in
+   * (`DeploymentContext.timezone`). Each replayed message of the person is
+   * dated in it (#650).
+   */
+  timezone: string;
 }
 
 /**
@@ -185,6 +216,8 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       createdAt: agentJobs.createdAt,
       completedAt: agentJobs.completedAt,
       toolsUsed: agentJobs.toolsUsed,
+      resultKind: agentJobs.resultKind,
+      runnerNotes: agentJobs.runnerNotes,
     })
     .from(agentJobs)
     .where(
@@ -242,13 +275,63 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   let nextSynthId = 0;
   const blocks: ModelMessage[][] = [];
   for (const row of chronological) {
+    // Ce que le runner a écrit ne passe JAMAIS pour les mots de l'agent (#562),
+    // et cela se lit à ses marques EXPLICITES, jamais à une absence :
+    //  - `relay` : le texte d'AUTRES jobs recompilé par le runner (les enfants,
+    //    dans fillResultFromChildrenIfEmpty comme dans failJob). Le rejouer comme
+    //    ce que l'agent avait envoyé lui apprenait à écrire lui-même
+    //    « ## Researcher\n… » — 12 887 caractères inventés par l'agent racine du
+    //    run b7ecc59a avant que son enfant ne démarre. Il part tout entier dans
+    //    le relevé ; la réponse de l'agent est ce qu'il a dit dans son tour.
+    //  - `runner_notes` : les lignes que le runner a ajoutées à un résultat
+    //    (avis d'échec de délégation, explication générique d'un échec, ligne
+    //    d'un livrable non vérifié ; 0137 rattrape les lignes plus anciennes).
+    //    Elles sont retirées des mots de l'agent et rangées dans le relevé.
+    // `result_kind` NULL dit « provenance inconnue » : 0117 a laissé toutes les
+    // lignes plus anciennes sans marque, et une vraie réponse d'avant n'existe
+    // parfois que dans `result`. Elle reste lue comme avant cette PR — la
+    // réponse de l'agent, moins ce que `runner_notes` reconnaît (revue Codex de
+    // #576, passe 2).
+    const agentsOwnResult = row.resultKind !== 'relay';
+    const runnerNotes = Array.isArray(row.runnerNotes) ? row.runnerNotes : [];
+    const agentsWords = withoutRunnerNotes(row.result, runnerNotes);
     const assistant = extractAssistantReply({
       task: row.task,
-      result: row.result,
+      result: agentsOwnResult ? agentsWords : null,
       messages: row.messages,
       channel: row.channel,
     });
-    if (assistant === null) continue;
+    // Un texte que l'agent a lui-même envoyé n'est pas redit par le relevé.
+    const unmarked = agentsOwnResult ? '' : (agentsWords ?? '').trim();
+    const runnerResult = unmarked === (assistant ?? '').trim() ? '' : unmarked;
+    // Ce que la personne a écrit PENDANT ce tour, remis au travail en cours
+    // (#531) : rejoué juste après sa demande, pour que la précision ne
+    // disparaisse pas des tours suivants. Lu à sa marque structurelle.
+    // Chacun porte l'heure où il est ARRIVÉ (`receivedAt`), pas celle de la demande.
+    const followUps: ModelMessage[] = (Array.isArray(row.messages) ? row.messages : [])
+      .filter(isInboxMessage)
+      .map((m) => ({
+        text: messageText((m as { content?: unknown }).content).trim(),
+        at: inboxReceivedAt(m, row.id),
+      }))
+      .filter(({ text }) => text !== '')
+      .map(({ text, at }) => ({
+        role: 'user',
+        content: datedTurn(truncate(text), at, opts.timezone),
+      }));
+    if (!row.createdAt) throw new Error(`thread history: agent_jobs ${row.id} has no created_at`);
+    const asked: ModelMessage[] = [
+      { role: 'user', content: datedTurn(truncate(row.task), row.createdAt, opts.timezone) },
+      ...followUps,
+    ];
+    if (
+      assistant === null &&
+      runnerResult === '' &&
+      runnerNotes.length === 0 &&
+      followUps.length === 0
+    ) {
+      continue;
+    }
 
     // Action ledger (see file header) — only when this job actually used a
     // STATE-CHANGING tool. Lists the job's FULL tools_used (not just the
@@ -270,23 +353,37 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       ...(ledgerLine ? [ledgerLine] : []),
       ...delegatedLedgerLines,
       ...inlineLedgerLines,
+      ...(runnerResult !== '' ? [truncate(runnerResult)] : []),
+      ...runnerNotes,
     ];
+    // Ce que le runner a écrit de ce tour vient APRÈS lui, dans un message à
+    // part dont la provenance est structurelle — jamais dans une part
+    // assistant (#562). Voir @nodal-agents/shared, runner-record.ts.
+    const record: ModelMessage[] =
+      allLedgerLines.length > 0 ? [runnerRecordMessage(allLedgerLines) as ModelMessage] : [];
+
+    if (assistant === null) {
+      // Un tour où l'agent n'a rien dit lui-même : seul le relevé en reste.
+      blocks.push([...asked, ...record]);
+      continue;
+    }
 
     const sendTool = CHANNEL_SEND_TOOL[row.channel];
     if (sendTool) {
       const callId = `history-tool-${nextSynthId++}`;
-      const assistantContent: Array<Record<string, unknown>> = [
-        {
-          type: 'tool-call',
-          toolCallId: callId,
-          toolName: sendTool,
-          input: { text: truncate(assistant) },
-        },
-      ];
-      for (const line of allLedgerLines) assistantContent.push({ type: 'text', text: line });
       blocks.push([
-        { role: 'user', content: truncate(row.task) },
-        { role: 'assistant', content: assistantContent } as ModelMessage,
+        ...asked,
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: callId,
+              toolName: sendTool,
+              input: { text: truncate(assistant) },
+            },
+          ],
+        } as ModelMessage,
         {
           role: 'tool',
           content: [
@@ -307,18 +404,10 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
             },
           ],
         } as ModelMessage,
+        ...record,
       ]);
     } else {
-      blocks.push([
-        { role: 'user', content: truncate(row.task) },
-        {
-          role: 'assistant',
-          content:
-            allLedgerLines.length > 0
-              ? `${truncate(assistant)}\n\n${allLedgerLines.join('\n')}`
-              : truncate(assistant),
-        },
-      ]);
+      blocks.push([...asked, { role: 'assistant', content: truncate(assistant) }, ...record]);
     }
   }
 
@@ -330,6 +419,42 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   }
 
   return blocks.flatMap((b) => b);
+}
+
+/**
+ * A message of the person as it is replayed: the time they sent it, then their
+ * words (#650). `[Wed, 30 Sept 2026, 23:07] Fais-moi une recherche…` — the same
+ * wall-clock form as the prompt's "now", so the model compares like with like,
+ * and the same for every turn, today's included. A past turn's stamp never
+ * changes: the replayed prefix stays stable for prompt caching.
+ */
+export function datedTurn(text: string, at: Date, timezone: string): string {
+  return `[${formatLocalTime(timezone, at)}] ${text}`;
+}
+
+/** L'heure d'arrivée d'un message remis (#531) ; la plateforme la pose à chaque remise. */
+function inboxReceivedAt(message: unknown, jobId: string): Date {
+  const receivedAt = inboxMessageReceivedAt(message);
+  const at = receivedAt === null ? null : new Date(receivedAt);
+  if (!at || Number.isNaN(at.getTime())) {
+    throw new Error(`thread history: an inbox message of agent_jobs ${jobId} has no receivedAt`);
+  }
+  return at;
+}
+
+/**
+ * Le résultat sans les lignes que le runner y a ajoutées. Elles y sont posées
+ * par `stampFailedDelegations` à la fin, séparées par une ligne vide, et
+ * `runner_notes` dit exactement lesquelles : aucune supposition sur le texte.
+ */
+function withoutRunnerNotes(result: string | null, notes: readonly string[]): string | null {
+  if (result === null) return null;
+  let text = result;
+  for (const note of [...notes].reverse()) {
+    if (text === note) text = '';
+    else if (text.endsWith(`\n\n${note}`)) text = text.slice(0, -(note.length + 2));
+  }
+  return text;
 }
 
 /**

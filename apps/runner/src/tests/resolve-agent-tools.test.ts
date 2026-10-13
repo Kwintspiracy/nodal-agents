@@ -10,6 +10,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
   eq,
   agents,
+  agentAssignments,
   entities,
   agentSkills,
   agentSkillAssignments,
@@ -70,10 +71,27 @@ describe('resolveAgentToolNames — root agent with grants', () => {
       })
       .where(eq(entities.id, seed.entityId));
 
+    // Without a teammate, no delegation tool: neither route reaches anyone
+    // (generateDelegationTools, review of #655).
+    const alone = await resolveAgentToolNames(db, rootAgent.id);
+    expect(alone.has('create_task')).toBe(false);
+    expect(alone.has('list_tasks')).toBe(false);
+
+    await db.insert(agentAssignments).values({
+      entityId: seed.entityId,
+      orchestratorId: rootAgent.id,
+      subAgentId: seed.agentId,
+    });
+    const [mate] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, seed.agentId));
+
     const names = await resolveAgentToolNames(db, rootAgent.id);
     expect(names.has('create_connector')).toBe(true);
     expect(names.has('create_schedule')).toBe(true);
-    // Orchestrator assembly: task-board + memory + return_result present.
+    // Orchestrator assembly: both delegation routes + memory + return_result present.
+    expect(names.has(`assign_${mate!.slug.replace(/-/g, '_')}`)).toBe(true);
     expect(names.has('create_task')).toBe(true);
     expect(names.has('list_tasks')).toBe(true);
     expect(names.has('return_result')).toBe(true);

@@ -12,11 +12,10 @@ import {
   LLMContextWindowError,
 } from './errors';
 import { CAPABILITY_MATRIX } from './providers/registry';
-import { validateMessageStructure } from './message-structure';
+import { validateMessageStructure, withoutNamelessToolCalls } from './message-structure';
 import { knownContextWindow, modelOutputCap } from '@nodal-agents/shared';
 import { reportedUsage } from './reported-usage';
 import { withRetry } from './retry';
-import { generateWithToolChoiceFloor } from './tool-choice-floor';
 import { buildLlmCallObservation, emitLlmCall } from './observe';
 import type { LlmCallObserver, LlmClientMeta } from './observe';
 import {
@@ -256,19 +255,21 @@ function buildModel(config: ProviderConfig): LanguageModel {
 // ─── Message structure helper ──────────────────────────────────────────────────
 
 /**
- * Extract messages from the args object if present, and validate structure.
- * Validation only runs when ModelMessage[] messages are provided.
+ * Extract messages from the args object if present, make them replayable by
+ * every provider (`withoutNamelessToolCalls`), and validate structure.
+ * Only runs when ModelMessage[] messages are provided.
  * Omit<Message, 'id'>[] (useChat format) is passed through without validation —
  * those are legacy messages and not produced by our orchestrators.
  */
-function validateIfMessages(args: { messages?: unknown }): void {
-  const messages = args.messages;
-  if (!Array.isArray(messages) || messages.length === 0) return;
+function prepareMessages<A>(args: A): A {
+  const messages = (args as { messages?: unknown }).messages;
+  if (!Array.isArray(messages) || messages.length === 0) return args;
   // Only validate if the first message looks like a ModelMessage (has role + content)
   const first = messages[0] as Record<string, unknown> | undefined;
-  if (first && typeof first['role'] === 'string' && 'content' in first) {
-    validateMessageStructure(messages as ModelMessage[]);
-  }
+  if (!first || typeof first['role'] !== 'string' || !('content' in first)) return args;
+  const replayable = withoutNamelessToolCalls(messages as ModelMessage[]);
+  validateMessageStructure(replayable);
+  return { ...args, messages: replayable };
 }
 
 // ─── Factory ───────────────────────────────────────────────────────────────────
@@ -328,14 +329,36 @@ export function createLlmClient(
   };
   const providerModel = { provider: config.provider, model: config.model };
 
-  // #563 — the output cap this client states on every generateText request
-  // whose caller did not state one. Without it the cap that ends a runaway
+  // #563 — the output cap this client states on every request: generateText,
+  // streamText and generateObject. Without it the cap that ends a runaway
   // turn is the serving provider's default, unknown here, and the only sign
   // of the cut is a finishReason the provider may not report. Each client of
   // a failover chain states its own model's cap.
   const outputCap = modelOutputCap(config.provider, config.model);
   // The window that bounds it too, when known (catalog, else the key's own).
   const contextWindow = knownContextWindow(config.provider, config.model, config.contextWindow);
+  /**
+   * The cap a request states: this client's, or the caller's when LOWER (a
+   * caller never raises it, Codex review of #571), and never more than the
+   * known window leaves once the estimated input is in (review of #571). No
+   * room left: nothing is sent, the error says so (`LLMContextWindowError`).
+   */
+  const statedCapFor = (estimatedInput: number, callerCap: unknown): number => {
+    const windowRoom = contextWindow === null ? Infinity : contextWindow - estimatedInput;
+    if (windowRoom < 1) {
+      throw new LLMContextWindowError(
+        config.provider,
+        config.model,
+        contextWindow ?? 0,
+        estimatedInput,
+      );
+    }
+    return Math.min(
+      outputCap,
+      windowRoom,
+      typeof callerCap === 'number' && callerCap > 0 ? callerCap : Infinity,
+    );
+  };
 
   // Anthropic does NOT auto-cache — opt it in by annotating cache_control
   // breakpoints (system + sliding last message). Other providers either cache
@@ -347,7 +370,7 @@ export function createLlmClient(
     config.cachingEnabled !== false;
 
   // Observation plumbing (étape D): one observation per invocation of this
-  // client, success or terminal failure — the retry/stale/floor stack inside
+  // client, success or terminal failure — the retry/stale stack inside
   // counts as ONE attempt from the trace's point of view (its outcome is what
   // the caller saw). durationMs therefore spans the whole stack.
   const observe = (
@@ -464,9 +487,8 @@ export function createLlmClient(
     return result;
   };
 
-  const clientGenerateText: NodalLlmClient['generateText'] = async (args, callOpts) => {
-    validateIfMessages(args as { messages?: unknown });
-    const toolChoice = (args as { toolChoice?: unknown }).toolChoice;
+  const clientGenerateText: NodalLlmClient['generateText'] = async (rawArgs, callOpts) => {
+    const args = prepareMessages(rawArgs);
     // The cap the request states (#563): this client's, or the caller's when
     // LOWER. A caller never raises it (revue Codex de #571): asking 131 072
     // stated a cap the provider cut under, without `length`, as in #563.
@@ -482,22 +504,10 @@ export function createLlmClient(
     // marker never leaks into a non-Anthropic provider's prompt.
     const unbounded = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
     const estimatedInput =
-      estimateContextTokens(unbounded as { system?: unknown; messages?: unknown }) +
-      (await estimateToolTokens((unbounded as { tools?: unknown }).tools));
-    const windowRoom = contextWindow === null ? Infinity : contextWindow - estimatedInput;
-    if (windowRoom < 1) {
-      throw new LLMContextWindowError(
-        config.provider,
-        config.model,
-        contextWindow ?? 0,
-        estimatedInput,
-      );
-    }
-    const statedCap = Math.min(
-      outputCap,
-      windowRoom,
-      typeof callerCap === 'number' && callerCap > 0 ? callerCap : Infinity,
-    );
+      estimateContextTokens(
+        unbounded as { system?: unknown; prompt?: unknown; messages?: unknown },
+      ) + (await estimateToolTokens((unbounded as { tools?: unknown }).tools));
+    const statedCap = statedCapFor(estimatedInput, callerCap);
     const prepared = { ...unbounded, maxOutputTokens: statedCap };
     const startedAt = Date.now();
     if (callOpts?.streamed === true && canStreamTurns) {
@@ -514,31 +524,26 @@ export function createLlmClient(
       });
       let streamedResult: GenerateTextResult;
       try {
-        streamedResult = await generateWithToolChoiceFloor(
-          (override) =>
-            withRetry(
-              () =>
-                consumeUnderClocks(
-                  (signal) =>
-                    streamText({
-                      ...prepared,
-                      model,
-                      ...(override ? { toolChoice: override } : {}),
-                      abortSignal: signal,
-                      maxRetries: 0,
-                      // Errors are read from the stream itself and thrown by
-                      // consumeUnderClocks; the SDK's default would only log them.
-                      onError: () => {},
-                    } as Parameters<typeof streamText>[0]),
-                  clocks,
-                  providerModel,
-                  callOpts.abortSignal,
-                  callOpts.onTextDelta,
-                ),
-              retryOpts,
+        streamedResult = await withRetry(
+          () =>
+            consumeUnderClocks(
+              (signal) =>
+                streamText({
+                  ...prepared,
+                  model,
+                  abortSignal: signal,
+                  maxRetries: 0,
+                  // Errors are read from the stream itself and thrown by
+                  // consumeUnderClocks; the SDK's default would only log them.
+                  onError: () => {},
+                } as Parameters<typeof streamText>[0]),
+              clocks,
+              providerModel,
+              callOpts.abortSignal,
+              callOpts.onTextDelta,
+              callOpts.onProgress,
             ),
-          toolChoice,
-          `${config.provider}/${config.model}`,
+          retryOpts,
         );
       } catch (err) {
         observe('generateText', args, null, err, startedAt);
@@ -554,44 +559,36 @@ export function createLlmClient(
     }
     let result: GenerateTextResult;
     try {
-      // tool_choice floor: if the provider rejects a forced tool_choice value
-      // (some OpenRouter routes reject it), retry once with 'auto' — logged.
-      result = await generateWithToolChoiceFloor(
-        (override) =>
-          withRetry(
-            () =>
-              withStaleRetry((timeoutMs) => {
-                // Stop is not a timeout: an aborted call leaves AT ONCE as a
-                // cancellation, never through the stale retry that would
-                // re-send it with the same dead signal (Codex review of #449,
-                // pass 10).
-                const stopped = (): LLMCallCancelledError =>
-                  new LLMCallCancelledError(config.provider, config.model, '');
-                if (callOpts?.abortSignal?.aborted) return Promise.reject(stopped());
-                return generateText({
-                  ...prepared,
-                  model,
-                  ...(override ? { toolChoice: override } : {}),
-                  // AI SDK native timeout via AbortSignal.timeout(). Survives
-                  // middleware wrapping unlike a passed-in abortSignal which their
-                  // internal retry can swallow. timeoutMs varies per attempt:
-                  // LLM_TIMEOUT_MS for the primary, LLM_STALE_RETRY_TIMEOUT_MS
-                  // for subsequent fresh-connection stale retries.
-                  timeout: timeoutMs,
-                  // The job's Stop, when the caller passes it (one-shot
-                  // turns of the models that cannot stream).
-                  ...(callOpts?.abortSignal ? { abortSignal: callOpts.abortSignal } : {}),
-                  // Disable AI SDK internal retry — we own retries via withRetry to
-                  // preserve typed error handling (Quota/MessageStructure/LLMTimeout).
-                  maxRetries: 0,
-                } as Parameters<typeof generateText>[0]).catch((err: unknown) => {
-                  throw callOpts?.abortSignal?.aborted ? stopped() : err;
-                });
-              }, providerModel),
-            retryOpts,
-          ),
-        toolChoice,
-        `${config.provider}/${config.model}`,
+      result = await withRetry(
+        () =>
+          withStaleRetry((timeoutMs) => {
+            // Stop is not a timeout: an aborted call leaves AT ONCE as a
+            // cancellation, never through the stale retry that would
+            // re-send it with the same dead signal (Codex review of #449,
+            // pass 10).
+            const stopped = (): LLMCallCancelledError =>
+              new LLMCallCancelledError(config.provider, config.model, '');
+            if (callOpts?.abortSignal?.aborted) return Promise.reject(stopped());
+            return generateText({
+              ...prepared,
+              model,
+              // AI SDK native timeout via AbortSignal.timeout(). Survives
+              // middleware wrapping unlike a passed-in abortSignal which their
+              // internal retry can swallow. timeoutMs varies per attempt:
+              // LLM_TIMEOUT_MS for the primary, LLM_STALE_RETRY_TIMEOUT_MS
+              // for subsequent fresh-connection stale retries.
+              timeout: timeoutMs,
+              // The job's Stop, when the caller passes it (one-shot
+              // turns of the models that cannot stream).
+              ...(callOpts?.abortSignal ? { abortSignal: callOpts.abortSignal } : {}),
+              // Disable AI SDK internal retry — we own retries via withRetry to
+              // preserve typed error handling (Quota/MessageStructure/LLMTimeout).
+              maxRetries: 0,
+            } as Parameters<typeof generateText>[0]).catch((err: unknown) => {
+              throw callOpts?.abortSignal?.aborted ? stopped() : err;
+            });
+          }, providerModel),
+        retryOpts,
       );
     } catch (err) {
       observe('generateText', args, null, err, startedAt);
@@ -605,20 +602,41 @@ export function createLlmClient(
     return refuseCutTurn(args, result, startedAt, callOpts?.inspectOnly === true, statedCap);
   };
 
-  const clientStreamText: NodalLlmClient['streamText'] = (args) => {
-    validateIfMessages(args as { messages?: unknown });
+  const clientStreamText: NodalLlmClient['streamText'] = (rawArgs) => {
+    const args = prepareMessages(rawArgs);
     // streamText returns a StreamTextResult synchronously (not a Promise).
     // Streaming semantics differ from generateText (timeout would have to be
     // per-chunk, not total) — left untouched here. Add when a streaming user
     // surfaces a hang in the wild. Strip the E1 boundary marker (this path
     // doesn't apply Anthropic caching, so the marker must not reach the model).
-    const prepared = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
-    return streamText({ ...prepared, model } as Parameters<typeof streamText>[0]);
+    const unbounded = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
+    // The stated cap, as on every request (#563). streamText answers
+    // synchronously, and a tool's schema is measured asynchronously
+    // (`estimateToolTokens`): the window part counts the prompt and messages
+    // only. An underestimate is refused by the server like any other `max_tokens`
+    // too high for its window (#119).
+    const statedCap = statedCapFor(
+      estimateContextTokens(
+        unbounded as { system?: unknown; prompt?: unknown; messages?: unknown },
+      ),
+      (args as { maxOutputTokens?: unknown }).maxOutputTokens,
+    );
+    return streamText({ ...unbounded, model, maxOutputTokens: statedCap } as Parameters<
+      typeof streamText
+    >[0]);
   };
 
-  const clientGenerateObject: NodalLlmClient['generateObject'] = async (args) => {
-    validateIfMessages(args as { messages?: unknown });
-    const prepared = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
+  const clientGenerateObject: NodalLlmClient['generateObject'] = async (rawArgs) => {
+    const args = prepareMessages(rawArgs);
+    const unbounded = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
+    // The stated cap, as on every request (#563).
+    const statedCap = statedCapFor(
+      estimateContextTokens(
+        unbounded as { system?: unknown; prompt?: unknown; messages?: unknown },
+      ) + (await estimateToolTokens((unbounded as { tools?: unknown }).tools)),
+      (args as { maxOutputTokens?: unknown }).maxOutputTokens,
+    );
+    const prepared = { ...unbounded, maxOutputTokens: statedCap };
     const startedAt = Date.now();
     try {
       const result = await withRetry(

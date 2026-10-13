@@ -22,9 +22,10 @@ import type { StatusVariant } from '@/components/ui/StatusPill';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import DisclosureButton from '@/components/ui/DisclosureButton';
-import QuestionActions from './QuestionActions.tsx';
 import { useApprovals } from '@/components/ApprovalsProvider';
-import { SHELL_CATEGORY_COPY } from '@/lib/shell-checklist-copy.ts';
+import { SHELL_CATEGORY_COPY, UNREAD_COPY } from '@/lib/shell-checklist-copy.ts';
+import { conversationOf, openRunHref, questionHref } from '@/lib/run-page.ts';
+import ElicitationCard from '@/app/(dashboard)/spaces/ElicitationCard.tsx';
 
 type RuleAction = 'auto_approve' | 'require_approval' | 'block';
 
@@ -77,11 +78,7 @@ const STATUS_TO_VARIANT: Record<string, StatusVariant> = {
  * Défauts : en attente → Open (elle appelle une réponse) ; tranchée → Close
  * (c'est une archive) ; `defaultOpen` → Open, ce que `?show=` demande.
  */
-export default function ApprovalRequestCard({
-  approval,
-  onResolved,
-  defaultOpen = false,
-}: {
+type ApprovalRequestCardProps = {
   approval: ApprovalRow;
   /** Called after a successful answer, so a list can drop the card. */
   onResolved?: () => void;
@@ -92,7 +89,31 @@ export default function ApprovalRequestCard({
    * la carte ne lit jamais l'URL elle-même.
    */
   defaultOpen?: boolean;
-}) {
+};
+
+/**
+ * La carte d'une ligne `approval_requests`, quelle qu'elle soit.
+ *
+ * Une ÉLICITATION (0145) — la question d'un serveur MCP pendant un appel — n'a
+ * RIEN d'une approbation : pas d'« Approve », pas de règle à poser, pas de
+ * « Never ». Elle se dessine avec sa propre carte, et c'est décidé ICI, au seul
+ * point d'entrée que partagent /approvals, l'onglet Code et le fil d'une
+ * conversation : un appelant de plus ne peut pas l'oublier.
+ */
+export default function ApprovalRequestCard(props: ApprovalRequestCardProps) {
+  if (props.approval.elicitation) {
+    return (
+      <ElicitationCard elicitation={props.approval.elicitation} onResolved={props.onResolved} />
+    );
+  }
+  return <ApprovalDecisionCard {...props} />;
+}
+
+function ApprovalDecisionCard({
+  approval,
+  onResolved,
+  defaultOpen = false,
+}: ApprovalRequestCardProps) {
   const [isPending, startTransition] = useTransition();
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [neverOpen, setNeverOpen] = useState(false);
@@ -429,6 +450,29 @@ export default function ApprovalRequestCard({
               {a.gateReasons.map((reason) => (
                 <li key={reason.category} className="text-medium-12 text-ink">
                   {SHELL_CATEGORY_COPY[reason.category].label}
+                  {/* Un téléchargement permis ne demande que s'il écrit hors
+                      des espaces du job (#614) : la carte dit où. */}
+                  {reason.outside && reason.outside.length > 0 && (
+                    <span className="text-ink-2">{` · outside its workspaces: ${[
+                      ...new Set(reason.outside.flatMap((o) => o.places)),
+                    ].join(', ')}`}</span>
+                  )}
+                  {/* Le code que la commande lance a été lu (#635) : la carte
+                      dit dans quel fichier, à quelle ligne, et ce qui n'a pas
+                      pu être lu. */}
+                  {reason.found?.map((f) => (
+                    <span
+                      key={`${f.source ?? ''}:${f.line}`}
+                      className="block text-mono-12 text-ink-2"
+                    >
+                      {`${f.source ?? 'code in the command'}, line ${f.line}: ${f.text}`}
+                    </span>
+                  ))}
+                  {reason.unread?.map((u) => (
+                    <span key={u.source} className="block text-ink-2">
+                      {`${u.source}: ${UNREAD_COPY[u.why]}`}
+                    </span>
+                  ))}
                 </li>
               ))}
             </ul>
@@ -586,13 +630,20 @@ export default function ApprovalRequestCard({
           />
         )}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <PrimaryButton variant="neutral" size="md" href={`/jobs/${a.jobId}`}>
+          <PrimaryButton variant="neutral" size="md" href={openRunHref(a.jobId)}>
             Open Run
           </PrimaryButton>
 
           {pending &&
             (question ? (
-              <QuestionActions approvalId={a.id} options={question.options} />
+              // #465 — une question ne se répond PAS ici. Elle se répond là où
+              // elle a été posée : le fil de sa conversation, ou la page du run
+              // quand elle n'en a pas (une automatisation). La carte renvoie.
+              <PrimaryButton variant="ink" size="md" href={questionHref(a)}>
+                {conversationOf(a.conversationId) !== null
+                  ? 'Answer in the conversation'
+                  : 'Answer on the run'}
+              </PrimaryButton>
             ) : (
               <div className="flex flex-wrap items-center gap-2">
                 {/* Rejeter est plein, pas contour : c'est la seule action qui
