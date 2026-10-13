@@ -2931,12 +2931,15 @@ const MAY_BE_SCRIPT = new WeakMap<readonly string[], readonly string[]>();
 const FED_AT_RUN_TIME = new WeakSet<readonly string[]>();
 
 /** The programs of `RUNS_ANOTHER` that hand what they run words of their own (`FED_AT_RUN_TIME`). */
-const HANDS_WORDS: Record<string, (payload: Payload) => boolean> = {
+const HANDS_WORDS: ReadonlySet<string> = new Set([
   // `xargs rm`, `xargs -I{} rm {}`: the words it reads.
-  xargs: () => true,
-  // `find … -exec rm {} +`: each file found, in place of `{}`, glued or not.
-  find: (payload) => 'words' in payload && payload.words.some((w) => w.text.includes('{}')),
-};
+  'xargs',
+  // `find … -exec rm {} +`: what it runs, once per file found, gets that file
+  // in place of `{}` (glued too: `x{}y`, measured). sh's scanner reads `{`
+  // and `}` as its own operators, so the `{}` is not always among the words
+  // read: every command find runs is handed them.
+  'find',
+]);
 
 /** cmd's own commands: never a file of the folder, whatever is there. */
 const CMD_INTERNAL = new Set([
@@ -3345,7 +3348,7 @@ function wordUnits(
               sourced: payload.sourced === true,
               ...(runs ? { model } : {}),
             });
-      if (HANDS_WORDS[name]?.(payload) === true) for (const unit of read) FED_AT_RUN_TIME.add(unit);
+      if (HANDS_WORDS.has(name)) for (const unit of read) FED_AT_RUN_TIME.add(unit);
       if (runs === undefined) runIn(read, [newProcess()]);
       else if (runs === 'not-known') {
         for (const unit of read) if (!UNIT_PROCESS.has(unit)) FOLDER_UNKNOWN.add(unit);

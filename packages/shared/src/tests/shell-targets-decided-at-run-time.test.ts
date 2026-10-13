@@ -154,6 +154,8 @@ describe('delete_files: a target the text does not establish asks (#715) @cap:ex
         ...sh(`for f in ${POSIX_ROOT}*; do ${RM} -rf "$f"; done`),
         ...sh(`${RM} -rf ~/build`),
         ...sh('unlink $LINK'),
+        // a program that is not Remove-Item's name, handed what find found
+        ...sh("find . -name '*.key' -exec shred -u {} \\;"),
         ...sh('rsync -a --delete src/ $DEST'),
       ],
       'delete_files',
@@ -215,6 +217,7 @@ describe('every other kind: what the text does not establish asks (#715) @cap:ex
     expectAsks(
       [
         ...sh('chmod -R 777 $DIR'),
+        ...sh('find . -type d -exec chmod 777 {} +'),
         ...cmd('icacls %X% /grant Everyone:F'),
         ...powershell('Get-Item x | Set-Acl -AclObject $acl'),
       ],
