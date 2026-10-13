@@ -39,7 +39,8 @@ import {
   FOREACH_OBJECT,
   INVOKE_COMMAND,
 } from './powershell-parameters';
-import { SHELLS } from './shell-programs';
+import { PROGRAM_OPTIONS, readOptions } from './program-options';
+import { PROGRAMS_HANDING_WORDS, SHELLS } from './shell-programs';
 
 const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:?\s*&\s*\}\s*;\s*:/;
 const MKFS = /\bmkfs(\.\w+)?\b/i;
@@ -253,30 +254,54 @@ const REMOVE_ITEM_NAMES: readonly string[] = [
 ];
 
 /**
- * The programs that delete files on Windows, macOS and Linux: ONE list, read
- * by the floor (the Remove-Item family, recursive and forced, on a whole disk)
- * and by the `delete_files` kind (any of them). Each kept its own list, and
- * they drifted: the floor knew `erase` and `ri`, the kind did not (#693).
- */
-const DELETE_PROGRAMS: readonly string[] = [...REMOVE_ITEM_NAMES, 'unlink', 'shred', 'srm'];
-
-/**
- * The provider cmdlets that erase what an item holds, or an entry of it, and
- * their aliases (#715, Nodal review pass 1): Clear-Content empties a file,
- * Clear-Item a value, Clear-ItemProperty and Remove-ItemProperty a registry
- * value. Deletions, read as Remove-Item is (`PIPELINE_TARGETS`); not the
- * floor's, whose list is Remove-Item's names.
+ * The provider cmdlets that erase what an item holds, or an entry of it (#715,
+ * Nodal review pass 1): Clear-Content empties a file, Clear-Item a value,
+ * Clear-ItemProperty and Remove-ItemProperty a registry value. Deletions,
+ * read as Remove-Item is (`PIPELINE_TARGETS`); not the floor's, whose list is
+ * Remove-Item's names.
  */
 const PROVIDER_ERASERS: Readonly<Record<string, PsSignature>> = {
   'clear-content': CLEAR_CONTENT,
-  clc: CLEAR_CONTENT,
   'clear-item': CLEAR_ITEM,
-  cli: CLEAR_ITEM,
   'clear-itemproperty': CLEAR_ITEM_PROPERTY,
-  clp: CLEAR_ITEM_PROPERTY,
   'remove-itemproperty': REMOVE_ITEM_PROPERTY,
-  rp: REMOVE_ITEM_PROPERTY,
 };
+
+/**
+ * PowerShell's own aliases of the cmdlets that delete or erase, by the cmdlet
+ * each names. An alias is one only where PowerShell reads the line
+ * (`UNIT_SHELL`, Nodal review pass 2 of PR #730): elsewhere `cli`, `rp` or
+ * `ri` is any program of that name (`npm run cli`, Ruby's `ri`), and cmd runs
+ * no cmdlet. `rm`, `del`, `erase`, `rd` and `rmdir` are not here: each is a
+ * deleting program or a cmd command of its own, in any shell.
+ */
+const POWERSHELL_DELETE_ALIASES: Readonly<Record<string, string>> = {
+  ri: 'remove-item',
+  clc: 'clear-content',
+  cli: 'clear-item',
+  clp: 'clear-itemproperty',
+  rp: 'remove-itemproperty',
+};
+
+/**
+ * The programs that delete files on Windows, macOS and Linux, by a name they
+ * have in any shell: read by the `delete_files` kind. The floor reads
+ * Remove-Item's names (`REMOVE_ITEM_NAMES`) its own way; each list kept apart
+ * once drifted, the floor knowing `erase` and `ri`, the kind not (#693), so
+ * this one is built from it.
+ */
+const DELETE_PROGRAMS: readonly string[] = [
+  ...REMOVE_ITEM_NAMES.filter((name) => !(name in POWERSHELL_DELETE_ALIASES)),
+  ...Object.keys(PROVIDER_ERASERS),
+  'unlink',
+  'shred',
+  'srm',
+];
+
+/** True when PowerShell reads this unit's program as an alias of a cmdlet that deletes or erases. */
+function deletesByAlias(unit: readonly string[]): boolean {
+  return (unit[0] ?? '') in POWERSHELL_DELETE_ALIASES && UNIT_SHELL.get(unit) === 'powershell';
+}
 
 /** rm's short options (GNU, BSD/macOS, busybox), which a group (`-rfv`) may hold. */
 const RM_SHORT_GROUP = /^-[dfiIPRrvWx]+$/;
@@ -1174,12 +1199,9 @@ function installsSoftware(unit: readonly string[]): boolean {
  */
 export const STATIC_SHELL_CATEGORY_PATTERNS = {
   delete_files: [
-    // every program that deletes files (`DELETE_PROGRAMS`, the floor's list
-    // too), and the cmdlets that erase an item's content or an entry
-    new RegExp(
-      String.raw`\b(?:${[...DELETE_PROGRAMS, ...Object.keys(PROVIDER_ERASERS)].join('|')})(?=\s|$)`,
-      'i',
-    ),
+    // every program that deletes files (`DELETE_PROGRAMS`); PowerShell's
+    // aliases are read on the unit (`deletesByAlias`), where PowerShell reads it
+    new RegExp(String.raw`\b(?:${DELETE_PROGRAMS.join('|')})(?=\s|$)`, 'i'),
     /\bfind\b[^\n]*-delete\b/i, // find … -delete
     // rsync deleting what the source does not have, or the source itself
     /\brsync\b[^\n]*\s--(?:delete(?:-[a-z]+)*|del|remove-source-files)(?![\w-])/i,
@@ -2104,18 +2126,51 @@ type Payload =
   | { words: ShellWord[]; shell: LineShell; invoked?: boolean; sourced?: boolean };
 
 /**
- * The words after a program's options: `-x`, `--long`, `--long=v`, and for the
- * options in `valued`, the word that follows. `--` ends them.
+ * The words of the command `program` runs after its options, read with its
+ * grammar (`PROGRAM_OPTIONS`); null when an option the grammar cannot
+ * classify hides where it starts (#715, Nodal review pass 2 of PR #730).
  */
-function afterOptions(args: readonly ShellWord[], valued: ReadonlySet<string>): ShellWord[] {
-  let i = 0;
-  while (i < args.length) {
-    const w = args[i]?.text ?? '';
-    if (w === '--') return args.slice(i + 1);
-    if (!/^-./.test(w)) break;
-    i += valued.has(w) ? 2 : 1;
-  }
-  return args.slice(i);
+function afterOptions(
+  program: keyof typeof PROGRAM_OPTIONS,
+  args: readonly ShellWord[],
+): ShellWord[] | null {
+  const read = readOptions(
+    args.map((a) => a.text),
+    PROGRAM_OPTIONS[program],
+  );
+  return read === null ? null : args.slice(read.start);
+}
+
+/**
+ * What `program` runs after its options: its words (`then` reads them), or,
+ * when its options cannot be read, a program decided at run time, which asks
+ * under any autonomy rather than a command picked by a guess.
+ */
+const afterItsOptions =
+  (
+    program: keyof typeof PROGRAM_OPTIONS,
+    then: (rest: ShellWord[]) => Payload[] = (rest) => argv(rest),
+  ) =>
+  (args: readonly ShellWord[]): Payload[] => {
+    const rest = afterOptions(program, args);
+    return rest === null ? DECIDED_AT_RUN_TIME : then(rest);
+  };
+
+/**
+ * The line a program's option hands a shell (`env -S LINE`, `flock -c LINE`,
+ * `runuser -c LINE`), read among its options as its grammar reads them.
+ */
+function optionLine(
+  program: keyof typeof PROGRAM_OPTIONS,
+  args: readonly ShellWord[],
+  names: readonly string[],
+): Payload[] {
+  const read = readOptions(
+    args.map((a) => a.text),
+    PROGRAM_OPTIONS[program],
+  );
+  const value = read?.values.find((v) => names.includes(v.option))?.value;
+  return value === undefined ? [] : [{ line: value, shell: 'sh' }];
 }
 
 const argv = (words: readonly ShellWord[], shell: LineShell = 'exec'): Payload[] =>
@@ -2136,73 +2191,6 @@ function commandOption(args: readonly ShellWord[]): Payload[] {
   return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
 }
 
-/** strace/ltrace options that take a value. */
-const TRACE_VALUED = new Set([
-  '-o',
-  '-e',
-  '-p',
-  '-s',
-  '-u',
-  '-E',
-  '-I',
-  '-a',
-  '-P',
-  '-X',
-  '-O',
-  '-S',
-  '-b',
-]);
-
-/** GNU parallel's options that take the next word as their value. */
-const PARALLEL_VALUED = new Set([
-  '-a',
-  '--arg-file',
-  '-C',
-  '--colsep',
-  '-d',
-  '--delimiter',
-  '-E',
-  '-I',
-  '-j',
-  '--jobs',
-  '-P',
-  '--max-procs',
-  '-L',
-  '--max-lines',
-  '-n',
-  '--max-args',
-  '-N',
-  '-s',
-  '--max-chars',
-  '-S',
-  '--sshlogin',
-  '--sshloginfile',
-  '--slf',
-  '--basefile',
-  '--bf',
-  '--block',
-  '--block-size',
-  '--delay',
-  '--env',
-  '--halt',
-  '--header',
-  '--joblog',
-  '--load',
-  '--memfree',
-  '--nice',
-  '--results',
-  '--res',
-  '--retries',
-  '--return',
-  '--tagstring',
-  '--timeout',
-  '--tmpdir',
-  '--transferfile',
-  '--tf',
-  '--workdir',
-  '--wd',
-]);
-
 /** `sh -c LINE`, `bash -lc LINE`, `zsh -o pipefail -c LINE`: a script file is not opened here. */
 function shellLine(args: readonly ShellWord[]): Payload[] {
   for (let i = 0; i < args.length; i++) {
@@ -2211,11 +2199,60 @@ function shellLine(args: readonly ShellWord[]): Payload[] {
       const line = args[i + 1];
       return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
     }
-    if (w === '-o' || w === '+o') i += 1;
+    // `-o`/`+o` and `-O`/`+O` (bash's shopt) take a value, and so do bash's
+    // `--rcfile` / `--init-file`; its other long options are switches. One
+    // it does not hold hides where `-c` stands: opaque (#715).
+    if (/^[-+][oO]$/.test(w) || w === '--rcfile' || w === '--init-file') i += 1;
+    else if (/^--./.test(w) && !SHELL_LONG_SWITCHES.has(w)) return DECIDED_AT_RUN_TIME;
     else if (!/^[-+]/.test(w)) return [];
   }
   return [];
 }
+
+/** `wsl`'s options that manage WSL and run no command (`wsl --help`). */
+const WSL_MANAGES: ReadonlySet<string> = new Set([
+  '--install',
+  '--list',
+  '-l',
+  '--set-default',
+  '-s',
+  '--set-version',
+  '--set-default-version',
+  '--shutdown',
+  '--terminate',
+  '-t',
+  '--unregister',
+  '--export',
+  '--import',
+  '--import-in-place',
+  '--mount',
+  '--unmount',
+  '--update',
+  '--status',
+  '--version',
+  '-v',
+  '--help',
+  '--manage',
+  '--debug-shell',
+  '--uninstall',
+]);
+
+/** The long options of bash and zsh that take no value (their manuals). */
+const SHELL_LONG_SWITCHES: ReadonlySet<string> = new Set([
+  '--debugger',
+  '--dump-po-strings',
+  '--dump-strings',
+  '--help',
+  '--login',
+  '--noediting',
+  '--noprofile',
+  '--norc',
+  '--posix',
+  '--pretty-print',
+  '--restricted',
+  '--verbose',
+  '--version',
+]);
 
 /**
  * What `cmd /c` reads again: its own command line from the word after `/c`.
@@ -2310,18 +2347,29 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
   // `wsl [-d distro] [-u user] [--cd dir] cmd…`: the distribution's shell reads
   // it; `-e` executes it; `--list`, `--shutdown` and the rest manage WSL.
   wsl: (args) => {
-    const valued = new Set(['-d', '--distribution', '-u', '--user', '--cd', '--distribution-id']);
+    const valued = new Set([
+      '-d',
+      '--distribution',
+      '-u',
+      '--user',
+      '--cd',
+      '--distribution-id',
+      '--shell-type',
+    ]);
     for (let i = 0; i < args.length; i++) {
       const w = args[i]?.text ?? '';
       if (valued.has(w)) i += 1;
+      else if (w === '--system') continue;
       else if (w === '-e' || w === '--exec') return argv(args.slice(i + 1));
       else if (w === '--') return argv(args.slice(i + 1), 'sh');
-      else if (/^-/.test(w)) return [];
+      else if (WSL_MANAGES.has(w)) return [];
+      else if (/^-/.test(w)) return DECIDED_AT_RUN_TIME;
       else return argv(args.slice(i), 'sh');
     }
     return [];
   },
-  busybox: (args) => argv(afterOptions(args, new Set())),
+  // `busybox APPLET …`; `busybox --list`, `--install`, `--help` run no applet.
+  busybox: (args) => (/^-/.test(args[0]?.text ?? '') ? [] : argv(args)),
   eval: (args) =>
     args.length > 0 ? [{ line: args.map((a) => a.text).join(' '), shell: 'sh' }] : [],
   script: (args) => {
@@ -2330,152 +2378,92 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
     return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
   },
   // launchers
+  // `env [options] [NAME=value]… command`, or `env -S LINE`.
   env: (args) => {
-    const valued = new Set(['-u', '--unset', '-C', '--chdir']);
-    let i = 0;
-    while (i < args.length) {
-      const w = args[i]?.text ?? '';
-      if (w === '-S' || w === '--split-string') {
-        const line = args[i + 1];
-        return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
-      }
-      if (w === '--') i += 1;
-      else if (valued.has(w)) i += 2;
-      else if (/^-/.test(w) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) i += 1;
-      else break;
-    }
-    return argv(args.slice(i));
+    const line = optionLine('env', args, ['-S', '--split-string']);
+    if (line.length > 0) return line;
+    return afterItsOptions('env', (rest) => {
+      let i = 0;
+      while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(rest[i]?.text ?? '')) i += 1;
+      return argv(rest.slice(i));
+    })(args);
   },
-  sudo: (args) =>
-    argv(
-      afterOptions(
-        args,
-        new Set(['-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-U', '-T', '--user', '--group']),
-      ),
-    ),
-  doas: (args) => argv(afterOptions(args, new Set(['-u', '-C']))),
-  nohup: (args) => argv(afterOptions(args, new Set())),
-  nice: (args) => argv(afterOptions(args, new Set(['-n', '--adjustment']))),
-  time: (args) => argv(afterOptions(args, new Set(['-f', '-o', '--format', '--output']))),
+  sudo: afterItsOptions('sudo'),
+  doas: afterItsOptions('doas'),
+  nohup: afterItsOptions('nohup'),
+  nice: afterItsOptions('nice'),
+  time: afterItsOptions('time'),
   // GNU `timeout [options] DURATION cmd…`; Windows' `timeout /t 5` only waits.
-  timeout: (args) => {
-    const rest = afterOptions(args, new Set(['-s', '--signal', '-k', '--kill-after']));
-    if (!/^\d+(\.\d+)?[smhd]?$/.test(rest[0]?.text ?? '')) return [];
-    return argv(rest.slice(1));
-  },
+  timeout: (args) =>
+    /^\//.test(args[0]?.text ?? '')
+      ? []
+      : afterItsOptions('timeout', (rest) =>
+          /^\d+(\.\d+)?[smhd]?$/.test(rest[0]?.text ?? '') ? argv(rest.slice(1)) : [],
+        )(args),
   // ── exec wrappers (review of PR #682, pass 5): each runs the command that
   // follows its own options, as it is, in another process state.
-  setsid: (args) => argv(afterOptions(args, new Set())),
-  stdbuf: (args) =>
-    argv(afterOptions(args, new Set(['-i', '-o', '-e', '--input', '--output', '--error']))),
+  setsid: afterItsOptions('setsid'),
+  stdbuf: afterItsOptions('stdbuf'),
   // With `-p PID` they act on a running process: the word left is a number.
-  ionice: (args) => argv(afterOptions(args, new Set(['-c', '-n', '--class', '--classdata']))),
+  ionice: afterItsOptions('ionice'),
   // `chrt [options] PRIORITY cmd…`
-  chrt: (args) => argv(afterNumber(afterOptions(args, new Set()))),
+  chrt: afterItsOptions('chrt', (rest) => argv(afterNumber(rest))),
   // `taskset [options] MASK|LIST cmd…`
-  taskset: (args) => argv(afterOptions(args, new Set()).slice(1)),
-  unbuffer: (args) => argv(afterOptions(args, new Set())),
-  strace: (args) => argv(afterOptions(args, TRACE_VALUED)),
-  ltrace: (args) => argv(afterOptions(args, TRACE_VALUED)),
-  valgrind: (args) => argv(afterOptions(args, new Set())),
+  taskset: afterItsOptions('taskset', (rest) => argv(rest.slice(1))),
+  unbuffer: afterItsOptions('unbuffer'),
+  strace: afterItsOptions('strace'),
+  ltrace: afterItsOptions('ltrace'),
+  valgrind: afterItsOptions('valgrind'),
   // `watch` hands its words to `sh -c` (`-x` executes them).
   watch: (args) => {
-    const rest = afterOptions(args, new Set(['-n', '--interval', '-q', '--equexit']));
+    const rest = afterOptions('watch', args);
+    if (rest === null) return DECIDED_AT_RUN_TIME;
     if (rest.length === 0) return [];
-    return hasAny(args, ['-x', '--exec'])
+    return hasAny(args.slice(0, args.length - rest.length), ['-x', '--exec'])
       ? argv(rest)
       : [{ line: rest.map((a) => a.text).join(' '), shell: 'sh' }];
   },
   // `flock [options] FILE cmd…` or `flock [options] FILE -c LINE`; `flock FD` runs nothing.
   flock: (args) => {
-    const rest = afterOptions(args, new Set(['-w', '--timeout', '-E', '--conflict-exit-code']));
-    const after = rest.slice(1);
-    const c = after.findIndex((a) => a.text === '-c' || a.text === '--command');
-    if (c >= 0) {
-      const line = after[c + 1];
-      return line === undefined ? [] : [{ line: line.text, shell: 'sh' }];
-    }
-    return argv(after);
+    const line = optionLine('flock', args, ['-c', '--command']);
+    if (line.length > 0) return line;
+    return afterItsOptions('flock', (rest) => {
+      const after = rest.slice(1);
+      const c = after.findIndex((a) => a.text === '-c' || a.text === '--command');
+      if (c < 0) return argv(after);
+      const value = after[c + 1];
+      return value === undefined ? [] : [{ line: value.text, shell: 'sh' }];
+    })(args);
   },
   // `chroot [options] NEWROOT [cmd…]`
-  chroot: (args) => argv(afterOptions(args, new Set()).slice(1)),
-  unshare: (args) =>
-    argv(
-      afterOptions(
-        args,
-        new Set([
-          '-S',
-          '--setuid',
-          '-G',
-          '--setgid',
-          '--map-user',
-          '--map-group',
-          '-R',
-          '--root',
-          '-w',
-          '--wd',
-        ]),
-      ),
-    ),
-  nsenter: (args) =>
-    argv(afterOptions(args, new Set(['-t', '--target', '-S', '--setuid', '-G', '--setgid']))),
-  'systemd-run': (args) =>
-    argv(
-      afterOptions(
-        args,
-        new Set([
-          '-p',
-          '--property',
-          '-u',
-          '--unit',
-          '-E',
-          '--setenv',
-          '--uid',
-          '--gid',
-          '-M',
-          '--machine',
-          '-H',
-          '--host',
-          '--description',
-          '--slice',
-          '--working-directory',
-          '--on-calendar',
-          '--on-active',
-        ]),
-      ),
-    ),
-  firejail: (args) => argv(afterOptions(args, new Set())),
+  chroot: afterItsOptions('chroot', (rest) => argv(rest.slice(1))),
+  unshare: afterItsOptions('unshare'),
+  nsenter: afterItsOptions('nsenter'),
+  'systemd-run': afterItsOptions('systemd-run'),
+  firejail: afterItsOptions('firejail'),
   // macOS: `caffeinate [-disu] [-t seconds] [-w pid] [utility args]`
-  caffeinate: (args) => argv(afterOptions(args, new Set(['-t', '-w']))),
+  caffeinate: afterItsOptions('caffeinate'),
   builtin: (args) => argv(args),
-  pkexec: (args) => argv(afterOptions(args, new Set(['--user']))),
+  pkexec: afterItsOptions('pkexec'),
   // `su [user] -c LINE`, `runuser -u user -- cmd…` / `runuser -c LINE`
   su: (args) => commandOption(args),
   runuser: (args) => {
-    const line = commandOption(args);
-    return line.length > 0
-      ? line
-      : argv(afterOptions(args, new Set(['-u', '--user', '-g', '--group', '-G', '-s', '--shell'])));
+    const line = optionLine('runuser', args, ['-c', '--command']);
+    return line.length > 0 ? line : afterItsOptions('runuser')(args);
   },
-  proxychains: (args) => argv(afterOptions(args, new Set(['-f']))),
-  torsocks: (args) => argv(afterOptions(args, new Set(['-u', '-p', '-a', '-P']))),
-  eatmydata: (args) => argv(afterOptions(args, new Set())),
-  fakeroot: (args) => argv(afterOptions(args, new Set(['-l', '-s', '-i']))),
-  'dbus-launch': (args) => argv(afterOptions(args, new Set())),
+  proxychains: afterItsOptions('proxychains'),
+  torsocks: afterItsOptions('torsocks'),
+  eatmydata: afterItsOptions('eatmydata'),
+  fakeroot: afterItsOptions('fakeroot'),
+  'dbus-launch': afterItsOptions('dbus-launch'),
   // `expect -c "spawn cmd…"`: Tcl, whose `spawn` starts a program.
   expect: (args) => commandOption(args),
-  spawn: (args) => argv(afterOptions(args, new Set())),
-  exec: (args) => argv(afterOptions(args, new Set(['-a']))),
+  spawn: afterItsOptions('spawn'),
+  exec: afterItsOptions('exec'),
   // `command -v x` only looks x up.
   command: (args) =>
-    args.some((a) => a.text === '-v' || a.text === '-V') ? [] : argv(afterOptions(args, new Set())),
-  xargs: (args) =>
-    argv(
-      afterOptions(
-        args,
-        new Set(['-I', '-n', '-P', '-L', '-s', '-d', '-E', '-a', '--max-args', '--max-procs']),
-      ),
-    ),
+    args.some((a) => a.text === '-v' || a.text === '-V') ? [] : afterItsOptions('command')(args),
+  xargs: afterItsOptions('xargs'),
   // `runas [/user:x] [/savecred…] "program args"`: one command line.
   runas: (args) => {
     const rest = args.filter((a) => !/^\/\w/.test(a.text));
@@ -2497,10 +2485,9 @@ const RUNS_ANOTHER: Record<string, (args: readonly ShellWord[], shell: LineShell
   // pass 1): read as a line, up to the first `:::` / `::::` separator.
   parallel: (args) => {
     const end = args.findIndex((a) => /^::::?\+?$/.test(a.text));
-    const command = afterOptions(end < 0 ? args : args.slice(0, end), PARALLEL_VALUED);
-    return command.length === 0
-      ? []
-      : [{ line: command.map((a) => a.text).join(' '), shell: 'sh' }];
+    return afterItsOptions('parallel', (command) =>
+      command.length === 0 ? [] : [{ line: command.map((a) => a.text).join(' '), shell: 'sh' }],
+    )(end < 0 ? args : args.slice(0, end));
   },
   // fd: `-x`/`--exec` runs a command per file found, `-X`/`--exec-batch`
   // once with all of them, its words up to a `;` (#715, Nodal review pass 1).
@@ -2752,6 +2739,10 @@ export const SHELL_KIND_TARGETS = {
 const PIPELINE_TARGETS: ReadonlyMap<string, PsSignature> = new Map([
   ...REMOVE_ITEM_NAMES.map((name) => [name, REMOVE_ITEM] as const),
   ...Object.entries(PROVIDER_ERASERS),
+  ...Object.entries(POWERSHELL_DELETE_ALIASES).flatMap(([alias, cmdlet]) => {
+    const signature = cmdlet === 'remove-item' ? REMOVE_ITEM : PROVIDER_ERASERS[cmdlet];
+    return signature === undefined ? [] : [[alias, signature] as const];
+  }),
 ]);
 
 /**
@@ -3055,20 +3046,15 @@ const FED_AT_RUN_TIME = new WeakSet<readonly string[]>();
 /** The shell that reads each unit's words, as `wordUnits` read them (#715: whose parameters bind). */
 const UNIT_SHELL = new WeakMap<readonly string[], LineShell>();
 
-/** The programs of `RUNS_ANOTHER` that hand what they run words of their own (`FED_AT_RUN_TIME`). */
-const HANDS_WORDS: ReadonlySet<string> = new Set([
-  // `xargs rm`, `xargs -I{} rm {}`, `parallel rm`: the words they read.
-  'xargs',
-  'parallel',
-  // `fd -x rm`, `fd -X rm`: each file found, or all of them.
-  'fd',
-  'fdfind',
-  // `find … -exec rm {} +`: what it runs, once per file found, gets that file
-  // in place of `{}` (glued too: `x{}y`, measured). sh's scanner reads `{`
-  // and `}` as its own operators, so the `{}` is not always among the words
-  // read: every command find runs is handed them.
-  'find',
-]);
+/**
+ * The programs of `RUNS_ANOTHER` that hand what they run words of their own
+ * (`FED_AT_RUN_TIME`): `PROGRAMS_HANDING_WORDS`, the list an allowlist may
+ * never name. `find … -exec rm {} +` puts each file found in place of `{}`
+ * (glued too: `x{}y`, measured); sh's scanner reads `{` and `}` as its own
+ * operators, so the `{}` is not always among the words read: every command
+ * find runs is handed them.
+ */
+const HANDS_WORDS: ReadonlySet<string> = new Set(PROGRAMS_HANDING_WORDS);
 
 /** cmd's own commands: never a file of the folder, whatever is there. */
 const CMD_INTERNAL = new Set([
@@ -5018,7 +5004,10 @@ export function isDestructiveOrHeavyCommand(cmd: string, host?: ShellHost): bool
     DESTRUCTIVE_PATTERNS.some((re) => re.test(c)) ||
     units.some(
       (u) =>
-        curlWritesAFile(u) || installsSoftware(u) || unitCategories(u).includes('open_or_send'),
+        curlWritesAFile(u) ||
+        installsSoftware(u) ||
+        deletesByAlias(u) ||
+        unitCategories(u).includes('open_or_send'),
     )
   );
 }
@@ -5089,7 +5078,8 @@ function patternKinds(unit: readonly string[]): Array<keyof typeof STATIC_SHELL_
       ([category, patterns]) =>
         patterns.some((re) => startsWithMatch(re, text)) ||
         (category === 'download' && curlWritesAFile(unit)) ||
-        (category === 'install_software' && installsSoftware(unit)),
+        (category === 'install_software' && installsSoftware(unit)) ||
+        (category === 'delete_files' && deletesByAlias(unit)),
     )
     .map(([category]) => category);
 }

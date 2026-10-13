@@ -15,9 +15,13 @@
 // l'exécution : aucune ligne de ce fichier n'en est une telle quelle.
 
 import { describe, it, expect } from 'vitest';
-import { isShellProgram } from '../shell-programs';
+import { SHELL_PROGRAMS, SHELL_RESERVED_WORDS, isShellProgram } from '../shell-programs';
 import {
+  RUNS_ANOTHER_PROGRAMS,
   SHELL_KIND_TARGETS,
+  isCatastrophicCommand,
+  isDestructiveOrHeavyCommand,
+  programDecidedAtRunTime,
   staticShellCategories,
   targetsDecidedAtRunTime,
   type ScriptShell,
@@ -330,5 +334,120 @@ describe('every other kind: what the text does not establish asks (#715) @cap:ex
   it('a download is never judged here: where it writes is judged against the workspaces by the gate', () => {
     for (const r of [...sh('curl -o $OUT https://x.org/a.zip'), ...sh('wget https://x.org/a.zip')])
       expect(decided(r), r.cmd).not.toContain('download');
+  });
+});
+
+// Passe 2 Nodal (PR #730) : une option que la grammaire d'un programme ne
+// classe pas faisait lire sa valeur comme le programme lancé
+// (`parallel --replace X rm -rf X`). Elle rend maintenant la lecture opaque :
+// ce qu'il lance est décidé à l'exécution, et demande.
+describe('an option a program’s grammar cannot classify makes what it runs opaque (#715) @cap:executer-une-commande/moteur', () => {
+  const ROOT = '/';
+  const opaque = [
+    `parallel --replace X ${RM} -rf X ::: a`,
+    `parallel --argfile jobs.txt ${RM} -rf ${ROOT}`,
+    `parallel --rep X ${RM} -rf X ::: a`,
+    `sudo --bogus x ${RM} -rf ./x`,
+    `sudo -Z x ${RM} -rf ./x`,
+    `timeout --nope 5 ${RM} -rf ./x`,
+    `xargs -i ${RM} {}`,
+    `env --bogus x ${RM} -rf ./x`,
+    `nice -19 ${RM} -rf ./x`,
+    `bash --bogus x -c '${RM} -rf ./x'`,
+    `wsl --newflag ${RM} -rf ./x`,
+    `strace -K x ${RM} -rf ./x`,
+  ];
+
+  it('opaque: a program decided at run time, which asks under any autonomy', () => {
+    for (const cmd of opaque) {
+      expect(programDecidedAtRunTime(cmd, 'posix'), cmd).toBe(true);
+      expect(staticShellCategories(cmd, 'posix'), cmd).toContain('inline_code');
+      expect(targetsDecidedAtRunTime(cmd, 'posix'), cmd).toContain('inline_code');
+      expect(isDestructiveOrHeavyCommand(cmd, 'posix'), cmd).toBe(true);
+    }
+  });
+
+  it('the options each manual holds still find the command, and its kind', () => {
+    for (const cmd of [
+      `sudo -E -u root ${RM} -rf ./x`,
+      `sudo -iu root ${RM} -rf ./x`,
+      `xargs -0 -n 1 ${RM}`,
+      `xargs --null --max-args=1 ${RM}`,
+      `parallel -j4 ${RM} {} ::: a b`,
+      `parallel --jobs 4 --halt now,fail=1 ${RM} {} ::: a b`,
+      `timeout -k 5 10 ${RM} -rf ./x`,
+      `env -i A=1 ${RM} -rf ./x`,
+      `env -S '${RM} -rf ./x'`,
+      `nice -n 10 ${RM} -rf ./x`,
+      `stdbuf -oL ${RM} -rf ./x`,
+      `strace -f -o log ${RM} -rf ./x`,
+      `chrt -f 10 ${RM} -rf ./x`,
+      `taskset -c 0 ${RM} -rf ./x`,
+      `flock -w 5 lockfile -c '${RM} -rf ./x'`,
+      `runuser -u bob -- ${RM} -rf ./x`,
+      `watch -n 5 ${RM} -rf ./x`,
+      `bash --norc -c '${RM} -rf ./x'`,
+      `wsl --system ${RM} -rf ./x`,
+    ]) {
+      expect(staticShellCategories(cmd, 'posix'), cmd).toContain('delete_files');
+      expect(programDecidedAtRunTime(cmd, 'posix'), cmd).toBe(false);
+    }
+    // and the floor reads what they run, as before
+    expect(isCatastrophicCommand(`sudo -E ${RM} -rf ${ROOT}`, 'posix')).toBe(true);
+  });
+
+  it('what manages a program runs nothing: `wsl --list`, `busybox --list`', () => {
+    for (const cmd of ['wsl --list', 'wsl --shutdown', 'busybox --list'])
+      expect(staticShellCategories(cmd, 'posix'), cmd).toEqual([]);
+  });
+});
+
+// Passe 2 Nodal (PR #730) : `npm run cli`, `ls cli` et `echo rp` étaient des
+// suppressions pour destructive_gate (motif lu sans ancrage), `./cli test`
+// pour la liste. Un alias PowerShell n'en est un que là où PowerShell lit.
+describe('a PowerShell alias is one only where PowerShell reads the line (#715) @cap:executer-une-commande/moteur', () => {
+  it('cli, clc, clp, rp and ri name any program elsewhere', () => {
+    for (const host of ['posix', 'windows'] as const)
+      for (const cmd of [
+        'npm run cli',
+        'ls cli',
+        'echo rp',
+        './cli test',
+        'ri Array',
+        'clc',
+        'rp x',
+      ]) {
+        expect(staticShellCategories(cmd, host), `${cmd} (${host})`).not.toContain('delete_files');
+        expect(isDestructiveOrHeavyCommand(cmd, host), `${cmd} (${host})`).toBe(false);
+      }
+  });
+
+  it('read by PowerShell, each is the cmdlet it names', () => {
+    for (const alias of ['ri', 'clc', 'cli', 'clp', 'rp']) {
+      const cmd = `powershell -Command "${alias} out.txt"`;
+      expect(staticShellCategories(cmd, 'windows'), cmd).toContain('delete_files');
+      expect(isDestructiveOrHeavyCommand(cmd, 'windows'), cmd).toBe(true);
+    }
+  });
+});
+
+// Passe 2 Nodal (PR #730) : `fd` manquait aux programmes qu'une liste
+// autorisée ne peut nommer. La liste est maintenant celle de HANDS_WORDS.
+describe('an allowlist may name no program that runs another one (#715) @cap:assigner-outils/moteur', () => {
+  it('every program the reading knows runs another one is refused, fd and find included', () => {
+    for (const program of [
+      'fd',
+      'fdfind',
+      'find',
+      'xargs',
+      'parallel',
+      'iex',
+      'start-process',
+      'source',
+    ])
+      expect(isShellProgram(program), program).toBe(true);
+    // one source: a program added to RUNS_ANOTHER is refused, or is a shell's own word
+    for (const program of RUNS_ANOTHER_PROGRAMS)
+      expect([...SHELL_PROGRAMS, ...SHELL_RESERVED_WORDS], program).toContain(program);
   });
 });
