@@ -2673,12 +2673,11 @@ export function commandUnits(
   // Substitutions run even inside double quotes: `$(…)` in sh and PowerShell,
   // backticks in sh (PowerShell's backtick is its escape, cmd has neither).
   if (shell !== 'cmd' && shell !== 'exec') {
-    const substitution = shell === 'sh' ? /\$\(([^()]*)\)|`([^`]*)`/g : /\$\(([^()]*)\)/g;
     // A here-document's body is read by the scan (`scanLine`): its own
     // substitutions run only when its marker is not quoted.
     const text = shell === 'sh' ? withoutHereDocBodies(cmd) : cmd;
-    for (const m of text.matchAll(substitution)) {
-      const read = commandUnits(m[1] ?? m[2] ?? '', depth + 1, shell);
+    for (const inner of substitutionsOf(text, shell)) {
+      const read = commandUnits(inner, depth + 1, shell);
       // sh runs a substitution in a subshell; cmd has none, its text runs
       // nothing. PowerShell runs one in its own runspace, but an unquoted one
       // is read by the scan below as well: its move cannot be counted once.
@@ -3470,8 +3469,98 @@ export function stdinReceiver(before: string, after: string): StdinReceiver {
   return doubt(program);
 }
 
-/** Command substitutions, which sh runs in an unquoted here-document's body. */
-const SUBSTITUTION = /\$\(([^()]*)\)|`([^`]*)`/g;
+/**
+ * The command substitutions of a text, outermost ones: the code of each
+ * `$( … )` (and of each backtick span in sh), read wherever it stands, in
+ * double quotes, in a case pattern, even in single quotes (a safety net may
+ * over-read: `echo '$(…)' | sh` runs it). Each ends where its `(` balances,
+ * past quotes, escapes, nested substitutions and a `case`'s patterns, whose
+ * `)` closes nothing (Nodal review of PR #721, pass 13: the regex this
+ * replaces read only the innermost one of `$(a $(b) c)`). An arithmetic
+ * `$(( … ))` is no code; the substitutions in it are.
+ */
+function substitutionsOf(text: string, shell: 'sh' | 'powershell'): string[] {
+  const escape = shell === 'sh' ? '\\' : '`';
+  const found: string[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === escape) i += 1;
+    else if (c === '$' && text[i + 1] === '(') {
+      const end = closingParen(text, i + 1, shell);
+      if (end === null) continue;
+      if (text[i + 2] === '(' && text[end - 1] === ')')
+        found.push(...substitutionsOf(text.slice(i + 3, end - 1), shell));
+      else found.push(text.slice(i + 2, end));
+      i = end;
+    } else if (shell === 'sh' && c === '`') {
+      const end = closingBacktick(text, i);
+      if (end === null) break;
+      found.push(text.slice(i + 1, end));
+      i = end;
+    }
+  }
+  return found;
+}
+
+/** The backtick that closes the one at `at`, past escaped ones; null if none. */
+function closingBacktick(text: string, at: number): number | null {
+  for (let j = at + 1; j < text.length; j++) {
+    if (text[j] === '\\') j += 1;
+    else if (text[j] === '`') return j;
+  }
+  return null;
+}
+
+/**
+ * The `)` that balances the `(` at `open`, as `shell` reads the code between:
+ * quotes and escapes respected, a nested `$( … )` read whole in double
+ * quotes, a backtick span skipped in sh, and in a `case` the `)` of a pattern
+ * closing nothing until its `esac`. Null when it never balances.
+ */
+function closingParen(text: string, open: number, shell: 'sh' | 'powershell'): number | null {
+  const escape = shell === 'sh' ? '\\' : '`';
+  const word = (at: number, name: string): boolean =>
+    text.startsWith(name, at) &&
+    /^$|[\s;&|()]/.test(text[at - 1] ?? '') &&
+    /^$|[\s;&|()<>]/.test(text[at + name.length] ?? '');
+  let depth = 0;
+  // The depth each open `case` stands at: a `)` there ends a pattern.
+  const cases: number[] = [];
+  let double = false;
+  for (let j = open; j < text.length; j++) {
+    const c = text[j];
+    if (c === escape) j += 1;
+    else if (double) {
+      if (c === '"') double = false;
+      else if (c === '$' && text[j + 1] === '(') {
+        const end = closingParen(text, j + 1, shell);
+        if (end === null) return null;
+        j = end;
+      }
+    } else if (c === '"') double = true;
+    else if (c === "'") {
+      const end = text.indexOf("'", j + 1);
+      if (end < 0) return null;
+      j = end;
+    } else if (shell === 'sh' && c === '`') {
+      const end = closingBacktick(text, j);
+      if (end === null) return null;
+      j = end;
+    } else if (c === '(') depth += 1;
+    else if (c === ')') {
+      if (cases[cases.length - 1] === depth) continue;
+      depth -= 1;
+      if (depth === 0) return j;
+    } else if (word(j, 'case')) {
+      cases.push(depth);
+      j += 3;
+    } else if (word(j, 'esac')) {
+      cases.pop();
+      j += 3;
+    }
+  }
+  return null;
+}
 
 /**
  * The here-documents of a text, as sh reads it (#635, reviews 4 and 5 of PR
@@ -4220,7 +4309,7 @@ function scanLine(
               );
           }
           if (!op.quotedMarker)
-            for (const m of body.matchAll(SUBSTITUTION)) runApart(scanLine(m[1] ?? m[2] ?? '', SH));
+            for (const inner of substitutionsOf(body, 'sh')) runApart(scanLine(inner, SH));
           from = doc.end;
         }
         pending.length = 0;

@@ -18,6 +18,8 @@ vi.mock('node:path', async () => {
 import { resolve } from 'node:path';
 import {
   DEFAULT_SHELL_POLICY,
+  commandUnits,
+  isCatastrophicCommand,
   programSources,
   splitShellWords,
   staticShellCategories,
@@ -512,5 +514,48 @@ describe('one reader of case patterns, as bash reads them (#717, Nodal review pa
     expect(staticShellCategories('case $x in\na b\n(rm -rf build)\nesac', 'posix')).toEqual(
       expect.arrayContaining(['inline_code', 'delete_files']),
     );
+  });
+});
+
+describe('a substitution is code wherever it stands, nested ones read whole (#717, Nodal review pass 13) @cap:executer-une-commande/moteur', () => {
+  // Measured in bash: `case $x in $(touch m1 $(echo m2))) :;; esac` creates
+  // m1 and m2, `` `touch m3`) `` m3, `$(touch "m4(b)"))` m4(b), and the
+  // same in `bash -c '…'` m5 and m6; `$(( 1+1 )))` is arithmetic;
+  // `echo $(echo a $(echo b) c)` prints `a b c`.
+  it.each([
+    'case $x in $(rm -rf / $(echo x))) :;; esac',
+    "bash -c 'case $x in $(rm -rf / $(echo x))) :;; esac'",
+    'case $x in `rm -rf /`) :;; esac',
+    'cat <<EOF\n$(rm -rf / $(echo x))\nEOF',
+    // in double quotes only the substitution pass reads them: a case's
+    // pattern `)`, a quoted `(` close nothing
+    'echo "$(case $x in a) rm -rf /;; esac)"',
+    `echo "$(echo '(' ; rm -rf /)"`,
+    'echo "$(echo "(" ; rm -rf /)"',
+  ])('%s: the floor sees rm -rf /', (command) => {
+    expect(isCatastrophicCommand(command, 'posix')).toBe(true);
+  });
+
+  it('an arithmetic expansion is no code: a variable named like a program runs nothing', () => {
+    expect(staticShellCategories('echo "$(( kill + 1 ))"', 'posix')).toEqual([]);
+  });
+
+  it('a substitution with a quoted parenthesis in a pattern is read', () => {
+    expect(staticShellCategories('case $x in $(rm -rf "/tmp/a(b)")) :;; esac', 'posix')).toContain(
+      'delete_files',
+    );
+  });
+
+  it('an arithmetic pattern asks nothing', async () => {
+    expect(await judge('case $x in $(( 1+1 ))) echo hi;; esac', placeWith('posix', {}))).toEqual(
+      [],
+    );
+  });
+
+  it('every command of nested substitutions is read, quoted or not', () => {
+    for (const command of ['echo "$(touch a $(rm -rf b) c)"', 'echo $(touch a $(rm -rf b) c)']) {
+      const heads = commandUnits(command, 0, 'sh').map((u) => u[0]);
+      expect(heads, command).toEqual(expect.arrayContaining(['touch', 'rm', 'c']));
+    }
   });
 });
