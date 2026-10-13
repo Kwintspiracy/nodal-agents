@@ -14,8 +14,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { z } from 'zod';
 
-import { createLlmClient } from '../client';
-import { LLMOutputLimitError, LLMContextWindowError, isContextOverflowError } from '../errors';
+import { createLlmClient, MIN_ESTIMATED_ROOM } from '../client';
+import { LLMOutputLimitError, isContextOverflowError } from '../errors';
 import {
   ATTACHMENT_TOKEN_ESTIMATE,
   estimateContextTokens,
@@ -261,15 +261,27 @@ describe('the stated cap fits the known context window @cap:suivre-execution/mot
     expect(room).toBeGreaterThan(7_000);
   });
 
-  it('a prompt that nearly fills the window leaves a small, valid max_tokens', async () => {
+  it('a prompt that leaves less room than the floor: the request goes, with no cap drawn from the estimate', async () => {
     stubFetch(() => chatCompletion('stop', 20));
-    const big = { ...ARGS, messages: [{ role: 'user' as const, content: 'x'.repeat(8_000 * 4) }] };
+    const big = { ...ARGS, messages: [{ role: 'user' as const, content: 'x'.repeat(5_000 * 4) }] };
 
     await createLlmClient(LOCAL).generateText(big);
 
     const room = 8_192 - (await estimate(big));
     expect(room).toBeGreaterThan(0);
-    expect(room).toBeLessThan(200);
+    expect(room).toBeLessThan(MIN_ESTIMATED_ROOM);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
+  });
+
+  it('a prompt that leaves room above the floor: that room is the stated cap', async () => {
+    stubFetch(() => chatCompletion('stop', 20));
+    const mid = { ...ARGS, messages: [{ role: 'user' as const, content: 'x'.repeat(3_000 * 4) }] };
+
+    await createLlmClient(LOCAL).generateText(mid);
+
+    const room = 8_192 - (await estimate(mid));
+    expect(room).toBeGreaterThanOrEqual(MIN_ESTIMATED_ROOM);
     expect(bodies[0]?.['max_tokens']).toBe(room);
   });
 
@@ -294,9 +306,9 @@ describe('the stated cap fits the known context window @cap:suivre-execution/mot
       ],
     };
 
-    await createLlmClient(LOCAL).generateText(withImage);
+    await createLlmClient({ ...LOCAL, contextWindow: 16_384 }).generateText(withImage);
 
-    const room = 8_192 - (await estimate(withImage));
+    const room = 16_384 - (await estimate(withImage));
     expect(await estimate(withImage)).toBeGreaterThan(ATTACHMENT_TOKEN_ESTIMATE);
     expect(bodies[0]?.['max_tokens']).toBe(room);
   });
@@ -310,20 +322,123 @@ describe('the stated cap fits the known context window @cap:suivre-execution/mot
     );
   });
 
-  it('a prompt beyond the window: nothing is sent, the error says context window', async () => {
-    stubFetch(() => chatCompletion('stop', 20));
-    const over = { ...ARGS, messages: [{ role: 'user' as const, content: 'x'.repeat(9_000 * 4) }] };
+  // Revue Nodal de #571, passe 1 (P1) : une ESTIMATION refusait le tour avant
+  // tout envoi (`LLMContextWindowError`). Le forfait d'une pièce jointe est un
+  // maximum : deux images sur 8 192, dix images rejouées ou sept captures
+  // d'outil sur 32k dépassaient la fenêtre sur le papier, et partaient sur
+  // main. Une estimation abaisse le plafond, elle ne refuse jamais un envoi :
+  // le refus pour dépassement appartient au compte réel du serveur.
+  const image = (n: number) => ({
+    type: 'image' as const,
+    image: new Uint8Array([137, 80, 78, 71, n % 256]),
+    mediaType: 'image/png',
+  });
+  const screenshot = (n: number) => [
+    {
+      role: 'assistant' as const,
+      content: [
+        { type: 'tool-call' as const, toolCallId: `c${n}`, toolName: 'save_memory', input: {} },
+      ],
+    },
+    {
+      role: 'tool' as const,
+      content: [
+        {
+          type: 'tool-result' as const,
+          toolCallId: `c${n}`,
+          toolName: 'save_memory',
+          output: {
+            type: 'content' as const,
+            value: [{ type: 'image-data' as const, data: 'iVBORw0KGgo=', mediaType: 'image/png' }],
+          },
+        },
+      ],
+    },
+  ];
+  const scenarios = [
+    {
+      label: 'two images on a key window of 8 192',
+      window: 8_192,
+      messages: [{ role: 'user' as const, content: [image(1), image(2)] }],
+    },
+    {
+      label: 'a conversation replaying ten images on 32k',
+      window: 32_768,
+      messages: Array.from({ length: 10 }, (_v, i) => ({
+        role: 'user' as const,
+        content: [{ type: 'text' as const, text: `photo ${i}` }, image(i)],
+      })),
+    },
+    {
+      label: 'seven tool screenshots on 32k',
+      window: 32_768,
+      messages: [
+        { role: 'user' as const, content: 'browse' },
+        ...Array.from({ length: 7 }, (_v, i) => screenshot(i)).flat(),
+      ],
+    },
+  ];
+  for (const sc of scenarios) {
+    it(`${sc.label}: over the window on paper, the request still goes, with no cap drawn from the estimate`, async () => {
+      stubFetch(() => chatCompletion('stop', 20));
+      const args = { ...ARGS, messages: sc.messages };
+      expect(await estimate(args)).toBeGreaterThan(sc.window);
+
+      const res = await createLlmClient({ ...LOCAL, contextWindow: sc.window }).generateText(
+        args as unknown as typeof ARGS,
+      );
+
+      expect(res.text).toBe('Je relance la recherche');
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]).not.toHaveProperty('max_tokens');
+    });
+  }
+
+  it("the server's own refusal of the window is still a context overflow", async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              error: {
+                message:
+                  "This model's maximum context length is 8192 tokens. However, your messages resulted in 9500 tokens.",
+                type: 'invalid_request_error',
+              },
+            }),
+            { status: 400, headers: { 'content-type': 'application/json' } },
+          ),
+      ),
+    );
 
     const err = await createLlmClient(LOCAL)
-      .generateText(over)
+      .generateText(ARGS)
       .then(
         () => null,
         (e: unknown) => e,
       );
 
-    expect(err).toBeInstanceOf(LLMContextWindowError);
+    expect(err).not.toBeNull();
     expect(isContextOverflowError(err)).toBe(true);
-    expect(bodies).toEqual([]);
+  });
+
+  it('native Anthropic beyond its window on paper: the request goes with the SDK default cap', async () => {
+    stubFetch(() => anthropicMessage('claude-opus-5', 'end_turn', 20));
+    const many = {
+      ...ARGS,
+      messages: [
+        { role: 'user' as const, content: Array.from({ length: 220 }, (_v, i) => image(i)) },
+      ],
+    };
+
+    await createLlmClient({ provider: 'anthropic', model: 'claude-opus-5', apiKey: 'k' })
+      .generateText(many as unknown as typeof ARGS)
+      .catch(() => null);
+
+    expect(bodies).toHaveLength(1);
+    expect(typeof bodies[0]?.['max_tokens']).toBe('number');
+    expect(bodies[0]?.['max_tokens']).not.toBe(TURN_OUTPUT_TOKEN_CAP);
   });
 });
 
@@ -455,7 +570,7 @@ describe('every request of the client states its output cap @cap:suivre-executio
 
   it('generateObject on a known window states what the window leaves after its prompt', async () => {
     stubFetch(objectReply);
-    const prompt = 'x'.repeat(8_000 * 4);
+    const prompt = 'x'.repeat(3_000 * 4);
 
     await createLlmClient(LOCAL).generateObject({
       output: 'object',
@@ -464,8 +579,8 @@ describe('every request of the client states its output cap @cap:suivre-executio
     } as Parameters<ReturnType<typeof createLlmClient>['generateObject']>[0]);
 
     const room = 8_192 - estimateContextTokens({ prompt });
-    expect(room).toBeGreaterThan(0);
-    expect(room).toBeLessThan(200);
+    expect(room).toBeGreaterThanOrEqual(MIN_ESTIMATED_ROOM);
+    expect(room).toBeLessThan(6_000);
     expect(bodies[0]?.['max_tokens']).toBe(room);
   });
 
@@ -486,21 +601,21 @@ describe('every request of the client states its output cap @cap:suivre-executio
 
   it('a generateText that sends a prompt, not messages, has it counted against the window', async () => {
     stubFetch(() => chatCompletion('stop', 20));
-    const prompt = 'x'.repeat(8_000 * 4);
+    const prompt = 'x'.repeat(3_000 * 4);
 
     await createLlmClient(LOCAL).generateText({ prompt });
 
     const room = 8_192 - estimateContextTokens({ prompt });
-    expect(room).toBeLessThan(200);
+    expect(room).toBeLessThan(6_000);
     expect(bodies[0]?.['max_tokens']).toBe(room);
   });
 
-  it('a streamText prompt beyond the window: nothing is sent, the error says context window', () => {
+  it('a streamText prompt beyond the window on paper: the request goes, with no cap drawn from it', async () => {
     stubStream();
 
-    expect(() => createLlmClient(LOCAL).streamText({ prompt: 'x'.repeat(9_000 * 4) })).toThrow(
-      LLMContextWindowError,
-    );
-    expect(bodies).toEqual([]);
+    await createLlmClient(LOCAL).streamText({ prompt: 'x'.repeat(9_000 * 4) }).text;
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
   });
 });

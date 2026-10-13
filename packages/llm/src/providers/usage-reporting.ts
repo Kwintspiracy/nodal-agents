@@ -15,7 +15,8 @@
 //     path (`z.number()`, not `.nullish()`), so a reply without it is refused
 //     by the SDK itself. What can still reach the client is the 0 a stream
 //     starts from when the event carrying the count never came: a truncated
-//     stream, abnormal by construction;
+//     stream, abnormal by construction. It holds for the provider the SDK is
+//     written for, not for another server the same SDK is pointed at;
 //   - DOC: the provider's official documentation says the count is returned
 //     on every reply of that path.
 // `false` where neither holds: the SDK tolerates an absent count and no
@@ -36,8 +37,11 @@ export const REPORTS_OUTPUT_USAGE: Record<ProviderName, OutputUsageReporting> = 
   // `usage.output_tokens: z.number()`, and the stream's `message_delta`
   // `usage.output_tokens: z.number()` (the stream starts from 0 until it).
   anthropic: { oneShot: true, streamed: true },
-  // Same SDK as anthropic, on MiniMax's Anthropic-compatible endpoint.
-  minimax: { oneShot: true, streamed: true },
+  // The Anthropic SDK on MiniMax's Anthropic-compatible endpoint. The SDK's
+  // schema says what it accepts, not what MiniMax's server sends, and
+  // platform.minimax.io/docs/api-reference/text-anthropic-api (read 2026-10-13)
+  // does not document `usage` on either path (Nodal review of #571, pass 1).
+  minimax: { oneShot: false, streamed: false },
   // DOC, openrouter.ai/docs/use-cases/usage-accounting: usage "is always
   // returned", "in the last SSE message for streaming responses, or in the
   // complete response for non-streaming requests"; no parameter needed.

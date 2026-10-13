@@ -9,7 +9,6 @@ import {
   LLMTimeoutError,
   LLMCallCancelledError,
   LLMOutputLimitError,
-  LLMContextWindowError,
 } from './errors';
 import { CAPABILITY_MATRIX } from './providers/registry';
 import { validateMessageStructure, withoutNamelessToolCalls } from './message-structure';
@@ -273,6 +272,17 @@ function prepareMessages<A>(args: A): A {
   return { ...args, messages: replayable };
 }
 
+/**
+ * The least room, in estimated tokens, a known window must leave after the
+ * input for the client to draw an output cap from it (#563). Below it the
+ * estimate cannot tell little room from none: it counts attachments at a
+ * ceiling, and a cap of a few hundred tokens would judge an ordinary turn cut.
+ * 4 096 is the cap `@ai-sdk/anthropic` applies itself to a model it does not
+ * know (read on the wire, `client-output-cap-wire.test.ts`): the smallest
+ * output a provider of this stack assumes a request needs.
+ */
+export const MIN_ESTIMATED_ROOM = 4_096;
+
 // ─── Factory ───────────────────────────────────────────────────────────────────
 
 /**
@@ -346,23 +356,26 @@ export function createLlmClient(
   /**
    * The cap a request states, or undefined when none is known: this client's,
    * or the caller's when LOWER (a caller never raises it, Codex review of
-   * #571), and never more than the known window leaves once the estimated
-   * input is in (review of #571). No room left: nothing is sent, the error
-   * says so (`LLMContextWindowError`). A caller's own cap is stated even for
-   * a model whose limits are unknown: the caller knows what it asks.
+   * #571), and no more than the known window leaves once the estimated input
+   * is in (review of #571). A caller's own cap is stated even for a model
+   * whose limits are unknown: the caller knows what it asks.
+   *
+   * The estimate LOWERS the cap; it never refuses a request (Nodal review of
+   * #571, pass 1). It counts each attachment at a ceiling
+   * (`ATTACHMENT_TOKEN_ESTIMATE`), so two images on an 8 192 window, or ten
+   * replayed on 32k, exceed the window on paper and fit in fact. When the
+   * room it leaves is under `MIN_ESTIMATED_ROOM`, it cannot tell little room
+   * from none: no cap is drawn from this client, and the request goes as
+   * before #563. Whether the input really overflows is the server's count to
+   * make, and its refusal is classified as a context overflow
+   * (`isContextOverflowError`, the job loop's `context_window_exceeded`).
    */
   const statedCapFor = (estimatedInput: number, callerCap: unknown): number | undefined => {
     const windowRoom = contextWindow === null ? Infinity : contextWindow - estimatedInput;
-    if (windowRoom < 1) {
-      throw new LLMContextWindowError(
-        config.provider,
-        config.model,
-        contextWindow ?? 0,
-        estimatedInput,
-      );
-    }
+    const platform =
+      windowRoom >= MIN_ESTIMATED_ROOM ? Math.min(outputCap ?? Infinity, windowRoom) : Infinity;
     const own = typeof callerCap === 'number' && callerCap > 0 ? callerCap : Infinity;
-    const cap = Math.min(outputCap ?? Infinity, windowRoom, own);
+    const cap = Math.min(platform, own);
     return Number.isFinite(cap) ? cap : undefined;
   };
   const withStatedCap = <A extends object>(args: A, statedCap: number | undefined): A =>
@@ -514,8 +527,8 @@ export function createLlmClient(
     // input is in (review of #571): a custom or local model configured at 8 192
     // tokens was asked for 65 536, and a server that validates `max_tokens`
     // against its window refuses the turn. The input is the same estimate the
-    // turn clocks use (characters / 4, tools included). No room left: nothing
-    // is sent, the error says so (`LLMContextWindowError`).
+    // turn clocks use (characters / 4, tools included, attachments at their
+    // allowance); it lowers the cap, never refuses the request (`statedCapFor`).
     const callerCap = (args as { maxOutputTokens?: unknown }).maxOutputTokens;
     // Caching path splits on the E1 boundary; non-caching path strips it so the
     // marker never leaks into a non-Anthropic provider's prompt.

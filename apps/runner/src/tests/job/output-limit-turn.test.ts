@@ -13,6 +13,7 @@
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
+import { APICallError } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
@@ -467,5 +468,46 @@ describe('the job row never turns an unknown usage into a number @cap:suivre-exe
       outputTokens: 4_000,
       totalCostUsd: null,
     });
+  });
+});
+
+// Revue Nodal de #571, passe 1 (P1) : le client ne refuse plus un envoi sur
+// une ESTIMATION de la fenêtre. Le dépassement réel reste dit par le serveur,
+// et le job le nomme comme avant.
+describe("the server's refusal of the window still ends the job as context_window_exceeded @cap:suivre-execution/moteur", () => {
+  it('a 400 "maximum context length" from the provider: failed with the actionable code', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps();
+    currentModel.model = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: PROVIDER_CONFIG.model,
+      doStream: async () => {
+        throw new APICallError({
+          message:
+            "This model's maximum context length is 8192 tokens. However, your messages resulted in 9500 tokens.",
+          url: 'https://openrouter.ai/api/v1/chat/completions',
+          requestBodyValues: {},
+          statusCode: 400,
+          isRetryable: false,
+        });
+      },
+      doGenerate: async () => {
+        throw new APICallError({
+          message:
+            "This model's maximum context length is 8192 tokens. However, your messages resulted in 9500 tokens.",
+          url: 'https://openrouter.ai/api/v1/chat/completions',
+          requestBodyValues: {},
+          statusCode: 400,
+          isRetryable: false,
+        });
+      },
+    });
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('failed');
+    expect((outcome as { error?: string }).error).toMatch(
+      /^context_window_exceeded:z-ai\/glm-5\.3 /,
+    );
   });
 });

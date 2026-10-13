@@ -277,14 +277,6 @@ const REFUSED: Array<[string, Case]> = [
     },
   ],
   [
-    'minimax, one-shot',
-    {
-      provider: 'minimax',
-      config: { provider: 'minimax', model: 'MiniMax-M3', ...k },
-      reply: anthropic('MiniMax-M3'),
-    },
-  ],
-  [
     'openrouter, one-shot',
     {
       provider: 'openrouter',
@@ -326,6 +318,14 @@ const REFUSED: Array<[string, Case]> = [
 // Where an absent count is the provider's normal behaviour, the turn goes on
 // and the count stays unknown.
 const PASSES: Array<[string, Case]> = [
+  [
+    'minimax, one-shot',
+    {
+      provider: 'minimax',
+      config: { provider: 'minimax', model: 'MiniMax-M3', ...k },
+      reply: anthropic('MiniMax-M3'),
+    },
+  ],
   [
     'openai, one-shot',
     {
