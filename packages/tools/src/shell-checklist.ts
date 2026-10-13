@@ -27,10 +27,11 @@ import {
   isCatastrophicCommand,
   languageOfPath,
   languageOfShebang,
-  programDecidedAtRunTime,
   programSources,
   readSource,
   staticShellCategories,
+  SHELL_KIND_TARGETS,
+  targetsDecidedAtRunTime,
   type ShellCategory,
   type ShellGateReason,
   type ShellHost,
@@ -715,8 +716,8 @@ export async function judgeShellChecklist(
 ): Promise<ShellGateReason[]> {
   const details = new Map<ShellCategory, string[]>();
   const found = new Map<ShellCategory, ShellSourceFinding[]>();
-  // Each command's own places outside, attached to it (revue passe 2).
-  const outside: NonNullable<ShellGateReason['outside']> = [];
+  // Per kind, each command's own places outside, attached to it (revue passe 2).
+  const outside = new Map<ShellCategory, NonNullable<ShellGateReason['outside']>>();
   const add = (category: ShellCategory, j: Judged): void => {
     const list = details.get(category) ?? [];
     if (!list.includes(j.call)) list.push(j.call);
@@ -731,24 +732,32 @@ export async function judgeShellChecklist(
   const { judged, unread, unreadCalls, scripts } = await readCall(commands, place);
 
   for (const j of judged) {
+    // Read once per text, for every kind it has that is allowed.
+    let decided: ShellCategory[] | null = null;
     for (const category of staticShellCategories(j.text, j.place.host, j.reader)) {
       if (policy[category] !== 'allow') {
         add(category, j);
         continue;
       }
-      // An allowed kind still asks when the text cannot say what it acts on:
-      // a program decided at run time (`$c x`, `%X% x`) for inline code, as a
-      // target decided at run time for a download (#667, review of PR #682).
-      if (category === 'inline_code') {
-        if (programDecidedAtRunTime(j.text, j.place.host, j.reader)) add(category, j);
-        continue;
+      // An allowed kind still asks when the text cannot establish what it
+      // acts on (#715, the owner's rule of 12/10), each kind by its own target
+      // (`SHELL_KIND_TARGETS`): where a download writes, judged against the
+      // job's workspaces (#614), and for every other kind, what the text says
+      // (inline code's program, a delete's files, an install's packages…).
+      let places: string[] = [];
+      if (SHELL_KIND_TARGETS[category] === 'writes') {
+        places = await downloadsOutside(j.text, j.from, j.place, j.reader, scripts);
+        if (places.length === 0) continue;
+      } else {
+        decided ??= targetsDecidedAtRunTime(j.text, j.place.host, j.reader);
+        if (!decided.includes(category)) continue;
       }
-      if (category !== 'download') continue;
-      const places = await downloadsOutside(j.text, j.from, j.place, j.reader, scripts);
-      if (places.length === 0) continue;
       add(category, j);
-      const entry = outside.find((o) => o.command === j.call);
-      if (entry === undefined) outside.push({ command: j.call, places });
+      if (places.length === 0) continue;
+      const list = outside.get(category) ?? [];
+      outside.set(category, list);
+      const entry = list.find((o) => o.command === j.call);
+      if (entry === undefined) list.push({ command: j.call, places });
       else for (const p of places) if (!entry.places.includes(p)) entry.places.push(p);
     }
   }
@@ -759,14 +768,14 @@ export async function judgeShellChecklist(
     const where = found.get(category);
     const extra = where !== undefined ? { found: where } : {};
     if (state === 'allow') {
-      // An allowed download that writes outside the job's workspaces asks,
-      // saying where; allowed inline code that runs a program decided at run
-      // time asks with its commands.
+      // An allowed kind whose target the text cannot establish asks, with its
+      // commands, and where a download would write outside the workspaces.
+      const places = outside.get(category);
       reasons.push({
         category,
         state: 'ask',
         details: list,
-        ...(category === 'download' ? { outside } : {}),
+        ...(places !== undefined ? { outside: places } : {}),
         ...extra,
       });
       continue;

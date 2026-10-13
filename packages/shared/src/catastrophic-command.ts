@@ -1821,9 +1821,16 @@ function isNullSink(p: string, host: ShellHost): boolean {
 
 const WINDOWS_NUL = /^nul(?::|\.[^\\/]*)?$/i;
 
-/** A path as written, or null when the shell decides it at run time. */
+/**
+ * A path as written, or null when the shell decides it at run time: a
+ * variable (`$x`, `%X%`, cmd's delayed `!X!`), a substitution, the home
+ * folder (`~`), a PowerShell splat (`@opts`). THE reading of a word a command
+ * acts on, for every kind (#715): where a download writes, where a line moves,
+ * what a delete removes.
+ */
 export function readablePath(p: string): string | null {
-  if (p === '' || /[$%`]/.test(p) || p.startsWith('~')) return null;
+  if (p === '' || /[$%`]/.test(p) || p.startsWith('~') || /![^!\s]+!/.test(p) || isSplat(p))
+    return null;
   return p;
 }
 
@@ -2607,6 +2614,113 @@ export function programDecidedAtRunTime(
   );
 }
 
+/**
+ * What each kind of action acts on, as the text says it (#715). The owner's
+ * rule (12/10): an ALLOWED kind still asks when the text cannot establish
+ * what it acts on, for every kind.
+ * - `program`: inline code acts through the program it runs, decided at run
+ *   time when no word names it (`programDecidedAtRunTime`, #667). The code
+ *   written into the command is the kind itself, allowed or not.
+ * - `writes`: a download acts on where it writes (`downloadWrites`). The gate
+ *   judges each place against the job's workspaces (#614), which only it can
+ *   see (packages/tools): one outside, or one the text does not say, asks.
+ * - `words`: every other kind acts on what its words name: the files a delete
+ *   removes, the packages an install fetches, the processes a kill stops,
+ *   what a launcher opens (`wordsDecidedAtRunTime`).
+ */
+export const SHELL_KIND_TARGETS = {
+  inline_code: 'program',
+  delete_files: 'words',
+  install_software: 'words',
+  download: 'writes',
+  open_or_send: 'words',
+  stop_programs: 'words',
+  system_settings: 'words',
+} as const satisfies Record<StaticShellCategory, 'program' | 'writes' | 'words'>;
+
+/**
+ * The PowerShell commands whose target parameters the reading holds (#715):
+ * the provider cmdlets' `[-Path] <string[]>` and `-LiteralPath`, which take
+ * what a pipeline hands the command when the text gives neither. Remove-Item
+ * and its names (`REMOVE_ITEM_NAMES`), whatever shell runs them, as the
+ * floor reads them.
+ */
+const PIPELINE_TARGETS: ReadonlyMap<
+  string,
+  { signature: PsSignature; parameters: readonly string[] }
+> = new Map(
+  REMOVE_ITEM_NAMES.map((name) => [
+    name,
+    { signature: REMOVE_ITEM, parameters: ['path', 'literalpath'] },
+  ]),
+);
+
+/** True when the text gives a held command one of its target parameters, by name or by position. */
+function givesTarget(unit: readonly string[]): boolean {
+  const held = PIPELINE_TARGETS.get(unit[0] ?? '');
+  if (held === undefined) return false;
+  const bound = bindPsArguments(unit.slice(1), held.signature);
+  return (
+    psPositional(bound).length > 0 || held.parameters.some((p) => psValues(bound, p).length > 0)
+  );
+}
+
+/**
+ * True when a PowerShell pipeline binds what it hands this command: any
+ * command whose parameters the reading does not hold may take it; one it
+ * holds (`PIPELINE_TARGETS`) only where the text leaves its targets empty
+ * (measured, Windows PowerShell 5.1: `Get-ChildItem src | Remove-Item
+ * .\x.txt` refuses each object it is handed, and deletes nothing).
+ */
+function pipelineBinds(unit: readonly string[]): boolean {
+  return !PIPELINE_TARGETS.has(unit[0] ?? '') || !givesTarget(unit);
+}
+
+/**
+ * A word whose value is decided when the command runs: one `readablePath`
+ * cannot read. An empty word names nothing, and PowerShell's switch written
+ * `-Name:$true` / `-Name:$false` holds a constant.
+ */
+function wordDecidedAtRunTime(word: string): boolean {
+  return word !== '' && !/^[-–—―][\w-]+:\$(true|false)$/i.test(word) && readablePath(word) === null;
+}
+
+/**
+ * True when what one unit acts on is decided when it runs (#715): a word of
+ * it the reading cannot read, words handed to it when it runs
+ * (`FED_AT_RUN_TIME`: xargs, find's `{}`, a PowerShell pipeline), or a
+ * command whose targets the reading holds given none of them by the text,
+ * which then come from a pipeline or a prompt. The reading does not hold each
+ * program's grammar: any word it cannot read may be what the program acts on.
+ */
+function wordsDecidedAtRunTime(unit: readonly string[]): boolean {
+  if (FED_AT_RUN_TIME.has(unit) || unit.slice(1).some(wordDecidedAtRunTime)) return true;
+  return PIPELINE_TARGETS.has(unit[0] ?? '') && !givesTarget(unit);
+}
+
+/**
+ * The kinds of action of `command` whose target its text cannot establish
+ * (#715, `SHELL_KIND_TARGETS`): an allowed one still asks. A download is not
+ * among them: where it writes is judged against the workspaces by the gate.
+ * Read on each command the line runs, for the kinds of that command only:
+ * `rm -rf ./dist && npm install $PKG` asks for the install, not the delete.
+ */
+export function targetsDecidedAtRunTime(
+  command: string,
+  host?: ShellHost,
+  reader?: ScriptShell,
+): StaticShellCategory[] {
+  if (typeof command !== 'string' || command.trim() === '') return [];
+  const found = new Set<StaticShellCategory>();
+  if (programDecidedAtRunTime(command, host, reader)) found.add('inline_code');
+  for (const unit of commandUnits(command, 0, reader ?? topShell(host))) {
+    if (!wordsDecidedAtRunTime(unit)) continue;
+    for (const kind of unitCategories(unit))
+      if (SHELL_KIND_TARGETS[kind] === 'words') found.add(kind);
+  }
+  return [...found];
+}
+
 /** The programs whose purpose is to run another one, as `commandUnits` reads them. */
 export const RUNS_ANOTHER_PROGRAMS: readonly string[] = Object.keys(RUNS_ANOTHER);
 
@@ -2709,6 +2823,8 @@ export function commandUnits(
       for (const unit of read) UNIT_REDIRECTIONS.set(unit, redirections);
     runIn(read, COMMAND_PROCESS.get(words) ?? []);
     if (COMMAND_MAY_NOT_RUN.has(words)) for (const unit of read) MAY_NOT_RUN.add(unit);
+    if (COMMAND_PIPED.has(words))
+      for (const unit of read) if (pipelineBinds(unit)) FED_AT_RUN_TIME.add(unit);
     chainIn(read, COMMAND_CHAIN.get(words) ?? []);
     units.push(...read);
   }
@@ -2805,6 +2921,22 @@ function chainIn(units: ReadonlyArray<readonly string[]>, chains: readonly numbe
  * a batch file or a `.ps1` found is that script, anything else is a program.
  */
 const MAY_BE_SCRIPT = new WeakMap<readonly string[], readonly string[]>();
+
+/**
+ * The units handed words the text does not hold, when they run (#715): what
+ * xargs appends, what find puts in place of `{}`, what a PowerShell pipeline
+ * binds to the command on its right. What such a command acts on is decided
+ * when it runs (`targetsDecidedAtRunTime`).
+ */
+const FED_AT_RUN_TIME = new WeakSet<readonly string[]>();
+
+/** The programs of `RUNS_ANOTHER` that hand what they run words of their own (`FED_AT_RUN_TIME`). */
+const HANDS_WORDS: Record<string, (payload: Payload) => boolean> = {
+  // `xargs rm`, `xargs -I{} rm {}`: the words it reads.
+  xargs: () => true,
+  // `find … -exec rm {} +`: each file found, in place of `{}`, glued or not.
+  find: (payload) => 'words' in payload && payload.words.some((w) => w.text.includes('{}')),
+};
 
 /** cmd's own commands: never a file of the folder, whatever is there. */
 const CMD_INTERNAL = new Set([
@@ -3213,6 +3345,7 @@ function wordUnits(
               sourced: payload.sourced === true,
               ...(runs ? { model } : {}),
             });
+      if (HANDS_WORDS[name]?.(payload) === true) for (const unit of read) FED_AT_RUN_TIME.add(unit);
       if (runs === undefined) runIn(read, [newProcess()]);
       else if (runs === 'not-known') {
         for (const unit of read) if (!UNIT_PROCESS.has(unit)) FOLDER_UNKNOWN.add(unit);
@@ -3803,6 +3936,9 @@ const COMMAND_MAY_NOT_RUN = new WeakSet<readonly ShellWord[]>();
 /** The `&&` chains a scanned command is in, outermost first: `UNIT_CHAIN`. */
 const COMMAND_CHAIN = new WeakMap<readonly ShellWord[], readonly number[]>();
 
+/** The scanned commands on the right of a PowerShell pipe: `FED_AT_RUN_TIME`. */
+const COMMAND_PIPED = new WeakSet<readonly ShellWord[]>();
+
 /** sh's compound commands: what opens one, where its body starts, what closes it. */
 const SH_OPENS = new Set(['if', 'while', 'until', 'for', 'select', 'case']);
 const SH_BODY = new Set(['then', 'else', 'elif', 'do']);
@@ -3876,6 +4012,8 @@ class Processes {
   private list = 0;
   /** The process of the command that comes next: a pipe's right side. */
   private side: number | null = null;
+  /** The command that comes next is bound what a PowerShell pipeline hands it (#715). */
+  private piped = false;
   /** Past the head of the current list: after `&&` or `||`. */
   private orElse = false;
   /**
@@ -3935,6 +4073,8 @@ class Processes {
     if (words === undefined) return;
     COMMAND_PROCESS.set(words, [...this.here(), ...(this.side === null ? [] : [this.side])]);
     COMMAND_CHAIN.set(words, [...this.groups.map((g) => g.chain), this.joinChain()]);
+    if (this.piped) COMMAND_PIPED.add(words);
+    this.piped = false;
     this.side = null;
     this.last = at;
     this.closed = null;
@@ -4051,6 +4191,7 @@ class Processes {
     }
     const process = this.side ?? (child ? newProcess() : null);
     this.side = null;
+    this.piped = false;
     const chain = this.joinChain();
     this.groups.push({
       process,
@@ -4083,10 +4224,17 @@ class Processes {
       this.model === 'sh' && group.afterWord && group.start === this.commands.length;
   }
 
-  /** A pipe: each side is a process of its own, but in PowerShell. */
+  /**
+   * A pipe: each side is a process of its own, but in PowerShell, where what
+   * it hands the right side is bound to that command's parameters (#715). In
+   * sh and cmd it is the program's input, never its arguments.
+   */
   pipe(): void {
     this.closed = null;
-    if (this.model === 'powershell') return;
+    if (this.model === 'powershell') {
+      this.piped = true;
+      return;
+    }
     this.apart(this.last);
     this.side = newProcess();
   }
@@ -4094,6 +4242,7 @@ class Processes {
   /** `&&` or `||`: what follows in the list runs only on the result of what came before. */
   andOr(operator: '&&' | '||'): void {
     this.closed = null;
+    this.piped = false;
     this.orElse = true;
     if (operator === '||') {
       this.chain = newProcess();
@@ -4112,6 +4261,7 @@ class Processes {
   /** `;` or a new line: a new list starts. */
   next(): void {
     this.closed = null;
+    this.piped = false;
     this.list = this.commands.length;
     this.orElse = false;
     this.chain = newProcess();
