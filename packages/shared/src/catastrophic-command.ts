@@ -4377,7 +4377,7 @@ function scanLine(
       begin(at);
       quoted = true;
       const end = ansiQuoteEnd(line, at);
-      word += line.slice(at + 2, end).replace(/\\(.)/gs, '$1');
+      word += line.slice(at + 2, end).replace(/\\([\s\S])/g, '$1');
       at = end;
       continue;
     }
