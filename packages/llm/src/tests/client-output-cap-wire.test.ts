@@ -35,11 +35,42 @@ const ARGS = {
   tools: TOOLS,
 };
 
+// Revue Nodal de #571, passe 5 : la borne énumérait les champs qu'elle
+// comptait, et chaque passe trouvait un champ oublié (le schéma de sortie,
+// l'enum, `toolChoice`, l'enveloppe du fil). Le corps envoyé est la vérité :
+// pour CHAQUE requête de ce fichier, la borne que le client a calculée ne
+// descend jamais sous les octets réellement envoyés. Un champ ou une
+// enveloppe oublié fait rougir n'importe quel test.
+const wire = vi.hoisted(() => ({
+  lastBound: Number.NaN,
+  sent: [] as Array<{ bound: number; bytes: number; body: string }>,
+}));
+
+vi.mock('../turn-clocks', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../turn-clocks')>();
+  return {
+    ...actual,
+    inputTokensUpperBound: (args: Parameters<typeof actual.inputTokensUpperBound>[0]) => {
+      wire.lastBound = actual.inputTokensUpperBound(args);
+      return wire.lastBound;
+    },
+  };
+});
+
 // Every provider call goes through `providerFetch` (#608). Routed to the global
 // fetch here, so the stub below is the network boundary and nothing leaves the
-// machine.
+// machine. Each request body is recorded with the bound computed for it.
 vi.mock('../transport', () => ({
-  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => {
+    if (typeof init?.body === 'string') {
+      wire.sent.push({
+        bound: wire.lastBound,
+        bytes: Buffer.byteLength(init.body, 'utf8'),
+        body: init.body.slice(0, 200),
+      });
+    }
+    return globalThis.fetch(input, init);
+  },
 }));
 
 let bodies: Array<Record<string, unknown>> = [];
@@ -68,6 +99,13 @@ function stubFetch(reply: () => unknown): void {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  const sent = wire.sent;
+  wire.sent = [];
+  wire.lastBound = Number.NaN;
+  for (const r of sent) {
+    expect(r.bound, `bound computed for ${r.body}`).not.toBeNaN();
+    expect(r.bound, `bound under the bytes sent: ${r.body}`).toBeGreaterThanOrEqual(r.bytes);
+  }
 });
 
 /** An OpenAI-shaped chat completion carrying one tool call. */
@@ -761,6 +799,58 @@ describe('every request of the client states its output cap @cap:suivre-executio
       .catch(() => null);
     expect(bodies).toHaveLength(1);
     expect(JSON.stringify(bodies[0]).length).toBeGreaterThan(55_000 + 10_000);
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
+  });
+
+  // Revue Nodal de #571, passe 5 (P2) : `output: 'enum'` partait avec ses
+  // valeurs, que la borne ne lisait pas (elle ne comptait que `schema`).
+  it("generateObject with output 'enum': its values count in the bound", async () => {
+    const prompt = 'x'.repeat(60_000);
+    const values = Array.from({ length: 100 }, (_v, i) => `choice_${i}_${'v'.repeat(10)}`);
+    stubFetch(() => ({
+      ...objectReply(),
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content: '{"result":"choice_0_vvvvvvvvvv"}' },
+          finish_reason: 'stop',
+        },
+      ],
+    }));
+    await createLlmClient(DEEPSEEK)
+      .generateObject({ output: 'enum', enum: values, prompt } as unknown as Parameters<
+        ReturnType<typeof createLlmClient>['generateObject']
+      >[0])
+      .catch(() => null);
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
+  });
+
+  it("generateObject with output 'array': its element schema counts", async () => {
+    stubFetch(objectReply);
+    await createLlmClient(DEEPSEEK)
+      .generateObject({ output: 'array', schema: CITY, prompt: 'cities' } as unknown as Parameters<
+        ReturnType<typeof createLlmClient>['generateObject']
+      >[0])
+      .catch(() => null);
+    expect(bodies).toHaveLength(1);
+  });
+
+  it('a forced toolChoice and a field the SDK may add tomorrow both count', async () => {
+    stubFetch(() => chatCompletion('tool_calls', 20));
+    await createLlmClient(DEEPSEEK).generateText({
+      ...ARGS,
+      toolChoice: { type: 'tool', toolName: 'save_memory' },
+    });
+    expect(bodies).toHaveLength(1);
+
+    // A field the client does not know: counted, never skipped.
+    stubFetch(() => chatCompletion('stop', 20));
+    await createLlmClient(DEEPSEEK).generateText({
+      ...ARGS,
+      providerOptions: { deepseek: { note: 'n'.repeat(70_000) } },
+    } as typeof ARGS);
     expect(bodies[0]).not.toHaveProperty('max_tokens');
   });
 

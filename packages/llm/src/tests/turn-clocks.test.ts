@@ -17,7 +17,7 @@ import {
   consumeUnderClocks,
   estimateContextTokens,
   ATTACHMENT_TOKEN_ESTIMATE,
-  FRAMING_TOKENS_PER_UNIT,
+  WIRE_ENVELOPE_PER_REQUEST,
   inputTokensUpperBound,
   estimateToolTokens,
   isLocalEndpoint,
@@ -850,8 +850,8 @@ describe('inputTokensUpperBound: never below what a tokenizer can make of the in
   it('text counts its UTF-8 bytes: dense text is not averaged away', () => {
     const cjk = { messages: [{ role: 'user', content: '中'.repeat(1_000) }] };
     expect(estimateContextTokens(cjk)).toBe(250);
-    // 3 000 bytes, one framed message, plus the reply's framing.
-    expect(inputTokensUpperBound(cjk)).toBe(3_000 + 2 * FRAMING_TOKENS_PER_UNIT);
+    // 3 000 bytes of text, plus the envelopes of the request and the message.
+    expect(inputTokensUpperBound(cjk)).toBeGreaterThan(WIRE_ENVELOPE_PER_REQUEST + 3_000);
   });
 
   it('an image or a PDF has no universal ceiling, so the bound is infinite', () => {
@@ -873,7 +873,7 @@ describe('inputTokensUpperBound: never below what a tokenizer can make of the in
     const sync = {
       tools: { find: { description: 'ab', inputSchema: z.object({ q: z.string() }) } },
     };
-    expect(inputTokensUpperBound(sync)).toBeGreaterThan(4 + 2 + 2 * FRAMING_TOKENS_PER_UNIT);
+    expect(inputTokensUpperBound(sync)).toBeGreaterThan(WIRE_ENVELOPE_PER_REQUEST + 4 + 2);
     expect(Number.isFinite(inputTokensUpperBound(sync))).toBe(true);
     const later = {
       tools: {
@@ -903,5 +903,35 @@ describe('inputTokensUpperBound: never below what a tokenizer can make of the in
         schema: jsonSchema(() => Promise.resolve({ type: 'object' as const })),
       }),
     ).toBe(Infinity);
+  });
+
+  // Revue Nodal de #571, passe 5 : la borne compte tout ce qui part, sauf ce
+  // qu'elle sait ne pas partir. Un champ qu'elle ne connaît pas est compté.
+  it('every argument counts but the transport and the callbacks; a value it cannot serialise is infinite', () => {
+    const base = inputTokensUpperBound({ prompt: 'p' });
+    expect(inputTokensUpperBound({ prompt: 'p', somethingNew: 'n'.repeat(5_000) })).toBeGreaterThan(
+      base + 5_000,
+    );
+    expect(inputTokensUpperBound({ prompt: 'p', enum: ['a'.repeat(2_000)] })).toBeGreaterThan(
+      base + 2 * 2_000,
+    );
+    expect(
+      inputTokensUpperBound({
+        prompt: 'p',
+        abortSignal: new AbortController().signal,
+        headers: { a: 'b'.repeat(5_000) },
+        maxOutputTokens: 10,
+        onFinish: () => {},
+      }),
+    ).toBe(base);
+    expect(inputTokensUpperBound({ prompt: 'p', somethingNew: () => 1 })).toBe(Infinity);
+    expect(inputTokensUpperBound({ prompt: 'p', somethingNew: 10n })).toBe(Infinity);
+  });
+
+  it("a tool's functions stay local: execute does not make the bound infinite", () => {
+    const tools = {
+      find: { description: 'ab', inputSchema: z.object({ q: z.string() }), execute: async () => 1 },
+    };
+    expect(Number.isFinite(inputTokensUpperBound({ tools }))).toBe(true);
   });
 });

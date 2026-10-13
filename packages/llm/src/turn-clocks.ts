@@ -136,12 +136,19 @@ const ATTACHMENT_PART_TYPES = new Set([
 interface InputMeasure {
   /** UTF-16 code units of its text (`String.length`). */
   chars: number;
-  /** UTF-8 bytes of the same text. */
+  /**
+   * UTF-8 bytes of the same text as the wire carries it: escaped inside a
+   * JSON string, and a structured value (a tool call's input, a JSON tool
+   * result) escaped twice, since providers send it as a string of JSON
+   * (OpenAI's `arguments`, a tool message's `content`).
+   */
   bytes: number;
   /** Attachments: images and files, in messages or in tool results. */
   attachments: number;
-  /** Framed units: the system prompt, the prompt, each message. */
+  /** Framed units: the system prompt, the prompt, each message, each part. */
   framed: number;
+  /** A value that could not be serialised: the bound cannot be established. */
+  unreadable: boolean;
 }
 
 function measureInput(args: {
@@ -149,10 +156,10 @@ function measureInput(args: {
   prompt?: unknown;
   messages?: unknown;
 }): InputMeasure {
-  const m: InputMeasure = { chars: 0, bytes: 0, attachments: 0, framed: 0 };
+  const m: InputMeasure = { chars: 0, bytes: 0, attachments: 0, framed: 0, unreadable: false };
   const text = (t: string): void => {
     m.chars += t.length;
-    m.bytes += Buffer.byteLength(t, 'utf8');
+    m.bytes += jsonStringBytes(t);
   };
   const add = (v: unknown): void => {
     if (typeof v === 'string') {
@@ -165,6 +172,7 @@ function measureInput(args: {
     }
     if (v && typeof v === 'object') {
       const part = v as Record<string, unknown>;
+      m.framed += 1;
       if (typeof part['type'] === 'string' && ATTACHMENT_PART_TYPES.has(part['type'])) {
         m.attachments += 1;
         return;
@@ -189,9 +197,13 @@ function measureInput(args: {
         return;
       }
       try {
-        text(JSON.stringify(part));
+        const serialised = JSON.stringify(part);
+        m.chars += serialised.length;
+        m.bytes += jsonStringBytes(serialised);
       } catch {
-        // A value that cannot be serialised adds nothing to the estimate.
+        // A value that cannot be serialised adds nothing to the estimate,
+        // and leaves the bound unknown.
+        m.unreadable = true;
       }
     }
   };
@@ -226,97 +238,182 @@ export function estimateContextTokens(args: {
   return Math.ceil(m.chars / 4) + m.attachments * ATTACHMENT_TOKEN_ESTIMATE;
 }
 
+/** UTF-8 bytes of a text once escaped inside a JSON string, quotes included. */
+function jsonStringBytes(t: string): number {
+  return Buffer.byteLength(JSON.stringify(t), 'utf8');
+}
+
 /**
- * What a chat template adds around each framed unit (a message, the system
- * prompt, the prompt, a tool definition): role markers and separators that
- * are tokens but not text. OpenAI counts 3 per message plus 3 to prime the
- * reply ("How to count tokens with tiktoken", OpenAI cookbook); Llama 3 frames
- * a message with 5 (`<|start_header_id|>`, role, `<|end_header_id|>`, `\n\n`,
- * `<|eot_id|>`). 16 stays above both, and above a SentencePiece tokenizer's
- * leading `▁` per text.
+ * The bytes a provider's wire format puts around each framed unit (a message,
+ * a content part, a tool definition, an argument) beyond the values the bound
+ * already counts: `{"role":"assistant","content":null,"tool_calls":[`,
+ * `{"type":"function","function":{"name":,"description":,"parameters":,
+ * "strict":false}}`, a cache-control marker.
+ *
+ * Measured on 2026-10-14 against every request body of
+ * `client-output-cap-wire.test.ts` and `client-usage-reporting.test.ts`
+ * (eleven providers' real builders): with 1 024 per request, 64 per unit
+ * falls under the bytes sent (streamText with 300 tools: 160 244 bytes sent)
+ * and 96 holds; with 128 per unit, 0 per request falls under them and 128
+ * holds. With nothing for either, a one-message, one-tool request is sent in
+ * 419 to 547 bytes where its counted values make 205.
  */
-export const FRAMING_TOKENS_PER_UNIT = 16;
+export const WIRE_ENVELOPE_PER_UNIT = 128;
+
+/**
+ * The bytes of a request around everything else: the model id, the stream
+ * flags, `max_tokens`, a provider's fixed options (OpenRouter's `usage`, a
+ * thinking configuration). Measured with `WIRE_ENVELOPE_PER_UNIT`, above.
+ */
+export const WIRE_ENVELOPE_PER_REQUEST = 1_024;
+
+/**
+ * The instruction a provider writes into the system prompt when it asks for
+ * JSON without native structured outputs (`injectJsonInstructionIntoMessages`
+ * in @ai-sdk/provider-utils, used by @ai-sdk/mistral): "JSON schema:", the
+ * schema itself, escaped in that string, and "You MUST answer with a JSON
+ * object that matches the JSON schema above." The schema is counted a second
+ * time, escaped twice; this is the fixed text around it.
+ */
+const JSON_INSTRUCTION_BYTES = 128;
+
+/**
+ * The arguments the client hands the SDK that never reach the wire as text:
+ * the model object, transport settings (HTTP headers, the abort signal,
+ * retries, the timeout), the output cap this client sets itself, and the
+ * SDK's local callbacks and hooks. Everything else is counted, a field the
+ * SDK adds tomorrow included (Nodal review of #571, pass 5: a list of what
+ * is counted forgot a field at every pass).
+ */
+const NOT_ON_THE_WIRE = new Set([
+  'model',
+  'headers',
+  'abortSignal',
+  'maxRetries',
+  'timeout',
+  'maxOutputTokens',
+  'onChunk',
+  'onError',
+  'onFinish',
+  'onAbort',
+  'onStepFinish',
+  'stopWhen',
+  'prepareStep',
+  'experimental_telemetry',
+  'experimental_repairToolCall',
+  'experimental_transform',
+  'experimental_download',
+  'experimental_context',
+]);
 
 /**
  * An UPPER bound of the input tokens a call sends (#563, Nodal review of #571,
- * pass 3), for a decision that must not be wrong in the dangerous direction:
- * whether a cap still fits in the window.
- * - Text counts its UTF-8 bytes. A byte-level BPE token (OpenAI, DeepSeek,
- *   Llama 3, Qwen, Kimi, Mistral's Tekken) covers at least one byte, and a
- *   SentencePiece tokenizer with byte fallback (Gemma, Gemini) falls back to
- *   one token per byte at worst. Not covered: a Unicode normalisation (NFKC)
- *   that lengthens a character before tokenising, such as a compatibility
- *   ideograph expanded into several; rare in practice.
+ * passes 3 to 5), for a decision that must not be wrong in the dangerous
+ * direction: whether a cap still fits in the window. It is never below the
+ * bytes of the request body itself, which `client-output-cap-wire.test.ts`
+ * checks on every request it makes.
+ * - Every argument counts, except those in `NOT_ON_THE_WIRE`.
+ * - Text counts its UTF-8 bytes as escaped on the wire. A byte-level BPE
+ *   token (OpenAI, DeepSeek, Llama 3, Qwen, Kimi, Mistral's Tekken) covers at
+ *   least one byte, and a SentencePiece tokenizer with byte fallback (Gemma,
+ *   Gemini) falls back to one token per byte at worst. Not covered: a Unicode
+ *   normalisation (NFKC) that lengthens a character before tokenising; rare.
  * - Any attachment, image or file, makes the bound infinite (pass 4): its
  *   cost depends on the provider, the model, the resolution, the detail
  *   level and the pages, and no universal ceiling exists.
- * - Each framed unit and each tool adds `FRAMING_TOKENS_PER_UNIT`.
- * - Tool definitions count the bytes of their name, description and JSON
- *   schema; an output schema (generateObject: `schema`, `schemaName`,
- *   `schemaDescription`) counts the same way, since it travels in the request
- *   (pass 4).
- * - A schema that cannot be read synchronously, or cannot be read or
- *   serialised at all, makes the bound infinite: what cannot be bounded is
- *   not bounded.
+ * - A schema (a tool's input, generateObject's output) counts its JSON
+ *   schema as the SDK sends it; generateObject's output shape (`schema`, or
+ *   the values of an `enum`) counts a second time, escaped twice, for the
+ *   providers that also write it into the prompt.
+ * - A tool's functions (`execute` and the other hooks) stay local.
+ * - A value that cannot be read synchronously or serialised (a function, a
+ *   promise, a cycle, a bigint) makes the bound infinite: what cannot be
+ *   bounded is not bounded.
  * Synchronous, so that every path reads the same bound (streamText answers
  * synchronously).
  */
-export function inputTokensUpperBound(args: {
-  system?: unknown;
-  prompt?: unknown;
-  messages?: unknown;
-  tools?: unknown;
-  schema?: unknown;
-  schemaName?: unknown;
-  schemaDescription?: unknown;
-}): number {
-  const m = measureInput(args);
-  if (m.attachments > 0) return Infinity;
-  return (
-    m.bytes +
-    (m.framed + 1) * FRAMING_TOKENS_PER_UNIT +
-    toolsUpperBound(args.tools) +
-    outputSchemaUpperBound(args)
-  );
+export function inputTokensUpperBound(args: object): number {
+  const fields = args as Record<string, unknown>;
+  const m = measureInput(fields);
+  if (m.attachments > 0 || m.unreadable) return Infinity;
+  let bound = WIRE_ENVELOPE_PER_REQUEST + m.bytes + m.framed * WIRE_ENVELOPE_PER_UNIT;
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined || NOT_ON_THE_WIRE.has(key)) continue;
+    if (key === 'system' || key === 'prompt' || key === 'messages') continue;
+    if (key === 'tools') bound += toolsUpperBound(value);
+    else if (key === 'schema') bound += outputShapeUpperBound(readSchema(value));
+    else if (key === 'enum') bound += outputShapeUpperBound(value);
+    else bound += WIRE_ENVELOPE_PER_UNIT + valueBytes(value);
+    if (!Number.isFinite(bound)) return Infinity;
+  }
+  return bound;
 }
 
-/** UTF-8 bytes of a JSON schema as the SDK sends it, or Infinity when it cannot be read now. */
-function schemaBytes(inputSchema: unknown): number {
+/** UTF-8 bytes of a value serialised as JSON, or Infinity when it cannot be. */
+function valueBytes(value: unknown): number {
   try {
-    const schema: unknown = asSchema(inputSchema as Parameters<typeof asSchema>[0]).jsonSchema;
-    if (schema === null || typeof schema !== 'object' || 'then' in schema) return Infinity;
-    return Buffer.byteLength(JSON.stringify(schema), 'utf8');
+    const serialised = JSON.stringify(value, (_k, v: unknown) => {
+      if (typeof v === 'function' || typeof v === 'bigint' || typeof v === 'symbol') {
+        throw new TypeError('not serialisable');
+      }
+      if (v !== null && typeof v === 'object' && 'then' in v) throw new TypeError('a promise');
+      return v;
+    });
+    return serialised === undefined ? 0 : Buffer.byteLength(serialised, 'utf8');
   } catch {
     return Infinity;
   }
 }
 
-function textBytes(v: unknown): number {
-  return typeof v === 'string' ? Buffer.byteLength(v, 'utf8') : 0;
+/** The JSON schema the SDK sends for a schema argument, or undefined when it cannot be read now. */
+function readSchema(inputSchema: unknown): unknown {
+  try {
+    const schema: unknown = asSchema(inputSchema as Parameters<typeof asSchema>[0]).jsonSchema;
+    if (schema === null || typeof schema !== 'object' || 'then' in schema) return undefined;
+    return schema;
+  } catch {
+    return undefined;
+  }
 }
 
 function toolsUpperBound(tools: unknown): number {
-  if (!tools || typeof tools !== 'object') return 0;
-  let tokens = 0;
+  if (!tools || typeof tools !== 'object') return valueBytes(tools);
+  let bytes = 0;
   for (const [name, def] of Object.entries(tools as Record<string, unknown>)) {
-    const tool = (def ?? {}) as { description?: unknown; inputSchema?: unknown };
-    tokens += textBytes(name) + FRAMING_TOKENS_PER_UNIT + textBytes(tool.description);
-    if (tool.inputSchema != null) tokens += schemaBytes(tool.inputSchema);
+    bytes += WIRE_ENVELOPE_PER_UNIT + jsonStringBytes(name);
+    for (const [key, value] of Object.entries((def ?? {}) as Record<string, unknown>)) {
+      // A tool's functions run here, never on the wire.
+      if (typeof value === 'function' || value === undefined) continue;
+      if (key === 'inputSchema') {
+        const schema = readSchema(value);
+        if (schema === undefined) return Infinity;
+        bytes += valueBytes(schema);
+      } else {
+        bytes += valueBytes(value);
+      }
+    }
   }
-  return tokens;
+  return bytes;
 }
 
-function outputSchemaUpperBound(args: {
-  schema?: unknown;
-  schemaName?: unknown;
-  schemaDescription?: unknown;
-}): number {
-  if (args.schema == null) return 0;
+/**
+ * generateObject's output shape (`schema`, or the values of `output: 'enum'`):
+ * the SDK turns it into a JSON schema sent as `response_format` or a forced
+ * tool, and some providers also write it, escaped, into the system prompt
+ * (@ai-sdk/mistral's `injectJsonInstructionIntoMessages`, @ai-sdk/deepseek's
+ * "Return JSON that conforms to the following schema:"). Counted twice: once
+ * as sent, once escaped in that instruction, plus the wrapper the SDK puts
+ * around an enum or an array (two envelope units) and the instruction text.
+ */
+function outputShapeUpperBound(shape: unknown): number {
+  if (shape === undefined) return Infinity;
+  const once = valueBytes(shape);
+  if (!Number.isFinite(once)) return Infinity;
   return (
-    FRAMING_TOKENS_PER_UNIT +
-    textBytes(args.schemaName) +
-    textBytes(args.schemaDescription) +
-    schemaBytes(args.schema)
+    2 * WIRE_ENVELOPE_PER_UNIT +
+    once +
+    jsonStringBytes(JSON.stringify(shape)) +
+    JSON_INSTRUCTION_BYTES
   );
 }
 

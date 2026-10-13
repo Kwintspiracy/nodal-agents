@@ -366,10 +366,12 @@ export function createLlmClient(
    * `context_window_exceeded`).
    */
   const statedCapFor = (input: object, callerCap: unknown): number | undefined => {
+    // Computed for every request, whether or not a cap is known, so that the
+    // bound is one function of what is sent (and checked against the wire).
+    const inputBound = inputTokensUpperBound(input);
     const own = typeof callerCap === 'number' && callerCap > 0 ? callerCap : Infinity;
     const fits =
-      outputCap !== null &&
-      (contextWindow === null || contextWindow - inputTokensUpperBound(input) >= outputCap);
+      outputCap !== null && (contextWindow === null || contextWindow - inputBound >= outputCap);
     const cap = Math.min(fits ? outputCap : Infinity, own);
     return Number.isFinite(cap) ? cap : undefined;
   };

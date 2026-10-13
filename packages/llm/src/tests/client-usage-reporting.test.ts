@@ -22,12 +22,47 @@ import { LLMOutputLimitError } from '../errors';
 import type { ProviderConfig } from '../types';
 import type { LlmCallObservation } from '../observe';
 
+// The bound the client computes for each request never falls below the bytes
+// it really sends (Nodal review of #571, pass 5): checked here on eleven
+// providers' real builders, as in client-output-cap-wire.test.ts.
+const wire = vi.hoisted(() => ({
+  lastBound: Number.NaN,
+  sent: [] as Array<{ bound: number; bytes: number; body: string }>,
+}));
+
+vi.mock('../turn-clocks', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../turn-clocks')>();
+  return {
+    ...actual,
+    inputTokensUpperBound: (args: Parameters<typeof actual.inputTokensUpperBound>[0]) => {
+      wire.lastBound = actual.inputTokensUpperBound(args);
+      return wire.lastBound;
+    },
+  };
+});
+
 vi.mock('../transport', () => ({
-  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => {
+    if (typeof init?.body === 'string') {
+      wire.sent.push({
+        bound: wire.lastBound,
+        bytes: Buffer.byteLength(init.body, 'utf8'),
+        body: init.body.slice(0, 200),
+      });
+    }
+    return globalThis.fetch(input, init);
+  },
 }));
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  const sent = wire.sent;
+  wire.sent = [];
+  wire.lastBound = Number.NaN;
+  for (const r of sent) {
+    expect(r.bound, `bound computed for ${r.body}`).not.toBeNaN();
+    expect(r.bound, `bound under the bytes sent: ${r.body}`).toBeGreaterThanOrEqual(r.bytes);
+  }
 });
 
 const ARGS = {
