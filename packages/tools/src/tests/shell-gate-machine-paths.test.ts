@@ -24,7 +24,7 @@ import {
   splitShellWords,
   staticShellCategories,
 } from '@nodal-agents/shared';
-import { judgeShellChecklist, type ShellPlace } from '../shell-checklist';
+import { callReachesTheFloor, judgeShellChecklist, type ShellPlace } from '../shell-checklist';
 
 const root = resolve('/nodal-fake-ws');
 
@@ -634,5 +634,40 @@ describe('a substitution is never dropped, and read with the grammar the scan kn
         'powershell',
       ),
     ).toEqual([]);
+  });
+});
+
+describe('a reading limit takes nothing away, and what it cannot read reaches the floor (#717, Nodal review pass 15) @cap:executer-une-commande/moteur', () => {
+  const parens = (n: number, inner: string) => '('.repeat(n) + inner + ')'.repeat(n);
+  // `bash -c '…'` around a line, n times, quoted as sh quotes a payload
+  const payload = (n: number, inner: string): string =>
+    n === 0 ? inner : payload(n - 1, `bash -c '${inner.replace(/'/g, "'\\''")}'`);
+  it.each([
+    'rm -rf / ; echo ' + parens(33, 'x'),
+    parens(33, ' rm -rf / '),
+    'rm -rf / ; echo ' + '"$(echo '.repeat(33) + 'x' + ')"'.repeat(33),
+    '{ '.repeat(33) + 'rm -rf /;' + ' }'.repeat(33),
+    'rm -rf / ; echo $((' + parens(33, '1') + '))',
+    // payloads nested past eight levels: their text is not read, and held
+    payload(10, 'rm -rf /'),
+    payload(10, 'echo hi'),
+    parens(20, ' rm -rf / '),
+  ])('%s: the floor holds it', (command) => {
+    expect(isCatastrophicCommand(command, 'posix')).toBe(true);
+  });
+
+  it('what stands within the limit is read as any line', () => {
+    expect(staticShellCategories('rm -rf build ; echo ' + parens(33, 'x'), 'posix')).toContain(
+      'delete_files',
+    );
+  });
+
+  it('a line no reading follows never runs without a human, whatever is allowed', async () => {
+    // inline code allowed, every kind allowed: the floor still holds it
+    for (const command of ['echo ' + parens(33, 'x'), 'echo ' + parens(10_000, 'x')]) {
+      expect(() => isCatastrophicCommand(command, 'posix')).not.toThrow();
+      expect(isCatastrophicCommand(command, 'posix')).toBe(true);
+      expect(await callReachesTheFloor([command], placeWith('posix', {}))).toBe(true);
+    }
   });
 });

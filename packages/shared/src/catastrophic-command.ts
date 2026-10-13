@@ -294,6 +294,9 @@ export function isCatastrophicCommand(
   // `shutdown --help` prints and exits (Reviewer A, #582 pass 2). Only the
   // long forms and `/?` here: `shutdown -h` HALTS the machine.
   const units = commandUnits(cmd, 0, shell).filter((u) => !runsAnother(u));
+  // Text no reading follows (`UNFOLLOWED`): what it runs is not known, so it
+  // is held as a destroyer may be, whatever the rest of the line reads.
+  if (units.some((u) => u[0] === UNFOLLOWED)) return true;
   if (
     units.length > 0 &&
     units.every((u) => u.length >= 2 && u.slice(1).every((t) => FLOOR_READ_FLAGS.has(t)))
@@ -2667,11 +2670,16 @@ export function commandUnits(
     }
     return units;
   }
-  if (depth > 8 || typeof cmd !== 'string' || cmd.trim() === '') return [];
-  // A line nested deeper than any reading follows (Nodal review of PR #721,
-  // pass 14: ten thousand levels ran the readers out of stack or memory) is
-  // not read: it is a program decided at run time, and asks.
-  if (depth === 0 && nestingOf(cmd) > MAX_NESTING) return [[UNFOLLOWED]];
+  if (typeof cmd !== 'string' || cmd.trim() === '') return [];
+  // What no reading follows (Nodal review of PR #721, passes 14 and 15):
+  // payloads and substitutions nested past eight levels, and the text of a
+  // line past `MAX_NESTING` parentheses or braces (ten thousand levels ran
+  // the readers out of stack or memory). It is `UNFOLLOWED`, which the floor
+  // holds for a human under any autonomy; what stands within the limits, the
+  // rest of the line, is read as any line.
+  if (depth > 8) return [[UNFOLLOWED]];
+  const within = depth === 0 ? withinNesting(cmd) : { text: cmd, cut: false };
+  if (within.cut) return [[UNFOLLOWED], ...commandUnits(within.text, depth, shell, processes)];
   const model = processes ?? shell;
   const units: string[][] = [];
   // Substitutions run even inside double quotes: `$(…)` in sh and PowerShell,
@@ -3474,26 +3482,51 @@ export function stdinReceiver(before: string, after: string): StdinReceiver {
 }
 
 /**
- * What a substitution the reading cannot follow stands for (nested past
- * `MAX_NESTING`): a program decided at run time, which asks.
+ * The unit that stands for text no reading follows (`commandUnits`): nobody
+ * knows what it runs. A program decided at run
+ * time to the checklist, and for the floor a destroyer not known
+ * (`isCatastrophicCommand`): it never runs without a human, under any
+ * autonomy (Nodal review of PR #721, pass 15).
  */
 const UNFOLLOWED = '$(…)';
 
-/** How deep substitutions and quotes nest before the reading stops following (pass 14). */
+/**
+ * How deep a line's parentheses and braces nest before the reading stops
+ * following (`withinNesting`): what nests deeper is not read (passes 14, 15).
+ * Within it, no reader below recurses past this depth.
+ */
 const MAX_NESTING = 32;
 
 /**
- * How deep a text's parentheses and braces nest, quotes ignored: more than
- * any reading of it nests, never less.
+ * A line with what its parentheses and braces nest past `MAX_NESTING` taken
+ * out (quotes ignored: never less than any reading nests), and whether any
+ * was: the rest stays, to be read as any line (pass 15).
  */
-function nestingOf(text: string): number {
+function withinNesting(text: string): { text: string; cut: boolean } {
   let depth = 0;
-  let most = 0;
-  for (const c of text) {
-    if (c === '(' || c === '{') most = Math.max(most, ++depth);
-    else if (c === ')' || c === '}') depth -= 1;
+  let kept = '';
+  let cut = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i] ?? '';
+    if ((c === '(' || c === '{') && depth === MAX_NESTING) {
+      // Past the limit: up to the parenthesis or brace that closes this one.
+      let level = 0;
+      let j = i;
+      for (; j < text.length; j++) {
+        const d = text[j];
+        if (d === '(' || d === '{') level += 1;
+        else if ((d === ')' || d === '}') && --level === 0) break;
+      }
+      kept += ' ';
+      cut = true;
+      i = j;
+      continue;
+    }
+    if (c === '(' || c === '{') depth += 1;
+    else if ((c === ')' || c === '}') && depth > 0) depth -= 1;
+    kept += c;
   }
-  return most;
+  return { text: kept, cut };
 }
 
 /**
@@ -3505,22 +3538,19 @@ function nestingOf(text: string): number {
  * it are.
  *
  * Nothing is ever dropped (Nodal review of PR #721, pass 14): a substitution
- * whose end is not found is read to the end of the text, as code; one nested
- * past `MAX_NESTING` is `UNFOLLOWED`, and asks.
+ * whose end is not found is read to the end of the text, as code.
  */
-function substitutionsOf(text: string, shell: 'sh' | 'powershell', nesting = 0): string[] {
-  if (nesting > MAX_NESTING) return [UNFOLLOWED];
+function substitutionsOf(text: string, shell: 'sh' | 'powershell'): string[] {
   const escape = shell === 'sh' ? '\\' : '`';
   const found: string[] = [];
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (c === escape) i += 1;
     else if (c === '$' && text[i + 1] === '(') {
-      const end = closingParen(text, i + 1, shell, nesting);
-      if (end === 'deep') return [...found, UNFOLLOWED];
+      const end = closingParen(text, i + 1, shell);
       if (end === null) return [...found, text.slice(i + 2)];
       if (text[i + 2] === '(' && text[end - 1] === ')')
-        found.push(...substitutionsOf(text.slice(i + 3, end - 1), shell, nesting + 1));
+        found.push(...substitutionsOf(text.slice(i + 3, end - 1), shell));
       else found.push(text.slice(i + 2, end));
       i = end;
     } else if (shell === 'sh' && c === '`') {
@@ -3550,16 +3580,9 @@ function closingBacktick(text: string, at: number): number | null {
  * (sh's `#` starting a word, PowerShell's `#` and `<# … #>`), and a `case`'s
  * patterns. `case` and `esac` are reserved where a command starts only, as
  * the scan reads them (`shNextCommand`), and a pattern is read by the scan's
- * pattern reader (`casePatternEnd`). Null when it never balances; `deep`
- * past `MAX_NESTING`.
+ * pattern reader (`casePatternEnd`). Null when it never balances.
  */
-function closingParen(
-  text: string,
-  open: number,
-  shell: 'sh' | 'powershell',
-  nesting = 0,
-): number | null | 'deep' {
-  if (nesting > MAX_NESTING) return 'deep';
+function closingParen(text: string, open: number, shell: 'sh' | 'powershell'): number | null {
   const escape = shell === 'sh' ? '\\' : '`';
   const startsWord = (at: number): boolean => /^$|[\s;&|()]/.test(text[at - 1] ?? '');
   let depth = 0;
@@ -3579,8 +3602,8 @@ function closingParen(
     if (double) {
       if (c === '"') double = false;
       else if (c === '$' && (next === '(' || next === '{' || next === '[')) {
-        const end = skipExpansion(text, j, shell, nesting + 1);
-        if (end === null || end === 'deep') return end;
+        const end = skipExpansion(text, j, shell);
+        if (end === null) return null;
         j = end;
       } else if (shell === 'sh' && c === '`') {
         const end = closingBacktick(text, j);
@@ -3620,8 +3643,8 @@ function closingParen(
       j = ansiQuoteEnd(text, j);
       command = false;
     } else if (c === '$' && (next === '{' || next === '[' || (next === '(' && shell === 'sh'))) {
-      const end = skipExpansion(text, j, shell, nesting + 1);
-      if (end === null || end === 'deep') return end;
+      const end = skipExpansion(text, j, shell);
+      if (end === null) return null;
       j = end;
       command = false;
     } else if (startsWord(j) && c === '#') {
@@ -3669,14 +3692,9 @@ function closingParen(
  * balancing `)` (`closingParen`), `${ … }` at the `}` that closes it, `$[ … ]`
  * at its `]`, past quotes and escapes; null when it never ends.
  */
-function skipExpansion(
-  text: string,
-  at: number,
-  shell: 'sh' | 'powershell',
-  nesting: number,
-): number | null | 'deep' {
+function skipExpansion(text: string, at: number, shell: 'sh' | 'powershell'): number | null {
   const open = text[at + 1];
-  if (open === '(') return closingParen(text, at + 1, shell, nesting);
+  if (open === '(') return closingParen(text, at + 1, shell);
   const close = open === '{' ? '}' : ']';
   const escape = shell === 'sh' ? '\\' : '`';
   let depth = 0;
