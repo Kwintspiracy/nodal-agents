@@ -38,9 +38,14 @@ node scripts/check-no-secrets.mjs
 # — and because --no-error-on-unmatched-pattern forgives both fragments, the
 # real file is silently never checked and the gate reports success. Found in the
 # PR #6 review, 2026-08-21.
+#
+# In batches of 50 (-n 50): on Windows `npx` is a .cmd, and cmd.exe takes 8 191
+# characters at most. A merge of main staging ~800 files failed with "The
+# command line is too long", read as "not formatted" (2026-10-13, rebase of
+# #571). xargs still fails when any batch fails.
 if git diff --cached --name-only --diff-filter=ACMR -z \
   | grep -z -E '\.(ts|tsx|js|jsx|mjs|cjs|json|md|mdx|css|scss|html|yml|yaml)$' \
-  | xargs -0 -r npx prettier --check; then
+  | xargs -0 -r -n 50 npx prettier --check; then
   : # formatted, or nothing to check
 else
   echo ""

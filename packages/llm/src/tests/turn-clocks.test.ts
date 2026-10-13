@@ -7,7 +7,8 @@
 // LLMTimeoutError with the text written before the clock fired.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { streamText } from 'ai';
+import { jsonSchema, streamText } from 'ai';
+import { z } from 'zod';
 import { MockLanguageModelV3 } from 'ai/test';
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 
@@ -15,6 +16,9 @@ import {
   computeTurnClocks,
   consumeUnderClocks,
   estimateContextTokens,
+  ATTACHMENT_TOKEN_ESTIMATE,
+  WIRE_ENVELOPE_PER_REQUEST,
+  inputTokensUpperBound,
   estimateToolTokens,
   isLocalEndpoint,
   BETWEEN_TOKENS_MS,
@@ -579,15 +583,42 @@ describe('computeTurnClocks @cap:organiser-equipe/moteur', () => {
     expect(clocks.firstTokenMs).toBeGreaterThan(FIRST_TOKEN_BASE_MS);
   });
 
-  it('estimates the context from text, not from image bytes', () => {
+  // Revue Nodal de #571 (P2) : une image ou un fichier comptait 0, et la place
+  // laissée dans la fenêtre était surestimée. Chaque pièce jointe compte un
+  // forfait sourcé (ATTACHMENT_TOKEN_ESTIMATE), jamais ses octets.
+  it('estimates the context from text, and each attachment at the flat allowance, not its bytes', () => {
     const est = estimateContextTokens({
       system: 'x'.repeat(4_000),
       messages: [
         { role: 'user', content: [{ type: 'text', text: 'y'.repeat(4_000) }] },
         { role: 'user', content: [{ type: 'image', image: 'z'.repeat(400_000) }] },
+        {
+          role: 'user',
+          content: [{ type: 'file', data: 'p'.repeat(40), mediaType: 'application/pdf' }],
+        },
       ],
     });
-    expect(est).toBe(2_000);
+    expect(ATTACHMENT_TOKEN_ESTIMATE).toBe(4_784);
+    expect(est).toBe(2_000 + 2 * 4_784);
+  });
+
+  it('an attachment inside a tool result counts the same', () => {
+    const est = estimateContextTokens({
+      messages: [
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'c1',
+              toolName: 'screenshot',
+              output: { type: 'content', value: [{ type: 'image-data', data: 'z'.repeat(9_000) }] },
+            },
+          ],
+        },
+      ],
+    });
+    expect(est).toBeGreaterThanOrEqual(4_784);
   });
 });
 
@@ -810,5 +841,97 @@ describe('a tool call finished IN the stream does not reset the ceiling (#484) @
     expect(err).toBeInstanceOf(LLMTimeoutError);
     expect(err.reason).toBe('invisible_production');
     expect(err.timeoutMs).toBe(INVISIBLE_PRODUCTION_MS);
+  });
+});
+
+// Revue Nodal de #571, passe 3 : la décision d'annoncer un plafond lit une
+// borne SUPÉRIEURE de l'entrée, jamais la moyenne des horloges.
+describe('inputTokensUpperBound: never below what a tokenizer can make of the input @cap:suivre-execution/moteur', () => {
+  it('text counts its UTF-8 bytes: dense text is not averaged away', () => {
+    const cjk = { messages: [{ role: 'user', content: '中'.repeat(1_000) }] };
+    expect(estimateContextTokens(cjk)).toBe(250);
+    // 3 000 bytes of text, plus the envelopes of the request and the message.
+    expect(inputTokensUpperBound(cjk)).toBeGreaterThan(WIRE_ENVELOPE_PER_REQUEST + 3_000);
+  });
+
+  it('an image or a PDF has no universal ceiling, so the bound is infinite', () => {
+    const image = {
+      messages: [
+        { role: 'user', content: [{ type: 'image', image: 'zzzz', mediaType: 'image/png' }] },
+      ],
+    };
+    expect(inputTokensUpperBound(image)).toBe(Infinity);
+    const pdf = {
+      messages: [
+        { role: 'user', content: [{ type: 'file', data: 'zzzz', mediaType: 'application/pdf' }] },
+      ],
+    };
+    expect(inputTokensUpperBound(pdf)).toBe(Infinity);
+  });
+
+  it('tools count the bytes of their definitions; a schema not readable now makes it infinite', () => {
+    const sync = {
+      tools: { find: { description: 'ab', inputSchema: z.object({ q: z.string() }) } },
+    };
+    expect(inputTokensUpperBound(sync)).toBeGreaterThan(WIRE_ENVELOPE_PER_REQUEST + 4 + 2);
+    expect(Number.isFinite(inputTokensUpperBound(sync))).toBe(true);
+    const later = {
+      tools: {
+        find: {
+          description: 'ab',
+          inputSchema: jsonSchema(() => Promise.resolve({ type: 'object' as const })),
+        },
+      },
+    };
+    expect(inputTokensUpperBound(later)).toBe(Infinity);
+  });
+
+  it('a schema that cannot be serialised makes the bound infinite instead of throwing', () => {
+    const cyclic: Record<string, unknown> = { type: 'object' };
+    cyclic['self'] = cyclic;
+    const tools = { find: { description: 'ab', inputSchema: jsonSchema(cyclic as never) } };
+    expect(() => inputTokensUpperBound({ tools })).not.toThrow();
+    expect(inputTokensUpperBound({ tools })).toBe(Infinity);
+    expect(inputTokensUpperBound({ schema: jsonSchema(cyclic as never) })).toBe(Infinity);
+  });
+
+  it('an output schema (generateObject) counts its bytes; unreadable, it is infinite', () => {
+    const schema = z.object({ city: z.string().describe('c'.repeat(1_000)) });
+    expect(inputTokensUpperBound({ schema })).toBeGreaterThan(1_000);
+    expect(
+      inputTokensUpperBound({
+        schema: jsonSchema(() => Promise.resolve({ type: 'object' as const })),
+      }),
+    ).toBe(Infinity);
+  });
+
+  // Revue Nodal de #571, passe 5 : la borne compte tout ce qui part, sauf ce
+  // qu'elle sait ne pas partir. Un champ qu'elle ne connaît pas est compté.
+  it('every argument counts but the transport and the callbacks; a value it cannot serialise is infinite', () => {
+    const base = inputTokensUpperBound({ prompt: 'p' });
+    expect(inputTokensUpperBound({ prompt: 'p', somethingNew: 'n'.repeat(5_000) })).toBeGreaterThan(
+      base + 5_000,
+    );
+    expect(inputTokensUpperBound({ prompt: 'p', enum: ['a'.repeat(2_000)] })).toBeGreaterThan(
+      base + 2 * 2_000,
+    );
+    expect(
+      inputTokensUpperBound({
+        prompt: 'p',
+        abortSignal: new AbortController().signal,
+        headers: { a: 'b'.repeat(5_000) },
+        maxOutputTokens: 10,
+        onFinish: () => {},
+      }),
+    ).toBe(base);
+    expect(inputTokensUpperBound({ prompt: 'p', somethingNew: () => 1 })).toBe(Infinity);
+    expect(inputTokensUpperBound({ prompt: 'p', somethingNew: 10n })).toBe(Infinity);
+  });
+
+  it("a tool's functions stay local: execute does not make the bound infinite", () => {
+    const tools = {
+      find: { description: 'ab', inputSchema: z.object({ q: z.string() }), execute: async () => 1 },
+    };
+    expect(Number.isFinite(inputTokensUpperBound({ tools }))).toBe(true);
   });
 });

@@ -13,6 +13,7 @@ import { humanLabel } from '@/lib/cron.ts';
 import { CHANNEL_LABELS } from '@/lib/activity-runs.ts';
 import { formatDate } from '@/lib/format-time';
 import { formatCost, formatMs } from '@/app/(dashboard)/spaces/format.ts';
+import { formatPartial } from '@/lib/partial-total.ts';
 import { runStatus } from '@/app/(dashboard)/runs/run-view.ts';
 
 /** Une ligne de la carte de réglages : son libellé, sa valeur. */
@@ -139,10 +140,17 @@ export function automationFacts(view: AutomationView, now: Date = new Date()): F
   ];
 }
 
-/** « RUNS · 12 · $0.51 over 30 days ». */
+/**
+ * « RUNS · 12 · $0.51 over 30 days ». Un run dont le coût est inconnu n'est
+ * pas compté comme 0 (revue Codex de #571) : « ≥ $0.51 over 30 days, 2 unknown ».
+ */
 export function runsHeadline(view: AutomationView): string {
-  const { runs, costUsd, days } = view.window;
-  return `Runs · ${runs} · ${formatCost(costUsd)} over ${days} days`;
+  const { runs, costUsd, unreportedCostRuns, days } = view.window;
+  const cost = formatPartial({ known: costUsd, unreported: unreportedCostRuns }, (n) =>
+    formatCost(n),
+  );
+  const unknown = unreportedCostRuns > 0 ? `, ${unreportedCostRuns} unknown` : '';
+  return `Runs · ${runs} · ${cost} over ${days} days${unknown}`;
 }
 
 /**

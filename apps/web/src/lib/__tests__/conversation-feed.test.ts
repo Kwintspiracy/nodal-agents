@@ -386,6 +386,9 @@ describe('buildConversationFeed — un job cron réel', () => {
       cachedTokens: 34048 + 35840 + 36032,
       cacheCreationTokens: 0,
       costUsd: 0.0479044 + 0.01150148 + 0.0098184 + 0.00947572,
+      // Every call of the real job reports its tokens and cost: nothing partial.
+      unpricedCalls: 0,
+      unreportedTokenCalls: 0,
       llmDurationMs: 3782 + 1369 + 1946 + 1706,
       models: ['z-ai/glm-5.3'],
     });

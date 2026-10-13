@@ -13,6 +13,7 @@ import Table, { THead, Th, Tr, Td, CellAgent, CellMono } from '@/components/ui/T
 import Banner from '@/components/ui/Banner';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import PageShell from '@/components/ui/PageShell';
+import { formatPartial, unreportedNote, type PartialTotal } from '@/lib/partial-total.ts';
 import ActiveAgentsPanel from './ActiveAgentsPanel.tsx';
 import WeeklyActivityChart from './WeeklyActivityChart.tsx';
 import { UsersThree, Star, PlugsConnected } from '@phosphor-icons/react/dist/ssr';
@@ -84,10 +85,9 @@ export default async function DashboardPage() {
   // so the number's meaning is explicit and the two cards are consistent.
   const skillCount = skills.filter((sk) => !sk.isSystem).length;
   const connectorCount = connectors.length + mcp.length;
-  const totalTokens = s.totalInputTokens + s.totalOutputTokens;
   const successRate =
     s.totalJobs > 0 ? Math.round(((s.statusCounts['completed'] ?? 0) / s.totalJobs) * 100) : null;
-  const tokensPerJob = s.totalJobs > 0 ? Math.round(totalTokens / s.totalJobs) : null;
+  const tokensPerJob = s.tokensPerJob;
 
   // Greeting — local time-of-day.
   const greet = getGreeting();
@@ -159,16 +159,8 @@ export default async function DashboardPage() {
           }
         />
         <MetricCard label="Tool calls" value={formatNumber(s.totalToolCalls)} />
-        <MetricCard
-          label="Input tokens"
-          value={formatTokens(s.totalInputTokens).value}
-          unit={formatTokens(s.totalInputTokens).unit}
-        />
-        <MetricCard
-          label="Output tokens"
-          value={formatTokens(s.totalOutputTokens).value}
-          unit={formatTokens(s.totalOutputTokens).unit}
-        />
+        <TokenTotalCard label="Input tokens" total={s.totalInputTokens} />
+        <TokenTotalCard label="Output tokens" total={s.totalOutputTokens} />
         <MetricCard
           label="Tokens / job"
           value={tokensPerJob === null ? '—' : formatNumber(tokensPerJob)}
@@ -236,10 +228,10 @@ export default async function DashboardPage() {
                     <CellMono>{a.jobCount}</CellMono>
                   </Td>
                   <Td align="right" className="hidden md:table-cell">
-                    <CellMono>{formatNumber(a.inputTokens)}</CellMono>
+                    <CellMono>{formatPartial(a.inputTokens, formatNumber)}</CellMono>
                   </Td>
                   <Td align="right" className="hidden md:table-cell">
-                    <CellMono>{formatNumber(a.outputTokens)}</CellMono>
+                    <CellMono>{formatPartial(a.outputTokens, formatNumber)}</CellMono>
                   </Td>
                 </Tr>
               ))}
@@ -262,6 +254,25 @@ const STATUS_LABEL: Record<string, string> = {
   awaiting_delegation: 'Awaiting delegation',
   cancelled: 'Cancelled',
 };
+
+/**
+ * Un total de jetons qui peut être partiel (revue Codex de #571) : un run dont
+ * un appel n'a pas rapporté son compte n'est pas compté comme 0. La carte dit
+ * « au moins » et combien de runs manquent.
+ */
+function TokenTotalCard({ label, total }: { label: string; total: PartialTotal }) {
+  const shown = formatTokens(total.known);
+  const partial = total.unreported > 0;
+  const note = unreportedNote(total);
+  return (
+    <MetricCard
+      label={label}
+      value={partial && total.known === 0 ? 'unknown' : `${partial ? '≥ ' : ''}${shown.value}`}
+      {...(!(partial && total.known === 0) && shown.unit ? { unit: shown.unit } : {})}
+      {...(note ? { subtle: note } : {})}
+    />
+  );
+}
 
 function statusToVariant(status: string): StatusVariant {
   if (status === 'completed') return 'done';

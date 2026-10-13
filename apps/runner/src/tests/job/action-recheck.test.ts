@@ -24,6 +24,7 @@ import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../../deps.ts';
 import { executeJob } from '../../job/execute.ts';
 import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
+import { modelOutputCap } from '@nodal-agents/shared';
 
 const MODEL = 'xiaomi/mimo-v2.6-pro';
 
@@ -82,6 +83,11 @@ function stubProvider(opts: {
         cut?: boolean;
         /** How many copies of the call the re-read emits (1 by default). */
         count?: number;
+        /**
+         * The re-read's reply bills 0 output tokens for a tool call it wrote: a
+         * count the provider did not have (`reportedUsage`), not a real 0.
+         */
+        unreported?: boolean;
       }
     | { text: string };
   /** Joué pendant la relance, avant qu'elle ne réponde. */
@@ -103,8 +109,11 @@ function stubProvider(opts: {
       const firstRecheck = isRecheck(body) && rechecks++ === 0;
       if (firstRecheck && opts.duringRecheck) await opts.duringRecheck();
       const prompt = isRecheck(body) ? 10 : (opts.turnPromptTokens ?? 10);
-      const usage = { prompt_tokens: prompt, completion_tokens: 2, total_tokens: prompt + 2 };
       const scripted = 'toolCall' in opts.recheck ? opts.recheck : null;
+      const usage =
+        firstRecheck && scripted?.unreported === true
+          ? { prompt_tokens: prompt, completion_tokens: 0, total_tokens: prompt }
+          : { prompt_tokens: prompt, completion_tokens: 2, total_tokens: prompt + 2 };
       const message =
         firstRecheck && scripted !== null
           ? {
@@ -350,6 +359,61 @@ describe('a prose turn that announced an action is re-read @cap:organiser-equipe
     expect(children).toHaveLength(0);
     // The cut call was served: what it billed is counted (turn 2 + re-read 2).
     expect(row?.outputTokens).toBe(4);
+  });
+
+  it('the re-read states its output cap, as every request does (#563)', async () => {
+    const { orchestratorId, assignTool } = await seedTeam();
+    const jobId = await createJob(orchestratorId, 'Rewrite the parser.');
+    const bodies = stubProvider({
+      turnText: 'I am delegating the rewrite to Dev-C.',
+      recheck: { toolCall: { name: assignTool, args: { task: 'Rewrite the parser.' } } },
+    });
+
+    await executeJob(jobId as JobId, makeDeps());
+
+    // Every request of the run, each turn and each re-read, states the cap.
+    const rechecks = bodies.filter(isRecheck);
+    expect(rechecks.length).toBeGreaterThan(0);
+    expect(bodies.length).toBeGreaterThan(rechecks.length);
+    expect(bodies.map((b) => b['max_tokens'])).toEqual(
+      bodies.map(() => modelOutputCap('openrouter', MODEL)),
+    );
+  });
+
+  it('a re-read whose output tokens are not reported is abandoned, and the job total says unknown', async () => {
+    const { orchestratorId, assignTool } = await seedTeam();
+    const jobId = await createJob(orchestratorId, 'Summarise the changelog.');
+    const bodies = stubProvider({
+      turnText: 'The changelog adds a stated output cap.',
+      recheck: { toolCall: { name: assignTool, args: { task: 'x' } }, unreported: true },
+    });
+
+    const outcome = await executeJob(jobId as JobId, makeDeps());
+
+    expect(bodies.filter(isRecheck)).toHaveLength(1);
+    expect(outcome.status).toBe('completed');
+    const [row] = await db
+      .select({
+        result: agentJobs.result,
+        inputTokens: agentJobs.inputTokens,
+        outputTokens: agentJobs.outputTokens,
+        totalCostUsd: agentJobs.totalCostUsd,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(row?.result).toBe('The changelog adds a stated output cap.');
+    // Its call is not executed.
+    const children = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, jobId));
+    expect(children).toHaveLength(0);
+    // The re-read was served and its output count is unknown: the job's output
+    // total is unknown, never the turn's 2 tokens presented as the whole. The
+    // input was reported (turn 10 + re-read 10).
+    expect(row?.inputTokens).toBe(20);
+    expect(row?.outputTokens).toBeNull();
+    expect(row?.totalCostUsd).toBeNull();
   });
 
   it('a turn already over the token budget stops without paying for a re-read', async () => {

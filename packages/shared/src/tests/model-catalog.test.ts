@@ -4,14 +4,27 @@
 import { describe, it, expect } from 'vitest';
 import {
   modelContextWindow,
+  knownContextWindow,
   DEFAULT_CONTEXT_WINDOW,
   MODEL_CATALOG,
   findModelCatalogEntry,
   modelToolsSupport,
   modelOptionLabel,
   modelCanSeeImages,
+  modelOutputCap,
+  TURN_OUTPUT_TOKEN_CAP,
   modelGroupLabel,
 } from '../model-catalog';
+
+describe('knownContextWindow — the window the output cap may rely on (review of #571)', () => {
+  it('catalog first, then the key window, else unknown (never the default)', () => {
+    expect(knownContextWindow('openrouter', 'deepseek/deepseek-v3.2')).toBe(131_072);
+    expect(knownContextWindow('openrouter', 'deepseek/deepseek-v3.2', 8192)).toBe(131_072);
+    expect(knownContextWindow('openai-compatible', 'local-gemma', 8192)).toBe(8192);
+    expect(knownContextWindow('openai-compatible', 'local-gemma')).toBeNull();
+    expect(knownContextWindow('openai-compatible', 'local-gemma', 0)).toBeNull();
+  });
+});
 
 describe('modelContextWindow', () => {
   it('returns the catalogued window for known models', () => {
@@ -615,6 +628,59 @@ describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
         id.startsWith('openai/gpt-6-astra') ? true : undefined,
       );
       expect(modelCanSeeImages(id), id).toBe(true);
+    }
+  });
+});
+
+// #563 — the output cap the LLM client states on every request.
+describe('modelOutputCap @cap:suivre-execution/moteur', () => {
+  it('a catalogued model gets the turn cap, native or routed', () => {
+    expect(modelOutputCap('openrouter', 'xiaomi/mimo-v2.6-pro')).toBe(TURN_OUTPUT_TOKEN_CAP);
+    expect(modelOutputCap('anthropic', 'claude-opus-5')).toBe(TURN_OUTPUT_TOKEN_CAP);
+  });
+
+  // Revue Nodal du 28/09 (P2) : un modèle hors catalogue, sans fenêtre connue,
+  // recevait 65 536, une limite inventée, refusée par un serveur strict.
+  it('a model whose limits are unknown gets no cap: neither in the catalog nor a window on the key', () => {
+    expect(modelOutputCap('openrouter', 'some/unknown-model')).toBeNull();
+    expect(modelOutputCap('ollama', 'llama-local')).toBeNull();
+    expect(modelOutputCap('anthropic', 'claude-3-opus-20240229')).toBeNull();
+  });
+
+  // Revue Nodal de #571, passe 2 : une fenêtre dit combien le modèle LIT, pas
+  // combien il peut ÉCRIRE. Hors catalogue, la limite de sortie reste inconnue.
+  it('a window on the key does not make the output limit known', () => {
+    expect(modelOutputCap('openai-compatible', 'local-model')).toBeNull();
+  });
+
+  it('a model whose own ceiling is lower is asked for no more than it can write', () => {
+    expect(modelOutputCap('openrouter', 'google/gemma-4-31b-it')).toBe(16_384);
+    expect(modelOutputCap('groq', 'llama-3.3-70b-versatile')).toBe(32_768);
+    expect(modelOutputCap('anthropic', 'claude-haiku-4-5-20251001')).toBe(64_000);
+    expect(modelOutputCap('openrouter', 'anthropic/claude-haiku-4.5')).toBe(64_000);
+  });
+
+  it('a recorded ceiling is only ever below the turn cap (a higher one would say nothing)', () => {
+    for (const entries of Object.values(MODEL_CATALOG)) {
+      for (const e of entries) {
+        if (e.maxOutputTokens !== undefined) {
+          expect(e.maxOutputTokens, e.modelId).toBeLessThan(TURN_OUTPUT_TOKEN_CAP);
+        }
+      }
+    }
+  });
+
+  it('every thinking budget stays below the cap, so no shim raises max_tokens past it', () => {
+    // The Anthropic and MiniMax shims raise max_tokens only when it is at or
+    // below the budget; above it the stated cap is the one the provider applies.
+    for (const [provider, entries] of Object.entries(MODEL_CATALOG)) {
+      for (const e of entries) {
+        for (const budget of Object.values(e.capabilities.reasoningControl?.budgets ?? {})) {
+          expect(budget, `${provider}/${e.modelId}`).toBeLessThan(
+            modelOutputCap(provider, e.modelId) ?? 0,
+          );
+        }
+      }
     }
   });
 });

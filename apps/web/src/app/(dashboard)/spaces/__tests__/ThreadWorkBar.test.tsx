@@ -52,6 +52,8 @@ const child = (name: string, slug: string | null, nested: FeedItem[] = []): Feed
               cachedTokens: 0,
               cacheCreationTokens: 0,
               costUsd: null,
+              unpricedCalls: 0,
+              unreportedTokenCalls: 0,
               llmDurationMs: 0,
               models: [],
             },

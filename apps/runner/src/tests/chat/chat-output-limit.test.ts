@@ -42,9 +42,12 @@ const INSTRUCTION = 'Draw the series and file it';
  * both entry points (the streamed turn, and the one-shot calls that follow).
  */
 function modelReplying(finish: 'length' | 'tool-calls'): MockLanguageModelV3 {
+  // Cut at the cap of run 04229144; a normal reply writes a normal amount (a
+  // reply that reaches the stated output cap is cut whatever its finish, #563).
+  const out = finish === 'length' ? 131_072 : 1_200;
   const usage = {
     inputTokens: { total: 900, noCache: 900, cacheRead: undefined, cacheWrite: undefined },
-    outputTokens: { total: 131_072, text: 131_072, reasoning: undefined },
+    outputTokens: { total: out, text: out, reasoning: undefined },
   };
   const call = {
     type: 'tool-call' as const,

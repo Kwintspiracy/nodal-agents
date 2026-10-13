@@ -295,6 +295,9 @@ describe('the request a provider receives carries no nameless call @cap:choisir-
     const bodies = captureBodies(() =>
       json({
         candidates: [{ content: { role: 'model', parts: [{ text: 'ok' }] }, finishReason: 'STOP' }],
+        // A turn that offers tools reports its usage, or the client refuses it
+        // as not judgeable (#563).
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 2, totalTokenCount: 12 },
       }),
     );
     const client = createLlmClient({

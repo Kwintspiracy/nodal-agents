@@ -60,6 +60,8 @@ const totals = (costUsd: number | null = null) => ({
   cachedTokens: 0,
   cacheCreationTokens: 0,
   costUsd,
+  unpricedCalls: 0,
+  unreportedTokenCalls: 0,
   llmDurationMs: 0,
   models: [],
 });

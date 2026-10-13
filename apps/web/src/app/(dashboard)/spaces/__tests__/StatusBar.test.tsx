@@ -20,6 +20,7 @@ const cost: SpaceCostView = {
       cacheCreationTokens: 18_000,
       costUsd: 0.71,
       unpricedCalls: 0,
+      unreportedTokenCalls: 0,
     },
     {
       agentId: 'b',
@@ -32,6 +33,7 @@ const cost: SpaceCostView = {
       cacheCreationTokens: 0,
       costUsd: 0.38,
       unpricedCalls: 1,
+      unreportedTokenCalls: 0,
     },
   ],
   totals: {
@@ -42,6 +44,7 @@ const cost: SpaceCostView = {
     cacheCreationTokens: 18_000,
     costUsd: 1.09,
     unpricedCalls: 1,
+    unreportedTokenCalls: 0,
     llmDurationMs: 312_000,
     durationMs: 18 * 60_000 + 4_000,
     humanWaitMs: 192_000,
@@ -96,6 +99,7 @@ describe('StatusBar', () => {
             cachedTokens: 0,
             costUsd: null,
             unpricedCalls: 0,
+            unreportedTokenCalls: 0,
           },
           cacheLost: { resumes: 0, tokens: 0, costUsd: null, unpricedResumes: 0 },
         }}

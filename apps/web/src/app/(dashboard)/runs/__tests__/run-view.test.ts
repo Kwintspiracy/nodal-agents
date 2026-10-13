@@ -30,6 +30,8 @@ const totals: ConversationFeed['totals'] = {
   cachedTokens: 0,
   cacheCreationTokens: 0,
   costUsd: null,
+  unpricedCalls: 0,
+  unreportedTokenCalls: 0,
   llmDurationMs: 0,
   models: [],
 };
@@ -104,6 +106,7 @@ function view(over: {
         cacheCreationTokens: 0,
         costUsd: null,
         unpricedCalls: 0,
+        unreportedTokenCalls: 0,
         llmDurationMs: 0,
         durationMs: 0,
         humanWaitMs: 0,

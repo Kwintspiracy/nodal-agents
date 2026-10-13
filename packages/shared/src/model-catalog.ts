@@ -139,6 +139,16 @@ export interface ModelCatalogEntry {
    */
   contextWindow?: number;
   /**
+   * The model's own ceiling on output tokens per response, recorded ONLY when
+   * it is below `TURN_OUTPUT_TOKEN_CAP` (#563): the cap the client states on a
+   * request is the lower of the two, so a request never asks a model for more
+   * than it can write (some APIs reject such a request outright). Source for
+   * each value: the vendor's own endpoint as listed by OpenRouter
+   * `GET /api/v1/models` `top_provider.max_completion_tokens`, or the vendor's
+   * models page, on the date written next to it.
+   */
+  maxOutputTokens?: number;
+  /**
    * List price for deriving cost on providers that don't self-report it (see
    * `estimateModelCostUsd`). Omit for unpriced models — the derived cost then
    * stays 0 (documented debt: Guard 1a's token budget is the backstop for
@@ -419,6 +429,8 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 200_000,
+      // OpenRouter `anthropic/claude-haiku-4.5`, Anthropic endpoint, 2026-09-28.
+      maxOutputTokens: 64_000,
       pricing: {
         inputPerMillionUsd: 1,
         outputPerMillionUsd: 5,
@@ -550,6 +562,8 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Llama 3.3 70B',
       capabilities: { tools: true },
       contextWindow: 131_072,
+      // console.groq.com/docs/models, "max completion tokens", 2026-09-28.
+      maxOutputTokens: 32_768,
     },
   ],
   mistral: [
@@ -846,6 +860,8 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 200_000,
+      // OpenRouter `top_provider.max_completion_tokens`, 2026-09-28.
+      maxOutputTokens: 64_000,
       pricing: {
         inputPerMillionUsd: 1,
         outputPerMillionUsd: 5,
@@ -1145,6 +1161,8 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Gemma 4 31B-IT',
       capabilities: { tools: true },
       contextWindow: 262_144,
+      // OpenRouter `top_provider.max_completion_tokens`, 2026-09-28.
+      maxOutputTokens: 16_384,
       pricing: {
         inputPerMillionUsd: 0.09,
         outputPerMillionUsd: 0.34,
@@ -1789,12 +1807,70 @@ export function modelContextWindow(
   modelId: string,
   storedWindow?: number | null,
 ): number {
+  return knownContextWindow(provider, modelId, storedWindow) ?? DEFAULT_CONTEXT_WINDOW;
+}
+
+/**
+ * The model's context window when it is KNOWN (the catalog, else the stored
+ * per-key value), null otherwise. `modelContextWindow` falls back to a default
+ * for compaction; a bound sent to the provider must not: the LLM client states
+ * its output cap from the room this window leaves (#563, review of #571), and
+ * a guessed window would cap an uncatalogued large-window model for nothing.
+ */
+export function knownContextWindow(
+  provider: string,
+  modelId: string,
+  storedWindow?: number | null,
+): number | null {
   const catalogued = findModelCatalogEntry(provider, modelId)?.contextWindow;
   if (catalogued !== undefined) return catalogued;
   if (typeof storedWindow === 'number' && Number.isFinite(storedWindow) && storedWindow > 0) {
     return storedWindow;
   }
-  return DEFAULT_CONTEXT_WINDOW;
+  return null;
+}
+
+/**
+ * The output-token cap the LLM client states on every request to a model whose
+ * limits are known (#563, `modelOutputCap`).
+ *
+ * Without it, the cap that ends a runaway turn is the serving provider's own
+ * default, unknown to the runner: on 2026-09-28 `xiaomi/mimo-v2.6-pro`, served
+ * by DeepInfra through OpenRouter, stopped at exactly 65 536 output tokens with
+ * 307 tool calls, and OpenRouter did not report `finishReason: 'length'`, so
+ * the cut-turn refusal (#554) never fired. A cap the runner states is a cap it
+ * can recognise: a response whose output reaches it is cut, whatever the
+ * provider says.
+ *
+ * 65 536: both degenerate turns on record (131 072 tokens on run 04229144,
+ * 65 536 on job da91bdbb) are refused at or before it, and it leaves room for
+ * what a legitimate turn does write — long reasoning plus a large file in one
+ * call. It must stay above every thinking budget a provider shim can inject
+ * (they raise `max_tokens` only when it is at or below the budget), which
+ * `model-catalog.test.ts` checks.
+ */
+export const TURN_OUTPUT_TOKEN_CAP = 65_536;
+
+/**
+ * The output cap this model is known to accept, or null when its output limit
+ * is unknown.
+ *
+ * - A catalogued model: `TURN_OUTPUT_TOKEN_CAP`, or its own lower ceiling when
+ *   the catalog records one (`maxOutputTokens`). Every catalogued model was
+ *   checked to accept at least the turn cap.
+ * - Any other model: null. A window on the key says how much the model READS,
+ *   not how much it can WRITE (Nodal review of #571, pass 2); an invented cap
+ *   is refused by a server that checks `max_tokens` against the model's real
+ *   limit (review of 2026-09-28). The request states no cap, as before #563.
+ *
+ * The client states it only when the estimated input leaves room for it in
+ * the known window (`packages/llm/src/client.ts`, `statedCapFor`).
+ */
+export function modelOutputCap(provider: string, modelId: string): number | null {
+  const entry = findModelCatalogEntry(provider, modelId);
+  if (entry === undefined) return null;
+  const own = entry.maxOutputTokens;
+  return own !== undefined && own < TURN_OUTPUT_TOKEN_CAP ? own : TURN_OUTPUT_TOKEN_CAP;
 }
 
 /**
