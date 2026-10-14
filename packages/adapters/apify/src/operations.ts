@@ -2,9 +2,13 @@
 // Each slug MUST match the tool name produced by createApifyTools() exactly.
 // Risk classification:
 //   read        — apify_get_run, apify_list_datasets, apify_get_dataset_items
-//   destructive — apify_run_actor: a run spends the user's paid credits, which
-//                 cannot be taken back (outbound = permanent side-effect, #744),
-//                 so it is `destructive` + requiresApproval, like Gmail's sends.
+//   destructive — apify_run_actor: runs an ARBITRARY marketplace program (any
+//                 actorId, any input) whose outside effects and spend are
+//                 unknown, unbounded and cannot be taken back (#744), so it is
+//                 `destructive` + requiresApproval, like Gmail's sends.
+//                 Metered, bounded calls with no outside effect (search,
+//                 scrape, image generation) do not ask: the criterion is not
+//                 "spends credits".
 
 import type { OperationDescriptor } from '@nodal-agents/shared';
 

@@ -35,7 +35,7 @@ describe('APIFY_OPERATIONS slugs match factory tool names', () => {
     }
   });
 
-  it('apify_run_actor is destructive and asks first (it spends paid credits, #744)', () => {
+  it('apify_run_actor is destructive and asks first (it runs an arbitrary actor, #744)', () => {
     const op = APIFY_OPERATIONS.find((o) => o.slug === 'apify_run_actor');
     expect(op).toBeDefined();
     expect(op?.risk).toBe('destructive');
