@@ -87,7 +87,7 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
     slug: 'drive_share_file',
     name: 'Share file',
     risk: 'write',
-    requiresApproval: false,
+    requiresApproval: true,
     description: 'Add or update sharing permissions on a file.',
   },
 

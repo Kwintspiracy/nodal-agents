@@ -12,7 +12,7 @@ export const APIFY_OPERATIONS: OperationDescriptor[] = [
     slug: 'apify_run_actor',
     name: 'Run actor',
     risk: 'write',
-    requiresApproval: false,
+    requiresApproval: true,
     description:
       'Start an Apify actor run and wait for it to finish. Consumes Apify platform credits.',
   },
