@@ -853,8 +853,8 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
   // qui porte le vérificateur — et pourtant quatre constats se retrouvent dans
   // `verification_runs`, et la décision est verte. Aucune commande n'a tourné.
   it('quatre constats verts en base, décision green, job completed — sans une seule commande', async () => {
-    const doc = join(dir, 'SKILL.md');
-    await writeFile(doc, '# Base CSS\n\nUn skill.\n', 'utf8');
+    const doc = join(dir, 'base.css');
+    await writeFile(doc, ':root { --ink: #111; }\n', 'utf8');
     const docKey = projectKey(doc);
     const jobId = await insertJob('processing');
     const stateId = await insertState(jobId, 'document', docKey, 1, true);
@@ -891,8 +891,8 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
     // d'ouverture. Sur un dossier sensible à la casse, elle ouvrait un fichier
     // qui n'existe pas. Ici les deux diffèrent pour de bon : la clé ne désigne
     // RIEN, seul le chemin d'affichage existe. Vert ne peut venir que du chemin.
-    const doc = join(dir, 'Adresse.md');
-    await writeFile(doc, '# Adresse\n', 'utf8');
+    const doc = join(dir, 'Adresse.css');
+    await writeFile(doc, '.adresse { color: red; }\n', 'utf8');
     const jobId = await insertJob('processing');
     const stateId = await insertState(
       jobId,
@@ -988,9 +988,9 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
     expect((await stateRow(stateId)).decisionStatus).toBe('dirty');
   });
 
-  it('un markdown sans titre : la décision est ROUGE, et la ligne rouge dit pourquoi', async () => {
-    const doc = join(dir, 'sans-titre.md');
-    await writeFile(doc, 'du texte sans titre\n', 'utf8');
+  it('un CSS mal formé : la décision est ROUGE, et la ligne rouge dit pourquoi', async () => {
+    const doc = join(dir, 'casse.css');
+    await writeFile(doc, 'body { color: red;\n', 'utf8');
     const jobId = await insertJob('processing');
     const stateId = await insertState(jobId, 'document', projectKey(doc), 1, true);
 
@@ -1005,6 +1005,27 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
     expect((await stateRow(stateId)).decisionStatus).toBe('red');
     // En ①, un rouge ne bloque pas la fin du job : il est DIT, pas caché.
     expect((await jobRow(jobId)).status).toBe('completed');
+  });
+
+  it('un markdown sans titre : la décision est VERTE (#736), aucun tour de réparation', async () => {
+    const doc = join(dir, 'sans-titre.md');
+    await writeFile(doc, 'du texte sans titre\n', 'utf8');
+    const jobId = await insertJob('processing');
+    const stateId = await insertState(jobId, 'document', projectKey(doc), 1, true);
+
+    await finalizeJobSuccess(
+      asDb(),
+      { jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
+      deps(),
+    );
+
+    const runs = await runsOf(jobId);
+    expect(runs.map((r) => [r.commandRank, r.verdict])).toEqual([
+      [1, 'green'],
+      [2, 'green'],
+      [3, 'green'],
+    ]);
+    expect((await stateRow(stateId)).decisionStatus).toBe('green');
   });
 });
 

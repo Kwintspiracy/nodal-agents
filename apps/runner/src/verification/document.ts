@@ -10,7 +10,7 @@
 //
 // Ce que « vérifier un document » veut dire, et rien d'autre : il existe à
 // l'endroit annoncé, il n'est pas vide, il se décode en UTF-8, et il est bien
-// formé pour ce qu'il est — un markdown a un titre, un CSS et un HTML se
+// formé pour ce qu'il est — un CSS et un HTML se
 // referment, un JSON et un SVG se parsent. Rien de tout cela n'exécute quoi
 // que ce soit du dépôt : aucune approbation, aucune configuration, aucune
 // commande. `loadConfig` rend donc TOUJOURS `ready`, avec une séquence vide.
@@ -31,8 +31,6 @@ import { createHash } from 'node:crypto';
 import { dirname, extname } from 'node:path';
 import { DOMParser } from '@xmldom/xmldom';
 import { Tokenizer, TokenizerMode, type Token } from 'parse5';
-import remarkParse from 'remark-parse';
-import { unified } from 'unified';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { projectKey } from '@nodal-agents/shared';
 import type {
@@ -205,92 +203,6 @@ const ko = (command: string, reason: string, durationMs = 0): Constat => ({
 
 /** `null` = bien formé ; sinon la raison, avec sa ligne quand on la connaît. */
 type FormCheck = (text: string) => string | null;
-
-/**
- * Les en-têtes de métadonnées, tels qu'ils s'écrivent vraiment : ouverts par
- * `---` (YAML) ou `+++` (TOML, employé par Hugo), et fermés par le même filet —
- * sauf le YAML, qui admet aussi `...` comme fin de document, la forme que
- * Pandoc accepte.
- *
- * Une boucle de lignes, et non une expression régulière : celle qu'elle
- * remplace ne connaissait qu'une seule des trois clôtures, et sa recherche
- * paresseuse manquait l'en-tête VIDE — elle allait chercher la fermeture au
- * filet suivant et emportait le vrai titre avec (passe 7, constats R1 et R2 :
- * un faux vert et un faux rouge dans la même ligne).
- *
- * Un en-tête jamais refermé n'en est pas un : le texte est rendu tel quel, et
- * `---` redevient ce que CommonMark en dit, un filet.
- */
-const FRONT_MATTER: ReadonlyArray<{ open: string; close: readonly string[] }> = [
-  { open: '---', close: ['---', '...'] },
-  { open: '+++', close: ['+++'] },
-];
-
-function stripFrontMatter(lf: string): string {
-  const lines = lf.split('\n');
-  const trimEnd = (line: string): string => line.replace(/[ \t]+$/, '');
-  const fence = FRONT_MATTER.find((candidate) => candidate.open === trimEnd(lines[0] ?? ''));
-  if (fence === undefined) return lf;
-  for (let i = 1; i < lines.length; i += 1) {
-    if (fence.close.includes(trimEnd(lines[i] ?? ''))) return lines.slice(i + 1).join('\n');
-  }
-  return lf;
-}
-
-/**
- * Un markdown a un titre : un `heading` de profondeur 1 dans l'arbre.
- *
- * POURQUOI UN VRAI PARSEUR. Cette règle a eu CINQ formes en cinq passes de
- * revue, et j'ai réécrit CommonMark à la main quatre fois. Chaque approximation
- * fermait un cas et en ouvrait un autre, jusqu'à une régression : un `- ~~~`
- * situé À L'INTÉRIEUR d'un bloc de code lu comme une clôture, donc un document
- * sans titre déclaré vert. La liste de ce qui s'est cassé en route — fin
- * d'entrée sous le drapeau `m`, longueur et caractère de la clôture, backtick
- * dans la ligne d'info, tabulation valant quatre colonnes, lignes recollées
- * fabriquant un titre souligné, conteneurs invisibles à une boucle de lignes —
- * dit assez que le problème n'était pas la qualité des expressions régulières.
- *
- * `remark-parse` répond à la question sans en inventer une autre. Il est déjà
- * épinglé dans ce dépôt, à la même version, pour le même travail côté écran.
- *
- * Profondeur 1 : c'est le TITRE du document qui est demandé, pas une section.
- * Un fichier qui commence par `## Détails` n'a pas de titre, et c'est voulu —
- * c'est exactement ce qu'un skill mal écrit produit.
- *
- * L'EN-TÊTE YAML est retiré AVANT de parser, et il faut qu'il le soit :
- * `remark-parse` ne connaît pas le front matter, donc il lit `---` comme un
- * filet et son contenu comme de la prose — un COMMENTAIRE YAML `# titre` y
- * devient un vrai `heading` de profondeur 1, et un document sans titre repasse
- * au vert. C'est le constat C5 de la passe 1, que ce remplacement avait
- * réintroduit sans le vouloir (passe 6, constat R1). Les fins de ligne sont
- * ramenées au LF d'abord : une convention d'éditeur n'est pas une propriété du
- * document.
- *
- * UNE SEULE LECTURE, celle du document sans son en-tête. La passe 8 m'avait
- * fait exiger le titre des DEUX côtés du retrait, pour refuser un document dont
- * la clôture d'en-tête vivait dans un bloc de code. C'était une règle inventée
- * de plus, et la passe 9 l'a défaite en une ligne : deux TÉMOINS DIFFÉRENTS
- * suffisaient à la satisfaire. Mesuré depuis, hors dépôt, contre
- * `remark-frontmatter` 5.0.0, la mise en œuvre de référence de cette
- * convention : elle lit l'en-tête exactement comme cette boucle — première
- * ligne délimiteur, puis jusqu'au délimiteur suivant, où qu'il soit — et rend
- * le même verdict sur les dix cas sondés — configurée `['yaml', 'toml']`, elle
- * connaît `+++` comme ici — sauf sur UN point où cette règle est plus stricte :
- * la clôture `...`, qu'elle ignore. Le document dont l'en-tête recouvre une
- * ouverture de bloc n'est donc pas un faux vert : son titre est dans le corps
- * pour la référence de cette convention, et c'est la seule autorité invoquée
- * ici — un sondage n'est pas une preuve d'universalité (passe 10). La
- * conjonction, elle, rendait rouge un en-tête parfaitement valide dont un
- * scalaire contenait trois backticks (passe 9, constat R2).
- */
-const markdownHasTitle: FormCheck = (text) => {
-  const lf = text.replace(/\r\n?/g, '\n');
-  const tree = unified().use(remarkParse).parse(stripFrontMatter(lf));
-  const hasTitle = (tree.children ?? []).some(
-    (node) => node.type === 'heading' && (node as { depth?: number }).depth === 1,
-  );
-  return hasTitle ? null : 'no title: expected a top-level heading (`# Title`)';
-};
 
 /**
  * Un CSS se referme : chaque `{`, `(` et `[` trouve sa fermeture, dans l'ordre,
@@ -586,14 +498,25 @@ const xmlParses: FormCheck = (text) => {
 
 /** Les règles par extension. Une extension absente ici = « pas de règle », dit tel quel. */
 const FORM_RULES: Readonly<Record<string, { readonly name: string; readonly check: FormCheck }>> = {
-  '.md': { name: 'markdown', check: markdownHasTitle },
-  '.markdown': { name: 'markdown', check: markdownHasTitle },
   '.css': { name: 'css', check: cssCloses },
   '.html': { name: 'html', check: htmlCloses },
   '.htm': { name: 'html', check: htmlCloses },
   '.json': { name: 'json', check: jsonParses },
   '.svg': { name: 'svg', check: xmlParses },
   '.xml': { name: 'xml', check: xmlParses },
+};
+
+/**
+ * Les formats de texte qui n'ont AUCUNE règle de forme mais exigent l'UTF-8.
+ * Markdown : CommonMark n'a pas de document invalide (pas de titre exigé, #736),
+ * donc rien à parser ; mais il décrit du texte Unicode, et un `.md` en
+ * Windows-1252 reste un fichier défectueux (décision du 27/09, revue de #509).
+ * Ce n'est pas une règle de forme : le constat est `utf8`, jamais
+ * `well-formed:*` — aucune preuve de forme n'est annoncée.
+ */
+const UTF8_ONLY_FORMATS: Readonly<Record<string, string>> = {
+  '.md': 'markdown',
+  '.markdown': 'markdown',
 };
 
 // ─── Texte ou binaire : UNE règle pour tous les fichiers (#509) ─────────────
@@ -1053,7 +976,10 @@ export const documentVerifier: DeliverableVerifier = {
       );
       return done();
     }
-    const knownText = TEXT_EXTENSIONS.has(ext) || FORM_RULES[ext] !== undefined;
+    const knownText =
+      TEXT_EXTENSIONS.has(ext) ||
+      FORM_RULES[ext] !== undefined ||
+      UTF8_ONLY_FORMATS[ext] !== undefined;
     if (!knownText && looksBinary(lu.head)) {
       // 3b · un binaire qu'aucune table ne connaît : exister et ne pas être vide
       // est tout ce qui se constate — et c'est DIT, jamais une règle inventée.
@@ -1073,7 +999,7 @@ export const documentVerifier: DeliverableVerifier = {
     // binaire sous un nom de texte. L'UTF-8, lui, dépend du FORMAT (décision de
     // Quentin, 27/09, revue Codex de #509) : JSON, XML, HTML, SVG, Markdown et
     // CSS l'exigent — ce sont les formats dont la preuve vérifie la forme
-    // (`FORM_RULES`) —, alors qu'un CSV, un SRT, un .ini ou un .bat produits par
+    // (`FORM_RULES`, `UTF8_ONLY_FORMATS`) —, alors qu'un CSV, un SRT, un .ini ou un .bat produits par
     // une commande sont légitimes dans un encodage 8 bits (Windows-1252, OEM),
     // que l'application qui les lit comprend. Les faire rougir ferait échouer un
     // run qui livre un fichier bon.
@@ -1089,10 +1015,11 @@ export const documentVerifier: DeliverableVerifier = {
       return done();
     }
     const rule = FORM_RULES[ext];
+    const utf8Format = rule?.name ?? UTF8_ONLY_FORMATS[ext];
     if (!lu.utf8) {
-      if (rule !== undefined) {
+      if (utf8Format !== undefined) {
         await emit(
-          ko('utf8', `the file is not valid UTF-8, which ${rule.name} requires`, Date.now() - t1),
+          ko('utf8', `the file is not valid UTF-8, which ${utf8Format} requires`, Date.now() - t1),
         );
         return done();
       }

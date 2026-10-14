@@ -254,15 +254,9 @@ importers:
       parse5:
         specifier: 8.0.1
         version: 8.0.1
-      remark-parse:
-        specifier: 11.0.0
-        version: 11.0.0
       tar:
         specifier: ^7.5.16
         version: 7.5.16
-      unified:
-        specifier: 11.0.5
-        version: 11.0.5
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
