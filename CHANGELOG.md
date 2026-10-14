@@ -10,6 +10,109 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.9.6 — Oct 14, 2026
+
+A release about trust in what your agents do on their own. Connector operations
+that send, share, delete or run something now ask you first, by default. An
+agent no longer redoes an action it has already done. The shell check reads
+more of what a command really does, including the script it runs. Fonts ship
+with the app. Twenty-three pull requests, no database migration.
+
+**Upgrading: what changes for you**
+
+- **26 connector operations now ask for approval by default.** Sending, replying
+  to or forwarding an email (Gmail and Outlook), deleting, archiving, sharing a
+  Drive file, running an Apify actor and deploying a Cloudflare site. The
+  Approvals tab shows "ask" for each of them. They run without asking only under
+  full autonomy, with an "Always allow" rule, or in Yolo. Under "ask only for
+  destructive actions", they ask too, except the site deploy, which is not
+  destructive. (#738, #745)
+- **An agent no longer redoes an action already done after a re-check or a
+  repair.** A message it sent, a post, a print or a delegation counts as done.
+  (#740)
+- **A Markdown deliverable without a `# title` is no longer refused.** Nothing
+  else about Markdown is checked, as for a `.txt` file. (#737)
+- **Fonts are self-hosted.** The app and the docs no longer fetch Google Fonts
+  when they build or start, so they work offline and a font outage can no longer
+  break a build. (#713)
+- **The shell asks in more cases under the default policy.** Opening a program,
+  printing or sending a message from a command has its own row in the shell
+  checklist, "Open programs, print or send", set to ask. This includes agents
+  whose shell kinds were all set to allow before this release. Deleting with `erase` or `ri`,
+  installing with `msiexec`, `dpkg` or `snap`, and a script whose lines delete or
+  install also ask now. (#682, #683, #710)
+- **An allowed kind asks when the command does not say what it acts on.** Agents
+  whose shell kinds are set to allow ask a little more, and only in those
+  cases. (#730)
+- **No database migration.** Nothing to apply on upgrade.
+
+**Connectors that ask before they act**
+
+- **One descriptor decides a connector tool's risk and whether it asks.** There
+  is no per-adapter list any more, so a tool can no longer disagree with what the
+  Connectors tab shows. A tool with no descriptor fails loudly. (#738)
+- **Replying to or forwarding an email asks, as sending does**, on Gmail and
+  Outlook. (#738)
+- **Sharing a Drive file and running an Apify actor ask.** Sharing can notify
+  someone or make a file public. An actor is an arbitrary program. Searches and
+  scrapes that send nothing outside do not ask. (#745)
+- **The Approvals tab shows the real default.** A connector row no longer reads
+  "Run without asking" when the operation asks. (#738)
+
+**Agents that do not repeat themselves**
+
+- **The re-check of a reply sees what the run already did.** It reads a record of
+  every tool call since your request, with its outcome, before judging whether
+  the reply promised something. (#740)
+- **The repair turn repairs the deliverable and nothing else.** It no longer says
+  "deliver again", and it tells the agent how many repair turns remain. (#740)
+- **A review verdict reaches the agent that asked for it**, through any number of
+  delegations, and a task that delivered only a verdict is no longer shown as
+  "no result". (#712)
+- **When Nodal knows a model's output limit and the request leaves room for it,
+  the request states it**, and a turn that reaches it is refused even when the
+  provider does not say it was cut. (#571)
+
+**Shell commands read for what they do**
+
+- **A command that runs a script is judged by the script.** A Python file that
+  runs `pip install` now asks, as the same command typed in the shell would.
+  (#683)
+- **Opening a program, printing and sending mail from the shell ask first.** The
+  agent is told to use a tool that asks you, when it has one. (#682)
+- **One delete list and one table of installers per system.** `erase`, `ri`,
+  `rsync --delete`, package managers whose verb is an option, and removals and
+  upgrades are covered. (#710)
+- **PowerShell parameters are read the way PowerShell binds them**: shortened
+  names, values after a colon, any dash. `Remove-Item -Recurse -Fo` is no longer
+  missed. (#709)
+- **A folder change made by a child process no longer moves the command line**,
+  and a script in the same process leaves the line where it ends. (#721)
+- **A device such as `/dev/null` is never read as a place**, and a path is never
+  cut inside a word. (#681)
+
+**The web app**
+
+- **The "+" next to Projects in the sidebar opens the project creation window in
+  place**, on any page. (#700)
+- **A "New Chat" row opens the list of Nodal chats.** It leads to the empty
+  conversation screen. (#702)
+- **Five new OpenRouter models**: Claude Sonnet 5.5, Claude Haiku 5.5, Mistral
+  Large 4, Qwen 3.8 Max Prime and Qwen 3.8 Flash, with Mistral models grouped
+  under "Mistral". (#707)
+
+**Build and quality**
+
+- **The web build no longer walks your home folder.** It needed about 24 GB of
+  memory and 16 minutes on Windows. It now stays near 3 GB. (#680)
+- **A failing test run can no longer exit green** on Linux CI. (#699)
+- **Two flaky tests are fixed**: the embedded Postgres log and a prompt check
+  that matched random digits. A read of the chat id that nothing paired is
+  removed from the approval path. (#679, #684, #696)
+- **The review rules are written down**: an important finding is fixed then
+  reviewed again, minor ones go to a backlog, and a platform card keeps its fixed
+  frame. (#677)
+
 ## v0.9.5 — Oct 5, 2026
 
 A release about the MCP servers you connect, and about conversations that keep
