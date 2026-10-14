@@ -14,7 +14,7 @@ export default defineConfig({
   // `dependencies`). noExternal forces them back into the bundle.
   noExternal: [/^@nodal-agents\//],
   // Keep the bundle pure ESM (matches package.json type: module).
-  target: 'node22',
+  target: 'node24',
   platform: 'node',
   // The CLI is a single short file — minification saves ~10 KB at the cost
   // of readable stack traces. Not worth it.

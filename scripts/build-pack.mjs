@@ -401,7 +401,7 @@ const packPkg = {
   },
   type: 'module',
   engines: {
-    node: '>=22',
+    node: '>=24',
   },
   files: ['cli.js', 'runner.js', 'web/**', 'migrations/**', 'docs-index.json', 'README.md'],
   dependencies: {

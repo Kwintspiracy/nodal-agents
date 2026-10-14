@@ -278,7 +278,7 @@ export const VERSION_DATE = 'October 2026';
 /* ── 05 Try it and compare notes ────────────────────────────────────────── */
 
 export const TRY_NOTE =
-  'Requires Node.js 22 or later. Connect your own model provider or a local model. Provider usage may incur costs.';
+  'Requires Node.js 24 or later. Connect your own model provider or a local model. Provider usage may incur costs.';
 
 export const FEEDBACK: readonly string[] = [
   'Maybe you’ve tried another way of handling approvals. Maybe delegation worked differently from what you expected. Or perhaps there’s a task you’d like to explore with it.',

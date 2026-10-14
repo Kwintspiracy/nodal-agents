@@ -4,7 +4,7 @@
 
 A self-hosted platform for building and orchestrating a **team of AI agents** on your own hardware — each with its own personality, tools, memory, and model. Talk to them in the dashboard, or on Telegram, Discord, Slack, and WhatsApp; they research, write files, call your connectors, and delegate to each other to get the job done.
 
-**No SaaS lock-in. No per-token markup. No cloud roundtrip.** Two commands to install, runs on any machine with Node 22+ (Mac, Windows, Linux), and works with **any LLM** — frontier or local, paid or free.
+**No SaaS lock-in. No per-token markup. No cloud roundtrip.** Two commands to install, runs on any machine with Node 24+ (Mac, Windows, Linux), and works with **any LLM** — frontier or local, paid or free.
 
 [![npm](https://img.shields.io/npm/v/nodal-agents?color=cb3837&label=npm&logo=npm)](https://www.npmjs.com/package/nodal-agents)
 [![Node](https://img.shields.io/badge/node-22%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
@@ -29,7 +29,7 @@ Run the two commands — **no config files, no account, nothing to answer in the
 
 Or, without installing anything globally: `npx nodal-agents up`.
 
-> Node 22+ · no external Postgres, no Redis, no cloud config · runs locally with no login · data lives in `~/.nodalai/` · stop with `nodal-agents down`
+> Node 24+ · no external Postgres, no Redis, no cloud config · runs locally with no login · data lives in `~/.nodalai/` · stop with `nodal-agents down`
 
 **If npm asks you to approve install scripts.** Recent npm versions print `npm warn allow-scripts …` and skip the install step of the packages they list. Only one of them matters: `@embedded-postgres/<platform>` carries the Postgres binaries Nodal boots. Approve that one, then install again:
 
@@ -155,7 +155,7 @@ pnpm install
 pnpm --filter nodal-agents exec tsx src/index.ts --dev   # hot-reloading dashboard
 ```
 
-**Stack** — Node 22+, TypeScript strict (no `any`), pnpm + Turborepo, embedded-postgres + Drizzle ORM (idempotent migrations), Zod everywhere, Hono (runner) + Next.js (dashboard), the Vercel AI SDK for multi-provider LLM, Vitest + Playwright + dependency-cruiser.
+**Stack** — Node 24+, TypeScript strict (no `any`), pnpm + Turborepo, embedded-postgres + Drizzle ORM (idempotent migrations), Zod everywhere, Hono (runner) + Next.js (dashboard), the Vercel AI SDK for multi-provider LLM, Vitest + Playwright + dependency-cruiser.
 
 **Monorepo**
 

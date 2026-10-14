@@ -54,7 +54,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
 
       # Turborepo's own cache, persisted between runs, keyed per OS because

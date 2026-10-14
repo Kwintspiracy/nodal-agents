@@ -80,10 +80,10 @@ await build({
   outfile: resolve(outDir, 'server.js'),
   bundle: true,
   platform: 'node',
-  target: 'node22',
+  target: 'node24',
   format: 'esm',
   external: externalsWithWildcards,
-  // node22 ESM doesn't have __dirname/__filename/require by default.
+  // node24 ESM doesn't have __dirname/__filename/require by default.
   // Some transitive workspace code (drizzle migrators, embedded-postgres
   // dynamic imports) calls them — define globals via the banner so the
   // bundle is portable.
