@@ -86,11 +86,6 @@ describe('outlook_list_messages', () => {
       code: 'outlook_unauthorized',
     });
   });
-
-  it('has riskLevel read', () => {
-    const { client } = makeMockClient();
-    expect(createListMessagesTool(client).riskLevel).toBe('read');
-  });
 });
 
 describe('outlook_get_message', () => {
@@ -174,11 +169,6 @@ describe('outlook_get_message', () => {
       code: 'outlook_not_found',
     });
   });
-
-  it('has riskLevel read', () => {
-    const { client } = makeMockClient();
-    expect(createGetMessageTool(client).riskLevel).toBe('read');
-  });
 });
 
 describe('outlook_send_email', () => {
@@ -259,11 +249,6 @@ describe('outlook_send_email', () => {
       retryAfterSeconds: 30,
     });
   });
-
-  it('has riskLevel destructive', () => {
-    const { client } = makeMockClient();
-    expect(createSendEmailTool(client).riskLevel).toBe('destructive');
-  });
 });
 
 describe('outlook_reply_message', () => {
@@ -293,11 +278,6 @@ describe('outlook_reply_message', () => {
     expect(api).toHaveBeenCalledWith('/me/messages/m-1/replyAll');
     expect(result.replyAll).toBe(true);
   });
-
-  it('has riskLevel write', () => {
-    const { client } = makeMockClient();
-    expect(createReplyMessageTool(client).riskLevel).toBe('write');
-  });
 });
 
 describe('outlook_forward_message', () => {
@@ -318,11 +298,6 @@ describe('outlook_forward_message', () => {
       toRecipients: [{ emailAddress: { address: 'x@example.com' } }],
     });
   });
-
-  it('has riskLevel write', () => {
-    const { client } = makeMockClient();
-    expect(createForwardMessageTool(client).riskLevel).toBe('write');
-  });
 });
 
 describe('outlook_delete_message', () => {
@@ -336,11 +311,6 @@ describe('outlook_delete_message', () => {
 
     expect(result).toEqual({ deleted: true, messageId: 'm-1', newMessageId: 'm-1-moved' });
     expect(req.post).toHaveBeenCalledWith({ destinationId: 'deleteditems' });
-  });
-
-  it('has riskLevel write (reversible — unlike outlook_delete_draft)', () => {
-    const { client } = makeMockClient();
-    expect(createDeleteMessageTool(client).riskLevel).toBe('write');
   });
 });
 
@@ -376,11 +346,6 @@ describe('outlook_update_message', () => {
       code: 'outlook_validation_error',
     });
   });
-
-  it('has riskLevel write', () => {
-    const { client } = makeMockClient();
-    expect(createUpdateMessageTool(client).riskLevel).toBe('write');
-  });
 });
 
 describe('outlook_move_message', () => {
@@ -401,10 +366,5 @@ describe('outlook_move_message', () => {
       destinationFolderId: 'archive',
     });
     expect(req.post).toHaveBeenCalledWith({ destinationId: 'archive' });
-  });
-
-  it('has riskLevel write', () => {
-    const { client } = makeMockClient();
-    expect(createMoveMessageTool(client).riskLevel).toBe('write');
   });
 });

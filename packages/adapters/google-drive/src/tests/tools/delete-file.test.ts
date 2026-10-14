@@ -68,8 +68,4 @@ describe('drive_delete_file', () => {
       code: 'drive_not_found',
     });
   });
-
-  it('has riskLevel destructive', () => {
-    expect(createDeleteFileTool(drive).riskLevel).toBe('destructive');
-  });
 });

@@ -132,10 +132,6 @@ describe('sheets_format_range', () => {
       ),
     ).rejects.toMatchObject({ code: 'sheets_unauthorized' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createFormatRangeTool(sheets).riskLevel).toBe('write');
-  });
 });
 
 // ── sheets_resize_columns ──────────────────────────────────────────────────
@@ -201,10 +197,6 @@ describe('sheets_resize_columns', () => {
       ),
     ).rejects.toMatchObject({ code: 'sheets_unauthorized' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createResizeColumnsTool(sheets).riskLevel).toBe('write');
-  });
 });
 
 // ── sheets_freeze_panes ────────────────────────────────────────────────────
@@ -264,9 +256,5 @@ describe('sheets_freeze_panes', () => {
     await expect(
       tool.execute({ spreadsheet_id: 'abc', sheet_id: 0, frozen_row_count: 1 }, {} as never),
     ).rejects.toMatchObject({ code: 'sheets_unauthorized' });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createFreezePanesTool(sheets).riskLevel).toBe('write');
   });
 });

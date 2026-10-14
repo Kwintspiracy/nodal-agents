@@ -2,7 +2,7 @@
 // get attachment data by message_id + attachment_id
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { Client } from '@microsoft/microsoft-graph-client';
 import type { FileAttachment } from '@microsoft/microsoft-graph-types';
 import { mapOutlookError, OutlookAdapterError } from '../errors';
@@ -26,7 +26,7 @@ export type GetAttachmentOutput = {
 
 export function createGetAttachmentTool(
   client: Client,
-): ToolDefinition<typeof GetAttachmentInput, GetAttachmentOutput> {
+): ConnectorToolDefinition<typeof GetAttachmentInput, GetAttachmentOutput> {
   return {
     name: 'outlook_get_attachment',
     description:
@@ -34,7 +34,6 @@ export function createGetAttachmentTool(
       'Get attachment IDs from outlook_get_message. Size cap: 25 MB. Only file attachments are supported ' +
       '(item attachments — a nested message or event — are not).',
     inputSchema: GetAttachmentInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const attachment = (await client

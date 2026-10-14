@@ -44,9 +44,4 @@ describe('outlook_list_folders', () => {
       code: 'outlook_forbidden',
     });
   });
-
-  it('has riskLevel read', () => {
-    const { client } = makeMockClient();
-    expect(createListFoldersTool(client).riskLevel).toBe('read');
-  });
 });

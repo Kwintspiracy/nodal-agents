@@ -2,7 +2,7 @@
 // list, get, modify-labels, trash
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { gmail_v1 } from 'googleapis';
 import { mapGmailError } from '../errors';
 import { paginateGmail } from '../helpers/pagination';
@@ -48,14 +48,13 @@ export type ListThreadsOutput = {
 
 export function createListThreadsTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof ListThreadsInput, ListThreadsOutput> {
+): ConnectorToolDefinition<typeof ListThreadsInput, ListThreadsOutput> {
   return {
     name: 'gmail_list_threads',
     description:
       'List Gmail conversation threads matching a query. Returns thread IDs and snippets. ' +
       'Use gmail_get_thread to read the full conversation.',
     inputSchema: ListThreadsInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const maxResults = Math.min(input.max_results ?? 20, 500);
@@ -120,14 +119,13 @@ export type GetThreadOutput = {
 
 export function createGetThreadTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof GetThreadInput, GetThreadOutput> {
+): ConnectorToolDefinition<typeof GetThreadInput, GetThreadOutput> {
   return {
     name: 'gmail_get_thread',
     description:
       'Fetch a full Gmail conversation thread with all messages, decoded bodies and headers. ' +
       `Capped at ${MAX_MESSAGES_PER_THREAD} messages (oldest first) — see the truncated flag.`,
     inputSchema: GetThreadInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const res = await gmail.users.threads.get({
@@ -185,14 +183,13 @@ export type ModifyThreadLabelsOutput = {
 
 export function createModifyThreadLabelsTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof ModifyThreadLabelsInput, ModifyThreadLabelsOutput> {
+): ConnectorToolDefinition<typeof ModifyThreadLabelsInput, ModifyThreadLabelsOutput> {
   return {
     name: 'gmail_modify_thread_labels',
     description:
       'Add or remove labels on all messages in a Gmail thread at once. ' +
       'Use to archive a thread (remove INBOX), mark all as read (remove UNREAD), etc.',
     inputSchema: ModifyThreadLabelsInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const res = await gmail.users.threads.modify({
@@ -223,13 +220,12 @@ export type TrashThreadOutput = {
 
 export function createTrashThreadTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof TrashThreadInput, TrashThreadOutput> {
+): ConnectorToolDefinition<typeof TrashThreadInput, TrashThreadOutput> {
   return {
     name: 'gmail_trash_thread',
     description:
       'Move an entire Gmail conversation thread to the Trash folder. Recoverable for 30 days.',
     inputSchema: TrashThreadInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const res = await gmail.users.threads.trash({

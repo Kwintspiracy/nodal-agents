@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-drive — public API
-// Single factory: createDriveTools(opts) → ToolDefinition[]
+// Single factory: createDriveTools(opts) → ConnectorToolDefinition[]
 
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createDriveClient } from './client';
 import { createListFilesTool } from './tools/list-files';
@@ -38,7 +38,8 @@ export type DriveAdapterOptions =
 
 /**
  * Create all 12 Google Drive tools using the provided OAuth access token.
- * Returns a flat ToolDefinition[] ready to register in a ToolRegistry.
+ * Returns a flat ConnectorToolDefinition[]: risk and default approval come
+ * from the operation descriptors, applied by ADAPTER_REGISTRY (issue #735).
  *
  * Tool count: 12
  * Read (5):        drive_list_files, drive_read_file, drive_get_file_info,
@@ -49,7 +50,7 @@ export type DriveAdapterOptions =
  */
 export function createDriveTools(
   opts: DriveAdapterOptions,
-): ToolDefinition<z.ZodTypeAny, unknown>[] {
+): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   const getAccessToken =
     'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
   const drive = createDriveClient(getAccessToken);
@@ -72,7 +73,7 @@ export function createDriveTools(
 
     // Destructive tools (1)
     createDeleteFileTool(drive),
-  ] as unknown as ToolDefinition<z.ZodTypeAny, unknown>[];
+  ] as unknown as ConnectorToolDefinition<z.ZodTypeAny, unknown>[];
 }
 
 // Re-export error types for consumers

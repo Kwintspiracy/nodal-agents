@@ -133,10 +133,6 @@ describe('notion_query_database', () => {
       tool.execute({ database_id: 'x', page_size: 50, max_rows: 500 }, {} as never),
     ).rejects.toMatchObject({ code: 'notion_unauthorized' });
   });
-
-  it('has riskLevel read', () => {
-    expect(createQueryDatabaseTool(client).riskLevel).toBe('read');
-  });
 });
 
 // ── notion_get_database ───────────────────────────────────────────────────────
@@ -182,10 +178,6 @@ describe('notion_get_database', () => {
     await expect(tool.execute({ database_id: 'x' }, {} as never)).rejects.toMatchObject({
       code: 'notion_not_found',
     });
-  });
-
-  it('has riskLevel read', () => {
-    expect(createGetDatabaseTool(client).riskLevel).toBe('read');
   });
 });
 
@@ -233,10 +225,6 @@ describe('notion_create_database_entry', () => {
       tool.execute({ database_id: 'x', properties: { Name: 'test' } }, {} as never),
     ).rejects.toMatchObject({ code: 'notion_rate_limited' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createCreateDatabaseEntryTool(client).riskLevel).toBe('write');
-  });
 });
 
 // ── notion_update_database_entry ──────────────────────────────────────────────
@@ -268,10 +256,6 @@ describe('notion_update_database_entry', () => {
 
     expect(result.id).toBe('row-1');
     expect(result.updated_properties).toBe(1);
-  });
-
-  it('has riskLevel write', () => {
-    expect(createUpdateDatabaseEntryTool(client).riskLevel).toBe('write');
   });
 });
 
@@ -319,10 +303,6 @@ describe('notion_create_database', () => {
       tool.execute({ parent_page_id: 'x', title: 'DB', columns: { Name: 'title' } }, {} as never),
     ).rejects.toMatchObject({ code: 'notion_unauthorized' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createCreateDatabaseTool(client).riskLevel).toBe('write');
-  });
 });
 
 // ── notion_update_database ────────────────────────────────────────────────────
@@ -360,9 +340,5 @@ describe('notion_update_database', () => {
     await expect(tool.execute({ database_id: 'db-1' }, {} as never)).rejects.toMatchObject({
       code: 'notion_unknown',
     });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createUpdateDatabaseTool(client).riskLevel).toBe('write');
   });
 });

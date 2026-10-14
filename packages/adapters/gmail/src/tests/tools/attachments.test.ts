@@ -91,8 +91,4 @@ describe('gmail_get_attachment', () => {
       tool.execute({ message_id: 'msg-1', attachment_id: 'att-1' }, {} as never),
     ).rejects.toMatchObject({ code: 'gmail_unauthorized' });
   });
-
-  it('has riskLevel read', () => {
-    expect(createGetAttachmentTool(gmail).riskLevel).toBe('read');
-  });
 });

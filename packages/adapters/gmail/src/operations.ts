@@ -2,13 +2,13 @@
 // Each slug MUST match the tool name produced by createGmailTools() exactly.
 // Risk classification:
 //   read        — gmail_list_*, gmail_get_*
-//   write       — gmail_send_*, gmail_reply_*, gmail_forward_*, gmail_modify_*,
-//                 gmail_trash_*, gmail_untrash_*, gmail_create_*, gmail_update_*,
-//                 gmail_send_draft
-//   destructive — gmail_delete_*
+//   write       — gmail_modify_*, gmail_trash_*, gmail_untrash_*,
+//                 gmail_create_*, gmail_update_*
+//   destructive — gmail_send_*, gmail_reply_*, gmail_forward_*, gmail_delete_*
 //
-// Note: gmail_send_email, gmail_send_draft are classified as `destructive`
-// because sending email is irreversible (outbound = permanent side-effect).
+// Note: every operation that sends an email (send, send_draft, reply, forward)
+// is `destructive` and requires approval: an email sent cannot be taken back
+// (outbound = permanent side-effect; owner's decision on #711).
 // gmail_trash_* and gmail_modify_* are `write` (reversible).
 
 import type { OperationDescriptor } from '@nodal-agents/shared';
@@ -79,21 +79,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     description: 'List mailbox history changes since a given historyId.',
   },
 
-  // ─── Write (11) ──────────────────────────────────────────────────────────────
-  {
-    slug: 'gmail_reply_message',
-    name: 'Reply to message',
-    risk: 'write',
-    requiresApproval: false,
-    description: 'Send a reply in an existing thread.',
-  },
-  {
-    slug: 'gmail_forward_message',
-    name: 'Forward message',
-    risk: 'write',
-    requiresApproval: false,
-    description: 'Forward an email to new recipients.',
-  },
+  // ─── Write (9) ───────────────────────────────────────────────────────────────
   {
     slug: 'gmail_modify_labels',
     name: 'Modify labels',
@@ -158,7 +144,21 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     description: 'Update an existing email draft.',
   },
 
-  // ─── Destructive (5) ─────────────────────────────────────────────────────────
+  // ─── Destructive (7) ─────────────────────────────────────────────────────────
+  {
+    slug: 'gmail_reply_message',
+    name: 'Reply to message',
+    risk: 'destructive',
+    requiresApproval: true,
+    description: 'Send a reply in an existing thread.',
+  },
+  {
+    slug: 'gmail_forward_message',
+    name: 'Forward message',
+    risk: 'destructive',
+    requiresApproval: true,
+    description: 'Forward an email to new recipients.',
+  },
   {
     slug: 'gmail_send_email',
     name: 'Send email',

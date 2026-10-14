@@ -2,7 +2,7 @@
 // list, get, create, update, delete
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { gmail_v1 } from 'googleapis';
 import { mapGmailError } from '../errors';
 
@@ -27,14 +27,13 @@ export type ListLabelsOutput = {
 
 export function createListLabelsTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof ListLabelsInput, ListLabelsOutput> {
+): ConnectorToolDefinition<typeof ListLabelsInput, ListLabelsOutput> {
   return {
     name: 'gmail_list_labels',
     description:
       'List all Gmail labels — both system labels (INBOX, SENT, TRASH, SPAM, etc.) and user-created labels. ' +
       'Returns label IDs needed for gmail_modify_labels.',
     inputSchema: ListLabelsInput,
-    riskLevel: 'read',
     async execute() {
       try {
         const res = await gmail.users.labels.list({ userId: 'me' });
@@ -77,12 +76,11 @@ export type GetLabelOutput = {
 
 export function createGetLabelTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof GetLabelInput, GetLabelOutput> {
+): ConnectorToolDefinition<typeof GetLabelInput, GetLabelOutput> {
   return {
     name: 'gmail_get_label',
     description: 'Get details and message counts for a specific Gmail label.',
     inputSchema: GetLabelInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const res = await gmail.users.labels.get({
@@ -127,13 +125,12 @@ export type CreateLabelOutput = {
 
 export function createCreateLabelTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof CreateLabelInput, CreateLabelOutput> {
+): ConnectorToolDefinition<typeof CreateLabelInput, CreateLabelOutput> {
   return {
     name: 'gmail_create_label',
     description:
       "Create a new Gmail user label. Use '/' in the name to nest labels, e.g. 'Projects/Nodal-Agents'.",
     inputSchema: CreateLabelInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const res = await gmail.users.labels.create({
@@ -174,12 +171,11 @@ export type UpdateLabelOutput = {
 
 export function createUpdateLabelTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof UpdateLabelInput, UpdateLabelOutput> {
+): ConnectorToolDefinition<typeof UpdateLabelInput, UpdateLabelOutput> {
   return {
     name: 'gmail_update_label',
     description: 'Update an existing Gmail user label — rename it or change its visibility.',
     inputSchema: UpdateLabelInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const requestBody: gmail_v1.Schema$Label = {};
@@ -220,14 +216,13 @@ export type DeleteLabelOutput = {
 
 export function createDeleteLabelTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof DeleteLabelInput, DeleteLabelOutput> {
+): ConnectorToolDefinition<typeof DeleteLabelInput, DeleteLabelOutput> {
   return {
     name: 'gmail_delete_label',
     description:
       'Permanently delete a Gmail user label. Cannot delete system labels (INBOX, SENT, etc.). ' +
       'Messages with this label are NOT deleted — they simply lose the label.',
     inputSchema: DeleteLabelInput,
-    riskLevel: 'destructive',
     async execute(input) {
       try {
         await gmail.users.labels.delete({

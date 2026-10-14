@@ -652,6 +652,24 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
 }
 
 /**
+ * A tool as a connector adapter builds it (`packages/adapters/*`), before it
+ * reaches a job: everything but its risk and its default approval (issue #735).
+ *
+ * Those two come from the adapter's operation descriptor
+ * (`OperationDescriptor.risk` / `requiresApproval`), the one source the
+ * Connectors and Approvals tabs already read. `ADAPTER_REGISTRY`
+ * (`@nodal-agents/runner-adapters`) applies them to every tool it hands out.
+ * A connector tool that declared its own risk was a second source, free to
+ * disagree with the first, and did: Gmail's send said `write` where its
+ * descriptor said `destructive`, and no descriptor's `requiresApproval` ever
+ * reached the gate.
+ */
+export type ConnectorToolDefinition<TInput extends z.ZodTypeAny, TOutput> = Omit<
+  ToolDefinition<TInput, TOutput>,
+  'riskLevel' | 'defaultApproval'
+>;
+
+/**
  * The value the model reads for a successful call of `tool`: its declared
  * `toModelOutput` rendering, or the output itself.
  */

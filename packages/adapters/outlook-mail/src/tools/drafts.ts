@@ -2,7 +2,7 @@
 // list, create, update, send, delete
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { Client } from '@microsoft/microsoft-graph-client';
 import type { Message } from '@microsoft/microsoft-graph-types';
 import { mapOutlookError, OutlookAdapterError } from '../errors';
@@ -44,14 +44,13 @@ export type ListDraftsOutput = {
 
 export function createListDraftsTool(
   client: Client,
-): ToolDefinition<typeof ListDraftsInput, ListDraftsOutput> {
+): ConnectorToolDefinition<typeof ListDraftsInput, ListDraftsOutput> {
   return {
     name: 'outlook_list_drafts',
     description:
       'List Outlook drafts with their IDs, recipients, subjects and previews. ' +
       'Use draft_id with outlook_send_draft to send or outlook_update_draft to edit.',
     inputSchema: ListDraftsInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const maxResults = Math.min(input.max_results ?? 20, 500);
@@ -99,12 +98,11 @@ export type CreateDraftOutput = { draftId: string; subject: string };
 
 export function createCreateDraftTool(
   client: Client,
-): ToolDefinition<typeof CreateDraftInput, CreateDraftOutput> {
+): ConnectorToolDefinition<typeof CreateDraftInput, CreateDraftOutput> {
   return {
     name: 'outlook_create_draft',
     description: 'Create a draft email in Outlook (not sent).',
     inputSchema: CreateDraftInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const message: Message = {
@@ -147,14 +145,13 @@ export type UpdateDraftOutput = { draftId: string };
 
 export function createUpdateDraftTool(
   client: Client,
-): ToolDefinition<typeof UpdateDraftInput, UpdateDraftOutput> {
+): ConnectorToolDefinition<typeof UpdateDraftInput, UpdateDraftOutput> {
   return {
     name: 'outlook_update_draft',
     description:
       'Update fields on an existing Outlook draft. Only the fields provided are changed. New attachments are ADDED ' +
       '— existing attachments are not removed or replaced.',
     inputSchema: UpdateDraftInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         // Review MINOR-3: an empty patch AND zero attachments is a no-op that
@@ -216,13 +213,12 @@ export type SendDraftOutput = { sent: boolean; draftId: string };
 
 export function createSendDraftTool(
   client: Client,
-): ToolDefinition<typeof SendDraftInput, SendDraftOutput> {
+): ConnectorToolDefinition<typeof SendDraftInput, SendDraftOutput> {
   return {
     name: 'outlook_send_draft',
     description:
       'Send an existing Outlook draft. The draft is dispatched as an email and can no longer be edited.',
     inputSchema: SendDraftInput,
-    riskLevel: 'destructive',
     async execute(input) {
       try {
         await client.api(`/me/messages/${encodeURIComponent(input.draft_id)}/send`).post({});
@@ -244,12 +240,11 @@ export type DeleteDraftOutput = { deleted: boolean; draftId: string };
 
 export function createDeleteDraftTool(
   client: Client,
-): ToolDefinition<typeof DeleteDraftInput, DeleteDraftOutput> {
+): ConnectorToolDefinition<typeof DeleteDraftInput, DeleteDraftOutput> {
   return {
     name: 'outlook_delete_draft',
     description: 'Permanently delete an Outlook draft.',
     inputSchema: DeleteDraftInput,
-    riskLevel: 'destructive',
     async execute(input) {
       try {
         await client.api(`/me/messages/${encodeURIComponent(input.draft_id)}`).delete();

@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-notion — user tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { Client } from '@notionhq/client';
 import { mapNotionError } from '../errors';
 
@@ -33,12 +33,11 @@ export type ListUsersOutput = {
 
 export function createListUsersTool(
   client: Client,
-): ToolDefinition<typeof ListUsersInput, ListUsersOutput> {
+): ConnectorToolDefinition<typeof ListUsersInput, ListUsersOutput> {
   return {
     name: 'notion_list_users',
     description: 'List all users in the Notion workspace.',
     inputSchema: ListUsersInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const res = await client.users.list({ page_size: input.page_size });
@@ -77,12 +76,11 @@ export type GetUserOutput = {
 
 export function createGetUserTool(
   client: Client,
-): ToolDefinition<typeof GetUserInput, GetUserOutput> {
+): ConnectorToolDefinition<typeof GetUserInput, GetUserOutput> {
   return {
     name: 'notion_get_user',
     description: 'Get details about a specific Notion user by their ID.',
     inputSchema: GetUserInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const u = await client.users.retrieve({ user_id: input.user_id });

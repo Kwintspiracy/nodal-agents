@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-sheets — public API
-// Single factory: createSheetsTools(opts) → ToolDefinition[]
+// Single factory: createSheetsTools(opts) → ConnectorToolDefinition[]
 
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createSheetsClient } from './client';
 
@@ -54,7 +54,8 @@ export type SheetsAdapterOptions =
 
 /**
  * Create all 20 Google Sheets tools using the provided OAuth access token.
- * Returns a flat ToolDefinition[] ready to register in a ToolRegistry.
+ * Returns a flat ConnectorToolDefinition[]: risk and default approval come
+ * from the operation descriptors, applied by ADAPTER_REGISTRY (issue #735).
  *
  * Tool count: 20
  * Read (5):        sheets_read_range, sheets_read_all, sheets_batch_read_ranges,
@@ -68,7 +69,7 @@ export type SheetsAdapterOptions =
  */
 export function createSheetsTools(
   opts: SheetsAdapterOptions,
-): ToolDefinition<z.ZodTypeAny, unknown>[] {
+): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   const getAccessToken =
     'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
   const sheets = createSheetsClient(getAccessToken);
@@ -99,7 +100,7 @@ export function createSheetsTools(
 
     // Destructive tools (1)
     createDeleteSheetTool(sheets),
-  ] as unknown as ToolDefinition<z.ZodTypeAny, unknown>[];
+  ] as unknown as ConnectorToolDefinition<z.ZodTypeAny, unknown>[];
 }
 
 // Re-export error types for consumers

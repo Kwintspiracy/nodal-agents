@@ -144,8 +144,4 @@ describe('drive_read_file', () => {
       code: 'drive_not_found',
     });
   });
-
-  it('has riskLevel read', () => {
-    expect(createReadFileTool(drive).riskLevel).toBe('read');
-  });
 });

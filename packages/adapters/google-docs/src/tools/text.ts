@@ -2,7 +2,7 @@
 // docs_insert_text, docs_append_text, docs_replace_text, docs_delete_content_range
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { docs_v1 } from 'googleapis';
 import { mapDocsError, DocsAdapterError } from '../errors';
 import {
@@ -38,7 +38,7 @@ export type InsertTextOutput = {
 
 export function createInsertTextTool(
   docs: docs_v1.Docs,
-): ToolDefinition<typeof InsertTextInput, InsertTextOutput> {
+): ConnectorToolDefinition<typeof InsertTextInput, InsertTextOutput> {
   return {
     name: 'docs_insert_text',
     description:
@@ -46,7 +46,6 @@ export function createInsertTextTool(
       'Index 1 = start of body. Use docs_get to find element indices. ' +
       'This shifts all subsequent content forward.',
     inputSchema: InsertTextInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         await docs.documents.batchUpdate({
@@ -86,7 +85,7 @@ export type AppendTextOutput = {
 
 export function createAppendTextTool(
   docs: docs_v1.Docs,
-): ToolDefinition<typeof AppendTextInput, AppendTextOutput> {
+): ConnectorToolDefinition<typeof AppendTextInput, AppendTextOutput> {
   return {
     name: 'docs_append_text',
     description:
@@ -94,7 +93,6 @@ export function createAppendTextTool(
       'Uses endOfSegmentLocation — always inserts at the very end of the body, ' +
       'regardless of the current document length. Use \\n for line breaks.',
     inputSchema: AppendTextInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const text = input.text.endsWith('\n') ? input.text : input.text + '\n';
@@ -135,7 +133,7 @@ export type ReplaceTextOutput = {
 
 export function createReplaceTextTool(
   docs: docs_v1.Docs,
-): ToolDefinition<typeof ReplaceTextInput, ReplaceTextOutput> {
+): ConnectorToolDefinition<typeof ReplaceTextInput, ReplaceTextOutput> {
   return {
     name: 'docs_replace_text',
     description:
@@ -143,7 +141,6 @@ export function createReplaceTextTool(
       'Replaces every match in the document body. ' +
       'Returns the number of occurrences changed (0 means the text was not found).',
     inputSchema: ReplaceTextInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const matchCase = input.match_case ?? true;
@@ -195,7 +192,7 @@ export type DeleteContentRangeOutput = {
 
 export function createDeleteContentRangeTool(
   docs: docs_v1.Docs,
-): ToolDefinition<typeof DeleteContentRangeInput, DeleteContentRangeOutput> {
+): ConnectorToolDefinition<typeof DeleteContentRangeInput, DeleteContentRangeOutput> {
   return {
     name: 'docs_delete_content_range',
     description:
@@ -204,7 +201,6 @@ export function createDeleteContentRangeTool(
       'Use docs_get to find the correct indices before deleting. ' +
       'To delete the whole document, use drive_delete_file from the Drive adapter instead.',
     inputSchema: DeleteContentRangeInput,
-    riskLevel: 'destructive',
     async execute(input) {
       try {
         if (input.end_index <= input.start_index) {

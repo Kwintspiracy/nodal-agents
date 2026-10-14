@@ -2,7 +2,7 @@
 // list, get, create, update, delete
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { calendar_v3 } from 'googleapis';
 import { mapGoogleCalendarError } from '../errors';
 
@@ -67,14 +67,13 @@ export type ListEventsOutput = { total: number; events: CalendarEvent[] };
 
 export function createListEventsTool(
   calendar: calendar_v3.Calendar,
-): ToolDefinition<typeof ListEventsInput, ListEventsOutput> {
+): ConnectorToolDefinition<typeof ListEventsInput, ListEventsOutput> {
   return {
     name: 'gcal_list_events',
     description:
       'List calendar events in a time range. Defaults to UPCOMING events from now. ' +
       'Use time_min/time_max (ISO 8601) to bound, query to text-search. Returns event IDs.',
     inputSchema: ListEventsInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const res = await calendar.events.list({
@@ -104,12 +103,11 @@ const GetEventInput = z.object({
 
 export function createGetEventTool(
   calendar: calendar_v3.Calendar,
-): ToolDefinition<typeof GetEventInput, CalendarEvent> {
+): ConnectorToolDefinition<typeof GetEventInput, CalendarEvent> {
   return {
     name: 'gcal_get_event',
     description: 'Get the full details of a single calendar event by ID.',
     inputSchema: GetEventInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const res = await calendar.events.get({
@@ -154,14 +152,13 @@ function toEventTime(value: string, timeZone?: string): calendar_v3.Schema$Event
 
 export function createCreateEventTool(
   calendar: calendar_v3.Calendar,
-): ToolDefinition<typeof CreateEventInput, WriteEventOutput> {
+): ConnectorToolDefinition<typeof CreateEventInput, WriteEventOutput> {
   return {
     name: 'gcal_create_event',
     description:
       'Create a new calendar event. Use ISO 8601 datetimes for timed events, or YYYY-MM-DD ' +
       'for all-day events. Optionally invite attendees by email.',
     inputSchema: CreateEventInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const res = await calendar.events.insert({
@@ -203,13 +200,12 @@ const UpdateEventInput = z.object({
 
 export function createUpdateEventTool(
   calendar: calendar_v3.Calendar,
-): ToolDefinition<typeof UpdateEventInput, WriteEventOutput> {
+): ConnectorToolDefinition<typeof UpdateEventInput, WriteEventOutput> {
   return {
     name: 'gcal_update_event',
     description:
       'Update an existing calendar event. Only the fields you provide are changed (patch semantics).',
     inputSchema: UpdateEventInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const requestBody: calendar_v3.Schema$Event = {};
@@ -250,12 +246,11 @@ export type DeleteEventOutput = { deleted: boolean; eventId: string };
 
 export function createDeleteEventTool(
   calendar: calendar_v3.Calendar,
-): ToolDefinition<typeof DeleteEventInput, DeleteEventOutput> {
+): ConnectorToolDefinition<typeof DeleteEventInput, DeleteEventOutput> {
   return {
     name: 'gcal_delete_event',
     description: 'Permanently delete a calendar event. This cannot be undone.',
     inputSchema: DeleteEventInput,
-    riskLevel: 'destructive',
     async execute(input) {
       try {
         await calendar.events.delete({

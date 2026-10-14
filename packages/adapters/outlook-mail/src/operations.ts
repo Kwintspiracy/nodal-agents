@@ -2,12 +2,13 @@
 // Each slug MUST match the tool name produced by createOutlookMailTools() exactly.
 // Risk classification (calqué sur adapter-gmail — see adapter-gmail/src/operations.ts):
 //   read        — outlook_list_*, outlook_get_*
-//   write       — outlook_reply_*, outlook_forward_*, outlook_update_message,
-//                 outlook_move_message, outlook_create_draft, outlook_update_draft,
-//                 and outlook_delete_message (reversible — moves to Deleted Items,
+//   write       — outlook_update_message, outlook_move_message,
+//                 outlook_create_draft, outlook_update_draft, and
+//                 outlook_delete_message (reversible — moves to Deleted Items,
 //                 unlike outlook_delete_draft below)
-//   destructive — outlook_send_email, outlook_send_draft (irreversible outbound
-//                 side-effect, same rationale as gmail_send_email/gmail_send_draft),
+//   destructive — outlook_send_email, outlook_send_draft, outlook_reply_*,
+//                 outlook_forward_* (every operation that sends an email:
+//                 irreversible outbound side-effect, owner's decision on #711),
 //                 outlook_delete_draft (permanent, unlike outlook_delete_message)
 
 import type { OperationDescriptor } from '@nodal-agents/shared';
@@ -50,21 +51,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     description: 'Download an email attachment by ID.',
   },
 
-  // ─── Write (7) ───────────────────────────────────────────────────────────────
-  {
-    slug: 'outlook_reply_message',
-    name: 'Reply to message',
-    risk: 'write',
-    requiresApproval: false,
-    description: 'Send a reply (or reply-all) to an Outlook message.',
-  },
-  {
-    slug: 'outlook_forward_message',
-    name: 'Forward message',
-    risk: 'write',
-    requiresApproval: false,
-    description: 'Forward an Outlook message to new recipients.',
-  },
+  // ─── Write (5) ───────────────────────────────────────────────────────────────
   {
     slug: 'outlook_delete_message',
     name: 'Delete message',
@@ -101,7 +88,21 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     description: 'Update an existing Outlook email draft.',
   },
 
-  // ─── Destructive (3) ─────────────────────────────────────────────────────────
+  // ─── Destructive (5) ─────────────────────────────────────────────────────────
+  {
+    slug: 'outlook_reply_message',
+    name: 'Reply to message',
+    risk: 'destructive',
+    requiresApproval: true,
+    description: 'Send a reply (or reply-all) to an Outlook message.',
+  },
+  {
+    slug: 'outlook_forward_message',
+    name: 'Forward message',
+    risk: 'destructive',
+    requiresApproval: true,
+    description: 'Forward an Outlook message to new recipients.',
+  },
   {
     slug: 'outlook_send_email',
     name: 'Send email',

@@ -79,10 +79,6 @@ describe('gmail_list_drafts', () => {
     });
   });
 
-  it('has riskLevel read', () => {
-    expect(createListDraftsTool(gmail).riskLevel).toBe('read');
-  });
-
   // audit#2026-07-07 F3: a failed per-draft GET must surface as an explicit
   // `error` field + a nonzero `errors` count — NOT a blank-field stub
   // indistinguishable from a genuinely empty draft (invariant #4, fail loud).
@@ -238,10 +234,6 @@ describe('gmail_create_draft', () => {
       tool.execute({ to: 'a@example.com', subject: 'X', body: 'Y' }, {} as never),
     ).rejects.toMatchObject({ code: 'gmail_unauthorized' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createCreateDraftTool(gmail).riskLevel).toBe('write');
-  });
 });
 
 describe('gmail_update_draft', () => {
@@ -267,10 +259,6 @@ describe('gmail_update_draft', () => {
     );
 
     expect(result.draftId).toBe('draft-1');
-  });
-
-  it('has riskLevel write', () => {
-    expect(createUpdateDraftTool(gmail).riskLevel).toBe('write');
   });
 });
 
@@ -317,10 +305,6 @@ describe('gmail_send_draft', () => {
       code: 'gmail_message_not_found',
     });
   });
-
-  it('has riskLevel write', () => {
-    expect(createSendDraftTool(gmail).riskLevel).toBe('write');
-  });
 });
 
 describe('gmail_delete_draft', () => {
@@ -349,9 +333,5 @@ describe('gmail_delete_draft', () => {
     await expect(tool.execute({ draft_id: 'nonexistent' }, {} as never)).rejects.toMatchObject({
       code: 'gmail_message_not_found',
     });
-  });
-
-  it('has riskLevel destructive', () => {
-    expect(createDeleteDraftTool(gmail).riskLevel).toBe('destructive');
   });
 });

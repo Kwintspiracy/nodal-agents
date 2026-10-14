@@ -211,9 +211,8 @@ describe('notion_search', () => {
     expect(result.results).toHaveLength(0);
   });
 
-  it('has name notion_search and riskLevel read', () => {
+  it('has name notion_search', () => {
     const tool = createSearchTool(client);
     expect(tool.name).toBe('notion_search');
-    expect(tool.riskLevel).toBe('read');
   });
 });

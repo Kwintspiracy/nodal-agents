@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-notion — page tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { Client } from '@notionhq/client';
 import { mapNotionError } from '../errors';
 import {
@@ -30,13 +30,12 @@ export type GetPageOutput = {
 
 export function createGetPageTool(
   client: Client,
-): ToolDefinition<typeof GetPageInput, GetPageOutput> {
+): ConnectorToolDefinition<typeof GetPageInput, GetPageOutput> {
   return {
     name: 'notion_get_page',
     description:
       'Retrieve a Notion page by its ID. Returns the page title and a summary of its properties.',
     inputSchema: GetPageInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const page = await client.pages.retrieve({ page_id: input.page_id });
@@ -96,13 +95,12 @@ export type GetPageContentOutput = {
 
 export function createGetPageContentTool(
   client: Client,
-): ToolDefinition<typeof GetPageContentInput, GetPageContentOutput> {
+): ConnectorToolDefinition<typeof GetPageContentInput, GetPageContentOutput> {
   return {
     name: 'notion_get_page_content',
     description:
       'Read the full text content of a Notion page (paragraphs, headings, lists, code, etc.). Use this after notion_search or notion_get_page to read what is actually written on the page.',
     inputSchema: GetPageContentInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         // Get title
@@ -158,13 +156,12 @@ export type CreatePageOutput = {
 
 export function createCreatePageTool(
   client: Client,
-): ToolDefinition<typeof CreatePageInput, CreatePageOutput> {
+): ConnectorToolDefinition<typeof CreatePageInput, CreatePageOutput> {
   return {
     name: 'notion_create_page',
     description:
       'Create a new Notion page. Provide EITHER parent_page_id (to nest under a page) OR parent_database_id (to create a row in a database) — not both.',
     inputSchema: CreatePageInput,
-    riskLevel: 'write',
     async execute(input) {
       if (input.parent_page_id && input.parent_database_id) {
         throw mapNotionError(
@@ -248,13 +245,12 @@ export type UpdatePageOutput = {
 
 export function createUpdatePageTool(
   client: Client,
-): ToolDefinition<typeof UpdatePageInput, UpdatePageOutput> {
+): ConnectorToolDefinition<typeof UpdatePageInput, UpdatePageOutput> {
   return {
     name: 'notion_update_page',
     description:
       'Update properties of a Notion page (title, status, select, text, number, etc.). Use notion_query_database first to discover the correct property names and types.',
     inputSchema: UpdatePageInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         // Fetch page to discover DB schema for type coercion
@@ -303,12 +299,11 @@ export type ArchivePageOutput = { id: string; archived: true };
 
 export function createArchivePageTool(
   client: Client,
-): ToolDefinition<typeof ArchivePageInput, ArchivePageOutput> {
+): ConnectorToolDefinition<typeof ArchivePageInput, ArchivePageOutput> {
   return {
     name: 'notion_archive_page',
     description: 'Archive (soft-delete) a Notion page. The page can be restored from trash.',
     inputSchema: ArchivePageInput,
-    riskLevel: 'destructive',
     async execute(input) {
       try {
         await client.pages.update({ page_id: input.page_id, archived: true });

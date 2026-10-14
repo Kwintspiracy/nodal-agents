@@ -13,16 +13,23 @@ describe('CLOUDFLARE_OPERATIONS ↔ createCloudflareTools parity', () => {
     expect(slugs).toEqual(toolNames);
   });
 
+  // The descriptor is the one source of a connector tool's risk and default
+  // approval (issue #735): ADAPTER_REGISTRY applies it to the tool, and
+  // runner-adapters' registry test proves it on every connector.
   it('deploy and delete are approval-gated by default; list is not', () => {
-    const tools = createCloudflareTools({ accessToken: 'mock-token' });
-    const byName = new Map(tools.map((t) => [t.name, t]));
-    expect(byName.get('cloudflare_deploy')?.defaultApproval).toBe('require_approval');
-    expect(byName.get('cloudflare_delete_worker')?.defaultApproval).toBe('require_approval');
-    expect(byName.get('cloudflare_list_workers')?.defaultApproval).toBeUndefined();
-    // Risk levels mirror the descriptors (the UI grid's source of truth).
-    for (const op of CLOUDFLARE_OPERATIONS) {
-      expect(byName.get(op.slug)?.riskLevel).toBe(op.risk);
-    }
+    const bySlug = new Map(CLOUDFLARE_OPERATIONS.map((o) => [o.slug, o]));
+    expect(bySlug.get('cloudflare_deploy')).toMatchObject({
+      risk: 'write',
+      requiresApproval: true,
+    });
+    expect(bySlug.get('cloudflare_delete_worker')).toMatchObject({
+      risk: 'destructive',
+      requiresApproval: true,
+    });
+    expect(bySlug.get('cloudflare_list_workers')).toMatchObject({
+      risk: 'read',
+      requiresApproval: false,
+    });
   });
 
   it('createCloudflareTools throws on empty accessToken', () => {

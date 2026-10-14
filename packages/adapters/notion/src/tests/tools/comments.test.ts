@@ -94,10 +94,6 @@ describe('notion_list_comments', () => {
       },
     );
   });
-
-  it('has riskLevel read', () => {
-    expect(createListCommentsTool(client).riskLevel).toBe('read');
-  });
 });
 
 // ── notion_add_comment ────────────────────────────────────────────────────────
@@ -134,9 +130,5 @@ describe('notion_add_comment', () => {
     await expect(tool.execute({ page_id: 'x', text: 'hello' }, {} as never)).rejects.toMatchObject({
       code: 'notion_not_found',
     });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createAddCommentTool(client).riskLevel).toBe('write');
   });
 });

@@ -219,6 +219,55 @@ beforeEach(() => {
   }));
 });
 
+// Sans règle, la ligne d'une opération de connecteur montre ce que le runner
+// fera : le `requiresApproval` de sa fiche est la posture par défaut de l'outil
+// (issue #735). Avant, toute ligne sans règle lisait « Run without asking »,
+// alors qu'un envoi d'e-mail demande désormais d'abord.
+describe("la ligne d'une opération sans règle dit sa posture par défaut @cap:regler-autonomie/ecran", () => {
+  const pressed = (slug: string, action: string) =>
+    container
+      .querySelector(`[data-testid="autonomy-btn-${slug}-${action}"]`)
+      ?.getAttribute('aria-pressed');
+  const WITH_QUIET_OP = {
+    ...CONNECTOR,
+    availableOperations: [
+      ...CONNECTOR.availableOperations,
+      {
+        slug: 'quiet_write',
+        name: 'Quiet write',
+        risk: 'write' as const,
+        requiresApproval: false,
+        description: 'A write that does not ask.',
+      },
+    ],
+  };
+
+  it('« Ask for approval » pour une opération marquée requiresApproval, « Run without asking » pour les autres', async () => {
+    await render([WITH_QUIET_OP]);
+    expect(pressed('cloudflare_deploy', 'require_approval')).toBe('true');
+    expect(pressed('cloudflare_deploy', 'auto_approve')).toBe('false');
+    expect(pressed('quiet_write', 'auto_approve')).toBe('true');
+    expect(pressed('quiet_write', 'require_approval')).toBe('false');
+  });
+
+  it('une règle explicite l’emporte sur la posture par défaut', async () => {
+    await render(
+      [WITH_QUIET_OP],
+      [
+        {
+          id: 'r1',
+          toolName: 'cloudflare_deploy',
+          action: 'auto_approve',
+          conditionJson: null,
+          workspaceLabel: null,
+        },
+      ],
+    );
+    expect(pressed('cloudflare_deploy', 'auto_approve')).toBe('true');
+    expect(pressed('cloudflare_deploy', 'require_approval')).toBe('false');
+  });
+});
+
 describe("les textes de l'onglet Approvals @cap:regler-autonomie/ecran", () => {
   it('ouvre sur ce que le propriétaire décide ici', async () => {
     const text = await render();
@@ -230,7 +279,7 @@ describe("les textes de l'onglet Approvals @cap:regler-autonomie/ecran", () => {
   it('dit la règle par défaut et quand un changement prend effet', async () => {
     const text = await render();
     expect(text).toContain(
-      'Connector tools without a rule run without asking. Third-party tools, commands and the tools that change your workspace ask first.',
+      'Connector tools marked ⚠ in the Connectors tab ask first unless you set a rule. The others run without asking. Third-party tools, commands and the tools that change your workspace ask first.',
     );
     expect(text).toContain("Changes apply at the agent's next step.");
   });

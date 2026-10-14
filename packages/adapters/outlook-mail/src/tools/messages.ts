@@ -2,7 +2,7 @@
 // list, get, send, reply, forward, delete (move to Deleted Items), update (read/categories), move
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { Client } from '@microsoft/microsoft-graph-client';
 import type { Message } from '@microsoft/microsoft-graph-types';
 import { mapOutlookError, OutlookAdapterError } from '../errors';
@@ -88,7 +88,7 @@ export type ListMessagesOutput = {
 
 export function createListMessagesTool(
   client: Client,
-): ToolDefinition<typeof ListMessagesInput, ListMessagesOutput> {
+): ConnectorToolDefinition<typeof ListMessagesInput, ListMessagesOutput> {
   return {
     name: 'outlook_list_messages',
     description:
@@ -96,7 +96,6 @@ export function createListMessagesTool(
       'expression. Returns message IDs, sender, subject, received date and a preview. ' +
       'Use outlook_get_message for the full body.',
     inputSchema: ListMessagesInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const maxResults = Math.min(input.max_results ?? 20, 500);
@@ -157,14 +156,13 @@ export type GetMessageOutput = {
 
 export function createGetMessageTool(
   client: Client,
-): ToolDefinition<typeof GetMessageInput, GetMessageOutput> {
+): ConnectorToolDefinition<typeof GetMessageInput, GetMessageOutput> {
   return {
     name: 'outlook_get_message',
     description:
       'Get the full content of an Outlook message including decoded body and attachment metadata ' +
       '(not attachment content). Use outlook_get_attachment to download an attachment by its ID.',
     inputSchema: GetMessageInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const messageId = encodeURIComponent(input.message_id);
@@ -255,14 +253,13 @@ export type SendEmailOutput = { sent: boolean };
 
 export function createSendEmailTool(
   client: Client,
-): ToolDefinition<typeof SendEmailInput, SendEmailOutput> {
+): ConnectorToolDefinition<typeof SendEmailInput, SendEmailOutput> {
   return {
     name: 'outlook_send_email',
     description:
       'Send an email via Outlook. Supports plain text and HTML bodies, CC, BCC, Reply-To, and file attachments. ' +
       'The Microsoft Graph sendMail action does not return the created message — there is no messageId to report back.',
     inputSchema: SendEmailInput,
-    riskLevel: 'destructive',
     async execute(input) {
       try {
         const message: Message = {
@@ -301,14 +298,13 @@ export type ReplyMessageOutput = { sent: boolean; replyAll: boolean };
 
 export function createReplyMessageTool(
   client: Client,
-): ToolDefinition<typeof ReplyMessageInput, ReplyMessageOutput> {
+): ConnectorToolDefinition<typeof ReplyMessageInput, ReplyMessageOutput> {
   return {
     name: 'outlook_reply_message',
     description:
       'Reply to an Outlook message in-thread. Set reply_all to reply to every recipient instead of just the sender. ' +
       'Graph automatically quotes the original message and sets threading — this action returns no messageId.',
     inputSchema: ReplyMessageInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const action = input.reply_all ? 'replyAll' : 'reply';
@@ -335,12 +331,11 @@ export type ForwardMessageOutput = { sent: boolean };
 
 export function createForwardMessageTool(
   client: Client,
-): ToolDefinition<typeof ForwardMessageInput, ForwardMessageOutput> {
+): ConnectorToolDefinition<typeof ForwardMessageInput, ForwardMessageOutput> {
   return {
     name: 'outlook_forward_message',
     description: 'Forward an Outlook message to new recipients, with an optional note.',
     inputSchema: ForwardMessageInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         await client.api(`/me/messages/${encodeURIComponent(input.message_id)}/forward`).post({
@@ -365,14 +360,13 @@ export type DeleteMessageOutput = { deleted: boolean; messageId: string; newMess
 
 export function createDeleteMessageTool(
   client: Client,
-): ToolDefinition<typeof DeleteMessageInput, DeleteMessageOutput> {
+): ConnectorToolDefinition<typeof DeleteMessageInput, DeleteMessageOutput> {
   return {
     name: 'outlook_delete_message',
     description:
       'Move an Outlook message to the Deleted Items folder. Recoverable — this does not permanently erase the ' +
       'message. Moving a message assigns it a new ID; that new ID is returned.',
     inputSchema: DeleteMessageInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const moved = (await client
@@ -403,14 +397,13 @@ export type UpdateMessageOutput = { messageId: string; isRead: boolean; categori
 
 export function createUpdateMessageTool(
   client: Client,
-): ToolDefinition<typeof UpdateMessageInput, UpdateMessageOutput> {
+): ConnectorToolDefinition<typeof UpdateMessageInput, UpdateMessageOutput> {
   return {
     name: 'outlook_update_message',
     description:
       "Update an Outlook message's read status and/or categories (Outlook's closest equivalent to Gmail labels). " +
       'categories, when provided, REPLACES the full set — Graph has no separate add/remove.',
     inputSchema: UpdateMessageInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         if (input.is_read === undefined && input.categories === undefined) {
@@ -457,13 +450,12 @@ export type MoveMessageOutput = {
 
 export function createMoveMessageTool(
   client: Client,
-): ToolDefinition<typeof MoveMessageInput, MoveMessageOutput> {
+): ConnectorToolDefinition<typeof MoveMessageInput, MoveMessageOutput> {
   return {
     name: 'outlook_move_message',
     description:
       'Move an Outlook message to a different mail folder. Moving assigns the message a new ID, which is returned.',
     inputSchema: MoveMessageInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const moved = (await client

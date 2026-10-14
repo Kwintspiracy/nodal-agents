@@ -2,7 +2,7 @@
 // gmail_list_history — incremental sync using historyId
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { gmail_v1 } from 'googleapis';
 import { mapGmailError } from '../errors';
 
@@ -37,7 +37,7 @@ export type ListHistoryOutput = {
 
 export function createListHistoryTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof ListHistoryInput, ListHistoryOutput> {
+): ConnectorToolDefinition<typeof ListHistoryInput, ListHistoryOutput> {
   return {
     name: 'gmail_list_history',
     description:
@@ -45,7 +45,6 @@ export function createListHistoryTool(
       'Useful for incremental sync — only fetch changes since last check. ' +
       'Returns the latest historyId to use in subsequent calls.',
     inputSchema: ListHistoryInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const params: gmail_v1.Params$Resource$Users$History$List = {

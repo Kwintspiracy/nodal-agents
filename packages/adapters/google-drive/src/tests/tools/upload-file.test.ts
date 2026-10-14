@@ -72,8 +72,4 @@ describe('drive_upload_file', () => {
       code: 'drive_forbidden',
     });
   });
-
-  it('has riskLevel write', () => {
-    expect(createUploadFileTool(drive).riskLevel).toBe('write');
-  });
 });

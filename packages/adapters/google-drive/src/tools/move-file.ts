@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-drive — drive_move_file tool
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { drive_v3 } from 'googleapis';
 import { mapDriveError } from '../errors';
 
@@ -18,12 +18,11 @@ export type MoveFileOutput = {
 
 export function createMoveFileTool(
   drive: drive_v3.Drive,
-): ToolDefinition<typeof MoveFileInput, MoveFileOutput> {
+): ConnectorToolDefinition<typeof MoveFileInput, MoveFileOutput> {
   return {
     name: 'drive_move_file',
     description: 'Move a file to a different folder in Google Drive.',
     inputSchema: MoveFileInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         // Fetch current parents first

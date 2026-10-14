@@ -2,7 +2,7 @@
 // Verifies: tool count, unique names, correct risk levels, schema validation.
 
 import { describe, it, expect } from 'vitest';
-import { createAirtableTools } from '../index.ts';
+import { createAirtableTools, AIRTABLE_OPERATIONS } from '../index.ts';
 import { z } from 'zod';
 
 const FAKE_TOKEN = 'pat_integration_test_token';
@@ -33,40 +33,40 @@ describe('createAirtableTools integration', () => {
     }
   });
 
-  it('read tools have riskLevel read', () => {
+  it('read operations have risk read in the descriptor', () => {
     const readTools = [
       'airtable_list_bases',
       'airtable_list_tables',
       'airtable_list_records',
       'airtable_get_record',
     ];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(AIRTABLE_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of readTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be read`).toBe('read');
+      expect(toolMap[name]?.risk, `${name} should be read`).toBe('read');
     }
   });
 
-  it('write tools have riskLevel write', () => {
+  it('write operations have risk write in the descriptor', () => {
     const writeTools = [
       'airtable_create_records',
       'airtable_update_record',
       'airtable_replace_record',
     ];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(AIRTABLE_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of writeTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be write`).toBe('write');
+      expect(toolMap[name]?.risk, `${name} should be write`).toBe('write');
     }
   });
 
-  it('destructive tools have riskLevel destructive', () => {
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
-    expect(toolMap['airtable_delete_record']?.riskLevel).toBe('destructive');
+  it('destructive operations have risk destructive in the descriptor', () => {
+    const toolMap = Object.fromEntries(AIRTABLE_OPERATIONS.map((o) => [o.slug, o]));
+    expect(toolMap['airtable_delete_record']?.risk).toBe('destructive');
   });
 
   it('risk level distribution is 4 read, 3 write, 1 destructive', () => {
     const counts = { read: 0, write: 0, destructive: 0 };
-    for (const tool of tools) {
-      counts[tool.riskLevel as keyof typeof counts]++;
+    for (const op of AIRTABLE_OPERATIONS) {
+      counts[op.risk]++;
     }
     expect(counts.read).toBe(4);
     expect(counts.write).toBe(3);

@@ -167,10 +167,6 @@ describe('docs_format_text', () => {
       tool.execute({ document_id: 'doc1', start_index: 1, end_index: 10, bold: true }, {} as never),
     ).rejects.toMatchObject({ code: 'docs_rate_limited' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createFormatTextTool(docs).riskLevel).toBe('write');
-  });
 });
 
 // ── docs_apply_named_style ─────────────────────────────────────────────────
@@ -240,10 +236,6 @@ describe('docs_apply_named_style', () => {
         {} as never,
       ),
     ).rejects.toMatchObject({ code: 'docs_unauthorized' });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createApplyNamedStyleTool(docs).riskLevel).toBe('write');
   });
 });
 
@@ -335,9 +327,5 @@ describe('docs_batch_update', () => {
         {} as never,
       ),
     ).rejects.toMatchObject({ code: 'docs_rate_limited' });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createBatchUpdateTool(docs).riskLevel).toBe('write');
   });
 });

@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-airtable — public API
-// Single factory: createAirtableTools(opts) → ToolDefinition[]
+// Single factory: createAirtableTools(opts) → ConnectorToolDefinition[]
 
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createAirtableClient } from './client.ts';
 import { makeAirtableListBasesTool, makeAirtableListTablesTool } from './tools/bases.ts';
@@ -43,7 +43,8 @@ export type AirtableAdapterOptions =
 
 /**
  * Create all 8 Airtable tools using the provided access token or PAT.
- * Returns a flat ToolDefinition[] ready to register in a ToolRegistry.
+ * Returns a flat ConnectorToolDefinition[]: risk and default approval come
+ * from the operation descriptors, applied by ADAPTER_REGISTRY (issue #735).
  *
  * Tool count: 8
  * Read (4):        airtable_list_bases, airtable_list_tables,
@@ -54,7 +55,7 @@ export type AirtableAdapterOptions =
  */
 export function createAirtableTools(
   opts: AirtableAdapterOptions,
-): ToolDefinition<z.ZodTypeAny, unknown>[] {
+): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   if ('accessToken' in opts && !opts.accessToken) {
     throw new Error('AirtableAdapterOptions: accessToken must be a non-empty string.');
   }
@@ -77,7 +78,7 @@ export function createAirtableTools(
 
     // Destructive tools (1)
     makeAirtableDeleteRecordTool(client),
-  ] as unknown as ToolDefinition<z.ZodTypeAny, unknown>[];
+  ] as unknown as ConnectorToolDefinition<z.ZodTypeAny, unknown>[];
 }
 
 // Re-export error types for consumers
