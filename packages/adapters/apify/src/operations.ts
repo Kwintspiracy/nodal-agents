@@ -1,18 +1,24 @@
 // @nodal-agents/adapter-apify — operation descriptors.
 // Each slug MUST match the tool name produced by createApifyTools() exactly.
 // Risk classification:
-//   read  — apify_get_run, apify_list_datasets, apify_get_dataset_items
-//   write — apify_run_actor (spawns a remote run and consumes user credits)
+//   read        — apify_get_run, apify_list_datasets, apify_get_dataset_items
+//   destructive — apify_run_actor: runs an ARBITRARY marketplace program (any
+//                 actorId, any input) whose outside effects and spend are
+//                 unknown, unbounded and cannot be taken back (#744), so it is
+//                 `destructive` + requiresApproval, like Gmail's sends.
+//                 Metered, bounded calls with no outside effect (search,
+//                 scrape, image generation) do not ask: the criterion is not
+//                 "spends credits".
 
 import type { OperationDescriptor } from '@nodal-agents/shared';
 
 export const APIFY_OPERATIONS: OperationDescriptor[] = [
-  // ─── Write (1) ───────────────────────────────────────────────────────────────
+  // ─── Destructive (1) ───────────────────────────────────────────────────────────────
   {
     slug: 'apify_run_actor',
     name: 'Run actor',
-    risk: 'write',
-    requiresApproval: false,
+    risk: 'destructive',
+    requiresApproval: true,
     description:
       'Start an Apify actor run and wait for it to finish. Consumes Apify platform credits.',
   },

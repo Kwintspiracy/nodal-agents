@@ -4,8 +4,12 @@
 //   read        — drive_list_files, drive_read_file, drive_get_file_info,
 //                 drive_list_permissions, drive_export_file
 //   write       — drive_upload_file, drive_create_folder, drive_move_file,
-//                 drive_rename_file, drive_copy_file, drive_share_file
-//   destructive — drive_delete_file
+//                 drive_rename_file, drive_copy_file
+//   destructive — drive_delete_file, drive_share_file
+//
+// drive_share_file is `destructive` + requiresApproval (#744): it emails the
+// invited person and can make the file public to anyone with the link or grant
+// ownership; none of that can be taken back (outbound = permanent side-effect).
 
 import type { OperationDescriptor } from '@nodal-agents/shared';
 
@@ -86,8 +90,8 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
   {
     slug: 'drive_share_file',
     name: 'Share file',
-    risk: 'write',
-    requiresApproval: false,
+    risk: 'destructive',
+    requiresApproval: true,
     description: 'Add or update sharing permissions on a file.',
   },
 

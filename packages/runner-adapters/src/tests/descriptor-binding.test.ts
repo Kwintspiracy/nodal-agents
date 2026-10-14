@@ -277,8 +277,8 @@ describe('the gate asks for a real connector operation marked requiresApproval @
       e.operations.filter((op) => op.requiresApproval).map((op) => ({ slug, op })),
     );
     // 20 at #735, plus Gmail's and Outlook's reply and forward (#711: sending
-    // an email asks by default).
-    expect(flagged.length).toBe(24);
+    // an email asks by default), plus drive_share_file and apify_run_actor (#744).
+    expect(flagged.length).toBe(26);
     for (const { slug, op } of flagged) {
       // The real tool's posture, with a schema that accepts the harness's
       // `{ purpose }` input (the real one would refuse its missing arguments
@@ -297,6 +297,44 @@ describe('the gate asks for a real connector operation marked requiresApproval @
         asked: [true, true],
       });
     }
+  });
+
+  it('drive_share_file and apify_run_actor ask by default (#744); gcal_create_event and notion_add_comment still do not', async () => {
+    const at = (slug: string, name: string) => {
+      const built = realConnectorTool(slug, name);
+      return {
+        ...built,
+        tool: { ...built.tool, inputSchema: PERMISSIVE_INPUT } as BuiltTool['tool'],
+      };
+    };
+    const posture = (slug: string, name: string) => {
+      const t = ADAPTER_REGISTRY[slug]!.toolFactory(MOCK_TOKEN).find((x) => x.name === name);
+      return t?.defaultApproval;
+    };
+    const riskOf = (slug: string, name: string) =>
+      ADAPTER_REGISTRY[slug]!.toolFactory(MOCK_TOKEN).find((x) => x.name === name)?.riskLevel;
+    expect(riskOf('google-drive', 'drive_share_file')).toBe('destructive');
+    expect(riskOf('apify', 'apify_run_actor')).toBe('destructive');
+    expect(posture('google-drive', 'drive_share_file')).toBe('require_approval');
+    expect(posture('apify', 'apify_run_actor')).toBe('require_approval');
+    expect(posture('google-calendar', 'gcal_create_event')).toBeUndefined();
+    expect(posture('notion', 'notion_add_comment')).toBeUndefined();
+    await expectGate(at('google-drive', 'drive_share_file'))
+      .withRules([])
+      .underAutonomy(undefined, 'propose_confirm')
+      .toRequireApproval();
+    await expectGate(at('apify', 'apify_run_actor'))
+      .withRules([])
+      .underAutonomy(undefined, 'propose_confirm')
+      .toRequireApproval();
+    await expectGate(at('google-calendar', 'gcal_create_event'))
+      .withRules([])
+      .underEveryAutonomy()
+      .toRunWithoutAsking();
+    await expectGate(at('notion', 'notion_add_comment'))
+      .withRules([])
+      .underEveryAutonomy()
+      .toRunWithoutAsking();
   });
 
   it('under destructive_gate: a destructive operation asks, a write one marked requiresApproval runs (the existing relaxation)', async () => {
@@ -318,6 +356,16 @@ describe('the gate asks for a real connector operation marked requiresApproval @
       .withRules([])
       .underAutonomy('destructive_gate')
       .toRunWithoutAsking();
+    // #744: share and actor run are `destructive` (cannot be taken back), so
+    // destructive_gate holds them too.
+    await expectGate(at('google-drive', 'drive_share_file'))
+      .withRules([])
+      .underAutonomy('destructive_gate')
+      .toRequireApproval();
+    await expectGate(at('apify', 'apify_run_actor'))
+      .withRules([])
+      .underAutonomy('destructive_gate')
+      .toRequireApproval();
   });
 
   it('CONTROL: an operation not marked requiresApproval runs without asking in every mode', async () => {

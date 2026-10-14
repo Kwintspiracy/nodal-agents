@@ -55,7 +55,6 @@ describe('createDriveTools integration', () => {
       'drive_move_file',
       'drive_rename_file',
       'drive_copy_file',
-      'drive_share_file',
     ];
     const toolMap = Object.fromEntries(DRIVE_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of writeTools) {
@@ -64,7 +63,7 @@ describe('createDriveTools integration', () => {
   });
 
   it('destructive operations have risk destructive in the descriptor', () => {
-    const destructiveTools = ['drive_delete_file'];
+    const destructiveTools = ['drive_delete_file', 'drive_share_file'];
     const toolMap = Object.fromEntries(DRIVE_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of destructiveTools) {
       expect(toolMap[name]?.risk, `${name} should be destructive`).toBe('destructive');
@@ -90,14 +89,14 @@ describe('createDriveTools integration', () => {
     expect(readCount).toBe(5);
   });
 
-  it('has exactly 6 write tools', () => {
+  it('has exactly 5 write tools', () => {
     const writeCount = DRIVE_OPERATIONS.filter((o) => o.risk === 'write').length;
-    expect(writeCount).toBe(6);
+    expect(writeCount).toBe(5);
   });
 
-  it('has exactly 1 destructive tool', () => {
+  it('has exactly 2 destructive tools', () => {
     const destructiveCount = DRIVE_OPERATIONS.filter((o) => o.risk === 'destructive').length;
-    expect(destructiveCount).toBe(1);
+    expect(destructiveCount).toBe(2);
   });
 
   // Schema spot-checks
