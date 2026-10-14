@@ -84,7 +84,7 @@
     "custom-http-mcp",
     "custom-stdio-mcp"
   ],
-  "models": 66,
+  "models": 71,
   "builtinTools": 74,
   "alwaysOnTools": 20,
   "gatedTools": 54,
