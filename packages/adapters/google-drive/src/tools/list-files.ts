@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-drive — drive_list_files tool
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { drive_v3 } from 'googleapis';
 import { mapDriveError } from '../errors';
 import { paginateDrive } from '../helpers/pagination';
@@ -41,13 +41,12 @@ export type ListFilesOutput = {
 
 export function createListFilesTool(
   drive: drive_v3.Drive,
-): ToolDefinition<typeof ListFilesInput, ListFilesOutput> {
+): ConnectorToolDefinition<typeof ListFilesInput, ListFilesOutput> {
   return {
     name: 'drive_list_files',
     description:
       'List files in Google Drive. Optionally filter by folder or search query. Returns file names and IDs needed for drive_read_file.',
     inputSchema: ListFilesInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const maxResults = Math.min(input.max_results ?? 20, 1000);

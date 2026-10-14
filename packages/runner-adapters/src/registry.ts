@@ -2,6 +2,12 @@
 // Used by both the runner (to instantiate tools per job) and the web UI
 // (to display the operations grid in AgentForm before an access token is resolved).
 //
+// Every connector tool a job receives comes out of a factory of this registry,
+// and the registry gives it its risk and its default approval from the
+// operation descriptor (issue #735, `bindOperationDescriptors`). An adapter
+// builds tools without either: the descriptor the Connectors and Approvals
+// tabs show is the one the approval gate reads.
+//
 // `credentialType` tells the runner where to find the bearer token for the
 // connector at job-execution time:
 //   - one of CredentialType (e.g. 'google-oauth', 'notion-oauth', 'airtable-oauth')
@@ -30,7 +36,7 @@ import { createApifyTools, APIFY_OPERATIONS } from '@nodal-agents/adapter-apify'
 import { createTavilyTools, TAVILY_OPERATIONS } from '@nodal-agents/adapter-tavily';
 import { createPoyoTools, POYO_OPERATIONS } from '@nodal-agents/adapter-poyo';
 import type { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition, ToolDefinition } from '@nodal-agents/tools';
 import type { CredentialType, OperationDescriptor } from '@nodal-agents/shared';
 
 export type AdapterCredentialSource = CredentialType | 'api_key';
@@ -58,60 +64,113 @@ export type AdapterEntry = {
   operations: OperationDescriptor[];
 };
 
-export const ADAPTER_REGISTRY: Record<string, AdapterEntry> = {
+type ConnectorTool = ConnectorToolDefinition<z.ZodTypeAny, unknown>;
+
+/** An adapter as written: its factories build tools without risk or approval. */
+type ConnectorSource = {
+  credentialType: AdapterCredentialSource;
+  toolFactory: (accessToken: string) => ConnectorTool[];
+  toolFactoryWithResolver?: (getAccessToken: () => Promise<string>) => ConnectorTool[];
+  operations: OperationDescriptor[];
+};
+
+/**
+ * Give each tool of a connector the risk and the default approval its
+ * operation descriptor declares (issue #735): `risk` becomes `riskLevel`, and
+ * `requiresApproval: true` becomes `defaultApproval: 'require_approval'`, which
+ * the approval gate (`executeTool`) applies when no rule names the tool.
+ *
+ * A tool without a descriptor, or a descriptor without a tool, throws: the
+ * first would reach the gate with a risk nobody declared, the second would
+ * show the owner an operation the agent cannot call. Neither gets a default.
+ */
+export function bindOperationDescriptors(
+  slug: string,
+  operations: readonly OperationDescriptor[],
+  tools: readonly ConnectorTool[],
+): ToolDefinition<z.ZodTypeAny, unknown>[] {
+  const bySlug = new Map(operations.map((op) => [op.slug, op]));
+  const bound = tools.map((tool): ToolDefinition<z.ZodTypeAny, unknown> => {
+    const op = bySlug.get(tool.name);
+    if (!op) {
+      throw new Error(
+        `connector '${slug}': tool '${tool.name}' has no operation descriptor, ` +
+          'so its risk and default approval are unknown. Declare it in the adapter operations.',
+      );
+    }
+    return op.requiresApproval
+      ? { ...tool, riskLevel: op.risk, defaultApproval: 'require_approval' }
+      : { ...tool, riskLevel: op.risk };
+  });
+  const built = new Set(tools.map((t) => t.name));
+  const orphans = operations.filter((op) => !built.has(op.slug)).map((op) => op.slug);
+  if (orphans.length > 0) {
+    throw new Error(
+      `connector '${slug}': operation descriptor(s) ${orphans.join(', ')} match no tool ` +
+        'its factory builds. Remove them or build the tool.',
+    );
+  }
+  return bound;
+}
+
+function bindSource(slug: string, source: ConnectorSource): AdapterEntry {
+  const { toolFactory, toolFactoryWithResolver, operations } = source;
+  return {
+    credentialType: source.credentialType,
+    toolFactory: (accessToken) =>
+      bindOperationDescriptors(slug, operations, toolFactory(accessToken)),
+    ...(toolFactoryWithResolver
+      ? {
+          toolFactoryWithResolver: (getAccessToken: () => Promise<string>) =>
+            bindOperationDescriptors(slug, operations, toolFactoryWithResolver(getAccessToken)),
+        }
+      : {}),
+    operations,
+  };
+}
+
+const CONNECTOR_SOURCES: Record<string, ConnectorSource> = {
   'google-drive': {
     credentialType: 'google-oauth',
-    toolFactory: (t) =>
-      createDriveTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
-    toolFactoryWithResolver: (getAccessToken) =>
-      createDriveTools({ getAccessToken }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createDriveTools({ accessToken: t }),
+    toolFactoryWithResolver: (getAccessToken) => createDriveTools({ getAccessToken }),
     operations: DRIVE_OPERATIONS,
   },
   gmail: {
     credentialType: 'google-oauth',
-    toolFactory: (t) =>
-      createGmailTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
-    toolFactoryWithResolver: (getAccessToken) =>
-      createGmailTools({ getAccessToken }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createGmailTools({ accessToken: t }),
+    toolFactoryWithResolver: (getAccessToken) => createGmailTools({ getAccessToken }),
     operations: GMAIL_OPERATIONS,
   },
   'google-calendar': {
     credentialType: 'google-oauth',
-    toolFactory: (t) =>
-      createGoogleCalendarTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
-    toolFactoryWithResolver: (getAccessToken) =>
-      createGoogleCalendarTools({ getAccessToken }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createGoogleCalendarTools({ accessToken: t }),
+    toolFactoryWithResolver: (getAccessToken) => createGoogleCalendarTools({ getAccessToken }),
     operations: GOOGLE_CALENDAR_OPERATIONS,
   },
   'google-sheets': {
     credentialType: 'google-oauth',
-    toolFactory: (t) =>
-      createSheetsTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
-    toolFactoryWithResolver: (getAccessToken) =>
-      createSheetsTools({ getAccessToken }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createSheetsTools({ accessToken: t }),
+    toolFactoryWithResolver: (getAccessToken) => createSheetsTools({ getAccessToken }),
     operations: SHEETS_OPERATIONS,
   },
   'google-docs': {
     credentialType: 'google-oauth',
-    toolFactory: (t) =>
-      createDocsTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
-    toolFactoryWithResolver: (getAccessToken) =>
-      createDocsTools({ getAccessToken }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createDocsTools({ accessToken: t }),
+    toolFactoryWithResolver: (getAccessToken) => createDocsTools({ getAccessToken }),
     operations: DOCS_OPERATIONS,
   },
   // notion-oauth: Public Integration (browser OAuth roundtrip)
   'notion-oauth': {
     credentialType: 'notion-oauth',
-    toolFactory: (t) =>
-      createNotionTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createNotionTools({ accessToken: t }),
     operations: NOTION_OPERATIONS,
   },
   // notion: Internal Integration api_key — wire format identical on the Notion API.
   // Token is the decrypted connectors.api_key (no credentials row).
   notion: {
     credentialType: 'api_key',
-    toolFactory: (t) =>
-      createNotionTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createNotionTools({ accessToken: t }),
     operations: NOTION_OPERATIONS,
   },
   // outlook-mail: Microsoft Graph delegated OAuth access token via
@@ -121,10 +180,8 @@ export const ADAPTER_REGISTRY: Record<string, AdapterEntry> = {
   // Graph request instead of a one-shot token.
   'outlook-mail': {
     credentialType: 'microsoft-oauth',
-    toolFactory: (t) =>
-      createOutlookMailTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
-    toolFactoryWithResolver: (getAccessToken) =>
-      createOutlookMailTools({ getAccessToken }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createOutlookMailTools({ accessToken: t }),
+    toolFactoryWithResolver: (getAccessToken) => createOutlookMailTools({ getAccessToken }),
     operations: OUTLOOK_MAIL_OPERATIONS,
   },
   // airtable-oauth: OAuth access token via credentials.payload.accessToken.
@@ -133,50 +190,46 @@ export const ADAPTER_REGISTRY: Record<string, AdapterEntry> = {
   // credential before every request instead of a one-shot token.
   'airtable-oauth': {
     credentialType: 'airtable-oauth',
-    toolFactory: (t) =>
-      createAirtableTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
-    toolFactoryWithResolver: (getAccessToken) =>
-      createAirtableTools({ getAccessToken }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createAirtableTools({ accessToken: t }),
+    toolFactoryWithResolver: (getAccessToken) => createAirtableTools({ getAccessToken }),
     operations: AIRTABLE_OPERATIONS,
   },
   // airtable: Personal Access Token via connectors.api_key. Same Bearer wire
   // format as the OAuth path — the adapter doesn't distinguish.
   airtable: {
     credentialType: 'api_key',
-    toolFactory: (t) =>
-      createAirtableTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createAirtableTools({ accessToken: t }),
     operations: AIRTABLE_OPERATIONS,
   },
   firecrawl: {
     credentialType: 'api_key',
-    toolFactory: (t) =>
-      createFirecrawlTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createFirecrawlTools({ accessToken: t }),
     operations: FIRECRAWL_OPERATIONS,
   },
   // cloudflare: API Token (template « Edit Cloudflare Workers ») via
   // connectors.api_key. Deploy runs wrangler; list/delete use the official SDK.
   cloudflare: {
     credentialType: 'api_key',
-    toolFactory: (t) =>
-      createCloudflareTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createCloudflareTools({ accessToken: t }),
     operations: CLOUDFLARE_OPERATIONS,
   },
   apify: {
     credentialType: 'api_key',
-    toolFactory: (t) =>
-      createApifyTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createApifyTools({ accessToken: t }),
     operations: APIFY_OPERATIONS,
   },
   tavily: {
     credentialType: 'api_key',
-    toolFactory: (t) =>
-      createTavilyTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createTavilyTools({ accessToken: t }),
     operations: TAVILY_OPERATIONS,
   },
   poyo: {
     credentialType: 'api_key',
-    toolFactory: (t) =>
-      createPoyoTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactory: (t) => createPoyoTools({ accessToken: t }),
     operations: POYO_OPERATIONS,
   },
 };
+
+export const ADAPTER_REGISTRY: Record<string, AdapterEntry> = Object.fromEntries(
+  Object.entries(CONNECTOR_SOURCES).map(([slug, source]) => [slug, bindSource(slug, source)]),
+);

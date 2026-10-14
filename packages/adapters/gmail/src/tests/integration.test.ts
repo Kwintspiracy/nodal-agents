@@ -2,7 +2,7 @@
 // Verifies: tool count, unique names, correct risk levels, schema validation
 
 import { describe, it, expect } from 'vitest';
-import { createGmailTools } from '../index';
+import { createGmailTools, GMAIL_OPERATIONS } from '../index';
 import { z } from 'zod';
 
 // Use a fake token — tools are instantiated but never called here
@@ -34,7 +34,7 @@ describe('createGmailTools integration', () => {
     }
   });
 
-  it('read tools have riskLevel read', () => {
+  it('read operations have risk read in the descriptor', () => {
     const readTools = [
       'gmail_list_messages',
       'gmail_get_message',
@@ -46,15 +46,14 @@ describe('createGmailTools integration', () => {
       'gmail_get_attachment',
       'gmail_list_history',
     ];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(GMAIL_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of readTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be read`).toBe('read');
+      expect(toolMap[name]?.risk, `${name} should be read`).toBe('read');
     }
   });
 
-  it('write tools have riskLevel write', () => {
+  it('write operations have risk write in the descriptor', () => {
     const writeTools = [
-      'gmail_send_email',
       'gmail_reply_message',
       'gmail_forward_message',
       'gmail_modify_labels',
@@ -66,19 +65,25 @@ describe('createGmailTools integration', () => {
       'gmail_update_label',
       'gmail_create_draft',
       'gmail_update_draft',
-      'gmail_send_draft',
     ];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(GMAIL_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of writeTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be write`).toBe('write');
+      expect(toolMap[name]?.risk, `${name} should be write`).toBe('write');
     }
   });
 
-  it('destructive tools have riskLevel destructive', () => {
-    const destructiveTools = ['gmail_delete_message', 'gmail_delete_label', 'gmail_delete_draft'];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+  it('destructive operations have risk destructive in the descriptor', () => {
+    // Sending cannot be taken back: the descriptor says destructive (issue #735).
+    const destructiveTools = [
+      'gmail_send_email',
+      'gmail_send_draft',
+      'gmail_delete_message',
+      'gmail_delete_label',
+      'gmail_delete_draft',
+    ];
+    const toolMap = Object.fromEntries(GMAIL_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of destructiveTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be destructive`).toBe('destructive');
+      expect(toolMap[name]?.risk, `${name} should be destructive`).toBe('destructive');
     }
   });
 
@@ -96,19 +101,19 @@ describe('createGmailTools integration', () => {
   });
 
   // Tool count breakdown
-  it('has exactly 9 read tools', () => {
-    const readCount = tools.filter((t) => t.riskLevel === 'read').length;
+  it('has exactly 9 read operations', () => {
+    const readCount = GMAIL_OPERATIONS.filter((o) => o.risk === 'read').length;
     expect(readCount).toBe(9);
   });
 
-  it('has exactly 13 write tools', () => {
-    const writeCount = tools.filter((t) => t.riskLevel === 'write').length;
-    expect(writeCount).toBe(13);
+  it('has exactly 11 write operations', () => {
+    const writeCount = GMAIL_OPERATIONS.filter((o) => o.risk === 'write').length;
+    expect(writeCount).toBe(11);
   });
 
-  it('has exactly 3 destructive tools', () => {
-    const destructiveCount = tools.filter((t) => t.riskLevel === 'destructive').length;
-    expect(destructiveCount).toBe(3);
+  it('has exactly 5 destructive operations', () => {
+    const destructiveCount = GMAIL_OPERATIONS.filter((o) => o.risk === 'destructive').length;
+    expect(destructiveCount).toBe(5);
   });
 
   // Schema spot-checks

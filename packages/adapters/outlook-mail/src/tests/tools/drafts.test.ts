@@ -48,11 +48,6 @@ describe('outlook_list_drafts', () => {
       code: 'outlook_unauthorized',
     });
   });
-
-  it('has riskLevel read', () => {
-    const { client } = makeMockClient();
-    expect(createListDraftsTool(client).riskLevel).toBe('read');
-  });
 });
 
 describe('outlook_create_draft', () => {
@@ -100,11 +95,6 @@ describe('outlook_create_draft', () => {
       Buffer.from('hello', 'utf-8').toString('base64'),
     );
   });
-
-  it('has riskLevel write', () => {
-    const { client } = makeMockClient();
-    expect(createCreateDraftTool(client).riskLevel).toBe('write');
-  });
 });
 
 describe('outlook_update_draft', () => {
@@ -138,11 +128,6 @@ describe('outlook_update_draft', () => {
     expect(api).toHaveBeenCalledWith('/me/messages/d-1/attachments');
     expect(attReq.post).toHaveBeenCalledTimes(1);
     expect(patchReq.patch).not.toHaveBeenCalled();
-  });
-
-  it('has riskLevel write', () => {
-    const { client } = makeMockClient();
-    expect(createUpdateDraftTool(client).riskLevel).toBe('write');
   });
 
   // review MINOR-3: an empty patch and no attachments must fail loud, not
@@ -191,11 +176,6 @@ describe('outlook_send_draft', () => {
       code: 'outlook_not_found',
     });
   });
-
-  it('has riskLevel destructive', () => {
-    const { client } = makeMockClient();
-    expect(createSendDraftTool(client).riskLevel).toBe('destructive');
-  });
 });
 
 describe('outlook_delete_draft', () => {
@@ -220,10 +200,5 @@ describe('outlook_delete_draft', () => {
     await expect(tool.execute({ draft_id: 'missing' }, {} as never)).rejects.toMatchObject({
       code: 'outlook_not_found',
     });
-  });
-
-  it('has riskLevel destructive', () => {
-    const { client } = makeMockClient();
-    expect(createDeleteDraftTool(client).riskLevel).toBe('destructive');
   });
 });

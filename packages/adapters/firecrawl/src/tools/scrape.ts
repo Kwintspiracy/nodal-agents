@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-firecrawl — scrape, map, and search tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { FirecrawlClient } from '../client.ts';
 import { wrapFirecrawlError } from '../errors.ts';
 
@@ -49,13 +49,12 @@ export type ScrapeOutput = {
 
 export function makeFirecrawlScrapeTool(
   client: FirecrawlClient,
-): ToolDefinition<typeof ScrapeInput, ScrapeOutput> {
+): ConnectorToolDefinition<typeof ScrapeInput, ScrapeOutput> {
   return {
     name: 'firecrawl_scrape',
     description:
       'Scrape a single web page and return its content. Supports markdown (default), raw HTML, and extracted links.',
     inputSchema: ScrapeInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const doc = await client.scrape(input.url, {
@@ -93,13 +92,12 @@ export type MapOutput = {
 
 export function makeFirecrawlMapTool(
   client: FirecrawlClient,
-): ToolDefinition<typeof MapInput, MapOutput> {
+): ConnectorToolDefinition<typeof MapInput, MapOutput> {
   return {
     name: 'firecrawl_map',
     description:
       'Discover all URLs on a website (sitemap-aware). Returns a list of links with optional titles and descriptions. Use the search param to filter results.',
     inputSchema: MapInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const result = await client.map(input.url, {
@@ -144,13 +142,12 @@ export type SearchOutput = {
 
 export function makeFirecrawlSearchTool(
   client: FirecrawlClient,
-): ToolDefinition<typeof SearchInput, SearchOutput> {
+): ConnectorToolDefinition<typeof SearchInput, SearchOutput> {
   return {
     name: 'firecrawl_search',
     description:
       'Search the web via Firecrawl and return a list of web results (URL, title, description).',
     inputSchema: SearchInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const data = await client.search(input.query, {

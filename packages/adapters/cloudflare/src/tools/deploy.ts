@@ -16,7 +16,7 @@
 
 import { stat, readdir } from 'node:fs/promises';
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import { resolveAndCheckPath, resolveCliPath, runCli, buildChildEnv } from '@nodal-agents/tools';
 import { CloudflareApiError } from '../errors.ts';
 import type { CloudflareAccountContext } from '../client.ts';
@@ -93,7 +93,7 @@ export function buildWranglerDeployArgs(name: string, assetsDir: string): string
 
 export function makeCloudflareDeployTool(
   account: CloudflareAccountContext,
-): ToolDefinition<typeof DeployInput, DeployOutput> {
+): ConnectorToolDefinition<typeof DeployInput, DeployOutput> {
   return {
     name: 'cloudflare_deploy',
     description:
@@ -103,11 +103,6 @@ export function makeCloudflareDeployTool(
       '(the directory must contain the final index.html/assets, not sources). Redeploying ' +
       'the same name updates the same URL. First run may take ~1 min (wrangler download).',
     inputSchema: DeployInput,
-    riskLevel: 'write',
-    // Publishing to the public internet is outward-facing — safe-by-default,
-    // same posture as run_command/code_task; a per-agent auto_approve rule
-    // (Yolo) or per-operation rule overrides.
-    defaultApproval: 'require_approval',
     async execute(input, ctx) {
       const assetsDir = await resolveAndCheckPath(ctx, input.directory);
 

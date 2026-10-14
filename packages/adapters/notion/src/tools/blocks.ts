@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-notion — block tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { Client } from '@notionhq/client';
 import { mapNotionError } from '../errors';
 import { chunkRichText } from '../helpers/property-coerce';
@@ -23,13 +23,12 @@ export type GetBlockOutput = {
 
 export function createGetBlockTool(
   client: Client,
-): ToolDefinition<typeof GetBlockInput, GetBlockOutput> {
+): ConnectorToolDefinition<typeof GetBlockInput, GetBlockOutput> {
   return {
     name: 'notion_get_block',
     description:
       'Retrieve a specific Notion block by ID. Returns the block type and its text content.',
     inputSchema: GetBlockInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const block = await client.blocks.retrieve({ block_id: input.block_id });
@@ -126,13 +125,12 @@ function buildBlock(item: z.infer<typeof BlockItemSchema>): Record<string, unkno
 
 export function createAppendBlocksTool(
   client: Client,
-): ToolDefinition<typeof AppendBlocksInput, AppendBlocksOutput> {
+): ConnectorToolDefinition<typeof AppendBlocksInput, AppendBlocksOutput> {
   return {
     name: 'notion_append_blocks',
     description:
       'Add content blocks to an existing Notion page. Supports paragraphs, headings, lists, code blocks, quotes, and dividers.',
     inputSchema: AppendBlocksInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const children = input.blocks.map(buildBlock);
@@ -159,13 +157,12 @@ export type UpdateBlockOutput = { id: string };
 
 export function createUpdateBlockTool(
   client: Client,
-): ToolDefinition<typeof UpdateBlockInput, UpdateBlockOutput> {
+): ConnectorToolDefinition<typeof UpdateBlockInput, UpdateBlockOutput> {
   return {
     name: 'notion_update_block',
     description:
       'Update the text content of an existing Notion block. The block type is preserved.',
     inputSchema: UpdateBlockInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         // Retrieve current type so we can update the right property
@@ -197,12 +194,11 @@ export type DeleteBlockOutput = { id: string; deleted: true };
 
 export function createDeleteBlockTool(
   client: Client,
-): ToolDefinition<typeof DeleteBlockInput, DeleteBlockOutput> {
+): ConnectorToolDefinition<typeof DeleteBlockInput, DeleteBlockOutput> {
   return {
     name: 'notion_delete_block',
     description: 'Delete (archive) a specific block from a Notion page.',
     inputSchema: DeleteBlockInput,
-    riskLevel: 'destructive',
     async execute(input) {
       try {
         await client.blocks.delete({ block_id: input.block_id });

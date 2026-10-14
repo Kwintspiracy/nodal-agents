@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-drive — drive_get_file_info tool
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { drive_v3 } from 'googleapis';
 import { mapDriveError } from '../errors';
 
@@ -24,13 +24,12 @@ export type GetFileInfoOutput = {
 
 export function createGetFileInfoTool(
   drive: drive_v3.Drive,
-): ToolDefinition<typeof GetFileInfoInput, GetFileInfoOutput> {
+): ConnectorToolDefinition<typeof GetFileInfoInput, GetFileInfoOutput> {
   return {
     name: 'drive_get_file_info',
     description:
       'Get detailed metadata for a file: size, owner, sharing status, dates, MIME type, parent folders.',
     inputSchema: GetFileInfoInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const res = await drive.files.get({

@@ -125,10 +125,9 @@ describe('makeFirecrawlScrapeTool', () => {
     );
   });
 
-  it('has riskLevel read and correct name', () => {
+  it('has the correct name', () => {
     const tool = makeFirecrawlScrapeTool(getClient());
     expect(tool.name).toBe('firecrawl_scrape');
-    expect(tool.riskLevel).toBe('read');
   });
 
   it('sets truncated:false for markdown under the 15000-char cap', async () => {
@@ -253,10 +252,9 @@ describe('makeFirecrawlMapTool', () => {
     );
   });
 
-  it('has riskLevel read and correct name', () => {
+  it('has the correct name', () => {
     const tool = makeFirecrawlMapTool(getClient());
     expect(tool.name).toBe('firecrawl_map');
-    expect(tool.riskLevel).toBe('read');
   });
 });
 
@@ -324,9 +322,8 @@ describe('makeFirecrawlSearchTool', () => {
     );
   });
 
-  it('has riskLevel read and correct name', () => {
+  it('has the correct name', () => {
     const tool = makeFirecrawlSearchTool(getClient());
     expect(tool.name).toBe('firecrawl_search');
-    expect(tool.riskLevel).toBe('read');
   });
 });

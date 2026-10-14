@@ -98,10 +98,6 @@ describe('docs_insert_paragraph', () => {
       tool.execute({ document_id: 'doc1', text: 'text', index: 1 }, {} as never),
     ).rejects.toMatchObject({ code: 'docs_unauthorized' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createInsertParagraphTool(docs).riskLevel).toBe('write');
-  });
 });
 
 // ── docs_insert_page_break ─────────────────────────────────────────────────
@@ -148,10 +144,6 @@ describe('docs_insert_page_break', () => {
     await expect(
       tool.execute({ document_id: 'doc1', index: 1 }, {} as never),
     ).rejects.toMatchObject({ code: 'docs_unauthorized' });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createInsertPageBreakTool(docs).riskLevel).toBe('write');
   });
 });
 
@@ -205,10 +197,6 @@ describe('docs_insert_table', () => {
     await expect(
       tool.execute({ document_id: 'doc1', index: 1, rows: 2, columns: 2 }, {} as never),
     ).rejects.toMatchObject({ code: 'docs_unauthorized' });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createInsertTableTool(docs).riskLevel).toBe('write');
   });
 });
 
@@ -305,9 +293,5 @@ describe('docs_insert_image', () => {
         {} as never,
       ),
     ).rejects.toMatchObject({ code: 'docs_invalid_request' });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createInsertImageTool(docs).riskLevel).toBe('write');
   });
 });

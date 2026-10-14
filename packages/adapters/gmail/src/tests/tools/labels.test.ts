@@ -79,10 +79,6 @@ describe('gmail_list_labels', () => {
       code: 'gmail_unauthorized',
     });
   });
-
-  it('has riskLevel read', () => {
-    expect(createListLabelsTool(gmail).riskLevel).toBe('read');
-  });
 });
 
 describe('gmail_get_label', () => {
@@ -122,10 +118,6 @@ describe('gmail_get_label', () => {
     await expect(tool.execute({ label_id: 'nonexistent' }, {} as never)).rejects.toMatchObject({
       code: 'gmail_message_not_found',
     });
-  });
-
-  it('has riskLevel read', () => {
-    expect(createGetLabelTool(gmail).riskLevel).toBe('read');
   });
 });
 
@@ -173,10 +165,6 @@ describe('gmail_create_label', () => {
       code: 'gmail_unauthorized',
     });
   });
-
-  it('has riskLevel write', () => {
-    expect(createCreateLabelTool(gmail).riskLevel).toBe('write');
-  });
 });
 
 describe('gmail_update_label', () => {
@@ -195,10 +183,6 @@ describe('gmail_update_label', () => {
 
     expect(result.id).toBe('Label_123');
     expect(result.name).toBe('NewName');
-  });
-
-  it('has riskLevel write', () => {
-    expect(createUpdateLabelTool(gmail).riskLevel).toBe('write');
   });
 });
 
@@ -228,9 +212,5 @@ describe('gmail_delete_label', () => {
     await expect(tool.execute({ label_id: 'INBOX' }, {} as never)).rejects.toMatchObject({
       code: 'gmail_forbidden',
     });
-  });
-
-  it('has riskLevel destructive', () => {
-    expect(createDeleteLabelTool(gmail).riskLevel).toBe('destructive');
   });
 });

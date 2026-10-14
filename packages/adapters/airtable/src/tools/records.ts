@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-airtable — record CRUD tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { AirtableClient } from '../client.ts';
 import { wrapAirtableError } from '../errors.ts';
 
@@ -58,13 +58,12 @@ export type ListRecordsOutput = {
 
 export function makeAirtableListRecordsTool(
   client: AirtableClient,
-): ToolDefinition<typeof ListRecordsInput, ListRecordsOutput> {
+): ConnectorToolDefinition<typeof ListRecordsInput, ListRecordsOutput> {
   return {
     name: 'airtable_list_records',
     description:
       'List records in an Airtable table. Supports filtering by formula, sorting, field selection, and pagination via offset token.',
     inputSchema: ListRecordsInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const params: Record<string, string | number | boolean | string[]> = {
@@ -125,13 +124,12 @@ export type GetRecordOutput = AirtableRecord;
 
 export function makeAirtableGetRecordTool(
   client: AirtableClient,
-): ToolDefinition<typeof GetRecordInput, GetRecordOutput> {
+): ConnectorToolDefinition<typeof GetRecordInput, GetRecordOutput> {
   return {
     name: 'airtable_get_record',
     description:
       'Retrieve a single record from an Airtable table by its record ID. Returns all field values.',
     inputSchema: GetRecordInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const data = (await client.get(
@@ -178,13 +176,12 @@ export type CreateRecordsOutput = {
 
 export function makeAirtableCreateRecordsTool(
   client: AirtableClient,
-): ToolDefinition<typeof CreateRecordsInput, CreateRecordsOutput> {
+): ConnectorToolDefinition<typeof CreateRecordsInput, CreateRecordsOutput> {
   return {
     name: 'airtable_create_records',
     description:
       'Create one or more records in an Airtable table. Max 10 records per call. Field names must match the table schema exactly.',
     inputSchema: CreateRecordsInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const body: Record<string, unknown> = { records: input.records };
@@ -238,13 +235,12 @@ export type UpdateRecordOutput = {
 
 export function makeAirtableUpdateRecordTool(
   client: AirtableClient,
-): ToolDefinition<typeof UpdateRecordInput, UpdateRecordOutput> {
+): ConnectorToolDefinition<typeof UpdateRecordInput, UpdateRecordOutput> {
   return {
     name: 'airtable_update_record',
     description:
       'Update specific fields on a single Airtable record (PATCH — only listed fields are changed, others remain). Use airtable_replace_record to overwrite all fields.',
     inputSchema: UpdateRecordInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const body: Record<string, unknown> = { fields: input.fields };
@@ -290,13 +286,12 @@ export type ReplaceRecordOutput = UpdateRecordOutput;
 
 export function makeAirtableReplaceRecordTool(
   client: AirtableClient,
-): ToolDefinition<typeof ReplaceRecordInput, ReplaceRecordOutput> {
+): ConnectorToolDefinition<typeof ReplaceRecordInput, ReplaceRecordOutput> {
   return {
     name: 'airtable_replace_record',
     description:
       'Fully replace all fields on a single Airtable record (PUT — fields not listed are cleared to empty). Use airtable_update_record for partial field updates.',
     inputSchema: ReplaceRecordInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const body: Record<string, unknown> = { fields: input.fields };
@@ -340,13 +335,12 @@ export type DeleteRecordOutput = {
 
 export function makeAirtableDeleteRecordTool(
   client: AirtableClient,
-): ToolDefinition<typeof DeleteRecordInput, DeleteRecordOutput> {
+): ConnectorToolDefinition<typeof DeleteRecordInput, DeleteRecordOutput> {
   return {
     name: 'airtable_delete_record',
     description:
       'Permanently delete a single record from an Airtable table. This is irreversible — confirm the record ID with airtable_get_record before deleting.',
     inputSchema: DeleteRecordInput,
-    riskLevel: 'destructive',
     async execute(input) {
       try {
         const data = (await client.delete(

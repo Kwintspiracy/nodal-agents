@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-gmail — public API
-// Single factory: createGmailTools(opts) → ToolDefinition[]
+// Single factory: createGmailTools(opts) → ConnectorToolDefinition[]
 
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createGmailClient } from './client';
 
@@ -63,22 +63,24 @@ export type GmailAdapterOptions =
 
 /**
  * Create all 25 Gmail tools using the provided OAuth access token.
- * Returns a flat ToolDefinition[] ready to register in a ToolRegistry.
+ * Returns a flat ConnectorToolDefinition[]: risk and default approval come
+ * from the operation descriptors, applied by ADAPTER_REGISTRY (issue #735).
  *
  * Tool count: 25
  * Read (9):        gmail_list_messages, gmail_get_message, gmail_list_threads,
  *                  gmail_get_thread, gmail_list_labels, gmail_get_label,
  *                  gmail_list_drafts, gmail_get_attachment, gmail_list_history
- * Write (13):      gmail_send_email, gmail_reply_message, gmail_forward_message,
+ * Write (11):      gmail_reply_message, gmail_forward_message,
  *                  gmail_modify_labels, gmail_trash_message, gmail_untrash_message,
  *                  gmail_modify_thread_labels, gmail_trash_thread,
  *                  gmail_create_label, gmail_update_label,
- *                  gmail_create_draft, gmail_update_draft, gmail_send_draft
- * Destructive (3): gmail_delete_message, gmail_delete_label, gmail_delete_draft
+ *                  gmail_create_draft, gmail_update_draft
+ * Destructive (5): gmail_send_email, gmail_send_draft, gmail_delete_message,
+ *                  gmail_delete_label, gmail_delete_draft
  */
 export function createGmailTools(
   opts: GmailAdapterOptions,
-): ToolDefinition<z.ZodTypeAny, unknown>[] {
+): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   const getAccessToken =
     'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
   const gmail = createGmailClient(getAccessToken);
@@ -114,7 +116,7 @@ export function createGmailTools(
     createDeleteMessageTool(gmail),
     createDeleteLabelTool(gmail),
     createDeleteDraftTool(gmail),
-  ] as unknown as ToolDefinition<z.ZodTypeAny, unknown>[];
+  ] as unknown as ConnectorToolDefinition<z.ZodTypeAny, unknown>[];
 }
 
 // Re-export error types for consumers

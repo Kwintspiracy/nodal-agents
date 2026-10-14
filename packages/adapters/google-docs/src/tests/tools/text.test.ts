@@ -82,10 +82,6 @@ describe('docs_insert_text', () => {
       tool.execute({ document_id: 'missing', text: 'Hi', index: 1 }, {} as never),
     ).rejects.toMatchObject({ code: 'docs_not_found' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createInsertTextTool(docs).riskLevel).toBe('write');
-  });
 });
 
 // ── docs_append_text ───────────────────────────────────────────────────────
@@ -149,10 +145,6 @@ describe('docs_append_text', () => {
     await expect(
       tool.execute({ document_id: 'doc1', text: 'text' }, {} as never),
     ).rejects.toMatchObject({ code: 'docs_unauthorized' });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createAppendTextTool(docs).riskLevel).toBe('write');
   });
 });
 
@@ -247,10 +239,6 @@ describe('docs_replace_text', () => {
       tool.execute({ document_id: 'doc1', find: 'x', replace: 'y' }, {} as never),
     ).rejects.toMatchObject({ code: 'docs_forbidden' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createReplaceTextTool(docs).riskLevel).toBe('write');
-  });
 });
 
 // ── docs_delete_content_range ─────────────────────────────────────────────
@@ -322,9 +310,5 @@ describe('docs_delete_content_range', () => {
     await expect(
       tool.execute({ document_id: 'doc1', start_index: 1, end_index: 5 }, {} as never),
     ).rejects.toMatchObject({ code: 'docs_forbidden' });
-  });
-
-  it('has riskLevel destructive', () => {
-    expect(createDeleteContentRangeTool(docs).riskLevel).toBe('destructive');
   });
 });

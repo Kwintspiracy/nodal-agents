@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-drive — drive_copy_file tool
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { drive_v3 } from 'googleapis';
 import { mapDriveError } from '../errors';
 
@@ -19,12 +19,11 @@ export type CopyFileOutput = {
 
 export function createCopyFileTool(
   drive: drive_v3.Drive,
-): ToolDefinition<typeof CopyFileInput, CopyFileOutput> {
+): ConnectorToolDefinition<typeof CopyFileInput, CopyFileOutput> {
   return {
     name: 'drive_copy_file',
     description: 'Create a copy of a file in Google Drive.',
     inputSchema: CopyFileInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const body: drive_v3.Schema$File = {};

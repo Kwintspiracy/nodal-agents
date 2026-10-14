@@ -2,7 +2,7 @@
 // set_basic_filter, clear_basic_filter, sort_range
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { sheets_v4 } from 'googleapis';
 import { mapSheetsError } from '../errors';
 import {
@@ -37,7 +37,7 @@ export type SetBasicFilterOutput = {
 
 export function createSetBasicFilterTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof SetBasicFilterInput, SetBasicFilterOutput> {
+): ConnectorToolDefinition<typeof SetBasicFilterInput, SetBasicFilterOutput> {
   return {
     name: 'sheets_set_basic_filter',
     description:
@@ -45,7 +45,6 @@ export function createSetBasicFilterTool(
       'Adds dropdown arrows to the header row for filtering. ' +
       'Uses zero-based row/column indices.',
     inputSchema: SetBasicFilterInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         await sheets.spreadsheets.batchUpdate({
@@ -84,12 +83,11 @@ export type ClearBasicFilterOutput = {
 
 export function createClearBasicFilterTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof ClearBasicFilterInput, ClearBasicFilterOutput> {
+): ConnectorToolDefinition<typeof ClearBasicFilterInput, ClearBasicFilterOutput> {
   return {
     name: 'sheets_clear_basic_filter',
     description: 'Remove the basic auto-filter from a sheet tab.',
     inputSchema: ClearBasicFilterInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         await sheets.spreadsheets.batchUpdate({
@@ -146,7 +144,7 @@ export type SortRangeOutput = {
 
 export function createSortRangeTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof SortRangeInput, SortRangeOutput> {
+): ConnectorToolDefinition<typeof SortRangeInput, SortRangeOutput> {
   return {
     name: 'sheets_sort_range',
     description:
@@ -154,7 +152,6 @@ export function createSortRangeTool(
       'Supports multi-level sort (primary + secondary columns). ' +
       'Uses zero-based row/column indices.',
     inputSchema: SortRangeInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         await sheets.spreadsheets.batchUpdate({

@@ -84,10 +84,6 @@ describe('notion_list_users', () => {
       code: 'notion_unauthorized',
     });
   });
-
-  it('has riskLevel read', () => {
-    expect(createListUsersTool(client).riskLevel).toBe('read');
-  });
 });
 
 // ── notion_get_user ───────────────────────────────────────────────────────────
@@ -137,9 +133,5 @@ describe('notion_get_user', () => {
     await expect(tool.execute({ user_id: 'x' }, {} as never)).rejects.toMatchObject({
       code: 'notion_rate_limited',
     });
-  });
-
-  it('has riskLevel read', () => {
-    expect(createGetUserTool(client).riskLevel).toBe('read');
   });
 });

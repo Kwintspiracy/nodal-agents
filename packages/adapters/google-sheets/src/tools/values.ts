@@ -3,7 +3,7 @@
 // clear_range, batch_update_values, find_rows
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { sheets_v4 } from 'googleapis';
 import { mapSheetsError, SheetsAdapterError } from '../errors';
 import { coerceGrid } from '../helpers/value-coerce';
@@ -53,14 +53,13 @@ export type ReadRangeOutput = {
 
 export function createReadRangeTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof ReadRangeInput, ReadRangeOutput> {
+): ConnectorToolDefinition<typeof ReadRangeInput, ReadRangeOutput> {
   return {
     name: 'sheets_read_range',
     description:
       'Read a specific A1-notation range from a Google Sheet. Returns a 2D array of cell values. ' +
       'Capped at 10,000 rows — use a smaller range if exceeded.',
     inputSchema: ReadRangeInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const parsed = parseRange(input.range); // validate syntax
@@ -104,7 +103,7 @@ export type ReadAllOutput = {
 
 export function createReadAllTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof ReadAllInput, ReadAllOutput> {
+): ConnectorToolDefinition<typeof ReadAllInput, ReadAllOutput> {
   return {
     name: 'sheets_read_all',
     // audit#2026-07-07 F10: unlike sheets_read_range, this always targets the
@@ -118,7 +117,6 @@ export function createReadAllTool(
       'Note: because this reads a whole tab, the cap is only enforced AFTER the full sheet is ' +
       'fetched — prefer sheets_read_range with an explicit row-bounded range for very large sheets.',
     inputSchema: ReadAllInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         // Resolve sheet name: if not given, fetch metadata to get first sheet
@@ -187,14 +185,13 @@ export type BatchReadRangesOutput = {
 
 export function createBatchReadRangesTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof BatchReadRangesInput, BatchReadRangesOutput> {
+): ConnectorToolDefinition<typeof BatchReadRangesInput, BatchReadRangesOutput> {
   return {
     name: 'sheets_batch_read_ranges',
     description:
       'Read multiple A1-notation ranges from a spreadsheet in a single API call. ' +
       'Efficient for dashboards that need data from several tabs or ranges at once.',
     inputSchema: BatchReadRangesInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         for (const r of input.ranges) parseRange(r); // validate all
@@ -245,14 +242,13 @@ export type WriteRangeOutput = {
 
 export function createWriteRangeTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof WriteRangeInput, WriteRangeOutput> {
+): ConnectorToolDefinition<typeof WriteRangeInput, WriteRangeOutput> {
   return {
     name: 'sheets_write_range',
     description:
       'Write (overwrite) a 2D array of values into a Google Sheet range. ' +
       'Existing values in the range are replaced. Use sheets_append_row to add rows at the end.',
     inputSchema: WriteRangeInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         parseRange(input.range);
@@ -305,14 +301,13 @@ export type AppendRowOutput = {
 
 export function createAppendRowTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof AppendRowInput, AppendRowOutput> {
+): ConnectorToolDefinition<typeof AppendRowInput, AppendRowOutput> {
   return {
     name: 'sheets_append_row',
     description:
       'Append one or more rows to the end of a Google Sheet (after the last row with data). ' +
       "Pass a 2D array — e.g. [['Alice', 95]] for one row or [['Alice',95],['Bob',87]] for multiple.",
     inputSchema: AppendRowInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const res = await sheets.spreadsheets.values.append({
@@ -351,14 +346,13 @@ export type ClearRangeOutput = {
 
 export function createClearRangeTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof ClearRangeInput, ClearRangeOutput> {
+): ConnectorToolDefinition<typeof ClearRangeInput, ClearRangeOutput> {
   return {
     name: 'sheets_clear_range',
     description:
       'Clear values from a range in a Google Sheet. Cell formatting and structure are preserved. ' +
       'To delete rows entirely, use sheets_delete_sheet and recreate, or use write with empty values.',
     inputSchema: ClearRangeInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         parseRange(input.range);
@@ -403,13 +397,12 @@ export type BatchUpdateValuesOutput = {
 
 export function createBatchUpdateValuesTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof BatchUpdateValuesInput, BatchUpdateValuesOutput> {
+): ConnectorToolDefinition<typeof BatchUpdateValuesInput, BatchUpdateValuesOutput> {
   return {
     name: 'sheets_batch_update_values',
     description:
       'Write values to multiple ranges in a single API call. More efficient than calling sheets_write_range repeatedly.',
     inputSchema: BatchUpdateValuesInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         for (const u of input.updates) parseRange(u.range);
@@ -472,7 +465,7 @@ export type FindRowsOutput = {
 
 export function createFindRowsTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof FindRowsInput, FindRowsOutput> {
+): ConnectorToolDefinition<typeof FindRowsInput, FindRowsOutput> {
   return {
     name: 'sheets_find_rows',
     description:
@@ -480,7 +473,6 @@ export function createFindRowsTool(
       'More efficient than reading all rows when you know what you are looking for. ' +
       'Provide exactly one of: equals or contains.',
     inputSchema: FindRowsInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const provided = [input.equals, input.contains].filter((v) => v !== undefined);

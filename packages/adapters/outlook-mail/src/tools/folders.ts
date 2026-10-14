@@ -2,7 +2,7 @@
 // list (Outlook's equivalent of Gmail labels for scoping/moving messages)
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { Client } from '@microsoft/microsoft-graph-client';
 import type { MailFolder } from '@microsoft/microsoft-graph-types';
 import { mapOutlookError } from '../errors';
@@ -34,14 +34,13 @@ export type ListFoldersOutput = {
 
 export function createListFoldersTool(
   client: Client,
-): ToolDefinition<typeof ListFoldersInput, ListFoldersOutput> {
+): ConnectorToolDefinition<typeof ListFoldersInput, ListFoldersOutput> {
   return {
     name: 'outlook_list_folders',
     description:
       'List all Outlook mail folders (Inbox, Sent Items, Drafts, user-created folders, etc). ' +
       'Returns folder IDs needed for outlook_move_message and outlook_list_messages.',
     inputSchema: ListFoldersInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const maxResults = Math.min(input.max_results ?? 50, 500);

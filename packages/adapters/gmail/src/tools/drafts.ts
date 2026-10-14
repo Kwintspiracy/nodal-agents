@@ -2,7 +2,7 @@
 // list, create, update, send, delete
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { gmail_v1 } from 'googleapis';
 import { mapGmailError } from '../errors';
 import { paginateGmail } from '../helpers/pagination';
@@ -58,14 +58,13 @@ export type ListDraftsOutput = {
 
 export function createListDraftsTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof ListDraftsInput, ListDraftsOutput> {
+): ConnectorToolDefinition<typeof ListDraftsInput, ListDraftsOutput> {
   return {
     name: 'gmail_list_drafts',
     description:
       'List Gmail drafts with their IDs, subjects and snippets. ' +
       'Use draft_id with gmail_send_draft to send or gmail_update_draft to edit.',
     inputSchema: ListDraftsInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const maxResults = Math.min(input.max_results ?? 20, 500);
@@ -152,14 +151,13 @@ export type CreateDraftOutput = {
 
 export function createCreateDraftTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof CreateDraftInput, CreateDraftOutput> {
+): ConnectorToolDefinition<typeof CreateDraftInput, CreateDraftOutput> {
   return {
     name: 'gmail_create_draft',
     description:
       'Create a draft email in Gmail (not sent). ' +
       'Use reply_to_message_id to create a reply draft in-thread with correct threading headers.',
     inputSchema: CreateDraftInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         let threadId: string | undefined;
@@ -244,14 +242,13 @@ export type UpdateDraftOutput = {
 
 export function createUpdateDraftTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof UpdateDraftInput, UpdateDraftOutput> {
+): ConnectorToolDefinition<typeof UpdateDraftInput, UpdateDraftOutput> {
   return {
     name: 'gmail_update_draft',
     description:
       'Overwrite an existing Gmail draft with new content. ' +
       'Use this to revise a draft before sending.',
     inputSchema: UpdateDraftInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const raw = buildRfc2822Message({
@@ -291,13 +288,12 @@ export type SendDraftOutput = {
 
 export function createSendDraftTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof SendDraftInput, SendDraftOutput> {
+): ConnectorToolDefinition<typeof SendDraftInput, SendDraftOutput> {
   return {
     name: 'gmail_send_draft',
     description:
       'Send an existing Gmail draft. The draft is dispatched as an email and can no longer be edited.',
     inputSchema: SendDraftInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const res = await gmail.users.drafts.send({
@@ -328,12 +324,11 @@ export type DeleteDraftOutput = {
 
 export function createDeleteDraftTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof DeleteDraftInput, DeleteDraftOutput> {
+): ConnectorToolDefinition<typeof DeleteDraftInput, DeleteDraftOutput> {
   return {
     name: 'gmail_delete_draft',
     description: 'Permanently delete a Gmail draft. This is irreversible.',
     inputSchema: DeleteDraftInput,
-    riskLevel: 'destructive',
     async execute(input) {
       try {
         await gmail.users.drafts.delete({

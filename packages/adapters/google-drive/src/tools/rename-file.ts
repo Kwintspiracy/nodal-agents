@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-drive — drive_rename_file tool
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { drive_v3 } from 'googleapis';
 import { mapDriveError } from '../errors';
 
@@ -17,12 +17,11 @@ export type RenameFileOutput = {
 
 export function createRenameFileTool(
   drive: drive_v3.Drive,
-): ToolDefinition<typeof RenameFileInput, RenameFileOutput> {
+): ConnectorToolDefinition<typeof RenameFileInput, RenameFileOutput> {
   return {
     name: 'drive_rename_file',
     description: 'Rename a file in Google Drive.',
     inputSchema: RenameFileInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const res = await drive.files.update({

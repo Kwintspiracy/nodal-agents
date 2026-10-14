@@ -11,7 +11,7 @@
 // is better served by a future suspend/resume flow; this tool targets images.)
 
 import { z } from 'zod';
-import type { ToolDefinition, ToolContext } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition, ToolContext } from '@nodal-agents/tools';
 import type { PoyoClient } from '../client.ts';
 import { PoyoApiError, wrapPoyoError } from '../errors.ts';
 
@@ -59,13 +59,12 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 export function makePoyoGenerateImageTool(
   client: PoyoClient,
   poll: PoyoPollConfig = DEFAULT_POLL,
-): ToolDefinition<typeof GenerateImageInput, GenerateImageOutput> {
+): ConnectorToolDefinition<typeof GenerateImageInput, GenerateImageOutput> {
   return {
     name: 'poyo_generate_image',
     description:
       'Generate an image from a text prompt using Poyo. Submits the job, waits for it to finish, and returns the resulting image URL(s). Use `model` to pick a Poyo image model (default gpt-4o-image) and `size` for the aspect ratio.',
     inputSchema: GenerateImageInput,
-    riskLevel: 'write',
     async execute(input, _ctx: ToolContext) {
       const model = input.model ?? DEFAULT_MODEL;
       try {

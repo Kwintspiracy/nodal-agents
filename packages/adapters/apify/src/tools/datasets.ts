@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-apify — dataset tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { ApifyClient } from '../client.ts';
 import { wrapApifyError } from '../errors.ts';
 
@@ -66,13 +66,12 @@ export type ListDatasetsOutput = {
 
 export function makeApifyListDatasetsTool(
   client: ApifyClient,
-): ToolDefinition<typeof ListDatasetsInput, ListDatasetsOutput> {
+): ConnectorToolDefinition<typeof ListDatasetsInput, ListDatasetsOutput> {
   return {
     name: 'apify_list_datasets',
     description:
       "List datasets in the user's Apify account. Returns dataset IDs and names needed for apify_get_dataset_items.",
     inputSchema: ListDatasetsInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const result = await client.datasets().list({
@@ -134,14 +133,13 @@ export type GetDatasetItemsOutput = {
 
 export function makeApifyGetDatasetItemsTool(
   client: ApifyClient,
-): ToolDefinition<typeof GetDatasetItemsInput, GetDatasetItemsOutput> {
+): ConnectorToolDefinition<typeof GetDatasetItemsInput, GetDatasetItemsOutput> {
   return {
     name: 'apify_get_dataset_items',
     description:
       'Retrieve items from an Apify dataset. Use the datasetId returned by apify_run_actor or from apify_list_datasets. Supports limit/offset pagination (max 1000 items per call). ' +
       `Each item is capped at ${ITEM_CHAR_CAP} chars of JSON — see the truncated flag.`,
     inputSchema: GetDatasetItemsInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const result = await client.dataset(input.datasetId).listItems({

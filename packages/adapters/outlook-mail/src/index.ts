@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-outlook-mail — public API
-// Single factory: createOutlookMailTools(opts) → ToolDefinition[]
+// Single factory: createOutlookMailTools(opts) → ConnectorToolDefinition[]
 
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createOutlookClient } from './client';
 
@@ -53,7 +53,8 @@ export type OutlookMailAdapterOptions =
 
 /**
  * Create all 15 Outlook Mail tools using the provided Microsoft Graph access token.
- * Returns a flat ToolDefinition[] ready to register in a ToolRegistry.
+ * Returns a flat ConnectorToolDefinition[]: risk and default approval come
+ * from the operation descriptors, applied by ADAPTER_REGISTRY (issue #735).
  *
  * Tool count: 15
  * Read (5):        outlook_list_messages, outlook_get_message, outlook_list_drafts,
@@ -65,7 +66,7 @@ export type OutlookMailAdapterOptions =
  */
 export function createOutlookMailTools(
   opts: OutlookMailAdapterOptions,
-): ToolDefinition<z.ZodTypeAny, unknown>[] {
+): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   const getAccessToken =
     'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
   const client = createOutlookClient(getAccessToken);
@@ -91,7 +92,7 @@ export function createOutlookMailTools(
     createSendEmailTool(client),
     createSendDraftTool(client),
     createDeleteDraftTool(client),
-  ] as unknown as ToolDefinition<z.ZodTypeAny, unknown>[];
+  ] as unknown as ConnectorToolDefinition<z.ZodTypeAny, unknown>[];
 }
 
 // Re-export error types for consumers

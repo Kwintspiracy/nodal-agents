@@ -797,7 +797,10 @@ function RiskBadge({ op }: { op: OperationDescriptor }) {
       <span className={`${base} bg-warn/10 text-warn`}>{op.requiresApproval ? '⚠ ' : ''}write</span>
     );
   }
-  return <span className={`${base} bg-warn-bg text-err`}>⚠ destr</span>;
+  // ⚠ says the operation asks first by default, for every risk (issue #735).
+  return (
+    <span className={`${base} bg-warn-bg text-err`}>{op.requiresApproval ? '⚠ ' : ''}destr</span>
+  );
 }
 
 function GearIcon() {

@@ -2,7 +2,7 @@
 // Verifies: tool count, unique names, correct risk levels, schema validation
 
 import { describe, it, expect } from 'vitest';
-import { createOutlookMailTools } from '../index';
+import { createOutlookMailTools, OUTLOOK_MAIL_OPERATIONS } from '../index';
 import { z } from 'zod';
 
 // Use a fake token — tools are instantiated but never called here.
@@ -34,7 +34,7 @@ describe('createOutlookMailTools integration', () => {
     }
   });
 
-  it('read tools have riskLevel read', () => {
+  it('read operations have risk read in the descriptor', () => {
     const readTools = [
       'outlook_list_messages',
       'outlook_get_message',
@@ -42,13 +42,13 @@ describe('createOutlookMailTools integration', () => {
       'outlook_list_folders',
       'outlook_get_attachment',
     ];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(OUTLOOK_MAIL_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of readTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be read`).toBe('read');
+      expect(toolMap[name]?.risk, `${name} should be read`).toBe('read');
     }
   });
 
-  it('write tools have riskLevel write', () => {
+  it('write operations have risk write in the descriptor', () => {
     const writeTools = [
       'outlook_reply_message',
       'outlook_forward_message',
@@ -58,17 +58,17 @@ describe('createOutlookMailTools integration', () => {
       'outlook_create_draft',
       'outlook_update_draft',
     ];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(OUTLOOK_MAIL_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of writeTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be write`).toBe('write');
+      expect(toolMap[name]?.risk, `${name} should be write`).toBe('write');
     }
   });
 
-  it('destructive tools have riskLevel destructive', () => {
+  it('destructive operations have risk destructive in the descriptor', () => {
     const destructiveTools = ['outlook_send_email', 'outlook_send_draft', 'outlook_delete_draft'];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(OUTLOOK_MAIL_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of destructiveTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be destructive`).toBe('destructive');
+      expect(toolMap[name]?.risk, `${name} should be destructive`).toBe('destructive');
     }
   });
 
@@ -87,17 +87,17 @@ describe('createOutlookMailTools integration', () => {
 
   // Tool count breakdown
   it('has exactly 5 read tools', () => {
-    const readCount = tools.filter((t) => t.riskLevel === 'read').length;
+    const readCount = OUTLOOK_MAIL_OPERATIONS.filter((o) => o.risk === 'read').length;
     expect(readCount).toBe(5);
   });
 
   it('has exactly 7 write tools', () => {
-    const writeCount = tools.filter((t) => t.riskLevel === 'write').length;
+    const writeCount = OUTLOOK_MAIL_OPERATIONS.filter((o) => o.risk === 'write').length;
     expect(writeCount).toBe(7);
   });
 
   it('has exactly 3 destructive tools', () => {
-    const destructiveCount = tools.filter((t) => t.riskLevel === 'destructive').length;
+    const destructiveCount = OUTLOOK_MAIL_OPERATIONS.filter((o) => o.risk === 'destructive').length;
     expect(destructiveCount).toBe(3);
   });
 

@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-drive — drive_export_file tool
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { drive_v3 } from 'googleapis';
 import { mapDriveError } from '../errors';
 
@@ -28,13 +28,12 @@ export type ExportFileOutput = {
 
 export function createExportFileTool(
   drive: drive_v3.Drive,
-): ToolDefinition<typeof ExportFileInput, ExportFileOutput> {
+): ConnectorToolDefinition<typeof ExportFileInput, ExportFileOutput> {
   return {
     name: 'drive_export_file',
     description:
       'Export a Google Workspace file (Doc, Sheet, Slide) to a different format. Common: Google Doc → text/plain or application/pdf, Google Sheet → text/csv, Google Slides → application/pdf. Use drive_read_file for regular (non-Workspace) files.',
     inputSchema: ExportFileInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const isTextMime =

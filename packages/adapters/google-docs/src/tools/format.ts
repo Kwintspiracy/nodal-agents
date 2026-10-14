@@ -2,7 +2,7 @@
 // docs_format_text, docs_apply_named_style, docs_batch_update
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { docs_v1 } from 'googleapis';
 import { mapDocsError, DocsAdapterError } from '../errors';
 import { buildUpdateTextStyleRequest, buildApplyNamedStyleRequest } from '../helpers/batch-update';
@@ -60,7 +60,7 @@ export type FormatTextOutput = {
 
 export function createFormatTextTool(
   docs: docs_v1.Docs,
-): ToolDefinition<typeof FormatTextInput, FormatTextOutput> {
+): ConnectorToolDefinition<typeof FormatTextInput, FormatTextOutput> {
   return {
     name: 'docs_format_text',
     description:
@@ -68,7 +68,6 @@ export function createFormatTextTool(
       'bold, italic, underline, strikethrough, font size, foreground color, and font family. ' +
       'Use docs_get to find the start/end indices of the text to format.',
     inputSchema: FormatTextInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         if (input.end_index <= input.start_index) {
@@ -180,7 +179,7 @@ export type ApplyNamedStyleOutput = {
 
 export function createApplyNamedStyleTool(
   docs: docs_v1.Docs,
-): ToolDefinition<typeof ApplyNamedStyleInput, ApplyNamedStyleOutput> {
+): ConnectorToolDefinition<typeof ApplyNamedStyleInput, ApplyNamedStyleOutput> {
   return {
     name: 'docs_apply_named_style',
     description:
@@ -188,7 +187,6 @@ export function createApplyNamedStyleTool(
       'HEADING_1 through HEADING_6, TITLE, SUBTITLE, or NORMAL_TEXT. ' +
       'Use docs_get to find the paragraph start/end indices.',
     inputSchema: ApplyNamedStyleInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         if (input.end_index <= input.start_index) {
@@ -251,7 +249,7 @@ export type BatchUpdateOutput = {
 
 export function createBatchUpdateTool(
   docs: docs_v1.Docs,
-): ToolDefinition<typeof BatchUpdateInput, BatchUpdateOutput> {
+): ConnectorToolDefinition<typeof BatchUpdateInput, BatchUpdateOutput> {
   return {
     name: 'docs_batch_update',
     description:
@@ -260,7 +258,6 @@ export function createBatchUpdateTool(
       'updateParagraphStyle, replaceAllText, insertTable, insertInlineImage, and more. ' +
       'All requests are applied atomically in order. Use this when other docs_* tools do not cover your use case.',
     inputSchema: BatchUpdateInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const res = await docs.documents.batchUpdate({
