@@ -38,11 +38,12 @@ with the app. Twenty-three pull requests, no database migration.
 - **The shell asks in more cases under the default policy.** Opening a program,
   printing or sending a message from a command has its own row in the shell
   checklist, "Open programs, print or send", set to ask. This includes agents
-  that were set to Yolo before this release. Deleting with `erase` or `ri`,
+  whose shell kinds were all set to allow before this release. Deleting with `erase` or `ri`,
   installing with `msiexec`, `dpkg` or `snap`, and a script whose lines delete or
   install also ask now. (#682, #683, #710)
 - **An allowed kind asks when the command does not say what it acts on.** Agents
-  in Yolo mode ask a little more, and only in those cases. (#730)
+  whose shell kinds are set to allow ask a little more, and only in those
+  cases. (#730)
 - **No database migration.** Nothing to apply on upgrade.
 
 **Connectors that ask before they act**
@@ -68,8 +69,9 @@ with the app. Twenty-three pull requests, no database migration.
 - **A review verdict reaches the agent that asked for it**, through any number of
   delegations, and a task that delivered only a verdict is no longer shown as
   "no result". (#712)
-- **A turn that reaches its output limit is refused**, whatever the provider
-  reports as the reason it stopped. Every request now states its own limit. (#571)
+- **When Nodal knows a model's output limit and the request leaves room for it,
+  the request states it**, and a turn that reaches it is refused even when the
+  provider does not say it was cut. (#571)
 
 **Shell commands read for what they do**
 
