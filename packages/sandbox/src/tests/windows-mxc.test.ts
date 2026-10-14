@@ -1,7 +1,6 @@
 // windows-mxc.test.ts — le backend MXC, sondé et démarré pour de vrai.
 
 import { describe, it, expect } from 'vitest';
-import { tmpdir } from 'node:os';
 import { mxcBackend, MXC_BACKEND_NAME } from '../windows-mxc';
 import { SandboxStartError } from '../types';
 
@@ -15,9 +14,7 @@ describe('mxcBackend — SDK absent (tous systèmes)', () => {
       code: 'SANDBOX_BACKEND_MISSING',
       reason: "Cannot find package '@microsoft/mxc-sdk'",
     });
-    await expect(
-      backend.start({ target: { command: 'exit 0' }, cwd: tmpdir(), env: {}, writableRoots: [] }),
-    ).rejects.toBeInstanceOf(SandboxStartError);
+    await expect(backend.openContainer([], {})).rejects.toBeInstanceOf(SandboxStartError);
   });
 });
 
@@ -82,10 +79,10 @@ describe.runIf(isWindows && tier === 'base-container')(
       });
     });
 
-    it('un démarrage que MXC refuse lève SandboxStartError avec SA raison (ici : LOCALAPPDATA absent)', async () => {
+    it('un conteneur que MXC refuse d’ouvrir lève SandboxStartError avec SA raison (ici : LOCALAPPDATA absent)', async () => {
       const env = { SYSTEMROOT: process.env['SYSTEMROOT'], PATH: process.env['PATH'] };
       const error = await mxcBackend()
-        .start({ target: { command: 'exit 0' }, cwd: tmpdir(), env, writableRoots: [] })
+        .openContainer([], env)
         .then(
           () => null,
           (e: unknown) => e,

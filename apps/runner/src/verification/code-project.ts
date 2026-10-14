@@ -37,6 +37,7 @@ import {
   projectKey,
 } from '@nodal-agents/shared';
 import type { RunVerdict } from '@nodal-agents/shared';
+import { jobProcessScope } from '@nodal-agents/sandbox';
 import { buildChildEnv, isGreen, runCommandSequence } from '@nodal-agents/tools';
 // Le CONTRAT, jamais le registre : le registre importe CE fichier, l'importer
 // en retour ferait un cycle que `pnpm deps:check` refuse (CI de la PR #46).
@@ -158,6 +159,9 @@ async function runProof(
     // Le même bac à sable que `run_command` (#628) : une commande de preuve
     // n'écrit que dans les dossiers du job.
     confinement: { writableRoots: scope.writableRoots },
+    // Le périmètre du job : une preuve qui lance un serveur ne le laisse pas
+    // derrière elle — il meurt quand le job est fini.
+    scope: jobProcessScope(scope.jobId),
     keep: 'tail',
     maxChars: MAX_TAIL_CHARS,
     onCommandDone: async (step) => {

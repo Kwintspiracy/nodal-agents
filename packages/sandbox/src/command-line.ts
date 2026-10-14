@@ -37,12 +37,35 @@ export function quoteWindowsArg(arg: string): string {
   return out + '\\'.repeat(backslashes * 2) + '"';
 }
 
+/**
+ * Ce qu'il faut à `child_process.spawn` pour produire EXACTEMENT la ligne de
+ * commande d'une cible : le programme à chercher (`file`), et la ligne passée
+ * telle quelle (`windowsVerbatimArguments`) sous la forme `argv0 + ' ' + rest`.
+ * L'hôte du conteneur d'un job (job-host.ts) lance ainsi chaque commande.
+ */
+export interface WindowsSpawnParts {
+  readonly file: string;
+  readonly argv0: string;
+  readonly rest: string;
+}
+
+/** Les morceaux de la ligne Windows d'une cible. `comspec` : celui de l'environnement de l'enfant. */
+export function windowsSpawnParts(target: LaunchTarget, comspec: string): WindowsSpawnParts {
+  if ('command' in target) {
+    return { file: comspec, argv0: comspec, rest: `/d /s /c "${target.command}"` };
+  }
+  if (target.windowsVerbatimArguments === true) {
+    return { file: target.file, argv0: target.file, rest: target.args.join(' ') };
+  }
+  return {
+    file: target.file,
+    argv0: quoteWindowsArg(target.file),
+    rest: target.args.map(quoteWindowsArg).join(' '),
+  };
+}
+
 /** La ligne de commande Windows d'une cible. `comspec` : celui de l'environnement de l'enfant. */
 export function windowsCommandLine(target: LaunchTarget, comspec: string): string {
-  if ('command' in target) {
-    return `${comspec} /d /s /c "${target.command}"`;
-  }
-  const parts = [target.file, ...target.args];
-  if (target.windowsVerbatimArguments === true) return parts.join(' ');
-  return parts.map(quoteWindowsArg).join(' ');
+  const parts = windowsSpawnParts(target, comspec);
+  return parts.rest === '' ? parts.argv0 : `${parts.argv0} ${parts.rest}`;
 }

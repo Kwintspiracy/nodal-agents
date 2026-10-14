@@ -6,6 +6,7 @@
 // d'appels.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { closeJobProcessScope } from '@nodal-agents/sandbox';
 import { mkdtemp, rm, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,6 +42,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await closeJobProcessScope('code-project-test');
   for (let i = 0; i < 5; i++) {
     try {
       await rm(dir, { recursive: true, force: true });
@@ -162,7 +164,7 @@ describe('code-project — loadConfig', () => {
 
 describe('code-project — runProof @cap:verifier-un-livrable/moteur', () => {
   /** Le dossier de test est le seul inscriptible de la preuve (#628). */
-  const scope = (): ProofScope => ({ writableRoots: [dir] });
+  const scope = (): ProofScope => ({ writableRoots: [dir], jobId: 'code-project-test' });
   const readyOf = (commands: VerifyCommand[]): ReadyConfig => ({
     kind: 'ready',
     manifestHash: manifestHashOf(commands, projectKey(projectPath)),

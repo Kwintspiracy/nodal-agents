@@ -126,13 +126,19 @@ export interface ProofResult {
 }
 
 /**
- * Où une preuve qui LANCE des commandes peut écrire (#628) : les dossiers du
+ * Où une preuve qui LANCE des commandes peut écrire, et dans quel job (#628) : les dossiers du
  * job — ses workspaces, partagé compris, et le dossier attaché à la demande —,
  * résolus par la finalisation exactement comme l'exécution du job les
  * résout. Un vérificateur qui constate sans rien lancer l'ignore.
  */
 export interface ProofScope {
   readonly writableRoots: readonly string[];
+  /**
+   * Le job dont la preuve fait partie : ses commandes tournent dans le
+   * périmètre de ce job (@nodal-agents/sandbox, `jobProcessScope`), et ce
+   * qu'elles laissent tourner meurt avec lui.
+   */
+  readonly jobId: string;
 }
 
 /**

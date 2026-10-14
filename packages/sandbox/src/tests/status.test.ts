@@ -38,7 +38,7 @@ describe('createSandbox', () => {
         await new Promise((r) => setTimeout(r, 20));
         return { state: 'available', backend: 'fake' };
       },
-      start: async () => {
+      openContainer: async () => {
         throw new Error('not used');
       },
     };

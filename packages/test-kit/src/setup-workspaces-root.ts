@@ -17,3 +17,7 @@ process.env['NODALAI_WORKSPACES_ROOT'] ??= mkdtempSync(join(tmpdir(), 'nodalai-t
 // at this root, and a suite that runs `npm install` must not fill the real
 // ~/.nodalai/tool-cache.
 process.env['NODALAI_TOOL_CACHE_ROOT'] ??= mkdtempSync(join(tmpdir(), 'nodalai-test-cache-'));
+
+// And for the sandbox's own scripts (the job host, the MXC broker): written
+// where Nodal keeps them, so a test run writes them to a temp dir instead.
+process.env['NODALAI_SANDBOX_DIR'] ??= mkdtempSync(join(tmpdir(), 'nodalai-test-sandbox-'));

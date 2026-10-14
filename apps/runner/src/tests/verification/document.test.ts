@@ -20,7 +20,7 @@ import { DOCUMENT_MANIFEST_HASH, documentVerifier } from '../../verification/doc
 import type { ProofCommandRecord, ProofScope, ReadyConfig } from '../../verification/types.ts';
 
 /** Un document se constate sans rien lancer : la preuve n'a aucun dossier où écrire. */
-const NO_COMMANDS: ProofScope = { writableRoots: [] };
+const NO_COMMANDS: ProofScope = { writableRoots: [], jobId: 'document-test' };
 
 let dir = '';
 beforeAll(() => {

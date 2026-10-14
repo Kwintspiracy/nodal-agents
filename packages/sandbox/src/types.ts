@@ -45,14 +45,12 @@ export type LaunchTarget =
       readonly windowsVerbatimArguments?: boolean;
     };
 
-/** Une commande prête à être confinée. */
-export interface ConfinedLaunch {
+/** UNE commande à lancer dans le conteneur d'un job. */
+export interface CommandLaunch {
   readonly target: LaunchTarget;
   readonly cwd: string;
-  /** L'environnement EXACT de l'enfant — jamais complété par celui du runner. */
+  /** L'environnement EXACT de la commande — jamais complété par celui du runner. */
   readonly env: Readonly<Record<string, string | undefined>>;
-  /** Les dossiers inscriptibles, déjà résolus (`resolveWritableRoots`). */
-  readonly writableRoots: readonly string[];
 }
 
 /** Comment un processus a fini — trois issues, jamais confondues. */
@@ -66,12 +64,28 @@ export interface StartedProcess {
   readonly stdout: Readable | null;
   readonly stderr: Readable | null;
   /**
-   * Résolue quand le processus est sorti ET que ses flux sont fermés. Ne
-   * rejette jamais : une panne devient `{ kind: 'error' }`.
+   * Résolue quand la commande est sortie — son processus racine, puis ses
+   * flux vidés (borné : un processus d'arrière-plan qui garde le tuyau ne
+   * retient pas la commande). Ne rejette jamais : une panne devient
+   * `{ kind: 'error' }`.
    */
   readonly done: Promise<ProcessEnd>;
-  /** Tue la commande et tout ce qu'elle a lancé. Idempotent. */
+  /** Tue la commande et ce qu'elle a lancé (timeout, Stop). Idempotent. */
   kill(): void;
+}
+
+/**
+ * Le conteneur confiné d'UN job (#628, décision du 14/10) : toutes les
+ * commandes du job y tournent, et ce qu'elles lancent en arrière-plan y vit
+ * jusqu'à ce que le job finisse — un serveur démarré par une commande répond
+ * à la suivante. `close()` tue tout ce qu'il contient.
+ */
+export interface JobContainer {
+  /** Lève `SandboxStartError` si le conteneur ne peut pas lancer la commande. */
+  start(launch: CommandLaunch): Promise<StartedProcess>;
+  /** Le conteneur tourne encore (il peut mourir seul : son hôte tué de l'extérieur). */
+  readonly alive: boolean;
+  close(): Promise<void>;
 }
 
 /** Ce qu'un backend sait faire. */
@@ -79,10 +93,15 @@ export interface SandboxBackend {
   /** Sonde UNE fois par processus ; le résultat est mis en cache par l'appelant. */
   probe(): Promise<SandboxStatus>;
   /**
-   * Lance une commande confinée. LÈVE `SandboxStartError` si le bac à sable
-   * ne peut pas la démarrer : on ne lance jamais la commande sans lui.
+   * Ouvre un conteneur dont seuls `writableRoots` (déjà résolus) sont
+   * inscriptibles. `env` est l'environnement de son hôte. LÈVE
+   * `SandboxStartError` si le bac à sable ne peut pas l'ouvrir : rien ne
+   * tourne alors sans lui.
    */
-  start(launch: ConfinedLaunch): Promise<StartedProcess>;
+  openContainer(
+    writableRoots: readonly string[],
+    env: Readonly<Record<string, string | undefined>>,
+  ): Promise<JobContainer>;
 }
 
 /**

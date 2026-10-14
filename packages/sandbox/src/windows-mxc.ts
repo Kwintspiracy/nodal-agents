@@ -20,23 +20,31 @@
 //   - télémétrie coupée explicitement (`getTelemetryConsentStatus()` plantait
 //     Node sur la machine de l'essai : on n'y touche pas).
 //
-// Les processus que la commande laisse derrière elle — un petit-enfant
-// détaché, un `start /b` — meurent avec le conteneur à la fin de la commande
-// (mesure 1g, et `sandbox-windows.test.ts`).
+// UN CONTENEUR PAR JOB, pas par commande (décision du 14/10) : un hôte
+// (job-host.ts) y lance chaque commande du job, si bien que ce qu'une
+// commande laisse tourner en arrière-plan vit jusqu'à la fin du job, puis
+// meurt avec le conteneur quand le runner le ferme.
 //
 // Le SDK n'est chargé que sous Windows, et par `import()` : sous macOS et
 // Linux il n'est jamais lu, et son absence d'une installation se dit
 // (`SANDBOX_BACKEND_MISSING`) au lieu de faire tomber le runner au démarrage.
 
+import { spawn as spawnHostSide } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { finished } from 'node:stream/promises';
-import type { Readable } from 'node:stream';
+import { createRequire } from 'node:module';
+import { createServer, type AddressInfo, type Server, type Socket } from 'node:net';
+import { dirname } from 'node:path';
+import { PassThrough } from 'node:stream';
 import type * as MxcSdk from '@microsoft/mxc-sdk/v1';
-import type { ContainerRequest, MxcProcess } from '@microsoft/mxc-sdk/v1';
-import { windowsCommandLine } from './command-line';
+import type { ContainerRequest } from '@microsoft/mxc-sdk/v1';
+import { windowsSpawnParts } from './command-line';
+import { ensureJobHostScript } from './job-host';
+import { MxcBroker, type BrokeredContainer } from './mxc-broker';
 import {
   SandboxStartError,
-  type ConfinedLaunch,
+  type CommandLaunch,
+  type JobContainer,
   type ProcessEnd,
   type SandboxBackend,
   type SandboxStatus,
@@ -51,12 +59,8 @@ const ACCEPTED_TIER = 'base-container';
 /** Le nom sous lequel ce backend apparaît dans le statut et les journaux. */
 export const MXC_BACKEND_NAME = 'mxc-processcontainer';
 
-/**
- * Délai laissé aux flux de sortie pour se vider après la fin du processus.
- * Au-delà, on rend ce qui est capturé : un flux qui ne se ferme jamais ne
- * doit pas bloquer la commande (le processus, lui, est déjà fini).
- */
-const STREAM_DRAIN_MS = 2_000;
+/** Le temps laissé à l'hôte d'un conteneur pour se dire prêt. */
+const HOST_READY_TIMEOUT_MS = 60_000;
 
 /** Les lecteurs présents, déclarés en lecture seule. Lus une fois par processus. */
 let driveRoots: string[] | undefined;
@@ -70,71 +74,36 @@ function readableDriveRoots(): string[] {
   return driveRoots;
 }
 
-function toRequest(launch: ConfinedLaunch): ContainerRequest {
-  const environment: Record<string, string> = {};
-  for (const [k, v] of Object.entries(launch.env)) {
-    if (v !== undefined) environment[k] = v;
-  }
+function definedEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) if (v !== undefined) out[k] = v;
+  return out;
+}
+
+function comspecOf(env: Readonly<Record<string, string | undefined>>): string {
   // ComSpec de l'environnement de l'ENFANT, comme Node le lit pour `shell: true`.
-  const comspecKey = Object.keys(environment).find((k) => k.toUpperCase() === 'COMSPEC');
-  const comspec = (comspecKey && environment[comspecKey]) || 'cmd.exe';
+  const key = Object.keys(env).find((k) => k.toUpperCase() === 'COMSPEC');
+  return (key && env[key]) || 'cmd.exe';
+}
+
+function hostRequest(
+  script: string,
+  port: number,
+  token: string,
+  writableRoots: readonly string[],
+  environment: Record<string, string>,
+): ContainerRequest {
   return {
-    command: windowsCommandLine(launch.target, comspec),
+    command: `"${process.execPath}" "${script}" ${port} ${token}`,
     filesystem: {
-      readwritePaths: [...launch.writableRoots],
+      readwritePaths: [...writableRoots],
       readonlyPaths: readableDriveRoots(),
     },
     network: { egress: { default: 'allow' } },
     ui: { disable: false },
-    workingDirectory: launch.cwd,
+    workingDirectory: dirname(script),
     environment,
     inheritDefaultEnvironment: false,
-  };
-}
-
-async function drain(stream: Readable | null): Promise<void> {
-  if (!stream) return;
-  await Promise.race([
-    finished(stream).catch(() => undefined),
-    new Promise((r) => setTimeout(r, STREAM_DRAIN_MS)),
-  ]);
-}
-
-function wrap(proc: MxcProcess): StartedProcess {
-  // Les flux sont pris AVANT `wait()` : le SDK draine lui-même ceux qu'on
-  // n'a pas pris, et refuse ensuite qu'on les lise.
-  const stdout = proc.standardOutput;
-  const stderr = proc.standardError;
-  const done: Promise<ProcessEnd> = proc
-    .wait()
-    .then(async (w): Promise<ProcessEnd> => {
-      await Promise.all([drain(stdout), drain(stderr)]);
-      return { kind: 'exit', exitCode: w.exitCode };
-    })
-    .catch(
-      (e: unknown): ProcessEnd => ({
-        kind: 'error',
-        message: e instanceof Error ? e.message : String(e),
-      }),
-    )
-    .finally(() => {
-      try {
-        proc.dispose();
-      } catch {
-        /* déjà libéré */
-      }
-    });
-  return {
-    stdout,
-    stderr,
-    done,
-    kill: () => {
-      try {
-        proc.kill();
-      } catch {
-        /* déjà fini */
-      }
-    },
   };
 }
 
@@ -147,6 +116,231 @@ function messageOf(e: unknown): string {
 }
 
 /**
+ * Tue l'arbre d'une commande DEPUIS L'HÔTE Windows : `taskkill /T` lancé dans
+ * le conteneur est refusé (« The user name or password is incorrect »,
+ * mesuré le 14/10), lancé par le runner il tue l'arbre (mesuré aussi). Les
+ * autres processus du conteneur — ceux des autres commandes du job — vivent.
+ */
+function killTreeFromHost(pid: number): void {
+  try {
+    const tk = spawnHostSide('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+    tk.on('error', () => undefined);
+  } catch {
+    /* déjà mort */
+  }
+}
+
+interface PendingCommand {
+  stdout: PassThrough;
+  stderr: PassThrough;
+  pid: number | null;
+  killRequested: boolean;
+  resolve: (end: ProcessEnd) => void;
+}
+
+interface HostMessage {
+  hello?: string;
+  fatal?: string;
+  ready?: boolean;
+  id?: number;
+  started?: number;
+  s?: 'o' | 'e';
+  d?: string;
+  exit?: number | null;
+  signal?: string | null;
+  error?: string;
+}
+
+/**
+ * Le conteneur d'un job : un hôte MXC, joint par une connexion TCP qu'il
+ * ouvre lui-même vers ce serveur (job-host.ts dit pourquoi pas l'entrée
+ * standard), et les commandes qu'il porte.
+ */
+class MxcJobContainer implements JobContainer {
+  private nextId = 0;
+  private readonly pending = new Map<number, PendingCommand>();
+  private socket: Socket | null = null;
+  private dead = false;
+  private hostOutput = '';
+  private readonly exited: Promise<void>;
+  private readyWaiter: { resolve: () => void; reject: (e: Error) => void } | null = null;
+
+  constructor(
+    private readonly container: BrokeredContainer,
+    private readonly server: Server,
+    private readonly token: string,
+  ) {
+    server.on('connection', (sock) => this.accept(sock));
+    // Ce que la racine du conteneur a écrit (une panne de Node au démarrage
+    // de l'hôte) arrive avec son arrêt, par le courtier — cité, borné. Une
+    // panne de l'hôte plus tard arrive par la connexion (`fatal`).
+    this.exited = container.exited.then((r) => {
+      if (r.output.trim()) this.hostOutput = `${this.hostOutput}${r.output}`.slice(-2_000);
+      this.markDead();
+    });
+  }
+
+  get alive(): boolean {
+    return !this.dead;
+  }
+
+  private reason(code: string): string {
+    const said = this.hostOutput.trim();
+    return said ? `${code}: ${said}` : code;
+  }
+
+  private markDead(): void {
+    if (this.dead) return;
+    this.dead = true;
+    this.socket?.destroy();
+    this.server.close();
+    this.readyWaiter?.reject(new SandboxStartError(this.reason('SANDBOX_HOST_EXITED')));
+    for (const [id, cmd] of this.pending) {
+      this.pending.delete(id);
+      cmd.stdout.end();
+      cmd.stderr.end();
+      cmd.resolve(
+        cmd.killRequested
+          ? { kind: 'signal' }
+          : { kind: 'error', message: this.reason('SANDBOX_CONTAINER_EXITED') },
+      );
+    }
+  }
+
+  /** La première connexion qui présente le jeton est celle de l'hôte ; toute autre est fermée. */
+  private accept(sock: Socket): void {
+    if (this.socket || this.dead) {
+      sock.destroy();
+      return;
+    }
+    sock.setEncoding('utf8');
+    let buffer = '';
+    let greeted = false;
+    sock.on('data', (chunk: string) => {
+      buffer += chunk;
+      let at: number;
+      while ((at = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, at);
+        buffer = buffer.slice(at + 1);
+        let m: HostMessage;
+        try {
+          m = JSON.parse(line) as HostMessage;
+        } catch {
+          continue;
+        }
+        if (!greeted) {
+          if (m.hello !== this.token) {
+            sock.destroy();
+            return;
+          }
+          greeted = true;
+          this.socket = sock;
+          // La connexion perdue, l'hôte s'arrête : le conteneur est fini.
+          sock.on('close', () => this.container.kill());
+          this.onSocketReady?.();
+          continue;
+        }
+        this.handle(m);
+      }
+    });
+    sock.on('error', () => undefined);
+  }
+
+  private onSocketReady: (() => void) | null = null;
+
+  /** Attend l'hôte, lui donne l'environnement passé, attend son `ready`. */
+  async init(env: Record<string, string>): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new SandboxStartError(this.reason('SANDBOX_HOST_NOT_READY'))),
+        HOST_READY_TIMEOUT_MS,
+      );
+      this.readyWaiter = {
+        resolve: () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        reject: (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
+      };
+      this.onSocketReady = () => this.send({ op: 'init', env });
+      if (this.dead)
+        this.readyWaiter.reject(new SandboxStartError(this.reason('SANDBOX_HOST_EXITED')));
+    });
+    this.readyWaiter = null;
+  }
+
+  private send(message: unknown): void {
+    this.socket?.write(`${JSON.stringify(message)}\n`);
+  }
+
+  private handle(m: HostMessage): void {
+    if (m.fatal !== undefined) {
+      this.hostOutput = `${this.hostOutput}${m.fatal}`.slice(-2_000);
+      return;
+    }
+    if (m.ready) {
+      this.readyWaiter?.resolve();
+      return;
+    }
+    const cmd = m.id === undefined ? undefined : this.pending.get(m.id);
+    if (!cmd || m.id === undefined) return;
+    if (m.started !== undefined) {
+      cmd.pid = m.started;
+      if (cmd.killRequested) killTreeFromHost(m.started);
+    } else if (m.d !== undefined) {
+      (m.s === 'e' ? cmd.stderr : cmd.stdout).write(Buffer.from(m.d, 'base64'));
+    } else if (m.error !== undefined || 'exit' in m) {
+      this.pending.delete(m.id);
+      cmd.stdout.end();
+      cmd.stderr.end();
+      cmd.resolve(
+        m.error !== undefined
+          ? { kind: 'error', message: m.error }
+          : typeof m.exit === 'number'
+            ? { kind: 'exit', exitCode: m.exit }
+            : { kind: 'signal' },
+      );
+    }
+  }
+
+  async start(launch: CommandLaunch): Promise<StartedProcess> {
+    if (this.dead || !this.socket) {
+      throw new SandboxStartError(this.reason('SANDBOX_CONTAINER_EXITED'));
+    }
+    const id = ++this.nextId;
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    let resolve!: (end: ProcessEnd) => void;
+    const done = new Promise<ProcessEnd>((r) => (resolve = r));
+    const cmd: PendingCommand = { stdout, stderr, pid: null, killRequested: false, resolve };
+    this.pending.set(id, cmd);
+    const parts = windowsSpawnParts(launch.target, comspecOf(launch.env));
+    this.send({ op: 'run', id, ...parts, cwd: launch.cwd, env: definedEnv(launch.env) });
+    return {
+      stdout,
+      stderr,
+      done,
+      kill: () => {
+        if (cmd.killRequested) return;
+        cmd.killRequested = true;
+        if (cmd.pid !== null) killTreeFromHost(cmd.pid);
+      },
+    };
+  }
+
+  async close(): Promise<void> {
+    if (!this.dead) {
+      this.socket?.destroy();
+      this.container.kill();
+    }
+    await this.exited;
+  }
+}
+
+/**
  * Le backend MXC. `load` est injectable pour les tests (un SDK absent, un SDK
  * qui refuse) ; par défaut, le vrai paquet.
  */
@@ -155,20 +349,48 @@ export function mxcBackend(
 ): SandboxBackend {
   let mod: Promise<MxcModule> | undefined;
   const sdk = (): Promise<MxcModule> => (mod ??= load());
+  // Les conteneurs sont tenus par le courtier, hors du runner (mxc-broker.ts
+  // dit pourquoi) ; il charge le même SDK, par son chemin résolu ici.
+  let brokerClient: MxcBroker | undefined;
+  const broker = (): MxcBroker =>
+    (brokerClient ??= new MxcBroker(
+      createRequire(import.meta.url).resolve('@microsoft/mxc-sdk/v1'),
+    ));
 
-  const start = async (launch: ConfinedLaunch): Promise<StartedProcess> => {
-    let m: MxcModule;
+  const openContainer = async (
+    writableRoots: readonly string[],
+    env: Readonly<Record<string, string | undefined>>,
+  ): Promise<JobContainer> => {
     try {
-      m = await sdk();
+      await sdk();
     } catch (e) {
       throw new SandboxStartError(messageOf(e));
     }
+    const environment = definedEnv(env);
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+    const port = (server.address() as AddressInfo).port;
+    const token = randomBytes(24).toString('hex');
+    let opened: BrokeredContainer;
     try {
-      const proc = await m.spawn(toRequest(launch), { telemetry: { enabled: false } });
-      return wrap(proc);
+      opened = await broker().open(
+        hostRequest(ensureJobHostScript(), port, token, writableRoots, environment),
+      );
     } catch (e) {
-      throw new SandboxStartError(messageOf(e));
+      server.close();
+      throw e instanceof SandboxStartError ? e : new SandboxStartError(messageOf(e));
     }
+    const container = new MxcJobContainer(opened, server, token);
+    try {
+      await container.init(environment);
+    } catch (e) {
+      await container.close();
+      throw e instanceof SandboxStartError ? e : new SandboxStartError(messageOf(e));
+    }
+    return container;
   };
 
   const probe = async (): Promise<SandboxStatus> => {
@@ -189,15 +411,15 @@ export function mxcBackend(
       }
       // LE PALIER D'ISOLATION. Seul `base-container` est accepté, parce que
       // c'est le seul MESURÉ sain (Windows 11 Home 25H2, essai #731 et ce
-      // PR : +120 ms par commande). Sur le palier `appcontainer-dacl`
-      // (runner Windows Server 2025 de GitHub, mesuré le 14/10), déclarer
-      // les lecteurs en lecture fait RÉÉCRIRE par MXC les ACL de tout le
-      // lecteur C: : 820 s pour la première commande, 159 s pour la
-      // suivante, et des commandes parallèles refusées au bout de 30 s
-      // (`timed out acquiring DACL mutex on \\?\C:\`). Confiner à ce prix,
-      // en touchant aux droits de chaque fichier de l'utilisateur, n'est pas
-      // un mode dégradé acceptable : le bac à sable se dit indisponible, avec
-      // le palier et les avertissements de MXC cités tels quels.
+      // PR). Sur le palier `appcontainer-dacl` (runner Windows Server 2025 de
+      // GitHub, mesuré le 14/10), déclarer les lecteurs en lecture fait
+      // RÉÉCRIRE par MXC les ACL de tout le lecteur C: : 820 s pour la
+      // première commande, 159 s pour la suivante, et des commandes
+      // parallèles refusées au bout de 30 s (`timed out acquiring DACL mutex
+      // on \\?\C:\`). Confiner à ce prix, en touchant aux droits de chaque
+      // fichier de l'utilisateur, n'est pas un mode dégradé acceptable : le
+      // bac à sable se dit indisponible, avec le palier et les avertissements
+      // de MXC cités tels quels.
       if (support.isolationTier !== ACCEPTED_TIER) {
         return {
           state: 'unavailable',
@@ -211,23 +433,24 @@ export function mxcBackend(
     } catch (e) {
       return { state: 'unavailable', code: 'SANDBOX_PLATFORM_UNSUPPORTED', reason: messageOf(e) };
     }
-    // L'épreuve : une commande triviale, confinée pour de vrai. Elle attrape
-    // ce qu'aucune sonde déclarative ne voit — un Node trop ancien pour les
-    // flux natifs du SDK (« native stdio on Windows requires Node.js
-    // 24.21.0 … or 26.8.0 », mesuré sur Node 26.4), une DLL qui ne
-    // s'initialise pas, des binaires manquants.
+    // L'épreuve : un conteneur ouvert pour de vrai, une commande triviale,
+    // fermé. Elle attrape ce qu'aucune sonde déclarative ne voit — un Node
+    // trop ancien pour les flux natifs du SDK (« native stdio on Windows
+    // requires Node.js 24.21.0 … or 26.8.0 », mesuré sur Node 26.4), une DLL
+    // qui ne s'initialise pas, des binaires manquants.
     // LOCALAPPDATA : MXC refuse un environnement qui ne le porte pas
     // (`policy_validation … missing the required variable(s): LOCALAPPDATA`).
     const env: Record<string, string | undefined> = {};
     for (const name of ['SYSTEMROOT', 'WINDIR', 'PATH', 'COMSPEC', 'LOCALAPPDATA', 'USERPROFILE']) {
       env[name] = process.env[name];
     }
+    let container: JobContainer | null = null;
     try {
-      const proc = await start({
+      container = await openContainer([], env);
+      const proc = await container.start({
         target: { command: 'exit 0' },
         cwd: process.env['SYSTEMROOT'] ?? 'C:\\Windows',
         env,
-        writableRoots: [],
       });
       proc.stdout?.resume();
       proc.stderr?.resume();
@@ -247,9 +470,11 @@ export function mxcBackend(
     } catch (e) {
       const reason = e instanceof SandboxStartError ? e.backendMessage : messageOf(e);
       return { state: 'unavailable', code: 'SANDBOX_SELF_TEST_FAILED', reason };
+    } finally {
+      await container?.close();
     }
     return { state: 'available', backend: MXC_BACKEND_NAME };
   };
 
-  return { probe, start };
+  return { probe, openContainer };
 }

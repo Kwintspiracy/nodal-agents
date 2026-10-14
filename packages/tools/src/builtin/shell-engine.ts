@@ -36,6 +36,15 @@
 // (`getSandboxStatus()` la rend au bandeau). Un seul chemin pour les trois
 // appelants : `run_command`, `run_skill_script`, les commandes de preuve.
 //
+// DURÉE DE VIE (décision du 14/10) : chaque commande tourne dans le PÉRIMÈTRE
+// de son job (`scope`, @nodal-agents/sandbox job-scope.ts). Ce qu'elle laisse
+// tourner en arrière-plan vit jusqu'à la fin du job — la commande suivante
+// joint le serveur que la précédente a lancé — et meurt quand le runner
+// ferme le périmètre. La fin d'une commande est la fin de son processus
+// racine, ses flux vidés au plus DRAIN_MS : un processus d'arrière-plan qui
+// garde le tuyau de sortie ne retient pas la commande jusqu'à son timeout.
+// Le Stop (`signal`) tue la commande comme le timeout.
+//
 // Les messages de ce module sont des CODES techniques (invariant #2 : aucun
 // texte utilisateur dans une couche que le runner exécute).
 
@@ -44,16 +53,16 @@ import { statSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 import { VerifyCommandsSchema, type RunVerdict, type VerifyCommand } from '@nodal-agents/shared';
 import {
+  DRAIN_MS,
   SandboxStartError,
-  defaultSandbox,
   extractRefusedWrites,
   resolveWritableRoots,
   toolCacheEnv,
   type ConfinementPolicy,
+  type JobProcessScope,
   type LaunchTarget,
   type ProcessEnd,
   type RefusedWrite,
-  type Sandbox,
   type StartedProcess,
 } from '@nodal-agents/sandbox';
 
@@ -169,16 +178,24 @@ export interface CommandSpec {
    * l'absence est une erreur d'appelant (`CONFINEMENT_REQUIRED`).
    */
   confinement: ConfinementPolicy;
+  /**
+   * OBLIGATOIRE. Le périmètre du job (`jobProcessScope(ctx.jobId)`) : ce que
+   * la commande laisse tourner y vit jusqu'à la fin du job, et meurt quand le
+   * runner le ferme. Il porte aussi le bac à sable sous lequel elle tourne.
+   * L'absence est une erreur d'appelant (`SCOPE_REQUIRED`).
+   */
+  scope: JobProcessScope;
+  /**
+   * Le Stop du job : quand il tombe, la commande est tuée comme au timeout
+   * (outcome `spawn_error` / `ABORTED`). Ce qu'elle a lancé en arrière-plan
+   * meurt avec le périmètre, que le runner ferme à la fin du job.
+   */
+  signal?: AbortSignal;
 }
 
 export interface CommandRunOptions {
   /** Injectable pour tester la forme d'invocation sans lancer de processus. */
   platform?: NodeJS.Platform;
-  /**
-   * Le bac à sable — injectable pour les tests (un backend indisponible, un
-   * backend qui refuse de démarrer). Par défaut, celui du processus.
-   */
-  sandbox?: Sandbox;
 }
 
 /**
@@ -227,10 +244,10 @@ export function killProcessTree(child: ChildProcess, platform: NodeJS.Platform):
 }
 
 /**
- * Lance une commande, capture sa sortie bornée, la tue au timeout, et rend une
- * issue typée. Ne lève JAMAIS pour une panne du processus (elle devient
- * `spawn_error`) ; lève pour un contrat violé par l'appelant (`ENV_REQUIRED`,
- * `CONFINEMENT_REQUIRED`).
+ * Lance une commande, capture sa sortie bornée, la tue au timeout ou au Stop,
+ * et rend une issue typée. Ne lève JAMAIS pour une panne du processus (elle
+ * devient `spawn_error`) ; lève pour un contrat violé par l'appelant
+ * (`ENV_REQUIRED`, `CONFINEMENT_REQUIRED`, `SCOPE_REQUIRED`).
  */
 export function runShellCommand(
   spec: CommandSpec,
@@ -242,17 +259,17 @@ export function runShellCommand(
   if (spec.confinement === undefined || spec.confinement === null) {
     throw new Error('CONFINEMENT_REQUIRED');
   }
-  return runWithSandbox(spec, opts);
+  if (spec.scope === undefined || spec.scope === null) {
+    throw new Error('SCOPE_REQUIRED');
+  }
+  return runInScope(spec, opts);
 }
 
-async function runWithSandbox(
-  spec: CommandSpec,
-  opts: CommandRunOptions,
-): Promise<CommandRunResult> {
+async function runInScope(spec: CommandSpec, opts: CommandRunOptions): Promise<CommandRunResult> {
   const platform = opts.platform ?? process.platform;
   const keep = spec.keep ?? 'head';
   const cap = spec.maxChars ?? DEFAULT_MAX_OUTPUT_CHARS;
-  const sandbox = opts.sandbox ?? defaultSandbox();
+  const sandbox = spec.scope.sandbox;
   const status = await sandbox.status();
   // Les caches d'outils, désignés pour TOUTE commande (policy.ts du paquet
   // sandbox dit lesquels et pourquoi) : confinée ou non, une commande garde
@@ -283,20 +300,18 @@ async function runWithSandbox(
     confinement,
   });
 
+  // Un job arrêté ne lance plus rien.
+  if (spec.signal?.aborted) return notStarted('ABORTED');
   // Un dossier de départ absent est dit par son nom, sous les deux régimes :
   // Node répondait `spawn cmd.exe ENOENT` (le shell accusé à tort), et MXC
   // lance la commande quand même, ailleurs.
   if (!isExistingDirectory(spec.cwd)) return notStarted(`CWD_NOT_FOUND: ${spec.cwd}`);
 
   let proc: StartedProcess;
-  if (confinement.kind === 'confined' && sandbox.backend) {
+  if (confinement.kind === 'confined') {
     try {
-      proc = await sandbox.backend.start({
-        target: spec.target,
-        cwd: spec.cwd,
-        env,
-        writableRoots: confinement.writableRoots,
-      });
+      const container = await spec.scope.container(confinement.writableRoots, env);
+      proc = await container.start({ target: spec.target, cwd: spec.cwd, env });
     } catch (e) {
       if (!(e instanceof SandboxStartError)) throw e;
       // Le bac à sable est là mais n'a pas pu démarrer CETTE commande : elle
@@ -316,14 +331,17 @@ async function runWithSandbox(
 
   return new Promise<CommandRunResult>((resolve) => {
     let settled = false;
-    let timedOut = false;
+    let cut: 'timeout' | 'aborted' | null = null;
     let graceTimer: ReturnType<typeof setTimeout> | undefined;
+    const cutOutcome = (): CommandOutcome =>
+      cut === 'aborted' ? { kind: 'spawn_error', message: 'ABORTED' } : { kind: 'timeout' };
 
     const finish = (outcome: CommandOutcome): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       if (graceTimer) clearTimeout(graceTimer);
+      spec.signal?.removeEventListener('abort', onAbort);
       const stdout = out.end();
       const stderr = err.end();
       resolve({
@@ -348,19 +366,23 @@ async function runWithSandbox(
       });
     };
 
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const cutNow = (why: 'timeout' | 'aborted'): void => {
+      if (cut !== null || settled) return;
+      cut = why;
       proc.kill();
       // Un petit-enfant têtu peut garder un tuyau ouvert après le kill : on
       // résout quand même, le kill a été émis.
-      graceTimer = setTimeout(() => finish({ kind: 'timeout' }), KILL_GRACE_MS);
-    }, spec.timeoutMs);
+      graceTimer = setTimeout(() => finish(cutOutcome()), KILL_GRACE_MS);
+    };
+    const onAbort = (): void => cutNow('aborted');
+    const timer = setTimeout(() => cutNow('timeout'), spec.timeoutMs);
+    spec.signal?.addEventListener('abort', onAbort, { once: true });
 
     void proc.done.then((end: ProcessEnd) => {
-      if (timedOut) return finish({ kind: 'timeout' });
+      if (cut !== null) return finish(cutOutcome());
       if (end.kind === 'exit') return finish({ kind: 'exit', exitCode: end.exitCode });
-      // `signal` sans timeout = tué par un signal externe : pas une sortie
-      // propre, on le dit comme tel plutôt que d'inventer un code.
+      // `signal` sans coupure de notre part = tué par un signal externe : pas
+      // une sortie propre, on le dit comme tel plutôt que d'inventer un code.
       finish({
         kind: 'spawn_error',
         message: end.kind === 'error' ? end.message : 'KILLED_BY_SIGNAL',
@@ -379,14 +401,18 @@ function isExistingDirectory(path: string): boolean {
 
 /**
  * Le lancement SANS bac à sable (indisponible sur ce système) — la forme
- * d'avant #628 : `shell:true` ⇒ cmd.exe / sh, `detached` sur Unix pour que le
- * groupe entier se tue.
+ * d'avant #628 : `shell:true` ⇒ cmd.exe / sh, `detached` sur Unix pour que la
+ * commande soit cheffe de son groupe de processus.
  *
- * À la fin de la commande, sur Unix, le GROUPE est tué : un processus que la
- * commande a laissé tourner en arrière-plan (`cmd &`) ne lui survit pas. Ce
- * qui a quitté son groupe (`setsid`) échappe encore — les backends Linux et
- * macOS de #628 s'en chargeront. Sous Windows sans bac à sable, rien ne tue
- * un petit-enfant détaché : seul le conteneur MXC le fait.
+ * La commande est NOTÉE dans le périmètre de son job : ce qu'elle laisse
+ * tourner vit jusqu'à la fin du job, puis meurt quand le runner ferme le
+ * périmètre (le groupe entier sous Unix ; l'arbre encore rattaché sous
+ * Windows — un petit-enfant détaché dont le parent est mort échappe, seul
+ * le conteneur MXC le tient).
+ *
+ * La commande finit à la sortie de son processus racine, ses flux vidés au
+ * plus DRAIN_MS : un processus d'arrière-plan qui hérite du tuyau ne la
+ * retient pas.
  */
 function startUnconfined(
   spec: CommandSpec,
@@ -408,17 +434,16 @@ function startUnconfined(
           shell: false,
           windowsVerbatimArguments: spec.target.windowsVerbatimArguments === true,
         });
+  if (child.pid !== undefined) spec.scope.trackUnconfined(child.pid, platform);
   const done = new Promise<ProcessEnd>((resolve) => {
     child.on('error', (e: Error) => resolve({ kind: 'error', message: e.message }));
-    child.on('close', (code: number | null) => {
-      if (!isWindows && child.pid) {
-        try {
-          process.kill(-child.pid, 'SIGKILL');
-        } catch {
-          /* groupe déjà vide */
-        }
-      }
-      resolve(code === null ? { kind: 'signal' } : { kind: 'exit', exitCode: code });
+    child.on('exit', (code: number | null) => {
+      const end: ProcessEnd = code === null ? { kind: 'signal' } : { kind: 'exit', exitCode: code };
+      const drained = setTimeout(() => resolve(end), DRAIN_MS);
+      child.once('close', () => {
+        clearTimeout(drained);
+        resolve(end);
+      });
     });
   });
   return {
@@ -497,8 +522,11 @@ export interface SequenceOptions {
   env: Record<string, string | undefined>;
   /** Les dossiers du job où chaque commande peut écrire (voir `CommandSpec`). */
   confinement: ConfinementPolicy;
+  /** Le périmètre du job (voir `CommandSpec`). */
+  scope: JobProcessScope;
+  /** Le Stop du job : la commande en cours est tuée, les suivantes ne partent pas. */
+  signal?: AbortSignal;
   platform?: NodeJS.Platform;
-  sandbox?: Sandbox;
   keep?: 'head' | 'tail';
   maxChars?: number;
   /**
@@ -534,13 +562,12 @@ export async function runCommandSequence(
         timeoutMs: entry.timeoutSeconds * 1000,
         env: opts.env,
         confinement: opts.confinement,
+        scope: opts.scope,
+        ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
         keep: opts.keep ?? 'tail',
         ...(opts.maxChars !== undefined ? { maxChars: opts.maxChars } : {}),
       },
-      {
-        ...(opts.platform !== undefined ? { platform: opts.platform } : {}),
-        ...(opts.sandbox !== undefined ? { sandbox: opts.sandbox } : {}),
-      },
+      opts.platform !== undefined ? { platform: opts.platform } : {},
     );
     const step: SequenceStepResult = { ...run, rank, command: entry.command };
     results.push(step);

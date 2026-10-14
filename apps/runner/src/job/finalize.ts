@@ -952,7 +952,7 @@ export async function finalizeJobSuccess(
       writableRoots = withJobFolder(agentFolders, job.jobFolder).map((w) => w.path);
     }
 
-    return { entityId: job.entityId, plans, maxReparations, proofScope: { writableRoots } };
+    return { entityId: job.entityId, plans, maxReparations, proofScope: { writableRoots, jobId } };
   });
 
   if (!opened) return alreadyTerminal;

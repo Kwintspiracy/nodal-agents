@@ -15,7 +15,7 @@ import { mkdtemp, mkdir, readdir, readFile, rm, writeFile, realpath } from 'node
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getSandboxStatus } from '@nodal-agents/sandbox';
+import { closeJobProcessScope, getSandboxStatus } from '@nodal-agents/sandbox';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import type { ToolContext } from '@nodal-agents/tools';
 import { codeProjectVerifier } from '../../verification/code-project.ts';
@@ -104,7 +104,7 @@ const paths: { name: string; run: (inside: string, outside: string) => Promise<P
         },
         async () => {},
         // Ce que la finalisation passe : les dossiers du job.
-        { writableRoots: [ws] },
+        { writableRoots: [ws], jobId: 'job-3p' },
       );
       const record = proof.records[0];
       return { exitCode: record?.exitCode ?? null, stderr: record?.stderrTail ?? '' };
@@ -152,6 +152,7 @@ describe.skipIf(!isWindows || tierUnsupported)(
     });
 
     afterAll(async () => {
+      await closeJobProcessScope('job-3p');
       for (let i = 0; i < 5; i++) {
         try {
           await rm(base, { recursive: true, force: true });

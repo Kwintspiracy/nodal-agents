@@ -26,6 +26,7 @@ import { mkdtemp, rm, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import { closeAllJobProcessScopes } from '@nodal-agents/sandbox';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
   and,
@@ -114,6 +115,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Les preuves de ces jobs ont ouvert leur périmètre ; aucun job n'est lancé
+  // par executeJob ici, rien d'autre ne les fermerait.
+  await closeAllJobProcessScopes();
   for (let i = 0; i < 5; i++) {
     try {
       await rm(dir, { recursive: true, force: true });
@@ -1478,7 +1482,7 @@ describe('finalizeJobSuccess — où la preuve peut écrire (#628)', () => {
         deps({ getVerifier: () => verifier }),
       );
 
-      expect(scopes).toEqual([{ writableRoots: [jobFolder, dir, sharedOf(seed.entityId)] }]);
+      expect(scopes).toEqual([{ writableRoots: [jobFolder, dir, sharedOf(seed.entityId)], jobId }]);
       const runs = await runsOf(jobId);
       expect(runs.map((r) => r.verdict)).toEqual(['green']);
     } finally {
@@ -1502,7 +1506,7 @@ describe('finalizeJobSuccess — où la preuve peut écrire (#628)', () => {
         deps({ getVerifier: () => verifier }),
       );
 
-      expect(scopes).toEqual([{ writableRoots: [jobFolder] }]);
+      expect(scopes).toEqual([{ writableRoots: [jobFolder], jobId }]);
     } finally {
       await rm(jobFolder, { recursive: true, force: true });
     }

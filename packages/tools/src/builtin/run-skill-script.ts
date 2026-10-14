@@ -28,6 +28,7 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from '../types';
 import { terminalCard } from '../presenters';
 import { resolveSkillRoot, resolveWithinSkill } from './skill-ops/skill-files';
+import { JobProcessScope, jobProcessScope } from '@nodal-agents/sandbox';
 import { buildChildEnv } from './child-env';
 import {
   SHARED_WORKSPACE_LABEL,
@@ -67,18 +68,26 @@ export function resolvePythonInterpreter(): Promise<string | null> {
   return (cachedPython ??= (async (): Promise<string | null> => {
     const candidates =
       process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
-    for (const candidate of candidates) {
-      const probe = await runShellCommand({
-        target: { file: candidate, args: ['--version'] },
-        cwd: tmpdir(),
-        timeoutMs: 5_000,
-        env: buildChildEnv(process.env),
-        // Nothing to write: a `--version` needs no folder.
-        confinement: { writableRoots: [] },
-      });
-      if (probe.outcome.kind === 'exit' && probe.outcome.exitCode === 0) return candidate;
+    // Its own short-lived scope: a `--version` belongs to no job, and nothing
+    // it might start is left running once the probe is done.
+    const scope = new JobProcessScope('python-interpreter-probe');
+    try {
+      for (const candidate of candidates) {
+        const probe = await runShellCommand({
+          target: { file: candidate, args: ['--version'] },
+          cwd: tmpdir(),
+          timeoutMs: 5_000,
+          env: buildChildEnv(process.env),
+          // Nothing to write: a `--version` needs no folder.
+          confinement: { writableRoots: [] },
+          scope,
+        });
+        if (probe.outcome.kind === 'exit' && probe.outcome.exitCode === 0) return candidate;
+      }
+      return null;
+    } finally {
+      await scope.close();
     }
-    return null;
   })());
 }
 
@@ -313,6 +322,7 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
         timeoutMs,
         input.script,
         (ctx.workspaces ?? []).map((w) => w.path),
+        ctx,
         sharedWorkspace ? { NODAL_SHARED_WORKSPACE: sharedWorkspace } : undefined,
       );
 
@@ -382,6 +392,7 @@ async function runScript(
   timeoutMs: number,
   scriptLabel: string,
   writableRoots: readonly string[],
+  ctx: ToolContext,
   envExtras?: Record<string, string>,
 ): Promise<RunSkillScriptOutput> {
   const run = await runShellCommand({
@@ -393,6 +404,9 @@ async function runScript(
     env: buildChildEnv(process.env, envExtras),
     keep: 'head',
     confinement: { writableRoots },
+    // The job's scope: what the script leaves running lives until the job ends.
+    scope: jobProcessScope(ctx.jobId),
+    ...(ctx.signal ? { signal: ctx.signal } : {}),
   });
   const o = run.outcome;
   const sandbox = sandboxReport(run);

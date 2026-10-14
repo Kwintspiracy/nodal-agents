@@ -10,11 +10,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runShellCommand, DEFAULT_MAX_OUTPUT_CHARS } from '../builtin/shell-engine';
 import { buildChildEnv } from '../builtin/child-env';
+import { JobProcessScope } from '@nodal-agents/sandbox';
 
 let dir: string;
 const orphans: number[] = [];
 const node = process.execPath;
 const env = buildChildEnv(process.env);
+/** Le périmètre de ces commandes, fermé en fin de suite : rien ne leur survit. */
+const scope = new JobProcessScope('shell-engine-test');
 /** Le dossier de test est le seul inscriptible : le moteur l'exige de chaque appelant. */
 const confinement = {
   get writableRoots() {
@@ -27,6 +30,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await scope.close();
   for (const pid of orphans) {
     try {
       process.kill(pid, 'SIGKILL');
@@ -67,6 +71,7 @@ describe('runShellCommand — issue typée', () => {
       target: { file: node, args: [p] },
       cwd: dir,
       confinement,
+      scope,
       timeoutMs: 20_000,
       env,
     });
@@ -84,6 +89,7 @@ describe('runShellCommand — issue typée', () => {
       target: { file: node, args: [p] },
       cwd: dir,
       confinement,
+      scope,
       timeoutMs: 20_000,
       env,
     });
@@ -97,6 +103,7 @@ describe('runShellCommand — issue typée', () => {
       target: { file: node, args: [p] },
       cwd: dir,
       confinement,
+      scope,
       timeoutMs: 500,
       env,
     });
@@ -108,6 +115,7 @@ describe('runShellCommand — issue typée', () => {
       target: { file: node, args: ['-e', '1'] },
       cwd: join(dir, 'nulle-part'),
       confinement,
+      scope,
       timeoutMs: 5_000,
       env,
     });
@@ -122,6 +130,7 @@ describe('runShellCommand — issue typée', () => {
         target: { command: 'echo x' },
         cwd: dir,
         confinement,
+        scope,
         timeoutMs: 1000,
         env: undefined as unknown as Record<string, string>,
       }),
@@ -139,6 +148,7 @@ describe('runShellCommand — tree-kill : le petit-enfant est mort', () => {
       target: { command: `"${node}" "${p}"` },
       cwd: dir,
       confinement,
+      scope,
       timeoutMs: 1_000,
       env,
     });
@@ -159,6 +169,7 @@ describe('runShellCommand — quoting à travers le shell', () => {
       target: { command: `"${node}" "${p}" && "${node}" "${p}"` },
       cwd: dir,
       confinement,
+      scope,
       timeoutMs: 20_000,
       env,
     });
@@ -177,6 +188,7 @@ describe('runShellCommand — quoting à travers le shell', () => {
       },
       cwd: dir,
       confinement,
+      scope,
       timeoutMs: 20_000,
       env,
     });
@@ -193,6 +205,7 @@ describe('runShellCommand — env scrubbé', () => {
       target: { file: node, args: [p] },
       cwd: dir,
       confinement,
+      scope,
       timeoutMs: 20_000,
       env: buildChildEnv(source),
     });
@@ -212,6 +225,7 @@ describe('runShellCommand — plafonds et décodage', () => {
       target: { file: node, args: [p] },
       cwd: dir,
       confinement,
+      scope,
       timeoutMs: 20_000,
       env,
       keep: 'head',
@@ -231,6 +245,7 @@ describe('runShellCommand — plafonds et décodage', () => {
       target: { file: node, args: [p] },
       cwd: dir,
       confinement,
+      scope,
       timeoutMs: 20_000,
       env,
       keep: 'tail',
@@ -247,6 +262,7 @@ describe('runShellCommand — plafonds et décodage', () => {
       target: { file: node, args: [p] },
       cwd: dir,
       confinement,
+      scope,
       timeoutMs: 20_000,
       env,
     });
@@ -266,6 +282,7 @@ describe('runShellCommand — plafonds et décodage', () => {
       target: { file: node, args: [p] },
       cwd: dir,
       confinement,
+      scope,
       timeoutMs: 20_000,
       env,
       maxChars: 500_000,

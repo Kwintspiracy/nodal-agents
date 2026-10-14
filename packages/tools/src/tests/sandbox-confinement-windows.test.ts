@@ -19,7 +19,7 @@ import { mkdtemp, mkdir, readdir, readFile, rm, writeFile, realpath } from 'node
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getSandboxStatus } from '@nodal-agents/sandbox';
+import { closeJobProcessScope, getSandboxStatus } from '@nodal-agents/sandbox';
 import { runCommandTool } from '../builtin/run-command';
 import { resolvePythonInterpreter } from '../builtin/run-skill-script';
 import type { ToolContext } from '../types';
@@ -31,9 +31,10 @@ let ws: string;
 let canary: string;
 const node = process.execPath;
 
-function ctx(): ToolContext {
+function ctx(jobId = 'job-sbx', signal?: AbortSignal): ToolContext {
   return {
-    jobId: 'job-sbx',
+    jobId,
+    ...(signal ? { signal } : {}),
     agentId: 'agent-sbx',
     entityId: 'entity-sbx',
     db: undefined as unknown as ToolContext['db'],
@@ -42,10 +43,14 @@ function ctx(): ToolContext {
   };
 }
 
-async function run(command: string, timeoutSeconds = 60) {
+async function run(
+  command: string,
+  timeoutSeconds = 60,
+  opts: { jobId?: string; signal?: AbortSignal } = {},
+) {
   return runCommandTool.execute(
     { purpose: 'sandbox test', command, timeout_seconds: timeoutSeconds },
-    ctx(),
+    ctx(opts.jobId, opts.signal),
   );
 }
 
@@ -100,6 +105,7 @@ describe.skipIf(!isWindows || tierUnsupported)(
     });
 
     afterAll(async () => {
+      await closeJobProcessScope('job-sbx');
       for (let i = 0; i < 5; i++) {
         try {
           await rm(base, { recursive: true, force: true });
@@ -213,56 +219,115 @@ describe.skipIf(!isWindows || tierUnsupported)(
       await expectCanaryIntact();
     });
 
-    // Les trois petits-enfants : chacun écrit son pid dès qu'il démarre, puis
-    // `after` au bout de 3 s s'il vit encore. La commande ATTEND le pid avant
-    // de finir (`waitfor.cjs`) : sans cela, un petit-enfant lent à démarrer
-    // serait tué avant d'avoir prouvé qu'il a tourné, et le test ne prouverait
-    // rien.
-    const grandchildFiles = async (): Promise<void> => {
+    // LA DURÉE DE VIE (décision du 14/10) : ce qu'une commande laisse tourner
+    // vit jusqu'à la fin du JOB, puis meurt quand le runner ferme son
+    // périmètre. Chaque processus d'arrière-plan écrit son pid et son port
+    // dès qu'il écoute ; la commande ATTEND ce fichier (`waitfor.cjs`) avant
+    // de finir, sans quoi un processus lent à démarrer ne prouverait rien.
+    const lifetimeFiles = async (): Promise<void> => {
       await writeFile(
-        join(ws, 'bg.cjs'),
-        "const fs = require('fs'); fs.writeFileSync(process.argv[2] + '.pid', String(process.pid)); setTimeout(() => fs.writeFileSync(process.argv[2], 'survived'), 3000);\n",
+        join(ws, 'server.cjs'),
+        "const fs = require('fs'); require('http').createServer((q, s) => s.end('pong ' + process.pid)).listen(0, '127.0.0.1', function () { fs.writeFileSync(process.argv[2], JSON.stringify({ pid: process.pid, port: this.address().port })); });\n",
       );
       await writeFile(
         join(ws, 'waitfor.cjs'),
         "const fs = require('fs'); const t = Date.now(); (function poll() { if (fs.existsSync(process.argv[2])) return; if (Date.now() - t > 20000) process.exit(1); setTimeout(poll, 50); })();\n",
       );
-    };
-    const waitFor = (marker: string): string =>
-      `"${node}" "${join(ws, 'waitfor.cjs')}" "${marker}.pid"`;
-
-    it('a detached grandchild (spawn detached + unref) dies with the command', async () => {
-      await grandchildFiles();
+      await writeFile(
+        join(ws, 'fetch.cjs'),
+        "fetch('http://127.0.0.1:' + process.argv[2] + '/').then((r) => r.text()).then((t) => console.log(t)).catch((e) => { console.log('ERR', e.cause && e.cause.code); process.exit(2); });\n",
+      );
       await writeFile(
         join(ws, 'launcher.cjs'),
-        "const c = require('child_process').spawn(process.execPath, [process.argv[2], process.argv[3]], { detached: true, stdio: 'ignore' }); c.unref(); console.log('launched', c.pid);\n",
+        "const c = require('child_process').spawn(process.execPath, [process.argv[2], process.argv[3]], { detached: true, stdio: 'ignore' }); c.unref();\n",
       );
-      const marker = join(ws, 'detached-after.txt');
-      const out = await run(
-        `"${node}" "${join(ws, 'launcher.cjs')}" "${join(ws, 'bg.cjs')}" "${marker}" && ${waitFor(marker)}`,
-      );
-      expect(out.exitCode, out.stderr).toBe(0);
-      await expectGrandchildDead(marker);
+    };
+    const waitFor = (info: string): string => `"${node}" "${join(ws, 'waitfor.cjs')}" "${info}"`;
+    const readInfo = async (info: string): Promise<{ pid: number; port: number }> =>
+      JSON.parse(await readFile(info, 'utf8')) as { pid: number; port: number };
+    const reach = (jobId: string, port: number) =>
+      run(`"${node}" "${join(ws, 'fetch.cjs')}" ${port}`, 60, { jobId });
+
+    /** Les trois façons de laisser un serveur tourner, sous cmd.exe. */
+    const backgroundForms: { name: string; command: (info: string) => string }[] = [
+      {
+        name: 'start /b',
+        command: (info) => `start "" /b "${node}" "${join(ws, 'server.cjs')}" "${info}"`,
+      },
+      {
+        name: 'a detached child (spawn detached + unref)',
+        command: (info) =>
+          `"${node}" "${join(ws, 'launcher.cjs')}" "${join(ws, 'server.cjs')}" "${info}"`,
+      },
+      {
+        name: 'PowerShell Start-Process',
+        command: (info) =>
+          `powershell -NoProfile -NonInteractive -Command "Start-Process -WindowStyle Hidden -FilePath '${node}' -ArgumentList '\\"${join(ws, 'server.cjs')}\\"','\\"${info}\\"'"`,
+      },
+    ];
+
+    it.each(backgroundForms)(
+      '$name: the server outlives its command, the next command of the SAME job reaches it, and it dies when the job ends',
+      async ({ name, command }) => {
+        await lifetimeFiles();
+        const jobId = `job-sbx-life-${name.replace(/[^a-z]+/gi, '-')}`;
+        const info = join(ws, `${jobId}.json`);
+        const first = await run(`${command(info)} && ${waitFor(info)}`, 60, { jobId });
+        expect(first.exitCode, first.stderr).toBe(0);
+        const { pid, port } = await readInfo(info);
+        expect(alive(pid)).toBe(true);
+        const second = await reach(jobId, port);
+        expect(second.stdout.trim()).toBe(`pong ${pid}`);
+        expect(await closeJobProcessScope(jobId)).toBe(true);
+        await new Promise((r) => setTimeout(r, 1_000));
+        expect(alive(pid)).toBe(false);
+      },
+    );
+
+    it('closing one job does not touch another job’s processes', async () => {
+      await lifetimeFiles();
+      const infoA = join(ws, 'job-a.json');
+      const infoB = join(ws, 'job-b.json');
+      const start = (info: string): string =>
+        `start "" /b "${node}" "${join(ws, 'server.cjs')}" "${info}" && ${waitFor(info)}`;
+      await run(start(infoA), 60, { jobId: 'job-sbx-a' });
+      await run(start(infoB), 60, { jobId: 'job-sbx-b' });
+      const a = await readInfo(infoA);
+      const b = await readInfo(infoB);
+      await closeJobProcessScope('job-sbx-a');
+      await new Promise((r) => setTimeout(r, 1_000));
+      expect(alive(a.pid)).toBe(false);
+      expect(alive(b.pid)).toBe(true);
+      expect((await reach('job-sbx-b', b.port)).stdout.trim()).toBe(`pong ${b.pid}`);
+      await closeJobProcessScope('job-sbx-b');
+      await new Promise((r) => setTimeout(r, 1_000));
+      expect(alive(b.pid)).toBe(false);
     });
 
-    it('a `start /b` grandchild dies with the command', async () => {
-      await grandchildFiles();
-      const marker = join(ws, 'startb-after.txt');
-      const out = await run(
-        `start "" /b "${node}" "${join(ws, 'bg.cjs')}" "${marker}" && ${waitFor(marker)}`,
+    it('Stop (the job signal) kills the running command at once', async () => {
+      await writeFile(
+        join(ws, 'long.cjs'),
+        "require('fs').writeFileSync(process.argv[2], String(process.pid)); setTimeout(() => {}, 600000);\n",
       );
-      expect(out.exitCode, out.stderr).toBe(0);
-      await expectGrandchildDead(marker);
-    });
-
-    it('a PowerShell Start-Process grandchild dies with the command', async () => {
-      await grandchildFiles();
-      const marker = join(ws, 'startprocess-after.txt');
-      const out = await run(
-        `powershell -NoProfile -NonInteractive -Command "Start-Process -WindowStyle Hidden -FilePath '${node}' -ArgumentList '\\"${join(ws, 'bg.cjs')}\\"','\\"${marker}\\"'" && ${waitFor(marker)}`,
-      );
-      expect(out.exitCode, out.stderr).toBe(0);
-      await expectGrandchildDead(marker);
+      const pidFile = join(ws, 'stop.pid');
+      const controller = new AbortController();
+      const started = Date.now();
+      const running = run(`"${node}" "${join(ws, 'long.cjs')}" "${pidFile}"`, 600, {
+        jobId: 'job-sbx-stop',
+        signal: controller.signal,
+      });
+      for (let i = 0; i < 200 && !existsSync(pidFile); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const pid = Number(await readFile(pidFile, 'utf8'));
+      controller.abort();
+      const out = await running;
+      expect(out.exitCode).toBeNull();
+      expect(out.stderr).toContain('spawn_error: ABORTED');
+      expect(Date.now() - started).toBeLessThan(30_000);
+      await new Promise((r) => setTimeout(r, 1_000));
+      expect(alive(pid)).toBe(false);
+      await closeJobProcessScope('job-sbx-stop');
     });
 
     it('npm install of a local tarball works confined (offline, cache in the Nodal tool cache)', async () => {
@@ -330,27 +395,3 @@ describe.runIf(isWindows && tierUnsupported)(
     });
   },
 );
-
-/** Le petit-enfant a démarré (il a écrit son pid), puis n'a pas survécu à la commande. */
-async function expectGrandchildDead(marker: string): Promise<void> {
-  // Le pid est écrit au démarrage ; s'il manque, le petit-enfant n'a jamais
-  // tourné et le test ne prouverait rien.
-  const pidFile = `${marker}.pid`;
-  for (let i = 0; i < 20 && !existsSync(pidFile); i++) {
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  expect(existsSync(pidFile), 'the grandchild never started').toBe(true);
-  const pid = Number((await readFile(pidFile, 'utf8')).trim());
-  // Il devait écrire au bout de 3 s ; on en attend 5.
-  await new Promise((r) => setTimeout(r, 5_000));
-  const survived = alive(pid);
-  if (survived) {
-    try {
-      process.kill(pid);
-    } catch {
-      /* déjà mort */
-    }
-  }
-  expect(existsSync(marker)).toBe(false);
-  expect(survived).toBe(false);
-}

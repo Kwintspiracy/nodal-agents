@@ -44,7 +44,8 @@ import { migratePlaintextSecretsToEncrypted } from './bootstrap/migrate-plaintex
 import { backfillMemoryEmbeddings } from './bootstrap/backfill-embeddings.ts';
 import { backfillRegisteredProjects } from './bootstrap/backfill-registered-projects.ts';
 import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
-import { getSandboxStatus } from '@nodal-agents/sandbox';
+import { closeAllJobProcessScopes, getSandboxStatus } from '@nodal-agents/sandbox';
+import { startJobProcessSweep } from './job/process-scopes.ts';
 import { AuthError, checkRequestOrigin } from '@nodal-agents/auth';
 import { isValidWorkerSecret } from './lib/worker-secret.ts';
 import './lib/runner-auth-context.ts';
@@ -462,10 +463,16 @@ async function main(): Promise<void> {
   // son code) est ainsi dans le journal du runner dès le boot. Jamais
   // attendu : la sonde lance une commande confinée triviale.
   void getSandboxStatus();
+  // #628 : les processus d'un job meurent quand le job est fini — un Stop sur
+  // un job suspendu compris, qu'aucun run ne voit passer.
+  const processSweep = startJobProcessSweep(deps.db);
 
   // Graceful shutdown
   const shutdown = async (): Promise<void> => {
     ticker?.stop();
+    processSweep.stop();
+    // Ce que les commandes des jobs ont laissé tourner ne survit pas au runner.
+    await closeAllJobProcessScopes();
     await telegramManager?.stop();
     await discordManager?.stop();
     await slackManager?.stop();

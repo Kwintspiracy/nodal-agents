@@ -226,6 +226,7 @@ import {
   finalizeJobSuccess,
 } from './finalize.ts';
 import type { DeclaredDeliverableFailure } from './finalize.ts';
+import { releaseJobProcessesIfEnded } from './process-scopes.ts';
 import { runnerNotesValue } from './transcript-text.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
@@ -1377,6 +1378,9 @@ export async function executeJob(
     );
     result = await outcomeFromRow(deps, jobId);
   }
+  // #628 : un job FINI emporte ce que ses commandes ont laissé tourner (un
+  // serveur, un `start /b`) ; suspendu ou remis en file, ils vivent.
+  await releaseJobProcessesIfEnded(deps.db, jobId as string);
   if (
     !opts?.inlineDelegation &&
     (result.status === 'completed' || result.status === 'failed' || result.status === 'cancelled')
@@ -1840,7 +1844,24 @@ async function runJobTracked(
   // Le job est à nous : il bat, sous cette prise, jusqu'à ce que `runJob` le
   // lâche, quoi qu'il fasse entre les deux — préparation, appel modèle,
   // outils, attente (#565).
-  tenue.lacher = holdJobHeartbeat(db, jobId as string, prise);
+  const lacherBattement = holdJobHeartbeat(db, jobId as string, prise);
+  // Le Stop des OUTILS (#750) : la même veille de la ligne que celle des
+  // appels modèle, ouverte quand les outils d'un tour tournent et fermée avant
+  // l'appel modèle suivant — qui a la sienne : jamais deux relectures de la
+  // ligne en même temps. Quand la ligne ne laisse plus ce run agir — Stop,
+  // annulation, job fauché ou repris —, son signal tombe et la commande en
+  // cours (run_command, run_skill_script) est tuée.
+  let veilleOutils: ReturnType<typeof watchJobRow> | null = null;
+  const signalOutils = (): AbortSignal =>
+    (veilleOutils ??= watchJobRow(db, jobId as string, prise, STOP_POLL_MS)).signal;
+  const fermerVeilleOutils = (): void => {
+    veilleOutils?.stop();
+    veilleOutils = null;
+  };
+  tenue.lacher = () => {
+    fermerVeilleOutils();
+    lacherBattement();
+  };
 
   // Invariant 8: chain_count is bumped on every resume from awaiting_delegation
   // (and would also be bumped on awaiting_approval resume once that path ships).
@@ -3299,6 +3320,8 @@ async function runJobTracked(
                 req.toolInput,
                 {
                   jobId: jobId as string,
+                  // #750 : le Stop du job tue la commande approuvée qui tourne.
+                  signal: signalOutils(),
                   agentId: agentRow.id,
                   entityId: job.entityId ?? '',
                   db,
@@ -4599,6 +4622,7 @@ async function runJobTracked(
       // ligne est relue sous la prise de ce run ; toute perte du droit d'agir
       // coupe l'appel, et une ligne illisible JOB_ROW_UNREADABLE_MAX fois
       // d'affilée aussi (invariant #4 : illisible ne vaut pas autorisation).
+      fermerVeilleOutils();
       const veille = watchJobRow(db, jobId as string, prise, STOP_POLL_MS);
       let response: Awaited<ReturnType<typeof llmClient.generateText>>;
       const appelCommenceA = Date.now();
@@ -5093,6 +5117,7 @@ async function runJobTracked(
         texteDuTour.trim() !== '' &&
         !approvalPending
       ) {
+        fermerVeilleOutils();
         const veilleRelecture = watchJobRow(db, jobId as string, prise, STOP_POLL_MS);
         // Ce que CE run a déjà fait depuis sa tâche (#711) : la frontière de
         // `currentTurnMessages`, SANS son repli sur la transcription entière —
@@ -5689,6 +5714,8 @@ async function runJobTracked(
       // serial path. Any write/delegation tool in the turn → serial path too.
       const sharedToolCtx = {
         jobId: jobId as string,
+        // #750 : le Stop du job tue la commande que l'outil a lancée.
+        signal: signalOutils(),
         agentId: agentRow.id,
         entityId: job.entityId ?? '',
         db,

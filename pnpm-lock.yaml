@@ -1064,6 +1064,9 @@ importers:
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.10
 
   packages/secrets:
     devDependencies:
