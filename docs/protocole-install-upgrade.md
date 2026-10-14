@@ -19,7 +19,7 @@ reçoit quelqu'un qui tape `npm install`.
 
 ## Pré-requis
 
-- Node ≥ 22, pnpm ≥ 10, accès réseau à npm (les deux scripts téléchargent la
+- Node ≥ 24, pnpm ≥ 10, accès réseau à npm (les deux scripts téléchargent la
   version publiée).
 - Environ 4 Go libres sous le répertoire temporaire du système et ~15 min.
 - **Aucune préparation de données.** Les deux scripts créent leur propre
