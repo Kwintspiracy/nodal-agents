@@ -66,7 +66,11 @@ type Body = Record<string, unknown> & { messages?: Array<{ role: string; content
 
 const isRecheck = (body: Body): boolean => {
   const last = body.messages?.[body.messages.length - 1];
-  return last?.role === 'user' && last.content === ACTION_RECHECK;
+  return (
+    last?.role === 'user' &&
+    typeof last.content === 'string' &&
+    last.content.endsWith(ACTION_RECHECK)
+  );
 };
 
 /**
@@ -234,14 +238,18 @@ describe('a prose turn that announced an action is re-read @cap:organiser-equipe
 
     const outcome = await executeJob(jobId as JobId, makeDeps());
 
-    // The re-read: short and local (no system prompt, no history), the job's
-    // tools offered, left to the model.
+    // The re-read: short and local (no system prompt, no history), the record
+    // of what the run did since its task (nothing yet, said as such, #711),
+    // the job's tools offered, left to the model.
     const recheck = bodies.find(isRecheck);
     expect(recheck, 'the prose turn was re-read').toBeDefined();
     expect(recheck?.messages).toEqual([
       { role: 'user', content: task },
       { role: 'assistant', content: "I'll delegate the rewrite to Dev-C." },
-      { role: 'user', content: ACTION_RECHECK },
+      {
+        role: 'user',
+        content: `Record of this run: no tool has been called since the request.\n\n${ACTION_RECHECK}`,
+      },
     ]);
     expect(recheck?.['tool_choice']).toBe('auto');
     const offered = (recheck?.['tools'] as Array<{ function: { name: string } }>).map(

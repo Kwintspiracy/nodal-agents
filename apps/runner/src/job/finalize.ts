@@ -720,6 +720,9 @@ async function ouvrirReparation(
         // ce que l'agent doit rouvrir, pas une clé repliée en casse.
         deliverable: rouge.plan.displayPath ?? rouge.plan.canonicalKey,
         record,
+        // Ce qui restera à CE livrable après ce tour (#711) : sa réserve à lui,
+        // jamais celle d'un autre. Au bout de la sienne, il compte zéro.
+        turnsLeft: Math.max(0, max - (rouge.plan.repairAttempts + 1)),
       });
     }
   }

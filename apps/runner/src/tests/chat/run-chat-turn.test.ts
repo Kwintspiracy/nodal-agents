@@ -1167,10 +1167,15 @@ describe('runChatTurn — la relance d’escalade (coût d’un tour, 09/09)', (
     expect(relance?.messages[1]?.content).toBe('Bonjour Quentin, je suis là.');
     expect(relance?.messages[2]?.role).toBe('user');
     expect(String(relance?.messages[2]?.content)).toContain('Re-read your previous reply');
+    // Le relevé de ce que le tour a fait depuis la demande (#711) : un tour de
+    // chat n'exécute aucun outil avant sa relance, et le relevé le dit.
+    expect(String(relance?.messages[2]?.content)).toMatch(
+      /^Record of this run: no tool has been called since the request\.\n\n/,
+    );
     // Le MÊME mécanisme que la boucle de job (#600) : la relance du chat est
     // exactement celle que construit llm/action-recheck.ts, consigne comprise.
     expect(relance?.messages).toEqual(
-      actionRecheckMessages('Bonjour, tu es là ?', 'Bonjour Quentin, je suis là.'),
+      actionRecheckMessages('Bonjour, tu es là ?', 'Bonjour Quentin, je suis là.', []),
     );
   });
 
