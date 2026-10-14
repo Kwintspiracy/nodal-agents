@@ -138,7 +138,7 @@ function network(script: readonly Reply[], onCall: (n: number) => Promise<void> 
       if (!url.includes('/chat/completions')) throw new Error(`unexpected fetch ${url}`);
       const body = JSON.parse(init?.body as string) as { stream?: boolean; messages: Sent };
       const last = body.messages[body.messages.length - 1];
-      const recheck = textOf(last?.content) === ACTION_RECHECK;
+      const recheck = textOf(last?.content).endsWith(ACTION_RECHECK);
       let reply: Reply = { text: 'ok' };
       if (!recheck) {
         turns.push(body.messages);

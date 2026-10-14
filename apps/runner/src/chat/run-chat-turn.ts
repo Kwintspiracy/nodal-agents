@@ -799,6 +799,14 @@ export async function runChatTurn(opts: {
       const recheck = await recheckNarratedAction(llmClient, {
         request: message,
         reply: text,
+        // Le relevé de ce que le tour a fait depuis la demande (#711) : rien,
+        // et c'est exact. Un tour de chat n'exécute aucun outil avant sa
+        // relance — son seul outil, `run_task`, part APRÈS elle, et une
+        // réponse qui l'a appelé n'est jamais relue (`runTask` ci-dessus). Ce
+        // que les tours d'avant ont fait est dans l'historique, que la relance
+        // ne rejoue pas : la consigne dit qu'une réponse qui le rappelle
+        // n'engage à rien.
+        run: [],
         tools: CHAT_TOOLS,
         ...(abortSignal ? { abortSignal } : {}),
       });

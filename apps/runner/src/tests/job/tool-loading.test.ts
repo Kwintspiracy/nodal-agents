@@ -243,7 +243,7 @@ describe('a job reads the schemas it needs and keeps its whole whitelist @cap:as
       ],
     });
 
-    const recheck = bodies.find((b) => lastMessageText(b) === ACTION_RECHECK);
+    const recheck = bodies.find((b) => lastMessageText(b).endsWith(ACTION_RECHECK));
     expect(recheck, 'the prose turn was rechecked').toBeDefined();
     const turn = bodies[bodies.indexOf(recheck!) - 1]!;
     expect(offered(recheck!)).toEqual(offered(turn));

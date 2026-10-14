@@ -195,6 +195,7 @@ import {
   findTaskBoundary,
 } from './state.ts';
 import { holdJobHeartbeat } from './heartbeat.ts';
+import { EVICTED_TOOL_INPUT_MARKER, EVICTED_TOOL_RESULT_MARKER } from './compaction-markers.ts';
 import { unansweredToolCalls } from './close-transcript.ts';
 import {
   APPROVED_CALL_OUTCOME_UNKNOWN,
@@ -513,10 +514,6 @@ export function raisedErrorBlock(
   );
   return { error: framedForModel(toolName, fitted), ...extra };
 }
-
-const EVICTED_TOOL_RESULT_MARKER =
-  '[earlier tool result elided to fit the context window — re-run the tool if you need this data again]';
-const EVICTED_TOOL_INPUT_MARKER = '[earlier tool-call arguments elided to fit the context window]';
 
 // Only elide a tool-call's INPUT when it's actually large — small args (the
 // common case) cost nothing to keep and eliding them would lose useful signal.
@@ -5065,8 +5062,10 @@ async function runJobTracked(
       // prose ANNONÇANT une action (« Je délègue à Dev-C. ») sans l'appel qui
       // la fait n'a rien fait, et finissait `completed` sur un travail jamais
       // lancé. Le MÊME mécanisme que le chat (llm/action-recheck.ts) : une
-      // relance locale et courte (la tâche, la réponse, la consigne, les
-      // outils du job), jamais le tour rejoué. Si le modèle appelle un outil,
+      // relance locale et courte (la tâche, la réponse, le relevé de ce que le
+      // run a déjà fait, la consigne, les outils du job), jamais le tour
+      // rejoué. Le relevé (#711) : une réponse qui RAPPORTE un envoi fait ne se
+      // relit plus comme la promesse de l'envoyer encore. Si le modèle appelle un outil,
       // ses appels deviennent ceux de CE tour, sous les mêmes gardes (Stop,
       // plafonds de jetons et de coût, 50 appels par tour). Sinon la prose
       // reste la réponse, jugée plus bas comme avant.
@@ -5087,10 +5086,16 @@ async function runJobTracked(
         !approvalPending
       ) {
         const veilleRelecture = watchJobRow(db, jobId as string, prise, STOP_POLL_MS);
+        // Ce que CE run a déjà fait depuis sa tâche (#711) : la frontière de
+        // `currentTurnMessages`, SANS son repli sur la transcription entière —
+        // l'historique rejoué avant la tâche n'est pas ce que ce run a fait.
+        // Introuvable, le relevé le dit (déjà tracé : `current_turn_boundary_missing`).
+        const debutDuRun = findTaskBoundary(messages, job.task);
         try {
           relecture = await recheckNarratedAction(llmClient, {
             request: job.task,
             reply: texteDuTour.trim(),
+            run: debutDuRun === -1 ? null : messages.slice(debutDuRun),
             tools: aiSdkTools,
             abortSignal: veilleRelecture.signal,
           });

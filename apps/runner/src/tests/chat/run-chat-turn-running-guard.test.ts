@@ -441,7 +441,10 @@ describe('toute entrée du chat passe par la file de sa conversation (#453, revu
 
 /** Les appels de RELECTURE capturés (#600) : ceux qui finissent par la consigne partagée. */
 const relectures = (captured: readonly ModelMessage[][]): ModelMessage[][] =>
-  captured.filter((m) => m[m.length - 1]?.content === ACTION_RECHECK);
+  captured.filter((m) => {
+    const fin = m[m.length - 1]?.content;
+    return typeof fin === 'string' && fin.endsWith(ACTION_RECHECK);
+  });
 
 // Revue Nodal de la PR #604, passe 2 : chaque réponse FINALE en prose du tour
 // passe par la relecture partagée, y compris celle qui suit un run_task refusé
@@ -473,7 +476,7 @@ describe('runChatTurn — every final prose reply is re-read, once per turn (#60
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.reply).toBe('Launching the search.');
     expect(relectures(captured)).toEqual([
-      actionRecheckMessages('status?', 'Launching the search.'),
+      actionRecheckMessages('status?', 'Launching the search.', []),
     ]);
     const [, tour] = await travauxDuFil();
     expect(tour).toMatchObject({
@@ -510,7 +513,7 @@ describe('runChatTurn — every final prose reply is re-read, once per turn (#60
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.spawnedJobId).toBeTruthy();
     expect(relectures(captured)).toEqual([
-      actionRecheckMessages('and 0.9.3?', 'I will fetch the 0.9.3 changelog.'),
+      actionRecheckMessages('and 0.9.3?', 'I will fetch the 0.9.3 changelog.', []),
     ]);
     expect((await travauxDuFil()).map((j) => j.task)).toContain(
       'Find the nodal-agents 0.9.3 changelog',

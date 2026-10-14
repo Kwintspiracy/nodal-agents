@@ -85,24 +85,51 @@ function bloc(item: RepairBriefCommand): string {
 /**
  * Le message de plateforme qui ouvre le tour de réparation.
  *
- * La dernière phrase est le contrat de la décision D2 : UN tour, et la preuve
- * repasse ensuite quoi qu'il arrive. Le modèle doit savoir que ce n'est pas
- * une boucle — sinon il livre une correction partielle en comptant sur un
- * troisième essai qui n'existe pas.
+ * Le contrat, dit exactement (#711). Ce qui est rouge, c'est le LIVRABLE (un
+ * fichier, un projet) : c'est lui qu'on répare. « Livre à nouveau de la même
+ * façon » faisait refaire au modèle tout ce qui avait accompagné sa première
+ * fin — un courriel déjà parti est reparti le 12/10. Ce qui a été fait au
+ * dehors (un message, une publication, une impression, une délégation) a eu
+ * lieu ; le refaire ne répare rien. Pour que la preuve repasse, il suffit de
+ * FINIR, comme toute tâche : une réponse sans appel d'outil, ou
+ * `return_result` — les deux portes de `finalizeJobSuccess` dans la boucle
+ * (execute.ts), et `return_result` est le seul outil que tout agent a.
+ *
+ * La dernière phrase est celle de la décision D2 : le modèle doit savoir si
+ * le verdict suivant est le dernier mot — sinon il livre une correction
+ * partielle en comptant sur un essai qui n'existe pas. `toursRestants` est ce
+ * qui restera APRÈS ce tour-ci : le réglage de l'espace en permet plusieurs
+ * (#377), et « ton seul tour » était faux dès qu'il valait plus d'un.
  */
-export function buildRepairBrief(commands: readonly RepairBriefCommand[]): string {
+export function buildRepairBrief(
+  commands: readonly RepairBriefCommand[],
+  toursRestants: number,
+): string {
   if (commands.length === 0) {
     throw new Error('REPAIR_BRIEF_WITHOUT_RED_COMMAND');
   }
   const tete =
     commands.length === 1
-      ? 'The proof of your delivery failed. Here is the command that failed, verbatim.'
-      : `The proof of your delivery failed. Here are the ${commands.length} commands that failed, verbatim.`;
+      ? 'The proof of your deliverable failed. Here is the command that failed, verbatim.'
+      : `The proof of your deliverables failed. Here are the ${commands.length} commands that failed, verbatim.`;
+  const unSeul = new Set(commands.map((c) => c.deliverable)).size === 1;
+  const fin =
+    toursRestants <= 0
+      ? 'This is your last repair turn: the verdict of that proof is final.'
+      : `If it fails again, you get at most ${toursRestants} more repair turn${toursRestants === 1 ? '' : 's'}.`;
   return [
     tete,
     '',
     commands.map(bloc).join('\n\n'),
     '',
-    'Fix the cause, then deliver again the same way you just did. This is your only repair turn: the proof runs once more after your next delivery, and its verdict is final.',
+    `Repair ${unSeul ? 'the deliverable' : 'the deliverables'} named above, so that ` +
+      `${commands.length === 1 ? 'this command passes' : 'every command above passes'}. ` +
+      `Do not repeat anything you already did outside ${unSeul ? 'it' : 'them'}: a message or ` +
+      'a post already sent, a print, a delegation, or any other action already performed has ' +
+      'happened, and doing it again repairs nothing. ' +
+      `Once ${unSeul ? 'it is' : 'they are'} repaired, finish as you finish any task — reply ` +
+      `without calling a tool, or call return_result — and the proof runs again on ` +
+      `${unSeul ? 'it' : 'them'}. ` +
+      fin,
   ].join('\n');
 }

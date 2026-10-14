@@ -395,9 +395,13 @@ describe('la borne de réparation est un réglage de l’espace @cap:verifier-un
     const premier = await finalize(jobId);
     expect(premier.kind).toBe('repair_due');
     expect((await stateRow(stateId)).repairAttempts).toBe(1);
+    // Le brief dit le vrai : un tour de plus reste après celui-ci (#711).
+    expect(premier.repair?.brief).toContain('you get at most 1 more repair turn.');
+    expect(premier.repair?.brief).not.toContain('last repair turn');
 
     const second = await finalize(jobId);
     expect(second.kind).toBe('repair_due');
+    expect(second.repair?.brief).toContain('This is your last repair turn');
     expect((await stateRow(stateId)).repairAttempts).toBe(2);
     // Toujours pas de rouge définitif : il reste un tour à jouer.
     expect((await stateRow(stateId)).redStreak).toBe(0);
@@ -452,7 +456,7 @@ describe('le brief de réparation borne la sortie et le DIT @cap:verifier-un-liv
 
   it('une sortie plus longue que la borne garde la FIN, et la troncature est annoncée', () => {
     const long = `${'x'.repeat(REPAIR_BRIEF_TAIL_CHARS + 500)}DERNIERE_LIGNE`;
-    const brief = buildRepairBrief([{ deliverable: 'D:/p', record: record(long) }]);
+    const brief = buildRepairBrief([{ deliverable: 'D:/p', record: record(long) }], 0);
 
     expect(brief).toContain('DERNIERE_LIGNE');
     expect(brief).toContain(
@@ -462,11 +466,61 @@ describe('le brief de réparation borne la sortie et le DIT @cap:verifier-un-liv
   });
 
   it('une commande muette le dit, plutôt que de rendre une section vide', () => {
-    const brief = buildRepairBrief([{ deliverable: 'D:/p', record: record('') }]);
+    const brief = buildRepairBrief([{ deliverable: 'D:/p', record: record('') }], 0);
     expect(brief).toContain('the command printed nothing');
   });
 
+  // #711 — « deliver again the same way you just did » : quand la livraison
+  // avait envoyé un courriel, la même façon était un second courriel. Le brief
+  // fait réparer le LIVRABLE, et dit ce qu'est finir pour que la preuve repasse.
+  it('il fait réparer le LIVRABLE nommé, jamais refaire la livraison (#711)', () => {
+    const brief = buildRepairBrief([{ deliverable: 'D:/notes/brief.md', record: record('') }], 0);
+
+    expect(brief).not.toContain('deliver again');
+    expect(brief).not.toContain('the same way');
+    expect(brief).toContain('Deliverable: D:/notes/brief.md');
+    expect(brief).toContain('Repair the deliverable named above, so that this command passes.');
+    // Ce qui a été fait au dehors a eu lieu — un envoi, une publication, une
+    // impression, une délégation : aucun nom d'outil ni de service.
+    expect(brief).toContain(
+      'Do not repeat anything you already did outside it: a message or a post already sent, ' +
+        'a print, a delegation, or any other action already performed has happened, and doing ' +
+        'it again repairs nothing.',
+    );
+    // Finir, c'est l'une des deux portes de la finalisation dans la boucle.
+    expect(brief).toContain(
+      'finish as you finish any task — reply without calling a tool, or call return_result — ' +
+        'and the proof runs again on it.',
+    );
+    expect(brief).toContain('This is your last repair turn: the verdict of that proof is final.');
+  });
+
+  it('plusieurs livrables rouges : il les nomme tous, au pluriel', () => {
+    const brief = buildRepairBrief(
+      [
+        { deliverable: 'D:/a', record: record('') },
+        { deliverable: 'D:/b', record: record('') },
+      ],
+      0,
+    );
+    expect(brief).toContain('Deliverable: D:/a');
+    expect(brief).toContain('Deliverable: D:/b');
+    expect(brief).toContain(
+      'Repair the deliverables named above, so that every command above passes.',
+    );
+    expect(brief).toContain('Do not repeat anything you already did outside them');
+    expect(brief).toContain('the proof runs again on them.');
+  });
+
+  it('il dit EXACTEMENT combien de tours restent après celui-ci (réglage de l’espace, #377)', () => {
+    const un = buildRepairBrief([{ deliverable: 'D:/p', record: record('') }], 1);
+    expect(un).toContain('If it fails again, you get at most 1 more repair turn.');
+    expect(un).not.toContain('last repair turn');
+    const deux = buildRepairBrief([{ deliverable: 'D:/p', record: record('') }], 2);
+    expect(deux).toContain('If it fails again, you get at most 2 more repair turns.');
+  });
+
   it('sans aucune commande rouge, il refuse plutôt que de composer un brief vide', () => {
-    expect(() => buildRepairBrief([])).toThrow('REPAIR_BRIEF_WITHOUT_RED_COMMAND');
+    expect(() => buildRepairBrief([], 0)).toThrow('REPAIR_BRIEF_WITHOUT_RED_COMMAND');
   });
 });
