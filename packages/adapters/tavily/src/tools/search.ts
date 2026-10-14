@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-tavily — search, extract, and crawl tools
 
 import { z } from 'zod';
-import type { ToolDefinition, ToolContext } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition, ToolContext } from '@nodal-agents/tools';
 import type { TavilyClient } from '../client.ts';
 import { wrapTavilyError } from '../errors.ts';
 
@@ -65,13 +65,12 @@ export type SearchOutput = {
 
 export function makeTavilySearchTool(
   client: TavilyClient,
-): ToolDefinition<typeof SearchInput, SearchOutput> {
+): ConnectorToolDefinition<typeof SearchInput, SearchOutput> {
   return {
     name: 'tavily_search',
     description:
       'Search the web using Tavily. Returns ranked results with titles, URLs, content snippets, and relevance scores. Use topic="news" for current events.',
     inputSchema: SearchInput,
-    riskLevel: 'read',
     async execute(input, _ctx: ToolContext) {
       try {
         const response = await client.search(input.query, {
@@ -137,13 +136,12 @@ export type ExtractOutput = {
 
 export function makeTavilyExtractTool(
   client: TavilyClient,
-): ToolDefinition<typeof ExtractInput, ExtractOutput> {
+): ConnectorToolDefinition<typeof ExtractInput, ExtractOutput> {
   return {
     name: 'tavily_extract',
     description:
       'Extract the full text content from one or more URLs (max 20). Returns the raw content of each page and a list of URLs that failed to extract.',
     inputSchema: ExtractInput,
-    riskLevel: 'read',
     async execute(input, _ctx: ToolContext) {
       try {
         const response = await client.extract(input.urls, {
@@ -199,13 +197,12 @@ export type CrawlOutput = {
 
 export function makeTavilyCrawlTool(
   client: TavilyClient,
-): ToolDefinition<typeof CrawlInput, CrawlOutput> {
+): ConnectorToolDefinition<typeof CrawlInput, CrawlOutput> {
   return {
     name: 'tavily_crawl',
     description:
       'Crawl from a seed URL and return scraped content for all reachable pages up to a depth and page limit. Useful for comprehensive site content extraction.',
     inputSchema: CrawlInput,
-    riskLevel: 'read',
     async execute(input, _ctx: ToolContext) {
       try {
         const response = await client.crawl(input.url, {

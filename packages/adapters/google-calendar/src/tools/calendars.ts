@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-calendar — calendar + free/busy tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { calendar_v3 } from 'googleapis';
 import { mapGoogleCalendarError } from '../errors';
 
@@ -23,14 +23,13 @@ export type ListCalendarsOutput = {
 
 export function createListCalendarsTool(
   calendar: calendar_v3.Calendar,
-): ToolDefinition<typeof ListCalendarsInput, ListCalendarsOutput> {
+): ConnectorToolDefinition<typeof ListCalendarsInput, ListCalendarsOutput> {
   return {
     name: 'gcal_list_calendars',
     description:
       'List the calendars the user can access. Returns calendar IDs (use the id with the other ' +
       "gcal_* tools; 'primary' is the user's main calendar).",
     inputSchema: ListCalendarsInput,
-    riskLevel: 'read',
     async execute() {
       try {
         const res = await calendar.calendarList.list();
@@ -69,14 +68,13 @@ export type FindFreeSlotsOutput = {
 
 export function createFindFreeSlotsTool(
   calendar: calendar_v3.Calendar,
-): ToolDefinition<typeof FindFreeSlotsInput, FindFreeSlotsOutput> {
+): ConnectorToolDefinition<typeof FindFreeSlotsInput, FindFreeSlotsOutput> {
   return {
     name: 'gcal_find_free_slots',
     description:
       'Query busy intervals across one or more calendars in a time window, so you can find ' +
       'free slots for scheduling. Returns the BUSY ranges per calendar — gaps are free.',
     inputSchema: FindFreeSlotsInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const ids = input.calendar_ids ?? ['primary'];

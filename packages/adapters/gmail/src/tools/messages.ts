@@ -2,7 +2,7 @@
 // send, list, get, reply, modify-labels, forward, trash, untrash, delete
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { gmail_v1 } from 'googleapis';
 import { mapGmailError, GmailAdapterError } from '../errors';
 import { paginateGmail } from '../helpers/pagination';
@@ -66,14 +66,13 @@ export type SendEmailOutput = {
 
 export function createSendEmailTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof SendEmailInput, SendEmailOutput> {
+): ConnectorToolDefinition<typeof SendEmailInput, SendEmailOutput> {
   return {
     name: 'gmail_send_email',
     description:
       'Send an email via Gmail. Supports plain text and HTML bodies, CC, BCC, Reply-To, and file attachments. ' +
       'Use attachments to send reports, CSVs, or HTML files as real files rather than pasting content inline.',
     inputSchema: SendEmailInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const raw = buildRfc2822Message({
@@ -142,14 +141,13 @@ export type ListMessagesOutput = {
 
 export function createListMessagesTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof ListMessagesInput, ListMessagesOutput> {
+): ConnectorToolDefinition<typeof ListMessagesInput, ListMessagesOutput> {
   return {
     name: 'gmail_list_messages',
     description:
       'List Gmail messages matching a query. Returns message IDs, thread IDs, sender, subject, date and snippet. ' +
       'Use gmail_get_message to read the full body, or gmail_get_thread for the full conversation.',
     inputSchema: ListMessagesInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const maxResults = Math.min(input.max_results ?? 20, 500);
@@ -248,14 +246,13 @@ export type GetMessageOutput = {
 
 export function createGetMessageTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof GetMessageInput, GetMessageOutput> {
+): ConnectorToolDefinition<typeof GetMessageInput, GetMessageOutput> {
   return {
     name: 'gmail_get_message',
     description:
       'Get the full content of a Gmail message including decoded body and attachment metadata. ' +
       'Use gmail_get_attachment to download an attachment by its ID.',
     inputSchema: GetMessageInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const res = await gmail.users.messages.get({
@@ -312,14 +309,13 @@ export type ReplyMessageOutput = {
 
 export function createReplyMessageTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof ReplyMessageInput, ReplyMessageOutput> {
+): ConnectorToolDefinition<typeof ReplyMessageInput, ReplyMessageOutput> {
   return {
     name: 'gmail_reply_message',
     description:
       'Reply to a Gmail message in-thread. Automatically sets In-Reply-To, References, subject (Re: prefix), and threadId. ' +
       'Fetches the original message headers to build correct threading.',
     inputSchema: ReplyMessageInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         // Fetch original message metadata for threading headers
@@ -390,13 +386,12 @@ export type ForwardMessageOutput = {
 
 export function createForwardMessageTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof ForwardMessageInput, ForwardMessageOutput> {
+): ConnectorToolDefinition<typeof ForwardMessageInput, ForwardMessageOutput> {
   return {
     name: 'gmail_forward_message',
     description:
       'Forward a Gmail message to new recipients. Quotes the original body and prepends Fwd: to the subject.',
     inputSchema: ForwardMessageInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const original = await gmail.users.messages.get({
@@ -464,14 +459,13 @@ export type ModifyLabelsOutput = {
 
 export function createModifyLabelsTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof ModifyLabelsInput, ModifyLabelsOutput> {
+): ConnectorToolDefinition<typeof ModifyLabelsInput, ModifyLabelsOutput> {
   return {
     name: 'gmail_modify_labels',
     description:
       'Add or remove labels on a Gmail message. System labels: INBOX, UNREAD, STARRED, IMPORTANT, TRASH, SPAM. ' +
       'Use to mark as read (remove UNREAD), star, archive (remove INBOX), etc.',
     inputSchema: ModifyLabelsInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         if (!input.add_labels?.length && !input.remove_labels?.length) {
@@ -512,13 +506,12 @@ export type TrashMessageOutput = {
 
 export function createTrashMessageTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof TrashMessageInput, TrashMessageOutput> {
+): ConnectorToolDefinition<typeof TrashMessageInput, TrashMessageOutput> {
   return {
     name: 'gmail_trash_message',
     description:
       'Move a Gmail message to the Trash folder. Recoverable for 30 days. Prefer this over permanent delete.',
     inputSchema: TrashMessageInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const res = await gmail.users.messages.trash({
@@ -549,12 +542,11 @@ export type UntrashMessageOutput = {
 
 export function createUntrashMessageTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof UntrashMessageInput, UntrashMessageOutput> {
+): ConnectorToolDefinition<typeof UntrashMessageInput, UntrashMessageOutput> {
   return {
     name: 'gmail_untrash_message',
     description: 'Restore a Gmail message from the Trash folder.',
     inputSchema: UntrashMessageInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const res = await gmail.users.messages.untrash({
@@ -585,14 +577,13 @@ export type DeleteMessageOutput = {
 
 export function createDeleteMessageTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof DeleteMessageInput, DeleteMessageOutput> {
+): ConnectorToolDefinition<typeof DeleteMessageInput, DeleteMessageOutput> {
   return {
     name: 'gmail_delete_message',
     description:
       'Permanently delete a Gmail message. This is irreversible — the message cannot be recovered. ' +
       'Consider gmail_trash_message for recoverable deletion.',
     inputSchema: DeleteMessageInput,
-    riskLevel: 'destructive',
     async execute(input) {
       try {
         await gmail.users.messages.delete({

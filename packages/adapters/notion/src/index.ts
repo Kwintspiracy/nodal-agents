@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-notion — public API
-// Single factory: createNotionTools(opts) → ToolDefinition[]
+// Single factory: createNotionTools(opts) → ConnectorToolDefinition[]
 
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createNotionClient } from './client';
 import { createSearchTool } from './tools/search';
@@ -66,7 +66,8 @@ function resolveBearer(opts: NotionAdapterOptions): string {
 
 /**
  * Create all 17 Notion tools using the provided API key or OAuth access token.
- * Returns a flat ToolDefinition[] ready to register in a ToolRegistry.
+ * Returns a flat ConnectorToolDefinition[]: risk and default approval come
+ * from the operation descriptors, applied by ADAPTER_REGISTRY (issue #735).
  *
  * Tool count: 17
  * Read (9):        notion_search, notion_get_page, notion_get_page_content,
@@ -84,7 +85,7 @@ function resolveBearer(opts: NotionAdapterOptions): string {
  */
 export function createNotionTools(
   opts: NotionAdapterOptions,
-): ToolDefinition<z.ZodTypeAny, unknown>[] {
+): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   const client = createNotionClient(resolveBearer(opts));
 
   return [
@@ -113,7 +114,7 @@ export function createNotionTools(
     // Destructive tools (2)
     createArchivePageTool(client),
     createDeleteBlockTool(client),
-  ] as unknown as ToolDefinition<z.ZodTypeAny, unknown>[];
+  ] as unknown as ConnectorToolDefinition<z.ZodTypeAny, unknown>[];
 }
 
 // Re-export error types for consumers

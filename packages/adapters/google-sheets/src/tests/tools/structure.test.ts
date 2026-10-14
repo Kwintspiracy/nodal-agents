@@ -98,10 +98,6 @@ describe('sheets_get_metadata', () => {
       code: 'sheets_not_found',
     });
   });
-
-  it('has riskLevel read', () => {
-    expect(createGetMetadataTool(sheets).riskLevel).toBe('read');
-  });
 });
 
 // ── sheets_create_spreadsheet ──────────────────────────────────────────────
@@ -140,10 +136,6 @@ describe('sheets_create_spreadsheet', () => {
       code: 'sheets_unauthorized',
     });
   });
-
-  it('has riskLevel write', () => {
-    expect(createCreateSpreadsheetTool(sheets).riskLevel).toBe('write');
-  });
 });
 
 // ── sheets_add_sheet ────────────────────────────────────────────────────────
@@ -177,10 +169,6 @@ describe('sheets_add_sheet', () => {
       tool.execute({ spreadsheet_id: 'abc', title: 'Tab' }, {} as never),
     ).rejects.toMatchObject({ code: 'sheets_forbidden' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createAddSheetTool(sheets).riskLevel).toBe('write');
-  });
 });
 
 // ── sheets_delete_sheet ────────────────────────────────────────────────────
@@ -211,10 +199,6 @@ describe('sheets_delete_sheet', () => {
     await expect(
       tool.execute({ spreadsheet_id: 'abc', sheet_id: 99 }, {} as never),
     ).rejects.toMatchObject({ code: 'sheets_not_found' });
-  });
-
-  it('has riskLevel destructive', () => {
-    expect(createDeleteSheetTool(sheets).riskLevel).toBe('destructive');
   });
 });
 
@@ -257,10 +241,6 @@ describe('sheets_duplicate_sheet', () => {
       tool.execute({ spreadsheet_id: 'abc', source_sheet_id: 0 }, {} as never),
     ).rejects.toMatchObject({ code: 'sheets_unauthorized' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createDuplicateSheetTool(sheets).riskLevel).toBe('write');
-  });
 });
 
 // ── sheets_rename_sheet ────────────────────────────────────────────────────
@@ -294,9 +274,5 @@ describe('sheets_rename_sheet', () => {
     await expect(
       tool.execute({ spreadsheet_id: 'abc', sheet_id: 0, new_title: 'X' }, {} as never),
     ).rejects.toMatchObject({ code: 'sheets_forbidden' });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createRenameSheetTool(sheets).riskLevel).toBe('write');
   });
 });

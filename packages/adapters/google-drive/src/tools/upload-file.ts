@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-drive — drive_upload_file tool
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { drive_v3 } from 'googleapis';
 import { mapDriveError } from '../errors';
 
@@ -20,12 +20,11 @@ export type UploadFileOutput = {
 
 export function createUploadFileTool(
   drive: drive_v3.Drive,
-): ToolDefinition<typeof UploadFileInput, UploadFileOutput> {
+): ConnectorToolDefinition<typeof UploadFileInput, UploadFileOutput> {
   return {
     name: 'drive_upload_file',
     description: 'Create a new file in Google Drive with text content.',
     inputSchema: UploadFileInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const mimeType = input.mime_type ?? 'text/plain';

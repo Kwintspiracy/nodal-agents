@@ -115,10 +115,6 @@ describe('gmail_send_email', () => {
       tool.execute({ to: 'a@example.com', subject: 'X', body: 'Y' }, {} as never),
     ).rejects.toMatchObject({ code: 'gmail_quota_exceeded' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createSendEmailTool(gmail).riskLevel).toBe('write');
-  });
 });
 
 // ── gmail_list_messages ───────────────────────────────────────────────────────
@@ -198,10 +194,6 @@ describe('gmail_list_messages', () => {
     await expect(tool.execute({}, {} as never)).rejects.toMatchObject({
       code: 'gmail_unauthorized',
     });
-  });
-
-  it('has riskLevel read', () => {
-    expect(createListMessagesTool(gmail).riskLevel).toBe('read');
   });
 
   // audit#2026-07-07 F3: a failed per-message GET must surface as an explicit
@@ -331,10 +323,6 @@ describe('gmail_get_message', () => {
       code: 'gmail_message_not_found',
     });
   });
-
-  it('has riskLevel read', () => {
-    expect(createGetMessageTool(gmail).riskLevel).toBe('read');
-  });
 });
 
 // ── gmail_modify_labels ───────────────────────────────────────────────────────
@@ -378,10 +366,6 @@ describe('gmail_modify_labels', () => {
       tool.execute({ message_id: 'msg-1', add_labels: ['STARRED'] }, {} as never),
     ).rejects.toMatchObject({ code: 'gmail_unauthorized' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createModifyLabelsTool(gmail).riskLevel).toBe('write');
-  });
 });
 
 // ── gmail_trash_message ───────────────────────────────────────────────────────
@@ -414,10 +398,6 @@ describe('gmail_trash_message', () => {
       code: 'gmail_message_not_found',
     });
   });
-
-  it('has riskLevel write', () => {
-    expect(createTrashMessageTool(gmail).riskLevel).toBe('write');
-  });
 });
 
 // ── gmail_untrash_message ─────────────────────────────────────────────────────
@@ -436,10 +416,6 @@ describe('gmail_untrash_message', () => {
     const tool = createUntrashMessageTool(gmail);
     const result = await tool.execute({ message_id: 'msg-1' }, {} as never);
     expect(result.messageId).toBe('msg-1');
-  });
-
-  it('has riskLevel write', () => {
-    expect(createUntrashMessageTool(gmail).riskLevel).toBe('write');
   });
 });
 
@@ -471,10 +447,6 @@ describe('gmail_delete_message', () => {
     await expect(tool.execute({ message_id: 'missing' }, {} as never)).rejects.toMatchObject({
       code: 'gmail_message_not_found',
     });
-  });
-
-  it('has riskLevel destructive', () => {
-    expect(createDeleteMessageTool(gmail).riskLevel).toBe('destructive');
   });
 });
 
@@ -516,10 +488,6 @@ describe('gmail_reply_message', () => {
       requestBody: { threadId?: string; raw: string };
     };
     expect(sendCall?.requestBody?.threadId).toBe('thread-1');
-  });
-
-  it('has riskLevel write', () => {
-    expect(createReplyMessageTool(gmail).riskLevel).toBe('write');
   });
 });
 
@@ -580,9 +548,5 @@ describe('gmail_forward_message', () => {
     const bodyWithPad = bodyPadded.replace(/\s/g, '') + '='.repeat(bodyPadLength);
     const bodyText = Buffer.from(bodyWithPad, 'base64').toString('utf-8');
     expect(bodyText).toContain('Original email body');
-  });
-
-  it('has riskLevel write', () => {
-    expect(createForwardMessageTool(gmail).riskLevel).toBe('write');
   });
 });

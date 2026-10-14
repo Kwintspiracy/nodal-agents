@@ -90,11 +90,6 @@ describe('makeApifyListDatasetsTool', () => {
     expect(tool.name).toBe('apify_list_datasets');
   });
 
-  it('riskLevel is read', () => {
-    const tool = makeApifyListDatasetsTool(makeClient());
-    expect(tool.riskLevel).toBe('read');
-  });
-
   it('inputSchema accepts empty object (all params optional with defaults)', () => {
     const tool = makeApifyListDatasetsTool(makeClient());
     const parsed = tool.inputSchema.parse({}) as { limit: number; offset: number };
@@ -164,11 +159,6 @@ describe('makeApifyGetDatasetItemsTool', () => {
   it('tool name is apify_get_dataset_items', () => {
     const tool = makeApifyGetDatasetItemsTool(makeClient());
     expect(tool.name).toBe('apify_get_dataset_items');
-  });
-
-  it('riskLevel is read', () => {
-    const tool = makeApifyGetDatasetItemsTool(makeClient());
-    expect(tool.riskLevel).toBe('read');
   });
 
   it('inputSchema requires datasetId', () => {

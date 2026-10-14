@@ -2,7 +2,7 @@
 // get_metadata, create_spreadsheet, add_sheet, delete_sheet, duplicate_sheet, rename_sheet
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { sheets_v4 } from 'googleapis';
 import { mapSheetsError, SheetsAdapterError } from '../errors';
 import {
@@ -36,14 +36,13 @@ export type GetMetadataOutput = {
 
 export function createGetMetadataTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof GetMetadataInput, GetMetadataOutput> {
+): ConnectorToolDefinition<typeof GetMetadataInput, GetMetadataOutput> {
   return {
     name: 'sheets_get_metadata',
     description:
       'Get metadata about a Google Spreadsheet: title, list of sheet tabs with their dimensions, ' +
       'and named ranges. Use this to discover sheet names before reading.',
     inputSchema: GetMetadataInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const res = await sheets.spreadsheets.get({
@@ -95,14 +94,13 @@ export type CreateSpreadsheetOutput = {
 
 export function createCreateSpreadsheetTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof CreateSpreadsheetInput, CreateSpreadsheetOutput> {
+): ConnectorToolDefinition<typeof CreateSpreadsheetInput, CreateSpreadsheetOutput> {
   return {
     name: 'sheets_create_spreadsheet',
     description:
       'Create a new Google Spreadsheet. Returns the spreadsheet ID and URL. ' +
       'The new spreadsheet will be placed in the root of the authenticated user Drive.',
     inputSchema: CreateSpreadsheetInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const res = await sheets.spreadsheets.create({
@@ -151,12 +149,11 @@ export type AddSheetOutput = {
 
 export function createAddSheetTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof AddSheetInput, AddSheetOutput> {
+): ConnectorToolDefinition<typeof AddSheetInput, AddSheetOutput> {
   return {
     name: 'sheets_add_sheet',
     description: 'Add a new sheet tab to an existing Google Spreadsheet.',
     inputSchema: AddSheetInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const res = await sheets.spreadsheets.batchUpdate({
@@ -204,14 +201,13 @@ export type DeleteSheetOutput = {
 
 export function createDeleteSheetTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof DeleteSheetInput, DeleteSheetOutput> {
+): ConnectorToolDefinition<typeof DeleteSheetInput, DeleteSheetOutput> {
   return {
     name: 'sheets_delete_sheet',
     description:
       'Permanently delete a sheet tab from a Google Spreadsheet. This is irreversible. ' +
       'Get the numeric sheetId from sheets_get_metadata (not the tab name).',
     inputSchema: DeleteSheetInput,
-    riskLevel: 'destructive',
     async execute(input) {
       try {
         await sheets.spreadsheets.batchUpdate({
@@ -254,14 +250,13 @@ export type DuplicateSheetOutput = {
 
 export function createDuplicateSheetTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof DuplicateSheetInput, DuplicateSheetOutput> {
+): ConnectorToolDefinition<typeof DuplicateSheetInput, DuplicateSheetOutput> {
   return {
     name: 'sheets_duplicate_sheet',
     description:
       'Copy a sheet tab within the same Google Spreadsheet. ' +
       'Duplicates all data, formatting, and formulas.',
     inputSchema: DuplicateSheetInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         // Determine insert index: default to last position
@@ -311,12 +306,11 @@ export type RenameSheetOutput = {
 
 export function createRenameSheetTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof RenameSheetInput, RenameSheetOutput> {
+): ConnectorToolDefinition<typeof RenameSheetInput, RenameSheetOutput> {
   return {
     name: 'sheets_rename_sheet',
     description: 'Rename a sheet tab in a Google Spreadsheet.',
     inputSchema: RenameSheetInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         await sheets.spreadsheets.batchUpdate({

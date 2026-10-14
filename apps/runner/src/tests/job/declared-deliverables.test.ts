@@ -699,12 +699,12 @@ describe('SANS livrable déclaré, rien ne change @cap:verifier-un-livrable/mote
           {
             toolCallId: 'fw-1',
             toolName: 'file_write',
-            args: { path: 'notes/sans-titre.md', content: 'pas de titre\n', create_dirs: true },
+            args: { path: 'notes/casse.css', content: 'body { color: red;\n', create_dirs: true },
           },
           { toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } },
         ],
       },
-      rendu('rr-2', 'Note écrite, toujours sans titre.'),
+      rendu('rr-2', 'Note écrite, toujours cassée.'),
     ]);
 
     const out = await executeJob(id as JobId, makeDeps(client), testEnv);
@@ -721,7 +721,7 @@ describe('SANS livrable déclaré, rien ne change @cap:verifier-un-livrable/mote
       states.map((s) => [s.deliverableType, s.declared, s.decisionStatus, s.redStreak]),
     ).toEqual([['document', false, 'red', 1]]);
     const runs = await runsOf(id);
-    expect(runs.at(-1)).toMatchObject({ command: 'well-formed:markdown', verdict: 'red' });
+    expect(runs.at(-1)).toMatchObject({ command: 'well-formed:css', verdict: 'red' });
   });
 });
 

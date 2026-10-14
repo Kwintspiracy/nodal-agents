@@ -1,5 +1,5 @@
 // @nodal-agents/adapter-cloudflare — public API
-// Single factory: createCloudflareTools(opts) → ToolDefinition[]
+// Single factory: createCloudflareTools(opts) → ConnectorToolDefinition[]
 //
 // The experience (demande Quentin 20/08) : an agent that just coded a
 // site/app in its workspace publishes it to Cloudflare Workers and answers
@@ -7,7 +7,7 @@
 // online preview. Auth = ONE Cloudflare API Token (connectors UI, api_key
 // flow); the account id and workers.dev subdomain are derived from it.
 
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { CloudflareAccountContext } from './client.ts';
 import { makeCloudflareDeployTool } from './tools/deploy.ts';
@@ -28,7 +28,7 @@ export type CloudflareAdapterOptions = {
  */
 export function createCloudflareTools(
   opts: CloudflareAdapterOptions,
-): ToolDefinition<z.ZodTypeAny, unknown>[] {
+): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   if (!opts.accessToken) {
     throw new Error('CloudflareAdapterOptions: accessToken must be a non-empty string.');
   }
@@ -39,7 +39,7 @@ export function createCloudflareTools(
     makeCloudflareDeployTool(account),
     makeCloudflareListWorkersTool(account),
     makeCloudflareDeleteWorkerTool(account),
-  ] as unknown as ToolDefinition<z.ZodTypeAny, unknown>[];
+  ] as unknown as ConnectorToolDefinition<z.ZodTypeAny, unknown>[];
 }
 
 export { CloudflareApiError } from './errors.ts';

@@ -75,9 +75,4 @@ describe('outlook_get_attachment', () => {
       code: 'outlook_not_found',
     });
   });
-
-  it('has riskLevel read', () => {
-    const { client } = makeMockClient();
-    expect(createGetAttachmentTool(client).riskLevel).toBe('read');
-  });
 });

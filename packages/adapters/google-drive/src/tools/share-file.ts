@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-drive — drive_share_file tool
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { drive_v3 } from 'googleapis';
 import { mapDriveError } from '../errors';
 
@@ -32,13 +32,12 @@ export type ShareFileOutput = {
 
 export function createShareFileTool(
   drive: drive_v3.Drive,
-): ToolDefinition<typeof ShareFileInput, ShareFileOutput> {
+): ConnectorToolDefinition<typeof ShareFileInput, ShareFileOutput> {
   return {
     name: 'drive_share_file',
     description:
       'Share a file with a user or make it accessible via link. Provide email for user sharing, or omit for anyone-with-link sharing.',
     inputSchema: ShareFileInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const role = input.role ?? 'reader';

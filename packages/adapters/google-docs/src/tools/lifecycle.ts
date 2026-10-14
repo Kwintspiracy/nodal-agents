@@ -2,7 +2,7 @@
 // docs_create, docs_get, docs_get_text
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { docs_v1 } from 'googleapis';
 import { mapDocsError, DocsAdapterError } from '../errors';
 import { docBodyToText } from '../helpers/doc-to-text';
@@ -39,14 +39,13 @@ export type CreateDocOutput = {
 
 export function createCreateDocTool(
   docs: docs_v1.Docs,
-): ToolDefinition<typeof CreateDocInput, CreateDocOutput> {
+): ConnectorToolDefinition<typeof CreateDocInput, CreateDocOutput> {
   return {
     name: 'docs_create',
     description:
       'Create a new Google Document with the given title. Optionally provide initial text content. ' +
       "Returns the document ID and URL. The document is placed in the authenticated user's Drive root.",
     inputSchema: CreateDocInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const res = await docs.documents.create({
@@ -108,7 +107,7 @@ export type GetDocOutput = {
 
 export function createGetDocTool(
   docs: docs_v1.Docs,
-): ToolDefinition<typeof GetDocInput, GetDocOutput> {
+): ConnectorToolDefinition<typeof GetDocInput, GetDocOutput> {
   return {
     name: 'docs_get',
     description:
@@ -116,7 +115,6 @@ export function createGetDocTool(
       'tables, and structural elements), plus headers and footers. ' +
       'Capped at 100,000 characters of body text — use docs_get_text for plain text extraction.',
     inputSchema: GetDocInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const res = await docs.documents.get({
@@ -191,7 +189,7 @@ export type GetDocTextOutput = {
 
 export function createGetDocTextTool(
   docs: docs_v1.Docs,
-): ToolDefinition<typeof GetDocTextInput, GetDocTextOutput> {
+): ConnectorToolDefinition<typeof GetDocTextInput, GetDocTextOutput> {
   return {
     name: 'docs_get_text',
     description:
@@ -199,7 +197,6 @@ export function createGetDocTextTool(
       'joining all paragraph runs, handling tables (tab-separated cells), and headings. ' +
       'Capped at 100,000 characters — throws docs_document_too_large if exceeded.',
     inputSchema: GetDocTextInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const res = await docs.documents.get({

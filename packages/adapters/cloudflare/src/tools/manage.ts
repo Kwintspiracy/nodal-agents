@@ -3,7 +3,7 @@
 // (client.ts), never asked to the model.
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { CloudflareAccountContext } from '../client.ts';
 import { wrapCloudflareError } from '../client.ts';
 import { WORKER_NAME_RE } from './deploy.ts';
@@ -17,14 +17,13 @@ export type ListWorkersOutput = {
 
 export function makeCloudflareListWorkersTool(
   account: CloudflareAccountContext,
-): ToolDefinition<typeof ListInput, ListWorkersOutput> {
+): ConnectorToolDefinition<typeof ListInput, ListWorkersOutput> {
   return {
     name: 'cloudflare_list_workers',
     description:
       'List the Workers deployed on the connected Cloudflare account, with their ' +
       'workers.dev preview URLs.',
     inputSchema: ListInput,
-    riskLevel: 'read',
     async execute() {
       const { accountId, subdomain } = await account.resolve();
       try {
@@ -58,15 +57,13 @@ export type DeleteWorkerOutput = { deleted: string };
 
 export function makeCloudflareDeleteWorkerTool(
   account: CloudflareAccountContext,
-): ToolDefinition<typeof DeleteInput, DeleteWorkerOutput> {
+): ConnectorToolDefinition<typeof DeleteInput, DeleteWorkerOutput> {
   return {
     name: 'cloudflare_delete_worker',
     description:
       'Permanently delete a Worker from the connected Cloudflare account. Its ' +
       'workers.dev URL goes offline immediately — irreversible.',
     inputSchema: DeleteInput,
-    riskLevel: 'destructive',
-    defaultApproval: 'require_approval',
     async execute(input) {
       const { accountId } = await account.resolve();
       try {

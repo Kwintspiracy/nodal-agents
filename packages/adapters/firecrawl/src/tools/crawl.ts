@@ -11,7 +11,7 @@
 // poll status in a subsequent turn — matching the SDK's natural shape.
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { FirecrawlClient } from '../client.ts';
 import { wrapFirecrawlError } from '../errors.ts';
 import { capField } from './scrape.ts';
@@ -43,13 +43,12 @@ export type CrawlStartOutput = {
 
 export function makeFirecrawlCrawlStartTool(
   client: FirecrawlClient,
-): ToolDefinition<typeof CrawlStartInput, CrawlStartOutput> {
+): ConnectorToolDefinition<typeof CrawlStartInput, CrawlStartOutput> {
   return {
     name: 'firecrawl_crawl_start',
     description:
       'Start an async crawl job for a website. Returns a job ID. Use firecrawl_crawl_status to poll for results.',
     inputSchema: CrawlStartInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const response = await client.startCrawl(input.url, {
@@ -91,14 +90,13 @@ export type CrawlStatusOutput = {
 
 export function makeFirecrawlCrawlStatusTool(
   client: FirecrawlClient,
-): ToolDefinition<typeof CrawlStatusInput, CrawlStatusOutput> {
+): ConnectorToolDefinition<typeof CrawlStatusInput, CrawlStatusOutput> {
   return {
     name: 'firecrawl_crawl_status',
     description:
       'Get the current status and partial results of a Firecrawl crawl job. Poll this until status is "completed", "failed", or "cancelled". ' +
       `Capped at ${MAX_CRAWL_DOCS_PER_CALL} documents per call — see the dataTruncated flag.`,
     inputSchema: CrawlStatusInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const job = await client.getCrawlStatus(input.id);

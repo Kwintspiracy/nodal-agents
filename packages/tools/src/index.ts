@@ -3,6 +3,7 @@
 // Types
 export type {
   ToolDefinition,
+  ConnectorToolDefinition,
   ToolContext,
   ToolProvisioning,
   ProvisionMcpConnect,

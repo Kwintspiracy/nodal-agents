@@ -109,10 +109,6 @@ describe('sheets_set_basic_filter', () => {
       ),
     ).rejects.toMatchObject({ code: 'sheets_unauthorized' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createSetBasicFilterTool(sheets).riskLevel).toBe('write');
-  });
 });
 
 // ── sheets_clear_basic_filter ──────────────────────────────────────────────
@@ -161,10 +157,6 @@ describe('sheets_clear_basic_filter', () => {
     await expect(
       tool.execute({ spreadsheet_id: 'abc', sheet_id: 0 }, {} as never),
     ).rejects.toMatchObject({ code: 'sheets_forbidden' });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createClearBasicFilterTool(sheets).riskLevel).toBe('write');
   });
 });
 
@@ -261,9 +253,5 @@ describe('sheets_sort_range', () => {
         {} as never,
       ),
     ).rejects.toMatchObject({ code: 'sheets_unauthorized' });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createSortRangeTool(sheets).riskLevel).toBe('write');
   });
 });

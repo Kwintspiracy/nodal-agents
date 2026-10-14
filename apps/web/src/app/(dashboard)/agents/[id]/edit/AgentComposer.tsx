@@ -1646,9 +1646,11 @@ function SkillDetachIcon() {
 // are not shown to avoid clutter.
 //
 // The three-way control maps directly to approval_rules.action:
-//   Run without asking → delete the rule (runtime default = auto_approve)
+//   Run without asking → action='auto_approve'
 //   Ask for approval   → action='require_approval'
 //   Block              → action='block'
+// With no rule, a row shows what the runtime does: the operation descriptor's
+// `requiresApproval` is the tool's default approval (issue #735).
 
 // Static: always-possible outward tool when a bot is configured.
 const TELEGRAM_SEND_OPERATION: OperationDescriptor = {
@@ -1658,7 +1660,9 @@ const TELEGRAM_SEND_OPERATION: OperationDescriptor = {
   summary:
     'Send a message through the connected Telegram bot. A sent message cannot be taken back.',
   risk: 'destructive',
-  requiresApproval: true,
+  // What the runtime does: `telegram_send_message` declares no default
+  // approval, so with no rule it runs (the row reads its default from here).
+  requiresApproval: false,
   description: 'Deliver a message to the user via the configured Telegram bot (irreversible).',
 };
 
@@ -1816,6 +1820,14 @@ export function AutonomyTab({
     return rules.find((r) => r.toolName === toolName)?.action ?? 'auto_approve';
   }
 
+  /** A connector operation's rule, or its descriptor's default when it has none (#735). */
+  function operationRule(op: OperationDescriptor): ApprovalAction {
+    return (
+      rules.find((r) => r.toolName === op.slug)?.action ??
+      (op.requiresApproval ? 'require_approval' : 'auto_approve')
+    );
+  }
+
   /**
    * Le dossier auquel la règle de cet outil est confinée, ou `undefined`
    * (issue #361). Le libellé vient du serveur, qui l'a résolu depuis
@@ -1946,7 +1958,7 @@ export function AutonomyTab({
                 slug={op.slug}
                 {...ownerTextFor(op)}
                 risk={op.risk}
-                value={ruleFor(op.slug)}
+                value={operationRule(op)}
                 saving={saving.has(op.slug)}
                 onChange={(action) => requestChange(op.slug, action)}
                 {...(folderFor(op.slug) === undefined ? {} : { folder: folderFor(op.slug) })}
@@ -1955,8 +1967,9 @@ export function AutonomyTab({
           </div>
         )}
         <p className="mt-4 text-body-12 text-ink-4">
-          Connector tools without a rule run without asking. Third-party tools, commands and the
-          tools that change your workspace ask first. Changes apply at the agent&apos;s next step.
+          Connector tools marked ⚠ in the Connectors tab ask first unless you set a rule. The others
+          run without asking. Third-party tools, commands and the tools that change your workspace
+          ask first. Changes apply at the agent&apos;s next step.
         </p>
       </SectionCard>
 

@@ -2,7 +2,7 @@
 // get attachment data by message_id + attachment_id
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { gmail_v1 } from 'googleapis';
 import { mapGmailError, GmailAdapterError } from '../errors';
 
@@ -25,7 +25,7 @@ export type GetAttachmentOutput = {
 
 export function createGetAttachmentTool(
   gmail: gmail_v1.Gmail,
-): ToolDefinition<typeof GetAttachmentInput, GetAttachmentOutput> {
+): ConnectorToolDefinition<typeof GetAttachmentInput, GetAttachmentOutput> {
   return {
     name: 'gmail_get_attachment',
     description:
@@ -33,7 +33,6 @@ export function createGetAttachmentTool(
       'Returns base64url-encoded content. Get attachment IDs from gmail_get_message. ' +
       'Size cap: 25 MB.',
     inputSchema: GetAttachmentInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const res = await gmail.users.messages.attachments.get({

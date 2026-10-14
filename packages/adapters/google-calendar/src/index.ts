@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-calendar — public API
-// Single factory: createGoogleCalendarTools(opts) → ToolDefinition[]
+// Single factory: createGoogleCalendarTools(opts) → ConnectorToolDefinition[]
 
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createGoogleCalendarClient } from './client';
 
@@ -39,7 +39,8 @@ export type GoogleCalendarAdapterOptions =
 
 /**
  * Create all 7 Google Calendar tools using the provided OAuth access token.
- * Returns a flat ToolDefinition[] ready to register in a ToolRegistry.
+ * Returns a flat ConnectorToolDefinition[]: risk and default approval come
+ * from the operation descriptors, applied by ADAPTER_REGISTRY (issue #735).
  *
  * Tool count: 7
  * Read (4):        gcal_list_calendars, gcal_list_events, gcal_get_event,
@@ -49,7 +50,7 @@ export type GoogleCalendarAdapterOptions =
  */
 export function createGoogleCalendarTools(
   opts: GoogleCalendarAdapterOptions,
-): ToolDefinition<z.ZodTypeAny, unknown>[] {
+): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   const getAccessToken =
     'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
   const calendar = createGoogleCalendarClient(getAccessToken);
@@ -67,7 +68,7 @@ export function createGoogleCalendarTools(
 
     // Destructive tools (1)
     createDeleteEventTool(calendar),
-  ] as unknown as ToolDefinition<z.ZodTypeAny, unknown>[];
+  ] as unknown as ConnectorToolDefinition<z.ZodTypeAny, unknown>[];
 }
 
 // Re-export error types for consumers

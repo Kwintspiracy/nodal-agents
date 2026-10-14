@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-drive — drive_delete_file tool
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { drive_v3 } from 'googleapis';
 import { mapDriveError } from '../errors';
 
@@ -17,13 +17,12 @@ export type DeleteFileOutput = {
 
 export function createDeleteFileTool(
   drive: drive_v3.Drive,
-): ToolDefinition<typeof DeleteFileInput, DeleteFileOutput> {
+): ConnectorToolDefinition<typeof DeleteFileInput, DeleteFileOutput> {
   return {
     name: 'drive_delete_file',
     description:
       'Move a file to trash in Google Drive. This is reversible — the file can be restored from the Drive trash.',
     inputSchema: DeleteFileInput,
-    riskLevel: 'destructive',
     async execute(input) {
       try {
         const res = await drive.files.update({

@@ -3,7 +3,7 @@
 //           and that both auth variants (apiKey / accessToken) produce identical tool sets.
 
 import { describe, it, expect } from 'vitest';
-import { createNotionTools } from '../index';
+import { createNotionTools, NOTION_OPERATIONS } from '../index';
 import { z } from 'zod';
 
 // Use a fake API key — tools are instantiated but never called here
@@ -40,7 +40,7 @@ describe('createNotionTools integration', () => {
     }
   });
 
-  it('read tools have riskLevel read', () => {
+  it('read operations have risk read in the descriptor', () => {
     const readTools = [
       'notion_search',
       'notion_get_page',
@@ -52,13 +52,13 @@ describe('createNotionTools integration', () => {
       'notion_list_users',
       'notion_get_user',
     ];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(NOTION_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of readTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be read`).toBe('read');
+      expect(toolMap[name]?.risk, `${name} should be read`).toBe('read');
     }
   });
 
-  it('write tools have riskLevel write', () => {
+  it('write operations have risk write in the descriptor', () => {
     const writeTools = [
       'notion_create_page',
       'notion_update_page',
@@ -70,17 +70,17 @@ describe('createNotionTools integration', () => {
       'notion_update_database',
       'notion_add_comment',
     ];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(NOTION_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of writeTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be write`).toBe('write');
+      expect(toolMap[name]?.risk, `${name} should be write`).toBe('write');
     }
   });
 
-  it('destructive tools have riskLevel destructive', () => {
+  it('destructive operations have risk destructive in the descriptor', () => {
     const destructiveTools = ['notion_archive_page', 'notion_delete_block'];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(NOTION_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of destructiveTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be destructive`).toBe('destructive');
+      expect(toolMap[name]?.risk, `${name} should be destructive`).toBe('destructive');
     }
   });
 
@@ -195,14 +195,6 @@ describe('createNotionTools — auth variant parity (apiKey vs accessToken)', ()
     const apiKeyNames = byApiKey.map((t) => t.name).sort();
     const tokenNames = byAccessToken.map((t) => t.name).sort();
     expect(tokenNames).toEqual(apiKeyNames);
-  });
-
-  it('accessToken variant produces identical riskLevels as apiKey variant', () => {
-    const byApiKey = createNotionTools({ apiKey: FAKE_KEY });
-    const byAccessToken = createNotionTools({ accessToken: FAKE_ACCESS_TOKEN });
-    const apiKeyMap = Object.fromEntries(byApiKey.map((t) => [t.name, t.riskLevel]));
-    const tokenMap = Object.fromEntries(byAccessToken.map((t) => [t.name, t.riskLevel]));
-    expect(tokenMap).toEqual(apiKeyMap);
   });
 
   it('accessToken variant does not throw during tool instantiation', () => {

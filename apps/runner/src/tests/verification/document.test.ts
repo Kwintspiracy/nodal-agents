@@ -175,7 +175,7 @@ describe('document — les trois constats communs', () => {
     const p = write('ok.md', '# Titre\n\ncorps\n');
     const { records, seen } = await prove(p);
     expect(seen.map((r) => r.rank)).toEqual(records.map((r) => r.rank));
-    expect(seen.map((r) => r.rank)).toEqual([1, 2, 3, 4]);
+    expect(seen.map((r) => r.rank)).toEqual([1, 2, 3]);
   });
 });
 
@@ -424,12 +424,7 @@ describe('document — le chemin RÉEL, pas la clé repliée en casse', () => {
     expect(config).toMatchObject({ kind: 'ready', subject: reel });
     const proof = await documentVerifier.runProof(config as ReadyConfig, async () => {});
     expect(proof.verdict).toBe('green');
-    expect(proof.records.map((r) => r.command)).toEqual([
-      'exists',
-      'not-empty',
-      'utf8',
-      'well-formed:markdown',
-    ]);
+    expect(proof.records.map((r) => r.command)).toEqual(['exists', 'not-empty', 'utf8']);
   });
 
   it('sans chemin d’affichage, la clé reste le sujet — le contrat d’avant, intact', async () => {
@@ -479,21 +474,54 @@ describe('document — le chemin RÉEL, pas la clé repliée en casse', () => {
   });
 });
 
-describe('document — bien formé, selon son type', () => {
-  it('un markdown sans titre est rouge et dit pourquoi', async () => {
-    const p = write('sans-titre.md', 'juste du texte\n\nsans titre\n');
-    const { verdict, records } = await prove(p);
-    expect(verdict).toBe('red');
-    expect(records.at(-1)).toMatchObject({ command: 'well-formed:markdown', verdict: 'red' });
-    expect(records.at(-1)?.stderrTail).toMatch(/title|heading/i);
+describe('document — un markdown n’a pas de forme à refuser @cap:verifier-un-livrable/moteur', () => {
+  // #736 : la preuve exigeait un titre `# Title`. Un titre est un choix de
+  // style, CommonMark n'a pas de document invalide : le 12/10/2026 ce faux
+  // rouge a déclenché un tour de réparation qui a fait envoyer un fichier deux fois.
+  it('un markdown sans titre est VERT, et la preuve ne prétend pas avoir contrôlé une forme', async () => {
+    const sansTitre = [
+      ['sans-titre.md', 'juste du texte\n\nsans titre\n'],
+      ['commence-par-h2.md', '## Détails\n\ncorps\n'],
+      ['front-matter-sans-titre.md', '---\ntitle: x\n---\n\ncorps\n'],
+      ['liste.markdown', '- un\n- deux\n'],
+    ] as const;
+    for (const [name, content] of sansTitre) {
+      const { verdict, records } = await prove(write(name, content));
+      expect(verdict, name).toBe('green');
+      expect(
+        records.map((r) => [r.command, r.verdict]),
+        name,
+      ).toEqual([
+        ['exists', 'green'],
+        ['not-empty', 'green'],
+        ['utf8', 'green'],
+      ]);
+      // Dit, pas tu : aucune règle de forme, et le constat ne s'appelle pas `well-formed:*`.
+      expect(records.at(-1)?.stdoutTail, name).toMatch(
+        /no well-formedness rule for \.(md|markdown)/,
+      );
+    }
   });
 
-  it('un markdown à titre setext (souligné) est un markdown avec titre', async () => {
-    const p = write('setext.md', 'Mon titre\n=========\n\ncorps\n');
-    const { verdict } = await prove(p);
+  it('un markdown avec titre reste vert, par le même chemin', async () => {
+    const { verdict, records } = await prove(write('avec-titre.md', '# Titre\n\ncorps\n'));
     expect(verdict).toBe('green');
+    expect(records.map((r) => r.command)).toEqual(['exists', 'not-empty', 'utf8']);
   });
 
+  it('un markdown qui n’est pas de l’UTF-8 reste ROUGE sur utf8 : c’est le texte, pas le titre', async () => {
+    for (const name of ['latin1-md.md', 'latin1-md.markdown']) {
+      const { verdict, records } = await prove(
+        write(name, Buffer.from([0x23, 0x20, 0x63, 0x61, 0x66, 0xe9, 0x0a])),
+      );
+      expect(verdict, name).toBe('red');
+      expect(records.at(-1), name).toMatchObject({ command: 'utf8', verdict: 'red' });
+      expect(records.at(-1)?.stderrTail, name).toMatch(/not valid UTF-8, which markdown requires/);
+    }
+  });
+});
+
+describe('document — bien formé, selon son type', () => {
   it('un CSS dont un bloc ne se referme pas est rouge, avec la ligne de l’ouverture', async () => {
     const p = write('bad.css', 'body { color: red;\n.x { }\n'); // l'accolade de body jamais refermée
     const { verdict, records } = await prove(p);
@@ -520,18 +548,6 @@ describe('document — bien formé, selon son type', () => {
     ).toBe('green');
   });
 
-  it('un en-tête YAML et une liste suivie d’un filet ne sont pas des titres', async () => {
-    // Trouvés en sondant : la deuxième ligne de `---`/`title: x`/`---` passait
-    // pour un titre souligné, et `- item` suivi de `---` aussi.
-    const fm = write('frontmatter.md', '---\ntitle: x\n---\n\ncorps sans titre\n');
-    expect((await prove(fm)).verdict).toBe('red');
-    const liste = write('liste.md', '- item\n---\ntexte\n');
-    expect((await prove(liste)).verdict).toBe('red');
-    // Mais un vrai titre APRÈS l'en-tête compte.
-    const fmTitre = write('frontmatter-titre.md', '---\ntitle: x\n---\n\n# Titre\n');
-    expect((await prove(fmTitre)).verdict).toBe('green');
-  });
-
   it('une accolade ÉCHAPPÉE dans un sélecteur CSS ne compte pas comme une ouverture', async () => {
     // Revue Codex de la PR #66, constat C7 : `.foo\{ { color: red; }` était
     // rapporté rouge (« '{' opened at line 1 is never closed ») alors que la
@@ -544,133 +560,6 @@ describe('document — bien formé, selon son type', () => {
     // Et l'échappement ne sert pas d'excuse : un bloc vraiment ouvert reste rouge.
     const ouvert = write('escape-ouvert.css', '.foo\\{ { color: red;\n');
     expect((await prove(ouvert)).verdict).toBe('red');
-  });
-
-  it('un en-tête YAML en CRLF n’est pas un titre non plus — la fin de ligne ne décide pas', async () => {
-    // Revue Codex de la PR #66, constat C5 : l'en-tête n'était retiré qu'avec
-    // des fins de ligne LF. Le MÊME fichier écrit par un éditeur Windows
-    // passait au vert, sa deuxième ligne lue comme un titre souligné.
-    const crlf = write('frontmatter-crlf.md', '---\r\ntitle: x\r\n---\r\ncorps sans titre\r\n');
-    expect((await prove(crlf)).verdict).toBe('red');
-    const crlfTitre = write(
-      'frontmatter-crlf-titre.md',
-      '---\r\ntitle: x\r\n---\r\n\r\n# Titre\r\n',
-    );
-    expect((await prove(crlfTitre)).verdict).toBe('green');
-  });
-
-  it('un titre dans un bloc de code clôturé n’est pas le titre du document', async () => {
-    // Revue Codex de la PR #66, constat C5 : un fichier qui ne contient qu'un
-    // exemple passait au vert parce que l'exemple contenait un `#`.
-    const fence = write('fence.md', '```\n# faux titre\n```\n');
-    expect((await prove(fence)).verdict).toBe('red');
-    const fenceTilde = write('fence-tilde.md', '~~~md\n# faux titre\n~~~\n');
-    expect((await prove(fenceTilde)).verdict).toBe('red');
-    // Un vrai titre hors du bloc compte, et le bloc ne le mange pas.
-    const vrai = write('fence-vrai.md', '# Titre\n\n```\n# exemple\n```\n');
-    expect((await prove(vrai)).verdict).toBe('green');
-  });
-
-  it('un bloc clôturé ne se termine pas à la première fin de ligne', async () => {
-    // Passe 2 de la dette #66, constat R2. Le `$` de l'alternative, sous le
-    // drapeau `m`, s'accroche à CHAQUE fin de ligne : le bloc s'arrêtait donc
-    // au premier saut, et le retrait ne retirait presque rien. Trois verdicts
-    // faux, mesurés sur le vrai vérificateur.
-    const fauxTitreAuMilieu = write('fence-milieu.md', '```\ntexte\n# faux\n```\n');
-    expect((await prove(fauxTitreAuMilieu)).verdict).toBe('red');
-
-    const jamaisFerme = write('fence-ouvert.md', '```\ntexte\n# faux\n');
-    expect((await prove(jamaisFerme)).verdict).toBe('red');
-
-    // Une clôture PLUS LONGUE que l'ouverture est permise : le titre qui suit
-    // est bien hors du bloc, et le document a un titre.
-    const clotureLongue = write('fence-longue.md', '```\ntexte\n````\n# vrai\n');
-    expect((await prove(clotureLongue)).verdict).toBe('green');
-  });
-
-  it('les règles CommonMark des blocs clôturés, une par une', async () => {
-    // Le tableau de régression de cette règle, accumulé au fil des passes 2 à 6.
-    // La règle a eu cinq formes — quatre réécritures de CommonMark à la main,
-    // puis `remark-parse` ; ces cas ont survécu à toutes, et c'est ce qui leur
-    // donne leur valeur. La plupart viennent de la revue, pas de moi.
-    const cas: Array<[string, string, 'green' | 'red']> = [
-      ['cloture-mixte-1.md', '```\ncode\n```~\n# faux\n', 'red'],
-      ['cloture-mixte-2.md', '~~~\ncode\n~~~`\n# faux\n', 'red'],
-      ['info-backtick.md', '``` info`x\n# vrai\n', 'green'],
-      ['tab-ouvre-pas.md', '\t```\n# vrai\n', 'green'],
-      ['tab-ferme-pas.md', '```\ncode\n\t```\n# faux\n', 'red'],
-      ['indent-4.md', '    ```\n    # faux\n', 'red'],
-      ['cloture-indentee-3.md', '```\ncode\n   ```\n# vrai\n', 'green'],
-      ['deux-blocs.md', '```\na\n```\n```\nb\n```\n# vrai\n', 'green'],
-      ['titre-entre-blocs.md', '```\na\n```\n# vrai\n```\nb\n```\n', 'green'],
-      ['bloc-en-citation.md', '> ```\n> # faux\n> ```\n', 'red'],
-      // Passe 4, constat R3 : un bloc dans un élément de LISTE n'était pas vu
-      // du tout — son contenu passait pour de la prose, et sa clôture devenait
-      // une ouverture qui avalait le vrai titre plus bas. L'espace insécable,
-      // lui, était accepté comme fin de clôture par `trim()`.
-      ['bloc-en-liste.md', '- ~~~\n  # faux\n  ~~~\n', 'red'],
-      ['cloture-nbsp.md', '~~~\ncode\n~~~\u00a0\n# faux\n', 'red'],
-      // Passe 5. Le retrait du préfixe de conteneur, posé en passe 4, était une
-      // approximation de plus : elle fabriquait une clôture à partir d'un `- ~~~`
-      // situé DANS le code, et faisait disparaître de vrais titres. Elle est
-      // retirée ; c'est la règle « un titre commence en colonne zéro » qui ferme
-      // le faux vert, du côté sûr.
-      ['pseudo-cloture-dans-le-code.md', '~~~\n- ~~~\n# faux\n', 'red'],
-      ['liste-dix-chiffres.md', '1234567890. ~~~\n# vrai\n', 'green'],
-      ['tiret-cinq-espaces.md', '-     ~~~\n\n# vrai\n', 'green'],
-      ['citation-puis-titre.md', '> ~~~\n> code\n\n# vrai\n', 'green'],
-      ['liste-puis-titre.md', '- ~~~\n  code\n\n# vrai\n', 'green'],
-      // Depuis `remark-parse`, un titre indenté de trois espaces EST un titre :
-      // la règle « colonne zéro » était une prudence rendue inutile par un vrai
-      // parseur, et ce cas le prouve dans l'autre sens.
-      ['titre-indente-trois.md', '   # Titre\n\ncorps\n', 'green'],
-      // La profondeur compte : c'est le TITRE du document qui est demandé.
-      ['commence-par-h2.md', '## Details\n\ncorps\n', 'red'],
-      // Passe 6, constat R1 — une RÉGRESSION de C5 que le passage au parseur
-      // avait réintroduite : `remark-parse` ignore le front matter, lit `---`
-      // comme un filet, et un commentaire YAML `# …` y devient un vrai titre.
-      ['yaml-commentaire.md', '---\n# commentaire YAML\ntitle: x\n---\n\ncorps\n', 'red'],
-      ['yaml-commentaire-crlf.md', '---\r\n# commentaire\r\ntitle: x\r\n---\r\ncorps\r\n', 'red'],
-      ['yaml-puis-vrai-titre.md', '---\ntitle: x\n---\n\n# Vrai\n', 'green'],
-      // Passe 7, constats R1 et R2. L'expression régulière ne connaissait qu'un
-      // seul en-tête : ouvert par `---`, fermé par `---`, non vide. La clôture
-      // YAML `...` et l'en-tête TOML `+++` lui échappaient — deux FAUX VERTS.
-      ['yaml-cloture-points.md', '---\n# commentaire\ntitle: x\n...\ncorps\n', 'red'],
-      ['toml-commentaire.md', '+++\n# commentaire\ntitle = "x"\n+++\ncorps\n', 'red'],
-      ['toml-puis-vrai-titre.md', '+++\ntitle = "x"\n+++\n\n# Vrai\n', 'green'],
-      // Et un en-tête VIDE faisait chercher la fermeture trop loin : le vrai
-      // titre était mangé jusqu'au filet suivant — un FAUX ROUGE.
-      ['front-matter-vide.md', '---\n---\n# Vrai\n\n---\n\ncorps\n', 'green'],
-      // Jamais refermé : ce n'est pas un en-tête, c'est le document lui-même.
-      ['front-matter-non-ferme.md', '---\ntitle: x\n\ncorps\n', 'red'],
-      // Passe 8, constat R1, puis passe 9 : un en-tête dont la clôture tombe
-      // dans un bloc de code n'est PAS un faux vert. `remark-frontmatter`
-      // 5.0.0, mesuré hors dépôt, lit le même en-tête et rend le même vert :
-      // le titre est dans le corps pour la référence de cette convention.
-      ['cloture-dans-le-code.md', '---\n\n```\n---\n# faux\n```\n', 'green'],
-      // Le titre collé au délimiteur, lui, reste rouge : après l'en-tête il ne
-      // reste qu'un bloc de code ouvert. La référence dit la même chose.
-      ['titre-colle-a-l-en-tete.md', '---\n# Vrai\n\n```\n---\n```\n', 'red'],
-      // Passe 9, constat R2 — la conjonction de la passe 8 rendait ROUGE ce
-      // document-ci, dont l'en-tête est parfaitement valide : `example` est un
-      // scalaire littéral qui contient trois backticks, et la lecture brute y
-      // voyait un bloc de code jamais refermé qui cachait le vrai titre.
-      ['bloc-scalaire-yaml.md', '---\nexample: |\n  ```\n---\n# Vrai\n', 'green'],
-    ];
-    for (const [name, content, attendu] of cas) {
-      expect((await prove(write(name, content))).verdict, name).toBe(attendu);
-    }
-  });
-
-  it('retirer un bloc ne doit pas FABRIQUER un titre souligné', async () => {
-    // Passe 3, constat R3. La règle d'alors supprimait les lignes du bloc, ce
-    // qui recollait leurs voisines : un paragraphe, un bloc, puis un filet
-    // devenaient « texte / --- », donc un titre setext qui n'existait pas.
-    // `remark-parse` ne peut plus se tromper là-dessus ; le cas reste, parce
-    // qu'il dit ce que le document SIGNIFIE.
-    const p = write('recollage.md', 'texte\n```\ncode\n```\n---\n');
-
-    expect((await prove(p)).verdict).toBe('red');
   });
 
   it('une entité déclarée DANS le document ne le rend pas mal formé', async () => {
@@ -795,10 +684,18 @@ describe('document — bien formé, selon son type', () => {
       'skill/base.html',
       '<!doctype html>\n<html lang="fr"><head><title>Base</title></head><body><main>ok</main></body></html>\n',
     );
-    for (const p of [md, css, html]) {
+    // Le markdown n'a pas de règle de forme (#736) : trois constats ; CSS et HTML en ont quatre.
+    for (const [p, constats] of [
+      [md, 3],
+      [css, 4],
+      [html, 4],
+    ] as const) {
       const { verdict, records } = await prove(p);
       expect(verdict, p).toBe('green');
-      expect(records.map((r) => r.verdict)).toEqual(['green', 'green', 'green', 'green']);
+      expect(
+        records.map((r) => r.verdict),
+        p,
+      ).toEqual(Array(constats).fill('green'));
     }
   });
 
