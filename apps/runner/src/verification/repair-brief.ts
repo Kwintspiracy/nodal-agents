@@ -37,6 +37,11 @@ export interface RepairBriefCommand {
   /** L'adresse du livrable (`display_path_snapshot`), ou sa clé à défaut. */
   readonly deliverable: string;
   readonly record: ProofCommandRecord;
+  /**
+   * Les tours de réparation qui resteront à CE livrable après celui-ci. Par
+   * livrable, parce que chacun a sa réserve (revue Nodal de #740, passe 1).
+   */
+  readonly turnsLeft: number;
 }
 
 /**
@@ -70,6 +75,7 @@ function issue(record: ProofCommandRecord): string {
 function bloc(item: RepairBriefCommand): string {
   const lignes = [
     `Deliverable: ${item.deliverable}`,
+    `Repair turns left for this deliverable after this one: ${Math.max(0, item.turnsLeft)}`,
     `Command: ${item.record.command}`,
     issue(item.record),
   ];
@@ -97,14 +103,15 @@ function bloc(item: RepairBriefCommand): string {
  *
  * La dernière phrase est celle de la décision D2 : le modèle doit savoir si
  * le verdict suivant est le dernier mot — sinon il livre une correction
- * partielle en comptant sur un essai qui n'existe pas. `toursRestants` est ce
- * qui restera APRÈS ce tour-ci : le réglage de l'espace en permet plusieurs
- * (#377), et « ton seul tour » était faux dès qu'il valait plus d'un.
+ * partielle en comptant sur un essai qui n'existe pas. Ce qui reste APRÈS ce
+ * tour-ci est dit PAR LIVRABLE (`turnsLeft`, une ligne dans chaque bloc) : le
+ * réglage de l'espace en permet plusieurs (#377), et chaque livrable a sa
+ * réserve. Un seul nombre pour tous mentait dès qu'elles différaient — le
+ * maximum promettait un tour de plus à un livrable arrivé au bout de la
+ * sienne, le minimum en retirait aux autres. La phrase de fin résume quand
+ * tous ont le même reste, et renvoie aux blocs sinon.
  */
-export function buildRepairBrief(
-  commands: readonly RepairBriefCommand[],
-  toursRestants: number,
-): string {
+export function buildRepairBrief(commands: readonly RepairBriefCommand[]): string {
   if (commands.length === 0) {
     throw new Error('REPAIR_BRIEF_WITHOUT_RED_COMMAND');
   }
@@ -113,10 +120,14 @@ export function buildRepairBrief(
       ? 'The proof of your deliverable failed. Here is the command that failed, verbatim.'
       : `The proof of your deliverables failed. Here are the ${commands.length} commands that failed, verbatim.`;
   const unSeul = new Set(commands.map((c) => c.deliverable)).size === 1;
+  const restes = [...new Set(commands.map((c) => Math.max(0, c.turnsLeft)))];
   const fin =
-    toursRestants <= 0
-      ? 'This is your last repair turn: the verdict of that proof is final.'
-      : `If it fails again, you get at most ${toursRestants} more repair turn${toursRestants === 1 ? '' : 's'}.`;
+    restes.length > 1
+      ? 'Each deliverable above says how many repair turns it has left after this one; where it ' +
+        'is 0, the verdict of that proof is final.'
+      : restes[0] === 0
+        ? 'This is your last repair turn: the verdict of that proof is final.'
+        : `If it fails again, you get at most ${restes[0]} more repair turn${restes[0] === 1 ? '' : 's'}.`;
   return [
     tete,
     '',

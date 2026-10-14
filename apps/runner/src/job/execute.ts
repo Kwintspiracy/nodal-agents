@@ -195,7 +195,15 @@ import {
   findTaskBoundary,
 } from './state.ts';
 import { holdJobHeartbeat } from './heartbeat.ts';
-import { EVICTED_TOOL_INPUT_MARKER, EVICTED_TOOL_RESULT_MARKER } from './compaction-markers.ts';
+import {
+  AWAITING_APPROVAL_MARK,
+  DEFERRED_MARK,
+  EVICTED_TOOL_INPUT_MARKER,
+  EVICTED_TOOL_RESULT_MARKER,
+  EXPIRED_MARK,
+  REJECTED_MARK,
+  toolResultShape,
+} from './tool-result-shape.ts';
 import { unansweredToolCalls } from './close-transcript.ts';
 import {
   APPROVED_CALL_OUTCOME_UNKNOWN,
@@ -1543,7 +1551,7 @@ export async function maybeResumeParent(
  * `[AWAITING_APPROVAL]`, au même endroit que `[REJECTED]`.
  */
 export const APPROVAL_EXPIRED_TOOL_RESULT =
-  '[EXPIRED] No answer arrived before this request deadline, so it expired. ' +
+  `${EXPIRED_MARK} No answer arrived before this request deadline, so it expired. ` +
   'Nothing was done. Ask again if it is still needed.';
 
 /**
@@ -3391,7 +3399,7 @@ async function runJobTracked(
         const heldNote =
           held?.success && held.data.length > 0 ? ` ${shellChecklistDeclined(held.data)}` : '';
         replacementOutput = toResultOutput(
-          `[REJECTED] Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.` +
+          `${REJECTED_MARK} Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.` +
             heldNote,
         );
         trace('resume_rejected_tool_marker_replaced', { toolName: req.toolName });
@@ -3434,7 +3442,7 @@ async function runJobTracked(
           if (req.executedAt !== null && tb.toolCallId !== req.toolCallId) return block;
           const outputText =
             tb.output.type === 'text' ? tb.output.value : JSON.stringify(tb.output.value);
-          if (!outputText.includes('[AWAITING_APPROVAL]')) return block;
+          if (!outputText.includes(AWAITING_APPROVAL_MARK)) return block;
           // Replace with the real (or rejection) output.
           return { ...tb, output: replacementOutput };
         });
@@ -3485,7 +3493,7 @@ async function runJobTracked(
       (messages as Array<{ role?: string; content?: unknown }>)
         .filter((m) => m.role === 'tool' && Array.isArray(m.content))
         .flatMap((m) => m.content as Array<{ toolCallId?: string; output?: unknown }>)
-        .filter((p) => JSON.stringify(p.output ?? null).includes('[AWAITING_APPROVAL]'))
+        .filter((p) => JSON.stringify(p.output ?? null).includes(AWAITING_APPROVAL_MARK))
         .map((p) => p.toolCallId),
     );
     const closedElsewhere =
@@ -5789,7 +5797,7 @@ async function runJobTracked(
             toolCallId: call.id,
             toolName: call.name,
             output: toResultOutput(
-              '[DEFERRED] a prior action in this turn is awaiting approval; re-issue this call after it resolves.',
+              `${DEFERRED_MARK} a prior action in this turn is awaiting approval; re-issue this call after it resolves.`,
             ),
           });
           continue;
@@ -6195,7 +6203,7 @@ async function runJobTracked(
         }
 
         if (toolResult.outcome === 'awaiting_approval') {
-          const awaitingMarker = `[AWAITING_APPROVAL] tool_call_id=${call.id}`;
+          const awaitingMarker = `${AWAITING_APPROVAL_MARK} tool_call_id=${call.id}`;
           toolResultBlocks.push({
             type: 'tool-result',
             toolCallId: call.id,
@@ -6441,19 +6449,15 @@ async function runJobTracked(
       // AFTER the `{"error":` prefix (elision/truncation both preserve the
       // head), so that prefix survives and is a safe marker to check for text
       // outputs too.
-      const isToolErrorBlock = (block: (typeof toolResultBlocks)[number]): boolean => {
-        if (block.toolName === 'return_result') return false;
-        if (block.output.type === 'json') {
-          const v = block.output.value;
-          if (v === null || typeof v !== 'object') return false;
-          // A mayHaveDelivered send timeout is ambiguous, not a failure to fix:
-          // deferring return_result over it would push the LLM to resend the
-          // (probably delivered) message. Let the turn finalize.
-          if ((v as Record<string, unknown>)['mayHaveDelivered'] === true) return false;
-          return 'error' in (v as Record<string, unknown>);
-        }
-        return block.output.value.startsWith('{"error":');
-      };
+      //
+      // A mayHaveDelivered send timeout is ambiguous, not a failure to fix:
+      // deferring return_result over it would push the LLM to resend the
+      // (probably delivered) message. Let the turn finalize.
+      //
+      // ONE reading of a result's outcome, shared with the re-read's record
+      // of the run (#711, job/tool-result-shape.ts).
+      const isToolErrorBlock = (block: (typeof toolResultBlocks)[number]): boolean =>
+        block.toolName !== 'return_result' && toolResultShape(block.output) === 'error';
 
       const turnHadSiblingToolError =
         returnResultCall !== undefined && toolResultBlocks.some(isToolErrorBlock);

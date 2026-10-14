@@ -28,27 +28,32 @@
 // pas (invariant #4) : les premiers et les derniers appels, chacun réduit à
 // ses arguments et à son issue, jamais l'historique entier.
 //
+// Un rapport ne vaut que si le relevé le porte (revue Nodal de #740, passe 1) :
+// « Le rapport est envoyé. » sans aucun envoi au relevé est exactement la
+// réponse que #600 existe pour rattraper, et l'action reste due.
+//
 // La consigne et le relevé sont adressés au modèle, jamais montrés à
 // l'utilisateur (invariant #2) : ils ne vivent que dans la requête de relance.
 
 import type { ModelMessage } from 'ai';
 import type { NodalLlmClient } from '@nodal-agents/llm';
-import { cutForContext, elideBinary, framedForModel, unwrapUntrusted } from '@nodal-agents/shared';
-import {
-  EVICTED_TOOL_INPUT_MARKER,
-  EVICTED_TOOL_RESULT_MARKER,
-} from '../job/compaction-markers.ts';
+import { cutForContext, elideBinary, unwrapUntrusted, wrapUntrusted } from '@nodal-agents/shared';
+import { EVICTED_TOOL_INPUT_MARKER, toolResultShape } from '../job/tool-result-shape.ts';
 
 export const ACTION_RECHECK =
-  'Re-read your previous reply against the record above of what this run has already done. ' +
-  'An action the record shows as done has happened: a reply that reports it commits to ' +
-  'nothing, and you must not perform it again. ' +
-  'If your reply committed to performing an action — running, launching, sending, fetching, ' +
-  'creating, configuring, delegating, or any task or tool use — that the record does not show ' +
-  'as done, then your text ALONE did nothing: call the tool that performs it NOW, conveying ' +
-  'the request faithfully (its words and data, with no invented scope, method, or delivery). ' +
-  'If your reply was pure conversation, a question, an answer, a report of what was done, or ' +
-  'simply recalling a fact, do not call any tool — the reply stands as it is.';
+  'Re-read your previous reply against the record above of what this run has done since the ' +
+  'request. ' +
+  'An action the record shows as done, or as possibly done with an uncertain outcome, has ' +
+  'happened: do not perform it again. ' +
+  "An action the record shows as refused by a person, or as waiting for a person's " +
+  'decision, must not be performed now either. ' +
+  'Any other action your reply reports or commits to — running, launching, sending, ' +
+  'fetching, creating, configuring, delegating, or any task or tool use — that the record ' +
+  'does not show as done was NOT done: your text ALONE does nothing, so call the tool that ' +
+  'performs it NOW, conveying the request faithfully (its words and data, with no invented ' +
+  'scope, method, or delivery). ' +
+  'If your reply was pure conversation, a question, an answer, or simply recalling a fact, do ' +
+  'not call any tool — the reply stands as it is.';
 
 /** Les appels listés depuis le DÉBUT du run quand il en a fait plus que le relevé n'en montre. */
 export const RUN_RECORD_HEAD_CALLS = 5;
@@ -59,6 +64,9 @@ export const RUN_RECORD_ARGS_CHARS = 200;
 /** Les caractères gardés du résultat d'un appel. */
 export const RUN_RECORD_RESULT_CHARS = 200;
 
+/** La source que nomme le cadre du relevé. */
+const RUN_RECORD_SOURCE = 'the tool calls of this run and what they returned';
+
 interface RecordedCall {
   readonly id: string;
   readonly name: string;
@@ -68,64 +76,72 @@ interface RecordedCall {
 const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim();
 
 /**
- * Un extrait du résultat d'un appel : déballé de son cadre, coupé, PUIS
- * recadré quand l'outil est un tiers (INJECT-001). Couper le texte encadré
- * pourrait retirer le délimiteur fermant.
+ * Un extrait, sur une ligne : déballé de son propre cadre (un résultat de
+ * tiers arrive encadré, et l'en-tête du cadre mangerait l'extrait), puis
+ * coupé, la coupe dite. Il n'est PAS recadré ici : le relevé entier l'est.
  */
-function excerpt(toolName: string, text: string): string {
-  const content = oneLine(elideBinary(unwrapUntrusted(text)));
-  return framedForModel(toolName, cutForContext(content, RUN_RECORD_RESULT_CHARS));
+function excerpt(text: string, room: number): string {
+  return oneLine(cutForContext(oneLine(elideBinary(unwrapUntrusted(text))), room));
 }
 
 function argumentsOf(input: unknown): string {
   if (input === EVICTED_TOOL_INPUT_MARKER) return '(arguments elided from the transcript)';
-  const text = typeof input === 'string' ? input : JSON.stringify(input ?? {});
-  return cutForContext(oneLine(text), RUN_RECORD_ARGS_CHARS);
+  return excerpt(
+    typeof input === 'string' ? input : JSON.stringify(input ?? {}),
+    RUN_RECORD_ARGS_CHARS,
+  );
+}
+
+/** Le texte d'un résultat : le message d'un bloc `{ error }` quand c'est un texte, sinon tout. */
+function resultText(output: unknown): string {
+  const value = (output as { value?: unknown } | null)?.value;
+  if (typeof value === 'string') return value;
+  if (value !== null && typeof value === 'object') {
+    const err = (value as { error?: unknown }).error;
+    if (typeof err === 'string') return err;
+  }
+  return JSON.stringify(value === undefined ? (output ?? null) : value);
 }
 
 /**
- * L'issue d'un appel, lue sur la forme que le runner écrit : un bloc
- * `{ error }` est un échec (`mayHaveDelivered` : peut-être passé quand même),
- * un résultat retiré par la compaction n'est ni l'un ni l'autre. Tout le reste
- * est ce que l'outil a rendu, CITÉ, jamais résumé en « succès » : un marqueur
- * du runner (`[REJECTED]`, `[DEFERRED]`…) s'y lit tel qu'il est.
+ * L'issue d'un appel, lue par LA lecture de la boucle (`toolResultShape`,
+ * job/tool-result-shape.ts), jamais par une seconde grammaire. Ce que l'outil
+ * a rendu est CITÉ, jamais résumé en « succès ». Un appel que le runner n'a
+ * pas exécuté (en attente d'une personne, refusé, différé, expiré) est dit
+ * non exécuté, avec ce qui l'a arrêté.
  */
-function outcomeOf(toolName: string, output: unknown): string {
+function outcomeOf(output: unknown): string {
   if (output === undefined) return 'no result recorded';
-  const out = output as { type?: unknown; value?: unknown } | null;
-  const value = out?.value;
-  if (out?.type === 'text' && value === EVICTED_TOOL_RESULT_MARKER) {
-    return 'its result was elided from the transcript: the outcome is not known here';
+  const cite = (): string => excerpt(resultText(output), RUN_RECORD_RESULT_CHARS);
+  switch (toolResultShape(output)) {
+    case 'error':
+      return `failed: ${cite()}`;
+    case 'may_have_delivered':
+      return `outcome uncertain, it may have taken effect: ${cite()}`;
+    case 'awaiting_approval':
+      return 'not executed: it waits for a person’s decision';
+    case 'rejected':
+      return `not executed: a person refused it — ${cite()}`;
+    case 'deferred':
+      return `not executed: deferred — ${cite()}`;
+    case 'expired':
+      return 'not executed: its approval request expired without an answer';
+    case 'elided':
+      return 'its result was elided from the transcript: the outcome is not known here';
+    case 'ok':
+      return `returned: ${cite()}`;
   }
-  if (out?.type === 'json' && value !== null && typeof value === 'object') {
-    const v = value as { error?: unknown; mayHaveDelivered?: unknown };
-    if (typeof v.error === 'string') {
-      return v.mayHaveDelivered === true
-        ? `failed, but it may have taken effect: ${excerpt(toolName, v.error)}`
-        : `failed: ${excerpt(toolName, v.error)}`;
-    }
-    return `returned: ${excerpt(toolName, JSON.stringify(value))}`;
-  }
-  if (out?.type === 'error-text' && typeof value === 'string') {
-    return `failed: ${excerpt(toolName, value)}`;
-  }
-  if (out?.type === 'error-json') return `failed: ${excerpt(toolName, JSON.stringify(value))}`;
-  if (out?.type === 'text' && typeof value === 'string') {
-    // Un `{ error }` trop long pour le budget arrive en texte, préfixe gardé
-    // (le même repère que `isToolErrorBlock`, execute.ts).
-    return value.startsWith('{"error":')
-      ? `failed: ${excerpt(toolName, value)}`
-      : `returned: ${excerpt(toolName, value)}`;
-  }
-  if (out?.type === 'content' && Array.isArray(value)) {
-    const text = (value as Array<{ type?: unknown; text?: unknown } | null>)
-      .map((p) =>
-        p?.type === 'text' && typeof p.text === 'string' ? p.text : `[${String(p?.type)}]`,
-      )
-      .join(' ');
-    return `returned: ${excerpt(toolName, text)}`;
-  }
-  return `returned: ${excerpt(toolName, JSON.stringify(output))}`;
+}
+
+/**
+ * Les lignes du relevé, encadrées UNE fois comme donnée (INJECT-001, revue
+ * Nodal de #740) : arguments et résultats y sont écrits par des outils — la
+ * sortie d'une commande, la prose d'un enfant —, et le relevé les fait entrer
+ * dans le message qui porte la consigne. Quel que soit l'outil, ils y restent
+ * des données, délimiteurs neutralisés par `wrapUntrusted`.
+ */
+function framed(lines: readonly string[]): string {
+  return wrapUntrusted(RUN_RECORD_SOURCE, lines.join('\n'));
 }
 
 /**
@@ -167,13 +183,13 @@ export function runRecord(run: readonly ModelMessage[] | null): string {
     return 'Record of this run: no tool has been called since the request.';
   }
   const line = (call: RecordedCall, i: number): string =>
-    `${i + 1}. ${call.name} ${argumentsOf(call.input)} → ${outcomeOf(call.name, results.get(call.id))}`;
+    `${i + 1}. ${call.name} ${argumentsOf(call.input)} → ${outcomeOf(results.get(call.id))}`;
   const total = calls.length;
   if (total <= RUN_RECORD_HEAD_CALLS + RUN_RECORD_TAIL_CALLS) {
     return [
       `Record of this run — the ${total} tool call${total === 1 ? '' : 's'} made since the ` +
         'request, oldest first, each with its outcome:',
-      ...calls.map(line),
+      framed(calls.map(line)),
     ].join('\n');
   }
   const firstHidden = RUN_RECORD_HEAD_CALLS + 1;
@@ -182,9 +198,11 @@ export function runRecord(run: readonly ModelMessage[] | null): string {
     `Record of this run — the ${total} tool calls made since the request, oldest first, each ` +
       `with its outcome. Only the first ${RUN_RECORD_HEAD_CALLS} and the last ` +
       `${RUN_RECORD_TAIL_CALLS} are listed: calls ${firstHidden} to ${lastHidden} are not shown.`,
-    ...calls.slice(0, RUN_RECORD_HEAD_CALLS).map(line),
-    `[… calls ${firstHidden} to ${lastHidden} not shown …]`,
-    ...calls.slice(lastHidden).map((c, i) => line(c, lastHidden + i)),
+    framed([
+      ...calls.slice(0, RUN_RECORD_HEAD_CALLS).map(line),
+      `[… calls ${firstHidden} to ${lastHidden} not shown …]`,
+      ...calls.slice(lastHidden).map((c, i) => line(c, lastHidden + i)),
+    ]),
   ].join('\n');
 }
 

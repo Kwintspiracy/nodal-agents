@@ -720,6 +720,9 @@ async function ouvrirReparation(
         // ce que l'agent doit rouvrir, pas une clé repliée en casse.
         deliverable: rouge.plan.displayPath ?? rouge.plan.canonicalKey,
         record,
+        // Ce qui restera à CE livrable après ce tour (#711) : sa réserve à lui,
+        // jamais celle d'un autre. Au bout de la sienne, il compte zéro.
+        turnsLeft: Math.max(0, max - (rouge.plan.repairAttempts + 1)),
       });
     }
   }
@@ -744,13 +747,8 @@ async function ouvrirReparation(
     })
     .where(ownJobRow(jobId));
 
-  // Les tours de réparation qui resteront APRÈS celui-ci, pour le livrable
-  // qui en garde le plus : le brief dit exactement si le verdict qui suit est
-  // le dernier mot (#711). Un livrable déjà au bout de sa réserve compte zéro.
-  const toursRestants = Math.max(0, ...rouges.map((r) => max - (r.plan.repairAttempts + 1)));
-
   return {
-    brief: buildRepairBrief(commandes, toursRestants),
+    brief: buildRepairBrief(commandes),
     keys: rouges.map((r) => r.plan.canonicalKey),
   };
 }
