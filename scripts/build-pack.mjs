@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { scanServerChunks, formatMissingChunks } from './lib/next-chunk-integrity.mjs';
 import { pinToInstalledVersions, formatUnresolved } from './lib/pin-runtime-deps.mjs';
+import { packEngines } from './lib/pack-engines.mjs';
 import { shouldPackMigrationFile } from './lib/migration-pack-filter.mjs';
 import { mesurerCommande, verdictPic, plancherPour } from './lib/build-heap-sampler.mjs';
 import { scanTracesOutsideRoot, formatTracesOutsideRoot } from './lib/next-trace-scope.mjs';
@@ -400,9 +401,7 @@ const packPkg = {
     'nodal-agents': './cli.js',
   },
   type: 'module',
-  engines: {
-    node: '>=24',
-  },
+  engines: packEngines(repoRoot),
   files: ['cli.js', 'runner.js', 'web/**', 'migrations/**', 'docs-index.json', 'README.md'],
   dependencies: {
     // ── CLI deps

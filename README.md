@@ -7,7 +7,7 @@ A self-hosted platform for building and orchestrating a **team of AI agents** on
 **No SaaS lock-in. No per-token markup. No cloud roundtrip.** Two commands to install, runs on any machine with Node 24+ (Mac, Windows, Linux), and works with **any LLM** — frontier or local, paid or free.
 
 [![npm](https://img.shields.io/npm/v/nodal-agents?color=cb3837&label=npm&logo=npm)](https://www.npmjs.com/package/nodal-agents)
-[![Node](https://img.shields.io/badge/node-22%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/node-24%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Docs](https://img.shields.io/badge/docs-online-3565ff)](https://kwintspiracy.github.io/nodal-agents/)
 [![Changelog](https://img.shields.io/npm/v/nodal-agents?label=changelog&color=d4ff2e)](CHANGELOG.md)

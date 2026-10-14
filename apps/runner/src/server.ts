@@ -1,6 +1,7 @@
 // server.ts — Hono app entry point
 // Wires all routes, middleware, and starts the HTTP server.
 
+import '@nodal-agents/shared/node-guard';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { serve } from '@hono/node-server';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nodeVersionProblem } from '../lib/node-version.ts';
+import { nodeVersionProblem } from '../node-version';
 
 describe('nodeVersionProblem (#628)', () => {
   it.each(['22.12.0', '23.11.1', 'v22.0.0'])('refuses Node %s with the install message', (v) => {

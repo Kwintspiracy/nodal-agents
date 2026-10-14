@@ -2,7 +2,7 @@
 // index.ts — nodal-agents CLI entry point
 // Registered as `nodal-agents` binary in package.json bin field.
 
-import './lib/node-guard.ts';
+import '@nodal-agents/shared/node-guard';
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { getInstalledVersion } from './lib/version.ts';

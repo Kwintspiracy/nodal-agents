@@ -7,7 +7,9 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./git-binary": "./src/git-binary.ts"
+    "./git-binary": "./src/git-binary.ts",
+    "./node-guard": "./src/node-guard.ts",
+    "./node-version": "./src/node-version.ts"
   },
   "scripts": {
     "lint": "eslint src",
