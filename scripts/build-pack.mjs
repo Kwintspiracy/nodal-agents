@@ -474,6 +474,17 @@ const packPkg = {
     // pre-built .next/ and postcss is build-only. Drops to clean
     // when Next 16.3 stable releases (currently canary).
   },
+  // OS sandbox, Windows backend (#628): Microsoft MXC. OPTIONAL, exact pin.
+  // Optional because its dependency `node-pty` ships no Linux prebuild and
+  // compiles with node-gyp there: as a hard dependency, a Linux machine
+  // without a C toolchain could not install Nodal at all. As an optional one,
+  // a failed install drops the SDK and nothing else — and Nodal says so at
+  // boot (`[sandbox] SANDBOX_UNAVAILABLE`, code SANDBOX_BACKEND_MISSING),
+  // the state the D2 banner reads. Only Windows loads it (apps/runner/build.mjs
+  // keeps it external). Not pinned by §7a: the exact version is written here.
+  optionalDependencies: {
+    '@microsoft/mxc-sdk': '1.0.0',
+  },
   // Ship exceljs INSIDE the tarball instead of letting `npm install -g` fetch it.
   // exceljs is stale and drags in deprecated transitives (glob@7 "security",
   // inflight "memory leak", fstream, rimraf@2, uuid@8) whose deprecation warnings

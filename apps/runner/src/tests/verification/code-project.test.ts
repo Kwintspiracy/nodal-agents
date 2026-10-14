@@ -24,7 +24,7 @@ import {
   codeProjectVerifier,
   VERIFY_RUN_CALLBACK_FAILED,
 } from '../../verification/code-project.ts';
-import type { ProofCommandRecord, ReadyConfig } from '../../verification/registry.ts';
+import type { ProofCommandRecord, ProofScope, ReadyConfig } from '../../verification/registry.ts';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -161,6 +161,8 @@ describe('code-project — loadConfig', () => {
 });
 
 describe('code-project — runProof @cap:verifier-un-livrable/moteur', () => {
+  /** Le dossier de test est le seul inscriptible de la preuve (#628). */
+  const scope = (): ProofScope => ({ writableRoots: [dir] });
   const readyOf = (commands: VerifyCommand[]): ReadyConfig => ({
     kind: 'ready',
     manifestHash: manifestHashOf(commands, projectKey(projectPath)),
@@ -177,6 +179,7 @@ describe('code-project — runProof @cap:verifier-un-livrable/moteur', () => {
       async (record) => {
         seen.push(record);
       },
+      scope(),
     );
     expect(proof.verdict).toBe('green');
     expect(seen).toHaveLength(1);
@@ -205,6 +208,7 @@ describe('code-project — runProof @cap:verifier-un-livrable/moteur', () => {
       async (record) => {
         seen.push(record.rank);
       },
+      scope(),
     );
     expect(proof.verdict).toBe('red');
     expect(seen).toEqual([0, 1]);
@@ -222,7 +226,7 @@ describe('code-project — runProof @cap:verifier-un-livrable/moteur', () => {
     const slow = await script('slow.js', 'setTimeout(() => process.exit(0), 3000)');
     const order: string[] = [];
     const proof = codeProjectVerifier
-      .runProof(readyOf([{ command: slow, timeoutSeconds: 30 }]), async () => {})
+      .runProof(readyOf([{ command: slow, timeoutSeconds: 30 }]), async () => {}, scope())
       .then((r) => {
         order.push('preuve');
         return r;
@@ -244,6 +248,7 @@ describe('code-project — runProof @cap:verifier-un-livrable/moteur', () => {
         async () => {
           throw new Error('disque plein');
         },
+        scope(),
       );
       expect(proof.verdict).toBe('green');
       expect(proof.records).toHaveLength(1);
@@ -259,6 +264,7 @@ describe('code-project — runProof @cap:verifier-un-livrable/moteur', () => {
     const proof = await codeProjectVerifier.runProof(
       readyOf([{ command: cmd, timeoutSeconds: 1 }]),
       async () => {},
+      scope(),
     );
     expect(proof.verdict).toBe('infra_error');
     expect(proof.records[0]?.outcomeKind).toBe('timeout');

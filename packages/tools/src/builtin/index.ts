@@ -150,10 +150,12 @@ export {
   runCommandSequence,
   killProcessTree,
   isGreen,
+  sandboxReport,
   SHELL_POLICY_VERSION,
   DEFAULT_MAX_OUTPUT_CHARS,
 } from './shell-engine';
 export type {
+  CommandConfinement,
   CommandOutcome,
   CommandRunResult,
   CommandSpec,
@@ -161,6 +163,7 @@ export type {
   SequenceResult,
   SequenceStepResult,
   SequenceOptions,
+  SandboxReport,
 } from './shell-engine';
 
 /**

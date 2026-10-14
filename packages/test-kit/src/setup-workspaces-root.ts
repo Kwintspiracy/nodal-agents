@@ -11,3 +11,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env['NODALAI_WORKSPACES_ROOT'] ??= mkdtempSync(join(tmpdir(), 'nodalai-test-ws-'));
+
+// Same guard for the tool caches (#628, @nodal-agents/sandbox policy.ts): every
+// command the shell engine runs gets npm_config_cache, PIP_CACHE_DIR… pointed
+// at this root, and a suite that runs `npm install` must not fill the real
+// ~/.nodalai/tool-cache.
+process.env['NODALAI_TOOL_CACHE_ROOT'] ??= mkdtempSync(join(tmpdir(), 'nodalai-test-cache-'));

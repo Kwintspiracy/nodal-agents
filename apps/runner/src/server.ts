@@ -44,6 +44,7 @@ import { migratePlaintextSecretsToEncrypted } from './bootstrap/migrate-plaintex
 import { backfillMemoryEmbeddings } from './bootstrap/backfill-embeddings.ts';
 import { backfillRegisteredProjects } from './bootstrap/backfill-registered-projects.ts';
 import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
+import { getSandboxStatus } from '@nodal-agents/sandbox';
 import { AuthError, checkRequestOrigin } from '@nodal-agents/auth';
 import { isValidWorkerSecret } from './lib/worker-secret.ts';
 import './lib/runner-auth-context.ts';
@@ -456,6 +457,11 @@ async function main(): Promise<void> {
   // P5b : les projets de l'onglet Code sont déclarés au registre — Spaces les
   // liste sans un clic. Même discipline : après serve(), jamais attendu.
   startRegistryBackfillBackground(deps);
+  // #628 : le bac à sable des commandes est sondé au démarrage, pas à la
+  // première commande — sa disponibilité (ou la raison de son absence, avec
+  // son code) est ainsi dans le journal du runner dès le boot. Jamais
+  // attendu : la sonde lance une commande confinée triviale.
+  void getSandboxStatus();
 
   // Graceful shutdown
   const shutdown = async (): Promise<void> => {

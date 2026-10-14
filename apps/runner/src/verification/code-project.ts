@@ -19,8 +19,9 @@
 //     commande de preuve est un pouvoir ; seule la révision exacte approuvée
 //     par le propriétaire s'exécute ;
 //   - la séquence elle-même (`runCommandSequence`, arrêt au premier non-vert),
-//     avec l'environnement filtré (`buildChildEnv`) et la capture en QUEUE :
-//     l'erreur d'un test est à la fin, jamais au début.
+//     avec l'environnement filtré (`buildChildEnv`), la capture en QUEUE —
+//     l'erreur d'un test est à la fin, jamais au début — et le bac à sable de
+//     #628 : les dossiers du job sont les seuls où elle écrit.
 //
 // La preuve tourne HORS transaction (décision n°5) : `runProof` ne reçoit
 // aucun `tx`, seulement un callback. Un spawn de plusieurs secondes sous
@@ -45,6 +46,7 @@ import type {
   OnCommandDone,
   ProofCommandRecord,
   ProofResult,
+  ProofScope,
   ReadyConfig,
   VerifierTarget,
 } from './types.ts';
@@ -144,11 +146,18 @@ function verdictOf(outcomeKind: 'exit' | 'timeout' | 'spawn_error', green: boole
  * — les deux gardes ont chacune leur raison : celle-ci protège le verdict
  * contre un appelant fragile, celle de l'appelant nomme la table qui a lâché.
  */
-async function runProof(config: ReadyConfig, onCommandDone: OnCommandDone): Promise<ProofResult> {
+async function runProof(
+  config: ReadyConfig,
+  onCommandDone: OnCommandDone,
+  scope: ProofScope,
+): Promise<ProofResult> {
   const records: ProofCommandRecord[] = [];
   const sequence = await runCommandSequence(config.commands, {
     cwd: config.cwd,
     env: buildChildEnv(process.env),
+    // Le même bac à sable que `run_command` (#628) : une commande de preuve
+    // n'écrit que dans les dossiers du job.
+    confinement: { writableRoots: scope.writableRoots },
     keep: 'tail',
     maxChars: MAX_TAIL_CHARS,
     onCommandDone: async (step) => {

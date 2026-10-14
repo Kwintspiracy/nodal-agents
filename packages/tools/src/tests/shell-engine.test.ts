@@ -15,6 +15,12 @@ let dir: string;
 const orphans: number[] = [];
 const node = process.execPath;
 const env = buildChildEnv(process.env);
+/** Le dossier de test est le seul inscriptible : le moteur l'exige de chaque appelant. */
+const confinement = {
+  get writableRoots() {
+    return [dir];
+  },
+};
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'nodal-engine-'));
@@ -60,6 +66,7 @@ describe('runShellCommand — issue typée', () => {
     const r = await runShellCommand({
       target: { file: node, args: [p] },
       cwd: dir,
+      confinement,
       timeoutMs: 20_000,
       env,
     });
@@ -76,6 +83,7 @@ describe('runShellCommand — issue typée', () => {
     const r = await runShellCommand({
       target: { file: node, args: [p] },
       cwd: dir,
+      confinement,
       timeoutMs: 20_000,
       env,
     });
@@ -88,6 +96,7 @@ describe('runShellCommand — issue typée', () => {
     const r = await runShellCommand({
       target: { file: node, args: [p] },
       cwd: dir,
+      confinement,
       timeoutMs: 500,
       env,
     });
@@ -98,6 +107,7 @@ describe('runShellCommand — issue typée', () => {
     const r = await runShellCommand({
       target: { file: node, args: ['-e', '1'] },
       cwd: join(dir, 'nulle-part'),
+      confinement,
       timeoutMs: 5_000,
       env,
     });
@@ -111,6 +121,7 @@ describe('runShellCommand — issue typée', () => {
       runShellCommand({
         target: { command: 'echo x' },
         cwd: dir,
+        confinement,
         timeoutMs: 1000,
         env: undefined as unknown as Record<string, string>,
       }),
@@ -127,6 +138,7 @@ describe('runShellCommand — tree-kill : le petit-enfant est mort', () => {
     const r = await runShellCommand({
       target: { command: `"${node}" "${p}"` },
       cwd: dir,
+      confinement,
       timeoutMs: 1_000,
       env,
     });
@@ -146,6 +158,7 @@ describe('runShellCommand — quoting à travers le shell', () => {
     const r = await runShellCommand({
       target: { command: `"${node}" "${p}" && "${node}" "${p}"` },
       cwd: dir,
+      confinement,
       timeoutMs: 20_000,
       env,
     });
@@ -163,6 +176,7 @@ describe('runShellCommand — quoting à travers le shell', () => {
           : `"${node}" "${p}" "$NODAL_TEST_UNSET"`,
       },
       cwd: dir,
+      confinement,
       timeoutMs: 20_000,
       env,
     });
@@ -178,6 +192,7 @@ describe('runShellCommand — env scrubbé', () => {
     const r = await runShellCommand({
       target: { file: node, args: [p] },
       cwd: dir,
+      confinement,
       timeoutMs: 20_000,
       env: buildChildEnv(source),
     });
@@ -196,6 +211,7 @@ describe('runShellCommand — plafonds et décodage', () => {
     const r = await runShellCommand({
       target: { file: node, args: [p] },
       cwd: dir,
+      confinement,
       timeoutMs: 20_000,
       env,
       keep: 'head',
@@ -214,6 +230,7 @@ describe('runShellCommand — plafonds et décodage', () => {
     const r = await runShellCommand({
       target: { file: node, args: [p] },
       cwd: dir,
+      confinement,
       timeoutMs: 20_000,
       env,
       keep: 'tail',
@@ -229,6 +246,7 @@ describe('runShellCommand — plafonds et décodage', () => {
     const r = await runShellCommand({
       target: { file: node, args: [p] },
       cwd: dir,
+      confinement,
       timeoutMs: 20_000,
       env,
     });
@@ -247,6 +265,7 @@ describe('runShellCommand — plafonds et décodage', () => {
     const r = await runShellCommand({
       target: { file: node, args: [p] },
       cwd: dir,
+      confinement,
       timeoutMs: 20_000,
       env,
       maxChars: 500_000,

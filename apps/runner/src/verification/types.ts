@@ -126,6 +126,16 @@ export interface ProofResult {
 }
 
 /**
+ * Où une preuve qui LANCE des commandes peut écrire (#628) : les dossiers du
+ * job — ses workspaces, partagé compris, et le dossier attaché à la demande —,
+ * résolus par la finalisation exactement comme l'exécution du job les
+ * résout. Un vérificateur qui constate sans rien lancer l'ignore.
+ */
+export interface ProofScope {
+  readonly writableRoots: readonly string[];
+}
+
+/**
  * Ce qu'un type de livrable doit savoir faire pour entrer dans la boucle de
  * vérification. `runProof` ne reçoit AUCUNE transaction : la preuve tourne
  * hors transaction (décision n°5), un spawn de plusieurs secondes ne tient
@@ -135,5 +145,9 @@ export interface DeliverableVerifier {
   readonly deliverableType: DeliverableType;
   canonicalize(raw: string): string;
   loadConfig(tx: AnyDrizzleDb, target: VerifierTarget): Promise<LoadedConfig>;
-  runProof(config: ReadyConfig, onCommandDone: OnCommandDone): Promise<ProofResult>;
+  runProof(
+    config: ReadyConfig,
+    onCommandDone: OnCommandDone,
+    scope: ProofScope,
+  ): Promise<ProofResult>;
 }

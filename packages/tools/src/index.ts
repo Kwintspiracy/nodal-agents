@@ -213,6 +213,7 @@ export {
   runCommandSequence,
   killProcessTree,
   isGreen,
+  sandboxReport,
   SHELL_POLICY_VERSION,
   DEFAULT_MAX_OUTPUT_CHARS,
   runCliDoctor,

@@ -21,8 +21,8 @@
 //   4. NO SHELL: the interpreter is spawned with an ARG ARRAY (shell:false), so
 //      arguments can never be shell-injected — stricter than run_command.
 
-import { spawnSync } from 'node:child_process';
 import { readdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from '../types';
@@ -34,7 +34,12 @@ import {
   processAddressing,
   PROCESS_PATHS_RULE,
 } from './file-ops/workspace';
-import { runShellCommand } from './shell-engine';
+import {
+  SANDBOX_RESULT_RULE,
+  runShellCommand,
+  sandboxReport,
+  type SandboxReport,
+} from './shell-engine';
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
 
@@ -49,25 +54,32 @@ const MAX_TIMEOUT_SECONDS = 1800;
  * script (live incident 2026-07-20: two image jobs burned 25+ recovery tool
  * calls each after exit 9009). The stub fails the probe, so it can never be
  * selected. Result cached for the process lifetime; null = none available.
+ *
+ * The probe runs through the SAME engine as the script (#628): under the OS
+ * sandbox, a candidate must work confined, not merely on the host. Measured
+ * 14/10 under MXC: the `py` launcher answers "No installed Python found!"
+ * (exit 112) — it finds installations through the user registry, which the
+ * container does not see — while `python` runs. A host-side probe picked `py`
+ * and every confined .py script failed.
  */
-let cachedPython: string | null | undefined;
-export function resolvePythonInterpreter(): string | null {
-  if (cachedPython !== undefined) return cachedPython;
-  const candidates =
-    process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
-  for (const candidate of candidates) {
-    try {
-      const probe = spawnSync(candidate, ['--version'], { windowsHide: true, timeout: 5000 });
-      if (probe.status === 0) {
-        cachedPython = candidate;
-        return candidate;
-      }
-    } catch {
-      /* candidate unusable — try the next */
+let cachedPython: Promise<string | null> | undefined;
+export function resolvePythonInterpreter(): Promise<string | null> {
+  return (cachedPython ??= (async (): Promise<string | null> => {
+    const candidates =
+      process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
+    for (const candidate of candidates) {
+      const probe = await runShellCommand({
+        target: { file: candidate, args: ['--version'] },
+        cwd: tmpdir(),
+        timeoutMs: 5_000,
+        env: buildChildEnv(process.env),
+        // Nothing to write: a `--version` needs no folder.
+        confinement: { writableRoots: [] },
+      });
+      if (probe.outcome.kind === 'exit' && probe.outcome.exitCode === 0) return candidate;
     }
-  }
-  cachedPython = null;
-  return null;
+    return null;
+  })());
 }
 
 /** Test-only: forget the probed interpreter so tests can re-probe. */
@@ -81,9 +93,9 @@ export function _resetPythonInterpreterCacheForTests(): void {
  * 'python-missing' when the script is Python but no working interpreter exists
  * (fail loud with an actionable error instead of the stub's cryptic 9009).
  */
-function interpreterFor(scriptPath: string): string | 'python-missing' | null {
+async function interpreterFor(scriptPath: string): Promise<string | 'python-missing' | null> {
   const lower = scriptPath.toLowerCase();
-  if (lower.endsWith('.py')) return resolvePythonInterpreter() ?? 'python-missing';
+  if (lower.endsWith('.py')) return (await resolvePythonInterpreter()) ?? 'python-missing';
   if (lower.endsWith('.sh')) return 'bash';
   if (lower.endsWith('.js') || lower.endsWith('.mjs') || lower.endsWith('.cjs')) return 'node';
   return null;
@@ -169,6 +181,12 @@ export interface RunSkillScriptOutput {
   warning?: string;
   /** How the script's paths are addressed (#592) — for the model. */
   paths?: string;
+  /**
+   * Present when Nodal's OS sandbox confined the script (#628): the folders
+   * it could write to — the agent's folders, never the skill bundle — and
+   * the writes it was refused.
+   */
+  sandbox?: SandboxReport;
 }
 
 /** Thrown when the owner has not authorized this skill's scripts for this agent. */
@@ -205,6 +223,8 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
       'can enable auto-run ("Yolo") per agent. A non-zero exit code is returned to you (not an error) ' +
       '— read stderr and adapt. Only runs scripts of a skill the owner has authorized for you; ' +
       'if it returns scripts_not_authorized, ask the user to enable it rather than retrying. ' +
+      SANDBOX_RESULT_RULE +
+      ' ' +
       PROCESS_PATHS_RULE,
     inputSchema: runSkillScriptSchema,
     riskLevel: 'destructive',
@@ -246,7 +266,7 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
       const realRoot = await resolveSkillRoot(ctx, input.skill);
       const scriptAbs = await resolveWithinSkill(realRoot, input.script);
 
-      const interpreter = interpreterFor(scriptAbs);
+      const interpreter = await interpreterFor(scriptAbs);
       if (!interpreter) {
         const err = new Error(
           `unsupported_script_type: only .py, .sh and .js scripts can be run (got "${input.script}").`,
@@ -283,12 +303,16 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
       const before = await listBundleFiles(realRoot);
 
       // GATE 4 — no shell: interpreter + [script, ...args] as an arg array.
+      // Sous le bac à sable, le script écrit dans les dossiers de l'agent pour
+      // ce run — jamais dans le bundle, qui reste en lecture : c'est le
+      // contrat que `bundle_pollution` ne faisait que constater.
       const result = await runScript(
         interpreter,
         [scriptAbs, ...(input.args ?? [])],
         realRoot,
         timeoutMs,
         input.script,
+        (ctx.workspaces ?? []).map((w) => w.path),
         sharedWorkspace ? { NODAL_SHARED_WORKSPACE: sharedWorkspace } : undefined,
       );
 
@@ -357,6 +381,7 @@ async function runScript(
   cwd: string,
   timeoutMs: number,
   scriptLabel: string,
+  writableRoots: readonly string[],
   envExtras?: Record<string, string>,
 ): Promise<RunSkillScriptOutput> {
   const run = await runShellCommand({
@@ -367,9 +392,12 @@ async function runScript(
     // DATABASE_URL/WORKER_SECRET/LLM keys via os.environ / process.env.
     env: buildChildEnv(process.env, envExtras),
     keep: 'head',
+    confinement: { writableRoots },
   });
   const o = run.outcome;
+  const sandbox = sandboxReport(run);
   return {
+    ...(sandbox ? { sandbox } : {}),
     exitCode: o.kind === 'exit' ? o.exitCode : null,
     stdout: run.stdout,
     stderr:

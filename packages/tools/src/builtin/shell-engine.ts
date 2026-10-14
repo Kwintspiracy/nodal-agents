@@ -26,12 +26,36 @@
 //     `keep` explicite (tête ou queue).
 // Changer l'un de ces points = bumper SHELL_POLICY_VERSION.
 //
+// BAC À SABLE (#628, étape 1) : chaque commande passe par
+// `@nodal-agents/sandbox`. Quand le bac à sable est disponible, elle ne peut
+// écrire que dans les dossiers que l'APPELANT déclare (`confinement`), son
+// temporaire et les caches d'outils ; un démarrage refusé par le bac à sable
+// refuse la commande (spawn_error `SANDBOX_START_FAILED`), jamais un repli
+// sans confinement. Quand il n'est pas disponible, la commande tourne comme
+// avant, et la raison est journalisée une fois par processus avec un code
+// (`getSandboxStatus()` la rend au bandeau). Un seul chemin pour les trois
+// appelants : `run_command`, `run_skill_script`, les commandes de preuve.
+//
 // Les messages de ce module sont des CODES techniques (invariant #2 : aucun
 // texte utilisateur dans une couche que le runner exécute).
 
 import { spawn, type ChildProcess } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 import { VerifyCommandsSchema, type RunVerdict, type VerifyCommand } from '@nodal-agents/shared';
+import {
+  SandboxStartError,
+  defaultSandbox,
+  extractRefusedWrites,
+  resolveWritableRoots,
+  toolCacheEnv,
+  type ConfinementPolicy,
+  type LaunchTarget,
+  type ProcessEnd,
+  type RefusedWrite,
+  type Sandbox,
+  type StartedProcess,
+} from '@nodal-agents/sandbox';
 
 export { SHELL_POLICY_VERSION } from '@nodal-agents/shared';
 
@@ -47,6 +71,26 @@ export type CommandOutcome =
   | { kind: 'timeout' }
   | { kind: 'spawn_error'; message: string };
 
+/**
+ * Sous quel régime la commande a tourné — dit dans le résultat, pour que
+ * l'appelant (et l'agent) sache où elle pouvait écrire.
+ */
+export type CommandConfinement =
+  | {
+      kind: 'confined';
+      /** Le backend qui a confiné (`mxc-processcontainer`). */
+      backend: string;
+      /** Où la commande pouvait écrire, chemins résolus — hors son temporaire. */
+      writableRoots: readonly string[];
+      /** Les écritures refusées que la sortie laisse voir, la ligne de l'OS citée. */
+      refusedWrites: readonly RefusedWrite[];
+    }
+  | {
+      kind: 'unconfined';
+      /** Pourquoi : le code stable de `getSandboxStatus()`. */
+      code: string;
+    };
+
 export interface CommandRunResult {
   outcome: CommandOutcome;
   stdout: string;
@@ -55,25 +99,50 @@ export interface CommandRunResult {
   truncatedStderr: boolean;
   durationMs: number;
   cwd: string;
+  confinement: CommandConfinement;
 }
 
-/** Ce qu'on lance : une commande shell, ou un exécutable avec ses arguments. */
-export type CommandTarget =
-  | { command: string }
-  | {
-      file: string;
-      args: readonly string[];
-      /**
-       * Windows : passer argv TEL QUEL, sans le requotage de Node. Un seul
-       * appelant le pose — `run_command` sous liste blanche, pour lancer un
-       * `.cmd` via `cmd.exe /d /s /c "<ligne>"`, la seule forme mesurée qui
-       * marche (sans verbatim Node échappe les guillemets en \" que cmd ne
-       * lit pas). Absent partout ailleurs, donc SHELL_POLICY_VERSION ne bouge
-       * PAS : ce que fait une commande de preuve déjà approuvée est inchangé,
-       * octet pour octet.
-       */
-      windowsVerbatimArguments?: boolean;
-    };
+/**
+ * Ce que le tool_result d'une commande confinée dit à l'agent (#628) : où
+ * elle pouvait écrire, et quelles écritures ont été refusées, chacune avec
+ * la ligne de l'OS citée et son chemin quand la ligne le nomme. Absent quand
+ * la commande n'a pas été confinée : rien à dire de plus qu'avant.
+ */
+export interface SandboxReport {
+  writableRoots: readonly string[];
+  refusedWrites: readonly RefusedWrite[];
+}
+
+/**
+ * La phrase de description, pour le modèle, des outils dont les commandes
+ * passent par ce moteur (`run_command`, `run_skill_script`). Une seule copie.
+ */
+export const SANDBOX_RESULT_RULE =
+  "When the result carries `sandbox`, Nodal's sandbox confined the process: it could write only " +
+  'inside `sandbox.writableRoots` and its own temp folder (reading and the network stay open). ' +
+  'Each refused write is listed in `sandbox.refusedWrites` with the OS error and, when known, the ' +
+  'path. Write inside those folders instead; do not retry the same path.';
+
+/** Le rapport de bac à sable d'un résultat, pour les outils qui lancent des commandes. */
+export function sandboxReport(run: CommandRunResult): SandboxReport | undefined {
+  if (run.confinement.kind !== 'confined') return undefined;
+  return {
+    writableRoots: run.confinement.writableRoots,
+    refusedWrites: run.confinement.refusedWrites,
+  };
+}
+
+/**
+ * Ce qu'on lance : une commande shell, ou un exécutable avec ses arguments.
+ *
+ * `windowsVerbatimArguments` (Windows) : passer argv TEL QUEL, sans le
+ * requotage de Node. Un seul appelant le pose — `run_command` sous liste
+ * blanche, pour lancer un `.cmd` via `cmd.exe /d /s /c "<ligne>"`, la seule
+ * forme mesurée qui marche (sans verbatim Node échappe les guillemets en \"
+ * que cmd ne lit pas). Absent partout ailleurs : ce que fait une commande de
+ * preuve déjà approuvée n'en dépend pas.
+ */
+export type CommandTarget = LaunchTarget;
 
 export interface CommandSpec {
   target: CommandTarget;
@@ -92,11 +161,24 @@ export interface CommandSpec {
    */
   keep?: 'head' | 'tail';
   maxChars?: number;
+  /**
+   * OBLIGATOIRE, comme `env`. Les dossiers du job où la commande peut écrire
+   * quand le bac à sable est disponible : ses workspaces et le dossier
+   * attaché à la demande. L'appelant les donne — le moteur ne devine aucune
+   * racine. Une liste vide est permise et veut dire « nulle part » ;
+   * l'absence est une erreur d'appelant (`CONFINEMENT_REQUIRED`).
+   */
+  confinement: ConfinementPolicy;
 }
 
 export interface CommandRunOptions {
   /** Injectable pour tester la forme d'invocation sans lancer de processus. */
   platform?: NodeJS.Platform;
+  /**
+   * Le bac à sable — injectable pour les tests (un backend indisponible, un
+   * backend qui refuse de démarrer). Par défaut, celui du processus.
+   */
+  sandbox?: Sandbox;
 }
 
 /**
@@ -147,7 +229,8 @@ export function killProcessTree(child: ChildProcess, platform: NodeJS.Platform):
 /**
  * Lance une commande, capture sa sortie bornée, la tue au timeout, et rend une
  * issue typée. Ne lève JAMAIS pour une panne du processus (elle devient
- * `spawn_error`) ; lève pour un contrat violé par l'appelant (`ENV_REQUIRED`).
+ * `spawn_error`) ; lève pour un contrat violé par l'appelant (`ENV_REQUIRED`,
+ * `CONFINEMENT_REQUIRED`).
  */
 export function runShellCommand(
   spec: CommandSpec,
@@ -156,35 +239,82 @@ export function runShellCommand(
   if (spec.env === undefined || spec.env === null) {
     throw new Error('ENV_REQUIRED');
   }
+  if (spec.confinement === undefined || spec.confinement === null) {
+    throw new Error('CONFINEMENT_REQUIRED');
+  }
+  return runWithSandbox(spec, opts);
+}
+
+async function runWithSandbox(
+  spec: CommandSpec,
+  opts: CommandRunOptions,
+): Promise<CommandRunResult> {
   const platform = opts.platform ?? process.platform;
-  const isWindows = platform === 'win32';
   const keep = spec.keep ?? 'head';
   const cap = spec.maxChars ?? DEFAULT_MAX_OUTPUT_CHARS;
+  const sandbox = opts.sandbox ?? defaultSandbox();
+  const status = await sandbox.status();
+  // Les caches d'outils, désignés pour TOUTE commande (policy.ts du paquet
+  // sandbox dit lesquels et pourquoi) : confinée ou non, une commande garde
+  // le même cache.
+  const env: Record<string, string | undefined> = { ...spec.env, ...toolCacheEnv() };
   const startedAt = Date.now();
 
+  const confinement: CommandConfinement =
+    status.state === 'available' && sandbox.backend
+      ? {
+          kind: 'confined',
+          backend: status.backend,
+          writableRoots: resolveWritableRoots(spec.confinement),
+          refusedWrites: [],
+        }
+      : {
+          kind: 'unconfined',
+          code: status.state === 'unavailable' ? status.code : 'SANDBOX_NOT_IMPLEMENTED',
+        };
+  const notStarted = (message: string): CommandRunResult => ({
+    outcome: { kind: 'spawn_error', message },
+    stdout: '',
+    stderr: '',
+    truncatedStdout: false,
+    truncatedStderr: false,
+    durationMs: Date.now() - startedAt,
+    cwd: spec.cwd,
+    confinement,
+  });
+
+  // Un dossier de départ absent est dit par son nom, sous les deux régimes :
+  // Node répondait `spawn cmd.exe ENOENT` (le shell accusé à tort), et MXC
+  // lance la commande quand même, ailleurs.
+  if (!isExistingDirectory(spec.cwd)) return notStarted(`CWD_NOT_FOUND: ${spec.cwd}`);
+
+  let proc: StartedProcess;
+  if (confinement.kind === 'confined' && sandbox.backend) {
+    try {
+      proc = await sandbox.backend.start({
+        target: spec.target,
+        cwd: spec.cwd,
+        env,
+        writableRoots: confinement.writableRoots,
+      });
+    } catch (e) {
+      if (!(e instanceof SandboxStartError)) throw e;
+      // Le bac à sable est là mais n'a pas pu démarrer CETTE commande : elle
+      // est refusée, avec la raison du backend. Jamais lancée sans lui.
+      return notStarted(e.message);
+    }
+  } else {
+    proc = startUnconfined(spec, env, platform);
+  }
+
+  const out = new StreamCapture(cap, keep);
+  const err = new StreamCapture(cap, keep);
+  // On continue de drainer le tuyau après le plafond : un enfant dont le
+  // tuyau OS est plein se bloque, et le timeout le tuerait pour rien.
+  proc.stdout?.on('data', (c: Buffer) => out.push(c));
+  proc.stderr?.on('data', (c: Buffer) => err.push(c));
+
   return new Promise<CommandRunResult>((resolve) => {
-    const spawnOpts = {
-      cwd: spec.cwd,
-      detached: !isWindows,
-      windowsHide: true,
-      env: spec.env as unknown as NodeJS.ProcessEnv,
-    };
-    const child =
-      'command' in spec.target
-        ? spawn(spec.target.command, { ...spawnOpts, shell: true })
-        : spawn(spec.target.file, [...spec.target.args], {
-            ...spawnOpts,
-            shell: false,
-            windowsVerbatimArguments: spec.target.windowsVerbatimArguments === true,
-          });
-
-    const out = new StreamCapture(cap, keep);
-    const err = new StreamCapture(cap, keep);
-    // On continue de drainer le tuyau après le plafond : un enfant dont le
-    // tuyau OS est plein se bloque, et le timeout le tuerait pour rien.
-    child.stdout?.on('data', (c: Buffer) => out.push(c));
-    child.stderr?.on('data', (c: Buffer) => err.push(c));
-
     let settled = false;
     let timedOut = false;
     let graceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -194,37 +324,109 @@ export function runShellCommand(
       settled = true;
       clearTimeout(timer);
       if (graceTimer) clearTimeout(graceTimer);
+      const stdout = out.end();
+      const stderr = err.end();
       resolve({
         outcome,
-        stdout: out.end(),
-        stderr: err.end(),
+        stdout,
+        stderr,
         truncatedStdout: out.truncated,
         truncatedStderr: err.truncated,
         durationMs: Date.now() - startedAt,
         cwd: spec.cwd,
+        confinement:
+          confinement.kind === 'confined'
+            ? {
+                ...confinement,
+                refusedWrites: extractRefusedWrites(
+                  `${stderr}\n${stdout}`,
+                  confinement.writableRoots,
+                  spec.cwd,
+                ),
+              }
+            : confinement,
       });
     };
 
     const timer = setTimeout(() => {
       timedOut = true;
-      killProcessTree(child, platform);
+      proc.kill();
       // Un petit-enfant têtu peut garder un tuyau ouvert après le kill : on
       // résout quand même, le kill a été émis.
       graceTimer = setTimeout(() => finish({ kind: 'timeout' }), KILL_GRACE_MS);
     }, spec.timeoutMs);
 
-    child.on('error', (e: Error) => finish({ kind: 'spawn_error', message: e.message }));
-    child.on('close', (code: number | null) => {
+    void proc.done.then((end: ProcessEnd) => {
       if (timedOut) return finish({ kind: 'timeout' });
-      // `code === null` sans timeout = tué par un signal externe : pas une
-      // sortie propre, on le dit comme tel plutôt que d'inventer un code.
-      finish(
-        code === null
-          ? { kind: 'spawn_error', message: 'KILLED_BY_SIGNAL' }
-          : { kind: 'exit', exitCode: code },
-      );
+      if (end.kind === 'exit') return finish({ kind: 'exit', exitCode: end.exitCode });
+      // `signal` sans timeout = tué par un signal externe : pas une sortie
+      // propre, on le dit comme tel plutôt que d'inventer un code.
+      finish({
+        kind: 'spawn_error',
+        message: end.kind === 'error' ? end.message : 'KILLED_BY_SIGNAL',
+      });
     });
   });
+}
+
+function isExistingDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Le lancement SANS bac à sable (indisponible sur ce système) — la forme
+ * d'avant #628 : `shell:true` ⇒ cmd.exe / sh, `detached` sur Unix pour que le
+ * groupe entier se tue.
+ *
+ * À la fin de la commande, sur Unix, le GROUPE est tué : un processus que la
+ * commande a laissé tourner en arrière-plan (`cmd &`) ne lui survit pas. Ce
+ * qui a quitté son groupe (`setsid`) échappe encore — les backends Linux et
+ * macOS de #628 s'en chargeront. Sous Windows sans bac à sable, rien ne tue
+ * un petit-enfant détaché : seul le conteneur MXC le fait.
+ */
+function startUnconfined(
+  spec: CommandSpec,
+  env: Record<string, string | undefined>,
+  platform: NodeJS.Platform,
+): StartedProcess {
+  const isWindows = platform === 'win32';
+  const spawnOpts = {
+    cwd: spec.cwd,
+    detached: !isWindows,
+    windowsHide: true,
+    env: env as unknown as NodeJS.ProcessEnv,
+  };
+  const child =
+    'command' in spec.target
+      ? spawn(spec.target.command, { ...spawnOpts, shell: true })
+      : spawn(spec.target.file, [...spec.target.args], {
+          ...spawnOpts,
+          shell: false,
+          windowsVerbatimArguments: spec.target.windowsVerbatimArguments === true,
+        });
+  const done = new Promise<ProcessEnd>((resolve) => {
+    child.on('error', (e: Error) => resolve({ kind: 'error', message: e.message }));
+    child.on('close', (code: number | null) => {
+      if (!isWindows && child.pid) {
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+        } catch {
+          /* groupe déjà vide */
+        }
+      }
+      resolve(code === null ? { kind: 'signal' } : { kind: 'exit', exitCode: code });
+    });
+  });
+  return {
+    stdout: child.stdout,
+    stderr: child.stderr,
+    done,
+    kill: () => killProcessTree(child, platform),
+  };
 }
 
 /**
@@ -293,7 +495,10 @@ export interface SequenceResult {
 export interface SequenceOptions {
   cwd: string;
   env: Record<string, string | undefined>;
+  /** Les dossiers du job où chaque commande peut écrire (voir `CommandSpec`). */
+  confinement: ConfinementPolicy;
   platform?: NodeJS.Platform;
+  sandbox?: Sandbox;
   keep?: 'head' | 'tail';
   maxChars?: number;
   /**
@@ -328,10 +533,14 @@ export async function runCommandSequence(
         cwd: opts.cwd,
         timeoutMs: entry.timeoutSeconds * 1000,
         env: opts.env,
+        confinement: opts.confinement,
         keep: opts.keep ?? 'tail',
         ...(opts.maxChars !== undefined ? { maxChars: opts.maxChars } : {}),
       },
-      opts.platform !== undefined ? { platform: opts.platform } : {},
+      {
+        ...(opts.platform !== undefined ? { platform: opts.platform } : {}),
+        ...(opts.sandbox !== undefined ? { sandbox: opts.sandbox } : {}),
+      },
     );
     const step: SequenceStepResult = { ...run, rank, command: entry.command };
     results.push(step);
