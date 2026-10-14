@@ -16,7 +16,7 @@
 //     `/…: Operation not permitted` ;
 //   - cmd.exe : `Access is denied.` (sans chemin).
 
-import { isAbsolute, resolve } from 'node:path';
+import { posix, win32 } from 'node:path';
 
 /** Un refus d'écriture lu dans la sortie : la ligne citée, et le chemin si elle le nomme. */
 export interface RefusedWrite {
@@ -78,8 +78,11 @@ export function extractRefusedWrites(
 ): RefusedWrite[] {
   const norm = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
   const roots = writableRoots.map(norm);
+  // Les chemins de la sortie suivent la forme du dossier de la commande : un
+  // `C:\…` se résout en règles Windows, quel que soit l'OS qui lit la sortie.
+  const flavour = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(cwd) ? win32 : posix;
   const inside = (p: string): boolean => {
-    const abs = isAbsolute(p) || /^[A-Za-z]:/.test(p) ? p : resolve(cwd, p);
+    const abs = flavour.isAbsolute(p) ? p : flavour.resolve(cwd, p);
     const n = norm(abs);
     return roots.some((r) => n === r || n.startsWith(`${r}/`));
   };
