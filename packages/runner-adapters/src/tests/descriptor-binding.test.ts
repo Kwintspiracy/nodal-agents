@@ -311,6 +311,10 @@ describe('the gate asks for a real connector operation marked requiresApproval @
       const t = ADAPTER_REGISTRY[slug]!.toolFactory(MOCK_TOKEN).find((x) => x.name === name);
       return t?.defaultApproval;
     };
+    const riskOf = (slug: string, name: string) =>
+      ADAPTER_REGISTRY[slug]!.toolFactory(MOCK_TOKEN).find((x) => x.name === name)?.riskLevel;
+    expect(riskOf('google-drive', 'drive_share_file')).toBe('destructive');
+    expect(riskOf('apify', 'apify_run_actor')).toBe('destructive');
     expect(posture('google-drive', 'drive_share_file')).toBe('require_approval');
     expect(posture('apify', 'apify_run_actor')).toBe('require_approval');
     expect(posture('google-calendar', 'gcal_create_event')).toBeUndefined();
@@ -345,22 +349,23 @@ describe('the gate asks for a real connector operation marked requiresApproval @
       .withRules([])
       .underAutonomy('destructive_gate')
       .toRequireApproval();
-    // cloudflare_deploy, drive_share_file and apify_run_actor (#744) are the `write` + requiresApproval operations:
+    // cloudflare_deploy is the only `write` + requiresApproval operation:
     // `destructive_gate` auto-approves ordinary work and keeps the gate on a
     // `destructive` tool (packages/tools/src/execute.ts). Unchanged by #735.
     await expectGate(at('cloudflare', 'cloudflare_deploy'))
       .withRules([])
       .underAutonomy('destructive_gate')
       .toRunWithoutAsking();
-    // riskLevel stays 'write' for the two #744 operations, so they pass too.
+    // #744: share and actor run are `destructive` (cannot be taken back), so
+    // destructive_gate holds them too.
     await expectGate(at('google-drive', 'drive_share_file'))
       .withRules([])
       .underAutonomy('destructive_gate')
-      .toRunWithoutAsking();
+      .toRequireApproval();
     await expectGate(at('apify', 'apify_run_actor'))
       .withRules([])
       .underAutonomy('destructive_gate')
-      .toRunWithoutAsking();
+      .toRequireApproval();
   });
 
   it('CONTROL: an operation not marked requiresApproval runs without asking in every mode', async () => {

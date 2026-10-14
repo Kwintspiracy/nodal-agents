@@ -35,10 +35,11 @@ describe('APIFY_OPERATIONS slugs match factory tool names', () => {
     }
   });
 
-  it('apify_run_actor has risk write (it consumes platform credits)', () => {
+  it('apify_run_actor is destructive and asks first (it spends paid credits, #744)', () => {
     const op = APIFY_OPERATIONS.find((o) => o.slug === 'apify_run_actor');
     expect(op).toBeDefined();
-    expect(op?.risk).toBe('write');
+    expect(op?.risk).toBe('destructive');
+    expect(op?.requiresApproval).toBe(true);
   });
 
   it('read operations do not require approval', () => {
