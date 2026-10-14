@@ -54,8 +54,6 @@ describe('createGmailTools integration', () => {
 
   it('write operations have risk write in the descriptor', () => {
     const writeTools = [
-      'gmail_reply_message',
-      'gmail_forward_message',
       'gmail_modify_labels',
       'gmail_trash_message',
       'gmail_untrash_message',
@@ -73,10 +71,13 @@ describe('createGmailTools integration', () => {
   });
 
   it('destructive operations have risk destructive in the descriptor', () => {
-    // Sending cannot be taken back: the descriptor says destructive (issue #735).
+    // Sending cannot be taken back: every operation that sends an email is
+    // destructive (issues #735, #711).
     const destructiveTools = [
       'gmail_send_email',
       'gmail_send_draft',
+      'gmail_reply_message',
+      'gmail_forward_message',
       'gmail_delete_message',
       'gmail_delete_label',
       'gmail_delete_draft',
@@ -106,14 +107,14 @@ describe('createGmailTools integration', () => {
     expect(readCount).toBe(9);
   });
 
-  it('has exactly 11 write operations', () => {
+  it('has exactly 9 write operations', () => {
     const writeCount = GMAIL_OPERATIONS.filter((o) => o.risk === 'write').length;
-    expect(writeCount).toBe(11);
+    expect(writeCount).toBe(9);
   });
 
-  it('has exactly 5 destructive operations', () => {
+  it('has exactly 7 destructive operations', () => {
     const destructiveCount = GMAIL_OPERATIONS.filter((o) => o.risk === 'destructive').length;
-    expect(destructiveCount).toBe(5);
+    expect(destructiveCount).toBe(7);
   });
 
   // Schema spot-checks

@@ -50,8 +50,6 @@ describe('createOutlookMailTools integration', () => {
 
   it('write operations have risk write in the descriptor', () => {
     const writeTools = [
-      'outlook_reply_message',
-      'outlook_forward_message',
       'outlook_delete_message',
       'outlook_update_message',
       'outlook_move_message',
@@ -65,7 +63,14 @@ describe('createOutlookMailTools integration', () => {
   });
 
   it('destructive operations have risk destructive in the descriptor', () => {
-    const destructiveTools = ['outlook_send_email', 'outlook_send_draft', 'outlook_delete_draft'];
+    // Every operation that sends an email is destructive (issues #735, #711).
+    const destructiveTools = [
+      'outlook_send_email',
+      'outlook_send_draft',
+      'outlook_reply_message',
+      'outlook_forward_message',
+      'outlook_delete_draft',
+    ];
     const toolMap = Object.fromEntries(OUTLOOK_MAIL_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of destructiveTools) {
       expect(toolMap[name]?.risk, `${name} should be destructive`).toBe('destructive');
@@ -86,19 +91,19 @@ describe('createOutlookMailTools integration', () => {
   });
 
   // Tool count breakdown
-  it('has exactly 5 read tools', () => {
+  it('has exactly 5 read operations', () => {
     const readCount = OUTLOOK_MAIL_OPERATIONS.filter((o) => o.risk === 'read').length;
     expect(readCount).toBe(5);
   });
 
-  it('has exactly 7 write tools', () => {
+  it('has exactly 5 write operations', () => {
     const writeCount = OUTLOOK_MAIL_OPERATIONS.filter((o) => o.risk === 'write').length;
-    expect(writeCount).toBe(7);
+    expect(writeCount).toBe(5);
   });
 
-  it('has exactly 3 destructive tools', () => {
+  it('has exactly 5 destructive operations', () => {
     const destructiveCount = OUTLOOK_MAIL_OPERATIONS.filter((o) => o.risk === 'destructive').length;
-    expect(destructiveCount).toBe(3);
+    expect(destructiveCount).toBe(5);
   });
 
   // Schema spot-checks

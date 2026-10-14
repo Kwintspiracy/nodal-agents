@@ -59,10 +59,10 @@ export type OutlookMailAdapterOptions =
  * Tool count: 15
  * Read (5):        outlook_list_messages, outlook_get_message, outlook_list_drafts,
  *                  outlook_list_folders, outlook_get_attachment
- * Write (7):       outlook_reply_message, outlook_forward_message, outlook_delete_message,
- *                  outlook_update_message, outlook_move_message, outlook_create_draft,
- *                  outlook_update_draft
- * Destructive (3): outlook_send_email, outlook_send_draft, outlook_delete_draft
+ * Write (5):       outlook_delete_message, outlook_update_message, outlook_move_message,
+ *                  outlook_create_draft, outlook_update_draft
+ * Destructive (5): outlook_send_email, outlook_send_draft, outlook_reply_message,
+ *                  outlook_forward_message, outlook_delete_draft
  */
 export function createOutlookMailTools(
   opts: OutlookMailAdapterOptions,

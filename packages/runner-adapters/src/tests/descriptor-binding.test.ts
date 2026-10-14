@@ -103,6 +103,10 @@ describe('ADAPTER_REGISTRY: each connector tool carries its descriptor @cap:appr
         'gmail/gmail_send_email',
         'gmail/gmail_send_draft',
         'outlook-mail/outlook_send_email',
+        'gmail/gmail_reply_message',
+        'gmail/gmail_forward_message',
+        'outlook-mail/outlook_reply_message',
+        'outlook-mail/outlook_forward_message',
         'google-drive/drive_delete_file',
         'google-calendar/gcal_delete_event',
         'notion/notion_archive_page',
@@ -272,7 +276,9 @@ describe('the gate asks for a real connector operation marked requiresApproval @
     const flagged = Object.entries(ADAPTER_REGISTRY).flatMap(([slug, e]) =>
       e.operations.filter((op) => op.requiresApproval).map((op) => ({ slug, op })),
     );
-    expect(flagged.length).toBeGreaterThanOrEqual(20);
+    // 20 at #735, plus Gmail's and Outlook's reply and forward (#711: sending
+    // an email asks by default).
+    expect(flagged.length).toBe(24);
     for (const { slug, op } of flagged) {
       // The real tool's posture, with a schema that accepts the harness's
       // `{ purpose }` input (the real one would refuse its missing arguments
