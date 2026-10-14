@@ -45,6 +45,9 @@ import {
 
 type MxcModule = typeof MxcSdk;
 
+/** Le seul palier d'isolation MXC accepté (voir la sonde). */
+const ACCEPTED_TIER = 'base-container';
+
 /** Le nom sous lequel ce backend apparaît dans le statut et les journaux. */
 export const MXC_BACKEND_NAME = 'mxc-processcontainer';
 
@@ -182,6 +185,27 @@ export function mxcBackend(
           state: 'unavailable',
           code: 'SANDBOX_PLATFORM_UNSUPPORTED',
           reason: support.reason || 'getPlatformSupport: isSupported=false',
+        };
+      }
+      // LE PALIER D'ISOLATION. Seul `base-container` est accepté, parce que
+      // c'est le seul MESURÉ sain (Windows 11 Home 25H2, essai #731 et ce
+      // PR : +120 ms par commande). Sur le palier `appcontainer-dacl`
+      // (runner Windows Server 2025 de GitHub, mesuré le 14/10), déclarer
+      // les lecteurs en lecture fait RÉÉCRIRE par MXC les ACL de tout le
+      // lecteur C: : 820 s pour la première commande, 159 s pour la
+      // suivante, et des commandes parallèles refusées au bout de 30 s
+      // (`timed out acquiring DACL mutex on \\?\C:\`). Confiner à ce prix,
+      // en touchant aux droits de chaque fichier de l'utilisateur, n'est pas
+      // un mode dégradé acceptable : le bac à sable se dit indisponible, avec
+      // le palier et les avertissements de MXC cités tels quels.
+      if (support.isolationTier !== ACCEPTED_TIER) {
+        return {
+          state: 'unavailable',
+          code: 'SANDBOX_PLATFORM_UNSUPPORTED',
+          reason: [
+            `isolationTier=${support.isolationTier ?? 'unknown'}`,
+            ...(support.isolationWarnings ?? []),
+          ].join(' | '),
         };
       }
     } catch (e) {

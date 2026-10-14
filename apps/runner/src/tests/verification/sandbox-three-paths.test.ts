@@ -112,8 +112,21 @@ const paths: { name: string; run: (inside: string, outside: string) => Promise<P
   },
 ];
 
-describe.skipIf(!isWindows)(
-  'sandbox — run_command, run_skill_script and proof commands go through ONE confinement @cap:executer-une-commande/moteur (Windows only: the macOS and Linux backends come in later PRs of #628)',
+/**
+ * Un Windows sans le palier MXC base-container (Windows Server, dont le runner
+ * Windows de GitHub, ou un Windows plus ancien) : MXC n'y confine qu'en
+ * réécrivant les ACL de tout le lecteur, et le bac à sable s'y dit
+ * indisponible (SANDBOX_PLATFORM_UNSUPPORTED). La batterie de confinement n'a
+ * alors rien à prouver ; la suite qui la remplace prouve que la commande
+ * tourne et que la raison est dite. Toute AUTRE indisponibilité (Node trop
+ * ancien, SDK absent) fait échouer la batterie, avec sa raison.
+ */
+const hereStatus = isWindows ? await getSandboxStatus() : undefined;
+const tierUnsupported =
+  hereStatus?.state === 'unavailable' && hereStatus.code === 'SANDBOX_PLATFORM_UNSUPPORTED';
+
+describe.skipIf(!isWindows || tierUnsupported)(
+  'sandbox — run_command, run_skill_script and proof commands go through ONE confinement @cap:executer-une-commande/moteur (Windows only: the macOS and Linux backends come in later PRs of #628 — skipped on a Windows without the MXC base-container tier, e.g. the GitHub Windows Server runner)',
   () => {
     beforeAll(async () => {
       const status = await getSandboxStatus();

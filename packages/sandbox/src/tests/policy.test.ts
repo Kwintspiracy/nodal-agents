@@ -15,15 +15,26 @@ afterAll(() => {
   rmSync(base, { recursive: true, force: true });
 });
 
+/**
+ * Le cache d'outils tel que déclaré : son chemin, et son chemin RÉSOLU quand
+ * il diffère. Sur le runner Windows de GitHub, le temporaire s'écrit en nom
+ * court 8.3 (`RUNNER~1`), et la résolution le rallonge.
+ */
+const cacheRoots = (): string[] => {
+  const root = toolCacheRoot();
+  const real = realpathSync.native(root);
+  return real === root ? [root] : [root, real];
+};
+
 describe('resolveWritableRoots', () => {
   it('les dossiers du job, puis le cache d’outils — jamais rien d’autre', () => {
     const ws = join(base, 'ws');
     mkdirSync(ws);
-    expect(resolveWritableRoots({ writableRoots: [ws] })).toEqual([ws, toolCacheRoot()]);
+    expect(resolveWritableRoots({ writableRoots: [ws] })).toEqual([ws, ...cacheRoots()]);
   });
 
   it('une liste vide veut dire « le cache seulement », jamais « partout »', () => {
-    expect(resolveWritableRoots({ writableRoots: [] })).toEqual([toolCacheRoot()]);
+    expect(resolveWritableRoots({ writableRoots: [] })).toEqual(cacheRoots());
   });
 
   it('un chemin relatif est une erreur de l’appelant, pas un chemin résolu en silence', () => {
@@ -43,7 +54,7 @@ describe('resolveWritableRoots', () => {
       expect(resolveWritableRoots({ writableRoots: [link] })).toEqual([
         link,
         target,
-        toolCacheRoot(),
+        ...cacheRoots(),
       ]);
     },
   );

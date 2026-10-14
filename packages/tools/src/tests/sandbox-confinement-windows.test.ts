@@ -64,8 +64,21 @@ const alive = (pid: number): boolean => {
   }
 };
 
-describe.skipIf(!isWindows)(
-  'sandbox, Windows (MXC) — run_command writes only inside its folders @cap:executer-une-commande/moteur (Windows only: the macOS and Linux backends come in later PRs of #628)',
+/**
+ * Un Windows sans le palier MXC base-container (Windows Server, dont le runner
+ * Windows de GitHub, ou un Windows plus ancien) : MXC n'y confine qu'en
+ * réécrivant les ACL de tout le lecteur, et le bac à sable s'y dit
+ * indisponible (SANDBOX_PLATFORM_UNSUPPORTED). La batterie de confinement n'a
+ * alors rien à prouver ; la suite qui la remplace prouve que la commande
+ * tourne et que la raison est dite. Toute AUTRE indisponibilité (Node trop
+ * ancien, SDK absent) fait échouer la batterie, avec sa raison.
+ */
+const hereStatus = isWindows ? await getSandboxStatus() : undefined;
+const tierUnsupported =
+  hereStatus?.state === 'unavailable' && hereStatus.code === 'SANDBOX_PLATFORM_UNSUPPORTED';
+
+describe.skipIf(!isWindows || tierUnsupported)(
+  'sandbox, Windows (MXC) — run_command writes only inside its folders @cap:executer-une-commande/moteur (Windows only: the macOS and Linux backends come in later PRs of #628 — skipped on a Windows without the MXC base-container tier, e.g. the GitHub Windows Server runner)',
   () => {
     beforeAll(async () => {
       const status = await getSandboxStatus();
@@ -296,6 +309,24 @@ describe.skipIf(!isWindows)(
       expect(cacheRoot).toBeDefined();
       expect(existsSync(join(cacheRoot as string, 'npm', '_cacache'))).toBe(true);
       await expectCanaryIntact();
+    });
+  },
+);
+
+describe.runIf(isWindows && tierUnsupported)(
+  'sandbox, Windows without the MXC base-container tier — run_command runs unconfined and the reason is said @cap:executer-une-commande/moteur',
+  () => {
+    it('the status names the tier; the command runs; the result carries no `sandbox` report', async () => {
+      expect(hereStatus?.state === 'unavailable' && hereStatus.reason).toMatch(/^isolationTier=/);
+      ws = await realpath(await mkdtemp(join(tmpdir(), 'nodal-sbx-unsupported-')));
+      try {
+        const out = await run(`echo ok> "${join(ws, 'inside.txt')}"`);
+        expect(out.exitCode).toBe(0);
+        expect((await readFile(join(ws, 'inside.txt'), 'utf8')).trim()).toBe('ok');
+        expect(out.sandbox).toBeUndefined();
+      } finally {
+        await rm(ws, { recursive: true, force: true });
+      }
     });
   },
 );
