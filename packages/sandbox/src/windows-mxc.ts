@@ -32,9 +32,9 @@
 import { spawn as spawnHostSide } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { createServer, type AddressInfo, type Server, type Socket } from 'node:net';
 import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { PassThrough } from 'node:stream';
 import type * as MxcSdk from '@microsoft/mxc-sdk/v1';
 import type { ContainerRequest } from '@microsoft/mxc-sdk/v1';
@@ -350,12 +350,11 @@ export function mxcBackend(
   let mod: Promise<MxcModule> | undefined;
   const sdk = (): Promise<MxcModule> => (mod ??= load());
   // Les conteneurs sont tenus par le courtier, hors du runner (mxc-broker.ts
-  // dit pourquoi) ; il charge le même SDK, par son chemin résolu ici.
+  // dit pourquoi). Il résout le SDK lui-même, depuis CE module : le même
+  // paquet que celui que le runner charge. Rien n'est résolu ici, où un
+  // bundler (le build du web) lirait la résolution et voudrait l'embarquer.
   let brokerClient: MxcBroker | undefined;
-  const broker = (): MxcBroker =>
-    (brokerClient ??= new MxcBroker(
-      createRequire(import.meta.url).resolve('@microsoft/mxc-sdk/v1'),
-    ));
+  const broker = (): MxcBroker => (brokerClient ??= new MxcBroker(fileURLToPath(import.meta.url)));
 
   const openContainer = async (
     writableRoots: readonly string[],

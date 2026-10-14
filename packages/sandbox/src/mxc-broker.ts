@@ -41,7 +41,9 @@ export const BROKER_THREADPOOL_SIZE = 128;
 export const MXC_BROKER_SOURCE = `'use strict';
 // Courtier MXC de Nodal (@nodal-agents/sandbox, mxc-broker.ts).
 const { pathToFileURL } = require('url');
-const sdkPath = process.argv[2];
+const { createRequire } = require('module');
+// Le SDK est résolu depuis le module du runner qui a lancé ce courtier.
+const sdkPath = createRequire(process.argv[2]).resolve('@microsoft/mxc-sdk/v1');
 let sdk = null;
 const procs = new Map();
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
@@ -130,11 +132,12 @@ export class MxcBroker {
   private nextId = 0;
   private readonly pending = new Map<number, Pending>();
 
-  constructor(private readonly sdkEntry: string) {}
+  /** `resolveFrom` : le fichier depuis lequel le courtier résout le SDK. */
+  constructor(private readonly resolveFrom: string) {}
 
   private start(): ChildProcess {
     if (this.child && this.child.exitCode === null && !this.child.killed) return this.child;
-    const child = spawn(process.execPath, [ensureBrokerScript(), this.sdkEntry], {
+    const child = spawn(process.execPath, [ensureBrokerScript(), this.resolveFrom], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       env: { ...process.env, UV_THREADPOOL_SIZE: String(BROKER_THREADPOOL_SIZE) },
