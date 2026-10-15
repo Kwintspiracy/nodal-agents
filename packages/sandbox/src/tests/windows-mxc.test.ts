@@ -199,10 +199,23 @@ const [major = 0, minor = 0] = process.versions.node.split('.').map(Number);
 const nodeInMxcRange = (major === 24 && minor >= 21) || (major === 26 && minor >= 8) || major > 26;
 
 describe.runIf(isWindows && tier === 'base-container' && !nodeInMxcRange)(
-  'mxcBackend — le vrai MXC sous un Node trop ancien pour lui (Windows, palier base-container)',
+  'mxcBackend — le Node de l’utilisateur est trop ancien pour le SDK (Windows, palier base-container)',
   () => {
-    it('la sonde dit SANDBOX_SELF_TEST_FAILED, et la raison nomme le Node courant, les versions requises, et quoi faire', async () => {
+    // D5 : le courtier tourne sur le Node DÉDIÉ que Nodal télécharge, pas sur
+    // celui de l'utilisateur. Donc le bac à sable est DISPONIBLE même ici, où
+    // `process.versions.node` est trop ancien pour les flux natifs du SDK.
+    it('le bac à sable est `available` via le Node dédié du courtier', async () => {
       const status = await mxcBackend().probe();
+      expect(status, JSON.stringify(status)).toMatchObject({
+        state: 'available',
+        backend: MXC_BACKEND_NAME,
+      });
+    }, 120_000);
+
+    // Et la preuve que c'est bien le Node dédié qui sauve : forcé sur le Node
+    // de l'utilisateur, le même backend échoue, en nommant les versions.
+    it('forcé sur le Node de l’utilisateur, il échoue et nomme les versions requises', async () => {
+      const status = await mxcBackend(undefined, undefined, process.execPath).probe();
       expect(status.state).toBe('unavailable');
       if (status.state !== 'unavailable') return;
       expect(status.code).toBe('SANDBOX_SELF_TEST_FAILED');

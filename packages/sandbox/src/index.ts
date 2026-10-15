@@ -54,6 +54,14 @@ export {
 } from './command-line';
 export { type RefusedWrite, extractRefusedWrites } from './refused-writes';
 export {
+  BROKER_NODE_VERSION,
+  BrokerNodeUnavailable,
+  ensureBrokerNode,
+  brokerNodeDir,
+  readCachedSha,
+  type BrokerNodeDeps,
+} from './broker-node';
+export {
   DEFAULT_HOST_LOOPBACK_POLICY,
   type HostLoopbackPolicy,
   MXC_BACKEND_NAME,

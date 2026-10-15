@@ -47,7 +47,11 @@ const node = process.execPath;
  * où la politique par défaut rend le bac à sable indisponible. Même code de
  * production, une valeur de son unique paramètre ; aucune branche de test.
  */
-const batterySandbox = createSandbox(mxcBackend(undefined, 'when-available'));
+// Le Node du runner de test est déjà dans la plage du SDK (26.11 local, 26.12
+// CI) : le courtier tourne dessus, pas sur le Node dédié téléchargé (prouvé
+// par broker-node.test.ts et windows-mxc.test.ts). Cette suite prouve le mur
+// des fichiers, pas D5.
+const batterySandbox = createSandbox(mxcBackend(undefined, 'when-available', process.execPath));
 
 function ctx(jobId = 'job-sbx', signal?: AbortSignal): ToolContext {
   return {

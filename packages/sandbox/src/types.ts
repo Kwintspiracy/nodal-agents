@@ -23,7 +23,9 @@ export type SandboxUnavailableCode =
    */
   | 'SANDBOX_HOST_LOOPBACK_UNSUPPORTED'
   /** Le processus qui tient les conteneurs (le courtier MXC) n'a pas pu être lancé. */
-  | 'SANDBOX_BROKER_START_FAILED';
+  | 'SANDBOX_BROKER_START_FAILED'
+  /** Le Node dédié du courtier n'a pas pu être obtenu (réseau, somme). */
+  | 'SANDBOX_BROKER_NODE_UNAVAILABLE';
 
 export type SandboxStatus =
   | {

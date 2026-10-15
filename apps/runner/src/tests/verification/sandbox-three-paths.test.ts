@@ -31,7 +31,8 @@ import {
  * où la politique par défaut rend le bac à sable indisponible. Même code de
  * production, une valeur de son unique paramètre ; aucune branche de test.
  */
-const batterySandbox = createSandbox(mxcBackend(undefined, 'when-available'));
+// Le Node du runner de test fait tourner le courtier (D5 est prouvé ailleurs).
+const batterySandbox = createSandbox(mxcBackend(undefined, 'when-available', process.execPath));
 
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import type { ToolContext } from '@nodal-agents/tools';

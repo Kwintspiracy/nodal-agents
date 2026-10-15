@@ -46,6 +46,7 @@ import type { ContainerRequest } from '@microsoft/mxc-sdk/v1';
 import { windowsSpawnParts } from './command-line';
 import { ensureJobHostScript } from './job-host';
 import { MxcBroker, mxcErrorText, type BrokeredContainer, type MxcErrorFields } from './mxc-broker';
+import { BrokerNodeUnavailable, ensureBrokerNode, type BrokerNodeDeps } from './broker-node';
 import {
   SandboxStartError,
   type CommandLaunch,
@@ -353,7 +354,13 @@ class MxcJobContainer implements JobContainer {
 export function mxcBackend(
   load: () => Promise<MxcModule> = () => import('@microsoft/mxc-sdk/v1'),
   loopbackPolicy: HostLoopbackPolicy = DEFAULT_HOST_LOOPBACK_POLICY,
-  brokerNode: string = process.execPath,
+  /**
+   * D'où vient le Node du courtier. Par défaut Nodal l'obtient
+   * (`ensureBrokerNode`, un build officiel épinglé, téléchargé et vérifié) :
+   * le courtier ne tourne jamais sur le Node de l'utilisateur, qui peut être
+   * trop ancien pour les flux natifs du SDK. Un chemin fixe sert aux tests.
+   */
+  brokerNode: string | BrokerNodeDeps = {},
 ): SandboxBackend {
   let mod: Promise<MxcModule> | undefined;
   const sdk = (): Promise<MxcModule> => (mod ??= load());
@@ -363,8 +370,13 @@ export function mxcBackend(
   // bundler (le build du web) lirait la résolution et voudrait l'embarquer.
   let brokerClient: MxcBroker | undefined;
   let hostLoopback: boolean | undefined;
-  const broker = (): MxcBroker =>
-    (brokerClient ??= new MxcBroker(fileURLToPath(import.meta.url), brokerNode));
+  // Le Node du courtier, résolu une fois : un chemin fixe (tests), ou le build
+  // officiel que Nodal télécharge et vérifie. Résolu AVANT le premier `spawn`,
+  // qui est synchrone.
+  const brokerNodePath = (): Promise<string> =>
+    typeof brokerNode === 'string' ? Promise.resolve(brokerNode) : ensureBrokerNode(brokerNode);
+  const broker = async (): Promise<MxcBroker> =>
+    (brokerClient ??= new MxcBroker(fileURLToPath(import.meta.url), await brokerNodePath()));
 
   const openContainer = async (
     writableRoots: readonly string[],
@@ -380,10 +392,12 @@ export function mxcBackend(
     try {
       const loopback = (hostLoopback ??=
         loopbackPolicy !== 'closed' && hasHostLoopback(await sdk()));
-      opened = await broker().open(
+      const b = await broker();
+      opened = await b.open(
         hostRequest(ensureJobHostScript(), writableRoots, environment, loopback),
       );
     } catch (e) {
+      if (e instanceof BrokerNodeUnavailable) throw new SandboxStartError(e.message, e.code);
       throw e instanceof SandboxStartError ? e : new SandboxStartError(messageOf(e));
     }
     const container = new MxcJobContainer(opened);

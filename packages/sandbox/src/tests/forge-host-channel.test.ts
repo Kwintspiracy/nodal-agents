@@ -31,7 +31,10 @@ const isWindows = process.platform === 'win32';
 // Le vrai backend, pour que l'attaquant soit un enfant du vrai hôte. La
 // politique de boucle locale n'entre pas en jeu : `available` sur les deux
 // builds base-container (avec ou sans limits).
-const sandbox = isWindows ? createSandbox(mxcBackend(), { log: () => {} }) : undefined;
+// Le courtier tourne sur le Node du runner de test (D5 prouvé ailleurs).
+const sandbox = isWindows
+  ? createSandbox(mxcBackend(undefined, undefined, process.execPath), { log: () => {} })
+  : undefined;
 const status = sandbox ? await sandbox.status() : undefined;
 
 // koffi est une dépendance du SDK MXC : on le résout depuis lui, sur les deux

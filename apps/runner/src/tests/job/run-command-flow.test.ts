@@ -36,7 +36,7 @@ import {
  */
 const flowSandbox =
   process.platform === 'win32'
-    ? createSandbox(mxcBackend(undefined, 'when-available'))
+    ? createSandbox(mxcBackend(undefined, 'when-available', process.execPath))
     : defaultSandbox();
 import { join } from 'node:path';
 import { MockLanguageModelV3 } from 'ai/test';
