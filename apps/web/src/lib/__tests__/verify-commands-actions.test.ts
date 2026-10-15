@@ -14,8 +14,12 @@ import { basename, join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, and, agentWorkspaces, codeProjects, entities, users } from '@nodal-agents/db';
-import { projectKey, hashVerificationManifest } from '@nodal-agents/shared';
-import { codeProjectManifest, deriveVerifyStatus } from '../verification-display.ts';
+import { projectKey, hashVerificationManifest, SHELL_POLICY_VERSION } from '@nodal-agents/shared';
+import {
+  codeProjectManifest,
+  currentManifestHash,
+  deriveVerifyStatus,
+} from '../verification-display.ts';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -410,6 +414,24 @@ describe('listCodeProjectPrefsAction — statut dérivé au serveur', () => {
         verifyApprovedManifestHash: hash,
       }),
     ).toBe('approved');
+  });
+
+  it('une approbation donnée sous la politique shell v1 s’affiche « à approuver » sous v2 (#628)', () => {
+    const approuveSousV1 = hashVerificationManifest({
+      ...codeProjectManifest({ projectPath: PATH, verifyCommands: CMDS }),
+      shellPolicyVersion: 1,
+    });
+    expect(
+      deriveVerifyStatus({
+        projectPath: PATH,
+        verifyCommands: CMDS,
+        verifyApprovedManifestHash: approuveSousV1,
+      }),
+    ).toBe('pending_approval');
+    expect(currentManifestHash({ projectPath: PATH, verifyCommands: CMDS })).not.toBe(
+      approuveSousV1,
+    );
+    expect(SHELL_POLICY_VERSION).toBe(2);
   });
 });
 
