@@ -4,14 +4,18 @@
 // qui exigent Node ≥ 24.21 (ou ≥ 26.8) sous Windows (voir windows-mxc.ts). Le
 // Node de l'utilisateur peut être plus ancien (26.4 chez Quentin). Plutôt que
 // de dépendre de SA version, Nodal fait tourner le courtier sur un Node À LUI :
-// un build officiel épinglé, téléchargé une fois depuis nodejs.org, vérifié
-// contre SHASUMS256.txt, et gardé dans le cache d'outils. UN seul chemin : le
-// courtier tourne TOUJOURS sur ce Node, quelle que soit la version de
-// l'utilisateur — pas de branche « sa version suffit ».
+// un build officiel épinglé, téléchargé une fois depuis nodejs.org, et gardé
+// sous le dossier des scripts du bac à sable. UN seul chemin : le courtier
+// tourne TOUJOURS sur ce Node, quelle que soit la version de l'utilisateur —
+// pas de branche « sa version suffit ».
 //
-// Le binaire vit sous le cache d'outils (`toolCacheRoot()`), que le bac à sable
-// laisse LISIBLE (deniedPaths épargne le cache) : le courtier, hors conteneur,
-// le lance ; un conteneur peut le lire, ce qui est sans risque.
+// Sa somme SHA-256 est ÉPINGLÉE dans ce fichier (BROKER_NODE_SHA256), jamais
+// lue d'un SHASUMS venu par le même canal que le binaire. Elle est vérifiée au
+// téléchargement, puis À CHAQUE LANCEMENT du courtier (MxcBroker.start, par
+// `verifyPinnedNodeSync`) : le courtier, hors conteneur, n'exécute jamais un
+// binaire dont la somme a changé (#628, P1-2). Le dossier n'est d'ailleurs
+// inscriptible par aucune commande confinée (D1 le refuse, ne le rouvre qu'en
+// lecture).
 //
 // Indisponible (réseau coupé, somme fausse) : on le DIT, avec un code, et la
 // commande tourne sans bac à sable (jamais un repli silencieux sur le Node de
@@ -19,7 +23,7 @@
 
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { sandboxHostDir } from './job-host';
 
@@ -97,21 +101,20 @@ const defaultFetchBytes = async (url: string): Promise<Uint8Array> => {
 const inFlight = new Map<string, Promise<string>>();
 
 /**
- * Le chemin du Node du courtier, téléchargé et vérifié si besoin. Un node.exe
- * en cache est RE-VÉRIFIÉ contre la somme épinglée ; s'il ne correspond pas
- * (altéré, tronqué), il est retéléchargé — on ne lance jamais un binaire dont
- * la somme a changé. Un seul téléchargement à la fois par (version, arch).
- * Lève `BrokerNodeUnavailable` si le réseau échoue ou si la somme ne
- * correspond pas — jamais de repli.
+ * Le chemin du Node du courtier, téléchargé (et vérifié contre la somme
+ * épinglée) s'il est absent. Un binaire PRÉSENT n'est pas re-haché ici : il
+ * l'est à chaque lancement, par `verifyPinnedNodeSync` — un seul endroit. Un
+ * seul téléchargement à la fois par (version, arch). Lève
+ * `BrokerNodeUnavailable` si le réseau échoue ou si la somme ne correspond pas
+ * — jamais de repli.
  */
 export function ensureBrokerNode(
   deps: BrokerNodeDeps = {},
   version = BROKER_NODE_VERSION,
   arch: string = process.arch,
 ): Promise<string> {
-  const expected = deps.expectedSha256 ?? BROKER_NODE_SHA256[winArch(arch)];
   const path = brokerNodePath(version, arch);
-  if (existsSync(path) && cachedShaMatches(path, expected)) return Promise.resolve(path);
+  if (existsSync(path)) return Promise.resolve(path);
   const key = `${version}:${arch}`;
   let p = inFlight.get(key);
   if (!p) {
@@ -121,12 +124,38 @@ export function ensureBrokerNode(
   return p;
 }
 
-function cachedShaMatches(path: string, expected: string): boolean {
+/** La somme épinglée attendue pour cette arch (ou celle qu'un test injecte). */
+export function pinnedBrokerNodeSha(
+  deps: BrokerNodeDeps = {},
+  arch: string = process.arch,
+): string {
+  return deps.expectedSha256 ?? BROKER_NODE_SHA256[winArch(arch)];
+}
+
+/**
+ * Vérifie, juste avant de LANCER le courtier, que `path` a la somme
+ * `expected`. Sinon le binaire est SUPPRIMÉ (la prochaine ouverture le
+ * retélécharge, vérifié) et `BrokerNodeUnavailable` est levée : rien n'est
+ * lancé. Synchrone : `spawn` l'est, et c'est le seul moment qui compte.
+ */
+export function verifyPinnedNodeSync(path: string, expected: string): void {
+  let got: string;
   try {
-    return createHash('sha256').update(readFileSync(path)).digest('hex') === expected;
-  } catch {
-    return false;
+    got = createHash('sha256').update(readFileSync(path)).digest('hex');
+  } catch (e) {
+    throw new BrokerNodeUnavailable(
+      `cannot read the broker Node at ${path}: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
+  if (got === expected) return;
+  try {
+    unlinkSync(path);
+  } catch {
+    /* déjà parti, ou verrouillé : il ne sera pas lancé de toute façon */
+  }
+  throw new BrokerNodeUnavailable(
+    `broker Node at ${path} has SHA-256 ${got}, not the pinned ${expected}: discarded, not launched`,
+  );
 }
 
 async function download(deps: BrokerNodeDeps, version: string, arch: string): Promise<string> {

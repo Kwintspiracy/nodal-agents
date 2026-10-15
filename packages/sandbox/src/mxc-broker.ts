@@ -34,6 +34,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ContainerRequest } from '@microsoft/mxc-sdk/v1';
 import { sandboxHostDir } from './job-host';
+import { BrokerNodeUnavailable, verifyPinnedNodeSync } from './broker-node';
 import { SandboxStartError, type SandboxUnavailableCode } from './types';
 
 /**
@@ -185,20 +186,58 @@ export class MxcBroker {
 
   /**
    * `resolveFrom` : le fichier depuis lequel le courtier résout le SDK.
-   * `nodePath` : le Node qui fait tourner le courtier, celui du runner.
+   * `nodePath` : le Node qui fait tourner le courtier.
+   * `expectedSha256` : la somme épinglée de ce Node, vérifiée À CHAQUE
+   * lancement (#628, P1-2) ; absente seulement pour un Node fixe de test.
    */
   constructor(
     private readonly resolveFrom: string,
     private readonly nodePath: string = process.execPath,
+    private readonly expectedSha256?: string,
   ) {}
 
-  private start(): ChildProcess {
-    if (this.child && this.child.exitCode === null && !this.child.killed) return this.child;
-    const child = spawn(this.nodePath, [ensureBrokerScript(), this.resolveFrom], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-      env: { ...process.env, UV_THREADPOOL_SIZE: String(BROKER_THREADPOOL_SIZE) },
-    });
+  /** Le courtier vivant, ou `null` — sans jamais en lancer un. */
+  private live(): ChildProcess | null {
+    const c = this.child;
+    return c && c.exitCode === null && !c.killed ? c : null;
+  }
+
+  /**
+   * Le courtier vivant, ou un courtier NEUF. Le seul endroit qui lance un
+   * processus hors conteneur : la somme du Node y est vérifiée d'abord. Une
+   * somme fausse rejette ce qui attend (code SANDBOX_BROKER_NODE_UNAVAILABLE)
+   * et ne lance rien.
+   */
+  private start(): ChildProcess | null {
+    const alive = this.live();
+    if (alive) return alive;
+    if (this.expectedSha256 !== undefined) {
+      try {
+        verifyPinnedNodeSync(this.nodePath, this.expectedSha256);
+      } catch (e) {
+        if (!(e instanceof BrokerNodeUnavailable)) throw e;
+        this.rejectPending(e.message, e.code);
+        return null;
+      }
+    }
+    let child: ChildProcess;
+    try {
+      child = spawn(this.nodePath, [ensureBrokerScript(), this.resolveFrom], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        env: { ...process.env, UV_THREADPOOL_SIZE: String(BROKER_THREADPOOL_SIZE) },
+      });
+    } catch (e) {
+      // `spawn` peut lever TOUT DE SUITE (Windows : `spawn UNKNOWN` sur un
+      // binaire qui n'est pas un exécutable) au lieu d'émettre `error` : même
+      // règlement, même code — rien ne reste en attente.
+      const err = e as NodeJS.ErrnoException;
+      this.rejectPending(
+        `SANDBOX_BROKER_START_FAILED: ${err.code ? `${err.code} ` : ''}${err.message}`,
+        'SANDBOX_BROKER_START_FAILED',
+      );
+      return null;
+    }
     let buffer = '';
     let stderr = '';
     child.stdout?.setEncoding('utf8');
@@ -248,12 +287,17 @@ export class MxcBroker {
    */
   private failAll(child: ChildProcess, why: string, reasonCode?: SandboxUnavailableCode): void {
     if (this.child === child) this.child = null;
+    this.rejectPending(why, reasonCode);
+    this.hold();
+  }
+
+  /** Chaque demande en attente est rejetée, chaque conteneur se dit fini. */
+  private rejectPending(why: string, reasonCode?: SandboxUnavailableCode): void {
     for (const [id, p] of this.pending) {
       this.pending.delete(id);
       p.open?.reject(new SandboxStartError(why, reasonCode));
       p.exit({ code: null, output: why });
     }
-    this.hold();
   }
 
   /**
@@ -291,12 +335,15 @@ export class MxcBroker {
       open?.resolve({
         pid: m.pid ?? 0,
         exited: p.exited,
-        write: (data) => this.send({ op: 'write', id, data }),
+        // Écrire ou tuer ne LANCE jamais de courtier : si le sien est mort,
+        // le conteneur l'est aussi (failAll a réglé sa fin), il n'y a
+        // personne à qui parler.
+        write: (data) => this.post({ op: 'write', id, data }),
         onOutput: (listener) => {
           p.listener = listener;
           for (const chunk of p.early.splice(0)) listener(chunk);
         },
-        kill: () => this.send({ op: 'kill', id }),
+        kill: () => this.post({ op: 'kill', id }),
       });
     } else if (m.o !== undefined) {
       if (p.listener) p.listener(m.o);
@@ -308,8 +355,9 @@ export class MxcBroker {
     }
   }
 
-  private send(message: unknown): void {
-    this.start().stdin?.write(`${JSON.stringify(message)}\n`);
+  /** Un message au courtier VIVANT ; rien si aucun ne l'est. */
+  private post(message: unknown): void {
+    this.live()?.stdin?.write(`${JSON.stringify(message)}\n`);
   }
 
   /** Ouvre un conteneur ; lève `SandboxStartError` avec la raison du SDK. */
@@ -319,7 +367,9 @@ export class MxcBroker {
     const exited = new Promise<{ code: number | null; output: string }>((r) => (exit = r));
     return new Promise<BrokeredContainer>((resolve, reject) => {
       this.pending.set(id, { open: { resolve, reject }, exit, exited, early: [] });
-      this.send({ op: 'open', id, request });
+      // Seule une ouverture peut LANCER un courtier (start vérifie son Node).
+      this.start();
+      this.post({ op: 'open', id, request });
       this.hold();
     });
   }

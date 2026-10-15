@@ -51,7 +51,12 @@ import {
 import { startNodalProxy, type NodalProxy } from './proxy';
 import { ensureJobHostScript, sandboxHostDir } from './job-host';
 import { MxcBroker, mxcErrorText, type BrokeredContainer, type MxcErrorFields } from './mxc-broker';
-import { BrokerNodeUnavailable, ensureBrokerNode, type BrokerNodeDeps } from './broker-node';
+import {
+  BrokerNodeUnavailable,
+  ensureBrokerNode,
+  pinnedBrokerNodeSha,
+  type BrokerNodeDeps,
+} from './broker-node';
 import {
   SandboxStartError,
   type CommandLaunch,
@@ -437,13 +442,17 @@ export function mxcBackend(
       ? networkSetup('proxy', (await proxy()).url)
       : networkSetup('deny-all', null);
   // Le Node du courtier : un chemin fixe (tests), ou le build officiel que
-  // Nodal télécharge. Résolu À CHAQUE ouverture, pas une fois : `ensureBrokerNode`
-  // re-vérifie la somme épinglée du node.exe en cache avant chaque lancement
-  // (#628, P1-2) et le retélécharge s'il a changé.
+  // Nodal télécharge s'il manque. Résolu à chaque ouverture : un binaire
+  // écarté (somme fausse) est ainsi retéléchargé à la suivante. Sa somme
+  // ÉPINGLÉE est vérifiée par le courtier à chaque LANCEMENT (#628, P1-2).
   const brokerNodePath = (): Promise<string> =>
     typeof brokerNode === 'string' ? Promise.resolve(brokerNode) : ensureBrokerNode(brokerNode);
   const broker = (nodePath: string): MxcBroker =>
-    (brokerClient ??= new MxcBroker(fileURLToPath(import.meta.url), nodePath));
+    (brokerClient ??= new MxcBroker(
+      fileURLToPath(import.meta.url),
+      nodePath,
+      typeof brokerNode === 'string' ? undefined : pinnedBrokerNodeSha(brokerNode),
+    ));
 
   const openContainer = async (
     writableRoots: readonly string[],

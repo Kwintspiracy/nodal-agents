@@ -61,6 +61,8 @@ export {
   BROKER_NODE_VERSION,
   BrokerNodeUnavailable,
   ensureBrokerNode,
+  verifyPinnedNodeSync,
+  pinnedBrokerNodeSha,
   BROKER_NODE_SHA256,
   brokerNodeDir,
   readCachedSha,

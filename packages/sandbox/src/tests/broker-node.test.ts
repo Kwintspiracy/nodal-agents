@@ -17,6 +17,8 @@ import {
   ensureBrokerNode,
   brokerNodeDir,
   readCachedSha,
+  verifyPinnedNodeSync,
+  pinnedBrokerNodeSha,
   type BrokerNodeDeps,
 } from '../broker-node';
 
@@ -102,18 +104,37 @@ describe('ensureBrokerNode @cap:executer-une-commande/moteur', () => {
     expect(touched).toBe(false);
   });
 
-  it('un node.exe en cache ALTÉRÉ (somme changée) est retéléchargé, pas réutilisé', async () => {
+  it('un node.exe ALTÉRÉ est écarté au lancement, puis retéléchargé (vérifié) à l’ouverture suivante', async () => {
     const path = await ensureBrokerNode(deps(), BROKER_NODE_VERSION, ARCH);
-    writeFileSync(path, Buffer.from('tampered by a confined command')); // réécrit
+    writeFileSync(path, Buffer.from('tampered')); // réécrit
+    expect(() => verifyPinnedNodeSync(path, FAKE_SHA)).toThrow(BrokerNodeUnavailable);
+    expect(existsSync(path)).toBe(false); // écarté, jamais lancé
     let refetched = false;
     const again = deps({
       fetchBytes: async () => {
         refetched = true;
-        return FAKE; // le vrai binaire (somme attendue) revient
+        return FAKE;
       },
     });
     await ensureBrokerNode(again, BROKER_NODE_VERSION, ARCH);
     expect(refetched).toBe(true);
     expect(await readCachedSha(BROKER_NODE_VERSION, ARCH)).toBe(FAKE_SHA);
+  });
+});
+
+describe('verifyPinnedNodeSync @cap:executer-une-commande/moteur', () => {
+  it('passe sur la somme épinglée ; lève BrokerNodeUnavailable si le fichier manque', () => {
+    const path = join(dir, 'node.exe');
+    writeFileSync(path, FAKE);
+    expect(() => verifyPinnedNodeSync(path, FAKE_SHA)).not.toThrow();
+    expect(existsSync(path)).toBe(true);
+    expect(() => verifyPinnedNodeSync(join(dir, 'gone.exe'), FAKE_SHA)).toThrow(
+      BrokerNodeUnavailable,
+    );
+  });
+
+  it('le produit vérifie contre la somme épinglée de l’arch, pas contre une valeur reçue', () => {
+    expect(pinnedBrokerNodeSha({}, 'x64')).toBe(BROKER_NODE_SHA256['win-x64']);
+    expect(pinnedBrokerNodeSha({}, 'arm64')).toBe(BROKER_NODE_SHA256['win-arm64']);
   });
 });
