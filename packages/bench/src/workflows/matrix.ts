@@ -13,7 +13,7 @@
 // sans toucher à la stack.
 
 import { estimateCallCostUsd, findModelCatalogEntry, MODEL_CATALOG } from '@nodal-agents/shared';
-import type { AnyScenario, TrialLine } from './types';
+import { ACTIVITIES, type AnyScenario, type TrialLine } from './types';
 
 /** Un modèle de la matrice : `fournisseur:modèle`, ou le modèle seul quand le catalogue n'en connaît qu'un. */
 export interface MatrixModel {
@@ -27,7 +27,10 @@ export interface MatrixModel {
  * Un modèle inconnu ou ambigu est une erreur, jamais un choix fait à la place
  * du propriétaire.
  */
-export function parseModels(arg: string): MatrixModel[] {
+export function parseModels(
+  arg: string,
+  catalog: Record<string, ReadonlyArray<{ modelId: string }>> = MODEL_CATALOG,
+): MatrixModel[] {
   const out: MatrixModel[] = [];
   for (const raw of arg
     .split(',')
@@ -38,7 +41,7 @@ export function parseModels(arg: string): MatrixModel[] {
       out.push({ provider: raw.slice(0, colon), model: raw.slice(colon + 1) });
       continue;
     }
-    const providers = Object.entries(MODEL_CATALOG)
+    const providers = Object.entries(catalog)
       .filter(([, entries]) => entries.some((e) => e.modelId === raw))
       .map(([p]) => p);
     if (providers.length === 0) {
@@ -146,7 +149,11 @@ export function planMatrix(
   past: readonly PastLine[],
 ): MatrixPlan {
   const cells: PlanCell[] = [];
-  for (const s of scenarios) {
+  // Rangés par activité, dans l'ordre de la liste fermée : une activité, un bloc.
+  const ordered = [...scenarios].sort(
+    (a, b) => ACTIVITIES.indexOf(a.activity) - ACTIVITIES.indexOf(b.activity),
+  );
+  for (const s of ordered) {
     const runs = past.filter(
       (l) =>
         l.scenario === s.id &&
