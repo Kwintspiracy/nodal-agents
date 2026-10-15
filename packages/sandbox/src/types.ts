@@ -21,7 +21,9 @@ export type SandboxUnavailableCode =
    * (Windows : palier base-container sans la capacité MXC
    * `ingressHostLoopbackAllow`), et la politique la requiert.
    */
-  | 'SANDBOX_HOST_LOOPBACK_UNSUPPORTED';
+  | 'SANDBOX_HOST_LOOPBACK_UNSUPPORTED'
+  /** Le processus qui tient les conteneurs (le courtier MXC) n'a pas pu être lancé. */
+  | 'SANDBOX_BROKER_START_FAILED';
 
 export type SandboxStatus =
   | {
@@ -125,6 +127,12 @@ export class SandboxStartError extends Error {
   constructor(
     /** Le message du backend, cité tel quel. */
     readonly backendMessage: string,
+    /**
+     * Le code d'indisponibilité quand l'échec n'est pas celui d'une commande
+     * mais du backend entier (le courtier qui ne démarre pas) : la sonde le
+     * rend tel quel dans le statut.
+     */
+    readonly reasonCode?: SandboxUnavailableCode,
   ) {
     super(`SANDBOX_START_FAILED: ${backendMessage}`);
     this.name = 'SandboxStartError';

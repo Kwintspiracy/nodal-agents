@@ -353,6 +353,7 @@ class MxcJobContainer implements JobContainer {
 export function mxcBackend(
   load: () => Promise<MxcModule> = () => import('@microsoft/mxc-sdk/v1'),
   loopbackPolicy: HostLoopbackPolicy = DEFAULT_HOST_LOOPBACK_POLICY,
+  brokerNode: string = process.execPath,
 ): SandboxBackend {
   let mod: Promise<MxcModule> | undefined;
   const sdk = (): Promise<MxcModule> => (mod ??= load());
@@ -362,7 +363,8 @@ export function mxcBackend(
   // bundler (le build du web) lirait la résolution et voudrait l'embarquer.
   let brokerClient: MxcBroker | undefined;
   let hostLoopback: boolean | undefined;
-  const broker = (): MxcBroker => (brokerClient ??= new MxcBroker(fileURLToPath(import.meta.url)));
+  const broker = (): MxcBroker =>
+    (brokerClient ??= new MxcBroker(fileURLToPath(import.meta.url), brokerNode));
 
   const openContainer = async (
     writableRoots: readonly string[],
@@ -478,8 +480,14 @@ export function mxcBackend(
         };
       }
     } catch (e) {
-      const reason = e instanceof SandboxStartError ? e.backendMessage : messageOf(e);
-      return { state: 'unavailable', code: 'SANDBOX_SELF_TEST_FAILED', reason };
+      if (e instanceof SandboxStartError) {
+        return {
+          state: 'unavailable',
+          code: e.reasonCode ?? 'SANDBOX_SELF_TEST_FAILED',
+          reason: e.backendMessage,
+        };
+      }
+      return { state: 'unavailable', code: 'SANDBOX_SELF_TEST_FAILED', reason: messageOf(e) };
     } finally {
       await container?.close();
     }

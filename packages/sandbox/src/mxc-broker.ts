@@ -34,7 +34,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ContainerRequest } from '@microsoft/mxc-sdk/v1';
 import { sandboxHostDir } from './job-host';
-import { SandboxStartError } from './types';
+import { SandboxStartError, type SandboxUnavailableCode } from './types';
 
 /**
  * Taille du pool de threads du courtier : deux lectures bloquantes par
@@ -183,12 +183,18 @@ export class MxcBroker {
   private nextId = 0;
   private readonly pending = new Map<number, Pending>();
 
-  /** `resolveFrom` : le fichier depuis lequel le courtier résout le SDK. */
-  constructor(private readonly resolveFrom: string) {}
+  /**
+   * `resolveFrom` : le fichier depuis lequel le courtier résout le SDK.
+   * `nodePath` : le Node qui fait tourner le courtier, celui du runner.
+   */
+  constructor(
+    private readonly resolveFrom: string,
+    private readonly nodePath: string = process.execPath,
+  ) {}
 
   private start(): ChildProcess {
     if (this.child && this.child.exitCode === null && !this.child.killed) return this.child;
-    const child = spawn(process.execPath, [ensureBrokerScript(), this.resolveFrom], {
+    const child = spawn(this.nodePath, [ensureBrokerScript(), this.resolveFrom], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       env: { ...process.env, UV_THREADPOOL_SIZE: String(BROKER_THREADPOOL_SIZE) },
@@ -212,23 +218,42 @@ export class MxcBroker {
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr = `${stderr}${String(chunk)}`.slice(-2_000);
     });
+    // Le courtier mort, ou jamais lancé : UN seul chemin règle tout ce qui
+    // l'attend (ouvertures, fins de conteneur — donc les commandes et les
+    // fermetures qui attendent ces fins). Rien ne reste en attente.
     child.on('exit', () => {
-      if (this.child === child) this.child = null;
-      // Le courtier mort, ses conteneurs sont morts avec lui.
-      const why = `SANDBOX_BROKER_EXITED${stderr.trim() ? `: ${stderr.trim()}` : ''}`;
-      for (const [id, p] of this.pending) {
-        this.pending.delete(id);
-        p.open?.reject(new SandboxStartError(why));
-        p.exit({ code: null, output: why });
-      }
+      this.failAll(child, `SANDBOX_BROKER_EXITED${stderr.trim() ? `: ${stderr.trim()}` : ''}`);
     });
-    child.on('error', () => undefined);
+    child.on('error', (e: NodeJS.ErrnoException) => {
+      this.failAll(
+        child,
+        `SANDBOX_BROKER_START_FAILED: ${e.code ? `${e.code} ` : ''}${e.message}`,
+        'SANDBOX_BROKER_START_FAILED',
+      );
+    });
+    // Une écriture vers un courtier mort (EPIPE) se règle par `exit` / `error`.
+    child.stdin?.on('error', () => undefined);
     // Le runner ne reste pas en vie pour son courtier sans conteneur : voir hold().
     (child.stderr as unknown as { unref?: () => void } | null)?.unref?.();
     (child.stdin as unknown as { unref?: () => void } | null)?.unref?.();
     this.child = child;
     this.hold();
     return child;
+  }
+
+  /**
+   * Le courtier `child` ne servira plus : chaque demande en attente est rejetée
+   * et chaque conteneur ouvert se dit fini, avec `why` ; la demande suivante
+   * relance un courtier neuf au lieu d'écrire à celui-ci.
+   */
+  private failAll(child: ChildProcess, why: string, reasonCode?: SandboxUnavailableCode): void {
+    if (this.child === child) this.child = null;
+    for (const [id, p] of this.pending) {
+      this.pending.delete(id);
+      p.open?.reject(new SandboxStartError(why, reasonCode));
+      p.exit({ code: null, output: why });
+    }
+    this.hold();
   }
 
   /**
