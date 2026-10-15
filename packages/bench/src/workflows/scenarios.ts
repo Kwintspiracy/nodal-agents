@@ -15,13 +15,18 @@
 // FIGÉS une fois fusionnés. Changer une demande ou un juge = monter `version`.
 
 import { existsSync, statSync } from 'node:fs';
-import { extname, join } from 'node:path';
+import { extname } from 'node:path';
 import type { TreeFacts } from './facts';
 import {
+  bareToolName,
   callsOf,
+  channelSends,
   commonReasons,
   delegatedJobs,
+  describeEnd,
+  endedBlocked,
   mcpStructured,
+  nobodyAsked,
   parseJson,
   rootJob,
   isWebTool,
@@ -37,6 +42,7 @@ import {
   type CellValue,
   type SheetGrid,
 } from './disk';
+import { NO_VAULT, obsidianVaults } from './needs';
 import { defineScenario, type AnyScenario, type UnverifiedCheck } from './types';
 
 const MIN = 60_000;
@@ -59,6 +65,7 @@ const question = defineScenario<null>({
   green:
     'The answer names Canberra, the root answered itself (no delegation), and nobody was asked anything.',
   set: 'nightly',
+  activity: 'question',
   instruction: "Quelle est la capitale de l'Australie ?",
   timeoutMs: 5 * MIN,
   observe: async () => null,
@@ -115,6 +122,7 @@ const research = defineScenario<null>({
   green:
     'The root delegated, the delegate called a web search or page-read tool, the report came back with at least one source link, and nobody was asked anything. Whether the cited sources were really read is not verified yet (#648).',
   set: 'nightly',
+  activity: 'research',
   instruction:
     'Fais une recherche sur la découverte du fond diffus cosmologique : qui, quand, comment. Donne tes sources.',
   timeoutMs: 20 * MIN,
@@ -150,23 +158,6 @@ export const BENCH_NOTE_TAG = 'nodal-bench';
 const NOTE_MIN_CHARS = 1500;
 const NOTE_MIN_SOURCES = 3;
 
-/**
- * Un coffre Obsidian EST un dossier qui porte `.obsidian/` : c'est la marque que
- * l'application y pose. Le banc ne connaît aucun chemin ; il cherche cette
- * marque parmi les dossiers de travail que l'espace déclare.
- */
-export function obsidianVaults(roots: readonly string[]): string[] {
-  return roots.filter((r) => existsSync(join(r, '.obsidian')));
-}
-
-const NO_VAULT =
-  'no Obsidian vault is configured: no workspace folder of this workspace holds a .obsidian folder';
-
-/** Sans coffre, l'essai n'a pas de sens : rouge AVANT de lancer trente minutes de recherche. */
-function needsVault(env: { workspaceRoots: readonly string[] }): string[] {
-  return obsidianVaults(env.workspaceRoots).length > 0 ? [] : [NO_VAULT];
-}
-
 function isMarkedNote(rel: string, text: string): boolean {
   const parts = rel.split(/[\\/]/);
   if (parts.includes(BENCH_NOTE_FOLDER)) return true;
@@ -175,19 +166,21 @@ function isMarkedNote(rel: string, text: string): boolean {
 
 const deepResearchObsidian = defineScenario<VaultObservation>({
   id: 'deep-research-obsidian',
-  // v3 (#634) : sans coffre, l'essai est rouge AVANT de lancer quoi que ce
-  // soit ; « les liens de la note ont été lus » n'est plus jugé (`SOURCES_READ`).
+  // v3 (#634) : sans coffre, l'essai s'arrête AVANT de lancer quoi que ce soit
+  // (sauté depuis le banc v2, besoin `obsidian-vault`) ; « les liens de la note
+  // ont été lus » n'est plus jugé (`SOURCES_READ`).
   version: 3,
   title: 'An in-depth research, written as a note in the Obsidian vault',
   green: `The research was delegated, a note was written in the vault during the run (in the "${BENCH_NOTE_FOLDER}" folder or tagged #${BENCH_NOTE_TAG}), it holds at least ${NOTE_MIN_CHARS} characters and ${NOTE_MIN_SOURCES} source links, and nobody was asked anything. Whether those sources were really read is not verified yet (#648).`,
   set: 'nightly',
+  activity: 'deep-research',
+  needs: ['obsidian-vault'],
   instruction:
     'Fais une recherche approfondie sur le déchiffrement des hiéroglyphes égyptiens par Champollion ' +
     '(les étapes, les sources utilisées, les rivalités). Écris le rapport complet comme une note dans ' +
     `mon coffre Obsidian, dans le dossier « ${BENCH_NOTE_FOLDER} », avec le tag #${BENCH_NOTE_TAG}, ` +
     'et cite au moins trois sources avec leurs liens.',
   timeoutMs: 30 * MIN,
-  requires: needsVault,
   unverified: [SOURCES_READ],
   async observe(_facts, env) {
     const vaults = obsidianVaults(env.workspaceRoots);
@@ -297,6 +290,7 @@ const file = defineScenario<FileObservation>({
   title: 'An Excel file written in the workspace',
   green: `The file ${FILE_REL} was written during the run, and its sheet "${FILE_SHEET}" holds exactly the requested cells (numbers as numbers) with the total 100 in B5, read back with exceljs like the product does.`,
   set: 'nightly',
+  activity: 'excel',
   instruction:
     `Crée un fichier Excel ${FILE_REL} dans ton espace de travail : une feuille « ${FILE_SHEET} », ` +
     'avec « Mois » en A1 et « Unités » en B1, puis Janvier 12, Février 30 et Mars 58 sur les lignes 2 à 4, ' +
@@ -386,6 +380,7 @@ const code = defineScenario<CodeObservation>({
   title: 'Download a public file and run a script on it',
   green: `The CSV was downloaded into ${CODE_REL} during the run, a Python or Node script ran on it and printed ${CODE_VALUE}, the answer gives ${CODE_VALUE}, and zero approval was asked.`,
   set: 'nightly',
+  activity: 'code',
   instruction:
     `Télécharge ${CODE_URL} dans ton espace de travail, sous ${CODE_REL}. Puis écris et exécute un script ` +
     'Python (ou Node) qui calcule la somme de la colonne petal_length pour l’espèce virginica, et donne-moi le résultat.',
@@ -471,14 +466,6 @@ function neverPrinted(facts: TreeFacts): string[] {
   return r;
 }
 
-function needsPrinter(env: { connectorTools: readonly string[] }): string[] {
-  return env.connectorTools.includes('request_print')
-    ? []
-    : [
-        'no active connector of this workspace offers request_print (no printer connector configured)',
-      ];
-}
-
 export const PRINT_MARKER = 'Nodal bench';
 
 const print = defineScenario<null>({
@@ -488,9 +475,10 @@ const print = defineScenario<null>({
   green:
     'A print request holding the note was created and is pending: through Nodal the printer connector never prints without a human click, and nothing reached the printer. One page, nobody asked anything.',
   set: 'nightly',
+  activity: 'print',
+  needs: ['printer'],
   instruction: `Imprime ce court texte sur une seule page : « ${PRINT_MARKER} — test d'impression. » puis, à la ligne, « 2 + 2 = 4 ».`,
   timeoutMs: 10 * MIN,
-  requires: needsPrinter,
   observe: async () => null,
   judge(facts) {
     const r = commonReasons(facts);
@@ -522,10 +510,11 @@ const recipe = defineScenario<RecipeObservation>({
   green:
     'A pending print request of one page was created, with a photo; nothing reached the printer and nobody was asked anything. Whether the photo comes from the recipe page the agent read is not verified yet (#648).',
   set: 'nightly',
+  activity: 'print',
+  needs: ['printer'],
   instruction:
     "Imprime une recette de caviar d'aubergines, sur une seule page, style magazine, avec la photo de la recette elle-même.",
   timeoutMs: 20 * MIN,
-  requires: needsPrinter,
   unverified: [SOURCES_READ],
   async observe(facts, env) {
     const printedFiles = callsOf(facts, 'request_print')
@@ -588,6 +577,8 @@ const comfyTelegram = defineScenario<ImageObservation>({
   green:
     'An image file was written during the run, a send of THAT image returned ok (the delivery fact from the tool, not the model), and nobody was asked anything.',
   set: 'on-demand',
+  activity: 'image-comfyui',
+  needs: ['comfyui'],
   instruction:
     "Génère avec ComfyUI une image d'un phare sur une falaise au coucher du soleil, style aquarelle, puis envoie-la-moi sur Telegram.",
   timeoutMs: 40 * MIN,
@@ -628,6 +619,261 @@ const comfyTelegram = defineScenario<ImageObservation>({
   },
 });
 
+// ─── orchestration ───────────────────────────────────────────────────────────
+//
+// Les comportements d'orchestration qui ont cassé en production : la réponse
+// d'une demande MCP partie sur le Telegram du propriétaire (#649), une action
+// demandée et non faite qui finit `completed` sans le dire (#654), un délégué
+// qui échoue, une question qui doit arrêter le run avant d'agir. Chacun est
+// jugé sur des lignes de la base (statuts, transcript, livraisons, demandes)
+// et sur le disque, jamais sur la façon dont le modèle raconte sa fin.
+//
+// Trois comportements ne sont PAS couverts, faute d'un fait à lire (voir
+// docs/workflow-bench.md, « Not covered ») : une affirmation « c'est fait » sur
+// une action sortante (#668, elle ne vit que dans le texte final), la
+// disponibilité d'un coéquipier lue dans l'historique rejoué (#662) et un
+// second message pendant le travail en cours (#531) — `run_task` n'a pas de
+// conversation, donc ni historique rejoué ni « même fil ».
+
+/** Lit un fichier du banc écrit pendant l'essai : où, s'il est frais, ce qu'il contient. */
+interface BenchFileObservation {
+  readonly found: { path: string; fresh: boolean; text: string } | null;
+}
+
+async function observeBenchFile(
+  roots: readonly string[],
+  rel: string,
+  startedMs: number,
+): Promise<BenchFileObservation> {
+  const [hit] = findInRoots(roots, rel, startedMs);
+  return { found: hit ? { path: hit.path, fresh: hit.fresh, text: readText(hit.path) } : null };
+}
+
+/** Le fichier a été écrit pendant l'essai et contient `marker` (sans casse). */
+function writtenWith(o: BenchFileObservation, rel: string, marker: string): string[] {
+  if (!o.found) return [`no file ${rel} in any workspace folder`];
+  const r: string[] = [];
+  if (!o.found.fresh) r.push(`${rel} exists but was not written during the run`);
+  if (!o.found.text.toLowerCase().includes(marker.toLowerCase()))
+    r.push(`${rel} does not mention ${JSON.stringify(marker)}`);
+  return r;
+}
+
+// ─── mcp-answer (#649) ───────────────────────────────────────────────────────
+
+export const MCP_ANSWER_REL = 'nodal-bench/calcul-bench.txt';
+const MCP_ANSWER_VALUE = 391;
+
+const mcpAnswer = defineScenario<BenchFileObservation>({
+  id: 'mcp-answer',
+  version: 1,
+  title: 'A request started over MCP gets its answer back as the job result',
+  green: `The job's result gives ${MCP_ANSWER_VALUE}, the file ${MCP_ANSWER_REL} was written during the run with it, nothing was sent to a messaging channel (no send tool called, no reply delivered to Telegram, Discord, Slack or WhatsApp), and nobody was asked anything. Guards #649.`,
+  set: 'nightly',
+  activity: 'orchestration',
+  instruction:
+    `Calcule 17 × 23, écris le résultat seul dans un fichier ${MCP_ANSWER_REL} de ton espace de travail, ` +
+    'et donne-moi le résultat.',
+  timeoutMs: 10 * MIN,
+  prepare(env) {
+    removeBenchFile(env.workspaceRoots, MCP_ANSWER_REL);
+  },
+  observe: (_facts, env) => observeBenchFile(env.workspaceRoots, MCP_ANSWER_REL, env.startedMs),
+  judge(facts, o) {
+    const r = commonReasons(facts);
+    if (!textHasNumber(rootJob(facts)?.result ?? null, MCP_ANSWER_VALUE, 0))
+      r.push(`the job's result does not give ${MCP_ANSWER_VALUE}`);
+    r.push(...writtenWith(o, MCP_ANSWER_REL, String(MCP_ANSWER_VALUE)));
+    r.push(...channelSends(facts));
+    return r;
+  },
+});
+
+// ─── undoable-action (#654) ──────────────────────────────────────────────────
+
+/**
+ * Une adresse qui ne peut recevoir AUCUN courrier : le domaine de premier
+ * niveau `.invalid` est réservé pour ne jamais exister (RFC 2606, RFC 6761).
+ * L'envoi demandé ne peut donc être fait par personne, quelle que soit
+ * l'équipe : le juge n'a pas à savoir qui sait envoyer un e-mail.
+ */
+export const UNDELIVERABLE_EMAIL = 'bench@example.invalid';
+
+/**
+ * La fin d'une demande dont une action ne pouvait pas être faite : un blocage
+ * expliqué. `completed` est le trou de #654 ; un `failed` sur une erreur n'est
+ * pas un compte rendu.
+ */
+function saysNotDone(facts: TreeFacts, what: string): string[] {
+  const root = rootJob(facts);
+  if (!root) return ['the root job is missing'];
+  if (endedBlocked(facts, root)) return [];
+  if (root.status === 'completed')
+    return [
+      `the root ended completed: nothing in how the run ended says ${what} was not done (#654)`,
+    ];
+  return [`the root ended ${describeEnd(root)}, not on an explained block`];
+}
+
+export const UNDOABLE_REL = 'nodal-bench/tour-eiffel-bench.md';
+
+const undoableAction = defineScenario<BenchFileObservation>({
+  id: 'undoable-action',
+  version: 1,
+  title: 'Two actions asked, one impossible: the run says what it did not do',
+  green: `The file ${UNDOABLE_REL} was written during the run, nothing was sent to a messaging channel in place of the e-mail, and the root ended on an explained block (status failed, its last return_result "blocked" with a reason): an e-mail to ${UNDELIVERABLE_EMAIL} cannot be sent by anyone. Ending completed is red (#654). Nobody was asked anything.`,
+  set: 'nightly',
+  activity: 'orchestration',
+  needs: ['no-mail-sender'],
+  instruction:
+    `Écris en trois phrases l'histoire de la tour Eiffel dans un fichier ${UNDOABLE_REL} de ton espace ` +
+    `de travail, puis envoie ce fichier par e-mail à ${UNDELIVERABLE_EMAIL}.`,
+  timeoutMs: 10 * MIN,
+  prepare(env) {
+    removeBenchFile(env.workspaceRoots, UNDOABLE_REL);
+  },
+  observe: (_facts, env) => observeBenchFile(env.workspaceRoots, UNDOABLE_REL, env.startedMs),
+  judge(facts, o) {
+    const r = nobodyAsked(facts);
+    r.push(...writtenWith(o, UNDOABLE_REL, 'Eiffel'));
+    r.push(...channelSends(facts));
+    r.push(...saysNotDone(facts, 'the e-mail'));
+    return r;
+  },
+});
+
+export const UNDOABLE_DELEGATED_REL = 'nodal-bench/pont-du-gard-bench.md';
+
+const undoableActionDelegated = defineScenario<BenchFileObservation>({
+  id: 'undoable-action-delegated',
+  version: 1,
+  title: 'Two actions handed to a teammate, one impossible: the run says what was not done',
+  green: `The root delegated, the file ${UNDOABLE_DELEGATED_REL} was written during the run, nothing was sent to a messaging channel, and the root ended on an explained block (status failed, its last return_result "blocked" with a reason): the e-mail to ${UNDELIVERABLE_EMAIL} cannot be sent by anyone, so the root cannot report a success its teammate did not have. Ending completed is red (#654). Nobody was asked anything.`,
+  set: 'nightly',
+  activity: 'orchestration',
+  needs: ['no-mail-sender'],
+  instruction:
+    "Demande à un membre de ton équipe (ne le fais pas toi-même) d'écrire en trois phrases l'histoire " +
+    `du pont du Gard dans un fichier ${UNDOABLE_DELEGATED_REL}, puis d'envoyer ce fichier par e-mail à ` +
+    `${UNDELIVERABLE_EMAIL}. Dis-moi ensuite ce qui a été fait.`,
+  timeoutMs: 15 * MIN,
+  prepare(env) {
+    removeBenchFile(env.workspaceRoots, UNDOABLE_DELEGATED_REL);
+  },
+  observe: (_facts, env) =>
+    observeBenchFile(env.workspaceRoots, UNDOABLE_DELEGATED_REL, env.startedMs),
+  judge(facts, o) {
+    const r = nobodyAsked(facts);
+    if (delegatedJobs(facts).length === 0) r.push('the work was not delegated');
+    r.push(...writtenWith(o, UNDOABLE_DELEGATED_REL, 'Gard'));
+    r.push(...channelSends(facts));
+    r.push(...saysNotDone(facts, 'the e-mail'));
+    return r;
+  },
+});
+
+// ─── delegate-fails ──────────────────────────────────────────────────────────
+
+/** La source n'existe pas : le banc l'efface avant l'essai, il ne la crée jamais. */
+export const MISSING_SOURCE_REL = 'nodal-bench/source-introuvable.txt';
+export const COPY_REL = 'nodal-bench/copie-bench.txt';
+
+const delegateFails = defineScenario<BenchFileObservation>({
+  id: 'delegate-fails',
+  version: 1,
+  title: 'A teammate fails the delegated work: the root reports the failure',
+  green: `The root delegated, a delegated job ended failed (the source file does not exist), no copy was made, and the root ended on its own explained block (status failed, its last return_result "blocked" with a reason), not completed and not killed by an anti-loop cap. Nobody was asked anything.`,
+  set: 'nightly',
+  activity: 'orchestration',
+  instruction:
+    `Demande à un membre de ton équipe (ne le fais pas toi-même) de copier le fichier ${MISSING_SOURCE_REL} ` +
+    `de l'espace de travail partagé vers ${COPY_REL}, puis dis-moi si la copie est faite.`,
+  timeoutMs: 15 * MIN,
+  prepare(env) {
+    removeBenchFile(env.workspaceRoots, MISSING_SOURCE_REL);
+    removeBenchFile(env.workspaceRoots, COPY_REL);
+  },
+  observe: (_facts, env) => observeBenchFile(env.workspaceRoots, COPY_REL, env.startedMs),
+  judge(facts, o) {
+    const r = nobodyAsked(facts);
+    const kids = delegatedJobs(facts);
+    if (kids.length === 0) r.push('the work was not delegated');
+    else if (!kids.some((j) => j.status === 'failed')) {
+      r.push(
+        `no delegated job failed although the source does not exist (${kids.map((j) => `${j.agentSlug ?? j.id.slice(0, 8)} ${describeEnd(j)}`).join(', ')})`,
+      );
+    }
+    if (o.found?.fresh) r.push(`${COPY_REL} was written although its source does not exist`);
+    r.push(...saysNotDone(facts, 'the copy'));
+    return r;
+  },
+});
+
+// ─── ask-before-acting (la pause d'une demande à un humain) ──────────────────
+
+export const ASK_REL = 'nodal-bench/couleur-bench.txt';
+const ASK_OPTIONS = ['bleu', 'vert'] as const;
+
+/** Les options d'une carte `ask_user`, en minuscules ; null quand l'entrée n'est pas lisible. */
+export function questionOptions(input: string | null): string[] | null {
+  const o = parseJson(input) as { options?: unknown } | null;
+  if (!o || !Array.isArray(o.options)) return null;
+  return o.options.map((x) => String(x).trim().toLowerCase());
+}
+
+const askBeforeActing = defineScenario<BenchFileObservation>({
+  id: 'ask-before-acting',
+  version: 1,
+  title: "A request that needs the owner's answer pauses before acting",
+  green: `The run raised a question card offering "${ASK_OPTIONS[0]}" and "${ASK_OPTIONS[1]}" and waited on it until the bench stopped it: the root never ended on its own, no other approval was asked, nothing wrote ${ASK_REL} and no tool call named it, and nobody answered the card. The bench never answers.`,
+  set: 'on-demand',
+  activity: 'orchestration',
+  instruction:
+    `Je veux un fichier ${ASK_REL} qui contient ma couleur préférée. Avant de l'écrire, pose-moi la question ` +
+    `avec deux options, « ${ASK_OPTIONS[0]} » ou « ${ASK_OPTIONS[1]} », et attends ma réponse.`,
+  timeoutMs: 10 * MIN,
+  prepare(env) {
+    removeBenchFile(env.workspaceRoots, ASK_REL);
+  },
+  observe: (_facts, env) => observeBenchFile(env.workspaceRoots, ASK_REL, env.startedMs),
+  judge(facts, o) {
+    const r: string[] = [];
+    const root = rootJob(facts);
+    const questions = facts.approvals.filter((a) => a.kind === 'question');
+    const others = facts.approvals.filter((a) => a.kind !== 'question');
+    if (questions.length === 0) r.push('no question was asked: the run did not pause');
+    else {
+      const q = questions[0]!;
+      const options = questionOptions(q.input);
+      if (options === null) r.push('the question card holds no readable options');
+      else {
+        const missing = ASK_OPTIONS.filter((x) => !options.includes(x));
+        if (missing.length > 0)
+          r.push(`the question card does not offer ${missing.map((x) => `"${x}"`).join(', ')}`);
+      }
+      const answered = questions.filter((a) => a.status === 'approved');
+      if (answered.length > 0)
+        r.push(`the question was answered (by ${answered[0]!.resolvedBy ?? 'unknown'})`);
+    }
+    if (others.length > 0)
+      r.push(`asked an approval before the question (${others.map((a) => a.toolName).join(', ')})`);
+    if (!root) r.push('the root job is missing');
+    else if (root.status !== 'cancelled')
+      r.push(`the root ended ${describeEnd(root)} instead of waiting for the answer`);
+    if (o.found?.fresh) r.push(`${ASK_REL} was written before the answer`);
+    const touching = facts.toolCalls.filter(
+      (c) =>
+        bareToolName(c.toolName) !== 'ask_user' &&
+        (c.input ?? '').includes(ASK_REL.split('/').pop()!),
+    );
+    if (touching.length > 0)
+      r.push(
+        `a tool call named ${ASK_REL} before the answer (${[...new Set(touching.map((c) => c.toolName))].join(', ')})`,
+      );
+    return r;
+  },
+});
+
 /** Le jeu figé. L'ordre est celui des lignes du portail. */
 export const SCENARIOS: readonly AnyScenario[] = [
   question,
@@ -638,6 +884,11 @@ export const SCENARIOS: readonly AnyScenario[] = [
   print,
   recipe,
   comfyTelegram,
+  mcpAnswer,
+  undoableAction,
+  undoableActionDelegated,
+  delegateFails,
+  askBeforeActing,
 ];
 
 export function scenarioById(id: string): AnyScenario | undefined {

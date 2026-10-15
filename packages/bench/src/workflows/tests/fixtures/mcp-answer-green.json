@@ -1,0 +1,143 @@
+{
+  "scenario": "mcp-answer",
+  "version": 1,
+  "facts": {
+    "rootId": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+    "entityId": "00000000-0000-0000-0000-000000000002",
+    "jobs": [
+      {
+        "id": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+        "parentJobId": null,
+        "agentSlug": "alfred",
+        "status": "completed",
+        "channel": "mcp",
+        "result": "17 × 23 = **391**.\n\nLe fichier `Nodal/nodal-bench/calcul-bench.txt` (`~\\Documents\\Nodal\\nodal-bench\\calcul-bench.txt`) contient « 391 ». Je l'ai relu après écriture pour le vérifier.\n\nMa réponse précédente disait le fichier écrit alors qu'aucun appel d'écriture n'avait été fait. Je l'ai réellement écrit maintenant.",
+        "error": null,
+        "createdMs": 1791770580213.098,
+        "updatedMs": 1791770599018
+      }
+    ],
+    "toolCalls": [
+      {
+        "jobId": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+        "toolName": "file_write",
+        "input": "{\"path\": \"Nodal/nodal-bench/calcul-bench.txt\", \"content\": \"391\", \"purpose\": \"Écrire le résultat du calcul 17 × 23 dans le fichier demandé.\", \"create_dirs\": true}",
+        "output": "{\"ok\":true,\"written\":true,\"bytes\":3,\"path\":\"~\\\\Documents\\\\Nodal\\\\nodal-bench\\\\calcul-bench.txt\",\"deliverable_key\":\"~/documents/nodal/nodal-bench/calcul-bench.txt\"}",
+        "createdMs": 1791770584545.796
+      },
+      {
+        "jobId": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+        "toolName": "file_read",
+        "input": "{\"path\": \"Nodal/nodal-bench/calcul-bench.txt\", \"purpose\": \"Vérifier le contenu du fichier écrit.\"}",
+        "output": "{\"ok\":true,\"content\":\"391\",\"total_lines\":1,\"start_line\":1,\"end_line\":1,\"truncated\":false}",
+        "createdMs": 1791770586372.442
+      },
+      {
+        "jobId": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+        "toolName": "file_write",
+        "input": "{\"path\": \"nodal-bench/calcul-bench.txt\", \"content\": \"391\", \"purpose\": \"Écrire le résultat du calcul 17 × 23 dans le fichier demandé.\", \"create_dirs\": true}",
+        "output": "{\"ok\":true,\"written\":true,\"bytes\":3,\"path\":\"~\\\\Documents\\\\Nodal\\\\nodal-bench\\\\calcul-bench.txt\",\"deliverable_key\":\"~/documents/nodal/nodal-bench/calcul-bench.txt\"}",
+        "createdMs": 1791770595159.138
+      },
+      {
+        "jobId": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+        "toolName": "file_read",
+        "input": "{\"path\": \"nodal-bench/calcul-bench.txt\", \"purpose\": \"Relire le fichier pour vérifier son contenu.\"}",
+        "output": "{\"ok\":true,\"content\":\"391\",\"total_lines\":1,\"start_line\":1,\"end_line\":1,\"truncated\":false}",
+        "createdMs": 1791770596828.313
+      }
+    ],
+    "llmCalls": [
+      {
+        "jobId": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+        "model": "anthropic/claude-haiku-5.5",
+        "inputTokens": 32277,
+        "outputTokens": 308,
+        "costUsd": 0.0033817000221461058,
+        "durationMs": 3182,
+        "error": null,
+        "createdMs": 1791770583763.3
+      },
+      {
+        "jobId": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+        "model": "anthropic/claude-haiku-5.5",
+        "inputTokens": 32697,
+        "outputTokens": 106,
+        "costUsd": 0.0033227000385522842,
+        "durationMs": 1766,
+        "error": null,
+        "createdMs": 1791770586365.634
+      },
+      {
+        "jobId": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+        "model": "anthropic/claude-haiku-5.5",
+        "inputTokens": 32943,
+        "outputTokens": 167,
+        "costUsd": 0.0033778001088649035,
+        "durationMs": 1808,
+        "error": null,
+        "createdMs": 1791770588204.46
+      },
+      {
+        "jobId": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+        "model": "anthropic/claude-haiku-5.5",
+        "inputTokens": 33326,
+        "outputTokens": 181,
+        "costUsd": 0.0034231001045554876,
+        "durationMs": 3140,
+        "error": null,
+        "createdMs": 1791770591367.533
+      },
+      {
+        "jobId": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+        "model": "anthropic/claude-haiku-5.5",
+        "inputTokens": 13668,
+        "outputTokens": 432,
+        "costUsd": 0.0015827999450266361,
+        "durationMs": 2835,
+        "error": null,
+        "createdMs": 1791770594205.132
+      },
+      {
+        "jobId": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+        "model": "anthropic/claude-haiku-5.5",
+        "inputTokens": 33929,
+        "outputTokens": 102,
+        "costUsd": 0.003443900030106306,
+        "durationMs": 1636,
+        "error": null,
+        "createdMs": 1791770596822.712
+      },
+      {
+        "jobId": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+        "model": "anthropic/claude-haiku-5.5",
+        "inputTokens": 34171,
+        "outputTokens": 281,
+        "costUsd": 0.0035576000809669495,
+        "durationMs": 2140,
+        "error": null,
+        "createdMs": 1791770598985.329
+      }
+    ],
+    "cliRuns": [],
+    "approvals": [],
+    "deliveries": [],
+    "returnResults": [
+      {
+        "jobId": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+        "input": "{\"reason\": \"17 × 23 = 391. Le fichier Nodal/nodal-bench/calcul-bench.txt contient « 391 » (relu et vérifié).\", \"status\": \"success\", \"deliverables\": [\"Nodal/nodal-bench/calcul-bench.txt\"]}"
+      },
+      {
+        "jobId": "f04331e9-2ea4-4ade-a40d-56b7f48222d8",
+        "input": "{\"status\": \"success\", \"deliverables\": [\"~\\\\Documents\\\\Nodal\\\\nodal-bench\\\\calcul-bench.txt\"]}"
+      }
+    ]
+  },
+  "observed": {
+    "found": {
+      "path": "~\\Documents\\Nodal\\nodal-bench\\calcul-bench.txt",
+      "fresh": true,
+      "text": "391"
+    }
+  }
+}

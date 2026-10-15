@@ -15,6 +15,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import type { AgentId, EntityId } from '@nodal-agents/orchestration';
 import { executeRows } from './facts';
 
 /** Le préfixe de l'étiquette `caller` que le banc pose sur chacun de ses jobs. */
@@ -38,6 +39,51 @@ export function stackDatabaseUrl(): string {
     throw new Error(`workflow_no_stack: postgresPassword missing in ${path}`);
   const port = cfg.ports?.postgres ?? 25444;
   return `postgresql://nodalai:${encodeURIComponent(cfg.postgresPassword)}@localhost:${port}/nodalai`;
+}
+
+/**
+ * La configuration du banc, sur la machine qui l'héberge : ~/.nodalai/bench.json.
+ * Elle déclare les services locaux que des scénarios demandent (ComfyUI) et
+ * leur adresse : rien de tout cela n'est écrit dans le code (invariant #6).
+ * Absente : aucun service n'est déclaré, et les scénarios qui en demandent un
+ * sont sautés en le disant.
+ */
+export const BENCH_CONFIG_FILE = join(homedir(), '.nodalai', 'bench.json');
+
+const BenchConfigSchema = z
+  .object({
+    services: z.record(z.string(), z.string().url()).default({}),
+  })
+  .strict();
+export type BenchConfig = z.infer<typeof BenchConfigSchema>;
+
+/** Lit la configuration du banc ; un fichier illisible ou mal formé est une erreur, jamais une config vide. */
+export function readBenchConfig(path: string = BENCH_CONFIG_FILE): BenchConfig {
+  if (!existsSync(path)) return { services: {} };
+  try {
+    return BenchConfigSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+  } catch (e) {
+    throw new Error(
+      `workflow_bad_bench_config: ${path} cannot be read: ${String(e instanceof Error ? e.message : e)}`,
+    );
+  }
+}
+
+/**
+ * Sonde un service local déclaré : une requête GET sur son adresse, trois
+ * secondes au plus. Toute réponse HTTP 2xx compte ; le reste est dit tel quel.
+ */
+export async function probeService(
+  url: string,
+  fetcher: typeof fetch = fetch,
+  timeoutMs = 3_000,
+): Promise<string | null> {
+  try {
+    const res = await fetcher(url, { signal: AbortSignal.timeout(timeoutMs) });
+    return res.ok ? null : `HTTP ${res.status}`;
+  } catch (e) {
+    return String(e instanceof Error ? e.message : e);
+  }
 }
 
 export async function openStackDb(): Promise<{ db: AnyDrizzleDb; close: () => Promise<void> }> {
@@ -224,6 +270,57 @@ export async function cancelTree(
   const { cancelJobTree } = await import('@nodal-agents/db');
   const r = await cancelJobTree(db, { entityId, jobId: rootId });
   return { jobIds: r.jobIds, requestIds: r.requestIds };
+}
+
+// ─── Ce que l'équipe sait faire ──────────────────────────────────────────────
+
+/**
+ * Les outils que les agents ACTIFS de l'espace peuvent appeler, sous le nom
+ * que le produit leur donne (`<serveur>__outil` pour un serveur MCP, le nom de
+ * l'opération pour un connecteur adaptateur). La règle est celle du produit,
+ * `computeAgentToolNames` (@nodal-agents/orchestration) : connecteurs
+ * adaptateurs ET serveurs MCP, listes blanches par agent comprises.
+ *
+ * Le banc lisait seulement `mcp_servers.available_tools` : Gmail, connecteur
+ * adaptateur, lui était invisible, et le garde « aucun connecteur ne sait
+ * envoyer un e-mail » a laissé partir sept e-mails (#711). Les outils de
+ * livraison sont comptés (`hasDeliveryRecipient: true`) : un garde se trompe
+ * du côté prudent.
+ */
+export async function readTeamTools(db: AnyDrizzleDb, entityId: string): Promise<string[]> {
+  const { sql } = await import('@nodal-agents/db');
+  const { computeAgentToolNames } = await import('@nodal-agents/orchestration');
+  const agents = z.array(z.object({ id: z.string() })).parse(
+    await executeRows(
+      db,
+      sql`
+        select id::text from agents
+         where entity_id = ${entityId}::uuid and coalesce(active, true) = true
+         order by id`,
+    ),
+  );
+  const names = new Set<string>();
+  for (const a of agents) {
+    const tools = await computeAgentToolNames(a.id as AgentId, entityId as EntityId, db, {
+      hasDeliveryRecipient: true,
+    });
+    for (const n of tools) names.add(n);
+  }
+  return [...names].sort();
+}
+
+/** Le modèle configuré de l'agent racine de l'espace (`agents.model`), ou null s'il n'en a pas. */
+export async function readRootModel(db: AnyDrizzleDb, entityId: string): Promise<string | null> {
+  const { sql } = await import('@nodal-agents/db');
+  const rows = z.array(z.object({ model: z.string().nullable() })).parse(
+    await executeRows(
+      db,
+      sql`
+        select a.model from entities e join agents a on a.id = e.root_agent_id
+         where e.id = ${entityId}::uuid`,
+    ),
+  );
+  return rows[0]?.model ?? null;
 }
 
 // ─── Où sont les fichiers ────────────────────────────────────────────────────

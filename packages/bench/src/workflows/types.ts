@@ -7,6 +7,7 @@
 // différentes.
 
 import type { TreeFacts } from './facts';
+import type { Need } from './needs';
 
 /**
  * `nightly` : le jeu sans surveillance, lancé chaque nuit.
@@ -16,11 +17,53 @@ import type { TreeFacts } from './facts';
  */
 export type ScenarioSet = 'nightly' | 'on-demand';
 
+/**
+ * Le métier qu'un scénario éprouve : les lignes de la matrice du portail. Liste
+ * FERMÉE — une activité nouvelle s'ajoute ici, jamais à la volée dans un
+ * scénario. Plusieurs activités n'ont pas encore de scénario (e-mail, Airtable,
+ * Notion, Google Workspace, livraison, mémoire) : elles attendent un compte de
+ * test, une décision du propriétaire ; le portail les montre vides.
+ */
+export const ACTIVITIES = [
+  'question',
+  'research',
+  'deep-research',
+  'code',
+  'excel',
+  'word',
+  'powerpoint',
+  'pdf',
+  'image-comfyui',
+  'html-page',
+  'email',
+  'airtable',
+  'notion',
+  'google-workspace',
+  'delivery',
+  'print',
+  'orchestration',
+  'memory',
+] as const;
+export type Activity = (typeof ACTIVITIES)[number];
+
+/** Un service local que le banc sait sonder, à l'adresse que ~/.nodalai/bench.json déclare. */
+export interface ServiceProbe {
+  readonly url: string;
+  /** null : il répond. Sinon, ce qui a échoué. */
+  readonly problem: string | null;
+}
+
 export interface ScenarioEnv {
   /** Les dossiers de travail de l'espace (le partagé d'abord). */
   readonly workspaceRoots: readonly string[];
-  /** Les outils que les connecteurs actifs de l'espace offrent, par leur nom nu. */
-  readonly connectorTools: readonly string[];
+  /**
+   * Les outils que les agents actifs de l'espace peuvent appeler, sous le nom
+   * que le produit leur donne (`readTeamTools`) : connecteurs adaptateurs et
+   * serveurs MCP (`<serveur>__outil`) compris.
+   */
+  readonly teamTools: readonly string[];
+  /** Les services locaux déclarés pour le banc, sondés au début de l'essai. */
+  readonly services: Readonly<Record<string, ServiceProbe>>;
   /** Début de l'essai (ms). Un fichier plus ancien n'a pas été écrit par lui. */
   readonly startedMs: number;
 }
@@ -49,13 +92,14 @@ export interface Scenario<O> {
   /** Ce que « vert » veut dire, en clair (anglais : rendu au portail). */
   readonly green: string;
   readonly set: ScenarioSet;
+  readonly activity: Activity;
+  /** Ce que l'essai demande à la machine. Un besoin absent : l'essai est SAUTÉ, avec sa raison. */
+  readonly needs?: readonly Need[];
   /** La demande, telle que le propriétaire la taperait. */
   readonly instruction: string;
   readonly timeoutMs: number;
   /** Les contrôles que ce scénario ne vérifie pas encore (voir `UnverifiedCheck`). */
   readonly unverified?: readonly UnverifiedCheck[];
-  /** Ce qui manque pour que l'essai ait un sens. Non vide : ROUGE, sans lancer de job. */
-  requires?(env: ScenarioEnv): string[];
   /** Remet à zéro ce qu'un essai précédent du banc a laissé (ses propres fichiers seulement). */
   prepare?(env: ScenarioEnv): void;
   /** Lit ce qu'il faut sur le disque, une fois l'essai fini. */
@@ -72,6 +116,39 @@ export function defineScenario<O>(s: Scenario<O>): AnyScenario {
 
 export type TrialVerdict = 'green' | 'red' | 'skipped' | 'error';
 
+/**
+ * Un modèle tel qu'un job de l'essai l'a utilisé : ce qui était DEMANDÉ et ce
+ * qui a RÉPONDU (un maillon de secours peut répondre à la place), lu dans
+ * `llm_calls` (API) et `cli_runs` (Claude Code, Codex). Une ligne par job et
+ * par combinaison demandé / effectif / fournisseur / effort / secours.
+ */
+export interface ModelUse {
+  /** Les 8 premiers caractères du job. */
+  readonly job: string;
+  readonly agent: string | null;
+  readonly via: 'api' | 'cli';
+  readonly requested: string | null;
+  readonly effective: string;
+  readonly provider: string | null;
+  readonly reasoningEffort: string | null;
+  /** Servi par un maillon de secours. null : la ligne ne le dit pas (CLI, ancienne capture). */
+  readonly failover: boolean | null;
+  readonly calls: number;
+  /** Entrée cache compris (même sémantique que `TrialLine.inputTokens`). */
+  readonly inputTokens: number | null;
+  /** Lectures de cache, comprises dans `inputTokens`. */
+  readonly cachedTokens: number | null;
+  readonly outputTokens: number | null;
+  readonly costUsd: number | null;
+}
+
+/** Un fichier que l'essai a laissé dans le dossier du banc d'un dossier de travail. */
+export interface Deliverable {
+  /** Relatif au dossier de travail, toujours sous `nodal-bench/`, en barres obliques. */
+  readonly path: string;
+  readonly bytes: number;
+}
+
 /** Une ligne de apps/qa/data/workflows.ndjson : un essai, ajouté, jamais réécrit. */
 export interface TrialLine {
   readonly scenario: string;
@@ -80,6 +157,19 @@ export interface TrialLine {
   readonly title: string;
   readonly green: string;
   readonly set: ScenarioSet;
+  /**
+   * Absents des lignes écrites avant la v2 du banc : le portail range une
+   * telle ligne sous l'activité du scénario dans le catalogue.
+   */
+  readonly activity: Activity;
+  readonly needs: Need[];
+  /**
+   * Le modèle que la matrice (`--models`) a imposé à l'essai ; null : les
+   * agents tournaient sur leurs propres modèles.
+   */
+  readonly modelUnderTest: string | null;
+  /** Le modèle configuré de l'agent racine au début de l'essai (`agents.model`). */
+  readonly rootModel: string | null;
   readonly nodalVersion: string;
   /** Le commit extrait dans le dossier de la stack, en 12 caractères. */
   readonly stackCommit: string | null;
@@ -103,6 +193,10 @@ export interface TrialLine {
   readonly cliRuns: number;
   /** Entrée cache compris, API et CLI confondues. null = un appel ne l'a pas rapportée. */
   readonly inputTokens: number | null;
+  /** Lectures de cache, comprises dans `inputTokens`. null = un appel ne l'a pas rapportée. */
+  readonly cachedTokens: number | null;
+  /** Écritures de cache, comprises dans `inputTokens`. null = un appel ne l'a pas rapportée. */
+  readonly cacheWriteTokens: number | null;
   readonly outputTokens: number | null;
   /**
    * Dollars facturés à l'appel (API, CLI payée par clé). null = un appel facturé
@@ -114,4 +208,10 @@ export interface TrialLine {
   readonly rootJobId: string | null;
   /** Le banc a dû annuler l'arbre (approbation, dépassement, erreur). */
   readonly cancelled: boolean;
+  /** Les modèles de chaque job, demandés et effectifs. */
+  readonly modelUse: ModelUse[];
+  /** Ce que l'essai a laissé sous `nodal-bench/`, écrit pendant l'essai. */
+  readonly deliverables: Deliverable[];
+  /** La réponse finale du job de tête, tronquée (`ANSWER_MAX` caractères), dossier personnel masqué. */
+  readonly answer: string | null;
 }

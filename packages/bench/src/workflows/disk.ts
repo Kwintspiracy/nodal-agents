@@ -54,13 +54,14 @@ export function removeBenchFile(roots: readonly string[], rel: string): string[]
 const SKIP_DIRS = new Set(['.obsidian', '.git', '.trash', 'node_modules']);
 
 /**
- * Les fichiers d'extension donnée modifiés depuis `sinceMs` sous `root`.
+ * Les fichiers d'extension donnée (toutes quand `exts` est null) modifiés
+ * depuis `sinceMs` sous `root`.
  * Parcours borné (`maxEntries`) : un coffre ou un dossier énorme ne doit pas
  * faire durer le jugement ; la borne atteinte est dite, pas tue.
  */
 export function freshFilesUnder(
   root: string,
-  exts: readonly string[],
+  exts: readonly string[] | null,
   sinceMs: number,
   maxEntries = 200_000,
 ): { files: Array<{ path: string; rel: string; mtimeMs: number }>; truncated: boolean } {
@@ -83,7 +84,7 @@ export function freshFilesUnder(
       const p = join(dir, e.name);
       if (e.isDirectory()) {
         if (!SKIP_DIRS.has(e.name)) walk(p);
-      } else if (e.isFile() && exts.includes(extname(e.name).toLowerCase())) {
+      } else if (e.isFile() && (exts === null || exts.includes(extname(e.name).toLowerCase()))) {
         const m = statSync(p).mtimeMs;
         if (m >= sinceMs) files.push({ path: p, rel: relative(root, p), mtimeMs: m });
       }
@@ -91,6 +92,40 @@ export function freshFilesUnder(
   };
   if (existsSync(root)) walk(root);
   return { files, truncated };
+}
+
+/** Le dossier du banc, sous chaque dossier de travail : tout ce qu'un scénario fait écrire y vit. */
+export const BENCH_DIR = 'nodal-bench';
+const MAX_DELIVERABLES = 50;
+
+/**
+ * Ce que l'essai a laissé dans `nodal-bench/` de chaque dossier de travail,
+ * écrit depuis `sinceMs` : chemin relatif au dossier de travail (en barres
+ * obliques) et taille. `node_modules` et `.git` ne sont pas parcourus. Au-delà
+ * de cinquante fichiers, la liste s'arrête et le dernier élément le dit.
+ */
+export function benchDeliverables(
+  roots: readonly string[],
+  sinceMs: number,
+): Array<{ path: string; bytes: number }> {
+  const out: Array<{ path: string; bytes: number }> = [];
+  let more = 0;
+  for (const root of roots) {
+    const dir = join(root, BENCH_DIR);
+    for (const f of freshFilesUnder(dir, null, sinceMs, 20_000).files) {
+      if (out.length >= MAX_DELIVERABLES) {
+        more++;
+        continue;
+      }
+      out.push({
+        path: `${BENCH_DIR}/${f.rel.split(/[\\/]/).join('/')}`,
+        bytes: statSync(f.path).size,
+      });
+    }
+  }
+  out.sort((a, b) => a.path.localeCompare(b.path));
+  if (more > 0) out.push({ path: `… and ${more} more file(s)`, bytes: 0 });
+  return out;
 }
 
 export function readText(path: string): string {

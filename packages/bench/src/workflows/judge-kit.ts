@@ -6,6 +6,7 @@
 // n'est pas jugé ici : aucune ligne de la base ne le dit de façon fiable (#648).
 
 import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
+import { DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
 import type { JobFact, ToolCallFact, TreeFacts } from './facts';
 
 /** Le job de tête de l'essai. */
@@ -160,6 +161,17 @@ export function commonReasons(facts: TreeFacts): string[] {
       `root ended ${root.status ?? 'without a status'}${root.error ? `: ${root.error.slice(0, 200)}` : ''}`,
     );
   }
+  return [...reasons, ...nobodyAsked(facts)];
+}
+
+/**
+ * Personne n'a été sollicité : ni approbation, ni question, ni formulaire. La
+ * moitié de `commonReasons`, pour les scénarios dont la tête a le droit de NE
+ * PAS finir `completed` (un blocage expliqué est la bonne fin d'une demande
+ * impossible).
+ */
+export function nobodyAsked(facts: TreeFacts): string[] {
+  const reasons: string[] = [];
   const approvals = facts.approvals.filter((a) => a.kind !== 'question');
   const questions = facts.approvals.filter((a) => a.kind === 'question');
   if (approvals.length > 0) {
@@ -178,4 +190,59 @@ export function textHasNumber(text: string | null, value: number, decimals: numb
     if (Number.isFinite(n) && n.toFixed(decimals) === target) return true;
   }
   return false;
+}
+
+/**
+ * Ce qui est parti vers un canal de messagerie (Telegram, Discord, Slack,
+ * WhatsApp) pendant l'essai : un appel d'un outil d'envoi (la liste unique du
+ * produit, `DELIVERY_TOOL_NAMES`) ou une livraison de réponse consignée dans
+ * `job_deliveries`. Une demande partie par MCP reçoit sa réponse comme résultat
+ * du job, jamais sur le canal du propriétaire (#649).
+ */
+export function channelSends(facts: TreeFacts): string[] {
+  const reasons: string[] = [];
+  const delivery = new Set<string>(DELIVERY_TOOL_NAMES);
+  const sends = facts.toolCalls.filter((c) => delivery.has(bareToolName(c.toolName)));
+  if (sends.length > 0) {
+    reasons.push(
+      `a send tool was called (${[...new Set(sends.map((c) => bareToolName(c.toolName)))].join(', ')})`,
+    );
+  }
+  if (facts.deliveries.length > 0) {
+    reasons.push(
+      `a reply was delivered to a channel (${facts.deliveries.map((d) => `${d.channel} ${d.outcome}`).join(', ')})`,
+    );
+  }
+  return reasons;
+}
+
+/**
+ * Le job a fini sur un blocage EXPLIQUÉ : statut `failed`, et son dernier
+ * `return_result` dit `blocked` avec une raison. C'est, dans le contrat
+ * d'aujourd'hui (`return-result.ts`), la seule fin qui dit « l'action demandée
+ * n'a pas été faite » : un `failed` sur une erreur (délai, plafond anti-boucle)
+ * n'en est pas une, un `completed` non plus.
+ *
+ * L'appel est lu dans le transcript du job (`returnResults`), pas dans
+ * `tool_calls` : `return_result` est un signal de la boucle, il n'y laisse
+ * aucune ligne. La colonne `error` d'un blocage porte la première phrase de la
+ * raison (`shortBlockReason`), du texte libre : la lire pour reconnaître un
+ * blocage serait deviner.
+ */
+export function endedBlocked(facts: TreeFacts, job: JobFact): boolean {
+  if (job.status !== 'failed') return false;
+  const calls = facts.returnResults.filter((c) => c.jobId === job.id);
+  const last = calls[calls.length - 1];
+  if (!last) return false;
+  const input = jsonObject(parseJson(last.input));
+  return (
+    input?.['status'] === 'blocked' &&
+    typeof input['reason'] === 'string' &&
+    input['reason'].trim() !== ''
+  );
+}
+
+/** La fin d'un job, en clair, pour une raison de rouge. */
+export function describeEnd(job: JobFact): string {
+  return `${job.status ?? 'no status'}${job.error ? ` (${job.error.slice(0, 160)})` : ''}`;
 }

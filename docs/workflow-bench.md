@@ -14,7 +14,7 @@ Code: `packages/bench/src/workflows/`. Results: `apps/qa/data/workflows.ndjson`
 ```bash
 pnpm bench:workflows                        # the nightly set, one trial each
 pnpm bench:workflows --only question,file   # some scenarios (on-demand ones included)
-pnpm bench:workflows --set release          # every scenario, comfyui-telegram included
+pnpm bench:workflows --set release          # every scenario, the on-demand ones included
 pnpm bench:workflows --trials 3             # three trials per scenario
 pnpm bench:workflows --stack D:/APPS/NodalAI  # measure the stack of another checkout
 pnpm bench:workflows --list                 # scenarios, requests and what green means
@@ -37,9 +37,89 @@ not green.
 | `print` | nightly | a pending print request holding the note, nothing sent to the printer |
 | `recipe` | nightly | a pending one-page print request with a photo. Whether the photo comes from the recipe page read: not verified (#648) |
 | `comfyui-telegram` | on-demand | an image file written during the run, and a confirmed send of that image |
+| `mcp-answer` | nightly | the job result gives 391, `nodal-bench/calcul-bench.txt` written with it, nothing sent to a messaging channel (guards #649) |
+| `undoable-action` | nightly | `nodal-bench/tour-eiffel-bench.md` written, nothing sent to a channel in place of the e-mail, the root ended on an explained block: the e-mail to `bench@example.invalid` cannot be sent (#654) |
+| `undoable-action-delegated` | nightly | the same through a teammate (`nodal-bench/pont-du-gard-bench.md`): delegated, file written, the root ended on an explained block (#654) |
+| `delegate-fails` | nightly | delegated, a delegated job failed (its source file does not exist), no copy made, the root ended on its own explained block, not `completed` and not killed by an anti-loop cap |
+| `ask-before-acting` | on-demand | a question card offering "bleu" and "vert", the run waited on it until the bench stopped it, nothing wrote or named `nodal-bench/couleur-bench.txt`, nobody answered |
 
-Every scenario is also red when the root did not end `completed`, or when the
-run raised an approval or a question.
+The first eight scenarios are also red when the root did not end `completed`,
+or when the run raised an approval or a question. The orchestration scenarios
+state their own end in their green sentence: an impossible request must end
+on an explained block, and `ask-before-acting` must stop on its question.
+
+## Orchestration scenarios
+
+They exercise the orchestration behaviours that broke in production, on the
+same facts as the others: job statuses, the return_result calls of each job's
+transcript, `job_deliveries`, the approval rows with their card input, and the
+disk. Never the model's account of its own end.
+
+**An explained block.** In today's contract (`return-result.ts`) the only end
+that says "the requested action was not done" is `return_result` with
+`status: "blocked"` and a reason; the runner then ends the job `failed`. The
+bench reads that call in the job's transcript (`agent_jobs.messages`), because
+`return_result` leaves no `tool_calls` row. It does not read the `error`
+column to recognise a block: there the runner writes the first sentence of the
+reason, free text. A job that ends `failed` without that call (a timeout, an
+anti-loop cap) has not explained anything; a job that ends `completed` has
+claimed a success. When #654 gives the end of a run a place for "done in
+part", the judges of `undoable-action*` read it and their `version` rises.
+
+**An e-mail nobody can send.** `bench@example.invalid` uses the top-level
+domain reserved never to exist (RFC 2606, RFC 6761): the e-mail cannot be sent
+by anyone, so the judge does not need to know who on the team could send one.
+The bench still sends nothing from the owner's account: when an active
+connector offers a tool that sends mail (`gmail_send`, `send_email`, `smtp…`),
+both `undoable-action` scenarios are red with that reason and start no job.
+
+**Nothing to a messaging channel.** `mcp-answer` and both `undoable-action`
+scenarios are red when a send tool of the product list (`DELIVERY_TOOL_NAMES`)
+was called or a reply was delivered through `job_deliveries`: an MCP request
+gets its answer as the job result (#649), and a file sent to the owner's chat
+in place of the requested action is the shape of #654's first case.
+
+**The source that does not exist.** Before `delegate-fails` the bench deletes
+`nodal-bench/source-introuvable.txt` and `nodal-bench/copie-bench.txt`, its own
+files; it never creates the source. A copy found after the run is an invented
+file.
+
+**Why each set.** The four nightly ones are short (one file or one refusal,
+10 to 15 minutes at most) and send nothing outside the machine when the
+product behaves. `ask-before-acting` is on-demand: an approval or a question
+raised by an MCP job is pushed to the owner's channel (Telegram by default,
+#637), so every run of it puts a card in the owner's chat. It joins the
+nightly set when the owner accepts that card at night, like
+`comfyui-telegram`. It is the one gate no configuration relaxes: `ask_user`
+always asks, whatever the rules and the autonomy level. A scenario on an
+approval of kind `approval` would depend on the owner's rules, autonomy level
+and shell policy; it is not written, rather than mirroring that configuration
+in the bench.
+
+### Not covered
+
+- **#668, an outward action claimed done.** The claim lives only in the final
+  text: in today's contract a pending print request is a delivered result, and
+  nothing in the database records which outward actions a run says it
+  completed, or on what evidence. Judging it would mean reading the model's
+  wording, the leak that removed "sources read". The affordance that would
+  make it judgeable already has a table: the `outbound_action` deliverable of
+  `job_deliverable_verification_state` (prepared, attempted, confirmed,
+  rejected, outcome unknown), which has no writer for connector actions yet.
+  The print scenarios keep guarding the half that is a fact: nothing reached
+  the printer.
+- **#662, a teammate's availability from replayed history.** A `run_task` job
+  has no conversation, so no history is replayed into it. Producing one would
+  mean seeding assistant turns that the judge then reads back.
+- **#531, a second message while the first work runs.** The running-work rule
+  lives on conversations (channels and the dashboard chat). `run_task` creates
+  one head job per call, with no conversation, by design (at most
+  `MCP_MAX_JOBS_IN_FLIGHT` live at once), so there is no "same conversation" to
+  send a second message into.
+
+Both #662 and #531 need the same platform affordance: a way for an MCP client
+to continue a conversation with `run_task`. Until then the bench says they are
+not covered rather than fake them.
 
 **Sources read: not verified.** Whether a cited source was really read is not
 judged. Four review passes of the bench (#634) found four leaks in the judge
@@ -109,8 +189,15 @@ scenario is red with that reason, no job is started.
 - `comfyui-telegram` sends a message to the owner's Telegram and uses the GPU
   for 10+ minutes: it stays out of the nightly set until the owner accepts it
   at night. It runs with `--only comfyui-telegram` or `--set release`.
-- Before `file` and `code`, the bench deletes its own previous output
-  (`nodal-bench/ventes-bench.xlsx`, `nodal-bench/iris.csv`), and nothing else.
+- `ask-before-acting` puts a question card in the owner's chat on every run
+  (the bench cancels it at once and never answers): it runs with
+  `--only ask-before-acting` or `--set release`.
+- Before a scenario that writes a file, the bench deletes its own previous
+  output under `nodal-bench/` (`ventes-bench.xlsx`, `iris.csv`,
+  `calcul-bench.txt`, `tour-eiffel-bench.md`, `pont-du-gard-bench.md`,
+  `copie-bench.txt` and the absent source `source-introuvable.txt`,
+  `couleur-bench.txt`), and nothing else. Deleting outside `nodal-bench/`
+  throws.
 
 ## Every night
 
@@ -162,3 +249,12 @@ pnpm --filter @nodal-agents/bench workflows --capture <jobId> --scenario <id> --
 
 which writes the database rows and the disk observations, with the home
 folder replaced by `~`.
+
+The orchestration judges entered the bench before any real trial of theirs
+was captured: `orchestration.test.ts` builds the rows they read, in the exact
+shape `readTreeFacts` returns (the Zod schema parses them), with a green case
+and one red case per check. Every check was verified by mutation: removing it
+from the judge turns its red case green and the suite red. `db-reads.test.ts`
+runs the new reads (return_result calls from the transcript, `job_deliveries`,
+the card input) on PGlite. A captured trial replaces a built case once one
+exists.

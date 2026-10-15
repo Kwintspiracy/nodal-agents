@@ -2,7 +2,7 @@
 //
 // Le juge d'un scénario ne lit jamais ce que le modèle dit de lui-même : il lit
 // les lignes que le runner a écrites (agent_jobs, tool_calls, llm_calls,
-// cli_runs, approval_requests) et, quand le scénario produit un fichier, le fichier sur
+// cli_runs, approval_requests, job_deliveries) et, quand le scénario produit un fichier, le fichier sur
 // le disque. Ce module fait la première moitié : une photo de l'arbre d'un job,
 // sous une forme simple et sérialisable. C'est aussi la forme des fixtures des
 // tests — une photo prise sur un vrai essai, jamais une ligne inventée.
@@ -37,7 +37,21 @@ export type ToolCallFact = z.infer<typeof ToolCallFactSchema>;
 
 export const LlmCallFactSchema = z.object({
   jobId: z.string().nullable(),
+  /** Le modèle qui a RÉPONDU (`model_effective`). */
   model: z.string(),
+  /**
+   * Ce que l'agent DEMANDAIT, le fournisseur, l'effort de raisonnement, le
+   * maillon de secours et les jetons de cache : absents des fixtures capturées
+   * avant que le banc ne les lise (null, jamais une valeur inventée).
+   */
+  modelRequested: z.string().nullable().default(null),
+  provider: z.string().nullable().default(null),
+  reasoningEffort: z.string().nullable().default(null),
+  failover: z.boolean().nullable().default(null),
+  /** Lectures de cache, comprises dans `inputTokens` (sémantique du SDK IA). */
+  cachedTokens: z.number().nullable().default(null),
+  /** Écritures de cache, comprises dans `inputTokens`. */
+  cacheCreationTokens: z.number().nullable().default(null),
   inputTokens: z.number().nullable(),
   outputTokens: z.number().nullable(),
   costUsd: z.number().nullable(),
@@ -62,6 +76,8 @@ export const CliRunFactSchema = z.object({
   source: z.string(),
   /** Les modèles que la CLI dit avoir utilisés, sinon celui demandé ; vide = non rapporté. */
   models: z.array(z.string()),
+  /** Le modèle demandé à la CLI (`cli_runs.model`). Absent des anciennes fixtures. */
+  modelRequested: z.string().nullable().default(null),
   costUsd: z.number().nullable(),
   inputTokens: z.number().nullable(),
   outputTokens: z.number().nullable(),
@@ -77,10 +93,36 @@ export const ApprovalFactSchema = z.object({
   kind: z.string(),
   status: z.string().nullable(),
   toolName: z.string(),
+  /**
+   * Ce que la carte montre : l'entrée de l'appel retenu (pour `ask_user`, la
+   * question et ses options), sérialisée. Absent des fixtures capturées avant
+   * que le banc ne la lise : null, jamais une entrée inventée.
+   */
+  input: z.string().nullable().default(null),
   resolvedBy: z.string().nullable(),
   requestedMs: z.number(),
 });
 export type ApprovalFact = z.infer<typeof ApprovalFactSchema>;
+
+/**
+ * Une réponse de job partie vers un canal (`job_deliveries`, l'outbox de la
+ * livraison) : Telegram, Discord, Slack ou WhatsApp. `channel` est le canal de
+ * TRANSPORT résolu, jamais l'origine du job.
+ */
+export const DeliveryFactSchema = z.object({
+  jobId: z.string(),
+  channel: z.string(),
+  outcome: z.string(),
+  createdMs: z.number(),
+});
+export type DeliveryFact = z.infer<typeof DeliveryFactSchema>;
+
+/** Un appel de `return_result`, tel que le modèle l'a fait (son entrée, sérialisée). */
+export const ReturnResultFactSchema = z.object({
+  jobId: z.string(),
+  input: z.string().nullable(),
+});
+export type ReturnResultFact = z.infer<typeof ReturnResultFactSchema>;
 
 /** L'arbre d'un essai : le job de tête, tout ce qu'il a délégué, et ce qui s'y est passé. */
 export const TreeFactsSchema = z.object({
@@ -95,6 +137,18 @@ export const TreeFactsSchema = z.object({
    */
   cliRuns: z.array(CliRunFactSchema).default([]),
   approvals: z.array(ApprovalFactSchema),
+  /**
+   * Absent des fixtures capturées avant que le banc ne lise `job_deliveries`.
+   * `readTreeFacts` le remplit toujours.
+   */
+  deliveries: z.array(DeliveryFactSchema).default([]),
+  /**
+   * Les appels de `return_result` de chaque job, dans l'ordre, lus dans son
+   * transcript (`agent_jobs.messages`) : ce signal de fin ne laisse aucune
+   * ligne `tool_calls`. Absent des fixtures capturées avant que le banc ne le
+   * lise.
+   */
+  returnResults: z.array(ReturnResultFactSchema).default([]),
 });
 export type TreeFacts = z.infer<typeof TreeFactsSchema>;
 
@@ -156,6 +210,12 @@ const RawTool = z.object({
 const RawLlm = z.object({
   job_id: z.string().nullable(),
   model_effective: z.string(),
+  model_requested: z.string().nullable(),
+  provider: z.string().nullable(),
+  reasoning_effort: z.string().nullable(),
+  failover: z.boolean().nullable(),
+  cached_tokens: numOrNull,
+  cache_creation_tokens: numOrNull,
   input_tokens: numOrNull,
   output_tokens: numOrNull,
   cost_usd: numOrNull,
@@ -182,8 +242,15 @@ const RawApproval = z.object({
   kind: z.string(),
   status: z.string().nullable(),
   tool_name: z.string(),
+  tool_input: z.string().nullable(),
   resolved_by: z.string().nullable(),
   requested_ms: num,
+});
+const RawDelivery = z.object({
+  job_id: z.string(),
+  channel: z.string(),
+  outcome: z.string(),
+  created_ms: num,
 });
 
 /**
@@ -227,7 +294,9 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
     await executeRows(
       db,
       sql`
-      select job_id::text, model_effective, input_tokens, output_tokens, cost_usd::float8 as cost_usd,
+      select job_id::text, model_effective, model_requested, provider, reasoning_effort, failover,
+             cached_tokens, cache_creation_tokens,
+             input_tokens, output_tokens, cost_usd::float8 as cost_usd,
              duration_ms, error,
              (extract(epoch from created_at) * 1000)::float8 as created_ms
         from llm_calls where job_id in (${tree}) order by created_at`,
@@ -247,11 +316,44 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
     await executeRows(
       db,
       sql`
-      select id::text, job_id::text, kind, status, tool_name, resolved_by,
+      select id::text, job_id::text, kind, status, tool_name, tool_input::text as tool_input,
+             resolved_by,
              (extract(epoch from requested_at) * 1000)::float8 as requested_ms
         from approval_requests where job_id in (${tree}) order by requested_at`,
     ),
   );
+  const deliveries = z.array(RawDelivery).parse(
+    await executeRows(
+      db,
+      sql`
+      select job_id::text, channel, outcome,
+             (extract(epoch from created_at) * 1000)::float8 as created_ms
+        from job_deliveries where job_id in (${tree}) order by created_at`,
+    ),
+  );
+  // Les parties `tool-call` du transcript — seuls les messages assistant en
+  // portent (forme des messages du SDK IA : `input`, `args` dans les
+  // transcripts plus anciens).
+  const returnResults = z
+    .array(z.object({ job_id: z.string(), input: z.string().nullable() }))
+    .parse(
+      await executeRows(
+        db,
+        sql`
+      select j.id::text as job_id, coalesce(p.part->'input', p.part->'args')::text as input
+        from agent_jobs j
+        cross join lateral jsonb_array_elements(
+          case when jsonb_typeof(j.messages) = 'array' then j.messages else '[]'::jsonb end
+        ) with ordinality as m(msg, i)
+        cross join lateral jsonb_array_elements(
+          case when jsonb_typeof(m.msg->'content') = 'array' then m.msg->'content' else '[]'::jsonb end
+        ) with ordinality as p(part, k)
+       where j.id in (${tree})
+         and p.part->>'type' = 'tool-call'
+         and p.part->>'toolName' = 'return_result'
+       order by j.created_at, j.id, m.i, p.k`,
+      ),
+    );
   return {
     rootId,
     entityId: root.entity_id,
@@ -276,6 +378,12 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
     llmCalls: llm.map((l) => ({
       jobId: l.job_id,
       model: l.model_effective,
+      modelRequested: l.model_requested,
+      provider: l.provider,
+      reasoningEffort: l.reasoning_effort,
+      failover: l.failover,
+      cachedTokens: l.cached_tokens,
+      cacheCreationTokens: l.cache_creation_tokens,
       inputTokens: l.input_tokens,
       outputTokens: l.output_tokens,
       costUsd: l.cost_usd,
@@ -292,6 +400,7 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
         : c.model
           ? [c.model]
           : [],
+      modelRequested: c.model,
       costUsd: c.cost_usd,
       inputTokens: c.input_tokens,
       outputTokens: c.output_tokens,
@@ -305,8 +414,16 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
       kind: a.kind,
       status: a.status,
       toolName: a.tool_name,
+      input: a.tool_input,
       resolvedBy: a.resolved_by,
       requestedMs: a.requested_ms,
     })),
+    deliveries: deliveries.map((d) => ({
+      jobId: d.job_id,
+      channel: d.channel,
+      outcome: d.outcome,
+      createdMs: d.created_ms,
+    })),
+    returnResults: returnResults.map((r) => ({ jobId: r.job_id, input: r.input })),
   };
 }

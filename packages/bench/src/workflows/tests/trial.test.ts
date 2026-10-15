@@ -29,6 +29,7 @@ const OPTS: TrialOptions = {
   trigger: 'manual',
   nodalVersion: '0.9.3',
   stackCommit: 'ebef7ed7e02b',
+  modelUnderTest: null,
 };
 
 const IDLE: ForeignActivity = { jobs: [], lastChatMs: null };
@@ -77,7 +78,8 @@ function world(opts: {
       const list = opts.foreign ?? [IDLE];
       return list[Math.min(foreignReads++, list.length - 1)]!;
     },
-    env: async (startedMs) => ({ workspaceRoots: [], connectorTools: [], startedMs }),
+    env: async (startedMs) => ({ workspaceRoots: [], teamTools: [], services: {}, startedMs }),
+    rootModel: async () => 'z-ai/glm-5.3',
     log: () => undefined,
   };
   return { deps, started, cancelled, clock };
@@ -190,15 +192,34 @@ describe('workflow trial safety rules', () => {
     expect(line.cancelled).toBe(true);
   });
 
-  it('a missing prerequisite is RED with its reason, and no job is started', async () => {
+  it('a missing need SKIPS the trial with its reason, never red, and no job is started', async () => {
     const green = load('question-green');
     const w = world({ rootId: green.rootId, snapshots: [green] });
     const line = await runTrial(scenarioById('print')!, w.deps, OPTS);
     expect(w.started).toEqual([]);
-    expect(line.verdict).toBe('red');
+    expect(line.verdict).toBe('skipped');
     expect(line.reasons).toEqual([
-      'no active connector of this workspace offers request_print (no printer connector configured)',
+      'no agent of this workspace has request_print (no printer connector configured)',
     ]);
+    expect(line).toMatchObject({
+      activity: 'print',
+      needs: ['printer'],
+      rootModel: 'z-ai/glm-5.3',
+    });
+  });
+
+  it('the same need met lets the trial run: the printer is seen under its MCP server prefix', async () => {
+    const green = load('print-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    w.deps.env = async (startedMs) => ({
+      workspaceRoots: [],
+      teamTools: ['office_printer__request_print'],
+      services: {},
+      startedMs,
+    });
+    const line = await runTrial(scenarioById('print')!, w.deps, OPTS);
+    expect(w.started).toHaveLength(1);
+    expect(line.verdict).toBe('green');
   });
 
   it('a refused run_task is an ERROR line with the server words, never a silent pass', async () => {
@@ -244,12 +265,12 @@ describe('workflow trial safety rules', () => {
 // pas coûter trente minutes d'essai, et une préparation qui lève ne doit pas
 // emporter les scénarios suivants avec elle.
 describe('what happens before a trial starts', () => {
-  it('deep-research-obsidian without a vault is RED at once, with the reason, and no job is started', async () => {
+  it('deep-research-obsidian without a vault is SKIPPED at once, with the reason, and no job is started', async () => {
     const green = load('question-green');
     const w = world({ rootId: green.rootId, snapshots: [green] });
     const line = await runTrial(scenarioById('deep-research-obsidian')!, w.deps, OPTS);
     expect(w.started).toEqual([]);
-    expect(line.verdict).toBe('red');
+    expect(line.verdict).toBe('skipped');
     expect(line.reasons).toEqual([
       'no Obsidian vault is configured: no workspace folder of this workspace holds a .obsidian folder',
     ]);
@@ -276,16 +297,18 @@ describe('what happens before a trial starts', () => {
     expect(line.scenario).toBe('file');
   });
 
-  it('a prerequisite check that throws is an ERROR line too', async () => {
+  it('a need check that throws is an ERROR line too', async () => {
     const green = load('question-green');
     const w = world({ rootId: green.rootId, snapshots: [green] });
-    const broken: AnyScenario = {
-      ...scenarioById('print')!,
-      requires() {
+    w.deps.env = async (startedMs) => ({
+      get workspaceRoots(): string[] {
         throw new Error('EACCES: permission denied, stat');
       },
-    };
-    const line = await runTrial(broken, w.deps, OPTS);
+      teamTools: [],
+      services: {},
+      startedMs,
+    });
+    const line = await runTrial(scenarioById('deep-research-obsidian')!, w.deps, OPTS);
     expect(w.started).toEqual([]);
     expect(line).toMatchObject({
       verdict: 'error',
@@ -315,6 +338,7 @@ describe('measures that a runtime does not report', () => {
   const cli = {
     jobId: green.rootId,
     provider: 'claude',
+    modelRequested: 'opus',
     source: 'subscription',
     models: ['claude-opus-4-1-20250805'],
     costUsd: 0.52,

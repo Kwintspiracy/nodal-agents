@@ -20,6 +20,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@nodal-agents/db": "workspace:*",
+    "@nodal-agents/orchestration": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
     "@nodal-agents/test-kit": "workspace:*",
     "@nodal-agents/tools": "workspace:*",
@@ -27,6 +28,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@nodal-agents/runner-adapters": "workspace:*",
     "@types/node": "^25.7.0",
     "tsx": "^4.21.0",
     "vitest": "^4.1.6"
