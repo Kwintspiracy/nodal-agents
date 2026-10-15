@@ -485,6 +485,22 @@ describe('la matrice activités × modèles', () => {
     );
   });
 
+  it('la phrase de comparaison et les comptes sont en tête du cadre de la matrice, avec sa gouttière', () => {
+    const html = htmlWorkflows({ lignes: [QUESTION_V2], illisibles: 0 }, CATALOGUE);
+    const tete = html.slice(
+      html.indexOf('<div class="wf-panneau__tete">'),
+      html.indexOf('<div class="wf-matrice-defile">'),
+    );
+    expect(tete).toContain('<p class="wf-compare">');
+    expect(tete).toContain('<p class="chapo">');
+    expect(html.indexOf('<div class="wf-panneau">')).toBeLessThan(
+      html.indexOf('<div class="wf-panneau__tete">'),
+    );
+    expect(html.indexOf('<p class="wf-legende">')).toBeGreaterThan(
+      html.indexOf('<div class="wf-matrice-defile">'),
+    );
+  });
+
   it('une cellule donne les derniers essais, le compte des verts et les médianes vertes', () => {
     const html = htmlMatrice(construireMatrice([QUESTION_VERTE], CATALOGUE));
     expect(html).toContain('<span class="wf-c__mot">1/1 green</span>');

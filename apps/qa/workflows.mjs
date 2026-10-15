@@ -628,8 +628,7 @@ export function htmlMatrice(m) {
       .join('');
     return `<details class="wf-act" id="wf-act-${esc(activite)}"><summary class="wf-l wf-l--act" role="row"><div role="rowheader"><b>${esc(nom)}</b> <span class="wf-nd">${scenarios.length} scenario${scenarios.length > 1 ? 's' : ''}</span></div>${cols.map((c) => celluleActivite(scenarios, c)).join('')}</summary>${lignes}</details>`;
   });
-  return `<div class="wf-matrice-defile"><div class="wf-matrice" role="table" ${grille}>${tete}${blocs.join('')}</div></div>
-<p class="wf-legende"><i class="wf-b wf-b--green"></i> green <i class="wf-b wf-b--red"></i> red <i class="wf-b wf-b--error"></i> bench error <i class="wf-b wf-b--skipped"></i> skipped (a need is missing, or the stack was busy: nothing was tried). Bars are the last ${DERNIERS} runs, oldest first; times and costs are medians of green runs. Open an activity to see its scenarios; a scenario name leads to its details.</p>`;
+  return `<div class="wf-matrice-defile"><div class="wf-matrice" role="table" ${grille}>${tete}${blocs.join('')}</div></div>`;
 }
 
 const STYLE = `<style>
@@ -668,7 +667,11 @@ const STYLE = `<style>
 .wf-reponse{margin:0;padding:8px 10px;border-left:2px solid var(--regle);background:var(--panneau2);white-space:pre-wrap;font-size:12px;color:var(--encre2);max-height:220px;overflow:auto}
 .wf-h{margin:22px 0 10px;font-size:15px;color:var(--encre)}
 /* La matrice : une grille, une colonne d'intitulés puis une par modèle. */
-.wf-matrice-defile{overflow-x:auto;margin:0 0 6px;border:1px solid var(--regle);border-radius:6px;background:var(--panneau)}
+/* Le cadre de la matrice : la phrase de comparaison et les comptes y ont la même gouttière que la colonne Activity. */
+.wf-panneau{border:1px solid var(--regle);border-radius:6px;background:var(--panneau);margin:0 0 6px;overflow:hidden}
+.wf-panneau__tete{padding:12px 12px 10px;border-bottom:1px solid var(--regle)}
+.wf-panneau__tete .chapo{margin:4px 0 0}
+.wf-matrice-defile{overflow-x:auto}
 .wf-matrice{min-width:calc(220px + var(--wf-cols) * 190px)}
 .wf-l{display:grid;grid-template-columns:minmax(220px,1.3fr) repeat(var(--wf-cols),minmax(190px,1fr));border-bottom:1px solid var(--regle)}
 .wf-l > div{padding:9px 12px;min-width:0}
@@ -702,12 +705,25 @@ const STYLE = `<style>
 .wf-q--error{background:var(--moyen);opacity:1}
 .wf-q--vide{background:transparent;border:1px dashed var(--regle);opacity:1}
 .wf-legende{font-size:12px;color:var(--encre3);margin:6px 0 18px}
-.wf-compare{margin:0 0 6px;font-size:14px;color:var(--encre)}
+.wf-compare{margin:0;font-size:14px;color:var(--encre)}
 .wf-l--resume{background:var(--panneau2);border-bottom:2px solid var(--regle)}
 .wf-l--resume b{color:var(--encre)}
 .wf-c__taux{font-size:16px;font-weight:700;color:var(--encre);font-variant-numeric:tabular-nums}
 .wf-legende .wf-b{height:10px;vertical-align:baseline;margin:0 2px 0 8px}
 </style>`;
+
+/** Ce que les couleurs et les chiffres de la matrice veulent dire. */
+function legendeMatrice() {
+  return `<p class="wf-legende"><i class="wf-b wf-b--green"></i> green <i class="wf-b wf-b--red"></i> red <i class="wf-b wf-b--error"></i> bench error <i class="wf-b wf-b--skipped"></i> skipped (a need is missing, or the stack was busy: nothing was tried). Bars are the last ${DERNIERS} runs, oldest first; times and costs are medians of green runs. Open an activity to see its scenarios; a scenario name leads to its details.</p>`;
+}
+
+/**
+ * Le cadre de la matrice : la phrase de comparaison et les comptes en tête,
+ * avec la gouttière de la colonne Activity, puis la grille ; la légende dessous.
+ */
+function panneau(phrase, chapo, matrice) {
+  return `<div class="wf-panneau"><div class="wf-panneau__tete">${phrase}${chapo}</div>${matrice}</div>${legendeMatrice()}`;
+}
 
 /**
  * Le corps de la page (sans son en-tête, que build.mjs pose). Rien de mesuré :
@@ -725,7 +741,8 @@ export function htmlWorkflows({ lignes, illisibles }, catalogue = null) {
   const phrase = m ? phraseComparaison(m) : '';
   const matrice = m ? htmlMatrice(m) : '';
   if (series.length === 0) {
-    return `${STYLE}${alerte}${phrase}<p class="wf-vide">No workflow run is recorded yet, so nothing here is measured. The runs are recorded on the machine that hosts the stack, by <code>pnpm bench:workflows</code>.</p>${matrice}`;
+    const vide = `<p class="wf-vide">No workflow run is recorded yet, so nothing here is measured. The runs are recorded on the machine that hosts the stack, by <code>pnpm bench:workflows</code>.</p>`;
+    return `${STYLE}${alerte}${vide}${m ? panneau(phrase, '', matrice) : ''}`;
   }
   const ralentis = series.filter((x) => x.ralenti).length;
   const derniersVerdicts = series.map((x) => x.derniers[x.derniers.length - 1]?.verdict);
@@ -735,5 +752,5 @@ export function htmlWorkflows({ lignes, illisibles }, catalogue = null) {
     ? catalogue.scenarios.filter((s) => !series.some((x) => x.scenario === s.id)).length
     : 0;
   const chapo = `<p class="chapo">${series.length} workflow${series.length > 1 ? 's' : ''}: <b>${rouges} not green on their last run</b>${sautes > 0 ? `, ${sautes} skipped` : ''}${ralentis > 0 ? `, <b>${ralentis} slower than on the previous version</b>` : ''}${jamais > 0 ? `; ${jamais} more never run` : ''}.</p>`;
-  return `${STYLE}${alerte}${phrase}${chapo}${matrice}<h3 class="wf-h">Scenario details</h3><div class="wf-grille">${series.map(carte).join('\n')}</div>`;
+  return `${STYLE}${alerte}${m ? panneau(phrase, chapo, matrice) : chapo}<h3 class="wf-h">Scenario details</h3><div class="wf-grille">${series.map(carte).join('\n')}</div>`;
 }
