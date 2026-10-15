@@ -1113,6 +1113,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       source text NOT NULL DEFAULT 'job'
         CONSTRAINT verification_runs_source_check CHECK (source IN ('job','reviewer')),
       source_job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
+      -- 0147 (#628) — confined, or the stable code of why not.
+      sandbox text,
       created_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_verification_runs_job_created

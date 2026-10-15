@@ -214,6 +214,7 @@ export {
   killProcessTree,
   isGreen,
   sandboxReport,
+  sandboxFact,
   SHELL_POLICY_VERSION,
   DEFAULT_MAX_OUTPUT_CHARS,
   runCliDoctor,

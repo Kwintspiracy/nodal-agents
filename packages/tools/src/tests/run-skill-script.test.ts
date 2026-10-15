@@ -4,7 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runSkillScriptTool, resolvePythonInterpreter } from '../builtin/run-skill-script.ts';
 import type { ToolContext } from '../types.ts';
-import { getSandboxStatus } from '@nodal-agents/sandbox';
+import { getSandboxStatus, type RefusedWrite } from '@nodal-agents/sandbox';
+import type { SandboxReport } from '../builtin/shell-engine';
+
+/** Les écritures refusées d'un résultat CONFINÉ ; un résultat non confiné fait échouer. */
+function refusedOf(out: { sandbox?: SandboxReport }): readonly RefusedWrite[] {
+  if (!out.sandbox?.confined) throw new Error(`not confined: ${JSON.stringify(out.sandbox)}`);
+  return out.sandbox.refusedWrites ?? [];
+}
 
 // Probed once, through the same engine as the scripts (sandbox included).
 const pythonAvailable = (await resolvePythonInterpreter()) !== null;
@@ -146,9 +153,7 @@ describe('run_skill_script', () => {
       expect(out.exitCode).not.toBe(0);
       expect(await readdir(join(storeDir, SLUG))).not.toContain('outputs');
       expect(out.bundleWrites).toBeUndefined();
-      expect(out.sandbox?.refusedWrites.map((r) => r.path)).toContain(
-        join(storeDir, SLUG, 'outputs'),
-      );
+      expect(refusedOf(out).map((r) => r.path)).toContain(join(storeDir, SLUG, 'outputs'));
     },
   );
 

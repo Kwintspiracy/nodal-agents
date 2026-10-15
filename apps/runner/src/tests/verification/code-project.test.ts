@@ -6,7 +6,7 @@
 // d'appels.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { closeJobProcessScope } from '@nodal-agents/sandbox';
+import { closeJobProcessScope, createSandbox, jobProcessScope } from '@nodal-agents/sandbox';
 import { mkdtemp, rm, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -145,6 +145,38 @@ describe('code-project — loadConfig', () => {
     expect(await exists(witness)).toBe(false);
   });
 
+  it('une preuve approuvée sous la politique shell v1 redemande son approbation sous v2 (#628), et RIEN n’est lancé', async () => {
+    const witness = join(dir, 'temoin-v1.txt');
+    const cmd = await script(
+      'policy-v1.js',
+      `require('node:fs').writeFileSync(${JSON.stringify(witness)}, 'x'); process.exit(0)`,
+    );
+    const commands = [{ command: cmd, timeoutSeconds: 20 }];
+    const key = projectKey(projectPath);
+    // Exactement la même révision, approuvée avant le bac à sable : seule la
+    // version de politique diffère.
+    const approuveSousV1 = hashVerificationManifest({
+      verifierConfig: commands,
+      invariants: [],
+      canonicalKey: key,
+      cwd: projectPath,
+      shellPolicyVersion: 1,
+      envAllowlistVersion: ENV_ALLOWLIST_VERSION,
+    });
+    await setProject(commands, approuveSousV1);
+
+    const config = await codeProjectVerifier.loadConfig(db, {
+      entityId: seed.entityId,
+      canonicalKey: key,
+    });
+    expect(config.kind).toBe('pending_approval');
+    if (config.kind === 'pending_approval') {
+      expect(config.manifestHash).toBe(manifestHashOf(commands, key));
+    }
+    expect(await exists(witness)).toBe(false);
+    expect(SHELL_POLICY_VERSION).toBe(2);
+  });
+
   it('hash approuvé = hash courant ⇒ ready, avec cwd = project_path et l’epoch lu', async () => {
     const cmd = await script('ready.js', 'process.exit(0)');
     const commands = [{ command: cmd, timeoutSeconds: 20 }];
@@ -163,6 +195,25 @@ describe('code-project — loadConfig', () => {
 });
 
 describe('code-project — runProof @cap:verifier-un-livrable/moteur', () => {
+  it('chaque commande de preuve dit son régime : sans bac à sable, le code stable (#628)', async () => {
+    const jobId = 'code-project-unconfined';
+    jobProcessScope(jobId, createSandbox(null, { platform: 'linux', log: () => {} }));
+    try {
+      const ok = await script('regime-ok.js', 'process.exit(0)');
+      const seen: ProofCommandRecord[] = [];
+      await codeProjectVerifier.runProof(
+        readyOf([{ command: ok, timeoutSeconds: 20 }]),
+        async (r) => {
+          seen.push(r);
+        },
+        { writableRoots: [dir], jobId },
+      );
+      expect(seen.map((r) => r.sandbox)).toEqual(['SANDBOX_NOT_IMPLEMENTED']);
+    } finally {
+      await closeJobProcessScope(jobId);
+    }
+  });
+
   /** Le dossier de test est le seul inscriptible de la preuve (#628). */
   const scope = (): ProofScope => ({ writableRoots: [dir], jobId: 'code-project-test' });
   const readyOf = (commands: VerifyCommand[]): ReadyConfig => ({

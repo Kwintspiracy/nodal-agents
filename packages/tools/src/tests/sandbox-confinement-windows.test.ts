@@ -19,7 +19,8 @@ import { mkdtemp, mkdir, readdir, readFile, rm, writeFile, realpath } from 'node
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { closeJobProcessScope, getSandboxStatus } from '@nodal-agents/sandbox';
+import { closeJobProcessScope, getSandboxStatus, type RefusedWrite } from '@nodal-agents/sandbox';
+import type { SandboxReport } from '../builtin/shell-engine';
 import { runCommandTool } from '../builtin/run-command';
 import { resolvePythonInterpreter } from '../builtin/run-skill-script';
 import type { ToolContext } from '../types';
@@ -58,6 +59,12 @@ async function run(
 async function expectCanaryIntact(): Promise<void> {
   expect(await readdir(canary)).toEqual(['existing.txt']);
   expect(await readFile(join(canary, 'existing.txt'), 'utf8')).toBe('original');
+}
+
+/** Les écritures refusées d'un résultat CONFINÉ ; un résultat non confiné fait échouer. */
+function refusedOf(out: { sandbox?: SandboxReport }): readonly RefusedWrite[] {
+  if (!out.sandbox?.confined) throw new Error(`not confined: ${JSON.stringify(out.sandbox)}`);
+  return out.sandbox.refusedWrites ?? [];
 }
 
 const alive = (pid: number): boolean => {
@@ -120,7 +127,8 @@ describe.skipIf(!isWindows || tierUnsupported)(
       const out = await run(`echo ok> "${join(ws, 'inside.txt')}"`);
       expect(out.exitCode).toBe(0);
       expect((await readFile(join(ws, 'inside.txt'), 'utf8')).trim()).toBe('ok');
-      expect(out.sandbox?.writableRoots).toContain(ws);
+      expect(out.sandbox).toMatchObject({ confined: true });
+      expect(out.sandbox.confined && out.sandbox.writableRoots).toContain(ws);
     });
 
     it('shell redirection outside: refused, canary intact', async () => {
@@ -141,8 +149,8 @@ describe.skipIf(!isWindows || tierUnsupported)(
       const out = await run(`"${node}" "${join(ws, 'write.cjs')}" "${target}"`);
       await expectCanaryIntact();
       expect(out.exitCode).not.toBe(0);
-      expect(out.sandbox?.refusedWrites.map((r) => r.path)).toContain(target);
-      expect(out.sandbox?.refusedWrites.find((r) => r.path === target)?.error).toMatch(/EPERM/);
+      expect(refusedOf(out).map((r) => r.path)).toContain(target);
+      expect(refusedOf(out).find((r) => r.path === target)?.error).toMatch(/EPERM/);
     });
 
     it('a Python script outside: refused, canary intact, the refusal names the path', async () => {
@@ -158,7 +166,7 @@ describe.skipIf(!isWindows || tierUnsupported)(
       await expectCanaryIntact();
       expect(out.exitCode).not.toBe(0);
       expect(out.stderr).toMatch(/PermissionError/);
-      expect(out.sandbox?.refusedWrites.map((r) => r.path)).toContain(target);
+      expect(refusedOf(out).map((r) => r.path)).toContain(target);
     });
 
     it('a child process outside: refused, canary intact', async () => {
@@ -381,14 +389,15 @@ describe.skipIf(!isWindows || tierUnsupported)(
 describe.runIf(isWindows && tierUnsupported)(
   'sandbox, Windows without the MXC base-container tier — run_command runs unconfined and the reason is said @cap:executer-une-commande/moteur',
   () => {
-    it('the status names the tier; the command runs; the result carries no `sandbox` report', async () => {
+    it('the status names the tier; the command runs; its result says it was not confined, with the code', async () => {
       expect(hereStatus?.state === 'unavailable' && hereStatus.reason).toMatch(/^isolationTier=/);
       ws = await realpath(await mkdtemp(join(tmpdir(), 'nodal-sbx-unsupported-')));
       try {
         const out = await run(`echo ok> "${join(ws, 'inside.txt')}"`);
         expect(out.exitCode).toBe(0);
         expect((await readFile(join(ws, 'inside.txt'), 'utf8')).trim()).toBe('ok');
-        expect(out.sandbox).toBeUndefined();
+        // Le résultat le DIT : la commande n'a pas été confinée, et pourquoi.
+        expect(out.sandbox).toEqual({ confined: false, code: 'SANDBOX_PLATFORM_UNSUPPORTED' });
       } finally {
         await rm(ws, { recursive: true, force: true });
       }

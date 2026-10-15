@@ -23,7 +23,9 @@
 //   - `windowsHide`, `detached` sur Unix (leader de groupe ⇒ kill du groupe) ;
 //   - tree-kill au timeout, 3 s de grâce puis résolution forcée ;
 //   - capture bornée par flux, décodage UTF-8 par StringDecoder, politique
-//     `keep` explicite (tête ou queue).
+//     `keep` explicite (tête ou queue) ;
+//   - (v2, #628) le bac à sable quand il est disponible, les variables de
+//     cache d'outils, le périmètre de processus du job.
 // Changer l'un de ces points = bumper SHELL_POLICY_VERSION.
 //
 // BAC À SABLE (#628, étape 1) : chaque commande passe par
@@ -112,33 +114,48 @@ export interface CommandRunResult {
 }
 
 /**
- * Ce que le tool_result d'une commande confinée dit à l'agent (#628) : où
- * elle pouvait écrire, et quelles écritures ont été refusées, chacune avec
- * la ligne de l'OS citée et son chemin quand la ligne le nomme. Absent quand
- * la commande n'a pas été confinée : rien à dire de plus qu'avant.
+ * Ce que le résultat de TOUTE commande passée par ce moteur dit de son
+ * régime (#628) — invariant #4 : une commande qui a tourné sans bac à sable
+ * le dit elle-même, dans son tool_result, et pas seulement dans un journal.
+ *   - confinée : où elle pouvait écrire, et les écritures refusées (la ligne
+ *     de l'OS citée, le chemin quand la ligne le nomme) — la liste n'est
+ *     présente que si elle n'est pas vide ;
+ *   - non confinée : le code stable de `getSandboxStatus()`, rien de plus —
+ *     chaque commande le paie en jetons, sous macOS et Linux toutes.
  */
-export interface SandboxReport {
-  writableRoots: readonly string[];
-  refusedWrites: readonly RefusedWrite[];
-}
+export type SandboxReport =
+  | { confined: true; writableRoots: readonly string[]; refusedWrites?: readonly RefusedWrite[] }
+  | { confined: false; code: string };
 
 /**
  * La phrase de description, pour le modèle, des outils dont les commandes
  * passent par ce moteur (`run_command`, `run_skill_script`). Une seule copie.
  */
 export const SANDBOX_RESULT_RULE =
-  "When the result carries `sandbox`, Nodal's sandbox confined the process: it could write only " +
-  'inside `sandbox.writableRoots` and its own temp folder (reading and the network stay open). ' +
-  'Each refused write is listed in `sandbox.refusedWrites` with the OS error and, when known, the ' +
-  'path. Write inside those folders instead; do not retry the same path.';
+  "The result's `sandbox` says whether Nodal's sandbox confined the process: `confined: false` " +
+  '(with a `code`) means its writes were not limited, `confined: true` means it could write only ' +
+  'inside `sandbox.writableRoots` and its temp folder, and a refused write is listed in ' +
+  '`sandbox.refusedWrites` (OS error, path when known), so write inside those folders instead of ' +
+  'retrying the same path.';
 
-/** Le rapport de bac à sable d'un résultat, pour les outils qui lancent des commandes. */
-export function sandboxReport(run: CommandRunResult): SandboxReport | undefined {
-  if (run.confinement.kind !== 'confined') return undefined;
+/** Le rapport de bac à sable d'un résultat — toujours présent, confiné ou non. */
+export function sandboxReport(run: CommandRunResult): SandboxReport {
+  const c = run.confinement;
+  if (c.kind === 'unconfined') return { confined: false, code: c.code };
   return {
-    writableRoots: run.confinement.writableRoots,
-    refusedWrites: run.confinement.refusedWrites,
+    confined: true,
+    writableRoots: c.writableRoots,
+    ...(c.refusedWrites.length > 0 ? { refusedWrites: c.refusedWrites } : {}),
   };
+}
+
+/**
+ * Le même fait, en un mot, pour ce qui le CONSERVE (`verification_runs.sandbox`) :
+ * `confined`, ou le code stable de la raison pour laquelle la commande ne
+ * l'a pas été.
+ */
+export function sandboxFact(confinement: CommandConfinement): string {
+  return confinement.kind === 'confined' ? 'confined' : confinement.code;
 }
 
 /**

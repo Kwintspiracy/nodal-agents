@@ -26,7 +26,7 @@ import { mkdtemp, rm, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
-import { closeAllJobProcessScopes } from '@nodal-agents/sandbox';
+import { closeAllJobProcessScopes, getSandboxStatus } from '@nodal-agents/sandbox';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
   and,
@@ -1485,6 +1485,14 @@ describe('finalizeJobSuccess — où la preuve peut écrire (#628)', () => {
       expect(scopes).toEqual([{ writableRoots: [jobFolder, dir, sharedOf(seed.entityId)], jobId }]);
       const runs = await runsOf(jobId);
       expect(runs.map((r) => r.verdict)).toEqual(['green']);
+      // La ligne de preuve garde le régime de la commande : `confined`, ou le
+      // code de la raison — celui que le bac à sable de cette machine donne.
+      const status = await getSandboxStatus();
+      const [row] = await db
+        .select({ sandbox: verificationRuns.sandbox })
+        .from(verificationRuns)
+        .where(eq(verificationRuns.jobId, jobId));
+      expect(row?.sandbox).toBe(status.state === 'available' ? 'confined' : status.code);
     } finally {
       await rm(jobFolder, { recursive: true, force: true });
     }

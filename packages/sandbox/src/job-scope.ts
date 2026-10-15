@@ -137,12 +137,19 @@ async function killTracked(t: TrackedProcess): Promise<void> {
 
 const scopes = new Map<string, JobProcessScope>();
 
-/** Le périmètre du job `jobId`, ouvert à la première demande. */
-export function jobProcessScope(jobId: string): JobProcessScope {
+/**
+ * Le périmètre du job `jobId`, ouvert à la première demande — sous le bac à
+ * sable de ce processus, ou sous `sandbox` quand celui qui l'ouvre le donne
+ * (un test qui veut un bac à sable indisponible). Un périmètre déjà ouvert
+ * sous un AUTRE bac à sable est une erreur, jamais un changement en silence.
+ */
+export function jobProcessScope(jobId: string, sandbox?: Sandbox): JobProcessScope {
   let s = scopes.get(jobId);
   if (!s || s.isClosed) {
-    s = new JobProcessScope(jobId);
+    s = new JobProcessScope(jobId, sandbox ?? defaultSandbox());
     scopes.set(jobId, s);
+  } else if (sandbox !== undefined && s.sandbox !== sandbox) {
+    throw new Error(`JOB_SCOPE_SANDBOX_MISMATCH: ${jobId}`);
   }
   return s;
 }

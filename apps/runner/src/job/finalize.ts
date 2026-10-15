@@ -988,6 +988,7 @@ export async function finalizeJobSuccess(
             verdict: record.verdict,
             testedGeneration: plan.generation,
             testedEpoch: ready.epoch,
+            sandbox: record.sandbox ?? null,
           });
         } catch (error) {
           persistenceFailed = true;

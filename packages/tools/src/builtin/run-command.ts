@@ -118,11 +118,12 @@ export interface RunCommandOutput {
   /** How the command's paths are addressed (#592) — for the model. */
   paths: string;
   /**
-   * Present when Nodal's OS sandbox confined the command (#628): the folders
-   * it could write to, and the writes it was refused (the OS line quoted,
-   * with the path when that line names one).
+   * Whether Nodal's OS sandbox confined the command (#628): when it did, the
+   * folders it could write to and the writes it was refused (the OS line
+   * quoted, with the path when that line names one); when it did not, the
+   * stable code saying why.
    */
-  sandbox?: SandboxReport;
+  sandbox: SandboxReport;
 }
 
 // ─── Tool ───────────────────────────────────────────────────────────────────
@@ -266,9 +267,8 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
  */
 function toRunCommandOutput(run: CommandRunResult): Omit<RunCommandOutput, 'paths'> {
   const o = run.outcome;
-  const sandbox = sandboxReport(run);
   return {
-    ...(sandbox ? { sandbox } : {}),
+    sandbox: sandboxReport(run),
     exitCode: o.kind === 'exit' ? o.exitCode : null,
     stdout: run.stdout,
     stderr:

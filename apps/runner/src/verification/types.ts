@@ -93,6 +93,12 @@ export interface ProofCommandRecord {
   readonly stderrTail: string;
   readonly durationMs: number;
   readonly verdict: RunVerdict;
+  /**
+   * Le régime de la commande (#628) : `confined`, ou le code stable de la
+   * raison pour laquelle elle ne l'a pas été (`sandboxFact`). Absent pour un
+   * constat qui ne lance aucun processus (un document).
+   */
+  readonly sandbox?: string;
 }
 
 /**

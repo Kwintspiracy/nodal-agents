@@ -38,7 +38,7 @@ import {
 } from '@nodal-agents/shared';
 import type { RunVerdict } from '@nodal-agents/shared';
 import { jobProcessScope } from '@nodal-agents/sandbox';
-import { buildChildEnv, isGreen, runCommandSequence } from '@nodal-agents/tools';
+import { buildChildEnv, isGreen, runCommandSequence, sandboxFact } from '@nodal-agents/tools';
 // Le CONTRAT, jamais le registre : le registre importe CE fichier, l'importer
 // en retour ferait un cycle que `pnpm deps:check` refuse (CI de la PR #46).
 import type {
@@ -178,6 +178,8 @@ async function runProof(
             : step.stderr,
         durationMs: step.durationMs,
         verdict: verdictOf(step.outcome.kind, green),
+        // Confinée ou pas, et pourquoi : conservé avec la preuve (#628).
+        sandbox: sandboxFact(step.confinement),
       };
       records.push(record);
       try {

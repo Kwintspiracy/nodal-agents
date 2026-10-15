@@ -191,9 +191,10 @@ export interface RunSkillScriptOutput {
   /** How the script's paths are addressed (#592) — for the model. */
   paths?: string;
   /**
-   * Present when Nodal's OS sandbox confined the script (#628): the folders
-   * it could write to — the agent's folders, never the skill bundle — and
-   * the writes it was refused.
+   * Whether Nodal's OS sandbox confined the script (#628): when it did, the
+   * folders it could write to (the agent's folders, never the skill bundle)
+   * and the writes it was refused; when it did not, the stable code saying
+   * why. Absent only when the script never started (an error is thrown).
    */
   sandbox?: SandboxReport;
 }
@@ -409,9 +410,8 @@ async function runScript(
     ...(ctx.signal ? { signal: ctx.signal } : {}),
   });
   const o = run.outcome;
-  const sandbox = sandboxReport(run);
   return {
-    ...(sandbox ? { sandbox } : {}),
+    sandbox: sandboxReport(run),
     exitCode: o.kind === 'exit' ? o.exitCode : null,
     stdout: run.stdout,
     stderr:
