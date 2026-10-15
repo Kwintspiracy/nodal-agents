@@ -64,6 +64,21 @@ const ACCEPTED_TIER = 'base-container';
 /** La capacité MXC qui ouvre la boucle locale de la machine au conteneur. */
 const HOST_LOOPBACK_CAPABILITY = 'ingressHostLoopbackAllow';
 
+/**
+ * Ce que le bac à sable fait d'un build base-container SANS la capacité de la
+ * boucle locale — LE SEUL ENDROIT où ce choix vit (décision de l'owner en
+ * attente, 15/10) :
+ *   - `required` (C) : indisponible, code `SANDBOX_HOST_LOOPBACK_UNSUPPORTED` ;
+ *     les commandes tournent sans confinement et le bandeau D2 le dit ;
+ *   - `when-available` (A) : confiné quand même, la boucle locale de la
+ *     machine fermée, et le statut le dit dans `limits` avec le même code.
+ * Avec la capacité, les deux ouvrent la boucle locale (`hostLoopback`).
+ */
+export type HostLoopbackPolicy = 'required' | 'when-available';
+export const DEFAULT_HOST_LOOPBACK_POLICY: HostLoopbackPolicy = 'required';
+
+const HOST_LOOPBACK_UNSUPPORTED_REASON = `base-container without the MXC capability ${HOST_LOOPBACK_CAPABILITY}: a confined command cannot reach a service of this machine on 127.0.0.1`;
+
 /** Le backend de processus porte-t-il la capacité de la boucle locale ? */
 function hasHostLoopback(m: MxcModule): boolean {
   return m
@@ -328,6 +343,7 @@ class MxcJobContainer implements JobContainer {
  */
 export function mxcBackend(
   load: () => Promise<MxcModule> = () => import('@microsoft/mxc-sdk/v1'),
+  loopbackPolicy: HostLoopbackPolicy = DEFAULT_HOST_LOOPBACK_POLICY,
 ): SandboxBackend {
   let mod: Promise<MxcModule> | undefined;
   const sdk = (): Promise<MxcModule> => (mod ??= load());
@@ -405,6 +421,14 @@ export function mxcBackend(
           ].join(' | '),
         };
       }
+      hostLoopback = hasHostLoopback(m);
+      if (!hostLoopback && loopbackPolicy === 'required') {
+        return {
+          state: 'unavailable',
+          code: 'SANDBOX_HOST_LOOPBACK_UNSUPPORTED',
+          reason: HOST_LOOPBACK_UNSUPPORTED_REASON,
+        };
+      }
     } catch (e) {
       return { state: 'unavailable', code: 'SANDBOX_PLATFORM_UNSUPPORTED', reason: messageOf(e) };
     }
@@ -453,9 +477,7 @@ export function mxcBackend(
       : {
           state: 'available',
           backend: MXC_BACKEND_NAME,
-          limits: [
-            `host loopback closed: processcontainer lacks ${HOST_LOOPBACK_CAPABILITY} on this Windows build, so a confined command cannot reach a service of this machine on 127.0.0.1`,
-          ],
+          limits: [`SANDBOX_HOST_LOOPBACK_UNSUPPORTED: ${HOST_LOOPBACK_UNSUPPORTED_REASON}`],
         };
   };
 

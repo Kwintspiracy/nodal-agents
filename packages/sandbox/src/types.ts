@@ -15,7 +15,13 @@ export type SandboxUnavailableCode =
   /** Le backend dit lui-même que cette machine ne le supporte pas. */
   | 'SANDBOX_PLATFORM_UNSUPPORTED'
   /** Une commande triviale confinée n'a pas pu tourner : le backend est cassé ici. */
-  | 'SANDBOX_SELF_TEST_FAILED';
+  | 'SANDBOX_SELF_TEST_FAILED'
+  /**
+   * Le backend confinerait, mais sans ouvrir la boucle locale de la machine
+   * (Windows : palier base-container sans la capacité MXC
+   * `ingressHostLoopbackAllow`), et la politique la requiert.
+   */
+  | 'SANDBOX_HOST_LOOPBACK_UNSUPPORTED';
 
 export type SandboxStatus =
   | {
@@ -24,8 +30,8 @@ export type SandboxStatus =
       readonly backend: string;
       /**
        * Ce que la politique de l'étape 1 promet et que CETTE machine ne tient
-       * pas sous ce backend, chaque limite dite avec sa cause (« la boucle
-       * locale de la machine est fermée : … »). Absent quand il n'y en a pas.
+       * pas sous ce backend, chaque limite commençant par son code stable
+       * (`SANDBOX_HOST_LOOPBACK_UNSUPPORTED: …`). Absent quand il n'y en a pas.
        */
       readonly limits?: readonly string[];
     }

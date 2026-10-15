@@ -48,6 +48,36 @@ describe('mxcBackend — palier d’isolation (tous systèmes)', () => {
   });
 });
 
+describe('mxcBackend — boucle locale, politique par défaut (tous systèmes)', () => {
+  it('base-container SANS ingressHostLoopbackAllow : indisponible, SANDBOX_HOST_LOOPBACK_UNSUPPORTED, aucune commande lancée', async () => {
+    let spawned = 0;
+    const sdk = {
+      getPlatformSupport: () => ({
+        isSupported: true,
+        reason: '',
+        availableMethods: ['processcontainer'],
+        isolationTier: 'base-container',
+      }),
+      // Ce que windows-11-arm (26200.9457) rend : pas la capacité.
+      getAvailableBackends: () => [
+        { backend: 'processcontainer', tier: 'base-container', capabilities: [], warnings: [] },
+      ],
+      spawn: () => {
+        spawned++;
+        throw new Error('must not be called');
+      },
+    };
+    const backend = mxcBackend(() => Promise.resolve(sdk as never));
+    expect(await backend.probe()).toEqual({
+      state: 'unavailable',
+      code: 'SANDBOX_HOST_LOOPBACK_UNSUPPORTED',
+      reason:
+        'base-container without the MXC capability ingressHostLoopbackAllow: a confined command cannot reach a service of this machine on 127.0.0.1',
+    });
+    expect(spawned).toBe(0);
+  });
+});
+
 describe('mxcErrorText — une erreur du SDK dit quoi ET que faire (tous systèmes)', () => {
   it('la remédiation de MXC suit le message ; sans remédiation, `code: message` seul', () => {
     // Les champs d'un `MxcError` levé par le SDK 1.0.0 sur un Node trop ancien
@@ -94,26 +124,41 @@ describe.runIf(isWindows && tier !== 'base-container')(
 describe.runIf(isWindows && tier === 'base-container')(
   'mxcBackend — le vrai MXC, palier base-container (Windows only: MXC is the Windows backend of #628)',
   () => {
-    it('la sonde lance une commande confinée triviale et rend `available` ; la boucle locale fermée est dite, et seulement si elle l’est', async () => {
-      const status = await mxcBackend().probe();
-      // Ce que MXC dit de CE build (26200.9711 : la capacité ; 26200.9457,
-      // l'image windows-11-arm : pas la capacité) : les deux branches sont
-      // ainsi prouvées, chacune sur la machine qui la porte.
-      const sdk = await import('@microsoft/mxc-sdk/v1');
-      const loopback = sdk
+    // Ce que MXC dit de CE build (26200.9711 : la capacité ; 26200.9457,
+    // l'image windows-11-arm : pas la capacité). Chaque branche est prouvée
+    // sur la machine qui la porte, sous les deux valeurs de la politique.
+    const loopbackCapability = async (): Promise<boolean> =>
+      (await import('@microsoft/mxc-sdk/v1'))
         .getAvailableBackends()
         .some(
           (b) =>
             b.backend === 'processcontainer' && b.capabilities.includes('ingressHostLoopbackAllow'),
         );
+
+    it('politique par défaut (required) : `available` avec la capacité ; sans elle, SANDBOX_HOST_LOOPBACK_UNSUPPORTED', async () => {
+      const status = await mxcBackend().probe();
       expect(status, JSON.stringify(status)).toEqual(
-        loopback
+        (await loopbackCapability())
+          ? { state: 'available', backend: MXC_BACKEND_NAME }
+          : {
+              state: 'unavailable',
+              code: 'SANDBOX_HOST_LOOPBACK_UNSUPPORTED',
+              reason:
+                'base-container without the MXC capability ingressHostLoopbackAllow: a confined command cannot reach a service of this machine on 127.0.0.1',
+            },
+      );
+    });
+
+    it('politique when-available : `available` partout ; la boucle locale fermée est dite dans `limits`, et seulement si elle l’est', async () => {
+      const status = await mxcBackend(undefined, 'when-available').probe();
+      expect(status, JSON.stringify(status)).toEqual(
+        (await loopbackCapability())
           ? { state: 'available', backend: MXC_BACKEND_NAME }
           : {
               state: 'available',
               backend: MXC_BACKEND_NAME,
               limits: [
-                'host loopback closed: processcontainer lacks ingressHostLoopbackAllow on this Windows build, so a confined command cannot reach a service of this machine on 127.0.0.1',
+                'SANDBOX_HOST_LOOPBACK_UNSUPPORTED: base-container without the MXC capability ingressHostLoopbackAllow: a confined command cannot reach a service of this machine on 127.0.0.1',
               ],
             },
       );

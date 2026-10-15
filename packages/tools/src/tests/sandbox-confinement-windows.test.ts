@@ -19,7 +19,14 @@ import { mkdtemp, mkdir, readdir, readFile, rm, writeFile, realpath } from 'node
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { closeJobProcessScope, getSandboxStatus, type RefusedWrite } from '@nodal-agents/sandbox';
+import {
+  closeJobProcessScope,
+  createSandbox,
+  getSandboxStatus,
+  jobProcessScope,
+  mxcBackend,
+  type RefusedWrite,
+} from '@nodal-agents/sandbox';
 import type { SandboxReport } from '../builtin/shell-engine';
 import { runCommandTool } from '../builtin/run-command';
 import { resolvePythonInterpreter } from '../builtin/run-skill-script';
@@ -31,6 +38,16 @@ let base: string;
 let ws: string;
 let canary: string;
 const node = process.execPath;
+
+/**
+ * Le bac à sable de la batterie : le VRAI backend MXC, sous la politique de
+ * boucle locale `when-available` (windows-mxc.ts). La batterie prouve le mur
+ * des écritures et la vie des processus d'un job ; elle le prouve donc aussi
+ * sur un build sans la capacité `ingressHostLoopbackAllow` (windows-11-arm),
+ * où la politique par défaut rend le bac à sable indisponible. Même code de
+ * production, une valeur de son unique paramètre ; aucune branche de test.
+ */
+const batterySandbox = createSandbox(mxcBackend(undefined, 'when-available'));
 
 function ctx(jobId = 'job-sbx', signal?: AbortSignal): ToolContext {
   return {
@@ -49,9 +66,13 @@ async function run(
   timeoutSeconds = 60,
   opts: { jobId?: string; signal?: AbortSignal } = {},
 ) {
+  const c = ctx(opts.jobId, opts.signal);
+  // Le périmètre du job, ouvert sous le bac à sable de la batterie ; le vrai
+  // `run_command` le reprend tel quel (jobProcessScope).
+  jobProcessScope(c.jobId, batterySandbox);
   return runCommandTool.execute(
     { purpose: 'sandbox test', command, timeout_seconds: timeoutSeconds },
-    ctx(opts.jobId, opts.signal),
+    c,
   );
 }
 
@@ -93,7 +114,7 @@ describe.skipIf(!isWindows || tierUnsupported)(
   'sandbox, Windows (MXC) — run_command writes only inside its folders @cap:executer-une-commande/moteur (Windows only: the macOS and Linux backends come in later PRs of #628 — skipped on a Windows without the MXC base-container tier, e.g. the GitHub Windows Server runner)',
   () => {
     beforeAll(async () => {
-      const status = await getSandboxStatus();
+      const status = await batterySandbox.status();
       // Échoue fort, avec la raison, plutôt que de passer sans rien confiner.
       // `limits` (la boucle locale de la machine, fermée sur certains builds)
       // ne touche pas à ce que cette suite prouve.

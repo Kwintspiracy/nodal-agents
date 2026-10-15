@@ -15,7 +15,24 @@ import { mkdtemp, mkdir, readdir, readFile, rm, writeFile, realpath } from 'node
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { closeJobProcessScope, getSandboxStatus } from '@nodal-agents/sandbox';
+import {
+  closeJobProcessScope,
+  createSandbox,
+  getSandboxStatus,
+  jobProcessScope,
+  mxcBackend,
+} from '@nodal-agents/sandbox';
+
+/**
+ * Le bac à sable de la batterie : le VRAI backend MXC, sous la politique de
+ * boucle locale `when-available` (windows-mxc.ts). La suite prouve le mur
+ * des écritures, le même pour les trois chemins ; elle le prouve donc aussi
+ * sur un build sans la capacité `ingressHostLoopbackAllow` (windows-11-arm),
+ * où la politique par défaut rend le bac à sable indisponible. Même code de
+ * production, une valeur de son unique paramètre ; aucune branche de test.
+ */
+const batterySandbox = createSandbox(mxcBackend(undefined, 'when-available'));
+
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import type { ToolContext } from '@nodal-agents/tools';
 import { codeProjectVerifier } from '../../verification/code-project.ts';
@@ -129,7 +146,8 @@ describe.skipIf(!isWindows || tierUnsupported)(
   'sandbox — run_command, run_skill_script and proof commands go through ONE confinement @cap:executer-une-commande/moteur (Windows only: the macOS and Linux backends come in later PRs of #628 — skipped on a Windows without the MXC base-container tier, e.g. the GitHub Windows Server runner)',
   () => {
     beforeAll(async () => {
-      const status = await getSandboxStatus();
+      const status = await batterySandbox.status();
+      jobProcessScope('job-3p', batterySandbox);
       // `limits` (la boucle locale de la machine, fermée sur certains builds)
       // ne touche pas à ce que cette suite prouve.
       expect(status, JSON.stringify(status)).toMatchObject({
