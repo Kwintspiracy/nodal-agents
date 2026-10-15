@@ -7,11 +7,45 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { sandboxDeniedPaths, readonlyTraversalRoots } from '../policy';
+import {
+  sandboxDeniedPaths,
+  readonlyTraversalRoots,
+  nodalDeniedEndpoints,
+  NodalPortsUnknown,
+} from '../policy';
 
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+
+describe('nodalDeniedEndpoints', () => {
+  const base = { PORT: '3001', WEB_PORT: '3000', DATABASE_URL: 'postgres://u@127.0.0.1:25432/db' };
+
+  it('refuse le runner, le web et le port Postgres de l’URL', () => {
+    expect(new Set(nodalDeniedEndpoints(base).map((e) => e.port))).toEqual(
+      new Set([3001, 3000, 25432]),
+    );
+  });
+
+  it('prend le port Postgres PAR DÉFAUT (5432) quand l’URL n’en porte pas — jamais laissé tomber', () => {
+    const ports = nodalDeniedEndpoints({ ...base, DATABASE_URL: 'postgres://u@127.0.0.1/db' }).map(
+      (e) => e.port,
+    );
+    expect(ports).toContain(5432);
+  });
+
+  it('échoue fort (NodalPortsUnknown) si PORT, WEB_PORT ou DATABASE_URL manque ou est illisible', () => {
+    for (const bad of [
+      { ...base, PORT: undefined },
+      { ...base, WEB_PORT: 'x' },
+      { ...base, DATABASE_URL: undefined },
+      { ...base, DATABASE_URL: 'not a url' },
+      { ...base, DATABASE_URL: 'redis://127.0.0.1/0' },
+    ]) {
+      expect(() => nodalDeniedEndpoints(bad), JSON.stringify(bad)).toThrow(NodalPortsUnknown);
+    }
+  });
 });
 
 describe('sandboxDeniedPaths', () => {

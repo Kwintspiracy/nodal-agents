@@ -1,15 +1,18 @@
 // broker-node.test.ts — le Node dédié du courtier : téléchargé une fois,
-// vérifié contre SHASUMS256.txt, gardé dans le cache d'outils ; un échec se
-// DIT avec un code, jamais un repli (#628, D5). Les téléchargements sont
-// injectés : ce test ne touche pas le réseau.
+// vérifié contre une somme SHA-256 ÉPINGLÉE DANS LE CODE (#628, D5 + P1-2),
+// gardé SOUS LE DOSSIER DES SCRIPTS DU BAC À SABLE (hors des racines
+// inscriptibles par une commande confinée) ; un échec se DIT avec un code,
+// jamais un repli. Les téléchargements et la somme attendue sont injectés :
+// ce test ne touche pas le réseau et sert un faux node.exe.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   BROKER_NODE_VERSION,
+  BROKER_NODE_SHA256,
   BrokerNodeUnavailable,
   ensureBrokerNode,
   brokerNodeDir,
@@ -17,17 +20,19 @@ import {
   type BrokerNodeDeps,
 } from '../broker-node';
 
-let cache: string;
+let dir: string;
 let prev: string | undefined;
 beforeEach(() => {
-  cache = mkdtempSync(join(tmpdir(), 'nodal-brokernode-'));
-  prev = process.env['NODALAI_TOOL_CACHE_ROOT'];
-  process.env['NODALAI_TOOL_CACHE_ROOT'] = cache;
+  dir = mkdtempSync(join(tmpdir(), 'nodal-brokernode-'));
+  prev = process.env['NODALAI_SANDBOX_DIR'];
+  // Le Node du courtier vit sous sandboxHostDir() ; on le redirige vers un
+  // temporaire (comme le fait test-kit) pour ne pas écrire dans le vrai ~/.nodalai.
+  process.env['NODALAI_SANDBOX_DIR'] = dir;
 });
 afterEach(() => {
-  if (prev === undefined) delete process.env['NODALAI_TOOL_CACHE_ROOT'];
-  else process.env['NODALAI_TOOL_CACHE_ROOT'] = prev;
-  rmSync(cache, { recursive: true, force: true });
+  if (prev === undefined) delete process.env['NODALAI_SANDBOX_DIR'];
+  else process.env['NODALAI_SANDBOX_DIR'] = prev;
+  rmSync(dir, { recursive: true, force: true });
 });
 
 const FAKE = Buffer.from('fake node.exe bytes');
@@ -37,10 +42,7 @@ const ARCH = 'x64';
 function deps(overrides: Partial<BrokerNodeDeps> = {}): BrokerNodeDeps {
   return {
     distBaseUrl: 'https://example.test/dist/',
-    fetchText: async (url) => {
-      expect(url).toBe(`https://example.test/dist/v${BROKER_NODE_VERSION}/SHASUMS256.txt`);
-      return `${FAKE_SHA}  win-x64/node.exe\n0000  win-arm64/node.exe\n`;
-    },
+    expectedSha256: FAKE_SHA,
     fetchBytes: async (url) => {
       expect(url).toBe(`https://example.test/dist/v${BROKER_NODE_VERSION}/win-x64/node.exe`);
       return FAKE;
@@ -49,10 +51,19 @@ function deps(overrides: Partial<BrokerNodeDeps> = {}): BrokerNodeDeps {
   };
 }
 
+describe('broker Node pin @cap:executer-une-commande/moteur', () => {
+  it('la somme épinglée est un SHA-256 (64 hexa) pour chaque arch Windows', () => {
+    for (const arch of ['win-x64', 'win-arm64'] as const) {
+      expect(BROKER_NODE_SHA256[arch]).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+});
+
 describe('ensureBrokerNode @cap:executer-une-commande/moteur', () => {
-  it('télécharge, vérifie la somme, et garde le node.exe sous le cache d’outils', async () => {
+  it('télécharge, vérifie la somme, et garde le node.exe sous le dossier du bac à sable', async () => {
     const path = await ensureBrokerNode(deps(), BROKER_NODE_VERSION, ARCH);
     expect(path).toBe(join(brokerNodeDir(BROKER_NODE_VERSION, ARCH), 'node.exe'));
+    expect(path.toLowerCase()).toContain(join(dir, 'broker-node').toLowerCase());
     expect(existsSync(path)).toBe(true);
     expect(await readCachedSha(BROKER_NODE_VERSION, ARCH)).toBe(FAKE_SHA);
   });
@@ -67,7 +78,7 @@ describe('ensureBrokerNode @cap:executer-une-commande/moteur', () => {
 
   it('réseau coupé : BrokerNodeUnavailable avec le code et l’erreur réelle', async () => {
     const offline = deps({
-      fetchText: async () => {
+      fetchBytes: async () => {
         throw new Error('getaddrinfo ENOTFOUND nodejs.org');
       },
     });
@@ -77,14 +88,10 @@ describe('ensureBrokerNode @cap:executer-une-commande/moteur', () => {
     expect((err as BrokerNodeUnavailable).message).toMatch(/ENOTFOUND nodejs\.org/);
   });
 
-  it('un node.exe déjà en cache n’est pas retéléchargé', async () => {
+  it('un node.exe en cache dont la somme CORRESPOND n’est pas retéléchargé', async () => {
     await ensureBrokerNode(deps(), BROKER_NODE_VERSION, ARCH);
     let touched = false;
     const second = deps({
-      fetchText: async () => {
-        touched = true;
-        return '';
-      },
       fetchBytes: async () => {
         touched = true;
         return FAKE;
@@ -93,5 +100,20 @@ describe('ensureBrokerNode @cap:executer-une-commande/moteur', () => {
     const path = await ensureBrokerNode(second, BROKER_NODE_VERSION, ARCH);
     expect(existsSync(path)).toBe(true);
     expect(touched).toBe(false);
+  });
+
+  it('un node.exe en cache ALTÉRÉ (somme changée) est retéléchargé, pas réutilisé', async () => {
+    const path = await ensureBrokerNode(deps(), BROKER_NODE_VERSION, ARCH);
+    writeFileSync(path, Buffer.from('tampered by a confined command')); // réécrit
+    let refetched = false;
+    const again = deps({
+      fetchBytes: async () => {
+        refetched = true;
+        return FAKE; // le vrai binaire (somme attendue) revient
+      },
+    });
+    await ensureBrokerNode(again, BROKER_NODE_VERSION, ARCH);
+    expect(refetched).toBe(true);
+    expect(await readCachedSha(BROKER_NODE_VERSION, ARCH)).toBe(FAKE_SHA);
   });
 });

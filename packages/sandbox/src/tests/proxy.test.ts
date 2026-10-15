@@ -98,7 +98,7 @@ describe('startNodalProxy @cap:executer-une-commande/moteur', () => {
     expect(r.status, JSON.stringify(r)).not.toBe(403);
   });
 
-  it('CONNECT to a denied local port is refused', async () => {
+  it('CONNECT to a denied local port is refused, by the RESOLVED address', async () => {
     const nodal = await localServer();
     const proxy = await startNodalProxy([{ port: nodal.port }]);
     closers.push(() => proxy.close());
@@ -109,5 +109,27 @@ describe('startNodalProxy @cap:executer-une-commande/moteur', () => {
     const [chunk] = (await once(sock, 'data')) as [Buffer];
     expect(String(chunk)).toMatch(/^HTTP\/1\.1 403/);
     sock.destroy();
+  });
+
+  // Les contournements de la passe 3 : la décision est prise sur l'ADRESSE
+  // résolue, pas sur la chaîne de l'hôte.
+  it('refuses the denied port reached through a loopback alias (127.0.0.2) and a mapped IPv6', async () => {
+    const nodal = await localServer();
+    const proxy = await startNodalProxy([{ port: nodal.port }]);
+    closers.push(() => proxy.close());
+    for (const host of ['127.0.0.2', '127.255.255.254', '[::ffff:127.0.0.1]', '[::1]']) {
+      const r = await getThroughProxy(proxy, `http://${host}:${nodal.port}/`);
+      expect(r.status, `host ${host}`).toBe(403);
+    }
+  });
+
+  it('refuses the denied port reached through a NAME that resolves to loopback', async () => {
+    const nodal = await localServer();
+    const proxy = await startNodalProxy([{ port: nodal.port }]);
+    closers.push(() => proxy.close());
+    // `localhost` resolves to a loopback address without external DNS; the
+    // decision must catch it by its resolved address, not its literal string.
+    const r = await getThroughProxy(proxy, `http://localhost:${nodal.port}/`);
+    expect(r.status).toBe(403);
   });
 });

@@ -42,7 +42,12 @@ import { PassThrough } from 'node:stream';
 import type * as MxcSdk from '@microsoft/mxc-sdk/v1';
 import type { ContainerRequest } from '@microsoft/mxc-sdk/v1';
 import { windowsSpawnParts } from './command-line';
-import { sandboxDeniedPaths, readonlyTraversalRoots, nodalDeniedEndpoints } from './policy';
+import {
+  sandboxDeniedPaths,
+  readonlyTraversalRoots,
+  nodalDeniedEndpoints,
+  NodalPortsUnknown,
+} from './policy';
 import { startNodalProxy, type NodalProxy } from './proxy';
 import { ensureJobHostScript, sandboxHostDir } from './job-host';
 import { MxcBroker, mxcErrorText, type BrokeredContainer, type MxcErrorFields } from './mxc-broker';
@@ -431,13 +436,14 @@ export function mxcBackend(
     networkPolicy === 'proxy'
       ? networkSetup('proxy', (await proxy()).url)
       : networkSetup('deny-all', null);
-  // Le Node du courtier, résolu une fois : un chemin fixe (tests), ou le build
-  // officiel que Nodal télécharge et vérifie. Résolu AVANT le premier `spawn`,
-  // qui est synchrone.
+  // Le Node du courtier : un chemin fixe (tests), ou le build officiel que
+  // Nodal télécharge. Résolu À CHAQUE ouverture, pas une fois : `ensureBrokerNode`
+  // re-vérifie la somme épinglée du node.exe en cache avant chaque lancement
+  // (#628, P1-2) et le retélécharge s'il a changé.
   const brokerNodePath = (): Promise<string> =>
     typeof brokerNode === 'string' ? Promise.resolve(brokerNode) : ensureBrokerNode(brokerNode);
-  const broker = async (): Promise<MxcBroker> =>
-    (brokerClient ??= new MxcBroker(fileURLToPath(import.meta.url), await brokerNodePath()));
+  const broker = (nodePath: string): MxcBroker =>
+    (brokerClient ??= new MxcBroker(fileURLToPath(import.meta.url), nodePath));
 
   const openContainer = async (
     writableRoots: readonly string[],
@@ -452,10 +458,12 @@ export function mxcBackend(
     let opened: BrokeredContainer;
     try {
       const net = await setup();
-      const b = await broker();
+      const b = broker(await brokerNodePath());
       opened = await b.open(hostRequest(ensureJobHostScript(), writableRoots, environment, net));
     } catch (e) {
-      if (e instanceof BrokerNodeUnavailable) throw new SandboxStartError(e.message, e.code);
+      if (e instanceof BrokerNodeUnavailable || e instanceof NodalPortsUnknown) {
+        throw new SandboxStartError(e.message, e.code);
+      }
       throw e instanceof SandboxStartError ? e : new SandboxStartError(messageOf(e));
     }
     const container = new MxcJobContainer(opened);

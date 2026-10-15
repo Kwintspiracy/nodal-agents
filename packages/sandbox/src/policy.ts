@@ -77,24 +77,54 @@ export function toolCacheRoot(): string {
  * Le proxy (proxy.ts) refuse ces ports sur les adresses locales ; tout le
  * reste — internet et les services tiers locaux — passe.
  */
+/**
+ * Les ports de Nodal n'ont pas pu être déterminés : on NE refuse jamais moins
+ * en silence (#628, P2-3). Le backend en fait un statut indisponible codé.
+ */
+export class NodalPortsUnknown extends Error {
+  readonly code = 'SANDBOX_NODAL_PORTS_UNKNOWN';
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'NodalPortsUnknown';
+  }
+}
+
+/** Le port par défaut d'un schéma d'URL de base, quand l'URL n'en porte pas. */
+const SCHEME_DEFAULT_PORT: Record<string, number> = {
+  'postgres:': 5432,
+  'postgresql:': 5432,
+};
+
 export function nodalDeniedEndpoints(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): { port: number }[] {
   const ports = new Set<number>();
-  const addPort = (v: string | undefined): void => {
+  const required = (name: string): number => {
+    const v = env[name];
     const n = Number(v);
-    if (Number.isInteger(n) && n > 0 && n < 65536) ports.add(n);
-  };
-  addPort(env['PORT']);
-  addPort(env['WEB_PORT']);
-  const dbUrl = env['DATABASE_URL'];
-  if (dbUrl) {
-    try {
-      addPort(new URL(dbUrl).port);
-    } catch {
-      /* URL illisible : pas de port à refuser de cette source */
+    if (!v || !Number.isInteger(n) || n < 1 || n > 65535) {
+      throw new NodalPortsUnknown(`${name} is missing or not a port: ${JSON.stringify(v)}`);
     }
+    return n;
+  };
+  ports.add(required('PORT'));
+  ports.add(required('WEB_PORT'));
+  // Postgres : le port de l'URL, ou le port par défaut du schéma — jamais
+  // laissé tomber en silence (`Number('')` valait 0, filtré, et le port du
+  // Postgres restait joignable).
+  const dbUrl = env['DATABASE_URL'];
+  if (!dbUrl) throw new NodalPortsUnknown('DATABASE_URL is missing');
+  let u: URL;
+  try {
+    u = new URL(dbUrl);
+  } catch {
+    throw new NodalPortsUnknown('DATABASE_URL is not a URL');
   }
+  const dbPort = u.port ? Number(u.port) : SCHEME_DEFAULT_PORT[u.protocol];
+  if (!dbPort || !Number.isInteger(dbPort) || dbPort < 1 || dbPort > 65535) {
+    throw new NodalPortsUnknown(`DATABASE_URL has no port and no known default (${u.protocol})`);
+  }
+  ports.add(dbPort);
   return [...ports].map((port) => ({ port }));
 }
 

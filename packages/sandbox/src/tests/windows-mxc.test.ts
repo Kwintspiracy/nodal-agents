@@ -94,6 +94,9 @@ describe.runIf(isWindows && tier !== 'base-container')(
 describe.runIf(isWindows && tier === 'base-container')(
   'mxcBackend — le vrai MXC, palier base-container (Windows only: MXC is the Windows backend of #628)',
   () => {
+    // Les ports de Nodal que le régime proxy refuse (nodalDeniedEndpoints) sont
+    // fournis globalement par le setupFile de test-kit (#628, P2-3).
+
     // Le proxy côté hôte est-il joignable depuis le conteneur sur CE build ?
     // Empiriquement il l'est là où MXC porte `ingressHostLoopbackAllow`
     // (26200.9711) et pas là où la capacité manque (26200.9457,

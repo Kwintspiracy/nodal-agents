@@ -31,7 +31,11 @@ let comfyPort = 0;
 let nodalPort = 0;
 let rawPort = 0;
 let ws = '';
-const savedPort = process.env['PORT'];
+const savedEnv: Record<string, string | undefined> = {
+  PORT: process.env['PORT'],
+  WEB_PORT: process.env['WEB_PORT'],
+  DATABASE_URL: process.env['DATABASE_URL'],
+};
 
 if (isWindows) {
   ws = mkdtempSync(join(tmpdir(), 'nodal-proxy-'));
@@ -61,20 +65,32 @@ async function setup(): Promise<void> {
   comfyPort = (comfy.address() as { port: number }).port;
   nodalPort = (nodal.address() as { port: number }).port;
   rawPort = (rawServer.address() as { port: number }).port;
-  // Le port de Nodal que le proxy doit refuser, lu de l'env par le backend.
+  // Les ports de Nodal que le proxy doit refuser, lus de l'env par le backend
+  // (nodalDeniedEndpoints). Le port runner = le faux serveur « nodal » ; le web
+  // et le Postgres sont des ports à part (non joints par le test).
   process.env['PORT'] = String(nodalPort);
+  process.env['WEB_PORT'] = String(nodalPort + 1);
+  process.env['DATABASE_URL'] = `postgres://u@127.0.0.1:${nodalPort + 2}/db`;
   status = await sandbox!.status();
 }
 
 if (isWindows) beforeAll(setup, 120_000);
 
 afterAll(() => {
-  if (savedPort === undefined) delete process.env['PORT'];
-  else process.env['PORT'] = savedPort;
+  for (const [k, v] of Object.entries(savedEnv)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
   comfy?.close();
   nodal?.close();
   rawServer?.close();
-  if (ws) rmSync(ws, { recursive: true, force: true });
+  if (ws) {
+    try {
+      rmSync(ws, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch {
+      /* laissé au nettoyage de l'OS */
+    }
+  }
 });
 
 // `runIf` est évalué à la collecte, avant beforeAll : on garde juste Windows,
@@ -97,6 +113,17 @@ describe.runIf(isWindows)(
       return e;
     };
     const unavailable = (): boolean => status?.state !== 'available';
+
+    // release:check (machine de l'owner) pose NODAL_SANDBOX_REQUIRE_PROXY=1 :
+    // c'est le SEUL endroit où le filtrage proxy est prouvé, donc la suite doit
+    // y TOURNER, pas se sauter. Si le proxy y devenait injoignable, ce test
+    // rougit au lieu de laisser release:check vert sans rien prouver (#628,
+    // P2-5). La CI 9457 ne pose pas le drapeau : là, les cas ci-dessous se
+    // sautent et windows-mxc.test.ts affirme l'indisponibilité codée.
+    it('the proxy regime is actually exercised where release:check requires it', () => {
+      if (process.env['NODAL_SANDBOX_REQUIRE_PROXY'] !== '1') return;
+      expect(status, JSON.stringify(status)).toMatchObject({ state: 'available' });
+    });
 
     async function once_(container: JobContainer, command: string): Promise<string> {
       const p = await container.start({ target: { command }, cwd: ws, env: env() });

@@ -25,6 +25,7 @@ export {
   resolveWritableRoots,
   sandboxDeniedPaths,
   nodalDeniedEndpoints,
+  NodalPortsUnknown,
   toolCacheEnv,
   toolCacheRoot,
 } from './policy';
@@ -60,6 +61,7 @@ export {
   BROKER_NODE_VERSION,
   BrokerNodeUnavailable,
   ensureBrokerNode,
+  BROKER_NODE_SHA256,
   brokerNodeDir,
   readCachedSha,
   type BrokerNodeDeps,

@@ -21,7 +21,9 @@ export type SandboxUnavailableCode =
   /** Le Node dédié du courtier n'a pas pu être obtenu (réseau, somme). */
   | 'SANDBOX_BROKER_NODE_UNAVAILABLE'
   /** Le proxy réseau (côté hôte) n'est pas joignable depuis le conteneur. */
-  | 'SANDBOX_PROXY_UNREACHABLE';
+  | 'SANDBOX_PROXY_UNREACHABLE'
+  /** Les ports de Nodal à refuser n'ont pas pu être déterminés (config absente). */
+  | 'SANDBOX_NODAL_PORTS_UNKNOWN';
 
 export type SandboxStatus =
   | {

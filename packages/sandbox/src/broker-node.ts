@@ -19,15 +19,28 @@
 
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { toolCacheRoot } from './policy';
+import { sandboxHostDir } from './job-host';
 
 /**
  * La version épinglée du Node du courtier : la dernière 24 LTS (Krypton) au
  * 2026-10-14. Au-dessus du plancher du SDK (24.21) ; montée à la main, testée.
  */
 export const BROKER_NODE_VERSION = '24.22.0';
+
+/**
+ * La somme SHA-256 attendue du `node.exe` officiel, ÉPINGLÉE ICI par arch
+ * (#628, P1-2). On la vérifie au téléchargement ET avant chaque lancement,
+ * contre cette valeur du code — pas contre un SHASUMS256.txt venu du même
+ * canal que le binaire (qui ne prouverait rien si le canal est compromis).
+ * Relevées de https://nodejs.org/dist/v24.22.0/SHASUMS256.txt le 2026-10-15.
+ * À changer EN MÊME TEMPS que BROKER_NODE_VERSION.
+ */
+export const BROKER_NODE_SHA256: Record<'win-x64' | 'win-arm64', string> = {
+  'win-x64': 'ba93f9a70bd86fce3ebbb39ec758501458453467aa92a34a0a3602d1e3fc2b9c',
+  'win-arm64': 'df4b0e71e4e4d022bf8582fbe75f6061feb9c4a111a86f3fec6300d24b6fe5e0',
+};
 
 /** `process.arch` → le dossier d'arch de nodejs.org. Les seuls supportés. */
 function winArch(arch: string): 'win-x64' | 'win-arm64' {
@@ -36,9 +49,16 @@ function winArch(arch: string): 'win-x64' | 'win-arm64' {
   throw new Error(`unsupported Windows arch for the broker Node: ${arch}`);
 }
 
-/** Où le Node du courtier est gardé, sous le cache d'outils (donc lisible). */
+/**
+ * Où le Node du courtier est gardé : SOUS LE DOSSIER DES SCRIPTS DU BAC À
+ * SABLE (sandboxHostDir, ~/.nodalai/sandbox), donc sous le dossier de données
+ * de Nodal — que le bac à sable REFUSE en écriture à une commande confinée
+ * (D1) et ne re-concède qu'en lecture. Jamais sous le cache d'outils, qui est
+ * une racine INSCRIPTIBLE : une commande confinée aurait pu y réécrire le
+ * node.exe que le courtier (non confiné) relance (#628, P1-2).
+ */
 export function brokerNodeDir(version = BROKER_NODE_VERSION, arch: string = process.arch): string {
-  return join(toolCacheRoot(), 'broker-node', version, winArch(arch));
+  return join(sandboxHostDir(), 'broker-node', version, winArch(arch));
 }
 
 function brokerNodePath(version = BROKER_NODE_VERSION, arch: string = process.arch): string {
@@ -54,51 +74,44 @@ export class BrokerNodeUnavailable extends Error {
   }
 }
 
-/** Ce qu'on injecte pour les tests : d'où lire, et comment récupérer un octet. */
+/** Ce qu'on injecte pour les tests : d'où lire, quoi récupérer, quelle somme. */
 export interface BrokerNodeDeps {
   /** Base des URLs nodejs.org ; une barre finale. */
   readonly distBaseUrl?: string;
-  /** Récupère une URL en texte (SHASUMS256.txt). */
-  readonly fetchText?: (url: string) => Promise<string>;
   /** Récupère une URL en octets (node.exe). */
   readonly fetchBytes?: (url: string) => Promise<Uint8Array>;
+  /**
+   * La somme attendue, pour les tests qui servent un faux node.exe (le produit
+   * ne la passe jamais : il vérifie contre `BROKER_NODE_SHA256` épinglé).
+   */
+  readonly expectedSha256?: string;
 }
 
 const DEFAULT_BASE = 'https://nodejs.org/dist/';
-const defaultFetchText = async (url: string): Promise<string> => {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText} for ${url}`);
-  return r.text();
-};
 const defaultFetchBytes = async (url: string): Promise<Uint8Array> => {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`${r.status} ${r.statusText} for ${url}`);
   return new Uint8Array(await r.arrayBuffer());
 };
 
-/** La somme attendue de `win-<arch>/node.exe`, lue dans SHASUMS256.txt. */
-function expectedSha(shasums: string, arch: 'win-x64' | 'win-arm64'): string {
-  for (const line of shasums.split('\n')) {
-    const [sha, name] = line.trim().split(/\s+/);
-    if (name === `${arch}/node.exe` && sha) return sha.toLowerCase();
-  }
-  throw new Error(`SHASUMS256.txt has no entry for ${arch}/node.exe`);
-}
-
 const inFlight = new Map<string, Promise<string>>();
 
 /**
- * Le chemin du Node du courtier, téléchargé et vérifié si besoin. Un seul
- * téléchargement à la fois par (version, arch). Lève `BrokerNodeUnavailable`
- * si le réseau échoue ou si la somme ne correspond pas — jamais de repli.
+ * Le chemin du Node du courtier, téléchargé et vérifié si besoin. Un node.exe
+ * en cache est RE-VÉRIFIÉ contre la somme épinglée ; s'il ne correspond pas
+ * (altéré, tronqué), il est retéléchargé — on ne lance jamais un binaire dont
+ * la somme a changé. Un seul téléchargement à la fois par (version, arch).
+ * Lève `BrokerNodeUnavailable` si le réseau échoue ou si la somme ne
+ * correspond pas — jamais de repli.
  */
 export function ensureBrokerNode(
   deps: BrokerNodeDeps = {},
   version = BROKER_NODE_VERSION,
   arch: string = process.arch,
 ): Promise<string> {
+  const expected = deps.expectedSha256 ?? BROKER_NODE_SHA256[winArch(arch)];
   const path = brokerNodePath(version, arch);
-  if (existsSync(path)) return Promise.resolve(path);
+  if (existsSync(path) && cachedShaMatches(path, expected)) return Promise.resolve(path);
   const key = `${version}:${arch}`;
   let p = inFlight.get(key);
   if (!p) {
@@ -108,20 +121,26 @@ export function ensureBrokerNode(
   return p;
 }
 
+function cachedShaMatches(path: string, expected: string): boolean {
+  try {
+    return createHash('sha256').update(readFileSync(path)).digest('hex') === expected;
+  } catch {
+    return false;
+  }
+}
+
 async function download(deps: BrokerNodeDeps, version: string, arch: string): Promise<string> {
   const a = winArch(arch);
   const base = deps.distBaseUrl ?? DEFAULT_BASE;
-  const fetchText = deps.fetchText ?? defaultFetchText;
   const fetchBytes = deps.fetchBytes ?? defaultFetchBytes;
+  const expected = deps.expectedSha256 ?? BROKER_NODE_SHA256[a];
   const dir = brokerNodeDir(version, arch);
   const path = join(dir, 'node.exe');
   try {
-    const shasums = await fetchText(`${base}v${version}/SHASUMS256.txt`);
-    const want = expectedSha(shasums, a);
     const bytes = await fetchBytes(`${base}v${version}/${a}/node.exe`);
     const got = createHash('sha256').update(bytes).digest('hex');
-    if (got !== want) {
-      throw new Error(`SHA-256 mismatch for ${a}/node.exe: expected ${want}, got ${got}`);
+    if (got !== expected) {
+      throw new Error(`SHA-256 mismatch for ${a}/node.exe: expected ${expected}, got ${got}`);
     }
     await mkdir(dir, { recursive: true });
     // Écriture atomique : un fichier temporaire renommé, pour qu'un node.exe
