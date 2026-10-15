@@ -40,7 +40,7 @@ import type * as MxcSdk from '@microsoft/mxc-sdk/v1';
 import type { ContainerRequest } from '@microsoft/mxc-sdk/v1';
 import { windowsSpawnParts } from './command-line';
 import { ensureJobHostScript } from './job-host';
-import { MxcBroker, type BrokeredContainer } from './mxc-broker';
+import { MxcBroker, mxcErrorText, type BrokeredContainer, type MxcErrorFields } from './mxc-broker';
 import {
   SandboxStartError,
   type CommandLaunch,
@@ -108,11 +108,7 @@ function hostRequest(
 }
 
 function messageOf(e: unknown): string {
-  if (e instanceof Error) {
-    const code = (e as { code?: unknown }).code;
-    return typeof code === 'string' ? `${code}: ${e.message}` : e.message;
-  }
-  return String(e);
+  return e instanceof Error ? mxcErrorText(e as MxcErrorFields) : String(e);
 }
 
 /**

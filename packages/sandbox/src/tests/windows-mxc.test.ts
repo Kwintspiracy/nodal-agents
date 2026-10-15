@@ -2,6 +2,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { mxcBackend, MXC_BACKEND_NAME } from '../windows-mxc';
+import { mxcErrorText } from '../mxc-broker';
 import { SandboxStartError } from '../types';
 
 describe('mxcBackend — SDK absent (tous systèmes)', () => {
@@ -44,6 +45,28 @@ describe('mxcBackend — palier d’isolation (tous systèmes)', () => {
       reason: `isolationTier=appcontainer-dacl | ${warning}`,
     });
     expect(spawned).toBe(0);
+  });
+});
+
+describe('mxcErrorText — une erreur du SDK dit quoi ET que faire (tous systèmes)', () => {
+  it('la remédiation de MXC suit le message ; sans remédiation, `code: message` seul', () => {
+    // Les champs d'un `MxcError` levé par le SDK 1.0.0 sur un Node trop ancien
+    // (dist/bindings/streaming.js, ensureSupportedNodeVersion).
+    expect(
+      mxcErrorText({
+        code: 'backend_unavailable',
+        message:
+          'native stdio on Windows requires Node.js 24.21.0 or newer within Node.js 24, or Node.js 26.8.0 or newer; current version is 26.4.0',
+        remediation:
+          'Use Node.js 24.21.0 or newer within Node.js 24, or Node.js 26.8.0 or newer on Windows.',
+      }),
+    ).toBe(
+      'backend_unavailable: native stdio on Windows requires Node.js 24.21.0 or newer within Node.js 24, or Node.js 26.8.0 or newer; current version is 26.4.0. Use Node.js 24.21.0 or newer within Node.js 24, or Node.js 26.8.0 or newer on Windows.',
+    );
+    expect(mxcErrorText({ code: 'policy_validation', message: 'missing LOCALAPPDATA' })).toBe(
+      'policy_validation: missing LOCALAPPDATA',
+    );
+    expect(mxcErrorText(new Error('plain'))).toBe('plain');
   });
 });
 
@@ -90,6 +113,30 @@ describe.runIf(isWindows && tier === 'base-container')(
       expect(error).toBeInstanceOf(SandboxStartError);
       expect((error as SandboxStartError).message).toMatch(
         /^SANDBOX_START_FAILED: policy_validation: .*LOCALAPPDATA/,
+      );
+    });
+  },
+);
+
+// Le Node de CE processus est-il dans la plage que MXC exige sous Windows
+// (`>=24.21.0 <25 || >=26.8.0`, @microsoft/mxc-sdk 1.0.0
+// dist/bindings/native-stdio.js) ? Les engines de Nodal disent `>=24` : un
+// utilisateur sous 24.0 à 24.20, ou sous 26.0 à 26.7, est un cas réel.
+const [major = 0, minor = 0] = process.versions.node.split('.').map(Number);
+const nodeInMxcRange = (major === 24 && minor >= 21) || (major === 26 && minor >= 8) || major > 26;
+
+describe.runIf(isWindows && tier === 'base-container' && !nodeInMxcRange)(
+  'mxcBackend — le vrai MXC sous un Node trop ancien pour lui (Windows, palier base-container)',
+  () => {
+    it('la sonde dit SANDBOX_SELF_TEST_FAILED, et la raison nomme le Node courant, les versions requises, et quoi faire', async () => {
+      const status = await mxcBackend().probe();
+      expect(status.state).toBe('unavailable');
+      if (status.state !== 'unavailable') return;
+      expect(status.code).toBe('SANDBOX_SELF_TEST_FAILED');
+      expect(status.reason).toContain(`current version is ${process.versions.node}`);
+      expect(status.reason).toMatch(/requires Node\.js 24\.21\.0 .*26\.8\.0/);
+      expect(status.reason).toMatch(
+        /\. Use Node\.js 24\.21\.0 or newer within Node\.js 24, or Node\.js 26\.8\.0 or newer on Windows\.$/,
       );
     });
   },

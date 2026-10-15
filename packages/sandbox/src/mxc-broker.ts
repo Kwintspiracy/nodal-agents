@@ -21,7 +21,8 @@
 // Protocole, une ligne JSON par message, sur l'entrée et la sortie standard
 // du courtier :
 //   runner → courtier  {op:'open', id, request}  |  {op:'kill', id}
-//   courtier → runner  {id, opened, pid} | {id, error} | {id, exited, output}
+//   courtier → runner  {id, opened, pid} | {id, error: {code, message, remediation}}
+//                      | {id, exited, output}
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -77,7 +78,9 @@ async function handle(m) {
     const s = await load();
     p = await s.spawn(m.request, { telemetry: { enabled: false } });
   } catch (e) {
-    out({ id: m.id, error: (e && typeof e.code === 'string' ? e.code + ': ' : '') + String((e && e.message) || e) });
+    // L'erreur du SDK telle quelle, champs séparés : le runner la met en
+    // texte (mxcErrorText), remédiation comprise.
+    out({ id: m.id, error: { code: e && e.code, message: String((e && e.message) || e), remediation: e && e.remediation } });
     return;
   }
   procs.set(m.id, p);
@@ -93,6 +96,29 @@ async function handle(m) {
   });
 }
 `;
+
+/** Les champs d'une erreur du SDK MXC (`MxcError`) qui disent quoi et que faire. */
+export interface MxcErrorFields {
+  readonly code?: unknown;
+  readonly message?: unknown;
+  readonly remediation?: unknown;
+}
+
+/**
+ * Le texte d'une erreur du SDK MXC, le même qu'elle vienne du courtier ou du
+ * runner : `code: message`, puis la REMÉDIATION que MXC donne quand il en
+ * donne une. C'est elle qui dit à l'utilisateur quoi faire — pour un Node trop
+ * ancien, MXC nomme la version courante dans le message et les versions à
+ * installer dans la remédiation (`Use Node.js 24.21.0 or newer within Node.js
+ * 24, or Node.js 26.8.0 or newer on Windows.`).
+ */
+export function mxcErrorText(e: MxcErrorFields): string {
+  const message = typeof e.message === 'string' ? e.message : String(e.message);
+  const head = typeof e.code === 'string' ? `${e.code}: ${message}` : message;
+  return typeof e.remediation === 'string' && e.remediation.trim()
+    ? `${head}. ${e.remediation.trim()}`
+    : head;
+}
 
 /** Le script du courtier, écrit s'il manque ou diffère (même règle que l'hôte). */
 function ensureBrokerScript(dir: string = sandboxHostDir()): string {
@@ -186,8 +212,9 @@ export class MxcBroker {
     if (!p) return;
     if (m.error !== undefined) {
       this.pending.delete(m.id);
-      p.open?.reject(new SandboxStartError(m.error));
-      p.exit({ code: null, output: m.error });
+      const text = mxcErrorText(m.error);
+      p.open?.reject(new SandboxStartError(text));
+      p.exit({ code: null, output: text });
     } else if (m.opened) {
       const open = p.open;
       p.open = undefined;
@@ -223,7 +250,7 @@ interface BrokerMessage {
   id: number;
   opened?: boolean;
   pid?: number;
-  error?: string;
+  error?: MxcErrorFields;
   exited?: number | null;
   output?: string;
 }
