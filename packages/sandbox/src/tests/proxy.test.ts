@@ -82,13 +82,20 @@ describe('startNodalProxy @cap:executer-une-commande/moteur', () => {
     const nodal = await localServer();
     const proxy = await startNodalProxy([{ port: nodal.port }]);
     closers.push(() => proxy.close());
-    // 203.0.113.1 (TEST-NET-3) is not local; the proxy must try to forward it
-    // (it will fail to connect, 502 — but NOT a 403 refusal).
-    const r = await getThroughProxy(proxy, `http://203.0.113.1:${nodal.port}/`).catch(() => ({
-      status: 502,
-      body: '',
-    }));
-    expect(r.status).not.toBe(403);
+    // 203.0.113.1 (TEST-NET-3) is not local, so the proxy FORWARDS it instead
+    // of refusing (403). It is unroutable, so forwarding hangs or errors — both
+    // mean "not refused". We only care that the decision is not a 403: race the
+    // request against a short timer (a hang to a blackhole never resolves).
+    const r = await Promise.race([
+      getThroughProxy(proxy, `http://203.0.113.1:${nodal.port}/`).catch(() => ({
+        status: 502,
+        body: '',
+      })),
+      new Promise<{ status: number; body: string }>((resolve) =>
+        setTimeout(() => resolve({ status: 0, body: 'forwarding (no fast answer)' }), 2000),
+      ),
+    ]);
+    expect(r.status, JSON.stringify(r)).not.toBe(403);
   });
 
   it('CONNECT to a denied local port is refused', async () => {
