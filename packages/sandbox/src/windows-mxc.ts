@@ -85,9 +85,18 @@ const ACCEPTED_TIER = 'base-container';
 export type NetworkPolicy = 'proxy' | 'deny-all';
 export const DEFAULT_NETWORK_POLICY: NetworkPolicy = 'proxy';
 
-/** La limite nommée du régime proxy : un client NON-HTTP n'a pas de réseau local. */
+/**
+ * Les limites nommées du régime proxy, dites dans le statut (`limits`) :
+ *   - un client NON-HTTP n'a pas de route vers un service local ;
+ *   - un serveur qu'une commande lance est joignable, par le proxy, par une
+ *     commande d'un AUTRE job (la boucle locale de l'hôte est commune à tous
+ *     les conteneurs). Un fait, pas un défaut : c'est le même chemin que
+ *     ComfyUI, et les ports de Nodal, eux, restent refusés.
+ */
 const RAW_TCP_LIMIT =
   'SANDBOX_NETWORK_RAW_TCP_LOCAL: a confined command reaches local services (ComfyUI, Ollama, a server another command started) and the internet only over HTTP/HTTPS, through the sandbox proxy; a non-HTTP (raw TCP/UDP) client to a local service has no route';
+const CROSS_JOB_LIMIT =
+  "SANDBOX_NETWORK_SHARED_LOOPBACK: a server one job starts on 127.0.0.1 is reachable through the sandbox proxy by a command of another job (the machine loopback is shared); Nodal's own ports stay refused";
 
 /** La configuration réseau MXC d'un régime, et l'env à ajouter aux commandes. */
 interface NetworkSetup {
@@ -558,7 +567,7 @@ export function mxcBackend(
       await container?.close();
     }
     return networkPolicy === 'proxy'
-      ? { state: 'available', backend: MXC_BACKEND_NAME, limits: [RAW_TCP_LIMIT] }
+      ? { state: 'available', backend: MXC_BACKEND_NAME, limits: [RAW_TCP_LIMIT, CROSS_JOB_LIMIT] }
       : { state: 'available', backend: MXC_BACKEND_NAME };
   };
 

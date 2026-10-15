@@ -179,5 +179,34 @@ const rawTcp = (port) => new Promise((r) => { const s = require('net').connect(p
         await scope.close();
       }
     }, 120_000);
+
+    // Un FAIT nommé (limite SANDBOX_NETWORK_SHARED_LOOPBACK), pas un défaut :
+    // la boucle locale de l'hôte est commune, donc un serveur qu'un job lance
+    // est joignable par une commande d'un AUTRE job, par le même proxy que
+    // ComfyUI. Le test le fixe, pour qu'un changement de ce fait se voie.
+    it('a server one job starts is reached by a command of ANOTHER job, through the proxy (named limit)', async () => {
+      if (unavailable()) return;
+      expect(status?.state === 'available' && status.limits?.join('\n')).toMatch(
+        /SANDBOX_NETWORK_SHARED_LOOPBACK/,
+      );
+      const node = process.execPath;
+      const serverInfo = join(ws, 'srv-a.json');
+      const jobA = new JobProcessScope('proxy-job-a', sandbox!);
+      const jobB = new JobProcessScope('proxy-job-b', sandbox!);
+      try {
+        const a = await jobA.container([ws], env());
+        await once_(
+          a,
+          `start "" /b "${node}" "${join(ws, 'srv.cjs')}" "${serverInfo}" && "${node}" "${join(ws, 'wait.cjs')}" "${serverInfo}"`,
+        );
+        const port = (await import('node:fs')).readFileSync(serverInfo, 'utf8').trim();
+        const b = await jobB.container([ws], env());
+        const out = await once_(b, `"${node}" "${join(ws, 'get.cjs')}" ${port}`);
+        expect(out, out).toContain('GOT 200:server-in-job');
+      } finally {
+        await jobB.close();
+        await jobA.close();
+      }
+    }, 120_000);
   },
 );
