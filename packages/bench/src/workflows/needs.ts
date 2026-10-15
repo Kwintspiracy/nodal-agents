@@ -14,11 +14,9 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ScenarioEnv } from './types';
+import { NEED_IDS, type Need, type ScenarioEnv } from './types';
 
-/** Les besoins qu'un scénario peut déclarer. Un nom hors de cette liste ne compile pas. */
-export const NEED_IDS = ['comfyui', 'obsidian-vault', 'printer', 'no-mail-sender'] as const;
-export type Need = (typeof NEED_IDS)[number];
+export { NEED_IDS, type Need };
 
 /** Le nom d'un outil, découpé en mots : `office_printer__request_print` → office, printer, request, print. */
 function words(toolName: string): string[] {

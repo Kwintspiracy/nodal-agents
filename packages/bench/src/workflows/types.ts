@@ -7,7 +7,6 @@
 // différentes.
 
 import type { TreeFacts } from './facts';
-import type { Need } from './needs';
 
 /**
  * `nightly` : le jeu sans surveillance, lancé chaque nuit.
@@ -45,6 +44,13 @@ export const ACTIVITIES = [
   'memory',
 ] as const;
 export type Activity = (typeof ACTIVITIES)[number];
+
+/**
+ * Les besoins qu'un scénario peut déclarer (vérifiés par needs.ts). Un nom hors
+ * de cette liste ne compile pas.
+ */
+export const NEED_IDS = ['comfyui', 'obsidian-vault', 'printer', 'no-mail-sender'] as const;
+export type Need = (typeof NEED_IDS)[number];
 
 /** Un service local que le banc sait sonder, à l'adresse que ~/.nodalai/bench.json déclare. */
 export interface ServiceProbe {
