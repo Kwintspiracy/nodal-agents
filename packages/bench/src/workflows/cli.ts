@@ -2,7 +2,7 @@
 //
 //   pnpm bench:workflows                     le jeu de nuit (scénarios `nightly`), un essai chacun
 //   pnpm bench:workflows --only question,file
-//   pnpm bench:workflows --activity excel,word   les scénarios de ces activités
+//   pnpm bench:workflows --activity excel,word   tous les scénarios de ces activités
 //   pnpm bench:workflows --set release       tous les scénarios, `on-demand` compris
 //   pnpm bench:workflows --trials 3          trois essais par scénario
 //   pnpm bench:workflows --models a,b --dry-run   la matrice : le plan et son coût, sans rien lancer
@@ -92,13 +92,15 @@ function pickScenarios(): AnyScenario[] {
   const set = arg('set') ?? 'nightly';
   if (set !== 'release' && set !== 'nightly')
     throw new Error(`unknown set ${set} — known: nightly, release`);
-  const inSet = set === 'release' ? [...SCENARIOS] : SCENARIOS.filter((s) => s.set === 'nightly');
   const activities = list('activity');
-  if (!activities) return inSet;
-  const unknown = activities.filter((a) => !(ACTIVITIES as readonly string[]).includes(a));
-  if (unknown.length > 0)
-    throw new Error(`unknown activity: ${unknown.join(', ')} — known: ${ACTIVITIES.join(', ')}`);
-  return inSet.filter((s) => activities.includes(s.activity));
+  if (activities) {
+    // Nommer une activité, c'est demander ses scénarios, `on-demand` compris.
+    const unknown = activities.filter((a) => !(ACTIVITIES as readonly string[]).includes(a));
+    if (unknown.length > 0)
+      throw new Error(`unknown activity: ${unknown.join(', ')} — known: ${ACTIVITIES.join(', ')}`);
+    return SCENARIOS.filter((s) => activities.includes(s.activity));
+  }
+  return set === 'release' ? [...SCENARIOS] : SCENARIOS.filter((s) => s.set === 'nightly');
 }
 
 function printList(): void {

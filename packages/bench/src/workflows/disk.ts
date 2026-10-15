@@ -153,7 +153,12 @@ export async function readXlsxGrid(path: string): Promise<SheetGrid[]> {
     const cells: Record<string, CellValue> = {};
     ws.eachRow({ includeEmpty: false }, (row) => {
       row.eachCell({ includeEmpty: false }, (cell) => {
-        cells[cell.address] = toCellValue(cell.value);
+        // Une formule PARTAGÉE (recopiée vers le bas dans Excel) n'a pas de
+        // `formula` dans sa valeur : `cell.formula` la rend traduite à sa cellule.
+        cells[cell.address] =
+          cell.type === ExcelJS.ValueType.Formula
+            ? toCellValue({ formula: cell.formula, result: cell.result } as ExcelJS.CellValue)
+            : toCellValue(cell.value);
       });
     });
     sheets.push({ name: ws.name, cells });
@@ -175,6 +180,10 @@ function toCellValue(v: ExcelJS.CellValue): CellValue {
     }
     if ('richText' in v && Array.isArray(v.richText)) {
       return { kind: 'text', value: v.richText.map((t) => t.text).join('') };
+    }
+    // Un lien (une adresse e-mail le devient souvent) : son texte affiché.
+    if ('hyperlink' in v && 'text' in v && typeof v.text === 'string') {
+      return { kind: 'text', value: v.text };
     }
   }
   return { kind: 'other', value: JSON.stringify(v) };

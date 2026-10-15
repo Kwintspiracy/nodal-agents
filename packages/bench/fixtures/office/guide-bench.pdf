@@ -1,0 +1,73 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 6 0 R 8 0 R] /Count 3 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 158 >>
+stream
+BT
+/F1 12 Tf
+16 TL
+72 770 Td
+(Guide de d\351marrage) Tj T*
+(Chapitre 1 : Pr\351sentation) Tj T*
+(Ce guide pr\351sente l\222outil en trois \351tapes.) Tj T*
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 125 >>
+stream
+BT
+/F1 12 Tf
+16 TL
+72 770 Td
+(Chapitre 2 : Installation) Tj T*
+(T\351l\351chargez l\222installateur puis lancez-le.) Tj T*
+ET
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 9 0 R >>
+endobj
+9 0 obj
+<< /Length 104 >>
+stream
+BT
+/F1 12 Tf
+16 TL
+72 770 Td
+(Chapitre 3 : Premiers pas) Tj T*
+(Cr\351ez votre premier projet.) Tj T*
+ET
+endstream
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000127 00000 n 
+0000000224 00000 n 
+0000000350 00000 n 
+0000000559 00000 n 
+0000000685 00000 n 
+0000000861 00000 n 
+0000000987 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R >>
+startxref
+1142
+%%EOF

@@ -22,3 +22,8 @@ pack/
 # collecte, jamais à la main. Les formater ferait diverger le fichier committé
 # par la CI de celui produit en local, et chaque nuit rouvrirait le même diff.
 apps/qa/data/
+
+# Fixtures du banc des workflows : des fichiers posés tels quels dans l'espace
+# de travail avant une demande (une page à modifier, un projet à corriger).
+# Un juge compare ce qui reste à la fixture ; la reformater changerait l'essai.
+packages/bench/fixtures/

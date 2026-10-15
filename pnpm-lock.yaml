@@ -778,6 +778,21 @@ importers:
       exceljs:
         specifier: ^4.4.0
         version: 4.4.0
+      image-size:
+        specifier: ^1.2.1
+        version: 1.2.1
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
+      mammoth:
+        specifier: ^1.12.0
+        version: 1.12.0
+      parse5:
+        specifier: 8.0.1
+        version: 8.0.1
+      pdf-parse:
+        specifier: ^2.4.5
+        version: 2.4.5
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -788,6 +803,15 @@ importers:
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
+      docx:
+        specifier: ^9.7.1
+        version: 9.7.1
+      pptxgenjs:
+        specifier: ^4.0.1
+        version: 4.0.1
+      slugify:
+        specifier: ^1.6.9
+        version: 1.6.9
       tsx:
         specifier: ^4.21.0
         version: 4.23.10
@@ -15191,7 +15215,7 @@ snapshots:
 
   pdfjs-dist@5.4.296:
     optionalDependencies:
-      '@napi-rs/canvas': 0.1.80
+      '@napi-rs/canvas': 0.1.100
 
   pdfjs-dist@5.6.205:
     optionalDependencies:

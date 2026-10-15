@@ -8,6 +8,7 @@
 import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 import { DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
 import type { JobFact, ToolCallFact, TreeFacts } from './facts';
+import type { UnverifiedCheck } from './types';
 
 /** Le job de tête de l'essai. */
 export function rootJob(facts: TreeFacts): JobFact | undefined {
@@ -245,4 +246,87 @@ export function endedBlocked(facts: TreeFacts, job: JobFact): boolean {
 /** La fin d'un job, en clair, pour une raison de rouge. */
 export function describeEnd(job: JobFact): string {
   return `${job.status ?? 'no status'}${job.error ? ` (${job.error.slice(0, 160)})` : ''}`;
+}
+
+// ─── sources read : non vérifié ──────────────────────────────────────────────
+
+/**
+ * « Une source citée a réellement été lue » n'est PAS jugé. Quatre passes de
+ * revue de #634 ont trouvé quatre fuites dans le juge qui le devinait à partir
+ * des sorties d'outils (une entrée prise pour une lecture, un échec CLI en
+ * texte, un échec MCP sérialisé en chaîne, puis Firecrawl/Apify invisibles et
+ * une page 404 prise pour du contenu). Décision de Quentin, 30/09 : le contrôle
+ * sort des juges jusqu'à ce que la plateforme enregistre chaque lecture web
+ * (#648), et il est dit sur chaque ligne, jamais tu.
+ */
+export const SOURCES_READ: UnverifiedCheck = {
+  check: 'sources read',
+  state: 'not verified',
+  reason:
+    'Nothing in the database records which web addresses a run really read; guessing it from tool outputs leaked four times.',
+  ticket: '#648',
+};
+
+// ─── commandes ───────────────────────────────────────────────────────────────
+
+/** Un outil qui exécute une commande, quel que soit le runtime (produit, CLI). */
+export const COMMAND_TOOL = /(^|__)(run_command|run_skill_script|bash|shell|execute_command)$/i;
+/** Une commande qui lance un script. */
+export const SCRIPT_RUNNER = /\b(python3?|py|node|deno|bun)\b/i;
+
+/** Les appels d'un outil de commande dont l'entrée correspond à `pattern`. */
+export function commandRuns(facts: TreeFacts, pattern: RegExp): ToolCallFact[] {
+  return facts.toolCalls.filter(
+    (c) => COMMAND_TOOL.test(bareToolName(c.toolName)) && pattern.test(c.input ?? ''),
+  );
+}
+
+// ─── réponses ────────────────────────────────────────────────────────────────
+
+/** La réponse finale du job de tête, ou une chaîne vide. */
+export function answerOf(facts: TreeFacts): string {
+  return rootJob(facts)?.result ?? '';
+}
+
+/** Un fait attendu dans un texte : ce qui le reconnaît, et ce que le rouge dira s'il manque. */
+export interface ExpectedFact {
+  readonly holds: (text: string) => boolean;
+  readonly says: string;
+}
+
+/** Un fait reconnu par un motif. */
+export function matches(pattern: RegExp, says: string): ExpectedFact {
+  return { holds: (t) => pattern.test(t), says };
+}
+
+/** Un nombre, quelle que soit son écriture (`604 800`, `397,8`, `397.80`). */
+export function hasNumber(value: number, decimals: number, says: string): ExpectedFact {
+  return { holds: (t) => textHasNumber(t, value, decimals), says };
+}
+
+/** Les faits absents d'un texte, chacun en une raison de rouge (`where` : « the answer », « the report »…). */
+export function missingFacts(
+  text: string,
+  facts: readonly ExpectedFact[],
+  where: string,
+): string[] {
+  return facts.filter((f) => !f.holds(text)).map((f) => `${where} does not ${f.says}`);
+}
+
+/** Le job de tête a répondu lui-même : une délégation est un rouge, nommé. */
+export function noDelegation(facts: TreeFacts): string[] {
+  const d = delegatedJobs(facts);
+  return d.length === 0
+    ? []
+    : [`delegated a direct question (${d.map((j) => j.agentSlug ?? j.id.slice(0, 8)).join(', ')})`];
+}
+
+/** Un job de l'arbre, quel qu'il soit, a appelé un outil web. */
+export function treeCalledTheWeb(facts: TreeFacts): boolean {
+  return facts.toolCalls.some(isWebTool);
+}
+
+/** Les hôtes distincts des adresses d'un texte : deux pages d'un même site comptent pour un. */
+export function hostsIn(text: string | null): string[] {
+  return [...new Set(urlsIn(text).map((u) => u.split('/')[0]!))];
 }

@@ -18,6 +18,9 @@ import { existsSync, statSync } from 'node:fs';
 import { extname } from 'node:path';
 import type { TreeFacts } from './facts';
 import {
+  COMMAND_TOOL,
+  SCRIPT_RUNNER,
+  SOURCES_READ,
   bareToolName,
   callsOf,
   channelSends,
@@ -42,8 +45,17 @@ import {
   type CellValue,
   type SheetGrid,
 } from './disk';
+import { installFixture } from './fixtures';
 import { NO_VAULT, obsidianVaults } from './needs';
-import { defineScenario, type AnyScenario, type UnverifiedCheck } from './types';
+import { DEEP_RESEARCH_SCENARIOS, QUESTION_SCENARIOS, RESEARCH_SCENARIOS } from './suites/answers';
+import { CODE_SCENARIOS } from './suites/code';
+import { COMFYUI_SCENARIOS } from './suites/comfyui';
+import { EXCEL_SCENARIOS } from './suites/excel';
+import { HTML_SCENARIOS } from './suites/html';
+import { PDF_SCENARIOS } from './suites/pdf';
+import { POWERPOINT_SCENARIOS } from './suites/powerpoint';
+import { WORD_SCENARIOS } from './suites/word';
+import { defineScenario, type AnyScenario } from './types';
 
 const MIN = 60_000;
 
@@ -82,25 +94,6 @@ const question = defineScenario<null>({
     return r;
   },
 });
-
-// ─── sources read : non vérifié ──────────────────────────────────────────────
-
-/**
- * « Une source citée a réellement été lue » n'est PAS jugé. Quatre passes de
- * revue de #634 ont trouvé quatre fuites dans le juge qui le devinait à partir
- * des sorties d'outils (une entrée prise pour une lecture, un échec CLI en
- * texte, un échec MCP sérialisé en chaîne, puis Firecrawl/Apify invisibles et
- * une page 404 prise pour du contenu). Décision de Quentin, 30/09 : le contrôle
- * sort des juges jusqu'à ce que la plateforme enregistre chaque lecture web
- * (#648), et il est dit sur chaque ligne, jamais tu.
- */
-const SOURCES_READ: UnverifiedCheck = {
-  check: 'sources read',
-  state: 'not verified',
-  reason:
-    'Nothing in the database records which web addresses a run really read; guessing it from tool outputs leaked four times.',
-  ticket: '#648',
-};
 
 // ─── research ────────────────────────────────────────────────────────────────
 
@@ -370,10 +363,6 @@ export function virginicaPetalSum(csv: string): { rows: number; sum: number } {
   return { rows: lines.length - 1, sum: Math.round(sum * 10) / 10 };
 }
 
-/** Un outil qui exécute une commande, quel que soit le runtime (produit, CLI). */
-const COMMAND_TOOL = /(^|__)(run_command|run_skill_script|bash|shell|execute_command)$/i;
-const SCRIPT_RUNNER = /\b(python3?|py|node|deno|bun)\b/i;
-
 const code = defineScenario<CodeObservation>({
   id: 'code',
   version: 1,
@@ -493,6 +482,79 @@ const print = defineScenario<null>({
     }
     r.push(...neverPrinted(facts));
     return r;
+  },
+});
+
+/**
+ * Une demande d'impression retenue (la dernière qui répond à `mine`) : en
+ * attente, d'une page quand le connecteur le dit, et rien n'est parti.
+ */
+function pendingPrint(
+  facts: TreeFacts,
+  mine: (q: { input: string }) => boolean,
+  what: string,
+): string[] {
+  const r: string[] = [];
+  const reqs = printRequests(facts);
+  const kept = reqs.filter(mine);
+  if (reqs.length === 0) r.push('no print request was created');
+  else if (kept.length === 0) r.push(`no print request ${what}`);
+  else {
+    const last = kept[kept.length - 1]!.view;
+    if (last.status !== 'pending') r.push(`the print request is ${last.status}, not pending`);
+    if (last.pages !== null && last.pages !== 1) r.push(`${last.pages} pages, not one`);
+  }
+  return [...r, ...neverPrinted(facts)];
+}
+
+export const PRINT_FILE_REL = 'nodal-bench/facture-impression.pdf';
+
+const printFile = defineScenario<null>({
+  id: 'print-file',
+  version: 1,
+  title: 'Print an existing PDF file (the request waits for the owner)',
+  green: `A print request naming ${PRINT_FILE_REL} was created and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything.`,
+  set: 'on-demand',
+  activity: 'print',
+  needs: ['printer'],
+  instruction: `Imprime le fichier ${PRINT_FILE_REL} de l'espace de travail partagé.`,
+  timeoutMs: 10 * MIN,
+  prepare(env) {
+    installFixture(env.workspaceRoots, 'office/facture-bench.pdf', PRINT_FILE_REL);
+  },
+  observe: async () => null,
+  judge(facts) {
+    const name = fileName(PRINT_FILE_REL);
+    return [
+      ...commonReasons(facts),
+      ...pendingPrint(facts, (q) => q.input.includes(name), `names ${name}`),
+    ];
+  },
+});
+
+const SHOPPING = ['pain', 'lait', 'œufs', 'tomates', 'café'];
+
+const printList = defineScenario<null>({
+  id: 'print-list',
+  version: 1,
+  title: 'Print a shopping list (the request waits for the owner)',
+  green:
+    'A print request holding every item of the list was created and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything.',
+  set: 'on-demand',
+  activity: 'print',
+  needs: ['printer'],
+  instruction: `Imprime sur une seule page cette liste de courses : ${SHOPPING.join(', ')}.`,
+  timeoutMs: 10 * MIN,
+  observe: async () => null,
+  judge(facts) {
+    return [
+      ...commonReasons(facts),
+      ...pendingPrint(
+        facts,
+        (q) => SHOPPING.every((x) => q.input.toLowerCase().includes(x)),
+        `holds the whole list (${SHOPPING.join(', ')})`,
+      ),
+    ];
   },
 });
 
@@ -877,19 +939,38 @@ const askBeforeActing = defineScenario<BenchFileObservation>({
 /** Le jeu figé. L'ordre est celui des lignes du portail. */
 export const SCENARIOS: readonly AnyScenario[] = [
   question,
+  ...QUESTION_SCENARIOS,
   research,
+  ...RESEARCH_SCENARIOS,
   deepResearchObsidian,
-  file,
+  ...DEEP_RESEARCH_SCENARIOS,
   code,
+  ...CODE_SCENARIOS,
+  file,
+  ...EXCEL_SCENARIOS,
+  ...WORD_SCENARIOS,
+  ...POWERPOINT_SCENARIOS,
+  ...PDF_SCENARIOS,
+  ...HTML_SCENARIOS,
+  comfyTelegram,
+  ...COMFYUI_SCENARIOS,
   print,
   recipe,
-  comfyTelegram,
+  printFile,
+  printList,
   mcpAnswer,
   undoableAction,
   undoableActionDelegated,
   delegateFails,
   askBeforeActing,
 ];
+
+{
+  // Un identifiant est la clé d'une série sur le portail : deux scénarios ne la partagent jamais.
+  const ids = SCENARIOS.map((s) => s.id);
+  const twice = ids.filter((id, i) => ids.indexOf(id) !== i);
+  if (twice.length > 0) throw new Error(`workflow_scenario_twice: ${twice.join(', ')}`);
+}
 
 export function scenarioById(id: string): AnyScenario | undefined {
   return SCENARIOS.find((s) => s.id === id);
