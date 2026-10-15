@@ -14,16 +14,75 @@ Code: `packages/bench/src/workflows/`. Results: `apps/qa/data/workflows.ndjson`
 ```bash
 pnpm bench:workflows                        # the nightly set, one trial each
 pnpm bench:workflows --only question,file   # some scenarios (on-demand ones included)
+pnpm bench:workflows --activity excel,word  # every scenario of these activities (on-demand ones included)
 pnpm bench:workflows --set release          # every scenario, the on-demand ones included
 pnpm bench:workflows --trials 3             # three trials per scenario
+pnpm bench:workflows --models openrouter:z-ai/glm-5.3,deepseek-chat --dry-run
+                                            # the model matrix: the plan and its cost, nothing run
 pnpm bench:workflows --stack D:/APPS/NodalAI  # measure the stack of another checkout
-pnpm bench:workflows --list                 # scenarios, requests and what green means
+pnpm bench:workflows --list                 # scenarios, activities, needs, requests, what green means
+pnpm bench:workflows --catalog              # rewrite apps/qa/data/workflow-catalog.json
 ```
 
 The stack must be up (`pnpm --filter nodal-agents exec tsx src/index.ts --dev`).
 Each request goes through the user MCP path (`nodal-agents mcp serve`, tool
 `run_task`), which wakes the runner at once. The exit code is 1 when a trial is
-not green.
+red or a bench error; a skipped trial does not fail the run.
+
+## Activities and needs
+
+Every scenario declares an **activity**, from a closed list
+(`ACTIVITIES`, `packages/bench/src/workflows/types.ts`): question, research,
+deep-research, code, excel, word, powerpoint, pdf, image-comfyui, html-page,
+email, airtable, notion, google-workspace, delivery, print, orchestration,
+memory. The portal draws one matrix row per activity. E-mail, Airtable,
+Notion, Google Workspace, delivery and memory have no scenario yet: they need
+a test account or a send, which waits on an owner decision, and the portal
+says "no scenario yet".
+
+A scenario also declares its **needs** (`needs.ts`): `comfyui`,
+`obsidian-vault`, `printer`, `no-mail-sender`. A missing need SKIPS the trial,
+with its reason, without starting a job: a `skipped` line, grey on the
+portal, never red (nothing was tried). One mechanism for every scenario; it
+replaced the per-scenario `requires`, which made such a trial red.
+
+- `comfyui`: an address declared in `~/.nodalai/bench.json`
+  (`{"services": {"comfyui": "http://127.0.0.1:8188"}}`) that answers a GET
+  within 3 s. Nothing about the owner's machine is written in the code.
+- `obsidian-vault`: a workspace folder holding `.obsidian/`.
+- `printer`: an agent of the workspace has `request_print`.
+- `no-mail-sender`: no agent of the workspace can send e-mail.
+
+The team's tools are read by the **product's own rule**,
+`computeAgentToolNames` (`@nodal-agents/orchestration`), for every active
+agent: adapter connectors (`connectors` + `agent_connector_assignments`) and
+MCP servers, with each agent's whitelist. Until bench v2 the bench read only
+`mcp_servers.available_tools`; Gmail, an adapter connector, was invisible to
+the mail guard, and seven e-mails left the owner's account (#711). The mail
+guard reads the full tool name by words (a sending verb and a mail word, or
+`smtp`), server prefix included: it sees `gmail_send_email`,
+`outlook_reply_message`, `outlook_forward_message`, `outlook_send_draft`,
+`gmail_mcp__send_message`, and not Telegram's `send_message`. It is still a
+reading of names: the general form would be an `outbound` mark on each
+connector operation (`OperationDescriptor`) and reading `openWorldHint` on MCP
+tools.
+
+## Model matrix
+
+`--models a,b,c` runs every selected scenario once per model (times
+`--trials`). A model is `provider:model`, or a bare model the catalog knows
+under exactly one provider; an unknown or ambiguous one is an error.
+
+How a model is applied to a trial is an **open owner decision**: a separate
+bench workspace with its own copy of the team, or the owner's agents. There
+is no per-job model today (`agents.model` only). Until it is decided, the
+bench changes no agent and creates no workspace: the seam is `ModelApplier`
+(`matrix.ts`), and its only implementation refuses, before the database is
+even opened. `--dry-run` prints the plan: scenario × model × trials, grouped
+by activity, each cell priced from the model catalog and the medians of the
+scenario's past runs (input, cached and output tokens, current version only,
+skipped and error runs excluded). A cell without a past run or without a
+catalog price says so; it is never priced at zero.
 
 ## Scenarios
 
@@ -48,6 +107,40 @@ or when the run raised an approval or a question. The orchestration scenarios
 state their own end in their green sentence: an impossible request must end
 on an explained block, and `ask-before-acting` must stop on its question.
 
+## Scenarios by activity (bench v2)
+
+42 more scenarios, `on-demand` (they run with `--activity`, `--only` or
+`--set release`; putting some in the nightly set is the owner's call, since
+every one costs model calls). None has an external effect or needs an
+external account. Each is red when the root did not end `completed` or when
+anything was asked. `pnpm bench:workflows --list` prints each one's French
+request and its one-sentence green.
+
+| activity | scenarios | judged on |
+|---|---|---|
+| question | `question-percent`, `question-weekday`, `question-seconds`, `question-river` | facts in the answer (a number in any writing, a name), no delegation |
+| research | `research-penicillin`, `research-transistor`, `research-rabies`, `research-voyager` | a web tool called by some job of the tree, stable historical facts in the answer, links on 2+ distinct sites. Sources read: not verified (#648) |
+| deep-research | `deep-research-dna`, `-gps`, `-gutenberg`, `-apollo` | a Markdown report under `nodal-bench/` written during the run: 3000+ characters, 3+ headings, links on 4+ sites, the facts; a web call. Sources read: not verified |
+| code | `code-http-server`, `code-install-dep`, `code-bugfix`, `code-data` | a Node project from `fixtures/code` with a failing suite (one starts a local HTTP server): the bench reruns `node --test` itself, every fixture test must pass by name, test files byte for byte, the agent ran the suite; `slugify` declared, installed and imported; the bug file changed; revenue per region recomputed from the untouched CSV, to the cent |
+| excel | `excel-edit-column`, `excel-new-sheet`, `excel-read-answer`, `excel-csv-import` | the workbook reopened with exceljs; formulas without a cached result are computed by the bench (`evaluateCell`: arithmetic, references across sheets, SUM/AVERAGE/MIN/MAX/ROUND/PRODUCT; anything else is said, never guessed); the fixture's cells unchanged; a read leaves the file byte for byte |
+| word | `word-create`, `word-replace`, `word-append`, `word-table` | text by mammoth (the product's `docx_read`), headings and tables from the OOXML; a replacement leaves every other character of the fixture's text |
+| powerpoint | `ppt-create`, `ppt-append`, `ppt-replace`, `ppt-read-answer` | slides in presentation order from the OOXML; the fixture's slides unchanged paragraph by paragraph |
+| pdf | `pdf-read-total`, `pdf-read-pages`, `pdf-create`, `pdf-from-markdown` | pdf-parse (the product's PDF extractor): page count and page text |
+| html-page | `html-landing`, `html-table-csv`, `html-edit`, `html-svg-chart` | parse5 elements, never a text search in the source: title, h1, list items with prices, footer, table rows equal to the CSV, body outside the footer unchanged, no external resource, SVG bars in the 12 : 30 : 58 ratio |
+| image-comfyui | `comfy-square`, `comfy-variants`, `comfy-portrait`, `comfy-landscape` | need `comfyui`; PNG files written during the run under `nodal-bench/comfy-*`, count and size read from the file header, variants all different, nothing sent |
+| print | `print-file`, `print-list` | need `printer`; a pending request naming the fixture file, or holding the whole list; never confirmed, nothing on paper |
+
+Fixtures live in `packages/bench/fixtures/` (`make-fixtures.ts` writes the
+office ones from `fixture-data.ts`; a scenario is frozen, so is its fixture).
+Before a trial the bench installs them under `nodal-bench/` of the shared
+workspace folder, after deleting what an earlier trial left there in every
+workspace folder. The code scenarios rerun the agent's code with `node --test`
+(two minutes at most), on the machine where the agent already ran it.
+
+The portal reads `apps/qa/data/workflow-catalog.json` (`--catalog`; a test
+refuses it out of sync with the code) for the activity order and the
+scenarios never run.
+
 ## Orchestration scenarios
 
 They exercise the orchestration behaviours that broke in production, on the
@@ -69,9 +162,10 @@ part", the judges of `undoable-action*` read it and their `version` rises.
 **An e-mail nobody can send.** `bench@example.invalid` uses the top-level
 domain reserved never to exist (RFC 2606, RFC 6761): the e-mail cannot be sent
 by anyone, so the judge does not need to know who on the team could send one.
-The bench still sends nothing from the owner's account: when an active
-connector offers a tool that sends mail (`gmail_send`, `send_email`, `smtp…`),
-both `undoable-action` scenarios are red with that reason and start no job.
+The bench still sends nothing from the owner's account: when an agent of the
+workspace has a tool that sends mail (an adapter connector such as Gmail or
+Outlook, or an MCP server), both `undoable-action` scenarios are skipped with
+that reason and start no job (need `no-mail-sender`).
 
 **Nothing to a messaging channel.** `mcp-answer` and both `undoable-action`
 scenarios are red when a send tool of the product list (`DELIVERY_TOOL_NAMES`)
@@ -144,8 +238,9 @@ comparing two different things.
 
 The vault is found, never configured: a vault is a workspace folder of the
 workspace that holds `.obsidian/`. The printer is found the same way: an
-active connector that offers `request_print`. When either is missing, the
-scenario is red with that reason, no job is started.
+agent of the workspace that has `request_print`. When either is missing, the
+scenario is skipped with that reason, no job is started (needs
+`obsidian-vault`, `printer`).
 
 ## Safety on the owner's stack
 
@@ -163,8 +258,12 @@ scenario is red with that reason, no job is started.
   source `chat` (an agent on an API), a `tool_calls` row without a job (a chat
   turn of an agent on Claude Code or Codex, while it runs), a `cli_runs` row
   without a job (the same turn, once finished).
-- A trial that cannot be prepared (the workspace unreadable, a prerequisite
-  check that throws, `ventes-bench.xlsx` locked because it is open in Excel) is
+- Nothing a scenario asks may reach a real recipient. The only address any
+  request names is `bench@example.invalid`, and the scenarios that ask for an
+  e-mail need `no-mail-sender` (see Activities and needs); a send to a
+  messaging channel during a trial is red.
+- A trial that cannot be prepared (the workspace unreadable, a need check
+  that throws, `ventes-bench.xlsx` locked because it is open in Excel) is
   an `error` line with the reason, and the bench goes on to the next scenario.
 - An approval or a question raised by a trial is red, and the whole tree is
   cancelled at once (`cancelJobTree`, the path of the Stop button). The
@@ -229,6 +328,18 @@ were committed.
 `jobs`, `agents`, `models`, `toolCalls`, `llmCalls`, `cliRuns`, `inputTokens`,
 `outputTokens`, `costUsd`, `approvals`, `rootJobId`, `cancelled`.
 
+Since bench v2, also: `activity`, `needs`, `modelUnderTest` (the model the
+matrix imposed, `null` otherwise), `rootModel` (the root agent's configured
+model when the trial started), `cachedTokens` and `cacheWriteTokens` (cache
+reads and writes, included in `inputTokens`), `modelUse` (per job and per
+combination: `requested` and `effective` model, `provider`, `via` api or
+cli, `reasoningEffort`, `failover`, `calls`, tokens and cost), `deliverables`
+(the files written under `nodal-bench/` during the trial, path and size) and
+`answer` (the root's final answer, 1200 characters at most, home folder
+masked). The file stays append-only and older lines still render: the portal
+says "not recorded on this run" for what they do not carry, and takes their
+activity from the catalog. Their matrix column is the models that answered.
+
 The measures count both runtimes. `llmCalls` are the API calls (`llm_calls`),
 `cliRuns` the turns of an agent on Claude Code or Codex (`cli_runs`).
 `inputTokens` includes the cache for both (a CLI run reports its input without
@@ -258,3 +369,25 @@ from the judge turns its red case green and the suite red. `db-reads.test.ts`
 runs the new reads (return_result calls from the transcript, `job_deliveries`,
 the card input) on PGlite. A captured trial replaces a built case once one
 exists.
+
+The bench v2 scenarios have no captured trial yet. Their judges are tested
+end to end without a model (`tests/harness.ts`): the real `prepare` installs
+the fixtures in a temporary workspace folder, the test writes the deliverable
+on disk with the library an agent would use (exceljs, docx, pptxgenjs, a
+hand-written PDF, HTML), then the real `observe` and `judge` run. Only the
+database rows are built. The code judges run the real fixture projects: each
+suite is shown failing as delivered and passing with the reference solution
+(`fixtures/solutions`). Seventeen guards were verified by mutation (each one
+removed turns a test red), and the three portal guards too.
+
+## Portal
+
+The Workflows page is a matrix: one row per activity (catalog order), one
+column per model, the activity cell showing the last verdict of each of its
+scenarios. An activity opens on its scenarios: per model, the bars of the
+last five runs, the green count, and the medians of time and cost of the
+green runs. A skipped run is grey with its reason in the cell, never red,
+and does not count as a workflow to look at. A scenario name leads to its
+card: series by Nodal version, slow-down flag, and for a v2 line the models of
+each job (requested to answered, provider, effort, fallback, cache tokens),
+the deliverables and the answer.
