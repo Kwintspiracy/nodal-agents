@@ -44,7 +44,8 @@ import { PassThrough } from 'node:stream';
 import type * as MxcSdk from '@microsoft/mxc-sdk/v1';
 import type { ContainerRequest } from '@microsoft/mxc-sdk/v1';
 import { windowsSpawnParts } from './command-line';
-import { ensureJobHostScript } from './job-host';
+import { sandboxDeniedPaths, readonlyTraversalRoots } from './policy';
+import { ensureJobHostScript, sandboxHostDir } from './job-host';
 import { MxcBroker, mxcErrorText, type BrokeredContainer, type MxcErrorFields } from './mxc-broker';
 import { BrokerNodeUnavailable, ensureBrokerNode, type BrokerNodeDeps } from './broker-node';
 import {
@@ -134,11 +135,24 @@ function hostRequest(
   environment: Record<string, string>,
   hostLoopback: boolean,
 ): ContainerRequest {
+  const denied = sandboxDeniedPaths();
   return {
     command: `"${process.execPath}" "${script}"`,
     filesystem: {
       readwritePaths: [...writableRoots],
-      readonlyPaths: readableDriveRoots(),
+      // Les lecteurs en lecture ; ET les sous-dossiers de tête qui mènent aux
+      // chemins que le conteneur doit atteindre sous le dossier refusé — les
+      // dossiers de travail, le cache d'outils, les scripts du bac à sable —
+      // pour que Node puisse résoudre son script d'entrée (sinon EPERM sur le
+      // `lstat` du parent refusé, mesuré le 15/10).
+      readonlyPaths: [
+        ...readableDriveRoots(),
+        ...readonlyTraversalRoots(denied, [...writableRoots, sandboxHostDir()]),
+      ],
+      // Le dossier de données de Nodal (secrets.key, config.json, pg-data) :
+      // ni lu ni listé par une commande confinée (D1). Les racines
+      // inscriptibles — dossiers de travail, cache d'outils — l'emportent.
+      deniedPaths: denied,
     },
     network: {
       egress: { default: 'allow' },

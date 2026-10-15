@@ -23,6 +23,7 @@ export {
   TOOL_CACHE_VARIABLES,
   defaultAllowedFolders,
   resolveWritableRoots,
+  sandboxDeniedPaths,
   toolCacheEnv,
   toolCacheRoot,
 } from './policy';

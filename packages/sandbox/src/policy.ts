@@ -28,7 +28,7 @@
 
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, resolve, sep } from 'node:path';
 
 /** Ce que l'appelant déclare pour UNE commande. */
 export interface ConfinementPolicy {
@@ -48,6 +48,77 @@ export interface ConfinementPolicy {
  */
 export function toolCacheRoot(): string {
   return process.env['NODALAI_TOOL_CACHE_ROOT'] ?? join(homedir(), '.nodalai', 'tool-cache');
+}
+
+/**
+ * Le dossier de DONNÉES de Nodal — `secrets.key` (la clé maîtresse des
+ * identifiants stockés), `config.json` (workerSecret, mot de passe Postgres,
+ * authSecret) et `pg-data`. C'est `~/.nodalai`, la convention du dépôt.
+ *
+ * Une commande confinée ne doit ni le LIRE ni le LISTER (#628, D1) : la
+ * lecture reste ouverte à l'étape 1, et la sortie vers l'internet aussi, donc
+ * un identifiant lu pourrait partir. On le REFUSE (`deniedPaths`).
+ *
+ * Ce qui reste accessible, et comment : les dossiers de travail et le cache
+ * d'outils (donc le Node du courtier) sont des racines INSCRIPTIBLES — une
+ * racine readwrite l'emporte sur un parent refusé (mesuré le 15/10). Les
+ * scripts du bac à sable (`sandboxHostDir()`), sous ce dossier dans la
+ * disposition par défaut, sont re-concédés en LECTURE par `hostRequest` :
+ * sans cela le conteneur ne pourrait pas charger son hôte (mesuré). On ne
+ * refuse que ce qui existe — un dossier absent n'est pas refusé.
+ */
+export function sandboxDeniedPaths(machine: MachineView = thisMachine()): string[] {
+  const dataDir = join(machine.home, '.nodalai');
+  if (!existsSync(dataDir)) return [];
+  try {
+    return [realpathSync.native(dataDir)];
+  } catch {
+    return [dataDir];
+  }
+}
+
+/**
+ * Pour que le conteneur traverse un dossier refusé jusqu'aux chemins qu'il
+ * DOIT atteindre (les dossiers de travail sous `~/.nodalai/workspaces`, le
+ * cache d'outils, les scripts du bac à sable), on re-concède en LECTURE le
+ * sous-dossier de tête qui y mène. Un refus bloque tout son sous-arbre SAUF
+ * ce qui est re-concédé (mesuré le 15/10) : `secrets.key`, `config.json`,
+ * `pg-data` et la LISTE du dossier restent refusés, mais Node peut résoudre
+ * son script d'entrée sous le workspace. Lire l'arbre des workspaces est
+ * conforme à l'étape 1 (« la lecture reste ouverte ») ; seul l'écrit est
+ * borné, par les racines inscriptibles.
+ */
+export function readonlyTraversalRoots(
+  deniedPaths: readonly string[],
+  mustReach: readonly string[],
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (p: string): void => {
+    const k = process.platform === 'win32' ? p.toLowerCase() : p;
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(p);
+  };
+  for (const raw of mustReach) {
+    let reach = raw;
+    try {
+      reach = realpathSync.native(raw);
+    } catch {
+      /* un chemin pas encore créé : tel quel */
+    }
+    for (const d of deniedPaths) {
+      const base = d.endsWith(sep) ? d : d + sep;
+      const matches =
+        process.platform === 'win32'
+          ? reach.toLowerCase().startsWith(base.toLowerCase())
+          : reach.startsWith(base);
+      if (!matches) continue;
+      const seg = reach.slice(base.length).split(/[\\/]/)[0];
+      if (seg) add(join(d, seg));
+    }
+  }
+  return out;
 }
 
 /**
