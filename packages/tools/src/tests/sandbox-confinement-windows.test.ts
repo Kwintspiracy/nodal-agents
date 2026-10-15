@@ -95,7 +95,9 @@ describe.skipIf(!isWindows || tierUnsupported)(
     beforeAll(async () => {
       const status = await getSandboxStatus();
       // Échoue fort, avec la raison, plutôt que de passer sans rien confiner.
-      expect(status, JSON.stringify(status)).toEqual({
+      // `limits` (la boucle locale de la machine, fermée sur certains builds)
+      // ne touche pas à ce que cette suite prouve.
+      expect(status, JSON.stringify(status)).toMatchObject({
         state: 'available',
         backend: 'mxc-processcontainer',
       });
