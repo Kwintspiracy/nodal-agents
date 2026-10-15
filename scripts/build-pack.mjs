@@ -474,16 +474,25 @@ const packPkg = {
     // pre-built .next/ and postcss is build-only. Drops to clean
     // when Next 16.3 stable releases (currently canary).
   },
-  // OS sandbox, Windows backend (#628): Microsoft MXC. OPTIONAL, exact pin.
-  // Optional because its dependency `node-pty` ships no Linux prebuild and
-  // compiles with node-gyp there: as a hard dependency, a Linux machine
-  // without a C toolchain could not install Nodal at all. As an optional one,
-  // a failed install drops the SDK and nothing else — and Nodal says so at
-  // boot (`[sandbox] SANDBOX_UNAVAILABLE`, code SANDBOX_BACKEND_MISSING),
-  // the state the D2 banner reads. Only Windows loads it (apps/runner/build.mjs
-  // keeps it external). Not pinned by §7a: the exact version is written here.
+  // OS sandbox, Windows backend (#628, D3): Microsoft MXC, carried by a
+  // Windows-ONLY package. OPTIONAL, exact pin.
+  //
+  // `nodal-agents-sandbox-windows` declares `"os": ["win32"]` and depends on
+  // `@microsoft/mxc-sdk@1.0.0`. npm installs it only on Windows, where the SDK
+  // is hoisted and the runner's `import("@microsoft/mxc-sdk/v1")` resolves it.
+  // On Linux/macOS npm SKIPS it (os mismatch), so neither the SDK nor its
+  // native dependency `node-pty` is fetched or compiled — no node-gyp, no C
+  // toolchain, no install failure. The runner then reports
+  // SANDBOX_BACKEND_MISSING at boot (the state the D2 banner reads).
+  //
+  // Why the indirection: declaring `@microsoft/mxc-sdk` DIRECTLY as optional
+  // still made npm TRY it on Linux (fetch node-pty, attempt a build, drop it)
+  // — slow and noisy. `"os"` only gates a DEPENDENCY, not an inline package,
+  // so the gate needs its own published package. Published by Quentin from
+  // packaging/sandbox-windows/ (its README has the steps); the version here
+  // and there move together when the SDK is upgraded. Not pinned by §7a.
   optionalDependencies: {
-    '@microsoft/mxc-sdk': '1.0.0',
+    'nodal-agents-sandbox-windows': '1.0.0',
   },
   // Ship exceljs INSIDE the tarball instead of letting `npm install -g` fetch it.
   // exceljs is stale and drags in deprecated transitives (glob@7 "security",

@@ -113,6 +113,42 @@ try {
     { stdio: 'inherit' },
   );
 
+  // ── 4b. The Windows sandbox carrier never lands on Linux (#628, D3) ────────
+  // `nodal-agents-sandbox-windows` is `"os": ["win32"]`, so on this Linux
+  // runner npm must skip it — and with it `@microsoft/mxc-sdk` and the native
+  // `node-pty`. None of the three may appear anywhere in the installed tree.
+  if (process.platform !== 'win32') {
+    step('no Windows-only sandbox deps on Linux (#628)');
+    const nm = join(installDir, 'node_modules');
+    for (const dep of ['nodal-agents-sandbox-windows', '@microsoft/mxc-sdk', 'node-pty']) {
+      const direct = join(nm, ...dep.split('/'));
+      if (existsSync(direct)) {
+        throw new Error(`${dep} was installed on ${process.platform}: ${direct}`);
+      }
+    }
+    // Deep check: not hoisted anywhere under the install either.
+    const offenders = [];
+    const walk = (d, depth) => {
+      if (depth > 6) return;
+      let entries;
+      try {
+        entries = readdirSync(d, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (!e.isDirectory()) continue;
+        if (e.name === 'node-pty' || e.name === 'mxc-sdk') offenders.push(join(d, e.name));
+        if (e.name === 'node_modules' || e.name.startsWith('@')) walk(join(d, e.name), depth + 1);
+      }
+    };
+    walk(nm, 0);
+    if (offenders.length) {
+      throw new Error(`Windows-only sandbox deps found on Linux:\n${offenders.join('\n')}`);
+    }
+    console.log('  none of nodal-agents-sandbox-windows / @microsoft/mxc-sdk / node-pty present ✓');
+  }
+
   // ── 5. Configure ───────────────────────────────────────────────────────────
   step('nodal-agents init --non-interactive');
   execFileSync(process.execPath, [cli, 'init', '--non-interactive'], { env, stdio: 'inherit' });
