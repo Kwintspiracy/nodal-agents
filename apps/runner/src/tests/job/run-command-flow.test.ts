@@ -18,7 +18,26 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
-import { getSandboxStatus, openJobProcessScopeIds } from '@nodal-agents/sandbox';
+import {
+  createSandbox,
+  defaultSandbox,
+  jobProcessScope,
+  mxcBackend,
+  openJobProcessScopeIds,
+} from '@nodal-agents/sandbox';
+
+/**
+ * Ce fichier prouve le FLUX d'un job (approbation, téléchargement dans le
+ * workspace, durée de vie de ce qu'une commande lance), pas la politique de
+ * boucle locale du bac à sable (windows-mxc.test.ts) : sous Windows, ses jobs
+ * tournent sous le vrai MXC avec la boucle locale ouverte quand le build le
+ * permet (`when-available`), pour qu'un serveur local réponde. Ailleurs, le
+ * bac à sable de la plateforme.
+ */
+const flowSandbox =
+  process.platform === 'win32'
+    ? createSandbox(mxcBackend(undefined, 'when-available'))
+    : defaultSandbox();
 import { join } from 'node:path';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
@@ -275,6 +294,7 @@ async function createJob(): Promise<{ id: string }> {
     })
     .returning();
   if (!job) throw new Error('Failed to create test job');
+  jobProcessScope(job.id, flowSandbox);
   return job;
 }
 
@@ -1258,7 +1278,7 @@ describe('run_command — what reaches a printer or the screen asks, and a decli
 // Sans bac à sable, sous Windows, un petit-enfant détaché n'est rattaché à
 // rien : seul le conteneur MXC du job le tient (sandbox-confinement-windows).
 const unconfinedWindows =
-  process.platform === 'win32' && (await getSandboxStatus()).state !== 'available';
+  process.platform === 'win32' && (await flowSandbox.status()).state !== 'available';
 
 describe('run_command — what a command starts lives for the JOB, and Stop kills the running command (#628, #750) @cap:executer-une-commande/moteur', () => {
   let ruleId: string;

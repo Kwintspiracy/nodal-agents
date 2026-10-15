@@ -65,19 +65,28 @@ const ACCEPTED_TIER = 'base-container';
 const HOST_LOOPBACK_CAPABILITY = 'ingressHostLoopbackAllow';
 
 /**
- * Ce que le bac à sable fait d'un build base-container SANS la capacité de la
- * boucle locale — LE SEUL ENDROIT où ce choix vit (décision de l'owner en
- * attente, 15/10) :
- *   - `required` (C) : indisponible, code `SANDBOX_HOST_LOOPBACK_UNSUPPORTED` ;
- *     les commandes tournent sans confinement et le bandeau D2 le dit ;
- *   - `when-available` (A) : confiné quand même, la boucle locale de la
- *     machine fermée, et le statut le dit dans `limits` avec le même code.
- * Avec la capacité, les deux ouvrent la boucle locale (`hostLoopback`).
+ * La boucle locale de la machine dans un conteneur — LE SEUL ENDROIT où ce
+ * choix vit (15/10) :
+ *   - `closed` (PAR DÉFAUT) : jamais `hostLoopback`. Une commande confinée ne
+ *     joint aucun service de la machine sur 127.0.0.1, et sur certains builds
+ *     (26200.9711) même pas un serveur lancé par une commande précédente de
+ *     son job. Le statut le dit (`limits`, `SANDBOX_HOST_LOOPBACK_CLOSED`).
+ *     Raison : ouverte, la boucle locale donne aussi accès au runner, au web
+ *     et au Postgres de Nodal, et les règles `egress.deny` de MXC ne s'y
+ *     appliquent pas (mesuré le 15/10) — c'est le seul état qui ne promet
+ *     rien de faux ;
+ *   - `when-available` : `hostLoopback` quand MXC porte la capacité ; sans
+ *     elle, confiné quand même, et `limits` le dit
+ *     (`SANDBOX_HOST_LOOPBACK_UNSUPPORTED`) ;
+ *   - `required` : `hostLoopback` ; sans la capacité, indisponible avec ce
+ *     même code.
  */
-export type HostLoopbackPolicy = 'required' | 'when-available';
-export const DEFAULT_HOST_LOOPBACK_POLICY: HostLoopbackPolicy = 'required';
+export type HostLoopbackPolicy = 'closed' | 'when-available' | 'required';
+export const DEFAULT_HOST_LOOPBACK_POLICY: HostLoopbackPolicy = 'closed';
 
 const HOST_LOOPBACK_UNSUPPORTED_REASON = `base-container without the MXC capability ${HOST_LOOPBACK_CAPABILITY}: a confined command cannot reach a service of this machine on 127.0.0.1`;
+const HOST_LOOPBACK_CLOSED_REASON =
+  'host loopback not opened (policy closed): a confined command cannot reach a service of this machine on 127.0.0.1, and on some Windows builds not even a server started by an earlier command of its job';
 
 /** Le backend de processus porte-t-il la capacité de la boucle locale ? */
 function hasHostLoopback(m: MxcModule): boolean {
@@ -367,7 +376,8 @@ export function mxcBackend(
     const environment = definedEnv(env);
     let opened: BrokeredContainer;
     try {
-      const loopback = (hostLoopback ??= hasHostLoopback(await sdk()));
+      const loopback = (hostLoopback ??=
+        loopbackPolicy !== 'closed' && hasHostLoopback(await sdk()));
       opened = await broker().open(
         hostRequest(ensureJobHostScript(), writableRoots, environment, loopback),
       );
@@ -421,8 +431,9 @@ export function mxcBackend(
           ].join(' | '),
         };
       }
-      hostLoopback = hasHostLoopback(m);
-      if (!hostLoopback && loopbackPolicy === 'required') {
+      const capability = hasHostLoopback(m);
+      hostLoopback = loopbackPolicy !== 'closed' && capability;
+      if (!capability && loopbackPolicy === 'required') {
         return {
           state: 'unavailable',
           code: 'SANDBOX_HOST_LOOPBACK_UNSUPPORTED',
@@ -477,7 +488,11 @@ export function mxcBackend(
       : {
           state: 'available',
           backend: MXC_BACKEND_NAME,
-          limits: [`SANDBOX_HOST_LOOPBACK_UNSUPPORTED: ${HOST_LOOPBACK_UNSUPPORTED_REASON}`],
+          limits: [
+            loopbackPolicy === 'closed'
+              ? `SANDBOX_HOST_LOOPBACK_CLOSED: ${HOST_LOOPBACK_CLOSED_REASON}`
+              : `SANDBOX_HOST_LOOPBACK_UNSUPPORTED: ${HOST_LOOPBACK_UNSUPPORTED_REASON}`,
+          ],
         };
   };
 

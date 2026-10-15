@@ -53,4 +53,9 @@ export {
   type WindowsSpawnParts,
 } from './command-line';
 export { type RefusedWrite, extractRefusedWrites } from './refused-writes';
-export { MXC_BACKEND_NAME, mxcBackend } from './windows-mxc';
+export {
+  DEFAULT_HOST_LOOPBACK_POLICY,
+  type HostLoopbackPolicy,
+  MXC_BACKEND_NAME,
+  mxcBackend,
+} from './windows-mxc';

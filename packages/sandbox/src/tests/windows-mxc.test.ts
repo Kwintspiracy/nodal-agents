@@ -48,7 +48,7 @@ describe('mxcBackend — palier d’isolation (tous systèmes)', () => {
   });
 });
 
-describe('mxcBackend — boucle locale, politique par défaut (tous systèmes)', () => {
+describe('mxcBackend — boucle locale, politique required (tous systèmes)', () => {
   it('base-container SANS ingressHostLoopbackAllow : indisponible, SANDBOX_HOST_LOOPBACK_UNSUPPORTED, aucune commande lancée', async () => {
     let spawned = 0;
     const sdk = {
@@ -67,7 +67,7 @@ describe('mxcBackend — boucle locale, politique par défaut (tous systèmes)',
         throw new Error('must not be called');
       },
     };
-    const backend = mxcBackend(() => Promise.resolve(sdk as never));
+    const backend = mxcBackend(() => Promise.resolve(sdk as never), 'required');
     expect(await backend.probe()).toEqual({
       state: 'unavailable',
       code: 'SANDBOX_HOST_LOOPBACK_UNSUPPORTED',
@@ -135,8 +135,19 @@ describe.runIf(isWindows && tier === 'base-container')(
             b.backend === 'processcontainer' && b.capabilities.includes('ingressHostLoopbackAllow'),
         );
 
-    it('politique par défaut (required) : `available` avec la capacité ; sans elle, SANDBOX_HOST_LOOPBACK_UNSUPPORTED', async () => {
+    it('politique par défaut (closed) : `available`, la boucle locale fermée dite dans `limits`, avec ou sans la capacité', async () => {
       const status = await mxcBackend().probe();
+      expect(status, JSON.stringify(status)).toEqual({
+        state: 'available',
+        backend: MXC_BACKEND_NAME,
+        limits: [
+          'SANDBOX_HOST_LOOPBACK_CLOSED: host loopback not opened (policy closed): a confined command cannot reach a service of this machine on 127.0.0.1, and on some Windows builds not even a server started by an earlier command of its job',
+        ],
+      });
+    });
+
+    it('politique required : `available` avec la capacité ; sans elle, SANDBOX_HOST_LOOPBACK_UNSUPPORTED', async () => {
+      const status = await mxcBackend(undefined, 'required').probe();
       expect(status, JSON.stringify(status)).toEqual(
         (await loopbackCapability())
           ? { state: 'available', backend: MXC_BACKEND_NAME }
