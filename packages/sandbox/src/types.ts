@@ -22,6 +22,12 @@ export type SandboxStatus =
       readonly state: 'available';
       /** Le backend qui confine, nommé pour les journaux et le bandeau. */
       readonly backend: string;
+      /**
+       * Ce que la politique de l'étape 1 promet et que CETTE machine ne tient
+       * pas sous ce backend, chaque limite dite avec sa cause (« la boucle
+       * locale de la machine est fermée : … »). Absent quand il n'y en a pas.
+       */
+      readonly limits?: readonly string[];
     }
   | {
       readonly state: 'unavailable';

@@ -94,12 +94,29 @@ describe.runIf(isWindows && tier !== 'base-container')(
 describe.runIf(isWindows && tier === 'base-container')(
   'mxcBackend — le vrai MXC, palier base-container (Windows only: MXC is the Windows backend of #628)',
   () => {
-    it('la sonde lance une commande confinée triviale et rend `available`', async () => {
+    it('la sonde lance une commande confinée triviale et rend `available` ; la boucle locale fermée est dite, et seulement si elle l’est', async () => {
       const status = await mxcBackend().probe();
-      expect(status, JSON.stringify(status)).toEqual({
-        state: 'available',
-        backend: MXC_BACKEND_NAME,
-      });
+      // Ce que MXC dit de CE build (26200.9711 : la capacité ; 26200.9457,
+      // l'image windows-11-arm : pas la capacité) : les deux branches sont
+      // ainsi prouvées, chacune sur la machine qui la porte.
+      const sdk = await import('@microsoft/mxc-sdk/v1');
+      const loopback = sdk
+        .getAvailableBackends()
+        .some(
+          (b) =>
+            b.backend === 'processcontainer' && b.capabilities.includes('ingressHostLoopbackAllow'),
+        );
+      expect(status, JSON.stringify(status)).toEqual(
+        loopback
+          ? { state: 'available', backend: MXC_BACKEND_NAME }
+          : {
+              state: 'available',
+              backend: MXC_BACKEND_NAME,
+              limits: [
+                'host loopback closed: processcontainer lacks ingressHostLoopbackAllow on this Windows build, so a confined command cannot reach a service of this machine on 127.0.0.1',
+              ],
+            },
+      );
     });
 
     it('un conteneur que MXC refuse d’ouvrir lève SandboxStartError avec SA raison (ici : LOCALAPPDATA absent)', async () => {

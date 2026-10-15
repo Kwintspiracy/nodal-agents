@@ -55,7 +55,7 @@ export function createSandbox(
             reason: `no sandbox backend for platform ${platform} yet`,
           };
       if (s.state === 'available') {
-        log('SANDBOX_ACTIVE', { backend: s.backend });
+        log('SANDBOX_ACTIVE', { backend: s.backend, ...(s.limits ? { limits: s.limits } : {}) });
       } else {
         log('SANDBOX_UNAVAILABLE', { code: s.code, reason: s.reason, platform });
       }

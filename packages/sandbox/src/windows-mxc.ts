@@ -9,16 +9,17 @@
 //     (mesure 0-ui). Presse-papiers et injection d'entrées restent refusés ;
 //   - chaque lecteur déclaré en LECTURE : tout chemin non déclaré est interdit
 //     en lecture aussi (mesure 2b-noroots) ;
-//   - réseau sortant ouvert (`egress allow`) : l'étape 1 ne confine que les
-//     écritures. Internet et le réseau local répondent ; la boucle locale de
-//     la MACHINE (127.0.0.1, ::1, et l'adresse de la machine elle-même), non :
-//     un conteneur en est exclu par défaut (`EACCES` mesuré le 15/10 sur
-//     Windows 11 26200.9711, `ETIMEDOUT` sur l'image windows-11-arm), et
-//     l'option MXC qui l'ouvre (`ingress.hostLoopback`) manque à certains
-//     builds (26200.9457 : « not supported by this version of Windows »).
-//     Une commande confinée ne joint donc pas un service de la machine
-//     (ComfyUI, Ollama) ; la boucle locale DU conteneur, elle, marche (un
-//     serveur lancé par une commande du job répond à la suivante) ;
+//   - réseau ouvert : l'étape 1 ne confine que les écritures. `egress allow`
+//     ouvre la sortie (internet, réseau local). La BOUCLE LOCALE (127.0.0.1)
+//     s'ouvre par `ingress.hostLoopback: 'allow'`, demandé dès que MXC porte
+//     la capacité `ingressHostLoopbackAllow` : sans lui, sur Windows 11
+//     26200.9711 (mise à jour du 14/10), même un serveur lancé par une
+//     commande du job est refusé à la suivante (`EACCES`), et ComfyUI ou
+//     Ollama sur la machine aussi. Les builds sans la capacité (26200.9457,
+//     l'image windows-11-arm de GitHub) refusent l'option (« not supported by
+//     this version of Windows ») ; la boucle locale DU conteneur y marche
+//     sans elle (mesuré), celle de la machine non (`ETIMEDOUT`) : le statut
+//     le dit (`limits`), une seule fois, au démarrage ;
 //   - l'environnement passé EN ENTIER (`inheritDefaultEnvironment: false`) :
 //     l'environnement par défaut de MXC est le bloc du profil utilisateur,
 //     variables persistées comprises — une clé d'API posée par `setx` y
@@ -60,6 +61,18 @@ type MxcModule = typeof MxcSdk;
 /** Le seul palier d'isolation MXC accepté (voir la sonde). */
 const ACCEPTED_TIER = 'base-container';
 
+/** La capacité MXC qui ouvre la boucle locale de la machine au conteneur. */
+const HOST_LOOPBACK_CAPABILITY = 'ingressHostLoopbackAllow';
+
+/** Le backend de processus porte-t-il la capacité de la boucle locale ? */
+function hasHostLoopback(m: MxcModule): boolean {
+  return m
+    .getAvailableBackends()
+    .some(
+      (b) => b.backend === 'processcontainer' && b.capabilities.includes(HOST_LOOPBACK_CAPABILITY),
+    );
+}
+
 /** Le nom sous lequel ce backend apparaît dans le statut et les journaux. */
 export const MXC_BACKEND_NAME = 'mxc-processcontainer';
 
@@ -94,6 +107,7 @@ function hostRequest(
   script: string,
   writableRoots: readonly string[],
   environment: Record<string, string>,
+  hostLoopback: boolean,
 ): ContainerRequest {
   return {
     command: `"${process.execPath}" "${script}"`,
@@ -101,7 +115,10 @@ function hostRequest(
       readwritePaths: [...writableRoots],
       readonlyPaths: readableDriveRoots(),
     },
-    network: { egress: { default: 'allow' } },
+    network: {
+      egress: { default: 'allow' },
+      ...(hostLoopback ? { ingress: { hostLoopback: 'allow' as const } } : {}),
+    },
     ui: { disable: false },
     workingDirectory: dirname(script),
     environment,
@@ -319,6 +336,7 @@ export function mxcBackend(
   // paquet que celui que le runner charge. Rien n'est résolu ici, où un
   // bundler (le build du web) lirait la résolution et voudrait l'embarquer.
   let brokerClient: MxcBroker | undefined;
+  let hostLoopback: boolean | undefined;
   const broker = (): MxcBroker => (brokerClient ??= new MxcBroker(fileURLToPath(import.meta.url)));
 
   const openContainer = async (
@@ -333,7 +351,10 @@ export function mxcBackend(
     const environment = definedEnv(env);
     let opened: BrokeredContainer;
     try {
-      opened = await broker().open(hostRequest(ensureJobHostScript(), writableRoots, environment));
+      const loopback = (hostLoopback ??= hasHostLoopback(await sdk()));
+      opened = await broker().open(
+        hostRequest(ensureJobHostScript(), writableRoots, environment, loopback),
+      );
     } catch (e) {
       throw e instanceof SandboxStartError ? e : new SandboxStartError(messageOf(e));
     }
@@ -427,7 +448,15 @@ export function mxcBackend(
     } finally {
       await container?.close();
     }
-    return { state: 'available', backend: MXC_BACKEND_NAME };
+    return hostLoopback
+      ? { state: 'available', backend: MXC_BACKEND_NAME }
+      : {
+          state: 'available',
+          backend: MXC_BACKEND_NAME,
+          limits: [
+            `host loopback closed: processcontainer lacks ${HOST_LOOPBACK_CAPABILITY} on this Windows build, so a confined command cannot reach a service of this machine on 127.0.0.1`,
+          ],
+        };
   };
 
   return { probe, openContainer };

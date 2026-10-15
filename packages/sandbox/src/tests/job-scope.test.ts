@@ -92,7 +92,9 @@ describe.runIf(status?.state === 'available')(
   'MXC — a runner killed outright takes its jobs’ processes with it (Windows only, MXC base-container tier)',
   () => {
     const dir = mkdtempSync(join(tmpdir(), 'nodal-sbx-crash-'));
-    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+    // Le serveur tué peut tenir le dossier un instant encore (EPERM mesuré sur
+    // windows-11-arm) : l'effacement réessaie, il ne masque pas un échec du test.
+    afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
 
     it('the background server of a job dies when the process holding the job is killed', async () => {
       const here = fileURLToPath(new URL('.', import.meta.url));
