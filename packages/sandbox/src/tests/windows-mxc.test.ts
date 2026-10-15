@@ -48,6 +48,40 @@ describe('mxcBackend — palier d’isolation (tous systèmes)', () => {
   });
 });
 
+describe('mxcBackend — boucle locale de l’hôte (tous systèmes)', () => {
+  it('base-container sans la capacité ingressHostLoopbackAllow : indisponible, la capacité nommée, aucune commande lancée', async () => {
+    let spawned = 0;
+    const sdk = {
+      getPlatformSupport: () => ({
+        isSupported: true,
+        reason: '',
+        availableMethods: ['processcontainer'],
+        isolationTier: 'base-container',
+      }),
+      getAvailableBackends: () => [
+        {
+          backend: 'processcontainer',
+          tier: 'base-container',
+          capabilities: ['captureDenials'],
+          warnings: ['host loopback not supported on this build'],
+        },
+      ],
+      spawn: () => {
+        spawned++;
+        throw new Error('must not be called');
+      },
+    };
+    const backend = mxcBackend(() => Promise.resolve(sdk as never));
+    expect(await backend.probe()).toEqual({
+      state: 'unavailable',
+      code: 'SANDBOX_PLATFORM_UNSUPPORTED',
+      reason:
+        'processcontainer lacks ingressHostLoopbackAllow | host loopback not supported on this build',
+    });
+    expect(spawned).toBe(0);
+  });
+});
+
 describe('mxcErrorText — une erreur du SDK dit quoi ET que faire (tous systèmes)', () => {
   it('la remédiation de MXC suit le message ; sans remédiation, `code: message` seul', () => {
     // Les champs d'un `MxcError` levé par le SDK 1.0.0 sur un Node trop ancien

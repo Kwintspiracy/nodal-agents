@@ -23,9 +23,16 @@
 // SECOND conteneur est lancé par le même runner, ce qu'on écrit sur l'entrée
 // standard du premier (le flux natif du SDK MXC 1.0.0) ne lui parvient plus,
 // et ses commandes restent sans réponse jusqu'à ce que l'autre se ferme. La
-// boucle locale, elle, répond depuis le conteneur avec la seule règle
-// `egress allow`. Le runner donne à l'hôte un port et un jeton à usage
-// unique ; une connexion qui ne présente pas le jeton est fermée.
+// boucle locale répond depuis le conteneur quand la demande porte
+// `network.ingress.hostLoopback: 'allow'` (windows-mxc.ts dit pourquoi ; la
+// seule règle `egress allow` ne suffit pas, mesuré le 15/10). Le runner donne
+// à l'hôte un port et un jeton à usage unique ; une connexion qui ne présente
+// pas le jeton est fermée.
+//
+// Un hôte qui ne joint pas le runner le DIT avant de s'arrêter : l'erreur de
+// l'OS (code, message) sur sa sortie d'erreur, encore ouverte à ce moment-là,
+// que le courtier rapporte avec l'arrêt du conteneur. La raison du statut la
+// cite (`SANDBOX_HOST_EXITED: SANDBOX_HOST_CONNECT_FAILED: EACCES …`).
 //
 // Le protocole, une ligne JSON par message :
 //   hôte → runner  {hello: jeton}           à la connexion ;
@@ -69,6 +76,7 @@ const socket = net.connect(Number(process.argv[2]), '127.0.0.1');
 const out = (o) => socket.write(JSON.stringify(o) + '\\n');
 let overrides = {};
 let buffer = '';
+let connected = false;
 socket.setEncoding('utf8');
 // Une panne de l'hôte se dit sur la connexion : ses sorties standard sont
 // fermées dès qu'elle est établie (voir plus bas).
@@ -77,6 +85,7 @@ process.on('uncaughtException', (e) => {
   setTimeout(() => process.exit(1), 50);
 });
 socket.on('connect', () => {
+  connected = true;
   out({ hello: process.argv[3] });
   // Le SDK lit les sorties standard d'un processus confiné par des lectures
   // BLOQUANTES du pool de threads de Node (4 threads par défaut) : un hôte
@@ -105,8 +114,17 @@ socket.on('data', (chunk) => {
     }
   }
 });
-socket.on('close', () => process.exit(0));
-socket.on('error', () => process.exit(1));
+// Jamais joint : l'erreur ci-dessous parle et sort ; la fermeture qui la suit
+// ne doit pas sortir avant elle.
+socket.on('close', () => { if (connected) process.exit(0); else setTimeout(() => process.exit(1), 1000); });
+socket.on('error', (e) => {
+  if (connected) process.exit(1);
+  const line = 'SANDBOX_HOST_CONNECT_FAILED: ' + ((e && e.code) ? e.code + ' ' : '') + String((e && e.message) || e) + '\\n';
+  let done = false;
+  const quit = () => { if (!done) { done = true; process.exit(1); } };
+  try { process.stderr.write(line, quit); } catch { quit(); }
+  setTimeout(quit, 500);
+});
 function run(m) {
   const replaced = new Set(Object.keys(overrides).map(up));
   const env = {};

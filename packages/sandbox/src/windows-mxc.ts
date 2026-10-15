@@ -56,6 +56,9 @@ type MxcModule = typeof MxcSdk;
 /** Le seul palier d'isolation MXC accepté (voir la sonde). */
 const ACCEPTED_TIER = 'base-container';
 
+/** La capacité MXC qui permet à l'hôte du conteneur de joindre le runner. */
+const HOST_LOOPBACK_CAPABILITY = 'ingressHostLoopbackAllow';
+
 /** Le nom sous lequel ce backend apparaît dans le statut et les journaux. */
 export const MXC_BACKEND_NAME = 'mxc-processcontainer';
 
@@ -99,7 +102,18 @@ function hostRequest(
       readwritePaths: [...writableRoots],
       readonlyPaths: readableDriveRoots(),
     },
-    network: { egress: { default: 'allow' } },
+    // `egress allow` ouvre la sortie (internet, réseau local). La boucle
+    // locale de la machine, elle, est fermée à un conteneur AppContainer par
+    // défaut : sans `hostLoopback allow`, l'hôte ne joint pas le runner
+    // (`EACCES connect 127.0.0.1:<port>`, mesuré le 15/10 sur Windows 11
+    // 26200.9711, `ETIMEDOUT` sur l'image windows-11-arm de GitHub). C'est
+    // l'option que MXC documente pour ce cas, portée par la capacité
+    // `ingressHostLoopbackAllow` que la sonde exige ; la règle vit avec le
+    // conteneur et disparaît avec lui (un conteneur suivant sans elle rend
+    // de nouveau EACCES, mesuré). Elle tient aussi la promesse de l'étape 1,
+    // « le réseau reste ouvert » : une commande joint ComfyUI, Ollama ou un
+    // serveur de dev sur 127.0.0.1 comme hors du bac à sable.
+    network: { egress: { default: 'allow' }, ingress: { hostLoopback: 'allow' } },
     ui: { disable: false },
     workingDirectory: dirname(script),
     environment,
@@ -422,6 +436,21 @@ export function mxcBackend(
           reason: [
             `isolationTier=${support.isolationTier ?? 'unknown'}`,
             ...(support.isolationWarnings ?? []),
+          ].join(' | '),
+        };
+      }
+      // LA BOUCLE LOCALE. L'hôte du conteneur joint le runner sur 127.0.0.1
+      // (job-host.ts) : sans la capacité `ingressHostLoopbackAllow` du
+      // backend de processus, il ne le pourrait pas, et le bac à sable le dit
+      // ici, la capacité nommée, plutôt que par un hôte qui ne répond pas.
+      const processBackend = m.getAvailableBackends().find((b) => b.backend === 'processcontainer');
+      if (!processBackend?.capabilities.includes(HOST_LOOPBACK_CAPABILITY)) {
+        return {
+          state: 'unavailable',
+          code: 'SANDBOX_PLATFORM_UNSUPPORTED',
+          reason: [
+            `processcontainer lacks ${HOST_LOOPBACK_CAPABILITY}`,
+            ...(processBackend?.warnings ?? []),
           ].join(' | '),
         };
       }

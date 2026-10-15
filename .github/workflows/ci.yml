@@ -450,3 +450,54 @@ jobs:
           path: ${{ runner.temp }}/stack.log
           retention-days: 7
           if-no-files-found: ignore
+
+  # ── Le bac à sable Windows, prouvé sur chaque PR (#628) ─────────────────────
+  # `windows-11-arm` est la seule image hébergée où MXC choisit le palier
+  # `base-container`, celui que le bac à sable accepte (sonde du 15/10 :
+  # Windows 11 10.0.26200.9457 arm64 → base-container ; windows-2022 et
+  # windows-2025 → appcontainer-dacl, que le bac à sable refuse). La batterie
+  # de confinement y tourne donc pour de vrai, au lieu d'être sautée par nom
+  # comme sur `ci-windows.yml`.
+  #
+  # Node 26 : MXC exige ≥ 24.21 ou ≥ 26.8 sous Windows ; `26` donne la dernière.
+  #
+  # Rien que les suites du bac à sable : le reste de Windows est l'affaire de
+  # `ci-windows.yml`, sur main et chaque nuit.
+  sandbox-windows:
+    runs-on: windows-11-arm
+    # Mesuré sur la sonde du 15/10 (run 38671844833) : install ~6 min à froid
+    # sur cette image, la batterie moins d'une minute.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '26'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        timeout-minutes: 15
+        run: pnpm install --frozen-lockfile
+
+      # La batterie se SAUTE par nom sur un autre palier. Si GitHub changeait
+      # cette image, le job deviendrait vert sans rien prouver : il refuse
+      # donc de continuer sans base-container, le palier cité.
+      - name: MXC isolation tier must be base-container
+        working-directory: packages/sandbox
+        run: >-
+          node --input-type=module -e "const m = await import('@microsoft/mxc-sdk/v1');
+          const s = m.getPlatformSupport(); console.log(JSON.stringify(s));
+          if (s.isolationTier !== 'base-container') { console.error('expected base-container, got ' + s.isolationTier); process.exit(1); }"
+
+      - name: Sandbox suites
+        timeout-minutes: 10
+        run: >-
+          npx vitest run
+          packages/sandbox
+          packages/tools/src/tests/sandbox-confinement-windows.test.ts
+          packages/tools/src/tests/sandbox-engine.test.ts
+          packages/tools/src/tests/sandbox-report.test.ts
+          apps/runner/src/tests/verification/sandbox-three-paths.test.ts
