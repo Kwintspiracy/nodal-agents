@@ -10,9 +10,15 @@
 //   - chaque lecteur déclaré en LECTURE : tout chemin non déclaré est interdit
 //     en lecture aussi (mesure 2b-noroots) ;
 //   - réseau sortant ouvert (`egress allow`) : l'étape 1 ne confine que les
-//     écritures. La boucle locale (127.0.0.1) répond avec cette seule règle —
-//     mesuré le 14/10, ce qui garde une skill ComfyUI locale joignable ;
-//     `ingress.hostLoopback` est refusé par ce Windows (`backend_unavailable`) ;
+//     écritures. Internet et le réseau local répondent ; la boucle locale de
+//     la MACHINE (127.0.0.1, ::1, et l'adresse de la machine elle-même), non :
+//     un conteneur en est exclu par défaut (`EACCES` mesuré le 15/10 sur
+//     Windows 11 26200.9711, `ETIMEDOUT` sur l'image windows-11-arm), et
+//     l'option MXC qui l'ouvre (`ingress.hostLoopback`) manque à certains
+//     builds (26200.9457 : « not supported by this version of Windows »).
+//     Une commande confinée ne joint donc pas un service de la machine
+//     (ComfyUI, Ollama) ; la boucle locale DU conteneur, elle, marche (un
+//     serveur lancé par une commande du job répond à la suivante) ;
 //   - l'environnement passé EN ENTIER (`inheritDefaultEnvironment: false`) :
 //     l'environnement par défaut de MXC est le bloc du profil utilisateur,
 //     variables persistées comprises — une clé d'API posée par `setx` y
@@ -30,9 +36,7 @@
 // (`SANDBOX_BACKEND_MISSING`) au lieu de faire tomber le runner au démarrage.
 
 import { spawn as spawnHostSide } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { createServer, type AddressInfo, type Server, type Socket } from 'node:net';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PassThrough } from 'node:stream';
@@ -55,9 +59,6 @@ type MxcModule = typeof MxcSdk;
 
 /** Le seul palier d'isolation MXC accepté (voir la sonde). */
 const ACCEPTED_TIER = 'base-container';
-
-/** La capacité MXC qui permet à l'hôte du conteneur de joindre le runner. */
-const HOST_LOOPBACK_CAPABILITY = 'ingressHostLoopbackAllow';
 
 /** Le nom sous lequel ce backend apparaît dans le statut et les journaux. */
 export const MXC_BACKEND_NAME = 'mxc-processcontainer';
@@ -91,29 +92,16 @@ function comspecOf(env: Readonly<Record<string, string | undefined>>): string {
 
 function hostRequest(
   script: string,
-  port: number,
-  token: string,
   writableRoots: readonly string[],
   environment: Record<string, string>,
 ): ContainerRequest {
   return {
-    command: `"${process.execPath}" "${script}" ${port} ${token}`,
+    command: `"${process.execPath}" "${script}"`,
     filesystem: {
       readwritePaths: [...writableRoots],
       readonlyPaths: readableDriveRoots(),
     },
-    // `egress allow` ouvre la sortie (internet, réseau local). La boucle
-    // locale de la machine, elle, est fermée à un conteneur AppContainer par
-    // défaut : sans `hostLoopback allow`, l'hôte ne joint pas le runner
-    // (`EACCES connect 127.0.0.1:<port>`, mesuré le 15/10 sur Windows 11
-    // 26200.9711, `ETIMEDOUT` sur l'image windows-11-arm de GitHub). C'est
-    // l'option que MXC documente pour ce cas, portée par la capacité
-    // `ingressHostLoopbackAllow` que la sonde exige ; la règle vit avec le
-    // conteneur et disparaît avec lui (un conteneur suivant sans elle rend
-    // de nouveau EACCES, mesuré). Elle tient aussi la promesse de l'étape 1,
-    // « le réseau reste ouvert » : une commande joint ComfyUI, Ollama ou un
-    // serveur de dev sur 127.0.0.1 comme hors du bac à sable.
-    network: { egress: { default: 'allow' }, ingress: { hostLoopback: 'allow' } },
+    network: { egress: { default: 'allow' } },
     ui: { disable: false },
     workingDirectory: dirname(script),
     environment,
@@ -149,7 +137,6 @@ interface PendingCommand {
 }
 
 interface HostMessage {
-  hello?: string;
   fatal?: string;
   ready?: boolean;
   id?: number;
@@ -162,30 +149,27 @@ interface HostMessage {
 }
 
 /**
- * Le conteneur d'un job : un hôte MXC, joint par une connexion TCP qu'il
- * ouvre lui-même vers ce serveur (job-host.ts dit pourquoi pas l'entrée
- * standard), et les commandes qu'il porte.
+ * Le conteneur d'un job : un hôte MXC, joint par ses flux standard que le
+ * courtier relaie (job-host.ts dit pourquoi), et les commandes qu'il porte.
  */
 class MxcJobContainer implements JobContainer {
   private nextId = 0;
   private readonly pending = new Map<number, PendingCommand>();
-  private socket: Socket | null = null;
   private dead = false;
   private hostOutput = '';
+  private buffer = '';
   private readonly exited: Promise<void>;
   private readyWaiter: { resolve: () => void; reject: (e: Error) => void } | null = null;
 
-  constructor(
-    private readonly container: BrokeredContainer,
-    private readonly server: Server,
-    private readonly token: string,
-  ) {
-    server.on('connection', (sock) => this.accept(sock));
-    // Ce que la racine du conteneur a écrit (une panne de Node au démarrage
-    // de l'hôte) arrive avec son arrêt, par le courtier — cité, borné. Une
-    // panne de l'hôte plus tard arrive par la connexion (`fatal`).
+  constructor(private readonly container: BrokeredContainer) {
+    container.onOutput((chunk) => this.receive(chunk));
+    // Ce que la racine du conteneur a écrit sur sa sortie d'erreur (une panne
+    // de Node au démarrage de l'hôte) arrive avec son arrêt, par le courtier —
+    // cité, borné. Une panne de l'hôte plus tard arrive par le canal (`fatal`).
     this.exited = container.exited.then((r) => {
-      if (r.output.trim()) this.hostOutput = `${this.hostOutput}${r.output}`.slice(-2_000);
+      // Jamais une raison vide : sans un mot de l'hôte, au moins son code.
+      const said = r.output.trim() || `exit code ${r.code ?? 'unknown'}`;
+      this.hostOutput = `${this.hostOutput}${said}`.slice(-2_000);
       this.markDead();
     });
   }
@@ -202,8 +186,6 @@ class MxcJobContainer implements JobContainer {
   private markDead(): void {
     if (this.dead) return;
     this.dead = true;
-    this.socket?.destroy();
-    this.server.close();
     this.readyWaiter?.reject(new SandboxStartError(this.reason('SANDBOX_HOST_EXITED')));
     for (const [id, cmd] of this.pending) {
       this.pending.delete(id);
@@ -217,46 +199,22 @@ class MxcJobContainer implements JobContainer {
     }
   }
 
-  /** La première connexion qui présente le jeton est celle de l'hôte ; toute autre est fermée. */
-  private accept(sock: Socket): void {
-    if (this.socket || this.dead) {
-      sock.destroy();
-      return;
-    }
-    sock.setEncoding('utf8');
-    let buffer = '';
-    let greeted = false;
-    sock.on('data', (chunk: string) => {
-      buffer += chunk;
-      let at: number;
-      while ((at = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, at);
-        buffer = buffer.slice(at + 1);
-        let m: HostMessage;
-        try {
-          m = JSON.parse(line) as HostMessage;
-        } catch {
-          continue;
-        }
-        if (!greeted) {
-          if (m.hello !== this.token) {
-            sock.destroy();
-            return;
-          }
-          greeted = true;
-          this.socket = sock;
-          // La connexion perdue, l'hôte s'arrête : le conteneur est fini.
-          sock.on('close', () => this.container.kill());
-          this.onSocketReady?.();
-          continue;
-        }
-        this.handle(m);
+  /** Les lignes JSON de l'hôte ; une ligne illisible est ignorée. */
+  private receive(chunk: string): void {
+    this.buffer += chunk;
+    let at: number;
+    while ((at = this.buffer.indexOf('\n')) >= 0) {
+      const line = this.buffer.slice(0, at);
+      this.buffer = this.buffer.slice(at + 1);
+      let m: HostMessage;
+      try {
+        m = JSON.parse(line) as HostMessage;
+      } catch {
+        continue;
       }
-    });
-    sock.on('error', () => undefined);
+      this.handle(m);
+    }
   }
-
-  private onSocketReady: (() => void) | null = null;
 
   /** Attend l'hôte, lui donne l'environnement passé, attend son `ready`. */
   async init(env: Record<string, string>): Promise<void> {
@@ -275,15 +233,15 @@ class MxcJobContainer implements JobContainer {
           reject(e);
         },
       };
-      this.onSocketReady = () => this.send({ op: 'init', env });
       if (this.dead)
         this.readyWaiter.reject(new SandboxStartError(this.reason('SANDBOX_HOST_EXITED')));
+      else this.send({ op: 'init', env });
     });
     this.readyWaiter = null;
   }
 
   private send(message: unknown): void {
-    this.socket?.write(`${JSON.stringify(message)}\n`);
+    this.container.write(`${JSON.stringify(message)}\n`);
   }
 
   private handle(m: HostMessage): void {
@@ -317,7 +275,7 @@ class MxcJobContainer implements JobContainer {
   }
 
   async start(launch: CommandLaunch): Promise<StartedProcess> {
-    if (this.dead || !this.socket) {
+    if (this.dead) {
       throw new SandboxStartError(this.reason('SANDBOX_CONTAINER_EXITED'));
     }
     const id = ++this.nextId;
@@ -342,10 +300,7 @@ class MxcJobContainer implements JobContainer {
   }
 
   async close(): Promise<void> {
-    if (!this.dead) {
-      this.socket?.destroy();
-      this.container.kill();
-    }
+    if (!this.dead) this.container.kill();
     await this.exited;
   }
 }
@@ -376,23 +331,13 @@ export function mxcBackend(
       throw new SandboxStartError(messageOf(e));
     }
     const environment = definedEnv(env);
-    const server = createServer();
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(0, '127.0.0.1', () => resolve());
-    });
-    const port = (server.address() as AddressInfo).port;
-    const token = randomBytes(24).toString('hex');
     let opened: BrokeredContainer;
     try {
-      opened = await broker().open(
-        hostRequest(ensureJobHostScript(), port, token, writableRoots, environment),
-      );
+      opened = await broker().open(hostRequest(ensureJobHostScript(), writableRoots, environment));
     } catch (e) {
-      server.close();
       throw e instanceof SandboxStartError ? e : new SandboxStartError(messageOf(e));
     }
-    const container = new MxcJobContainer(opened, server, token);
+    const container = new MxcJobContainer(opened);
     try {
       await container.init(environment);
     } catch (e) {
@@ -436,21 +381,6 @@ export function mxcBackend(
           reason: [
             `isolationTier=${support.isolationTier ?? 'unknown'}`,
             ...(support.isolationWarnings ?? []),
-          ].join(' | '),
-        };
-      }
-      // LA BOUCLE LOCALE. L'hôte du conteneur joint le runner sur 127.0.0.1
-      // (job-host.ts) : sans la capacité `ingressHostLoopbackAllow` du
-      // backend de processus, il ne le pourrait pas, et le bac à sable le dit
-      // ici, la capacité nommée, plutôt que par un hôte qui ne répond pas.
-      const processBackend = m.getAvailableBackends().find((b) => b.backend === 'processcontainer');
-      if (!processBackend?.capabilities.includes(HOST_LOOPBACK_CAPABILITY)) {
-        return {
-          state: 'unavailable',
-          code: 'SANDBOX_PLATFORM_UNSUPPORTED',
-          reason: [
-            `processcontainer lacks ${HOST_LOOPBACK_CAPABILITY}`,
-            ...(processBackend?.warnings ?? []),
           ].join(' | '),
         };
       }

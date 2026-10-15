@@ -466,8 +466,9 @@ jobs:
   sandbox-windows:
     runs-on: windows-11-arm
     # Mesuré sur la sonde du 15/10 (run 38671844833) : install ~6 min à froid
-    # sur cette image, la batterie moins d'une minute.
-    timeout-minutes: 30
+    # sur cette image, la batterie moins d'une minute. Borne du job = somme des
+    # étapes (15 + 2 + 10) + 5 pour les étapes de mise en place.
+    timeout-minutes: 32
     steps:
       - uses: actions/checkout@v5
 
@@ -486,6 +487,7 @@ jobs:
       # cette image, le job deviendrait vert sans rien prouver : il refuse
       # donc de continuer sans base-container, le palier cité.
       - name: MXC isolation tier must be base-container
+        timeout-minutes: 2
         working-directory: packages/sandbox
         run: >-
           node --input-type=module -e "const m = await import('@microsoft/mxc-sdk/v1');

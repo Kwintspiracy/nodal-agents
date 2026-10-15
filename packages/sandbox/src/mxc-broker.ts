@@ -12,17 +12,21 @@
 //
 // D'où ce courtier : un petit processus Node, NON confiné, lancé une fois par
 // le runner, qui seul appelle le SDK, avec un pool de threads à sa mesure
-// (`UV_THREADPOOL_SIZE`). Il ne fait que trois choses : ouvrir un conteneur
-// (le SDK, `spawn`), le tuer, dire quand il s'est arrêté. Les commandes, elles,
-// ne passent pas par lui : l'hôte du conteneur joint le runner directement
-// (job-host.ts). Le runner mort, l'entrée du courtier se ferme ; il tue alors
-// ses conteneurs et s'arrête.
+// (`UV_THREADPOOL_SIZE`). Il ouvre un conteneur (le SDK, `spawn`), le tue,
+// dit quand il s'est arrêté, et RELAIE le canal de son hôte : ce que le runner
+// écrit à l'hôte va sur l'entrée standard du conteneur, ce que l'hôte écrit
+// sur sa sortie standard revient au runner (job-host.ts dit pourquoi ce canal
+// plutôt que le réseau). Le runner mort, l'entrée du courtier se ferme ; il
+// tue alors ses conteneurs et s'arrête.
 //
 // Protocole, une ligne JSON par message, sur l'entrée et la sortie standard
 // du courtier :
-//   runner → courtier  {op:'open', id, request}  |  {op:'kill', id}
+//   runner → courtier  {op:'open', id, request} | {op:'write', id, data}
+//                      | {op:'kill', id}
 //   courtier → runner  {id, opened, pid} | {id, error: {code, message, remediation}}
-//                      | {id, exited, output}
+//                      | {id, o}  (ce que l'hôte a écrit sur sa sortie standard)
+//                      | {id, exited, output}  (output : la fin de sa sortie
+//                        d'erreur, où Node écrit une panne au démarrage)
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -63,13 +67,18 @@ process.stdin.on('data', (chunk) => {
   }
 });
 process.stdin.on('end', () => {
-  for (const p of procs.values()) { try { p.kill(); } catch {} }
+  for (const c of procs.values()) { try { c.p.kill(); } catch {} }
   setTimeout(() => process.exit(0), 500);
 });
 async function handle(m) {
   if (m.op === 'kill') {
-    const p = procs.get(m.id);
-    if (p) { try { p.kill(); } catch {} }
+    const c = procs.get(m.id);
+    if (c) { try { c.p.kill(); } catch {} }
+    return;
+  }
+  if (m.op === 'write') {
+    const c = procs.get(m.id);
+    if (c && c.stdin) { try { c.stdin.write(m.data); } catch {} }
     return;
   }
   if (m.op !== 'open') return;
@@ -83,11 +92,20 @@ async function handle(m) {
     out({ id: m.id, error: { code: e && e.code, message: String((e && e.message) || e), remediation: e && e.remediation } });
     return;
   }
-  procs.set(m.id, p);
+  // L'entrée de l'hôte est PRISE avant wait() : le SDK ferme une entrée que
+  // personne n'a prise quand on attend la fin du processus (wait(),
+  // container-process.js) — l'hôte lirait aussitôt la fin de son entrée.
+  const stdin = p.standardInput;
+  procs.set(m.id, { p, stdin });
   let output = '';
-  const keep = (d) => { output = (output + String(d)).slice(-2000); };
-  if (p.standardOutput) p.standardOutput.on('data', keep);
-  if (p.standardError) p.standardError.on('data', keep);
+  if (p.standardOutput) {
+    p.standardOutput.setEncoding('utf8');
+    p.standardOutput.on('data', (d) => out({ id: m.id, o: d }));
+  }
+  if (p.standardError) {
+    p.standardError.setEncoding('utf8');
+    p.standardError.on('data', (d) => { output = (output + d).slice(-2000); });
+  }
   out({ id: m.id, opened: true, pid: p.id });
   p.wait().then((w) => w.exitCode, () => null).then((code) => {
     procs.delete(m.id);
@@ -141,8 +159,12 @@ function ensureBrokerScript(dir: string = sandboxHostDir()): string {
 export interface BrokeredContainer {
   /** Le pid du processus racine du conteneur (l'hôte). */
   readonly pid: number;
-  /** Résolue quand le conteneur s'est arrêté, avec ce que sa racine a écrit. */
+  /** Résolue quand le conteneur s'est arrêté, avec la fin de sa sortie d'erreur. */
   readonly exited: Promise<{ code: number | null; output: string }>;
+  /** Écrit sur l'entrée standard de l'hôte. */
+  write(data: string): void;
+  /** Ce que l'hôte écrit sur sa sortie standard, dans l'ordre, rien de perdu. */
+  onOutput(listener: (chunk: string) => void): void;
   kill(): void;
 }
 
@@ -150,6 +172,9 @@ interface Pending {
   open?: { resolve: (c: BrokeredContainer) => void; reject: (e: Error) => void };
   exit: (r: { code: number | null; output: string }) => void;
   exited: Promise<{ code: number | null; output: string }>;
+  /** Sortie de l'hôte arrivée avant qu'on l'écoute ; vidée au premier écouteur. */
+  early: string[];
+  listener?: (chunk: string) => void;
 }
 
 /** Le client du courtier, côté runner. Un par processus, relancé s'il meurt. */
@@ -198,13 +223,31 @@ export class MxcBroker {
       }
     });
     child.on('error', () => undefined);
-    // Le runner ne reste pas en vie pour son courtier.
-    child.unref();
-    (child.stdout as unknown as { unref?: () => void } | null)?.unref?.();
+    // Le runner ne reste pas en vie pour son courtier sans conteneur : voir hold().
     (child.stderr as unknown as { unref?: () => void } | null)?.unref?.();
     (child.stdin as unknown as { unref?: () => void } | null)?.unref?.();
     this.child = child;
+    this.hold();
     return child;
+  }
+
+  /**
+   * Tant qu'un conteneur est ouvert (ou en train de s'ouvrir), le processus qui
+   * le tient reste en vie : une commande en cours attend une réponse qui ne
+   * vient que par le courtier. Sans conteneur, le courtier ne retient rien —
+   * le runner, ou un CLI qui a fini, s'arrête sans lui.
+   */
+  private hold(): void {
+    const child = this.child;
+    if (!child) return;
+    const out = child.stdout as unknown as { ref?: () => void; unref?: () => void } | null;
+    if (this.pending.size > 0) {
+      child.ref();
+      out?.ref?.();
+    } else {
+      child.unref();
+      out?.unref?.();
+    }
   }
 
   private handle(m: BrokerMessage): void {
@@ -212,6 +255,7 @@ export class MxcBroker {
     if (!p) return;
     if (m.error !== undefined) {
       this.pending.delete(m.id);
+      this.hold();
       const text = mxcErrorText(m.error);
       p.open?.reject(new SandboxStartError(text));
       p.exit({ code: null, output: text });
@@ -222,10 +266,19 @@ export class MxcBroker {
       open?.resolve({
         pid: m.pid ?? 0,
         exited: p.exited,
+        write: (data) => this.send({ op: 'write', id, data }),
+        onOutput: (listener) => {
+          p.listener = listener;
+          for (const chunk of p.early.splice(0)) listener(chunk);
+        },
         kill: () => this.send({ op: 'kill', id }),
       });
+    } else if (m.o !== undefined) {
+      if (p.listener) p.listener(m.o);
+      else p.early.push(m.o);
     } else if ('exited' in m) {
       this.pending.delete(m.id);
+      this.hold();
       p.exit({ code: m.exited ?? null, output: m.output ?? '' });
     }
   }
@@ -240,8 +293,9 @@ export class MxcBroker {
     let exit!: Pending['exit'];
     const exited = new Promise<{ code: number | null; output: string }>((r) => (exit = r));
     return new Promise<BrokeredContainer>((resolve, reject) => {
-      this.pending.set(id, { open: { resolve, reject }, exit, exited });
+      this.pending.set(id, { open: { resolve, reject }, exit, exited, early: [] });
       this.send({ op: 'open', id, request });
+      this.hold();
     });
   }
 }
@@ -251,6 +305,7 @@ interface BrokerMessage {
   opened?: boolean;
   pid?: number;
   error?: MxcErrorFields;
+  o?: string;
   exited?: number | null;
   output?: string;
 }

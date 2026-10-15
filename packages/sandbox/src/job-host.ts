@@ -18,24 +18,25 @@
 // pour un conteneur par commande) ; le serveur meurt quand le conteneur est
 // tué, ET quand le processus qui le tient se termine.
 //
-// LE CANAL est une connexion TCP sur la boucle locale, que l'hôte ouvre vers
-// le runner — pas l'entrée standard de l'hôte. Mesuré le 14/10 : dès qu'un
-// SECOND conteneur est lancé par le même runner, ce qu'on écrit sur l'entrée
-// standard du premier (le flux natif du SDK MXC 1.0.0) ne lui parvient plus,
-// et ses commandes restent sans réponse jusqu'à ce que l'autre se ferme. La
-// boucle locale répond depuis le conteneur quand la demande porte
-// `network.ingress.hostLoopback: 'allow'` (windows-mxc.ts dit pourquoi ; la
-// seule règle `egress allow` ne suffit pas, mesuré le 15/10). Le runner donne
-// à l'hôte un port et un jeton à usage unique ; une connexion qui ne présente
-// pas le jeton est fermée.
-//
-// Un hôte qui ne joint pas le runner le DIT avant de s'arrêter : l'erreur de
-// l'OS (code, message) sur sa sortie d'erreur, encore ouverte à ce moment-là,
-// que le courtier rapporte avec l'arrêt du conteneur. La raison du statut la
-// cite (`SANDBOX_HOST_EXITED: SANDBOX_HOST_CONNECT_FAILED: EACCES …`).
+// LE CANAL est l'entrée et la sortie standard de l'hôte, que le courtier
+// (mxc-broker.ts) relaie au runner. Aucun réseau : le 14/10, on avait mesuré
+// que dès qu'un SECOND conteneur était lancé, ce qu'on écrivait sur l'entrée
+// standard du premier ne lui parvenait plus, et l'hôte avait été branché sur
+// la boucle locale. La cause était le POOL DE THREADS du processus qui tenait
+// les conteneurs, pas MXC : le SDK lit chaque sortie par une lecture bloquante
+// du pool (4 threads par défaut), et deux conteneurs les prenaient tous,
+// écritures comprises. Mesuré le 15/10 : 3 conteneurs sous 4 threads, aucune
+// réponse ; 8 conteneurs sous 128 threads (ceux du courtier), toutes, en
+// 65 ms. Et la boucle locale, elle, n'est pas ouverte à un conteneur par
+// défaut (`EACCES` sur Windows 11 26200.9711, `ETIMEDOUT` sur l'image
+// windows-11-arm de GitHub), et l'option MXC qui l'ouvre
+// (`ingress.hostLoopback`) n'existe pas sur tous les builds (absente en
+// 26200.9457). Les flux standard, eux, ne dépendent ni du build ni de l'état
+// de la machine, et personne d'autre que le courtier ne tient leurs handles :
+// aucun processus, d'un autre conteneur ou hors de tout conteneur, n'a de nom
+// à ouvrir pour piloter cet hôte.
 //
 // Le protocole, une ligne JSON par message :
-//   hôte → runner  {hello: jeton}           à la connexion ;
 //   runner → hôte  {op:'init', env}         l'environnement que Nodal a passé
 //                                            à l'hôte : ce que MXC y a remplacé
 //                                            (TEMP, TMP, LOCALAPPDATA…) est
@@ -47,8 +48,9 @@
 //                                            refusé DANS le conteneur, mesuré) ;
 //                  {id, s:'o'|'e', d}       sa sortie, en base64 ;
 //                  {id, exit, signal} | {id, error}
-// La connexion fermée, l'hôte s'arrête — et le conteneur avec lui : un runner
-// qui meurt n'en laisse pas derrière lui.
+//                  {fatal}                  une panne de l'hôte, citée
+// L'entrée fermée (le courtier, donc le runner, est parti), l'hôte s'arrête —
+// et le conteneur avec lui.
 //
 // La fin d'une commande est la fin de son processus RACINE, puis ses flux
 // vidés au plus DRAIN_MS : un serveur lancé par `start /b` hérite du tuyau de
@@ -69,33 +71,17 @@ export const DRAIN_MS = 200;
 export const JOB_HOST_SOURCE = `'use strict';
 // Hôte du conteneur d'un job Nodal (@nodal-agents/sandbox, job-host.ts).
 const { spawn } = require('child_process');
-const net = require('net');
 const DRAIN_MS = ${DRAIN_MS};
 const up = (k) => k.toUpperCase();
-const socket = net.connect(Number(process.argv[2]), '127.0.0.1');
-const out = (o) => socket.write(JSON.stringify(o) + '\\n');
+const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 let overrides = {};
 let buffer = '';
-let connected = false;
-socket.setEncoding('utf8');
-// Une panne de l'hôte se dit sur la connexion : ses sorties standard sont
-// fermées dès qu'elle est établie (voir plus bas).
 process.on('uncaughtException', (e) => {
   try { out({ fatal: String((e && e.stack) || e) }); } catch {}
   setTimeout(() => process.exit(1), 50);
 });
-socket.on('connect', () => {
-  connected = true;
-  out({ hello: process.argv[3] });
-  // Le SDK lit les sorties standard d'un processus confiné par des lectures
-  // BLOQUANTES du pool de threads de Node (4 threads par défaut) : un hôte
-  // qui les garderait ouvertes immobiliserait deux threads du runner pour
-  // toute la durée du job, et deux jobs suffiraient à geler toutes ses
-  // lectures de fichiers. Fermées, ces lectures finissent aussitôt.
-  try { process.stdout.destroy(); } catch {}
-  try { process.stderr.destroy(); } catch {}
-});
-socket.on('data', (chunk) => {
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
   buffer += chunk;
   let at;
   while ((at = buffer.indexOf('\\n')) >= 0) {
@@ -114,15 +100,11 @@ socket.on('data', (chunk) => {
     }
   }
 });
-// Jamais joint : l'erreur ci-dessous parle et sort ; la fermeture qui la suit
-// ne doit pas sortir avant elle.
-socket.on('close', () => { if (connected) process.exit(0); else setTimeout(() => process.exit(1), 1000); });
-socket.on('error', (e) => {
-  if (connected) process.exit(1);
-  const line = 'SANDBOX_HOST_CONNECT_FAILED: ' + ((e && e.code) ? e.code + ' ' : '') + String((e && e.message) || e) + '\\n';
-  let done = false;
-  const quit = () => { if (!done) { done = true; process.exit(1); } };
-  try { process.stderr.write(line, quit); } catch { quit(); }
+// L'entrée fermée, il le DIT avant de sortir : un hôte arrêté sans un mot
+// laisserait au statut une raison vide.
+process.stdin.on('end', () => {
+  const quit = () => process.exit(0);
+  try { process.stderr.write('SANDBOX_HOST_INPUT_CLOSED\\n', quit); } catch { quit(); }
   setTimeout(quit, 500);
 });
 function run(m) {
