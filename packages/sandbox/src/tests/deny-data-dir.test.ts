@@ -45,7 +45,7 @@ if (isWindows) {
 }
 
 const sandbox = isWindows
-  ? createSandbox(mxcBackend(undefined, 'closed', process.execPath), { log: () => {} })
+  ? createSandbox(mxcBackend(undefined, 'deny-all'), { log: () => {} })
   : undefined;
 const status = sandbox ? await sandbox.status() : undefined;
 
@@ -54,7 +54,17 @@ afterAll(() => {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
-  if (home) rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  // Best-effort : le Node dédié que le courtier a téléchargé sous le cache
+  // d'outils (ici, sous `home`) reste tenu par le processus courtier jusqu'à
+  // la fin du worker vitest ; son node.exe verrouille le dossier (EPERM).
+  // Le test a prouvé ce qu'il devait ; le temporaire est nettoyé par l'OS.
+  if (home) {
+    try {
+      rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch {
+      /* le courtier tient encore son node.exe ; laissé au nettoyage de l'OS */
+    }
+  }
 });
 
 describe.runIf(isWindows && status?.state === 'available')(

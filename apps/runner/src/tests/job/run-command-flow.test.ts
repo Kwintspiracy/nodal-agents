@@ -28,16 +28,15 @@ import {
 
 /**
  * Ce fichier prouve le FLUX d'un job (approbation, téléchargement dans le
- * workspace, durée de vie de ce qu'une commande lance), pas la politique de
- * boucle locale du bac à sable (windows-mxc.test.ts) : sous Windows, ses jobs
- * tournent sous le vrai MXC avec la boucle locale ouverte quand le build le
- * permet (`when-available`), pour qu'un serveur local réponde. Ailleurs, le
- * bac à sable de la plateforme.
+ * workspace, durée de vie de ce qu'une commande lance). Ses cas réseau (un
+ * `curl` vers un serveur HTTP local, un serveur joint par la commande
+ * suivante) passent par le proxy : sous Windows ses jobs tournent donc sous
+ * la valeur PRODUIT `proxy`. Là où le proxy n'est pas joignable
+ * (windows-11-arm) le bac à sable est indisponible et ces cas se sautent
+ * (`unconfinedWindows`). Ailleurs (Linux CI), le bac à sable de la plateforme.
  */
 const flowSandbox =
-  process.platform === 'win32'
-    ? createSandbox(mxcBackend(undefined, 'when-available', process.execPath))
-    : defaultSandbox();
+  process.platform === 'win32' ? createSandbox(mxcBackend(undefined, 'proxy')) : defaultSandbox();
 import { join } from 'node:path';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';

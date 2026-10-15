@@ -16,16 +16,12 @@ export type SandboxUnavailableCode =
   | 'SANDBOX_PLATFORM_UNSUPPORTED'
   /** Une commande triviale confinée n'a pas pu tourner : le backend est cassé ici. */
   | 'SANDBOX_SELF_TEST_FAILED'
-  /**
-   * Le backend confinerait, mais sans ouvrir la boucle locale de la machine
-   * (Windows : palier base-container sans la capacité MXC
-   * `ingressHostLoopbackAllow`), et la politique la requiert.
-   */
-  | 'SANDBOX_HOST_LOOPBACK_UNSUPPORTED'
   /** Le processus qui tient les conteneurs (le courtier MXC) n'a pas pu être lancé. */
   | 'SANDBOX_BROKER_START_FAILED'
   /** Le Node dédié du courtier n'a pas pu être obtenu (réseau, somme). */
-  | 'SANDBOX_BROKER_NODE_UNAVAILABLE';
+  | 'SANDBOX_BROKER_NODE_UNAVAILABLE'
+  /** Le proxy réseau (côté hôte) n'est pas joignable depuis le conteneur. */
+  | 'SANDBOX_PROXY_UNREACHABLE';
 
 export type SandboxStatus =
   | {
@@ -35,7 +31,7 @@ export type SandboxStatus =
       /**
        * Ce que la politique de l'étape 1 promet et que CETTE machine ne tient
        * pas sous ce backend, chaque limite commençant par son code stable
-       * (`SANDBOX_HOST_LOOPBACK_UNSUPPORTED: …`). Absent quand il n'y en a pas.
+       * (par ex. `SANDBOX_NETWORK_RAW_TCP_LOCAL: …`). Absent quand il n'y en a pas.
        */
       readonly limits?: readonly string[];
     }

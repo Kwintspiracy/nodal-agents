@@ -33,7 +33,7 @@ const isWindows = process.platform === 'win32';
 // builds base-container (avec ou sans limits).
 // Le courtier tourne sur le Node du runner de test (D5 prouvé ailleurs).
 const sandbox = isWindows
-  ? createSandbox(mxcBackend(undefined, undefined, process.execPath), { log: () => {} })
+  ? createSandbox(mxcBackend(undefined, 'deny-all'), { log: () => {} })
   : undefined;
 const status = sandbox ? await sandbox.status() : undefined;
 

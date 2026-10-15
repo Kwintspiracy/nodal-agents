@@ -89,7 +89,7 @@ describe('MxcBroker — a broker that cannot start leaves nothing pending @cap:e
         { backend: 'processcontainer', tier: 'base-container', capabilities: [], warnings: [] },
       ],
     };
-    const backend = mxcBackend(() => Promise.resolve(sdk as never), 'closed', MISSING_NODE);
+    const backend = mxcBackend(() => Promise.resolve(sdk as never), 'deny-all', MISSING_NODE);
     const r = await settled(backend.probe());
     expect('ok' in r).toBe(true);
     const status = (r as { ok: Awaited<ReturnType<typeof backend.probe>> }).ok;

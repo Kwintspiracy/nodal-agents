@@ -67,6 +67,37 @@ export function toolCacheRoot(): string {
  * sans cela le conteneur ne pourrait pas charger son hôte (mesuré). On ne
  * refuse que ce qui existe — un dossier absent n'est pas refusé.
  */
+/**
+ * Les points d'accès de NODAL lui-même qu'une commande confinée ne doit pas
+ * joindre (#628, D2) : le runner, le web et le Postgres embarqué. Résolus de
+ * la VRAIE configuration du runner (invariant #6), jamais en dur :
+ *   - `PORT` : le port du runner (apps/cli/src/lib/env.ts) ;
+ *   - `DATABASE_URL` : le port du Postgres embarqué ;
+ *   - `WEB_PORT` : le port du tableau de bord (passé par le CLI).
+ * Le proxy (proxy.ts) refuse ces ports sur les adresses locales ; tout le
+ * reste — internet et les services tiers locaux — passe.
+ */
+export function nodalDeniedEndpoints(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): { port: number }[] {
+  const ports = new Set<number>();
+  const addPort = (v: string | undefined): void => {
+    const n = Number(v);
+    if (Number.isInteger(n) && n > 0 && n < 65536) ports.add(n);
+  };
+  addPort(env['PORT']);
+  addPort(env['WEB_PORT']);
+  const dbUrl = env['DATABASE_URL'];
+  if (dbUrl) {
+    try {
+      addPort(new URL(dbUrl).port);
+    } catch {
+      /* URL illisible : pas de port à refuser de cette source */
+    }
+  }
+  return [...ports].map((port) => ({ port }));
+}
+
 export function sandboxDeniedPaths(machine: MachineView = thisMachine()): string[] {
   const dataDir = join(machine.home, '.nodalai');
   if (!existsSync(dataDir)) return [];

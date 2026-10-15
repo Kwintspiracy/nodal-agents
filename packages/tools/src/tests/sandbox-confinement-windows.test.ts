@@ -40,18 +40,21 @@ let canary: string;
 const node = process.execPath;
 
 /**
- * Le bac à sable de la batterie : le VRAI backend MXC, sous la politique de
- * boucle locale `when-available` (windows-mxc.ts). La batterie prouve le mur
- * des écritures et la vie des processus d'un job ; elle le prouve donc aussi
- * sur un build sans la capacité `ingressHostLoopbackAllow` (windows-11-arm),
- * où la politique par défaut rend le bac à sable indisponible. Même code de
- * production, une valeur de son unique paramètre ; aucune branche de test.
+ * Le bac à sable de la batterie : le VRAI backend MXC, sous la valeur de test
+ * de la politique réseau — `deny-all` (windows-mxc.ts), aucun réseau, aucun
+ * proxy. C'est voulu : cette suite prouve le mur des ÉCRITURES et la VIE des
+ * processus d'un job (vivants jusqu'à la fin, morts après), qui ne dépendent
+ * d'aucun réseau. `deny-all` plutôt que `egress allow` pour qu'aucune fuite ne
+ * se cache derrière un réseau ouvert. La JOIGNABILITÉ d'un serveur par la
+ * commande suivante passe par le proxy : elle est prouvée à part, sous la
+ * valeur PRODUIT `proxy` (sandbox-proxy-windows.test.ts), sur 9711. `deny-all`
+ * et `proxy` sont deux valeurs de l'unique paramètre, pas une branche de test.
+ *
+ * Le courtier tourne sur le Node dédié que Nodal télécharge (D5), quel que
+ * soit le Node du runner de test : la suite marche donc même sur 9711, dont
+ * le Node est 26.4 (hors plage du SDK).
  */
-// Le Node du runner de test est déjà dans la plage du SDK (26.11 local, 26.12
-// CI) : le courtier tourne dessus, pas sur le Node dédié téléchargé (prouvé
-// par broker-node.test.ts et windows-mxc.test.ts). Cette suite prouve le mur
-// des fichiers, pas D5.
-const batterySandbox = createSandbox(mxcBackend(undefined, 'when-available', process.execPath));
+const batterySandbox = createSandbox(mxcBackend(undefined, 'deny-all'));
 
 function ctx(jobId = 'job-sbx', signal?: AbortSignal): ToolContext {
   return {
@@ -269,10 +272,6 @@ describe.skipIf(!isWindows || tierUnsupported)(
         "const fs = require('fs'); const t = Date.now(); (function poll() { if (fs.existsSync(process.argv[2])) return; if (Date.now() - t > 20000) process.exit(1); setTimeout(poll, 50); })();\n",
       );
       await writeFile(
-        join(ws, 'fetch.cjs'),
-        "fetch('http://127.0.0.1:' + process.argv[2] + '/').then((r) => r.text()).then((t) => console.log(t)).catch((e) => { console.log('ERR', e.cause && e.cause.code); process.exit(2); });\n",
-      );
-      await writeFile(
         join(ws, 'launcher.cjs'),
         "const c = require('child_process').spawn(process.execPath, [process.argv[2], process.argv[3]], { detached: true, stdio: 'ignore' }); c.unref();\n",
       );
@@ -280,8 +279,6 @@ describe.skipIf(!isWindows || tierUnsupported)(
     const waitFor = (info: string): string => `"${node}" "${join(ws, 'waitfor.cjs')}" "${info}"`;
     const readInfo = async (info: string): Promise<{ pid: number; port: number }> =>
       JSON.parse(await readFile(info, 'utf8')) as { pid: number; port: number };
-    const reach = (jobId: string, port: number) =>
-      run(`"${node}" "${join(ws, 'fetch.cjs')}" ${port}`, 60, { jobId });
 
     /** Les trois façons de laisser un serveur tourner, sous cmd.exe. */
     const backgroundForms: { name: string; command: (info: string) => string }[] = [
@@ -301,22 +298,29 @@ describe.skipIf(!isWindows || tierUnsupported)(
       },
     ];
 
+    // La VIE du processus, par son pid — indépendante du réseau (`deny-all`
+    // ici). La JOIGNABILITÉ par la commande suivante, qui passe par le proxy,
+    // est prouvée sous la valeur `proxy` dans sandbox-proxy-windows.test.ts.
+    // Marge de la commande 1 : la forme PowerShell Start-Process démarre
+    // powershell.exe + un processus caché dans un conteneur frais, LENT sur
+    // runner arm (jusqu'à ~60 s mesurés le 15/10, run 38733799656). On lui
+    // laisse donc 180 s et le cas 240 s, pour garder cette forme — les agents
+    // lancent de vrais serveurs ainsi sous Windows.
     it.each(backgroundForms)(
-      '$name: the server outlives its command, the next command of the SAME job reaches it, and it dies when the job ends',
+      '$name: the server outlives its command, and it dies when the job ends',
       async ({ name, command }) => {
         await lifetimeFiles();
         const jobId = `job-sbx-life-${name.replace(/[^a-z]+/gi, '-')}`;
         const info = join(ws, `${jobId}.json`);
-        const first = await run(`${command(info)} && ${waitFor(info)}`, 60, { jobId });
+        const first = await run(`${command(info)} && ${waitFor(info)}`, 180, { jobId });
         expect(first.exitCode, first.stderr).toBe(0);
-        const { pid, port } = await readInfo(info);
+        const { pid } = await readInfo(info);
         expect(alive(pid)).toBe(true);
-        const second = await reach(jobId, port);
-        expect(second.stdout.trim()).toBe(`pong ${pid}`);
         expect(await closeJobProcessScope(jobId)).toBe(true);
         await new Promise((r) => setTimeout(r, 1_000));
         expect(alive(pid)).toBe(false);
       },
+      240_000,
     );
 
     it('closing one job does not touch another job’s processes', async () => {
@@ -333,7 +337,6 @@ describe.skipIf(!isWindows || tierUnsupported)(
       await new Promise((r) => setTimeout(r, 1_000));
       expect(alive(a.pid)).toBe(false);
       expect(alive(b.pid)).toBe(true);
-      expect((await reach('job-sbx-b', b.port)).stdout.trim()).toBe(`pong ${b.pid}`);
       await closeJobProcessScope('job-sbx-b');
       await new Promise((r) => setTimeout(r, 1_000));
       expect(alive(b.pid)).toBe(false);

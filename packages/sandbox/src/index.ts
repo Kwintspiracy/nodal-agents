@@ -24,6 +24,7 @@ export {
   defaultAllowedFolders,
   resolveWritableRoots,
   sandboxDeniedPaths,
+  nodalDeniedEndpoints,
   toolCacheEnv,
   toolCacheRoot,
 } from './policy';
@@ -54,6 +55,7 @@ export {
   type WindowsSpawnParts,
 } from './command-line';
 export { type RefusedWrite, extractRefusedWrites } from './refused-writes';
+export { startNodalProxy, localAddresses, type NodalProxy, type DeniedEndpoint } from './proxy';
 export {
   BROKER_NODE_VERSION,
   BrokerNodeUnavailable,
@@ -63,8 +65,8 @@ export {
   type BrokerNodeDeps,
 } from './broker-node';
 export {
-  DEFAULT_HOST_LOOPBACK_POLICY,
-  type HostLoopbackPolicy,
+  DEFAULT_NETWORK_POLICY,
+  type NetworkPolicy,
   MXC_BACKEND_NAME,
   mxcBackend,
 } from './windows-mxc';

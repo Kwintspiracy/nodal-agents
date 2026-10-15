@@ -9,17 +9,15 @@
 //     (mesure 0-ui). Presse-papiers et injection d'entrées restent refusés ;
 //   - chaque lecteur déclaré en LECTURE : tout chemin non déclaré est interdit
 //     en lecture aussi (mesure 2b-noroots) ;
-//   - réseau ouvert : l'étape 1 ne confine que les écritures. `egress allow`
-//     ouvre la sortie (internet, réseau local). La BOUCLE LOCALE (127.0.0.1)
-//     s'ouvre par `ingress.hostLoopback: 'allow'`, demandé dès que MXC porte
-//     la capacité `ingressHostLoopbackAllow` : sans lui, sur Windows 11
-//     26200.9711 (mise à jour du 14/10), même un serveur lancé par une
-//     commande du job est refusé à la suivante (`EACCES`), et ComfyUI ou
-//     Ollama sur la machine aussi. Les builds sans la capacité (26200.9457,
-//     l'image windows-11-arm de GitHub) refusent l'option (« not supported by
-//     this version of Windows ») ; la boucle locale DU conteneur y marche
-//     sans elle (mesuré), celle de la machine non (`ETIMEDOUT`) : le statut
-//     le dit (`limits`), une seule fois, au démarrage ;
+//   - réseau : l'étape 1 ne confine que les écritures, mais la BOUCLE LOCALE
+//     de la machine donne accès à Nodal (runner, web, Postgres) et
+//     `egress.deny` ne la filtre pas (mesuré). D'où le régime `proxy`
+//     (NetworkPolicy) : `egress deny`, tout le trafic passe par un proxy côté
+//     hôte (proxy.ts) qui laisse passer internet et les services tiers locaux
+//     et refuse les ports de Nodal. MXC n'accepte un proxy que sur la boucle
+//     locale ; un build qui ne la joint pas (windows-11-arm 9457) rend le bac
+//     à sable indisponible (`SANDBOX_PROXY_UNREACHABLE`). Un client NON-HTTP
+//     vers un service local n'a pas de route : limite nommée (`limits`) ;
 //   - l'environnement passé EN ENTIER (`inheritDefaultEnvironment: false`) :
 //     l'environnement par défaut de MXC est le bloc du profil utilisateur,
 //     variables persistées comprises — une clé d'API posée par `setx` y
@@ -44,7 +42,8 @@ import { PassThrough } from 'node:stream';
 import type * as MxcSdk from '@microsoft/mxc-sdk/v1';
 import type { ContainerRequest } from '@microsoft/mxc-sdk/v1';
 import { windowsSpawnParts } from './command-line';
-import { sandboxDeniedPaths, readonlyTraversalRoots } from './policy';
+import { sandboxDeniedPaths, readonlyTraversalRoots, nodalDeniedEndpoints } from './policy';
+import { startNodalProxy, type NodalProxy } from './proxy';
 import { ensureJobHostScript, sandboxHostDir } from './job-host';
 import { MxcBroker, mxcErrorText, type BrokeredContainer, type MxcErrorFields } from './mxc-broker';
 import { BrokerNodeUnavailable, ensureBrokerNode, type BrokerNodeDeps } from './broker-node';
@@ -63,40 +62,56 @@ type MxcModule = typeof MxcSdk;
 /** Le seul palier d'isolation MXC accepté (voir la sonde). */
 const ACCEPTED_TIER = 'base-container';
 
-/** La capacité MXC qui ouvre la boucle locale de la machine au conteneur. */
-const HOST_LOOPBACK_CAPABILITY = 'ingressHostLoopbackAllow';
-
 /**
- * La boucle locale de la machine dans un conteneur — LE SEUL ENDROIT où ce
- * choix vit (15/10) :
- *   - `closed` (PAR DÉFAUT) : jamais `hostLoopback`. Une commande confinée ne
- *     joint aucun service de la machine sur 127.0.0.1, et sur certains builds
- *     (26200.9711) même pas un serveur lancé par une commande précédente de
- *     son job. Le statut le dit (`limits`, `SANDBOX_HOST_LOOPBACK_CLOSED`).
- *     Raison : ouverte, la boucle locale donne aussi accès au runner, au web
- *     et au Postgres de Nodal, et les règles `egress.deny` de MXC ne s'y
- *     appliquent pas (mesuré le 15/10) — c'est le seul état qui ne promet
- *     rien de faux ;
- *   - `when-available` : `hostLoopback` quand MXC porte la capacité ; sans
- *     elle, confiné quand même, et `limits` le dit
- *     (`SANDBOX_HOST_LOOPBACK_UNSUPPORTED`) ;
- *   - `required` : `hostLoopback` ; sans la capacité, indisponible avec ce
- *     même code.
+ * Le régime RÉSEAU du conteneur — un PARAMÈTRE du backend (#628, D2), comme le
+ * Node du courtier. Le produit n'en passe qu'UNE valeur, `proxy`, depuis un
+ * seul endroit (status.ts) ; il ne vient ni d'une config, ni d'une variable,
+ * ni d'un réglage.
+ *   - `proxy` (PRODUIT) : `egress deny`, tout le trafic sortant passe par un
+ *     proxy que Nodal tient CÔTÉ HÔTE (proxy.ts). Le proxy laisse passer
+ *     internet et les services tiers locaux (ComfyUI, Ollama, le serveur d'une
+ *     autre commande du job — l'AppContainer partage la pile réseau de l'hôte,
+ *     mesuré le 15/10) et REFUSE les ports de Nodal (runner, web, Postgres).
+ *     MXC n'accepte un proxy que sur la boucle locale ; sur un build où le
+ *     conteneur ne joint pas cette boucle (windows-11-arm 9457), le proxy est
+ *     injoignable et le bac à sable se dit indisponible
+ *     (`SANDBOX_PROXY_UNREACHABLE`).
+ *   - `deny-all` : `egress deny`, AUCUN proxy, aucun réseau. Jamais construit
+ *     par le produit — c'est la valeur que la CI passe aux suites qui prouvent
+ *     le mur des FICHIERS, le refus de lecture et le blocage du forge, lesquels
+ *     ne dépendent pas du réseau. Une valeur de son unique paramètre, pas une
+ *     branche de test dans le code produit.
  */
-export type HostLoopbackPolicy = 'closed' | 'when-available' | 'required';
-export const DEFAULT_HOST_LOOPBACK_POLICY: HostLoopbackPolicy = 'closed';
+export type NetworkPolicy = 'proxy' | 'deny-all';
+export const DEFAULT_NETWORK_POLICY: NetworkPolicy = 'proxy';
 
-const HOST_LOOPBACK_UNSUPPORTED_REASON = `base-container without the MXC capability ${HOST_LOOPBACK_CAPABILITY}: a confined command cannot reach a service of this machine on 127.0.0.1`;
-const HOST_LOOPBACK_CLOSED_REASON =
-  'host loopback not opened (policy closed): a confined command cannot reach a service of this machine on 127.0.0.1, and on some Windows builds not even a server started by an earlier command of its job';
+/** La limite nommée du régime proxy : un client NON-HTTP n'a pas de réseau local. */
+const RAW_TCP_LIMIT =
+  'SANDBOX_NETWORK_RAW_TCP_LOCAL: a confined command reaches local services (ComfyUI, Ollama, a server another command started) and the internet only over HTTP/HTTPS, through the sandbox proxy; a non-HTTP (raw TCP/UDP) client to a local service has no route';
 
-/** Le backend de processus porte-t-il la capacité de la boucle locale ? */
-function hasHostLoopback(m: MxcModule): boolean {
-  return m
-    .getAvailableBackends()
-    .some(
-      (b) => b.backend === 'processcontainer' && b.capabilities.includes(HOST_LOOPBACK_CAPABILITY),
-    );
+/** La configuration réseau MXC d'un régime, et l'env à ajouter aux commandes. */
+interface NetworkSetup {
+  readonly network: ContainerRequest['network'];
+  readonly containment?: ContainerRequest['containment'];
+  readonly extraEnv: Record<string, string>;
+}
+
+/** Construit la config réseau d'un régime ; en `proxy`, pointe sur `proxyUrl`. */
+function networkSetup(policy: NetworkPolicy, proxyUrl: string | null): NetworkSetup {
+  if (policy === 'deny-all' || proxyUrl === null) {
+    return { network: { egress: { default: 'deny' } }, extraEnv: {} };
+  }
+  return {
+    network: {
+      egress: { default: 'deny' },
+      ingress: { default: 'allow' },
+      runtimeConfig: { networkProxy: proxyUrl },
+    },
+    containment: { type: 'processcontainer', config: { network: { allowedProxyPeer: 'CLI' } } },
+    // Node n'honore `HTTP(S)_PROXY` (injectés par MXC) que si on le lui dit.
+    // curl et Python les lisent d'office. Propagé à chaque commande par l'hôte.
+    extraEnv: { NODE_USE_ENV_PROXY: '1' },
+  };
 }
 
 /** Le nom sous lequel ce backend apparaît dans le statut et les journaux. */
@@ -133,7 +148,7 @@ function hostRequest(
   script: string,
   writableRoots: readonly string[],
   environment: Record<string, string>,
-  hostLoopback: boolean,
+  setup: NetworkSetup,
 ): ContainerRequest {
   const denied = sandboxDeniedPaths();
   return {
@@ -154,15 +169,31 @@ function hostRequest(
       // inscriptibles — dossiers de travail, cache d'outils — l'emportent.
       deniedPaths: denied,
     },
-    network: {
-      egress: { default: 'allow' },
-      ...(hostLoopback ? { ingress: { hostLoopback: 'allow' as const } } : {}),
-    },
+    network: setup.network,
+    ...(setup.containment ? { containment: setup.containment } : {}),
     ui: { disable: false },
     workingDirectory: dirname(script),
-    environment,
+    // L'env de l'hôte, plus ce que le régime ajoute (NODE_USE_ENV_PROXY) : l'hôte
+    // le propage à chaque commande comme une surcharge (job-host.ts).
+    environment: { ...environment, ...setup.extraEnv },
     inheritDefaultEnvironment: false,
   };
+}
+
+/** Lance une commande d'épreuve dans un conteneur, draine ses flux, rend sa fin. */
+async function runProbeCommand(
+  container: JobContainer,
+  command: string,
+  env: Record<string, string | undefined>,
+): Promise<ProcessEnd> {
+  const proc = await container.start({
+    target: { command },
+    cwd: process.env['SYSTEMROOT'] ?? 'C:\\Windows',
+    env,
+  });
+  proc.stdout?.resume();
+  proc.stderr?.resume();
+  return proc.done;
 }
 
 function messageOf(e: unknown): string {
@@ -367,7 +398,7 @@ class MxcJobContainer implements JobContainer {
  */
 export function mxcBackend(
   load: () => Promise<MxcModule> = () => import('@microsoft/mxc-sdk/v1'),
-  loopbackPolicy: HostLoopbackPolicy = DEFAULT_HOST_LOOPBACK_POLICY,
+  networkPolicy: NetworkPolicy = DEFAULT_NETWORK_POLICY,
   /**
    * D'où vient le Node du courtier. Par défaut Nodal l'obtient
    * (`ensureBrokerNode`, un build officiel épinglé, téléchargé et vérifié) :
@@ -383,7 +414,14 @@ export function mxcBackend(
   // paquet que celui que le runner charge. Rien n'est résolu ici, où un
   // bundler (le build du web) lirait la résolution et voudrait l'embarquer.
   let brokerClient: MxcBroker | undefined;
-  let hostLoopback: boolean | undefined;
+  // Le proxy côté hôte, démarré une fois en régime `proxy`. Il refuse les
+  // ports de Nodal, lus de la vraie config du runner (nodalDeniedEndpoints).
+  let proxyOnce: Promise<NodalProxy> | undefined;
+  const proxy = (): Promise<NodalProxy> => (proxyOnce ??= startNodalProxy(nodalDeniedEndpoints()));
+  const setup = async (): Promise<NetworkSetup> =>
+    networkPolicy === 'proxy'
+      ? networkSetup('proxy', (await proxy()).url)
+      : networkSetup('deny-all', null);
   // Le Node du courtier, résolu une fois : un chemin fixe (tests), ou le build
   // officiel que Nodal télécharge et vérifie. Résolu AVANT le premier `spawn`,
   // qui est synchrone.
@@ -404,12 +442,9 @@ export function mxcBackend(
     const environment = definedEnv(env);
     let opened: BrokeredContainer;
     try {
-      const loopback = (hostLoopback ??=
-        loopbackPolicy !== 'closed' && hasHostLoopback(await sdk()));
+      const net = await setup();
       const b = await broker();
-      opened = await b.open(
-        hostRequest(ensureJobHostScript(), writableRoots, environment, loopback),
-      );
+      opened = await b.open(hostRequest(ensureJobHostScript(), writableRoots, environment, net));
     } catch (e) {
       if (e instanceof BrokerNodeUnavailable) throw new SandboxStartError(e.message, e.code);
       throw e instanceof SandboxStartError ? e : new SandboxStartError(messageOf(e));
@@ -461,15 +496,6 @@ export function mxcBackend(
           ].join(' | '),
         };
       }
-      const capability = hasHostLoopback(m);
-      hostLoopback = loopbackPolicy !== 'closed' && capability;
-      if (!capability && loopbackPolicy === 'required') {
-        return {
-          state: 'unavailable',
-          code: 'SANDBOX_HOST_LOOPBACK_UNSUPPORTED',
-          reason: HOST_LOOPBACK_UNSUPPORTED_REASON,
-        };
-      }
     } catch (e) {
       return { state: 'unavailable', code: 'SANDBOX_PLATFORM_UNSUPPORTED', reason: messageOf(e) };
     }
@@ -487,14 +513,7 @@ export function mxcBackend(
     let container: JobContainer | null = null;
     try {
       container = await openContainer([], env);
-      const proc = await container.start({
-        target: { command: 'exit 0' },
-        cwd: process.env['SYSTEMROOT'] ?? 'C:\\Windows',
-        env,
-      });
-      proc.stdout?.resume();
-      proc.stderr?.resume();
-      const end = await proc.done;
+      const end = await runProbeCommand(container, 'exit 0', env);
       if (end.kind !== 'exit' || end.exitCode !== 0) {
         return {
           state: 'unavailable',
@@ -506,6 +525,25 @@ export function mxcBackend(
                 ? end.message
                 : 'signal',
         };
+      }
+      // En régime proxy, le proxy côté hôte DOIT être joignable depuis le
+      // conteneur (par le canal `allowedProxyPeer`). Sur un build où la boucle
+      // locale est fermée (windows-11-arm 9457), il ne l'est pas : on le dit,
+      // on ne laisse pas une commande tourner avec un réseau qu'on croit filtré.
+      if (networkPolicy === 'proxy') {
+        const url = new URL((await proxy()).url);
+        const reach = await runProbeCommand(
+          container,
+          `"${process.execPath}" -e "const s=require('net').connect(${url.port},'127.0.0.1');s.on('connect',()=>process.exit(0));s.on('error',()=>process.exit(7));setTimeout(()=>process.exit(8),5000)"`,
+          env,
+        );
+        if (reach.kind !== 'exit' || reach.exitCode !== 0) {
+          return {
+            state: 'unavailable',
+            code: 'SANDBOX_PROXY_UNREACHABLE',
+            reason: `the sandbox proxy at ${(await proxy()).url} is not reachable from the container on this Windows build`,
+          };
+        }
       }
     } catch (e) {
       if (e instanceof SandboxStartError) {
@@ -519,17 +557,9 @@ export function mxcBackend(
     } finally {
       await container?.close();
     }
-    return hostLoopback
-      ? { state: 'available', backend: MXC_BACKEND_NAME }
-      : {
-          state: 'available',
-          backend: MXC_BACKEND_NAME,
-          limits: [
-            loopbackPolicy === 'closed'
-              ? `SANDBOX_HOST_LOOPBACK_CLOSED: ${HOST_LOOPBACK_CLOSED_REASON}`
-              : `SANDBOX_HOST_LOOPBACK_UNSUPPORTED: ${HOST_LOOPBACK_UNSUPPORTED_REASON}`,
-          ],
-        };
+    return networkPolicy === 'proxy'
+      ? { state: 'available', backend: MXC_BACKEND_NAME, limits: [RAW_TCP_LIMIT] }
+      : { state: 'available', backend: MXC_BACKEND_NAME };
   };
 
   return { probe, openContainer };
