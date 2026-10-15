@@ -16,7 +16,10 @@ import {
   mediane,
   duree,
   SEUIL_RALENTI,
+  AVANT_LA_MATRICE,
   colonneDe,
+  phraseComparaison,
+  resumerColonne,
   construireMatrice,
   htmlMatrice,
   lireCatalogue,
@@ -381,13 +384,6 @@ describe('la matrice activités × modèles', () => {
     return html.slice(debut, html.indexOf('</article>', debut));
   };
 
-  it('range une ligne dans la colonne du modèle imposé, sinon du root, sinon des modèles qui ont répondu', () => {
-    expect(colonneDe({ modelUnderTest: 'a', rootModel: 'b', models: ['c'] })).toBe('a');
-    expect(colonneDe({ modelUnderTest: null, rootModel: 'b', models: ['c'] })).toBe('b');
-    expect(colonneDe({ models: ['c', 'd'] })).toBe('c + d');
-    expect(colonneDe({ models: [] })).toBeNull();
-  });
-
   it('suit l’ordre du catalogue, montre les scénarios jamais joués et les activités sans scénario', () => {
     const m = construireMatrice([QUESTION_VERTE, FICHIER_ROUGE], CATALOGUE);
     expect(m.activites.map((a) => a.activite)).toEqual(['question', 'excel', 'email', 'print']);
@@ -401,13 +397,17 @@ describe('la matrice activités × modèles', () => {
     expect(m.activites.find((a) => a.activite === 'excel').scenarios[0].cellules.size).toBe(1);
   });
 
-  it('un essai sauté sans modèle rejoint la colonne la plus récente de son scénario', () => {
-    const vert = { ...QUESTION_VERTE, scenario: 'print', title: 'Print', verdict: 'green' };
-    const m = construireMatrice([vert, PRINT_SAUTE], CATALOGUE);
-    const print = m.activites.find((a) => a.activite === 'print').scenarios[0];
-    expect([...print.cellules.keys()]).toEqual(['z-ai/glm-5.3']);
-    expect(print.cellules.get('z-ai/glm-5.3').essais).toBe(2);
-    expect(m.colonnes).toEqual(['z-ai/glm-5.3']);
+  it('range une ligne dans la colonne du modèle RÉGLÉ : imposé par la matrice, sinon celui du root', () => {
+    expect(colonneDe({ modelUnderTest: 'a', rootModel: 'b', models: ['c'] })).toBe('a');
+    expect(colonneDe({ modelUnderTest: null, rootModel: 'b', models: ['c'] })).toBe('b');
+  });
+
+  it('une ligne d’avant la v2 va dans UNE colonne « before the matrix », jamais dans les modèles qui ont répondu', () => {
+    expect(colonneDe({ models: ['z-ai/glm-5.3', 'xiaomi/mimo-v2.6-pro'] })).toBe(AVANT_LA_MATRICE);
+    expect(colonneDe({ models: [] })).toBe(AVANT_LA_MATRICE);
+    const melange = { ...FICHIER_ROUGE, models: ['z-ai/glm-5.3', 'xiaomi/mimo-v2.6-pro'] };
+    const m = construireMatrice([QUESTION_V2, QUESTION_VERTE, melange, PRINT_SAUTE], CATALOGUE);
+    expect(m.colonnes).toEqual(['z-ai/glm-5.3', AVANT_LA_MATRICE]);
   });
 
   it('un sauté s’affiche en GRIS avec sa raison, jamais en rouge', () => {
@@ -420,7 +420,69 @@ describe('la matrice activités × modèles', () => {
     );
     expect(html).not.toContain('<span class="wf-c__mot">0/1 green</span>');
     expect(html).not.toContain('wf-c--red');
-    expect(html).toContain('model not recorded');
+  });
+
+  it('une activité sans essai sur un modèle est un tiret, pas « 0/n green · n not run »', () => {
+    const html = htmlMatrice(construireMatrice([QUESTION_V2], CATALOGUE));
+    const excel = html.slice(
+      html.indexOf('id="wf-act-excel"'),
+      html.indexOf('</summary>', html.indexOf('id="wf-act-excel"')),
+    );
+    expect(excel).toContain('<span class="wf-nd">–</span>');
+    expect(excel).not.toContain('not run');
+    expect(excel).not.toContain('green');
+    // « not run » reste dit dans les lignes de scénario dépliées.
+    expect(html).toContain('<span class="wf-nd">not run</span>');
+  });
+
+  it('résume chaque colonne : part de verts parmi les essais TENTÉS, médianes vertes, coût total', () => {
+    const rouge = {
+      ...QUESTION_V2,
+      startedAt: '2026-10-16T03:00:00.000Z',
+      verdict: 'red',
+      costUsd: 0.1,
+      durationMs: 90000,
+    };
+    const sansCout = { ...QUESTION_V2, startedAt: '2026-10-16T04:00:00.000Z', costUsd: null };
+    const saute = { ...PRINT_SAUTE, rootModel: 'z-ai/glm-5.3' };
+    const r = resumerColonne([QUESTION_V2, rouge, sansCout, saute]);
+    expect(r).toEqual({
+      tentes: 3,
+      sautes: 1,
+      verts: 2,
+      dureeMs: 20952,
+      coutMedianUsd: 0.0358,
+      coutTotalUsd: 0.0358 + 0.1,
+      coutInconnu: 1,
+    });
+    const html = htmlMatrice(construireMatrice([QUESTION_V2, rouge, sansCout, saute], CATALOGUE));
+    expect(html).toContain(
+      '<span class="wf-c__taux">67 % green <span class="wf-nd">(2/3)</span></span>',
+    );
+    expect(html).toContain('median 21 s · $0.036');
+    expect(html).toContain('total $0.136 for 3 runs, 1 without a cost');
+    expect(html).toContain('1 skipped, not counted');
+  });
+
+  it('dit en une phrase ce qui est comparé : les modèles, les essais par cellule, la période', () => {
+    const plus = {
+      ...QUESTION_V2,
+      startedAt: '2026-10-18T03:00:00.000Z',
+      rootModel: 'deepseek-chat',
+    };
+    const m = construireMatrice([QUESTION_V2, plus], CATALOGUE);
+    expect(phraseComparaison(m)).toBe(
+      '<p class="wf-compare">Comparing <b>2 models</b> (<span class="mono">z-ai/glm-5.3</span>, <span class="mono">deepseek-chat</span>), on the last 5 trials at most of each scenario, run from 2026-10-16 to 2026-10-18.</p>',
+    );
+    const html = htmlWorkflows({ lignes: [QUESTION_V2, plus], illisibles: 0 }, CATALOGUE);
+    expect(html.indexOf('wf-compare')).toBeLessThan(html.indexOf('class="chapo"'));
+    expect(phraseComparaison(construireMatrice([], CATALOGUE))).toContain('No trial yet');
+    // « before the matrix » n'est pas un modèle : la phrase le dit à part.
+    expect(
+      phraseComparaison(construireMatrice([QUESTION_V2, QUESTION_VERTE], CATALOGUE)),
+    ).toContain(
+      'Comparing <b>1 model</b> (<span class="mono">z-ai/glm-5.3</span>) and the runs from before the matrix, whose model was not recorded,',
+    );
   });
 
   it('une cellule donne les derniers essais, le compte des verts et les médianes vertes', () => {

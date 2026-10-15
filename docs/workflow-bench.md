@@ -338,7 +338,8 @@ cli, `reasoningEffort`, `failover`, `calls`, tokens and cost), `deliverables`
 `answer` (the root's final answer, 1200 characters at most, home folder
 masked). The file stays append-only and older lines still render: the portal
 says "not recorded on this run" for what they do not carry, and takes their
-activity from the catalog. Their matrix column is the models that answered.
+activity from the catalog. They go in one matrix column, "before the matrix":
+`models` says which models ANSWERED, not which one the run was set to.
 
 The measures count both runtimes. `llmCalls` are the API calls (`llm_calls`),
 `cliRuns` the turns of an agent on Claude Code or Codex (`cli_runs`).
@@ -382,12 +383,22 @@ removed turns a test red), and the three portal guards too.
 
 ## Portal
 
-The Workflows page is a matrix: one row per activity (catalog order), one
-column per model, the activity cell showing the last verdict of each of its
-scenarios. An activity opens on its scenarios: per model, the bars of the
-last five runs, the green count, and the medians of time and cost of the
-green runs. A skipped run is grey with its reason in the cell, never red,
-and does not count as a workflow to look at. A scenario name leads to its
+The Workflows page opens on one sentence saying what is compared: the
+models, the last five trials at most of each scenario, and the date range.
+
+Below it, a matrix: one row per activity (catalog order), one column per
+model. A column is the model the run was SET to (the one the matrix imposed,
+or the root agent's configured model), never the set of models that answered;
+lines from before bench v2 share one column, "before the matrix". The first
+row sums up each column over the trials shown: the share of green among the
+trials tried (a skipped trial tried nothing and is not counted), the medians
+of time and cost of the green ones, and the total cost of the trials tried
+(trials without a cost are said, never counted as zero). An activity with no
+trial on a model shows a dash; otherwise its cell shows the last verdict of
+each scenario run there. An activity opens on its scenarios: per model, the
+bars of the last five runs, the green count, and the medians of the green
+runs, or "not run". A skipped run is grey with its reason in the cell, never
+red, and does not count as a workflow to look at. A scenario name leads to its
 card: series by Nodal version, slow-down flag, and for a v2 line the models of
 each job (requested to answered, provider, effort, fallback, cache tokens),
 the deliverables and the answer.

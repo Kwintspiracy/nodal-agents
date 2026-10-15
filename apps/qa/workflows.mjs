@@ -203,17 +203,21 @@ export function workflowsARegarder({ lignes }) {
 
 // ─── La matrice : activités × modèles ────────────────────────────────────────
 
+/** La colonne des essais dont on ne sait pas sur quel modèle ils étaient RÉGLÉS. */
+export const AVANT_LA_MATRICE = 'before the matrix';
+
 /**
- * La colonne d'un essai : le modèle que la matrice lui a imposé, sinon le
- * modèle configuré de l'agent racine (lignes du banc v2), sinon les modèles
- * qui ont répondu (lignes plus anciennes). null : la ligne n'en dit rien (un
- * essai sauté écrit avant la v2).
+ * La colonne d'un essai : le modèle sur lequel il était RÉGLÉ, jamais
+ * l'ensemble des modèles qui ont répondu (un secours, un délégué sur un autre
+ * modèle mêleraient les colonnes). C'est le modèle que la matrice a imposé,
+ * sinon le modèle configuré de l'agent racine. Une ligne écrite avant le banc
+ * v2 ne porte ni l'un ni l'autre : `models` dit qui a RÉPONDU, pas ce qui était
+ * demandé. Elle va dans une seule colonne, « before the matrix ».
  */
 export function colonneDe(l) {
   if (typeof l.modelUnderTest === 'string' && l.modelUnderTest) return l.modelUnderTest;
   if (typeof l.rootModel === 'string' && l.rootModel) return l.rootModel;
-  if (Array.isArray(l.models) && l.models.length > 0) return l.models.join(' + ');
-  return null;
+  return AVANT_LA_MATRICE;
 }
 
 /** Ce qu'une cellule (un scénario, un modèle) montre : ses derniers essais et ses médianes vertes. */
@@ -226,6 +230,29 @@ function resumerCellule(lignes) {
     verts: verts.length,
     dureeMs: mediane(verts.map((l) => l.durationMs)),
     coutUsd: mediane(verts.map((l) => l.costUsd)),
+  };
+}
+
+/**
+ * Le résumé d'une colonne, sur les essais MONTRÉS (les cinq derniers de chaque
+ * scénario dans cette colonne) : la part de verts parmi les essais tentés (un
+ * essai sauté n'a rien tenté : ni au numérateur ni au dénominateur), les
+ * médianes de temps et de coût des verts, et le coût total des essais tentés.
+ * Un coût que des essais n'ont pas rapporté est DIT (`coutInconnu`), jamais
+ * compté zéro.
+ */
+export function resumerColonne(essais) {
+  const tentes = essais.filter((l) => l.verdict !== 'skipped');
+  const verts = tentes.filter((l) => l.verdict === 'green');
+  const couts = tentes.map((l) => l.costUsd);
+  return {
+    tentes: tentes.length,
+    sautes: essais.length - tentes.length,
+    verts: verts.length,
+    dureeMs: mediane(verts.map((l) => l.durationMs)),
+    coutMedianUsd: mediane(verts.map((l) => l.costUsd)),
+    coutTotalUsd: couts.filter((c) => typeof c === 'number').reduce((a, b) => a + b, 0),
+    coutInconnu: couts.filter((c) => typeof c !== 'number').length,
   };
 }
 
@@ -250,14 +277,15 @@ export function construireMatrice(lignes, catalogue = null) {
     ...[...parScenario.keys()].filter((id) => !duCatalogue.has(id)),
   ];
 
-  // Les colonnes : les modèles vus, les plus joués d'abord.
+  // Les colonnes : les modèles réglés, les plus joués d'abord ; « before the matrix » en dernier.
   const compte = new Map();
   for (const l of lignes) {
     const c = colonneDe(l);
-    if (c !== null) compte.set(c, (compte.get(c) ?? 0) + 1);
+    compte.set(c, (compte.get(c) ?? 0) + 1);
   }
-  const colonnes = [...compte.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
-  const SANS = 'model not recorded';
+  const colonnes = [...compte.entries()]
+    .sort((a, b) => (a[0] === AVANT_LA_MATRICE) - (b[0] === AVANT_LA_MATRICE) || b[1] - a[1])
+    .map(([c]) => c);
 
   const scenarios = ids.map((id) => {
     const cat = duCatalogue.get(id) ?? null;
@@ -268,19 +296,12 @@ export function construireMatrice(lignes, catalogue = null) {
     const derniere = [...serie]
       .sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)))
       .pop();
-    // Un essai sans colonne (sauté avant la v2) va dans la colonne la plus récente du scénario.
-    const recente = [...serie]
-      .sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)))
-      .map(colonneDe)
-      .filter((c) => c !== null)
-      .pop();
     const parColonne = new Map();
     for (const l of serie) {
-      const c = colonneDe(l) ?? recente ?? SANS;
+      const c = colonneDe(l);
       if (!parColonne.has(c)) parColonne.set(c, []);
       parColonne.get(c).push(l);
     }
-    if (parColonne.has(SANS) && !colonnes.includes(SANS)) colonnes.push(SANS);
     return {
       id,
       version,
@@ -304,8 +325,18 @@ export function construireMatrice(lignes, catalogue = null) {
       (a) => !(catalogue?.activities ?? []).includes(a),
     ),
   ];
+  // Le résumé de chaque colonne : ce que Quentin compare d'un modèle à l'autre.
+  const montres = (col) => scenarios.flatMap((s) => s.cellules.get(col)?.derniers ?? []);
+  const resumes = new Map(colonnes.map((c) => [c, resumerColonne(montres(c))]));
+  const dates = colonnes
+    .flatMap(montres)
+    .map((l) => String(l.startedAt ?? '').slice(0, 10))
+    .filter(Boolean)
+    .sort();
   return {
     colonnes,
+    resumes,
+    periode: dates.length > 0 ? { de: dates[0], a: dates[dates.length - 1] } : null,
     activites: ordre.map((a) => ({
       activite: a,
       scenarios: scenarios.filter((s) => s.activite === a),
@@ -527,12 +558,50 @@ function celluleActivite(scenarios, col) {
     return c ? c.derniers[c.derniers.length - 1].verdict : null;
   });
   const n = (v) => derniers.filter((d) => d === v).length;
-  const carres = derniers.map((d) => `<i class="wf-q wf-q--${d ?? 'vide'}"></i>`).join('');
-  const morceaux = [`${n('green')}/${scenarios.length} green`];
-  if (n('red') + n('error') > 0) morceaux.push(`${n('red') + n('error')} red`);
+  // Aucun essai de cette activité sur ce modèle : un tiret, rien à compter.
+  if (n(null) === derniers.length)
+    return '<div class="wf-c wf-c--vide" role="cell"><span class="wf-nd">–</span></div>';
+  const joues = derniers.filter((d) => d !== null);
+  const carres = joues.map((d) => `<i class="wf-q wf-q--${d}"></i>`).join('');
+  const tentes = joues.length - n('skipped');
+  const morceaux = [tentes > 0 ? `${n('green')}/${tentes} green` : 'nothing tried'];
   if (n('skipped') > 0) morceaux.push(`${n('skipped')} skipped`);
-  if (n(null) > 0) morceaux.push(`${n(null)} not run`);
   return `<div class="wf-c wf-c--activite" role="cell"><span class="wf-carres" aria-hidden="true">${carres}</span><span class="wf-c__mot">${esc(morceaux.join(' · '))}</span></div>`;
+}
+
+/** La ligne de résumé d'une colonne : ce qui se compare d'un modèle à l'autre. */
+function celluleResume(r) {
+  if (!r || r.tentes === 0) {
+    return `<div class="wf-c wf-c--resume" role="cell"><span class="wf-c__mot">nothing tried</span>${r?.sautes ? `<span class="wf-nd">${r.sautes} skipped</span>` : ''}</div>`;
+  }
+  const taux = Math.round((100 * r.verts) / r.tentes);
+  const medianes =
+    r.verts > 0
+      ? `median ${duree(r.dureeMs)} · ${typeof r.coutMedianUsd === 'number' ? `$${r.coutMedianUsd.toFixed(3)}` : 'cost not measured'}`
+      : 'no green run: no median';
+  const total = `total $${r.coutTotalUsd.toFixed(3)} for ${r.tentes} run${r.tentes > 1 ? 's' : ''}${r.coutInconnu > 0 ? `, ${r.coutInconnu} without a cost` : ''}`;
+  return `<div class="wf-c wf-c--resume" role="cell"><span class="wf-c__taux">${taux} % green <span class="wf-nd">(${r.verts}/${r.tentes})</span></span><span class="wf-c__chiffres">${esc(medianes)}</span><span class="wf-c__chiffres">${esc(total)}</span>${r.sautes > 0 ? `<span class="wf-nd">${r.sautes} skipped, not counted</span>` : ''}</div>`;
+}
+
+/**
+ * Ce que la matrice compare, en une phrase : les modèles, combien d'essais par
+ * cellule, la période. C'est la première ligne de la page.
+ */
+export function phraseComparaison(m) {
+  if (!m.periode) return '<p class="wf-compare">No trial yet: nothing is compared.</p>';
+  const modeles = m.colonnes.filter((c) => c !== AVANT_LA_MATRICE);
+  const avant = m.colonnes.includes(AVANT_LA_MATRICE);
+  const periode =
+    m.periode.de === m.periode.a ? `on ${m.periode.de}` : `from ${m.periode.de} to ${m.periode.a}`;
+  const quoi = [
+    ...(modeles.length > 0
+      ? [
+          `<b>${modeles.length} model${modeles.length > 1 ? 's' : ''}</b> (${modeles.map((c) => `<span class="mono">${esc(c)}</span>`).join(', ')})`,
+        ]
+      : []),
+    ...(avant ? ['the runs from before the matrix, whose model was not recorded'] : []),
+  ].join(' and ');
+  return `<p class="wf-compare">Comparing ${quoi}, on the last ${DERNIERS} trials at most of each scenario, run ${esc(periode)}.</p>`;
 }
 
 /** La matrice activités × modèles, avec le détail de chaque activité à déplier. */
@@ -541,6 +610,10 @@ export function htmlMatrice(m) {
   const grille = `style="--wf-cols:${cols.length}"`;
   const tete = `<div class="wf-l wf-l--tete" role="row"><div role="columnheader">Activity</div>${cols
     .map((c) => `<div role="columnheader" class="mono">${esc(c)}</div>`)
+    .join(
+      '',
+    )}</div><div class="wf-l wf-l--resume" role="row"><div role="rowheader"><b>All activities</b> <span class="wf-nd">trials shown below</span></div>${cols
+    .map((c) => celluleResume(m.resumes?.get(c)))
     .join('')}</div>`;
   const blocs = m.activites.map(({ activite, scenarios }) => {
     const nom = ACTIVITES[activite] ?? activite;
@@ -629,6 +702,10 @@ const STYLE = `<style>
 .wf-q--error{background:var(--moyen);opacity:1}
 .wf-q--vide{background:transparent;border:1px dashed var(--regle);opacity:1}
 .wf-legende{font-size:12px;color:var(--encre3);margin:6px 0 18px}
+.wf-compare{margin:0 0 6px;font-size:14px;color:var(--encre)}
+.wf-l--resume{background:var(--panneau2);border-bottom:2px solid var(--regle)}
+.wf-l--resume b{color:var(--encre)}
+.wf-c__taux{font-size:16px;font-weight:700;color:var(--encre);font-variant-numeric:tabular-nums}
 .wf-legende .wf-b{height:10px;vertical-align:baseline;margin:0 2px 0 8px}
 </style>`;
 
@@ -644,9 +721,11 @@ export function htmlWorkflows({ lignes, illisibles }, catalogue = null) {
     illisibles > 0
       ? `<div class="alerte"><b>${illisibles} line${illisibles > 1 ? 's' : ''} of data/workflows.ndjson could not be read.</b> They are left out of every number below.</div>`
       : '';
-  const matrice = catalogue ? htmlMatrice(construireMatrice(lignes, catalogue)) : '';
+  const m = catalogue ? construireMatrice(lignes, catalogue) : null;
+  const phrase = m ? phraseComparaison(m) : '';
+  const matrice = m ? htmlMatrice(m) : '';
   if (series.length === 0) {
-    return `${STYLE}${alerte}<p class="wf-vide">No workflow run is recorded yet, so nothing here is measured. The runs are recorded on the machine that hosts the stack, by <code>pnpm bench:workflows</code>.</p>${matrice}`;
+    return `${STYLE}${alerte}${phrase}<p class="wf-vide">No workflow run is recorded yet, so nothing here is measured. The runs are recorded on the machine that hosts the stack, by <code>pnpm bench:workflows</code>.</p>${matrice}`;
   }
   const ralentis = series.filter((x) => x.ralenti).length;
   const derniersVerdicts = series.map((x) => x.derniers[x.derniers.length - 1]?.verdict);
@@ -656,5 +735,5 @@ export function htmlWorkflows({ lignes, illisibles }, catalogue = null) {
     ? catalogue.scenarios.filter((s) => !series.some((x) => x.scenario === s.id)).length
     : 0;
   const chapo = `<p class="chapo">${series.length} workflow${series.length > 1 ? 's' : ''}: <b>${rouges} not green on their last run</b>${sautes > 0 ? `, ${sautes} skipped` : ''}${ralentis > 0 ? `, <b>${ralentis} slower than on the previous version</b>` : ''}${jamais > 0 ? `; ${jamais} more never run` : ''}.</p>`;
-  return `${STYLE}${alerte}${chapo}${matrice}<h3 class="wf-h">Scenario details</h3><div class="wf-grille">${series.map(carte).join('\n')}</div>`;
+  return `${STYLE}${alerte}${phrase}${chapo}${matrice}<h3 class="wf-h">Scenario details</h3><div class="wf-grille">${series.map(carte).join('\n')}</div>`;
 }
