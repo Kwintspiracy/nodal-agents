@@ -17,9 +17,12 @@
 // inscriptible par aucune commande confinée (D1 le refuse, ne le rouvre qu'en
 // lecture).
 //
-// Indisponible (réseau coupé, somme fausse) : on le DIT, avec un code, et la
-// commande tourne sans bac à sable (jamais un repli silencieux sur le Node de
-// l'utilisateur). La sonde réessaie au prochain processus.
+// Indisponible (réseau coupé, somme fausse) : on le DIT, avec le code
+// SANDBOX_BROKER_NODE_UNAVAILABLE, jamais par un repli sur le Node de
+// l'utilisateur. À la SONDE, le bac à sable se dit alors indisponible (statut
+// codé, mis en cache pour le processus ; le suivant réessaie). APRÈS la sonde,
+// un Node qui ne s'obtient plus ou dont la somme a changé fait REFUSER la
+// commande : elle n'est jamais lancée hors du bac à sable à sa place.
 
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';

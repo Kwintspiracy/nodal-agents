@@ -133,3 +133,89 @@ describe('startNodalProxy @cap:executer-une-commande/moteur', () => {
     expect(r.status).toBe(403);
   });
 });
+
+/** Le premier morceau de réponse d'un CONNECT par le proxy. */
+async function connectThroughProxy(proxy: NodalProxy, target: string): Promise<string> {
+  const sock = connect(Number(new URL(proxy.url).port), '127.0.0.1');
+  await once(sock, 'connect');
+  sock.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`);
+  const [chunk] = (await once(sock, 'data')) as [Buffer];
+  sock.destroy();
+  return String(chunk);
+}
+
+/** Une requête qui ne répond pas vite (un trou noir) ne fait pas pendre le test. */
+function within<T>(p: Promise<T>, fallback: T, ms = 2000): Promise<T> {
+  return Promise.race([
+    p.catch(() => fallback),
+    new Promise<T>((r) => setTimeout(() => r(fallback), ms)),
+  ]);
+}
+
+describe('startNodalProxy — pass 4: current interfaces, fail closed, every address @cap:executer-une-commande/moteur', () => {
+  it('une adresse devenue locale APRÈS le démarrage est refusée sur un port de Nodal (interfaces relues à chaque connexion)', async () => {
+    const nodal = await localServer();
+    // Comme `networkInterfaces()` : un ensemble NEUF à chaque lecture, qui dit
+    // l'état du moment.
+    const appeared: string[] = [];
+    const proxy = await startNodalProxy([{ port: nodal.port }], {
+      localAddresses: () => new Set([...localAddresses(), ...appeared]),
+    });
+    closers.push(() => proxy.close());
+    // Une interface qui apparaît maintenant (Docker, WSL, un VPN) : TEST-NET-3.
+    appeared.push('203.0.113.7');
+    const r = await within(getThroughProxy(proxy, `http://203.0.113.7:${nodal.port}/`), {
+      status: 0,
+      body: '',
+    });
+    expect(r.status, JSON.stringify(r)).toBe(403);
+    const tunnel = await within(connectThroughProxy(proxy, `203.0.113.7:${nodal.port}`), '');
+    expect(tunnel).toMatch(/^HTTP\/1\.1 403/);
+  });
+
+  it('un nom qui ne se résout pas est REFUSÉ avec un code, et le nom n’est jamais joint', async () => {
+    let hits = 0;
+    const server = createServer((_q, r) => {
+      hits++;
+      r.end('reached');
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    closers.push(() => new Promise<void>((r) => server.close(() => r())));
+    const port = (server.address() as { port: number }).port;
+    for (const lookup of [
+      async (): Promise<string[]> => {
+        throw Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' });
+      },
+      async (): Promise<string[]> => [],
+    ]) {
+      const proxy = await startNodalProxy([], { lookup });
+      closers.push(() => proxy.close());
+      // `localhost` : si le proxy joignait le NOM, Node le résoudrait lui-même
+      // vers ce serveur.
+      const r = await getThroughProxy(proxy, `http://localhost:${port}/`);
+      expect(r.status).toBe(502);
+      expect(r.body).toContain('SANDBOX_PROXY_UNRESOLVED');
+      expect(await connectThroughProxy(proxy, `localhost:${port}`)).toMatch(
+        /^HTTP\/1\.1 502[\s\S]*SANDBOX_PROXY_UNRESOLVED/,
+      );
+    }
+    expect(hits).toBe(0);
+  });
+
+  it('chaque adresse résolue est essayée dans l’ordre : une première adresse morte passe à la suivante', async () => {
+    // Le serveur n'écoute qu'en IPv4 : `::1` refuse, comme un AAAA cassé.
+    const server = createServer((_q, r) => r.end('second-address'));
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    closers.push(() => new Promise<void>((r) => server.close(() => r())));
+    const port = (server.address() as { port: number }).port;
+    const proxy = await startNodalProxy([], { lookup: async () => ['::1', '127.0.0.1'] });
+    closers.push(() => proxy.close());
+    expect(await getThroughProxy(proxy, `http://dual.test:${port}/`)).toEqual({
+      status: 200,
+      body: 'second-address',
+    });
+    expect(await connectThroughProxy(proxy, `dual.test:${port}`)).toMatch(/^HTTP\/1\.1 200/);
+  });
+});

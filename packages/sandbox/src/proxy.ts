@@ -15,7 +15,8 @@
 //   - requête en forme absolue (`GET http://host:port/…`) ;
 //   - `CONNECT host:port` (HTTPS, wss) ;
 //   - `Upgrade` websocket en clair (`ws://host:port`).
-// Un refus rend 403 (requête) ou ferme le tunnel (CONNECT/upgrade).
+// Un refus rend 403 (un port de Nodal) ou 502 codé (un nom introuvable), en
+// requête comme en tunnel.
 
 import {
   createServer as createHttpServer,
@@ -85,40 +86,105 @@ export interface NodalProxy {
   close(): Promise<void>;
 }
 
+/** Ce que le proxy lit du système ; injectable pour les tests. */
+export interface NodalProxyDeps {
+  /** Les adresses de cette machine, relues À CHAQUE connexion. */
+  readonly localAddresses?: () => Set<string>;
+  /** Toutes les adresses d'un nom, dans l'ordre du résolveur. */
+  readonly lookup?: (host: string) => Promise<string[]>;
+}
+
+const systemLookup = async (host: string): Promise<string[]> =>
+  (await lookup(host, { all: true })).map((r) => r.address);
+
+/** Le code du refus quand un nom ne se résout pas : le nom n'est jamais joint. */
+export const PROXY_UNRESOLVED = 'SANDBOX_PROXY_UNRESOLVED';
+
+/** Ce que le proxy décide pour une destination. */
+type Decision =
+  | { readonly kind: 'nodal' }
+  | { readonly kind: 'unresolved' }
+  | { readonly kind: 'forward'; readonly addrs: readonly string[] };
+
+/**
+ * Joint `port` sur la PREMIÈRE adresse qui répond, dans l'ordre du résolveur :
+ * un hôte double pile dont l'AAAA est cassé passe par son A, le repli que Node
+ * faisait quand on lui donnait le nom (#628, passe 4). Chaque adresse est déjà
+ * classée non refusée ; aucune n'est re-résolue.
+ */
+function connectFirst(addrs: readonly string[], port: number): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    let i = 0;
+    let last: unknown = new Error('no address to connect to');
+    const next = (): void => {
+      const addr = addrs[i++];
+      if (addr === undefined) {
+        reject(last);
+        return;
+      }
+      const sock = netConnect(port, addr);
+      const onError = (e: unknown): void => {
+        last = e;
+        sock.destroy();
+        next();
+      };
+      sock.once('error', onError);
+      sock.once('connect', () => {
+        sock.off('error', onError);
+        resolve(sock);
+      });
+    };
+    next();
+  });
+}
+
 /**
  * Démarre le proxy. `denied` = les ports de Nodal ; une destination locale sur
  * l'un d'eux est refusée, tout le reste passe.
  */
-export async function startNodalProxy(denied: readonly DeniedEndpoint[]): Promise<NodalProxy> {
-  const locals = localAddresses();
+export async function startNodalProxy(
+  denied: readonly DeniedEndpoint[],
+  deps: NodalProxyDeps = {},
+): Promise<NodalProxy> {
+  const readLocals = deps.localAddresses ?? localAddresses;
+  const resolveAll = deps.lookup ?? systemLookup;
   const deniedPorts = new Set(denied.map((d) => d.port));
   let refused = 0;
 
   /**
-   * Résout l'hôte UNE fois et décide sur l'adresse. Rend `{ refuse }` si un
-   * port de Nodal est visé sur une adresse locale ; sinon `{ addr }`, l'IP
-   * EXACTE à joindre — on ne re-résout pas (pas de fenêtre de rebinding).
+   * Résout l'hôte UNE fois et décide sur ses adresses. Les adresses locales
+   * sont relues ICI, à chaque connexion (#628, passe 4) : une interface apparue
+   * après le démarrage du proxy (Docker, WSL, un VPN) est locale dès qu'elle
+   * existe. Un nom qui ne se résout pas est REFUSÉ, jamais joint par son nom :
+   * Node le résoudrait lui-même, peut-être vers 127.0.0.1.
    */
-  const classify = async (
-    host: string,
-    port: number,
-  ): Promise<{ refuse: true } | { refuse: false; addr: string }> => {
+  const classify = async (host: string, port: number): Promise<Decision> => {
     const bare = host.replace(/^\[|\]$/g, '');
     let addrs: string[];
     if (isIP(bare)) {
       addrs = [bare];
     } else {
       try {
-        addrs = (await lookup(bare, { all: true })).map((r) => r.address);
+        addrs = await resolveAll(bare);
       } catch {
         addrs = [];
       }
     }
-    if (deniedPorts.has(port) && addrs.some((a) => isLocalIp(a, locals))) {
-      return { refuse: true };
+    if (addrs.length === 0) return { kind: 'unresolved' };
+    if (deniedPorts.has(port)) {
+      const locals = readLocals();
+      if (addrs.some((a) => isLocalIp(a, locals))) return { kind: 'nodal' };
     }
-    // On joint la première adresse résolue, littéralement.
-    return { refuse: false, addr: addrs[0] ?? bare };
+    return { kind: 'forward', addrs };
+  };
+
+  /** Le refus d'un tunnel (CONNECT, upgrade), en clair sur la socket. */
+  const tunnelRefusal = (d: Exclude<Decision, { kind: 'forward' }>, host: string): string => {
+    if (d.kind === 'nodal') {
+      refused++;
+      return 'HTTP/1.1 403 Forbidden\r\n\r\n';
+    }
+    return `HTTP/1.1 502 Bad Gateway\r\n\r\n${PROXY_UNRESOLVED}: ${host}`;
   };
 
   const server: Server = createHttpServer((req, res) => {
@@ -133,18 +199,31 @@ export async function startNodalProxy(denied: readonly DeniedEndpoint[]): Promis
       }
       const port = Number(target.port) || (target.protocol === 'https:' ? 443 : 80);
       const d = await classify(target.hostname, port);
-      if (d.refuse) {
+      if (d.kind === 'nodal') {
         refused++;
         res.writeHead(403).end('nodal endpoint refused by the sandbox');
         return;
       }
+      if (d.kind === 'unresolved') {
+        res.writeHead(502).end(`${PROXY_UNRESOLVED}: ${target.hostname}`);
+        return;
+      }
+      let sock: Socket;
+      try {
+        sock = await connectFirst(d.addrs, port);
+      } catch {
+        res.writeHead(502).end();
+        return;
+      }
       const up = httpRequest(
         {
-          host: d.addr,
+          host: target.hostname,
           port,
           method: req.method,
           path: target.pathname + target.search,
           headers: req.headers, // garde l'en-tête Host d'origine
+          // La connexion déjà ouverte vers l'adresse classée : aucune résolution.
+          createConnection: () => sock,
         },
         (upRes) => {
           res.writeHead(upRes.statusCode ?? 502, upRes.headers);
@@ -161,30 +240,36 @@ export async function startNodalProxy(denied: readonly DeniedEndpoint[]): Promis
 
   // CONNECT (HTTPS, wss) : tunnel brut.
   server.on('connect', (req: IncomingMessage, clientSocket: Socket, head: Buffer) => {
+    clientSocket.on('error', () => undefined);
     void (async () => {
       const url = req.url ?? '';
       const i = url.lastIndexOf(':');
       const host = url.slice(0, i);
       const port = Number(url.slice(i + 1)) || 443;
-      const d = host ? await classify(host, port) : ({ refuse: true } as const);
-      if (d.refuse) {
-        refused++;
-        clientSocket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+      const d: Decision = host ? await classify(host, port) : { kind: 'unresolved' };
+      if (d.kind !== 'forward') {
+        clientSocket.end(tunnelRefusal(d, host));
         return;
       }
-      const up = netConnect(port, d.addr, () => {
-        clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-        if (head.length) up.write(head);
-        up.pipe(clientSocket);
-        clientSocket.pipe(up);
-      });
+      let up: Socket;
+      try {
+        up = await connectFirst(d.addrs, port);
+      } catch {
+        clientSocket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+        return;
+      }
       up.on('error', () => clientSocket.destroy());
       clientSocket.on('error', () => up.destroy());
+      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head.length) up.write(head);
+      up.pipe(clientSocket);
+      clientSocket.pipe(up);
     })();
   });
 
   // Upgrade websocket en clair (`ws://host:port`).
   server.on('upgrade', (req: IncomingMessage, clientSocket: Socket, head: Buffer) => {
+    clientSocket.on('error', () => undefined);
     void (async () => {
       let target: URL;
       try {
@@ -195,27 +280,31 @@ export async function startNodalProxy(denied: readonly DeniedEndpoint[]): Promis
       }
       const port = Number(target.port) || 80;
       const d = await classify(target.hostname, port);
-      if (d.refuse) {
-        refused++;
-        clientSocket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+      if (d.kind !== 'forward') {
+        clientSocket.end(tunnelRefusal(d, target.hostname));
         return;
       }
-      const up = netConnect(port, d.addr, () => {
-        const headerLines = [
-          `${req.method} ${target.pathname + target.search} HTTP/1.1`,
-          ...Object.entries(req.headers).map(
-            ([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`,
-          ),
-          '',
-          '',
-        ].join('\r\n');
-        up.write(headerLines);
-        if (head.length) up.write(head);
-        up.pipe(clientSocket);
-        clientSocket.pipe(up);
-      });
+      let up: Socket;
+      try {
+        up = await connectFirst(d.addrs, port);
+      } catch {
+        clientSocket.destroy();
+        return;
+      }
       up.on('error', () => clientSocket.destroy());
       clientSocket.on('error', () => up.destroy());
+      const headerLines = [
+        `${req.method} ${target.pathname + target.search} HTTP/1.1`,
+        ...Object.entries(req.headers).map(
+          ([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`,
+        ),
+        '',
+        '',
+      ].join('\r\n');
+      up.write(headerLines);
+      if (head.length) up.write(head);
+      up.pipe(clientSocket);
+      clientSocket.pipe(up);
     })();
   });
 
