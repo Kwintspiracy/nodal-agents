@@ -376,6 +376,25 @@ if (!existsSync(docsIndexSrc)) {
 cpSync(docsIndexSrc, resolve(packDir, 'docs-index.json'));
 console.log('✔ Docs index staged: docs-index.json');
 
+// ─── 6c. The Visual C++ runtime for the embedded Postgres on Windows (0.9.7) ─
+// Microsoft's redistributable DLLs, which `up` places next to postgres.exe so
+// that a machine with an old System32 runtime boots without installing
+// anything (apps/cli/src/lib/vc-runtime.ts). Shipped on every platform: the
+// tarball is one for all. Fails loud when a file is missing: `up` would refuse
+// to start on Windows, so the pack must not be built without them.
+const vcRuntimeSrc = resolve(repoRoot, 'apps/cli/vc-runtime/x64');
+const vcRuntimeDlls = ['msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'];
+const vcRuntimeMissing = vcRuntimeDlls.filter((d) => !existsSync(resolve(vcRuntimeSrc, d)));
+if (vcRuntimeMissing.length > 0) {
+  console.error(`✖ apps/cli/vc-runtime/x64 is missing ${vcRuntimeMissing.join(', ')}.`);
+  process.exit(1);
+}
+mkdirSync(resolve(packDir, 'vc-runtime/x64'), { recursive: true });
+for (const dll of vcRuntimeDlls) {
+  cpSync(resolve(vcRuntimeSrc, dll), resolve(packDir, 'vc-runtime/x64', dll));
+}
+console.log(`✔ VC++ runtime staged: vc-runtime/x64 (${vcRuntimeDlls.join(', ')})`);
+
 // ─── 7. Pack package.json ───────────────────────────────────────────────────
 // Runtime deps only. The versions written below are RANGES for readability, but
 // every one of them is rewritten to the EXACT installed version by
@@ -402,7 +421,15 @@ const packPkg = {
   },
   type: 'module',
   engines: packEngines(repoRoot),
-  files: ['cli.js', 'runner.js', 'web/**', 'migrations/**', 'docs-index.json', 'README.md'],
+  files: [
+    'cli.js',
+    'runner.js',
+    'web/**',
+    'migrations/**',
+    'vc-runtime/**',
+    'docs-index.json',
+    'README.md',
+  ],
   dependencies: {
     // ── CLI deps
     chalk: '^5.4.1',
