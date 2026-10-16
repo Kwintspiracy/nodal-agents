@@ -1,7 +1,13 @@
 // vc-runtime-signatures.test.mjs — the verdict on the Authenticode output.
 
 import { describe, it, expect } from 'vitest';
-import { judgeSignatures, POWERSHELL_SCRIPT } from '../lib/vc-runtime-signatures.mjs';
+import {
+  buildPowerShellEnv,
+  judgeSignatures,
+  POWERSHELL_SCRIPT,
+  ENV_DIR,
+  ENV_NAMES,
+} from '../lib/vc-runtime-signatures.mjs';
 import { VC_RUNTIME_SOURCE } from '../lib/vc-runtime-source.mjs';
 import { VC_RUNTIME_DLLS } from '../../apps/cli/src/lib/vc-runtime.ts';
 
@@ -63,5 +69,19 @@ describe('the DLL list and the script', () => {
 
   it('carries no path or name in the PowerShell text (they arrive through the environment)', () => {
     expect(POWERSHELL_SCRIPT).not.toMatch(/\.dll|[A-Za-z]:\\/);
+  });
+});
+
+describe('buildPowerShellEnv', () => {
+  it.each(['PSModulePath', 'PSMODULEPATH', 'psmodulepath'])('drops %s whatever its case', (key) => {
+    const env = buildPowerShellEnv({ [key]: 'C:/pwsh7', PATH: 'p' }, 'D:/dir', ['a.dll']);
+    expect(Object.keys(env).map((k) => k.toUpperCase())).not.toContain('PSMODULEPATH');
+    expect(env.PATH).toBe('p');
+  });
+
+  it('sets our two keys once, replacing the same keys in another case', () => {
+    const base = { [ENV_DIR.toLowerCase()]: 'old', [ENV_NAMES.toLowerCase()]: 'old' };
+    const env = buildPowerShellEnv(base, 'D:/dir', ['a.dll', 'b.dll']);
+    expect(env).toEqual({ [ENV_DIR]: 'D:/dir', [ENV_NAMES]: 'a.dll,b.dll' });
   });
 });

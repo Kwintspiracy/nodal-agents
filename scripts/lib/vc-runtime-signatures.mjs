@@ -25,6 +25,24 @@ export const POWERSHELL_SCRIPT =
   `$s = Get-AuthenticodeSignature -LiteralPath $p; ` +
   `"$n|$p|$($s.Status)|$($s.SignerCertificate.Subject)" }`;
 
+/**
+ * The environment of the spawned powershell.exe 5.1. PSModulePath is dropped (a
+ * pwsh 7 parent's value breaks 5.1's Security module), and so are our own two
+ * keys, in ANY case: Windows reads the environment case-insensitively, so a
+ * `psmodulepath` or `vc_runtime_dir` left in the block would still win or clash.
+ * @param {Record<string, string | undefined>} base
+ * @param {string} dir
+ * @param {readonly string[]} dlls
+ */
+export function buildPowerShellEnv(base, dir, dlls) {
+  const drop = new Set(['PSMODULEPATH', ENV_DIR, ENV_NAMES].map((k) => k.toUpperCase()));
+  const env = {};
+  for (const [k, v] of Object.entries(base)) if (!drop.has(k.toUpperCase())) env[k] = v;
+  env[ENV_DIR] = dir;
+  env[ENV_NAMES] = dlls.join(',');
+  return env;
+}
+
 export const EXPECTED_SUBJECT = 'O=Microsoft Corporation';
 
 /**

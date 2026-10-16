@@ -11,8 +11,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VC_RUNTIME_SOURCE } from './lib/vc-runtime-source.mjs';
 import {
-  ENV_DIR,
-  ENV_NAMES,
+  buildPowerShellEnv,
   POWERSHELL_SCRIPT,
   judgeSignatures,
 } from './lib/vc-runtime-signatures.mjs';
@@ -35,14 +34,13 @@ const dlls = Object.keys(VC_RUNTIME_SOURCE.files);
 // PowerShell 5.1 is spawned from whatever shell runs the step. CI runs it under
 // pwsh 7, whose PSModulePath (7.x modules) 5.1 would inherit and then fail to
 // load Microsoft.PowerShell.Security from. Dropping it lets 5.1 compute its own.
-const { PSModulePath: _inherited, ...env } = process.env;
 const run = spawnSync(
   'powershell.exe',
   ['-NoProfile', '-NonInteractive', '-Command', POWERSHELL_SCRIPT],
   {
     encoding: 'utf-8',
     timeout: 5 * 60_000,
-    env: { ...env, [ENV_DIR]: dir, [ENV_NAMES]: dlls.join(',') },
+    env: buildPowerShellEnv(process.env, dir, dlls),
   },
 );
 if (run.error || run.status !== 0) {
