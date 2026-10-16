@@ -315,7 +315,9 @@ describe('the scratch index enters the store only checked against the snapshot a
   });
 
   it('un index dont une entrée ne correspond pas à l’arbre photographié est refusé', async () => {
-    const other = gitIn(ws, ['hash-object', '-w', '--stdin'], 'elsewhere\n');
+    // Hors de tout dépôt : `hash-object` sans `-w` n'en demande pas (le dossier
+    // temporaire d'une machine peut être DANS un dépôt, celui de la CI non).
+    const other = gitIn(root, ['hash-object', '--stdin'], 'elsewhere\n');
     const programs = tamperingPrograms('write-tree', async (env) => {
       execFileSync('git', ['update-index', '--cacheinfo', `100644,${other},a.txt`], {
         cwd: ws,
