@@ -7,7 +7,8 @@
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
-import { readScenarioEnv, rootEntity } from '../workflows/session';
+import { resolveBenchTarget } from '../space/space';
+import { readScenarioEnv } from '../workflows/session';
 import { openStackDb, readKeyProviders, readWorkspaceRoots } from '../workflows/stack';
 import { studioModels, studioNeeds, type NeedsView, type StudioModel } from './data';
 
@@ -72,11 +73,15 @@ export function createStudioRuntime(): StudioRuntime {
   return {
     needs: () =>
       studioNeeds(() =>
-        withDb(async (db) => readScenarioEnv(db, await rootEntity(db), Date.now())),
+        withDb(async (db) =>
+          readScenarioEnv(db, (await resolveBenchTarget(db)).entityId, Date.now()),
+        ),
       ),
     models: async () => {
       try {
-        const providers = await withDb(async (db) => readKeyProviders(db, await rootEntity(db)));
+        const providers = await withDb(async (db) =>
+          readKeyProviders(db, (await resolveBenchTarget(db)).entityId),
+        );
         return studioModels({ providers });
       } catch (e) {
         return studioModels({ why: String(e instanceof Error ? e.message : e) });
@@ -84,7 +89,10 @@ export function createStudioRuntime(): StudioRuntime {
     },
     deliverable: (path) =>
       withDb(async (db) =>
-        findDeliverable(await readWorkspaceRoots(db, await rootEntity(db)), path),
+        findDeliverable(
+          await readWorkspaceRoots(db, (await resolveBenchTarget(db)).entityId),
+          path,
+        ),
       ),
   };
 }

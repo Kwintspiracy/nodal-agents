@@ -1,5 +1,5 @@
 // Run — choisir des activités ou des scénarios, des modèles, un nombre d'essais ; estimer.
-// Lancer attend #769 : le bouton est désactivé, et le serveur n'a pas de route de lancement.
+// Bench Studio ne lance pas : le bouton est désactivé, et le serveur n'a pas de route de lancement.
 import { LAUNCH_DISABLED_REASON, studioCatalog } from '@nodal-agents/bench/studio';
 import { assertStudioPage, studioRuntime } from '@/lib/bench-studio/server';
 import StudioPage from '../_components/StudioPage';
@@ -20,7 +20,7 @@ export default async function RunPage({
   return (
     <StudioPage
       title="Run"
-      subtitle="Pick what to run and estimate its cost and time. Launching waits for the bench space (#769)."
+      subtitle="Pick what to run and estimate its cost and time. Trials run with `pnpm bench:workflows`, in the bench space."
     >
       <RunPanel
         activities={catalog.activities.filter((a) =>

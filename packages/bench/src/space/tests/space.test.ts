@@ -22,7 +22,14 @@ import type { ToolContext } from '@nodal-agents/tools';
 import { assertSpaceCannotSend, checkScope, checkSpaceCannotSend, renderCheck } from '../guard';
 import { applySpaceModel } from '../model';
 import { resetSpaceMemory } from '../reset';
-import { BENCH_SPACE_SLUG, copyIdFor, spaceIdFor } from '../space';
+import {
+  BENCH_SPACE_SLUG,
+  copyIdFor,
+  jobOffTarget,
+  readJobPlacement,
+  resolveBenchTarget,
+  spaceIdFor,
+} from '../space';
 import {
   AGENT_POLICY,
   APPROVAL_RULE_POLICY,
@@ -904,5 +911,85 @@ describe("les fichiers d'une skill système suivent l'équipe", () => {
     };
     expect(out.ok).toBe(true);
     expect(out.content).toContain('dev notes of the team');
+  });
+});
+
+describe('resolveBenchTarget — the one place trials go, never the owner', () => {
+  it('after a sync: the bench space and its root copy, never the owner workspace', async () => {
+    await sync();
+    const spaceId = spaceIdFor(team.entityId);
+    const target = await resolveBenchTarget(db);
+    expect(target).toEqual({
+      entityId: spaceId,
+      rootAgentId: copyIdFor(spaceId, 'agents', team.rootAgent.id),
+      rootAgentSlug: 'alfred',
+    });
+    expect(target.entityId).not.toBe(team.entityId);
+  });
+
+  it('no bench space: refuses with the sync hint, and never falls back to the owner', async () => {
+    await expect(resolveBenchTarget(db)).rejects.toThrow(
+      /bench_space_missing: .*pnpm bench:space sync --apply/,
+    );
+  });
+
+  it('a bench space without a usable root refuses, saying which', async () => {
+    await sync();
+    const spaceId = spaceIdFor(team.entityId);
+    const rootCopy = copyIdFor(spaceId, 'agents', team.rootAgent.id);
+    await db.update(d.agents).set({ active: false }).where(d.eq(d.agents.id, rootCopy));
+    await expect(resolveBenchTarget(db)).rejects.toThrow(
+      /bench_space_root_invalid: .* is inactive\. Re-run `pnpm bench:space sync --apply`/,
+    );
+    await db.update(d.entities).set({ rootAgentId: null }).where(d.eq(d.entities.id, spaceId));
+    await expect(resolveBenchTarget(db)).rejects.toThrow(/bench_space_no_root: /);
+    // Une racine qui pointerait hors de l'espace (l'agent du propriétaire) est refusée aussi.
+    await db
+      .update(d.entities)
+      .set({ rootAgentId: team.rootAgent.id })
+      .where(d.eq(d.entities.id, spaceId));
+    await expect(resolveBenchTarget(db)).rejects.toThrow(/is outside the bench space/);
+  });
+});
+
+describe('jobOffTarget — where run_task really put the job', () => {
+  it('a job of the bench root passes; one in the owner space, of another agent, or missing, does not', async () => {
+    await sync();
+    const target = await resolveBenchTarget(db);
+    const [onTarget, inOwner, otherAgent] = await db
+      .insert(d.agentJobs)
+      .values([
+        { entityId: target.entityId, agentId: target.rootAgentId, channel: 'mcp', task: 't' },
+        { entityId: team.entityId, agentId: team.rootAgent.id, channel: 'mcp', task: 't' },
+        {
+          entityId: target.entityId,
+          agentId: copyIdFor(target.entityId, 'agents', team.worker.id),
+          channel: 'mcp',
+          task: 't',
+        },
+      ])
+      .returning({ id: d.agentJobs.id });
+    const off = async (id: string) => jobOffTarget(id, await readJobPlacement(db, id), target);
+    expect(await off(onTarget!.id)).toBeNull();
+    expect(await off(inOwner!.id)).toMatch(
+      new RegExp(
+        `workflow_wrong_target: job ${inOwner!.id} was created in workspace ${team.entityId}`,
+      ),
+    );
+    expect(await off(otherAgent!.id)).toMatch(/workflow_wrong_target: .* for agent /);
+    // L'agent de la cible, mais une ligne posée dans un autre espace : refusée aussi.
+    const [crossed] = await db
+      .insert(d.agentJobs)
+      .values({ entityId: team.entityId, agentId: target.rootAgentId, channel: 'mcp', task: 't' })
+      .returning({ id: d.agentJobs.id });
+    expect(await off(crossed!.id)).toMatch(
+      new RegExp(
+        `workflow_wrong_target: job ${crossed!.id} was created in workspace ${team.entityId}`,
+      ),
+    );
+    const missing = '00000000-0000-4000-8000-000000000099';
+    expect(await off(missing)).toBe(
+      `workflow_wrong_target: job ${missing} was not found after run_task`,
+    );
   });
 });

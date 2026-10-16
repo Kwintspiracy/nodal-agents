@@ -151,10 +151,10 @@ export default async function ScenarioPage({ params }: { params: Promise<{ id: s
                       <NeedStatus needs={needs} need={n} />
                       <span className="text-body-12 text-ink-3">
                         {!needs.reachable
-                          ? `Stack not read: ${needs.why}`
+                          ? `Bench space not read: ${needs.why}`
                           : missing
                             ? `Missing: ${missing}`
-                            : 'Available on the stack now.'}
+                            : 'Available in the bench space now.'}
                       </span>
                     </li>
                   );

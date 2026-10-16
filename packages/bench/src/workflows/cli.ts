@@ -18,7 +18,9 @@
 // Chaque essai ajoute UNE ligne à apps/qa/data/workflows.ndjson (du dépôt qui
 // lance la commande) ; le fichier n'est jamais réécrit. Code de sortie 1 dès
 // qu'un essai n'est ni vert ni sauté, pour qu'une tâche planifiée le voie. Les
-// essais eux-mêmes passent par session.ts, le même code que Bench Studio.
+// essais eux-mêmes passent par session.ts, qui les joue dans l'espace banc et
+// nulle part ailleurs (#769) : sans espace banc, la commande refuse et dit de
+// lancer `pnpm bench:space sync --apply`.
 
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';

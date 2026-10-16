@@ -1,11 +1,18 @@
 // workflows/session.ts — une session du banc : des essais, l'un après l'autre, sur une stack.
 //
-// Le CLI (`pnpm bench:workflows`) et Bench Studio lancent les essais par CE
-// code, et par aucun autre (règle 11) : le verrou d'un seul banc par stack, le
-// ménage des essais qu'un banc mort a laissés vivants, l'espace que `run_task`
-// vise, les dépendances réelles d'un essai, un `runTrial` par essai et une
-// ligne ajoutée à workflows.ndjson. Chacun n'y ajoute que sa façon d'écouter
-// (`SessionHooks`) : le terminal pour l'un, un flux d'événements pour l'autre.
+// Le CLI (`pnpm bench:workflows`, et sa tâche planifiée) lance les essais par
+// CE code, et par aucun autre (règle 11) : la cible des essais, le verrou d'un
+// seul banc par stack, le ménage des essais qu'un banc mort a laissés vivants,
+// les dépendances réelles d'un essai, un `runTrial` par essai et une ligne
+// ajoutée à workflows.ndjson.
+//
+// La cible est résolue UNE fois, au début de la session (`resolveBenchTarget` :
+// l'espace banc et son agent racine, jamais l'espace du propriétaire, #769).
+// Cette seule résolution pilote l'agent que chaque `run_task` vise, l'espace que
+// le juge lit (environnement, modèle du root, livrables), et la vérification
+// faite après chaque `run_task` : un job créé ailleurs est annulé, et l'essai
+// échoue en le disant. Avant chaque essai, le contrôle structurel de l'espace
+// (`assertSpaceCannotSend`) doit passer, sinon l'essai ne démarre pas.
 
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -13,6 +20,13 @@ import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { readTreeFacts } from './facts';
 import { BENCH_LOCK_FILE, claimStack, type BenchLock, type BenchStop } from './lock';
 import { startRunTask } from './mcp';
+import { assertSpaceCannotSend } from '../space/guard';
+import {
+  jobOffTarget,
+  readJobPlacement,
+  resolveBenchTarget,
+  type BenchTarget,
+} from '../space/space';
 import { RESULTS_FILE } from './paths';
 import {
   cancelTree,
@@ -29,23 +43,6 @@ import {
 } from './stack';
 import { DEFAULT_TRIAL_OPTIONS, runTrial, type TrialDeps, type TrialProgress } from './trial';
 import type { AnyScenario, ScenarioEnv, ServiceProbe, TrialLine } from './types';
-
-/**
- * L'espace que `run_task` vise : la même règle que le serveur MCP
- * (`resolveRootAgentId`), lue par la même fonction — l'unique espace dont une
- * personne est membre et qui a un agent racine. Plusieurs, ou aucun :
- * `run_task` refuserait aussi, on le dit avant.
- */
-export async function rootEntity(db: AnyDrizzleDb): Promise<string> {
-  const { listMemberWorkspaces } = await import('@nodal-agents/db');
-  const rows = await listMemberWorkspaces(db, { withRootAgent: true });
-  if (rows.length !== 1) {
-    throw new Error(
-      `workflow_no_root: ${rows.length} workspace(s) you are a member of have a root agent; run_task needs exactly one`,
-    );
-  }
-  return rows[0]!.id;
-}
 
 /** L'environnement d'un essai : dossiers de travail, outils de l'équipe, services déclarés et sondés. */
 export async function readScenarioEnv(
@@ -107,6 +104,10 @@ export async function runBench(
   // La configuration du banc est lue avant tout essai : mal formée, rien ne part.
   readBenchConfig();
 
+  // La cible d'abord, et une seule fois : sans espace banc, la session refuse
+  // AVANT de toucher quoi que ce soit (ni verrou, ni ménage, ni essai).
+  const target = await resolveBenchTarget(db);
+
   let lock: BenchLock | null = null;
   const lines: TrialLine[] = [];
   let failed = 0;
@@ -121,9 +122,8 @@ export async function runBench(
       log: (l) => hooks.log(l),
     });
     stop.hold(lock);
-    const entityId = await rootEntity(db);
     hooks.log(
-      `Workflow bench — ${run.scenarios.length} scenario(s) × ${run.trials} · Nodal-Agents ${nodalVersion} @ ${stackCommit?.slice(0, 8) ?? 'unknown commit'} · ${run.stackDir}`,
+      `Workflow bench — ${run.scenarios.length} scenario(s) × ${run.trials} · Nodal-Agents ${nodalVersion} @ ${stackCommit?.slice(0, 8) ?? 'unknown commit'} · ${run.stackDir} · bench space ${target.entityId} (root ${target.rootAgentSlug})`,
     );
     mkdirSync(dirname(RESULTS_FILE), { recursive: true });
     const total = run.scenarios.length * run.trials;
@@ -139,12 +139,12 @@ export async function runBench(
           now: () => Date.now(),
           sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
           start: (instruction, caller) =>
-            stop.start(() => startRunTask(run.stackDir, instruction, caller)),
+            stop.start(() => startOnTarget(db, run.stackDir, instruction, caller, target)),
           read: (rootId) => readTreeFacts(db, rootId),
           cancel: (ent, rootId) => cancelTree(db, ent, rootId),
           foreign: () => readForeignActivity(db, DEFAULT_TRIAL_OPTIONS.chatQuietMs),
-          env: (startedMs) => readScenarioEnv(db, entityId, startedMs),
-          rootModel: () => readRootModel(db, entityId),
+          env: (startedMs) => readScenarioEnv(db, target.entityId, startedMs),
+          rootModel: () => readRootModel(db, target.entityId),
           log: (l) => hooks.log(l),
           progress: (e) => hooks.progress?.(s, at, e),
         };
@@ -169,4 +169,33 @@ export async function runBench(
     lock?.release();
   }
   return { lines, failed, skipped };
+}
+
+/**
+ * Un essai démarre sur la cible, et seulement là : le contrôle structurel de
+ * l'espace d'abord (rien ne part s'il échoue), puis `run_task` épinglé et
+ * nommé sur la racine de l'espace banc, puis la place réelle du job créé. Un
+ * job créé ailleurs est annulé et l'essai échoue avec la raison : jamais un
+ * essai joué hors de l'espace banc.
+ */
+async function startOnTarget(
+  db: AnyDrizzleDb,
+  stackDir: string,
+  instruction: string,
+  caller: string,
+  target: BenchTarget,
+): Promise<{ jobId: string; close(): Promise<void> }> {
+  await assertSpaceCannotSend(db, target.entityId);
+  const session = await startRunTask(stackDir, instruction, caller, target);
+  const job = await readJobPlacement(db, session.jobId);
+  const off = jobOffTarget(session.jobId, job, target);
+  if (off !== null) {
+    try {
+      if (job?.entityId) await cancelTree(db, job.entityId, session.jobId);
+    } finally {
+      await session.close();
+    }
+    throw new Error(off);
+  }
+  return session;
 }

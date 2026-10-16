@@ -1,7 +1,8 @@
 # Workflow bench
 
-Real requests, always the same ones, sent to the real root agent of a running
-stack, with the real models, and judged on what really happened. It is the
+Real requests, always the same ones, sent to the root agent of the bench
+space (a copy of the owner's team that can send nothing, `pnpm bench:space`)
+on a running stack, with the real models, and judged on what really happened. It is the
 layer the test suite does not have: unit tests use fake models and e2e
 journeys talk to no model.
 
@@ -26,10 +27,39 @@ pnpm bench:workflows --list                 # scenarios, activities, needs, requ
 pnpm bench:workflows --catalog              # rewrite apps/qa/data/workflow-catalog.json
 ```
 
-The stack must be up (`pnpm --filter nodal-agents exec tsx src/index.ts --dev`).
-Each request goes through the user MCP path (`nodal-agents mcp serve`, tool
-`run_task`), which wakes the runner at once. The exit code is 1 when a trial is
-red or a bench error; a skipped trial does not fail the run.
+The stack must be up (`pnpm --filter nodal-agents exec tsx src/index.ts --dev`),
+and the bench space must exist (`pnpm bench:space sync --apply`). Each request
+goes through the user MCP path (`nodal-agents mcp serve`, tool `run_task`),
+which wakes the runner at once. The exit code is 1 when a trial is red or a
+bench error; a skipped trial does not fail the run.
+
+## Where trials run: the bench space, never the owner's
+
+Trials never run on the owner's agents (decision of 16/10). The session
+resolves its target ONCE, before anything else (`resolveBenchTarget`,
+`packages/bench/src/space/space.ts`): the bench space and its root agent. That
+single resolution drives everything that depends on where a trial runs:
+
+- **run_task.** Every `mcp serve` is pinned to the bench root
+  (`NODAL_MCP_AGENT_ID`), and every `run_task` names it (`agent: <slug>`). The
+  server neither chooses nor re-resolves the target. A `NODAL_MCP_AGENT_ID`
+  inherited from the shell is dropped, whatever its case.
+- **What the judge reads.** The scenario environment, the root's model, the
+  workspace folders and the deliverables all come from the bench space.
+- **The CLI and its scheduled task.** They both go through the same session
+  code (`runBench`).
+
+Before each trial, the space's structural check must pass
+(`assertSpaceCannotSend`: no channel, connector or MCP server within reach).
+Otherwise the trial does not start, and its line says why. After each
+`run_task`, the job the server created is read back. If it is anywhere but the
+bench root, it is cancelled, and the trial is an `error` whose reason says
+where it landed.
+
+With no bench space, or a bench space without an active root, the session
+refuses before it touches anything, with
+`bench_space_missing`, which names the fix: `pnpm bench:space sync --apply`.
+It never falls back to the owner's space.
 
 ## Activities and needs
 
@@ -92,12 +122,10 @@ reading `openWorldHint` on MCP tools.
 `--trials`). A model is `provider:model`, or a bare model the catalog knows
 under exactly one provider; an unknown or ambiguous one is an error.
 
-How a model is applied to a trial is an **open owner decision**: a separate
-bench workspace with its own copy of the team, or the owner's agents. There
-is no per-job model today (`agents.model` only). Until it is decided, the
-bench changes no agent and creates no workspace: the seam is `ModelApplier`
-(`matrix.ts`), and its only implementation refuses, before the database is
-even opened. `--dry-run` prints the plan: scenario × model × trials, grouped
+A model is to be applied to the bench space's copies only (the owner's
+decision of 16/10; `applySpaceModel` in `space/model.ts`). That is not wired
+yet: the seam is `ModelApplier` (`matrix.ts`), and its only implementation
+refuses, before the database is even opened. `--dry-run` prints the plan: scenario × model × trials, grouped
 by activity, each cell priced from the model catalog and the medians of the
 scenario's past runs (input, cached and output tokens, current version only,
 skipped and error runs excluded). A cell without a past run or without a

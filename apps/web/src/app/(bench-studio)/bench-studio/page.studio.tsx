@@ -34,13 +34,13 @@ export default async function CatalogPage() {
       <div className="mb-6 flex flex-col gap-3">
         {needs.reachable ? (
           <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-rule-2 bg-paper px-5 py-3">
-            <span className="mr-1 text-medium-12 text-ink-4">Needs on the stack now</span>
+            <span className="mr-1 text-medium-12 text-ink-4">Needs of the bench space now</span>
             {needs.needs.map((n) => (
               <NeedStatus key={n.need} needs={needs} need={n.need} />
             ))}
           </div>
         ) : (
-          <Banner variant="warn" title="The stack could not be read">
+          <Banner variant="warn" title="The bench space could not be read">
             {needs.why}. Needs show as unknown until it answers.
           </Banner>
         )}
