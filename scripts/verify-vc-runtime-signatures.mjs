@@ -32,24 +32,31 @@ const dir = resolve(
 );
 const dlls = Object.keys(VC_RUNTIME_SOURCE.files);
 
+// PowerShell 5.1 is spawned from whatever shell runs the step. CI runs it under
+// pwsh 7, whose PSModulePath (7.x modules) 5.1 would inherit and then fail to
+// load Microsoft.PowerShell.Security from. Dropping it lets 5.1 compute its own.
+const { PSModulePath: _inherited, ...env } = process.env;
 const run = spawnSync(
   'powershell.exe',
   ['-NoProfile', '-NonInteractive', '-Command', POWERSHELL_SCRIPT],
   {
     encoding: 'utf-8',
     timeout: 5 * 60_000,
-    env: { ...process.env, [ENV_DIR]: dir, [ENV_NAMES]: dlls.join(',') },
+    env: { ...env, [ENV_DIR]: dir, [ENV_NAMES]: dlls.join(',') },
   },
 );
 if (run.error || run.status !== 0) {
   console.error(
-    `verify-vc-runtime-signatures: PowerShell failed (${run.error?.message ?? `exit ${run.status}`})\n${run.stderr ?? ''}`,
+    `verify-vc-runtime-signatures: PowerShell failed (${run.error?.message ?? `exit ${run.status}`})
+` +
+      `stdout: ${run.stdout ?? ''}
+stderr: ${run.stderr ?? ''}`,
   );
   process.exit(1);
 }
 
 process.stdout.write(run.stdout);
-const verdict = judgeSignatures(run.stdout, dlls);
+const verdict = judgeSignatures(run.stdout, dlls, run.stderr);
 if (!verdict.ok) {
   for (const p of verdict.problems) console.error(`FAIL ${p}`);
   process.exit(1);
