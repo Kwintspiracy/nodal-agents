@@ -13,6 +13,10 @@ export default defineConfig({
   // tsup default treats workspace deps as external (via package.json's
   // `dependencies`). noExternal forces them back into the bundle.
   noExternal: [/^@nodal-agents\//],
+  // Le SDK du bac à sable Windows (#628) : natif, chargé par `import()` sous
+  // Windows seulement, porté par le paquet optionnel nodal-agents-sandbox-windows
+  // (build-pack.mjs). Jamais embarqué — comme dans le bundle du runner.
+  external: ['@microsoft/mxc-sdk', '@microsoft/mxc-sdk/v1'],
   // Keep the bundle pure ESM (matches package.json type: module).
   target: 'node24',
   platform: 'node',

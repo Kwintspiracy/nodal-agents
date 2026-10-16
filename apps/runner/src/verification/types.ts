@@ -93,6 +93,12 @@ export interface ProofCommandRecord {
   readonly stderrTail: string;
   readonly durationMs: number;
   readonly verdict: RunVerdict;
+  /**
+   * Le régime de la commande (#628) : `confined`, ou le code stable de la
+   * raison pour laquelle elle ne l'a pas été (`sandboxFact`). Absent pour un
+   * constat qui ne lance aucun processus (un document).
+   */
+  readonly sandbox?: string;
 }
 
 /**
@@ -126,6 +132,22 @@ export interface ProofResult {
 }
 
 /**
+ * Où une preuve qui LANCE des commandes peut écrire, et dans quel job (#628) : les dossiers du
+ * job — ses workspaces, partagé compris, et le dossier attaché à la demande —,
+ * résolus par la finalisation exactement comme l'exécution du job les
+ * résout. Un vérificateur qui constate sans rien lancer l'ignore.
+ */
+export interface ProofScope {
+  readonly writableRoots: readonly string[];
+  /**
+   * Le job dont la preuve fait partie : ses commandes tournent dans le
+   * périmètre de ce job (@nodal-agents/sandbox, `jobProcessScope`), et ce
+   * qu'elles laissent tourner meurt avec lui.
+   */
+  readonly jobId: string;
+}
+
+/**
  * Ce qu'un type de livrable doit savoir faire pour entrer dans la boucle de
  * vérification. `runProof` ne reçoit AUCUNE transaction : la preuve tourne
  * hors transaction (décision n°5), un spawn de plusieurs secondes ne tient
@@ -135,5 +157,9 @@ export interface DeliverableVerifier {
   readonly deliverableType: DeliverableType;
   canonicalize(raw: string): string;
   loadConfig(tx: AnyDrizzleDb, target: VerifierTarget): Promise<LoadedConfig>;
-  runProof(config: ReadyConfig, onCommandDone: OnCommandDone): Promise<ProofResult>;
+  runProof(
+    config: ReadyConfig,
+    onCommandDone: OnCommandDone,
+    scope: ProofScope,
+  ): Promise<ProofResult>;
 }

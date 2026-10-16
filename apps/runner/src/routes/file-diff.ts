@@ -26,6 +26,7 @@ import {
   asCheckpointError,
   checkpointFailureLogLine,
 } from '@nodal-agents/checkpoints';
+import { withNodalPrograms } from '@nodal-agents/sandbox';
 import { normalizePath, isWindowsPath, redactSecretsInText } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import { resolveScannedPath, scannedEditPath } from '../job/code-projects.ts';
@@ -236,7 +237,11 @@ export async function fileDiffRoute(c: Context, deps: RunnerDeps): Promise<Respo
 
   let diff: Awaited<ReturnType<typeof diffFile>>;
   try {
-    diff = await diffFile(checkpointsRoot(), workspace, from.sha, toSha, relPath);
+    // Dans le bac à sable quand il est là (#628, audit P1-2) : le diff lance git
+    // sur le workspace, qu'une commande confinée a pu piéger.
+    diff = await withNodalPrograms((programs) =>
+      diffFile(checkpointsRoot(), workspace, from.sha, toSha, relPath, programs),
+    );
   } catch (err) {
     // Le magasin n'a pas répondu. La route rendait `workspace_unreachable`,
     // donc « dossier injoignable » à l'écran, pour un dossier qui est là et un

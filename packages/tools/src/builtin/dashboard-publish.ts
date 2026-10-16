@@ -40,6 +40,7 @@ export const dashboardPublishTool: ToolDefinition<
     'Correct: response.content = [{tool-call: dashboard_publish, ...}, {tool-call: return_result, ...}].',
   inputSchema: DashboardPublishInputSchema,
   riskLevel: 'write',
+  egress: 'none',
   loading: 'eager',
   card: 'sent',
   present: () => sentCard({ channel: 'dashboard', kind: 'dashboard' }),

@@ -4,6 +4,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runSkillScriptTool, resolvePythonInterpreter } from '../builtin/run-skill-script.ts';
 import type { ToolContext } from '../types.ts';
+import { getSandboxStatus, type RefusedWrite } from '@nodal-agents/sandbox';
+import type { SandboxReport } from '../builtin/shell-engine';
+
+/** Les écritures refusées d'un résultat CONFINÉ ; un résultat non confiné fait échouer. */
+function refusedOf(out: { sandbox?: SandboxReport }): readonly RefusedWrite[] {
+  if (!out.sandbox?.confined) throw new Error(`not confined: ${JSON.stringify(out.sandbox)}`);
+  return out.sandbox.refusedWrites ?? [];
+}
+
+// Probed once, through the same engine as the scripts (sandbox included).
+const pythonAvailable = (await resolvePythonInterpreter()) !== null;
+const sandboxActive = (await getSandboxStatus()).state === 'available';
 
 // Real skill store on disk: <store>/test-skill/{scripts/echo.js, data.txt}.
 let storeDir: string;
@@ -102,22 +114,48 @@ describe('run_skill_script', () => {
     ).rejects.toThrow(/unsupported_script_type/);
   });
 
-  it('detects and reports files a script writes into the bundle (bundle_pollution)', async () => {
-    const out = await runSkillScriptTool.execute(
-      {
-        purpose: 'script that pollutes its bundle',
-        skill: SLUG,
-        script: 'scripts/write-bundle.js',
-      },
-      ctx(),
-    );
-    expect(out.exitCode).toBe(0);
-    expect(out.bundleWrites).toEqual(['outputs/fake.png']);
-    expect(out.warning).toMatch(/bundle_pollution/);
-    expect(out.warning).toMatch(/shared workspace/i);
-    // Clean up so later tests see a pristine bundle.
-    await rm(join(storeDir, SLUG, 'outputs'), { recursive: true, force: true });
-  });
+  // The bundle is the skill's shipped code. Without the OS sandbox a script can
+  // still write there, and the tool REPORTS it (bundle_pollution). Under the
+  // sandbox (#628) the write is REFUSED: the bundle is not among the folders a
+  // script may write to, and the refusal names the path. Which of the two
+  // holds depends on this machine — the title says which one ran.
+  it.runIf(!sandboxActive)(
+    'detects and reports files a script writes into the bundle (bundle_pollution) — sandbox unavailable here',
+    async () => {
+      const out = await runSkillScriptTool.execute(
+        {
+          purpose: 'script that pollutes its bundle',
+          skill: SLUG,
+          script: 'scripts/write-bundle.js',
+        },
+        ctx(),
+      );
+      expect(out.exitCode).toBe(0);
+      expect(out.bundleWrites).toEqual(['outputs/fake.png']);
+      expect(out.warning).toMatch(/bundle_pollution/);
+      expect(out.warning).toMatch(/shared workspace/i);
+      // Clean up so later tests see a pristine bundle.
+      await rm(join(storeDir, SLUG, 'outputs'), { recursive: true, force: true });
+    },
+  );
+
+  it.runIf(sandboxActive)(
+    'refuses a write into the bundle and names the path (sandbox active here)',
+    async () => {
+      const out = await runSkillScriptTool.execute(
+        {
+          purpose: 'script that pollutes its bundle',
+          skill: SLUG,
+          script: 'scripts/write-bundle.js',
+        },
+        ctx(),
+      );
+      expect(out.exitCode).not.toBe(0);
+      expect(await readdir(join(storeDir, SLUG))).not.toContain('outputs');
+      expect(out.bundleWrites).toBeUndefined();
+      expect(refusedOf(out).map((r) => r.path)).toContain(join(storeDir, SLUG, 'outputs'));
+    },
+  );
 
   it('exposes the shared workspace to the script via NODAL_SHARED_WORKSPACE — writes land there, no warning', async () => {
     const sharedDir = await mkdtemp(join(tmpdir(), 'shared-ws-'));
@@ -148,7 +186,7 @@ describe('run_skill_script', () => {
   // skill script died. The tool now probes py/python/python3 and uses the
   // first that actually answers `--version` — asserted here by REALLY running
   // a Python script end-to-end. Skipped only when the machine has no Python.
-  it.skipIf(resolvePythonInterpreter() === null)(
+  it.skipIf(!pythonAvailable)(
     'runs a real .py script with the probed interpreter (no Store-stub 9009)',
     async () => {
       await writeFile(

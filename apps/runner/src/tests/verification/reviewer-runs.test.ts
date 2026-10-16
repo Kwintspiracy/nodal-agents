@@ -347,6 +347,22 @@ describe('reviewerVerificationRecord @cap:verifier-un-livrable/moteur', () => {
     expect(record?.verdict).toBe('green');
   });
 
+  it('garde le régime que le résultat de la commande dit (#628) : confined, le code, ou rien pour un ancien résultat', () => {
+    const base = { exitCode: 0, stdout: 'ok', stderr: '', timedOut: false, truncated: false };
+    const of = (extra: Record<string, unknown>) =>
+      reviewerVerificationRecord({
+        toolName: 'run_command',
+        toolInput: { command: 'pnpm test' },
+        toolOutput: JSON.stringify({ ...base, ...extra }),
+        durationMs: 1,
+      })?.sandbox;
+    expect(of({ sandbox: { confined: false, code: 'SANDBOX_NOT_IMPLEMENTED' } })).toBe(
+      'SANDBOX_NOT_IMPLEMENTED',
+    );
+    expect(of({ sandbox: { confined: true, writableRoots: ['C:\\ws'] } })).toBe('confined');
+    expect(of({})).toBeNull();
+  });
+
   it('rend null sur une sortie qui ne décrit aucun processus', () => {
     for (const toolOutput of [null, 'not json', '{}', JSON.stringify({ exitCode: 0 })]) {
       expect(

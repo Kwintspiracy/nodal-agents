@@ -20,6 +20,7 @@
     "@nodal-agents/delivery": "workspace:*",
     "@nodal-agents/llm": "workspace:*",
     "@nodal-agents/memory": "workspace:*",
+    "@nodal-agents/sandbox": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
     "cron-parser": "^5.5.0",
     "docx": "^9.7.1",

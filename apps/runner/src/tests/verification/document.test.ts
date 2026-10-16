@@ -17,7 +17,10 @@ import { join } from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { projectKey } from '@nodal-agents/shared';
 import { DOCUMENT_MANIFEST_HASH, documentVerifier } from '../../verification/document.ts';
-import type { ProofCommandRecord, ReadyConfig } from '../../verification/types.ts';
+import type { ProofCommandRecord, ProofScope, ReadyConfig } from '../../verification/types.ts';
+
+/** Un document se constate sans rien lancer : la preuve n'a aucun dossier où écrire. */
+const NO_COMMANDS: ProofScope = { writableRoots: [], jobId: 'document-test' };
 
 let dir = '';
 beforeAll(() => {
@@ -39,9 +42,13 @@ async function prove(absPath: string): Promise<{
   });
   expect(config.kind).toBe('ready');
   const seen: ProofCommandRecord[] = [];
-  const proof = await documentVerifier.runProof(config as ReadyConfig, async (r) => {
-    seen.push(r);
-  });
+  const proof = await documentVerifier.runProof(
+    config as ReadyConfig,
+    async (r) => {
+      seen.push(r);
+    },
+    NO_COMMANDS,
+  );
   return { verdict: proof.verdict, records: [...proof.records], seen };
 }
 
@@ -422,7 +429,11 @@ describe('document — le chemin RÉEL, pas la clé repliée en casse', () => {
     // Windows normal répond pareil aux deux, et le test y resterait vert quoi
     // qu'il arrive.
     expect(config).toMatchObject({ kind: 'ready', subject: reel });
-    const proof = await documentVerifier.runProof(config as ReadyConfig, async () => {});
+    const proof = await documentVerifier.runProof(
+      config as ReadyConfig,
+      async () => {},
+      NO_COMMANDS,
+    );
     expect(proof.verdict).toBe('green');
     expect(proof.records.map((r) => r.command)).toEqual(['exists', 'not-empty', 'utf8']);
   });
@@ -449,7 +460,11 @@ describe('document — le chemin RÉEL, pas la clé repliée en casse', () => {
       entityId: 'e',
       canonicalKey: documentVerifier.canonicalize(absent),
     });
-    const proof = await documentVerifier.runProof(config as ReadyConfig, async () => {});
+    const proof = await documentVerifier.runProof(
+      config as ReadyConfig,
+      async () => {},
+      NO_COMMANDS,
+    );
     expect(proof.verdict).toBe('red');
     const exists = proof.records[0];
     expect(exists?.command).toBe('exists');
@@ -467,7 +482,11 @@ describe('document — le chemin RÉEL, pas la clé repliée en casse', () => {
       canonicalKey: documentVerifier.canonicalize(absent),
       displayPath: absent,
     });
-    const proof = await documentVerifier.runProof(config as ReadyConfig, async () => {});
+    const proof = await documentVerifier.runProof(
+      config as ReadyConfig,
+      async () => {},
+      NO_COMMANDS,
+    );
     expect(proof.verdict).toBe('red');
     expect(proof.records[0]?.stderrTail).toMatch(/not found/i);
     expect(proof.records[0]?.stderrTail).not.toMatch(/case-folded key/i);

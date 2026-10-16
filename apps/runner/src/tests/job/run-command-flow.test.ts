@@ -17,12 +17,32 @@ import { mkdtemp, rm, realpath, readFile, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
+import { existsSync } from 'node:fs';
+import {
+  createSandbox,
+  defaultSandbox,
+  jobProcessScope,
+  mxcBackend,
+  openJobProcessScopeIds,
+} from '@nodal-agents/sandbox';
+
+/**
+ * Ce fichier prouve le FLUX d'un job (approbation, téléchargement dans le
+ * workspace, durée de vie de ce qu'une commande lance). Ses cas réseau (un
+ * `curl` vers un serveur HTTP local, un serveur joint par la commande
+ * suivante) passent par le proxy : sous Windows ses jobs tournent donc sous
+ * la valeur PRODUIT `proxy`. Là où le proxy n'est pas joignable
+ * (windows-11-arm) le bac à sable est indisponible et ces cas se sautent
+ * (`unconfinedWindows`). Ailleurs (Linux CI), le bac à sable de la plateforme.
+ */
+const flowSandbox =
+  process.platform === 'win32' ? createSandbox(mxcBackend(undefined, 'proxy')) : defaultSandbox();
 import { join } from 'node:path';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq } from '@nodal-agents/db';
+import { cancelJobTree, eq } from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
@@ -273,6 +293,7 @@ async function createJob(): Promise<{ id: string }> {
     })
     .returning();
   if (!job) throw new Error('Failed to create test job');
+  jobProcessScope(job.id, flowSandbox);
   return job;
 }
 
@@ -1249,4 +1270,156 @@ describe('run_command — what reaches a printer or the screen asks, and a decli
         .where(eq(entities.id, seed.entityId));
     }
   });
+});
+
+// ─── #628 / #750 : la durée de vie de ce qu'une commande lance ────────────────
+
+// Sans bac à sable, sous Windows, un petit-enfant détaché n'est rattaché à
+// rien : seul le conteneur MXC du job le tient (sandbox-confinement-windows).
+const unconfinedWindows =
+  process.platform === 'win32' && (await flowSandbox.status()).state !== 'available';
+
+describe('run_command — what a command starts lives for the JOB, and Stop kills the running command (#628, #750) @cap:executer-une-commande/moteur', () => {
+  let ruleId: string;
+  const node = process.execPath;
+  const waitFor = (path: string): Promise<void> =>
+    (async () => {
+      for (let i = 0; i < 400 && !existsSync(path); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    })();
+  const alive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  beforeAll(async () => {
+    const [rule] = await db
+      .insert(approvalRules)
+      .values({
+        entityId: seed.entityId,
+        agentId: null,
+        toolName: 'run_command',
+        action: 'auto_approve',
+      })
+      .returning();
+    if (!rule) throw new Error('Failed to insert auto_approve rule');
+    ruleId = rule.id;
+    await writeFile(
+      join(workspaceDir, 'long.js'),
+      "require('fs').writeFileSync(process.argv[2], String(process.pid)); setTimeout(() => {}, 600000);\n",
+    );
+    await writeFile(
+      join(workspaceDir, 'server.js'),
+      "const fs = require('fs'); require('http').createServer((q, s) => s.end('pong ' + process.pid)).listen(Number(process.argv[2]), '127.0.0.1', () => fs.writeFileSync(process.argv[3], String(process.pid)));\n",
+    );
+    await writeFile(
+      join(workspaceDir, 'waitfor.js'),
+      "const fs = require('fs'); const t = Date.now(); (function poll() { if (fs.existsSync(process.argv[2])) return; if (Date.now() - t > 20000) process.exit(1); setTimeout(poll, 50); })();\n",
+    );
+    await writeFile(
+      join(workspaceDir, 'fetch.js'),
+      "fetch('http://127.0.0.1:' + process.argv[2] + '/').then((r) => r.text()).then((t) => console.log(t)).catch((e) => { console.log('ERR', e.cause && e.cause.code); process.exit(2); });\n",
+    );
+  });
+
+  afterAll(async () => {
+    await db.delete(approvalRules).where(eq(approvalRules.id, ruleId));
+  });
+
+  it('Stop during a run_command: the command is killed at once and the job ends cancelled', async () => {
+    const job = await createJob();
+    const pidFile = join(workspaceDir, `stop-${job.id}.pid`);
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-stop-1',
+            toolName: 'run_command',
+            args: { purpose: 'a long command', command: `node long.js ${pidFile}` },
+          },
+        ],
+      },
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-stop-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+    const started = Date.now();
+    const running = executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    await waitFor(pidFile);
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    expect(alive(pid)).toBe(true);
+    // Le geste du bouton Stop : le chemin d'annulation unique.
+    await cancelJobTree(db as unknown as Parameters<typeof cancelJobTree>[0], {
+      entityId: seed.entityId,
+      jobId: job.id,
+    });
+    const result = await running;
+    expect(['cancelled', 'already_handled']).toContain(result.status);
+    // Le run_command durait 300 s par défaut : le Stop l'a coupé bien avant.
+    expect(Date.now() - started).toBeLessThan(60_000);
+    await new Promise((r) => setTimeout(r, 1_000));
+    expect(alive(pid)).toBe(false);
+    expect(openJobProcessScopeIds()).not.toContain(job.id);
+  });
+
+  it.skipIf(unconfinedWindows)(
+    'a server started by command 1 answers command 2 of the same job, then dies when the job completes (skipped on a Windows without the sandbox, where nothing holds a detached grandchild)',
+    async () => {
+      const job = await createJob();
+      const port = 40_000 + Math.floor(Math.random() * 20_000);
+      const info = join(workspaceDir, `server-${job.id}.pid`);
+      const start =
+        process.platform === 'win32'
+          ? `start "" /b "${node}" server.js ${port} ${info} && node waitfor.js ${info}`
+          : `"${node}" server.js ${port} ${info} > /dev/null 2>&1 & node waitfor.js ${info}`;
+      const llmClient = makeMockLlmClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-life-1',
+              toolName: 'run_command',
+              args: { purpose: 'start a local server', command: start },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-life-2',
+              toolName: 'run_command',
+              args: { purpose: 'call the local server', command: `node fetch.js ${port}` },
+            },
+          ],
+        },
+        {
+          text: 'Done.',
+          toolCalls: [
+            { toolCallId: 'tc-life-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]);
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('completed');
+      const pid = Number(await readFile(info, 'utf8'));
+      // La commande 2 a joint le serveur de la commande 1 : sa sortie est dans
+      // le tool_result que l'agent a lu.
+      const [row] = await db
+        .select({ messages: agentJobs.messages })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job.id));
+      expect(JSON.stringify(row?.messages)).toContain(`pong ${pid}`);
+      // Le job fini, le serveur est mort, et le périmètre fermé.
+      await new Promise((r) => setTimeout(r, 1_000));
+      expect(alive(pid)).toBe(false);
+      expect(openJobProcessScopeIds()).not.toContain(job.id);
+    },
+  );
 });

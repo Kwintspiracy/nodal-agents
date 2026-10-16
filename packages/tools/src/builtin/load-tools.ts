@@ -140,6 +140,7 @@ export function createLoadToolsTool(
       'Only tools from your index can be loaded.',
     inputSchema: LoadToolsInputSchema,
     riskLevel: 'read',
+    egress: 'none',
     loading: 'eager',
     card: 'text',
     execute: async (input) => {

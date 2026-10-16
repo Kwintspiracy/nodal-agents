@@ -100,6 +100,7 @@ export function generateTaskTools(
       'create tasks that do REAL work (research, write a file, send an email, build HTML, …).',
     inputSchema: createTaskSchema,
     riskLevel: 'write',
+    egress: 'none',
     loading: 'eager',
     card: 'text',
     execute: async (input: CreateTaskInput, ctx: ToolContext) => {
@@ -247,6 +248,7 @@ export function generateTaskTools(
       'assign_*: an empty list says nothing about whether anything else is running.',
     inputSchema: listTasksSchema,
     riskLevel: 'read',
+    egress: 'none',
     loading: 'eager',
     card: 'text',
     execute: async (input: ListTasksInput, ctx: ToolContext) => {

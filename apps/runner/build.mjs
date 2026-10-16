@@ -68,6 +68,10 @@ const EXTERNALS = [
   // Community-skill install (fetch + unpack SKILL.md archives)
   'tar',
   'fflate',
+  // OS sandbox, Windows backend (#628). Native (koffi + Microsoft binaries):
+  // never bundled. Loaded by `import()` under Windows only; the pack declares
+  // it as an OPTIONAL dependency (build-pack.mjs says why).
+  '@microsoft/mxc-sdk',
 ];
 
 // esbuild's external matches the literal import string. Deep imports

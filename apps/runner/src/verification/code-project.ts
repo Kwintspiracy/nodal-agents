@@ -19,8 +19,9 @@
 //     commande de preuve est un pouvoir ; seule la révision exacte approuvée
 //     par le propriétaire s'exécute ;
 //   - la séquence elle-même (`runCommandSequence`, arrêt au premier non-vert),
-//     avec l'environnement filtré (`buildChildEnv`) et la capture en QUEUE :
-//     l'erreur d'un test est à la fin, jamais au début.
+//     avec l'environnement filtré (`buildChildEnv`), la capture en QUEUE —
+//     l'erreur d'un test est à la fin, jamais au début — et le bac à sable de
+//     #628 : les dossiers du job sont les seuls où elle écrit.
 //
 // La preuve tourne HORS transaction (décision n°5) : `runProof` ne reçoit
 // aucun `tx`, seulement un callback. Un spawn de plusieurs secondes sous
@@ -36,7 +37,8 @@ import {
   projectKey,
 } from '@nodal-agents/shared';
 import type { RunVerdict } from '@nodal-agents/shared';
-import { buildChildEnv, isGreen, runCommandSequence } from '@nodal-agents/tools';
+import { jobProcessScope } from '@nodal-agents/sandbox';
+import { buildChildEnv, isGreen, runCommandSequence, sandboxFact } from '@nodal-agents/tools';
 // Le CONTRAT, jamais le registre : le registre importe CE fichier, l'importer
 // en retour ferait un cycle que `pnpm deps:check` refuse (CI de la PR #46).
 import type {
@@ -45,6 +47,7 @@ import type {
   OnCommandDone,
   ProofCommandRecord,
   ProofResult,
+  ProofScope,
   ReadyConfig,
   VerifierTarget,
 } from './types.ts';
@@ -144,11 +147,21 @@ function verdictOf(outcomeKind: 'exit' | 'timeout' | 'spawn_error', green: boole
  * — les deux gardes ont chacune leur raison : celle-ci protège le verdict
  * contre un appelant fragile, celle de l'appelant nomme la table qui a lâché.
  */
-async function runProof(config: ReadyConfig, onCommandDone: OnCommandDone): Promise<ProofResult> {
+async function runProof(
+  config: ReadyConfig,
+  onCommandDone: OnCommandDone,
+  scope: ProofScope,
+): Promise<ProofResult> {
   const records: ProofCommandRecord[] = [];
   const sequence = await runCommandSequence(config.commands, {
     cwd: config.cwd,
     env: buildChildEnv(process.env),
+    // Le même bac à sable que `run_command` (#628) : une commande de preuve
+    // n'écrit que dans les dossiers du job.
+    confinement: { writableRoots: scope.writableRoots },
+    // Le périmètre du job : une preuve qui lance un serveur ne le laisse pas
+    // derrière elle — il meurt quand le job est fini.
+    scope: jobProcessScope(scope.jobId),
     keep: 'tail',
     maxChars: MAX_TAIL_CHARS,
     onCommandDone: async (step) => {
@@ -165,6 +178,8 @@ async function runProof(config: ReadyConfig, onCommandDone: OnCommandDone): Prom
             : step.stderr,
         durationMs: step.durationMs,
         verdict: verdictOf(step.outcome.kind, green),
+        // Confinée ou pas, et pourquoi : conservé avec la preuve (#628).
+        sandbox: sandboxFact(step.confinement),
       };
       records.push(record);
       try {

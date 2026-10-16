@@ -97,6 +97,21 @@ export interface ReviewerVerificationRecord {
   stderrTail: string | null;
   durationMs: number | null;
   verdict: RunVerdict;
+  /**
+   * Le régime de la commande, tel que SON résultat le dit (#628) :
+   * `confined`, ou le code de la raison. `null` pour un résultat écrit avant
+   * que les commandes ne le disent.
+   */
+  sandbox: string | null;
+}
+
+/** `sandbox` d'un résultat de commande, ramené au même mot que la preuve du job. */
+function sandboxOf(value: unknown): string | null {
+  if (!value || typeof value !== 'object') return null;
+  const s = value as { confined?: unknown; code?: unknown };
+  if (s.confined === true) return 'confined';
+  if (s.confined === false && typeof s.code === 'string') return s.code;
+  return null;
 }
 
 function tail(text: unknown): string | null {
@@ -190,6 +205,7 @@ export function reviewerVerificationRecord(
     stderrTail: tail(out['stderr']),
     durationMs: call.durationMs,
     verdict,
+    sandbox: sandboxOf(out['sandbox']),
   };
 }
 
@@ -326,6 +342,7 @@ export async function recordReviewerVerificationRuns(
       stderrTail: r.stderrTail,
       durationMs: r.durationMs,
       verdict: r.verdict,
+      sandbox: r.sandbox,
       source: REVIEWER_SOURCE,
       sourceJobId: reviewerJobId,
     })),

@@ -26,6 +26,7 @@ import { mkdtemp, rm, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import { closeAllJobProcessScopes, getSandboxStatus } from '@nodal-agents/sandbox';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
   and,
@@ -33,6 +34,7 @@ import {
   eq,
   sql,
   agentJobs,
+  agentWorkspaces,
   codeProjects,
   jobDeliveries,
   jobDeliverableVerificationState,
@@ -59,7 +61,7 @@ import {
   finalizeJobSuccess,
 } from '../../job/finalize.ts';
 import type { FinalizeDeps } from '../../job/finalize.ts';
-import type { DeliverableVerifier } from '../../verification/registry.ts';
+import type { DeliverableVerifier, ProofScope } from '../../verification/registry.ts';
 import { MAX_TAIL_CHARS, codeProjectVerifier } from '../../verification/code-project.ts';
 import { documentVerifier } from '../../verification/document.ts';
 
@@ -101,9 +103,21 @@ beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'nodal-finalize-'));
   projectPath = normalizePath(dir);
   key = projectKey(projectPath);
+  // Le projet est un dossier de l'agent, comme en vrai : c'est par ses
+  // dossiers qu'un agent écrit un projet, et sous le bac à sable (#628) ce
+  // sont les seuls où ses commandes de preuve peuvent écrire.
+  await db.insert(agentWorkspaces).values({
+    agentId: seed.agentId,
+    entityId: seed.entityId,
+    label: 'projet',
+    path: dir,
+  });
 });
 
 afterAll(async () => {
+  // Les preuves de ces jobs ont ouvert leur périmètre ; aucun job n'est lancé
+  // par executeJob ici, rien d'autre ne les fermerait.
+  await closeAllJobProcessScopes();
   for (let i = 0; i < 5; i++) {
     try {
       await rm(dir, { recursive: true, force: true });
@@ -934,8 +948,8 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
 
     const apresLaPreuve: DeliverableVerifier = {
       ...documentVerifier,
-      runProof: async (config, onCommandDone) => {
-        const proof = await documentVerifier.runProof(config, onCommandDone);
+      runProof: async (config, onCommandDone, scope) => {
+        const proof = await documentVerifier.runProof(config, onCommandDone, scope);
         // La preuve a lu `# Court` et l'a trouvé vert ; l'autre job écrit ensuite.
         await writeFile(doc, 'plus aucun titre\n', 'utf8');
         return proof;
@@ -970,9 +984,9 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
 
     const aba: DeliverableVerifier = {
       ...documentVerifier,
-      runProof: async (config, onCommandDone) => {
+      runProof: async (config, onCommandDone, scope) => {
         await writeFile(doc, B, 'utf8'); // l'autre job écrit B
-        const proof = await documentVerifier.runProof(config, onCommandDone); // vert sur B
+        const proof = await documentVerifier.runProof(config, onCommandDone, scope); // vert sur B
         await writeFile(doc, A, 'utf8'); // …puis remet A
         return proof;
       },
@@ -1405,12 +1419,12 @@ describe('la réclamation du marqueur finalizing_at', () => {
     // AUTRE job dans le même projet : l'intention de T16 avance l'epoch.
     const bumping: DeliverableVerifier = {
       ...codeProjectVerifier,
-      runProof: async (config, onCommandDone) => {
+      runProof: async (config, onCommandDone, scope) => {
         await db
           .update(codeProjects)
           .set({ verificationEpoch: sql`${codeProjects.verificationEpoch} + 1` })
           .where(eq(codeProjects.projectKey, key));
-        return codeProjectVerifier.runProof(config, onCommandDone);
+        return codeProjectVerifier.runProof(config, onCommandDone, scope);
       },
     };
 
@@ -1431,5 +1445,78 @@ describe('la réclamation du marqueur finalizing_at', () => {
     expect(runs[0]?.verdict).toBe('green');
     expect(runs[0]?.testedEpoch).toBe(7);
     expect((await jobRow(jobId)).status).toBe('completed');
+  });
+});
+
+describe('finalizeJobSuccess — où la preuve peut écrire (#628)', () => {
+  /** Un vérificateur qui délègue au vrai, et retient le périmètre reçu. */
+  const capturing = (): { verifier: DeliverableVerifier; scopes: ProofScope[] } => {
+    const scopes: ProofScope[] = [];
+    return {
+      scopes,
+      verifier: {
+        ...codeProjectVerifier,
+        runProof: async (config, onCommandDone, scope) => {
+          scopes.push(scope);
+          return codeProjectVerifier.runProof(config, onCommandDone, scope);
+        },
+      },
+    };
+  };
+  const sharedOf = (entityId: string): string =>
+    join(process.env['NODALAI_WORKSPACES_ROOT'] as string, entityId, 'shared');
+
+  it('les dossiers du RUN : dossier de la demande en tête, puis ceux de l’agent, puis le partagé', async () => {
+    const jobFolder = await mkdtemp(join(tmpdir(), 'nodal-finalize-jobfolder-'));
+    try {
+      const ok = await script('scope-ok.js', 'process.exit(0)');
+      await setProject([{ command: ok, timeoutSeconds: 20 }], 'current');
+      const jobId = await insertJob('processing');
+      await db.update(agentJobs).set({ jobFolder }).where(eq(agentJobs.id, jobId));
+      await insertState(jobId, 'code_project', key, 1);
+      const { verifier, scopes } = capturing();
+
+      await finalizeJobSuccess(
+        asDb(),
+        { jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
+        deps({ getVerifier: () => verifier }),
+      );
+
+      expect(scopes).toEqual([{ writableRoots: [jobFolder, dir, sharedOf(seed.entityId)], jobId }]);
+      const runs = await runsOf(jobId);
+      expect(runs.map((r) => r.verdict)).toEqual(['green']);
+      // La ligne de preuve garde le régime de la commande : `confined`, ou le
+      // code de la raison — celui que le bac à sable de cette machine donne.
+      const status = await getSandboxStatus();
+      const [row] = await db
+        .select({ sandbox: verificationRuns.sandbox })
+        .from(verificationRuns)
+        .where(eq(verificationRuns.jobId, jobId));
+      expect(row?.sandbox).toBe(status.state === 'available' ? 'confined' : status.code);
+    } finally {
+      await rm(jobFolder, { recursive: true, force: true });
+    }
+  });
+
+  it('un job sans agent : seulement le dossier de la demande — jamais « partout »', async () => {
+    const jobFolder = await mkdtemp(join(tmpdir(), 'nodal-finalize-jobfolder-'));
+    try {
+      const ok = await script('scope-ok2.js', 'process.exit(0)');
+      await setProject([{ command: ok, timeoutSeconds: 20 }], 'current');
+      const jobId = await insertJob('processing');
+      await db.update(agentJobs).set({ jobFolder, agentId: null }).where(eq(agentJobs.id, jobId));
+      await insertState(jobId, 'code_project', key, 1);
+      const { verifier, scopes } = capturing();
+
+      await finalizeJobSuccess(
+        asDb(),
+        { jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
+        deps({ getVerifier: () => verifier }),
+      );
+
+      expect(scopes).toEqual([{ writableRoots: [jobFolder], jobId }]);
+    } finally {
+      await rm(jobFolder, { recursive: true, force: true });
+    }
   });
 });

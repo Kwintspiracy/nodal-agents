@@ -116,6 +116,7 @@ export const reviewVerdictTool: ToolDefinition<typeof reviewVerdictSchema, Revie
     'return_result so the requesting agent receives it.',
   inputSchema: reviewVerdictSchema,
   riskLevel: 'read',
+  egress: 'none',
   card: 'checks',
   present: ({ output }) =>
     checksCard({

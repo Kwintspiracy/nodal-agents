@@ -70,6 +70,7 @@ import {
   checkpointRefusalMessage,
   checkpointFailureLogLine,
 } from '@nodal-agents/checkpoints';
+import { withNodalPrograms, type NodalPrograms } from '@nodal-agents/sandbox';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
 import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.ts';
 
@@ -364,7 +365,22 @@ export async function takeCliTurnCheckpoints(
   turn: number,
 ): Promise<void> {
   const store = checkpointsRoot();
+  // Les git de la photo dans le bac à sable quand il est là (#628, audit P1-2 :
+  // un sous-dépôt imbriqué du workspace fait exécuter sa config par `snapshot`).
+  // Une session pour la boucle, tuée à la fin.
+  await withNodalPrograms((programs) =>
+    snapshotEachWorkspace(db, jobId, workspaces, turn, store, programs),
+  );
+}
 
+async function snapshotEachWorkspace(
+  db: AnyDrizzleDb,
+  jobId: string,
+  workspaces: ReadonlyArray<{ label: string; path: string }>,
+  turn: number,
+  store: string,
+  programs: NodalPrograms,
+): Promise<void> {
   for (const w of workspaces) {
     let sha: string | null;
     // Les millisecondes de la photo (#261). Mesurées autour du seul appel de
@@ -374,7 +390,7 @@ export async function takeCliTurnCheckpoints(
     let snapshotMs = 0;
     try {
       const debutPhoto = Date.now();
-      const cp = await snapshot(store, w.path, `before cli turn (job ${jobId})`);
+      const cp = await snapshot(store, w.path, `before cli turn (job ${jobId})`, { programs });
       snapshotMs = Date.now() - debutPhoto;
       // `null` = l'arbre n'a pas bougé depuis la dernière photo : l'état d'avant
       // de ce tour EST ce commit-là.

@@ -25,6 +25,7 @@
     "pack:smoke": "node scripts/smoke-pack.mjs",
     "pack:upgrade": "node scripts/smoke-upgrade.mjs",
     "bench": "pnpm --filter @nodal-agents/bench bench",
+    "bench:space": "pnpm --filter @nodal-agents/bench space",
     "bench:workflows": "pnpm --filter @nodal-agents/bench workflows",
     "bench:studio": "node scripts/bench-studio.mjs",
     "bench:workflows:schedule": "pnpm --filter @nodal-agents/bench workflows:schedule",

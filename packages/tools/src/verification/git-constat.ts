@@ -68,10 +68,9 @@
 // statut a changé (un `git add` déplace la lettre d'une colonne à l'autre sans
 // rien écrire).
 
-import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
-import { promisify } from 'node:util';
 import { normalizePath } from '@nodal-agents/shared';
+import { hostPrograms, withNodalPrograms, type ProgramRunner } from '@nodal-agents/sandbox';
 import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
 import type { ConstatedChangeKind, ConstatedWrite } from '@nodal-agents/shared';
 import { fingerprint, type FileFingerprint } from './observed';
@@ -81,8 +80,6 @@ import {
   statusAgainstFrozenIndex,
   SNAPSHOT_EXCLUDES,
 } from '@nodal-agents/checkpoints';
-
-const run = promisify(execFile);
 
 /** Une sonde qui pend ne doit pas tenir un appel d'outil. */
 const GIT_TIMEOUT_MS = 5_000;
@@ -135,30 +132,56 @@ export interface FrozenIndex {
 /** Ce que le seam garde entre l'avant et l'après d'un appel. */
 export type GitConstatBefore = readonly RepoSnapshot[];
 
-async function git(cwd: string, args: string[]): Promise<string | null> {
+/**
+ * OÙ TOURNE GIT (#628, audit P1-2). Le dépôt constaté est un dossier où des
+ * agents écrivent : son `.git/config` a pu être piégé par une commande
+ * confinée (`core.fsmonitor`, un filtre — mesuré, git les exécute sur
+ * `status`). Une phase de constat ouvre donc une session de programmes de
+ * Nodal (`withNodalPrograms`) : git tourne dans le bac à sable, sans réseau,
+ * quand il est là ; sur l'hôte, comme avant, quand il n'y est pas.
+ */
+interface GitReader {
+  readonly programs: ProgramRunner;
+  /**
+   * Ce que git doit pouvoir écrire : les dossiers du périmètre, qui
+   * contiennent son arbre de travail (sous MXC, un `chdir` dans un dossier en
+   * lecture seule est refusé). Ceux que les commandes du job écrivent déjà.
+   */
+  readonly roots: readonly string[];
+}
+
+/** Git sur l'hôte, comme avant : pour un appel hors d'une phase de constat. */
+const hostReader = (roots: readonly string[]): GitReader => ({ programs: hostPrograms, roots });
+
+async function git(reader: GitReader, cwd: string, args: string[]): Promise<string | null> {
   // Le chemin ABSOLU, jamais le nom nu : voir `resolveGitBinary`. Sans lui,
   // `cwd` — le dossier du projet, donc un dossier où des agents écrivent —
   // entre dans la recherche du programme sous Windows.
   const binaire = await resolveGitBinary();
   if (binaire === null) return null;
   try {
-    const { stdout } = await run(binaire, args, {
+    const { stdout } = await reader.programs.execFile(binaire, args, {
       cwd,
       timeout: GIT_TIMEOUT_MS,
-      windowsHide: true,
       maxBuffer: 16 * 1024 * 1024,
+      writableRoots: reader.roots,
+      readableRoots: [],
     });
     return stdout;
   } catch {
-    // Pas un dépôt, pas de git sur le PATH, délai dépassé : aucune réponse
-    // utilisable. L'appelant retombe sur le disque et le DIT.
+    // Pas un dépôt, pas de git sur le PATH, délai dépassé, bac à sable qui
+    // refuse : aucune réponse utilisable. L'appelant retombe sur le disque et
+    // le DIT.
     return null;
   }
 }
 
 /** La racine du dépôt qui contient `dir`, ou `null` s'il n'y en a pas. */
-export async function repoRootOf(dir: string): Promise<string | null> {
-  const out = await git(dir, ['rev-parse', '--show-toplevel']);
+export async function repoRootOf(
+  dir: string,
+  reader: GitReader = hostReader([dir]),
+): Promise<string | null> {
+  const out = await git(reader, dir, ['rev-parse', '--show-toplevel']);
   const root = out?.trim();
   return root ? normalizePath(root) : null;
 }
@@ -231,13 +254,19 @@ export function parsePorcelainZ(
 export async function snapshotRepo(
   root: string,
   frozen?: FrozenIndex,
+  reader: GitReader = hostReader([root]),
 ): Promise<RepoSnapshot | null> {
   let stdout: string | null;
   if (frozen === undefined) {
-    stdout = await git(root, ['status', '--porcelain', '-z', '--untracked-files=all']);
+    stdout = await git(reader, root, ['status', '--porcelain', '-z', '--untracked-files=all']);
     if (stdout === null) console.warn(`[verification] GIT_CONSTAT_STATUS_FAILED root=${root}`);
   } else {
-    const lu = await statusAgainstFrozenIndex(frozen.store, root, frozen.indexFile);
+    const lu = await statusAgainstFrozenIndex(
+      frozen.store,
+      root,
+      frozen.indexFile,
+      reader.programs,
+    );
     stdout = lu.kind === 'status' ? lu.stdout : null;
     if (lu.kind === 'failed') {
       console.warn(`[verification] GIT_CONSTAT_NO_FALLBACK ws=${root} reason=${lu.reason}`);
@@ -524,11 +553,26 @@ export async function snapshotGitAvant(
     readonly jobId?: string;
   },
 ): Promise<GitConstatBefore> {
-  const racines = new Map<string, RepoSnapshot>();
-  const vus = new Set<string>();
   // Le périmètre est comparé sur les chemins RÉELS : git rend la forme longue
   // et suivie, le dossier visé peut arriver en 8.3 ou à travers une jonction.
   const perimetre = await Promise.all(dirs.map((d) => cheminReel(d)));
+  // UNE session pour la phase : ses git partagent un conteneur, tué à la fin.
+  return withNodalPrograms((programs) =>
+    lireAvant(
+      { programs, roots: [...perimetre, ...(shadow?.workspaces ?? [])] },
+      perimetre,
+      shadow,
+    ),
+  );
+}
+
+async function lireAvant(
+  reader: GitReader,
+  perimetre: readonly string[],
+  shadow: Parameters<typeof snapshotGitAvant>[1],
+): Promise<GitConstatBefore> {
+  const racines = new Map<string, RepoSnapshot>();
+  const vus = new Set<string>();
   /**
    * La racine que git retient pour ce dossier, ou null s'il n'y en a pas
    * d'utilisable. Sondée UNE fois par dossier : un workspace est à la fois dans
@@ -544,7 +588,7 @@ export async function snapshotGitAvant(
     return sonde;
   };
   const sonder = async (dir: string): Promise<string | null> => {
-    const root = await repoRootOf(dir);
+    const root = await repoRootOf(dir, reader);
     if (root === null) return null;
     const rootReel = await cheminReel(root);
     if (!perimetre.some((d) => sousOuEgal(rootReel, d))) {
@@ -558,7 +602,7 @@ export async function snapshotGitAvant(
     vus.add(dir);
     const root = await racineRetenue(dir);
     if (root === null || racines.has(root)) continue;
-    const snap = await snapshotRepo(root);
+    const snap = await snapshotRepo(root, undefined, reader);
     if (snap !== null) racines.set(root, snap);
   }
   // LE REPLI, par workspace (#590). La garde au-dessus (pas de dépôt enraciné
@@ -600,7 +644,7 @@ export async function snapshotGitAvant(
     const frozen: FrozenIndex = { store: shadow.store, indexFile: fige.indexFile };
     let snap: RepoSnapshot | null;
     try {
-      snap = await snapshotRepo(normalizePath(ws), frozen);
+      snap = await snapshotRepo(normalizePath(ws), frozen, reader);
     } catch (err) {
       await releaseFrozenIndex(frozen.indexFile);
       throw err;
@@ -660,12 +704,19 @@ export interface GitConstat {
  * d'avant annoncés par git sont écartés de la relecture : ils sont déjà dits.
  */
 export async function constatedGitWrites(before: GitConstatBefore): Promise<GitConstat> {
+  // UNE session pour la phase, comme l'avant (voir `GitReader`).
+  return withNodalPrograms((programs) =>
+    lireApres({ programs, roots: before.map((avant) => avant.root) }, before),
+  );
+}
+
+async function lireApres(reader: GitReader, before: GitConstatBefore): Promise<GitConstat> {
   const writes: ConstatedWrite[] = [];
   const fallbackWrites: ConstatedWrite[] = [];
   const roots: string[] = [];
   const indecis: string[] = [];
   for (const avant of before) {
-    const apres = await snapshotRepo(avant.root, avant.frozen);
+    const apres = await snapshotRepo(avant.root, avant.frozen, reader);
     // L'après a lu la copie figée : elle a servi, elle part.
     if (avant.frozen !== undefined) await releaseFrozenIndex(avant.frozen.indexFile);
     if (apres === null) continue;

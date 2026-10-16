@@ -10,7 +10,7 @@
 // est-ce que l'instantané tombe une fois par tour, et est-ce qu'un échec REFUSE
 // l'écriture au lieu de la laisser passer sans filet.
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 
 // ── Un git qui PEND, pour que la borne tombe à coup sûr (#586) ──────────────
 //
@@ -72,6 +72,7 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agents, jobCheckpoints, and, eq } from '@nodal-agents/db';
 import { executeTool } from '../execute';
+import { createSandbox, _setNodalProgramsSandboxForTests } from '@nodal-agents/sandbox';
 import { listCheckpoints, ensureStore } from '@nodal-agents/checkpoints';
 import { createToolRegistry } from '../registry';
 import { registerBuiltins } from '../builtin';
@@ -112,6 +113,13 @@ const MINIMAL_INPUT: Readonly<Record<string, Readonly<Record<string, unknown>>>>
   run_skill_script: { purpose: 'test', skill: 'skill-inexistante', script: 'scripts/x.js' },
   code_task: { purpose: 'test', provider: 'claude', task: 'ne rien faire', mode: 'write' },
 };
+
+// git reste sur l'HÔTE dans ce fichier : son git qui pend est une simulation
+// de `node:child_process` (ci-dessus), qu'un git lancé dans le bac à sable ne
+// traverserait pas. Le passage par le bac à sable est prouvé ailleurs
+// (git-sandboxed.test.ts) ; ici, c'est le câblage du refus.
+beforeAll(() => _setNodalProgramsSandboxForTests(createSandbox(null)));
+afterAll(() => _setNodalProgramsSandboxForTests(undefined));
 
 beforeAll(async () => {
   const res = await spinUpTestDb();

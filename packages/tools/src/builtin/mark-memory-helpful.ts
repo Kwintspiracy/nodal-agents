@@ -39,6 +39,7 @@ export const markMemoryHelpfulTool: ToolDefinition<
     'Identify the memory by quoting a unique substring from the fact text.',
   inputSchema: MarkMemoryHelpfulInputSchema,
   riskLevel: 'write',
+  egress: 'none',
   card: 'text',
   execute: async (input, ctx) => {
     try {

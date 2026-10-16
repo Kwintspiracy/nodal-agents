@@ -23,6 +23,7 @@ export const detachMcpTool: ToolDefinition<typeof DetachMcpInput, DetachMcpOutpu
     'Reversible with attach_mcp. Idempotent.',
   inputSchema: DetachMcpInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {

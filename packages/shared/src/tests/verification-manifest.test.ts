@@ -110,7 +110,9 @@ describe('hashVerificationManifest', () => {
 
   it('versions : changer shellPolicyVersion ou envAllowlistVersion ⇒ hash différent', () => {
     const h = hashVerificationManifest(base);
-    expect(hashVerificationManifest({ ...base, shellPolicyVersion: 2 })).not.toBe(h);
+    expect(
+      hashVerificationManifest({ ...base, shellPolicyVersion: SHELL_POLICY_VERSION + 1 }),
+    ).not.toBe(h);
     expect(hashVerificationManifest({ ...base, envAllowlistVersion: 2 })).not.toBe(h);
   });
 

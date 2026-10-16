@@ -79,9 +79,13 @@ export { generateDelegationTools } from './delegation-tools';
 // ─── Router: tool availability (B2 brief validation) ─────────────────────────
 export {
   computeAgentToolNames,
+  computeAgentToolOrigins,
   findUnavailableToolMentions,
   KNOWN_TOOL_NAME_UNIVERSE,
 } from './router/tool-availability';
+export type { OutboundTool } from './router/tool-availability';
+export { servedToolDefinitions } from './router/served-tools';
+export type { ServedTool } from './router/served-tools';
 
 // ─── Router: internal (always-on) tool descriptors, for the Autonomy screen ──
 export { INTERNAL_TOOL_DESCRIPTORS, UNBLOCKABLE_TOOLS } from './router/internal-tools';
