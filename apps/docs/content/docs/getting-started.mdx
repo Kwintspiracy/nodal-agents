@@ -9,6 +9,15 @@ description: Install Nodal-Agents and run your first agent in a couple of minute
 ships with Node, so if you have a recent Node you already have npm. No external
 Postgres, no Redis, no cloud config.
 
+**npm ≥ 11.6** is required. Older npm versions crash during the install
+(`Cannot read properties of null (reading 'edgesOut')`) on a package published
+upstream on 15 October 2026. Node 22, and Node 24 up to 24.7, ship such an npm.
+Check with `npm -v`, and update npm first if it is older:
+
+```bash
+npm install -g npm@latest
+```
+
 ## Install
 
 ```bash

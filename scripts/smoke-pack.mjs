@@ -93,43 +93,28 @@ const env = { ...process.env, HOME: homeDir, USERPROFILE: homeDir };
 let failure = null;
 
 try {
-  step(`Installing into ${installDir}`);
-  execSync('npm init -y', { cwd: installDir, stdio: 'ignore' });
-  execSync(`npm install "${join(packDir, tarball)}" --no-audit --no-fund --loglevel=error`, {
-    cwd: installDir,
-    stdio: 'inherit',
-  });
-
-  const cli = join(installDir, 'node_modules', 'nodal-agents', 'cli.js');
-  if (!existsSync(cli)) throw new Error(`installed package has no cli.js at ${cli}`);
-
-  // ── 3a. No dependency resolved through git ────────────────────────────────
+  // ── 3a. The install that boots is made WITHOUT git ───────────────────────
   // 0.9.6 installed only where git exists: @whiskeysockets/baileys declared
   // libsignal as a git URL, and npm failed with `spawn git ENOENT` on every
   // machine without git. CI runners have git, so the install passed here and
-  // broke for users. Scanned on the install made WITH git, where every package
-  // is present: without git npm drops an optional dependency that needs it in
-  // silence, and the scan would never see it.
-  step('No dependency resolved through git');
-  const gitReport = formatGitDependencySpecs(
-    findGitDependencySpecs(join(installDir, 'node_modules')),
-  );
-  if (gitReport) throw new Error(gitReport);
-  console.log('  ✔ every installed dependency comes from the registry');
-
-  // ── 3b. A second install, WITHOUT git, runs ───────────────────────────────
-  // npm runs git through its `git` setting; naming a command that exists
-  // nowhere is what a machine without git looks like to npm (the same
-  // `spawn … ENOENT`), on every OS. Stripping git from PATH is not portable:
-  // on Linux /usr/bin holds git next to the sh npm runs scripts with.
-  const noGitDir = join(sandbox, 'install-no-git');
-  step(`Installing into ${noGitDir} with git unavailable to npm`);
-  mkdirSync(noGitDir, { recursive: true });
-  execSync('npm init -y', { cwd: noGitDir, stdio: 'ignore' });
+  // broke for users. npm runs git through its `git` setting; naming a command
+  // that exists nowhere is what a machine without git looks like to npm (the
+  // same `spawn … ENOENT`), on every OS. Stripping git from PATH is not
+  // portable: on Linux /usr/bin holds git next to the sh npm runs scripts with.
+  //
+  // The npm doing it is the one a user has: NODAL_SMOKE_NPM=<version|tag>
+  // installs with that npm (`npx npm@<it>`), else the npm on PATH. The CI runs
+  // both the npm of the current Node LTS and npm latest: a registry change that
+  // breaks an npm users have (16/10/2026: vitest 4.1.12 crashed every npm below
+  // 11.6.0 inside better-auth's optional peers) turns CI red, not their install.
+  const npm = process.env.NODAL_SMOKE_NPM ? `npx -y npm@${process.env.NODAL_SMOKE_NPM}` : 'npm';
+  const npmVersion = execSync(`${npm} --version`, { encoding: 'utf-8' }).trim();
   const NO_GIT = 'nodal-smoke-no-git';
+  step(`Installing into ${installDir} with npm ${npmVersion}, git unavailable to npm`);
+  execSync('npm init -y', { cwd: installDir, stdio: 'ignore' });
   try {
-    execSync(`npm install "${join(packDir, tarball)}" --no-audit --no-fund --loglevel=error`, {
-      cwd: noGitDir,
+    execSync(`${npm} install "${join(packDir, tarball)}" --no-audit --no-fund --loglevel=error`, {
+      cwd: installDir,
       stdio: 'pipe',
       encoding: 'utf-8',
       env: { ...process.env, npm_config_git: NO_GIT },
@@ -143,19 +128,29 @@ try {
           'and a machine without git fails right here (`spawn git ENOENT`)',
       );
     }
-    throw e;
+    throw new Error(`npm ${npmVersion} cannot install the tarball (see its output above)`);
   }
-  const noGitVersion = execFileSync(
-    process.execPath,
-    [join(noGitDir, 'node_modules', 'nodal-agents', 'cli.js'), '--version'],
-    { encoding: 'utf-8' },
-  ).trim();
-  if (noGitVersion !== version) {
-    throw new Error(
-      `the install made without git answers --version "${noGitVersion}", not ${version}`,
-    );
-  }
-  console.log(`  ✔ installed without git, --version answers ${noGitVersion}`);
+
+  const cli = join(installDir, 'node_modules', 'nodal-agents', 'cli.js');
+  if (!existsSync(cli)) throw new Error(`installed package has no cli.js at ${cli}`);
+
+  // ── 3b. No dependency resolved through git ────────────────────────────────
+  // Scanned on a second install made WITH git, where every package is present:
+  // without git npm drops an optional dependency that needs it in silence, so
+  // the scan of the install above would never see it.
+  const withGitDir = join(sandbox, 'install-with-git');
+  step(`No dependency resolved through git (scan of an install made with git)`);
+  mkdirSync(withGitDir, { recursive: true });
+  execSync('npm init -y', { cwd: withGitDir, stdio: 'ignore' });
+  execSync(`${npm} install "${join(packDir, tarball)}" --no-audit --no-fund --loglevel=error`, {
+    cwd: withGitDir,
+    stdio: 'inherit',
+  });
+  const gitReport = formatGitDependencySpecs(
+    findGitDependencySpecs(join(withGitDir, 'node_modules')),
+  );
+  if (gitReport) throw new Error(gitReport);
+  console.log('  ✔ every installed dependency comes from the registry');
 
   // ── 4. Dependency + chunk integrity on the INSTALLED tree ──────────────────
   step('verify-install (deps resolve, chunks present)');

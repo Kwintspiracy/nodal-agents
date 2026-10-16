@@ -296,6 +296,22 @@ git, npm could not fetch it.
 npm install -g nodal-agents@latest
 ```
 
+### `Cannot read properties of null (reading 'edgesOut')` at install
+
+**Symptom.** `npm install -g nodal-agents` stops with `npm error Cannot read
+properties of null (reading 'edgesOut')`, with or without git.
+
+**Cause.** An npm older than 11.6. A package published upstream on 15 October
+2026 makes those versions crash while they resolve the dependency tree. Node
+22, and Node 24 up to 24.7, ship such an npm.
+
+**Fix.** Update npm, then install again:
+
+```bash
+npm install -g npm@latest
+npm install -g nodal-agents@latest
+```
+
 ### npm skipped the database binaries
 
 **Symptom.** The install ended with `npm warn allow-scripts`, and `nodal-agents
