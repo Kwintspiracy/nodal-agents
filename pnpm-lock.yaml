@@ -379,6 +379,9 @@ importers:
       '@figma/code-connect':
         specifier: 1.4.9
         version: 1.4.9
+      '@nodal-agents/bench':
+        specifier: workspace:*
+        version: link:../../packages/bench
       '@nodal-agents/test-kit':
         specifier: workspace:*
         version: link:../../packages/test-kit

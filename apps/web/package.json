@@ -53,6 +53,7 @@
   },
   "devDependencies": {
     "@figma/code-connect": "1.4.9",
+    "@nodal-agents/bench": "workspace:*",
     "@nodal-agents/test-kit": "workspace:*",
     "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4.3.0",

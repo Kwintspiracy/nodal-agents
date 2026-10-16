@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next';
+import { PHASE_DEVELOPMENT_SERVER } from 'next/constants';
 import type { Configuration } from 'webpack';
 import { networkInterfaces } from 'node:os';
 import { resolve } from 'node:path';
@@ -224,4 +225,43 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// ─── Bench Studio ───────────────────────────────────────────────────────────
+//
+// L'outil LOCAL du propriétaire pour le banc d'essai (`pnpm bench:studio`,
+// scripts/bench-studio.mjs), jamais livré. Ses pages et ses routes vivent dans
+// src/app/(bench-studio)/ sous des noms `page.studio.tsx`, `route.studio.ts` :
+// pour Next, ce ne sont des routes QUE lorsque `pageExtensions` les nomme,
+// c'est-à-dire seulement ici. Un `next build` ordinaire, le pack npm et la
+// stack de dev (même en mode LAN) ne les voient pas : ni route, ni chunk
+// (scripts/check-no-bench-studio.mjs le vérifie en CI sur `.next` et sur le
+// pack).
+//
+// Le mode studio n'existe qu'en serveur de dev : un build de production dans
+// ce mode est refusé, pas produit. Il écrit dans SON dossier (`.next-studio`),
+// jamais dans `.next` de la stack qui tourne, et lit son propre tsconfig pour
+// que Next n'ajoute rien au tsconfig.json du dépôt.
+export const BENCH_STUDIO_ENV = 'NODAL_BENCH_STUDIO';
+export const BENCH_STUDIO_DIST_DIR = '.next-studio';
+
+export default function nextConfigFor(phase: string): NextConfig {
+  if (process.env[BENCH_STUDIO_ENV] !== '1') return nextConfig;
+  if (phase !== PHASE_DEVELOPMENT_SERVER) {
+    throw new Error(
+      `bench_studio_dev_only: ${BENCH_STUDIO_ENV}=1 is only for \`pnpm bench:studio\` (a dev server); ${phase} refused, unset it`,
+    );
+  }
+  return {
+    ...nextConfig,
+    distDir: BENCH_STUDIO_DIST_DIR,
+    pageExtensions: ['studio.tsx', 'studio.ts', 'tsx', 'ts', 'jsx', 'js'],
+    typescript: { tsconfigPath: 'tsconfig.studio.json' },
+    // Le badge de développement de Next n'a rien à dire au propriétaire ici.
+    devIndicators: false,
+    transpilePackages: [
+      ...(nextConfig.transpilePackages ?? []),
+      '@nodal-agents/bench',
+      '@nodal-agents/test-kit',
+      '@nodal-agents/adapter-mcp',
+    ],
+  };
+}
