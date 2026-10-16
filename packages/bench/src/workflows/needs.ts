@@ -88,6 +88,73 @@ export function isMailSender(toolName: string): boolean {
   );
 }
 
+/** Les verbes qui font sortir quelque chose de la machine, mot entier d'un nom d'outil. */
+const OUTBOUND_VERBS = new Set([
+  'send',
+  'sends',
+  'post',
+  'publish',
+  'share',
+  'forward',
+  'reply',
+  'notify',
+  'tweet',
+  'broadcast',
+  'upload',
+  'dm',
+]);
+/** Les services de messagerie : un outil qui les vise peut écrire à quelqu'un, quel que soit son verbe. */
+const CHANNEL_SERVICES = new Set([
+  'telegram',
+  'slack',
+  'discord',
+  'whatsapp',
+  'signal',
+  'sms',
+  'twilio',
+  'teams',
+  'mattermost',
+  'messenger',
+  'wechat',
+  'mastodon',
+  'bluesky',
+  'twitter',
+  'linkedin',
+  'facebook',
+  'instagram',
+  'reddit',
+]);
+/**
+ * Les outils internes que leur nom ferait prendre pour des envois : la liste
+ * courte et explicite. `dashboard_publish` publie sur le tableau de bord Nodal
+ * du propriétaire, sans message ni sortie de la machine.
+ */
+const INTERNAL_TOOLS =
+  /^(return_result|dashboard_publish|file_[a-z_]+|workspace_[a-z_]+|xlsx_[a-z_]+|docx_[a-z_]+|pptx_[a-z_]+)$/;
+
+/**
+ * Un outil qui peut faire sortir quelque chose vers quelqu'un : un courrier
+ * (`isMailSender`), un nom qui porte un verbe sortant (`send`, `post`,
+ * `publish`, `share`, `forward`, `reply`, `notify`, `tweet`, `upload`…), qui
+ * COMMENCE par « message » (`message_user`), ou qui vise un service de
+ * messagerie (`slack__list_channels` compris). Fermé par défaut : un faux
+ * rouge vaut mieux qu'un faux vert ; seuls les outils internes de la liste
+ * courte en sont exemptés.
+ *
+ * Toujours une lecture de NOMS (revue Reviewer A de #756, passe 3) : la vraie
+ * prévention est un espace « banc » sans canal (décision du propriétaire,
+ * b1). Jusque-là, un essai sur les agents du propriétaire PEUT encore lui
+ * envoyer un message ; le banc ne fait que le signaler après coup.
+ */
+export function isOutboundTool(toolName: string): boolean {
+  const bare = toolName.replace(/^cli:/, '').split('__').pop() ?? toolName;
+  if (INTERNAL_TOOLS.test(bare)) return false;
+  if (isMailSender(toolName)) return true;
+  const w = words(toolName);
+  if (w.some((x) => OUTBOUND_VERBS.has(x) || CHANNEL_SERVICES.has(x))) return true;
+  return words(bare)[0] === 'message';
+}
+
 /** Pourquoi le besoin manque, ou null quand il est là. */
 const CHECKS: Record<Need, (env: ScenarioEnv) => string | null> = {
   comfyui(env) {

@@ -24,7 +24,7 @@ import type { TreeFacts } from './facts';
 import { isLive, liveJobs, pendingApprovals } from './facts';
 import { DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
 import { bareToolName, channelSends } from './judge-kit';
-import { isMailSender, missingNeeds } from './needs';
+import { isMailSender, isOutboundTool, missingNeeds } from './needs';
 import { recipientIds } from './recipients';
 import { redactHome } from './redact';
 import type { ForeignActivity } from './stack';
@@ -371,19 +371,22 @@ export function destinationGate(
 
 /**
  * Après l'essai : ce qui est réellement parti contre la destination déclarée.
- * `nothing` : aucun outil d'envoi (messagerie ou courrier) et aucune
- * livraison de réponse. `owner` : l'envoi va au chat par défaut du
- * propriétaire ; un envoi qui nomme un destinataire explicite est refusé.
+ * `nothing` : aucune livraison de réponse, aucun outil d'envoi du produit, et
+ * — fermé par défaut — aucun outil dont le nom porte un verbe sortant ou vise
+ * un canal (`isOutboundTool`), nommé dans la raison. `owner` : l'envoi va au
+ * chat par défaut du propriétaire ; un envoi qui nomme un destinataire
+ * explicite est refusé.
  */
 export function destinationReasons(s: AnyScenario, facts: TreeFacts): string[] {
   if (s.sends === 'nothing') {
-    const mail = facts.toolCalls.filter((c) => isMailSender(c.toolName));
+    const delivery = new Set<string>(DELIVERY_TOOL_NAMES);
+    const outbound = facts.toolCalls
+      .filter((c) => isOutboundTool(c.toolName) && !delivery.has(bareToolName(c.toolName)))
+      .map((c) => c.toolName);
     return [
       ...channelSends(facts),
-      ...(mail.length > 0
-        ? [
-            `a mail tool was called (${[...new Set(mail.map((c) => bareToolName(c.toolName)))].join(', ')})`,
-          ]
+      ...(outbound.length > 0
+        ? [`an outbound tool was called (${[...new Set(outbound)].join(', ')})`]
         : []),
     ];
   }

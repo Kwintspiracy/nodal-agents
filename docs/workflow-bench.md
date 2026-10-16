@@ -157,8 +157,11 @@ workspace folder. **The bench never executes agent-written code outside a
 sandbox.** A rule on the tool name and the command ("the agent ran `npm
 test`") is bypassed by an `echo`, a `cd` elsewhere or an MCP tool merely named
 `bash`. The code judges read the output of the agent's last command run that
-carries test results, and every line says "tests re-run by the bench: not
-verified" (a tool output could be faked). Once the platform sandbox is
+reports EVERY test of the project (passed or failed): a later `✔ done` from a
+lint step, a `cat`, another folder's suite or a partial run does not replace
+it, and with no complete run the trial is red, "no test run of this project
+found". Every line says "tests re-run by the bench: not verified" (a tool
+output could be faked). Once the platform sandbox is
 available (#753), re-running the suite inside it restores the check.
 
 The portal reads `apps/qa/data/workflow-catalog.json` (`--catalog`; a test
@@ -309,9 +312,7 @@ scenario is skipped with that reason, no job is started (needs
   "Print is confirmed on a preview card or a dialog, which this client does
   not show"). A pending request
   expires after 60 minutes in the connector's memory.
-- Every scenario declares where it sends (`sends`): `nothing` (a send during
-  the trial, by a messaging or a mail tool, or a reply delivered to a channel,
-  is red whatever the scenario's own judge says), `owner`, or
+- Every scenario declares where it sends (`sends`): `nothing`, `owner`, or
   `test-account:<name>` (none is wired: such a scenario is skipped).
   `recipients.test.ts` fails on a request that asks to send to the owner
   ("envoie-la-moi", "send it to me", "sur Telegram" with no named recipient)
@@ -320,6 +321,20 @@ scenario is skipped with that reason, no job is started (needs
   given `--allow-owner-sends`, otherwise it is skipped with that reason; a send
   that names an explicit recipient is red. Today only `comfyui-telegram` (an
   image to the owner's Telegram, 10+ minutes of GPU) declares `owner`.
+- Under `nothing` the judge fails CLOSED: a reply delivered to a channel, a
+  send tool of the product, and ANY tool whose name carries an outbound verb
+  (`send`, `post`, `publish`, `share`, `forward`, `reply`, `notify`, `tweet`,
+  `upload`…), starts with "message" or targets a messaging service
+  (`mcp-telegram__send_message`, `slack__chat_postMessage`,
+  `discord__sendMessage`, `whatsapp__sendText`, `slack__list_channels`) makes
+  the trial red, naming the tool, whatever the scenario's own judge says. Only
+  a short explicit list of internal tools is exempt (`return_result`,
+  `dashboard_publish`, `file_*`, `workspace_*`, `xlsx_*`, `docx_*`, `pptx_*`).
+  A false red is preferred to a false green (a local upload to ComfyUI would
+  be one). **This is still a reading of names, and it reports after the fact.**
+  The real prevention is a bench workspace without channels (owner decision
+  b1); until then a trial on the owner's agents CAN still send him a message,
+  and the bench only says so afterwards.
 - The real `research` trial of 30/09 called `telegram_send_message` from the
   delegate: a message reached the owner during a bench trial. Its judge said
   green; the declared destination (`nothing`) now makes such a run red.

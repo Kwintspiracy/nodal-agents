@@ -119,7 +119,7 @@ describe('code-http-server judge', () => {
     // Sans fichier de test, la suite de l'agent ne rapporte aucun résultat.
     expect(r.reasons).toEqual([
       'the test file test/server.js was deleted',
-      "no test run of the agent shows the suite's results",
+      'no test run of this project found',
     ]);
   });
 
@@ -134,7 +134,7 @@ describe('code-http-server judge', () => {
 
   it('red: the agent never ran the suite — and the bench runs nothing either', async () => {
     const r = await play('code-http-server', {}, plantMarker);
-    expect(r.reasons).toEqual(["no test run of the agent shows the suite's results"]);
+    expect(r.reasons).toEqual(['no test run of this project found']);
     expect(executed(r.root)).toBe(false);
   });
 
@@ -154,11 +154,11 @@ describe('code-http-server judge', () => {
       },
       plantMarker,
     );
-    expect(r.reasons).toEqual(["no test run of the agent shows the suite's results"]);
+    expect(r.reasons).toEqual(['no test run of this project found']);
     expect(executed(r.root)).toBe(false);
   });
 
-  it('bypass 2: `cd elsewhere && npm test` shows another suite, so red, and nothing runs', async () => {
+  it('bypass 2: `cd elsewhere && npm test` shows another suite: no run of this project, and nothing runs', async () => {
     const r = await play(
       'code-http-server',
       (root) => {
@@ -176,8 +176,7 @@ describe('code-http-server judge', () => {
         plantMarker(root);
       },
     );
-    expect(r.reasons).toHaveLength(1);
-    expect(r.reasons[0]).toMatch(/^in the agent's last test run, 4 test\(s\) do not pass/);
+    expect(r.reasons).toEqual(['no test run of this project found']);
     expect(executed(r.root)).toBe(false);
   });
 
@@ -196,9 +195,9 @@ describe('code-http-server judge', () => {
       plantMarker,
     );
     expect(executed(r.root)).toBe(false);
-    // Une sortie inventée ne couvre pas les quatre tests ; et même complète, la
-    // ligne dirait « tests re-run by the bench: not verified ».
-    expect(r.reasons[0]).toMatch(/^in the agent's last test run, 3 test\(s\) do not pass/);
+    // Une sortie partielle n'est pas un lancement de CE projet ; et même
+    // complète, la ligne dirait « tests re-run by the bench: not verified ».
+    expect(r.reasons).toEqual(['no test run of this project found']);
   });
 
   it('only the LAST run counts: a passing run followed by a failing one is red', async () => {
@@ -206,11 +205,17 @@ describe('code-http-server judge', () => {
       'code-http-server',
       (root) => {
         const ok = agentRanTests('http-somme')(root).tools![0]!;
+        // Un second lancement COMPLET du même projet, où tout échoue.
         const ko = {
           ...ok,
           output: JSON.stringify({
             exitCode: 1,
-            stdout: 'not ok 1 - GET /somme additionne a et b\n',
+            stdout: [
+              'not ok 1 - GET /somme additionne a et b',
+              'not ok 2 - les décimaux et les négatifs',
+              "not ok 3 - un paramètre qui n'est pas un nombre est une erreur 400",
+              'not ok 4 - une autre route répond 404',
+            ].join('\n'),
           }),
         };
         return { tools: [ok, ko] };
@@ -218,6 +223,45 @@ describe('code-http-server judge', () => {
       solve('http-somme'),
     );
     expect(r.reasons[0]).toMatch(/^in the agent's last test run, 4 test\(s\) do not pass/);
+  });
+
+  // Revue Reviewer A, passe 3 (P2) : un `✔ done` d'une étape de lint ou un
+  // `cat` APRÈS les tests ne remplace pas le vrai lancement (faux rouge).
+  it('a later command whose output holds an unrelated ✔ line does not replace the real test run', async () => {
+    const r = await play(
+      'code-http-server',
+      (root) => {
+        const tests = agentRanTests('http-somme')(root).tools![0]!;
+        const lint = {
+          name: 'run_command',
+          input: { command: 'npm run lint' },
+          output: JSON.stringify({ exitCode: 0, stdout: '✔ done (12ms)\n' }),
+        };
+        return { tools: [tests, lint] };
+      },
+      solve('http-somme'),
+    );
+    expect(r.reasons).toEqual([]);
+  });
+
+  it('a run that names only some of the project tests is not a run of this project', async () => {
+    const r = await play(
+      'code-http-server',
+      {
+        tools: [
+          {
+            name: 'run_command',
+            input: { command: 'node --test test/server.js --test-name-pattern somme' },
+            output: JSON.stringify({
+              exitCode: 0,
+              stdout: 'ok 1 - GET /somme additionne a et b\n',
+            }),
+          },
+        ],
+      },
+      solve('http-somme'),
+    );
+    expect(r.reasons).toEqual(['no test run of this project found']);
   });
 });
 

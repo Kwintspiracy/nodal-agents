@@ -68,12 +68,24 @@ function commandText(output: string | null): string {
   return output;
 }
 
-/** Le DERNIER lancement de tests de l'agent : la sortie du dernier outil de commande qui porte des résultats. */
-export function lastAgentTestRun(facts: TreeFacts): { passed: string[]; failed: string[] } | null {
+/**
+ * Le DERNIER lancement des tests DE CE PROJET par l'agent : la sortie du
+ * dernier outil de commande qui rapporte TOUS les tests attendus (passés ou
+ * échoués). Un `✔ done` d'une étape de lint, un `cat`, une suite d'un autre
+ * dossier ou un lancement partiel ne le remplacent pas (revue Reviewer A,
+ * passe 3) ; sans lancement complet, null : jamais une correspondance partielle.
+ */
+export function lastAgentTestRun(
+  facts: TreeFacts,
+  expected: readonly string[],
+): { passed: string[]; failed: string[] } | null {
   const runs = facts.toolCalls
     .filter((c) => COMMAND_TOOL.test(bareToolName(c.toolName)))
     .map((c) => testResultsIn(commandText(c.output)))
-    .filter((x): x is { passed: string[]; failed: string[] } => x !== null);
+    .filter(
+      (x): x is { passed: string[]; failed: string[] } =>
+        x !== null && expected.every((t) => x.passed.includes(t) || x.failed.includes(t)),
+    );
   return runs[runs.length - 1] ?? null;
 }
 
@@ -128,11 +140,11 @@ function judgeProject(facts: TreeFacts, project: string, o: ProjectObservation):
     if (o.testHashes[f] === null) r.push(`the test file test/${f} was deleted`);
     else if (o.testHashes[f] !== want) r.push(`the test file test/${f} was changed`);
   }
-  const run = lastAgentTestRun(facts);
-  if (run === null) return [...r, "no test run of the agent shows the suite's results"];
   const expected = testFiles(project).flatMap((f) =>
     declaredTests(readFileSync(join(fixturePath(`code/${project}`), 'test', f), 'utf8')),
   );
+  const run = lastAgentTestRun(facts, expected);
+  if (run === null) return [...r, 'no test run of this project found'];
   const notPassed = expected.filter((t) => !run.passed.includes(t) || run.failed.includes(t));
   if (notPassed.length > 0)
     r.push(
