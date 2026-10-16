@@ -6,7 +6,7 @@
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { createServer, request as httpRequest, type Server } from 'node:http';
-import { connect } from 'node:net';
+import { connect, createServer as createNetServer } from 'node:net';
 import { once } from 'node:events';
 import { startNodalProxy, localAddresses, type NodalProxy } from '../proxy';
 
@@ -217,5 +217,42 @@ describe('startNodalProxy — pass 4: current interfaces, fail closed, every add
       body: 'second-address',
     });
     expect(await connectThroughProxy(proxy, `dual.test:${port}`)).toMatch(/^HTTP\/1\.1 200/);
+  });
+});
+
+describe('startNodalProxy — an upstream that resets the connection is no unhandled error @cap:executer-une-commande/moteur', () => {
+  it('le proxy tient le socket amont : un RST de l’amont après la réponse ne lève aucune erreur non gérée, et la réponse était entière', async () => {
+    // Un amont qui répond puis RESET la connexion (un service local qui plante,
+    // un conteneur qui s'arrête) : sans écouteur d'erreur sur le socket que le
+    // proxy a ouvert, Node lève ECONNRESET dans le processus hôte.
+    const upstream = createNetServer((s) => {
+      s.on('error', () => undefined);
+      s.once('data', () => {
+        s.write(
+          ['HTTP/1.1 200 OK', 'Content-Length: 2', '', 'ok'].join(String.fromCharCode(13, 10)),
+        );
+        setTimeout(() => s.resetAndDestroy(), 50);
+      });
+    });
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    closers.push(() => new Promise<void>((r) => upstream.close(() => r())));
+    const port = (upstream.address() as { port: number }).port;
+    const proxy = await startNodalProxy([]);
+    closers.push(() => proxy.close());
+
+    const unhandled: unknown[] = [];
+    const record = (e: unknown): number => unhandled.push(e);
+    process.on('uncaughtException', record);
+    try {
+      expect(await getThroughProxy(proxy, `http://127.0.0.1:${port}/`)).toEqual({
+        status: 200,
+        body: 'ok',
+      });
+      await new Promise((r) => setTimeout(r, 400));
+    } finally {
+      process.off('uncaughtException', record);
+    }
+    expect(unhandled.map(String)).toEqual([]);
   });
 });
