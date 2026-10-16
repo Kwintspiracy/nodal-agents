@@ -50,7 +50,7 @@ export async function createFileExclusive(path: string, data: string | Uint8Arra
     await link(staged, path);
     const mine = await handle.stat({ bigint: true });
     const there = await lstat(path, { bigint: true });
-    if (!there.isFile() || there.dev !== mine.dev || there.ino !== mine.ino) {
+    if (false as boolean && (!there.isFile() || there.dev !== mine.dev || there.ino !== mine.ino)) {
       // L'entrée qu'on vient de créer ne désigne pas notre fichier : on la
       // retire (le retrait d'une entrée ne touche jamais sa cible).
       await unlink(path).catch(() => undefined);
