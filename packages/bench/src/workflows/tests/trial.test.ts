@@ -6,7 +6,8 @@
 // la ligne écrite, l'arbre annulé, le job jamais lancé — pas des compteurs
 // d'appels.
 
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { TreeFactsSchema, type TreeFacts } from '../facts';
@@ -496,23 +497,27 @@ describe('what happens before a trial starts', () => {
     expect(line.rootJobId).toBeNull();
   });
 
-  it('a preparation that throws (the workbook open in Excel) is an ERROR line with its reason, never a rejected trial', async () => {
+  it('a preparation that throws (a declared fixture missing) is an ERROR line with its reason, never a rejected trial', async () => {
     const green = load('question-green');
     const w = world({ rootId: green.rootId, snapshots: [green] });
-    const locked: AnyScenario = {
+    w.deps.env = async (startedMs) => ({
+      workspaceRoots: [mkdtempSync(join(tmpdir(), 'wf-prep-'))],
+      teamTools: [],
+      services: {},
+      unlistedMcpServers: [],
+      startedMs,
+    });
+    const broken: AnyScenario = {
       ...scenarioById('file')!,
-      prepare() {
-        throw new Error(
-          "EBUSY: resource busy or locked, unlink '~/.nodalai/workspaces/x/shared/nodal-bench/ventes-bench.xlsx'",
-        );
-      },
+      fixtures: [{ from: 'office/absent-bench.xlsx', to: 'nodal-bench/absent-bench.xlsx' }],
     };
-    const line = await runTrial(locked, w.deps, OPTS);
+    const line = await runTrial(broken, w.deps, OPTS);
     expect(w.started).toEqual([]);
     expect(line.verdict).toBe('error');
-    expect(line.reasons).toEqual([
-      "the trial could not be prepared: EBUSY: resource busy or locked, unlink '~/.nodalai/workspaces/x/shared/nodal-bench/ventes-bench.xlsx'",
-    ]);
+    expect(line.reasons).toHaveLength(1);
+    expect(line.reasons[0]).toMatch(
+      /^the trial could not be prepared: workflow_fixture_missing: .*absent-bench\.xlsx$/,
+    );
     expect(line.scenario).toBe('file');
   });
 

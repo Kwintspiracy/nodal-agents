@@ -21,6 +21,11 @@ export interface CatalogScenario {
   readonly needs: string[];
   readonly sends: string;
   readonly instruction: string;
+  readonly timeoutMs: number;
+  readonly judgedBy: string[];
+  readonly fixtures: Array<{ from: string; to: string }>;
+  readonly outputs: string[];
+  readonly unverified: Array<{ check: string; reason: string; ticket: string }>;
 }
 
 export interface Catalog {
@@ -43,6 +48,15 @@ export function buildCatalog(): Catalog {
       needs: [...(s.needs ?? [])],
       sends: s.sends,
       instruction: s.instruction,
+      timeoutMs: s.timeoutMs,
+      judgedBy: [...s.judgedBy],
+      fixtures: (s.fixtures ?? []).map((f) => ({ from: f.from, to: f.to })),
+      outputs: [...(s.outputs ?? [])],
+      unverified: (s.unverified ?? []).map((u) => ({
+        check: u.check,
+        reason: u.reason,
+        ticket: u.ticket,
+      })),
     })),
   };
 }

@@ -27,6 +27,9 @@ on:
       - 'CHANGELOG.md'
       # Le portail est rendu ici : son code ET ses données republient.
       - 'apps/qa/**'
+      # Ses calculs de la page Workflows vivent dans le banc (Bench Studio les lit
+      # aussi) : les changer republie le portail.
+      - 'packages/bench/src/workflows/results.ts'
   # La mesure nocturne committe `apps/qa/data` avec `GITHUB_TOKEN` et
   # `[skip ci]` : ce push ne déclenche AUCUN workflow, `paths` compris. Sans ce
   # `workflow_run`, chaque nuit mesurerait pour rien et le portail en ligne

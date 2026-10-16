@@ -31,6 +31,7 @@ import { packEngines } from './lib/pack-engines.mjs';
 import { shouldPackMigrationFile } from './lib/migration-pack-filter.mjs';
 import { mesurerCommande, verdictPic, plancherPour } from './lib/build-heap-sampler.mjs';
 import { scanTracesOutsideRoot, formatTracesOutsideRoot } from './lib/next-trace-scope.mjs';
+import { findStudioTraces } from './lib/bench-studio-absent.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
@@ -601,6 +602,23 @@ if (bundled.length > 0) {
 // ─── 8. README ──────────────────────────────────────────────────────────────
 if (existsSync(resolve(repoRoot, 'README.md'))) {
   cpSync(resolve(repoRoot, 'README.md'), resolve(packDir, 'README.md'));
+}
+
+// ─── 8a. Bench Studio absent ────────────────────────────────────────────────
+//
+// Bench Studio (`pnpm bench:studio`) est l'outil LOCAL du propriétaire : ses
+// routes ne sont des routes qu'en mode studio (apps/web/next.config.ts), et un
+// build de production dans ce mode est refusé. Ce qui sort ici est vérifié
+// quand même, sur le pack lui-même : c'est lui que npm publiera. Le smoke-test
+// du pack (CI pack-smoke, release:check) passe par ce script.
+{
+  const traces = findStudioTraces(packDir);
+  if (traces.length > 0) {
+    throw new Error(
+      `Bench Studio is in the pack; it is a local tool and must never ship:\n${traces.map((t) => `  ${t}`).join('\n')}`,
+    );
+  }
+  console.log('\n✔ No Bench Studio trace in the pack');
 }
 
 // ─── 8b. Size gate ──────────────────────────────────────────────────────────

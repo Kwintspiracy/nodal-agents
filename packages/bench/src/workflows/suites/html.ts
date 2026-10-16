@@ -6,9 +6,9 @@
 // dans la source, qui prendrait un commentaire pour un titre.
 
 import { readFileSync } from 'node:fs';
-import { findInRoots, readText, removeBenchFile } from '../disk';
-import { fixturePath, installFixture, installed } from '../fixtures';
-import { commonReasons } from '../judge-kit';
+import { findInRoots, readText } from '../disk';
+import { fixturePath, installed } from '../fixtures';
+import { JUDGED_COMMON, commonReasons } from '../judge-kit';
 import { normalizeSpace, readHtml, type HtmlElement } from '../office';
 import { defineScenario, type AnyScenario } from '../types';
 
@@ -56,6 +56,11 @@ const PRICE = /\d+(?:[.,]\d{1,2})?\s?(?:€|eur\b|euros?\b)/i;
 
 const landing = defineScenario<PageObservation>({
   id: 'html-landing',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `parses ${LANDING_REL} with parse5 (elements, never a text search), written during the trial`,
+    `the title element names "${SHOP}"; exactly one non-empty h1; a list with three items priced in euros; a footer element holding "${ADDRESS}"`,
+  ],
   version: 1,
   title: 'Write a small standalone web page',
   green: `${LANDING_REL} was written during the run: its title element names "${SHOP}", it has exactly one non-empty h1, a list of at least three items each with a price in euros, a footer element holding "${ADDRESS}", and nobody was asked anything.`,
@@ -68,9 +73,7 @@ const landing = defineScenario<PageObservation>({
     'principal h1, une liste de trois produits avec leur prix en euros, et un pied de page (balise ' +
     `footer) avec l'adresse « ${ADDRESS} ».`,
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    removeBenchFile(env.workspaceRoots, LANDING_REL);
-  },
+  outputs: [LANDING_REL],
   observe: async (_facts, env) => observeCreated(env.workspaceRoots, LANDING_REL, env.startedMs),
   judge(facts, o) {
     const { r, els } = pageReasons(LANDING_REL, o);
@@ -117,6 +120,11 @@ interface TableObservation extends PageObservation {
 
 const tableCsv = defineScenario<TableObservation>({
   id: 'html-table-csv',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `parses ${WEATHER_HTML_REL} with parse5, written during the trial`,
+    `a table whose rows equal ${WEATHER_CSV_REL} (header first, same order; 12,5 equals 12.5); the CSV untouched`,
+  ],
   version: 1,
   title: 'Show a CSV as an HTML table, row for row',
   green: `${WEATHER_HTML_REL} was written during the run with a table whose rows are exactly the CSV's (header first, then one row per day, same order, same values), the CSV is untouched, and nobody was asked anything.`,
@@ -128,10 +136,8 @@ const tableCsv = defineScenario<TableObservation>({
     `${WEATHER_CSV_REL} (${SHARED.replace("de l'", "dans l'")}) dans un tableau HTML : une ligne ` +
     "d'en-tête, puis une ligne par jour, dans le même ordre.",
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/meteo.csv', WEATHER_CSV_REL);
-    removeBenchFile(env.workspaceRoots, WEATHER_HTML_REL);
-  },
+  fixtures: [{ from: 'office/meteo.csv', to: WEATHER_CSV_REL }],
+  outputs: [WEATHER_HTML_REL],
   async observe(_facts, env) {
     const csv = installed(env.workspaceRoots, WEATHER_CSV_REL, env.startedMs);
     return {
@@ -197,6 +203,11 @@ function bodyTextOutsideFooter(els: readonly HtmlElement[]): string {
 
 const edit = defineScenario<PageObservation>({
   id: 'html-edit',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `parses ${HOME_REL}; it must be changed during the trial`,
+    `the title element reads exactly "${NEW_TITLE}"; a footer element holds "${FOOTER}"; headings and paragraphs outside the footer are the fixture's`,
+  ],
   version: 1,
   title: 'Edit an existing web page: its title and a new footer',
   green: `${HOME_REL} was changed during the run: its title element reads exactly "${NEW_TITLE}", a footer element holds "${FOOTER}", the headings and paragraphs outside the footer are exactly the fixture's, and nobody was asked anything.`,
@@ -208,9 +219,7 @@ const edit = defineScenario<PageObservation>({
     `« ${NEW_TITLE} » et ajoute un pied de page (balise footer) qui contient « ${FOOTER} ». ` +
     'Ne change rien d’autre.',
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/accueil.html', HOME_REL);
-  },
+  fixtures: [{ from: 'office/accueil.html', to: HOME_REL }],
   async observe(_facts, env) {
     const f = installed(env.workspaceRoots, HOME_REL, env.startedMs);
     return { found: f.exists ? { path: f.path, fresh: f.fresh, source: readText(f.path) } : null };
@@ -256,6 +265,11 @@ export function barsMatch(heights: readonly number[], values: readonly number[])
 
 const svgChart = defineScenario<PageObservation>({
   id: 'html-svg-chart',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `parses ${CHART_REL} with parse5, written during the trial`,
+    'no script, stylesheet or image loaded from another site; an inline svg whose rect heights are in the ratio 12 : 30 : 58 (± 5 %); the page names janvier, février and mars',
+  ],
   version: 1,
   title: 'Draw a bar chart in inline SVG',
   green: `${CHART_REL} was written during the run, loads nothing from another site, holds an inline svg with bars (rect) whose heights are in the ratio 12 : 30 : 58 within 5 %, names janvier, février and mars, and nobody was asked anything.`,
@@ -267,9 +281,7 @@ const svgChart = defineScenario<PageObservation>({
     'ni ressource externe) qui affiche en SVG un diagramme en barres des ventes : ' +
     `${SALES.map(([m, v]) => `${m} ${v}`).join(', ')}.`,
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    removeBenchFile(env.workspaceRoots, CHART_REL);
-  },
+  outputs: [CHART_REL],
   observe: async (_facts, env) => observeCreated(env.workspaceRoots, CHART_REL, env.startedMs),
   judge(facts, o) {
     const { r, els } = pageReasons(CHART_REL, o);

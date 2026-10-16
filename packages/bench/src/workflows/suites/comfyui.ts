@@ -8,8 +8,8 @@
 
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileHash, resetBenchPath } from '../fixtures';
-import { channelSends, commonReasons } from '../judge-kit';
+import { fileHash } from '../fixtures';
+import { JUDGED_COMMON, JUDGED_NO_CHANNEL_SEND, channelSends, commonReasons } from '../judge-kit';
 import { readImage } from '../office';
 import { defineScenario, type AnyScenario } from '../types';
 
@@ -121,9 +121,15 @@ function comfy(o: {
     needs: ['comfyui'],
     instruction: `Génère avec ComfyUI ${what}.`,
     timeoutMs: 40 * MIN,
-    prepare(env) {
-      resetBenchPath(env.workspaceRoots, o.dir);
-    },
+    judgedBy: [
+      ...JUDGED_COMMON,
+      `lists the files written during the trial under ${o.dir}/ in every workspace folder`,
+      `exactly ${o.count} PNG file(s)${o.name ? ` named ${o.name}` : ''}`,
+      `width × height read from each file's header (not its name): ${o.width} × ${o.height}`,
+      ...(o.count > 1 ? ['every image a different file (sha-256)'] : []),
+      JUDGED_NO_CHANNEL_SEND,
+    ],
+    outputs: [o.dir],
     observe: async (_facts, env) => observeDir(env.workspaceRoots, o.dir, env.startedMs),
     judge(facts, ob) {
       return [

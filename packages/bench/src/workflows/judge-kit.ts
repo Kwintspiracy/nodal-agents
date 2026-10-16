@@ -147,6 +147,15 @@ export function isWebTool(c: ToolCallFact): boolean {
   return WEB_TOOL.test(bareToolName(c.toolName));
 }
 
+/** Ce que lit `commonReasons`, dit pour Bench Studio. */
+export const JUDGED_ROOT_COMPLETED = 'agent_jobs: the root job of the trial ended completed';
+export const JUDGED_NOBODY_ASKED =
+  'approval_requests: the tree raised no approval and no question (the bench never answers one)';
+export const JUDGED_COMMON = [JUDGED_ROOT_COMPLETED, JUDGED_NOBODY_ASKED] as const;
+/** Ce que lit `channelSends`. */
+export const JUDGED_NO_CHANNEL_SEND =
+  'tool_calls and job_deliveries: no send tool called, no reply delivered to Telegram, Discord, Slack or WhatsApp';
+
 /**
  * Les raisons communes à tous les scénarios : la tête a fini `completed`, et
  * personne n'a été sollicité. Une approbation ou une question levée par un

@@ -5,10 +5,17 @@
 // la réponse, plus l'intégrité du fichier lu ; une production, sur le fichier.
 
 import { readFileSync } from 'node:fs';
-import { findInRoots, removeBenchFile } from '../disk';
-import { fileHash, fixturePath, installFixture, installed } from '../fixtures';
+import { findInRoots } from '../disk';
+import { fileHash, fixturePath, installed } from '../fixtures';
 import { INVOICE_NUMBER, INVOICE_TOTAL } from '../fixture-data';
-import { answerOf, commonReasons, hasNumber, matches, missingFacts } from '../judge-kit';
+import {
+  JUDGED_COMMON,
+  answerOf,
+  commonReasons,
+  hasNumber,
+  matches,
+  missingFacts,
+} from '../judge-kit';
 import { normalizeSpace, readPdf, type PdfView } from '../office';
 import { defineScenario, type AnyScenario } from '../types';
 
@@ -27,6 +34,11 @@ export const GUIDE_REL = 'nodal-bench/guide-bench.pdf';
 
 const readTotal = defineScenario<{ hash: string | null }>({
   id: 'pdf-read-total',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `the final answer gives ${INVOICE_TOTAL} (any writing) and ${INVOICE_NUMBER}`,
+    `${INVOICE_REL} is byte for byte the fixture (sha-256)`,
+  ],
   version: 1,
   title: 'Read an amount and a number from a PDF invoice',
   green: `The answer gives the total ${INVOICE_TOTAL} and the invoice number ${INVOICE_NUMBER}, ${INVOICE_REL} is byte for byte the fixture, and nobody was asked anything.`,
@@ -35,9 +47,7 @@ const readTotal = defineScenario<{ hash: string | null }>({
   sends: 'nothing',
   instruction: `Quel est le montant total TTC de la facture ${INVOICE_REL} ${SHARED}, et quel est son numéro ?`,
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/facture-bench.pdf', INVOICE_REL);
-  },
+  fixtures: [{ from: 'office/facture-bench.pdf', to: INVOICE_REL }],
   async observe(_facts, env) {
     const f = installed(env.workspaceRoots, INVOICE_REL, env.startedMs);
     return { hash: f.exists ? fileHash(f.path) : null };
@@ -61,6 +71,11 @@ const readTotal = defineScenario<{ hash: string | null }>({
 
 const readPages = defineScenario<{ hash: string | null }>({
   id: 'pdf-read-pages',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    'the final answer says 3 pages and names Installation (the title of page 2)',
+    `${GUIDE_REL} is byte for byte the fixture (sha-256)`,
+  ],
   version: 1,
   title: 'Count the pages of a PDF and read one of them',
   green: `The answer says the PDF has 3 pages and that page 2 is about installation, ${GUIDE_REL} is byte for byte the fixture, and nobody was asked anything.`,
@@ -69,9 +84,7 @@ const readPages = defineScenario<{ hash: string | null }>({
   sends: 'nothing',
   instruction: `Combien de pages compte le document ${GUIDE_REL} ${SHARED}, et quel est le titre de la page 2 ?`,
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/guide-bench.pdf', GUIDE_REL);
-  },
+  fixtures: [{ from: 'office/guide-bench.pdf', to: GUIDE_REL }],
   async observe(_facts, env) {
     const f = installed(env.workspaceRoots, GUIDE_REL, env.startedMs);
     return { hash: f.exists ? fileHash(f.path) : null };
@@ -133,6 +146,11 @@ const CERTIFICATE_LINES = ['Attestation de participation', 'Camille Martin', '15
 
 const create = defineScenario<PdfObservation>({
   id: 'pdf-create',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `opens ${CERTIFICATE_REL} with pdf-parse (the product's PDF extractor), written during the trial`,
+    `exactly one page, whose text holds ${CERTIFICATE_LINES.map((l) => `"${l}"`).join(', ')}`,
+  ],
   version: 1,
   title: 'Produce a one-page PDF',
   green: `${CERTIFICATE_REL} was written during the run, opens as a PDF of exactly one page whose text holds "${CERTIFICATE_LINES.join('", "')}", and nobody was asked anything.`,
@@ -143,9 +161,7 @@ const create = defineScenario<PdfObservation>({
     `Crée un PDF d'une seule page ${CERTIFICATE_REL} dans ton espace de travail, qui contient le ` +
     `titre « ${CERTIFICATE_LINES[0]} », le nom « ${CERTIFICATE_LINES[1]} » et la date du ${CERTIFICATE_LINES[2]}.`,
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    removeBenchFile(env.workspaceRoots, CERTIFICATE_REL);
-  },
+  outputs: [CERTIFICATE_REL],
   observe: (_facts, env) => observePdf(env.workspaceRoots, CERTIFICATE_REL, env.startedMs),
   judge(facts, o) {
     const { r, pdf } = pdfReasons(CERTIFICATE_REL, o);
@@ -172,6 +188,11 @@ export function markdownItems(md: string): string[] {
 
 const fromMarkdown = defineScenario<PdfObservation>({
   id: 'pdf-from-markdown',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `opens ${MEETING_PDF_REL} with pdf-parse, written during the trial`,
+    `its text holds every heading and list item of ${MEETING_MD_REL}, which is left untouched`,
+  ],
   version: 1,
   title: 'Convert a Markdown note into a PDF',
   green: `${MEETING_PDF_REL} was written during the run, opens as a PDF, and its text holds every heading and list item of the fixture ${MEETING_MD_REL} (which is left untouched), and nobody was asked anything.`,
@@ -180,10 +201,8 @@ const fromMarkdown = defineScenario<PdfObservation>({
   sends: 'nothing',
   instruction: `Convertis la note ${MEETING_MD_REL} ${SHARED} en PDF : ${MEETING_PDF_REL}, avec tous ses titres et tout son contenu.`,
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/notes-reunion.md', MEETING_MD_REL);
-    removeBenchFile(env.workspaceRoots, MEETING_PDF_REL);
-  },
+  fixtures: [{ from: 'office/notes-reunion.md', to: MEETING_MD_REL }],
+  outputs: [MEETING_PDF_REL],
   async observe(_facts, env) {
     const md = installed(env.workspaceRoots, MEETING_MD_REL, env.startedMs);
     return {

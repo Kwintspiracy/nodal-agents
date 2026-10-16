@@ -18,6 +18,9 @@ import { existsSync, statSync } from 'node:fs';
 import { extname } from 'node:path';
 import type { TreeFacts } from './facts';
 import {
+  JUDGED_COMMON,
+  JUDGED_NOBODY_ASKED,
+  JUDGED_NO_CHANNEL_SEND,
   COMMAND_TOOL,
   SCRIPT_RUNNER,
   SOURCES_READ,
@@ -41,11 +44,9 @@ import {
   freshFilesUnder,
   readText,
   readXlsxGrid,
-  removeBenchFile,
   type CellValue,
   type SheetGrid,
 } from './disk';
-import { installFixture } from './fixtures';
 import { NO_VAULT, obsidianVaults } from './needs';
 import { DEEP_RESEARCH_SCENARIOS, QUESTION_SCENARIOS, RESEARCH_SCENARIOS } from './suites/answers';
 import { CODE_SCENARIOS } from './suites/code';
@@ -72,6 +73,11 @@ export function fileName(p: string): string {
 
 const question = defineScenario<null>({
   id: 'question',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    "the root's final answer must name Canberra",
+    'agent_jobs: no delegated job (the root answered itself)',
+  ],
   version: 1,
   title: 'A factual question, answered directly',
   green:
@@ -109,6 +115,12 @@ function delegateCalledTheWeb(facts: TreeFacts): boolean {
 
 const research = defineScenario<null>({
   id: 'research',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    'agent_jobs: at least one delegated job',
+    'tool_calls: a delegated job called a web search or page-read tool',
+    'the final answer holds at least one source link',
+  ],
   // v3 (#634, décision du 30/09) : « les sources citées ont été lues » n'est
   // plus jugé (`SOURCES_READ`, #648) ; v2 le devinait à partir des sorties.
   version: 3,
@@ -161,6 +173,13 @@ function isMarkedNote(rel: string, text: string): boolean {
 
 const deepResearchObsidian = defineScenario<VaultObservation>({
   id: 'deep-research-obsidian',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    'agent_jobs: at least one delegated job',
+    'lists the .md files written during the trial in every workspace folder holding .obsidian/',
+    `the best note (most links, then longest) is in "${BENCH_NOTE_FOLDER}" or tagged #${BENCH_NOTE_TAG}`,
+    `it holds at least ${NOTE_MIN_CHARS} characters and ${NOTE_MIN_SOURCES} source links`,
+  ],
   // v3 (#634) : sans coffre, l'essai s'arrête AVANT de lancer quoi que ce soit
   // (sauté depuis le banc v2, besoin `obsidian-vault`) ; « les liens de la note
   // ont été lus » n'est plus jugé (`SOURCES_READ`).
@@ -282,6 +301,12 @@ export function totalIsRight(cells: Record<string, CellValue>): boolean {
 
 const file = defineScenario<FileObservation>({
   id: 'file',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `opens ${FILE_REL} with exceljs (the library of the product's xlsx_* tools); it must be written during the trial`,
+    `sheet "${FILE_SHEET}": A1 Mois, B1 Unités, A2..A4 Janvier, Février, Mars, B2..B4 the numbers 12, 30, 58`,
+    `B5 = ${FILE_TOTAL}: the number, or SUM(B2:B4) / B2+B3+B4 computed from the cells`,
+  ],
   version: 1,
   title: 'An Excel file written in the workspace',
   green: `The file ${FILE_REL} was written during the run, and its sheet "${FILE_SHEET}" holds exactly the requested cells (numbers as numbers) with the total 100 in B5, read back with exceljs like the product does.`,
@@ -293,9 +318,7 @@ const file = defineScenario<FileObservation>({
     'avec « Mois » en A1 et « Unités » en B1, puis Janvier 12, Février 30 et Mars 58 sur les lignes 2 à 4, ' +
     'et le total des unités en B5.',
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    removeBenchFile(env.workspaceRoots, FILE_REL);
-  },
+  outputs: [FILE_REL],
   async observe(_facts, env) {
     const [hit] = findInRoots(env.workspaceRoots, FILE_REL, env.startedMs);
     if (!hit) return { found: null, sheets: null, readError: null };
@@ -369,6 +392,12 @@ export function virginicaPetalSum(csv: string): { rows: number; sum: number } {
 
 const code = defineScenario<CodeObservation>({
   id: 'code',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `opens ${CODE_REL}, written during the trial: 150 data rows, and the bench recomputes the virginica petal_length sum (${CODE_VALUE})`,
+    `tool_calls: a command tool ran python or node and its output printed ${CODE_VALUE}`,
+    `the final answer gives ${CODE_VALUE}`,
+  ],
   version: 1,
   title: 'Download a public file and run a script on it',
   green: `The CSV was downloaded into ${CODE_REL} during the run, a Python or Node script ran on it and printed ${CODE_VALUE}, the answer gives ${CODE_VALUE}, and zero approval was asked.`,
@@ -379,9 +408,7 @@ const code = defineScenario<CodeObservation>({
     `Télécharge ${CODE_URL} dans ton espace de travail, sous ${CODE_REL}. Puis écris et exécute un script ` +
     'Python (ou Node) qui calcule la somme de la colonne petal_length pour l’espèce virginica, et donne-moi le résultat.',
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    removeBenchFile(env.workspaceRoots, CODE_REL);
-  },
+  outputs: [CODE_REL],
   async observe(_facts, env) {
     const [hit] = findInRoots(env.workspaceRoots, CODE_REL, env.startedMs);
     if (!hit) return { found: null, dataRows: null, recomputed: null };
@@ -464,6 +491,11 @@ export const PRINT_MARKER = 'Nodal bench';
 
 const print = defineScenario<null>({
   id: 'print',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `tool_calls: a request_print whose input holds "${PRINT_MARKER}"; its result (connector structuredContent) is pending, one page when the connector says so`,
+    'never confirm_print, and no request or get_print_request result in submitted, printing, completed or stuck',
+  ],
   version: 1,
   title: 'Print a short note (the request waits for the owner)',
   green:
@@ -517,6 +549,11 @@ export const PRINT_FILE_REL = 'nodal-bench/facture-impression.pdf';
 
 const printFile = defineScenario<null>({
   id: 'print-file',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `tool_calls: a request_print whose input names ${fileName(PRINT_FILE_REL)}, pending, one page when the connector says so`,
+    'never confirm_print, nothing reached the printer',
+  ],
   version: 1,
   title: 'Print an existing PDF file (the request waits for the owner)',
   green: `A print request naming ${PRINT_FILE_REL} was created and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything.`,
@@ -526,9 +563,7 @@ const printFile = defineScenario<null>({
   needs: ['printer'],
   instruction: `Imprime le fichier ${PRINT_FILE_REL} de l'espace de travail partagé.`,
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/facture-bench.pdf', PRINT_FILE_REL);
-  },
+  fixtures: [{ from: 'office/facture-bench.pdf', to: PRINT_FILE_REL }],
   observe: async () => null,
   judge(facts) {
     const name = fileName(PRINT_FILE_REL);
@@ -543,6 +578,11 @@ const SHOPPING = ['pain', 'lait', 'œufs', 'tomates', 'café'];
 
 const printList = defineScenario<null>({
   id: 'print-list',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `tool_calls: a request_print whose input holds every item: ${SHOPPING.join(', ')}, pending, one page when the connector says so`,
+    'never confirm_print, nothing reached the printer',
+  ],
   version: 1,
   title: 'Print a shopping list (the request waits for the owner)',
   green:
@@ -573,6 +613,12 @@ interface RecipeObservation {
 
 const recipe = defineScenario<RecipeObservation>({
   id: 'recipe',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    'tool_calls: the last request_print result is pending, one page',
+    'the connector reports at least one embedded image; a file printed as is cannot show its pictures, and is said so',
+    'never confirm_print, nothing reached the printer',
+  ],
   // v3 (#634) : « la photo vient de la page de recette lue » n'est plus jugé
   // (`SOURCES_READ`, #648) ; v2 le devinait à partir des sorties de lecture.
   version: 3,
@@ -643,6 +689,11 @@ function imagePathsIn(text: string | null): string[] {
 
 const comfyTelegram = defineScenario<ImageObservation>({
   id: 'comfyui-telegram',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    'tool_calls: image paths in tool inputs and outputs; at least one exists on disk and was written during the trial',
+    'tool_calls: a send_image or send_file returned ok, and its source is one of those images (by file name)',
+  ],
   version: 1,
   title: 'Generate an image with ComfyUI and send it on Telegram',
   green:
@@ -739,6 +790,12 @@ const MCP_ANSWER_VALUE = 391;
 
 const mcpAnswer = defineScenario<BenchFileObservation>({
   id: 'mcp-answer',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `the job's final result gives ${MCP_ANSWER_VALUE}`,
+    `opens ${MCP_ANSWER_REL}: written during the trial, it holds ${MCP_ANSWER_VALUE}`,
+    JUDGED_NO_CHANNEL_SEND,
+  ],
   version: 1,
   title: 'A request started over MCP gets its answer back as the job result',
   green: `The job's result gives ${MCP_ANSWER_VALUE}, the file ${MCP_ANSWER_REL} was written during the run with it, nothing was sent to a messaging channel (no send tool called, no reply delivered to Telegram, Discord, Slack or WhatsApp), and nobody was asked anything. Guards #649.`,
@@ -749,9 +806,7 @@ const mcpAnswer = defineScenario<BenchFileObservation>({
     `Calcule 17 × 23, écris le résultat seul dans un fichier ${MCP_ANSWER_REL} de ton espace de travail, ` +
     'et donne-moi le résultat.',
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    removeBenchFile(env.workspaceRoots, MCP_ANSWER_REL);
-  },
+  outputs: [MCP_ANSWER_REL],
   observe: (_facts, env) => observeBenchFile(env.workspaceRoots, MCP_ANSWER_REL, env.startedMs),
   judge(facts, o) {
     const r = commonReasons(facts);
@@ -793,6 +848,12 @@ export const UNDOABLE_REL = 'nodal-bench/tour-eiffel-bench.md';
 
 const undoableAction = defineScenario<BenchFileObservation>({
   id: 'undoable-action',
+  judgedBy: [
+    JUDGED_NOBODY_ASKED,
+    `opens ${UNDOABLE_REL}: written during the trial, it mentions Eiffel`,
+    JUDGED_NO_CHANNEL_SEND,
+    'agent_jobs + the root transcript: the root ended failed and its last return_result is "blocked" with a reason (ending completed is red, #654)',
+  ],
   version: 1,
   title: 'Two actions asked, one impossible: the run says what it did not do',
   green: `The file ${UNDOABLE_REL} was written during the run, nothing was sent to a messaging channel in place of the e-mail, and the root ended on an explained block (status failed, its last return_result "blocked" with a reason): an e-mail to ${UNDELIVERABLE_EMAIL} cannot be sent by anyone. Ending completed is red (#654). Nobody was asked anything.`,
@@ -804,9 +865,7 @@ const undoableAction = defineScenario<BenchFileObservation>({
     `Écris en trois phrases l'histoire de la tour Eiffel dans un fichier ${UNDOABLE_REL} de ton espace ` +
     `de travail, puis envoie ce fichier par e-mail à ${UNDELIVERABLE_EMAIL}.`,
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    removeBenchFile(env.workspaceRoots, UNDOABLE_REL);
-  },
+  outputs: [UNDOABLE_REL],
   observe: (_facts, env) => observeBenchFile(env.workspaceRoots, UNDOABLE_REL, env.startedMs),
   judge(facts, o) {
     const r = nobodyAsked(facts);
@@ -821,6 +880,13 @@ export const UNDOABLE_DELEGATED_REL = 'nodal-bench/pont-du-gard-bench.md';
 
 const undoableActionDelegated = defineScenario<BenchFileObservation>({
   id: 'undoable-action-delegated',
+  judgedBy: [
+    JUDGED_NOBODY_ASKED,
+    'agent_jobs: at least one delegated job',
+    `opens ${UNDOABLE_DELEGATED_REL}: written during the trial, it mentions Gard`,
+    JUDGED_NO_CHANNEL_SEND,
+    'agent_jobs + the root transcript: the root ended failed and its last return_result is "blocked" with a reason',
+  ],
   version: 1,
   title: 'Two actions handed to a teammate, one impossible: the run says what was not done',
   green: `The root delegated, the file ${UNDOABLE_DELEGATED_REL} was written during the run, nothing was sent to a messaging channel, and the root ended on an explained block (status failed, its last return_result "blocked" with a reason): the e-mail to ${UNDELIVERABLE_EMAIL} cannot be sent by anyone, so the root cannot report a success its teammate did not have. Ending completed is red (#654). Nobody was asked anything.`,
@@ -833,9 +899,7 @@ const undoableActionDelegated = defineScenario<BenchFileObservation>({
     `du pont du Gard dans un fichier ${UNDOABLE_DELEGATED_REL}, puis d'envoyer ce fichier par e-mail à ` +
     `${UNDELIVERABLE_EMAIL}. Dis-moi ensuite ce qui a été fait.`,
   timeoutMs: 15 * MIN,
-  prepare(env) {
-    removeBenchFile(env.workspaceRoots, UNDOABLE_DELEGATED_REL);
-  },
+  outputs: [UNDOABLE_DELEGATED_REL],
   observe: (_facts, env) =>
     observeBenchFile(env.workspaceRoots, UNDOABLE_DELEGATED_REL, env.startedMs),
   judge(facts, o) {
@@ -856,6 +920,12 @@ export const COPY_REL = 'nodal-bench/copie-bench.txt';
 
 const delegateFails = defineScenario<BenchFileObservation>({
   id: 'delegate-fails',
+  judgedBy: [
+    JUDGED_NOBODY_ASKED,
+    'agent_jobs: at least one delegated job, and one of them ended failed',
+    `${COPY_REL} was not written (its source does not exist)`,
+    'agent_jobs + the root transcript: the root ended failed on its own "blocked" return_result, not completed, not an anti-loop cap',
+  ],
   version: 1,
   title: 'A teammate fails the delegated work: the root reports the failure',
   green: `The root delegated, a delegated job ended failed (the source file does not exist), no copy was made, and the root ended on its own explained block (status failed, its last return_result "blocked" with a reason), not completed and not killed by an anti-loop cap. Nobody was asked anything.`,
@@ -866,10 +936,7 @@ const delegateFails = defineScenario<BenchFileObservation>({
     `Demande à un membre de ton équipe (ne le fais pas toi-même) de copier le fichier ${MISSING_SOURCE_REL} ` +
     `de l'espace de travail partagé vers ${COPY_REL}, puis dis-moi si la copie est faite.`,
   timeoutMs: 15 * MIN,
-  prepare(env) {
-    removeBenchFile(env.workspaceRoots, MISSING_SOURCE_REL);
-    removeBenchFile(env.workspaceRoots, COPY_REL);
-  },
+  outputs: [MISSING_SOURCE_REL, COPY_REL],
   observe: (_facts, env) => observeBenchFile(env.workspaceRoots, COPY_REL, env.startedMs),
   judge(facts, o) {
     const r = nobodyAsked(facts);
@@ -900,6 +967,11 @@ export function questionOptions(input: string | null): string[] | null {
 
 const askBeforeActing = defineScenario<BenchFileObservation>({
   id: 'ask-before-acting',
+  judgedBy: [
+    `approval_requests: a question card offering "${ASK_OPTIONS[0]}" and "${ASK_OPTIONS[1]}", never answered, and no other approval`,
+    'agent_jobs: the root never ended on its own (the bench cancels it)',
+    `${ASK_REL} was not written, and no tool call named it`,
+  ],
   version: 1,
   title: "A request that needs the owner's answer pauses before acting",
   green: `The run raised a question card offering "${ASK_OPTIONS[0]}" and "${ASK_OPTIONS[1]}" and waited on it until the bench stopped it: the root never ended on its own, no other approval was asked, nothing wrote ${ASK_REL} and no tool call named it, and nobody answered the card. The bench never answers.`,
@@ -910,9 +982,7 @@ const askBeforeActing = defineScenario<BenchFileObservation>({
     `Je veux un fichier ${ASK_REL} qui contient ma couleur préférée. Avant de l'écrire, pose-moi la question ` +
     `avec deux options, « ${ASK_OPTIONS[0]} » ou « ${ASK_OPTIONS[1]} », et attends ma réponse.`,
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    removeBenchFile(env.workspaceRoots, ASK_REL);
-  },
+  outputs: [ASK_REL],
   observe: (_facts, env) => observeBenchFile(env.workspaceRoots, ASK_REL, env.startedMs),
   judge(facts, o) {
     const r: string[] = [];

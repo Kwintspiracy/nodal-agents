@@ -227,9 +227,15 @@ export async function stopOwnTrials(lock: BenchLock | null, o: TrialSweep): Prom
 export class BenchStop {
   private stopping = false;
   private inFlight: Promise<unknown> | null = null;
+  private held: BenchLock | null = null;
 
   get stopped(): boolean {
     return this.stopping;
+  }
+
+  /** Le verrou de la session en cours (session.ts) : `stop` balaie les essais vivants avec lui. */
+  hold(lock: BenchLock): void {
+    this.held = lock;
   }
 
   /** Lance un essai (`run_task`), sauf si l'arrêt est demandé ; retient l'appel en vol. */
@@ -267,6 +273,6 @@ export class BenchStop {
         );
       }
     }
-    await stopOwnTrials(lock, sweep);
+    await stopOwnTrials(lock ?? this.held, sweep);
   }
 }

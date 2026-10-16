@@ -22,7 +22,10 @@ import { executeRows } from './facts';
 export const BENCH_CALLER_PREFIX = 'nodal-bench/';
 
 const LocalConfigSchema = z.object({
-  ports: z.object({ postgres: z.number().optional() }).partial().optional(),
+  ports: z
+    .object({ postgres: z.number().int().optional(), web: z.number().int().optional() })
+    .partial()
+    .optional(),
   postgresPassword: z.string().optional(),
 });
 
@@ -39,6 +42,18 @@ export function stackDatabaseUrl(): string {
     throw new Error(`workflow_no_stack: postgresPassword missing in ${path}`);
   const port = cfg.ports?.postgres ?? 25444;
   return `postgresql://nodalai:${encodeURIComponent(cfg.postgresPassword)}@localhost:${port}/nodalai`;
+}
+
+/**
+ * L'adresse du dashboard de la stack (`ports.web` de ~/.nodalai/config.json,
+ * 3000 par défaut, comme le CLI) : Bench Studio y renvoie pour ouvrir un run.
+ */
+export function stackWebUrl(): string {
+  const path = join(homedir(), '.nodalai', 'config.json');
+  const cfg = existsSync(path)
+    ? LocalConfigSchema.parse(JSON.parse(readFileSync(path, 'utf8')))
+    : { ports: undefined };
+  return `http://localhost:${cfg.ports?.web ?? 3000}`;
 }
 
 /**
@@ -347,6 +362,27 @@ export async function readRootModel(db: AnyDrizzleDb, entityId: string): Promise
     ),
   );
   return rows[0]?.model ?? null;
+}
+
+/**
+ * Les fournisseurs de modèles qu'un espace peut appeler : ceux de ses clés LLM
+ * actives (`entity_llm_keys`). Une ligne compte quand elle porte une clé, ou
+ * une adresse sans clé (un serveur local). Jamais une clé ni sa fin : le nom du
+ * fournisseur seulement.
+ */
+export async function readKeyProviders(db: AnyDrizzleDb, entityId: string): Promise<string[]> {
+  const { sql } = await import('@nodal-agents/db');
+  const rows = z.array(z.object({ provider: z.string() })).parse(
+    await executeRows(
+      db,
+      sql`
+        select distinct provider from entity_llm_keys
+         where entity_id = ${entityId}::uuid and is_active
+           and (api_key <> '' or base_url is not null)
+         order by provider`,
+    ),
+  );
+  return rows.map((r) => r.provider);
 }
 
 // ─── Où sont les fichiers ────────────────────────────────────────────────────

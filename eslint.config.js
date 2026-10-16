@@ -23,6 +23,7 @@ export default tseslint.config(
       '**/dist/**',
       '**/build/**',
       '**/.next/**',
+      '**/.next-studio/**',
       '**/.turbo/**',
       '**/coverage/**',
       '**/playwright-report/**',

@@ -4,10 +4,11 @@
 // joués à partir de apps/qa/data/workflow-catalog.json. Un scénario ajouté sans
 // réécrire ce fichier serait absent du portail, en silence : ce test le refuse.
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildCatalog, catalogText } from '../catalog';
+import { FIXTURES_DIR } from '../fixtures';
 import { NEED_IDS } from '../needs';
 import { SCENARIOS } from '../scenarios';
 import { ACTIVITIES } from '../types';
@@ -40,6 +41,18 @@ describe('the workflow catalog', () => {
       expect(s.green).not.toMatch(/\n/);
       // Une demande française porte au moins un mot ou un signe que l'anglais n'a pas.
       expect(s.instruction).toMatch(/[éèêàçùœ«»]|\b(le|la|les|du|des|dans|une?)\b/i);
+    }
+  });
+
+  it('every scenario says how it is judged, and every fixture it declares exists', () => {
+    for (const s of SCENARIOS) {
+      expect({ id: s.id, judged: s.judgedBy.length > 0 }).toEqual({ id: s.id, judged: true });
+      for (const j of s.judgedBy) expect(j.trim().length).toBeGreaterThan(10);
+      for (const f of s.fixtures ?? []) {
+        expect(existsSync(join(FIXTURES_DIR, f.from))).toBe(true);
+        expect(f.to.startsWith('nodal-bench/')).toBe(true);
+      }
+      for (const o of s.outputs ?? []) expect(o.startsWith('nodal-bench/')).toBe(true);
     }
   });
 

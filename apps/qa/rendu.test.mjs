@@ -139,6 +139,13 @@ const rendre = (instantane, modules = {}, tests = null) => {
     if (Object.hasOwn(modules, f)) writeFileSync(join(app, f), modules[f]);
     else cpSync(new URL(`./${f}`, import.meta.url), join(app, f));
   }
+  // workflows.mjs lit ses calculs dans le banc (packages/bench, results.ts) :
+  // le bac en reçoit le fichier, au même chemin relatif.
+  mkdirSync(join(app, '..', '..', 'packages', 'bench', 'src', 'workflows'), { recursive: true });
+  cpSync(
+    new URL('../../packages/bench/src/workflows/results.ts', import.meta.url),
+    join(app, '..', '..', 'packages', 'bench', 'src', 'workflows', 'results.ts'),
+  );
   // Les polices du portail sont lues dans le dossier du site de docs, à côté
   // du portail : le bac en reçoit la feuille et les seuls sous-ensembles latin.
   cpSync(new URL('../docs/app/fonts/', import.meta.url), join(app, '..', 'docs', 'app', 'fonts'), {

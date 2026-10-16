@@ -8,10 +8,17 @@
 // identique à la fixture du dépôt.
 
 import { readFileSync } from 'node:fs';
-import { readXlsxGrid, removeBenchFile, findInRoots, type SheetGrid } from '../disk';
-import { fileHash, fixturePath, installFixture, installed } from '../fixtures';
+import { readXlsxGrid, findInRoots, type SheetGrid } from '../disk';
+import { fileHash, fixturePath, installed } from '../fixtures';
 import { CONTACTS_CSV, NOTES, QUARTER, STOCK } from '../fixture-data';
-import { answerOf, commonReasons, hasNumber, matches, missingFacts } from '../judge-kit';
+import {
+  JUDGED_COMMON,
+  answerOf,
+  commonReasons,
+  hasNumber,
+  matches,
+  missingFacts,
+} from '../judge-kit';
 import { evaluateCell } from '../office';
 import { defineScenario, type AnyScenario } from '../types';
 
@@ -80,6 +87,12 @@ export const STOCK_REL = 'nodal-bench/stock.xlsx';
 
 const editColumn = defineScenario<WorkbookObservation>({
   id: 'excel-edit-column',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `opens ${STOCK_REL} with exceljs; it must be changed during the trial`,
+    'sheet Stock: D1 "Valeur"; D2..D6 = quantity × unit price (a value, a cached result, or a formula the bench computes); D7 their total',
+    "columns A to C are exactly the fixture's",
+  ],
   version: 1,
   title: 'Add a computed column and its total to an existing workbook',
   green: `${STOCK_REL} was changed during the run: D1 reads "Valeur", D2 to D6 hold quantity × unit price, D7 their total (values or formulas the bench computes), columns A to C are exactly the fixture's, and nobody was asked anything.`,
@@ -91,9 +104,7 @@ const editColumn = defineScenario<WorkbookObservation>({
     'multipliée par le prix unitaire pour chaque article, puis le total de la colonne D juste sous ' +
     'la dernière ligne.',
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/stock.xlsx', STOCK_REL);
-  },
+  fixtures: [{ from: 'office/stock.xlsx', to: STOCK_REL }],
   async observe(_facts, env) {
     const f = installed(env.workspaceRoots, STOCK_REL, env.startedMs);
     return observeWorkbook(f.exists ? f.path : null, f.fresh);
@@ -134,6 +145,12 @@ const AVERAGES = 'Moyennes';
 
 const newSheet = defineScenario<WorkbookObservation>({
   id: 'excel-new-sheet',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `opens ${NOTES_REL} with exceljs; it must be changed during the trial`,
+    `a sheet "${AVERAGES}": for each pupil, the name in column A and the mean of the three marks in column B (± 0.005, formulas computed)`,
+    `the "${NOTES.sheet}" sheet is exactly the fixture's`,
+  ],
   version: 1,
   title: 'Add a sheet of averages to an existing workbook',
   green: `${NOTES_REL} was changed during the run: a sheet "${AVERAGES}" gives, for each of the ${NOTES.rows.length} pupils, their name in column A and the mean of their three marks in column B (to the hundredth, value or formula), the "${NOTES.sheet}" sheet is exactly the fixture's, and nobody was asked anything.`,
@@ -144,9 +161,7 @@ const newSheet = defineScenario<WorkbookObservation>({
     `Dans le classeur ${NOTES_REL} ${SHARED}, ajoute une feuille « ${AVERAGES} » avec, en colonne A, ` +
     'le nom de chaque élève et, en colonne B, la moyenne de ses trois notes, arrondie à deux décimales.',
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/notes.xlsx', NOTES_REL);
-  },
+  fixtures: [{ from: 'office/notes.xlsx', to: NOTES_REL }],
   async observe(_facts, env) {
     const f = installed(env.workspaceRoots, NOTES_REL, env.startedMs);
     return observeWorkbook(f.exists ? f.path : null, f.fresh);
@@ -195,6 +210,11 @@ function bestProduct(): { name: string; total: number } {
 
 const readAnswer = defineScenario<{ hash: string | null }>({
   id: 'excel-read-answer',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `the final answer names ${bestProduct().name} and gives ${bestProduct().total}`,
+    `${QUARTER_REL} is byte for byte the fixture (sha-256)`,
+  ],
   version: 1,
   title: 'Answer a question from an existing workbook, without changing it',
   green: `The answer names "${bestProduct().name}" and its quarter total ${bestProduct().total}, ${QUARTER_REL} is byte for byte the fixture, and nobody was asked anything.`,
@@ -203,9 +223,7 @@ const readAnswer = defineScenario<{ hash: string | null }>({
   sends: 'nothing',
   instruction: `Dans le classeur ${QUARTER_REL} ${SHARED}, quel produit a le plus gros total de ventes sur le trimestre, et quel est ce total ?`,
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/ventes-trimestre.xlsx', QUARTER_REL);
-  },
+  fixtures: [{ from: 'office/ventes-trimestre.xlsx', to: QUARTER_REL }],
   async observe(_facts, env) {
     const f = installed(env.workspaceRoots, QUARTER_REL, env.startedMs);
     return { hash: f.exists ? fileHash(f.path) : null };
@@ -237,6 +255,11 @@ const CONTACTS_SHEET = 'Contacts';
 
 const csvImport = defineScenario<WorkbookObservation>({
   id: 'excel-csv-import',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `opens ${CONTACTS_XLSX_REL} with exceljs, written during the trial`,
+    `sheet "${CONTACTS_SHEET}": every cell equals the CSV's, header first, same order, and nothing outside`,
+  ],
   version: 1,
   title: 'Turn a CSV into a workbook, row for row',
   green: `${CONTACTS_XLSX_REL} was written during the run with a sheet "${CONTACTS_SHEET}" whose rows are exactly the CSV's (header first, same order, nothing more), and nobody was asked anything.`,
@@ -248,10 +271,8 @@ const csvImport = defineScenario<WorkbookObservation>({
     `une feuille « ${CONTACTS_SHEET} », la ligne d'en-tête du CSV en ligne 1, puis une ligne par ` +
     'contact, dans le même ordre.',
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/contacts.csv', CONTACTS_CSV_REL);
-    removeBenchFile(env.workspaceRoots, CONTACTS_XLSX_REL);
-  },
+  fixtures: [{ from: 'office/contacts.csv', to: CONTACTS_CSV_REL }],
+  outputs: [CONTACTS_XLSX_REL],
   async observe(_facts, env) {
     const [hit] = findInRoots(env.workspaceRoots, CONTACTS_XLSX_REL, env.startedMs);
     return observeWorkbook(hit?.path ?? null, hit?.fresh ?? false);

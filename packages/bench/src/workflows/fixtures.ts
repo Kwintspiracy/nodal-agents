@@ -15,6 +15,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'n
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BENCH_DIR } from './disk';
+import type { FixtureInstall } from './types';
 
 export const FIXTURES_DIR = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -84,4 +85,17 @@ export function installed(
   const path = join(sharedRoot(roots), rel);
   const exists = existsSync(path);
   return { path, exists, fresh: exists && statSync(path).mtimeMs >= sinceMs };
+}
+
+/**
+ * Prépare un essai à partir de ce que le scénario DÉCLARE : efface ses
+ * sorties (`outputs`) dans tous les dossiers de travail, puis pose ses
+ * fixtures (`fixtures`). Le seul chemin de préparation, pour tous les scénarios.
+ */
+export function prepareTrial(
+  s: { readonly fixtures?: readonly FixtureInstall[]; readonly outputs?: readonly string[] },
+  roots: readonly string[],
+): void {
+  for (const rel of s.outputs ?? []) resetBenchPath(roots, rel);
+  for (const f of s.fixtures ?? []) installFixture(roots, f.from, f.to);
 }

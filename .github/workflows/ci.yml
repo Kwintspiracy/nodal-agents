@@ -299,6 +299,13 @@ jobs:
         timeout-minutes: 8
         run: pnpm build
 
+      # Bench Studio (`pnpm bench:studio`) est un outil local, jamais livré : un
+      # build ordinaire ne doit en porter ni route ni chunk. Le pack fait la même
+      # vérification dans build-pack (pack-smoke, release:check).
+      - name: No Bench Studio in the web build
+        timeout-minutes: 2
+        run: node scripts/check-no-bench-studio.mjs apps/web/.next
+
   # ── Pack smoke test ─────────────────────────────────────────────────────────
   # SUPPLY-001 (audit 2026-08-07). `pnpm build` builds the WORKSPACE; it says
   # nothing about the TARBALL. Two releases shipped a dead dashboard because

@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync, crc32 } from 'node:zlib';
 import { TreeFactsSchema, type TreeFacts } from '../facts';
+import { prepareTrial } from '../fixtures';
 import { scenarioById } from '../scenarios';
 import type { ScenarioEnv } from '../types';
 
@@ -121,7 +122,7 @@ export async function play(
     unlistedMcpServers: [],
     startedMs: 0,
   };
-  s.prepare?.(env0);
+  prepareTrial(s, env0.workspaceRoots);
   ageAll(root, Date.now() - 3_600_000);
   // Une seconde de marge : sous Windows, la date d'un fichier suit une horloge
   // plus grossière (≈ 16 ms) que Date.now(), et un fichier écrit juste après
