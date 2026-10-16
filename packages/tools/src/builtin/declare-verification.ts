@@ -87,7 +87,7 @@ export const declareVerificationTool: ToolDefinition<
     'it names nothing.',
   inputSchema: DeclareVerificationInputSchema,
   riskLevel: 'write',
-  egress: 'none',
+  egress: 'process',
   card: 'text',
   // Le même régime que `run_command` : la preuve s'exécutera plus tard, sans
   // repasser par une approbation. Sans cette ligne, déclarer serait un moyen

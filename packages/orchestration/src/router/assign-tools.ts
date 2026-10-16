@@ -67,6 +67,72 @@ export function summarizePurpose(personality: string | null | undefined, maxLen 
   return (lastStop > 60 ? slice.slice(0, lastStop + 1) : slice.trimEnd() + '…').trim();
 }
 
+/**
+ * The `assign_<slug>` tool for ONE teammate: a pure construction, no query.
+ * `generateAssignTools` builds one per active teammate; the served-tool
+ * catalog (`servedToolDefinitions`) builds one to read the family's declarations.
+ */
+export function buildAssignTool(
+  agentName: string,
+  agentSlug: string,
+): ToolDefinition<typeof assignInputSchema, never> {
+  // Normalize slug: hyphens → underscores for valid tool names
+  const toolSlug = agentSlug.replace(/-/g, '_');
+  const toolName = `assign_${toolSlug}`;
+
+  // The tool is the HANDLE, the roster is the DESCRIPTION. `## Your team`
+  // (team-block.ts) describes each teammate — purpose, skills, connectors,
+  // folders, shell, the owner's instructions — and names this very tool on
+  // its entry, so the description says who it reaches and nothing more. It
+  // used to recopy part of the roster (purpose, skills, connectors,
+  // instructions) and the delegation scope rule, in every assign_* tool:
+  // ~11k characters of eager schemas per turn on a root with ten teammates,
+  // half of them said twice (lot 2, PR C2). The name comes from the base
+  // (invariant #1).
+  const description = `Assign a task to ${agentName}.`;
+
+  // Capture in closure
+  const capturedSlug = agentSlug;
+
+  const tool: ToolDefinition<typeof assignInputSchema, never> = {
+    name: toolName,
+    description,
+    // Le texte que lit le PROPRIÉTAIRE (issue #382), construit du nom en base
+    // comme la description : un outil de délégation par sous-agent, jamais une
+    // table de libellés écrite à la main (invariant #1).
+    label: `Delegate to ${agentName}`,
+    summary: `Hand a task to ${agentName} and wait for the answer before going on.`,
+    inputSchema: assignInputSchema,
+    riskLevel: 'write',
+    egress: 'none',
+    loading: 'eager',
+    // Un travail confié à un autre agent : la conversation le rend comme un
+    // groupe indenté portant les actes de l'enfant (P1, `ToolCard`).
+    card: 'delegation',
+    // La charge utile de la carte : qui reçoit, quoi. La réponse de l'enfant
+    // n'existe pas encore quand ce présentateur est appelé — execute() lève
+    // avant toute ligne d'audit ; l'écran lit le sous-job par parent_job_id.
+    present: ({ input }) =>
+      delegationCard({ to: agentName, task: input.task, ok: true, resultText: null }),
+    // execute() throws DelegationPendingError — the runner must intercept this
+    // and call handleDelegation() to suspend the parent and create the child job.
+    // The tool never actually returns a value; the signal IS the error.
+    execute: async (input: AssignInput) => {
+      // This execute is a sentinel — the runner intercepts DelegationPendingError
+      // before it propagates. The child job ID will be set by handleDelegation().
+      throw new DelegationPendingError(
+        // placeholder — handleDelegation will override with the real child job ID
+        `pending:${capturedSlug}`,
+        capturedSlug,
+      );
+
+      // Unreachable — typed as `never` return
+      return input as never;
+    },
+  };
+  return tool;
+}
+
 export async function generateAssignTools(
   parentAgentId: AgentId,
   db: AnyDrizzleDb,
@@ -80,67 +146,7 @@ export async function generateAssignTools(
     );
 
   const tools: ToolDefinition<typeof assignInputSchema, never>[] = [];
-
-  for (const row of rows) {
-    const { agentName, agentSlug } = row;
-
-    // Normalize slug: hyphens → underscores for valid tool names
-    const toolSlug = agentSlug.replace(/-/g, '_');
-    const toolName = `assign_${toolSlug}`;
-
-    // The tool is the HANDLE, the roster is the DESCRIPTION. `## Your team`
-    // (team-block.ts) describes each teammate — purpose, skills, connectors,
-    // folders, shell, the owner's instructions — and names this very tool on
-    // its entry, so the description says who it reaches and nothing more. It
-    // used to recopy part of the roster (purpose, skills, connectors,
-    // instructions) and the delegation scope rule, in every assign_* tool:
-    // ~11k characters of eager schemas per turn on a root with ten teammates,
-    // half of them said twice (lot 2, PR C2). The name comes from the base
-    // (invariant #1).
-    const description = `Assign a task to ${agentName}.`;
-
-    // Capture in closure
-    const capturedSlug = agentSlug;
-
-    const tool: ToolDefinition<typeof assignInputSchema, never> = {
-      name: toolName,
-      description,
-      // Le texte que lit le PROPRIÉTAIRE (issue #382), construit du nom en base
-      // comme la description : un outil de délégation par sous-agent, jamais une
-      // table de libellés écrite à la main (invariant #1).
-      label: `Delegate to ${agentName}`,
-      summary: `Hand a task to ${agentName} and wait for the answer before going on.`,
-      inputSchema: assignInputSchema,
-      riskLevel: 'write',
-      loading: 'eager',
-      // Un travail confié à un autre agent : la conversation le rend comme un
-      // groupe indenté portant les actes de l'enfant (P1, `ToolCard`).
-      card: 'delegation',
-      // La charge utile de la carte : qui reçoit, quoi. La réponse de l'enfant
-      // n'existe pas encore quand ce présentateur est appelé — execute() lève
-      // avant toute ligne d'audit ; l'écran lit le sous-job par parent_job_id.
-      present: ({ input }) =>
-        delegationCard({ to: agentName, task: input.task, ok: true, resultText: null }),
-      // execute() throws DelegationPendingError — the runner must intercept this
-      // and call handleDelegation() to suspend the parent and create the child job.
-      // The tool never actually returns a value; the signal IS the error.
-      execute: async (input: AssignInput) => {
-        // This execute is a sentinel — the runner intercepts DelegationPendingError
-        // before it propagates. The child job ID will be set by handleDelegation().
-        throw new DelegationPendingError(
-          // placeholder — handleDelegation will override with the real child job ID
-          `pending:${capturedSlug}`,
-          capturedSlug,
-        );
-
-        // Unreachable — typed as `never` return
-        return input as never;
-      },
-    };
-
-    tools.push(tool);
-  }
-
+  for (const row of rows) tools.push(buildAssignTool(row.agentName, row.agentSlug));
   return tools;
 }
 

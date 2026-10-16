@@ -14,9 +14,10 @@
 //
 // CE QUI N'EST PAS COUVERT, et la commande le DIT à chaque fois (`scope`) au
 // lieu de le laisser croire. La liste n'est pas tenue ici : c'est la
-// déclaration `egress` de chaque outil intégré (@nodal-agents/tools, rendue
-// obligatoire par `egress.test.ts`) — un processus lancé (shell, script de
-// skill, CLI de code), internet, un fournisseur de modèle. S'y ajoutent les
+// déclaration `egress` de chaque outil que Nodal sert (le catalogue
+// `servedToolDefinitions` d'@nodal-agents/orchestration, où un test la rend
+// obligatoire) — un processus lancé (shell, script de skill, CLI de code,
+// commandes de vérification), internet, un fournisseur de modèle. S'y ajoutent les
 // runtimes CLI (Claude Code, Codex : leurs outils ne passent pas par la liste
 // de Nodal), et les déclencheurs webhook, ni copiés ni couverts. Ces outils
 // restent, les scénarios de code en ont besoin ; `notCovered` nomme ceux que
@@ -34,14 +35,16 @@ const NOT_COVERED_EGRESS: Partial<Record<ToolEgress, string>> = {
   'model-provider': 'a model provider',
 };
 
-/** Les outils intégrés qui atteignent le réseau d'eux-mêmes, hors canal : nom → egress. */
+/**
+ * Les outils que Nodal sert et qui atteignent le réseau d'eux-mêmes, hors
+ * canal : nom → egress. Lus du catalogue complet (`servedToolDefinitions` :
+ * le registre, les fabriques par job, les outils de délégation), la MÊME
+ * liste que le test qui rend la déclaration obligatoire.
+ */
 async function networkBuiltins(): Promise<Map<string, ToolEgress>> {
-  const { createToolRegistry, registerBuiltins } = await import('@nodal-agents/tools');
-  const registry = createToolRegistry();
-  registerBuiltins(registry);
+  const { servedToolDefinitions } = await import('@nodal-agents/orchestration');
   return new Map(
-    registry
-      .list()
+    servedToolDefinitions()
       .filter((t) => t.egress !== undefined && t.egress in NOT_COVERED_EGRESS)
       .map((t) => [t.name, t.egress!] as const)
       .sort(([a], [b]) => a.localeCompare(b)),

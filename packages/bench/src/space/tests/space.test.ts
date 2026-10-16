@@ -723,6 +723,7 @@ describe("avant chaque essai : l'équipe du banc ne peut rien envoyer hors de No
       findings: [],
       notCovered: [
         "agent coder (claude-code): runs outside Nodal's tool list",
+        'declare_verification (process): held by alfred, coder, writer',
         'run_command (process): held by writer',
         'run_skill_script (process): held by writer',
         'save_memory (model-provider): held by alfred, coder, writer',
@@ -855,6 +856,7 @@ describe("avant chaque essai : l'équipe du banc ne peut rien envoyer hors de No
     // Ce que l'équipe tient vraiment, lu des déclarations `egress` du produit.
     expect(r.notCovered).toEqual([
       "agent coder (claude-code): runs outside Nodal's tool list",
+      'declare_verification (process): held by alfred, coder, writer',
       'run_command (process): held by writer',
       'run_skill_script (process): held by writer',
       'save_memory (model-provider): held by alfred, coder, writer',
@@ -869,7 +871,9 @@ describe("avant chaque essai : l'équipe du banc ne peut rien envoyer hors de No
     // La portée vient des déclarations : un outil intégré qui atteint le réseau
     // (generate_speech, que la première version oubliait) y est, sans liste ici.
     expect(scope).toContain('generate_speech, save_memory (a model provider)');
-    expect(scope).toContain('code_task, run_command, run_skill_script (a process they start)');
+    expect(scope).toContain(
+      'code_task, declare_verification, run_command, run_skill_script (a process they start)',
+    );
     expect(scope).toContain('web_search (the internet)');
     expect(scope).toContain('nor CLI runtimes (Claude Code, Codex)');
     expect(scope).toContain('Webhook triggers are not copied, and not covered.');

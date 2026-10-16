@@ -30,7 +30,8 @@ export type RiskLevel = OperationRiskLevel;
  *   (speech synthesis, embeddings), beyond the job's own model call;
  * - `internet`: hosts on the open internet (a search);
  * - `process`: a process it starts, which can reach anything (a shell, a skill
- *   script, a coding CLI).
+ *   script, a coding CLI), at the call or later: `declare_verification`'s
+ *   commands run when the job finishes.
  */
 export type ToolEgress = 'none' | 'channel' | 'model-provider' | 'internet' | 'process';
 
@@ -412,8 +413,9 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    * list of names of its own.
    *
    * Optional in the TYPE (connector and MCP tools are classified by their
-   * origin), required for every tool the PRODUCT ships: the registry test
-   * (`egress.test.ts`) names any that does not declare it.
+   * origin), required for every tool the PRODUCT ships: the test over the
+   * served-tool catalog (`servedToolDefinitions`, @nodal-agents/orchestration)
+   * names any that does not declare it.
    */
   egress?: ToolEgress;
   /**
