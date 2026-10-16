@@ -13,7 +13,12 @@
 //     son espace : une variable héritée du shell est retirée, quelle que soit sa
 //     casse (sous Windows, `process.env` ne la distingue pas) ;
 //   - l'agent est nommé dans l'appel (`agent: <slug>`), donc le serveur ne
-//     re-résout pas la racine de l'espace à chaque appel.
+//     re-résout pas la racine de l'espace à chaque appel ;
+//   - l'espace attendu est déclaré (`expectedWorkspaceId`) : si l'épinglage
+//     cassait, le serveur refuserait AVANT de créer le job
+//     (`mcp_workspace_mismatch`), au lieu d'un job créé ailleurs et rattrapé
+//     après coup. La vérification de la session après chaque appel reste, en
+//     seconde ligne.
 //
 // Le client est le SDK officiel (@modelcontextprotocol/sdk, invariant #7). Il
 // reste ouvert pendant tout l'essai : le réveil du runner est envoyé par le
@@ -29,8 +34,9 @@ export interface RunTaskSession {
   close(): Promise<void>;
 }
 
-/** L'agent que `run_task` vise : son id (l'épinglage du serveur) et son slug (l'appel). */
+/** La cible de `run_task` : l'agent (épinglage et appel) et l'espace où le job doit être créé. */
 export interface RunTaskTarget {
+  readonly entityId: string;
   readonly rootAgentId: string;
   readonly rootAgentSlug: string;
 }
@@ -105,7 +111,12 @@ export async function startRunTask(
     await client.connect(transport);
     const res = await client.callTool({
       name: 'run_task',
-      arguments: { instruction, caller, agent: target.rootAgentSlug },
+      arguments: {
+        instruction,
+        caller,
+        agent: target.rootAgentSlug,
+        expectedWorkspaceId: target.entityId,
+      },
     });
     const content = z
       .array(z.object({ type: z.string(), text: z.string().optional() }))

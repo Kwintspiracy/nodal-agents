@@ -14,7 +14,12 @@ server.registerTool(
   'run_task',
   {
     description: 'test double',
-    inputSchema: { instruction: z.string(), caller: z.string(), agent: z.string().optional() },
+    inputSchema: {
+      instruction: z.string(),
+      caller: z.string(),
+      agent: z.string().optional(),
+      expectedWorkspaceId: z.string().optional(),
+    },
   },
   async (args) => {
     const pinned = Object.entries(process.env).filter(

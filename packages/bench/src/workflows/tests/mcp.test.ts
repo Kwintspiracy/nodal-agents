@@ -13,7 +13,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MCP_PINNED_AGENT_ENV, runTaskEnv, startRunTask } from '../mcp';
 
 const FAKE = join(__dirname, 'fixtures', 'fake-mcp-serve.mjs');
-const BENCH_ROOT = { rootAgentId: 'aaaaaaaa-0000-5000-8000-000000000001', rootAgentSlug: 'alfred' };
+const BENCH_ROOT = {
+  entityId: 'bbbbbbbb-0000-5000-8000-000000000002',
+  rootAgentId: 'aaaaaaaa-0000-5000-8000-000000000001',
+  rootAgentSlug: 'alfred',
+};
 
 let out: string;
 const saved = new Map<string, string | undefined>();
@@ -55,7 +59,7 @@ async function call(): Promise<{ pinned: Array<[string, string]>; args: Record<s
 }
 
 describe('startRunTask targets the resolved agent, through the real MCP transport', () => {
-  it('the server is pinned to the bench root, and run_task names it explicitly', async () => {
+  it('the server is pinned to the bench root, and run_task names it and the bench space explicitly', async () => {
     setEnv(MCP_PINNED_AGENT_ENV, undefined);
     const seen = await call();
     expect(seen.pinned).toEqual([[MCP_PINNED_AGENT_ENV, BENCH_ROOT.rootAgentId]]);
@@ -63,6 +67,8 @@ describe('startRunTask targets the resolved agent, through the real MCP transpor
       instruction: 'Quelle est la capitale ?',
       caller: 'nodal-bench/question',
       agent: 'alfred',
+      // L'espace attendu : le serveur refuse avant d'écrire s'il parle pour un autre.
+      expectedWorkspaceId: BENCH_ROOT.entityId,
     });
   });
 
