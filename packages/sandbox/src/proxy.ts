@@ -131,6 +131,13 @@ function connectFirst(addrs: readonly string[], port: number): Promise<Socket> {
       sock.once('error', onError);
       sock.once('connect', () => {
         sock.off('error', onError);
+        // Le socket est désormais au proxy, pas à l'appelant : un RST de
+        // l'amont (service local qui plante, conteneur qui s'arrête) après la
+        // réponse arrive quand l'écouteur du client HTTP est déjà retiré, et
+        // sans écouteur Node lève ECONNRESET dans le processus hôte. L'erreur
+        // n'est pas perdue : le socket se ferme, et chaque appelant traite la
+        // fin de sa connexion (502, destruction du tunnel).
+        sock.on('error', () => undefined);
         resolve(sock);
       });
     };
