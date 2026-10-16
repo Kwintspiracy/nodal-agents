@@ -375,7 +375,15 @@ describe('the fallback reads a frozen copy of the snapshot, not the store as is 
       // Des changements APRÈS l'instantané du tour (des appels précédents du
       // même tour, par exemple) : la borne compte ce qui a changé, pas ce qui
       // est là.
-      for (let i = 0; i < 1001; i++) await writeFile(join(ws, `n-${i}.png`), `n ${i}`);
+      // Par paquets : 1001 écritures l'une après l'autre prenaient l'essentiel de
+      // la borne sur un runner Windows chargé (timeout de 60 s, CI du 16/10).
+      for (let i = 0; i < 1001; i += 100) {
+        await Promise.all(
+          Array.from({ length: Math.min(100, 1001 - i) }, (_, j) =>
+            writeFile(join(ws, `n-${i + j}.png`), `n ${i + j}`),
+          ),
+        );
+      }
       const avant = await snapshotGitAvant([ws], { store, workspaces: [ws] });
 
       expect(avant).toEqual([]);
@@ -387,7 +395,7 @@ describe('the fallback reads a frozen copy of the snapshot, not the store as is 
     } finally {
       warn.mockRestore();
     }
-  }, 60_000);
+  }, 180_000);
 
   it('an index that cannot be copied is freeze_failed', async () => {
     const warn = vi.spyOn(console, 'warn');
