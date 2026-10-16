@@ -25,7 +25,37 @@ describe('print-request skill', () => {
     expect(skill?.name).toBe('Print requests');
     expect(skill?.requiredBuiltins).toEqual([]);
     expect(skill?.kind ?? 'capability').toBe('capability');
-    expect(skill?.content).toContain('the only valid answer is a print preview');
+  });
+
+  it('lets the settings decide the print tool: preview not mandatory, blocked tool falls back, give-up condition, never "printed" early', () => {
+    const c = skill?.content ?? '';
+    const d = skill?.description ?? '';
+    // The preview is no longer imposed, in the content or in the description.
+    expect(c).not.toContain('the only valid answer');
+    expect(d).not.toContain('only valid answer');
+    expect(c).toContain('print it with the print tool your settings allow');
+    expect(c).toContain(
+      'a preview they can approve when such a tool is available, direct printing when that is what is allowed',
+    );
+    expect(c).toContain("The owner's settings decide which one, never this skill");
+    // A blocked print tool is not the end: the other allowed one is used.
+    expect(c).toContain(
+      'If a print tool is refused as blocked by the owner, do not stop: use the other allowed print tool',
+    );
+    // Giving up needs a reason that is not "the preview tool was refused".
+    expect(c).toContain(
+      'Give up only when no print tool is allowed, no printer can print, or the content cannot be read anywhere: then say so once, with the reason',
+    );
+    // The "never say it printed" rule stays, for both modes.
+    expect(c).toContain(
+      'Never say it printed before the print tool reports the job as accepted or completed, whichever mode you used',
+    );
+    expect(c).toContain('With direct printing there is no pending request to replace');
+    expect(d).toContain('the settings allow');
+    expect(d).toContain('If one print tool is refused as blocked, use the other allowed one');
+    // No connector-specific tool name leaks into the skill.
+    expect(`${d}
+${c}`).not.toMatch(/print_now|request_print|hp_connector|__/);
   });
 
   it('lays out inside the printable area the print tool reports, full-bleed only on request', () => {
