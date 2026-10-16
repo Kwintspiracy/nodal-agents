@@ -20,17 +20,11 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { TreeFacts } from '../facts';
-import {
-  fileHash,
-  fixturePath,
-  installFixture,
-  installed,
-  resetBenchPath,
-  sharedRoot,
-} from '../fixtures';
+import { fileHash, fixturePath, installed, sharedRoot } from '../fixtures';
 import { REGIONS } from '../fixture-data';
 import {
   COMMAND_TOOL,
+  JUDGED_COMMON,
   SCRIPT_RUNNER,
   bareToolName,
   commandRuns,
@@ -162,6 +156,8 @@ function codeProject(o: {
   instruction: string;
   extraJudge?: (o: ProjectObservation) => string[];
   extraObserve?: (dir: string) => Record<string, unknown>;
+  /** Ce que `extraJudge` vérifie, en clair. */
+  extraJudgedBy?: string[];
 }): AnyScenario {
   return defineScenario<ProjectObservation>({
     id: o.id,
@@ -174,9 +170,20 @@ function codeProject(o: {
     instruction: o.instruction,
     timeoutMs: 20 * MIN,
     unverified: [TESTS_NOT_RERUN],
-    prepare(env) {
-      installFixture(env.workspaceRoots, `code/${o.project}`, `nodal-bench/${o.project}`);
-    },
+    judgedBy: [
+      ...JUDGED_COMMON,
+      `the test files of nodal-bench/${o.project} are byte for byte the fixture's (sha-256)`,
+      `tool_calls: the agent's last command output that reports EVERY test of the project (TAP or spec lines); each test must have passed, by name: ${testFiles(
+        o.project,
+      )
+        .flatMap((f) =>
+          declaredTests(readFileSync(join(fixturePath(`code/${o.project}`), 'test', f), 'utf8')),
+        )
+        .join(' · ')}`,
+      'the bench never runs the code itself (no sandbox yet, #753)',
+      ...(o.extraJudgedBy ?? []),
+    ],
+    fixtures: [{ from: `code/${o.project}`, to: `nodal-bench/${o.project}` }],
     observe: async (_facts, env) =>
       observeProject(sharedRoot(env.workspaceRoots), o.project, o.source, o.extraObserve),
     judge(facts, ob) {
@@ -227,10 +234,15 @@ const codeData = defineScenario<DataObservation>({
     `total par région, puis écris le résultat dans ${DATA_JSON_REL} sous la forme ` +
     '{"Nord": 1234.56, …}, arrondi au centime.',
   timeoutMs: 15 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'data/ventes-regions.csv', DATA_CSV_REL);
-    resetBenchPath(env.workspaceRoots, DATA_JSON_REL);
-  },
+  judgedBy: [
+    ...JUDGED_COMMON,
+    'tool_calls: a command tool ran a Python or Node script',
+    `${DATA_CSV_REL} is byte for byte the fixture (sha-256)`,
+    `opens ${DATA_JSON_REL} (written during the trial) and parses it as JSON`,
+    `it holds exactly the keys ${REGIONS.join(', ')}; each value equals the revenue the bench recomputes from the CSV (quantity × unit price, to the cent)`,
+  ],
+  fixtures: [{ from: 'data/ventes-regions.csv', to: DATA_CSV_REL }],
+  outputs: [DATA_JSON_REL],
   async observe(_facts, env) {
     const csv = installed(env.workspaceRoots, DATA_CSV_REL, env.startedMs);
     const json = installed(env.workspaceRoots, DATA_JSON_REL, env.startedMs);
@@ -307,6 +319,11 @@ export const CODE_SCENARIOS: AnyScenario[] = [
           ),
       };
     },
+    extraJudgedBy: [
+      'package.json declares slugify in its dependencies',
+      'node_modules/slugify/package.json exists and names slugify',
+      'src/slug.js imports slugify (import or require)',
+    ],
     extraJudge(o) {
       const r: string[] = [];
       if (o.extra['declared'] !== true)
@@ -326,6 +343,7 @@ export const CODE_SCENARIOS: AnyScenario[] = [
     instruction:
       `Les tests du projet nodal-bench/facture-tva ${SHARED} échouent. Trouve et corrige le ou ` +
       'les bugs dans src/facture.js pour que `npm test` passe, sans modifier les tests.',
+    extraJudgedBy: ['src/facture.js differs from the fixture (the bug file was changed)'],
     extraJudge(o) {
       return o.sourceHash === fileHash(join(fixturePath('code/facture-tva'), 'src', 'facture.js'))
         ? ['src/facture.js was not changed']

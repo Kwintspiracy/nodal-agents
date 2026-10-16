@@ -8,9 +8,10 @@
 // dans l'arbre (une ligne `tool_calls`) et des liens ; que ces liens aient été
 // lus n'est pas vérifié (#648), et la ligne le dit.
 
-import { findInRoots, readText, removeBenchFile } from '../disk';
+import { findInRoots, readText } from '../disk';
 import type { TreeFacts } from '../facts';
 import {
+  JUDGED_COMMON,
   SOURCES_READ,
   answerOf,
   commonReasons,
@@ -40,6 +41,12 @@ function question(o: {
 }): AnyScenario {
   return defineScenario<null>({
     id: o.id,
+    judgedBy: [
+      ...JUDGED_COMMON,
+      'agent_jobs: no delegated job (the root answered itself)',
+      ...o.facts.map((f) => `the root's final answer must ${f.says}`),
+      ...(o.not ?? []).map((n) => `red if the final answer ${n.says}`),
+    ],
     version: 1,
     title: o.title,
     green: o.green,
@@ -111,6 +118,12 @@ function research(o: {
 }): AnyScenario {
   return defineScenario<null>({
     id: o.id,
+    judgedBy: [
+      ...JUDGED_COMMON,
+      'tool_calls: at least one web search or page-read call by any job of the tree (web_search, tavily_*, firecrawl_*, apify_*, fetch*, cli:WebSearch…)',
+      ...o.facts.map((f) => `the root's final answer must ${f.says}`),
+      `the final answer links sources on at least ${RESEARCH_MIN_HOSTS} different sites (distinct hosts)`,
+    ],
     version: 1,
     title: o.title,
     green: `A job of the run called a web search or page-read tool, the answer ${o.subject} and links sources on at least ${RESEARCH_MIN_HOSTS} different sites, and nobody was asked anything. Whether those sources were really read is not verified yet (#648).`,
@@ -202,6 +215,13 @@ function deepResearch(o: {
 }): AnyScenario {
   return defineScenario<ReportObservation>({
     id: o.id,
+    judgedBy: [
+      ...JUDGED_COMMON,
+      'tool_calls: at least one web search or page-read call by any job of the tree',
+      `opens ${o.rel} in the workspace folders: it must exist and be written during the trial`,
+      `at least ${REPORT_MIN_CHARS} characters, ${REPORT_MIN_HEADINGS} Markdown headings and links on ${REPORT_MIN_HOSTS} different sites`,
+      ...o.facts.map((f) => `the report must ${f.says}`),
+    ],
     version: 1,
     title: o.title,
     green: `A job of the run called a web tool, the report ${o.rel} was written during the run with at least ${REPORT_MIN_HEADINGS} section headings, ${REPORT_MIN_CHARS} characters and links to ${REPORT_MIN_HOSTS} different sites, it ${o.subject}, and nobody was asked anything. Whether those sources were really read is not verified yet (#648).`,
@@ -214,9 +234,7 @@ function deepResearch(o: {
       'quatre sources différentes avec leurs liens.',
     timeoutMs: 30 * MIN,
     unverified: [SOURCES_READ],
-    prepare(env) {
-      removeBenchFile(env.workspaceRoots, o.rel);
-    },
+    outputs: [o.rel],
     async observe(_facts, env) {
       const [hit] = findInRoots(env.workspaceRoots, o.rel, env.startedMs);
       return { found: hit ? { path: hit.path, fresh: hit.fresh, text: readText(hit.path) } : null };

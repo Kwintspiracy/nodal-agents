@@ -5,10 +5,10 @@
 // modification est jugée sur ce qui a changé ET sur ce qui devait rester : le
 // texte d'origine de la fixture, à l'identique.
 
-import { findInRoots, removeBenchFile } from '../disk';
-import { fixturePath, installFixture, installed } from '../fixtures';
+import { findInRoots } from '../disk';
+import { fixturePath, installed } from '../fixtures';
 import { CONTRACT, MINUTES } from '../fixture-data';
-import { commonReasons } from '../judge-kit';
+import { JUDGED_COMMON, commonReasons } from '../judge-kit';
 import { isHeading, readDocx, normalizeSpace, type DocxView } from '../office';
 import { defineScenario, type AnyScenario } from '../types';
 
@@ -55,6 +55,12 @@ export const CONVOCATION_REL = 'nodal-bench/convocation-bench.docx';
 
 const create = defineScenario<DocObservation>({
   id: 'word-create',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `opens ${CONVOCATION_REL}, written during the trial: text with mammoth, paragraphs and styles from the OOXML`,
+    'a heading paragraph (Heading/Titre/Title style or an outline level) reads "Convocation", followed by at least three body paragraphs',
+    'the text names 12 novembre 2026, 14 h and salle B',
+  ],
   version: 1,
   title: 'Write a Word document with a heading and body paragraphs',
   green: `${CONVOCATION_REL} was written during the run, opens as a Word document, has a heading paragraph reading "Convocation" followed by at least three body paragraphs, names 12 novembre 2026, 14 h and salle B, and nobody was asked anything.`,
@@ -66,9 +72,7 @@ const create = defineScenario<DocObservation>({
     '(en style de titre), puis trois paragraphes qui convoquent l’équipe à une réunion le ' +
     '12 novembre 2026 à 14 h en salle B.',
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    removeBenchFile(env.workspaceRoots, CONVOCATION_REL);
-  },
+  outputs: [CONVOCATION_REL],
   async observe(_facts, env) {
     const [hit] = findInRoots(env.workspaceRoots, CONVOCATION_REL, env.startedMs);
     return observeDoc(hit?.path ?? null, hit?.fresh ?? false);
@@ -98,6 +102,12 @@ export const CONTRACT_REL = 'nodal-bench/contrat.docx';
 
 const replace = defineScenario<DocObservation>({
   id: 'word-replace',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `opens ${CONTRACT_REL} (mammoth); it must be changed during the trial`,
+    `"${CONTRACT.from}" appears nowhere and "${CONTRACT.to}" exactly ${CONTRACT.occurrences} times, the table included`,
+    "every other character of the text is the fixture's",
+  ],
   version: 1,
   title: 'Replace a name everywhere in an existing Word document, changing nothing else',
   green: `${CONTRACT_REL} was changed during the run: "${CONTRACT.from}" appears nowhere, "${CONTRACT.to}" appears exactly ${CONTRACT.occurrences} times (the table included), every other character of the text is the fixture's, and nobody was asked anything.`,
@@ -108,9 +118,7 @@ const replace = defineScenario<DocObservation>({
     `Dans le document ${CONTRACT_REL} ${SHARED}, remplace partout « ${CONTRACT.from} » par ` +
     `« ${CONTRACT.to} », sans rien changer d’autre.`,
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/contrat.docx', CONTRACT_REL);
-  },
+  fixtures: [{ from: 'office/contrat.docx', to: CONTRACT_REL }],
   async observe(_facts, env) {
     const f = installed(env.workspaceRoots, CONTRACT_REL, env.startedMs);
     const original = (await readDocx(fixturePath('office/contrat.docx'))).text;
@@ -140,6 +148,11 @@ export const MINUTES_REL = 'nodal-bench/compte-rendu.docx';
 
 const append = defineScenario<DocObservation>({
   id: 'word-append',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `opens ${MINUTES_REL}; it must be changed during the trial`,
+    'it starts with the fixture\'s paragraphs in order, then a heading reading "Décisions" and at least three non-empty paragraphs or list items',
+  ],
   version: 1,
   title: 'Append a section at the end of an existing Word document',
   green: `${MINUTES_REL} was changed during the run: it still starts with the fixture's ${MINUTES.paragraphs.length + 1} paragraphs, in order, then has a heading reading "Décisions" followed by at least three non-empty paragraphs or list items, and nobody was asked anything.`,
@@ -150,9 +163,7 @@ const append = defineScenario<DocObservation>({
     `Ajoute à la fin du document ${MINUTES_REL} ${SHARED} une section « Décisions » (un titre), ` +
     'suivie d’au moins trois décisions, une par paragraphe ou en liste à puces. Ne change pas le reste.',
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/compte-rendu.docx', MINUTES_REL);
-  },
+  fixtures: [{ from: 'office/compte-rendu.docx', to: MINUTES_REL }],
   async observe(_facts, env) {
     const f = installed(env.workspaceRoots, MINUTES_REL, env.startedMs);
     return observeDoc(f.exists ? f.path : null, f.fresh);
@@ -188,6 +199,11 @@ const COLUMNS = ['Jour', 'Tâche', 'Responsable'];
 
 const table = defineScenario<DocObservation>({
   id: 'word-table',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `opens ${PLANNING_REL}, written during the trial; reads its tables from the OOXML`,
+    `a table whose header row is ${COLUMNS.join(' / ')} and whose next five rows start with lundi to vendredi, every cell filled`,
+  ],
   version: 1,
   title: 'Write a Word document holding a table',
   green: `${PLANNING_REL} was written during the run with a table whose header row is ${COLUMNS.join(' / ')} and whose next five rows start with lundi to vendredi, in order, every cell filled, and nobody was asked anything.`,
@@ -198,9 +214,7 @@ const table = defineScenario<DocObservation>({
     `Crée un document Word ${PLANNING_REL} dans ton espace de travail avec un tableau de trois ` +
     `colonnes (${COLUMNS.join(', ')}) et une ligne par jour, du lundi au vendredi.`,
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    removeBenchFile(env.workspaceRoots, PLANNING_REL);
-  },
+  outputs: [PLANNING_REL],
   async observe(_facts, env) {
     const [hit] = findInRoots(env.workspaceRoots, PLANNING_REL, env.startedMs);
     return observeDoc(hit?.path ?? null, hit?.fresh ?? false);

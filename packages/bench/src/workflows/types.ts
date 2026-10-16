@@ -126,12 +126,35 @@ export interface Scenario<O> {
   readonly timeoutMs: number;
   /** Les contrôles que ce scénario ne vérifie pas encore (voir `UnverifiedCheck`). */
   readonly unverified?: readonly UnverifiedCheck[];
-  /** Remet à zéro ce qu'un essai précédent du banc a laissé (ses propres fichiers seulement). */
-  prepare?(env: ScenarioEnv): void;
+  /**
+   * COMMENT le juge décide, en clair (anglais : rendu dans Bench Studio) : les
+   * lignes de la base qu'il lit, le fichier qu'il ouvre et avec quoi, les
+   * cellules et les valeurs attendues. Une phrase par contrôle, écrite à côté
+   * du juge qu'elle décrit.
+   */
+  readonly judgedBy: readonly string[];
+  /**
+   * Les fichiers que le banc pose AVANT la demande (une fixture du dépôt,
+   * packages/bench/fixtures, copiée dans le dossier du banc de l'espace
+   * partagé). Déclarés, pas cachés dans du code : Bench Studio les montre.
+   */
+  readonly fixtures?: readonly FixtureInstall[];
+  /**
+   * Les chemins (sous `nodal-bench/`) que le banc efface avant l'essai : ce
+   * qu'un essai précédent a laissé et qui ferait juger celui du jour sur le
+   * travail de la veille.
+   */
+  readonly outputs?: readonly string[];
   /** Lit ce qu'il faut sur le disque, une fois l'essai fini. */
   observe(facts: TreeFacts, env: ScenarioEnv): Promise<O>;
   /** Pur : les raisons du rouge, vides pour un vert. */
   judge(facts: TreeFacts, observed: O): string[];
+}
+
+/** Une fixture posée avant l'essai : `from` relatif à packages/bench/fixtures, `to` sous `nodal-bench/`. */
+export interface FixtureInstall {
+  readonly from: string;
+  readonly to: string;
 }
 
 export type AnyScenario = Scenario<unknown>;

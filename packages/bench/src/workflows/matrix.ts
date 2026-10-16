@@ -12,6 +12,8 @@
 // `--dry-run` imprime le plan (scénario × modèle × essais) et son coût estimé,
 // sans toucher à la stack.
 
+import { existsSync, readFileSync } from 'node:fs';
+import { RESULTS_FILE } from './paths';
 import { estimateCallCostUsd, findModelCatalogEntry, MODEL_CATALOG } from '@nodal-agents/shared';
 import { ACTIVITIES, type AnyScenario, type TrialLine } from './types';
 
@@ -237,4 +239,23 @@ export function formatPlan(plan: MatrixPlan, models: readonly MatrixModel[]): st
     `Estimated time, trials one after the other: ${minutes(plan.knownDurationMs)} for the cells with a past run.`,
   );
   return lines.join('\n');
+}
+
+/** Les lignes passées de workflows.ndjson, pour les médianes du plan. Une ligne illisible est comptée et dite. */
+export function readPastLines(file: string = RESULTS_FILE): {
+  lines: PastLine[];
+  unreadable: number;
+} {
+  if (!existsSync(file)) return { lines: [], unreadable: 0 };
+  const lines: PastLine[] = [];
+  let unreadable = 0;
+  for (const raw of readFileSync(file, 'utf8').split('\n')) {
+    if (!raw.trim()) continue;
+    try {
+      lines.push(JSON.parse(raw) as PastLine);
+    } catch {
+      unreadable++;
+    }
+  }
+  return { lines, unreadable };
 }

@@ -20,6 +20,7 @@
 //      ligne `skipped` le dit.
 
 import { benchDeliverables } from './disk';
+import { prepareTrial } from './fixtures';
 import type { TreeFacts } from './facts';
 import { isLive, liveJobs, pendingApprovals } from './facts';
 import { DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
@@ -45,7 +46,25 @@ export interface TrialDeps {
   /** Le modèle configuré de l'agent racine, lu au début de l'essai. */
   rootModel(): Promise<string | null>;
   log(line: string): void;
+  /** Où en est l'essai, pour qui le suit en direct (Bench Studio). Facultatif. */
+  progress?(event: TrialProgress): void;
 }
+
+/** Une étape d'un essai, telle que runTrial la traverse. */
+export type TrialProgress =
+  | { readonly step: 'waiting'; readonly why: string }
+  | { readonly step: 'preparing' }
+  | { readonly step: 'started'; readonly rootJobId: string }
+  | {
+      readonly step: 'running';
+      readonly rootJobId: string;
+      readonly jobs: number;
+      readonly liveJobs: number;
+      readonly toolCalls: number;
+      readonly elapsedMs: number;
+    }
+  | { readonly step: 'judging'; readonly rootJobId: string }
+  | { readonly step: 'done'; readonly verdict: TrialLine['verdict'] };
 
 export interface TrialOptions {
   readonly pollMs: number;
@@ -345,6 +364,7 @@ export async function waitForIdle(deps: TrialDeps, o: TrialOptions): Promise<str
       return `the stack was busy for ${Math.round(waited / 60_000)} min: ${why}`;
     }
     deps.log(`  waiting, the owner is working (${why})`);
+    deps.progress?.({ step: 'waiting', why });
     await deps.sleep(o.idlePollMs);
   }
 }
@@ -413,13 +433,20 @@ function truncate(text: string, max: number): string {
 /**
  * Un essai complet : attendre la stack libre, vérifier les besoins, préparer,
  * lancer, surveiller, annuler si besoin, juger. Rend TOUJOURS une ligne ;
- * n'en écrit aucune.
+ * n'en écrit aucune. Chaque étape est signalée à `deps.progress`, la fin
+ * comprise, quelle que soit la sortie.
  */
 export async function runTrial(
   s: AnyScenario,
   deps: TrialDeps,
   o: TrialOptions,
 ): Promise<TrialLine> {
+  const line = await runTrialSteps(s, deps, o);
+  deps.progress?.({ step: 'done', verdict: line.verdict });
+  return line;
+}
+
+async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): Promise<TrialLine> {
   const busy = await waitForIdle(deps, o);
   if (busy !== null) {
     return { ...emptyLine(s, o, deps.now()), verdict: 'skipped', reasons: [busy] };
@@ -436,7 +463,8 @@ export async function runTrial(
     if (missing.length > 0) {
       return { ...emptyLine(s, o, deps.now(), rootModel), verdict: 'skipped', reasons: missing };
     }
-    s.prepare?.(envBefore);
+    deps.progress?.({ step: 'preparing' });
+    prepareTrial(s, envBefore.workspaceRoots);
   } catch (e) {
     return {
       ...emptyLine(s, o, deps.now(), rootModel),
@@ -457,6 +485,7 @@ export async function runTrial(
     };
   }
   const rootId = session.jobId;
+  deps.progress?.({ step: 'started', rootJobId: rootId });
   let entityId: string | null = null;
 
   let cancelled = false;
@@ -478,6 +507,14 @@ export async function runTrial(
     for (;;) {
       const facts = await deps.read(rootId);
       entityId = facts.entityId;
+      deps.progress?.({
+        step: 'running',
+        rootJobId: rootId,
+        jobs: facts.jobs.length,
+        liveJobs: liveJobs(facts).length,
+        toolCalls: facts.toolCalls.length,
+        elapsedMs: deps.now() - startedMs,
+      });
       const asking = pendingApprovals(facts);
       if (asking.length > 0) {
         await cancel(`it asked: ${asking.map((a) => `${a.kind} ${a.toolName}`).join(', ')}`);
@@ -526,6 +563,7 @@ export async function runTrial(
   }
   let judged: string[];
   let deliverables: TrialLine['deliverables'] = [];
+  deps.progress?.({ step: 'judging', rootJobId: rootId });
   try {
     const envAfter = await deps.env(startedMs);
     deliverables = benchDeliverables(envAfter.workspaceRoots, startedMs);

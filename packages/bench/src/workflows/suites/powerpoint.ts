@@ -5,10 +5,17 @@
 // a changé et sur ce qui devait rester : les diapositives de la fixture,
 // paragraphe par paragraphe.
 
-import { findInRoots, removeBenchFile } from '../disk';
-import { fileHash, fixturePath, installFixture, installed } from '../fixtures';
+import { findInRoots } from '../disk';
+import { fileHash, fixturePath, installed } from '../fixtures';
 import { OFFER_DECK, OFFER_PRO_PRICE, PROJECT_DECK, REVIEW_DECK } from '../fixture-data';
-import { answerOf, commonReasons, hasNumber, matches, missingFacts } from '../judge-kit';
+import {
+  JUDGED_COMMON,
+  answerOf,
+  commonReasons,
+  hasNumber,
+  matches,
+  missingFacts,
+} from '../judge-kit';
 import { normalizeSpace, readPptx, type PptxSlide } from '../office';
 import { defineScenario, type AnyScenario } from '../types';
 
@@ -70,6 +77,11 @@ export const GLASS_REL = 'nodal-bench/presentation-bench.pptx';
 
 const create = defineScenario<DeckObservation>({
   id: 'ppt-create',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `opens ${GLASS_REL}, written during the trial; slides in presentation order (p:sldIdLst)`,
+    'exactly 5 slides; the first reads "Le recyclage du verre"; each of the next four holds a title and at least two other paragraphs',
+  ],
   version: 1,
   title: 'Write a five-slide presentation',
   green: `${GLASS_REL} was written during the run and opens as a presentation of exactly 5 slides, the first reads "Le recyclage du verre", each of the next four holds a title and at least two other paragraphs, and nobody was asked anything.`,
@@ -81,9 +93,7 @@ const create = defineScenario<DeckObservation>({
     'le recyclage du verre : une diapositive de titre « Le recyclage du verre », puis quatre ' +
     'diapositives de contenu, chacune avec un titre et des puces.',
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    removeBenchFile(env.workspaceRoots, GLASS_REL);
-  },
+  outputs: [GLASS_REL],
   async observe(_facts, env) {
     const [hit] = findInRoots(env.workspaceRoots, GLASS_REL, env.startedMs);
     return observeDeck(hit?.path ?? null, hit?.fresh ?? false);
@@ -113,6 +123,11 @@ export const PROJECT_REL = 'nodal-bench/projet.pptx';
 
 const append = defineScenario<DeckObservation>({
   id: 'ppt-append',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `opens ${PROJECT_REL}; it must be changed during the trial`,
+    '4 slides; the first three read exactly as the fixture\'s, paragraph by paragraph; the fourth reads "Prochaines étapes" and at least three more paragraphs',
+  ],
   version: 1,
   title: 'Append a slide to an existing presentation',
   green: `${PROJECT_REL} was changed during the run: it has 4 slides, the first three read exactly as the fixture's, the fourth reads "Prochaines étapes" and at least three more paragraphs, and nobody was asked anything.`,
@@ -123,9 +138,7 @@ const append = defineScenario<DeckObservation>({
     `Ajoute à la fin de la présentation ${PROJECT_REL} ${SHARED} une quatrième diapositive ` +
     '« Prochaines étapes » avec trois puces. Ne change pas les autres diapositives.',
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/projet.pptx', PROJECT_REL);
-  },
+  fixtures: [{ from: 'office/projet.pptx', to: PROJECT_REL }],
   async observe(_facts, env) {
     const f = installed(env.workspaceRoots, PROJECT_REL, env.startedMs);
     return observeDeck(f.exists ? f.path : null, f.fresh);
@@ -153,6 +166,11 @@ export const REVIEW_REL = 'nodal-bench/bilan-2025.pptx';
 
 const replace = defineScenario<DeckObservation>({
   id: 'ppt-replace',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `opens ${REVIEW_REL}; it must be changed during the trial`,
+    "2025 appears nowhere; with 2026 read back as 2025, every slide reads exactly as the fixture's",
+  ],
   version: 1,
   title: 'Replace a year everywhere in an existing presentation, changing nothing else',
   green: `${REVIEW_REL} was changed during the run: 2025 appears nowhere, its ${REVIEW_DECK.length} slides read exactly as the fixture's with 2026 in place of 2025, and nobody was asked anything.`,
@@ -163,9 +181,7 @@ const replace = defineScenario<DeckObservation>({
     `Dans la présentation ${REVIEW_REL} ${SHARED}, remplace partout l'année 2025 par 2026, ` +
     'sans rien changer d’autre. Garde le même nom de fichier.',
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/bilan-2025.pptx', REVIEW_REL);
-  },
+  fixtures: [{ from: 'office/bilan-2025.pptx', to: REVIEW_REL }],
   async observe(_facts, env) {
     const f = installed(env.workspaceRoots, REVIEW_REL, env.startedMs);
     return observeDeck(f.exists ? f.path : null, f.fresh);
@@ -189,6 +205,11 @@ export const OFFER_REL = 'nodal-bench/offre.pptx';
 
 const readAnswer = defineScenario<{ hash: string | null }>({
   id: 'ppt-read-answer',
+  judgedBy: [
+    ...JUDGED_COMMON,
+    `the final answer says ${OFFER_DECK.length} slides and gives ${OFFER_PRO_PRICE}`,
+    `${OFFER_REL} is byte for byte the fixture (sha-256)`,
+  ],
   version: 1,
   title: 'Answer a question from an existing presentation, without changing it',
   green: `The answer says the presentation has ${OFFER_DECK.length} slides and gives ${OFFER_PRO_PRICE} € for the Pro plan, ${OFFER_REL} is byte for byte the fixture, and nobody was asked anything.`,
@@ -197,9 +218,7 @@ const readAnswer = defineScenario<{ hash: string | null }>({
   sends: 'nothing',
   instruction: `Combien de diapositives contient la présentation ${OFFER_REL} ${SHARED}, et quel est le prix de la formule Pro ?`,
   timeoutMs: 10 * MIN,
-  prepare(env) {
-    installFixture(env.workspaceRoots, 'office/offre.pptx', OFFER_REL);
-  },
+  fixtures: [{ from: 'office/offre.pptx', to: OFFER_REL }],
   async observe(_facts, env) {
     const f = installed(env.workspaceRoots, OFFER_REL, env.startedMs);
     return { hash: f.exists ? fileHash(f.path) : null };
