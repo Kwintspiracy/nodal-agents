@@ -10,6 +10,7 @@ export {
   readFixture,
   studioNeeds,
   studioPlan,
+  studioModels,
   studioResults,
   studioTrial,
   readResultLines,
@@ -26,3 +27,14 @@ export {
   type SessionRunner,
 } from './runs';
 export { ACTIVITIES, type Activity } from '../workflows/types';
+export {
+  createStudioRuntime,
+  findDeliverable,
+  type StudioRuntime,
+  type JobTreeView,
+  type TreeJob,
+  type DeliverableView,
+} from './runtime';
+export { stackWebUrl } from '../workflows/stack';
+export { FIXTURES_DIR } from '../workflows/fixtures';
+export { duree, nombreJetons, dollars, AVANT_LA_MATRICE } from '../workflows/results';

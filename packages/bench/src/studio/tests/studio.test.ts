@@ -6,7 +6,7 @@
 // du banc étape par étape, et les lectures ne rendent que ce que les modules du
 // banc calculent (catalogue, fixtures, plan, résultats).
 
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -14,6 +14,7 @@ import type { SpawnSyncReturns } from 'node:child_process';
 import { launchGate } from '../launch-gate';
 import { readFixture, studioCatalog, studioPlan, studioResults, studioTrial } from '../data';
 import { RunManager, type RunEvent, type SessionRunner } from '../runs';
+import { findDeliverable } from '../runtime';
 import { SCENARIOS } from '../../workflows/scenarios';
 
 const OPEN = { enabled: true, reason: 'ok' };
@@ -161,9 +162,16 @@ describe('studio reads', () => {
     expect(() => readFixture('office/../../src/index.ts')).toThrow('studio_no_fixture');
   });
 
-  it('plans with the bench selection rules: no models means no price, owner scenarios never in a matrix', () => {
+  it("plans with the bench selection rules: no models means the agents' own, owner scenarios never in a matrix", () => {
     const none = studioPlan({ selection: { activity: ['excel'] }, models: '', trials: 2 });
-    expect(none.plan).toBeNull();
+    expect(none.columns).toEqual(["the agents' own models"]);
+    expect(none.plan.cells.map((c) => [c.scenario, c.model, c.trials])).toEqual([
+      ['file', "the agents' own models", 2],
+      ['excel-edit-column', "the agents' own models", 2],
+      ['excel-new-sheet', "the agents' own models", 2],
+      ['excel-read-answer', "the agents' own models", 2],
+      ['excel-csv-import', "the agents' own models", 2],
+    ]);
     expect(none.scenarios).toEqual([
       'file',
       'excel-edit-column',
@@ -176,7 +184,8 @@ describe('studio reads', () => {
       models: 'deepseek-chat',
       trials: 1,
     });
-    expect(priced.plan!.cells).toHaveLength(1);
+    expect(priced.plan.cells).toHaveLength(1);
+    expect(priced.columns).toEqual(['deepseek:deepseek-chat']);
     expect(() =>
       studioPlan({ selection: { only: ['comfyui-telegram'] }, models: 'deepseek-chat', trials: 1 }),
     ).toThrow('workflow_owner_sends_in_matrix');
@@ -210,6 +219,13 @@ describe('studio reads', () => {
     expect(r.unreadable).toBe(1);
     expect(r.columns).toEqual(['m1']);
     expect(r.summaries[0]).toMatchObject({ column: 'm1', tentes: 2, verts: 1 });
+    // La cellule activité × modèle : le même résumé, restreint à l'activité.
+    expect(r.activities.find((a) => a.activity === 'question')!.summaries).toEqual([
+      expect.objectContaining({ column: 'm1', tentes: 2, verts: 1, dureeMs: 10_000 }),
+    ]);
+    expect(r.activities.find((a) => a.activity === 'excel')!.summaries).toEqual([
+      expect.objectContaining({ column: 'm1', tentes: 0, verts: 0, dureeMs: null }),
+    ]);
     const q = r.activities
       .find((a) => a.activity === 'question')!
       .scenarios.find((s) => s.id === 'question')!;
@@ -219,5 +235,41 @@ describe('studio reads', () => {
     ]);
     expect(studioTrial(3, f).line).toMatchObject({ verdict: 'red', reasons: ['x'] });
     expect(() => studioTrial(2, f)).toThrow('studio_no_trial');
+  });
+});
+
+describe('findDeliverable', () => {
+  function root(files: Record<string, string>): string {
+    const d = mkdtempSync(join(tmpdir(), 'studio-ws-'));
+    for (const [rel, text] of Object.entries(files)) {
+      mkdirSync(join(d, rel, '..'), { recursive: true });
+      writeFileSync(join(d, rel), text);
+    }
+    return d;
+  }
+
+  it('opens a file the trial left under nodal-bench/, and says which folder holds it', () => {
+    const a = root({ 'nodal-bench/file/v1/notes.md': '# Notes' });
+    const b = root({});
+    expect(findDeliverable([b, a], 'nodal-bench/file/v1/notes.md')).toEqual({
+      kind: 'text',
+      root: a,
+      text: '# Notes',
+    });
+  });
+
+  it('refuses anything outside nodal-bench/, a missing file, and the same path in two folders', () => {
+    const a = root({ 'secret.txt': 'x', 'nodal-bench/s/v1/r.csv': 'a' });
+    const b = root({ 'nodal-bench/s/v1/r.csv': 'b' });
+    expect(() => findDeliverable([a], 'secret.txt')).toThrow('studio_no_deliverable');
+    expect(() => findDeliverable([a], 'nodal-bench/../secret.txt')).toThrow(
+      'studio_no_deliverable',
+    );
+    expect(() => findDeliverable([a], 'nodal-bench/s/v1/none.csv')).toThrow(
+      'is in no workspace folder any more',
+    );
+    expect(() => findDeliverable([a, b], 'nodal-bench/s/v1/r.csv')).toThrow(
+      'studio_ambiguous_deliverable: nodal-bench/s/v1/r.csv exists in 2 workspace folders',
+    );
   });
 });

@@ -7,7 +7,15 @@
 
 import { describe, expect, it } from 'vitest';
 import { estimateCallCostUsd } from '@nodal-agents/shared';
-import { formatPlan, parseModels, planMatrix, UNDECIDED_APPLIER, type PastLine } from '../matrix';
+import {
+  formatPlan,
+  OWN_MODELS,
+  parseModels,
+  planMatrix,
+  planOwnModels,
+  UNDECIDED_APPLIER,
+  type PastLine,
+} from '../matrix';
 import { scenarioById } from '../scenarios';
 
 const QUESTION = scenarioById('question')!;
@@ -125,6 +133,42 @@ describe('planMatrix', () => {
     expect(text).toContain('[excel]');
     expect(text).toMatch(/file +openrouter:z-ai\/glm-5\.3 +×3 +cost unknown \(no past run/);
     expect(text).toContain('plus 2 cell(s) with no estimate');
+  });
+});
+
+describe('planOwnModels', () => {
+  it('estimates from what past runs really cost, times the trials, with their median time', () => {
+    const lines = [
+      past({ scenario: 'question', costUsd: 0.01, durationMs: 10_000 }),
+      past({ scenario: 'question', costUsd: 0.03, durationMs: 30_000 }),
+      past({ scenario: 'question', costUsd: 0.02, durationMs: 20_000 }),
+      past({ scenario: 'question', costUsd: 9, verdict: 'skipped' }),
+    ];
+    const plan = planOwnModels([QUESTION], 3, lines);
+    expect(plan.cells).toEqual([
+      expect.objectContaining({
+        scenario: 'question',
+        model: OWN_MODELS,
+        trials: 3,
+        pastRuns: 3,
+        medianDurationMs: 20_000,
+        estimatedUsd: 0.06,
+        why: null,
+      }),
+    ]);
+    expect(plan).toMatchObject({ knownUsd: 0.06, unknownCells: 0, knownDurationMs: 60_000 });
+  });
+
+  it('a past run that did not report its cost, or no past run at all: NO estimate, said', () => {
+    const plan = planOwnModels([QUESTION, FILE], 1, [
+      past({ scenario: 'question', costUsd: 0.01 }),
+      past({ scenario: 'question', costUsd: null }),
+    ]);
+    expect(plan.cells.map((c) => [c.scenario, c.estimatedUsd, c.why])).toEqual([
+      ['question', null, 'a past run did not report its cost'],
+      ['file', null, 'no past run of this scenario version'],
+    ]);
+    expect(plan.unknownCells).toBe(2);
   });
 });
 

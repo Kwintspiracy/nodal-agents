@@ -12,7 +12,7 @@ import { dirname } from 'node:path';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { z } from 'zod';
 import { executeRows, readTreeFacts } from './facts';
-import { BENCH_LOCK_FILE, BenchStop, claimStack, type BenchLock } from './lock';
+import { BENCH_LOCK_FILE, claimStack, type BenchLock, type BenchStop } from './lock';
 import { startRunTask } from './mcp';
 import { RESULTS_FILE } from './paths';
 import {

@@ -22,7 +22,10 @@ import { executeRows } from './facts';
 export const BENCH_CALLER_PREFIX = 'nodal-bench/';
 
 const LocalConfigSchema = z.object({
-  ports: z.object({ postgres: z.number().optional() }).partial().optional(),
+  ports: z
+    .object({ postgres: z.number().int().optional(), web: z.number().int().optional() })
+    .partial()
+    .optional(),
   postgresPassword: z.string().optional(),
 });
 
@@ -39,6 +42,18 @@ export function stackDatabaseUrl(): string {
     throw new Error(`workflow_no_stack: postgresPassword missing in ${path}`);
   const port = cfg.ports?.postgres ?? 25444;
   return `postgresql://nodalai:${encodeURIComponent(cfg.postgresPassword)}@localhost:${port}/nodalai`;
+}
+
+/**
+ * L'adresse du dashboard de la stack (`ports.web` de ~/.nodalai/config.json,
+ * 3000 par défaut, comme le CLI) : Bench Studio y renvoie pour ouvrir un run.
+ */
+export function stackWebUrl(): string {
+  const path = join(homedir(), '.nodalai', 'config.json');
+  const cfg = existsSync(path)
+    ? LocalConfigSchema.parse(JSON.parse(readFileSync(path, 'utf8')))
+    : { ports: undefined };
+  return `http://localhost:${cfg.ports?.web ?? 3000}`;
 }
 
 /**

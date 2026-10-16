@@ -6,10 +6,18 @@
 // Ce module ne fait que rassembler et rendre du JSON.
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { MODEL_CATALOG } from '@nodal-agents/shared';
 import { extname, join, relative, resolve, sep } from 'node:path';
 import { buildCatalog, type Catalog } from '../workflows/catalog';
 import { FIXTURES_DIR } from '../workflows/fixtures';
-import { planMatrix, parseModels, readPastLines, type MatrixPlan } from '../workflows/matrix';
+import {
+  OWN_MODELS,
+  planMatrix,
+  planOwnModels,
+  parseModels,
+  readPastLines,
+  type MatrixPlan,
+} from '../workflows/matrix';
 import { needReport } from '../workflows/needs';
 import { RESULTS_FILE } from '../workflows/paths';
 import { colonneDe, construireMatrice, lireWorkflows, type ResultLine } from '../workflows/results';
@@ -87,6 +95,13 @@ export async function studioNeeds(readEnv: () => Promise<ScenarioEnv>): Promise<
 
 // ─── Plan ────────────────────────────────────────────────────────────────────
 
+/** Les modèles qu'une matrice peut nommer : ceux du catalogue, et aucun autre (`parseModels`). */
+export function studioModels(): Array<{ key: string; provider: string; label: string }> {
+  return Object.entries(MODEL_CATALOG).flatMap(([provider, entries]) =>
+    entries.map((e) => ({ key: `${provider}:${e.modelId}`, provider, label: e.label })),
+  );
+}
+
 export interface PlanRequest {
   readonly selection: Selection;
   /** `fournisseur:modèle`, séparés par des virgules ; vide : les agents sur leurs propres modèles. */
@@ -97,8 +112,9 @@ export interface PlanRequest {
 export interface PlanView {
   readonly scenarios: string[];
   readonly trials: number;
-  /** null : aucun modèle imposé, les agents tournent sur les leurs (pas de prix à appliquer). */
-  readonly plan: MatrixPlan | null;
+  /** Les colonnes du plan : les modèles nommés, ou `OWN_MODELS` quand aucun ne l'est. */
+  readonly columns: string[];
+  readonly plan: MatrixPlan;
   readonly unreadableLines: number;
 }
 
@@ -108,21 +124,25 @@ export function studioPlan(req: PlanRequest): PlanView {
   const scenarios = selectScenarios(req.selection);
   if (scenarios.length === 0) throw new Error('studio_no_scenario: the selection is empty');
   const past = readPastLines();
-  if (!req.models.trim()) {
+  const base = {
+    scenarios: scenarios.map((s) => s.id),
+    trials: req.trials,
+    unreadableLines: past.unreadable,
+  };
+  // Sans modèle nommé, les agents tournent sur les leurs : le plan le dit, et
+  // son coût est celui que les essais passés ont réellement facturé.
+  if (!req.models.trim())
     return {
-      scenarios: scenarios.map((s) => s.id),
-      trials: req.trials,
-      plan: null,
-      unreadableLines: past.unreadable,
+      ...base,
+      columns: [OWN_MODELS],
+      plan: planOwnModels(scenarios, req.trials, past.lines),
     };
-  }
   const models = parseModels(req.models);
   assertMatrixable(scenarios);
   return {
-    scenarios: scenarios.map((s) => s.id),
-    trials: req.trials,
+    ...base,
+    columns: models.map((m) => `${m.provider}:${m.model}`),
     plan: planMatrix(scenarios, models, req.trials, past.lines),
-    unreadableLines: past.unreadable,
   };
 }
 
@@ -167,6 +187,7 @@ export function studioResults(file: string = RESULTS_FILE) {
     summaries: m.colonnes.map((c) => ({ column: c, ...m.resumes.get(c)! })),
     activities: m.activites.map((a) => ({
       activity: a.activite,
+      summaries: m.colonnes.map((c) => ({ column: c, ...a.resumes.get(c)! })),
       scenarios: a.scenarios.map((s) => ({
         id: s.id,
         version: s.version,

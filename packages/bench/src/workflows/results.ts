@@ -357,7 +357,15 @@ export interface Matrice {
   colonnes: string[];
   resumes: Map<string, ResumeColonne>;
   periode: { de: string; a: string } | null;
-  activites: Array<{ activite: string; scenarios: ScenarioDeMatrice[] }>;
+  /**
+   * `resumes` : la cellule activité × modèle, par le MÊME calcul que le résumé
+   * de colonne, restreint aux scénarios de l'activité.
+   */
+  activites: Array<{
+    activite: string;
+    scenarios: ScenarioDeMatrice[];
+    resumes: Map<string, ResumeColonne>;
+  }>;
 }
 
 /**
@@ -444,10 +452,19 @@ export function construireMatrice(
     colonnes,
     resumes,
     periode: dates.length > 0 ? { de: dates[0]!, a: dates[dates.length - 1]! } : null,
-    activites: ordre.map((a) => ({
-      activite: a,
-      scenarios: scenarios.filter((s) => s.activite === a),
-    })),
+    activites: ordre.map((a) => {
+      const deLActivite = scenarios.filter((s) => s.activite === a);
+      return {
+        activite: a,
+        scenarios: deLActivite,
+        resumes: new Map(
+          colonnes.map((c) => [
+            c,
+            resumerColonne(deLActivite.flatMap((s) => s.cellules.get(c)?.derniers ?? [])),
+          ]),
+        ),
+      };
+    }),
   };
 }
 
@@ -466,4 +483,9 @@ export function nombreJetons(n: unknown): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)} M`;
   if (n >= 1_000) return `${Math.round(n / 1_000)} k`;
   return String(n);
+}
+
+/** Un montant en dollars, à trois décimales ; une absence est dite, jamais zéro. */
+export function dollars(n: unknown): string {
+  return typeof n === 'number' ? `$${n.toFixed(3)}` : 'not measured';
 }

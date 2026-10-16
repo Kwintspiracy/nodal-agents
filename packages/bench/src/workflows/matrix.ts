@@ -110,7 +110,7 @@ export function median(values: ReadonlyArray<number | null | undefined>): number
 export type PastLine = Pick<
   TrialLine,
   'scenario' | 'scenarioVersion' | 'durationMs' | 'inputTokens' | 'outputTokens' | 'verdict'
-> & { readonly cachedTokens?: number | null };
+> & { readonly cachedTokens?: number | null; readonly costUsd?: number | null };
 
 export interface PlanCell {
   readonly scenario: string;
@@ -144,6 +144,60 @@ export interface MatrixPlan {
  * nombre d'essais. Sans essai passé ou sans prix au catalogue, le coût est
  * ABSENT et la raison est dite : jamais un zéro.
  */
+/** Ce que les essais passés d'un scénario (sa version courante) disent de sa taille. */
+interface PastMedians {
+  readonly runs: number;
+  readonly inputTokens: number | null;
+  readonly outputTokens: number | null;
+  /** null quand un essai ne l'a pas rapporté : on ne déduit pas un cache inconnu. */
+  readonly cachedTokens: number | null;
+  readonly durationMs: number | null;
+  /** Le coût réellement facturé ; null quand un seul essai ne l'a pas rapporté. */
+  readonly costUsd: number | null;
+}
+
+function pastMedians(s: AnyScenario, past: readonly PastLine[]): PastMedians {
+  const runs = past.filter(
+    (l) =>
+      l.scenario === s.id &&
+      l.scenarioVersion === s.version &&
+      (l.verdict === 'green' || l.verdict === 'red') &&
+      typeof l.inputTokens === 'number' &&
+      typeof l.outputTokens === 'number',
+  );
+  const allKnown = (f: (l: PastLine) => unknown): boolean =>
+    runs.every((l) => typeof f(l) === 'number');
+  return {
+    runs: runs.length,
+    inputTokens: median(runs.map((l) => l.inputTokens)),
+    outputTokens: median(runs.map((l) => l.outputTokens)),
+    cachedTokens: allKnown((l) => l.cachedTokens) ? median(runs.map((l) => l.cachedTokens)) : null,
+    durationMs: median(runs.map((l) => l.durationMs)),
+    costUsd: allKnown((l) => l.costUsd) ? median(runs.map((l) => l.costUsd)) : null,
+  };
+}
+
+function totals(cells: PlanCell[], trials: number): MatrixPlan {
+  return {
+    cells,
+    trials,
+    knownUsd: Number(cells.reduce((t, c) => t + (c.estimatedUsd ?? 0), 0).toFixed(4)),
+    unknownCells: cells.filter((c) => c.estimatedUsd === null).length,
+    knownDurationMs: cells.reduce((t, c) => t + (c.medianDurationMs ?? 0) * c.trials, 0),
+  };
+}
+
+const byActivity = (scenarios: readonly AnyScenario[]): AnyScenario[] =>
+  // Rangés par activité, dans l'ordre de la liste fermée : une activité, un bloc.
+  [...scenarios].sort((a, b) => ACTIVITIES.indexOf(a.activity) - ACTIVITIES.indexOf(b.activity));
+
+/**
+ * Le plan de la matrice. Le coût d'une cellule = prix du catalogue appliqué aux
+ * médianes des essais passés du scénario (sa version courante, tous modèles
+ * confondus : c'est la taille de la tâche, pas celle d'un modèle), fois le
+ * nombre d'essais. Sans essai passé ou sans prix au catalogue, le coût est
+ * ABSENT et la raison est dite : jamais un zéro.
+ */
 export function planMatrix(
   scenarios: readonly AnyScenario[],
   models: readonly MatrixModel[],
@@ -151,37 +205,20 @@ export function planMatrix(
   past: readonly PastLine[],
 ): MatrixPlan {
   const cells: PlanCell[] = [];
-  // Rangés par activité, dans l'ordre de la liste fermée : une activité, un bloc.
-  const ordered = [...scenarios].sort(
-    (a, b) => ACTIVITIES.indexOf(a.activity) - ACTIVITIES.indexOf(b.activity),
-  );
-  for (const s of ordered) {
-    const runs = past.filter(
-      (l) =>
-        l.scenario === s.id &&
-        l.scenarioVersion === s.version &&
-        (l.verdict === 'green' || l.verdict === 'red') &&
-        typeof l.inputTokens === 'number' &&
-        typeof l.outputTokens === 'number',
-    );
-    const medIn = median(runs.map((l) => l.inputTokens));
-    const medOut = median(runs.map((l) => l.outputTokens));
-    const cachedKnown = runs.filter((l) => typeof l.cachedTokens === 'number');
-    const medCached =
-      cachedKnown.length === runs.length ? median(runs.map((l) => l.cachedTokens)) : null;
-    const medDur = median(runs.map((l) => l.durationMs));
+  for (const s of byActivity(scenarios)) {
+    const m0 = pastMedians(s, past);
     for (const m of models) {
       const pricing = findModelCatalogEntry(m.provider, m.model)?.pricing;
       let estimatedUsd: number | null = null;
       let why: string | null = null;
-      if (runs.length === 0 || medIn === null || medOut === null)
+      if (m0.runs === 0 || m0.inputTokens === null || m0.outputTokens === null)
         why = 'no past run of this scenario version';
       else if (!pricing) why = `no catalog price for ${modelKey(m)}`;
       else {
         const one = estimateCallCostUsd(m.provider, m.model, {
-          inputTokens: medIn,
-          outputTokens: medOut,
-          cachedTokens: medCached ?? 0,
+          inputTokens: m0.inputTokens,
+          outputTokens: m0.outputTokens,
+          cachedTokens: m0.cachedTokens ?? 0,
         });
         estimatedUsd = Number((one * trials).toFixed(4));
       }
@@ -190,22 +227,54 @@ export function planMatrix(
         activity: s.activity,
         model: modelKey(m),
         trials,
-        pastRuns: runs.length,
-        medianDurationMs: medDur,
-        medianInputTokens: medIn,
-        medianOutputTokens: medOut,
+        pastRuns: m0.runs,
+        medianDurationMs: m0.durationMs,
+        medianInputTokens: m0.inputTokens,
+        medianOutputTokens: m0.outputTokens,
         estimatedUsd,
         why,
       });
     }
   }
-  return {
-    cells,
-    trials,
-    knownUsd: Number(cells.reduce((t, c) => t + (c.estimatedUsd ?? 0), 0).toFixed(4)),
-    unknownCells: cells.filter((c) => c.estimatedUsd === null).length,
-    knownDurationMs: cells.reduce((t, c) => t + (c.medianDurationMs ?? 0) * c.trials, 0),
-  };
+  return totals(cells, trials);
+}
+
+/** Le nom de la colonne d'un plan sans modèle imposé. */
+export const OWN_MODELS = "the agents' own models";
+
+/**
+ * Le plan d'une session SANS modèle imposé : les agents tournent sur les leurs.
+ * Aucun prix de catalogue à appliquer ; le coût estimé est la médiane de ce que
+ * les essais passés ont réellement coûté, fois le nombre d'essais. Un essai
+ * passé qui n'a pas rapporté son coût rend l'estimation absente, et c'est dit.
+ */
+export function planOwnModels(
+  scenarios: readonly AnyScenario[],
+  trials: number,
+  past: readonly PastLine[],
+): MatrixPlan {
+  const cells = byActivity(scenarios).map((s): PlanCell => {
+    const m0 = pastMedians(s, past);
+    const why =
+      m0.runs === 0
+        ? 'no past run of this scenario version'
+        : m0.costUsd === null
+          ? 'a past run did not report its cost'
+          : null;
+    return {
+      scenario: s.id,
+      activity: s.activity,
+      model: OWN_MODELS,
+      trials,
+      pastRuns: m0.runs,
+      medianDurationMs: m0.durationMs,
+      medianInputTokens: m0.inputTokens,
+      medianOutputTokens: m0.outputTokens,
+      estimatedUsd: why === null ? Number((m0.costUsd! * trials).toFixed(4)) : null,
+      why,
+    };
+  });
+  return totals(cells, trials);
 }
 
 function minutes(ms: number | null): string {
