@@ -19,7 +19,7 @@ import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import { DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import type { ToolContext } from '@nodal-agents/tools';
-import { CHECK_SCOPE, assertSpaceCannotSend, checkSpaceCannotSend, renderCheck } from '../guard';
+import { assertSpaceCannotSend, checkScope, checkSpaceCannotSend, renderCheck } from '../guard';
 import { applySpaceModel } from '../model';
 import { resetSpaceMemory } from '../reset';
 import { BENCH_SPACE_SLUG, copyIdFor, spaceIdFor } from '../space';
@@ -721,7 +721,14 @@ describe("avant chaque essai : l'équipe du banc ne peut rien envoyer hors de No
     expect(await checkSpaceCannotSend(db)).toEqual({
       ok: true,
       findings: [],
-      notCovered: ["agent coder (claude-code): runs outside Nodal's tool list"],
+      notCovered: [
+        "agent coder (claude-code): runs outside Nodal's tool list",
+        'run_command (process): held by writer',
+        'run_skill_script (process): held by writer',
+        'save_memory (model-provider): held by alfred, coder, writer',
+        'web_search (internet): held by alfred, coder, writer',
+      ],
+      scope: await checkScope(),
     });
     await expect(assertSpaceCannotSend(db)).resolves.toBeUndefined();
     // Le propriétaire, lui, a de quoi envoyer : la règle n'est pas aveugle.
@@ -845,13 +852,27 @@ describe("avant chaque essai : l'équipe du banc ne peut rien envoyer hors de No
     await sync();
     const r = await checkSpaceCannotSend(db);
     expect(r.ok).toBe(true);
-    expect(r.notCovered).toEqual(["agent coder (claude-code): runs outside Nodal's tool list"]);
+    // Ce que l'équipe tient vraiment, lu des déclarations `egress` du produit.
+    expect(r.notCovered).toEqual([
+      "agent coder (claude-code): runs outside Nodal's tool list",
+      'run_command (process): held by writer',
+      'run_skill_script (process): held by writer',
+      'save_memory (model-provider): held by alfred, coder, writer',
+      'web_search (internet): held by alfred, coder, writer',
+    ]);
     const text = renderCheck(r);
     expect(text).toContain(
       'no channel, connector or MCP server is within reach, and none can be added',
     );
-    expect(text).toContain(CHECK_SCOPE);
-    expect(CHECK_SCOPE).toContain('does not cover the shell and skill scripts');
+    const scope = await checkScope();
+    expect(text).toContain(scope);
+    // La portée vient des déclarations : un outil intégré qui atteint le réseau
+    // (generate_speech, que la première version oubliait) y est, sans liste ici.
+    expect(scope).toContain('generate_speech, save_memory (a model provider)');
+    expect(scope).toContain('code_task, run_command, run_skill_script (a process they start)');
+    expect(scope).toContain('web_search (the internet)');
+    expect(scope).toContain('nor CLI runtimes (Claude Code, Codex)');
+    expect(scope).toContain('Webhook triggers are not copied, and not covered.');
     expect(text).not.toMatch(/no tool can send/i);
   });
 });

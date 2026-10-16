@@ -41,6 +41,7 @@ export const updateAgentTool: ToolDefinition<typeof UpdateAgentInput, UpdateAgen
     'Fails if no agent with that slug exists (use create_agent to make one).',
   inputSchema: UpdateAgentInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {

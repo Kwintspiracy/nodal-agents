@@ -80,6 +80,7 @@ function makeSendMediaTool(spec: MediaSpec): ToolDefinition<typeof MediaInput, M
     summary: spec.summary,
     inputSchema: MediaInput,
     riskLevel: 'write',
+    egress: 'channel',
     // Les trois outils média (vidéo, audio, voix) sortent de cette fabrique :
     // une seule déclaration, quelque chose est parti vers le canal.
     card: 'sent',

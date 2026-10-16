@@ -72,6 +72,7 @@ export const pptxReadTool: ToolDefinition<typeof PptxReadInput, PptxReadOutput> 
     'be included.',
   inputSchema: PptxReadInput,
   riskLevel: 'read',
+  egress: 'none',
   card: 'read',
   present: ({ input, output }) =>
     output.ok
@@ -399,6 +400,7 @@ export const pptxCreateTool: ToolDefinition<typeof PptxCreateInput, PptxCreateOu
     'pptx_append_slides, and to edit text in place use pptx_replace_text.',
   inputSchema: PptxCreateInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   present: ({ output }) =>
     output.ok
@@ -448,6 +450,7 @@ export const pptxAppendSlidesTool: ToolDefinition<
     'never modified.',
   inputSchema: PptxAppendSlidesInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   present: ({ output }) =>
     output.ok
@@ -627,6 +630,7 @@ export const pptxReplaceTextTool: ToolDefinition<
     'anywhere in the presentation (or in the target slide, if slide_index is given).',
   inputSchema: PptxReplaceTextInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   present: ({ input, output }) =>
     output.ok

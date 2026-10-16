@@ -12,22 +12,58 @@
 // Les liaisons de canal de l'espace sont refusées en plus, toutes, même
 // désactivées : une liaison est un canal qu'un geste suffit à rouvrir.
 //
-// CE QUI N'EST PAS COUVERT, et la commande le DIT à chaque fois (`CHECK_SCOPE`)
-// au lieu de le laisser croire : le shell et les scripts de skill
-// (`run_command`, `run_skill_script`), les runtimes CLI et `code_task` (Claude
-// Code, Codex : leurs outils ne passent pas par la liste de Nodal), et
-// `web_search`. Ils restent, les scénarios de code en ont besoin ; un agent de
-// l'espace en runtime CLI est nommé un par un dans `notCovered`.
+// CE QUI N'EST PAS COUVERT, et la commande le DIT à chaque fois (`scope`) au
+// lieu de le laisser croire. La liste n'est pas tenue ici : c'est la
+// déclaration `egress` de chaque outil intégré (@nodal-agents/tools, rendue
+// obligatoire par `egress.test.ts`) — un processus lancé (shell, script de
+// skill, CLI de code), internet, un fournisseur de modèle. S'y ajoutent les
+// runtimes CLI (Claude Code, Codex : leurs outils ne passent pas par la liste
+// de Nodal), et les déclencheurs webhook, ni copiés ni couverts. Ces outils
+// restent, les scénarios de code en ont besoin ; `notCovered` nomme ceux que
+// l'équipe tient vraiment, et chaque agent en runtime CLI.
 
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { AgentId, EntityId } from '@nodal-agents/orchestration';
+import type { ToolEgress } from '@nodal-agents/tools';
 import { requireBenchSpace } from './space';
 
-/** La phrase que la commande imprime, que le contrôle passe ou non. */
-export const CHECK_SCOPE =
-  'This check covers channels (tokens and bindings), connectors and MCP servers, and the root ' +
-  'grants that add one. It does not cover the shell and skill scripts (run_command, ' +
-  'run_skill_script), CLI runtimes and code_task (Claude Code, Codex), or web_search.';
+/** Ce que veut dire, pour un outil intégré, chaque `egress` que le contrôle ne couvre pas. */
+const NOT_COVERED_EGRESS: Partial<Record<ToolEgress, string>> = {
+  process: 'a process they start',
+  internet: 'the internet',
+  'model-provider': 'a model provider',
+};
+
+/** Les outils intégrés qui atteignent le réseau d'eux-mêmes, hors canal : nom → egress. */
+async function networkBuiltins(): Promise<Map<string, ToolEgress>> {
+  const { createToolRegistry, registerBuiltins } = await import('@nodal-agents/tools');
+  const registry = createToolRegistry();
+  registerBuiltins(registry);
+  return new Map(
+    registry
+      .list()
+      .filter((t) => t.egress !== undefined && t.egress in NOT_COVERED_EGRESS)
+      .map((t) => [t.name, t.egress!] as const)
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+}
+
+/** La phrase que la commande imprime, que le contrôle passe ou non, lue des déclarations. */
+export async function checkScope(): Promise<string> {
+  const byEgress = new Map<ToolEgress, string[]>();
+  for (const [name, egress] of await networkBuiltins()) {
+    byEgress.set(egress, [...(byEgress.get(egress) ?? []), name]);
+  }
+  const parts = [...byEgress].map(
+    ([egress, names]) => `${names.join(', ')} (${NOT_COVERED_EGRESS[egress]!})`,
+  );
+  return (
+    'This check covers channels (tokens and bindings), connectors and MCP servers, and the root ' +
+    'grants that add one. It does not cover the built-in tools that reach the network on their ' +
+    `own: ${parts.join('; ')}; nor CLI runtimes (Claude Code, Codex), whose tools are not ` +
+    "Nodal's. Webhook triggers are not copied, and not covered."
+  );
+}
 
 export interface SendCheck {
   ok: boolean;
@@ -35,6 +71,8 @@ export interface SendCheck {
   findings: string[];
   /** Ce que le contrôle ne peut pas voir, nommé : ne refuse pas l'essai. */
   notCovered: string[];
+  /** Ce que le contrôle couvre et ne couvre pas, en une phrase. */
+  scope: string;
 }
 
 /** Ce qui, dans l'espace du banc, peut parler au monde. Ne modifie rien. */
@@ -44,6 +82,8 @@ export async function checkSpaceCannotSend(db: AnyDrizzleDb, spaceId?: string): 
   const id = spaceId ?? (await requireBenchSpace(db)).id;
   const findings: string[] = [];
   const notCovered: string[] = [];
+  const network = await networkBuiltins();
+  const holders = new Map<string, string[]>();
 
   const team = await db
     .select({ id: d.agents.id, slug: d.agents.slug, runtime: d.agents.runtime })
@@ -74,9 +114,12 @@ export async function checkSpaceCannotSend(db: AnyDrizzleDb, spaceId?: string): 
     if (a.runtime !== 'nodal') {
       notCovered.push(`agent ${a.slug} (${a.runtime}): runs outside Nodal's tool list`);
     }
-    const { outbound } = await computeAgentToolOrigins(a.id as AgentId, id as EntityId, db, {
+    const { names, outbound } = await computeAgentToolOrigins(a.id as AgentId, id as EntityId, db, {
       hasDeliveryRecipient: true,
     });
+    for (const n of names) {
+      if (network.has(n)) holders.set(n, [...(holders.get(n) ?? []), a.slug]);
+    }
     const byVia = new Map<string, Set<string>>();
     for (const o of outbound) {
       const key = `${o.via} (${o.origin})`;
@@ -88,7 +131,11 @@ export async function checkSpaceCannotSend(db: AnyDrizzleDb, spaceId?: string): 
       );
     }
   }
-  return { ok: findings.length === 0, findings, notCovered };
+  for (const [tool, egress] of network) {
+    const who = holders.get(tool);
+    if (who) notCovered.push(`${tool} (${egress}): held by ${who.join(', ')}`);
+  }
+  return { ok: findings.length === 0, findings, notCovered, scope: await checkScope() };
 }
 
 /** Le résultat, tel que la commande l'imprime : ce qui est vu, ce qui ne l'est pas, la portée. */
@@ -102,7 +149,7 @@ export function renderCheck(c: SendCheck): string {
   if (c.notCovered.length > 0) {
     lines.push('Not covered:', ...c.notCovered.map((n) => `  - ${n}`));
   }
-  lines.push(CHECK_SCOPE);
+  lines.push(c.scope);
   return lines.join('\n');
 }
 
@@ -113,7 +160,7 @@ export async function assertSpaceCannotSend(db: AnyDrizzleDb, spaceId?: string):
     throw new Error(
       `bench_space_can_send: the trial does not start, the bench team can reach outside Nodal:\n` +
         r.findings.map((f) => `  - ${f}`).join('\n') +
-        `\n${CHECK_SCOPE}`,
+        `\n${r.scope}`,
     );
   }
 }

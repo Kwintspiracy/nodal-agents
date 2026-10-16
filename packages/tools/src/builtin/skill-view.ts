@@ -81,6 +81,7 @@ export const skillViewTool: ToolDefinition<typeof SkillViewInputSchema, SkillVie
     'Follow what it returns instead of reimplementing the skill yourself.',
   inputSchema: SkillViewInputSchema,
   riskLevel: 'read',
+  egress: 'none',
   loading: 'eager',
   card: 'read',
   present: ({ output }) =>

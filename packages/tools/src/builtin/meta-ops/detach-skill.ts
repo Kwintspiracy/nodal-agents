@@ -28,6 +28,7 @@ export const detachSkillTool: ToolDefinition<typeof DetachSkillInput, DetachSkil
     'Idempotent: ok even if the skill was not assigned.',
   inputSchema: DetachSkillInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
