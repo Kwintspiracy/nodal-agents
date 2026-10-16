@@ -202,3 +202,104 @@ describe('the live bench trials, and only them', () => {
     expect(rows.map((r) => r.id)).not.toContain(benchDone);
   });
 });
+
+describe('what the orchestration judges read from the tree', () => {
+  it('reads the return_result calls from the transcript, the deliveries and the card input, of the tree only', async () => {
+    await pg.exec(
+      'delete from job_deliveries; delete from approval_requests; delete from agent_jobs;',
+    );
+    const root = await job({ status: 'failed' });
+    const kid = await job({ parent: root, status: 'failed' });
+    const stranger = await job({ status: 'completed' });
+    const transcript = (status: string, reason: string) =>
+      JSON.stringify([
+        { role: 'user', content: 'copie le fichier' },
+        { role: 'assistant', content: 'texte seul, pas de partie' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'c0',
+              toolName: 'return_result',
+              input: { status: 'success', reason: 'first try' },
+            },
+          ],
+        },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Je termine.' },
+            { type: 'tool-call', toolCallId: 'c1', toolName: 'file_read', input: { path: 'x' } },
+            {
+              type: 'tool-call',
+              toolCallId: 'c2',
+              toolName: 'return_result',
+              input: { status, reason },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'tool-result', toolCallId: 'c2', toolName: 'return_result' }],
+        },
+      ]);
+    await pg.query(`update agent_jobs set messages = $2::jsonb where id = $1`, [
+      root,
+      transcript('blocked', 'the copy failed'),
+    ]);
+    // Un transcript plus ancien : l'entrée sous `args`.
+    await pg.query(`update agent_jobs set messages = $2::jsonb where id = $1`, [
+      kid,
+      JSON.stringify([
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'k',
+              toolName: 'return_result',
+              args: { status: 'blocked', reason: 'missing source' },
+            },
+          ],
+        },
+      ]),
+    ]);
+    await pg.query(`update agent_jobs set messages = $2::jsonb where id = $1`, [
+      stranger,
+      transcript('success', ''),
+    ]);
+    await pg.query(
+      `insert into job_deliveries (job_id, channel, chat_id, payload, outcome, idempotency_key)
+       values ($1, 'telegram', '42', '391', 'confirmed', 'k-root'), ($2, 'telegram', '42', 'x', 'confirmed', 'k-stranger')`,
+      [root, stranger],
+    );
+    await pg.query(
+      `insert into approval_requests (entity_id, job_id, tool_name, tool_input, kind, status)
+       values ($1, $2, 'ask_user', $3::jsonb, 'question', 'pending')`,
+      [entityId, kid, JSON.stringify({ question: 'Couleur ?', options: ['bleu', 'vert'] })],
+    );
+
+    const facts = await readTreeFacts(db, root);
+
+    // Par job, dans l'ordre du transcript : c'est ce que les juges lisent
+    // (le DERNIER appel d'un job). L'ordre entre deux jobs nés dans la même
+    // milliseconde n'a pas de sens.
+    const callsOf = (jobId: string) =>
+      facts.returnResults.filter((r) => r.jobId === jobId).map((r) => JSON.parse(r.input!));
+    expect(facts.returnResults).toHaveLength(3);
+    expect(callsOf(root)).toEqual([
+      { status: 'success', reason: 'first try' },
+      { status: 'blocked', reason: 'the copy failed' },
+    ]);
+    expect(callsOf(kid)).toEqual([{ status: 'blocked', reason: 'missing source' }]);
+    expect(facts.deliveries.map((d) => [d.jobId, d.channel, d.outcome])).toEqual([
+      [root, 'telegram', 'confirmed'],
+    ]);
+    expect(facts.approvals).toHaveLength(1);
+    expect(JSON.parse(facts.approvals[0]!.input!)).toEqual({
+      question: 'Couleur ?',
+      options: ['bleu', 'vert'],
+    });
+  });
+});

@@ -54,6 +54,7 @@ export const queryMemoryTool: ToolDefinition<typeof QueryMemoryInputSchema, Memo
     'filter by skill_tags for narrower lookups.',
   inputSchema: QueryMemoryInputSchema,
   riskLevel: 'write', // write because it updates last_accessed_at on matched rows
+  egress: 'none',
   loading: 'eager',
   // Une recherche, pas une table (retour de Quentin, 06/09) : ce que l'agent
   // fait ici, c'est chercher des souvenirs ; le fil les montre comme des

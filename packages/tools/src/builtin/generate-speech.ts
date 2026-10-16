@@ -120,6 +120,7 @@ export const generateSpeechTool: ToolDefinition<
     'optionally the `model`, the `voice` and a delivery `style`. Returns the path of the file.',
   inputSchema: GenerateSpeechInputSchema,
   riskLevel: 'write',
+  egress: 'model-provider',
   card: 'files',
   present: ({ output }) =>
     output.ok

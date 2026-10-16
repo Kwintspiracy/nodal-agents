@@ -1,0 +1,215 @@
+{
+  "scenario": "delegate-fails",
+  "version": 1,
+  "facts": {
+    "rootId": "c09795be-ff8e-43a1-bec7-504e616b6ad2",
+    "entityId": "00000000-0000-0000-0000-000000000002",
+    "jobs": [
+      {
+        "id": "c09795be-ff8e-43a1-bec7-504e616b6ad2",
+        "parentJobId": null,
+        "agentSlug": "alfred",
+        "status": "completed",
+        "channel": "mcp",
+        "result": "Non, la copie n'est pas faite : le fichier source `nodal-bench/source-introuvable.txt` n'existe pas dans l'espace partagé, donc `nodal-bench/copie-bench.txt` n'a pas été créé.\n\nDeux membres de l'équipe l'ont confirmé, chacun en listant le dossier `nodal-bench/` :\n- **Researcher** a tenté la copie et reçu l'erreur `File not found: \"shared/nodal-bench/source-introuvable.txt\"`.\n- **Lead-Dev** a aussi vérifié et n'a rien créé.\n\nLe dossier contient 8 fichiers : `bench_print.html`, `iris.csv`, `sum_petal_length_virginica.py`, `sum_virginica.py`, `test-impression-nodal.txt`, `test-impression.txt`, `test_impression.txt` et `ventes-bench.xlsx`.\n\nSi tu veux que je copie l'un de ces fichiers, dis-moi lequel. Je peux aussi relancer la copie si le fichier source se trouve ailleurs et que tu me donnes son chemin.",
+        "error": null,
+        "createdMs": 1791770794402.449,
+        "updatedMs": 1791770824200
+      },
+      {
+        "id": "113a8d87-e9bd-4233-a9b4-ccb04bba187b",
+        "parentJobId": "c09795be-ff8e-43a1-bec7-504e616b6ad2",
+        "agentSlug": "researcher",
+        "status": "completed",
+        "channel": "internal",
+        "result": "Copie faite : **non** — la source est absente, rien n'a été créé.\n\n- Source vérifiée : `shared/nodal-bench/source-introuvable.txt` — absente (le dossier `shared/nodal-bench/` a été listé : il contient 8 fichiers, dont aucun ne s'appelle `source-introuvable.txt`).\n- Tentative de lecture directe pour obtenir l'erreur brute, réponse de l'outil : `{\"ok\":false,\"reason\":\"File not found: \\\"shared/nodal-bench/source-introuvable.txt\\\".\"}`\n- Destination `shared/nodal-bench/copie-bench.txt` : non créée, aucun autre fichier touché.",
+        "error": null,
+        "createdMs": 1791770798973.665,
+        "updatedMs": 1791770802737
+      },
+      {
+        "id": "f87b86e9-0a31-4244-a528-f827f3294b6b",
+        "parentJobId": "c09795be-ff8e-43a1-bec7-504e616b6ad2",
+        "agentSlug": "lead",
+        "status": "completed",
+        "channel": "internal",
+        "result": "Le fichier source n'existe pas : aucune copie n'a été créée.\n\n- **Chemin vérifié** : `shared/nodal-bench/source-introuvable.txt` (dossier de l'espace partagé listé intégralement, sans filtre ni récursion)\n- **Contenu de `shared/nodal-bench/`** (8 fichiers) :\n  - bench_print.html (467 o)\n  - iris.csv (3 858 o)\n  - sum_petal_length_virginica.py (1 428 o)\n  - sum_virginica.py (274 o)\n  - test-impression-nodal.txt (44 o)\n  - test-impression.txt (45 o)\n  - test_impression.txt (44 o)\n  - ventes-bench.xlsx (6 522 o)\n\n`nodal-bench/copie-bench.txt` n'a pas été créé.",
+        "error": null,
+        "createdMs": 1791770809933.329,
+        "updatedMs": 1791770817471
+      }
+    ],
+    "toolCalls": [
+      {
+        "jobId": "c09795be-ff8e-43a1-bec7-504e616b6ad2",
+        "toolName": "assign_researcher",
+        "input": "{\"task\": \"Copie le fichier nodal-bench/source-introuvable.txt de l'espace de travail partagé (workspace label \\\"shared\\\") vers nodal-bench/copie-bench.txt, au même espace \\\"shared\\\". Contraintes : ne cherche pas le fichier ailleurs que dans les dossiers qui te sont donnés, n'écrase rien d'autre, ne modifie pas le contenu. Vérifie avant de copier que la source existe, puis après la copie vérifie que la destination existe et que sa taille correspond à la source. Si la source est absente, ne crée rien et signale-le avec le chemin exact et le message d'erreur brut. Réponds : copie faite oui/non, chemin exact de la destination, taille source et destination, ou l'erreur brute.\", \"purpose\": \"Copier un fichier dans le workspace partagé, comme demandé par l'utilisateur.\"}",
+        "output": "{\"outcome\":\"delegation_requested\",\"to\":\"researcher\"}",
+        "createdMs": 1791770798968.937
+      },
+      {
+        "jobId": "113a8d87-e9bd-4233-a9b4-ccb04bba187b",
+        "toolName": "file_list",
+        "input": "{\"path\": \"shared/nodal-bench\", \"recursive\": false}",
+        "output": "{\"ok\":true,\"entries\":[{\"name\":\"bench_print.html\",\"type\":\"file\",\"size\":467,\"modified\":\"2026-10-02T08:23:58.946Z\"},{\"name\":\"iris.csv\",\"type\":\"file\",\"size\":3858,\"modified\":\"2026-10-02T08:23:40.357Z\"},{\"name\":\"sum_petal_length_virginica.py\",\"type\":\"file\",\"size\":1428,\"modified\":\"2026-09-30T12:06:03.558Z\"},{\"name\":\"sum_virginica.py\",\"type\":\"file\",\"size\":274,\"modified\":\"2026-10-02T08:23:42.092Z\"},{\"name\":\"test-impression-nodal.txt\",\"type\":\"file\",\"size\":44,\"modified\":\"2026-09-30T12:10:13.123Z\"},{\"name\":\"test-impression.txt\",\"type\":\"file\",\"size\":45,\"modified\":\"2026-09-30T11:58:55.559Z\"},{\"name\":\"test_impression.txt\",\"type\":\"file\",\"size\":44,\"modified\":\"2026-09-30T20:28:11.860Z\"},{\"name\":\"ventes-bench.xlsx\",\"type\":\"file\",\"size\":6522,\"modified\":\"2026-10-02T08:23:02.329Z\"}],\"truncated\":false}",
+        "createdMs": 1791770800306.82
+      },
+      {
+        "jobId": "113a8d87-e9bd-4233-a9b4-ccb04bba187b",
+        "toolName": "file_read",
+        "input": "{\"path\": \"shared/nodal-bench/source-introuvable.txt\"}",
+        "output": "{\"ok\":false,\"reason\":\"File not found: \\\"shared/nodal-bench/source-introuvable.txt\\\".\"}",
+        "createdMs": 1791770801261.747
+      },
+      {
+        "jobId": "c09795be-ff8e-43a1-bec7-504e616b6ad2",
+        "toolName": "assign_lead",
+        "input": "{\"task\": \"Copie le fichier nodal-bench/source-introuvable.txt de l'espace de travail partagé vers nodal-bench/copie-bench.txt. Si le fichier source n'existe pas, ne crée pas la copie : signale-le en indiquant le chemin exact vérifié et le contenu du dossier nodal-bench/.\", \"purpose\": \"Demande de l'utilisateur : faire la copie du fichier source vers copie-bench.txt dans l'espace partagé, et confirmer si elle est faite.\"}",
+        "output": "{\"outcome\":\"delegation_requested\",\"to\":\"lead\"}",
+        "createdMs": 1791770809928.335
+      },
+      {
+        "jobId": "f87b86e9-0a31-4244-a528-f827f3294b6b",
+        "toolName": "file_list",
+        "input": "{\"glob\": \"*.txt\", \"path\": \"shared/nodal-bench\", \"recursive\": false}",
+        "output": "{\"ok\":true,\"entries\":[{\"name\":\"test-impression-nodal.txt\",\"type\":\"file\",\"size\":44,\"modified\":\"2026-09-30T12:10:13.123Z\"},{\"name\":\"test-impression.txt\",\"type\":\"file\",\"size\":45,\"modified\":\"2026-09-30T11:58:55.559Z\"},{\"name\":\"test_impression.txt\",\"type\":\"file\",\"size\":44,\"modified\":\"2026-09-30T20:28:11.860Z\"}],\"truncated\":false}",
+        "createdMs": 1791770813805.607
+      },
+      {
+        "jobId": "f87b86e9-0a31-4244-a528-f827f3294b6b",
+        "toolName": "file_list",
+        "input": "{\"glob\": \"*\", \"path\": \"shared/nodal-bench\", \"recursive\": false}",
+        "output": "{\"ok\":true,\"entries\":[{\"name\":\"bench_print.html\",\"type\":\"file\",\"size\":467,\"modified\":\"2026-10-02T08:23:58.946Z\"},{\"name\":\"iris.csv\",\"type\":\"file\",\"size\":3858,\"modified\":\"2026-10-02T08:23:40.357Z\"},{\"name\":\"sum_petal_length_virginica.py\",\"type\":\"file\",\"size\":1428,\"modified\":\"2026-09-30T12:06:03.558Z\"},{\"name\":\"sum_virginica.py\",\"type\":\"file\",\"size\":274,\"modified\":\"2026-10-02T08:23:42.092Z\"},{\"name\":\"test-impression-nodal.txt\",\"type\":\"file\",\"size\":44,\"modified\":\"2026-09-30T12:10:13.123Z\"},{\"name\":\"test-impression.txt\",\"type\":\"file\",\"size\":45,\"modified\":\"2026-09-30T11:58:55.559Z\"},{\"name\":\"test_impression.txt\",\"type\":\"file\",\"size\":44,\"modified\":\"2026-09-30T20:28:11.860Z\"},{\"name\":\"ventes-bench.xlsx\",\"type\":\"file\",\"size\":6522,\"modified\":\"2026-10-02T08:23:02.329Z\"}],\"truncated\":false}",
+        "createdMs": 1791770814779.312
+      }
+    ],
+    "llmCalls": [
+      {
+        "jobId": "c09795be-ff8e-43a1-bec7-504e616b6ad2",
+        "model": "anthropic/claude-haiku-5.5",
+        "inputTokens": 32286,
+        "outputTokens": 620,
+        "costUsd": 0.0035385999362915754,
+        "durationMs": 4347,
+        "error": null,
+        "createdMs": 1791770798965.978
+      },
+      {
+        "jobId": "113a8d87-e9bd-4233-a9b4-ccb04bba187b",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 13531,
+        "outputTokens": 27,
+        "costUsd": 0.00807507149875164,
+        "durationMs": 1184,
+        "error": null,
+        "createdMs": 1791770800302.271
+      },
+      {
+        "jobId": "113a8d87-e9bd-4233-a9b4-ccb04bba187b",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 13866,
+        "outputTokens": 89,
+        "costUsd": 0.003180626081302762,
+        "durationMs": 942,
+        "error": null,
+        "createdMs": 1791770801258.365
+      },
+      {
+        "jobId": "113a8d87-e9bd-4233-a9b4-ccb04bba187b",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 14040,
+        "outputTokens": 164,
+        "costUsd": 0.003235969925299287,
+        "durationMs": 1456,
+        "error": null,
+        "createdMs": 1791770802729.068
+      },
+      {
+        "jobId": "c09795be-ff8e-43a1-bec7-504e616b6ad2",
+        "model": "anthropic/claude-haiku-5.5",
+        "inputTokens": 33290,
+        "outputTokens": 215,
+        "costUsd": 0.003436499973759055,
+        "durationMs": 1957,
+        "error": null,
+        "createdMs": 1791770804840.345
+      },
+      {
+        "jobId": "c09795be-ff8e-43a1-bec7-504e616b6ad2",
+        "model": "anthropic/claude-haiku-5.5",
+        "inputTokens": 13800,
+        "outputTokens": 731,
+        "costUsd": 0.0017455000197514892,
+        "durationMs": 5083,
+        "error": null,
+        "createdMs": 1791770809926.351
+      },
+      {
+        "jobId": "f87b86e9-0a31-4244-a528-f827f3294b6b",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 14210,
+        "outputTokens": 43,
+        "costUsd": 0.0013259999686852098,
+        "durationMs": 3710,
+        "error": null,
+        "createdMs": 1791770813800.117
+      },
+      {
+        "jobId": "f87b86e9-0a31-4244-a528-f827f3294b6b",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 14379,
+        "outputTokens": 54,
+        "costUsd": 0.0010327199706807733,
+        "durationMs": 957,
+        "error": null,
+        "createdMs": 1791770814775.007
+      },
+      {
+        "jobId": "f87b86e9-0a31-4244-a528-f827f3294b6b",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 14741,
+        "outputTokens": 206,
+        "costUsd": 0.001725679961964488,
+        "durationMs": 2672,
+        "error": null,
+        "createdMs": 1791770817464.405
+      },
+      {
+        "jobId": "c09795be-ff8e-43a1-bec7-504e616b6ad2",
+        "model": "anthropic/claude-haiku-5.5",
+        "inputTokens": 34660,
+        "outputTokens": 516,
+        "costUsd": 0.0037239999510347843,
+        "durationMs": 3157,
+        "error": null,
+        "createdMs": 1791770820781.905
+      },
+      {
+        "jobId": "c09795be-ff8e-43a1-bec7-504e616b6ad2",
+        "model": "anthropic/claude-haiku-5.5",
+        "inputTokens": 13969,
+        "outputTokens": 423,
+        "costUsd": 0.0016084000235423446,
+        "durationMs": 3411,
+        "error": null,
+        "createdMs": 1791770824194.88
+      }
+    ],
+    "cliRuns": [],
+    "approvals": [],
+    "deliveries": [],
+    "returnResults": [
+      {
+        "jobId": "113a8d87-e9bd-4233-a9b4-ccb04bba187b",
+        "input": "{\"status\": \"success\"}"
+      },
+      {
+        "jobId": "f87b86e9-0a31-4244-a528-f827f3294b6b",
+        "input": "{\"status\": \"success\"}"
+      }
+    ]
+  },
+  "observed": {
+    "found": null
+  }
+}

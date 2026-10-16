@@ -22,6 +22,19 @@ import type { JobPlacement } from './job-placement';
 // RiskLevel is OperationRiskLevel — single source of truth from @nodal-agents/shared
 export type RiskLevel = OperationRiskLevel;
 
+/**
+ * What a tool reaches on its own (see `ToolDefinition.egress`):
+ * - `none`: Nodal's database and the workspace's files, nothing else;
+ * - `channel`: a human channel (Telegram, Discord, Slack), the delivery tools;
+ * - `model-provider`: a configured model provider, with content the tool sends
+ *   (speech synthesis, embeddings), beyond the job's own model call;
+ * - `internet`: hosts on the open internet (a search);
+ * - `process`: a process it starts, which can reach anything (a shell, a skill
+ *   script, a coding CLI), at the call or later: `declare_verification`'s
+ *   commands run when the job finishes.
+ */
+export type ToolEgress = 'none' | 'channel' | 'model-provider' | 'internet' | 'process';
+
 // Re-exported so a tool file declaring `resolveMutationTargets` or `card`
 // imports its argument type from the same place as the field itself.
 export type { MutationTarget, ToolCard, ToolCardPayload };
@@ -399,6 +412,20 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
   summary?: string;
   inputSchema: TInput;
   riskLevel: OperationRiskLevel;
+  /**
+   * What this tool, BY ITSELF, reaches beyond Nodal's own database and disk,
+   * besides the job's model call (`ToolEgress`). A DECLARATION, like
+   * `riskLevel` and `mutatesWorkspace`: no scanner can prove what a function
+   * contacts. A workspace that must send nothing (the bench space) reads it to
+   * say which tools its pre-trial check does not cover, instead of keeping a
+   * list of names of its own.
+   *
+   * Optional in the TYPE (connector and MCP tools are classified by their
+   * origin), required for every tool the PRODUCT ships: the test over the
+   * served-tool catalog (`servedToolDefinitions`, @nodal-agents/orchestration)
+   * names any that does not declare it.
+   */
+  egress?: ToolEgress;
   /**
    * Whether the model receives this tool's SCHEMA on every turn (`eager`) or
    * only once the job has loaded it (`deferred`, issue #612).

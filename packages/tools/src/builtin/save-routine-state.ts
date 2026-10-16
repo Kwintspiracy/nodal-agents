@@ -64,6 +64,7 @@ export const saveRoutineStateTool: ToolDefinition<
     'the user, and it is retrieved by search, so a value stored there may not come back.',
   inputSchema: SaveRoutineStateInputSchema,
   riskLevel: 'write',
+  egress: 'none',
   card: 'text',
   execute: async (input, ctx) => {
     // La routine à laquelle ce job appartient — lue sur le job, seule source de

@@ -2192,6 +2192,7 @@ async function runJobTracked(
     const resolved = await resolveAgentLlmClient(
       db,
       {
+        entityId: agentRow.entityId,
         llmKeyId: agentRow.llmKeyId,
         fallbackChain: agentRow.fallbackChain ?? null,
         model: agent.model,

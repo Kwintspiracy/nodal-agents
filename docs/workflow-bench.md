@@ -14,16 +14,94 @@ Code: `packages/bench/src/workflows/`. Results: `apps/qa/data/workflows.ndjson`
 ```bash
 pnpm bench:workflows                        # the nightly set, one trial each
 pnpm bench:workflows --only question,file   # some scenarios (on-demand ones included)
-pnpm bench:workflows --set release          # every scenario, comfyui-telegram included
+pnpm bench:workflows --activity excel,word  # every scenario of these activities (on-demand ones included)
+pnpm bench:workflows --set release          # every scenario, the on-demand ones included (not the owner-sending ones)
+pnpm bench:workflows --only comfyui-telegram --allow-owner-sends
+                                            # a scenario that sends TO THE OWNER: named, and this flag
 pnpm bench:workflows --trials 3             # three trials per scenario
+pnpm bench:workflows --models openrouter:z-ai/glm-5.3,deepseek-chat --dry-run
+                                            # the model matrix: the plan and its cost, nothing run
 pnpm bench:workflows --stack D:/APPS/NodalAI  # measure the stack of another checkout
-pnpm bench:workflows --list                 # scenarios, requests and what green means
+pnpm bench:workflows --list                 # scenarios, activities, needs, requests, what green means
+pnpm bench:workflows --catalog              # rewrite apps/qa/data/workflow-catalog.json
 ```
 
 The stack must be up (`pnpm --filter nodal-agents exec tsx src/index.ts --dev`).
 Each request goes through the user MCP path (`nodal-agents mcp serve`, tool
 `run_task`), which wakes the runner at once. The exit code is 1 when a trial is
-not green.
+red or a bench error; a skipped trial does not fail the run.
+
+## Activities and needs
+
+Every scenario declares an **activity**, from a closed list
+(`ACTIVITIES`, `packages/bench/src/workflows/types.ts`): question, research,
+deep-research, code, excel, word, powerpoint, pdf, image-comfyui, html-page,
+email, airtable, notion, google-workspace, delivery, print, orchestration,
+memory. The portal draws one matrix row per activity. E-mail, Airtable,
+Notion, Google Workspace, delivery and memory have no scenario yet: they need
+a test account or a send, which waits on an owner decision, and the portal
+says "no scenario yet".
+
+A scenario also declares its **needs** (`needs.ts`): `comfyui`,
+`obsidian-vault`, `printer`, `no-mail-sender`. A missing need SKIPS the trial,
+with its reason, without starting a job: a `skipped` line, grey on the
+portal, never red (nothing was tried). One mechanism for every scenario; it
+replaced the per-scenario `requires`, which made such a trial red.
+
+- `comfyui`: an address declared in `~/.nodalai/bench.json`
+  (`{"services": {"comfyui": "http://127.0.0.1:8188"}}`) that answers a GET
+  within 3 s. Nothing about the owner's machine is written in the code.
+- `obsidian-vault`: a workspace folder holding `.obsidian/`.
+- `printer`: an agent of the workspace has `request_print`.
+- `no-mail-sender`: no agent of the workspace can send e-mail, and no MCP
+  server of the team has unknown tools (see below).
+
+The team's tools are read by the **product's own rule**,
+`computeAgentToolNames` (`@nodal-agents/orchestration`), for every active
+agent: adapter connectors (`connectors` + `agent_connector_assignments`) and
+MCP servers, with each agent's whitelist. Until bench v2 the bench read only
+`mcp_servers.available_tools`; Gmail, an adapter connector, was invisible to
+the mail guard, and seven e-mails left the owner's account (#711). The mail
+guard reads the full tool name by words, camelCase split, server prefix
+included (a word starting with a sending verb, and a word containing "mail" or
+naming a mail service, or `smtp`): it sees `gmail_send_email`,
+`outlook_reply_message`, `outlookForwardMessage`, `gmail_users_drafts_create`,
+`mailchimp__campaign_send`, `gmail_mcp__send_message`, and not Telegram's
+`send_message`. It fails CLOSED on an MCP server whose tools are not known (no
+usable cache by the runner's own rule, `isUsableMcpToolCache`, now in
+`@nodal-agents/adapter-mcp`): the runner connects to such a server when a job
+starts and may offer any tool, so the scenario is skipped with that reason.
+
+**The name guard is defence in depth, not the protection.** No list of names
+will ever see an e-mail sent by a generic tool (`run_command` with smtplib or
+curl, `run_skill_script`). The protection is that the bench holds **no real
+recipient anywhere**: `recipients.test.ts` scans every scenario request and
+every file under `packages/bench/fixtures` (Office and PDF text included, read
+with the judges' readers) for e-mail addresses, phone numbers and chat ids, and
+fails unless each address is under a reserved domain (`.invalid`, `.test`,
+`.example`, `example.com/.net/.org`) or a declared test recipient
+(`BENCH_TEST_RECIPIENTS`, empty until the owner decides on test accounts);
+phone numbers and chat ids must be declared. Later, a bench workspace whose
+only accounts are test accounts. The general form of the name guard would be
+an `outbound` mark on each connector operation (`OperationDescriptor`) and
+reading `openWorldHint` on MCP tools.
+
+## Model matrix
+
+`--models a,b,c` runs every selected scenario once per model (times
+`--trials`). A model is `provider:model`, or a bare model the catalog knows
+under exactly one provider; an unknown or ambiguous one is an error.
+
+How a model is applied to a trial is an **open owner decision**: a separate
+bench workspace with its own copy of the team, or the owner's agents. There
+is no per-job model today (`agents.model` only). Until it is decided, the
+bench changes no agent and creates no workspace: the seam is `ModelApplier`
+(`matrix.ts`), and its only implementation refuses, before the database is
+even opened. `--dry-run` prints the plan: scenario × model × trials, grouped
+by activity, each cell priced from the model catalog and the medians of the
+scenario's past runs (input, cached and output tokens, current version only,
+skipped and error runs excluded). A cell without a past run or without a
+catalog price says so; it is never priced at zero.
 
 ## Scenarios
 
@@ -37,9 +115,132 @@ not green.
 | `print` | nightly | a pending print request holding the note, nothing sent to the printer |
 | `recipe` | nightly | a pending one-page print request with a photo. Whether the photo comes from the recipe page read: not verified (#648) |
 | `comfyui-telegram` | on-demand | an image file written during the run, and a confirmed send of that image |
+| `mcp-answer` | nightly | the job result gives 391, `nodal-bench/calcul-bench.txt` written with it, nothing sent to a messaging channel (guards #649) |
+| `undoable-action` | nightly | `nodal-bench/tour-eiffel-bench.md` written, nothing sent to a channel in place of the e-mail, the root ended on an explained block: the e-mail to `bench@example.invalid` cannot be sent (#654) |
+| `undoable-action-delegated` | nightly | the same through a teammate (`nodal-bench/pont-du-gard-bench.md`): delegated, file written, the root ended on an explained block (#654) |
+| `delegate-fails` | nightly | delegated, a delegated job failed (its source file does not exist), no copy made, the root ended on its own explained block, not `completed` and not killed by an anti-loop cap |
+| `ask-before-acting` | on-demand | a question card offering "bleu" and "vert", the run waited on it until the bench stopped it, nothing wrote or named `nodal-bench/couleur-bench.txt`, nobody answered |
 
-Every scenario is also red when the root did not end `completed`, or when the
-run raised an approval or a question.
+The first eight scenarios are also red when the root did not end `completed`,
+or when the run raised an approval or a question. The orchestration scenarios
+state their own end in their green sentence: an impossible request must end
+on an explained block, and `ask-before-acting` must stop on its question.
+
+## Scenarios by activity (bench v2)
+
+42 more scenarios, `on-demand` (they run with `--activity`, `--only` or
+`--set release`; putting some in the nightly set is the owner's call, since
+every one costs model calls). None has an external effect or needs an
+external account. Each is red when the root did not end `completed` or when
+anything was asked. `pnpm bench:workflows --list` prints each one's French
+request and its one-sentence green.
+
+| activity | scenarios | judged on |
+|---|---|---|
+| question | `question-percent`, `question-weekday`, `question-seconds`, `question-river` | facts in the answer (a number in any writing, a name), no delegation |
+| research | `research-penicillin`, `research-transistor`, `research-rabies`, `research-voyager` | a web tool called by some job of the tree, stable historical facts in the answer, links on 2+ distinct sites. Sources read: not verified (#648) |
+| deep-research | `deep-research-dna`, `-gps`, `-gutenberg`, `-apollo` | a Markdown report under `nodal-bench/` written during the run: 3000+ characters, 3+ headings, links on 4+ sites, the facts; a web call. Sources read: not verified |
+| code | `code-http-server`, `code-install-dep`, `code-bugfix`, `code-data` | a Node project from `fixtures/code` with a failing suite (one starts a local HTTP server): every fixture test must pass by name in the agent's own last test run (TAP or spec lines of its command tool), test files byte for byte; the bench never re-runs the suite (not verified, #753); `slugify` declared, installed and imported; the bug file changed; revenue per region recomputed from the untouched CSV, to the cent |
+| excel | `excel-edit-column`, `excel-new-sheet`, `excel-read-answer`, `excel-csv-import` | the workbook reopened with exceljs; formulas without a cached result are computed by the bench (`evaluateCell`: arithmetic, references across sheets, SUM/AVERAGE/MIN/MAX/ROUND/PRODUCT; anything else is said, never guessed); the fixture's cells unchanged; a read leaves the file byte for byte |
+| word | `word-create`, `word-replace`, `word-append`, `word-table` | text by mammoth (the product's `docx_read`), headings and tables from the OOXML; a replacement leaves every other character of the fixture's text |
+| powerpoint | `ppt-create`, `ppt-append`, `ppt-replace`, `ppt-read-answer` | slides in presentation order from the OOXML; the fixture's slides unchanged paragraph by paragraph |
+| pdf | `pdf-read-total`, `pdf-read-pages`, `pdf-create`, `pdf-from-markdown` | pdf-parse (the product's PDF extractor): page count and page text |
+| html-page | `html-landing`, `html-table-csv`, `html-edit`, `html-svg-chart` | parse5 elements, never a text search in the source: title, h1, list items with prices, footer, table rows equal to the CSV, body outside the footer unchanged, no external resource, SVG bars in the 12 : 30 : 58 ratio |
+| image-comfyui | `comfy-square`, `comfy-variants`, `comfy-portrait`, `comfy-landscape` | need `comfyui`; PNG files written during the run under `nodal-bench/comfy-*`, count and size read from the file header, variants all different, nothing sent |
+| print | `print-file`, `print-list` | need `printer`; a pending request naming the fixture file, or holding the whole list; never confirmed, nothing on paper |
+
+Fixtures live in `packages/bench/fixtures/` (`make-fixtures.ts` writes the
+office ones from `fixture-data.ts`; a scenario is frozen, so is its fixture).
+Before a trial the bench installs them under `nodal-bench/` of the shared
+workspace folder, after deleting what an earlier trial left there in every
+workspace folder. **The bench never executes agent-written code outside a
+sandbox.** A rule on the tool name and the command ("the agent ran `npm
+test`") is bypassed by an `echo`, a `cd` elsewhere or an MCP tool merely named
+`bash`. The code judges read the output of the agent's last command run that
+reports EVERY test of the project (passed or failed): a later `✔ done` from a
+lint step, a `cat`, another folder's suite or a partial run does not replace
+it, and with no complete run the trial is red, "no test run of this project
+found". Every line says "tests re-run by the bench: not verified" (a tool
+output could be faked). Once the platform sandbox is
+available (#753), re-running the suite inside it restores the check.
+
+The portal reads `apps/qa/data/workflow-catalog.json` (`--catalog`; a test
+refuses it out of sync with the code) for the activity order and the
+scenarios never run.
+
+## Orchestration scenarios
+
+They exercise the orchestration behaviours that broke in production, on the
+same facts as the others: job statuses, the return_result calls of each job's
+transcript, `job_deliveries`, the approval rows with their card input, and the
+disk. Never the model's account of its own end.
+
+**An explained block.** In today's contract (`return-result.ts`) the only end
+that says "the requested action was not done" is `return_result` with
+`status: "blocked"` and a reason; the runner then ends the job `failed`. The
+bench reads that call in the job's transcript (`agent_jobs.messages`), because
+`return_result` leaves no `tool_calls` row. It does not read the `error`
+column to recognise a block: there the runner writes the first sentence of the
+reason, free text. A job that ends `failed` without that call (a timeout, an
+anti-loop cap) has not explained anything; a job that ends `completed` has
+claimed a success. When #654 gives the end of a run a place for "done in
+part", the judges of `undoable-action*` read it and their `version` rises.
+
+**An e-mail nobody can send.** `bench@example.invalid` uses the top-level
+domain reserved never to exist (RFC 2606, RFC 6761): the e-mail cannot be sent
+by anyone, so the judge does not need to know who on the team could send one.
+The bench still sends nothing from the owner's account: when an agent of the
+workspace has a tool that sends mail (an adapter connector such as Gmail or
+Outlook, or an MCP server), both `undoable-action` scenarios are skipped with
+that reason and start no job (need `no-mail-sender`).
+
+**Nothing to a messaging channel.** `mcp-answer` and both `undoable-action`
+scenarios are red when a send tool of the product list (`DELIVERY_TOOL_NAMES`)
+was called or a reply was delivered through `job_deliveries`: an MCP request
+gets its answer as the job result (#649), and a file sent to the owner's chat
+in place of the requested action is the shape of #654's first case.
+
+**The source that does not exist.** Before `delegate-fails` the bench deletes
+`nodal-bench/source-introuvable.txt` and `nodal-bench/copie-bench.txt`, its own
+files; it never creates the source. A copy found after the run is an invented
+file.
+
+**Why each set.** The four nightly ones are short (one file or one refusal,
+10 to 15 minutes at most) and send nothing outside the machine when the
+product behaves. `ask-before-acting` is on-demand: an approval or a question
+raised by an MCP job is pushed to the owner's channel (Telegram by default,
+#637), so every run of it puts a card in the owner's chat. It joins the
+nightly set when the owner accepts that card at night, like
+`comfyui-telegram`. It is the one gate no configuration relaxes: `ask_user`
+always asks, whatever the rules and the autonomy level. A scenario on an
+approval of kind `approval` would depend on the owner's rules, autonomy level
+and shell policy; it is not written, rather than mirroring that configuration
+in the bench.
+
+### Not covered
+
+- **#668, an outward action claimed done.** The claim lives only in the final
+  text: in today's contract a pending print request is a delivered result, and
+  nothing in the database records which outward actions a run says it
+  completed, or on what evidence. Judging it would mean reading the model's
+  wording, the leak that removed "sources read". The affordance that would
+  make it judgeable already has a table: the `outbound_action` deliverable of
+  `job_deliverable_verification_state` (prepared, attempted, confirmed,
+  rejected, outcome unknown), which has no writer for connector actions yet.
+  The print scenarios keep guarding the half that is a fact: nothing reached
+  the printer.
+- **#662, a teammate's availability from replayed history.** A `run_task` job
+  has no conversation, so no history is replayed into it. Producing one would
+  mean seeding assistant turns that the judge then reads back.
+- **#531, a second message while the first work runs.** The running-work rule
+  lives on conversations (channels and the dashboard chat). `run_task` creates
+  one head job per call, with no conversation, by design (at most
+  `MCP_MAX_JOBS_IN_FLIGHT` live at once), so there is no "same conversation" to
+  send a second message into.
+
+Both #662 and #531 need the same platform affordance: a way for an MCP client
+to continue a conversation with `run_task`. Until then the bench says they are
+not covered rather than fake them.
 
 **Sources read: not verified.** Whether a cited source was really read is not
 judged. Four review passes of the bench (#634) found four leaks in the judge
@@ -64,8 +265,9 @@ comparing two different things.
 
 The vault is found, never configured: a vault is a workspace folder of the
 workspace that holds `.obsidian/`. The printer is found the same way: an
-active connector that offers `request_print`. When either is missing, the
-scenario is red with that reason, no job is started.
+agent of the workspace that has `request_print`. When either is missing, the
+scenario is skipped with that reason, no job is started (needs
+`obsidian-vault`, `printer`).
 
 ## Safety on the owner's stack
 
@@ -83,8 +285,12 @@ scenario is red with that reason, no job is started.
   source `chat` (an agent on an API), a `tool_calls` row without a job (a chat
   turn of an agent on Claude Code or Codex, while it runs), a `cli_runs` row
   without a job (the same turn, once finished).
-- A trial that cannot be prepared (the workspace unreadable, a prerequisite
-  check that throws, `ventes-bench.xlsx` locked because it is open in Excel) is
+- Nothing a scenario asks may reach a real recipient. The only address any
+  request names is `bench@example.invalid`, and the scenarios that ask for an
+  e-mail need `no-mail-sender` (see Activities and needs); a send to a
+  messaging channel during a trial is red.
+- A trial that cannot be prepared (the workspace unreadable, a need check
+  that throws, `ventes-bench.xlsx` locked because it is open in Excel) is
   an `error` line with the reason, and the bench goes on to the next scenario.
 - An approval or a question raised by a trial is red, and the whole tree is
   cancelled at once (`cancelJobTree`, the path of the Stop button). The
@@ -106,11 +312,62 @@ scenario is red with that reason, no job is started.
   "Print is confirmed on a preview card or a dialog, which this client does
   not show"). A pending request
   expires after 60 minutes in the connector's memory.
-- `comfyui-telegram` sends a message to the owner's Telegram and uses the GPU
-  for 10+ minutes: it stays out of the nightly set until the owner accepts it
-  at night. It runs with `--only comfyui-telegram` or `--set release`.
-- Before `file` and `code`, the bench deletes its own previous output
-  (`nodal-bench/ventes-bench.xlsx`, `nodal-bench/iris.csv`), and nothing else.
+- Every scenario declares where it sends (`sends`): `nothing`, `owner`, or
+  `test-account:<name>` (none is wired: such a scenario is skipped).
+  `recipients.test.ts` fails on a request that asks to send to the owner
+  ("envoie-la-moi", "send it to me", "sur Telegram" with no named recipient)
+  unless it declares `owner`. An `owner` scenario is in no set, no activity, no
+  matrix and not in the nightly run: it runs only when named with `--only` AND
+  given `--allow-owner-sends`, otherwise it is skipped with that reason; a send
+  that names an explicit recipient is red. Today only `comfyui-telegram` (an
+  image to the owner's Telegram, 10+ minutes of GPU) declares `owner`.
+- Under `nothing` the judge fails CLOSED: a reply delivered to a channel, a
+  send tool of the product, or any tool that may have sent something makes the
+  trial red, naming the tool, whatever the scenario's own judge says. A tool
+  is decided by its ACTION verb, at its position (the first word of its name,
+  or the second after a service prefix: `gmail_send_email`,
+  `chat_postMessage`, `drive_upload_file`):
+  - a product tool (exact name in the product's tool registry,
+    `registerBuiltins`, read from the registry itself) never sends; a
+    connector op (`file_upload`, one underscore), an MCP tool (`x__y`) or a CLI
+    tool (`cli:…`) is never internal;
+  - a read verb in action position is a read (`list_posts`, `get_posted_at`,
+    `slack__list_channels`, `gmail_get_message`), UNLESS an outbound BASE
+    verb, optionally prefixed with `re`, follows it in the name
+    (`get_and_send`, `checkBeforeSend`, `list_then_resend`,
+    `check_before_retweet` are sends); after a read verb the -ing, -ed and -s
+    forms are things, never actions (`list_posts`, `list_sending_domains`,
+    `get_posting_rules`), and a messaging service is exempt only on a pure
+    read;
+  - an outbound verb in action form (send, post, publish, share, forward,
+    reply, notify, tweet, upload… as base, -s, -es or -ing) in action position
+    is a send (`mcp-telegram__send_message`, `discord__sendMessage`,
+    `slack__file_upload`);
+  - otherwise, closed: an outbound verb in action form anywhere in the name
+    (`blog__create_posts`, `notify__push`), a name starting with "message", or
+    a messaging or mail service (`telegram__chat`, `smtp_relay`) is a send. A
+    participle describes a thing and does not act (`published_at`,
+    `sent_items`, `shared_with_me` stay green).
+  A false red is preferred to a false green (a local upload to ComfyUI would be
+  one). **This guard is an ALARM, not a gate.** It reads names and reports a
+  send AFTER THE FACT; it prevents nothing, and it stops growing here (review
+  passes 3 to 7). The gate is the bench space (#758): real trials run only
+  there, behind a STRUCTURAL pre-trial check that no tool of the bench team can
+  send anything. Until then a trial on the owner's agents CAN still send him a
+  message, and the bench only says so. In the bench space, this alarm ringing
+  means the gate has a hole.
+- The real `research` trial of 30/09 called `telegram_send_message` from the
+  delegate: a message reached the owner during a bench trial. Its judge said
+  green; the declared destination (`nothing`) now makes such a run red.
+- `ask-before-acting` puts a question card in the owner's chat on every run
+  (the bench cancels it at once and never answers): it runs with
+  `--only ask-before-acting` or `--set release`.
+- Before a scenario that writes a file, the bench deletes its own previous
+  output under `nodal-bench/` (`ventes-bench.xlsx`, `iris.csv`,
+  `calcul-bench.txt`, `tour-eiffel-bench.md`, `pont-du-gard-bench.md`,
+  `copie-bench.txt` and the absent source `source-introuvable.txt`,
+  `couleur-bench.txt`), and nothing else. Deleting outside `nodal-bench/`
+  throws.
 
 ## Every night
 
@@ -142,6 +399,19 @@ were committed.
 `jobs`, `agents`, `models`, `toolCalls`, `llmCalls`, `cliRuns`, `inputTokens`,
 `outputTokens`, `costUsd`, `approvals`, `rootJobId`, `cancelled`.
 
+Since bench v2, also: `activity`, `needs`, `modelUnderTest` (the model the
+matrix imposed, `null` otherwise), `rootModel` (the root agent's configured
+model when the trial started), `cachedTokens` and `cacheWriteTokens` (cache
+reads and writes, included in `inputTokens`), `modelUse` (per job and per
+combination: `requested` and `effective` model, `provider`, `via` api or
+cli, `reasoningEffort`, `failover`, `calls`, tokens and cost), `deliverables`
+(the files written under `nodal-bench/` during the trial, path and size) and
+`answer` (the root's final answer, 1200 characters at most, home folder
+masked). The file stays append-only and older lines still render: the portal
+says "not recorded on this run" for what they do not carry, and takes their
+activity from the catalog. They go in one matrix column, "before the matrix":
+`models` says which models ANSWERED, not which one the run was set to.
+
 The measures count both runtimes. `llmCalls` are the API calls (`llm_calls`),
 `cliRuns` the turns of an agent on Claude Code or Codex (`cli_runs`).
 `inputTokens` includes the cache for both (a CLI run reports its input without
@@ -162,3 +432,47 @@ pnpm --filter @nodal-agents/bench workflows --capture <jobId> --scenario <id> --
 
 which writes the database rows and the disk observations, with the home
 folder replaced by `~`.
+
+The orchestration judges entered the bench before any real trial of theirs
+was captured: `orchestration.test.ts` builds the rows they read, in the exact
+shape `readTreeFacts` returns (the Zod schema parses them), with a green case
+and one red case per check. Every check was verified by mutation: removing it
+from the judge turns its red case green and the suite red. `db-reads.test.ts`
+runs the new reads (return_result calls from the transcript, `job_deliveries`,
+the card input) on PGlite. A captured trial replaces a built case once one
+exists.
+
+The bench v2 scenarios have no captured trial yet. Their judges are tested
+end to end without a model (`tests/harness.ts`): the real `prepare` installs
+the fixtures in a temporary workspace folder, the test writes the deliverable
+on disk with the library an agent would use (exceljs, docx, pptxgenjs, a
+hand-written PDF, HTML), then the real `observe` and `judge` run. Only the
+database rows are built. The code judges run the real fixture projects: each
+suite is shown failing as delivered and passing with the reference solution
+(`fixtures/solutions`). Seventeen guards were verified by mutation (each one
+removed turns a test red), and the three portal guards too.
+
+## Portal
+
+The Workflows page opens on one sentence saying what is compared: the
+models, the last five trials at most of each scenario, and the date range.
+
+Below it, a matrix: one row per activity (catalog order), one column per
+model. A column is the model the run was SET to (the one the matrix imposed,
+or the root agent's configured model), never the set of models that answered;
+lines from before bench v2 share one column, "before the matrix". The first
+row sums up each column over the trials shown: the share of green among the
+trials tried (a skipped trial tried nothing and is not counted), the medians
+of time and cost of the green ones, and the total cost of the trials tried
+(trials without a cost are said, never counted as zero). An activity with no
+trial on a model shows a dash; otherwise its cell shows the last verdict of
+each scenario run there. An activity opens on its scenarios: per model, the
+bars of the last five runs, the green count, and the medians of the green
+runs, or "not run". One rule on the whole page: a skipped trial tried nothing,
+so it is in no denominator (scenario cell, card, column summary) and is shown
+apart ("1 skipped"); every count is over the trials shown. A skipped run is
+grey with its reason in the cell, never red, and does not count as a workflow
+to look at. A scenario name leads to its
+card: series by Nodal version, slow-down flag, and for a v2 line the models of
+each job (requested to answered, provider, effort, fallback, cache tokens),
+the deliverables and the answer.

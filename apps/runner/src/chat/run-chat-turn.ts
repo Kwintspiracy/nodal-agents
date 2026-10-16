@@ -513,6 +513,7 @@ export async function runChatTurn(opts: {
   const resolved = await resolveAgentLlmClient(
     db,
     {
+      entityId: agentRow.entityId ?? null,
       llmKeyId: agentRow.llmKeyId,
       fallbackChain: agentRow.fallbackChain ?? null,
       model: agentRow.model ?? DEFAULT_MODEL,

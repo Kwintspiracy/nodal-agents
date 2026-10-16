@@ -28,6 +28,8 @@ module.exports = {
           '(^|/)app/(page|layout|loading|error|not-found|template|default|globals)\\.(tsx?|css)$',
           '(^|/)proxy\\.ts$',
           '(^|/)next-env\\.d\\.ts$',
+          // Workflow bench fixtures: projects COPIED into a workspace before a trial, never imported.
+          '^packages/bench/fixtures/',
         ],
       },
       to: {},

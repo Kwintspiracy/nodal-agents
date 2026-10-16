@@ -231,6 +231,7 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     `The CLI is a process too: in the task text, name files relative to its working directory or by absolute path. ${PROCESS_PATHS_RULE}`,
   inputSchema: codeTaskSchema,
   riskLevel: 'destructive',
+  egress: 'process',
   // Une DÉLÉGATION, pas des fichiers : la sortie est la réponse finale d'un
   // autre agent (le CLI), son coût, sa durée, son code de sortie — jamais une
   // liste de fichiers ni un diff (revue passe 11 : « `files` décrit quelque

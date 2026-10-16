@@ -92,6 +92,7 @@ Fail conditions:
     inputSchema: ListConversationsInput,
 
     riskLevel: 'read',
+    egress: 'none',
     loading: 'eager',
     card: 'text',
 

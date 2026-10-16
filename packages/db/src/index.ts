@@ -72,6 +72,8 @@ export {
   INSTALL_NOTES_KEY,
 } from './repos/app-settings.ts';
 export { getVerificationSurfaces } from './repos/verification-surfaces.ts';
+export { listMemberWorkspaces, countMemberlessRootWorkspaces } from './repos/member-workspaces.ts';
+export type { MemberWorkspace } from './repos/member-workspaces.ts';
 export {
   recordApprovalCardMessage,
   claimSettledApprovalCards,
@@ -161,4 +163,5 @@ export {
   sum,
   max,
   min,
+  getTableColumns,
 } from 'drizzle-orm';

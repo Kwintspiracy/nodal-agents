@@ -29,6 +29,8 @@ const OPTS: TrialOptions = {
   trigger: 'manual',
   nodalVersion: '0.9.3',
   stackCommit: 'ebef7ed7e02b',
+  modelUnderTest: null,
+  allowOwnerSends: false,
 };
 
 const IDLE: ForeignActivity = { jobs: [], lastChatMs: null };
@@ -77,7 +79,14 @@ function world(opts: {
       const list = opts.foreign ?? [IDLE];
       return list[Math.min(foreignReads++, list.length - 1)]!;
     },
-    env: async (startedMs) => ({ workspaceRoots: [], connectorTools: [], startedMs }),
+    env: async (startedMs) => ({
+      workspaceRoots: [],
+      teamTools: [],
+      services: {},
+      unlistedMcpServers: [],
+      startedMs,
+    }),
+    rootModel: async () => 'z-ai/glm-5.3',
     log: () => undefined,
   };
   return { deps, started, cancelled, clock };
@@ -190,15 +199,35 @@ describe('workflow trial safety rules', () => {
     expect(line.cancelled).toBe(true);
   });
 
-  it('a missing prerequisite is RED with its reason, and no job is started', async () => {
+  it('a missing need SKIPS the trial with its reason, never red, and no job is started', async () => {
     const green = load('question-green');
     const w = world({ rootId: green.rootId, snapshots: [green] });
     const line = await runTrial(scenarioById('print')!, w.deps, OPTS);
     expect(w.started).toEqual([]);
-    expect(line.verdict).toBe('red');
+    expect(line.verdict).toBe('skipped');
     expect(line.reasons).toEqual([
-      'no active connector of this workspace offers request_print (no printer connector configured)',
+      'no agent of this workspace has request_print (no printer connector configured)',
     ]);
+    expect(line).toMatchObject({
+      activity: 'print',
+      needs: ['printer'],
+      rootModel: 'z-ai/glm-5.3',
+    });
+  });
+
+  it('the same need met lets the trial run: the printer is seen under its MCP server prefix', async () => {
+    const green = load('print-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    w.deps.env = async (startedMs) => ({
+      workspaceRoots: [],
+      teamTools: ['office_printer__request_print'],
+      services: {},
+      unlistedMcpServers: [],
+      startedMs,
+    });
+    const line = await runTrial(scenarioById('print')!, w.deps, OPTS);
+    expect(w.started).toHaveLength(1);
+    expect(line.verdict).toBe('green');
   });
 
   it('a refused run_task is an ERROR line with the server words, never a silent pass', async () => {
@@ -243,13 +272,224 @@ describe('workflow trial safety rules', () => {
 // Revue Codex de la PR #634, constats 5 et 6 : un prérequis qui manque ne doit
 // pas coûter trente minutes d'essai, et une préparation qui lève ne doit pas
 // emporter les scénarios suivants avec elle.
+// Revue Reviewer A de #756, passe 2 (P2-1) : chaque scénario déclare où il
+// envoie. Un scénario qui envoie au propriétaire ne tourne qu'avec un drapeau
+// explicite ; et un envoi qui part ailleurs que là où le scénario le déclare
+// interdit le vert, quel que soit le juge du scénario.
+describe('where a trial may send', () => {
+  const sendTool = (input: object) => ({
+    jobId: null as string | null,
+    toolName: 'send_image',
+    input: JSON.stringify(input),
+    output: JSON.stringify({ ok: true }),
+    createdMs: 0,
+  });
+
+  it('a scenario that sends to the owner is SKIPPED without --allow-owner-sends, and starts nothing', async () => {
+    const green = load('question-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    w.deps.env = async (startedMs) => ({
+      workspaceRoots: [],
+      teamTools: [],
+      services: { comfyui: { url: 'http://127.0.0.1:8188', problem: null } },
+      unlistedMcpServers: [],
+      startedMs,
+    });
+    const line = await runTrial(scenarioById('comfyui-telegram')!, w.deps, OPTS);
+    expect(w.started).toEqual([]);
+    expect(line.verdict).toBe('skipped');
+    expect(line.reasons).toEqual([
+      "this scenario sends to the owner's own account (sends: owner): it runs only with --allow-owner-sends",
+    ]);
+    expect(line.sends).toBe('owner');
+  });
+
+  it('the same scenario starts with the flag', async () => {
+    const green = load('question-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    w.deps.env = async (startedMs) => ({
+      workspaceRoots: [],
+      teamTools: [],
+      services: { comfyui: { url: 'http://127.0.0.1:8188', problem: null } },
+      unlistedMcpServers: [],
+      startedMs,
+    });
+    await runTrial(scenarioById('comfyui-telegram')!, w.deps, { ...OPTS, allowOwnerSends: true });
+    expect(w.started).toHaveLength(1);
+  });
+
+  it('a send during a scenario that declares nothing is red, though its own judge is green', async () => {
+    const green = load('question-green');
+    const sent: TreeFacts = {
+      ...green,
+      toolCalls: [...green.toolCalls, { ...sendTool({ source: 'x.png' }), jobId: green.rootId }],
+    };
+    const w = world({ rootId: green.rootId, snapshots: [sent] });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(scenarioById('question')!.judge(sent, null)).toEqual([]);
+    expect(line.verdict).toBe('red');
+    expect(line.reasons).toEqual(['a send tool was called (send_image)']);
+  });
+
+  it('an owner scenario whose send names an explicit recipient is red: that is not the owner', async () => {
+    const green = load('question-green');
+    const sent: TreeFacts = {
+      ...green,
+      toolCalls: [
+        { ...sendTool({ source: 'x.png', chat_id: '-1001234567890' }), jobId: green.rootId },
+      ],
+    };
+    const w = world({ rootId: green.rootId, snapshots: [sent] });
+    const ownerQuestion: AnyScenario = { ...scenarioById('question')!, sends: 'owner' };
+    const line = await runTrial(ownerQuestion, w.deps, { ...OPTS, allowOwnerSends: true });
+    expect(line.verdict).toBe('red');
+    expect(line.reasons).toEqual([
+      "a send names a recipient other than the owner (-1001234567890): sends: owner allows only the owner's own chat",
+    ]);
+  });
+
+  // Revue Reviewer A, passe 3 (P1) : un envoi par un outil MCP ou de connecteur
+  // de messagerie, sans destinataire (donc le chat par défaut : le propriétaire),
+  // passait inaperçu. Fermé par défaut : sous `nothing`, tout outil dont le nom
+  // porte un verbe sortant ou vise un canal rend l'essai rouge, en le nommant.
+  it.each([
+    'mcp-telegram__send_message',
+    'slack__chat_postMessage',
+    'discord__sendMessage',
+    'whatsapp__sendText',
+    'twitter__tweet',
+    'notify__push',
+    // Passe 4 (P1) : un connecteur dont le dernier segment ressemble à un outil
+    // interne du produit n'est PAS interne.
+    'slack__file_upload',
+    'telegram__file_send',
+    'dropbox__file_share',
+    'gdrive__file_publish',
+    // Passe 4 (P3) : les flexions des verbes, une seule règle pour tous.
+    'blog__create_posts',
+    'drive__shares_add',
+    'mail_tool__replied_to',
+    'cms__publishes',
+    'gallery__uploading_images',
+    // Passe 5 (P3) : une opération de connecteur adaptateur (un seul « _ ») n'est
+    // jamais interne, même nommée comme un outil du produit.
+    'file_upload',
+    'gmail_send_email',
+    'drive_upload_file',
+    // Pas de verbe d'action, mais un service de messagerie ou de courrier : fermé par défaut.
+    'telegram__chat',
+    'smtp_relay',
+    // Passe 6 (P1) : une lecture SUIVIE d'un envoi dans le même outil reste un envoi.
+    'get_and_send',
+    'list_then_post',
+    'getAndSend',
+    'checkBeforeSend',
+    'slack__list_and_notify',
+    // Passe 7 (P1) : après une lecture, une base sortante préfixée de « re ».
+    'get_sent_then_resend',
+    'list_then_resend',
+    'fetch_then_repost',
+    'check_before_retweet',
+    'search_and_reshare',
+  ])('under sends: nothing, %s makes the trial red, named', async (tool) => {
+    const green = load('question-green');
+    const sent: TreeFacts = {
+      ...green,
+      toolCalls: [
+        ...green.toolCalls,
+        { jobId: green.rootId, toolName: tool, input: '{"text":"x"}', output: '{}', createdMs: 0 },
+      ],
+    };
+    const w = world({ rootId: green.rootId, snapshots: [sent] });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.verdict).toBe('red');
+    expect(line.reasons).toEqual([`an outbound tool was called (${tool})`]);
+  });
+
+  // Revue Reviewer A, passe 5 (P2) : le verbe d'ACTION décide, par sa position
+  // (le premier mot après un préfixe de service), pas n'importe quel mot. Un
+  // outil qui LIT reste vert, même si un mot de son nom est une forme d'envoi.
+  it.each([
+    'get_posted_at',
+    'list_shared_drives',
+    'shared_with_me',
+    'list_posts',
+    'published_at',
+    'queue__sent_items',
+    'drive__shared_with_me',
+    'slack__list_channels',
+    'gmail_list_messages',
+    'gmail_get_message',
+    'blog__search_posts',
+    'telegram__get_updates',
+    // Passe 7 (P2) : après une lecture, un -ing est un complément de nom, pas une action.
+    'list_sending_domains',
+    'get_posting_rules',
+    'get_forwarding_rules',
+  ])('under sends: nothing, the read %s stays green', async (tool) => {
+    const green = load('question-green');
+    const read: TreeFacts = {
+      ...green,
+      toolCalls: [{ jobId: green.rootId, toolName: tool, input: '{}', output: '{}', createdMs: 0 }],
+    };
+    const w = world({ rootId: green.rootId, snapshots: [read] });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.reasons).toEqual([]);
+  });
+
+  it('internal tools stay quiet: files, office documents, the dashboard, return_result', async () => {
+    const green = load('question-green');
+    const quiet: TreeFacts = {
+      ...green,
+      toolCalls: [
+        'file_write',
+        'workspace_list',
+        'xlsx_create',
+        'docx_replace_text',
+        'pptx_append_slides',
+        'dashboard_publish',
+        'return_result',
+        'web_search',
+        'run_command',
+        'postgres__query',
+        // Un message passé à du travail EN COURS de la même conversation : interne.
+        // S'il en résulte une réponse sur un canal, c'est une livraison (job_deliveries), lue à part.
+        'message_conversation_run',
+      ].map((toolName) => ({
+        jobId: green.rootId,
+        toolName,
+        input: '{}',
+        output: '{}',
+        createdMs: 0,
+      })),
+    };
+    const w = world({ rootId: green.rootId, snapshots: [quiet] });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.verdict).toBe('green');
+  });
+
+  it('a scenario declaring a test account does not run: no test account is wired yet', async () => {
+    const green = load('question-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    const tested: AnyScenario = { ...scenarioById('question')!, sends: 'test-account:gmail-test' };
+    const line = await runTrial(tested, w.deps, OPTS);
+    expect(w.started).toEqual([]);
+    expect(line).toMatchObject({
+      verdict: 'skipped',
+      reasons: [
+        'this scenario sends to the test account "gmail-test", and no test account is wired yet',
+      ],
+    });
+  });
+});
+
 describe('what happens before a trial starts', () => {
-  it('deep-research-obsidian without a vault is RED at once, with the reason, and no job is started', async () => {
+  it('deep-research-obsidian without a vault is SKIPPED at once, with the reason, and no job is started', async () => {
     const green = load('question-green');
     const w = world({ rootId: green.rootId, snapshots: [green] });
     const line = await runTrial(scenarioById('deep-research-obsidian')!, w.deps, OPTS);
     expect(w.started).toEqual([]);
-    expect(line.verdict).toBe('red');
+    expect(line.verdict).toBe('skipped');
     expect(line.reasons).toEqual([
       'no Obsidian vault is configured: no workspace folder of this workspace holds a .obsidian folder',
     ]);
@@ -276,16 +516,19 @@ describe('what happens before a trial starts', () => {
     expect(line.scenario).toBe('file');
   });
 
-  it('a prerequisite check that throws is an ERROR line too', async () => {
+  it('a need check that throws is an ERROR line too', async () => {
     const green = load('question-green');
     const w = world({ rootId: green.rootId, snapshots: [green] });
-    const broken: AnyScenario = {
-      ...scenarioById('print')!,
-      requires() {
+    w.deps.env = async (startedMs) => ({
+      get workspaceRoots(): string[] {
         throw new Error('EACCES: permission denied, stat');
       },
-    };
-    const line = await runTrial(broken, w.deps, OPTS);
+      teamTools: [],
+      services: {},
+      unlistedMcpServers: [],
+      startedMs,
+    });
+    const line = await runTrial(scenarioById('deep-research-obsidian')!, w.deps, OPTS);
     expect(w.started).toEqual([]);
     expect(line).toMatchObject({
       verdict: 'error',
@@ -315,6 +558,7 @@ describe('measures that a runtime does not report', () => {
   const cli = {
     jobId: green.rootId,
     provider: 'claude',
+    modelRequested: 'opus',
     source: 'subscription',
     models: ['claude-opus-4-1-20250805'],
     costUsd: 0.52,
@@ -358,12 +602,30 @@ describe('an unverified check travels on every line of its scenario', () => {
     ticket: '#648',
   };
 
-  it('a green research trial is green on what IS judged, and its line says sources read: not verified', async () => {
+  it('a research trial green on its own judge says sources read: not verified', async () => {
     const green = load('research-green');
-    const w = world({ rootId: green.rootId, snapshots: [green] });
+    // Le vrai essai du 30/09 a aussi envoyé un message Telegram (voir le cas suivant) : on le retire ici.
+    const quiet: TreeFacts = {
+      ...green,
+      toolCalls: green.toolCalls.filter((c) => c.toolName !== 'telegram_send_message'),
+    };
+    const w = world({ rootId: green.rootId, snapshots: [quiet] });
     const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
     expect(line.verdict).toBe('green');
     expect(line.unverified).toEqual([expect.objectContaining(SOURCES)]);
+  });
+
+  // Ce que la passe 2 de revue a fait voir sur un essai RÉEL : le 30/09, le
+  // délégué de `research` a appelé telegram_send_message — un message est parti
+  // chez le propriétaire pendant un essai du banc. Le juge du scénario disait
+  // vert ; la destination déclarée (`nothing`) le refuse désormais.
+  it('the real research trial of 30/09 sent a Telegram message: red for that, whatever its judge says', async () => {
+    const green = load('research-green');
+    expect(scenarioById('research')!.judge(green, null)).toEqual([]);
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
+    expect(line.verdict).toBe('red');
+    expect(line.reasons).toEqual(['a send tool was called (telegram_send_message)']);
   });
 
   it('a skipped trial says it too: the check is a property of the scenario, not of a green run', async () => {

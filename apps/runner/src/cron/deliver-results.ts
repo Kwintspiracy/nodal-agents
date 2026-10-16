@@ -387,6 +387,7 @@ async function synthesizePayload(
 ): Promise<string> {
   const [ag] = await db
     .select({
+      entityId: agents.entityId,
       llmKeyId: agents.llmKeyId,
       fallbackChain: agents.fallbackChain,
       model: agents.model,
@@ -417,6 +418,7 @@ async function synthesizePayload(
 async function synthesizeForChannel(
   db: AnyDrizzleDb,
   agent: {
+    entityId: string | null;
     llmKeyId: string | null;
     fallbackChain: unknown;
     model: string | null;
@@ -429,6 +431,7 @@ async function synthesizeForChannel(
     const resolved = await resolveAgentLlmClient(
       db,
       {
+        entityId: agent.entityId,
         llmKeyId: agent.llmKeyId,
         fallbackChain: (agent.fallbackChain ?? null) as
           | readonly { keyId: string; model: string; reasoningEffort?: string }[]

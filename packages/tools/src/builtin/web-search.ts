@@ -153,6 +153,7 @@ export const webSearchTool: ToolDefinition<typeof WebSearchInputSchema, WebSearc
     'best-effort search.',
   inputSchema: WebSearchInputSchema,
   riskLevel: 'read',
+  egress: 'internet',
   loading: 'eager',
   card: 'search',
   present: ({ input, output }) =>
