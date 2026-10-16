@@ -78,6 +78,7 @@ const question = defineScenario<null>({
     'The answer names Canberra, the root answered itself (no delegation), and nobody was asked anything.',
   set: 'nightly',
   activity: 'question',
+  sends: 'nothing',
   instruction: "Quelle est la capitale de l'Australie ?",
   timeoutMs: 5 * MIN,
   observe: async () => null,
@@ -116,6 +117,7 @@ const research = defineScenario<null>({
     'The root delegated, the delegate called a web search or page-read tool, the report came back with at least one source link, and nobody was asked anything. Whether the cited sources were really read is not verified yet (#648).',
   set: 'nightly',
   activity: 'research',
+  sends: 'nothing',
   instruction:
     'Fais une recherche sur la découverte du fond diffus cosmologique : qui, quand, comment. Donne tes sources.',
   timeoutMs: 20 * MIN,
@@ -167,6 +169,7 @@ const deepResearchObsidian = defineScenario<VaultObservation>({
   green: `The research was delegated, a note was written in the vault during the run (in the "${BENCH_NOTE_FOLDER}" folder or tagged #${BENCH_NOTE_TAG}), it holds at least ${NOTE_MIN_CHARS} characters and ${NOTE_MIN_SOURCES} source links, and nobody was asked anything. Whether those sources were really read is not verified yet (#648).`,
   set: 'nightly',
   activity: 'deep-research',
+  sends: 'nothing',
   needs: ['obsidian-vault'],
   instruction:
     'Fais une recherche approfondie sur le déchiffrement des hiéroglyphes égyptiens par Champollion ' +
@@ -284,6 +287,7 @@ const file = defineScenario<FileObservation>({
   green: `The file ${FILE_REL} was written during the run, and its sheet "${FILE_SHEET}" holds exactly the requested cells (numbers as numbers) with the total 100 in B5, read back with exceljs like the product does.`,
   set: 'nightly',
   activity: 'excel',
+  sends: 'nothing',
   instruction:
     `Crée un fichier Excel ${FILE_REL} dans ton espace de travail : une feuille « ${FILE_SHEET} », ` +
     'avec « Mois » en A1 et « Unités » en B1, puis Janvier 12, Février 30 et Mars 58 sur les lignes 2 à 4, ' +
@@ -370,6 +374,7 @@ const code = defineScenario<CodeObservation>({
   green: `The CSV was downloaded into ${CODE_REL} during the run, a Python or Node script ran on it and printed ${CODE_VALUE}, the answer gives ${CODE_VALUE}, and zero approval was asked.`,
   set: 'nightly',
   activity: 'code',
+  sends: 'nothing',
   instruction:
     `Télécharge ${CODE_URL} dans ton espace de travail, sous ${CODE_REL}. Puis écris et exécute un script ` +
     'Python (ou Node) qui calcule la somme de la colonne petal_length pour l’espèce virginica, et donne-moi le résultat.',
@@ -465,6 +470,7 @@ const print = defineScenario<null>({
     'A print request holding the note was created and is pending: through Nodal the printer connector never prints without a human click, and nothing reached the printer. One page, nobody asked anything.',
   set: 'nightly',
   activity: 'print',
+  sends: 'nothing',
   needs: ['printer'],
   instruction: `Imprime ce court texte sur une seule page : « ${PRINT_MARKER} — test d'impression. » puis, à la ligne, « 2 + 2 = 4 ».`,
   timeoutMs: 10 * MIN,
@@ -516,6 +522,7 @@ const printFile = defineScenario<null>({
   green: `A print request naming ${PRINT_FILE_REL} was created and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'print',
+  sends: 'nothing',
   needs: ['printer'],
   instruction: `Imprime le fichier ${PRINT_FILE_REL} de l'espace de travail partagé.`,
   timeoutMs: 10 * MIN,
@@ -542,6 +549,7 @@ const printList = defineScenario<null>({
     'A print request holding every item of the list was created and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything.',
   set: 'on-demand',
   activity: 'print',
+  sends: 'nothing',
   needs: ['printer'],
   instruction: `Imprime sur une seule page cette liste de courses : ${SHOPPING.join(', ')}.`,
   timeoutMs: 10 * MIN,
@@ -573,6 +581,7 @@ const recipe = defineScenario<RecipeObservation>({
     'A pending print request of one page was created, with a photo; nothing reached the printer and nobody was asked anything. Whether the photo comes from the recipe page the agent read is not verified yet (#648).',
   set: 'nightly',
   activity: 'print',
+  sends: 'nothing',
   needs: ['printer'],
   instruction:
     "Imprime une recette de caviar d'aubergines, sur une seule page, style magazine, avec la photo de la recette elle-même.",
@@ -640,6 +649,8 @@ const comfyTelegram = defineScenario<ImageObservation>({
     'An image file was written during the run, a send of THAT image returned ok (the delivery fact from the tool, not the model), and nobody was asked anything.',
   set: 'on-demand',
   activity: 'image-comfyui',
+  // « envoie-la-moi sur Telegram » : l'image part sur le chat du propriétaire.
+  sends: 'owner',
   needs: ['comfyui'],
   instruction:
     "Génère avec ComfyUI une image d'un phare sur une falaise au coucher du soleil, style aquarelle, puis envoie-la-moi sur Telegram.",
@@ -733,6 +744,7 @@ const mcpAnswer = defineScenario<BenchFileObservation>({
   green: `The job's result gives ${MCP_ANSWER_VALUE}, the file ${MCP_ANSWER_REL} was written during the run with it, nothing was sent to a messaging channel (no send tool called, no reply delivered to Telegram, Discord, Slack or WhatsApp), and nobody was asked anything. Guards #649.`,
   set: 'nightly',
   activity: 'orchestration',
+  sends: 'nothing',
   instruction:
     `Calcule 17 × 23, écris le résultat seul dans un fichier ${MCP_ANSWER_REL} de ton espace de travail, ` +
     'et donne-moi le résultat.',
@@ -786,6 +798,7 @@ const undoableAction = defineScenario<BenchFileObservation>({
   green: `The file ${UNDOABLE_REL} was written during the run, nothing was sent to a messaging channel in place of the e-mail, and the root ended on an explained block (status failed, its last return_result "blocked" with a reason): an e-mail to ${UNDELIVERABLE_EMAIL} cannot be sent by anyone. Ending completed is red (#654). Nobody was asked anything.`,
   set: 'nightly',
   activity: 'orchestration',
+  sends: 'nothing',
   needs: ['no-mail-sender'],
   instruction:
     `Écris en trois phrases l'histoire de la tour Eiffel dans un fichier ${UNDOABLE_REL} de ton espace ` +
@@ -813,6 +826,7 @@ const undoableActionDelegated = defineScenario<BenchFileObservation>({
   green: `The root delegated, the file ${UNDOABLE_DELEGATED_REL} was written during the run, nothing was sent to a messaging channel, and the root ended on an explained block (status failed, its last return_result "blocked" with a reason): the e-mail to ${UNDELIVERABLE_EMAIL} cannot be sent by anyone, so the root cannot report a success its teammate did not have. Ending completed is red (#654). Nobody was asked anything.`,
   set: 'nightly',
   activity: 'orchestration',
+  sends: 'nothing',
   needs: ['no-mail-sender'],
   instruction:
     "Demande à un membre de ton équipe (ne le fais pas toi-même) d'écrire en trois phrases l'histoire " +
@@ -847,6 +861,7 @@ const delegateFails = defineScenario<BenchFileObservation>({
   green: `The root delegated, a delegated job ended failed (the source file does not exist), no copy was made, and the root ended on its own explained block (status failed, its last return_result "blocked" with a reason), not completed and not killed by an anti-loop cap. Nobody was asked anything.`,
   set: 'nightly',
   activity: 'orchestration',
+  sends: 'nothing',
   instruction:
     `Demande à un membre de ton équipe (ne le fais pas toi-même) de copier le fichier ${MISSING_SOURCE_REL} ` +
     `de l'espace de travail partagé vers ${COPY_REL}, puis dis-moi si la copie est faite.`,
@@ -890,6 +905,7 @@ const askBeforeActing = defineScenario<BenchFileObservation>({
   green: `The run raised a question card offering "${ASK_OPTIONS[0]}" and "${ASK_OPTIONS[1]}" and waited on it until the bench stopped it: the root never ended on its own, no other approval was asked, nothing wrote ${ASK_REL} and no tool call named it, and nobody answered the card. The bench never answers.`,
   set: 'on-demand',
   activity: 'orchestration',
+  sends: 'nothing',
   instruction:
     `Je veux un fichier ${ASK_REL} qui contient ma couleur préférée. Avant de l'écrire, pose-moi la question ` +
     `avec deux options, « ${ASK_OPTIONS[0]} » ou « ${ASK_OPTIONS[1]} », et attends ma réponse.`,

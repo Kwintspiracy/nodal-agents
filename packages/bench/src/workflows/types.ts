@@ -52,6 +52,18 @@ export type Activity = (typeof ACTIVITIES)[number];
 export const NEED_IDS = ['comfyui', 'obsidian-vault', 'printer', 'no-mail-sender'] as const;
 export type Need = (typeof NEED_IDS)[number];
 
+/**
+ * Où un scénario fait envoyer quelque chose (revue Reviewer A de #756) :
+ *   - `nothing` : rien ne doit partir ; un envoi pendant l'essai est rouge ;
+ *   - `owner` : au propriétaire lui-même (son chat par défaut). Ne tourne
+ *     qu'avec `--allow-owner-sends`, jamais dans un jeu, une activité, une
+ *     matrice ni la nuit ; un envoi qui nomme un autre destinataire est rouge ;
+ *   - `test-account:<nom>` : un compte de test déclaré. Aucun n'est branché
+ *     aujourd'hui : un tel scénario est sauté.
+ * recipients.test.ts refuse une demande d'envoi au propriétaire qui ne déclare pas `owner`.
+ */
+export type Sends = 'nothing' | 'owner' | `test-account:${string}`;
+
 /** Un service local que le banc sait sonder, à l'adresse que ~/.nodalai/bench.json déclare. */
 export interface ServiceProbe {
   readonly url: string;
@@ -105,6 +117,8 @@ export interface Scenario<O> {
   readonly green: string;
   readonly set: ScenarioSet;
   readonly activity: Activity;
+  /** Où l'essai fait envoyer quelque chose (voir `Sends`). Déclaré par CHAQUE scénario. */
+  readonly sends: Sends;
   /** Ce que l'essai demande à la machine. Un besoin absent : l'essai est SAUTÉ, avec sa raison. */
   readonly needs?: readonly Need[];
   /** La demande, telle que le propriétaire la taperait. */
@@ -175,6 +189,8 @@ export interface TrialLine {
    */
   readonly activity: Activity;
   readonly needs: Need[];
+  /** La destination déclarée par le scénario (absente des lignes d'avant la passe 2 de revue). */
+  readonly sends: Sends;
   /**
    * Le modèle que la matrice (`--models`) a imposé à l'essai ; null : les
    * agents tournaient sur leurs propres modèles.

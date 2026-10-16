@@ -48,14 +48,6 @@ export function obsidianVaults(roots: readonly string[]): string[] {
 export const NO_VAULT =
   'no Obsidian vault is configured: no workspace folder of this workspace holds a .obsidian folder';
 
-/**
- * Les destinataires de test déclarés : les seules adresses, numéros ou chats
- * réels qu'une demande ou une fixture du banc a le droit de nommer. Vide tant
- * que le propriétaire n'a pas décidé des comptes de test (entité « banc ») ;
- * recipients.test.ts refuse tout autre destinataire.
- */
-export const BENCH_TEST_RECIPIENTS: readonly string[] = [];
-
 /** Un mot qui commence par un verbe d'envoi (`send`, `sendmail`, `reply`, `forward`, `draft`, `drafts`). */
 const SEND_VERB = /^(send|reply|forward|draft)/;
 /** Un service de courrier : tout mot qui contient « mail » (gmail, mailchimp, hotmail…), ou l'un de ceux-ci. */
@@ -83,7 +75,8 @@ const MAIL_SERVICES = new Set([
  * sur chaque opération de connecteur, `openWorldHint` sur les outils MCP). La
  * vraie protection est qu'AUCUN destinataire réel n'existe dans le banc : ni
  * dans une demande, ni dans une fixture que le banc pose (seuls les domaines
- * réservés `.invalid` et `example.*`, prouvé par recipients.test.ts), puis,
+ * réservés `.invalid` et `example.*`, et chaque scénario déclare où il envoie :
+ * recipients.ts, prouvé par recipients.test.ts), puis,
  * plus tard, une entité « banc » dont les seuls comptes sont des comptes de
  * test. Voir docs/workflow-bench.md.
  */

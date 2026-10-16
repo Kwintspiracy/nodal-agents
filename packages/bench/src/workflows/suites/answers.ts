@@ -45,6 +45,7 @@ function question(o: {
     green: o.green,
     set: 'on-demand',
     activity: 'question',
+    sends: 'nothing',
     instruction: o.instruction,
     timeoutMs: 5 * MIN,
     observe: async () => null,
@@ -115,6 +116,7 @@ function research(o: {
     green: `A job of the run called a web search or page-read tool, the answer ${o.subject} and links sources on at least ${RESEARCH_MIN_HOSTS} different sites, and nobody was asked anything. Whether those sources were really read is not verified yet (#648).`,
     set: 'on-demand',
     activity: 'research',
+    sends: 'nothing',
     instruction: o.instruction,
     timeoutMs: 20 * MIN,
     unverified: [SOURCES_READ],
@@ -205,6 +207,7 @@ function deepResearch(o: {
     green: `A job of the run called a web tool, the report ${o.rel} was written during the run with at least ${REPORT_MIN_HEADINGS} section headings, ${REPORT_MIN_CHARS} characters and links to ${REPORT_MIN_HOSTS} different sites, it ${o.subject}, and nobody was asked anything. Whether those sources were really read is not verified yet (#648).`,
     set: 'on-demand',
     activity: 'deep-research',
+    sends: 'nothing',
     instruction:
       `Fais une recherche approfondie sur ${o.topic}. Écris un rapport complet en Markdown dans ` +
       `${o.rel} de ton espace de travail, organisé en sections avec des titres, et cite au moins ` +

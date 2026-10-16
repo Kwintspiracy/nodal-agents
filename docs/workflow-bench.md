@@ -15,7 +15,9 @@ Code: `packages/bench/src/workflows/`. Results: `apps/qa/data/workflows.ndjson`
 pnpm bench:workflows                        # the nightly set, one trial each
 pnpm bench:workflows --only question,file   # some scenarios (on-demand ones included)
 pnpm bench:workflows --activity excel,word  # every scenario of these activities (on-demand ones included)
-pnpm bench:workflows --set release          # every scenario, the on-demand ones included
+pnpm bench:workflows --set release          # every scenario, the on-demand ones included (not the owner-sending ones)
+pnpm bench:workflows --only comfyui-telegram --allow-owner-sends
+                                            # a scenario that sends TO THE OWNER: named, and this flag
 pnpm bench:workflows --trials 3             # three trials per scenario
 pnpm bench:workflows --models openrouter:z-ai/glm-5.3,deepseek-chat --dry-run
                                             # the model matrix: the plan and its cost, nothing run
@@ -138,7 +140,7 @@ request and its one-sentence green.
 | question | `question-percent`, `question-weekday`, `question-seconds`, `question-river` | facts in the answer (a number in any writing, a name), no delegation |
 | research | `research-penicillin`, `research-transistor`, `research-rabies`, `research-voyager` | a web tool called by some job of the tree, stable historical facts in the answer, links on 2+ distinct sites. Sources read: not verified (#648) |
 | deep-research | `deep-research-dna`, `-gps`, `-gutenberg`, `-apollo` | a Markdown report under `nodal-bench/` written during the run: 3000+ characters, 3+ headings, links on 4+ sites, the facts; a web call. Sources read: not verified |
-| code | `code-http-server`, `code-install-dep`, `code-bugfix`, `code-data` | a Node project from `fixtures/code` with a failing suite (one starts a local HTTP server): the bench reruns `node --test` itself, every fixture test must pass by name, test files byte for byte, the agent ran the suite; `slugify` declared, installed and imported; the bug file changed; revenue per region recomputed from the untouched CSV, to the cent |
+| code | `code-http-server`, `code-install-dep`, `code-bugfix`, `code-data` | a Node project from `fixtures/code` with a failing suite (one starts a local HTTP server): every fixture test must pass by name in the agent's own last test run (TAP or spec lines of its command tool), test files byte for byte; the bench never re-runs the suite (not verified, #753); `slugify` declared, installed and imported; the bug file changed; revenue per region recomputed from the untouched CSV, to the cent |
 | excel | `excel-edit-column`, `excel-new-sheet`, `excel-read-answer`, `excel-csv-import` | the workbook reopened with exceljs; formulas without a cached result are computed by the bench (`evaluateCell`: arithmetic, references across sheets, SUM/AVERAGE/MIN/MAX/ROUND/PRODUCT; anything else is said, never guessed); the fixture's cells unchanged; a read leaves the file byte for byte |
 | word | `word-create`, `word-replace`, `word-append`, `word-table` | text by mammoth (the product's `docx_read`), headings and tables from the OOXML; a replacement leaves every other character of the fixture's text |
 | powerpoint | `ppt-create`, `ppt-append`, `ppt-replace`, `ppt-read-answer` | slides in presentation order from the OOXML; the fixture's slides unchanged paragraph by paragraph |
@@ -151,11 +153,13 @@ Fixtures live in `packages/bench/fixtures/` (`make-fixtures.ts` writes the
 office ones from `fixture-data.ts`; a scenario is frozen, so is its fixture).
 Before a trial the bench installs them under `nodal-bench/` of the shared
 workspace folder, after deleting what an earlier trial left there in every
-workspace folder. The code scenarios rerun the agent's code with `node --test`
-(two minutes at most), outside any sandbox, and ONLY when the agent ran the
-suite itself (a `tool_calls` row running the tests, read before anything is
-run): the bench never gives execution to an agent that had none. Without it the
-trial is red, "the agent never ran the test suite", and nothing is rerun.
+workspace folder. **The bench never executes agent-written code outside a
+sandbox.** A rule on the tool name and the command ("the agent ran `npm
+test`") is bypassed by an `echo`, a `cd` elsewhere or an MCP tool merely named
+`bash`. The code judges read the output of the agent's last command run that
+carries test results, and every line says "tests re-run by the bench: not
+verified" (a tool output could be faked). Once the platform sandbox is
+available (#753), re-running the suite inside it restores the check.
 
 The portal reads `apps/qa/data/workflow-catalog.json` (`--catalog`; a test
 refuses it out of sync with the code) for the activity order and the
@@ -305,9 +309,20 @@ scenario is skipped with that reason, no job is started (needs
   "Print is confirmed on a preview card or a dialog, which this client does
   not show"). A pending request
   expires after 60 minutes in the connector's memory.
-- `comfyui-telegram` sends a message to the owner's Telegram and uses the GPU
-  for 10+ minutes: it stays out of the nightly set until the owner accepts it
-  at night. It runs with `--only comfyui-telegram` or `--set release`.
+- Every scenario declares where it sends (`sends`): `nothing` (a send during
+  the trial, by a messaging or a mail tool, or a reply delivered to a channel,
+  is red whatever the scenario's own judge says), `owner`, or
+  `test-account:<name>` (none is wired: such a scenario is skipped).
+  `recipients.test.ts` fails on a request that asks to send to the owner
+  ("envoie-la-moi", "send it to me", "sur Telegram" with no named recipient)
+  unless it declares `owner`. An `owner` scenario is in no set, no activity, no
+  matrix and not in the nightly run: it runs only when named with `--only` AND
+  given `--allow-owner-sends`, otherwise it is skipped with that reason; a send
+  that names an explicit recipient is red. Today only `comfyui-telegram` (an
+  image to the owner's Telegram, 10+ minutes of GPU) declares `owner`.
+- The real `research` trial of 30/09 called `telegram_send_message` from the
+  delegate: a message reached the owner during a bench trial. Its judge said
+  green; the declared destination (`nothing`) now makes such a run red.
 - `ask-before-acting` puts a question card in the owner's chat on every run
   (the bench cancels it at once and never answers): it runs with
   `--only ask-before-acting` or `--set release`.

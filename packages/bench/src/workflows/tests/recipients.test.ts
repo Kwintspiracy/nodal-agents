@@ -14,35 +14,21 @@
 // `example.net`, `example.org`) ou déclarée comme destinataire de test
 // (`BENCH_TEST_RECIPIENTS`). Un numéro de téléphone ou un identifiant de chat
 // n'est admis que déclaré.
+//
+// Passe 2 : une demande peut viser le propriétaire SANS aucun identifiant
+// (« envoie-la-moi sur Telegram » : l'outil d'envoi retombe sur son chat). Tout
+// scénario déclare donc où il envoie (`sends`), et une demande d'envoi tournée
+// vers le propriétaire exige `sends: 'owner'` — un scénario qui ne tourne
+// qu'avec `--allow-owner-sends`, jamais dans un jeu, une matrice ou la nuit.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { extname, join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readXlsxGrid } from '../disk';
 import { FIXTURES_DIR } from '../fixtures';
-import { BENCH_TEST_RECIPIENTS } from '../needs';
+import { destinationProblems, realRecipients } from '../recipients';
 import { readDocx, readPdf, readPptx } from '../office';
 import { SCENARIOS } from '../scenarios';
-
-const EMAIL = /[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g;
-/** Un numéro : international (+33 6 12 34 56 78) ou national à dix chiffres (06 12 34 56 78). */
-const PHONE =
-  /(?<![\w.,])(?:\+\d{1,3}[\s.-]?\d(?:[\s.-]?\d){7,12}|0[1-9](?:[\s.-]?\d{2}){4})(?![\w]|[.,]\d)/g;
-/** Un identifiant de chat (Telegram, Discord, WhatsApp) : neuf chiffres d'affilée ou plus. */
-const CHAT_ID = /(?<![\w.,-])-?\d{9,}(?![\w]|[.,]\d)/g;
-
-const RESERVED = /(^|\.)(invalid|test|example|localhost)$|(^|\.)example\.(com|net|org)$/i;
-
-/** Les destinataires d'un texte qui ne sont ni réservés ni déclarés. */
-export function realRecipients(text: string): string[] {
-  const declared = new Set(BENCH_TEST_RECIPIENTS.map((r) => r.toLowerCase()));
-  const out: string[] = [];
-  for (const m of text.matchAll(EMAIL))
-    if (!RESERVED.test(m[1]!) && !declared.has(m[0].toLowerCase())) out.push(m[0]);
-  for (const re of [PHONE, CHAT_ID])
-    for (const m of text.matchAll(re)) if (!declared.has(m[0].trim())) out.push(m[0].trim());
-  return out;
-}
 
 function filesUnder(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
@@ -95,7 +81,53 @@ describe('the scanner sees real recipients', () => {
   });
 });
 
+describe('a request to send to the owner needs a declared destination', () => {
+  it('sees the verb turned to the person asking, in French and in English', () => {
+    expect(destinationProblems('Puis envoie-la-moi sur Telegram.', 'nothing')).toHaveLength(1);
+    expect(destinationProblems('Tu peux me l’envoyer ?', 'nothing')).toHaveLength(1);
+    expect(destinationProblems("Tu peux me l'envoyer ?", 'nothing')).toHaveLength(1);
+    expect(destinationProblems('Then send it to me.', 'nothing')).toHaveLength(1);
+    expect(destinationProblems('Partage le rapport sur Slack.', 'nothing')).toHaveLength(1);
+  });
+
+  it('a send to a reserved address nobody can receive is no send to the owner', () => {
+    expect(
+      destinationProblems(
+        'Écris le fichier, puis envoie-le par e-mail à bench@example.invalid. Dis-moi ensuite ce qui a été fait.',
+        'nothing',
+      ),
+    ).toEqual([]);
+  });
+
+  it('a sentence without a sending verb, or a fixture that delivers a service, asks nothing', () => {
+    expect(
+      destinationProblems('Pose-moi la question, puis donne-moi le résultat.', 'nothing'),
+    ).toEqual([]);
+    expect(
+      destinationProblems('ACME s’engage à livrer la prestation sous trente jours.', 'nothing'),
+    ).toEqual([]);
+  });
+
+  it('the same request is fine once the scenario declares the owner', () => {
+    expect(destinationProblems('Puis envoie-la-moi sur Telegram.', 'owner')).toEqual([]);
+  });
+});
+
 describe('no real recipient anywhere in the bench', () => {
+  it('every scenario request matches the destination it declares', () => {
+    const found = SCENARIOS.map((s) => ({
+      id: s.id,
+      problems: destinationProblems(s.instruction, s.sends),
+    })).filter((x) => x.problems.length > 0);
+    expect(found).toEqual([]);
+  });
+
+  it('only scenarios that ask for it declare the owner', () => {
+    expect(SCENARIOS.filter((s) => s.sends === 'owner').map((s) => s.id)).toEqual([
+      'comfyui-telegram',
+    ]);
+  });
+
   it('in no scenario request', () => {
     const found = SCENARIOS.map((s) => ({ id: s.id, real: realRecipients(s.instruction) })).filter(
       (x) => x.real.length > 0,
@@ -108,7 +140,9 @@ describe('no real recipient anywhere in the bench', () => {
     const files = filesUnder(FIXTURES_DIR);
     expect(files.length).toBeGreaterThan(20);
     for (const f of files) {
-      const real = realRecipients(await textOf(f));
+      const text = await textOf(f);
+      // Une fixture ne déclare rien : elle ne doit ni nommer quelqu'un, ni demander d'envoyer au propriétaire.
+      const real = [...realRecipients(text), ...destinationProblems(text, 'nothing')];
       if (real.length > 0) found.push({ file: relative(FIXTURES_DIR, f), real });
     }
     expect(found).toEqual([]);

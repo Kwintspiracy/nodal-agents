@@ -75,6 +75,7 @@ const create = defineScenario<DeckObservation>({
   green: `${GLASS_REL} was written during the run and opens as a presentation of exactly 5 slides, the first reads "Le recyclage du verre", each of the next four holds a title and at least two other paragraphs, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'powerpoint',
+  sends: 'nothing',
   instruction:
     `Crée une présentation PowerPoint ${GLASS_REL} dans ton espace de travail, de 5 diapositives sur ` +
     'le recyclage du verre : une diapositive de titre « Le recyclage du verre », puis quatre ' +
@@ -117,6 +118,7 @@ const append = defineScenario<DeckObservation>({
   green: `${PROJECT_REL} was changed during the run: it has 4 slides, the first three read exactly as the fixture's, the fourth reads "Prochaines étapes" and at least three more paragraphs, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'powerpoint',
+  sends: 'nothing',
   instruction:
     `Ajoute à la fin de la présentation ${PROJECT_REL} ${SHARED} une quatrième diapositive ` +
     '« Prochaines étapes » avec trois puces. Ne change pas les autres diapositives.',
@@ -156,6 +158,7 @@ const replace = defineScenario<DeckObservation>({
   green: `${REVIEW_REL} was changed during the run: 2025 appears nowhere, its ${REVIEW_DECK.length} slides read exactly as the fixture's with 2026 in place of 2025, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'powerpoint',
+  sends: 'nothing',
   instruction:
     `Dans la présentation ${REVIEW_REL} ${SHARED}, remplace partout l'année 2025 par 2026, ` +
     'sans rien changer d’autre. Garde le même nom de fichier.',
@@ -191,6 +194,7 @@ const readAnswer = defineScenario<{ hash: string | null }>({
   green: `The answer says the presentation has ${OFFER_DECK.length} slides and gives ${OFFER_PRO_PRICE} € for the Pro plan, ${OFFER_REL} is byte for byte the fixture, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'powerpoint',
+  sends: 'nothing',
   instruction: `Combien de diapositives contient la présentation ${OFFER_REL} ${SHARED}, et quel est le prix de la formule Pro ?`,
   timeoutMs: 10 * MIN,
   prepare(env) {

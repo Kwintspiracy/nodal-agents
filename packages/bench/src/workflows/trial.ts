@@ -22,7 +22,10 @@
 import { benchDeliverables } from './disk';
 import type { TreeFacts } from './facts';
 import { isLive, liveJobs, pendingApprovals } from './facts';
-import { missingNeeds } from './needs';
+import { DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
+import { bareToolName, channelSends } from './judge-kit';
+import { isMailSender, missingNeeds } from './needs';
+import { recipientIds } from './recipients';
 import { redactHome } from './redact';
 import type { ForeignActivity } from './stack';
 import type { AnyScenario, ModelUse, ScenarioEnv, TrialLine } from './types';
@@ -56,11 +59,13 @@ export interface TrialOptions {
   readonly stackCommit: string | null;
   /** Le modèle que la matrice impose ; null : les agents sur leurs propres modèles. */
   readonly modelUnderTest: string | null;
+  /** `--allow-owner-sends` : seul ce drapeau laisse partir un scénario qui envoie au propriétaire. */
+  readonly allowOwnerSends: boolean;
 }
 
 export const DEFAULT_TRIAL_OPTIONS: Omit<
   TrialOptions,
-  'trigger' | 'nodalVersion' | 'stackCommit' | 'modelUnderTest'
+  'trigger' | 'nodalVersion' | 'stackCommit' | 'modelUnderTest' | 'allowOwnerSends'
 > = {
   pollMs: 2_000,
   idleWaitMs: 30 * 60_000,
@@ -107,6 +112,7 @@ function emptyLine(
     set: s.set,
     activity: s.activity,
     needs: [...(s.needs ?? [])],
+    sends: s.sends,
     modelUnderTest: o.modelUnderTest,
     rootModel,
     nodalVersion: o.nodalVersion,
@@ -343,6 +349,58 @@ export async function waitForIdle(deps: TrialDeps, o: TrialOptions): Promise<str
   }
 }
 
+/**
+ * Avant tout lancement : un scénario qui envoie au propriétaire ne part
+ * qu'avec `--allow-owner-sends` ; un scénario qui envoie à un compte de test
+ * ne part pas tant qu'aucun compte de test n'est branché.
+ */
+export function destinationGate(
+  s: AnyScenario,
+  o: Pick<TrialOptions, 'allowOwnerSends'>,
+): string[] {
+  if (s.sends === 'owner' && !o.allowOwnerSends)
+    return [
+      "this scenario sends to the owner's own account (sends: owner): it runs only with --allow-owner-sends",
+    ];
+  if (s.sends.startsWith('test-account:'))
+    return [
+      `this scenario sends to the test account "${s.sends.slice('test-account:'.length)}", and no test account is wired yet`,
+    ];
+  return [];
+}
+
+/**
+ * Après l'essai : ce qui est réellement parti contre la destination déclarée.
+ * `nothing` : aucun outil d'envoi (messagerie ou courrier) et aucune
+ * livraison de réponse. `owner` : l'envoi va au chat par défaut du
+ * propriétaire ; un envoi qui nomme un destinataire explicite est refusé.
+ */
+export function destinationReasons(s: AnyScenario, facts: TreeFacts): string[] {
+  if (s.sends === 'nothing') {
+    const mail = facts.toolCalls.filter((c) => isMailSender(c.toolName));
+    return [
+      ...channelSends(facts),
+      ...(mail.length > 0
+        ? [
+            `a mail tool was called (${[...new Set(mail.map((c) => bareToolName(c.toolName)))].join(', ')})`,
+          ]
+        : []),
+    ];
+  }
+  if (s.sends === 'owner') {
+    const delivery = new Set<string>(DELIVERY_TOOL_NAMES);
+    const named = facts.toolCalls
+      .filter((c) => delivery.has(bareToolName(c.toolName)) || isMailSender(c.toolName))
+      .flatMap((c) => recipientIds(c.input ?? ''));
+    return named.length > 0
+      ? [
+          `a send names a recipient other than the owner (${[...new Set(named)].join(', ')}): sends: owner allows only the owner's own chat`,
+        ]
+      : [];
+  }
+  return [];
+}
+
 function truncate(text: string, max: number): string {
   return text.length <= max
     ? text
@@ -371,7 +429,7 @@ export async function runTrial(
   try {
     rootModel = await deps.rootModel();
     const envBefore = await deps.env(deps.now());
-    const missing = missingNeeds(s.needs ?? [], envBefore);
+    const missing = [...destinationGate(s, o), ...missingNeeds(s.needs ?? [], envBefore)];
     if (missing.length > 0) {
       return { ...emptyLine(s, o, deps.now(), rootModel), verdict: 'skipped', reasons: missing };
     }
@@ -472,7 +530,9 @@ export async function runTrial(
   } catch (e) {
     judged = [`the judge failed: ${String(e instanceof Error ? e.message : e)}`];
   }
-  const reasons = [...benchReasons, ...judged];
+  // Un envoi parti ailleurs que là où le scénario le déclare interdit le vert,
+  // quel que soit le juge du scénario (une raison déjà dite n'est pas répétée).
+  const reasons = [...new Set([...benchReasons, ...judged, ...destinationReasons(s, facts)])];
   const result = facts.jobs.find((j) => j.id === facts.rootId)?.result ?? null;
   return {
     ...emptyLine(s, o, startedMs, rootModel),

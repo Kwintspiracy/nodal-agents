@@ -61,6 +61,7 @@ const landing = defineScenario<PageObservation>({
   green: `${LANDING_REL} was written during the run: its title element names "${SHOP}", it has exactly one non-empty h1, a list of at least three items each with a price in euros, a footer element holding "${ADDRESS}", and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'html-page',
+  sends: 'nothing',
   instruction:
     `Crée une page web autonome ${LANDING_REL} dans ton espace de travail pour une boulangerie ` +
     `fictive « ${SHOP} » : un titre de page (balise title) qui contient « ${SHOP} », un titre ` +
@@ -121,6 +122,7 @@ const tableCsv = defineScenario<TableObservation>({
   green: `${WEATHER_HTML_REL} was written during the run with a table whose rows are exactly the CSV's (header first, then one row per day, same order, same values), the CSV is untouched, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'html-page',
+  sends: 'nothing',
   instruction:
     `Crée une page ${WEATHER_HTML_REL} dans ton espace de travail qui affiche les données de ` +
     `${WEATHER_CSV_REL} (${SHARED.replace("de l'", "dans l'")}) dans un tableau HTML : une ligne ` +
@@ -200,6 +202,7 @@ const edit = defineScenario<PageObservation>({
   green: `${HOME_REL} was changed during the run: its title element reads exactly "${NEW_TITLE}", a footer element holds "${FOOTER}", the headings and paragraphs outside the footer are exactly the fixture's, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'html-page',
+  sends: 'nothing',
   instruction:
     `Dans la page ${HOME_REL} ${SHARED}, change le titre de la page (balise title) en ` +
     `« ${NEW_TITLE} » et ajoute un pied de page (balise footer) qui contient « ${FOOTER} ». ` +
@@ -258,6 +261,7 @@ const svgChart = defineScenario<PageObservation>({
   green: `${CHART_REL} was written during the run, loads nothing from another site, holds an inline svg with bars (rect) whose heights are in the ratio 12 : 30 : 58 within 5 %, names janvier, février and mars, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'html-page',
+  sends: 'nothing',
   instruction:
     `Crée une page ${CHART_REL} dans ton espace de travail : une page autonome (sans bibliothèque ` +
     'ni ressource externe) qui affiche en SVG un diagramme en barres des ventes : ' +

@@ -32,6 +32,7 @@ const readTotal = defineScenario<{ hash: string | null }>({
   green: `The answer gives the total ${INVOICE_TOTAL} and the invoice number ${INVOICE_NUMBER}, ${INVOICE_REL} is byte for byte the fixture, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'pdf',
+  sends: 'nothing',
   instruction: `Quel est le montant total TTC de la facture ${INVOICE_REL} ${SHARED}, et quel est son numéro ?`,
   timeoutMs: 10 * MIN,
   prepare(env) {
@@ -65,6 +66,7 @@ const readPages = defineScenario<{ hash: string | null }>({
   green: `The answer says the PDF has 3 pages and that page 2 is about installation, ${GUIDE_REL} is byte for byte the fixture, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'pdf',
+  sends: 'nothing',
   instruction: `Combien de pages compte le document ${GUIDE_REL} ${SHARED}, et quel est le titre de la page 2 ?`,
   timeoutMs: 10 * MIN,
   prepare(env) {
@@ -136,6 +138,7 @@ const create = defineScenario<PdfObservation>({
   green: `${CERTIFICATE_REL} was written during the run, opens as a PDF of exactly one page whose text holds "${CERTIFICATE_LINES.join('", "')}", and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'pdf',
+  sends: 'nothing',
   instruction:
     `Crée un PDF d'une seule page ${CERTIFICATE_REL} dans ton espace de travail, qui contient le ` +
     `titre « ${CERTIFICATE_LINES[0]} », le nom « ${CERTIFICATE_LINES[1]} » et la date du ${CERTIFICATE_LINES[2]}.`,
@@ -174,6 +177,7 @@ const fromMarkdown = defineScenario<PdfObservation>({
   green: `${MEETING_PDF_REL} was written during the run, opens as a PDF, and its text holds every heading and list item of the fixture ${MEETING_MD_REL} (which is left untouched), and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'pdf',
+  sends: 'nothing',
   instruction: `Convertis la note ${MEETING_MD_REL} ${SHARED} en PDF : ${MEETING_PDF_REL}, avec tous ses titres et tout son contenu.`,
   timeoutMs: 10 * MIN,
   prepare(env) {

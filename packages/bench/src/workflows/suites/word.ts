@@ -60,6 +60,7 @@ const create = defineScenario<DocObservation>({
   green: `${CONVOCATION_REL} was written during the run, opens as a Word document, has a heading paragraph reading "Convocation" followed by at least three body paragraphs, names 12 novembre 2026, 14 h and salle B, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'word',
+  sends: 'nothing',
   instruction:
     `Crée un document Word ${CONVOCATION_REL} dans ton espace de travail : un titre « Convocation » ` +
     '(en style de titre), puis trois paragraphes qui convoquent l’équipe à une réunion le ' +
@@ -102,6 +103,7 @@ const replace = defineScenario<DocObservation>({
   green: `${CONTRACT_REL} was changed during the run: "${CONTRACT.from}" appears nowhere, "${CONTRACT.to}" appears exactly ${CONTRACT.occurrences} times (the table included), every other character of the text is the fixture's, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'word',
+  sends: 'nothing',
   instruction:
     `Dans le document ${CONTRACT_REL} ${SHARED}, remplace partout « ${CONTRACT.from} » par ` +
     `« ${CONTRACT.to} », sans rien changer d’autre.`,
@@ -143,6 +145,7 @@ const append = defineScenario<DocObservation>({
   green: `${MINUTES_REL} was changed during the run: it still starts with the fixture's ${MINUTES.paragraphs.length + 1} paragraphs, in order, then has a heading reading "Décisions" followed by at least three non-empty paragraphs or list items, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'word',
+  sends: 'nothing',
   instruction:
     `Ajoute à la fin du document ${MINUTES_REL} ${SHARED} une section « Décisions » (un titre), ` +
     'suivie d’au moins trois décisions, une par paragraphe ou en liste à puces. Ne change pas le reste.',
@@ -190,6 +193,7 @@ const table = defineScenario<DocObservation>({
   green: `${PLANNING_REL} was written during the run with a table whose header row is ${COLUMNS.join(' / ')} and whose next five rows start with lundi to vendredi, in order, every cell filled, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'word',
+  sends: 'nothing',
   instruction:
     `Crée un document Word ${PLANNING_REL} dans ton espace de travail avec un tableau de trois ` +
     `colonnes (${COLUMNS.join(', ')}) et une ligne par jour, du lundi au vendredi.`,

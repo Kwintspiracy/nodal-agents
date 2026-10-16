@@ -19,6 +19,7 @@ export interface CatalogScenario {
   readonly green: string;
   readonly set: string;
   readonly needs: string[];
+  readonly sends: string;
   readonly instruction: string;
 }
 
@@ -40,6 +41,7 @@ export function buildCatalog(): Catalog {
       green: s.green,
       set: s.set,
       needs: [...(s.needs ?? [])],
+      sends: s.sends,
       instruction: s.instruction,
     })),
   };

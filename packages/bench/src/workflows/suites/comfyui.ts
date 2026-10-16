@@ -117,6 +117,7 @@ function comfy(o: {
     green: `Exactly ${o.count} PNG file(s)${o.name ? ` named ${o.name}` : ''} written during the run under ${o.dir}/, each ${o.width} × ${o.height} pixels read from the file header${o.count > 1 ? ', all different' : ''}, nothing sent to a messaging channel, and nobody was asked anything.`,
     set: 'on-demand',
     activity: 'image-comfyui',
+    sends: 'nothing',
     needs: ['comfyui'],
     instruction: `Génère avec ComfyUI ${what}.`,
     timeoutMs: 40 * MIN,

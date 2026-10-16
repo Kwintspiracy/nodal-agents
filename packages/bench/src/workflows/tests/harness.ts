@@ -10,6 +10,7 @@
 // les lignes de la base (statut, outils appelés, réponse) sont construites,
 // dans la forme exacte que `readTreeFacts` rend (le schéma Zod les valide).
 
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, statSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -107,7 +108,7 @@ export interface Played {
  */
 export async function play(
   id: string,
-  run: Run,
+  runOrBuild: Run | ((root: string) => Run),
   work: (root: string) => void | Promise<void> = () => undefined,
 ): Promise<Played> {
   const s = scenarioById(id);
@@ -127,6 +128,7 @@ export async function play(
   // le début pourrait sembler écrit avant. Un vrai essai dure des secondes.
   const startedMs = Date.now() - 1_000;
   await work(root);
+  const run = typeof runOrBuild === 'function' ? runOrBuild(root) : runOrBuild;
   const env: ScenarioEnv = { ...env0, startedMs };
   const observed = await s.observe(facts(run), env);
   return { root, reasons: s.judge(facts(run), observed), observed };
@@ -160,4 +162,20 @@ export function png(width: number, height: number, seed = 0): Buffer {
 /** La date de modification d'un fichier (pour vérifier qu'un test a bien écrit). */
 export function mtime(p: string): number {
   return statSync(p).mtimeMs;
+}
+
+/**
+ * Lance `node --test` dans `dir` — pour les TESTS seulement : prouver qu'une
+ * fixture échoue telle que livrée et passe résolue, et produire la sortie
+ * qu'un agent obtiendrait de son propre `npm test`. Le banc, lui, n'exécute
+ * jamais le code d'un agent (suites/code.ts).
+ */
+export function runNodeTests(dir: string): { exitCode: number | null; stdout: string } {
+  const r = spawnSync(process.execPath, ['--test', '--test-reporter=tap'], {
+    cwd: dir,
+    encoding: 'utf8',
+    timeout: 120_000,
+    windowsHide: true,
+  });
+  return { exitCode: r.status, stdout: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 }

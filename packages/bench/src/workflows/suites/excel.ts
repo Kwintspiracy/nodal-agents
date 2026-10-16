@@ -85,6 +85,7 @@ const editColumn = defineScenario<WorkbookObservation>({
   green: `${STOCK_REL} was changed during the run: D1 reads "Valeur", D2 to D6 hold quantity × unit price, D7 their total (values or formulas the bench computes), columns A to C are exactly the fixture's, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'excel',
+  sends: 'nothing',
   instruction:
     `Dans le classeur ${STOCK_REL} ${SHARED}, ajoute une colonne D « Valeur » égale à la quantité ` +
     'multipliée par le prix unitaire pour chaque article, puis le total de la colonne D juste sous ' +
@@ -138,6 +139,7 @@ const newSheet = defineScenario<WorkbookObservation>({
   green: `${NOTES_REL} was changed during the run: a sheet "${AVERAGES}" gives, for each of the ${NOTES.rows.length} pupils, their name in column A and the mean of their three marks in column B (to the hundredth, value or formula), the "${NOTES.sheet}" sheet is exactly the fixture's, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'excel',
+  sends: 'nothing',
   instruction:
     `Dans le classeur ${NOTES_REL} ${SHARED}, ajoute une feuille « ${AVERAGES} » avec, en colonne A, ` +
     'le nom de chaque élève et, en colonne B, la moyenne de ses trois notes, arrondie à deux décimales.',
@@ -198,6 +200,7 @@ const readAnswer = defineScenario<{ hash: string | null }>({
   green: `The answer names "${bestProduct().name}" and its quarter total ${bestProduct().total}, ${QUARTER_REL} is byte for byte the fixture, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'excel',
+  sends: 'nothing',
   instruction: `Dans le classeur ${QUARTER_REL} ${SHARED}, quel produit a le plus gros total de ventes sur le trimestre, et quel est ce total ?`,
   timeoutMs: 10 * MIN,
   prepare(env) {
@@ -239,6 +242,7 @@ const csvImport = defineScenario<WorkbookObservation>({
   green: `${CONTACTS_XLSX_REL} was written during the run with a sheet "${CONTACTS_SHEET}" whose rows are exactly the CSV's (header first, same order, nothing more), and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'excel',
+  sends: 'nothing',
   instruction:
     `Convertis le fichier ${CONTACTS_CSV_REL} ${SHARED} en un classeur Excel ${CONTACTS_XLSX_REL} : ` +
     `une feuille « ${CONTACTS_SHEET} », la ligne d'en-tête du CSV en ligne 1, puis une ligne par ` +

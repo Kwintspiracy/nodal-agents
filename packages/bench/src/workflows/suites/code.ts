@@ -1,19 +1,22 @@
-// workflows/suites/code.ts — du code qui doit MARCHER, prouvé en le relançant.
+// workflows/suites/code.ts — du code qui doit MARCHER, jugé sur ce que l'agent a lancé.
 //
 // Chaque scénario pose un petit projet Node (packages/bench/fixtures/code)
 // dans le dossier du banc de l'espace partagé, avec une suite de tests qui
-// échoue. Le juge ne croit pas l'agent qui dit « les tests passent » : il
-// relance lui-même la suite (`node --test`, sortie TAP), exige que CHAQUE test
-// de la fixture soit passé par son nom, et que les fichiers de test soient
-// ceux de la fixture, octet pour octet (supprimer un test ne le fait pas
-// passer).
+// échoue. Le juge exige que CHAQUE test de la fixture soit passé par son nom
+// dans le dernier lancement de tests de l'agent, et que les fichiers de test
+// soient ceux de la fixture, octet pour octet (supprimer un test ne le fait
+// pas passer).
 //
-// Le banc exécute ainsi le code écrit par l'agent, hors bac à sable : il ne le
-// fait QUE si l'agent l'a déjà exécuté lui-même (une ligne `tool_calls` qui
-// lance la suite), constaté dans la base AVANT toute relance. Le banc ne donne
-// jamais l'exécution à un agent qui ne l'avait pas (revue Reviewer A, #756).
+// Le banc n'exécute JAMAIS le code écrit par un agent hors bac à sable (revue
+// Reviewer A de #756, passes 1 et 2). Une règle sur le nom de l'outil et sur
+// la commande (« l'agent a lancé `npm test` ») se contourne : un `echo`, un
+// `cd` ailleurs, un outil MCP qui s'appelle `bash`. Le juge lit donc la SORTIE
+// du dernier outil de commande de l'agent qui porte des résultats de tests
+// (lignes TAP ou du rapporteur spec de `node --test`) ; ce que le banc ne
+// vérifie pas par lui-même est dit sur chaque ligne (`TESTS_NOT_RERUN`). Le
+// jour où un bac à sable de la plateforme sera disponible (#753), relancer la
+// suite à l'intérieur rétablira le contrôle.
 
-import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { TreeFacts } from '../facts';
@@ -26,47 +29,52 @@ import {
   sharedRoot,
 } from '../fixtures';
 import { REGIONS } from '../fixture-data';
-import { SCRIPT_RUNNER, commandRuns, commonReasons, parseJson } from '../judge-kit';
-import { defineScenario, type AnyScenario } from '../types';
+import {
+  COMMAND_TOOL,
+  SCRIPT_RUNNER,
+  bareToolName,
+  commandRuns,
+  commonReasons,
+  parseJson,
+} from '../judge-kit';
+import { defineScenario, type AnyScenario, type UnverifiedCheck } from '../types';
 
 const MIN = 60_000;
-const TEST_TIMEOUT_MS = 120_000;
 
-export interface TestRun {
-  readonly exitCode: number | null;
-  readonly timedOut: boolean;
-  /** Les tests passés, par leur nom (lignes TAP `ok N - nom`). */
-  readonly passed: string[];
-  readonly failed: string[];
-  /** La fin de la sortie, pour la raison d'un rouge. */
-  readonly tail: string;
+/** Ce que le banc ne vérifie pas lui-même : il ne relance pas la suite (il n'exécute aucun code d'agent). */
+export const TESTS_NOT_RERUN: UnverifiedCheck = {
+  check: 'tests re-run by the bench',
+  state: 'not verified',
+  reason:
+    "The bench never executes agent-written code outside a sandbox: the verdict reads the agent's own last test run, whose output a tool could fake.",
+  ticket: '#753',
+};
+
+/** Les tests passés et échoués qu'un texte rapporte : TAP (`ok N - nom`) ou rapporteur spec (`✔ nom`). */
+export function testResultsIn(text: string): { passed: string[]; failed: string[] } | null {
+  const names = (re: RegExp): string[] =>
+    [...text.matchAll(re)].map((m) => m[1]!.replace(/\s+\([\d.]+m?s\)$/, '').trim());
+  const passed = [...names(/^\s*ok \d+ - (.+?)(?: # .*)?$/gm), ...names(/^\s*✔ (.+)$/gm)];
+  const failed = [...names(/^\s*not ok \d+ - (.+?)(?: # .*)?$/gm), ...names(/^\s*✖ (.+)$/gm)];
+  return passed.length + failed.length === 0 ? null : { passed, failed };
 }
 
-/** Relance `node --test` dans `dir`, avec le Node qui fait tourner le banc. */
-export function runNodeTests(dir: string): TestRun {
-  const r = spawnSync(process.execPath, ['--test', '--test-reporter=tap'], {
-    cwd: dir,
-    encoding: 'utf8',
-    timeout: TEST_TIMEOUT_MS,
-    windowsHide: true,
-  });
-  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
-  const names = (re: RegExp): string[] => [...out.matchAll(re)].map((m) => m[1]!.trim());
-  return {
-    exitCode: r.status,
-    timedOut: r.error !== undefined && /ETIMEDOUT/.test(String(r.error)),
-    passed: names(/^ok \d+ - (.+?)(?: # .*)?$/gm),
-    failed: names(/^not ok \d+ - (.+?)(?: # .*)?$/gm),
-    tail: out.trim().split('\n').slice(-6).join(' | '),
-  };
+/** Le texte qu'un outil de commande a rendu : stdout et stderr quand la sortie est du JSON, sinon le texte brut. */
+function commandText(output: string | null): string {
+  if (output === null) return '';
+  const o = parseJson(output) as { stdout?: unknown; stderr?: unknown } | null;
+  if (o && typeof o === 'object' && (typeof o.stdout === 'string' || typeof o.stderr === 'string'))
+    return `${typeof o.stdout === 'string' ? o.stdout : ''}\n${typeof o.stderr === 'string' ? o.stderr : ''}`;
+  return output;
 }
 
-/** Une commande qui lance la suite de tests d'un projet Node. */
-const TEST_RUN = /npm(\.cmd)?\s+(run\s+)?test|node\s+--test|pnpm\s+test/i;
-
-/** L'agent a lancé la suite lui-même : le seul cas où le banc la relance. */
-export function agentRanTheSuite(facts: TreeFacts): boolean {
-  return commandRuns(facts, TEST_RUN).length > 0;
+/** Le DERNIER lancement de tests de l'agent : la sortie du dernier outil de commande qui porte des résultats. */
+export function lastAgentTestRun(facts: TreeFacts): { passed: string[]; failed: string[] } | null {
+  const runs = facts.toolCalls
+    .filter((c) => COMMAND_TOOL.test(bareToolName(c.toolName)))
+    .map((c) => testResultsIn(commandText(c.output)))
+    .filter((x): x is { passed: string[]; failed: string[] } => x !== null);
+  return runs[runs.length - 1] ?? null;
 }
 
 /** Les noms des tests qu'un fichier de test déclare (`test('…'`). */
@@ -81,8 +89,6 @@ interface ProjectObservation {
   /** Fichier de test (relatif au projet) → empreinte actuelle, null s'il a disparu. */
   readonly testHashes: Record<string, string | null>;
   readonly sourceHash: string | null;
-  /** La relance du banc ; null quand l'agent n'a jamais lancé la suite (aucune relance). */
-  readonly run: TestRun | null;
   readonly extra: Record<string, unknown>;
 }
 
@@ -90,16 +96,15 @@ function testFiles(project: string): string[] {
   return readdirSync(join(fixturePath(`code/${project}`), 'test'));
 }
 
+/** Ce qu'on lit du projet sur le disque. Rien n'y est exécuté. */
 function observeProject(
-  facts: TreeFacts,
   root: string,
   project: string,
   source: string,
   extra: (dir: string) => Record<string, unknown> = () => ({}),
 ): ProjectObservation {
   const dir = join(root, 'nodal-bench', project);
-  if (!existsSync(dir))
-    return { exists: false, testHashes: {}, sourceHash: null, run: null, extra: {} };
+  if (!existsSync(dir)) return { exists: false, testHashes: {}, sourceHash: null, extra: {} };
   const testHashes: Record<string, string | null> = {};
   for (const f of testFiles(project)) {
     const p = join(dir, 'test', f);
@@ -110,12 +115,11 @@ function observeProject(
     exists: true,
     testHashes,
     sourceHash: existsSync(src) ? fileHash(src) : null,
-    run: agentRanTheSuite(facts) ? runNodeTests(dir) : null,
     extra: extra(dir),
   };
 }
 
-/** Les raisons communes : projet présent, tests intacts, chaque test de la fixture passé, la suite lancée par l'agent. */
+/** Les raisons communes : projet présent, tests intacts, chaque test de la fixture passé dans le dernier lancement de l'agent. */
 function judgeProject(facts: TreeFacts, project: string, o: ProjectObservation): string[] {
   const r = commonReasons(facts);
   if (!o.exists) return [...r, `the project nodal-bench/${project} is gone`];
@@ -124,21 +128,16 @@ function judgeProject(facts: TreeFacts, project: string, o: ProjectObservation):
     if (o.testHashes[f] === null) r.push(`the test file test/${f} was deleted`);
     else if (o.testHashes[f] !== want) r.push(`the test file test/${f} was changed`);
   }
-  const run = o.run;
-  if (!agentRanTheSuite(facts) || run === null) return [...r, 'the agent never ran the test suite'];
-  if (run.timedOut) r.push(`the test suite did not finish in ${TEST_TIMEOUT_MS / 1000} s`);
-  else {
-    const expected = testFiles(project).flatMap((f) =>
-      declaredTests(readFileSync(join(fixturePath(`code/${project}`), 'test', f), 'utf8')),
+  const run = lastAgentTestRun(facts);
+  if (run === null) return [...r, "no test run of the agent shows the suite's results"];
+  const expected = testFiles(project).flatMap((f) =>
+    declaredTests(readFileSync(join(fixturePath(`code/${project}`), 'test', f), 'utf8')),
+  );
+  const notPassed = expected.filter((t) => !run.passed.includes(t) || run.failed.includes(t));
+  if (notPassed.length > 0)
+    r.push(
+      `in the agent's last test run, ${notPassed.length} test(s) do not pass: ${notPassed.join('; ')}`,
     );
-    const notPassed = expected.filter((t) => !run.passed.includes(t));
-    if (notPassed.length > 0)
-      r.push(
-        `rerun by the bench, ${notPassed.length} test(s) do not pass: ${notPassed.join('; ')}`,
-      );
-    else if (run.exitCode !== 0)
-      r.push(`rerun by the bench, the suite exits ${run.exitCode}: ${run.tail}`);
-  }
   return r;
 }
 
@@ -159,13 +158,15 @@ function codeProject(o: {
     green: o.green,
     set: 'on-demand',
     activity: 'code',
+    sends: 'nothing',
     instruction: o.instruction,
     timeoutMs: 20 * MIN,
+    unverified: [TESTS_NOT_RERUN],
     prepare(env) {
       installFixture(env.workspaceRoots, `code/${o.project}`, `nodal-bench/${o.project}`);
     },
-    observe: async (facts, env) =>
-      observeProject(facts, sharedRoot(env.workspaceRoots), o.project, o.source, o.extraObserve),
+    observe: async (_facts, env) =>
+      observeProject(sharedRoot(env.workspaceRoots), o.project, o.source, o.extraObserve),
     judge(facts, ob) {
       const r = judgeProject(facts, o.project, ob);
       if (ob.exists && o.extraJudge) r.push(...o.extraJudge(ob));
@@ -207,6 +208,7 @@ const codeData = defineScenario<DataObservation>({
   green: `A Python or Node script ran, ${DATA_JSON_REL} was written during the run and holds, for each of the ${REGIONS.length} regions and nothing else, the revenue the bench recomputes from the untouched CSV (to the cent), and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'code',
+  sends: 'nothing',
   instruction:
     `Le fichier ${DATA_CSV_REL} ${SHARED} contient des ventes (une ligne par vente). Écris et ` +
     'exécute un script Python ou Node qui calcule le chiffre d’affaires (quantité × prix unitaire) ' +
@@ -256,7 +258,7 @@ export const CODE_SCENARIOS: AnyScenario[] = [
     id: 'code-http-server',
     title: 'Implement a local HTTP service until its test suite passes',
     green:
-      'Rerun by the bench, every test of nodal-bench/http-somme passes (the suite starts a local HTTP server), the test files are untouched, the agent ran the suite itself, and nobody was asked anything.',
+      "In the agent's last test run every test of nodal-bench/http-somme passes (the suite starts a local HTTP server), the test files are untouched, and nobody was asked anything; the bench does not re-run the suite (#753).",
     project: 'http-somme',
     source: 'src/server.js',
     instruction:
@@ -267,7 +269,7 @@ export const CODE_SCENARIOS: AnyScenario[] = [
     id: 'code-install-dep',
     title: 'Install an npm dependency and use it',
     green:
-      'slugify is declared in package.json and installed in node_modules, src/slug.js imports it, every test of nodal-bench/slug-titre passes when the bench reruns it, the test files are untouched, and nobody was asked anything.',
+      "slugify is declared in package.json and installed in node_modules, src/slug.js imports it, every test of nodal-bench/slug-titre passes in the agent's last test run, the test files are untouched, and nobody was asked anything; the bench does not re-run the suite (#753).",
     project: 'slug-titre',
     source: 'src/slug.js',
     instruction:
@@ -306,7 +308,7 @@ export const CODE_SCENARIOS: AnyScenario[] = [
     id: 'code-bugfix',
     title: 'Fix a bug that makes a test suite fail',
     green:
-      'src/facture.js was changed, every test of nodal-bench/facture-tva passes when the bench reruns it, the test files are untouched, the agent ran the suite itself, and nobody was asked anything.',
+      "src/facture.js was changed, every test of nodal-bench/facture-tva passes in the agent's last test run, the test files are untouched, and nobody was asked anything; the bench does not re-run the suite (#753).",
     project: 'facture-tva',
     source: 'src/facture.js',
     instruction:

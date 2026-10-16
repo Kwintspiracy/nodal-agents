@@ -3,7 +3,9 @@
 //   pnpm bench:workflows                     le jeu de nuit (scénarios `nightly`), un essai chacun
 //   pnpm bench:workflows --only question,file
 //   pnpm bench:workflows --activity excel,word   tous les scénarios de ces activités
-//   pnpm bench:workflows --set release       tous les scénarios, `on-demand` compris
+//   pnpm bench:workflows --set release       tous les scénarios, `on-demand` compris (sauf ceux qui envoient au propriétaire)
+//   pnpm bench:workflows --only comfyui-telegram --allow-owner-sends
+//                                            un scénario qui envoie AU PROPRIÉTAIRE : nommé, et ce drapeau
 //   pnpm bench:workflows --trials 3          trois essais par scénario
 //   pnpm bench:workflows --models a,b --dry-run   la matrice : le plan et son coût, sans rien lancer
 //   pnpm bench:workflows --stack D:/APPS/NodalAI   la stack mesurée (défaut : ce dépôt)
@@ -36,6 +38,7 @@ import {
 import { startRunTask } from './mcp';
 import { redactHome } from './redact';
 import { SCENARIOS, scenarioById } from './scenarios';
+import { assertMatrixable, selectScenarios } from './selection';
 import {
   cancelTree,
   openStackDb,
@@ -51,13 +54,7 @@ import {
   readWorkspaceRoots,
 } from './stack';
 import { DEFAULT_TRIAL_OPTIONS, runTrial, type TrialDeps } from './trial';
-import {
-  ACTIVITIES,
-  type AnyScenario,
-  type ScenarioEnv,
-  type ServiceProbe,
-  type TrialLine,
-} from './types';
+import { type AnyScenario, type ScenarioEnv, type ServiceProbe, type TrialLine } from './types';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 export const RESULTS_FILE = join(REPO, 'apps', 'qa', 'data', 'workflows.ndjson');
@@ -80,35 +77,18 @@ function list(name: string): string[] | null {
 }
 
 function pickScenarios(): AnyScenario[] {
-  const only = list('only');
-  if (only) {
-    const unknown = only.filter((id) => !scenarioById(id));
-    if (unknown.length > 0) {
-      throw new Error(
-        `unknown scenario(s): ${unknown.join(', ')} — known: ${SCENARIOS.map((s) => s.id).join(', ')}`,
-      );
-    }
-    return only.map((id) => scenarioById(id)!);
-  }
-  const set = arg('set') ?? 'nightly';
-  if (set !== 'release' && set !== 'nightly')
-    throw new Error(`unknown set ${set} — known: nightly, release`);
-  const activities = list('activity');
-  if (activities) {
-    // Nommer une activité, c'est demander ses scénarios, `on-demand` compris.
-    const unknown = activities.filter((a) => !(ACTIVITIES as readonly string[]).includes(a));
-    if (unknown.length > 0)
-      throw new Error(`unknown activity: ${unknown.join(', ')} — known: ${ACTIVITIES.join(', ')}`);
-    return SCENARIOS.filter((s) => activities.includes(s.activity));
-  }
-  return set === 'release' ? [...SCENARIOS] : SCENARIOS.filter((s) => s.set === 'nightly');
+  return selectScenarios({
+    only: list('only') ?? undefined,
+    set: arg('set'),
+    activity: list('activity') ?? undefined,
+  });
 }
 
 function printList(): void {
   console.log('Workflow scenarios\n');
   for (const s of SCENARIOS) {
     console.log(
-      `${s.id}  v${s.version}  [${s.activity} · ${s.set}]  timeout ${Math.round(s.timeoutMs / 60_000)} min${s.needs?.length ? `  needs ${s.needs.join(', ')}` : ''}`,
+      `${s.id}  v${s.version}  [${s.activity} · ${s.set} · sends ${s.sends}]  timeout ${Math.round(s.timeoutMs / 60_000)} min${s.needs?.length ? `  needs ${s.needs.join(', ')}` : ''}`,
     );
     console.log(`  ${s.title}`);
     console.log(`  Green: ${s.green}`);
@@ -221,6 +201,7 @@ async function main(): Promise<void> {
   // propriétaire (matrix.ts), et le banc le refuse AVANT de toucher la stack.
   const modelsArg = arg('models');
   const models: MatrixModel[] | null = modelsArg === undefined ? null : parseModels(modelsArg);
+  if (models) assertMatrixable(scenarios);
   if (models && flag('dry-run')) {
     const past = readPastLines();
     console.log(formatPlan(planMatrix(scenarios, models, trials, past.lines), models));
@@ -309,6 +290,7 @@ async function main(): Promise<void> {
           nodalVersion,
           stackCommit,
           modelUnderTest: null,
+          allowOwnerSends: flag('allow-owner-sends'),
         });
         // Un essai coupé par l'arrêt ne mesure rien : pas de ligne.
         if (stop.stopped) break;
