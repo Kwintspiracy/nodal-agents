@@ -760,9 +760,15 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
+      '@nodal-agents/adapter-mcp':
+        specifier: workspace:*
+        version: link:../adapters/mcp
       '@nodal-agents/db':
         specifier: workspace:*
         version: link:../db
+      '@nodal-agents/orchestration':
+        specifier: workspace:*
+        version: link:../orchestration
       '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../shared
@@ -775,13 +781,40 @@ importers:
       exceljs:
         specifier: ^4.4.0
         version: 4.4.0
+      image-size:
+        specifier: ^1.2.1
+        version: 1.2.1
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
+      mammoth:
+        specifier: ^1.12.0
+        version: 1.12.0
+      parse5:
+        specifier: 8.0.1
+        version: 8.0.1
+      pdf-parse:
+        specifier: ^2.4.5
+        version: 2.4.5
       zod:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/runner-adapters':
+        specifier: workspace:*
+        version: link:../runner-adapters
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
+      docx:
+        specifier: ^9.7.1
+        version: 9.7.1
+      pptxgenjs:
+        specifier: ^4.0.1
+        version: 4.0.1
+      slugify:
+        specifier: ^1.6.9
+        version: 1.6.9
       tsx:
         specifier: ^4.21.0
         version: 4.23.10
@@ -11272,7 +11305,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.1.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.6(@opentelemetry/api@1.9.0)(@types/node@25.7.0)(@vitest/coverage-v8@4.1.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.2.2(@types/node@25.7.0)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
+      vitest: 4.1.6(@opentelemetry/api@1.9.0)(@types/node@25.7.0)(@vitest/coverage-v8@4.1.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.2.2(@types/node@25.7.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.10)(yaml@2.9.0))
 
   '@vitest/expect@4.1.6':
     dependencies:
@@ -15185,7 +15218,7 @@ snapshots:
 
   pdfjs-dist@5.4.296:
     optionalDependencies:
-      '@napi-rs/canvas': 0.1.80
+      '@napi-rs/canvas': 0.1.100
 
   pdfjs-dist@5.6.205:
     optionalDependencies:

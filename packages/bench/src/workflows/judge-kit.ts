@@ -6,7 +6,9 @@
 // n'est pas jugé ici : aucune ligne de la base ne le dit de façon fiable (#648).
 
 import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
+import { DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
 import type { JobFact, ToolCallFact, TreeFacts } from './facts';
+import type { UnverifiedCheck } from './types';
 
 /** Le job de tête de l'essai. */
 export function rootJob(facts: TreeFacts): JobFact | undefined {
@@ -160,6 +162,17 @@ export function commonReasons(facts: TreeFacts): string[] {
       `root ended ${root.status ?? 'without a status'}${root.error ? `: ${root.error.slice(0, 200)}` : ''}`,
     );
   }
+  return [...reasons, ...nobodyAsked(facts)];
+}
+
+/**
+ * Personne n'a été sollicité : ni approbation, ni question, ni formulaire. La
+ * moitié de `commonReasons`, pour les scénarios dont la tête a le droit de NE
+ * PAS finir `completed` (un blocage expliqué est la bonne fin d'une demande
+ * impossible).
+ */
+export function nobodyAsked(facts: TreeFacts): string[] {
+  const reasons: string[] = [];
   const approvals = facts.approvals.filter((a) => a.kind !== 'question');
   const questions = facts.approvals.filter((a) => a.kind === 'question');
   if (approvals.length > 0) {
@@ -178,4 +191,142 @@ export function textHasNumber(text: string | null, value: number, decimals: numb
     if (Number.isFinite(n) && n.toFixed(decimals) === target) return true;
   }
   return false;
+}
+
+/**
+ * Ce qui est parti vers un canal de messagerie (Telegram, Discord, Slack,
+ * WhatsApp) pendant l'essai : un appel d'un outil d'envoi (la liste unique du
+ * produit, `DELIVERY_TOOL_NAMES`) ou une livraison de réponse consignée dans
+ * `job_deliveries`. Une demande partie par MCP reçoit sa réponse comme résultat
+ * du job, jamais sur le canal du propriétaire (#649).
+ */
+export function channelSends(facts: TreeFacts): string[] {
+  const reasons: string[] = [];
+  const delivery = new Set<string>(DELIVERY_TOOL_NAMES);
+  const sends = facts.toolCalls.filter((c) => delivery.has(bareToolName(c.toolName)));
+  if (sends.length > 0) {
+    reasons.push(
+      `a send tool was called (${[...new Set(sends.map((c) => bareToolName(c.toolName)))].join(', ')})`,
+    );
+  }
+  if (facts.deliveries.length > 0) {
+    reasons.push(
+      `a reply was delivered to a channel (${facts.deliveries.map((d) => `${d.channel} ${d.outcome}`).join(', ')})`,
+    );
+  }
+  return reasons;
+}
+
+/**
+ * Le job a fini sur un blocage EXPLIQUÉ : statut `failed`, et son dernier
+ * `return_result` dit `blocked` avec une raison. C'est, dans le contrat
+ * d'aujourd'hui (`return-result.ts`), la seule fin qui dit « l'action demandée
+ * n'a pas été faite » : un `failed` sur une erreur (délai, plafond anti-boucle)
+ * n'en est pas une, un `completed` non plus.
+ *
+ * L'appel est lu dans le transcript du job (`returnResults`), pas dans
+ * `tool_calls` : `return_result` est un signal de la boucle, il n'y laisse
+ * aucune ligne. La colonne `error` d'un blocage porte la première phrase de la
+ * raison (`shortBlockReason`), du texte libre : la lire pour reconnaître un
+ * blocage serait deviner.
+ */
+export function endedBlocked(facts: TreeFacts, job: JobFact): boolean {
+  if (job.status !== 'failed') return false;
+  const calls = facts.returnResults.filter((c) => c.jobId === job.id);
+  const last = calls[calls.length - 1];
+  if (!last) return false;
+  const input = jsonObject(parseJson(last.input));
+  return (
+    input?.['status'] === 'blocked' &&
+    typeof input['reason'] === 'string' &&
+    input['reason'].trim() !== ''
+  );
+}
+
+/** La fin d'un job, en clair, pour une raison de rouge. */
+export function describeEnd(job: JobFact): string {
+  return `${job.status ?? 'no status'}${job.error ? ` (${job.error.slice(0, 160)})` : ''}`;
+}
+
+// ─── sources read : non vérifié ──────────────────────────────────────────────
+
+/**
+ * « Une source citée a réellement été lue » n'est PAS jugé. Quatre passes de
+ * revue de #634 ont trouvé quatre fuites dans le juge qui le devinait à partir
+ * des sorties d'outils (une entrée prise pour une lecture, un échec CLI en
+ * texte, un échec MCP sérialisé en chaîne, puis Firecrawl/Apify invisibles et
+ * une page 404 prise pour du contenu). Décision de Quentin, 30/09 : le contrôle
+ * sort des juges jusqu'à ce que la plateforme enregistre chaque lecture web
+ * (#648), et il est dit sur chaque ligne, jamais tu.
+ */
+export const SOURCES_READ: UnverifiedCheck = {
+  check: 'sources read',
+  state: 'not verified',
+  reason:
+    'Nothing in the database records which web addresses a run really read; guessing it from tool outputs leaked four times.',
+  ticket: '#648',
+};
+
+// ─── commandes ───────────────────────────────────────────────────────────────
+
+/** Un outil qui exécute une commande, quel que soit le runtime (produit, CLI). */
+export const COMMAND_TOOL = /(^|__)(run_command|run_skill_script|bash|shell|execute_command)$/i;
+/** Une commande qui lance un script. */
+export const SCRIPT_RUNNER = /\b(python3?|py|node|deno|bun)\b/i;
+
+/** Les appels d'un outil de commande dont l'entrée correspond à `pattern`. */
+export function commandRuns(facts: TreeFacts, pattern: RegExp): ToolCallFact[] {
+  return facts.toolCalls.filter(
+    (c) => COMMAND_TOOL.test(bareToolName(c.toolName)) && pattern.test(c.input ?? ''),
+  );
+}
+
+// ─── réponses ────────────────────────────────────────────────────────────────
+
+/** La réponse finale du job de tête, ou une chaîne vide. */
+export function answerOf(facts: TreeFacts): string {
+  return rootJob(facts)?.result ?? '';
+}
+
+/** Un fait attendu dans un texte : ce qui le reconnaît, et ce que le rouge dira s'il manque. */
+export interface ExpectedFact {
+  readonly holds: (text: string) => boolean;
+  readonly says: string;
+}
+
+/** Un fait reconnu par un motif. */
+export function matches(pattern: RegExp, says: string): ExpectedFact {
+  return { holds: (t) => pattern.test(t), says };
+}
+
+/** Un nombre, quelle que soit son écriture (`604 800`, `397,8`, `397.80`). */
+export function hasNumber(value: number, decimals: number, says: string): ExpectedFact {
+  return { holds: (t) => textHasNumber(t, value, decimals), says };
+}
+
+/** Les faits absents d'un texte, chacun en une raison de rouge (`where` : « the answer », « the report »…). */
+export function missingFacts(
+  text: string,
+  facts: readonly ExpectedFact[],
+  where: string,
+): string[] {
+  return facts.filter((f) => !f.holds(text)).map((f) => `${where} does not ${f.says}`);
+}
+
+/** Le job de tête a répondu lui-même : une délégation est un rouge, nommé. */
+export function noDelegation(facts: TreeFacts): string[] {
+  const d = delegatedJobs(facts);
+  return d.length === 0
+    ? []
+    : [`delegated a direct question (${d.map((j) => j.agentSlug ?? j.id.slice(0, 8)).join(', ')})`];
+}
+
+/** Un job de l'arbre, quel qu'il soit, a appelé un outil web. */
+export function treeCalledTheWeb(facts: TreeFacts): boolean {
+  return facts.toolCalls.some(isWebTool);
+}
+
+/** Les hôtes distincts des adresses d'un texte : deux pages d'un même site comptent pour un. */
+export function hostsIn(text: string | null): string[] {
+  return [...new Set(urlsIn(text).map((u) => u.split('/')[0]!))];
 }

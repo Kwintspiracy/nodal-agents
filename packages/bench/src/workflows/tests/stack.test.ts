@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { obsidianVaults } from '../scenarios';
+import { obsidianVaults } from '../needs';
 import { readStackCommit, readStackVersion } from '../stack';
 import { redactHome } from '../redact';
 import { createArgs, wrapperScript } from '../schedule';
