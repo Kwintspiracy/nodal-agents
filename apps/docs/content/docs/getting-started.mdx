@@ -25,17 +25,15 @@ Recent npm versions do not run a package's install scripts until you approve
 them. On a fresh install you may see this:
 
 ```
-npm warn allow-scripts 4 packages have install scripts not yet covered by allowScripts:
+npm warn allow-scripts 2 packages have install scripts not yet covered by allowScripts:
 npm warn allow-scripts   @embedded-postgres/windows-x64@18.3.0-beta.17 (install: (install scripts present))
-npm warn allow-scripts   @whiskeysockets/baileys@6.7.23 (preinstall: node ./engine-requirements.js)
-npm warn allow-scripts   protobufjs@7.6.6 (postinstall: node scripts/postinstall)
 npm warn allow-scripts   tesseract.js@7.0.0 (postinstall: opencollective-postinstall || true)
 npm warn allow-scripts Run npm approve-scripts --allow-scripts-pending to review, or npm approve-scripts <pkg> to allow.
 ```
 
 **Only one of those packages matters.** `@embedded-postgres/<platform>` carries
 the Postgres binaries Nodal boots, and its install step finishes preparing them.
-The other three run fine without their scripts. Approve that one package, then
+The other one runs fine without its script. Approve that one package, then
 install again:
 
 ```bash

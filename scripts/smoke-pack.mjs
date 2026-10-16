@@ -42,6 +42,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findGitDependencySpecs, formatGitDependencySpecs } from './lib/git-dependency-specs.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packDir = join(repoRoot, 'pack');
@@ -101,6 +102,60 @@ try {
 
   const cli = join(installDir, 'node_modules', 'nodal-agents', 'cli.js');
   if (!existsSync(cli)) throw new Error(`installed package has no cli.js at ${cli}`);
+
+  // ── 3a. No dependency resolved through git ────────────────────────────────
+  // 0.9.6 installed only where git exists: @whiskeysockets/baileys declared
+  // libsignal as a git URL, and npm failed with `spawn git ENOENT` on every
+  // machine without git. CI runners have git, so the install passed here and
+  // broke for users. Scanned on the install made WITH git, where every package
+  // is present: without git npm drops an optional dependency that needs it in
+  // silence, and the scan would never see it.
+  step('No dependency resolved through git');
+  const gitReport = formatGitDependencySpecs(
+    findGitDependencySpecs(join(installDir, 'node_modules')),
+  );
+  if (gitReport) throw new Error(gitReport);
+  console.log('  ✔ every installed dependency comes from the registry');
+
+  // ── 3b. A second install, WITHOUT git, runs ───────────────────────────────
+  // npm runs git through its `git` setting; naming a command that exists
+  // nowhere is what a machine without git looks like to npm (the same
+  // `spawn … ENOENT`), on every OS. Stripping git from PATH is not portable:
+  // on Linux /usr/bin holds git next to the sh npm runs scripts with.
+  const noGitDir = join(sandbox, 'install-no-git');
+  step(`Installing into ${noGitDir} with git unavailable to npm`);
+  mkdirSync(noGitDir, { recursive: true });
+  execSync('npm init -y', { cwd: noGitDir, stdio: 'ignore' });
+  const NO_GIT = 'nodal-smoke-no-git';
+  try {
+    execSync(`npm install "${join(packDir, tarball)}" --no-audit --no-fund --loglevel=error`, {
+      cwd: noGitDir,
+      stdio: 'pipe',
+      encoding: 'utf-8',
+      env: { ...process.env, npm_config_git: NO_GIT },
+    });
+  } catch (e) {
+    const output = `${e.stdout ?? ''}${e.stderr ?? ''}`;
+    process.stderr.write(output);
+    if (output.includes(`spawn ${NO_GIT}`)) {
+      throw new Error(
+        'the tarball needs git to install: npm tried to run git for a dependency, ' +
+          'and a machine without git fails right here (`spawn git ENOENT`)',
+      );
+    }
+    throw e;
+  }
+  const noGitVersion = execFileSync(
+    process.execPath,
+    [join(noGitDir, 'node_modules', 'nodal-agents', 'cli.js'), '--version'],
+    { encoding: 'utf-8' },
+  ).trim();
+  if (noGitVersion !== version) {
+    throw new Error(
+      `the install made without git answers --version "${noGitVersion}", not ${version}`,
+    );
+  }
+  console.log(`  ✔ installed without git, --version answers ${noGitVersion}`);
 
   // ── 4. Dependency + chunk integrity on the INSTALLED tree ──────────────────
   step('verify-install (deps resolve, chunks present)');

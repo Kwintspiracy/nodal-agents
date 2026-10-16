@@ -24,6 +24,11 @@ export type DeliveryErrorCode =
   /** Generic send failure for the WhatsApp adapter (missing credential/
    *  conversationId, socket not open, or a Baileys sendMessage() throw). */
   | 'whatsapp_send_failed'
+  /** The WhatsApp library (@whiskeysockets/baileys) could not be imported
+   *  when a socket was opened. The runner bundle carries its own copy; this
+   *  only fires in a process that has neither the bundle nor an installed
+   *  copy (see socket-manager.ts). */
+  | 'whatsapp_library_unavailable'
   | 'delivery_email_not_configured'
   | 'delivery_job_not_found'
   | 'delivery_no_content'

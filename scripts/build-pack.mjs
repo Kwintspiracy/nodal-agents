@@ -458,10 +458,18 @@ const packPkg = {
     // runner still boots fine (it bundles its own copies) — caught live on
     // the 0.7.8 pack ritual, invisible to verify-install until declared.)
     'discord.js': '^14.26.5',
-    // EXACT pin, no caret: ^6.7.23 resolves to 6.17.16 (chronologically OLDER
-    // despite the higher number), deprecated with a message-spoofing CVE.
-    // Mirrors packages/delivery/package.json.
-    '@whiskeysockets/baileys': '6.7.23',
+    // NOT @whiskeysockets/baileys (0.9.7). 6.7.x declares libsignal as a git
+    // URL, so installing it from npm spawns git: 0.9.6 failed with
+    // `spawn git ENOENT` on every machine without it. The runner bundle
+    // (apps/runner/build.mjs) inlines baileys and libsignal; the dashboard only
+    // imports the delivery package, which loads baileys when a socket opens
+    // (packages/delivery/src/channels/whatsapp/socket-manager.ts), and never
+    // opens one. smoke-pack.mjs refuses any git-resolved dependency.
+    //
+    // pino: imported by that same delivery package at module load, so every
+    // dashboard route requires it. It used to resolve only because baileys
+    // brought it in transitively; declared now that baileys is gone.
+    pino: '^9.6.0',
     // ── Web deps (Next.js standalone server requires these at runtime)
     next: '^16.2.6',
     react: '19.2.4',
