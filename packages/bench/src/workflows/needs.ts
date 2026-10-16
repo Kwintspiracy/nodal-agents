@@ -89,9 +89,8 @@ export function isMailSender(toolName: string): boolean {
 }
 
 /** Les verbes qui font sortir quelque chose de la machine, mot entier d'un nom d'outil. */
-const OUTBOUND_VERBS = new Set([
+const OUTBOUND_BASES = [
   'send',
-  'sends',
   'post',
   'publish',
   'share',
@@ -102,7 +101,21 @@ const OUTBOUND_VERBS = new Set([
   'broadcast',
   'upload',
   'dm',
-]);
+];
+
+/**
+ * Les formes d'un verbe anglais, dérivées d'UNE règle pour tous : la base, -s,
+ * -es, -ed, -d, -ing (le e final tombé : sharing), et y → ies / ied (replies,
+ * notified). Les irréguliers qu'aucune règle ne donne sont listés à part.
+ */
+function inflections(base: string): string[] {
+  const forms = [base, `${base}s`, `${base}es`, `${base}ed`, `${base}d`, `${base}ing`];
+  if (base.endsWith('e')) forms.push(`${base.slice(0, -1)}ing`);
+  if (base.endsWith('y')) forms.push(`${base.slice(0, -1)}ies`, `${base.slice(0, -1)}ied`);
+  return forms;
+}
+const IRREGULAR_OUTBOUND = ['sent'];
+const OUTBOUND_VERBS = new Set([...OUTBOUND_BASES.flatMap(inflections), ...IRREGULAR_OUTBOUND]);
 /** Les services de messagerie : un outil qui les vise peut écrire à quelqu'un, quel que soit son verbe. */
 const CHANNEL_SERVICES = new Set([
   'telegram',
@@ -125,9 +138,12 @@ const CHANNEL_SERVICES = new Set([
   'reddit',
 ]);
 /**
- * Les outils internes que leur nom ferait prendre pour des envois : la liste
- * courte et explicite. `dashboard_publish` publie sur le tableau de bord Nodal
- * du propriétaire, sans message ni sortie de la machine.
+ * Les outils INTERNES du produit que leur nom ferait prendre pour des envois :
+ * la liste courte et explicite, comparée au nom ENTIER. Un outil de connecteur
+ * ou de serveur MCP (`slack__file_upload`) ou d'une CLI (`cli:…`) n'en est
+ * jamais un, même si son dernier segment leur ressemble (revue Reviewer A,
+ * passe 4). `dashboard_publish` publie sur le tableau de bord Nodal du
+ * propriétaire, sans message ni sortie de la machine.
  */
 const INTERNAL_TOOLS =
   /^(return_result|dashboard_publish|file_[a-z_]+|workspace_[a-z_]+|xlsx_[a-z_]+|docx_[a-z_]+|pptx_[a-z_]+)$/;
@@ -147,8 +163,10 @@ const INTERNAL_TOOLS =
  * envoyer un message ; le banc ne fait que le signaler après coup.
  */
 export function isOutboundTool(toolName: string): boolean {
+  // Interne seulement s'il s'agit d'un outil du produit lui-même, nommé en entier.
+  const ownTool = !toolName.includes('__') && !toolName.startsWith('cli:');
+  if (ownTool && INTERNAL_TOOLS.test(toolName)) return false;
   const bare = toolName.replace(/^cli:/, '').split('__').pop() ?? toolName;
-  if (INTERNAL_TOOLS.test(bare)) return false;
   if (isMailSender(toolName)) return true;
   const w = words(toolName);
   if (w.some((x) => OUTBOUND_VERBS.has(x) || CHANNEL_SERVICES.has(x))) return true;

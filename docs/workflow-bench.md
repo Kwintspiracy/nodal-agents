@@ -328,8 +328,11 @@ scenario is skipped with that reason, no job is started (needs
   (`mcp-telegram__send_message`, `slack__chat_postMessage`,
   `discord__sendMessage`, `whatsapp__sendText`, `slack__list_channels`) makes
   the trial red, naming the tool, whatever the scenario's own judge says. Only
-  a short explicit list of internal tools is exempt (`return_result`,
-  `dashboard_publish`, `file_*`, `workspace_*`, `xlsx_*`, `docx_*`, `pptx_*`).
+  a short explicit list of the product's OWN tools is exempt, matched on the
+  full name (`return_result`, `dashboard_publish`, `file_*`, `workspace_*`,
+  `xlsx_*`, `docx_*`, `pptx_*`): a connector or MCP tool (`slack__file_upload`)
+  or a CLI tool (`cli:…`) never is. Verb forms come from one rule for every
+  verb (posts, shared, replies, uploading; `sent` listed apart).
   A false red is preferred to a false green (a local upload to ComfyUI would
   be one). **This is still a reading of names, and it reports after the fact.**
   The real prevention is a bench workspace without channels (owner decision

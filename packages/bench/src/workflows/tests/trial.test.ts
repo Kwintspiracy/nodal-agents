@@ -361,6 +361,19 @@ describe('where a trial may send', () => {
     'notify__push',
     'slack__list_channels',
     'message_conversation_run',
+    // Passe 4 (P1) : un connecteur dont le dernier segment ressemble à un outil
+    // interne du produit n'est PAS interne.
+    'slack__file_upload',
+    'telegram__file_send',
+    'dropbox__file_share',
+    'gdrive__file_publish',
+    // Passe 4 (P3) : les flexions des verbes, une seule règle pour tous.
+    'blog__create_posts',
+    'drive__shares_add',
+    'mail_tool__replied_to',
+    'cms__publishes',
+    'gallery__uploading_images',
+    'queue__sent_items',
   ])('under sends: nothing, %s makes the trial red, named', async (tool) => {
     const green = load('question-green');
     const sent: TreeFacts = {
