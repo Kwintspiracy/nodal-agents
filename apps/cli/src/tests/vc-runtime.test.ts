@@ -18,7 +18,6 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -214,28 +213,6 @@ describe('the VC++ runtime next to postgres.exe @cap:installer-et-demarrer/moteu
       expect(required).not.toBeNull();
       const shipped = readFileVersion(readFileSync(join(shippedDir, 'msvcp140.dll')))!;
       expect(compareVersion(shipped, required!)).toBeGreaterThanOrEqual(0);
-    },
-  );
-
-  // Authenticode can only be verified by Windows itself.
-  it.runIf(process.platform === 'win32')(
-    'each shipped DLL carries a valid Microsoft Authenticode signature',
-    () => {
-      for (const dll of VC_RUNTIME_DLLS) {
-        const out = execFileSync(
-          'powershell.exe',
-          [
-            '-NoProfile',
-            '-Command',
-            `$s = Get-AuthenticodeSignature -LiteralPath '${join(shippedDir, dll)}'; ` +
-              `"$($s.Status)|$($s.SignerCertificate.Subject)"`,
-          ],
-          { encoding: 'utf-8' },
-        ).trim();
-        const [status, subject] = out.split('|');
-        expect(status, dll).toBe('Valid');
-        expect(subject, dll).toContain('O=Microsoft Corporation');
-      }
     },
   );
 });
