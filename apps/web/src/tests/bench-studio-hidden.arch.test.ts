@@ -47,9 +47,8 @@ describe('Bench Studio stays inside its own folder', () => {
         'bench-studio/layout.studio.tsx',
         'bench-studio/page.studio.tsx',
         'bench-studio/run/page.studio.tsx',
-        'bench-studio/live/[id]/page.studio.tsx',
         'bench-studio/results/page.studio.tsx',
-        'bench-studio/api/launch/route.studio.ts',
+        'bench-studio/api/plan/route.studio.ts',
       ]),
     );
     const plain = files.filter((f) => ROUTE_FILES.test(f.split('/').pop()!));
@@ -123,7 +122,7 @@ describe('studio routes refuse what did not come through the studio server', () 
     );
     expect(raw.map((f) => relative(WEB, f))).toEqual([]);
     const callers = files.filter((f) => readFileSync(f, 'utf8').includes('studioPost('));
-    expect(callers.map((f) => f.split(sep).pop()).sort()).toEqual(['LiveRun.tsx', 'RunPanel.tsx']);
+    expect(callers.map((f) => f.split(sep).pop()).sort()).toEqual(['RunPanel.tsx']);
     // Le layout rend le jeton dans la page, là où studioPost le lit.
     expect(readFileSync(join(STUDIO_APP, 'bench-studio', 'layout.studio.tsx'), 'utf8')).toContain(
       '<meta name={CSRF_META} content={studioCsrfToken()} />',
@@ -132,7 +131,7 @@ describe('studio routes refuse what did not come through the studio server', () 
 
   it('every studio route checks the guard before anything else', () => {
     const routes = walk(STUDIO_APP).filter((f) => f.endsWith('route.studio.ts'));
-    expect(routes.length).toBeGreaterThanOrEqual(7);
+    expect(routes.length).toBeGreaterThanOrEqual(3);
     for (const f of routes) {
       const src = readFileSync(f, 'utf8');
       for (const handler of src.matchAll(
@@ -149,6 +148,45 @@ describe('studio routes refuse what did not come through the studio server', () 
   });
 });
 
+describe('no request can start a session from Bench Studio (launch waits for #769)', () => {
+  it('its server routes are reads and an estimate, and nothing else', () => {
+    const handlers = walk(STUDIO_APP)
+      .filter((f) => f.endsWith('route.studio.ts'))
+      .flatMap((f) =>
+        [
+          ...readFileSync(f, 'utf8').matchAll(
+            /export async function (GET|POST|PUT|PATCH|DELETE)\b/g,
+          ),
+        ].map((m) => `${m[1]} ${relative(STUDIO_APP, f).split(sep).join('/')}`),
+      )
+      .sort();
+    expect(handlers).toEqual([
+      'GET bench-studio/api/deliverable/route.studio.ts',
+      'GET bench-studio/api/fixture/route.studio.ts',
+      'POST bench-studio/api/plan/route.studio.ts',
+    ]);
+  });
+
+  it('no studio file reaches the code that plays a session', () => {
+    const files = [...walk(STUDIO_APP), ...walk(STUDIO_LIB)].filter((f) => /\.tsx?$/.test(f));
+    const reaching = files.filter((f) =>
+      /\b(runBench|runTrial|startRunTask|RunManager|BenchStop)\b|workflows\/(session|trial|mcp)/.test(
+        readFileSync(f, 'utf8'),
+      ),
+    );
+    expect(reaching.map((f) => relative(WEB, f))).toEqual([]);
+  });
+
+  it('the Launch button is always disabled and says why', () => {
+    const panel = readFileSync(join(STUDIO_APP, 'bench-studio', 'run', 'RunPanel.tsx'), 'utf8');
+    expect(panel).toContain('<PrimaryButton variant="agent" disabled>');
+    expect(panel).not.toMatch(/onClick=\{[^}]*launch/i);
+    expect(
+      readFileSync(join(STUDIO_APP, 'bench-studio', 'run', 'page.studio.tsx'), 'utf8'),
+    ).toContain('launchDisabledReason={LAUNCH_DISABLED_REASON}');
+  });
+});
+
 describe('studioPost sends the token the page received, and nothing without it', () => {
   afterEach(() => {
     document.head.innerHTML = '';
@@ -162,10 +200,10 @@ describe('studioPost sends the token the page received, and nothing without it',
       return Promise.resolve(new Response('{}'));
     });
     document.head.innerHTML = `<meta name="${CSRF_META}" content="${'t'.repeat(48)}">`;
-    await studioPost('/bench-studio/api/launch', { trials: 1 });
+    await studioPost('/bench-studio/api/plan', { trials: 1 });
     expect(sent).toEqual([
       [
-        '/bench-studio/api/launch',
+        '/bench-studio/api/plan',
         {
           method: 'POST',
           headers: { 'content-type': 'application/json', [STUDIO_CSRF_HEADER]: 't'.repeat(48) },
@@ -182,9 +220,7 @@ describe('studioPost sends the token the page received, and nothing without it',
       sent.push(a);
       return Promise.resolve(new Response('{}'));
     });
-    await expect(studioPost('/bench-studio/api/launch', {})).rejects.toThrow(
-      'studio_no_csrf_token',
-    );
+    await expect(studioPost('/bench-studio/api/plan', {})).rejects.toThrow('studio_no_csrf_token');
     expect(sent).toEqual([]);
   });
 });

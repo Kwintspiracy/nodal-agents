@@ -16,10 +16,10 @@ import { join, relative, sep } from 'node:path';
 export const STUDIO_PATH_MARKERS = ['bench-studio', '.next-studio'];
 /**
  * Les littéraux qui n'existent que dans le code du studio : la garde de ses
- * routes (apps/web/src/lib/bench-studio/guard.ts) et sa porte de lancement
- * (packages/bench/src/studio/runs.ts).
+ * routes (apps/web/src/lib/bench-studio/guard.ts) et sa lecture des fixtures
+ * (packages/bench/src/studio/data.ts).
  */
-export const STUDIO_CONTENT_MARKERS = ['studio_not_behind_filter', 'studio_launch_refused'];
+export const STUDIO_CONTENT_MARKERS = ['studio_not_behind_filter', 'studio_no_fixture'];
 
 /**
  * Les traces du studio sous `dir`, en chemins relatifs. Vide = absent.

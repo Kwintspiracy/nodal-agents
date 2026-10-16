@@ -22,25 +22,10 @@ export interface RunTaskSession {
 
 const RunTaskReply = z.object({ jobId: z.string().uuid(), status: z.string() });
 
-/** La variable par laquelle `nodal-agents mcp serve` épingle l'agent pour qui il parle. */
-export const MCP_PINNED_AGENT_ENV = 'NODAL_MCP_AGENT_ID';
-
-/**
- * L'environnement du `mcp serve` d'un essai : celui du processus, sans les
- * valeurs indéfinies (le transport veut des chaînes), et dont l'agent épinglé
- * est CELUI QUE LE BANC PASSE, jamais un hérité. Un `NODAL_MCP_AGENT_ID` posé
- * dans le shell enverrait les essais ailleurs que là où le banc les a jugés :
- * il est retiré. `pinnedAgentId` null : aucun agent épinglé, le serveur résout
- * sa cible lui-même (l'espace membre qui a un agent racine).
- */
-export function runTaskEnv(
-  base: Readonly<Record<string, string | undefined>>,
-  pinnedAgentId: string | null,
-): Record<string, string> {
+/** Environnement du processus, sans les valeurs indéfinies (le transport veut des chaînes). */
+function inheritedEnv(): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(base))
-    if (typeof v === 'string' && k !== MCP_PINNED_AGENT_ENV) env[k] = v;
-  if (pinnedAgentId !== null) env[MCP_PINNED_AGENT_ENV] = pinnedAgentId;
+  for (const [k, v] of Object.entries(process.env)) if (typeof v === 'string') env[k] = v;
   return env;
 }
 
@@ -54,13 +39,12 @@ export async function startRunTask(
   stackDir: string,
   instruction: string,
   caller: string,
-  pinnedAgentId: string | null,
 ): Promise<RunTaskSession> {
   const transport = new StdioClientTransport({
     command: 'pnpm',
     args: ['--filter', 'nodal-agents', '--silent', 'exec', 'tsx', 'src/index.ts', 'mcp', 'serve'],
     cwd: stackDir,
-    env: runTaskEnv(process.env, pinnedAgentId),
+    env: inheritedEnv(),
     stderr: 'pipe',
   });
   let stderr = '';

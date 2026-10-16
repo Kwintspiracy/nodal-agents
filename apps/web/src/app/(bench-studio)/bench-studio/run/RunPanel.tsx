@@ -1,13 +1,12 @@
 'use client';
 
-// Le panneau de lancement. Il ne décide de rien : la sélection, le plan et la
-// porte de lancement sont ceux du banc (selection.ts, matrix.ts, launch-gate.ts),
-// rendus par les routes du studio. Le bouton désactivé dit pourquoi, et le
-// serveur tient la même porte (RunManager.launch).
+// Le panneau d'estimation. Il ne décide de rien : la sélection et le plan
+// sont ceux du banc (selection.ts, matrix.ts), rendus par la route du studio.
+// Le bouton Launch reste désactivé, avec sa raison : Bench Studio ne lance
+// aucun essai tant que le banc ne les épingle pas sur l'espace banc (#769), et
+// le serveur n'a aucune route de lancement.
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { toast } from 'sonner';
-import type { LaunchGate, PlanView, StudioModel } from '@nodal-agents/bench/studio';
+import type { PlanView, StudioModel } from '@nodal-agents/bench/studio';
 import { dollars, duree } from '@nodal-agents/bench/results';
 import Banner from '@/components/ui/Banner';
 import Checkbox from '@/components/ui/Checkbox';
@@ -15,7 +14,6 @@ import MetricCard from '@/components/ui/MetricCard';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import SegmentedControl from '@/components/ui/SegmentedControl';
-import Switch from '@/components/ui/Switch';
 import Table, {
   CellMono,
   CellMuted,
@@ -44,30 +42,27 @@ export default function RunPanel({
   activities,
   scenarios,
   models,
-  gate,
+  launchDisabledReason,
   initialOnly,
 }: {
   activities: string[];
   scenarios: ScenarioPick[];
   models: StudioModel[];
-  gate: LaunchGate;
+  launchDisabledReason: string;
   initialOnly: string[];
 }) {
-  const router = useRouter();
   const [mode, setMode] = useState<Mode>(initialOnly.length > 0 ? 'scenarios' : 'activities');
   const [pickedActivities, setPickedActivities] = useState<string[]>([]);
   const [pickedScenarios, setPickedScenarios] = useState<string[]>(initialOnly);
   const [pickedModels, setPickedModels] = useState<string[]>([]);
   const [modelFilter, setModelFilter] = useState('');
   const [trials, setTrials] = useState('1');
-  const [allowOwnerSends, setAllowOwnerSends] = useState(false);
   // Le plan porte la clé de la demande qui l'a produit : un plan d'une autre
   // sélection n'est jamais montré pour celle-ci.
   const [answer, setAnswer] = useState<{
     key: string;
     plan: { view: PlanView } | { error: string };
   } | null>(null);
-  const [launching, setLaunching] = useState(false);
 
   const selection = useMemo(
     () =>
@@ -81,10 +76,6 @@ export default function RunPanel({
     [mode, pickedActivities, pickedScenarios],
   );
   const trialsN = Number(trials);
-  const ownerPicked =
-    mode === 'scenarios'
-      ? scenarios.filter((s) => s.sends === 'owner' && pickedScenarios.includes(s.id))
-      : [];
 
   // Le plan suit la sélection : demandé au banc, jamais calculé ici.
   const planKey = selection
@@ -112,38 +103,6 @@ export default function RunPanel({
     };
   }, [planKey]);
   const plan = answer !== null && answer.key === planKey ? answer.plan : null;
-
-  const blocked: string | null = !gate.enabled
-    ? gate.reason
-    : !selection
-      ? 'Pick at least one activity or scenario.'
-      : pickedModels.length > 0
-        ? 'Models are for the estimate only: running a model matrix waits for the owner’s decision. Clear them to launch on the agents’ own models.'
-        : ownerPicked.length > 0 && !allowOwnerSends
-          ? `${ownerPicked.map((s) => s.id).join(', ')} sends to the owner: allow it below to launch.`
-          : plan && 'error' in plan
-            ? plan.error
-            : null;
-
-  async function launch(): Promise<void> {
-    if (!selection) return;
-    setLaunching(true);
-    try {
-      const r = await studioPost('/bench-studio/api/launch', {
-        selection,
-        trials: trialsN,
-        allowOwnerSends,
-      });
-      const body = (await r.json()) as { id: string } | { error: string };
-      if ('error' in body) {
-        toast.error(body.error);
-        return;
-      }
-      router.push(`/bench-studio/live/${body.id}`);
-    } finally {
-      setLaunching(false);
-    }
-  }
 
   const toggle = (list: string[], v: string): string[] =>
     list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
@@ -310,32 +269,12 @@ export default function RunPanel({
               value={trials}
               onChange={(e) => setTrials(e.target.value)}
             />
-            {ownerPicked.length > 0 && (
-              <div className="flex items-start gap-3 rounded-lg border border-rule-2 px-3 py-2.5">
-                <Switch
-                  checked={allowOwnerSends}
-                  onChange={() => setAllowOwnerSends((v) => !v)}
-                  ariaLabel="Allow sends to the owner"
-                />
-                <div className="text-body-12 text-ink-3">
-                  <div className="text-medium-13 text-ink">Allow sends to the owner</div>
-                  {ownerPicked.map((s) => s.id).join(', ')} sends a real message to the owner’s
-                  chat.
-                </div>
-              </div>
-            )}
-            <PrimaryButton
-              variant="agent"
-              disabled={blocked !== null || launching}
-              onClick={() => void launch()}
-            >
-              {launching ? 'Launching…' : 'Launch'}
+            <PrimaryButton variant="agent" disabled>
+              Launch
             </PrimaryButton>
-            {blocked !== null && (
-              <p className="text-body-12 text-ink-3" data-testid="launch-blocked">
-                {blocked}
-              </p>
-            )}
+            <p className="text-body-12 text-ink-3" data-testid="launch-blocked">
+              {launchDisabledReason}
+            </p>
           </div>
         </Panel>
       </div>

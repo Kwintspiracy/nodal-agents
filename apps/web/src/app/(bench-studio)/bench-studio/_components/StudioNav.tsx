@@ -14,7 +14,6 @@ const SCREENS = [
     match: ['/bench-studio', '/bench-studio/scenarios', '/bench-studio/fixture'],
   },
   { href: '/bench-studio/run', label: 'Run', match: ['/bench-studio/run'] },
-  { href: '/bench-studio/live', label: 'Live', match: ['/bench-studio/live'] },
   {
     href: '/bench-studio/results',
     label: 'Results',

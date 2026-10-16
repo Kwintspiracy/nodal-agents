@@ -175,8 +175,6 @@ async function main(): Promise<void> {
         trigger: flag('scheduled') ? 'scheduled' : 'manual',
         allowOwnerSends: flag('allow-owner-sends'),
         stackDir: resolve(arg('stack') ?? REPO),
-        // #769 épinglera les essais sur la racine de l'espace banc.
-        pinnedAgentId: null,
       },
       db,
       stop,

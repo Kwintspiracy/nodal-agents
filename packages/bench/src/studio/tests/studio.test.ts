@@ -1,17 +1,14 @@
 // studio.test.ts — la couche serveur de Bench Studio.
 //
-// Ce que ces cas prouvent : la porte de lancement est tenue CÔTÉ SERVEUR (une
-// requête est refusée, pas seulement un bouton grisé), un scénario qui envoie
-// au propriétaire exige l'interrupteur explicite, un lancement suit la session
-// du banc étape par étape, et les lectures ne rendent que ce que les modules du
-// banc calculent (catalogue, fixtures, plan, résultats).
+// Ce que ces cas prouvent : Bench Studio ne joue aucune session (son module
+// n'expose que des lectures ; lancer attend #769), et ses lectures ne rendent
+// que ce que les modules du banc calculent (catalogue, fixtures, plan,
+// modèles, résultats, livrables).
 
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { SpawnSyncReturns } from 'node:child_process';
-import { launchGate, studioGateTarget } from '../launch-gate';
 import {
   readFixture,
   studioCatalog,
@@ -20,230 +17,41 @@ import {
   studioResults,
   studioTrial,
 } from '../data';
-import { RunManager, type RunEvent, type SessionRunner } from '../runs';
-import { findDeliverable } from '../runtime';
-import { runTaskEnv } from '../../workflows/mcp';
+import { createStudioRuntime, findDeliverable } from '../runtime';
 import { SCENARIOS } from '../../workflows/scenarios';
 
-const PINNED = 'cccccccc-0000-5000-8000-000000000003';
-const OPEN = async () => ({ enabled: true as const, reason: 'ok', pinnedAgentId: PINNED });
-const CLOSED = async () => ({ enabled: false as const, reason: 'the bench space is not targeted' });
-
-function repoWith(scripts: Record<string, string>): string {
-  const d = mkdtempSync(join(tmpdir(), 'studio-repo-'));
-  writeFileSync(join(d, 'package.json'), JSON.stringify({ scripts }));
-  return d;
-}
-const spawned = (status: number | null, stdout = ''): SpawnSyncReturns<string> =>
-  ({ status, stdout, stderr: '', pid: 1, output: [], signal: null }) as SpawnSyncReturns<string>;
-
-const SPACE = 'aaaaaaaa-0000-5000-8000-000000000001';
-const OWNER = 'bbbbbbbb-0000-4000-8000-000000000002';
-const neverSpawn = (): SpawnSyncReturns<string> => {
-  throw new Error('must not run anything');
-};
-
-describe('launchGate', () => {
-  it('without the bench space script, launch is disabled and says why', async () => {
-    const g = await launchGate(repoWith({}), {
-      target: () => Promise.reject(new Error('must not read anything')),
-      spawn: neverSpawn,
-    });
-    expect(g.enabled).toBe(false);
-    expect(g.reason).toMatch(/bench space.*no `pnpm bench:space` yet \(#758\)/);
-  });
-
-  it('closed today: the bench space may exist, but trials are not pinned to it (#769), whatever the check says', async () => {
-    const repo = repoWith({ 'bench:space': 'x' });
-    expect(
-      await launchGate(repo, {
-        target: async () => ({ benchSpaceId: SPACE, pinned: null }),
-        spawn: neverSpawn,
-      }),
-    ).toEqual({
-      enabled: false,
-      reason:
-        'Trials are not pinned to the bench space yet (#769): without a pinned agent, run_task would reach your own workspace.',
-    });
-    expect(
-      await launchGate(repo, {
-        target: async () => ({ benchSpaceId: null, pinned: null }),
-        spawn: neverSpawn,
-      }),
-    ).toMatchObject({
-      enabled: false,
-      reason: expect.stringContaining('pnpm bench:space sync --apply'),
-    });
-    expect(
-      await launchGate(repo, {
-        target: () => Promise.reject(new Error('connection refused')),
-        spawn: neverSpawn,
-      }),
-    ).toEqual({
-      enabled: false,
-      reason: 'The bench space and the pinned agent could not be read: connection refused',
-    });
-  });
-
-  it('what Bench Studio reads today pins nothing, so the gate is closed with the #769 reason', async () => {
-    const target = await studioGateTarget(async () => ({ id: SPACE }));
-    expect(target).toEqual({ benchSpaceId: SPACE, pinned: null });
-    expect(
-      await launchGate(repoWith({ 'bench:space': 'x' }), {
-        target: () => studioGateTarget(async () => ({ id: SPACE })),
-        spawn: neverSpawn,
-      }),
-    ).toMatchObject({ enabled: false, reason: expect.stringContaining('(#769)') });
-  });
-
-  it('pinned to an agent outside the bench space: closed, and the agent is named', async () => {
-    const g = await launchGate(repoWith({ 'bench:space': 'x' }), {
-      target: async () => ({ benchSpaceId: SPACE, pinned: { agentId: PINNED, entityId: OWNER } }),
-      spawn: neverSpawn,
-    });
-    expect(g).toEqual({
-      enabled: false,
-      reason: `Trials are pinned to agent ${PINNED}, which is not in the bench space.`,
-    });
-  });
-
-  it('pinned in the bench space, it runs `pnpm bench:space check`, opens only on exit 0, and carries the pinned agent', async () => {
-    const calls: string[][] = [];
-    const repo = repoWith({ 'bench:space': 'x' });
-    const target = async () => ({
-      benchSpaceId: SPACE,
-      pinned: { agentId: PINNED, entityId: SPACE },
-    });
-    const ok = await launchGate(repo, {
-      target,
-      spawn: (cmd, args) => {
-        calls.push([cmd, ...args]);
-        return spawned(0);
-      },
-    });
-    expect(calls).toEqual([['pnpm', 'bench:space', 'check']]);
-    expect(ok).toEqual({
-      enabled: true,
-      reason: '`pnpm bench:space check` passed.',
-      pinnedAgentId: PINNED,
-    });
-    const ko = await launchGate(repo, {
-      target,
-      spawn: () => spawned(1, 'the bench team has a send-capable tool: gmail_send_email\n'),
-    });
-    expect(ko).toEqual({
-      enabled: false,
-      reason:
-        '`pnpm bench:space check` did not pass (exit 1): the bench team has a send-capable tool: gmail_send_email',
-    });
-  });
-});
-
-describe('the run_task target is pinned, never inherited', () => {
-  it('an inherited NODAL_MCP_AGENT_ID never reaches mcp serve; only the pinned agent does', () => {
-    const base = { PATH: '/bin', NODAL_MCP_AGENT_ID: 'owner-agent', EMPTY: undefined };
-    expect(runTaskEnv(base, null)).toEqual({ PATH: '/bin' });
-    expect(runTaskEnv(base, PINNED)).toEqual({ PATH: '/bin', NODAL_MCP_AGENT_ID: PINNED });
-  });
-});
-
-describe('RunManager', () => {
-  const quiet: SessionRunner = async () => ({ lines: [], failed: 0, skipped: 0 });
-  const req = (only: string, allowOwnerSends = false) => ({
-    selection: { only: [only] },
-    trials: 1,
-    allowOwnerSends,
-  });
-
-  it('refuses to launch while the gate is closed, and plays nothing', async () => {
-    let played = 0;
-    const m = new RunManager(
-      CLOSED,
-      async (...a) => {
-        played++;
-        return quiet(...a);
-      },
-      async () => undefined,
-    );
-    await expect(m.launch(req('question'))).rejects.toThrow(
-      'studio_launch_refused: the bench space is not targeted',
-    );
-    expect(played).toBe(0);
-    expect(m.list()).toEqual([]);
-  });
-
-  it('refuses a scenario that sends to the owner without the explicit toggle', async () => {
-    const m = new RunManager(OPEN, quiet, async () => undefined);
-    await expect(m.launch(req('comfyui-telegram'))).rejects.toThrow(
-      /studio_owner_sends: comfyui-telegram sends to the owner/,
-    );
-  });
-
-  it('streams the session: trial start, progress, trial end, done — past events replayed to a late listener', async () => {
-    const line = { scenario: 'question', verdict: 'green' } as never;
-    let finish!: () => void;
-    const runner: SessionRunner = async (run, _stop, hooks) => {
-      expect(run.scenarios.map((s) => s.id)).toEqual(['question']);
-      // La session épingle l'agent que la porte vient de vérifier, et aucun autre.
-      expect(run.pinnedAgentId).toBe(PINNED);
-      hooks.trialStart?.(run.scenarios[0]!, 1, 1);
-      hooks.progress?.(run.scenarios[0]!, 1, { step: 'started', rootJobId: 'r1' });
-      hooks.trialEnd?.(run.scenarios[0]!, 1, line);
-      await new Promise<void>((r) => (finish = r));
-      return { lines: [line], failed: 0, skipped: 0 };
-    };
-    let t = 1000;
-    const m = new RunManager(
-      OPEN,
-      runner,
-      async () => undefined,
-      () => t++,
-    );
-    const state = await m.launch(req('question'));
-    // Un second lancement pendant le premier est refusé.
-    await expect(m.launch(req('question'))).rejects.toThrow('studio_busy');
-    const seen: RunEvent['type'][] = [];
-    m.subscribe(state.id, (e) => seen.push(e.type));
-    expect(seen).toEqual(['trial-start', 'progress', 'trial-end']);
-    finish();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(seen).toEqual(['trial-start', 'progress', 'trial-end', 'done']);
-    expect(m.get(state.id)!.finished).toBe(true);
-  });
-
-  it('two launches sent together: one runs, the other is refused as busy', async () => {
-    let played = 0;
-    const m = new RunManager(
-      OPEN,
-      async () => {
-        played++;
-        return new Promise(() => undefined);
-      },
-      async () => undefined,
-    );
-    const results = await Promise.allSettled([
-      m.launch(req('question')),
-      m.launch(req('question')),
+describe('Bench Studio plays no session (launch waits for #769)', () => {
+  it('the studio module exposes reads only: nothing that starts, gates or cancels a session', async () => {
+    const studio = await import('../index');
+    expect(Object.keys(studio).sort()).toEqual([
+      'ACTIVITIES',
+      'AVANT_LA_MATRICE',
+      'FIXTURES_DIR',
+      'LAUNCH_DISABLED_REASON',
+      'aideDeColonne',
+      'createStudioRuntime',
+      'dollars',
+      'duree',
+      'findDeliverable',
+      'nombreJetons',
+      'readFixture',
+      'readResultLines',
+      'stackWebUrl',
+      'studioCatalog',
+      'studioModels',
+      'studioNeeds',
+      'studioPlan',
+      'studioResults',
+      'studioTrial',
     ]);
-    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
-    expect(
-      String((results.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason),
-    ).toContain('studio_busy');
-    expect(played).toBe(1);
+    expect(studio.LAUNCH_DISABLED_REASON).toBe(
+      'Trials are not pinned to the bench space yet (#769).',
+    );
   });
 
-  it('cancel goes through the shared stop', async () => {
-    const cancelled: unknown[] = [];
-    const m = new RunManager(
-      OPEN,
-      () => new Promise(() => undefined),
-      async (stop) => {
-        cancelled.push(stop);
-      },
-    );
-    const state = await m.launch(req('question'));
-    await m.cancel(state.id);
-    expect(cancelled).toHaveLength(1);
+  it('the runtime reads the stack and has no way to run anything', () => {
+    // Construire le runtime n'ouvre rien : seules ses lectures touchent la base.
+    expect(Object.keys(createStudioRuntime()).sort()).toEqual(['deliverable', 'models', 'needs']);
   });
 });
 

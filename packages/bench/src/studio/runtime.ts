@@ -1,43 +1,15 @@
-// studio/runtime.ts — Bench Studio branché sur la vraie stack.
+// studio/runtime.ts — Bench Studio branché sur la vraie stack, en LECTURE.
 //
-// data.ts et runs.ts ne connaissent ni la base ni le disque : ce module les
-// relie aux mêmes fonctions que le CLI (`openStackDb`, `runBench`,
-// `readLiveBenchRoots`, `cancelTree`, `readScenarioEnv`, `readTreeFacts`), et à
-// rien d'autre. Une seule instance par processus : le serveur de Bench Studio
-// la garde, ses routes la partagent.
+// data.ts ne connaît ni la base ni le disque : ce module le relie aux mêmes
+// fonctions que le CLI (`openStackDb`, `readScenarioEnv`, `readKeyProviders`,
+// `readWorkspaceRoots`), et à rien d'autre. Bench Studio ne lance aucun essai :
+// lancer attend que le banc épingle ses essais sur l'espace banc (#769).
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
-import { readTreeFacts, type JobFact } from '../workflows/facts';
-import { REPO } from '../workflows/paths';
-import { findBenchSpace } from '../space/space';
-import { readScenarioEnv, rootEntity, runBench } from '../workflows/session';
-import {
-  cancelTree,
-  openStackDb,
-  readKeyProviders,
-  readLiveBenchRoots,
-  readWorkspaceRoots,
-} from '../workflows/stack';
+import { readScenarioEnv, rootEntity } from '../workflows/session';
+import { openStackDb, readKeyProviders, readWorkspaceRoots } from '../workflows/stack';
 import { studioModels, studioNeeds, type NeedsView, type StudioModel } from './data';
-import { launchGate, studioGateTarget, type LaunchGate } from './launch-gate';
-import { RunManager } from './runs';
-
-/** Un job de l'arbre d'un essai, tel que la page « Live » le montre. */
-export interface TreeJob {
-  readonly id: string;
-  readonly parentJobId: string | null;
-  readonly agent: string | null;
-  readonly status: string | null;
-  readonly createdMs: number;
-  readonly updatedMs: number | null;
-}
-
-export interface JobTreeView {
-  readonly rootId: string;
-  readonly jobs: TreeJob[];
-  readonly toolCalls: number;
-}
 
 export type DeliverableView =
   | { readonly kind: 'text'; readonly root: string; readonly text: string }
@@ -50,12 +22,9 @@ export type DeliverableView =
     };
 
 export interface StudioRuntime {
-  readonly manager: RunManager;
-  gate(): Promise<LaunchGate>;
   needs(): Promise<NeedsView>;
   /** Les modèles du catalogue, ceux que l'espace du banc peut appeler d'abord. */
   models(): Promise<StudioModel[]>;
-  jobTree(rootId: string): Promise<JobTreeView>;
   deliverable(path: string): Promise<DeliverableView>;
 }
 
@@ -70,17 +39,6 @@ async function withDb<T>(
   } finally {
     await close();
   }
-}
-
-function treeJob(j: JobFact): TreeJob {
-  return {
-    id: j.id,
-    parentJobId: j.parentJobId,
-    agent: j.agentSlug,
-    status: j.status,
-    createdMs: j.createdMs,
-    updatedMs: j.updatedMs,
-  };
 }
 
 /**
@@ -111,38 +69,7 @@ export function findDeliverable(roots: readonly string[], path: string): Deliver
 }
 
 export function createStudioRuntime(): StudioRuntime {
-  // L'espace banc et l'agent sur lequel les essais seraient épinglés : lus à
-  // chaque fois (studioGateTarget, qui n'épingle encore rien : #769).
-  const gate = (): Promise<LaunchGate> =>
-    launchGate(REPO, {
-      target: () => withDb((db) => studioGateTarget(() => findBenchSpace(db))),
-    });
-  const manager = new RunManager(
-    gate,
-    async (run, stop, hooks) => {
-      const { db, close } = await openStackDb();
-      try {
-        return await runBench({ ...run, stackDir: REPO }, db, stop, hooks);
-      } finally {
-        await close();
-      }
-    },
-    (stop) =>
-      withDb((db) =>
-        stop.stop(
-          null,
-          {
-            liveRoots: () => readLiveBenchRoots(db),
-            cancel: (root) => cancelTree(db, root.entityId, root.id),
-            log: () => undefined,
-          },
-          { waitMs: 30_000 },
-        ),
-      ),
-  );
   return {
-    manager,
-    gate,
     needs: () =>
       studioNeeds(() =>
         withDb(async (db) => readScenarioEnv(db, await rootEntity(db), Date.now())),
@@ -155,15 +82,6 @@ export function createStudioRuntime(): StudioRuntime {
         return studioModels({ why: String(e instanceof Error ? e.message : e) });
       }
     },
-    jobTree: (rootId) =>
-      withDb(async (db) => {
-        const facts = await readTreeFacts(db, rootId);
-        return {
-          rootId,
-          jobs: facts.jobs.map(treeJob),
-          toolCalls: facts.toolCalls.length,
-        };
-      }),
     deliverable: (path) =>
       withDb(async (db) =>
         findDeliverable(await readWorkspaceRoots(db, await rootEntity(db)), path),

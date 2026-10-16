@@ -422,13 +422,13 @@ describe('No Bench Studio in a build output', () => {
     const d = tree({
       'server/app/(bench-studio)/bench-studio/page.js': 'x',
       'server/chunks/123.js': 'if(r)return Response.json({error:"studio_not_behind_filter"})',
-      'web/node_modules/x/index.js': 'throw new Error(`studio_launch_refused: ${g}`)',
+      'web/node_modules/x/index.js': 'throw new Error(`studio_no_fixture: ${g}`)',
       'cache/webpack/old.pack': 'studio_not_behind_filter',
     });
     expect(findStudioTraces(d).sort()).toEqual([
       'server/app/(bench-studio) (path)',
       'server/chunks/123.js (contains studio_not_behind_filter)',
-      'web/node_modules/x/index.js (contains studio_launch_refused)',
+      'web/node_modules/x/index.js (contains studio_no_fixture)',
     ]);
   });
 

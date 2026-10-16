@@ -73,13 +73,6 @@ export interface BenchRun {
   readonly allowOwnerSends: boolean;
   /** Le dossier de la stack mesurée (sa version, son commit, `nodal-agents mcp serve`). */
   readonly stackDir: string;
-  /**
-   * L'agent pour qui CHAQUE `run_task` de la session parle (`NODAL_MCP_AGENT_ID`
-   * du `mcp serve`), passé explicitement et jamais hérité. null : aucun, le
-   * serveur résout sa cible seul. Bench Studio ne lance qu'avec un agent
-   * épinglé dans l'espace banc, celui que sa porte a vérifié (#769).
-   */
-  readonly pinnedAgentId: string | null;
 }
 
 /** Ce qu'une session dit à qui l'écoute. Tout est facultatif sauf `log`. */
@@ -146,7 +139,7 @@ export async function runBench(
           now: () => Date.now(),
           sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
           start: (instruction, caller) =>
-            stop.start(() => startRunTask(run.stackDir, instruction, caller, run.pinnedAgentId)),
+            stop.start(() => startRunTask(run.stackDir, instruction, caller)),
           read: (rootId) => readTreeFacts(db, rootId),
           cancel: (ent, rootId) => cancelTree(db, ent, rootId),
           foreign: () => readForeignActivity(db, DEFAULT_TRIAL_OPTIONS.chatQuietMs),

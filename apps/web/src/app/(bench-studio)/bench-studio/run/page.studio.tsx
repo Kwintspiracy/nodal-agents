@@ -1,5 +1,6 @@
-// Run — choisir des activités ou des scénarios, des modèles, un nombre d'essais ; estimer ; lancer.
-import { studioCatalog } from '@nodal-agents/bench/studio';
+// Run — choisir des activités ou des scénarios, des modèles, un nombre d'essais ; estimer.
+// Lancer attend #769 : le bouton est désactivé, et le serveur n'a pas de route de lancement.
+import { LAUNCH_DISABLED_REASON, studioCatalog } from '@nodal-agents/bench/studio';
 import { assertStudioPage, studioRuntime } from '@/lib/bench-studio/server';
 import StudioPage from '../_components/StudioPage';
 import RunPanel from './RunPanel';
@@ -14,14 +15,12 @@ export default async function RunPage({
   await assertStudioPage();
   const { only } = await searchParams;
   const catalog = studioCatalog();
-  // La porte est lue à l'affichage, et tenue de nouveau par le serveur au lancement.
-  const gate = await studioRuntime().gate();
   // Les modèles que l'espace du banc peut appeler : ses fournisseurs de clés LLM.
   const models = await studioRuntime().models();
   return (
     <StudioPage
       title="Run"
-      subtitle="Pick what to run, estimate it, then launch. Trials run one after the other on the stack."
+      subtitle="Pick what to run and estimate its cost and time. Launching waits for the bench space (#769)."
     >
       <RunPanel
         activities={catalog.activities.filter((a) =>
@@ -35,7 +34,7 @@ export default async function RunPage({
           set: s.set,
         }))}
         models={models}
-        gate={gate}
+        launchDisabledReason={LAUNCH_DISABLED_REASON}
         initialOnly={only ? only.split(',').filter(Boolean) : []}
       />
     </StudioPage>
