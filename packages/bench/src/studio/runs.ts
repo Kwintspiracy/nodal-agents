@@ -53,9 +53,14 @@ export interface LaunchRequest {
   readonly allowOwnerSends: boolean;
 }
 
-/** Comment une session est réellement jouée : la base ouverte, `runBench`. Injecté pour les tests. */
+/**
+ * Comment une session est réellement jouée : la base ouverte, `runBench`.
+ * Injecté pour les tests. Une session du studio est TOUJOURS épinglée : son
+ * agent est celui que la porte a vérifié, et le type ne permet pas d'en lancer
+ * une sans.
+ */
 export type SessionRunner = (
-  run: Omit<BenchRun, 'stackDir'>,
+  run: Omit<BenchRun, 'stackDir' | 'pinnedAgentId'> & { readonly pinnedAgentId: string },
   stop: BenchStop,
   hooks: SessionHooks,
 ) => Promise<SessionSummary>;
@@ -116,7 +121,14 @@ export class RunManager {
       for (const l of this.listeners.get(id) ?? []) l(e);
     };
     void this.runner(
-      { scenarios, trials: req.trials, trigger: 'manual', allowOwnerSends: req.allowOwnerSends },
+      {
+        scenarios,
+        trials: req.trials,
+        trigger: 'manual',
+        allowOwnerSends: req.allowOwnerSends,
+        // L'agent que la porte vient de vérifier, et aucun autre.
+        pinnedAgentId: g.pinnedAgentId,
+      },
       stop,
       {
         log: (line) => emit({ at: this.now(), type: 'log', line }),

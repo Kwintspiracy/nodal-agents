@@ -2,32 +2,47 @@
 //
 // Décision du propriétaire (16/10) : les vrais essais ne tournent JAMAIS sur
 // ses agents, seulement dans l'espace « banc » (#758), une copie de son équipe
-// sans canal. Le bouton Launch n'est donc actif que lorsque les trois faits
-// sont vrais, lus à chaque fois :
+// sans canal.
+//
+// La cible d'un essai n'est jamais RÉSOLUE deux fois : chaque `run_task` démarre
+// son propre `mcp serve`, qui choisirait sa cible seul, et ce choix pourrait
+// diverger de celui que la porte a jugé. La cible est donc ÉPINGLÉE : la porte
+// vérifie un agent, et c'est CE MÊME agent que la session passe à chaque
+// `run_task` (`BenchRun.pinnedAgentId`, environnement assaini dans mcp.ts). La
+// porte s'ouvre quand les trois faits sont vrais, lus à chaque fois :
 //   1. l'espace banc existe ;
-//   2. les essais le VISENT : l'espace que `run_task` atteint est l'espace banc,
-//      pas celui du propriétaire (#758 a créé l'espace sans y diriger le banc) ;
+//   2. les essais sont épinglés sur un agent DE cet espace ;
 //   3. son contrôle (`pnpm bench:space check`) passe.
-// Sinon il est désactivé, et la raison est écrite à côté. La même porte est
-// tenue côté serveur : une requête de lancement est refusée, jamais seulement
-// un bouton grisé.
+// Sinon elle est fermée, et la raison est écrite à côté du bouton. La même
+// porte est tenue côté serveur : une requête de lancement est refusée, jamais
+// seulement un bouton grisé.
 
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export interface LaunchGate {
-  readonly enabled: boolean;
-  /** Pourquoi, en une phrase (anglais : rendu dans Bench Studio). */
-  readonly reason: string;
-}
+/** Ouverte, la porte porte l'agent qu'elle a vérifié : la session épingle celui-là, et aucun autre. */
+export type LaunchGate =
+  | { readonly enabled: false; readonly reason: string }
+  | { readonly enabled: true; readonly reason: string; readonly pinnedAgentId: string };
 
-/** Ce que la porte lit dans la base : l'espace que les essais visent, et l'espace banc. */
+/** Ce que la porte lit dans la base. */
 export interface GateTarget {
-  /** L'espace que `run_task` atteint (`rootEntity`). */
-  readonly targetEntityId: string;
   /** L'espace banc, null s'il n'existe pas. */
   readonly benchSpaceId: string | null;
+  /** L'agent sur lequel les essais seraient épinglés, et son espace ; null : aucun. */
+  readonly pinned: { readonly agentId: string; readonly entityId: string } | null;
+}
+
+/**
+ * Ce que Bench Studio lit aujourd'hui : l'espace banc, et AUCUN agent épinglé.
+ * Le banc n'épingle pas encore ses essais sur la racine de l'espace banc (#769) :
+ * tant que ce n'est pas fait, la porte reste fermée, et le dit.
+ */
+export async function studioGateTarget(
+  findBenchSpace: () => Promise<{ readonly id: string } | null>,
+): Promise<GateTarget> {
+  return { benchSpaceId: (await findBenchSpace())?.id ?? null, pinned: null };
 }
 
 type Spawn = (cmd: string, args: string[], cwd: string) => SpawnSyncReturns<string>;
@@ -60,7 +75,7 @@ export async function launchGate(
   } catch (e) {
     return {
       enabled: false,
-      reason: `The workspace trials would reach could not be read: ${String(e instanceof Error ? e.message : e)}`,
+      reason: `The bench space and the pinned agent could not be read: ${String(e instanceof Error ? e.message : e)}`,
     };
   }
   if (target.benchSpaceId === null) {
@@ -69,15 +84,27 @@ export async function launchGate(
       reason: 'The bench space does not exist yet: create it with `pnpm bench:space sync --apply`.',
     };
   }
-  if (target.targetEntityId !== target.benchSpaceId) {
+  if (target.pinned === null) {
     return {
       enabled: false,
       reason:
-        'Trials would still reach your own workspace, not the bench space: the bench does not aim run_task at the bench space yet. Launch opens once it does.',
+        'Trials are not pinned to the bench space yet (#769): without a pinned agent, run_task would reach your own workspace.',
+    };
+  }
+  if (target.pinned.entityId !== target.benchSpaceId) {
+    return {
+      enabled: false,
+      reason: `Trials are pinned to agent ${target.pinned.agentId}, which is not in the bench space.`,
     };
   }
   const r = (deps.spawn ?? runPnpm)('pnpm', [BENCH_SPACE_SCRIPT, 'check'], repo);
-  if (r.status === 0) return { enabled: true, reason: '`pnpm bench:space check` passed.' };
+  if (r.status === 0) {
+    return {
+      enabled: true,
+      reason: '`pnpm bench:space check` passed.',
+      pinnedAgentId: target.pinned.agentId,
+    };
+  }
   const tail = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split('\n').slice(-3).join(' ');
   return {
     enabled: false,

@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { SpawnSyncReturns } from 'node:child_process';
-import { launchGate } from '../launch-gate';
+import { launchGate, studioGateTarget } from '../launch-gate';
 import {
   readFixture,
   studioCatalog,
@@ -22,10 +22,12 @@ import {
 } from '../data';
 import { RunManager, type RunEvent, type SessionRunner } from '../runs';
 import { findDeliverable } from '../runtime';
+import { runTaskEnv } from '../../workflows/mcp';
 import { SCENARIOS } from '../../workflows/scenarios';
 
-const OPEN = async () => ({ enabled: true, reason: 'ok' });
-const CLOSED = async () => ({ enabled: false, reason: 'the bench space is not targeted' });
+const PINNED = 'cccccccc-0000-5000-8000-000000000003';
+const OPEN = async () => ({ enabled: true as const, reason: 'ok', pinnedAgentId: PINNED });
+const CLOSED = async () => ({ enabled: false as const, reason: 'the bench space is not targeted' });
 
 function repoWith(scripts: Record<string, string>): string {
   const d = mkdtempSync(join(tmpdir(), 'studio-repo-'));
@@ -51,20 +53,21 @@ describe('launchGate', () => {
     expect(g.reason).toMatch(/bench space.*no `pnpm bench:space` yet \(#758\)/);
   });
 
-  it("while trials would reach the owner's workspace, it stays closed, whatever the check says", async () => {
+  it('closed today: the bench space may exist, but trials are not pinned to it (#769), whatever the check says', async () => {
     const repo = repoWith({ 'bench:space': 'x' });
-    const g = await launchGate(repo, {
-      target: async () => ({ targetEntityId: OWNER, benchSpaceId: SPACE }),
-      spawn: neverSpawn,
-    });
-    expect(g).toEqual({
+    expect(
+      await launchGate(repo, {
+        target: async () => ({ benchSpaceId: SPACE, pinned: null }),
+        spawn: neverSpawn,
+      }),
+    ).toEqual({
       enabled: false,
       reason:
-        'Trials would still reach your own workspace, not the bench space: the bench does not aim run_task at the bench space yet. Launch opens once it does.',
+        'Trials are not pinned to the bench space yet (#769): without a pinned agent, run_task would reach your own workspace.',
     });
     expect(
       await launchGate(repo, {
-        target: async () => ({ targetEntityId: OWNER, benchSpaceId: null }),
+        target: async () => ({ benchSpaceId: null, pinned: null }),
         spawn: neverSpawn,
       }),
     ).toMatchObject({
@@ -73,20 +76,44 @@ describe('launchGate', () => {
     });
     expect(
       await launchGate(repo, {
-        target: () => Promise.reject(new Error('workflow_no_root: 2 workspace(s)')),
+        target: () => Promise.reject(new Error('connection refused')),
         spawn: neverSpawn,
       }),
     ).toEqual({
       enabled: false,
-      reason:
-        'The workspace trials would reach could not be read: workflow_no_root: 2 workspace(s)',
+      reason: 'The bench space and the pinned agent could not be read: connection refused',
     });
   });
 
-  it('aimed at the bench space, it runs `pnpm bench:space check` and opens only on exit 0', async () => {
+  it('what Bench Studio reads today pins nothing, so the gate is closed with the #769 reason', async () => {
+    const target = await studioGateTarget(async () => ({ id: SPACE }));
+    expect(target).toEqual({ benchSpaceId: SPACE, pinned: null });
+    expect(
+      await launchGate(repoWith({ 'bench:space': 'x' }), {
+        target: () => studioGateTarget(async () => ({ id: SPACE })),
+        spawn: neverSpawn,
+      }),
+    ).toMatchObject({ enabled: false, reason: expect.stringContaining('(#769)') });
+  });
+
+  it('pinned to an agent outside the bench space: closed, and the agent is named', async () => {
+    const g = await launchGate(repoWith({ 'bench:space': 'x' }), {
+      target: async () => ({ benchSpaceId: SPACE, pinned: { agentId: PINNED, entityId: OWNER } }),
+      spawn: neverSpawn,
+    });
+    expect(g).toEqual({
+      enabled: false,
+      reason: `Trials are pinned to agent ${PINNED}, which is not in the bench space.`,
+    });
+  });
+
+  it('pinned in the bench space, it runs `pnpm bench:space check`, opens only on exit 0, and carries the pinned agent', async () => {
     const calls: string[][] = [];
     const repo = repoWith({ 'bench:space': 'x' });
-    const target = async () => ({ targetEntityId: SPACE, benchSpaceId: SPACE });
+    const target = async () => ({
+      benchSpaceId: SPACE,
+      pinned: { agentId: PINNED, entityId: SPACE },
+    });
     const ok = await launchGate(repo, {
       target,
       spawn: (cmd, args) => {
@@ -95,7 +122,11 @@ describe('launchGate', () => {
       },
     });
     expect(calls).toEqual([['pnpm', 'bench:space', 'check']]);
-    expect(ok.enabled).toBe(true);
+    expect(ok).toEqual({
+      enabled: true,
+      reason: '`pnpm bench:space check` passed.',
+      pinnedAgentId: PINNED,
+    });
     const ko = await launchGate(repo, {
       target,
       spawn: () => spawned(1, 'the bench team has a send-capable tool: gmail_send_email\n'),
@@ -105,6 +136,14 @@ describe('launchGate', () => {
       reason:
         '`pnpm bench:space check` did not pass (exit 1): the bench team has a send-capable tool: gmail_send_email',
     });
+  });
+});
+
+describe('the run_task target is pinned, never inherited', () => {
+  it('an inherited NODAL_MCP_AGENT_ID never reaches mcp serve; only the pinned agent does', () => {
+    const base = { PATH: '/bin', NODAL_MCP_AGENT_ID: 'owner-agent', EMPTY: undefined };
+    expect(runTaskEnv(base, null)).toEqual({ PATH: '/bin' });
+    expect(runTaskEnv(base, PINNED)).toEqual({ PATH: '/bin', NODAL_MCP_AGENT_ID: PINNED });
   });
 });
 
@@ -145,6 +184,8 @@ describe('RunManager', () => {
     let finish!: () => void;
     const runner: SessionRunner = async (run, _stop, hooks) => {
       expect(run.scenarios.map((s) => s.id)).toEqual(['question']);
+      // La session épingle l'agent que la porte vient de vérifier, et aucun autre.
+      expect(run.pinnedAgentId).toBe(PINNED);
       hooks.trialStart?.(run.scenarios[0]!, 1, 1);
       hooks.progress?.(run.scenarios[0]!, 1, { step: 'started', rootJobId: 'r1' });
       hooks.trialEnd?.(run.scenarios[0]!, 1, line);

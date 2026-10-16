@@ -20,7 +20,7 @@ import {
   readWorkspaceRoots,
 } from '../workflows/stack';
 import { studioModels, studioNeeds, type NeedsView, type StudioModel } from './data';
-import { launchGate, type LaunchGate } from './launch-gate';
+import { launchGate, studioGateTarget, type LaunchGate } from './launch-gate';
 import { RunManager } from './runs';
 
 /** Un job de l'arbre d'un essai, tel que la page « Live » le montre. */
@@ -111,14 +111,11 @@ export function findDeliverable(roots: readonly string[], path: string): Deliver
 }
 
 export function createStudioRuntime(): StudioRuntime {
-  // L'espace que les essais atteindraient, et l'espace banc : lus à chaque fois.
+  // L'espace banc et l'agent sur lequel les essais seraient épinglés : lus à
+  // chaque fois (studioGateTarget, qui n'épingle encore rien : #769).
   const gate = (): Promise<LaunchGate> =>
     launchGate(REPO, {
-      target: () =>
-        withDb(async (db) => ({
-          targetEntityId: await rootEntity(db),
-          benchSpaceId: (await findBenchSpace(db))?.id ?? null,
-        })),
+      target: () => withDb((db) => studioGateTarget(() => findBenchSpace(db))),
     });
   const manager = new RunManager(
     gate,
