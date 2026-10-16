@@ -185,7 +185,11 @@ serve while the **MCP server** switch in Settings is off.
 The server exposes a single tool, `run_task`, which creates a tracked job for
 the workspace's root agent (or a chosen agent by slug). Jobs run under the
 agent's own approval rules and budgets, and can never use the configuration
-tools. When the client disconnects, the process exits cleanly.
+tools. A client may also state the workspace it expects (`expectedWorkspaceId`):
+when the server speaks for another one, `run_task` refuses
+(`mcp_workspace_mismatch`) and creates nothing. It is a check, never a choice:
+the workspace is always the one of the agent the server serves. When the client
+disconnects, the process exits cleanly.
 
 These runs have no conversation — nobody typed them — so they land in their own
 **MCP folder** under Channels (`/chat?folder=mcp`), whose rows open the run page

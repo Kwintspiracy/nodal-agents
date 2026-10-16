@@ -221,7 +221,23 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
     },
     async (args: unknown) => {
       try {
-        const { instruction, caller, agent: targetSlug } = runTaskInputSchema.parse(args);
+        const {
+          instruction,
+          caller,
+          agent: targetSlug,
+          expectedWorkspaceId,
+        } = runTaskInputSchema.parse(args);
+
+        // L'espace attendu par l'appelant, vérifié AVANT toute lecture ou
+        // écriture (#769) : un appelant dont l'épinglage aurait cassé voit son
+        // appel refusé ici, au lieu d'un job créé, et d'un runner réveillé,
+        // dans un espace qu'il n'a pas visé. Sans le champ, rien ne change.
+        if (expectedWorkspaceId !== undefined && expectedWorkspaceId !== entityId) {
+          throw new Error(
+            `mcp_workspace_mismatch: this server creates jobs in workspace ${entityId}, ` +
+              `not in ${expectedWorkspaceId} as the caller expects. Nothing was created.`,
+          );
+        }
 
         // La CIBLE se choisit, l'ENTITÉ jamais — c'est la ligne exacte que la
         // v1 avait franchie. Choisir un agent DANS le workspace équivaut à

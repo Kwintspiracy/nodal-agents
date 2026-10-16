@@ -105,3 +105,86 @@ export async function assertSpaceIdle(db: AnyDrizzleDb, spaceId: string): Promis
     );
   }
 }
+
+/**
+ * La cible des essais du banc des workflows : l'espace banc, et SON agent
+ * racine, résolus UNE fois par session. C'est cette résolution, et aucune
+ * autre, qui choisit l'agent que chaque `run_task` vise (épinglé et nommé
+ * explicitement), l'espace que le juge lit (environnement, modèle du root,
+ * dossiers de travail, livrables) et l'espace que le CLI et sa tâche
+ * planifiée atteignent.
+ *
+ * Pas d'espace banc, pas de racine, une racine inactive ou hors de l'espace :
+ * refus, avec ce qu'il faut faire. Jamais un repli sur l'espace du
+ * propriétaire (invariant #4) : c'est précisément ce que le banc ne doit
+ * jamais toucher (décision du 16/10).
+ */
+export interface BenchTarget {
+  readonly entityId: string;
+  readonly rootAgentId: string;
+  readonly rootAgentSlug: string;
+}
+
+export async function resolveBenchTarget(db: AnyDrizzleDb): Promise<BenchTarget> {
+  const { agents, entities, eq } = await import('@nodal-agents/db');
+  const space = await requireBenchSpace(db);
+  const [ent] = await db
+    .select({ rootAgentId: entities.rootAgentId })
+    .from(entities)
+    .where(eq(entities.id, space.id))
+    .limit(1);
+  if (!ent?.rootAgentId) {
+    throw new Error(
+      `bench_space_no_root: the bench space ${space.id} has no root agent. ` +
+        'Re-run `pnpm bench:space sync --apply`.',
+    );
+  }
+  const [root] = await db
+    .select({ id: agents.id, slug: agents.slug, entityId: agents.entityId, active: agents.active })
+    .from(agents)
+    .where(eq(agents.id, ent.rootAgentId))
+    .limit(1);
+  if (!root || !root.active || root.entityId !== space.id) {
+    throw new Error(
+      `bench_space_root_invalid: the bench space's root agent ${ent.rootAgentId} is ` +
+        `${!root ? 'missing' : !root.active ? 'inactive' : 'outside the bench space'}. ` +
+        'Re-run `pnpm bench:space sync --apply`.',
+    );
+  }
+  return { entityId: space.id, rootAgentId: root.id, rootAgentSlug: root.slug };
+}
+
+/** Où un job a réellement été créé : son espace et son agent, lus dans `agent_jobs`. */
+export async function readJobPlacement(
+  db: AnyDrizzleDb,
+  jobId: string,
+): Promise<{ entityId: string | null; agentId: string | null } | null> {
+  const { agentJobs, eq } = await import('@nodal-agents/db');
+  const [job] = await db
+    .select({ entityId: agentJobs.entityId, agentId: agentJobs.agentId })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId))
+    .limit(1);
+  return job ?? null;
+}
+
+/**
+ * Le job qu'un `run_task` vient de créer est-il là où la session l'a visé ?
+ * null : oui. Sinon, ce qui a été trouvé, dit tel quel : la session annule le
+ * job et l'essai échoue avec cette raison, jamais un essai joué ailleurs.
+ */
+export function jobOffTarget(
+  jobId: string,
+  job: { entityId: string | null; agentId: string | null } | null,
+  target: BenchTarget,
+): string | null {
+  if (job === null) return `workflow_wrong_target: job ${jobId} was not found after run_task`;
+  if (job.entityId !== target.entityId || job.agentId !== target.rootAgentId) {
+    return (
+      `workflow_wrong_target: job ${jobId} was created in workspace ${job.entityId ?? 'none'} for agent ` +
+      `${job.agentId ?? 'none'}, not in the bench space ${target.entityId} for its root ` +
+      `${target.rootAgentId}; it was cancelled`
+    );
+  }
+  return null;
+}

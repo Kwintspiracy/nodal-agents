@@ -148,7 +148,7 @@ describe('studio routes refuse what did not come through the studio server', () 
   });
 });
 
-describe('no request can start a session from Bench Studio (launch waits for #769)', () => {
+describe('no request can start a session from Bench Studio', () => {
   it('its server routes are reads and an estimate, and nothing else', () => {
     const handlers = walk(STUDIO_APP)
       .filter((f) => f.endsWith('route.studio.ts'))

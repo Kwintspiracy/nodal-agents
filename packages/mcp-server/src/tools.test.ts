@@ -212,6 +212,63 @@ describe('le contrat run_task', () => {
   });
 });
 
+describe("l'espace attendu : une assertion qui refuse avant d'écrire, jamais un choix (#769)", () => {
+  const jobsOf = async (entityId: string) =>
+    db.select({ id: agentJobs.id }).from(agentJobs).where(eq(agentJobs.entityId, entityId));
+
+  it("un espace attendu qui n'est pas celui du serveur : refus codé, et AUCUNE ligne agent_jobs", async () => {
+    const ws = await nouveauWorkspace('attendu-faux');
+    const client = await connect(ws.agentId);
+    for (const expected of [seed.entityId, autreEntiteId]) {
+      const res = await client.callTool({
+        name: 'run_task',
+        arguments: { instruction: 'ne doit pas exister', expectedWorkspaceId: expected },
+      });
+      expect(res.isError).toBe(true);
+      expect((res.content as Array<{ text: string }>)[0]!.text).toBe(
+        `mcp_workspace_mismatch: this server creates jobs in workspace ${ws.entityId}, ` +
+          `not in ${expected} as the caller expects. Nothing was created.`,
+      );
+    }
+    expect(await jobsOf(ws.entityId)).toEqual([]);
+    expect(await jobsOf(autreEntiteId)).toEqual([]);
+    await client.close();
+  });
+
+  it("l'espace du serveur déclaré : le job est créé là, comme sans le champ", async () => {
+    const ws = await nouveauWorkspace('attendu-juste');
+    const client = await connect(ws.agentId);
+    for (const args of [{ expectedWorkspaceId: ws.entityId }, {}]) {
+      const res = await client.callTool({
+        name: 'run_task',
+        arguments: { instruction: 'petite tache', ...args },
+      });
+      expect(res.isError).not.toBe(true);
+    }
+    const jobs = await db
+      .select({ entityId: agentJobs.entityId, agentId: agentJobs.agentId })
+      .from(agentJobs)
+      .where(eq(agentJobs.entityId, ws.entityId));
+    expect(jobs).toEqual([
+      { entityId: ws.entityId, agentId: ws.agentId },
+      { entityId: ws.entityId, agentId: ws.agentId },
+    ]);
+    await client.close();
+  });
+
+  it("le champ ne déplace rien : il n'accepte qu'un identifiant, et le serveur garde son espace", async () => {
+    const ws = await nouveauWorkspace('attendu-forme');
+    const client = await connect(ws.agentId);
+    const res = await client.callTool({
+      name: 'run_task',
+      arguments: { instruction: 'x', expectedWorkspaceId: 'autre-workspace' },
+    });
+    expect(res.isError).toBe(true);
+    expect(await jobsOf(ws.entityId)).toEqual([]);
+    await client.close();
+  });
+});
+
 describe('le plafond PAR DÉFAUT est la constante que la carte Settings affiche', () => {
   it('sans option, le serveur refuse le job qui dépasserait MCP_MAX_JOBS_IN_FLIGHT', async () => {
     // La carte lit la même constante : si le serveur en appliquait une autre,

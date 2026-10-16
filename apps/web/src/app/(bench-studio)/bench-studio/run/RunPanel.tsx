@@ -3,7 +3,7 @@
 // Le panneau d'estimation. Il ne décide de rien : la sélection et le plan
 // sont ceux du banc (selection.ts, matrix.ts), rendus par la route du studio.
 // Le bouton Launch reste désactivé, avec sa raison : Bench Studio ne lance
-// aucun essai tant que le banc ne les épingle pas sur l'espace banc (#769), et
+// aucun essai (les essais partent du CLI, dans l'espace banc, #769), et
 // le serveur n'a aucune route de lancement.
 import { useEffect, useMemo, useState } from 'react';
 import type { PlanView, StudioModel } from '@nodal-agents/bench/studio';

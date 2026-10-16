@@ -12,7 +12,7 @@ export default function NeedStatus({ needs, need }: { needs: NeedsView; need: st
   const state = needState(needs, need);
   const why =
     needs.reachable === false
-      ? `stack not read: ${needs.why}`
+      ? `bench space not read: ${needs.why}`
       : (needs.needs.find((x) => x.need === need)?.missing ?? 'available');
   return (
     <span title={why}>

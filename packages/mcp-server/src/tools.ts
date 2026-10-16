@@ -25,6 +25,23 @@ export const runTaskInputSchema = z.object({
       "THAT agent's tools, approval rules and budgets, and MCP jobs never " +
       'get the configuration tools regardless of target.',
   ),
+  // Une ASSERTION, jamais un choix (#769). La v1 laissait l'appelant fournir
+  // l'entité du job, et la review l'a retiré (usurpation inter-workspace) :
+  // l'entité vient de l'agent du serveur, et de lui seul. Ce champ ne déplace
+  // rien : il ne peut que REFUSER, avant toute écriture, quand le serveur parle
+  // pour un autre espace que celui que l'appelant attend. C'est la prévention
+  // dont un appelant a besoin quand son épinglage peut casser (le banc des
+  // workflows : un essai ne doit jamais être créé hors de l'espace banc).
+  expectedWorkspaceId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      'Optional ASSERTION, never a choice: the id of the workspace the job must be ' +
+        'created in. When this server speaks for another workspace, run_task refuses ' +
+        'before creating anything (mcp_workspace_mismatch). It cannot move a job: the ' +
+        'workspace is always the one of the agent this server was launched for.',
+    ),
   caller: z
     .string()
     .min(1)

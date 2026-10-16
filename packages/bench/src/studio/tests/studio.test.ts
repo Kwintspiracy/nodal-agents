@@ -45,7 +45,7 @@ describe('Bench Studio plays no session (launch waits for #769)', () => {
       'studioTrial',
     ]);
     expect(studio.LAUNCH_DISABLED_REASON).toBe(
-      'Trials are not pinned to the bench space yet (#769).',
+      'Bench Studio does not launch trials yet: run them with `pnpm bench:workflows`, which plays them in the bench space.',
     );
   });
 
