@@ -7,11 +7,17 @@
 // Nodal (refusés par le proxy) ; un client NON-HTTP (TCP brut) vers un service
 // local n'a pas de route — la limite nommée du régime.
 //
-// Windows seulement, et SOUS LE PROXY : sur un build où le proxy n'est pas
-// joignable (windows-11-arm 9457), le bac à sable est indisponible et toute
-// cette suite se saute. Elle est donc prouvée sur une machine où le proxy
-// répond (celle de Quentin, 9711, via release:check). Le MUR DES FICHIERS, lui,
-// est prouvé sous `deny-all` partout (sandbox-confinement-windows.test.ts).
+// Windows seulement, et SOUS LE PROXY. Le bac à sable peut y être indisponible
+// pour DEUX raisons, selon le palier MXC de la machine, et chaque cas de cette
+// suite affirme la raison attendue pour CE palier au lieu de se sauter :
+//   - `base-container` mais proxy injoignable (windows-11-arm 9457) :
+//     SANDBOX_PROXY_UNREACHABLE ;
+//   - tout autre palier (`appcontainer-dacl`, runners Windows Server 2022/2025
+//     de GitHub) : SANDBOX_PLATFORM_UNSUPPORTED, le palier cité (la sonde
+//     s'arrête avant d'ouvrir un conteneur, donc avant d'éprouver le proxy).
+// Le filtrage proxy est donc prouvé sur une machine où le proxy répond (celle
+// de Quentin, 9711, via release:check). Le MUR DES FICHIERS, lui, est prouvé
+// sous `deny-all` partout (sandbox-confinement-windows.test.ts).
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createServer, type Server } from 'node:http';
@@ -20,9 +26,43 @@ import { once } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { JobProcessScope, createSandbox, mxcBackend, type JobContainer } from '../index';
+import {
+  JobProcessScope,
+  createSandbox,
+  mxcBackend,
+  type JobContainer,
+  type SandboxStatus,
+} from '../index';
 
 const isWindows = process.platform === 'win32';
+
+// Le palier MXC de CETTE machine (comme deny-data-dir.test.ts et
+// windows-mxc.test.ts).
+const tier = isWindows
+  ? (await import('@microsoft/mxc-sdk/v1')).getPlatformSupport().isolationTier
+  : undefined;
+
+/**
+ * Ce qu'un statut INDISPONIBLE doit dire sous le régime proxy, selon le palier
+ * de la machine. Le palier est un paramètre pour que chaque branche se prouve
+ * sans la machine qui la produit (voir le describe « tous systèmes »).
+ */
+function expectUnavailableForTier(tierName: string | undefined, status: SandboxStatus): void {
+  if (tierName === 'base-container') {
+    expect(status, JSON.stringify(status)).toMatchObject({
+      state: 'unavailable',
+      code: 'SANDBOX_PROXY_UNREACHABLE',
+    });
+    return;
+  }
+  expect(status, JSON.stringify(status)).toMatchObject({
+    state: 'unavailable',
+    code: 'SANDBOX_PLATFORM_UNSUPPORTED',
+  });
+  expect(status.state === 'unavailable' && status.reason).toMatch(
+    new RegExp(`^isolationTier=${String(tierName)}`),
+  );
+}
 
 let comfy: Server;
 let nodal: Server;
@@ -112,7 +152,13 @@ describe.runIf(isWindows)(
         e[n] = process.env[n];
       return e;
     };
-    const unavailable = (): boolean => status?.state !== 'available';
+    // Indisponible : on affirme la raison de CE palier, puis le cas s'arrête
+    // (il n'y a rien à confiner). Jamais un saut silencieux.
+    const unavailable = (): boolean => {
+      if (status?.state === 'available') return false;
+      expectUnavailableForTier(tier, status as SandboxStatus);
+      return true;
+    };
 
     // release:check (machine de l'owner) pose NODAL_SANDBOX_REQUIRE_PROXY=1 :
     // c'est le SEUL endroit où le filtrage proxy est prouvé, donc la suite doit
@@ -135,10 +181,7 @@ describe.runIf(isWindows)(
     }
 
     it('a confined command reaches ComfyUI but not a Nodal port, and raw TCP has no route', async () => {
-      if (unavailable()) {
-        expect(status).toMatchObject({ code: 'SANDBOX_PROXY_UNREACHABLE' });
-        return;
-      }
+      if (unavailable()) return;
       const node = process.execPath;
       const script = join(ws, 'client.cjs');
       writeFileSync(
@@ -237,3 +280,54 @@ const rawTcp = (port) => new Promise((r) => { const s = require('net').connect(p
     }, 120_000);
   },
 );
+
+// Tous systèmes : la branche « autre palier » se prouve sans la machine qui la
+// produit, par le VRAI backend sur un SDK qui répond ce que le runner Windows
+// Server 2025 de GitHub a répondu (14/10), passé à la même fonction que la
+// suite Windows.
+describe('sandbox proxy regime — what an unavailable status must say per tier (all systems) @cap:executer-une-commande/moteur', () => {
+  const warning =
+    'BaseContainer tier not selected, and AppContainer + BFS is not compiled into this binary; falling back to AppContainer + DACL';
+  const sdkOfTier = (isolationTier: string): never =>
+    ({
+      getPlatformSupport: () => ({
+        isSupported: true,
+        reason: '',
+        availableMethods: ['processcontainer'],
+        isolationTier,
+        isolationWarnings: [warning],
+      }),
+      spawn: () => {
+        throw new Error('must not be called');
+      },
+    }) as never;
+
+  it('appcontainer-dacl: the probe says SANDBOX_PLATFORM_UNSUPPORTED with the tier, and that is what the suite accepts', async () => {
+    const status = await mxcBackend(
+      () => Promise.resolve(sdkOfTier('appcontainer-dacl')),
+      'proxy',
+    ).probe();
+    expect(status).toEqual({
+      state: 'unavailable',
+      code: 'SANDBOX_PLATFORM_UNSUPPORTED',
+      reason: `isolationTier=appcontainer-dacl | ${warning}`,
+    });
+    expectUnavailableForTier('appcontainer-dacl', status);
+  });
+
+  it('the proxy-unreachable code is NOT an acceptable answer on a tier other than base-container, and the tier code is not one on base-container', () => {
+    const tierStatus: SandboxStatus = {
+      state: 'unavailable',
+      code: 'SANDBOX_PLATFORM_UNSUPPORTED',
+      reason: 'isolationTier=appcontainer-dacl | w',
+    };
+    const proxyStatus: SandboxStatus = {
+      state: 'unavailable',
+      code: 'SANDBOX_PROXY_UNREACHABLE',
+      reason: 'the sandbox proxy is not reachable',
+    };
+    expect(() => expectUnavailableForTier('appcontainer-dacl', proxyStatus)).toThrow();
+    expect(() => expectUnavailableForTier('base-container', tierStatus)).toThrow();
+    expect(() => expectUnavailableForTier('base-container', proxyStatus)).not.toThrow();
+  });
+});
