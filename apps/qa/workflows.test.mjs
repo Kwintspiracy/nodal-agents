@@ -403,12 +403,19 @@ describe('la matrice activités × modèles', () => {
     expect(colonneDe({ modelUnderTest: null, rootModel: 'b', models: ['c'] })).toBe('b');
   });
 
-  it('une ligne d’avant la v2 va dans UNE colonne « before the matrix », jamais dans les modèles qui ont répondu', () => {
+  it('une ligne d’avant la v2 va dans UNE colonne « Earlier runs (model not recorded) », jamais dans les modèles qui ont répondu', () => {
+    expect(AVANT_LA_MATRICE).toBe('Earlier runs (model not recorded)');
     expect(colonneDe({ models: ['z-ai/glm-5.3', 'xiaomi/mimo-v2.6-pro'] })).toBe(AVANT_LA_MATRICE);
     expect(colonneDe({ models: [] })).toBe(AVANT_LA_MATRICE);
     const melange = { ...FICHIER_ROUGE, models: ['z-ai/glm-5.3', 'xiaomi/mimo-v2.6-pro'] };
     const m = construireMatrice([QUESTION_V2, QUESTION_VERTE, melange, PRINT_SAUTE], CATALOGUE);
     expect(m.colonnes).toEqual(['z-ai/glm-5.3', AVANT_LA_MATRICE]);
+    // L'en-tête de cette colonne dit pourquoi elle existe ; celui d'un modèle n'a pas d'infobulle.
+    const html = htmlMatrice(m);
+    expect(html).toContain(
+      '<div role="columnheader" title="Trials from before the model comparison: the model the run was set to was not recorded, so they cannot sit in a model&#39;s column.">Earlier runs (model not recorded)</div>',
+    );
+    expect(html).toContain('<div role="columnheader" class="mono">z-ai/glm-5.3</div>');
   });
 
   it('un sauté s’affiche en GRIS avec sa raison, jamais en rouge', () => {
@@ -478,11 +485,11 @@ describe('la matrice activités × modèles', () => {
     const html = htmlWorkflows({ lignes: [QUESTION_V2, plus], illisibles: 0 }, CATALOGUE);
     expect(html.indexOf('wf-compare')).toBeLessThan(html.indexOf('class="chapo"'));
     expect(phraseComparaison(construireMatrice([], CATALOGUE))).toContain('No trial yet');
-    // « before the matrix » n'est pas un modèle : la phrase le dit à part.
+    // La colonne des essais d'avant n'est pas un modèle : la phrase le dit à part.
     expect(
       phraseComparaison(construireMatrice([QUESTION_V2, QUESTION_VERTE], CATALOGUE)),
     ).toContain(
-      'Comparing <b>1 model</b> (<span class="mono">z-ai/glm-5.3</span>) and the runs from before the matrix, whose model was not recorded,',
+      'Comparing <b>1 model</b> (<span class="mono">z-ai/glm-5.3</span>) and the earlier runs, whose model was not recorded,',
     );
   });
 

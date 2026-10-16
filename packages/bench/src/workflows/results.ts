@@ -262,8 +262,19 @@ export function workflowsARegarder({ lignes }: { lignes: readonly ResultLine[] }
 
 // ─── La matrice : activités × modèles ────────────────────────────────────────
 
-/** La colonne des essais dont on ne sait pas sur quel modèle ils étaient RÉGLÉS. */
-export const AVANT_LA_MATRICE = 'before the matrix';
+/**
+ * La colonne des essais dont on ne sait pas sur quel modèle ils étaient RÉGLÉS.
+ * Son nom et son infobulle sont ceux que le portail et Bench Studio affichent :
+ * « before the matrix » ne disait rien au propriétaire (16/10).
+ */
+export const AVANT_LA_MATRICE = 'Earlier runs (model not recorded)';
+export const AVANT_LA_MATRICE_AIDE =
+  "Trials from before the model comparison: the model the run was set to was not recorded, so they cannot sit in a model's column.";
+
+/** L'infobulle d'une colonne de la matrice ; null pour une colonne qui est un modèle. */
+export function aideDeColonne(colonne: string): string | null {
+  return colonne === AVANT_LA_MATRICE ? AVANT_LA_MATRICE_AIDE : null;
+}
 
 /**
  * La colonne d'un essai : le modèle sur lequel il était RÉGLÉ, jamais
@@ -271,7 +282,7 @@ export const AVANT_LA_MATRICE = 'before the matrix';
  * modèle mêleraient les colonnes). C'est le modèle que la matrice a imposé,
  * sinon le modèle configuré de l'agent racine. Une ligne écrite avant le banc
  * v2 ne porte ni l'un ni l'autre : `models` dit qui a RÉPONDU, pas ce qui était
- * demandé. Elle va dans une seule colonne, « before the matrix ».
+ * demandé. Elle va dans une seule colonne, `AVANT_LA_MATRICE`.
  */
 export function colonneDe(l: Partial<ResultLine>): string {
   if (typeof l.modelUnderTest === 'string' && l.modelUnderTest) return l.modelUnderTest;
@@ -392,7 +403,7 @@ export function construireMatrice(
     ...[...parScenario.keys()].filter((id) => !duCatalogue.has(id)),
   ];
 
-  // Les colonnes : les modèles réglés, les plus joués d'abord ; « before the matrix » en dernier.
+  // Les colonnes : les modèles réglés, les plus joués d'abord ; `AVANT_LA_MATRICE` en dernier.
   const compte = new Map<string, number>();
   for (const l of lignes) {
     const c = colonneDe(l);

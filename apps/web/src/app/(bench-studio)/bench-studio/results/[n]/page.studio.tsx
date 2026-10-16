@@ -1,7 +1,14 @@
 // Un essai, par son numéro de ligne dans workflows.ndjson : verdict, réponse, livrables, coûts, modèles.
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { dollars, duree, nombreJetons, stackWebUrl, studioTrial } from '@nodal-agents/bench/studio';
+import {
+  aideDeColonne,
+  dollars,
+  duree,
+  nombreJetons,
+  stackWebUrl,
+  studioTrial,
+} from '@nodal-agents/bench/studio';
 import Banner from '@/components/ui/Banner';
 import CodeBlock from '@/components/ui/CodeBlock';
 import MetricCard from '@/components/ui/MetricCard';
@@ -166,7 +173,9 @@ export default async function TrialPage({ params }: { params: Promise<{ n: strin
           </div>
           <Panel title="Facts">
             <div className="-my-2 divide-y divide-rule-2">
-              <Fact label="Model column">{trial.column}</Fact>
+              <Fact label="Model column">
+                <span title={aideDeColonne(trial.column) ?? undefined}>{trial.column}</span>
+              </Fact>
               <Fact label="Model under test">
                 {str(l.modelUnderTest) ?? 'none (agents on their own)'}
               </Fact>

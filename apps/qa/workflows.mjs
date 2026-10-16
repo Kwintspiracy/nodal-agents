@@ -21,6 +21,7 @@ import { echapperHtml as esc } from './lib.mjs';
 import {
   AVANT_LA_MATRICE,
   DERNIERS,
+  aideDeColonne,
   SEUIL_RALENTI,
   aRegarder,
   colonneDe,
@@ -293,7 +294,7 @@ export function phraseComparaison(m) {
           `<b>${modeles.length} model${modeles.length > 1 ? 's' : ''}</b> (${modeles.map((c) => `<span class="mono">${esc(c)}</span>`).join(', ')})`,
         ]
       : []),
-    ...(avant ? ['the runs from before the matrix, whose model was not recorded'] : []),
+    ...(avant ? ['the earlier runs, whose model was not recorded'] : []),
   ].join(' and ');
   return `<p class="wf-compare">Comparing ${quoi}, on the last ${DERNIERS} trials at most of each scenario, run ${esc(periode)}.</p>`;
 }
@@ -303,7 +304,11 @@ export function htmlMatrice(m) {
   const cols = m.colonnes.length > 0 ? m.colonnes : ['no model yet'];
   const grille = `style="--wf-cols:${cols.length}"`;
   const tete = `<div class="wf-l wf-l--tete" role="row"><div role="columnheader">Activity</div>${cols
-    .map((c) => `<div role="columnheader" class="mono">${esc(c)}</div>`)
+    .map((c) =>
+      aideDeColonne(c) === null
+        ? `<div role="columnheader" class="mono">${esc(c)}</div>`
+        : `<div role="columnheader" title="${esc(aideDeColonne(c))}">${esc(c)}</div>`,
+    )
     .join(
       '',
     )}</div><div class="wf-l wf-l--resume" role="row"><div role="rowheader"><b>All activities</b> <span class="wf-nd">trials shown below</span></div>${cols

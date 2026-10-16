@@ -38,4 +38,10 @@ export {
 } from './runtime';
 export { stackWebUrl } from '../workflows/stack';
 export { FIXTURES_DIR } from '../workflows/fixtures';
-export { duree, nombreJetons, dollars, AVANT_LA_MATRICE } from '../workflows/results';
+export {
+  duree,
+  nombreJetons,
+  dollars,
+  AVANT_LA_MATRICE,
+  aideDeColonne,
+} from '../workflows/results';

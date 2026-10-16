@@ -1,7 +1,7 @@
 // Results — la matrice activités × modèles, calculée par results.ts (le même code que le portail).
 import { Fragment } from 'react';
 import Link from 'next/link';
-import { dollars, duree, studioResults } from '@nodal-agents/bench/studio';
+import { aideDeColonne, dollars, duree, studioResults } from '@nodal-agents/bench/studio';
 import Banner from '@/components/ui/Banner';
 import EmptyState from '@/components/ui/EmptyState';
 import PrimaryButton from '@/components/ui/PrimaryButton';
@@ -86,6 +86,7 @@ export default async function ResultsPage() {
                   <Tr key={s.column}>
                     <Td>
                       <CellTitle
+                        title={aideDeColonne(s.column) ?? undefined}
                         meta={`${s.tentes} trial(s)${s.sautes > 0 ? ` · ${s.sautes} skipped` : ''}`}
                       >
                         {s.column}
@@ -120,7 +121,9 @@ export default async function ResultsPage() {
               <THead>
                 <Th>Activity · scenario</Th>
                 {r.columns.map((c) => (
-                  <Th key={c}>{c}</Th>
+                  <Th key={c}>
+                    <span title={aideDeColonne(c) ?? undefined}>{c}</span>
+                  </Th>
                 ))}
               </THead>
               <tbody>
