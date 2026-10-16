@@ -57,6 +57,14 @@ export type ResolveLlmResult =
 export async function resolveAgentLlmClient(
   db: AnyDrizzleDb,
   agent: {
+    /**
+     * The agent's workspace. A key is used only when it belongs to it: a key
+     * id is a pointer, and a pointer copied from another workspace (an agent
+     * copied between spaces, a hand-edited row) must not run — or bill — on
+     * that other workspace's credentials. Such a link is skipped and said
+     * (`other_workspace`), exactly like a missing one.
+     */
+    entityId: string | null;
     llmKeyId: string | null;
     /**
      * Ordered failover chain AFTER the primary — each link is a (keyId, model)
@@ -114,6 +122,10 @@ export async function resolveAgentLlmClient(
     const metas: LlmClientMeta[] = [];
     for (const { keyId, model: requestedModel, effort } of requested) {
       const row = byId.get(keyId);
+      if (row && row.entityId !== agent.entityId) {
+        onSkip?.({ keyId, reason: 'other_workspace' });
+        continue;
+      }
       if (!row || !row.isActive) {
         // A skipped key (missing or toggled inactive) never aborts resolution —
         // the chain simply moves to the next active key. So disabling the

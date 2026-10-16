@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { _setMasterKeyForTests, encrypt } from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { entityLlmKeys } from '@nodal-agents/db';
+import { entities, entityLlmKeys } from '@nodal-agents/db';
 import { resolveAgentLlmClient } from '../../job/resolve-llm.ts';
 
 let db: TestDb;
@@ -47,6 +47,7 @@ describe('resolveAgentLlmClient', () => {
   it('builds a 2-link chain when the fallback provider has a catalog model', async () => {
     const fbId = await insertKey({ provider: 'openrouter', isActive: true });
     const res = await resolveAgentLlmClient(db, {
+      entityId: seed.entityId,
       llmKeyId: seed.llmKeyId,
       fallbackChain: [{ keyId: fbId, model: '' }],
       model: 'mock',
@@ -63,7 +64,12 @@ describe('resolveAgentLlmClient', () => {
     const skipped: Array<{ keyId: string; reason: string }> = [];
     const res = await resolveAgentLlmClient(
       db,
-      { llmKeyId: seed.llmKeyId, fallbackChain: [{ keyId: fbId, model: '' }], model: 'mock' },
+      {
+        entityId: seed.entityId,
+        llmKeyId: seed.llmKeyId,
+        fallbackChain: [{ keyId: fbId, model: '' }],
+        model: 'mock',
+      },
       (info) => skipped.push(info),
     );
     expect(res.ok).toBe(true);
@@ -78,6 +84,7 @@ describe('resolveAgentLlmClient', () => {
     const res = await resolveAgentLlmClient(
       db,
       {
+        entityId: seed.entityId,
         llmKeyId: deadPrimary,
         // Fallback runs on its own chosen model, not the (disabled) primary's.
         fallbackChain: [{ keyId: liveFallback, model: 'deepseek/deepseek-v4-pro' }],
@@ -97,6 +104,7 @@ describe('resolveAgentLlmClient', () => {
     const deadPrimary = await insertKey({ provider: 'openrouter', isActive: false });
     const deadFallback = await insertKey({ provider: 'openrouter', isActive: false });
     const res = await resolveAgentLlmClient(db, {
+      entityId: seed.entityId,
       llmKeyId: deadPrimary,
       fallbackChain: [{ keyId: deadFallback, model: '' }],
       model: 'mock',
@@ -110,7 +118,12 @@ describe('resolveAgentLlmClient', () => {
     const skipped: Array<{ keyId: string; reason: string }> = [];
     const res = await resolveAgentLlmClient(
       db,
-      { llmKeyId: seed.llmKeyId, fallbackChain: [{ keyId: fbId, model: '' }], model: 'mock' },
+      {
+        entityId: seed.entityId,
+        llmKeyId: seed.llmKeyId,
+        fallbackChain: [{ keyId: fbId, model: '' }],
+        model: 'mock',
+      },
       (info) => skipped.push(info),
     );
     expect(res.ok).toBe(true);
@@ -120,6 +133,7 @@ describe('resolveAgentLlmClient', () => {
 
   it('a missing fallback id is skipped, not fatal', async () => {
     const res = await resolveAgentLlmClient(db, {
+      entityId: seed.entityId,
       llmKeyId: seed.llmKeyId,
       fallbackChain: [{ keyId: '00000000-0000-0000-0000-0000000000ff', model: '' }],
       model: 'mock',
@@ -130,6 +144,7 @@ describe('resolveAgentLlmClient', () => {
 
   it('fails loud when there is no primary key', async () => {
     const res = await resolveAgentLlmClient(db, {
+      entityId: seed.entityId,
       llmKeyId: null,
       fallbackChain: [],
       model: 'mock',
@@ -146,6 +161,7 @@ describe('resolveAgentLlmClient', () => {
 describe('resolveAgentLlmClient — reasoning effort', () => {
   it('resolves a valid agent-level reasoning_effort onto the primary config', async () => {
     const res = await resolveAgentLlmClient(db, {
+      entityId: seed.entityId,
       llmKeyId: seed.llmKeyId,
       fallbackChain: [],
       model: 'mock',
@@ -159,6 +175,7 @@ describe('resolveAgentLlmClient — reasoning effort', () => {
     'reasoning_effort %j resolves to Auto (undefined on the config)',
     async (value) => {
       const res = await resolveAgentLlmClient(db, {
+        entityId: seed.entityId,
         llmKeyId: seed.llmKeyId,
         fallbackChain: [],
         model: 'mock',
@@ -173,6 +190,7 @@ describe('resolveAgentLlmClient — reasoning effort', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const res = await resolveAgentLlmClient(db, {
+        entityId: seed.entityId,
         llmKeyId: seed.llmKeyId,
         fallbackChain: [],
         model: 'mock',
@@ -194,6 +212,7 @@ describe('resolveAgentLlmClient — reasoning effort', () => {
     const deadPrimary = await insertKey({ provider: 'openrouter', isActive: false });
     const liveFallback = await insertKey({ provider: 'openrouter', isActive: true });
     const res = await resolveAgentLlmClient(db, {
+      entityId: seed.entityId,
       llmKeyId: deadPrimary,
       fallbackChain: [
         { keyId: liveFallback, model: 'deepseek/deepseek-v4-pro', reasoningEffort: 'low' },
@@ -215,6 +234,7 @@ describe('resolveAgentLlmClient — reasoning effort', () => {
     const deadPrimary = await insertKey({ provider: 'openrouter', isActive: false });
     const liveFallback = await insertKey({ provider: 'openrouter', isActive: true });
     const res = await resolveAgentLlmClient(db, {
+      entityId: seed.entityId,
       llmKeyId: deadPrimary,
       fallbackChain: [{ keyId: liveFallback, model: 'deepseek/deepseek-v4-pro' }],
       model: 'anthropic/claude-opus-4.8',
@@ -233,6 +253,7 @@ describe('resolveAgentLlmClient — reasoning effort', () => {
       const deadPrimary = await insertKey({ provider: 'openrouter', isActive: false });
       const liveFallback = await insertKey({ provider: 'openrouter', isActive: true });
       const res = await resolveAgentLlmClient(db, {
+        entityId: seed.entityId,
         llmKeyId: deadPrimary,
         fallbackChain: [
           { keyId: liveFallback, model: 'deepseek/deepseek-v4-pro', reasoningEffort: 'bogus' },
@@ -253,5 +274,64 @@ describe('resolveAgentLlmClient — reasoning effort', () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+});
+
+describe('resolveAgentLlmClient — a key of another workspace is never used', () => {
+  // A key id is a pointer. An agent copied into another workspace with its
+  // owner's key id, or a hand-edited row, would otherwise run — and bill —
+  // on that other workspace's credentials, with no error anywhere.
+  async function foreignKey(): Promise<string> {
+    const [other] = await db
+      .insert(entities)
+      .values({
+        userId: seed.userId,
+        name: 'Other',
+        slug: `other-${randomBytes(4).toString('hex')}`,
+      })
+      .returning();
+    const [row] = await db
+      .insert(entityLlmKeys)
+      .values({
+        entityId: other!.id,
+        provider: 'openrouter',
+        apiKey: encrypt('sk-other'),
+        isActive: true,
+      })
+      .returning();
+    return row!.id;
+  }
+
+  it('as primary: skipped and said, the agent has no LLM', async () => {
+    const foreign = await foreignKey();
+    const skipped: Array<{ keyId: string; reason: string }> = [];
+    const res = await resolveAgentLlmClient(
+      db,
+      { entityId: seed.entityId, llmKeyId: foreign, fallbackChain: null, model: 'mock' },
+      (info) => skipped.push(info),
+    );
+    expect(res).toEqual({ ok: false, reason: 'agent_no_llm_configured' });
+    expect(skipped).toEqual([{ keyId: foreign, reason: 'other_workspace' }]);
+  });
+
+  it('as fallback: skipped and said, the chain keeps only the own key', async () => {
+    const foreign = await foreignKey();
+    const skipped: Array<{ keyId: string; reason: string }> = [];
+    const res = await resolveAgentLlmClient(
+      db,
+      {
+        entityId: seed.entityId,
+        llmKeyId: seed.llmKeyId,
+        fallbackChain: [{ keyId: foreign, model: '' }],
+        model: 'mock',
+      },
+      (info) => skipped.push(info),
+    );
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.chainLength).toBe(1);
+      expect(res.primaryProvider).toBe('openai-compatible');
+    }
+    expect(skipped).toEqual([{ keyId: foreign, reason: 'other_workspace' }]);
   });
 });

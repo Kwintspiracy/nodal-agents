@@ -138,12 +138,14 @@ export async function runMemoryCuration(
       db,
       reflectionModel !== undefined
         ? {
+            entityId,
             llmKeyId: ag.llmKeyId,
             fallbackChain: null,
             model: reflectionModel,
             reasoningEffort: ag.reasoningEffort ?? null,
           }
         : {
+            entityId,
             llmKeyId: ag.llmKeyId,
             fallbackChain:
               (ag.fallbackChain as readonly { keyId: string; model: string }[] | null) ?? null,

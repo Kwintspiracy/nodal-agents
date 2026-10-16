@@ -1,7 +1,7 @@
 // routes/agent.ts — POST /api/agent — create a pending job, optionally trigger
 // 1:1 with legacy api/agent.py async mode
 //
-// POST /api/agent { agentSlug, task, channel?, chatId?, parentJobId? } → { jobId }
+// POST /api/agent { agentSlug, task, entityId?, channel?, chatId?, parentJobId? } → { jobId }
 
 import type { Context } from 'hono';
 import { z } from 'zod';
@@ -20,6 +20,14 @@ import type { RunnerEnv } from '../env.ts';
 export const AgentRequestSchema = z.object({
   task: z.string().min(1).max(200_000), // generous: large pasted tasks / skill content
   agentSlug: z.string().optional(),
+  /**
+   * The workspace the request is for, same contract as `/api/chat`. Without
+   * it, a trusted caller got its session's workspace — and on the runner the
+   * session is the local-trust one, always the local workspace — so a slug of
+   * any other workspace could not be reached. An untrusted caller may only
+   * name its own.
+   */
+  entityId: z.string().guid().optional(),
   channel: z
     .enum(['telegram', 'api', 'whatsapp', 'internal', 'cron', 'task-board', 'slack', 'discord'])
     .default('api'),
@@ -70,6 +78,7 @@ export async function agentRoute(
 
   const { task, agentSlug, channel, chatId, parentJobId, jobFolder, triggerImmediately } =
     parsed.data;
+  const requestedEntityId = parsed.data.entityId;
 
   // Refused, never guessed: a relative path would resolve against whatever the
   // runner's cwd happens to be, and a missing one would fail deep in a
@@ -106,7 +115,12 @@ export async function agentRoute(
   // agent holds that slug install-wide) is unchanged.
   const callerTrusted = c.get('callerTrusted');
   let entityId: string | null;
-  if (callerTrusted) {
+  if (!callerTrusted && requestedEntityId && requestedEntityId !== c.get('callerEntityId')) {
+    return c.json({ error: 'forbidden' }, 403);
+  }
+  if (requestedEntityId) {
+    entityId = requestedEntityId;
+  } else if (callerTrusted) {
     const session = await deps.authProvider.getSession(c.req.raw);
     entityId = session?.entityId ?? null;
   } else {
@@ -149,7 +163,10 @@ export async function agentRoute(
     }
     agentId = agentRows[0]?.id ?? null;
   } else {
-    // Default: find the entity's default agent
+    // Default: find the entity's default agent. Without an entity, the
+    // default agent of the install — and several workspaces each have one:
+    // fail loud, like an ambiguous slug, rather than take whichever row comes
+    // first (invariant #4).
     const defaultAgentRows = await deps.db
       .select({ id: agents.id })
       .from(agents)
@@ -158,7 +175,10 @@ export async function agentRoute(
           ? and(eq(agents.entityId, entityId), eq(agents.isDefault, true), eq(agents.active, true))
           : and(eq(agents.isDefault, true), eq(agents.active, true)),
       )
-      .limit(1);
+      .limit(2);
+    if (!entityId && defaultAgentRows.length > 1) {
+      return c.json({ error: 'ambiguous_default_agent' }, 400);
+    }
     agentId = defaultAgentRows[0]?.id ?? null;
   }
 
