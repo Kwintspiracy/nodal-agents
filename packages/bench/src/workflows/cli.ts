@@ -47,6 +47,7 @@ import {
   readStackCommit,
   readStackVersion,
   readTeamTools,
+  readUnlistedMcpServers,
   readWorkspaceRoots,
 } from './stack';
 import { DEFAULT_TRIAL_OPTIONS, runTrial, type TrialDeps } from './trial';
@@ -169,6 +170,7 @@ async function readEnv(
   return {
     workspaceRoots: await readWorkspaceRoots(db, entityId),
     teamTools: await readTeamTools(db, entityId),
+    unlistedMcpServers: await readUnlistedMcpServers(db, entityId),
     services,
     startedMs,
   };
@@ -187,7 +189,7 @@ async function capture(): Promise<void> {
     const startedMs = Math.min(...facts.jobs.map((j) => j.createdMs)) - 5_000;
     const env: ScenarioEnv = facts.entityId
       ? await readEnv(db, facts.entityId, startedMs)
-      : { workspaceRoots: [], teamTools: [], services: {}, startedMs };
+      : { workspaceRoots: [], teamTools: [], unlistedMcpServers: [], services: {}, startedMs };
     const observed = await s.observe(facts, env);
     const json = JSON.stringify({ scenario: s.id, version: s.version, facts, observed }, null, 1);
     writeFileSync(out, `${redactHome(json)}\n`);

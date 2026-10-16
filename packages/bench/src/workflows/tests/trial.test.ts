@@ -78,7 +78,13 @@ function world(opts: {
       const list = opts.foreign ?? [IDLE];
       return list[Math.min(foreignReads++, list.length - 1)]!;
     },
-    env: async (startedMs) => ({ workspaceRoots: [], teamTools: [], services: {}, startedMs }),
+    env: async (startedMs) => ({
+      workspaceRoots: [],
+      teamTools: [],
+      services: {},
+      unlistedMcpServers: [],
+      startedMs,
+    }),
     rootModel: async () => 'z-ai/glm-5.3',
     log: () => undefined,
   };
@@ -215,6 +221,7 @@ describe('workflow trial safety rules', () => {
       workspaceRoots: [],
       teamTools: ['office_printer__request_print'],
       services: {},
+      unlistedMcpServers: [],
       startedMs,
     });
     const line = await runTrial(scenarioById('print')!, w.deps, OPTS);
@@ -306,6 +313,7 @@ describe('what happens before a trial starts', () => {
       },
       teamTools: [],
       services: {},
+      unlistedMcpServers: [],
       startedMs,
     });
     const line = await runTrial(scenarioById('deep-research-obsidian')!, w.deps, OPTS);

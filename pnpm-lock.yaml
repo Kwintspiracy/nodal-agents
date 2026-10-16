@@ -760,6 +760,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
+      '@nodal-agents/adapter-mcp':
+        specifier: workspace:*
+        version: link:../adapters/mcp
       '@nodal-agents/db':
         specifier: workspace:*
         version: link:../db

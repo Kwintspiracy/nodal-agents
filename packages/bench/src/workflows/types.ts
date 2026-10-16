@@ -68,6 +68,12 @@ export interface ScenarioEnv {
    * serveurs MCP (`<serveur>__outil`) compris.
    */
   readonly teamTools: readonly string[];
+  /**
+   * Les serveurs MCP des agents actifs dont les outils ne sont pas connus (pas
+   * de cache utilisable, `isUsableMcpToolCache`) : le runner s'y connectera et
+   * pourra offrir n'importe quel outil. Le garde `no-mail-sender` refuse alors.
+   */
+  readonly unlistedMcpServers: readonly string[];
   /** Les services locaux déclarés pour le banc, sondés au début de l'essai. */
   readonly services: Readonly<Record<string, ServiceProbe>>;
   /** Début de l'essai (ms). Un fichier plus ancien n'a pas été écrit par lui. */

@@ -131,7 +131,7 @@ describe('html judges', () => {
 describe('comfyui judges', () => {
   it('needs a ComfyUI that answers: skipped otherwise, with the reason', () => {
     const s = scenarioById('comfy-square')!;
-    const env = { workspaceRoots: [], teamTools: [], startedMs: 0 };
+    const env = { workspaceRoots: [], teamTools: [], unlistedMcpServers: [], startedMs: 0 };
     expect(missingNeeds(s.needs ?? [], { ...env, services: {} })).toEqual([
       'no ComfyUI address is declared for the bench (services.comfyui in ~/.nodalai/bench.json)',
     ]);

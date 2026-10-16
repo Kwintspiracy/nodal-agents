@@ -117,7 +117,9 @@ export function resumerSerie(lignes) {
     const verts = de.filter((l) => l.verdict === 'green');
     return {
       version: v,
-      essais: de.length,
+      // Un essai sauté n'a rien tenté : hors du dénominateur, dit à part (`sautes`).
+      essais: de.filter((l) => l.verdict !== 'skipped').length,
+      sautes: de.filter((l) => l.verdict === 'skipped').length,
       verts: verts.length,
       rouges: de.filter((l) => l.verdict === 'red').length,
       dureeMs: mediane(verts.map((l) => l.durationMs)),
@@ -220,13 +222,19 @@ export function colonneDe(l) {
   return AVANT_LA_MATRICE;
 }
 
-/** Ce qu'une cellule (un scénario, un modèle) montre : ses derniers essais et ses médianes vertes. */
+/**
+ * Ce qu'une cellule (un scénario, un modèle) montre : ses derniers essais, et
+ * ce qu'elle compte porte sur CES essais-là, comme le résumé de colonne. Un
+ * essai sauté n'a rien tenté : hors du dénominateur, dit à part (`sautes`).
+ */
 function resumerCellule(lignes) {
   const tri = [...lignes].sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
-  const verts = tri.filter((l) => l.verdict === 'green');
+  const derniers = tri.slice(-DERNIERS);
+  const verts = derniers.filter((l) => l.verdict === 'green');
   return {
-    derniers: tri.slice(-DERNIERS),
-    essais: tri.length,
+    derniers,
+    essais: derniers.filter((l) => l.verdict !== 'skipped').length,
+    sautes: derniers.filter((l) => l.verdict === 'skipped').length,
     verts: verts.length,
     dureeMs: mediane(verts.map((l) => l.durationMs)),
     coutUsd: mediane(verts.map((l) => l.costUsd)),
@@ -465,7 +473,7 @@ function carte(serie) {
     .map(
       (p) => `<tr>
         <td class="mono">${esc(p.version)}</td>
-        <td>${p.verts}/${p.essais}</td>
+        <td>${p.verts}/${p.essais}${p.sautes > 0 ? ` <span class="wf-nd">· ${p.sautes} skipped</span>` : ''}</td>
         <td>${p.verts > 0 ? duree(p.dureeMs) : '<span class="wf-nd">none green</span>'}</td>
         <td>${p.verts > 0 ? nombreJetons(p.jetons) : '<span class="wf-nd">none green</span>'}</td>
         <td>${p.verts > 0 && typeof p.coutUsd === 'number' ? `$${p.coutUsd.toFixed(3)}` : '<span class="wf-nd">·</span>'}</td>
@@ -548,7 +556,7 @@ function cellule(c) {
     c.verts > 0
       ? `${duree(c.dureeMs)} · ${typeof c.coutUsd === 'number' ? `$${c.coutUsd.toFixed(3)}` : 'cost not measured'}`
       : 'none green';
-  return `<div class="wf-c wf-c--${esc(dernier.verdict)}" role="cell">${barres}<span class="wf-c__mot">${c.verts}/${c.essais} green</span><span class="wf-c__chiffres">${esc(chiffres)}</span></div>`;
+  return `<div class="wf-c wf-c--${esc(dernier.verdict)}" role="cell">${barres}<span class="wf-c__mot">${c.verts}/${c.essais} green</span>${c.sautes > 0 ? `<span class="wf-c__saute">${c.sautes} skipped</span>` : ''}<span class="wf-c__chiffres">${esc(chiffres)}</span></div>`;
 }
 
 /** La cellule d'une activité : le dernier verdict de chacun de ses scénarios dans cette colonne. */
@@ -693,6 +701,7 @@ const STYLE = `<style>
 .wf-c--skipped .wf-c__mot,.wf-c--skipped .wf-c__raison{color:var(--encre3)}
 .wf-c__raison{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:11px}
 .wf-c__chiffres{font-variant-numeric:tabular-nums}
+.wf-c__saute{color:var(--encre3);font-size:11px}
 .wf-barres{display:flex;gap:3px;align-items:flex-end;height:16px}
 .wf-b{display:inline-block;width:7px;height:16px;border-radius:2px;background:var(--inconnu);opacity:.55}
 .wf-b--green{background:var(--ok);opacity:1}

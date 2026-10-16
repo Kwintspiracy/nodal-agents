@@ -51,7 +51,8 @@ replaced the per-scenario `requires`, which made such a trial red.
   within 3 s. Nothing about the owner's machine is written in the code.
 - `obsidian-vault`: a workspace folder holding `.obsidian/`.
 - `printer`: an agent of the workspace has `request_print`.
-- `no-mail-sender`: no agent of the workspace can send e-mail.
+- `no-mail-sender`: no agent of the workspace can send e-mail, and no MCP
+  server of the team has unknown tools (see below).
 
 The team's tools are read by the **product's own rule**,
 `computeAgentToolNames` (`@nodal-agents/orchestration`), for every active
@@ -59,13 +60,29 @@ agent: adapter connectors (`connectors` + `agent_connector_assignments`) and
 MCP servers, with each agent's whitelist. Until bench v2 the bench read only
 `mcp_servers.available_tools`; Gmail, an adapter connector, was invisible to
 the mail guard, and seven e-mails left the owner's account (#711). The mail
-guard reads the full tool name by words (a sending verb and a mail word, or
-`smtp`), server prefix included: it sees `gmail_send_email`,
-`outlook_reply_message`, `outlook_forward_message`, `outlook_send_draft`,
-`gmail_mcp__send_message`, and not Telegram's `send_message`. It is still a
-reading of names: the general form would be an `outbound` mark on each
-connector operation (`OperationDescriptor`) and reading `openWorldHint` on MCP
-tools.
+guard reads the full tool name by words, camelCase split, server prefix
+included (a word starting with a sending verb, and a word containing "mail" or
+naming a mail service, or `smtp`): it sees `gmail_send_email`,
+`outlook_reply_message`, `outlookForwardMessage`, `gmail_users_drafts_create`,
+`mailchimp__campaign_send`, `gmail_mcp__send_message`, and not Telegram's
+`send_message`. It fails CLOSED on an MCP server whose tools are not known (no
+usable cache by the runner's own rule, `isUsableMcpToolCache`, now in
+`@nodal-agents/adapter-mcp`): the runner connects to such a server when a job
+starts and may offer any tool, so the scenario is skipped with that reason.
+
+**The name guard is defence in depth, not the protection.** No list of names
+will ever see an e-mail sent by a generic tool (`run_command` with smtplib or
+curl, `run_skill_script`). The protection is that the bench holds **no real
+recipient anywhere**: `recipients.test.ts` scans every scenario request and
+every file under `packages/bench/fixtures` (Office and PDF text included, read
+with the judges' readers) for e-mail addresses, phone numbers and chat ids, and
+fails unless each address is under a reserved domain (`.invalid`, `.test`,
+`.example`, `example.com/.net/.org`) or a declared test recipient
+(`BENCH_TEST_RECIPIENTS`, empty until the owner decides on test accounts);
+phone numbers and chat ids must be declared. Later, a bench workspace whose
+only accounts are test accounts. The general form of the name guard would be
+an `outbound` mark on each connector operation (`OperationDescriptor`) and
+reading `openWorldHint` on MCP tools.
 
 ## Model matrix
 
@@ -135,7 +152,10 @@ office ones from `fixture-data.ts`; a scenario is frozen, so is its fixture).
 Before a trial the bench installs them under `nodal-bench/` of the shared
 workspace folder, after deleting what an earlier trial left there in every
 workspace folder. The code scenarios rerun the agent's code with `node --test`
-(two minutes at most), on the machine where the agent already ran it.
+(two minutes at most), outside any sandbox, and ONLY when the agent ran the
+suite itself (a `tool_calls` row running the tests, read before anything is
+run): the bench never gives execution to an agent that had none. Without it the
+trial is red, "the agent never ran the test suite", and nothing is rerun.
 
 The portal reads `apps/qa/data/workflow-catalog.json` (`--catalog`; a test
 refuses it out of sync with the code) for the activity order and the
@@ -397,8 +417,11 @@ of time and cost of the green ones, and the total cost of the trials tried
 trial on a model shows a dash; otherwise its cell shows the last verdict of
 each scenario run there. An activity opens on its scenarios: per model, the
 bars of the last five runs, the green count, and the medians of the green
-runs, or "not run". A skipped run is grey with its reason in the cell, never
-red, and does not count as a workflow to look at. A scenario name leads to its
+runs, or "not run". One rule on the whole page: a skipped trial tried nothing,
+so it is in no denominator (scenario cell, card, column summary) and is shown
+apart ("1 skipped"); every count is over the trials shown. A skipped run is
+grey with its reason in the cell, never red, and does not count as a workflow
+to look at. A scenario name leads to its
 card: series by Nodal version, slow-down flag, and for a v2 line the models of
 each job (requested to answered, provider, effort, fallback, cache tokens),
 the deliverables and the answer.

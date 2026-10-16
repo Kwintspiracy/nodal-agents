@@ -108,6 +108,7 @@ describe('la page Workflows', () => {
       {
         version: '0.9.3',
         essais: 2,
+        sautes: 0,
         verts: 0,
         rouges: 2,
         dureeMs: null,
@@ -499,6 +500,32 @@ describe('la matrice activités × modèles', () => {
     expect(html.indexOf('<p class="wf-legende">')).toBeGreaterThan(
       html.indexOf('<div class="wf-matrice-defile">'),
     );
+  });
+
+  // Revue Reviewer A, passe 1 (P2-3) : une seule règle sur toute la page. Un
+  // essai sauté n'a rien tenté : il n'entre dans aucun dénominateur, il est dit à part.
+  it('un sauté n’entre dans aucun dénominateur : ni la cellule, ni la carte, ni le résumé', () => {
+    const vert = QUESTION_V2;
+    const rouge = { ...QUESTION_V2, startedAt: '2026-10-16T02:00:00.000Z', verdict: 'red' };
+    const saute = {
+      ...QUESTION_V2,
+      startedAt: '2026-10-16T03:00:00.000Z',
+      verdict: 'skipped',
+      reasons: ['the stack was busy for 30 min'],
+    };
+    const vertApres = { ...QUESTION_V2, startedAt: '2026-10-16T04:00:00.000Z' };
+    const lignes = [vert, rouge, saute, vertApres];
+    const html = htmlWorkflows({ lignes, illisibles: 0 }, CATALOGUE);
+    // La cellule du scénario.
+    expect(html).toContain('<span class="wf-c__mot">2/3 green</span>');
+    expect(html).toContain('<span class="wf-c__saute">1 skipped</span>');
+    expect(html).not.toContain('2/4 green');
+    // La carte, version par version.
+    const c = carteDe(html, 'question');
+    expect(c).toContain('<td>2/3 <span class="wf-nd">· 1 skipped</span></td>');
+    expect(c).not.toContain('<td>2/4');
+    // Le résumé de colonne, même règle.
+    expect(html).toContain('(2/3)');
   });
 
   it('une cellule donne les derniers essais, le compte des verts et les médianes vertes', () => {

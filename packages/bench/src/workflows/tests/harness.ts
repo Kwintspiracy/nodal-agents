@@ -113,7 +113,13 @@ export async function play(
   const s = scenarioById(id);
   if (!s) throw new Error(`unknown scenario ${id}`);
   const root = mkdtempSync(join(tmpdir(), `wf-${id}-`));
-  const env0: ScenarioEnv = { workspaceRoots: [root], teamTools: [], services: {}, startedMs: 0 };
+  const env0: ScenarioEnv = {
+    workspaceRoots: [root],
+    teamTools: [],
+    services: {},
+    unlistedMcpServers: [],
+    startedMs: 0,
+  };
   s.prepare?.(env0);
   ageAll(root, Date.now() - 3_600_000);
   // Une seconde de marge : sous Windows, la date d'un fichier suit une horloge

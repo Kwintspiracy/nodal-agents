@@ -6,8 +6,12 @@
 // relance lui-même la suite (`node --test`, sortie TAP), exige que CHAQUE test
 // de la fixture soit passé par son nom, et que les fichiers de test soient
 // ceux de la fixture, octet pour octet (supprimer un test ne le fait pas
-// passer). Le banc exécute ainsi le code écrit par l'agent, sur la machine où
-// l'agent l'a déjà exécuté, avec un délai.
+// passer).
+//
+// Le banc exécute ainsi le code écrit par l'agent, hors bac à sable : il ne le
+// fait QUE si l'agent l'a déjà exécuté lui-même (une ligne `tool_calls` qui
+// lance la suite), constaté dans la base AVANT toute relance. Le banc ne donne
+// jamais l'exécution à un agent qui ne l'avait pas (revue Reviewer A, #756).
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -57,6 +61,14 @@ export function runNodeTests(dir: string): TestRun {
   };
 }
 
+/** Une commande qui lance la suite de tests d'un projet Node. */
+const TEST_RUN = /npm(\.cmd)?\s+(run\s+)?test|node\s+--test|pnpm\s+test/i;
+
+/** L'agent a lancé la suite lui-même : le seul cas où le banc la relance. */
+export function agentRanTheSuite(facts: TreeFacts): boolean {
+  return commandRuns(facts, TEST_RUN).length > 0;
+}
+
 /** Les noms des tests qu'un fichier de test déclare (`test('…'`). */
 export function declaredTests(source: string): string[] {
   return [...source.matchAll(/\btest\(\s*(['"`])((?:(?!\1)[^\\]|\\.)*)\1/g)].map((m) =>
@@ -69,6 +81,7 @@ interface ProjectObservation {
   /** Fichier de test (relatif au projet) → empreinte actuelle, null s'il a disparu. */
   readonly testHashes: Record<string, string | null>;
   readonly sourceHash: string | null;
+  /** La relance du banc ; null quand l'agent n'a jamais lancé la suite (aucune relance). */
   readonly run: TestRun | null;
   readonly extra: Record<string, unknown>;
 }
@@ -78,6 +91,7 @@ function testFiles(project: string): string[] {
 }
 
 function observeProject(
+  facts: TreeFacts,
   root: string,
   project: string,
   source: string,
@@ -96,7 +110,7 @@ function observeProject(
     exists: true,
     testHashes,
     sourceHash: existsSync(src) ? fileHash(src) : null,
-    run: runNodeTests(dir),
+    run: agentRanTheSuite(facts) ? runNodeTests(dir) : null,
     extra: extra(dir),
   };
 }
@@ -110,7 +124,8 @@ function judgeProject(facts: TreeFacts, project: string, o: ProjectObservation):
     if (o.testHashes[f] === null) r.push(`the test file test/${f} was deleted`);
     else if (o.testHashes[f] !== want) r.push(`the test file test/${f} was changed`);
   }
-  const run = o.run!;
+  const run = o.run;
+  if (!agentRanTheSuite(facts) || run === null) return [...r, 'the agent never ran the test suite'];
   if (run.timedOut) r.push(`the test suite did not finish in ${TEST_TIMEOUT_MS / 1000} s`);
   else {
     const expected = testFiles(project).flatMap((f) =>
@@ -124,8 +139,6 @@ function judgeProject(facts: TreeFacts, project: string, o: ProjectObservation):
     else if (run.exitCode !== 0)
       r.push(`rerun by the bench, the suite exits ${run.exitCode}: ${run.tail}`);
   }
-  if (commandRuns(facts, /npm(\.cmd)?\s+(run\s+)?test|node\s+--test|pnpm\s+test/i).length === 0)
-    r.push('the agent never ran the test suite');
   return r;
 }
 
@@ -151,8 +164,8 @@ function codeProject(o: {
     prepare(env) {
       installFixture(env.workspaceRoots, `code/${o.project}`, `nodal-bench/${o.project}`);
     },
-    observe: async (_facts, env) =>
-      observeProject(sharedRoot(env.workspaceRoots), o.project, o.source, o.extraObserve),
+    observe: async (facts, env) =>
+      observeProject(facts, sharedRoot(env.workspaceRoots), o.project, o.source, o.extraObserve),
     judge(facts, ob) {
       const r = judgeProject(facts, o.project, ob);
       if (ob.exists && o.extraJudge) r.push(...o.extraJudge(ob));

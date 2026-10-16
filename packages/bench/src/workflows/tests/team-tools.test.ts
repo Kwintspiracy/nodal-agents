@@ -13,7 +13,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { seedMinimal, spinUpTestDb } from '@nodal-agents/db/test-utils';
-import { readTeamTools } from '../stack';
+import { readTeamTools, readUnlistedMcpServers } from '../stack';
 
 let pg: Awaited<ReturnType<typeof spinUpTestDb>>['pg'];
 let db: AnyDrizzleDb;
@@ -52,11 +52,21 @@ async function connector(slug: string, opts: { agent?: string; ops?: string[] | 
   );
 }
 
-async function mcpServer(slug: string, tools: string[], opts: { assigned?: boolean } = {}) {
+async function mcpServer(
+  slug: string,
+  tools: string[] | null,
+  opts: { assigned?: boolean; v2?: boolean } = {},
+) {
+  const cache =
+    tools === null
+      ? null
+      : JSON.stringify(
+          tools.map((name) => (opts.v2 ? { name, inputSchema: { type: 'object' } } : { name })),
+        );
   const s = await pg.query<{ id: string }>(
     `insert into mcp_servers (entity_id, name, slug, transport, command, available_tools)
      values ($1, $2, $3, 'stdio', 'x', $4::jsonb) returning id::text`,
-    [entityId, slug, slug, JSON.stringify(tools.map((name) => ({ name })))],
+    [entityId, slug, slug, cache],
   );
   if (opts.assigned !== false) {
     await pg.query(
@@ -98,5 +108,25 @@ describe('readTeamTools: what the agents of the workspace can call', () => {
     await pg.query(`update agents set active = false where id = $1`, [agentId]);
     const tools = await readTeamTools(db, entityId);
     expect(tools).not.toContain('outlook_send_email');
+  });
+
+  // Revue Reviewer A, passe 1 (P2-1 c) : la règle du runner (`isUsableMcpToolCache`).
+  it('names the MCP servers whose tools are not known: no cache, an empty one, or names only', async () => {
+    await mcpServer('never-explored', null);
+    await mcpServer('empty', []);
+    await mcpServer('names-only', ['send_mail']);
+    await mcpServer('explored', ['request_print'], { v2: true });
+    await mcpServer('nobody-has-it', null, { assigned: false });
+    expect(await readUnlistedMcpServers(db, entityId)).toEqual([
+      'empty',
+      'names-only',
+      'never-explored',
+    ]);
+  });
+
+  it('the server of an inactive agent is not counted', async () => {
+    await mcpServer('never-explored', null);
+    await pg.query(`update agents set active = false where id = $1`, [agentId]);
+    expect(await readUnlistedMcpServers(db, entityId)).toEqual([]);
   });
 });

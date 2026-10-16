@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@nodal-agents/adapter-mcp": "workspace:*",
     "@nodal-agents/db": "workspace:*",
     "@nodal-agents/orchestration": "workspace:*",
     "@nodal-agents/shared": "workspace:*",

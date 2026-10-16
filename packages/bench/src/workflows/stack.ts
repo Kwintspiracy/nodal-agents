@@ -309,6 +309,32 @@ export async function readTeamTools(db: AnyDrizzleDb, entityId: string): Promise
   return [...names].sort();
 }
 
+/**
+ * Les serveurs MCP attribués à un agent actif de l'espace dont les outils ne
+ * sont pas connus : la règle du runner (`isUsableMcpToolCache`,
+ * @nodal-agents/adapter-mcp), qui s'y connecte alors au lancement du job et
+ * peut offrir des outils qu'aucune liste ne montre encore. Triés par slug.
+ */
+export async function readUnlistedMcpServers(
+  db: AnyDrizzleDb,
+  entityId: string,
+): Promise<string[]> {
+  const { sql } = await import('@nodal-agents/db');
+  const { isUsableMcpToolCache } = await import('@nodal-agents/adapter-mcp');
+  const rows = z.array(z.object({ slug: z.string(), tools: z.unknown() })).parse(
+    await executeRows(
+      db,
+      sql`
+        select distinct s.slug, s.available_tools as tools
+          from agent_mcp_servers ams
+          join mcp_servers s on s.id = ams.mcp_server_id
+          join agents a on a.id = ams.agent_id
+         where ams.entity_id = ${entityId}::uuid and coalesce(a.active, true) = true`,
+    ),
+  );
+  return [...new Set(rows.filter((r) => !isUsableMcpToolCache(r.tools)).map((r) => r.slug))].sort();
+}
+
 /** Le modèle configuré de l'agent racine de l'espace (`agents.model`), ou null s'il n'en a pas. */
 export async function readRootModel(db: AnyDrizzleDb, entityId: string): Promise<string | null> {
   const { sql } = await import('@nodal-agents/db');

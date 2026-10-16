@@ -18,9 +18,14 @@ import { NEED_IDS, type Need, type ScenarioEnv } from './types';
 
 export { NEED_IDS, type Need };
 
-/** Le nom d'un outil, découpé en mots : `office_printer__request_print` → office, printer, request, print. */
+/**
+ * Le nom d'un outil, découpé en mots, camelCase compris :
+ * `office_printer__request_print` → office, printer, request, print ;
+ * `outlookForwardMessage` → outlook, forward, message.
+ */
 function words(toolName: string): string[] {
   return toolName
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
@@ -43,34 +48,51 @@ export function obsidianVaults(roots: readonly string[]): string[] {
 export const NO_VAULT =
   'no Obsidian vault is configured: no workspace folder of this workspace holds a .obsidian folder';
 
-const SEND_VERBS = new Set(['send', 'reply', 'forward', 'draft']);
-const MAIL_WORDS = new Set([
-  'mail',
-  'email',
-  'gmail',
+/**
+ * Les destinataires de test déclarés : les seules adresses, numéros ou chats
+ * réels qu'une demande ou une fixture du banc a le droit de nommer. Vide tant
+ * que le propriétaire n'a pas décidé des comptes de test (entité « banc ») ;
+ * recipients.test.ts refuse tout autre destinataire.
+ */
+export const BENCH_TEST_RECIPIENTS: readonly string[] = [];
+
+/** Un mot qui commence par un verbe d'envoi (`send`, `sendmail`, `reply`, `forward`, `draft`, `drafts`). */
+const SEND_VERB = /^(send|reply|forward|draft)/;
+/** Un service de courrier : tout mot qui contient « mail » (gmail, mailchimp, hotmail…), ou l'un de ceux-ci. */
+const MAIL_SERVICES = new Set([
   'outlook',
   'smtp',
-  'mailgun',
   'sendgrid',
   'postmark',
   'resend',
+  'sparkpost',
+  'mandrill',
 ]);
 
 /**
  * Un outil qui peut faire partir un courrier : son nom (préfixe du serveur
  * compris, qui porte souvent le service : `gmail_mcp__send_message`) contient
- * un verbe d'envoi ET un mot de courrier, ou `smtp`. Lire un courrier n'en
- * envoie aucun (`gmail_list_drafts`). Prudent : `gmail_create_draft` compte.
+ * un verbe d'envoi ET un mot de courrier, ou `smtp`. Les mots sont découpés au
+ * camelCase. Prudent : tout ce qui touche un brouillon
+ * compte (un brouillon peut partir), lister les messages non.
  *
- * C'est une lecture des NOMS : la plateforme ne déclare pas encore quelles
- * opérations sortent de la machine. Sa forme générale serait une marque
- * `outbound` sur chaque opération de connecteur (OperationDescriptor) et la
- * lecture de `openWorldHint` des outils MCP ; voir docs/workflow-bench.md.
+ * DÉFENSE EN PROFONDEUR, pas la protection. Une lecture de noms ne verra
+ * jamais un envoi fait par un outil générique (`run_command` avec smtplib ou
+ * curl, `run_skill_script`), et la plateforme ne déclare pas encore quelles
+ * opérations sortent de la machine (sa forme générale : une marque `outbound`
+ * sur chaque opération de connecteur, `openWorldHint` sur les outils MCP). La
+ * vraie protection est qu'AUCUN destinataire réel n'existe dans le banc : ni
+ * dans une demande, ni dans une fixture que le banc pose (seuls les domaines
+ * réservés `.invalid` et `example.*`, prouvé par recipients.test.ts), puis,
+ * plus tard, une entité « banc » dont les seuls comptes sont des comptes de
+ * test. Voir docs/workflow-bench.md.
  */
 export function isMailSender(toolName: string): boolean {
   const w = words(toolName);
   if (w.includes('smtp')) return true;
-  return w.some((x) => SEND_VERBS.has(x)) && w.some((x) => MAIL_WORDS.has(x));
+  return (
+    w.some((x) => SEND_VERB.test(x)) && w.some((x) => x.includes('mail') || MAIL_SERVICES.has(x))
+  );
 }
 
 /** Pourquoi le besoin manque, ou null quand il est là. */
@@ -91,6 +113,11 @@ const CHECKS: Record<Need, (env: ScenarioEnv) => string | null> = {
       : 'no agent of this workspace has request_print (no printer connector configured)';
   },
   'no-mail-sender'(env) {
+    // Fermé par défaut : un serveur MCP dont les outils ne sont pas connus peut
+    // en offrir un qui envoie (le runner s'y connecte au lancement du job).
+    if (env.unlistedMcpServers.length > 0) {
+      return `an MCP server of this workspace has never listed its tools (${env.unlistedMcpServers.join(', ')}): the bench cannot know whether it sends e-mail, so this scenario does not run here`;
+    }
     const senders = env.teamTools.filter(isMailSender);
     return senders.length === 0
       ? null

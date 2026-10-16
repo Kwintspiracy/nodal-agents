@@ -6,7 +6,7 @@
 // Les cas rouges défont une partie du travail : un test supprimé, un test
 // modifié, une suite que l'agent n'a jamais lancée.
 
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -83,6 +83,33 @@ describe('code-http-server judge', () => {
     expect((await play('code-http-server', {}, solve('http-somme'))).reasons).toEqual([
       'the agent never ran the test suite',
     ]);
+  });
+
+  // Revue Reviewer A, passe 1 (P2-2) : le banc ne donne jamais l'exécution à
+  // un agent qui ne l'avait pas. Sans lancement de la suite par l'agent (une
+  // ligne tool_calls), le banc ne relance RIEN : la preuve est un code qui,
+  // exécuté, laisserait une trace sur le disque.
+  it('red without any rerun: an agent that never ran the suite gets no execution from the bench', async () => {
+    const r = await play('code-http-server', {}, (root) => {
+      const dir = join(root, 'nodal-bench', 'http-somme');
+      writeFileSync(
+        join(dir, 'src', 'server.js'),
+        "import { writeFileSync } from 'node:fs';\n" +
+          "writeFileSync(new URL('../EXECUTED', import.meta.url), 'yes');\n" +
+          'export function createServer() { throw new Error("x"); }\n',
+      );
+    });
+    expect(r.reasons).toEqual(['the agent never ran the test suite']);
+    expect(existsSync(join(r.root, 'nodal-bench', 'http-somme', 'EXECUTED'))).toBe(false);
+    expect((r.observed as { run: unknown }).run).toBeNull();
+  });
+
+  it('a command that is not a test run (an ls) does not open the rerun', async () => {
+    const r = await play('code-http-server', {
+      tools: [{ name: 'run_command', input: { command: 'ls src' } }],
+    });
+    expect(r.reasons).toEqual(['the agent never ran the test suite']);
+    expect((r.observed as { run: unknown }).run).toBeNull();
   });
 });
 

@@ -295,7 +295,7 @@ describe('undoable-action judge', () => {
 
   it("does not run when an agent can send e-mail: nothing leaves the owner's account", () => {
     const s = scenarioById('undoable-action')!;
-    const env = { workspaceRoots: [], services: {}, startedMs: T0 };
+    const env = { workspaceRoots: [], services: {}, unlistedMcpServers: [], startedMs: T0 };
     expect(missingNeeds(s.needs ?? [], { ...env, teamTools: ['gmail_send_email'] })).toEqual([
       "an agent of this workspace can send e-mail (gmail_send_email): the bench sends nothing from the owner's account, so this scenario does not run here",
     ]);
@@ -306,7 +306,7 @@ describe('undoable-action judge', () => {
     expect(
       missingNeeds(s.needs ?? [], {
         ...env,
-        teamTools: ['gmail_list_messages', 'gmail_list_drafts', 'office_printer__request_print'],
+        teamTools: ['gmail_list_messages', 'gmail_get_message', 'office_printer__request_print'],
       }),
     ).toEqual([]);
   });
@@ -336,7 +336,39 @@ describe('undoable-action judge', () => {
     // Un serveur MCP de courrier porte le service dans son préfixe.
     expect(isMailSender('gmail_mcp__send_message')).toBe(true);
     expect(isMailSender('send_message')).toBe(false);
-    expect(isMailSender('gmail_list_drafts')).toBe(false);
+    expect(isMailSender('gmail_list_messages')).toBe(false);
+  });
+
+  // Revue Reviewer A, passe 1 (P2-1 b) : les trous du motif.
+  it('reads camelCase, plurals and mail services whose name only contains "mail"', () => {
+    expect(isMailSender('sendMail')).toBe(true);
+    expect(isMailSender('mail__sendEmail')).toBe(true);
+    expect(isMailSender('gmail_users_drafts_create')).toBe(true);
+    expect(isMailSender('mailchimp__campaign_send')).toBe(true);
+    expect(isMailSender('sendgrid__send')).toBe(true);
+    // Le verbe au milieu d'un nom en camelCase.
+    expect(isMailSender('outlookForwardMessage')).toBe(true);
+    expect(isMailSender('mailbox__bulkReplyAll')).toBe(true);
+    // Prudent : un brouillon peut partir, le lister compte aussi.
+    expect(isMailSender('gmail_list_drafts')).toBe(true);
+    expect(isMailSender('telegram__sendMessage')).toBe(false);
+  });
+
+  // Revue Reviewer A, passe 1 (P2-1 c) : un serveur MCP qui n'a jamais dit ses
+  // outils peut en offrir un qui envoie. Fermé par défaut : l'essai est sauté.
+  it('does not run while an MCP server of the team has never listed its tools', () => {
+    const s = scenarioById('undoable-action')!;
+    expect(
+      missingNeeds(s.needs ?? [], {
+        workspaceRoots: [],
+        services: {},
+        teamTools: [],
+        unlistedMcpServers: ['mystery-mail'],
+        startedMs: T0,
+      }),
+    ).toEqual([
+      'an MCP server of this workspace has never listed its tools (mystery-mail): the bench cannot know whether it sends e-mail, so this scenario does not run here',
+    ]);
   });
 
   it('asks for an address that cannot exist', () => {
