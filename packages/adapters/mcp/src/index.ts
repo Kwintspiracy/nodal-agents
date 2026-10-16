@@ -151,4 +151,5 @@ export type {
 export { mcpToolToToolDefinition, mcpToolToLazyToolDefinition, slugToPrefix } from './tools.ts';
 export { jsonSchemaToZod } from './json-schema-to-zod.ts';
 export { mcpResultForModel, recordMcpResult } from './result.ts';
+export { isUsableMcpToolCache } from './tool-cache.ts';
 export type { McpToolOutput, McpRecordedBlock } from './result.ts';

@@ -2,41 +2,62 @@
 //
 //   pnpm bench:workflows                     le jeu de nuit (scénarios `nightly`), un essai chacun
 //   pnpm bench:workflows --only question,file
-//   pnpm bench:workflows --set release       tous les scénarios, `on-demand` compris
+//   pnpm bench:workflows --activity excel,word   tous les scénarios de ces activités
+//   pnpm bench:workflows --set release       tous les scénarios, `on-demand` compris (sauf ceux qui envoient au propriétaire)
+//   pnpm bench:workflows --only comfyui-telegram --allow-owner-sends
+//                                            un scénario qui envoie AU PROPRIÉTAIRE : nommé, et ce drapeau
 //   pnpm bench:workflows --trials 3          trois essais par scénario
+//   pnpm bench:workflows --models a,b --dry-run   la matrice : le plan et son coût, sans rien lancer
 //   pnpm bench:workflows --stack D:/APPS/NodalAI   la stack mesurée (défaut : ce dépôt)
 //   pnpm bench:workflows --scheduled         posé par la tâche planifiée : la ligne le dit
 //   pnpm bench:workflows --list              les scénarios et ce que « vert » veut dire
+//   pnpm bench:workflows --catalog           réécrit apps/qa/data/workflow-catalog.json
 //   pnpm bench:workflows --capture <jobId> --scenario <id> --out <f.json>
 //                                            photographie un essai déjà joué (fixtures des tests)
 //
 // Chaque essai ajoute UNE ligne à apps/qa/data/workflows.ndjson (du dépôt qui
 // lance la commande) ; le fichier n'est jamais réécrit. Code de sortie 1 dès
-// qu'un essai n'est pas vert, pour qu'une tâche planifiée le voie.
+// qu'un essai n'est ni vert ni sauté, pour qu'une tâche planifiée le voie.
 
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { z } from 'zod';
-import { executeRows, readTreeFacts } from './facts';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { catalogText } from './catalog';
+import { readTreeFacts } from './facts';
 import { BENCH_LOCK_FILE, BenchStop, claimStack, type BenchLock } from './lock';
+import {
+  formatPlan,
+  parseModels,
+  planMatrix,
+  UNDECIDED_APPLIER,
+  type MatrixModel,
+  type PastLine,
+} from './matrix';
 import { startRunTask } from './mcp';
 import { redactHome } from './redact';
 import { SCENARIOS, scenarioById } from './scenarios';
+import { assertMatrixable, selectScenarios } from './selection';
 import {
   cancelTree,
   openStackDb,
+  probeService,
+  readBenchConfig,
   readForeignActivity,
   readLiveBenchRoots,
+  readRootModel,
   readStackCommit,
   readStackVersion,
+  readTeamTools,
+  readUnlistedMcpServers,
   readWorkspaceRoots,
 } from './stack';
 import { DEFAULT_TRIAL_OPTIONS, runTrial, type TrialDeps } from './trial';
-import type { AnyScenario, ScenarioEnv, TrialLine } from './types';
+import { type AnyScenario, type ScenarioEnv, type ServiceProbe, type TrialLine } from './types';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 export const RESULTS_FILE = join(REPO, 'apps', 'qa', 'data', 'workflows.ndjson');
+export const CATALOG_FILE = join(REPO, 'apps', 'qa', 'data', 'workflow-catalog.json');
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -44,32 +65,29 @@ function arg(name: string): string | undefined {
 }
 const flag = (name: string): boolean => process.argv.includes(`--${name}`);
 
-function pickScenarios(): AnyScenario[] {
-  const only = arg('only');
-  if (only) {
-    const ids = only
-      .split(',')
-      .map((x) => x.trim())
-      .filter(Boolean);
-    const unknown = ids.filter((id) => !scenarioById(id));
-    if (unknown.length > 0) {
-      throw new Error(
-        `unknown scenario(s): ${unknown.join(', ')} — known: ${SCENARIOS.map((s) => s.id).join(', ')}`,
-      );
-    }
-    return ids.map((id) => scenarioById(id)!);
-  }
-  const set = arg('set') ?? 'nightly';
-  if (set === 'release') return [...SCENARIOS];
-  if (set === 'nightly') return SCENARIOS.filter((s) => s.set === 'nightly');
-  throw new Error(`unknown set ${set} — known: nightly, release`);
+function list(name: string): string[] | null {
+  const v = arg(name);
+  return v === undefined
+    ? null
+    : v
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean);
 }
 
-function list(): void {
+function pickScenarios(): AnyScenario[] {
+  return selectScenarios({
+    only: list('only') ?? undefined,
+    set: arg('set'),
+    activity: list('activity') ?? undefined,
+  });
+}
+
+function printList(): void {
   console.log('Workflow scenarios\n');
   for (const s of SCENARIOS) {
     console.log(
-      `${s.id}  v${s.version}  [${s.set}]  timeout ${Math.round(s.timeoutMs / 60_000)} min`,
+      `${s.id}  v${s.version}  [${s.activity} · ${s.set} · sends ${s.sends}]  timeout ${Math.round(s.timeoutMs / 60_000)} min${s.needs?.length ? `  needs ${s.needs.join(', ')}` : ''}`,
     );
     console.log(`  ${s.title}`);
     console.log(`  Green: ${s.green}`);
@@ -80,21 +98,20 @@ function list(): void {
   }
 }
 
-async function connectorTools(
-  db: Awaited<ReturnType<typeof openStackDb>>['db'],
-  entityId: string,
-): Promise<string[]> {
-  const { sql } = await import('@nodal-agents/db');
-  const rows = z.array(z.object({ name: z.string() })).parse(
-    await executeRows(
-      db,
-      sql`
-        select distinct t->>'name' as name
-          from mcp_servers s, jsonb_array_elements(coalesce(s.available_tools, '[]'::jsonb)) t
-         where s.entity_id = ${entityId}::uuid and s.active = true and t->>'name' is not null`,
-    ),
-  );
-  return rows.map((r) => r.name);
+/** Les lignes passées, pour les médianes du plan. Une ligne illisible est comptée et dite. */
+function readPastLines(): { lines: PastLine[]; unreadable: number } {
+  if (!existsSync(RESULTS_FILE)) return { lines: [], unreadable: 0 };
+  const lines: PastLine[] = [];
+  let unreadable = 0;
+  for (const raw of readFileSync(RESULTS_FILE, 'utf8').split('\n')) {
+    if (!raw.trim()) continue;
+    try {
+      lines.push(JSON.parse(raw) as PastLine);
+    } catch {
+      unreadable++;
+    }
+  }
+  return { lines, unreadable };
 }
 
 /**
@@ -103,7 +120,7 @@ async function connectorTools(
  * personne est membre et qui a un agent racine. Plusieurs, ou aucun :
  * `run_task` refuserait aussi, on le dit avant.
  */
-async function rootEntity(db: Awaited<ReturnType<typeof openStackDb>>['db']): Promise<string> {
+async function rootEntity(db: AnyDrizzleDb): Promise<string> {
   const { listMemberWorkspaces } = await import('@nodal-agents/db');
   const rows = await listMemberWorkspaces(db, { withRootAgent: true });
   if (rows.length !== 1) {
@@ -112,6 +129,25 @@ async function rootEntity(db: Awaited<ReturnType<typeof openStackDb>>['db']): Pr
     );
   }
   return rows[0]!.id;
+}
+
+/** L'environnement d'un essai : dossiers de travail, outils de l'équipe, services déclarés et sondés. */
+async function readEnv(
+  db: AnyDrizzleDb,
+  entityId: string,
+  startedMs: number,
+): Promise<ScenarioEnv> {
+  const services: Record<string, ServiceProbe> = {};
+  for (const [name, url] of Object.entries(readBenchConfig().services)) {
+    services[name] = { url, problem: await probeService(url) };
+  }
+  return {
+    workspaceRoots: await readWorkspaceRoots(db, entityId),
+    teamTools: await readTeamTools(db, entityId),
+    unlistedMcpServers: await readUnlistedMcpServers(db, entityId),
+    services,
+    startedMs,
+  };
 }
 
 async function capture(): Promise<void> {
@@ -125,11 +161,9 @@ async function capture(): Promise<void> {
   try {
     const facts = await readTreeFacts(db, jobId);
     const startedMs = Math.min(...facts.jobs.map((j) => j.createdMs)) - 5_000;
-    const env: ScenarioEnv = {
-      workspaceRoots: facts.entityId ? await readWorkspaceRoots(db, facts.entityId) : [],
-      connectorTools: facts.entityId ? await connectorTools(db, facts.entityId) : [],
-      startedMs,
-    };
+    const env: ScenarioEnv = facts.entityId
+      ? await readEnv(db, facts.entityId, startedMs)
+      : { workspaceRoots: [], teamTools: [], unlistedMcpServers: [], services: {}, startedMs };
     const observed = await s.observe(facts, env);
     const json = JSON.stringify({ scenario: s.id, version: s.version, facts, observed }, null, 1);
     writeFileSync(out, `${redactHome(json)}\n`);
@@ -143,19 +177,46 @@ async function capture(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  if (flag('list')) return list();
+  if (flag('list')) return printList();
+  if (flag('catalog')) {
+    writeFileSync(CATALOG_FILE, catalogText(), 'utf8');
+    console.log(`wrote ${CATALOG_FILE}`);
+    return;
+  }
   if (arg('capture')) return capture();
 
   const scenarios = pickScenarios();
+  if (scenarios.length === 0) throw new Error('workflow_no_scenario: the selection is empty');
   const trials = Number(arg('trials') ?? '1');
   if (!Number.isInteger(trials) || trials < 1 || trials > 20)
     throw new Error('--trials must be an integer from 1 to 20');
+
+  // La matrice : le plan d'abord ; jouer réellement attend une décision du
+  // propriétaire (matrix.ts), et le banc le refuse AVANT de toucher la stack.
+  const modelsArg = arg('models');
+  const models: MatrixModel[] | null = modelsArg === undefined ? null : parseModels(modelsArg);
+  if (models) assertMatrixable(scenarios);
+  if (models && flag('dry-run')) {
+    const past = readPastLines();
+    console.log(formatPlan(planMatrix(scenarios, models, trials, past.lines), models));
+    if (past.unreadable > 0)
+      console.log(
+        `${past.unreadable} line(s) of ${RESULTS_FILE} could not be read and were left out.`,
+      );
+    return;
+  }
+  if (flag('dry-run')) throw new Error('--dry-run plans a model matrix: give --models too');
+  const applier = UNDECIDED_APPLIER;
+  if (models) await applier.apply(models[0]!);
+
   const stackDir = resolve(arg('stack') ?? REPO);
   const nodalVersion = readStackVersion(stackDir);
   // Douze caractères : sans ambiguïté dans ce dépôt, et une ligne qui porte à
   // la fois « …Tokens » et un sha complet de 40 caractères hexadécimaux est
   // prise pour une clé par la garde anti-secrets (scripts/check-no-secrets.mjs).
   const stackCommit = readStackCommit(stackDir)?.slice(0, 12) ?? null;
+  // La configuration du banc est lue avant tout essai : mal formée, rien ne part.
+  readBenchConfig();
   const { db, close } = await openStackDb();
 
   let lock: BenchLock | null = null;
@@ -187,6 +248,7 @@ async function main(): Promise<void> {
   process.once('SIGTERM', () => void stopNow('SIGTERM'));
 
   let failed = 0;
+  let skipped = 0;
   try {
     // Un seul banc par stack : le verrou d'abord (un second banc refuse, en
     // disant qui le tient), puis les essais qu'un banc mort a laissés vivants.
@@ -204,11 +266,8 @@ async function main(): Promise<void> {
       read: (rootId) => readTreeFacts(db, rootId),
       cancel: (ent, rootId) => cancelTree(db, ent, rootId),
       foreign: () => readForeignActivity(db, DEFAULT_TRIAL_OPTIONS.chatQuietMs),
-      env: async (startedMs) => ({
-        workspaceRoots: await readWorkspaceRoots(db, entityId),
-        connectorTools: await connectorTools(db, entityId),
-        startedMs,
-      }),
+      env: (startedMs) => readEnv(db, entityId, startedMs),
+      rootModel: () => readRootModel(db, entityId),
       log: (l) => console.log(l),
     };
     console.log(
@@ -218,18 +277,21 @@ async function main(): Promise<void> {
     for (const s of scenarios) {
       for (let i = 1; i <= trials; i++) {
         if (stop.stopped) break;
-        console.log(`\n▶ ${s.id} v${s.version} (${i}/${trials})`);
+        console.log(`\n▶ ${s.id} v${s.version} [${s.activity}] (${i}/${trials})`);
         const line: TrialLine = await runTrial(s, deps, {
           ...DEFAULT_TRIAL_OPTIONS,
           trigger: flag('scheduled') ? 'scheduled' : 'manual',
           nodalVersion,
           stackCommit,
+          modelUnderTest: null,
+          allowOwnerSends: flag('allow-owner-sends'),
         });
         // Un essai coupé par l'arrêt ne mesure rien : pas de ligne.
         if (stop.stopped) break;
         appendFileSync(RESULTS_FILE, `${JSON.stringify(line)}\n`, 'utf8');
         console.log(JSON.stringify(line));
-        if (line.verdict !== 'green') failed++;
+        if (line.verdict === 'skipped') skipped++;
+        else if (line.verdict !== 'green') failed++;
       }
     }
   } finally {
@@ -237,7 +299,7 @@ async function main(): Promise<void> {
     await close();
   }
   console.log(
-    `\n${failed === 0 ? 'All green.' : `${failed} trial(s) not green.`} Results: ${RESULTS_FILE}`,
+    `\n${failed === 0 ? 'All green' : `${failed} trial(s) not green`}${skipped > 0 ? `, ${skipped} skipped` : ''}. Results: ${RESULTS_FILE}`,
   );
   // exitCode plutôt que exit() : sous Windows, sortir pendant que le pool et le
   // processus MCP se ferment fait avorter libuv (UV_HANDLE_CLOSING).
