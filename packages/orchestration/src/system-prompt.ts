@@ -422,8 +422,8 @@ export function buildRuntimeBlock(
       : `This runner does not know which Nodal-Agents version it is.`,
     ``,
     nodalTools
-      ? `- Local services on this machine are reachable directly at \`127.0.0.1\` / \`localhost\` (a local API, a database, or an app such as ComfyUI on \`:8188\`). Call them directly. NEVER ask the user to expose a local service through a public tunnel (ngrok, cloudflared) — it is unnecessary here and a needless security risk.`
-      : `- Local services on this machine are reachable at \`127.0.0.1\` / \`localhost\` (a local API, a database, or an app such as ComfyUI on \`:8188\`) — a job can reach them there. NEVER tell the user to expose a local service through a public tunnel (ngrok, cloudflared): it is unnecessary here and a needless security risk.`,
+      ? `- Local services on this machine are reachable directly at \`127.0.0.1\` / \`localhost\` (a local API, a database, or an app such as ComfyUI on \`:8188\`). Call them directly. When Nodal's sandbox confines a command (its result says \`sandbox.confined: true\`), local services are reached over HTTP/HTTPS only, through the sandbox proxy: a raw-TCP client (a database driver, for instance) to a local service has no route, and Nodal's own ports are refused. NEVER ask the user to expose a local service through a public tunnel (ngrok, cloudflared) — it is unnecessary here and a needless security risk.`
+      : `- Local services on this machine are reachable at \`127.0.0.1\` / \`localhost\` (a local API, a database, or an app such as ComfyUI on \`:8188\`) — a job can reach them there. When Nodal's sandbox confines a command (its result says \`sandbox.confined: true\`), local services are reached over HTTP/HTTPS only, through the sandbox proxy: a raw-TCP client (a database driver, for instance) to a local service has no route, and Nodal's own ports are refused. NEVER tell the user to expose a local service through a public tunnel (ngrok, cloudflared): it is unnecessary here and a needless security risk.`,
     `- Network: ${networkLine}`,
   ];
 

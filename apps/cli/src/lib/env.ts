@@ -82,6 +82,10 @@ export function buildEnvForRunner(config: Config, databaseUrl: string): ChildEnv
     PORT: String(config.ports.runner),
     BIND: bind,
     APP_URL: `http://localhost:${config.ports.runner}`,
+    // Le port du tableau de bord, pour que le bac à sable refuse l'accès du
+    // web de Nodal à une commande confinée (#628, D2 — nodalDeniedEndpoints).
+    // Le runner ne sert pas le web ; il a juste besoin de connaître son port.
+    WEB_PORT: String(config.ports.web),
     NODE_ENV: 'production',
   };
 

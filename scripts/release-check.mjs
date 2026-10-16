@@ -226,6 +226,12 @@ if (skipSlow) {
     return 'aucune erreur';
   });
   step('Tests', () => {
+    // release:check tourne sur la machine de l'owner (Windows base-container),
+    // le SEUL endroit où le filtrage du bac à sable (régime proxy) est prouvé.
+    // On EXIGE donc que la suite proxy s'y exécute vraiment : si le proxy
+    // devenait injoignable, elle doit rougir, pas se sauter en silence (#628,
+    // P2-5). Ce drapeau n'est lu QUE par le test, jamais par le code produit.
+    process.env['NODAL_SANDBOX_REQUIRE_PROXY'] = '1';
     shLive('pnpm test');
     return 'suite verte';
   });

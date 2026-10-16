@@ -143,9 +143,10 @@ describe('freezeSnapshotIndex @cap:travailler-sur-des-fichiers/moteur', () => {
     const original = await stat(join(indexes, source!));
     const copie = await stat(indexFile);
     expect(copie.size).toBe(original.size);
-    // La date de l'original, arrondie vers le bas à la milliseconde.
-    expect(copie.mtimeMs).toBeLessThanOrEqual(original.mtimeMs);
-    expect(copie.mtimeMs).toBeGreaterThan(original.mtimeMs - 1);
+    // La date de l'original, arrondie vers le bas à la milliseconde, moins une
+    // (`copyIndex`) : jamais après l'original, jamais 2 ms avant.
+    expect(copie.mtimeMs).toBeLessThan(original.mtimeMs);
+    expect(copie.mtimeMs).toBeGreaterThan(original.mtimeMs - 2);
     await releaseFrozenIndex(indexFile);
     expect(await readdir(indexes)).toEqual([source]);
   });

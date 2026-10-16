@@ -22,12 +22,8 @@
 // `child_process`, and putting a probe there would have broken the seam. Same
 // split as the inventory: the runner computes, the orchestration renders.
 
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
+import { withNodalPrograms, type ProgramRunner } from '@nodal-agents/sandbox';
 import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
-
-const run = promisify(execFile);
 
 /** A probe that hangs must not hold a job's start. */
 const GIT_TIMEOUT_MS = 5_000;
@@ -53,7 +49,7 @@ export interface WorkspaceGitState {
   head: string | null;
 }
 
-async function git(cwd: string, args: string[]): Promise<string | null> {
+async function git(programs: ProgramRunner, cwd: string, args: string[]): Promise<string | null> {
   // QUEL git est lancé — le chemin ABSOLU du git du système, jamais le nom nu
   // (issue #251). `cwd` est le workspace : un dossier où l'agent écrit, donc un
   // dossier où un `git.exe` peut être déposé. Passer le nom nu laisserait le
@@ -69,10 +65,18 @@ async function git(cwd: string, args: string[]): Promise<string | null> {
   // la résolution existe pour fermer.
   if (binaire === null) return null;
   try {
-    const { stdout } = await run(binaire, args, {
+    // DANS le bac à sable quand il est là (#628, audit P1-2) : le workspace est
+    // un dossier où des commandes confinées écrivent, son `.git/config` peut
+    // nommer une commande que `status` exécute (`core.fsmonitor`, un filtre).
+    // Seul le dossier sondé est inscriptible — git doit pouvoir y `chdir` —,
+    // celui que les commandes du job écrivent déjà. Un dépôt enraciné AU-DESSUS
+    // n'y est pas : son `status` y échoue et le bloc dit « inconnu » plutôt que
+    // d'ouvrir à git un dossier que le job ne peut pas écrire.
+    const { stdout } = await programs.execFile(binaire, args, {
       cwd,
       timeout: GIT_TIMEOUT_MS,
-      windowsHide: true,
+      writableRoots: [cwd],
+      readableRoots: [],
     });
     return stdout.trim();
   } catch {
@@ -118,13 +122,18 @@ export function gitProbeTarget(
  * extra line is paid on every turn of every job.
  */
 export async function probeWorkspaceGit(cwd: string): Promise<WorkspaceGitState | null> {
-  const root = await git(cwd, ['rev-parse', '--show-toplevel']);
+  // UNE session pour la sonde : ses quatre git partagent un conteneur, tué à la fin.
+  return withNodalPrograms((programs) => probeWith(programs, cwd));
+}
+
+async function probeWith(programs: ProgramRunner, cwd: string): Promise<WorkspaceGitState | null> {
+  const root = await git(programs, cwd, ['rev-parse', '--show-toplevel']);
   if (!root) return null;
 
   const [branchRaw, statusRaw, headRaw] = await Promise.all([
-    git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']),
-    git(cwd, ['status', '--porcelain']),
-    git(cwd, ['rev-parse', '--short', 'HEAD']),
+    git(programs, cwd, ['rev-parse', '--abbrev-ref', 'HEAD']),
+    git(programs, cwd, ['status', '--porcelain']),
+    git(programs, cwd, ['rev-parse', '--short', 'HEAD']),
   ]);
 
   return {

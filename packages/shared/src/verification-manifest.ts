@@ -24,8 +24,14 @@
  * Version de la politique shell (quoting, tree-kill, capture) sous laquelle
  * une commande a été approuvée. Un changement de politique change ce qu'une
  * commande FAIT — donc ce qui a été approuvé.
+ *
+ * v2 (#628, décision de l'owner du 15/10) : la commande tourne dans le bac à
+ * sable de l'OS quand il est disponible (écritures limitées aux dossiers du
+ * job), avec les caches d'outils redirigés, et ce qu'elle laisse tourner vit
+ * jusqu'à la fin de son job. Une preuve approuvée sous v1 redemande donc son
+ * approbation, une fois.
  */
-export const SHELL_POLICY_VERSION = 1;
+export const SHELL_POLICY_VERSION = 2;
 
 /**
  * Version de l'allowlist des variables d'environnement transmises à la

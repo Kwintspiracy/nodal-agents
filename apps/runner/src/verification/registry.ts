@@ -35,6 +35,7 @@ export type {
   OnCommandDone,
   ProofCommandRecord,
   ProofResult,
+  ProofScope,
   ReadyConfig,
   VerifierTarget,
 } from './types.ts';

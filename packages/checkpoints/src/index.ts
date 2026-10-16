@@ -32,6 +32,9 @@ export {
   type Checkpoint,
   type FileDiff,
   type SnapshotOptions,
+  type CheckpointPrograms,
+  type CheckpointProgramOptions,
+  type CheckpointProgramChild,
 } from './checkpoints';
 export { checkpointsRoot } from './root';
 // Pourquoi un instantané a échoué, avec ses chiffres — issue #245. Exporté

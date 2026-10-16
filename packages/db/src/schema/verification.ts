@@ -205,6 +205,13 @@ export const verificationRuns = pgTable(
      * fait constaté même si le job du relecteur est effacé.
      */
     sourceJobId: uuid('source_job_id').references(() => agentJobs.id, { onDelete: 'set null' }),
+    /**
+     * Le régime de la commande (#628, 0147) : `confined` quand le bac à sable
+     * de Nodal l'a confinée, sinon le code stable de la raison
+     * (`SANDBOX_NOT_IMPLEMENTED`, `SANDBOX_PLATFORM_UNSUPPORTED`…). `NULL` sur
+     * les lignes écrites avant cette colonne.
+     */
+    sandbox: text('sandbox'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

@@ -67,6 +67,7 @@ import {
 } from './file-change-groups.ts';
 import { faconsDeConstater, rapprocherConstat } from './constated-files.ts';
 import { initGitRepository } from './project-git.ts';
+import { withNodalPrograms } from '@nodal-agents/sandbox';
 import {
   entityWorkspaceRoots,
   entityDeclaredCodeRoots,
@@ -15764,7 +15765,7 @@ export async function setCodeProjectInitGitAction(
       });
     }
 
-    const pose = await initGitRepository(projet.path);
+    const pose = await withNodalPrograms((programs) => initGitRepository(projet.path, programs));
     if (pose.kind === 'failed') {
       // L'option n'est PAS écrite : elle dirait que ce dossier est versionné
       // alors qu'il ne l'est pas. L'échec se dit, et l'interrupteur reste où

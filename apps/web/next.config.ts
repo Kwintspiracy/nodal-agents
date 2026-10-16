@@ -74,6 +74,11 @@ const nextConfig: NextConfig = {
     // @eshaz/web-worker) contain a FULLY dynamic `import(mod)` Turbopack can
     // never resolve statically, breaking every dashboard route's compile.
     '@whiskeysockets/baileys',
+    // OS sandbox, Windows backend (#628) — native (koffi + Microsoft
+    // binaries), loaded by `import()` under Windows only. Reached through
+    // @nodal-agents/sandbox ← tools ← orchestration; the web never runs a
+    // command, but the bundler still follows the import.
+    '@microsoft/mxc-sdk',
   ],
   allowedDevOrigins: ['localhost', '127.0.0.1', ...lanIPv4()],
   transpilePackages: [
@@ -83,6 +88,7 @@ const nextConfig: NextConfig = {
     '@nodal-agents/llm',
     '@nodal-agents/memory',
     '@nodal-agents/orchestration',
+    '@nodal-agents/sandbox',
     '@nodal-agents/shared',
     '@nodal-agents/tools',
   ],

@@ -50,6 +50,14 @@ export interface ToolContext {
   jobId: string;
   agentId: string;
   entityId: string;
+  /**
+   * The job's Stop (#750): aborted when the job's row no longer lets this run
+   * act — the Stop button, a cancellation, a job reaped or reclaimed. A tool
+   * that starts a process kills it when this fires (the shared shell engine
+   * does, for run_command, run_skill_script and the proof commands). Set by the
+   * runner around tool execution; absent in lightweight test contexts.
+   */
+  signal?: AbortSignal;
   db: AnyDrizzleDb;
   /**
    * Job-loop turn this call belongs to (étape D — written into tool_calls.turn

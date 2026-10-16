@@ -40,6 +40,7 @@ import { checkRootJobComplete } from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
+import { releaseJobProcessesIfEnded } from '../job/process-scopes.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { maybeResumeParent } from '../job/execute.ts';
 import type { ExecuteJobResult } from '../job/execute.ts';
@@ -317,6 +318,9 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
     } else {
       landed = await cancelRootJob(db, rootJobId, compiledResult);
     }
+    // #628 : le root est fini (ou l'était déjà) — ce que ses commandes, ses
+    // preuves comprises, ont laissé tourner meurt avec lui.
+    await releaseJobProcessesIfEnded(db, rootJobId);
     if (!landed) {
       // The root became terminal under our marker (a user cancel racing the
       // tick). Nothing to deliver, nothing to resume — and the marker is gone
