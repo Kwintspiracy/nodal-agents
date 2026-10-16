@@ -32,11 +32,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, open, rm, utimes, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { copyFile, mkdir, open, readdir, rename, rm, utimes, writeFile } from 'node:fs/promises';
+import { createReadStream, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { promisify } from 'node:util';
+import { createInflate } from 'node:zlib';
 
 import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
 
@@ -62,12 +63,26 @@ const run = promisify(execFile);
 // statut figé et sur `restoreCheckpoint`. Le `GIT_DIR` externe protège la
 // config du dépôt racine, pas celle-là.
 //
-// L'appelant qui tourne là où des commandes confinées écrivent (le runner) passe
-// donc les programmes du bac à sable (`openNodalPrograms` de
-// @nodal-agents/sandbox) : git tourne alors dans un conteneur, sans réseau, avec
-// pour seuls dossiers inscriptibles le workspace et le magasin. Sans eux, git
-// tourne sur l'hôte, comme avant. La forme est celle du `ProgramRunner` du bac à
-// sable, par structure : ce paquet n'en dépend pas (voir index.ts).
+// DEUX ENDROITS, et une règle (#628, passe 5) : AUCUN processus qui lit une
+// config contrôlée par le workspace n'a le droit d'écrire le magasin.
+//
+//   - Un git qui lit l'ARBRE DE TRAVAIL (`add`, `write-tree` après `add`,
+//     `status`, `checkout`, un diff contre l'arbre) tourne avec les programmes
+//     de l'appelant — dans le bac à sable quand le runner passe
+//     `openNodalPrograms` (@nodal-agents/sandbox). Le magasin y est en LECTURE
+//     seule : ses objets neufs vont dans un dossier JETABLE (`Scratch` :
+//     `GIT_OBJECT_DIRECTORY`, le magasin en alternate), son index dans une
+//     copie jetable. Ce qu'une commande plantée y ferait ne touche que le
+//     jetable et le workspace, que le job écrit déjà.
+//   - Un git qui ne lit QUE le magasin (`rev-parse`, `commit-tree`,
+//     `update-ref`, `log`, `ls-tree`, `cat-file`) tourne sur l'HÔTE, `GIT_DIR`
+//     seul, sans arbre de travail : il ne lit que la config que Nodal écrit. Lui
+//     seul écrit le magasin, après avoir importé et VÉRIFIÉ chaque objet du
+//     jetable (`importObjects`).
+//
+// La forme des programmes est celle du `ProgramRunner` du bac à sable, par
+// structure : ce paquet n'en dépend pas (voir index.ts). Sans programmes
+// donnés, le git de l'arbre tourne sur l'hôte, par le même chemin.
 
 /** Ce qu'un lancement de git reçoit. */
 export interface CheckpointProgramOptions {
@@ -138,16 +153,124 @@ function withPrograms<T>(given: CheckpointPrograms | undefined, fn: () => Promis
   return given ? programsOfOperation.run(given, fn) : fn();
 }
 
+/** Le dossier jetable d'un git qui lit l'arbre de travail. */
+interface Scratch {
+  readonly dir: string;
+  /** `GIT_OBJECT_DIRECTORY` : là où ce git écrit ses objets neufs. */
+  readonly objects: string;
+  /** La copie jetable de l'index du workspace. */
+  readonly index: string;
+}
+
+/** Où tourne un git : contre le magasin seul (hôte), ou sur l'arbre de travail. */
+export type Where =
+  | { readonly kind: 'store' }
+  | { readonly kind: 'worktree'; readonly scratch: Scratch };
+
+const STORE: Where = { kind: 'store' };
+const onWorktree = (scratch: Scratch): Where => ({ kind: 'worktree', scratch });
+
 /**
- * Ce que git doit pouvoir écrire : le workspace (son arbre de travail — même
- * pour lire, MXC refuse un `chdir` dans un dossier en lecture seule) et le
- * magasin. Le workspace d'abord : c'est le dossier de départ dans le conteneur.
+ * Ce que le git de l'arbre peut écrire : le workspace (son arbre — même pour
+ * lire, MXC refuse un `chdir` dans un dossier en lecture seule) et SON jetable.
+ * Le magasin : en lecture seulement. Le workspace d'abord : c'est le dossier de
+ * départ dans le conteneur.
  */
-function gitRoots(
+function worktreeRoots(
   store: string,
   workspace: string,
+  scratch: Scratch,
 ): Pick<CheckpointProgramOptions, 'writableRoots' | 'readableRoots'> {
-  return { writableRoots: [workspace, store], readableRoots: [] };
+  return { writableRoots: [workspace, scratch.dir], readableRoots: [store] };
+}
+
+/** Ouvre un jetable sous le magasin ; `seed` y copie l'index du workspace. */
+async function openScratch(store: string, workspace: string, seed: boolean): Promise<Scratch> {
+  const dir = join(store, 'scratch', randomBytes(8).toString('hex'));
+  const objects = join(dir, 'objects');
+  await mkdir(objects, { recursive: true });
+  const index = join(dir, 'index');
+  const source = join(store, 'indexes', workspaceKey(workspace));
+  if (seed && existsSync(source)) await copyFile(source, index);
+  return { dir, objects, index };
+}
+
+async function closeScratch(scratch: Scratch): Promise<void> {
+  await rm(scratch.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(
+    () => undefined,
+  );
+}
+
+/** L'index du jetable devient celui du workspace (renommage, atomique). */
+async function keepScratchIndex(store: string, workspace: string, scratch: Scratch): Promise<void> {
+  if (!existsSync(scratch.index)) return;
+  await rename(scratch.index, join(store, 'indexes', workspaceKey(workspace)));
+}
+
+/**
+ * Importe dans le magasin les objets que le git de l'arbre a écrits dans le
+ * jetable — sur l'HÔTE, chacun VÉRIFIÉ : un objet libre doit avoir le nom de
+ * son contenu (SHA-1 de `type taille\0contenu`), un paquet doit passer
+ * `git verify-pack`. Rien d'existant n'est remplacé. Ce que le jetable aurait
+ * reçu d'une commande plantée ne peut donc qu'AJOUTER des objets exacts.
+ */
+async function importObjects(store: string, scratch: Scratch): Promise<void> {
+  const target = join(store, 'store', 'objects');
+  for (const dir of await readdir(scratch.objects).catch(() => [] as string[])) {
+    if (/^[0-9a-f]{2}$/.test(dir)) {
+      for (const name of await readdir(join(scratch.objects, dir))) {
+        if (!/^[0-9a-f]{38}$/.test(name)) continue;
+        const src = join(scratch.objects, dir, name);
+        const got = await looseObjectId(src);
+        if (got !== dir + name) {
+          throw new Error(`CHECKPOINT_FOREIGN_OBJECT: ${dir}${name} holds ${got}`);
+        }
+        const dst = join(target, dir, name);
+        if (existsSync(dst)) continue;
+        await mkdir(join(target, dir), { recursive: true });
+        await moveFile(src, dst);
+      }
+    } else if (dir === 'pack') {
+      const packDir = join(scratch.objects, 'pack');
+      for (const name of await readdir(packDir)) {
+        if (!name.endsWith('.idx')) continue;
+        const base = name.slice(0, -'.idx'.length);
+        await run(await gitBinary(), ['verify-pack', join(packDir, name)], {
+          timeout: storeTimeoutMs(),
+          windowsHide: true,
+          env: storeEnv(store),
+        });
+        await mkdir(join(target, 'pack'), { recursive: true });
+        for (const ext of ['.pack', '.idx']) {
+          const dst = join(target, 'pack', base + ext);
+          if (!existsSync(dst)) await moveFile(join(packDir, base + ext), dst);
+        }
+      }
+    }
+  }
+}
+
+/** Le nom qu'un objet libre DEVRAIT porter : SHA-1 de son contenu décompressé. */
+function looseObjectId(path: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha1');
+    createReadStream(path)
+      .on('error', reject)
+      .pipe(createInflate())
+      .on('error', reject)
+      .on('data', (c: Buffer) => hash.update(c))
+      .on('end', () => resolve(hash.digest('hex')));
+  });
+}
+
+/** Renomme, ou copie puis supprime si le renommage traverse un volume. */
+async function moveFile(src: string, dst: string): Promise<void> {
+  try {
+    await rename(src, dst);
+  } catch {
+    await copyFile(src, dst);
+    await rm(src, { force: true });
+  }
 }
 
 /** A snapshot that hangs must not hold a tool call. */
@@ -288,10 +411,18 @@ export async function gitAllowingMiss(
   store: string,
   workspace: string,
   args: string[],
-  opts: { indexFile?: string; timeoutMs?: number } = {},
+  /** `where` : le magasin seul (l'hôte) par défaut ; l'arbre pour une lecture qui le touche. */
+  opts: { indexFile?: string; timeoutMs?: number; where?: Where } = {},
 ): Promise<string> {
   try {
-    return await git(store, workspace, args, opts.indexFile, opts.timeoutMs ?? storeTimeoutMs());
+    return await git(
+      store,
+      workspace,
+      args,
+      opts.where ?? STORE,
+      opts.indexFile,
+      opts.timeoutMs ?? storeTimeoutMs(),
+    );
   } catch (err) {
     if (isOrdinaryExitFailure(err)) return '';
     throw err;
@@ -414,16 +545,11 @@ function workspaceKey(workspace: string): string {
   return createHash('sha256').update(norm).digest('hex').slice(0, 16);
 }
 
-function gitEnv(store: string, workspace: string, indexFile?: string): NodeJS.ProcessEnv {
-  const key = workspaceKey(workspace);
-  return {
+/** L'environnement d'un git qui ne lit QUE le magasin : pas d'arbre de travail. */
+function storeEnv(store: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     GIT_DIR: join(store, 'store'),
-    GIT_WORK_TREE: workspace,
-    // A per-workspace index: two workspaces snapshotting at once must not
-    // stomp on each other's staging area. A READ (diffFile) brings its own
-    // temporary index instead — see diffFile — so it never touches this one.
-    GIT_INDEX_FILE: indexFile ?? join(store, 'indexes', key),
     // A checkpoint is machinery, not authorship. Identity is fixed so it can
     // never depend on — or leak — the owner's git config.
     GIT_AUTHOR_NAME: 'Nodal checkpoints',
@@ -433,22 +559,85 @@ function gitEnv(store: string, workspace: string, indexFile?: string): NodeJS.Pr
     // The owner's global config must not change what we store or how.
     GIT_CONFIG_GLOBAL: join(store, 'gitconfig'),
     GIT_CONFIG_SYSTEM: join(store, 'gitconfig'),
+    // Aucune maintenance automatique : elle réécrirait le magasin depuis un git
+    // qui n'a pas à l'écrire (et échouerait, en lecture seule, dans le conteneur).
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: 'gc.auto',
+    GIT_CONFIG_VALUE_0: '0',
+    GIT_CONFIG_KEY_1: 'maintenance.auto',
+    GIT_CONFIG_VALUE_1: 'false',
   };
+  delete env['GIT_WORK_TREE'];
+  delete env['GIT_INDEX_FILE'];
+  delete env['GIT_OBJECT_DIRECTORY'];
+  delete env['GIT_ALTERNATE_OBJECT_DIRECTORIES'];
+  return env;
+}
+
+/**
+ * L'environnement d'un git selon `where`. Sur l'arbre de travail : l'arbre,
+ * l'index (la copie du jetable, sauf un `indexFile` donné), et les objets
+ * neufs dans le jetable, ceux du magasin lus en alternate.
+ */
+function gitEnv(
+  store: string,
+  workspace: string,
+  where: Where,
+  indexFile?: string,
+): NodeJS.ProcessEnv {
+  if (where.kind === 'store') return storeEnv(store);
+  return {
+    ...storeEnv(store),
+    GIT_WORK_TREE: workspace,
+    GIT_INDEX_FILE: indexFile ?? where.scratch.index,
+    GIT_OBJECT_DIRECTORY: where.scratch.objects,
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: join(store, 'store', 'objects'),
+  };
+}
+
+/**
+ * Lance git selon `where` : le magasin seul, TOUJOURS sur l'hôte (il ne lit
+ * que la config de Nodal, et lui seul écrit le magasin) ; l'arbre de travail,
+ * avec les programmes de l'opération, magasin en lecture.
+ */
+function runGit(
+  store: string,
+  workspace: string,
+  args: readonly string[],
+  where: Where,
+  opts: {
+    indexFile?: string;
+    timeout: number;
+    maxBuffer?: number;
+    extraEnv?: Readonly<Record<string, string>>;
+  },
+): Promise<{ stdout: string; stderr: string }> {
+  return gitBinary().then((binaire) => {
+    const env = { ...gitEnv(store, workspace, where, opts.indexFile), ...opts.extraEnv };
+    const common = {
+      timeout: opts.timeout,
+      ...(opts.maxBuffer !== undefined ? { maxBuffer: opts.maxBuffer } : {}),
+      env,
+    };
+    return where.kind === 'store'
+      ? hostGit.execFile(binaire, args, { ...common, writableRoots: [], readableRoots: [] })
+      : programs().execFile(binaire, args, {
+          ...common,
+          ...worktreeRoots(store, workspace, where.scratch),
+        });
+  });
 }
 
 async function git(
   store: string,
   workspace: string,
   args: string[],
+  where: Where,
   indexFile?: string,
   /** La borne de CET appel. Seul l'instantané la surcharge — voir storeTimeoutMs. */
   timeoutMs: number = storeTimeoutMs(),
 ): Promise<string> {
-  const { stdout } = await programs().execFile(await gitBinary(), args, {
-    timeout: timeoutMs,
-    env: gitEnv(store, workspace, indexFile),
-    ...gitRoots(store, workspace),
-  });
+  const { stdout } = await runGit(store, workspace, args, where, { indexFile, timeout: timeoutMs });
   return stdout.trim();
 }
 
@@ -462,13 +651,11 @@ async function gitRaw(
   store: string,
   workspace: string,
   args: string[],
-  indexFile?: string,
+  where: Where,
 ): Promise<string> {
-  const { stdout } = await programs().execFile(await gitBinary(), args, {
+  const { stdout } = await runGit(store, workspace, args, where, {
     timeout: storeTimeoutMs(),
     maxBuffer: 8 * 1024 * 1024,
-    env: gitEnv(store, workspace, indexFile),
-    ...gitRoots(store, workspace),
   });
   return stdout;
 }
@@ -507,17 +694,22 @@ async function gitRawCapped(
   workspace: string,
   args: string[],
   maxBytes: number,
-  indexFile?: string,
+  where: Where,
 ): Promise<{ text: string; truncated: boolean }> {
   // Résolu AVANT d'ouvrir la promesse : `spawn` ne sait pas attendre, et un
   // `git` nu laisserait le système chercher le programme (#251).
   const binaire = await gitBinary();
   // Rejette si git ne peut pas démarrer (l'erreur du système, ou celle du bac
-  // à sable) — l'équivalent de l'événement `error` d'avant.
-  const child = await programs().spawn(binaire, args, {
-    env: gitEnv(store, workspace, indexFile),
-    ...gitRoots(store, workspace),
-  });
+  // à sable) — l'équivalent de l'événement `error` d'avant. Le magasin seul :
+  // sur l'hôte ; l'arbre : avec les programmes de l'opération.
+  const env = gitEnv(store, workspace, where);
+  const child =
+    where.kind === 'store'
+      ? await hostGit.spawn(binaire, args, { env, writableRoots: [], readableRoots: [] })
+      : await programs().spawn(binaire, args, {
+          env,
+          ...worktreeRoots(store, workspace, where.scratch),
+        });
   const chunks: Buffer[] = [];
   let size = 0;
   let truncated = false;
@@ -635,34 +827,51 @@ async function takeSnapshot(
   // secret gets a second, unmanaged copy", the first is the smaller harm. But
   // it is only acceptable while it is SAID: see CHECKPOINT_COVERAGE_NOTE and
   // the test that pins this behaviour, so nobody discovers it from a lost file.
-  await git(store, workspace, ['add', '-A'], undefined, limitMs);
-  const tree = await git(store, workspace, ['write-tree'], undefined, limitMs);
+  //
+  // L'ARBRE DE TRAVAIL est lu par un git qui n'écrit que le jetable (voir « Qui
+  // lance git ») ; le magasin n'est écrit que plus bas, sur l'hôte.
+  const scratch = await openScratch(store, workspace, true);
+  try {
+    const wt = onWorktree(scratch);
+    await git(store, workspace, ['add', '-A'], wt, undefined, limitMs);
+    const tree = await git(store, workspace, ['write-tree'], wt, undefined, limitMs);
+    // L'arbre que ce git annonce n'est cru qu'importé, vérifié, et d'un arbre.
+    await importObjects(store, scratch);
+    const kind = await git(store, workspace, ['cat-file', '-t', tree], STORE, undefined, limitMs);
+    if (kind !== 'tree') throw new Error(`CHECKPOINT_NOT_A_TREE: ${tree} is a ${kind}`);
+    await keepScratchIndex(store, workspace, scratch);
 
-  // Nothing changed since the last checkpoint — recording it again would bury
-  // the useful ones under identical noise.
-  // `gitAllowingMiss`, jamais un `.catch(() => '')` nu : une ref absente est
-  // une RÉPONSE de git, un dépassement de borne est une PANNE, et lire la
-  // seconde comme la première pose un commit racine (revue #262, passe 1).
-  const parent = await gitAllowingMiss(
-    store,
-    workspace,
-    ['rev-parse', '--verify', '--quiet', ref],
-    { timeoutMs: limitMs },
-  );
-  if (parent) {
-    const parentTree = await gitAllowingMiss(store, workspace, ['rev-parse', `${parent}^{tree}`], {
-      timeoutMs: limitMs,
-    });
-    if (parentTree === tree) return null;
+    // Nothing changed since the last checkpoint — recording it again would bury
+    // the useful ones under identical noise.
+    // `gitAllowingMiss`, jamais un `.catch(() => '')` nu : une ref absente est
+    // une RÉPONSE de git, un dépassement de borne est une PANNE, et lire la
+    // seconde comme la première pose un commit racine (revue #262, passe 1).
+    const parent = await gitAllowingMiss(
+      store,
+      workspace,
+      ['rev-parse', '--verify', '--quiet', ref],
+      { timeoutMs: limitMs },
+    );
+    if (parent) {
+      const parentTree = await gitAllowingMiss(
+        store,
+        workspace,
+        ['rev-parse', `${parent}^{tree}`],
+        { timeoutMs: limitMs },
+      );
+      if (parentTree === tree) return null;
+    }
+
+    const at = new Date().toISOString();
+    const args = ['commit-tree', tree, '-m', `${label} — ${at}`];
+    if (parent) args.push('-p', parent);
+    const sha = await git(store, workspace, args, STORE, undefined, limitMs);
+    await git(store, workspace, ['update-ref', ref, sha], STORE, undefined, limitMs);
+
+    return { sha, workspace, at, label };
+  } finally {
+    await closeScratch(scratch);
   }
-
-  const at = new Date().toISOString();
-  const args = ['commit-tree', tree, '-m', `${label} — ${at}`];
-  if (parent) args.push('-p', parent);
-  const sha = await git(store, workspace, args, undefined, limitMs);
-  await git(store, workspace, ['update-ref', ref, sha], undefined, limitMs);
-
-  return { sha, workspace, at, label };
 }
 
 /**
@@ -794,14 +1003,18 @@ export async function statusAgainstFrozenIndex(
   /** Qui lance git (voir « Qui lance git ») ; l'hôte par défaut. */
   given?: CheckpointPrograms,
 ): Promise<FrozenIndexStatus> {
+  // Une LECTURE de l'arbre : son git n'écrit que le jetable, magasin en lecture
+  // (voir « Qui lance git »). L'index lu est la copie figée.
+  let scratch: Scratch | undefined;
   try {
-    const binaire = await gitBinary();
+    scratch = await openScratch(store, workspace, false);
+    const wt = onWorktree(scratch);
     const { stdout } = await withPrograms(given, () =>
-      programs().execFile(binaire, ['status', '--porcelain', '-z', '--untracked-files=all'], {
+      runGit(store, workspace, ['status', '--porcelain', '-z', '--untracked-files=all'], wt, {
+        indexFile,
         timeout: storeTimeoutMs(),
         maxBuffer: FROZEN_STATUS_MAX_BUFFER,
-        env: { ...gitEnv(store, workspace, indexFile), GIT_OPTIONAL_LOCKS: '0' },
-        ...gitRoots(store, workspace),
+        extraEnv: { GIT_OPTIONAL_LOCKS: '0' },
       }),
     );
     return { kind: 'status', stdout };
@@ -817,6 +1030,8 @@ export async function statusAgainstFrozenIndex(
           ? 'snapshot_status_timeout'
           : 'snapshot_status_failed';
     return { kind: 'failed', reason };
+  } finally {
+    if (scratch) await closeScratch(scratch);
   }
 }
 
@@ -833,16 +1048,8 @@ export async function releaseFrozenIndex(indexFile: string): Promise<void> {
  * courant EST ce commit-là, et sans lui la ligne `job_checkpoints` de ce tour
  * n'aurait aucun sha à porter. Une lecture, jamais une écriture.
  */
-export async function headCheckpoint(
-  store: string,
-  workspace: string,
-  /** Qui lance git (voir « Qui lance git ») ; l'hôte par défaut. */
-  given?: CheckpointPrograms,
-): Promise<string | null> {
-  return withPrograms(given, () => readHeadCheckpoint(store, workspace));
-}
-
-async function readHeadCheckpoint(store: string, workspace: string): Promise<string | null> {
+export async function headCheckpoint(store: string, workspace: string): Promise<string | null> {
+  // Le magasin SEUL : sur l'hôte, sans arbre de travail (voir « Qui lance git »).
   if (!existsSync(join(store, 'store', 'HEAD'))) return null;
   const ref = `refs/nodal/${workspaceKey(workspace)}`;
   // `--verify --quiet` : ref absente ⇒ sortie vide et code 1, donc rejet, d'où
@@ -945,11 +1152,11 @@ async function readFileDiff(
 
   const inFrom = await inTree(fromSha);
 
-  // L'index JETABLE de cette lecture — jamais celui du dossier.
-  const scratch =
-    toSha === null
-      ? join(store, 'indexes', `${workspaceKey(workspace)}.diff-${randomBytes(6).toString('hex')}`)
-      : undefined;
+  // Le JETABLE de cette lecture — index vide, objets neufs : jamais l'index du
+  // dossier, jamais le magasin. Seul le diff contre l'ARBRE en a besoin (voir
+  // « Qui lance git ») ; deux instantanés se comparent dans le magasin seul.
+  const scratch = toSha === null ? await openScratch(store, workspace, false) : undefined;
+  const where: Where = scratch !== undefined ? onWorktree(scratch) : STORE;
   try {
     let inTo: boolean;
     if (scratch !== undefined) {
@@ -961,12 +1168,10 @@ async function readFileDiff(
       // de tout l'arbre à chaque clic (revue Codex, passe 43). Un chemin ignoré
       // par le `.gitignore` du dossier fait échouer `add` — c'est exactement
       // l'information qu'on cherche, pas une panne.
-      await gitAllowingMiss(store, workspace, ['add', '-A', '--', relPath], {
-        indexFile: scratch,
-      });
+      await gitAllowingMiss(store, workspace, ['add', '-A', '--', relPath], { where });
       inTo =
         (await gitAllowingMiss(store, workspace, ['ls-files', '--cached', '--', relPath], {
-          indexFile: scratch,
+          where,
         })) !== '';
     } else {
       inTo = await inTree(toSha as string);
@@ -982,7 +1187,7 @@ async function readFileDiff(
       store,
       workspace,
       ['diff', '--no-color', '--numstat', ...range, '--', relPath],
-      scratch,
+      where,
     );
     if (numstat.trim() === '') return { kind: 'unchanged' };
     if (/^-\t-\t/m.test(numstat)) return { kind: 'binary' };
@@ -992,11 +1197,11 @@ async function readFileDiff(
       workspace,
       ['diff', '--no-color', '--unified=3', ...range, '--', relPath],
       DIFF_MAX_BYTES,
-      scratch,
+      where,
     );
     return { kind: 'diff', text, truncated };
   } finally {
-    if (scratch !== undefined) await rm(scratch, { force: true }).catch(() => undefined);
+    if (scratch !== undefined) await closeScratch(scratch);
   }
 }
 
@@ -1014,12 +1219,9 @@ export function listCheckpoints(
   store: string,
   workspace: string,
   limit = 20,
-  /** Qui lance git (voir « Qui lance git ») ; l'hôte par défaut. */
-  given?: CheckpointPrograms,
 ): Promise<Checkpoint[]> {
-  return readingStore(workspace, () =>
-    withPrograms(given, () => readCheckpointList(store, workspace, limit)),
-  );
+  // Le magasin SEUL : sur l'hôte, sans arbre de travail (voir « Qui lance git »).
+  return readingStore(workspace, () => readCheckpointList(store, workspace, limit));
 }
 
 async function readCheckpointList(
@@ -1066,8 +1268,20 @@ export async function restoreCheckpoint(
   await ensureStore(store);
   return withPrograms(given, async () => {
     const safety = await snapshot(store, workspace, `before restoring ${sha.slice(0, 8)}`);
-    // -f: the working tree is expected to differ, that is the point.
-    await git(store, workspace, ['checkout', '-f', sha, '--', '.']);
+    // Le sha restauré est un commit DU MAGASIN, vérifié avant que quiconque y
+    // lise un arbre.
+    const kind = await git(store, workspace, ['cat-file', '-t', sha], STORE);
+    if (kind !== 'commit') throw new Error(`CHECKPOINT_NOT_A_COMMIT: ${sha} is a ${kind}`);
+    // L'ARBRE est écrit par un git qui ne peut écrire que lui et le jetable ;
+    // l'index du jetable devient celui du workspace (voir « Qui lance git »).
+    const scratch = await openScratch(store, workspace, true);
+    try {
+      // -f: the working tree is expected to differ, that is the point.
+      await git(store, workspace, ['checkout', '-f', sha, '--', '.'], onWorktree(scratch));
+      await keepScratchIndex(store, workspace, scratch);
+    } finally {
+      await closeScratch(scratch);
+    }
     return { restored: sha, safety };
   });
 }

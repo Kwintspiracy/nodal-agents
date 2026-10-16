@@ -394,7 +394,7 @@ async function snapshotEachWorkspace(
       snapshotMs = Date.now() - debutPhoto;
       // `null` = l'arbre n'a pas bougé depuis la dernière photo : l'état d'avant
       // de ce tour EST ce commit-là.
-      sha = cp?.sha ?? (await headCheckpoint(store, w.path, programs));
+      sha = cp?.sha ?? (await headCheckpoint(store, w.path));
     } catch (err) {
       // LE REFUS NOMME SA CAUSE (issue #245) — même phrase que le seam de
       // `packages/tools`, construite au même endroit. Le harnais de code est

@@ -1612,7 +1612,7 @@ async function checkpointEachWorkspace(
       if (cp) console.info(`[checkpoints] ${cp.sha.slice(0, 8)} ${workspace} before ${toolName}`);
       // P11 — la photo devient RETROUVABLE : une ligne (travail, tour, dossier,
       // sha). Ne refuse jamais l'écriture, voir recordTurnCheckpoint.
-      await recordTurnCheckpoint(store, workspace, cp?.sha ?? null, ctx, dureePhoto, programs);
+      await recordTurnCheckpoint(store, workspace, cp?.sha ?? null, ctx, dureePhoto);
     } catch (err) {
       // One workspace that cannot be snapshotted is enough to refuse: we have
       // no way to tell it is not the one about to be written.
@@ -1671,12 +1671,10 @@ async function recordTurnCheckpoint(
    * ne l'apprendre que le jour où elle la dépasse.
    */
   snapshotMs: number,
-  /** Les programmes de la photo : la relecture de la tête tourne au même endroit. */
-  programs: NodalPrograms,
 ): Promise<void> {
   if (ctx.turn === undefined || !ctx.jobId) return;
   try {
-    const resolved = sha ?? (await headCheckpoint(store, workspace, programs));
+    const resolved = sha ?? (await headCheckpoint(store, workspace));
     if (!resolved) return;
     await ctx.db
       .insert(jobCheckpoints)

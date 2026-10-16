@@ -16,8 +16,9 @@
 // cassait git : `git init`, `commit` et `branch` échouaient dans le workspace.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JobProcessScope, createSandbox, mxcBackend, openNodalPrograms } from '../index';
@@ -114,21 +115,56 @@ afterAll(() => {
   }
 });
 
+/** L'alias 8.3 d'un chemin, tel que Windows le donne (`%~sI`). */
+function shortName(path: string): string {
+  // execSync passe par cmd.exe sous Windows : `%~sI` y est développé.
+  return execSync(`for %I in ("${path}") do @echo %~sI`, { encoding: 'utf8' }).trim();
+}
+
+/** Le contenu de chaque fichier sous `dir`, pour comparer avant / après. */
+function fingerprint(dir: string): string {
+  const out: string[] = [];
+  const walk = (d: string): void => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else
+        out.push(
+          `${p.slice(dir.length)}=${createHash('sha256').update(readFileSync(p)).digest('hex')}`,
+        );
+    }
+  };
+  walk(dir);
+  return out.sort().join('\n');
+}
+
+let shortSecret = '';
+let junction = '';
+
 describe.runIf(isWindows && tier === 'base-container')(
   'production layout: a confined command cannot read Nodal’s data dir, its workspace stays usable, git works in it @cap:executer-une-commande/moteur (Windows, MXC)',
   () => {
     let out: Record<string, string>;
     let gitSteps: string[];
     beforeAll(async () => {
+      // Deux autres façons de NOMMER le même secret (revue passe 5, P2) : son
+      // alias 8.3 (`SECRET~1.KEY`), et le dossier de données atteint par une
+      // jonction posée hors de lui. Mesurées ici, sur le vrai MXC.
+      shortSecret = shortName(join(dataDir, 'secrets.key'));
+      junction = join(home, 'data-link');
+      execSync(`mklink /J "${junction}" "${dataDir}"`, { stdio: 'ignore' });
       const reader = join(ws, 'reader.cjs');
       writeFileSync(
         reader,
-        `const fs=require('fs'),p=require('path');const [dataDir,ws,pg]=process.argv.slice(2);
+        `const fs=require('fs'),p=require('path');const [dataDir,ws,pg,shortSecret,junction]=process.argv.slice(2);
 const r={};const t=(l,f)=>{try{r[l]='OK:'+String(f()).slice(0,200)}catch(e){r[l]=e.code}};
 t('secrets',()=>fs.readFileSync(p.join(dataDir,'secrets.key'),'utf8'));
 t('config',()=>fs.readFileSync(p.join(dataDir,'config.json'),'utf8'));
 t('pgdata',()=>fs.readFileSync(p.join(pg,'pg_hba.conf'),'utf8'));
 t('list',()=>fs.readdirSync(dataDir).sort().join(','));
+t('secretsShort',()=>fs.readFileSync(shortSecret,'utf8'));
+t('secretsJunction',()=>fs.readFileSync(p.join(junction,'secrets.key'),'utf8'));
+t('configJunction',()=>fs.readFileSync(p.join(junction,'config.json'),'utf8'));
 t('readWs',()=>fs.readFileSync(p.join(ws,'in.txt'),'utf8'));
 t('writeWs',()=>{fs.writeFileSync(p.join(ws,'out.txt'),'w');return 'written'});
 process.stdout.write('RESULT '+JSON.stringify(r));`,
@@ -138,7 +174,10 @@ process.stdout.write('RESULT '+JSON.stringify(r));`,
       try {
         const container = await scope.container([ws], env);
         const proc = await container.start({
-          target: { file: process.execPath, args: [reader, dataDir, ws, join(dataDir, 'pg-data')] },
+          target: {
+            file: process.execPath,
+            args: [reader, dataDir, ws, join(dataDir, 'pg-data'), shortSecret, junction],
+          },
           cwd: ws,
           env,
         });
@@ -179,6 +218,18 @@ process.stdout.write('RESULT '+JSON.stringify(r));`,
       );
     });
 
+    it('the secrets stay unreadable under their 8.3 alias and through a junction to the data dir (review pass 5)', () => {
+      // L'alias existe-t-il sur ce volume ? S'il est égal au nom long, la
+      // génération 8.3 est coupée : le dire, ne pas prétendre l'avoir prouvé.
+      expect(
+        shortSecret.toLowerCase(),
+        'no 8.3 alias on this volume: the short-name case was not exercised',
+      ).not.toBe(join(dataDir, 'secrets.key').toLowerCase());
+      expect(out.secretsShort, JSON.stringify(out)).toBe('EPERM');
+      expect(out.secretsJunction, JSON.stringify(out)).toBe('EPERM');
+      expect(out.configJunction, JSON.stringify(out)).toBe('EPERM');
+    });
+
     it('the workspace is readable and writable', () => {
       expect(out.readWs).toBe('OK:ws-content');
       expect(out.writeWs).toBe('OK:written');
@@ -193,19 +244,18 @@ process.stdout.write('RESULT '+JSON.stringify(r));`,
       ]);
     });
 
-    it('the checkpoints container (Nodal’s own git) writes a ref in the store under the data dir', async () => {
-      // Les gestes de `snapshot` : magasin nu créé sur l'hôte, puis add,
-      // write-tree, commit-tree et update-ref DANS le conteneur, l'arbre de
-      // travail et le magasin inscriptibles. `update-ref` échouait (« unable to
-      // create directory ») quand le dossier entier était refusé.
+    it('the worktree-reading container (Nodal’s own git) works on the workspace but CANNOT write the checkpoint store (review pass 5, P1)', async () => {
+      // Les racines que checkpoints.ts demande pour un git qui lit l'arbre
+      // (`worktreeRoots`, prouvé par store-isolation.test.ts) : le workspace et
+      // un jetable en écriture, le magasin en LECTURE. Ici, le vrai MXC les fait
+      // respecter : le git de l'arbre écrit ses objets dans le jetable, et une
+      // commande ordinaire du même conteneur ne peut ni effacer ni modifier le
+      // magasin, octet pour octet.
       const git = gitPath();
       const gitDir = join(store, 'store');
-      execFileSync(git, ['init', '--bare', '--quiet', gitDir]);
-      const env = {
+      const hostEnv = {
         ...process.env,
         GIT_DIR: gitDir,
-        GIT_WORK_TREE: ws,
-        GIT_INDEX_FILE: join(store, 'index'),
         GIT_CONFIG_GLOBAL: join(store, 'gitconfig'),
         GIT_CONFIG_SYSTEM: join(store, 'gitconfig'),
         GIT_AUTHOR_NAME: 't',
@@ -213,25 +263,64 @@ process.stdout.write('RESULT '+JSON.stringify(r));`,
         GIT_COMMITTER_NAME: 't',
         GIT_COMMITTER_EMAIL: 't@t',
       };
+      // Un magasin qui a déjà une ref, écrit sur l'hôte.
+      execFileSync(git, ['init', '--bare', '--quiet', gitDir]);
+      const tree0 = execFileSync(git, ['mktree'], { env: hostEnv, input: '' }).toString().trim();
+      const sha0 = execFileSync(git, ['commit-tree', tree0, '-m', 'base'], { env: hostEnv })
+        .toString()
+        .trim();
+      execFileSync(git, ['update-ref', 'refs/nodal/base', sha0], { env: hostEnv });
+      const before = fingerprint(gitDir);
+
+      const scratch = join(store, 'scratch', 'probe');
+      const scratchObjects = join(scratch, 'objects');
+      mkdirSync(scratchObjects, { recursive: true });
+      const roots = { writableRoots: [ws, scratch], readableRoots: [store] };
+      const env = {
+        ...hostEnv,
+        GIT_WORK_TREE: ws,
+        GIT_INDEX_FILE: join(scratch, 'index'),
+        GIT_OBJECT_DIRECTORY: scratchObjects,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: join(gitDir, 'objects'),
+      };
       const programs = await openNodalPrograms(sandbox);
+      let attempts: Record<string, string> = {};
       try {
         expect(programs.confined).toBe(true);
         const run = async (args: string[]): Promise<string> =>
-          (
-            await programs.execFile(git, args, {
-              env,
-              writableRoots: [ws, store],
-              readableRoots: [],
-            })
-          ).stdout.trim();
+          (await programs.execFile(git, args, { env, ...roots })).stdout.trim();
+        // Non vide : le git de l'arbre marche avec ces racines.
         await run(['add', '-A']);
         const tree = await run(['write-tree']);
-        const sha = await run(['commit-tree', tree, '-m', 'probe']);
-        await run(['update-ref', 'refs/nodal/probe', sha]);
-        expect(await run(['rev-parse', 'refs/nodal/probe'])).toBe(sha);
+        expect(tree).toMatch(/^[0-9a-f]{40}$/);
+        expect(
+          readdirSync(scratchObjects).length,
+          'the worktree git wrote no object in the scratch',
+        ).toBeGreaterThan(0);
+        // Une commande ordinaire du même conteneur s'en prend au magasin.
+        const tamper = join(ws, 'tamper.cjs');
+        writeFileSync(
+          tamper,
+          `const fs=require('fs'),p=require('path');const g=process.argv[2];const r={};
+const t=(l,f)=>{try{f();r[l]='DONE'}catch(e){r[l]=e.code}};
+t('writeRef',()=>fs.writeFileSync(p.join(g,'refs','nodal','base'),'0000000000000000000000000000000000000000\\n'));
+t('newRef',()=>fs.writeFileSync(p.join(g,'refs','nodal','planted'),'x'));
+t('deleteHead',()=>fs.unlinkSync(p.join(g,'HEAD')));
+t('removeObjects',()=>fs.rmSync(p.join(g,'objects'),{recursive:true}));
+process.stdout.write('RESULT '+JSON.stringify(r));`,
+        );
+        const r = await programs.execFile(process.execPath, [tamper, gitDir], { env, ...roots });
+        attempts = JSON.parse(/RESULT (\{.*\})/.exec(r.stdout)?.[1] ?? '{}');
       } finally {
         await programs.close();
       }
+      for (const [what, result] of Object.entries(attempts)) {
+        expect(result, `${what} succeeded on the store: ${JSON.stringify(attempts)}`).not.toBe(
+          'DONE',
+        );
+      }
+      expect(Object.keys(attempts)).toEqual(['writeRef', 'newRef', 'deleteHead', 'removeObjects']);
+      expect(fingerprint(gitDir), 'the checkpoint store changed').toBe(before);
     }, 120_000);
   },
 );

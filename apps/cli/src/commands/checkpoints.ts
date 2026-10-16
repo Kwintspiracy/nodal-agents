@@ -31,11 +31,8 @@ function ago(iso: string): string {
 
 export async function runCheckpointsList(workspace?: string): Promise<void> {
   const ws = resolve(workspace ?? process.cwd());
-  // git lit le workspace, qu'une commande confinée a pu piéger : dans le bac à
-  // sable quand il est là (#628, audit P1-2), comme dans le runner.
-  const list = await withNodalPrograms((programs) =>
-    listCheckpoints(checkpointsRoot(), ws, 20, programs),
-  );
+  // Le magasin seul : sur l'hôte, sans arbre de travail (checkpoints.ts).
+  const list = await listCheckpoints(checkpointsRoot(), ws, 20);
 
   if (list.length === 0) {
     console.log(chalk.yellow(`No checkpoints for ${ws}`));
@@ -63,9 +60,7 @@ export async function runCheckpointsList(workspace?: string): Promise<void> {
 
 export async function runCheckpointsRestore(sha: string, workspace?: string): Promise<void> {
   const ws = resolve(workspace ?? process.cwd());
-  const list = await withNodalPrograms((programs) =>
-    listCheckpoints(checkpointsRoot(), ws, 200, programs),
-  );
+  const list = await listCheckpoints(checkpointsRoot(), ws, 200);
 
   const match = list.find((c: Checkpoint) => c.sha.startsWith(sha));
   if (!match) {
