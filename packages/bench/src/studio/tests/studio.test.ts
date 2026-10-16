@@ -12,7 +12,14 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { SpawnSyncReturns } from 'node:child_process';
 import { launchGate } from '../launch-gate';
-import { readFixture, studioCatalog, studioPlan, studioResults, studioTrial } from '../data';
+import {
+  readFixture,
+  studioCatalog,
+  studioModels,
+  studioPlan,
+  studioResults,
+  studioTrial,
+} from '../data';
 import { RunManager, type RunEvent, type SessionRunner } from '../runs';
 import { findDeliverable } from '../runtime';
 import { SCENARIOS } from '../../workflows/scenarios';
@@ -270,6 +277,47 @@ describe('findDeliverable', () => {
     );
     expect(() => findDeliverable([a, b], 'nodal-bench/s/v1/r.csv')).toThrow(
       'studio_ambiguous_deliverable: nodal-bench/s/v1/r.csv exists in 2 workspace folders',
+    );
+  });
+});
+
+describe('studioModels', () => {
+  it('lists first the models the bench space holds a key for, OpenRouter first, with their catalog price', () => {
+    const models = studioModels({ providers: ['openrouter', 'deepseek'] });
+    const firstUnavailable = models.findIndex((m) => m.unavailable !== null);
+    const available = models.slice(0, firstUnavailable);
+    expect(available.length).toBeGreaterThan(0);
+    expect(available.every((m) => m.provider === 'openrouter' || m.provider === 'deepseek')).toBe(
+      true,
+    );
+    // OpenRouter d'abord, puis l'autre fournisseur qui a une clé.
+    const lastOpenRouter = available.map((m) => m.provider).lastIndexOf('openrouter');
+    expect(available.slice(0, lastOpenRouter + 1).every((m) => m.provider === 'openrouter')).toBe(
+      true,
+    );
+    expect(available.find((m) => m.key === 'deepseek:deepseek-chat')).toMatchObject({
+      unavailable: null,
+    });
+    const glm = models.find((m) => m.key === 'openrouter:z-ai/glm-5.3')!;
+    expect(glm.pricing).toEqual({
+      inputPerMillionUsd: expect.any(Number) as number,
+      outputPerMillionUsd: expect.any(Number) as number,
+    });
+    // Tout le reste est rendu indisponible, avec la raison : jamais proposé comme appelable.
+    const rest = models.slice(firstUnavailable);
+    expect(rest.every((m) => m.provider !== 'openrouter' && m.provider !== 'deepseek')).toBe(true);
+    expect(rest.find((m) => m.provider === 'minimax')!.unavailable).toBe(
+      'the bench space has no minimax key',
+    );
+  });
+
+  it('keys that could not be read make every model unavailable, and say why', () => {
+    const models = studioModels({ why: 'workflow_no_stack: config.json is missing' });
+    expect(models.length).toBeGreaterThan(0);
+    expect(new Set(models.map((m) => m.unavailable))).toEqual(
+      new Set([
+        'the bench space keys could not be read: workflow_no_stack: config.json is missing',
+      ]),
     );
   });
 });

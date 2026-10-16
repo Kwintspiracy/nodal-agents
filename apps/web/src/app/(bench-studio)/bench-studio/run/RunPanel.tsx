@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import type { LaunchGate, PlanView } from '@nodal-agents/bench/studio';
+import type { LaunchGate, PlanView, StudioModel } from '@nodal-agents/bench/studio';
 import { dollars, duree } from '@nodal-agents/bench/results';
 import Banner from '@/components/ui/Banner';
 import Checkbox from '@/components/ui/Checkbox';
@@ -48,7 +48,7 @@ export default function RunPanel({
 }: {
   activities: string[];
   scenarios: ScenarioPick[];
-  models: Array<{ key: string; provider: string; label: string }>;
+  models: StudioModel[];
   gate: LaunchGate;
   initialOnly: string[];
 }) {
@@ -251,22 +251,52 @@ export default function RunPanel({
             placeholder="Filter the catalog"
             aria-label="Filter models"
           />
-          <div className="mt-2 max-h-56 overflow-y-auto rounded-md border border-rule-2">
-            {shownModels.map((m) => (
-              <Checkbox
-                key={m.key}
-                checked={pickedModels.includes(m.key)}
-                onChange={() => setPickedModels((l) => toggle(l, m.key))}
-                containerClassName="border-b border-rule-2 px-2.5 py-1.5 last:border-0 hover:bg-hover"
-                label={
-                  <span className="flex min-w-0 flex-col">
-                    <span className="truncate text-body-13 text-ink">{m.label}</span>
-                    <span className="truncate text-mono-11 text-ink-4">{m.key}</span>
-                  </span>
-                }
-              />
+          <div className="mt-2 max-h-72 overflow-y-auto rounded-md border border-rule-2">
+            {shownModels.length === 0 && (
+              <p className="px-2.5 py-2 text-body-12 text-ink-4">No catalog model matches.</p>
+            )}
+            {shownModels.map((m, i) => (
+              <div key={m.key}>
+                {(i === 0 ||
+                  (shownModels[i - 1]!.unavailable === null) !== (m.unavailable === null)) && (
+                  <div className="border-b border-rule-2 bg-canvas px-2.5 py-1.5 text-label-11 tracking-wider text-ink-4 uppercase">
+                    {m.unavailable === null ? 'The bench space can call' : 'Not callable'}
+                  </div>
+                )}
+                <Checkbox
+                  checked={pickedModels.includes(m.key)}
+                  disabled={m.unavailable !== null}
+                  onChange={() => setPickedModels((l) => toggle(l, m.key))}
+                  containerClassName={`border-b border-rule-2 px-2.5 py-1.5 ${m.unavailable === null ? 'hover:bg-hover' : 'opacity-60'}`}
+                  label={
+                    <span
+                      className="flex min-w-0 flex-1 flex-col"
+                      title={m.unavailable ?? undefined}
+                    >
+                      <span className="flex items-baseline justify-between gap-2">
+                        <span className="truncate text-body-13 text-ink">{m.label}</span>
+                        <span className="shrink-0 text-mono-11 text-ink-3">
+                          {m.pricing
+                            ? `$${m.pricing.inputPerMillionUsd} / $${m.pricing.outputPerMillionUsd}`
+                            : 'no price'}
+                        </span>
+                      </span>
+                      <span className="truncate text-mono-11 text-ink-4">
+                        {m.provider} · {m.key.slice(m.provider.length + 1)}
+                      </span>
+                      {m.unavailable !== null && (
+                        <span className="text-body-12 text-ink-4">{m.unavailable}</span>
+                      )}
+                    </span>
+                  }
+                />
+              </div>
             ))}
           </div>
+          <p className="mt-2 text-body-12 text-ink-4">
+            Prices are the catalog&apos;s, in dollars per million tokens in / out. The estimate
+            below turns them into a cost per trial from past runs.
+          </p>
           <p className="mt-2 text-body-12 text-ink-4">
             {pickedModels.length === 0
               ? 'None picked: the agents run on their own models.'

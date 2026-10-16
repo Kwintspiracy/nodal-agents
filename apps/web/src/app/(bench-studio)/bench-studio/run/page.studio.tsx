@@ -1,5 +1,5 @@
 // Run — choisir des activités ou des scénarios, des modèles, un nombre d'essais ; estimer ; lancer.
-import { studioCatalog, studioModels } from '@nodal-agents/bench/studio';
+import { studioCatalog } from '@nodal-agents/bench/studio';
 import { assertStudioPage, studioRuntime } from '@/lib/bench-studio/server';
 import StudioPage from '../_components/StudioPage';
 import RunPanel from './RunPanel';
@@ -16,6 +16,8 @@ export default async function RunPage({
   const catalog = studioCatalog();
   // La porte est lue à l'affichage, et tenue de nouveau par le serveur au lancement.
   const gate = studioRuntime().gate();
+  // Les modèles que l'espace du banc peut appeler : ses fournisseurs de clés LLM.
+  const models = await studioRuntime().models();
   return (
     <StudioPage
       title="Run"
@@ -32,7 +34,7 @@ export default async function RunPage({
           sends: s.sends,
           set: s.set,
         }))}
-        models={studioModels()}
+        models={models}
         gate={gate}
         initialOnly={only ? only.split(',').filter(Boolean) : []}
       />

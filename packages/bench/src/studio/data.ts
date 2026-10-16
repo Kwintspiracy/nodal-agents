@@ -95,11 +95,59 @@ export async function studioNeeds(readEnv: () => Promise<ScenarioEnv>): Promise<
 
 // ─── Plan ────────────────────────────────────────────────────────────────────
 
-/** Les modèles qu'une matrice peut nommer : ceux du catalogue, et aucun autre (`parseModels`). */
-export function studioModels(): Array<{ key: string; provider: string; label: string }> {
-  return Object.entries(MODEL_CATALOG).flatMap(([provider, entries]) =>
-    entries.map((e) => ({ key: `${provider}:${e.modelId}`, provider, label: e.label })),
+export interface StudioModel {
+  readonly key: string;
+  readonly provider: string;
+  readonly label: string;
+  /** Le prix du catalogue, en dollars par million de jetons ; null quand il ne le connaît pas. */
+  readonly pricing: {
+    readonly inputPerMillionUsd: number;
+    readonly outputPerMillionUsd: number;
+  } | null;
+  /** null : l'espace du banc a une clé de ce fournisseur. Sinon, pourquoi il ne peut pas l'appeler. */
+  readonly unavailable: string | null;
+}
+
+/** Le fournisseur listé en premier : celui par lequel passent les clés du banc aujourd'hui. */
+const FIRST_PROVIDER = 'openrouter';
+
+/**
+ * Les modèles qu'une matrice peut nommer : ceux du catalogue, et aucun autre
+ * (`parseModels`). Un modèle dont l'espace du banc n'a pas la clé du
+ * fournisseur est rendu INDISPONIBLE, avec la raison : jamais proposé comme
+ * s'il pouvait tourner. `keys` est la liste lue dans l'espace, ou la raison
+ * pour laquelle elle n'a pas pu l'être (la stack injoignable est dite).
+ */
+export function studioModels(
+  keys: { providers: readonly string[] } | { why: string },
+): StudioModel[] {
+  const all = Object.entries(MODEL_CATALOG).flatMap(([provider, entries]) =>
+    entries.map(
+      (e): StudioModel => ({
+        key: `${provider}:${e.modelId}`,
+        provider,
+        label: e.label,
+        pricing: e.pricing
+          ? {
+              inputPerMillionUsd: e.pricing.inputPerMillionUsd,
+              outputPerMillionUsd: e.pricing.outputPerMillionUsd,
+            }
+          : null,
+        unavailable:
+          'why' in keys
+            ? `the bench space keys could not be read: ${keys.why}`
+            : keys.providers.includes(provider)
+              ? null
+              : `the bench space has no ${provider} key`,
+      }),
+    ),
   );
+  const rank = (m: StudioModel): number =>
+    (m.unavailable === null ? 0 : 2) + (m.provider === FIRST_PROVIDER ? 0 : 1);
+  return all
+    .map((m, i) => ({ m, i }))
+    .sort((a, b) => rank(a.m) - rank(b.m) || a.i - b.i)
+    .map(({ m }) => m);
 }
 
 export interface PlanRequest {

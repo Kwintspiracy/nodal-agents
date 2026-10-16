@@ -18,6 +18,7 @@ export {
   type NeedsView,
   type PlanRequest,
   type PlanView,
+  type StudioModel,
 } from './data';
 export {
   RunManager,

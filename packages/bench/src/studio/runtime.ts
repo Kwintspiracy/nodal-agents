@@ -14,10 +14,11 @@ import { readScenarioEnv, rootEntity, runBench } from '../workflows/session';
 import {
   cancelTree,
   openStackDb,
+  readKeyProviders,
   readLiveBenchRoots,
   readWorkspaceRoots,
 } from '../workflows/stack';
-import { studioNeeds, type NeedsView } from './data';
+import { studioModels, studioNeeds, type NeedsView, type StudioModel } from './data';
 import { launchGate, type LaunchGate } from './launch-gate';
 import { RunManager } from './runs';
 
@@ -51,6 +52,8 @@ export interface StudioRuntime {
   readonly manager: RunManager;
   gate(): LaunchGate;
   needs(): Promise<NeedsView>;
+  /** Les modèles du catalogue, ceux que l'espace du banc peut appeler d'abord. */
+  models(): Promise<StudioModel[]>;
   jobTree(rootId: string): Promise<JobTreeView>;
   deliverable(path: string): Promise<DeliverableView>;
 }
@@ -137,6 +140,14 @@ export function createStudioRuntime(): StudioRuntime {
       studioNeeds(() =>
         withDb(async (db) => readScenarioEnv(db, await rootEntity(db), Date.now())),
       ),
+    models: async () => {
+      try {
+        const providers = await withDb(async (db) => readKeyProviders(db, await rootEntity(db)));
+        return studioModels({ providers });
+      } catch (e) {
+        return studioModels({ why: String(e instanceof Error ? e.message : e) });
+      }
+    },
     jobTree: (rootId) =>
       withDb(async (db) => {
         const facts = await readTreeFacts(db, rootId);
