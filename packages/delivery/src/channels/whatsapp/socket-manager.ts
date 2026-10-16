@@ -30,22 +30,51 @@
 // The maintainers patched the "legacy" line by publishing 6.7.23 AFTER
 // 6.17.16 without bumping past it. Exact-pinning avoids resolving backwards
 // into the vulnerable release.
+//
+// Baileys is loaded when a socket is opened, NOT when this module is imported
+// (0.9.7). Baileys 6.7.x pulls libsignal from a git URL, so installing it from
+// npm needs git — 0.9.6 failed to install on every machine without it. The
+// pack therefore no longer installs baileys from npm: the runner bundle, the
+// only process that opens sockets, carries its own copy. The dashboard imports
+// this package through the delivery index for Discord and Slack and never opens
+// a socket, so a static import here would make every dashboard route crash on
+// a library it never uses.
 
 import { EventEmitter } from 'node:events';
-import makeWASocket, {
-  useMultiFileAuthState,
-  DisconnectReason,
-  areJidsSameUser,
-  type WASocket,
-  type WAMessage,
-  type AnyMessageContent,
-  type ConnectionState,
-  type GroupMetadata,
+import type {
+  WASocket,
+  WAMessage,
+  AnyMessageContent,
+  ConnectionState,
+  GroupMetadata,
 } from '@whiskeysockets/baileys';
 import type { proto } from '@whiskeysockets/baileys';
+import type * as BaileysModule from '@whiskeysockets/baileys';
 import type { Boom } from '@hapi/boom';
 import { pino } from 'pino';
 import type { BotIdentity } from '../../channel-adapter.ts';
+import { DeliveryError } from '../../errors.ts';
+
+type Baileys = typeof BaileysModule;
+
+let baileysLoad: Promise<Baileys> | undefined;
+
+/** The Baileys module, imported once on the first socket. A failed import is
+ *  not cached: the next socket tries again. Fails with a coded
+ *  `whatsapp_library_unavailable`, carrying the import's own message. */
+function loadBaileys(): Promise<Baileys> {
+  baileysLoad ??= import('@whiskeysockets/baileys').catch((err: unknown) => {
+    baileysLoad = undefined;
+    const reason = err instanceof Error ? err.message : String(err);
+    const error = new DeliveryError(
+      'whatsapp_library_unavailable',
+      `whatsapp_library_unavailable: the WhatsApp library @whiskeysockets/baileys could not be loaded (${reason})`,
+    );
+    error.cause = err;
+    throw error;
+  });
+  return baileysLoad;
+}
 
 export type WhatsAppStatus = 'connecting' | 'qr_pending' | 'open' | 'logged_out' | 'closed';
 
@@ -189,6 +218,7 @@ function extractMentionedJids(message: proto.IMessage): string[] {
 function mapInboundMessage(
   msg: WAMessage,
   ownJid: string | undefined,
+  areJidsSameUser: Baileys['areJidsSameUser'],
 ): WhatsAppInboundMessage | null {
   if (msg.key.fromMe) return null;
   const remoteJid = msg.key.remoteJid;
@@ -277,10 +307,33 @@ export function ensureWhatsAppSocket(bindingKey: string, opts: WhatsAppSocketOpt
 
   async function connect(): Promise<void> {
     if (closed) return;
+    const {
+      default: makeWASocket,
+      useMultiFileAuthState,
+      fetchLatestBaileysVersion,
+      DisconnectReason,
+      areJidsSameUser,
+    } = await loadBaileys();
+    if (closed) return; // closed while the library was loading
+    // The WhatsApp Web version the socket announces. The one built into the
+    // library goes stale: on 16/10/2026 WhatsApp closed every socket opened
+    // with 6.7.23's built-in version (`405 Connection Failure`), so no QR
+    // ever arrived. Fetched on every connect, as baileys' own example does;
+    // when it cannot be fetched, the stale version is NOT used instead.
+    const latest = await fetchLatestBaileysVersion();
+    if (!latest.isLatest) {
+      const reason = latest.error instanceof Error ? latest.error.message : String(latest.error);
+      throw new DeliveryError(
+        'whatsapp_version_unavailable',
+        `whatsapp_version_unavailable: the current WhatsApp Web version could not be fetched (${reason})`,
+      );
+    }
+    if (closed) return; // closed while the version was fetching
     const { state: authState, saveCreds } = await useMultiFileAuthState(opts.sessionDir);
     if (closed) return; // closed while the auth state was loading
 
     const sock = makeWASocket({
+      version: latest.version,
       auth: authState,
       logger: pino({ level: 'silent' }),
     });
@@ -324,7 +377,7 @@ export function ensureWhatsAppSocket(bindingKey: string, opts: WhatsAppSocketOpt
         // history/offline-backfill batches, which this phase doesn't surface.
         if (upsert.type !== 'notify') return;
         for (const msg of upsert.messages) {
-          const mapped = mapInboundMessage(msg, sock.user?.id);
+          const mapped = mapInboundMessage(msg, sock.user?.id, areJidsSameUser);
           if (mapped) events.emit('message', mapped);
         }
       },

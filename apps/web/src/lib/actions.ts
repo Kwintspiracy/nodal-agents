@@ -3652,10 +3652,16 @@ export async function startWhatsAppPairingAction(agentId: string): Promise<Actio
       return fail('config_error', 'Runner secret not configured');
     }
     try {
-      const res = await fetch(
-        `${env.RUNNER_URL}/api/whatsapp-pairing?agentId=${encodeURIComponent(agentId)}`,
-        { method: 'POST', headers: { Authorization: `Bearer ${env.WORKER_SECRET}` } },
-      );
+      // The runner's route (apps/runner/src/routes/whatsapp-pairing.ts) reads
+      // `agentId` from a JSON body.
+      const res = await fetch(`${env.RUNNER_URL}/api/whatsapp/pairing`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ agentId }),
+      });
       if (!res.ok) {
         return fail('pairing_start_failed', `Runner rejected pairing start (${res.status})`);
       }
@@ -3676,7 +3682,7 @@ export async function startWhatsAppPairingAction(agentId: string): Promise<Actio
 /**
  * Polled every ~2s by WhatsAppConfigForm while pairing. Returns 'disconnected'
  * (no runner call) when there's no binding at all — otherwise proxies the
- * runner's GET /api/whatsapp-pairing for the live status/QR, denormalizing
+ * runner's GET /api/whatsapp/pairing for the live status/QR, denormalizing
  * `identityLabel` from the binding's `bot_identity` (best-effort — the
  * runner is expected to keep it in sync once the socket reaches 'open').
  */
@@ -3707,7 +3713,7 @@ export async function getWhatsAppPairingStatusAction(
     let res: Response;
     try {
       res = await fetch(
-        `${env.RUNNER_URL}/api/whatsapp-pairing?agentId=${encodeURIComponent(agentId)}`,
+        `${env.RUNNER_URL}/api/whatsapp/pairing?agentId=${encodeURIComponent(agentId)}`,
         { headers: { Authorization: `Bearer ${env.WORKER_SECRET}` } },
       );
     } catch (fetchErr) {

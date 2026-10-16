@@ -376,6 +376,25 @@ if (!existsSync(docsIndexSrc)) {
 cpSync(docsIndexSrc, resolve(packDir, 'docs-index.json'));
 console.log('✔ Docs index staged: docs-index.json');
 
+// ─── 6c. The Visual C++ runtime for the embedded Postgres on Windows (0.9.7) ─
+// Microsoft's redistributable DLLs, which `up` places next to postgres.exe so
+// that a machine with an old System32 runtime boots without installing
+// anything (apps/cli/src/lib/vc-runtime.ts). Shipped on every platform: the
+// tarball is one for all. Fails loud when a file is missing: `up` would refuse
+// to start on Windows, so the pack must not be built without them.
+const vcRuntimeSrc = resolve(repoRoot, 'apps/cli/vc-runtime/x64');
+const vcRuntimeDlls = ['msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'];
+const vcRuntimeMissing = vcRuntimeDlls.filter((d) => !existsSync(resolve(vcRuntimeSrc, d)));
+if (vcRuntimeMissing.length > 0) {
+  console.error(`✖ apps/cli/vc-runtime/x64 is missing ${vcRuntimeMissing.join(', ')}.`);
+  process.exit(1);
+}
+mkdirSync(resolve(packDir, 'vc-runtime/x64'), { recursive: true });
+for (const dll of vcRuntimeDlls) {
+  cpSync(resolve(vcRuntimeSrc, dll), resolve(packDir, 'vc-runtime/x64', dll));
+}
+console.log(`✔ VC++ runtime staged: vc-runtime/x64 (${vcRuntimeDlls.join(', ')})`);
+
 // ─── 7. Pack package.json ───────────────────────────────────────────────────
 // Runtime deps only. The versions written below are RANGES for readability, but
 // every one of them is rewritten to the EXACT installed version by
@@ -402,7 +421,15 @@ const packPkg = {
   },
   type: 'module',
   engines: packEngines(repoRoot),
-  files: ['cli.js', 'runner.js', 'web/**', 'migrations/**', 'docs-index.json', 'README.md'],
+  files: [
+    'cli.js',
+    'runner.js',
+    'web/**',
+    'migrations/**',
+    'vc-runtime/**',
+    'docs-index.json',
+    'README.md',
+  ],
   dependencies: {
     // ── CLI deps
     chalk: '^5.4.1',
@@ -458,10 +485,18 @@ const packPkg = {
     // runner still boots fine (it bundles its own copies) — caught live on
     // the 0.7.8 pack ritual, invisible to verify-install until declared.)
     'discord.js': '^14.26.5',
-    // EXACT pin, no caret: ^6.7.23 resolves to 6.17.16 (chronologically OLDER
-    // despite the higher number), deprecated with a message-spoofing CVE.
-    // Mirrors packages/delivery/package.json.
-    '@whiskeysockets/baileys': '6.7.23',
+    // NOT @whiskeysockets/baileys (0.9.7). 6.7.x declares libsignal as a git
+    // URL, so installing it from npm spawns git: 0.9.6 failed with
+    // `spawn git ENOENT` on every machine without it. The runner bundle
+    // (apps/runner/build.mjs) inlines baileys and libsignal; the dashboard only
+    // imports the delivery package, which loads baileys when a socket opens
+    // (packages/delivery/src/channels/whatsapp/socket-manager.ts), and never
+    // opens one. smoke-pack.mjs refuses any git-resolved dependency.
+    //
+    // pino: imported by that same delivery package at module load, so every
+    // dashboard route requires it. It used to resolve only because baileys
+    // brought it in transitively; declared now that baileys is gone.
+    pino: '^9.6.0',
     // ── Web deps (Next.js standalone server requires these at runtime)
     next: '^16.2.6',
     react: '19.2.4',

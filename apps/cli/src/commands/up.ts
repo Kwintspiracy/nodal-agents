@@ -5,7 +5,7 @@ import ora from 'ora';
 import open from 'open';
 import { randomBytes } from 'crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { readConfig, writeConfig, LOG_DIR, PG_DATA_DIR, type Config } from '../lib/config.ts';
 import {
   startEmbeddedPostgres,
@@ -19,8 +19,11 @@ import {
 } from '../lib/postgres.ts';
 import {
   probeEmbeddedPostgres,
+  hydrateEmbeddedPostgres,
+  loadPlatformBinaries,
   EmbeddedPostgresUnavailableError,
 } from '../lib/embedded-postgres-binaries.ts';
+import { ensureVcRuntime, formatVersion, shippedVcRuntimeDir } from '../lib/vc-runtime.ts';
 import { seedDefaultUserEntityAgent } from '../lib/seed.ts';
 import {
   buildEnvForRunner,
@@ -181,9 +184,38 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // couches plus bas, sans jamais nommer la porte `allowScripts` des npm
   // récents ni la commande qui la lève. Le détail du constat est dans
   // lib/embedded-postgres-binaries.ts.
-  const binaries = await probeEmbeddedPostgres();
+  let binaries = await probeEmbeddedPostgres();
+  // npm 11.17+ no longer runs install scripts unapproved: the library links the
+  // package's postinstall would create are created here instead, then the
+  // install is read again (0.9.7, lib/embedded-postgres-binaries.ts).
+  if (!binaries.ok && binaries.reason === 'HYDRATION_SKIPPED') {
+    await hydrateEmbeddedPostgres();
+    binaries = await probeEmbeddedPostgres();
+  }
   if (!binaries.ok) {
     throw new EmbeddedPostgresUnavailableError(binaries.reason, binaries.message);
+  }
+
+  // ── 0b. Windows: the VC++ runtime the database binaries need (0.9.7) ──────
+  //
+  // Placed next to postgres.exe from the copy the pack carries, so that a
+  // machine with an old System32 runtime boots without installing anything.
+  // Why, measured, and the fallback: lib/vc-runtime.ts.
+  if (process.platform === 'win32') {
+    const platform = await loadPlatformBinaries();
+    if (platform !== null) {
+      const outcome = ensureVcRuntime({
+        binDir: dirname(platform.postgres),
+        shippedDir: shippedVcRuntimeDir(),
+        systemDir: join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32'),
+      });
+      if (outcome.kind === 'system') {
+        console.log(
+          `  Visual C++ runtime: using the system's ${formatVersion(outcome.version)} ` +
+            `(could not place Nodal's copy: ${outcome.copyError})`,
+        );
+      }
+    }
   }
 
   // ── 1. Load config (write a no-friction default if missing) ───────────────
