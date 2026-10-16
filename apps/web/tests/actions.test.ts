@@ -1045,9 +1045,14 @@ describe('WhatsApp channel actions (W3)', () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0]!;
-    expect(String(url)).toBe(`http://localhost:3001/api/whatsapp-pairing?agentId=${AGENT_ID}`);
+    // The runner serves POST /api/whatsapp/pairing and reads agentId from a JSON body.
+    expect(String(url)).toBe('http://localhost:3001/api/whatsapp/pairing');
     expect((init as RequestInit).method).toBe('POST');
-    expect((init as RequestInit).headers).toEqual({ Authorization: 'Bearer test-bearer-789' });
+    expect((init as RequestInit).headers).toEqual({
+      Authorization: 'Bearer test-bearer-789',
+      'Content-Type': 'application/json',
+    });
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ agentId: AGENT_ID });
 
     fetchSpy.mockRestore();
   });
@@ -1129,7 +1134,7 @@ describe('WhatsApp channel actions (W3)', () => {
       expect(r.data.identityLabel).toBe(null);
     }
     const [url] = fetchSpy.mock.calls[0]!;
-    expect(String(url)).toBe(`http://localhost:3001/api/whatsapp-pairing?agentId=${AGENT_ID}`);
+    expect(String(url)).toBe(`http://localhost:3001/api/whatsapp/pairing?agentId=${AGENT_ID}`);
 
     fetchSpy.mockRestore();
   });

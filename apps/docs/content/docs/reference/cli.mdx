@@ -18,10 +18,10 @@ npm install -g nodal-agents
 `npx nodal-agents up` runs the same stack without a global install.
 
 Recent npm versions gate install scripts behind `allowScripts` and print
-`npm warn allow-scripts …`. Approve `@embedded-postgres/<platform>` and install
-again: that package prepares the database binaries. When they are not usable,
-`up` stops on that command instead of on a Postgres error. See
-[Getting Started](/docs/getting-started#if-npm-asks-you-to-approve-install-scripts).
+`npm warn allow-scripts …`. Nothing needs approving: `up` creates the database's
+library links itself, and stops on a coded error (`HYDRATION_FAILED`) if it
+cannot. See
+[Getting Started](/docs/getting-started#if-npm-prints-an-allow-scripts-warning).
 
 ## Commands
 

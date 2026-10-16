@@ -11,11 +11,14 @@ export const printRequestSkill: SystemSkill = {
   slug: 'print-request',
   name: 'Print requests',
   description:
-    'Use whenever the person asks to print anything. The only valid answer to a print request is a print preview they can approve: get the content and lay it out YOURSELF with your own tools, then call the print tool. Do not delegate it, do not ask questions on the way. Check the print tool report and fix the page before handing it over.',
+    'Use whenever the person asks to print anything. Print with the print tool the settings allow, whichever it is: a preview to approve or direct printing. Get the content and lay it out YOURSELF with your own tools, then call the print tool. Use only a print tool the settings allow; if it is refused as blocked, do not retry it and use another allowed one. Do not delegate it, do not ask questions on the way. Check the print tool report and fix the page before handing it over.',
   requiredBuiltins: [],
   content: `# Print requests
 
-When the person asks to print something, **the only valid answer is a print preview** they can approve. Everything you do serves that preview. The only reason not to deliver one is a technical impossibility (no print tool, no printer that can print, a content that cannot be read anywhere): then say so once, with the reason.
+When the person asks to print something, **print it with an allowed print tool**: a preview they can approve when a preview tool is allowed, direct printing when direct printing is allowed (when both are allowed, the preview). The owner's settings decide which one, never this skill. Everything you do serves that print.
+- Use only a print tool your settings allow. Never use one they do not allow.
+- If a print tool is refused as blocked by the owner, or fails, do not retry it and do not stop: move to another allowed print tool, if there is one.
+- Give up only when no allowed print tool can be used (none is allowed, or every allowed one was refused or failed), no printer can print, or the content cannot be read anywhere: then say so once, with the reason.
 
 ## 1. What to print: get it the way the request calls for, no more
 - A question you can answer, a text to write: answer or write it yourself.
@@ -31,9 +34,9 @@ Style, language and pictures as asked. **Pages: keep exactly the number of pages
 - **Footer.** A footer (source, page number) goes in the page margin with @page margin boxes (@bottom-left / @bottom-right), never at the end of the text: it must never add a page.
 
 ## 3. No questions on the way
-There is nothing for the person to choose before the preview: you choose (source, picture, layout). The preview is where they decide, change the settings and print.
+There is nothing for the person to choose before you print: you choose (source, picture, layout). With a preview, that is where they decide, change the settings and print.
 
 ## 4. Check the report, fix, then hand over
-After each submission, read the checks the print tool returns: a picture left out, more or fewer pages than asked, margins smaller than the printable area, any warning. If one contradicts the request, fix the document and submit it again REPLACING the pending request (not one more request), at most 2 corrections. Then tell the person in one or two sentences what is waiting for them, and what could not be fixed. The print tool shows the preview and its Print button where they made the request. Never say it printed before the print tool reports the job as accepted or completed.
+After each submission, read the checks the print tool returns: a picture left out, more or fewer pages than asked, margins smaller than the printable area, any warning. If one contradicts the request, fix the document and submit it again REPLACING the pending request (not one more request), at most 2 corrections. With direct printing there is no pending request to replace: check the layout before you submit, and report what the tool answers. Then tell the person in one or two sentences where things stand, and what could not be fixed: with a preview, that it is waiting for them to approve, shown with its Print button where they made the request; with direct printing, the job status the print tool returned (accepted, completed, failed). Never say it printed before the print tool reports the job as accepted or completed, whichever mode you used.
 `,
 };

@@ -129,7 +129,7 @@ A proven magazine layout: a large photo at the top with a red kicker and a capti
 
 ## When to use
 - The person asks for a magazine style, a magazine layout, "like a magazine page", for a print or for a document.
-- It works with any print tool or document tool that takes HTML. When the page is to be printed, the print-request skill still applies: preview, printable area, exact picture URLs, page count.
+- It works with any print tool or document tool that takes HTML. When the page is to be printed, the print-request skill still applies: the print mode your settings allow, printable area, exact picture URLs, page count.
 
 ## How to fill it
 1. Copy the whole template. Replace every {{SLOT}}; delete an optional block you do not use (figures band, pull quote, hero) instead of leaving it empty. Leave no {{…}} in the result.
