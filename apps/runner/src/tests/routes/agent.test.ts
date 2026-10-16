@@ -319,6 +319,78 @@ describe('POST /api/agent', () => {
   });
 });
 
+// ─── A workspace named by the request (bench space, 16/10) ─────────────────
+//
+// On the runner, the session of a trusted caller is the local-trust one: it is
+// ALWAYS the local workspace. A second workspace (a copy of the team, with the
+// same slugs) could not be reached by slug at all: the request landed on the
+// local agent of the same name. The request now names its workspace, the way
+// /api/chat does.
+
+describe('POST /api/agent — the request names its workspace', () => {
+  let copyEntity: string;
+  let copyAgent: string;
+  let localSlug: string;
+
+  beforeAll(async () => {
+    const [local] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, seed.agentId));
+    localSlug = local!.slug;
+    const [ent] = await db
+      .insert(entities)
+      .values({ userId: seed.userId, name: 'Team copy', slug: `team-copy-${crypto.randomUUID()}` })
+      .returning();
+    copyEntity = ent!.id;
+    const [ag] = await db
+      .insert(agents)
+      .values({
+        entityId: copyEntity,
+        name: 'Copy',
+        slug: localSlug,
+        personality: 'copy',
+        isDefault: true,
+      })
+      .returning();
+    copyAgent = ag!.id;
+  });
+
+  async function post(body: Record<string, unknown>) {
+    const res = await app.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+    const json = (await res.json()) as { jobId?: string; error?: string };
+    const [job] = json.jobId
+      ? await db
+          .select({ agentId: agentJobs.agentId, entityId: agentJobs.entityId })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, json.jobId))
+      : [];
+    return { status: res.status, job, error: json.error };
+  }
+
+  it('a slug shared by two workspaces resolves in the workspace the request names', async () => {
+    const r = await post({ task: 'in the copy', agentSlug: localSlug, entityId: copyEntity });
+    expect(r.status).toBe(202);
+    expect(r.job).toEqual({ agentId: copyAgent, entityId: copyEntity });
+  });
+
+  it('the default agent too', async () => {
+    const r = await post({ task: 'default of the copy', entityId: copyEntity });
+    expect(r.job).toEqual({ agentId: copyAgent, entityId: copyEntity });
+  });
+
+  it('without a workspace, the session one, unchanged', async () => {
+    const r = await post({ task: 'local as before', agentSlug: localSlug });
+    expect(r.job).toEqual({ agentId: seed.agentId, entityId: LOCAL_ENTITY_ID });
+  });
+});
+
 // ─── triggerWorker — bounded fire-and-forget (audit fix) ───────────────────
 //
 // triggerWorker's POST to /api/worker used to have no timeout: a stalled
@@ -451,6 +523,26 @@ describe('POST /api/agent — entity authorization (bearer-token mode)', () => {
     expect(body.error).toBe('agent_not_found');
 
     const rows = await dbB.select().from(agentJobs).where(eq(agentJobs.agentId, agentYId));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('untrusted session caller naming another workspace is refused (403, no job created)', async () => {
+    const res = await appBearer.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-test-session': '1' },
+        body: JSON.stringify({
+          task: 'named cross-tenant',
+          agentSlug: agentYSlug,
+          entityId: entityY,
+        }),
+      }),
+    );
+    expect(res.status).toBe(403);
+    const rows = await dbB
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.task, 'named cross-tenant'));
     expect(rows).toHaveLength(0);
   });
 

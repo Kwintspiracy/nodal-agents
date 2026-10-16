@@ -124,6 +124,7 @@ Fail conditions:
     inputSchema: SendFileInput,
 
     riskLevel: 'write',
+    egress: 'channel',
     card: 'sent',
     present: ({ input, output }) =>
       sentCard({

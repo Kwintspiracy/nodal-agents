@@ -13,6 +13,7 @@
     "lint": "eslint src",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "space": "tsx src/space/cli.ts",
     "workflows": "tsx src/workflows/cli.ts",
     "workflows:schedule": "tsx src/workflows/schedule.ts install",
     "workflows:unschedule": "tsx src/workflows/schedule.ts remove"

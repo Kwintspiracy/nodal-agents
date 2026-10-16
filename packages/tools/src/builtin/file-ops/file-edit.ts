@@ -76,6 +76,7 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
     'untouched lines.',
   inputSchema: FileEditInputSchema,
   riskLevel: 'write',
+  egress: 'none',
   loading: 'eager',
   card: 'files',
   present: ({ input, output }) =>

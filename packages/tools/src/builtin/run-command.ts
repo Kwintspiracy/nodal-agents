@@ -137,6 +137,7 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
     PROCESS_PATHS_RULE,
   inputSchema: runCommandSchema,
   riskLevel: 'destructive',
+  egress: 'process',
   card: 'terminal',
   present: ({ input, output }) =>
     terminalCard({

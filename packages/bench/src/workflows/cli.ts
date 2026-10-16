@@ -23,9 +23,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { z } from 'zod';
 import { catalogText } from './catalog';
-import { executeRows, readTreeFacts } from './facts';
+import { readTreeFacts } from './facts';
 import { BENCH_LOCK_FILE, BenchStop, claimStack, type BenchLock } from './lock';
 import {
   formatPlan,
@@ -117,21 +116,16 @@ function readPastLines(): { lines: PastLine[]; unreadable: number } {
 
 /**
  * L'espace que `run_task` vise : la même règle que le serveur MCP
- * (`resolveRootAgentId`) — l'unique espace qui a un agent racine. Plusieurs, ou
- * aucun : `run_task` refuserait aussi, on le dit avant.
+ * (`resolveRootAgentId`), lue par la même fonction — l'unique espace dont une
+ * personne est membre et qui a un agent racine. Plusieurs, ou aucun :
+ * `run_task` refuserait aussi, on le dit avant.
  */
 async function rootEntity(db: AnyDrizzleDb): Promise<string> {
-  const { sql } = await import('@nodal-agents/db');
-  const rows = z.array(z.object({ id: z.string() })).parse(
-    await executeRows(
-      db,
-      sql`
-        select id::text from entities where root_agent_id is not null`,
-    ),
-  );
+  const { listMemberWorkspaces } = await import('@nodal-agents/db');
+  const rows = await listMemberWorkspaces(db, { withRootAgent: true });
   if (rows.length !== 1) {
     throw new Error(
-      `workflow_no_root: ${rows.length} workspace(s) have a root agent; run_task needs exactly one`,
+      `workflow_no_root: ${rows.length} workspace(s) you are a member of have a root agent; run_task needs exactly one`,
     );
   }
   return rows[0]!.id;

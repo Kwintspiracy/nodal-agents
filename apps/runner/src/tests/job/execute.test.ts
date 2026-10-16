@@ -8810,6 +8810,17 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
       .insert(entities)
       .values({ userId: user!.id, name: 'B3 Entity', slug: `e-b3-${ts}` })
       .returning();
+    // The workspace's OWN key: a key of another workspace is never used
+    // (resolveAgentLlmClient, bench space 16/10). Same settings as the seed's.
+    const { entityLlmKeys } = await import('@nodal-agents/db');
+    const [seedKey] = await db
+      .select()
+      .from(entityLlmKeys)
+      .where(eq(entityLlmKeys.id, seed.llmKeyId));
+    const [key] = await db
+      .insert(entityLlmKeys)
+      .values({ ...seedKey!, id: undefined, entityId: entity!.id })
+      .returning();
     const [root] = await db
       .insert(agents)
       .values({
@@ -8817,7 +8828,7 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
         name: 'B3 Root',
         slug: `b3-root-${ts}`,
         personality: 'root',
-        llmKeyId: seed.llmKeyId,
+        llmKeyId: key!.id,
         role: 'orchestrator',
         orchestratorMode: 'router',
         telegramBotToken: 'root-secret-token',
@@ -8832,7 +8843,7 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
         name: 'B3 Worker',
         slug: `b3-worker-${ts}`,
         personality: 'worker',
-        llmKeyId: seed.llmKeyId,
+        llmKeyId: key!.id,
         role: 'agent',
         telegramBotToken: null,
         systemAgent: true,
@@ -8943,6 +8954,15 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
       .insert(entities)
       .values({ userId: user!.id, name: 'B3bis Entity', slug: `e-b3bis-${ts}` })
       .returning();
+    const { entityLlmKeys } = await import('@nodal-agents/db');
+    const [seedKey] = await db
+      .select()
+      .from(entityLlmKeys)
+      .where(eq(entityLlmKeys.id, seed.llmKeyId));
+    const [key] = await db
+      .insert(entityLlmKeys)
+      .values({ ...seedKey!, id: undefined, entityId: entity!.id })
+      .returning();
     const [orch] = await db
       .insert(agents)
       .values({
@@ -8950,7 +8970,7 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
         name: 'B3bis Orchestrator',
         slug: `b3bis-orch-${ts}`,
         personality: 'orch',
-        llmKeyId: seed.llmKeyId,
+        llmKeyId: key!.id,
         role: 'orchestrator',
         orchestratorMode: 'router',
         telegramBotToken: 'orch-root-token',
@@ -8966,7 +8986,7 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
         name: 'B3bis Child',
         slug: childSlug,
         personality: 'child',
-        llmKeyId: seed.llmKeyId,
+        llmKeyId: key!.id,
         role: 'agent',
         telegramBotToken: null,
         systemAgent: true,

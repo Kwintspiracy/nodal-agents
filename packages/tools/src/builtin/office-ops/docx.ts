@@ -255,6 +255,7 @@ export const docxReadTool: ToolDefinition<typeof DocxReadInput, DocxReadOutput> 
     'included (mammoth walks the whole document body). Images and headers/footers are not included.',
   inputSchema: DocxReadInput,
   riskLevel: 'read',
+  egress: 'none',
   card: 'read',
   present: ({ input, output }) =>
     output.ok
@@ -383,6 +384,7 @@ export const docxCreateTool: ToolDefinition<typeof DocxCreateInput, DocxCreateOu
     'and page breaks. Fails if the file already exists unless overwrite:true is passed.',
   inputSchema: DocxCreateInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   present: ({ output }) =>
     output.ok ? writtenFile(output.path, 'created') : failureText(output.reason),
@@ -565,6 +567,7 @@ export const docxAppendParagraphsTool: ToolDefinition<typeof DocxAppendInput, Do
   // <w:p> nodes and never touches or removes anything else in the archive, so
   // it's a plain write, same posture as xlsx_append_rows.
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   present: ({ output }) =>
     output.ok
@@ -746,6 +749,7 @@ export const docxReplaceTextTool: ToolDefinition<
     'Headers/footers are not covered. Fails loud if the text is not found at all.',
   inputSchema: DocxReplaceTextInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   present: ({ output }) =>
     output.ok

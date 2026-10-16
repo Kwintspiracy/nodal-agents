@@ -26,6 +26,7 @@ export const attachAgentTool: ToolDefinition<typeof AttachAgentInput, AttachAgen
     'Fails with a clear error if the agent is not found in this workspace.',
   inputSchema: AttachAgentInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {

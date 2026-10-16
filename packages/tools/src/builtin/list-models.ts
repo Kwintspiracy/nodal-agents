@@ -35,6 +35,7 @@ export const listModelsTool: ToolDefinition<typeof ListModelsInputSchema, ListMo
     'never guess a model string.',
   inputSchema: ListModelsInputSchema,
   riskLevel: 'read',
+  egress: 'none',
   card: 'text',
   execute: async (input, ctx) => {
     let provider = input.provider;
