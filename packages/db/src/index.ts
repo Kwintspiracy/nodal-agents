@@ -163,4 +163,5 @@ export {
   sum,
   max,
   min,
+  getTableColumns,
 } from 'drizzle-orm';
