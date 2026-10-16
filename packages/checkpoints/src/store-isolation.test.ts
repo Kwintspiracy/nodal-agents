@@ -35,18 +35,20 @@ interface Launch {
   readonly args: readonly string[];
   readonly writableRoots: readonly string[];
   readonly readableRoots: readonly string[];
+  readonly env: NodeJS.ProcessEnv;
 }
 
 /** Git sur l'hôte, en notant les racines demandées à chaque lancement. */
 function recordingPrograms(launches: Launch[]): CheckpointPrograms {
   const note = (
     args: readonly string[],
-    o: Pick<CheckpointProgramOptions, 'writableRoots' | 'readableRoots'>,
+    o: Pick<CheckpointProgramOptions, 'writableRoots' | 'readableRoots' | 'env'>,
   ): void => {
     launches.push({
       args: [...args],
       writableRoots: [...o.writableRoots],
       readableRoots: [...o.readableRoots],
+      env: { ...o.env },
     });
   };
   return {
@@ -123,6 +125,22 @@ function assertStoreNeverWritable(launches: readonly Launch[]): void {
       offending,
       `git ${l.args.join(' ')} could write the store through ${offending.join(', ')}`,
     ).toEqual([]);
+    // Les racines ne suffisent pas : c'est l'ENVIRONNEMENT qui dit à git où
+    // écrire. Ses objets neufs vont dans une racine inscriptible, hors du
+    // magasin ; son index n'est jamais dans le magasin (revue passe 6, P2).
+    const objectDir = l.env['GIT_OBJECT_DIRECTORY'];
+    expect(objectDir, `git ${l.args.join(' ')} has no object directory of its own`).toBeTruthy();
+    expect(
+      covers(gitDir, objectDir!),
+      `git ${l.args.join(' ')} writes objects into the store`,
+    ).toBe(false);
+    expect(l.writableRoots.some((w) => covers(w, objectDir!))).toBe(true);
+    const indexFile = l.env['GIT_INDEX_FILE'];
+    expect(indexFile).toBeTruthy();
+    expect(covers(gitDir, indexFile!), `git ${l.args.join(' ')} uses an index in the store`).toBe(
+      false,
+    );
+    expect(l.env['GIT_ALTERNATE_OBJECT_DIRECTORIES']).toBe(join(gitDir, 'objects'));
   }
 }
 
