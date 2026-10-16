@@ -330,6 +330,9 @@ importers:
       '@nodal-agents/runner-adapters':
         specifier: workspace:*
         version: link:../../packages/runner-adapters
+      '@nodal-agents/sandbox':
+        specifier: workspace:*
+        version: link:../../packages/sandbox
       '@nodal-agents/secrets':
         specifier: workspace:*
         version: link:../../packages/secrets

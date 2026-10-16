@@ -25,9 +25,8 @@
 // dépôt vide suffit au constat, et chacun de ces gestes serait une décision
 // prise à la place de la personne.
 
-import { access, writeFile } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { lstat, writeFile } from 'node:fs/promises';
+import type { ProgramRunner } from '@nodal-agents/sandbox';
 import { normalizePath } from '@nodal-agents/shared';
 // LA MÊME résolution que le constat par git (#227), pas une copie : c'est le
 // même `git`, lancé avec le même `cwd`, donc la même question. Deux copies
@@ -35,8 +34,6 @@ import { normalizePath } from '@nodal-agents/shared';
 // PR #244, constat bloquant). Elle vit dans un SOUS-CHEMIN de `shared`, que
 // les deux paquets ont déjà — voir l'en-tête de ce module-là.
 import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
-
-const run = promisify(execFile);
 
 /** Une commande git qui pend ne doit pas tenir un clic. */
 const GIT_TIMEOUT_MS = 10_000;
@@ -64,12 +61,19 @@ export type GitInitOutcome =
   /** git a refusé, ou n'est pas là. Dit, jamais avalé. */
   | { readonly kind: 'failed'; readonly reason: string };
 
+/**
+ * Un NOM existe-t-il à ce chemin ? `lstat`, jamais `access` : `access` suit un
+ * lien, et la réponse dépendait du système (revue passe 6) — une jonction
+ * pendante y est « présente » sous Windows, un lien symbolique pendant
+ * « absent » sous POSIX. La question est celle du nom `.git` dans CE dossier.
+ */
 async function existe(path: string): Promise<boolean> {
   try {
-    await access(path);
+    await lstat(path);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
   }
 }
 
@@ -83,12 +87,31 @@ async function existe(path: string): Promise<boolean> {
  * de la borne que `git-constat.ts` pose sur la racine retenue, et elle vient du
  * même piège.
  *
+ * GIT TOURNE PAR LES PROGRAMMES DE NODAL (#628, revue passe 6, P1), comme
+ * tout git que Nodal lance sur un dossier que des commandes confinées écrivent
+ * (décision A) : `withNodalPrograms` chez l'appelant, donc le bac à sable quand
+ * il est là, le projet pour SEULE racine inscriptible. Le test ci-dessus et
+ * `git init` ne sont pas un seul geste : une commande confinée qui pose `.git`
+ * entre les deux, en jonction vers un dossier de l'hôte, faisait écrire le
+ * squelette du dépôt HORS du projet, par le serveur web. Dans le conteneur,
+ * cette écriture est refusée, et `git init` échoue — dit. Le paramètre est
+ * obligatoire : aucun appel ne peut l'oublier sans que le typage le dise.
+ *
  * Ne lève jamais : une panne de git n'est pas une panne de l'écran qui
  * l'appelle. Elle se rend, et l'appelant la dit.
  */
-export async function initGitRepository(dir: string): Promise<GitInitOutcome> {
+export async function initGitRepository(
+  dir: string,
+  programs: ProgramRunner,
+): Promise<GitInitOutcome> {
   const cwd = normalizePath(dir);
-  if (await existe(`${cwd}/.git`)) return { kind: 'already' };
+  try {
+    if (await existe(`${cwd}/.git`)) return { kind: 'already' };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`[projects] GIT_INIT_FAILED path=${cwd}`, err);
+    return { kind: 'failed', reason };
+  }
 
   // Le chemin ABSOLU, jamais le nom nu : `cwd` est le dossier d'un projet, donc
   // un dossier où des agents écrivent, et le nom nu le ferait entrer dans la
@@ -100,7 +123,12 @@ export async function initGitRepository(dir: string): Promise<GitInitOutcome> {
   }
 
   try {
-    await run(binaire, ['init'], { cwd, timeout: GIT_TIMEOUT_MS, windowsHide: true });
+    await programs.execFile(binaire, ['init'], {
+      cwd,
+      timeout: GIT_TIMEOUT_MS,
+      writableRoots: [cwd],
+      readableRoots: [],
+    });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.error(`[projects] GIT_INIT_FAILED path=${cwd}`, err);

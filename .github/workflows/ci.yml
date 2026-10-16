@@ -503,3 +503,4 @@ jobs:
           packages/tools/src/tests/sandbox-engine.test.ts
           packages/tools/src/tests/sandbox-report.test.ts
           apps/runner/src/tests/verification/sandbox-three-paths.test.ts
+          apps/web/src/lib/__tests__/project-git-sandboxed.test.ts
