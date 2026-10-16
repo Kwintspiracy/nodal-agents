@@ -310,14 +310,30 @@ export function ensureWhatsAppSocket(bindingKey: string, opts: WhatsAppSocketOpt
     const {
       default: makeWASocket,
       useMultiFileAuthState,
+      fetchLatestBaileysVersion,
       DisconnectReason,
       areJidsSameUser,
     } = await loadBaileys();
     if (closed) return; // closed while the library was loading
+    // The WhatsApp Web version the socket announces. The one built into the
+    // library goes stale: on 16/10/2026 WhatsApp closed every socket opened
+    // with 6.7.23's built-in version (`405 Connection Failure`), so no QR
+    // ever arrived. Fetched on every connect, as baileys' own example does;
+    // when it cannot be fetched, the stale version is NOT used instead.
+    const latest = await fetchLatestBaileysVersion();
+    if (!latest.isLatest) {
+      const reason = latest.error instanceof Error ? latest.error.message : String(latest.error);
+      throw new DeliveryError(
+        'whatsapp_version_unavailable',
+        `whatsapp_version_unavailable: the current WhatsApp Web version could not be fetched (${reason})`,
+      );
+    }
+    if (closed) return; // closed while the version was fetching
     const { state: authState, saveCreds } = await useMultiFileAuthState(opts.sessionDir);
     if (closed) return; // closed while the auth state was loading
 
     const sock = makeWASocket({
+      version: latest.version,
       auth: authState,
       logger: pino({ level: 'silent' }),
     });
