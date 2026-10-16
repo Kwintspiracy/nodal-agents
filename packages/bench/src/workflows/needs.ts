@@ -271,3 +271,8 @@ const CHECKS: Record<Need, (env: ScenarioEnv) => string | null> = {
 export function missingNeeds(needs: readonly Need[], env: ScenarioEnv): string[] {
   return needs.map((n) => CHECKS[n](env)).filter((r): r is string => r !== null);
 }
+
+/** L'état de chaque besoin dans un environnement : là, ou la raison de son absence (Bench Studio). */
+export function needReport(env: ScenarioEnv): Array<{ need: Need; missing: string | null }> {
+  return NEED_IDS.map((need) => ({ need, missing: CHECKS[need](env) }));
+}
