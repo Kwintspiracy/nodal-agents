@@ -10,6 +10,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 import { readTreeFacts, type JobFact } from '../workflows/facts';
 import { REPO } from '../workflows/paths';
+import { findBenchSpace } from '../space/space';
 import { readScenarioEnv, rootEntity, runBench } from '../workflows/session';
 import {
   cancelTree,
@@ -50,7 +51,7 @@ export type DeliverableView =
 
 export interface StudioRuntime {
   readonly manager: RunManager;
-  gate(): LaunchGate;
+  gate(): Promise<LaunchGate>;
   needs(): Promise<NeedsView>;
   /** Les modèles du catalogue, ceux que l'espace du banc peut appeler d'abord. */
   models(): Promise<StudioModel[]>;
@@ -110,8 +111,17 @@ export function findDeliverable(roots: readonly string[], path: string): Deliver
 }
 
 export function createStudioRuntime(): StudioRuntime {
+  // L'espace que les essais atteindraient, et l'espace banc : lus à chaque fois.
+  const gate = (): Promise<LaunchGate> =>
+    launchGate(REPO, {
+      target: () =>
+        withDb(async (db) => ({
+          targetEntityId: await rootEntity(db),
+          benchSpaceId: (await findBenchSpace(db))?.id ?? null,
+        })),
+    });
   const manager = new RunManager(
-    () => launchGate(REPO),
+    gate,
     async (run, stop, hooks) => {
       const { db, close } = await openStackDb();
       try {
@@ -135,7 +145,7 @@ export function createStudioRuntime(): StudioRuntime {
   );
   return {
     manager,
-    gate: () => launchGate(REPO),
+    gate,
     needs: () =>
       studioNeeds(() =>
         withDb(async (db) => readScenarioEnv(db, await rootEntity(db), Date.now())),

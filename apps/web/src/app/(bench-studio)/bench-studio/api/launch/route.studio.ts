@@ -8,7 +8,7 @@ export async function POST(req: Request): Promise<Response> {
   const refused = studioRouteRefusal(req);
   if (refused) return refused;
   try {
-    const state = studioRuntime().manager.launch((await req.json()) as LaunchRequest);
+    const state = await studioRuntime().manager.launch((await req.json()) as LaunchRequest);
     return Response.json({ id: state.id });
   } catch (e) {
     return studioError(e, 409);

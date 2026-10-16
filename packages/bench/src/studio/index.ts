@@ -4,7 +4,7 @@
 // livré. Ses routes vivent dans apps/web, compilées seulement en mode studio ;
 // elles n'appellent que ce module, qui rassemble les modules du banc.
 
-export { launchGate, BENCH_SPACE_SCRIPT, type LaunchGate } from './launch-gate';
+export { launchGate, BENCH_SPACE_SCRIPT, type LaunchGate, type GateTarget } from './launch-gate';
 export {
   studioCatalog,
   readFixture,

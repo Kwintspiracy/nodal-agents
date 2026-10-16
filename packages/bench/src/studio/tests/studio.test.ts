@@ -24,8 +24,8 @@ import { RunManager, type RunEvent, type SessionRunner } from '../runs';
 import { findDeliverable } from '../runtime';
 import { SCENARIOS } from '../../workflows/scenarios';
 
-const OPEN = { enabled: true, reason: 'ok' };
-const CLOSED = { enabled: false, reason: 'PR #758 not merged' };
+const OPEN = async () => ({ enabled: true, reason: 'ok' });
+const CLOSED = async () => ({ enabled: false, reason: 'the bench space is not targeted' });
 
 function repoWith(scripts: Record<string, string>): string {
   const d = mkdtempSync(join(tmpdir(), 'studio-repo-'));
@@ -35,26 +35,71 @@ function repoWith(scripts: Record<string, string>): string {
 const spawned = (status: number | null, stdout = ''): SpawnSyncReturns<string> =>
   ({ status, stdout, stderr: '', pid: 1, output: [], signal: null }) as SpawnSyncReturns<string>;
 
+const SPACE = 'aaaaaaaa-0000-5000-8000-000000000001';
+const OWNER = 'bbbbbbbb-0000-4000-8000-000000000002';
+const neverSpawn = (): SpawnSyncReturns<string> => {
+  throw new Error('must not run anything');
+};
+
 describe('launchGate', () => {
-  it('without the bench space script, launch is disabled and says why', () => {
-    const g = launchGate(repoWith({}), () => {
-      throw new Error('must not run anything');
+  it('without the bench space script, launch is disabled and says why', async () => {
+    const g = await launchGate(repoWith({}), {
+      target: () => Promise.reject(new Error('must not read anything')),
+      spawn: neverSpawn,
     });
     expect(g.enabled).toBe(false);
-    expect(g.reason).toMatch(/bench space.*PR #758, not merged yet/);
+    expect(g.reason).toMatch(/bench space.*no `pnpm bench:space` yet \(#758\)/);
   });
 
-  it('with the script, it runs `pnpm bench:space check` and opens only on exit 0', () => {
+  it("while trials would reach the owner's workspace, it stays closed, whatever the check says", async () => {
+    const repo = repoWith({ 'bench:space': 'x' });
+    const g = await launchGate(repo, {
+      target: async () => ({ targetEntityId: OWNER, benchSpaceId: SPACE }),
+      spawn: neverSpawn,
+    });
+    expect(g).toEqual({
+      enabled: false,
+      reason:
+        'Trials would still reach your own workspace, not the bench space: the bench does not aim run_task at the bench space yet. Launch opens once it does.',
+    });
+    expect(
+      await launchGate(repo, {
+        target: async () => ({ targetEntityId: OWNER, benchSpaceId: null }),
+        spawn: neverSpawn,
+      }),
+    ).toMatchObject({
+      enabled: false,
+      reason: expect.stringContaining('pnpm bench:space sync --apply'),
+    });
+    expect(
+      await launchGate(repo, {
+        target: () => Promise.reject(new Error('workflow_no_root: 2 workspace(s)')),
+        spawn: neverSpawn,
+      }),
+    ).toEqual({
+      enabled: false,
+      reason:
+        'The workspace trials would reach could not be read: workflow_no_root: 2 workspace(s)',
+    });
+  });
+
+  it('aimed at the bench space, it runs `pnpm bench:space check` and opens only on exit 0', async () => {
     const calls: string[][] = [];
-    const ok = launchGate(repoWith({ 'bench:space': 'x' }), (cmd, args) => {
-      calls.push([cmd, ...args]);
-      return spawned(0);
+    const repo = repoWith({ 'bench:space': 'x' });
+    const target = async () => ({ targetEntityId: SPACE, benchSpaceId: SPACE });
+    const ok = await launchGate(repo, {
+      target,
+      spawn: (cmd, args) => {
+        calls.push([cmd, ...args]);
+        return spawned(0);
+      },
     });
     expect(calls).toEqual([['pnpm', 'bench:space', 'check']]);
     expect(ok.enabled).toBe(true);
-    const ko = launchGate(repoWith({ 'bench:space': 'x' }), () =>
-      spawned(1, 'the bench team has a send-capable tool: gmail_send_email\n'),
-    );
+    const ko = await launchGate(repo, {
+      target,
+      spawn: () => spawned(1, 'the bench team has a send-capable tool: gmail_send_email\n'),
+    });
     expect(ko).toEqual({
       enabled: false,
       reason:
@@ -65,32 +110,34 @@ describe('launchGate', () => {
 
 describe('RunManager', () => {
   const quiet: SessionRunner = async () => ({ lines: [], failed: 0, skipped: 0 });
+  const req = (only: string, allowOwnerSends = false) => ({
+    selection: { only: [only] },
+    trials: 1,
+    allowOwnerSends,
+  });
 
-  it('refuses to launch while the gate is closed, and plays nothing', () => {
+  it('refuses to launch while the gate is closed, and plays nothing', async () => {
     let played = 0;
     const m = new RunManager(
-      () => CLOSED,
+      CLOSED,
       async (...a) => {
         played++;
         return quiet(...a);
       },
       async () => undefined,
     );
-    expect(() =>
-      m.launch({ selection: { only: ['question'] }, trials: 1, allowOwnerSends: false }),
-    ).toThrow('studio_launch_refused: PR #758 not merged');
+    await expect(m.launch(req('question'))).rejects.toThrow(
+      'studio_launch_refused: the bench space is not targeted',
+    );
     expect(played).toBe(0);
+    expect(m.list()).toEqual([]);
   });
 
-  it('refuses a scenario that sends to the owner without the explicit toggle', () => {
-    const m = new RunManager(
-      () => OPEN,
-      quiet,
-      async () => undefined,
+  it('refuses a scenario that sends to the owner without the explicit toggle', async () => {
+    const m = new RunManager(OPEN, quiet, async () => undefined);
+    await expect(m.launch(req('comfyui-telegram'))).rejects.toThrow(
+      /studio_owner_sends: comfyui-telegram sends to the owner/,
     );
-    expect(() =>
-      m.launch({ selection: { only: ['comfyui-telegram'] }, trials: 1, allowOwnerSends: false }),
-    ).toThrow(/studio_owner_sends: comfyui-telegram sends to the owner/);
   });
 
   it('streams the session: trial start, progress, trial end, done — past events replayed to a late listener', async () => {
@@ -106,20 +153,14 @@ describe('RunManager', () => {
     };
     let t = 1000;
     const m = new RunManager(
-      () => OPEN,
+      OPEN,
       runner,
       async () => undefined,
       () => t++,
     );
-    const state = m.launch({
-      selection: { only: ['question'] },
-      trials: 1,
-      allowOwnerSends: false,
-    });
+    const state = await m.launch(req('question'));
     // Un second lancement pendant le premier est refusé.
-    expect(() =>
-      m.launch({ selection: { only: ['question'] }, trials: 1, allowOwnerSends: false }),
-    ).toThrow('studio_busy');
+    await expect(m.launch(req('question'))).rejects.toThrow('studio_busy');
     const seen: RunEvent['type'][] = [];
     m.subscribe(state.id, (e) => seen.push(e.type));
     expect(seen).toEqual(['trial-start', 'progress', 'trial-end']);
@@ -129,20 +170,37 @@ describe('RunManager', () => {
     expect(m.get(state.id)!.finished).toBe(true);
   });
 
+  it('two launches sent together: one runs, the other is refused as busy', async () => {
+    let played = 0;
+    const m = new RunManager(
+      OPEN,
+      async () => {
+        played++;
+        return new Promise(() => undefined);
+      },
+      async () => undefined,
+    );
+    const results = await Promise.allSettled([
+      m.launch(req('question')),
+      m.launch(req('question')),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect(
+      String((results.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason),
+    ).toContain('studio_busy');
+    expect(played).toBe(1);
+  });
+
   it('cancel goes through the shared stop', async () => {
     const cancelled: unknown[] = [];
     const m = new RunManager(
-      () => OPEN,
+      OPEN,
       () => new Promise(() => undefined),
       async (stop) => {
         cancelled.push(stop);
       },
     );
-    const state = m.launch({
-      selection: { only: ['question'] },
-      trials: 1,
-      allowOwnerSends: false,
-    });
+    const state = await m.launch(req('question'));
     await m.cancel(state.id);
     expect(cancelled).toHaveLength(1);
   });

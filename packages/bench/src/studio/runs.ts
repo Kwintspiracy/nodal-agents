@@ -75,15 +75,15 @@ export class RunManager {
   private seq = 0;
 
   constructor(
-    private readonly gate: () => LaunchGate,
+    private readonly gate: () => Promise<LaunchGate>,
     private readonly runner: SessionRunner,
     private readonly cancelLive: (stop: BenchStop) => Promise<void>,
     private readonly now: () => number = () => Date.now(),
   ) {}
 
   /** Lance une session ; refuse, en le disant, si la porte est fermée ou si la demande est invalide. */
-  launch(req: LaunchRequest): RunState {
-    const g = this.gate();
+  async launch(req: LaunchRequest): Promise<RunState> {
+    const g = await this.gate();
     if (!g.enabled) throw new Error(`studio_launch_refused: ${g.reason}`);
     if (!Number.isInteger(req.trials) || req.trials < 1 || req.trials > 20)
       throw new Error('studio_bad_trials: trials must be an integer from 1 to 20');
@@ -95,6 +95,8 @@ export class RunManager {
         `studio_owner_sends: ${owner.join(', ')} sends to the owner; tick "Allow sends to the owner" to run it`,
       );
     }
+    // Aucun `await` entre ce contrôle et l'enregistrement du lancement : deux
+    // lancements concurrents ne peuvent pas passer tous les deux.
     if ([...this.runs.values()].some((r) => !r.finished))
       throw new Error('studio_busy: a run is already in progress');
 

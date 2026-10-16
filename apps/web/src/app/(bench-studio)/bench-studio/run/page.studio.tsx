@@ -15,7 +15,7 @@ export default async function RunPage({
   const { only } = await searchParams;
   const catalog = studioCatalog();
   // La porte est lue à l'affichage, et tenue de nouveau par le serveur au lancement.
-  const gate = studioRuntime().gate();
+  const gate = await studioRuntime().gate();
   // Les modèles que l'espace du banc peut appeler : ses fournisseurs de clés LLM.
   const models = await studioRuntime().models();
   return (
