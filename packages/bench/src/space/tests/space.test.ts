@@ -16,6 +16,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import * as d from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
+import { assertSpaceCannotSend, checkSpaceCannotSend } from '../guard';
 import { applySpaceModel } from '../model';
 import { resetSpaceMemory } from '../reset';
 import { BENCH_SPACE_SLUG, copyIdFor, spaceIdFor } from '../space';
@@ -693,5 +694,99 @@ describe('applySpaceModel — le modèle des copies pour une série, puis restau
       .from(d.agents)
       .where(d.eq(d.agents.id, team.worker.id));
     expect(owner).toEqual([{ model: 'z-ai/glm-5.3' }]);
+  });
+});
+
+describe("avant chaque essai : l'équipe du banc ne peut rien envoyer hors de Nodal", () => {
+  const space = () => spaceIdFor(team.entityId);
+  const copy = (id: string) => copyIdFor(space(), 'agents', id);
+
+  it("une équipe copiée telle que la synchronisation l'écrit passe", async () => {
+    await sync();
+    expect(await checkSpaceCannotSend(db)).toEqual({ ok: true, findings: [] });
+    await expect(assertSpaceCannotSend(db)).resolves.toBeUndefined();
+    // Le propriétaire, lui, a de quoi envoyer : la règle n'est pas aveugle.
+    const owner = await checkSpaceCannotSend(db, team.entityId);
+    expect(owner.ok).toBe(false);
+  });
+
+  it("une liaison de canal sur une copie refuse l'essai, et la nomme", async () => {
+    await sync();
+    await pg.query(
+      `insert into channel_bindings (entity_id, agent_id, channel, credentials) values ($1, $2, 'discord', 'enc:v1:X')`,
+      [space(), copy(team.rootAgent.id)],
+    );
+    const r = await checkSpaceCannotSend(db);
+    expect(r.ok).toBe(false);
+    expect(r.findings).toContain('discord channel bound to agent alfred');
+    expect(
+      r.findings.some((f) =>
+        f.startsWith('agent alfred can send outside Nodal through discord binding (channel): '),
+      ),
+    ).toBe(true);
+    await expect(assertSpaceCannotSend(db)).rejects.toThrow(
+      /bench_space_can_send: the trial does not start/,
+    );
+  });
+
+  it('même désactivée, une liaison refuse : un geste suffit à la rouvrir', async () => {
+    await sync();
+    await pg.query(
+      `insert into channel_bindings (entity_id, agent_id, channel, credentials, enabled) values ($1, $2, 'whatsapp', 'enc:v1:X', false)`,
+      [space(), copy(team.worker.id)],
+    );
+    expect((await checkSpaceCannotSend(db)).findings).toEqual([
+      'whatsapp channel bound to agent writer',
+    ]);
+  });
+
+  it('un connecteur ou un serveur MCP prêté à une copie refuse, en le nommant', async () => {
+    await sync();
+    const [conn] = await db
+      .insert(d.connectors)
+      .values({ entityId: space(), name: 'Mail', slug: 'gmail' })
+      .returning();
+    await db
+      .insert(d.agentConnectorAssignments)
+      .values({ entityId: space(), agentId: copy(team.worker.id), connectorId: conn!.id });
+    const mcp = await pg.query<{ id: string }>(
+      `insert into mcp_servers (entity_id, name, slug, transport, url, available_tools) values ($1, 'Printer', 'printer', 'http', 'http://x', '[{"name":"print"}]') returning id::text`,
+      [space()],
+    );
+    await db
+      .insert(d.agentMcpServers)
+      .values({ entityId: space(), agentId: copy(team.coder.id), mcpServerId: mcp.rows[0]!.id });
+
+    const r = await checkSpaceCannotSend(db);
+    expect(r.ok).toBe(false);
+    expect(
+      r.findings.some((f) =>
+        f.startsWith('agent writer can send outside Nodal through gmail (connector): '),
+      ),
+    ).toBe(true);
+    expect(r.findings).toContain(
+      'agent coder can send outside Nodal through printer (mcp): printer__print',
+    );
+  });
+
+  it("une synchronisation qui laisserait l'espace parler au monde n'écrit rien", async () => {
+    // Quelqu'un a lié un canal à une copie entre deux synchronisations : la
+    // suivante refuse, et sa transaction est annulée (le changement du
+    // propriétaire n'est PAS reporté).
+    await sync();
+    await pg.query(
+      `insert into channel_bindings (entity_id, agent_id, channel, credentials) values ($1, $2, 'slack', 'enc:v1:X')`,
+      [space(), copy(team.rootAgent.id)],
+    );
+    await db
+      .update(d.agents)
+      .set({ personality: 'changed by the owner' })
+      .where(d.eq(d.agents.id, team.worker.id));
+    await expect(sync()).rejects.toThrow(/bench_space_can_send/);
+    const [w] = await db
+      .select({ personality: d.agents.personality })
+      .from(d.agents)
+      .where(d.eq(d.agents.id, copy(team.worker.id)));
+    expect(w!.personality).toBe('You write.');
   });
 });

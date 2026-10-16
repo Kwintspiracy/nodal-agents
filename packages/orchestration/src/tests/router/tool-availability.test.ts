@@ -13,14 +13,21 @@ import { eq } from '@nodal-agents/db';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import {
   agents,
+  agentConnectorAssignments,
   agentMcpServers,
+  channelBindings,
+  connectors,
   agentSkills,
   agentSkillAssignments,
   entities,
   mcpServers,
   users,
 } from '@nodal-agents/db';
-import { computeAgentToolNames, findUnavailableToolMentions } from '../../router/tool-availability';
+import {
+  computeAgentToolNames,
+  computeAgentToolOrigins,
+  findUnavailableToolMentions,
+} from '../../router/tool-availability';
 import type { AgentId, EntityId } from '../../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 
@@ -222,5 +229,79 @@ describe('findUnavailableToolMentions', () => {
       new Set(['return_result']),
     );
     expect(missing).toHaveLength(0);
+  });
+});
+
+describe('computeAgentToolOrigins — what reaches outside Nodal, and through what @cap:assigner-outils/moteur', () => {
+  it('an enabled Discord binding arms the delivery tools, like execute.ts', async () => {
+    // The runner arms the six delivery tools on a Telegram token OR an enabled
+    // Discord / Slack binding; this computation saw only the token, so a
+    // Discord-bound agent was said to have no send tool.
+    const { entityId, agentId } = await seedEntityWithAgent();
+    await db
+      .insert(channelBindings)
+      .values({ entityId, agentId, channel: 'discord', credentials: 'enc:v1:x', enabled: true });
+    const { names, outbound } = await computeAgentToolOrigins(agentId, entityId, db, {
+      hasDeliveryRecipient: true,
+    });
+    expect(names.has('send_file')).toBe(true);
+    expect(outbound).toContainEqual({
+      tool: 'send_file',
+      origin: 'channel',
+      via: 'discord binding',
+    });
+  });
+
+  it('a disabled binding arms nothing', async () => {
+    const { entityId, agentId } = await seedEntityWithAgent();
+    await db
+      .insert(channelBindings)
+      .values({ entityId, agentId, channel: 'slack', credentials: 'enc:v1:x', enabled: false });
+    const { outbound } = await computeAgentToolOrigins(agentId, entityId, db, {
+      hasDeliveryRecipient: true,
+    });
+    expect(outbound).toEqual([]);
+  });
+
+  it('names a connector and an MCP server as what lends their tools', async () => {
+    const { entityId, agentId } = await seedEntityWithAgent();
+    const [conn] = await db
+      .insert(connectors)
+      .values({ entityId, name: 'Mail', slug: 'gmail' })
+      .returning();
+    await db
+      .insert(agentConnectorAssignments)
+      .values({ entityId, agentId, connectorId: conn!.id, enabledOperations: null });
+    const [srv] = await db
+      .insert(mcpServers)
+      .values({
+        entityId,
+        name: 'Printer',
+        slug: 'printer',
+        transport: 'http',
+        url: 'http://x',
+        availableTools: [{ name: 'print' }],
+      })
+      .returning();
+    await db.insert(agentMcpServers).values({ entityId, agentId, mcpServerId: srv!.id });
+
+    const { names, outbound } = await computeAgentToolOrigins(agentId, entityId, db, {
+      hasDeliveryRecipient: false,
+    });
+    expect(outbound).toContainEqual({ tool: 'printer__print', origin: 'mcp', via: 'printer' });
+    const viaGmail = outbound.filter((o) => o.via === 'gmail');
+    expect(viaGmail.length).toBeGreaterThan(0);
+    expect(viaGmail.every((o) => o.origin === 'connector' && names.has(o.tool))).toBe(true);
+  });
+
+  it('an agent with neither channel, connector nor MCP server reaches nothing outside', async () => {
+    const { entityId, agentId } = await seedEntityWithAgent();
+    const { names, outbound } = await computeAgentToolOrigins(agentId, entityId, db, {
+      hasDeliveryRecipient: true,
+    });
+    expect(outbound).toEqual([]);
+    expect(names).toEqual(
+      await computeAgentToolNames(agentId, entityId, db, { hasDeliveryRecipient: true }),
+    );
   });
 });

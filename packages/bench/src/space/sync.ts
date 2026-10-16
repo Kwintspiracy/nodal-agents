@@ -38,6 +38,7 @@ import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { assertSpaceCannotSend } from './guard';
 import {
   BENCH_SPACE_NAME,
   BENCH_SPACE_SLUG,
@@ -874,6 +875,10 @@ export async function applySync(db: AnyDrizzleDb, plan: SyncPlan, desired: Desir
           set: { value: String(s['value']), updatedAt: new Date() },
         });
     }
+
+    // La copie GARANTIT le contrôle d'avant essai : si l'espace écrit pouvait
+    // parler au monde, rien n'est écrit (la transaction est annulée).
+    await assertSpaceCannotSend(t, spaceId);
   });
 
   // Les fichiers, une fois la base écrite : un échec ici se dit, et la
