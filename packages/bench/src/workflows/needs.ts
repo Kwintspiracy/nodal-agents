@@ -14,6 +14,7 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { NEED_IDS, type Need, type ScenarioEnv } from './types';
 
 export { NEED_IDS, type Need };
@@ -88,7 +89,11 @@ export function isMailSender(toolName: string): boolean {
   );
 }
 
-/** Les verbes qui font sortir quelque chose de la machine, mot entier d'un nom d'outil. */
+/**
+ * Les verbes qui font sortir quelque chose de la machine. Leur forme d'ACTION
+ * (base, -s, -es, -ing, e final tombé) compte ; un participe (posted, shared,
+ * sent) décrit une chose (`published_at`, `sent_items`), il n'agit pas.
+ */
 const OUTBOUND_BASES = [
   'send',
   'post',
@@ -102,21 +107,41 @@ const OUTBOUND_BASES = [
   'upload',
   'dm',
 ];
-
-/**
- * Les formes d'un verbe anglais, dérivées d'UNE règle pour tous : la base, -s,
- * -es, -ed, -d, -ing (le e final tombé : sharing), et y → ies / ied (replies,
- * notified). Les irréguliers qu'aucune règle ne donne sont listés à part.
- */
-function inflections(base: string): string[] {
-  const forms = [base, `${base}s`, `${base}es`, `${base}ed`, `${base}d`, `${base}ing`];
+function actionForms(base: string): string[] {
+  const forms = [base, `${base}s`, `${base}es`, `${base}ing`];
   if (base.endsWith('e')) forms.push(`${base.slice(0, -1)}ing`);
-  if (base.endsWith('y')) forms.push(`${base.slice(0, -1)}ies`, `${base.slice(0, -1)}ied`);
+  if (base.endsWith('y')) forms.push(`${base.slice(0, -1)}ies`);
   return forms;
 }
-const IRREGULAR_OUTBOUND = ['sent'];
-const OUTBOUND_VERBS = new Set([...OUTBOUND_BASES.flatMap(inflections), ...IRREGULAR_OUTBOUND]);
-/** Les services de messagerie : un outil qui les vise peut écrire à quelqu'un, quel que soit son verbe. */
+const OUTBOUND_ACTIONS = new Set(OUTBOUND_BASES.flatMap(actionForms));
+
+/** Les verbes qui LISENT : en position d'action, l'outil est une lecture. */
+const READ_VERBS = new Set([
+  'get',
+  'list',
+  'read',
+  'search',
+  'fetch',
+  'find',
+  'query',
+  'describe',
+  'count',
+  'watch',
+  'show',
+  'view',
+  'lookup',
+  'check',
+  'download',
+  'export',
+  'retrieve',
+  'browse',
+  'peek',
+  'preview',
+  'inspect',
+  'poll',
+]);
+
+/** Les services de messagerie et de courrier : un outil qui les vise peut écrire à quelqu'un. */
 const CHANNEL_SERVICES = new Set([
   'telegram',
   'slack',
@@ -136,41 +161,63 @@ const CHANNEL_SERVICES = new Set([
   'facebook',
   'instagram',
   'reddit',
+  'smtp',
+  'gmail',
+  'outlook',
+  'mail',
+  'email',
 ]);
-/**
- * Les outils INTERNES du produit que leur nom ferait prendre pour des envois :
- * la liste courte et explicite, comparée au nom ENTIER. Un outil de connecteur
- * ou de serveur MCP (`slack__file_upload`) ou d'une CLI (`cli:…`) n'en est
- * jamais un, même si son dernier segment leur ressemble (revue Reviewer A,
- * passe 4). `dashboard_publish` publie sur le tableau de bord Nodal du
- * propriétaire, sans message ni sortie de la machine.
- */
-const INTERNAL_TOOLS =
-  /^(return_result|dashboard_publish|file_[a-z_]+|workspace_[a-z_]+|xlsx_[a-z_]+|docx_[a-z_]+|pptx_[a-z_]+)$/;
 
 /**
- * Un outil qui peut faire sortir quelque chose vers quelqu'un : un courrier
- * (`isMailSender`), un nom qui porte un verbe sortant (`send`, `post`,
- * `publish`, `share`, `forward`, `reply`, `notify`, `tweet`, `upload`…), qui
- * COMMENCE par « message » (`message_user`), ou qui vise un service de
- * messagerie (`slack__list_channels` compris). Fermé par défaut : un faux
- * rouge vaut mieux qu'un faux vert ; seuls les outils internes de la liste
- * courte en sont exemptés.
+ * Les outils INTERNES : les noms EXACTS du registre des outils du produit
+ * (`registerBuiltins`, @nodal-agents/tools), lus dans le registre lui-même,
+ * jamais recopiés. Tout autre nom — opération de connecteur adaptateur
+ * (`drive_upload_file`, un seul « _ »), outil MCP (`x__y`), outil de CLI
+ * (`cli:…`) — n'est pas interne (revue Reviewer A de #756, passe 5).
+ */
+let internalTools: ReadonlySet<string> | null = null;
+function isInternalTool(toolName: string): boolean {
+  if (internalTools === null) {
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    internalTools = new Set(registry.list().map((t) => t.name));
+  }
+  return internalTools.has(toolName);
+}
+
+/**
+ * Un outil appelé pendant l'essai qui a pu faire sortir quelque chose vers
+ * quelqu'un. Décidé par le verbe d'ACTION, à sa POSITION : le premier mot du
+ * nom, ou le second quand le premier est un préfixe de service (`gmail_`,
+ * `chat_postMessage`, `drive_upload_file`) :
+ *   1. un outil interne du produit (nom exact du registre) n'envoie pas ;
+ *   2. un verbe de lecture en position d'action : une lecture (`list_posts`,
+ *      `get_posted_at`, `slack__list_channels`) ;
+ *   3. un verbe sortant en forme d'action, en position d'action (`send_message`,
+ *      `chat_postMessage`, `file_upload`) : un envoi ;
+ *   4. sinon, fermé par défaut : un verbe sortant en forme d'action ailleurs
+ *      dans le nom, préfixe compris (`blog__create_posts`, `notify__push`), un
+ *      nom qui commence par « message », ou un service de messagerie ou de
+ *      courrier (`telegram__chat`, `smtp_relay`) : un envoi.
+ * Un faux rouge vaut mieux qu'un faux vert.
  *
- * Toujours une lecture de NOMS (revue Reviewer A de #756, passe 3) : la vraie
+ * Toujours une lecture de NOMS (revue Reviewer A, passes 3 à 5) : la vraie
  * prévention est un espace « banc » sans canal (décision du propriétaire,
  * b1). Jusque-là, un essai sur les agents du propriétaire PEUT encore lui
  * envoyer un message ; le banc ne fait que le signaler après coup.
  */
 export function isOutboundTool(toolName: string): boolean {
-  // Interne seulement s'il s'agit d'un outil du produit lui-même, nommé en entier.
-  const ownTool = !toolName.includes('__') && !toolName.startsWith('cli:');
-  if (ownTool && INTERNAL_TOOLS.test(toolName)) return false;
+  if (isInternalTool(toolName)) return false;
   const bare = toolName.replace(/^cli:/, '').split('__').pop() ?? toolName;
-  if (isMailSender(toolName)) return true;
-  const w = words(toolName);
-  if (w.some((x) => OUTBOUND_VERBS.has(x) || CHANNEL_SERVICES.has(x))) return true;
-  return words(bare)[0] === 'message';
+  const own = words(bare);
+  const isVerb = (x: string | undefined): boolean =>
+    x !== undefined && (READ_VERBS.has(x) || OUTBOUND_ACTIONS.has(x));
+  const action = isVerb(own[0]) ? own[0] : isVerb(own[1]) ? own[1] : undefined;
+  if (action !== undefined && READ_VERBS.has(action)) return false;
+  if (action !== undefined && OUTBOUND_ACTIONS.has(action)) return true;
+  const all = words(toolName);
+  if (all.some((x) => OUTBOUND_ACTIONS.has(x) || CHANNEL_SERVICES.has(x))) return true;
+  return own[0] === 'message';
 }
 
 /** Pourquoi le besoin manque, ou null quand il est là. */

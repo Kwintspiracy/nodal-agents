@@ -322,22 +322,31 @@ scenario is skipped with that reason, no job is started (needs
   that names an explicit recipient is red. Today only `comfyui-telegram` (an
   image to the owner's Telegram, 10+ minutes of GPU) declares `owner`.
 - Under `nothing` the judge fails CLOSED: a reply delivered to a channel, a
-  send tool of the product, and ANY tool whose name carries an outbound verb
-  (`send`, `post`, `publish`, `share`, `forward`, `reply`, `notify`, `tweet`,
-  `upload`…), starts with "message" or targets a messaging service
-  (`mcp-telegram__send_message`, `slack__chat_postMessage`,
-  `discord__sendMessage`, `whatsapp__sendText`, `slack__list_channels`) makes
-  the trial red, naming the tool, whatever the scenario's own judge says. Only
-  a short explicit list of the product's OWN tools is exempt, matched on the
-  full name (`return_result`, `dashboard_publish`, `file_*`, `workspace_*`,
-  `xlsx_*`, `docx_*`, `pptx_*`): a connector or MCP tool (`slack__file_upload`)
-  or a CLI tool (`cli:…`) never is. Verb forms come from one rule for every
-  verb (posts, shared, replies, uploading; `sent` listed apart).
-  A false red is preferred to a false green (a local upload to ComfyUI would
-  be one). **This is still a reading of names, and it reports after the fact.**
-  The real prevention is a bench workspace without channels (owner decision
-  b1); until then a trial on the owner's agents CAN still send him a message,
-  and the bench only says so afterwards.
+  send tool of the product, or any tool that may have sent something makes the
+  trial red, naming the tool, whatever the scenario's own judge says. A tool
+  is decided by its ACTION verb, at its position (the first word of its name,
+  or the second after a service prefix: `gmail_send_email`,
+  `chat_postMessage`, `drive_upload_file`):
+  - a product tool (exact name in the product's tool registry,
+    `registerBuiltins`, read from the registry itself) never sends; a
+    connector op (`file_upload`, one underscore), an MCP tool (`x__y`) or a CLI
+    tool (`cli:…`) is never internal;
+  - a read verb in action position is a read (`list_posts`, `get_posted_at`,
+    `slack__list_channels`, `gmail_get_message`);
+  - an outbound verb in action form (send, post, publish, share, forward,
+    reply, notify, tweet, upload… as base, -s, -es or -ing) in action position
+    is a send (`mcp-telegram__send_message`, `discord__sendMessage`,
+    `slack__file_upload`);
+  - otherwise, closed: an outbound verb in action form anywhere in the name
+    (`blog__create_posts`, `notify__push`), a name starting with "message", or
+    a messaging or mail service (`telegram__chat`, `smtp_relay`) is a send. A
+    participle describes a thing and does not act (`published_at`,
+    `sent_items`, `shared_with_me` stay green).
+  A false red is preferred to a false green (a local upload to ComfyUI would be
+  one). **This is still a reading of names, and it reports after the fact.** The
+  real prevention is a bench workspace without channels (owner decision b1);
+  until then a trial on the owner's agents CAN still send him a message, and
+  the bench only says so afterwards.
 - The real `research` trial of 30/09 called `telegram_send_message` from the
   delegate: a message reached the owner during a bench trial. Its judge said
   green; the declared destination (`nothing`) now makes such a run red.

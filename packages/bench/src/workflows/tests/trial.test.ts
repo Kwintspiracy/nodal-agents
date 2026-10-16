@@ -359,8 +359,6 @@ describe('where a trial may send', () => {
     'whatsapp__sendText',
     'twitter__tweet',
     'notify__push',
-    'slack__list_channels',
-    'message_conversation_run',
     // Passe 4 (P1) : un connecteur dont le dernier segment ressemble à un outil
     // interne du produit n'est PAS interne.
     'slack__file_upload',
@@ -373,7 +371,14 @@ describe('where a trial may send', () => {
     'mail_tool__replied_to',
     'cms__publishes',
     'gallery__uploading_images',
-    'queue__sent_items',
+    // Passe 5 (P3) : une opération de connecteur adaptateur (un seul « _ ») n'est
+    // jamais interne, même nommée comme un outil du produit.
+    'file_upload',
+    'gmail_send_email',
+    'drive_upload_file',
+    // Pas de verbe d'action, mais un service de messagerie ou de courrier : fermé par défaut.
+    'telegram__chat',
+    'smtp_relay',
   ])('under sends: nothing, %s makes the trial red, named', async (tool) => {
     const green = load('question-green');
     const sent: TreeFacts = {
@@ -387,6 +392,33 @@ describe('where a trial may send', () => {
     const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
     expect(line.verdict).toBe('red');
     expect(line.reasons).toEqual([`an outbound tool was called (${tool})`]);
+  });
+
+  // Revue Reviewer A, passe 5 (P2) : le verbe d'ACTION décide, par sa position
+  // (le premier mot après un préfixe de service), pas n'importe quel mot. Un
+  // outil qui LIT reste vert, même si un mot de son nom est une forme d'envoi.
+  it.each([
+    'get_posted_at',
+    'list_shared_drives',
+    'shared_with_me',
+    'list_posts',
+    'published_at',
+    'queue__sent_items',
+    'drive__shared_with_me',
+    'slack__list_channels',
+    'gmail_list_messages',
+    'gmail_get_message',
+    'blog__search_posts',
+    'telegram__get_updates',
+  ])('under sends: nothing, the read %s stays green', async (tool) => {
+    const green = load('question-green');
+    const read: TreeFacts = {
+      ...green,
+      toolCalls: [{ jobId: green.rootId, toolName: tool, input: '{}', output: '{}', createdMs: 0 }],
+    };
+    const w = world({ rootId: green.rootId, snapshots: [read] });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.reasons).toEqual([]);
   });
 
   it('internal tools stay quiet: files, office documents, the dashboard, return_result', async () => {
@@ -404,6 +436,9 @@ describe('where a trial may send', () => {
         'web_search',
         'run_command',
         'postgres__query',
+        // Un message passé à du travail EN COURS de la même conversation : interne.
+        // S'il en résulte une réponse sur un canal, c'est une livraison (job_deliveries), lue à part.
+        'message_conversation_run',
       ].map((toolName) => ({
         jobId: green.rootId,
         toolName,
