@@ -19,6 +19,7 @@ import {
 } from '../lib/postgres.ts';
 import {
   probeEmbeddedPostgres,
+  hydrateEmbeddedPostgres,
   loadPlatformBinaries,
   EmbeddedPostgresUnavailableError,
 } from '../lib/embedded-postgres-binaries.ts';
@@ -183,7 +184,14 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // couches plus bas, sans jamais nommer la porte `allowScripts` des npm
   // récents ni la commande qui la lève. Le détail du constat est dans
   // lib/embedded-postgres-binaries.ts.
-  const binaries = await probeEmbeddedPostgres();
+  let binaries = await probeEmbeddedPostgres();
+  // npm 11.17+ no longer runs install scripts unapproved: the library links the
+  // package's postinstall would create are created here instead, then the
+  // install is read again (0.9.7, lib/embedded-postgres-binaries.ts).
+  if (!binaries.ok && binaries.reason === 'HYDRATION_SKIPPED') {
+    await hydrateEmbeddedPostgres();
+    binaries = await probeEmbeddedPostgres();
+  }
   if (!binaries.ok) {
     throw new EmbeddedPostgresUnavailableError(binaries.reason, binaries.message);
   }
