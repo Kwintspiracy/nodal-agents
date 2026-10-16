@@ -1,6 +1,6 @@
 // bootstrap/seed-llm-key.ts — Brique 24 / Brique 25
 //
-// On runner startup, if the single local entity has zero entity_llm_keys rows
+// On runner startup, if the single local workspace has zero entity_llm_keys rows
 // AND LLM_PROVIDER + LLM_MODEL are configured in env, seed a default row from
 // env so existing agents (which were created against the env-based singleton)
 // continue to work without manual setup.
@@ -26,11 +26,26 @@
 //
 // Guard logic (Brique 25):
 //   - bearer-token mode: skip (multi-tenant, admins manage keys via UI)
-//   - exactly 1 entity in DB → seed for that entity (works for both
-//     local-trust and single-user local-auth installs like Quentin's)
-//   - >1 entities → skip (future multi-user installs, avoid wrong-entity seeding)
+//   - exactly 1 workspace someone is a member of → seed for that one (works
+//     for both local-trust and single-user local-auth installs like Quentin's)
+//   - 0 or >1 such workspaces → skip (first boot before sign-up; several
+//     workspaces, where the env key belongs to no one in particular)
+//
+// "A workspace someone is a member of" (`listMemberWorkspaces`), not "an
+// entity": the env key is the install owner's, and an entity no person is a
+// member of — a team copy driven by a tool, which never shows in the
+// dashboard — is nobody's. Counting every entity made such a copy switch the
+// seed off for the owner's own workspace.
 
-import { count, eq, isNull, and, entityLlmKeys, agents, entities } from '@nodal-agents/db';
+import {
+  count,
+  eq,
+  isNull,
+  and,
+  entityLlmKeys,
+  agents,
+  listMemberWorkspaces,
+} from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { encrypt, last4 } from '@nodal-agents/secrets';
 import type { RunnerEnv } from '../env.ts';
@@ -45,19 +60,14 @@ export async function seedDefaultLlmKey(db: AnyDrizzleDb, env: RunnerEnv): Promi
   // still sees `string`, not `string | undefined`.
   const llmProvider = env.LLM_PROVIDER;
 
-  // Resolve target entity: must be exactly 1 in DB.
-  // - local-trust: LOCAL_ENTITY_ID is the sole entity → always exactly 1
-  // - local-auth single-user: exactly 1 entity after first sign-up → seeds
-  // - local-auth multi-user (future): >1 entities → skip to avoid wrong seeding
-  const [entityCountRow] = await db.select({ n: count() }).from(entities);
-  const entityCount = entityCountRow?.n ?? 0;
+  // Resolve target workspace: exactly 1 that someone is a member of.
+  // - local-trust: LOCAL_ENTITY_ID, its member seeded by seedLocalUser
+  // - local-auth single-user: the workspace the sign-up hook created → seeds
+  // - several workspaces (dashboard-created, or multi-user): skip, no guess
+  const workspaces = await listMemberWorkspaces(db);
+  if (workspaces.length !== 1) return; // 0 (first boot before sign-up) or >1
 
-  if (entityCount !== 1) return; // 0 entities (first boot before sign-up) or >1
-
-  const [entityRow] = await db.select({ id: entities.id }).from(entities).limit(1);
-  if (!entityRow) return;
-
-  const targetEntityId = entityRow.id;
+  const targetEntityId = workspaces[0]!.id;
 
   const [keyCountRow] = await db
     .select({ n: count() })

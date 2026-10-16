@@ -128,3 +128,47 @@ describe('claimOwnerAccount — ambiguous install', () => {
     expect(rows).toHaveLength(0);
   });
 });
+
+describe('getSession — the default workspace of a member of several @cap:se-connecter/moteur', () => {
+  it('is the oldest workspace, whatever order the memberships were written in', async () => {
+    // The dashboard lets one person own several workspaces. With no
+    // active-workspace cookie, the session falls back to a default: it was
+    // `rows[0]` of an unordered query, so whichever row Postgres returned.
+    const freshDb = (await spinUpAuthTestDb()).db;
+    const freshProvider = makeProvider(freshDb);
+    await seedLocalUser(freshDb);
+    // An OLDER workspace whose membership is written AFTER the seeded one: an
+    // unordered read returns the seeded membership first.
+    const [older] = await freshDb
+      .insert(schema.entities)
+      .values({
+        userId: LOCAL_USER_ID,
+        name: 'Older',
+        slug: 'older-workspace',
+        createdAt: new Date('2020-01-01'),
+      })
+      .returning();
+    await freshDb
+      .insert(schema.entityMembers)
+      .values({ entityId: older!.id, userId: LOCAL_USER_ID, role: 'owner' });
+
+    await freshProvider.claimOwnerAccount({
+      email: 'owner@example.com',
+      password: 'long-enough-pass',
+    });
+    const signIn = await freshProvider.handleAuthRequest(
+      new Request(`${BASE}/api/auth/sign-in/email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: BASE },
+        body: JSON.stringify({ email: 'owner@example.com', password: 'long-enough-pass' }),
+      }),
+    );
+    const cookie = (signIn!.headers.get('set-cookie') ?? '').split(';')[0]!;
+    expect(cookie).toContain('better-auth');
+
+    const session = await freshProvider.getSession(
+      new Request(`${BASE}/`, { headers: { cookie } }),
+    );
+    expect(session).toEqual({ userId: LOCAL_USER_ID, entityId: older!.id });
+  });
+});
