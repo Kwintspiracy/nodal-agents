@@ -110,6 +110,19 @@ export const META_TOOL_BY_GRANT = {
   manageSchedules: ['create_schedule', 'update_schedule', 'toggle_schedule', 'run_schedule'],
 } as const;
 
+/**
+ * The grants whose tools bring a NEW way out of Nodal into a workspace: a
+ * connector (a third-party service) or an MCP server, created or attached to
+ * an agent. A workspace that must be able to send nothing (the bench space)
+ * turns exactly these off, and its pre-trial check refuses any of them.
+ */
+export const OUTWARD_GRANTS = [
+  'createConnector',
+  'attachConnector',
+  'createMcp',
+  'attachMcp',
+] as const satisfies ReadonlyArray<keyof typeof META_TOOL_BY_GRANT>;
+
 export const META_TOOL_NAMES = [
   'create_agent',
   'update_agent',

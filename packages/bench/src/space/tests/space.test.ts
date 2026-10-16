@@ -16,7 +16,10 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import * as d from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
-import { assertSpaceCannotSend, checkSpaceCannotSend } from '../guard';
+import { DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
+import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import type { ToolContext } from '@nodal-agents/tools';
+import { CHECK_SCOPE, assertSpaceCannotSend, checkSpaceCannotSend, renderCheck } from '../guard';
 import { applySpaceModel } from '../model';
 import { resetSpaceMemory } from '../reset';
 import { BENCH_SPACE_SLUG, copyIdFor, spaceIdFor } from '../space';
@@ -60,7 +63,7 @@ async function seedTeam(t: AnyDrizzleDb, p: Pg, wsRoot: string) {
       goal: 'ship things',
       reflectionEnabled: true,
       maxRunCostUsd: 0,
-      rootGrants: { create_agent: true },
+      rootGrants: DEFAULT_ROOT_GRANTS,
     })
     .returning();
   const entityId = ent!.id;
@@ -208,6 +211,9 @@ async function seedTeam(t: AnyDrizzleDb, p: Pg, wsRoot: string) {
   mkdirSync(join(skillDir, 'scripts'), { recursive: true });
   writeFileSync(join(skillDir, 'SKILL.md'), '# House style\n');
   writeFileSync(join(skillDir, 'scripts', 'check.js'), 'console.log(1)\n');
+  const devDir = join(wsRoot, entityId, 'skills', 'dev');
+  mkdirSync(devDir, { recursive: true });
+  writeFileSync(join(devDir, 'notes.md'), 'dev notes of the team\n');
 
   return {
     userId: user!.id,
@@ -311,7 +317,10 @@ describe('sync — le plan, sans rien écrire', () => {
       ].sort(),
     );
     expect(plan.changes.every((c) => c.kind === 'create')).toBe(true);
-    expect(plan.files).toEqual([{ skillSlug: 'house-style', kind: 'create', files: 2 }]);
+    expect(plan.files).toEqual([
+      { skillSlug: 'dev', kind: 'create', files: 1 },
+      { skillSlug: 'house-style', kind: 'create', files: 2 },
+    ]);
     expect(plan.referencedSystemSkills).toEqual(['dev']);
     expect(plan.notCopied.sort()).toEqual(
       [
@@ -364,7 +373,13 @@ describe("sync --apply — l'espace", () => {
       userId: team.userId,
       goal: 'ship things',
       rootAgentId: cp('agents', team.rootAgent.id),
-      rootGrants: { create_agent: true },
+      rootGrants: {
+        ...DEFAULT_ROOT_GRANTS,
+        createConnector: false,
+        attachConnector: false,
+        createMcp: false,
+        attachMcp: false,
+      },
       reflectionEnabled: false,
       maxRunCostUsd: 1.5,
       mcpServerEnabled: true,
@@ -703,7 +718,11 @@ describe("avant chaque essai : l'équipe du banc ne peut rien envoyer hors de No
 
   it("une équipe copiée telle que la synchronisation l'écrit passe", async () => {
     await sync();
-    expect(await checkSpaceCannotSend(db)).toEqual({ ok: true, findings: [] });
+    expect(await checkSpaceCannotSend(db)).toEqual({
+      ok: true,
+      findings: [],
+      notCovered: ["agent coder (claude-code): runs outside Nodal's tool list"],
+    });
     await expect(assertSpaceCannotSend(db)).resolves.toBeUndefined();
     // Le propriétaire, lui, a de quoi envoyer : la règle n'est pas aveugle.
     const owner = await checkSpaceCannotSend(db, team.entityId);
@@ -721,7 +740,7 @@ describe("avant chaque essai : l'équipe du banc ne peut rien envoyer hors de No
     expect(r.findings).toContain('discord channel bound to agent alfred');
     expect(
       r.findings.some((f) =>
-        f.startsWith('agent alfred can send outside Nodal through discord binding (channel): '),
+        f.startsWith('agent alfred reaches outside Nodal through discord binding (channel): '),
       ),
     ).toBe(true);
     await expect(assertSpaceCannotSend(db)).rejects.toThrow(
@@ -761,11 +780,11 @@ describe("avant chaque essai : l'équipe du banc ne peut rien envoyer hors de No
     expect(r.ok).toBe(false);
     expect(
       r.findings.some((f) =>
-        f.startsWith('agent writer can send outside Nodal through gmail (connector): '),
+        f.startsWith('agent writer reaches outside Nodal through gmail (connector): '),
       ),
     ).toBe(true);
     expect(r.findings).toContain(
-      'agent coder can send outside Nodal through printer (mcp): printer__print',
+      'agent coder reaches outside Nodal through printer (mcp): printer__print',
     );
   });
 
@@ -788,5 +807,77 @@ describe("avant chaque essai : l'équipe du banc ne peut rien envoyer hors de No
       .from(d.agents)
       .where(d.eq(d.agents.id, copy(team.worker.id)));
     expect(w!.personality).toBe('You write.');
+  });
+
+  it("le racine copié n'a aucun droit qui fasse entrer un connecteur ou un serveur MCP", async () => {
+    await sync();
+    const toolsOfRoot = await (
+      await import('@nodal-agents/orchestration')
+    ).computeAgentToolNames(copy(team.rootAgent.id) as never, space() as never, db, {
+      hasDeliveryRecipient: true,
+    });
+    for (const t of ['create_connector', 'attach_connector', 'create_mcp', 'attach_mcp']) {
+      expect(toolsOfRoot.has(t), t).toBe(false);
+    }
+    // Les autres droits du propriétaire passent : l'équipe reste la sienne.
+    expect(toolsOfRoot.has('create_skill')).toBe(true);
+    expect(toolsOfRoot.has('create_agent')).toBe(true);
+
+    // Qu'on en rallume un dans l'espace, et l'essai ne démarre plus.
+    await db
+      .update(d.entities)
+      .set({
+        rootGrants: {
+          ...DEFAULT_ROOT_GRANTS,
+          createMcp: false,
+          attachMcp: false,
+          createConnector: false,
+        },
+      })
+      .where(d.eq(d.entities.id, space()));
+    const r = await checkSpaceCannotSend(db);
+    expect(r.findings).toEqual([
+      'agent alfred reaches outside Nodal through attachConnector (grant): attach_connector, detach_connector',
+    ]);
+  });
+
+  it("dit ce qu'il ne couvre pas : la portée, et chaque agent en runtime CLI", async () => {
+    await sync();
+    const r = await checkSpaceCannotSend(db);
+    expect(r.ok).toBe(true);
+    expect(r.notCovered).toEqual(["agent coder (claude-code): runs outside Nodal's tool list"]);
+    const text = renderCheck(r);
+    expect(text).toContain(
+      'no channel, connector or MCP server is within reach, and none can be added',
+    );
+    expect(text).toContain(CHECK_SCOPE);
+    expect(CHECK_SCOPE).toContain('does not cover the shell and skill scripts');
+    expect(text).not.toMatch(/no tool can send/i);
+  });
+});
+
+describe("les fichiers d'une skill système suivent l'équipe", () => {
+  it("une copie lit, depuis le magasin de l'espace, le fichier qu'un agent du propriétaire y avait", async () => {
+    await sync();
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    const read = registry.get('skill_file_read')!;
+    const spaceId = spaceIdFor(team.entityId);
+    const ctx: ToolContext = {
+      jobId: '00000000-0000-0000-0000-000000000000',
+      agentId: copyIdFor(spaceId, 'agents', team.worker.id),
+      entityId: spaceId,
+      jobChatId: null,
+      db,
+      // Ce que le runner pose : le magasin de l'ESPACE du job.
+      skillStoreDir: join(root, spaceId, 'skills'),
+      assignedSkillSlugs: ['dev', 'house-style'],
+    };
+    const out = (await read.execute({ skill: 'dev', path: 'notes.md' }, ctx)) as {
+      ok: boolean;
+      content?: string;
+    };
+    expect(out.ok).toBe(true);
+    expect(out.content).toContain('dev notes of the team');
   });
 });

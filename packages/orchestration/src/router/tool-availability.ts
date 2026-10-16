@@ -33,6 +33,8 @@ import {
 import { TASK_TOOL_NAMES } from '../planner/task-tool-names';
 import {
   metaToolsForAgent,
+  META_TOOL_BY_GRANT,
+  OUTWARD_GRANTS,
   parseRootGrants,
   META_TOOL_NAMES,
   mcpToolPrefix,
@@ -100,13 +102,14 @@ export async function computeAgentToolNames(
 
 /**
  * A tool of the agent that reaches OUTSIDE Nodal, and through what: a channel
- * credential (the delivery tools), a connector (a third-party service), or an
- * MCP server.
+ * credential (the delivery tools), a connector (a third-party service), an MCP
+ * server, or a root grant whose meta-tool brings a new connector or MCP server
+ * in (`OUTWARD_GRANTS`).
  */
 export interface OutboundTool {
   tool: string;
-  origin: 'channel' | 'connector' | 'mcp';
-  /** What lends it: `telegram token`, `discord binding`, a connector or server slug. */
+  origin: 'channel' | 'connector' | 'mcp' | 'grant';
+  /** What lends it: `telegram token`, `discord binding`, a connector or server slug, a grant key. */
   via: string;
 }
 
@@ -239,10 +242,18 @@ export async function computeAgentToolOrigins(
     // Même retrait qu'execute.ts : sans `may_change_team`, les trois outils
     // d'équipe ne sont pas dans la liste (issue #137), donc un brief qui les
     // nomme doit être signalé comme visant un outil indisponible.
-    const metaNames = metaToolsForAgent(parseRootGrants(entityRow.rootGrants), {
+    const grants = parseRootGrants(entityRow.rootGrants);
+    const metaNames = metaToolsForAgent(grants, {
       mayChangeTeam: agentRow?.mayChangeTeam ?? false,
     });
     for (const n of metaNames) names.add(n);
+    for (const grant of OUTWARD_GRANTS) {
+      if (!grants[grant]) continue;
+      const lent: readonly string[] = [META_TOOL_BY_GRANT[grant]].flat();
+      for (const n of lent) {
+        if (metaNames.includes(n)) outbound.push({ tool: n, origin: 'grant', via: grant });
+      }
+    }
   }
 
   return { names, outbound };

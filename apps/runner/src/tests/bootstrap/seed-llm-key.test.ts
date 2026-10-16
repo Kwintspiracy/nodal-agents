@@ -10,7 +10,7 @@
 // sign-up hook, createWorkspaceAction): the tests give theirs one, like a
 // real install.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -22,7 +22,10 @@ import {
   decrypt,
   encrypt,
 } from '@nodal-agents/secrets';
-import { seedDefaultLlmKey } from '../../bootstrap/seed-llm-key.ts';
+import {
+  seedDefaultLlmKey,
+  _resetSeedLlmKeyWarningsForTests,
+} from '../../bootstrap/seed-llm-key.ts';
 import type { RunnerEnv } from '../../env.ts';
 
 // Inject a deterministic test master key so the seeder's encrypt() call doesn't
@@ -411,5 +414,70 @@ describe('seedDefaultLlmKey (Brique 25 guard)', () => {
       .from(entityLlmKeys)
       .where(eq(entityLlmKeys.entityId, entity.id));
     expect(afterCount?.n).toBe(1);
+  });
+
+  describe('a skipped seed is said, once', () => {
+    beforeEach(() => _resetSeedLlmKeyWarningsForTests());
+
+    async function warningsOf(run: () => Promise<void>): Promise<string[]> {
+      const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        await run();
+        return spy.mock.calls.map((c) => String(c[0]));
+      } finally {
+        spy.mockRestore();
+      }
+    }
+
+    it('a lone entity WITHOUT a member: no key, and the cause and the remedy are logged once', async () => {
+      // Before the member rule, one entity was enough to seed. An install whose
+      // only entity has no entity_members row would now lose its seed in silence.
+      const { db } = await spinUpTestDb();
+      const [user] = await db
+        .insert(users)
+        .values({ email: `lone-${Date.now()}@example.com` })
+        .returning();
+      await db
+        .insert(entities)
+        .values({ userId: user!.id, name: 'Lone', slug: `lone-${Date.now()}` });
+
+      const first = await warningsOf(() => seedDefaultLlmKey(db as TestDb, makeEnv('local-auth')));
+      expect(first).toHaveLength(1);
+      expect(first[0]).toMatch(
+        /^\[runner\] seed_llm_key_skipped: 1 workspace\(s\) exist but none has a member/,
+      );
+      expect(first[0]).toContain('seedLocalUser restores');
+      expect(first[0]).toContain('Settings > LLM keys');
+      const [keys] = await (db as TestDb).select({ n: count() }).from(entityLlmKeys);
+      expect(keys?.n).toBe(0);
+
+      // The cron retries every tick: said once per process, not every two minutes.
+      const again = await warningsOf(() => seedDefaultLlmKey(db as TestDb, makeEnv('local-auth')));
+      expect(again).toEqual([]);
+    });
+
+    it('a fresh install with no entity at all stays silent (first boot before sign-up)', async () => {
+      const { db } = await spinUpTestDb();
+      expect(
+        await warningsOf(() => seedDefaultLlmKey(db as TestDb, makeEnv('local-auth'))),
+      ).toEqual([]);
+    });
+
+    it('several member workspaces: said only when one of them has no key, naming it', async () => {
+      const { db } = await spinUpTestDb();
+      const [user] = await db
+        .insert(users)
+        .values({ email: `several-${Date.now()}@example.com` })
+        .returning();
+      const keyed = await memberWorkspace(db as TestDb, user!.id, 'Keyed');
+      await memberWorkspace(db as TestDb, user!.id, 'Keyless');
+      await db.insert(entityLlmKeys).values({ entityId: keyed, provider: 'openai-compatible' });
+
+      const w = await warningsOf(() => seedDefaultLlmKey(db as TestDb, makeEnv('local-auth')));
+      expect(w).toHaveLength(1);
+      expect(w[0]).toContain('2 workspaces have a member');
+      expect(w[0]).toContain('Keyless has no key');
+      expect(w[0]).not.toContain('Keyed,');
+    });
   });
 });

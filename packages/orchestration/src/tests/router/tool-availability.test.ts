@@ -28,6 +28,7 @@ import {
   computeAgentToolOrigins,
   findUnavailableToolMentions,
 } from '../../router/tool-availability';
+import { DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
 import type { AgentId, EntityId } from '../../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 
@@ -303,5 +304,43 @@ describe('computeAgentToolOrigins — what reaches outside Nodal, and through wh
     expect(names).toEqual(
       await computeAgentToolNames(agentId, entityId, db, { hasDeliveryRecipient: true }),
     );
+  });
+
+  it('a root grant that creates or attaches a connector or MCP server is named as a way out', async () => {
+    const { entityId, agentId } = await seedEntityWithAgent();
+    await db
+      .update(entities)
+      .set({ rootAgentId: agentId, rootGrants: DEFAULT_ROOT_GRANTS })
+      .where(eq(entities.id, entityId));
+    const { outbound } = await computeAgentToolOrigins(agentId, entityId, db, {
+      hasDeliveryRecipient: false,
+    });
+    expect(outbound.filter((o) => o.origin === 'grant')).toEqual([
+      { tool: 'create_connector', origin: 'grant', via: 'createConnector' },
+      { tool: 'attach_connector', origin: 'grant', via: 'attachConnector' },
+      { tool: 'detach_connector', origin: 'grant', via: 'attachConnector' },
+      { tool: 'create_mcp', origin: 'grant', via: 'createMcp' },
+      { tool: 'attach_mcp', origin: 'grant', via: 'attachMcp' },
+      { tool: 'detach_mcp', origin: 'grant', via: 'attachMcp' },
+    ]);
+
+    // The same root, those four grants off: the other meta-tools stay, no way out.
+    await db
+      .update(entities)
+      .set({
+        rootGrants: {
+          ...DEFAULT_ROOT_GRANTS,
+          createConnector: false,
+          attachConnector: false,
+          createMcp: false,
+          attachMcp: false,
+        },
+      })
+      .where(eq(entities.id, entityId));
+    const after = await computeAgentToolOrigins(agentId, entityId, db, {
+      hasDeliveryRecipient: false,
+    });
+    expect(after.outbound).toEqual([]);
+    expect(after.names.has('create_skill')).toBe(true);
   });
 });

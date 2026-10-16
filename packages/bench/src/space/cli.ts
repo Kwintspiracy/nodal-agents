@@ -6,13 +6,14 @@
 //   pnpm bench:space sync --source <entityId>   l'équipe copiée, quand il y a plusieurs espaces
 //   pnpm bench:space reset                      combien de souvenirs l'espace porte
 //   pnpm bench:space reset --apply              les efface
-//   pnpm bench:space check                      l'équipe du banc peut-elle envoyer hors de Nodal ?
-//                                               (code 1 si oui : le contrôle d'avant essai)
+//   pnpm bench:space check                      le contrôle d'avant essai : canaux, connecteurs,
+//                                               serveurs MCP (code 1 si l'un est à portée) ;
+//                                               il dit aussi ce qu'il ne couvre pas
 //
 // Sans `--apply`, rien n'est écrit : on lit le plan d'abord, toujours.
 
 import { openStackDb } from '../workflows/stack';
-import { checkSpaceCannotSend } from './guard';
+import { checkSpaceCannotSend, renderCheck } from './guard';
 import { resetSpaceMemory } from './reset';
 import { applySync, planSync, renderPlan } from './sync';
 
@@ -58,13 +59,8 @@ async function main(): Promise<void> {
     }
     if (command === 'check') {
       const c = await checkSpaceCannotSend(db);
-      if (c.ok) {
-        console.log('Bench space: no tool can send outside Nodal, no channel is bound.');
-        return;
-      }
-      console.log('Bench space can reach outside Nodal; a trial would not start:');
-      for (const f of c.findings) console.log(`  - ${f}`);
-      process.exitCode = 1;
+      console.log(renderCheck(c));
+      if (!c.ok) process.exitCode = 1;
       return;
     }
     const r = await resetSpaceMemory(db, { apply });

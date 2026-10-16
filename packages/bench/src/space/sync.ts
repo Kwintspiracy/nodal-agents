@@ -23,11 +23,12 @@
 // sans jamais le déchiffrer, et le plan ne l'imprime pas (ni lui, ni ses
 // quatre derniers caractères) — seulement le fournisseur et le surnom.
 //
-// L'ESPACE SE RÈGLE LUI-MÊME sur trois points : la réflexion est COUPÉE (le
+// L'ESPACE SE RÈGLE LUI-MÊME sur quatre points : la réflexion est COUPÉE (le
 // banc mesure une équipe, il ne la fait pas apprendre), le coût d'un run est
-// plafonné, et le serveur MCP de l'espace est ouvert (c'est par `run_task` que
-// le banc le pilotera ; il n'est servi qu'à un client qui épingle un de ses
-// agents).
+// plafonné, le racine perd les droits qui font entrer un connecteur ou un
+// serveur MCP (`OUTWARD_GRANTS`), et le serveur MCP de l'espace est ouvert
+// (c'est par `run_task` que le banc le pilotera ; il n'est servi qu'à un
+// client qui épingle un de ses agents).
 //
 // TOUTE COLONNE EST CLASSÉE. Chaque table copiée a sa politique colonne par
 // colonne ; un test exige que la politique couvre exactement les colonnes du
@@ -38,6 +39,7 @@ import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { OUTWARD_GRANTS, parseRootGrants } from '@nodal-agents/shared';
 import { assertSpaceCannotSend } from './guard';
 import {
   BENCH_SPACE_NAME,
@@ -72,7 +74,7 @@ export const ENTITY_POLICY = {
   timezone: 'copy',
   mcpToken: 'own',
   rootAgentId: 'map',
-  rootGrants: 'copy',
+  rootGrants: 'set',
   createdAt: 'own',
   updatedAt: 'own',
   lastCuratorRunAt: 'own',
@@ -231,8 +233,24 @@ function project(policy: Record<string, ColumnPolicy>, source: Row, fixed: Row):
   return out;
 }
 
+/**
+ * Deux valeurs de colonne égales ? Les clés d'un objet sont triées : Postgres
+ * range celles d'un `jsonb` à sa façon, et un ordre différent n'est pas un
+ * changement.
+ */
 function same(a: unknown, b: unknown): boolean {
-  const norm = (v: unknown): unknown => (v instanceof Date ? v.toISOString() : (v ?? null));
+  const norm = (v: unknown): unknown => {
+    if (v instanceof Date) return v.toISOString();
+    if (Array.isArray(v)) return v.map(norm);
+    if (v !== null && typeof v === 'object') {
+      return Object.fromEntries(
+        Object.keys(v)
+          .sort()
+          .map((k) => [k, norm((v as Record<string, unknown>)[k])]),
+      );
+    }
+    return v ?? null;
+  };
   return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
 }
 
@@ -457,6 +475,13 @@ export async function planSync(
     name: BENCH_SPACE_NAME,
     slug: BENCH_SPACE_SLUG,
     rootAgentId,
+    // Les droits du racine, SAUF ceux qui font entrer un connecteur ou un
+    // serveur MCP (`OUTWARD_GRANTS`) : pendant un essai, l'équipe ne peut pas
+    // s'ouvrir un chemin vers le monde.
+    rootGrants: {
+      ...parseRootGrants(src.rootGrants),
+      ...Object.fromEntries(OUTWARD_GRANTS.map((g) => [g, false])),
+    },
     reflectionEnabled: false,
     mcpServerEnabled: true,
     maxRunCostUsd: cap,
@@ -648,11 +673,18 @@ export async function planSync(
       changes.push({ table: 'entity_settings', kind: 'delete', label: h.key });
   }
 
-  // ── Les fichiers des skills copiées ──
+  // ── Les fichiers des skills que l'équipe tient ──
+  // Le magasin de skills est PAR ESPACE et par slug : un job lit
+  // `skillStoreDir(<espace du job>)/<slug>`, quelle que soit l'entité qui porte
+  // la ligne de la skill (apps/runner/src/skills/store-dir.ts, execute.ts).
+  // Une skill système référencée a donc ses fichiers dans le magasin de
+  // l'espace qui les a écrits (celui du propriétaire) : ils sont copiés comme
+  // ceux d'une skill copiée, sinon l'essai tournerait le prompt sans eux.
   const files: PlannedFiles[] = [];
   const skillDirs: Desired['skillDirs'] = [];
-  const copiedSlugs = new Set(copiedSkills.map((s) => s.slug));
-  for (const s of copiedSkills) {
+  const copiedSlugs = new Set([...copiedSkills.map((s) => s.slug), ...referencedSystemSkills]);
+  for (const slug of [...copiedSlugs].sort()) {
+    const s = { slug };
     const from = join(opts.workspacesRoot, src.id, 'skills', s.slug);
     const to = join(opts.workspacesRoot, spaceId, 'skills', s.slug);
     const a = treeDigest(from);

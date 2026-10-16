@@ -29,7 +29,9 @@
 //   - exactly 1 workspace someone is a member of → seed for that one (works
 //     for both local-trust and single-user local-auth installs like Quentin's)
 //   - 0 or >1 such workspaces → skip (first boot before sign-up; several
-//     workspaces, where the env key belongs to no one in particular)
+//     workspaces, where the env key belongs to no one in particular), and
+//     SAY it once when entities exist but none has a member, or when a
+//     workspace among several has no key
 //
 // "A workspace someone is a member of" (`listMemberWorkspaces`), not "an
 // entity": the env key is the install owner's, and an entity no person is a
@@ -44,11 +46,26 @@ import {
   and,
   entityLlmKeys,
   agents,
+  entities,
   listMemberWorkspaces,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { encrypt, last4 } from '@nodal-agents/secrets';
 import type { RunnerEnv } from '../env.ts';
+
+// The seed is retried on every cron tick: a skip is said once per process,
+// not every two minutes.
+const warned = new Set<string>();
+function warnOnce(line: string): void {
+  if (warned.has(line)) return;
+  warned.add(line);
+  console.warn(line);
+}
+
+/** Tests only: forget which skips were already said. */
+export function _resetSeedLlmKeyWarningsForTests(): void {
+  warned.clear();
+}
 
 export async function seedDefaultLlmKey(db: AnyDrizzleDb, env: RunnerEnv): Promise<void> {
   // bearer-token mode = multi-tenant; admins manage keys via UI, never auto-seed.
@@ -65,7 +82,43 @@ export async function seedDefaultLlmKey(db: AnyDrizzleDb, env: RunnerEnv): Promi
   // - local-auth single-user: the workspace the sign-up hook created → seeds
   // - several workspaces (dashboard-created, or multi-user): skip, no guess
   const workspaces = await listMemberWorkspaces(db);
-  if (workspaces.length !== 1) return; // 0 (first boot before sign-up) or >1
+  if (workspaces.length === 0) {
+    // First boot before sign-up: no entity at all, nothing to say. Entities
+    // WITHOUT a member are another story: before this rule, a lone entity was
+    // enough, and it would now lose its seed in silence (invariant #4).
+    const [entityCountRow] = await db.select({ n: count() }).from(entities);
+    const n = entityCountRow?.n ?? 0;
+    if (n > 0) {
+      warnOnce(
+        `[runner] seed_llm_key_skipped: ${n} workspace(s) exist but none has a member ` +
+          '(entity_members), so the env LLM key belongs to no one and is not seeded. ' +
+          "In local-trust, seedLocalUser restores the local workspace's member at every boot, " +
+          'before this seed. Otherwise add the owner as a member of the workspace, or add the ' +
+          'key in Settings > LLM keys.',
+      );
+    }
+    return;
+  }
+  if (workspaces.length > 1) {
+    // Several workspaces: the env key is nobody's in particular. Said only when
+    // one of them has no key, the only case where the seed would have mattered.
+    const keyless: string[] = [];
+    for (const w of workspaces) {
+      const [k] = await db
+        .select({ n: count() })
+        .from(entityLlmKeys)
+        .where(eq(entityLlmKeys.entityId, w.id));
+      if ((k?.n ?? 0) === 0) keyless.push(w.name);
+    }
+    if (keyless.length > 0) {
+      warnOnce(
+        `[runner] seed_llm_key_skipped: ${workspaces.length} workspaces have a member, so the ` +
+          `env LLM key belongs to none in particular; ${keyless.join(', ')} has no key. ` +
+          'Add it in Settings > LLM keys of that workspace.',
+      );
+    }
+    return;
+  }
 
   const targetEntityId = workspaces[0]!.id;
 
