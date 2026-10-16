@@ -31,6 +31,12 @@ Or, without installing anything globally: `npx nodal-agents up`.
 
 > Node 24+ · no external Postgres, no Redis, no cloud config · runs locally with no login · data lives in `~/.nodalai/` · stop with `nodal-agents down`
 
+**npm 11.6 or newer is needed.** Older npm versions crash during the install (`Cannot read properties of null (reading 'edgesOut')`) on a package published upstream on 15 October 2026. Check with `npm -v`, and update npm first if it is older:
+
+```bash
+npm install -g npm@latest
+```
+
 **If npm asks you to approve install scripts.** Recent npm versions print `npm warn allow-scripts …` and skip the install step of the packages they list. Only one of them matters: `@embedded-postgres/<platform>` carries the Postgres binaries Nodal boots. Approve that one, then install again:
 
 ```bash
