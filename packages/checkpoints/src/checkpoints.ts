@@ -191,8 +191,51 @@ async function openScratch(store: string, workspace: string, seed: boolean): Pro
   await mkdir(objects, { recursive: true });
   const index = join(dir, 'index');
   const source = join(store, 'indexes', workspaceKey(workspace));
-  if (seed && existsSync(source)) await copyFile(source, index);
+  if (seed && existsSync(source)) await copyIndex(source, index);
   return { dir, objects, index };
+}
+
+/**
+ * Copie un index de git en gardant ce que git lit dans sa DATE.
+ *
+ * Git ne relit le contenu d'une entrée que si elle est « racy » : datée au plus
+ * tard de l'écriture de l'index (racy-git.txt). Sinon il croit la date et la
+ * taille. La date d'un index fait donc partie de ce qu'il dit : une copie datée
+ * de maintenant rend « propre » une réécriture de même taille faite dans le
+ * même tic que l'original, qu'un instantané manque alors, et qu'une
+ * restauration ne réécrit pas. `copyFile` ne la garde que sous Windows
+ * (CopyFileW) ; ailleurs libuv date la copie de maintenant (CI rouge sur
+ * 71fb7bca). Seule copie d'index du paquet : le jetable de `openScratch` et la
+ * copie figée de `freezeSnapshotIndex` passent par elle. Le retour d'un index
+ * jetable (`keepScratchIndex`) est un renommage, qui garde la date que git a
+ * donnée à SON écriture.
+ *
+ * Une seule lecture (revue A de #591, passe 2) : contenu et date viennent de la
+ * même poignée, ouverte par libuv, qui partage lecture, écriture ET
+ * suppression. Git et `keepScratchIndex` remplacent un index par renommage : la
+ * poignée lit l'ancien fichier en entier, jamais un index à moitié écrit, et le
+ * renommage d'un autre job passe même sous Windows, où CopyFileW tenait la
+ * source ouverte sans partage de suppression.
+ *
+ * La date est arrondie VERS LE BAS à la milliseconde, moins une : `utimes`
+ * passe par des secondes en virgule flottante, dont l'erreur (de l'ordre du
+ * dixième de microseconde à notre époque) pourrait dater la copie un rien
+ * APRÈS l'original. Une copie datée un rien plus tôt fait juger racy un fichier
+ * de plus, donc relu ; jamais un de moins, donc manqué.
+ */
+async function copyIndex(source: string, dest: string): Promise<void> {
+  const lu = await open(source, 'r');
+  let contenu: Buffer;
+  let date: number;
+  try {
+    date = (await lu.stat()).mtimeMs;
+    contenu = await lu.readFile();
+  } finally {
+    await lu.close();
+  }
+  await writeFile(dest, contenu);
+  const secondes = (Math.floor(date) - 1) / 1000;
+  await utimes(dest, secondes, secondes);
 }
 
 async function closeScratch(scratch: Scratch): Promise<void> {
@@ -902,25 +945,16 @@ export const SNAPSHOT_EXCLUDES: readonly string[] = EXCLUDES;
  * chaque fichier, donc git ne relit que ceux qui ont bougé. Un index refait
  * depuis l'arbre (`read-tree`) n'en a pas, et chaque lecture rehacherait tout
  * le dossier — un dossier d'images de plusieurs gigaoctets, deux fois par
- * appel. La date de la copie est celle de l'original, pour que git juge les
- * fichiers « modifiés dans la même seconde » exactement comme sur l'original.
+ * appel. La copie garde la date de l'original (`copyIndex`), pour que git juge
+ * les fichiers « modifiés dans le même tic » exactement comme sur l'original.
  *
  * Rangée à côté de l'index, comme l'index jetable de `diffFile`, et retirée par
  * `releaseFrozenIndex`. Chaque absence a sa raison : pas de magasin, jamais
  * photographié, copie impossible.
  *
- * LA COPIE EST UNE SEULE LECTURE (revue A de #591, passe 2). `stat` puis
- * `copyFile` lisaient la date et le contenu à deux moments, et un instantané
- * concurrent pouvait remplacer l'index entre les deux. Et sous Windows
- * `copyFile` (CopyFileW) tient la source ouverte sans partage de suppression :
- * le renommage `index.lock` → `index` de l'autre job pouvait échouer, donc son
- * instantané, donc son écriture. Ici l'index est ouvert UNE fois, par libuv,
- * qui partage lecture, écriture ET suppression. Git écrit l'index par
- * `index.lock` puis renommage : la poignée lit donc l'ancien fichier en entier,
- * jamais un index à moitié écrit, et le renommage de l'autre job passe. La date
- * vient de la même poignée (`fstat`), puis la poignée est fermée. Une lecture
- * qui échoue quand même est retentée deux fois, 50 ms plus tard, et au bout de
- * ces trois essais c'est `freeze_failed`.
+ * LA COPIE EST UNE SEULE LECTURE (revue A de #591, passe 2) : voir
+ * `copyIndex`. Une lecture qui échoue quand même est retentée deux fois, 50 ms
+ * plus tard, et au bout de ces trois essais c'est `freeze_failed`.
  */
 export type FrozenSnapshotIndex =
   | { readonly kind: 'frozen'; readonly indexFile: string }
@@ -942,21 +976,7 @@ export async function freezeSnapshotIndex(
   const indexFile = `${source}.constat-${randomBytes(6).toString('hex')}`;
   for (let essai = 1; essai <= FREEZE_ATTEMPTS; essai++) {
     try {
-      const lu = await open(source, 'r');
-      let contenu: Buffer;
-      let date: number;
-      try {
-        date = (await lu.stat()).mtimeMs;
-        contenu = await lu.readFile();
-      } finally {
-        await lu.close();
-      }
-      await writeFile(indexFile, contenu);
-      // Arrondie VERS LE BAS à la milliseconde (`utimes` ne garde pas mieux) :
-      // une copie datée un rien plus tôt fait juger « modifié dans la même
-      // seconde » un fichier de plus, donc relu — jamais un de moins, donc manqué.
-      const secondes = Math.floor(date) / 1000;
-      await utimes(indexFile, secondes, secondes);
+      await copyIndex(source, indexFile);
       return { kind: 'frozen', indexFile };
     } catch {
       await rm(indexFile, { force: true }).catch(() => undefined);
