@@ -14,15 +14,20 @@ import {
   closeWhatsAppSocket,
   type WhatsAppInboundMessage,
 } from '../channels/whatsapp/socket-manager.ts';
+import type { DeliveryError } from '../errors.ts';
 
-const { mockMakeWASocket, mockUseMultiFileAuthState } = vi.hoisted(() => ({
-  mockMakeWASocket: vi.fn(),
-  mockUseMultiFileAuthState: vi.fn(),
-}));
+const { mockMakeWASocket, mockUseMultiFileAuthState, mockFetchLatestBaileysVersion } = vi.hoisted(
+  () => ({
+    mockMakeWASocket: vi.fn(),
+    mockUseMultiFileAuthState: vi.fn(),
+    mockFetchLatestBaileysVersion: vi.fn(),
+  }),
+);
 
 vi.mock('@whiskeysockets/baileys', () => ({
   default: mockMakeWASocket,
   useMultiFileAuthState: mockUseMultiFileAuthState,
+  fetchLatestBaileysVersion: mockFetchLatestBaileysVersion,
   DisconnectReason: { loggedOut: 401 },
   // Real implementation (not a mock) — jid comparison is pure string logic,
   // no reason to fake it, and mentionsSelf tests below depend on it working.
@@ -66,6 +71,9 @@ beforeEach(() => {
     state: {},
     saveCreds: vi.fn(),
   });
+  mockFetchLatestBaileysVersion
+    .mockReset()
+    .mockResolvedValue({ version: [2, 3000, 1043857760], isLatest: true });
 });
 
 async function waitForFirstSocket(): Promise<FakeSocket> {
@@ -94,6 +102,42 @@ describe('ensureWhatsAppSocket', () => {
 
     expect(handle2).toBe(handle1);
     expect(mockMakeWASocket).toHaveBeenCalledTimes(1);
+  });
+
+  // 16/10/2026: WhatsApp closes a socket opened with the version built into
+  // baileys 6.7.23 (`405 Connection Failure`), so no QR ever arrived. The
+  // socket must carry the CURRENT WhatsApp Web version.
+  it('opens the socket with the current WhatsApp Web version', async () => {
+    mockFetchLatestBaileysVersion.mockResolvedValue({ version: [2, 3000, 42], isLatest: true });
+    ensureWhatsAppSocket(nextKey(), { sessionDir: '/sessions/version' });
+    await waitForFirstSocket();
+
+    expect(mockMakeWASocket.mock.calls[0]![0]).toMatchObject({ version: [2, 3000, 42] });
+  });
+
+  it('fails loud, with no socket, when the current version cannot be fetched', async () => {
+    const errors: unknown[][] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errors.push(args);
+    });
+    try {
+      mockFetchLatestBaileysVersion.mockResolvedValue({
+        version: [2, 3000, 1],
+        isLatest: false,
+        error: new Error('getaddrinfo ENOTFOUND raw.githubusercontent.com'),
+      });
+      const handle = ensureWhatsAppSocket(nextKey(), { sessionDir: '/sessions/no-version' });
+
+      await vi.waitFor(() => expect(handle.getStatus()).toBe('closed'));
+      // The built-in version is NOT used as a fallback: WhatsApp refuses it.
+      expect(mockMakeWASocket).not.toHaveBeenCalled();
+      const [label, err] = errors[0]!;
+      expect(label).toBe('[whatsapp] connect failed');
+      expect((err as DeliveryError).code).toBe('whatsapp_version_unavailable');
+      expect((err as Error).message).toContain('getaddrinfo ENOTFOUND raw.githubusercontent.com');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('starts in "connecting" status before the socket connects', () => {

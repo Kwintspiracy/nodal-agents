@@ -29,6 +29,10 @@ export type DeliveryErrorCode =
    *  only fires in a process that has neither the bundle nor an installed
    *  copy (see socket-manager.ts). */
   | 'whatsapp_library_unavailable'
+  /** The current WhatsApp Web version could not be fetched when a socket was
+   *  opened. The version built into the library is refused by WhatsApp, so
+   *  it is never used instead (see socket-manager.ts). */
+  | 'whatsapp_version_unavailable'
   | 'delivery_email_not_configured'
   | 'delivery_job_not_found'
   | 'delivery_no_content'
