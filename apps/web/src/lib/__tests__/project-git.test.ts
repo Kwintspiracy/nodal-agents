@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { copyFile, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -179,5 +179,62 @@ describe('quel git est lancé @cap:travailler-sur-des-fichiers/moteur', () => {
     expect(existsSync(join(p, '.git'))).toBe(true);
 
     _resetGitBinaryCache();
+  });
+});
+
+// #628, passe 5 : `initGitRepository` tourne sur l'HÔTE (le serveur web) dans
+// un dossier de projet, que des commandes confinées écrivent. Ce qu'il peut y
+// lire ou y suivre, prouvé ici plutôt que supposé.
+describe('initGitRepository runs nothing a confined command planted @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('la course : un `.git` planté entre le test et `git init` — git le réinitialise sans RIEN lancer de ce que sa config nomme', async () => {
+    // `initGitRepository` répond `already` dès qu'un `.git` existe : le seul
+    // chemin où `git init` lit un dépôt planté est une commande qui le crée
+    // entre ce test et le lancement. On joue CE `git init`-là, avec les mêmes
+    // options que le module, sur un dépôt piégé de toutes les façons qu'un
+    // `.git/config` ou `.git/hooks` a de nommer une commande.
+    const p = await dossier('course');
+    await run('git', ['init', '-q'], { cwd: p, windowsHide: true });
+    const marker = join(racine, 'MARKER');
+    const hook = join(racine, 'hook.cjs');
+    await writeFile(hook, `require('fs').appendFileSync(${JSON.stringify(marker)}, 'ran');\n`);
+    const cmd = `node "${hook.split('\\').join('/')}"`;
+    for (const [k, v] of [
+      ['core.fsmonitor', cmd],
+      ['filter.evil.clean', cmd],
+      ['filter.evil.smudge', cmd],
+      ['core.pager', cmd],
+      ['core.editor', cmd],
+      ['core.hooksPath', join(p, '.git', 'hooks')],
+    ] as const) {
+      await run('git', ['config', k, v], { cwd: p, windowsHide: true });
+    }
+    await writeFile(join(p, '.gitattributes'), '* filter=evil\n');
+    for (const h of ['post-checkout', 'post-commit', 'pre-commit', 'post-index-change']) {
+      await writeFile(join(p, '.git', 'hooks', h), `#!/bin/sh\n${cmd}\n`, { mode: 0o755 });
+    }
+    const binaire = (await resolveGitBinary())!;
+    await run(binaire, ['init'], { cwd: p, timeout: 10_000, windowsHide: true });
+    expect(existsSync(marker), 'git init ran a command the planted repository named').toBe(false);
+  });
+
+  it('un `.gitignore` planté comme LIEN vers l’hôte n’est jamais suivi : rien n’est écrit hors du projet', async () => {
+    const p = await dossier('lien');
+    const dehors = join(racine, 'hors-du-projet.txt');
+    try {
+      await symlink(dehors, join(p, '.gitignore'), 'file');
+    } catch (e) {
+      // Sous Windows, créer un lien symbolique demande un privilège (ou le mode
+      // développeur) : sans lui, une commande confinée ne peut pas en poser
+      // non plus, et le cas ne se joue pas. Dit, pas sauté en silence.
+      const code = (e as NodeJS.ErrnoException).code;
+      expect(code, String(e)).toBe('EPERM');
+      return;
+    }
+    const out = await initGitRepository(p);
+    expect(out).toEqual({ kind: 'initialised', gitignoreWritten: false });
+    expect(
+      existsSync(dehors),
+      'the planted link was followed: a file was written on the host',
+    ).toBe(false);
   });
 });
