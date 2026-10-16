@@ -700,6 +700,73 @@ async function treeEntries(
 }
 
 /**
+ * Le plus gros index qu'un `add -A` suivi de `write-tree` honnêtes écrivent
+ * pour un arbre de ces chemins (octets bruts, en latin1) : l'en-tête et la
+ * somme, chaque entrée de version 2 (62 octets, le chemin, le bourrage),
+ * l'arbre en cache (`TREE` : par dossier, son nom, `NUL`, deux compteurs et un
+ * objet), et une marge pour les petites extensions qu'un git peut ajouter
+ * (`EOIE`, `IEOT` : quelques dizaines d'octets). Au-delà, ce n'est pas un index
+ * que ce git a écrit pour cet arbre, et il n'est pas lu (revue passe 7, P2) :
+ * un index de plusieurs gigaoctets posé dans le jetable tenait l'appel d'outil
+ * au-delà de sa borne, ou la mémoire du serveur.
+ */
+function largestHonestIndex(paths: Iterable<string>): number {
+  const EXTENSION_SLACK = 64 * 1024;
+  let size = 12 + 20 + EXTENSION_SLACK;
+  const dirs = new Set<string>(['']);
+  for (const path of paths) {
+    size += (62 + path.length + 8) & ~7;
+    for (let i = path.lastIndexOf('/'); i > 0; i = path.lastIndexOf('/', i - 1)) {
+      const dir = path.slice(0, i);
+      if (dirs.has(dir)) break;
+      dirs.add(dir);
+    }
+  }
+  size += 8; // l'en-tête de `TREE`
+  for (const dir of dirs) {
+    // Le nom, `NUL`, « <entrées> <sous-arbres>\n » (deux nombres de 11
+    // caractères au plus, `-1` compris), l'objet.
+    size += dir.length - dir.lastIndexOf('/') - 1 + 1 + 24 + 20;
+  }
+  return size;
+}
+
+/**
+ * L'index du jetable, lu par l'hôte : une poignée sur un fichier ordinaire
+ * (`openScratchFile`), refusé AVANT toute lecture s'il dépasse `max`, puis lu
+ * par morceaux dans la borne de temps de la vérification. Un fichier qui
+ * grandit pendant la lecture est refusé aussi.
+ */
+async function readScratchIndex(
+  path: string,
+  max: number,
+  deadline: HostDeadline,
+): Promise<{ content: Buffer; mtimeMs: number }> {
+  const what = 'CHECKPOINT_FOREIGN_INDEX';
+  const handle = await openScratchFile(path, what);
+  try {
+    const { size, mtimeMs } = await handle.stat();
+    if (size > max) {
+      throw new Error(
+        `${what}: the scratch index is ${size} bytes, more than the ${max} an index of this tree can be`,
+      );
+    }
+    const content = Buffer.alloc(size);
+    for (let at = 0; at < size; ) {
+      deadline.remaining();
+      const { bytesRead } = await handle.read(content, at, Math.min(1024 * 1024, size - at), at);
+      if (bytesRead === 0) throw new Error(`${what}: the scratch index shrank while it was read`);
+      at += bytesRead;
+    }
+    const { bytesRead } = await handle.read(Buffer.alloc(1), 0, 1, size);
+    if (bytesRead !== 0) throw new Error(`${what}: the scratch index grew while it was read`);
+    return { content, mtimeMs };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * L'index du jetable devient celui du workspace — mais l'hôte ne le prend pas
  * tel quel (revue passe 6, P1). Le jetable est une racine inscriptible du git
  * de l'arbre, donc de ce que la config d'un sous-dépôt lui fait lancer : un
@@ -729,9 +796,15 @@ async function adoptScratchIndex(
   deadline: HostDeadline,
 ): Promise<void> {
   const what = 'CHECKPOINT_FOREIGN_INDEX';
-  const { content, mtimeMs } = await readIndexOnce(await openScratchFile(scratch.index, what));
-  const entries = parseIndex(content);
+  // L'arbre D'ABORD : il dit combien un index honnête peut peser, et l'index
+  // n'est lu qu'en deçà (revue passe 7, P2).
   const expected = await treeEntries(store, workspace, tree, deadline);
+  const { content, mtimeMs } = await readScratchIndex(
+    scratch.index,
+    largestHonestIndex(expected.keys()),
+    deadline,
+  );
+  const entries = parseIndex(content);
   if (expected.size !== entries.length) {
     throw new Error(`${what}: ${entries.length} entries for a tree of ${expected.size}`);
   }
