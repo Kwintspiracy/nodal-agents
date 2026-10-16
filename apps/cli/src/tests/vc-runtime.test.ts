@@ -221,21 +221,28 @@ describe('the VC++ runtime next to postgres.exe @cap:installer-et-demarrer/moteu
   it.runIf(process.platform === 'win32')(
     'each shipped DLL carries a valid Microsoft Authenticode signature',
     () => {
+      // Un seul processus PowerShell pour toutes les DLL : le démarrage à froid d'un runner CI coûte cher.
+      const script = VC_RUNTIME_DLLS.map(
+        (dll) =>
+          `$s = Get-AuthenticodeSignature -LiteralPath '${join(shippedDir, dll)}'; ` +
+          `"${dll}|$($s.Status)|$($s.SignerCertificate.Subject)"`,
+      ).join('; ');
+      const out = execFileSync('powershell.exe', ['-NoProfile', '-Command', script], {
+        encoding: 'utf-8',
+      });
+      const lines = new Map<string, { status: string; subject: string }>();
+      for (const line of out.split(/\r?\n/)) {
+        const [name, status, ...rest] = line.trim().split('|');
+        if (name && status !== undefined) lines.set(name, { status, subject: rest.join('|') });
+      }
       for (const dll of VC_RUNTIME_DLLS) {
-        const out = execFileSync(
-          'powershell.exe',
-          [
-            '-NoProfile',
-            '-Command',
-            `$s = Get-AuthenticodeSignature -LiteralPath '${join(shippedDir, dll)}'; ` +
-              `"$($s.Status)|$($s.SignerCertificate.Subject)"`,
-          ],
-          { encoding: 'utf-8' },
-        ).trim();
-        const [status, subject] = out.split('|');
-        expect(status, dll).toBe('Valid');
-        expect(subject, dll).toContain('O=Microsoft Corporation');
+        const sig = lines.get(dll);
+        expect(sig, `no signature line for ${dll}`).toBeDefined();
+        expect(sig!.status, dll).toBe('Valid');
+        expect(sig!.subject, dll).toContain('O=Microsoft Corporation');
       }
     },
+    // Lancement de PowerShell à froid sur un runner CI : bien plus que les 5 s par défaut.
+    60_000,
   );
 });
