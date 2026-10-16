@@ -1,0 +1,78 @@
+name: Install without git
+
+# 0.9.6 (16/10/2026): `npm install -g nodal-agents` failed on every machine
+# without git (`npm error syscall spawn git`). @whiskeysockets/baileys declared
+# libsignal as a git URL, and every CI runner has git, so no job ever saw it.
+#
+# pack-smoke (ci.yml) already refuses a git-resolved dependency and installs the
+# tarball once with git unavailable to npm, on Linux, through npm's own `git`
+# setting. This job is the literal case, on the OS most users install from: a
+# Windows runner whose PATH no longer reaches git at all, a global install into
+# a fresh prefix and cache, then `nodal-agents --version`.
+#
+# Runs when what decides the installed tree changes (the lockfile, the pack
+# manifest), and on demand.
+
+on:
+  pull_request:
+    paths:
+      - pnpm-lock.yaml
+      - scripts/build-pack.mjs
+      - scripts/lib/git-dependency-specs.mjs
+      - scripts/lib/pin-runtime-deps.mjs
+      - .github/workflows/install-without-git.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  install-without-git:
+    runs-on: windows-latest
+    # Steps bounded below: 10 + 30 + 2 + 15 = 57, + 5 min of margin.
+    timeout-minutes: 62
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the pack
+        timeout-minutes: 30
+        run: node scripts/build-pack.mjs
+
+      - name: Create the tarball
+        timeout-minutes: 2
+        working-directory: pack
+        run: npm pack --silent
+
+      - name: Install the tarball with git gone from PATH
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          $tarball = (Get-ChildItem pack -Filter *.tgz | Select-Object -First 1).FullName
+          if (-not $tarball) { throw 'npm pack produced no .tgz in pack/' }
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'git.exe')) }) -join ';'
+          where.exe git 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'git is still reachable from PATH' }
+          Write-Output 'where git: not found'
+          $prefix = Join-Path $env:RUNNER_TEMP 'no-git-prefix'
+          $cache = Join-Path $env:RUNNER_TEMP 'no-git-cache'
+          npm install -g $tarball --prefix $prefix --cache $cache --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw "npm install exited $LASTEXITCODE without git" }
+          $expected = (Get-Content pack/package.json | ConvertFrom-Json).version
+          $actual = (& (Join-Path $prefix 'nodal-agents.cmd') --version).Trim()
+          if ($actual -ne $expected) { throw "nodal-agents --version answered '$actual', expected $expected" }
+          Write-Output "installed without git, --version answers $actual"
