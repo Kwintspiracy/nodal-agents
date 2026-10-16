@@ -25,7 +25,7 @@
 // dépôt vide suffit au constat, et chacun de ces gestes serait une décision
 // prise à la place de la personne.
 
-import { lstat, writeFile } from 'node:fs/promises';
+import { lstat } from 'node:fs/promises';
 import type { ProgramRunner } from '@nodal-agents/sandbox';
 import { normalizePath } from '@nodal-agents/shared';
 // LA MÊME résolution que le constat par git (#227), pas une copie : c'est le
@@ -33,6 +33,7 @@ import { normalizePath } from '@nodal-agents/shared';
 // auraient divergé au premier correctif porté d'un seul côté (revue C de la
 // PR #244, constat bloquant). Elle vit dans un SOUS-CHEMIN de `shared`, que
 // les deux paquets ont déjà — voir l'en-tête de ce module-là.
+import { createFileExclusive } from '@nodal-agents/shared/exclusive-create';
 import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
 
 /** Une commande git qui pend ne doit pas tenir un clic. */
@@ -139,16 +140,17 @@ export async function initGitRepository(
   // n'est pas un défaut à corriger. Son échec n'annule PAS la pose du dépôt —
   // le dépôt est là, et c'est lui qui porte le constat.
   //
-  // UNE création exclusive (`wx`), jamais « tester, puis écrire » (#628, passe
-  // 5) : ce dossier est écrit par des commandes confinées, et le serveur web
-  // qui écrit ici tourne sur l'HÔTE. Un `.gitignore` planté comme lien vers un
+  // UNE création exclusive, jamais « tester, puis écrire » (#628, passe 5) :
+  // ce dossier est écrit par des commandes confinées, et le serveur web qui
+  // écrit ici tourne sur l'HÔTE. Un `.gitignore` planté comme lien vers un
   // chemin hors du projet était suivi — `access()` disait « absent » d'un lien
-  // pendant, `writeFile` créait sa cible. `wx` refuse tout chemin qui existe
-  // déjà, lien compris, et ne laisse aucune fenêtre entre les deux.
+  // pendant, `writeFile` créait sa cible. `createFileExclusive` refuse tout
+  // chemin qui existe déjà, lien compris, SOUS TOUS LES SYSTÈMES : le simple
+  // drapeau `wx` suit un lien pendant sous Windows (voir exclusive-create.ts).
   const chemin = `${cwd}/.gitignore`;
   let gitignoreWritten = false;
   try {
-    await writeFile(chemin, GITIGNORE_MINIMAL, { encoding: 'utf8', flag: 'wx' });
+    await createFileExclusive(chemin, GITIGNORE_MINIMAL);
     gitignoreWritten = true;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {

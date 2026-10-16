@@ -359,10 +359,16 @@ describe('the scratch index enters the store only checked against the snapshot a
     gitIn(sub, ['add', 'x.txt']);
     gitIn(sub, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x']);
 
-    expect(await snapshot(store, ws, 'one')).not.toBeNull();
+    // Ce cas prouve qu'un index honnête N'EST PAS REFUSÉ, pas la vitesse de
+    // git : 200 fichiers et un sous-dépôt ont dépassé la borne par défaut de
+    // 30 s sur un runner Windows chargé (snapshot_timeout, CI du 16/10). Une
+    // borne large, comme frozen-index.test.ts, pour que seule la borne de
+    // TAILLE soit en jeu.
+    const options = { timeoutMs: 100_000 };
+    expect(await snapshot(store, ws, 'one', options)).not.toBeNull();
     await writeFile(join(ws, 'd0', 'encore.txt'), 'encore\n');
-    expect(await snapshot(store, ws, 'two')).not.toBeNull();
-  });
+    expect(await snapshot(store, ws, 'two', options)).not.toBeNull();
+  }, 240_000);
 
   it('un index dont une entrée ne correspond pas à l’arbre photographié est refusé', async () => {
     // Hors de tout dépôt : `hash-object` sans `-w` n'en demande pas (le dossier
