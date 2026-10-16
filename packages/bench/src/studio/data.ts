@@ -252,6 +252,8 @@ export function studioResults(file: string = RESULTS_FILE) {
             n: numberOf.get(l) ?? null,
             verdict: l.verdict,
             startedAt: l.startedAt ?? null,
+            durationMs: typeof l.durationMs === 'number' ? l.durationMs : null,
+            costUsd: typeof l.costUsd === 'number' ? l.costUsd : null,
             reasons: Array.isArray(l['reasons']) ? (l['reasons'] as string[]) : [],
           })),
         })),

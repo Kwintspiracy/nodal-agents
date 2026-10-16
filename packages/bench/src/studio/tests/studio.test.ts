@@ -294,9 +294,22 @@ describe('studio reads', () => {
     const q = r.activities
       .find((a) => a.activity === 'question')!
       .scenarios.find((s) => s.id === 'question')!;
-    expect(q.cells[0]!.last.map((l) => [l.n, l.verdict])).toEqual([
-      [1, 'green'],
-      [3, 'red'],
+    // Du plus ancien au plus récent, chacun avec ce que sa coche montre au survol.
+    expect(q.cells[0]!.last).toEqual([
+      expect.objectContaining({
+        n: 1,
+        verdict: 'green',
+        startedAt: '2026-10-16T01:00:00Z',
+        durationMs: 10_000,
+        costUsd: 0.01,
+      }),
+      expect.objectContaining({
+        n: 3,
+        verdict: 'red',
+        startedAt: '2026-10-16T02:00:00Z',
+        durationMs: 10_000,
+        costUsd: 0.01,
+      }),
     ]);
     expect(studioTrial(3, f).line).toMatchObject({ verdict: 'red', reasons: ['x'] });
     expect(() => studioTrial(2, f)).toThrow('studio_no_trial');

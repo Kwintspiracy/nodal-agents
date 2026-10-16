@@ -1,7 +1,13 @@
 // Un scénario : la demande exacte, ce que « vert » veut dire, comment il est jugé, ce qu'il exige.
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { duree, studioCatalog, studioResults } from '@nodal-agents/bench/studio';
+import {
+  aideDeColonne,
+  dollars,
+  duree,
+  studioCatalog,
+  studioResults,
+} from '@nodal-agents/bench/studio';
 import Banner from '@/components/ui/Banner';
 import CodeBlock from '@/components/ui/CodeBlock';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
@@ -9,8 +15,8 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import { assertStudioPage, studioRuntime } from '@/lib/bench-studio/server';
 import NeedStatus from '../../_components/NeedStatus';
 import StudioPage, { Fact, Panel } from '../../_components/StudioPage';
-import VerdictPill from '../../_components/VerdictPill';
-import { bytes, when } from '../../_components/format';
+import { TrialTicks } from '../../_components/Ticks';
+import { bytes } from '../../_components/format';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,12 +33,11 @@ export default async function ScenarioPage({ params }: { params: Promise<{ id: s
   const s = catalog.scenarios.find((x) => x.id === id);
   if (!s) notFound();
   const needs = await studioRuntime().needs();
-  const recent =
+  // Les cellules de ce scénario dans la matrice : une par modèle, ses derniers essais.
+  const cells =
     studioResults()
       .activities.flatMap((a) => a.scenarios)
-      .find((x) => x.id === s.id)
-      ?.cells.flatMap((c) => c.last.map((l) => ({ ...l, column: c.column }))) ?? [];
-  recent.sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
+      .find((x) => x.id === s.id)?.cells ?? [];
   const files = catalog.fixtureFiles[s.id] ?? [];
 
   return (
@@ -98,23 +103,29 @@ export default async function ScenarioPage({ params }: { params: Promise<{ id: s
               </Link>
             }
           >
-            {recent.length === 0 ? (
+            {cells.length === 0 ? (
               <p className="text-body-13 text-ink-4">No trial of this version yet.</p>
             ) : (
               <ul className="flex flex-col divide-y divide-rule-2">
-                {recent.slice(0, 8).map((t, i) => (
-                  <li key={`${t.n}-${i}`} className="flex flex-wrap items-center gap-3 py-2">
-                    <VerdictPill verdict={t.verdict} />
-                    <span className="text-mono-12 text-ink-3">{when(t.startedAt)}</span>
-                    <span className="text-body-13 text-ink-2">{t.column}</span>
-                    {t.n !== null && (
-                      <Link
-                        href={`/bench-studio/results/${t.n}`}
-                        className="ml-auto text-medium-12 text-ink-3 hover:text-ink"
-                      >
-                        Open trial
-                      </Link>
-                    )}
+                {cells.map((c) => (
+                  <li
+                    key={c.column}
+                    className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 py-2.5"
+                  >
+                    <span
+                      className="min-w-0 text-body-13 text-ink-2"
+                      title={aideDeColonne(c.column) ?? undefined}
+                    >
+                      {c.column}
+                    </span>
+                    <span className="flex items-center gap-3">
+                      <TrialTicks trials={c.last} />
+                      <span className="w-40 text-mono-11 text-ink-3">
+                        {c.tried === 0
+                          ? `${c.skipped} skipped`
+                          : `${c.green}/${c.tried} green${c.green > 0 ? ` · ${duree(c.medianMs)} · ${dollars(c.medianUsd)}` : ''}`}
+                      </span>
+                    </span>
                   </li>
                 ))}
               </ul>
