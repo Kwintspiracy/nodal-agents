@@ -10,6 +10,31 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.9.7 — Oct 16, 2026
+
+A hotfix: 0.9.6 could not be installed on a machine without git.
+
+**Upgrading: what changes for you**
+
+- **Nodal installs without git again.** On 0.9.6, `npm install -g
+  nodal-agents` stopped with `npm error syscall spawn git` wherever git was not
+  installed. A library behind the WhatsApp channel was fetched from a git
+  repository. It now ships inside the app, and npm no longer fetches it.
+
+**Under the hood**
+
+- The pack no longer lists `@whiskeysockets/baileys` as an npm dependency. The
+  runner bundle already carried it, and the dashboard loads it only when a
+  WhatsApp socket opens, which it never does. If the library is missing where a
+  socket opens, the error is coded `whatsapp_library_unavailable`.
+- `pino` is declared in the pack. The dashboard needs it, and it only resolved
+  because baileys brought it in.
+- The pack smoke test (CI and `release:check`) now refuses a dependency
+  resolved through git anywhere in the installed tree, and installs the
+  tarball a second time with git unavailable to npm.
+
+---
+
 ## v0.9.6 — Oct 14, 2026
 
 A release about trust in what your agents do on their own. Connector operations
