@@ -110,13 +110,20 @@ export async function initGitRepository(dir: string): Promise<GitInitOutcome> {
   // Le `.gitignore` seulement s'il n'y en a pas : celui de quelqu'un d'autre
   // n'est pas un défaut à corriger. Son échec n'annule PAS la pose du dépôt —
   // le dépôt est là, et c'est lui qui porte le constat.
+  //
+  // UNE création exclusive (`wx`), jamais « tester, puis écrire » (#628, passe
+  // 5) : ce dossier est écrit par des commandes confinées, et le serveur web
+  // qui écrit ici tourne sur l'HÔTE. Un `.gitignore` planté comme lien vers un
+  // chemin hors du projet était suivi — `access()` disait « absent » d'un lien
+  // pendant, `writeFile` créait sa cible. `wx` refuse tout chemin qui existe
+  // déjà, lien compris, et ne laisse aucune fenêtre entre les deux.
   const chemin = `${cwd}/.gitignore`;
   let gitignoreWritten = false;
-  if (!(await existe(chemin))) {
-    try {
-      await writeFile(chemin, GITIGNORE_MINIMAL, 'utf8');
-      gitignoreWritten = true;
-    } catch (err) {
+  try {
+    await writeFile(chemin, GITIGNORE_MINIMAL, { encoding: 'utf8', flag: 'wx' });
+    gitignoreWritten = true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
       console.warn(`[projects] GITIGNORE_WRITE_FAILED path=${chemin}`, err);
     }
   }
