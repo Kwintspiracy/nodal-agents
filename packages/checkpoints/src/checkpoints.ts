@@ -32,10 +32,22 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { copyFile, mkdir, open, readdir, rename, rm, utimes, writeFile } from 'node:fs/promises';
-import { createReadStream, existsSync } from 'node:fs';
+import {
+  link,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  rename,
+  rm,
+  utimes,
+  writeFile,
+  type FileHandle,
+} from 'node:fs/promises';
+import { constants, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Readable } from 'node:stream';
+import { Transform, Writable, type Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { createInflate } from 'node:zlib';
 
@@ -77,8 +89,9 @@ const run = promisify(execFile);
 //   - Un git qui ne lit QUE le magasin (`rev-parse`, `commit-tree`,
 //     `update-ref`, `log`, `ls-tree`, `cat-file`) tourne sur l'HÔTE, `GIT_DIR`
 //     seul, sans arbre de travail : il ne lit que la config que Nodal écrit. Lui
-//     seul écrit le magasin, après avoir importé et VÉRIFIÉ chaque objet du
-//     jetable (`importObjects`).
+//     seul écrit le magasin, après avoir COPIÉ et VÉRIFIÉ chaque objet du
+//     jetable (`importObjects`), et relu son index contre l'arbre photographié
+//     (`adoptScratchIndex`) — par l'ARRIVÉE (`incoming`), que lui seul écrit.
 //
 // La forme des programmes est celle du `ProgramRunner` du bac à sable, par
 // structure : ce paquet n'en dépend pas (voir index.ts). Sans programmes
@@ -184,15 +197,77 @@ function worktreeRoots(
   return { writableRoots: [workspace, scratch.dir], readableRoots: [store] };
 }
 
+/**
+ * Les dossiers de travail d'une opération, sous le magasin : le JETABLE du git
+ * de l'arbre (`scratch`, une de ses racines inscriptibles) et l'ARRIVÉE de
+ * l'hôte (`incoming`, que seul l'hôte écrit : le magasin entier est en lecture
+ * dans le conteneur). Ce qui sort du jetable passe par l'arrivée, vérifié, avant
+ * d'entrer dans le magasin.
+ *
+ * Le nom porte la date de création (`<ms>-<16 hex>`) : un dossier qu'une
+ * opération n'a pas pu retirer (un `rm` refusé, un processus tué) est récolté
+ * par la suivante une fois vieux d'un jour (revue passe 6, P2). Aucune
+ * opération ne dure un jour : chacune enchaîne une poignée de commandes git,
+ * chacune bornée (`storeTimeoutMs`), et la vérification de l'hôte l'est aussi.
+ * Un nom d'une autre forme n'est pas à nous : il n'est jamais touché.
+ */
+type WorkDirKind = 'scratch' | 'incoming';
+
+const WORK_DIR_NAME = /^(\d{13})-[0-9a-f]{16}$/;
+const STALE_WORK_DIR_MS = 24 * 60 * 60 * 1000;
+
+async function openWorkDir(store: string, kind: WorkDirKind): Promise<string> {
+  await reapStaleWorkDirs(store, kind);
+  const dir = join(store, kind, `${Date.now()}-${randomBytes(8).toString('hex')}`);
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+async function reapStaleWorkDirs(store: string, kind: WorkDirKind): Promise<void> {
+  const parent = join(store, kind);
+  let names: string[];
+  try {
+    names = await readdir(parent);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw err;
+  }
+  const now = Date.now();
+  for (const name of names) {
+    const m = WORK_DIR_NAME.exec(name);
+    if (m && now - Number(m[1]) > STALE_WORK_DIR_MS) await removeWorkDir(join(parent, name));
+  }
+}
+
+/**
+ * Retire un dossier de travail. Un échec ne fait pas échouer l'opération, qui a
+ * fini son travail ; il est DIT (invariant #4), et le dossier sera récolté.
+ */
+async function removeWorkDir(dir: string): Promise<void> {
+  try {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch (err) {
+    console.error(
+      `[checkpoints] CHECKPOINT_WORK_DIR_NOT_REMOVED ${dir}: ` +
+        `${err instanceof Error ? err.message : String(err)}` +
+        ' (reaped by the first operation once it is a day old)',
+    );
+  }
+}
+
 /** Ouvre un jetable sous le magasin ; `seed` y copie l'index du workspace. */
 async function openScratch(store: string, workspace: string, seed: boolean): Promise<Scratch> {
-  const dir = join(store, 'scratch', randomBytes(8).toString('hex'));
+  const dir = await openWorkDir(store, 'scratch');
   const objects = join(dir, 'objects');
   await mkdir(objects, { recursive: true });
   const index = join(dir, 'index');
   const source = join(store, 'indexes', workspaceKey(workspace));
   if (seed && existsSync(source)) await copyIndex(source, index);
   return { dir, objects, index };
+}
+
+async function closeScratch(scratch: Scratch): Promise<void> {
+  await removeWorkDir(scratch.dir);
 }
 
 /**
@@ -205,115 +280,471 @@ async function openScratch(store: string, workspace: string, seed: boolean): Pro
  * même tic que l'original, qu'un instantané manque alors, et qu'une
  * restauration ne réécrit pas. `copyFile` ne la garde que sous Windows
  * (CopyFileW) ; ailleurs libuv date la copie de maintenant (CI rouge sur
- * 71fb7bca). Seule copie d'index du paquet : le jetable de `openScratch` et la
- * copie figée de `freezeSnapshotIndex` passent par elle. Le retour d'un index
- * jetable (`keepScratchIndex`) est un renommage, qui garde la date que git a
- * donnée à SON écriture.
- *
- * Une seule lecture (revue A de #591, passe 2) : contenu et date viennent de la
- * même poignée, ouverte par libuv, qui partage lecture, écriture ET
- * suppression. Git et `keepScratchIndex` remplacent un index par renommage : la
- * poignée lit l'ancien fichier en entier, jamais un index à moitié écrit, et le
- * renommage d'un autre job passe même sous Windows, où CopyFileW tenait la
- * source ouverte sans partage de suppression.
- *
- * La date est arrondie VERS LE BAS à la milliseconde, moins une : `utimes`
- * passe par des secondes en virgule flottante, dont l'erreur (de l'ordre du
- * dixième de microseconde à notre époque) pourrait dater la copie un rien
- * APRÈS l'original. Une copie datée un rien plus tôt fait juger racy un fichier
- * de plus, donc relu ; jamais un de moins, donc manqué.
+ * 71fb7bca). Le jetable de `openScratch` et la copie figée de
+ * `freezeSnapshotIndex` passent par elle ; l'index qui revient du jetable
+ * (`adoptScratchIndex`) est daté par le même `dateLikeIndex`.
  */
 async function copyIndex(source: string, dest: string): Promise<void> {
-  const lu = await open(source, 'r');
-  let contenu: Buffer;
-  let date: number;
+  const { content, mtimeMs } = await readIndexOnce(await open(source, 'r'));
+  await writeFile(dest, content);
+  await dateLikeIndex(dest, mtimeMs);
+}
+
+/**
+ * Le contenu et la date d'un index, par UNE seule poignée, puis fermée (revue
+ * A de #591, passe 2). Ouverte par libuv, elle partage lecture, écriture ET
+ * suppression : git remplace un index par renommage, la poignée lit donc
+ * l'ancien fichier en entier, jamais un index à moitié écrit, et le renommage
+ * d'un autre job passe même sous Windows, où CopyFileW tenait la source ouverte
+ * sans partage de suppression.
+ */
+async function readIndexOnce(handle: FileHandle): Promise<{ content: Buffer; mtimeMs: number }> {
   try {
-    date = (await lu.stat()).mtimeMs;
-    contenu = await lu.readFile();
+    const { mtimeMs } = await handle.stat();
+    return { content: await handle.readFile(), mtimeMs };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Date `path` comme l'index lu à `mtimeMs` : arrondie VERS LE BAS à la
+ * milliseconde, moins une, et jamais après maintenant. `utimes` passe par des
+ * secondes en virgule flottante, dont l'erreur (de l'ordre du dixième de
+ * microseconde à notre époque) pourrait dater la copie un rien APRÈS
+ * l'original ; un index daté du futur n'est jamais celui qu'un git a écrit. Une
+ * copie datée un rien plus tôt fait juger racy un fichier de plus, donc relu ;
+ * jamais un de moins, donc manqué.
+ */
+async function dateLikeIndex(path: string, mtimeMs: number): Promise<void> {
+  const secondes = (Math.min(Math.floor(mtimeMs), Date.now()) - 1) / 1000;
+  await utimes(path, secondes, secondes);
+}
+
+/**
+ * La borne de temps de la vérification de l'hôte (revue passe 6, P2) : la même
+ * que chaque commande git de l'opération. Décompresser et hacher un objet que
+ * le jetable a reçu prend le temps de son contenu, et une bombe zlib plantée là
+ * (un mégaoctet qui se décompresse en gigaoctets) tenait l'appel d'outil au-delà
+ * de toute borne. Le dépassement porte `code: 'ETIMEDOUT'` : il se qualifie
+ * comme celui d'une commande git (`snapshot_timeout`).
+ */
+class HostDeadline {
+  private readonly at: number;
+  constructor(private readonly limitMs: number) {
+    this.at = Date.now() + limitMs;
+  }
+  /** Le temps qui reste, ou le dépassement. */
+  remaining(): number {
+    const left = this.at - Date.now();
+    if (left <= 0) throw this.exceeded();
+    return left;
+  }
+  signal(): AbortSignal {
+    return AbortSignal.timeout(this.remaining());
+  }
+  /** Ce qui a échoué une fois la borne passée EST le dépassement ; le reste passe tel quel. */
+  explain(err: unknown): unknown {
+    return Date.now() >= this.at || isTimeoutError(err) ? this.exceeded() : err;
+  }
+  private exceeded(): Error {
+    return Object.assign(
+      new Error(
+        `CHECKPOINT_HOST_CHECK_TIMEOUT: checking the scratch took more than ${this.limitMs} ms`,
+      ),
+      { code: 'ETIMEDOUT' },
+    );
+  }
+}
+
+/**
+ * Ouvre un fichier du JETABLE pour l'hôte : un fichier ordinaire, jamais un
+ * lien suivi, jamais un fichier spécial (un tube bloquerait l'ouverture).
+ * `lstat` dit ce qu'est le nom ; `O_NOFOLLOW` refuse un lien posé ensuite.
+ * Sous Windows, ni l'un ni l'autre drapeau n'existe : créer un lien symbolique
+ * y demande un privilège qu'une commande confinée n'a pas (mesuré : EPERM), et
+ * un lien en dur est un fichier ordinaire — il est COPIÉ, jamais adopté.
+ */
+async function openScratchFile(path: string, what: string): Promise<FileHandle> {
+  const st = await lstat(path);
+  if (!st.isFile()) throw new Error(`${what}: ${path} is not a regular file`);
+  const flags =
+    process.platform === 'win32'
+      ? constants.O_RDONLY
+      : constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+  const handle = await open(path, flags);
+  if (!(await handle.stat()).isFile()) {
+    await handle.close();
+    throw new Error(`${what}: ${path} is not a regular file`);
+  }
+  return handle;
+}
+
+/**
+ * Copie un fichier du jetable vers l'arrivée ; avec `check`, chaque morceau lu
+ * y passe décompressé : les octets vérifiés SONT les octets écrits. Adopter le
+ * fichier du jetable (le renommer) liait l'objet du magasin à ce fichier-là : un
+ * lien en dur depuis le workspace, ou une poignée qu'un processus planté garde
+ * ouverte, le réécrivait après la vérification (revue passe 6, P1).
+ */
+async function copyFromScratch(
+  src: string,
+  dst: string,
+  what: string,
+  deadline: HostDeadline,
+  check?: Writable,
+): Promise<void> {
+  const lu = await openScratchFile(src, what);
+  try {
+    const out = await open(dst, 'wx');
+    try {
+      const write = new Transform({
+        transform(chunk: Buffer, _enc, done) {
+          out.write(chunk).then(
+            () => done(null, chunk),
+            (err: unknown) => done(err as Error),
+          );
+        },
+      });
+      const stream = lu.createReadStream({ autoClose: false });
+      const signal = deadline.signal();
+      const sink = check ?? new Writable({ write: (_c, _e, done) => done() });
+      await (check
+        ? pipeline(stream, write, createInflate(), sink, { signal })
+        : pipeline(stream, write, sink, { signal }));
+    } finally {
+      await out.close();
+    }
+  } catch (err) {
+    const explained = deadline.explain(err);
+    // Un flux zlib invalide est un objet étranger, dit comme tel.
+    const zlib = String((err as { code?: unknown } | null)?.code ?? '').startsWith('Z_');
+    throw explained === err && zlib
+      ? new Error(`${what}: ${src} is not a zlib stream (${(err as Error).message})`)
+      : explained;
   } finally {
     await lu.close();
   }
-  await writeFile(dest, contenu);
-  const secondes = (Math.floor(date) - 1) / 1000;
-  await utimes(dest, secondes, secondes);
 }
 
-async function closeScratch(scratch: Scratch): Promise<void> {
-  await rm(scratch.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(
-    () => undefined,
-  );
+/**
+ * Ce qu'un objet libre décompressé doit être : un en-tête `type taille\0`, un
+ * contenu de cette taille exacte, le tout de SHA-1 `name`. La taille est
+ * vérifiée en flux : décompresser s'arrête au premier octet de trop.
+ */
+function looseObjectCheck(name: string): Writable {
+  const hash = createHash('sha1');
+  const head: Buffer[] = [];
+  let headSize = 0;
+  let declared = -1;
+  let payload = 0;
+  const foreign = (why: string): Error => new Error(`CHECKPOINT_FOREIGN_OBJECT: ${name} ${why}`);
+  return new Writable({
+    write(chunk: Buffer, _enc, done) {
+      hash.update(chunk);
+      let rest = chunk;
+      if (declared < 0) {
+        const nul = chunk.indexOf(0);
+        headSize += nul < 0 ? chunk.length : nul;
+        if (headSize > 32) return done(foreign('has no object header'));
+        if (nul < 0) {
+          head.push(chunk);
+          return done();
+        }
+        head.push(chunk.subarray(0, nul));
+        const m = /^(blob|tree|commit|tag) (0|[1-9][0-9]*)$/.exec(
+          Buffer.concat(head).toString('latin1'),
+        );
+        if (!m) return done(foreign('has no object header'));
+        declared = Number(m[2]);
+        rest = chunk.subarray(nul + 1);
+      }
+      payload += rest.length;
+      if (payload > declared) {
+        return done(foreign(`holds more than the ${declared} bytes its header says`));
+      }
+      done();
+    },
+    final(done) {
+      if (declared < 0) return done(foreign('has no object header'));
+      if (payload !== declared) {
+        return done(foreign(`holds ${payload} bytes, its header says ${declared}`));
+      }
+      const got = hash.digest('hex');
+      done(got === name ? null : foreign(`holds ${got}`));
+    },
+  });
 }
 
-/** L'index du jetable devient celui du workspace (renommage, atomique). */
-async function keepScratchIndex(store: string, workspace: string, scratch: Scratch): Promise<void> {
-  if (!existsSync(scratch.index)) return;
-  await rename(scratch.index, join(store, 'indexes', workspaceKey(workspace)));
+/**
+ * Pose `staged` (dans l'arrivée) à `dst` dans le magasin SANS JAMAIS remplacer
+ * un fichier existant : un lien en dur, qui échoue (`EEXIST`) si `dst` existe —
+ * la pose de git lui-même (`finalize_object_file`). Un renommage remplace sous
+ * POSIX, et une copie écrase : « rien d'existant n'est remplacé » ne tenait pas
+ * en concurrence (revue passe 6, P1). Un magasin sur un volume sans liens en
+ * dur n'importe rien, et le dit (l'erreur du système remonte).
+ */
+async function installNoReplace(staged: string, dst: string): Promise<void> {
+  try {
+    await link(staged, dst);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+  } finally {
+    await rm(staged, { force: true });
+  }
 }
 
 /**
  * Importe dans le magasin les objets que le git de l'arbre a écrits dans le
- * jetable — sur l'HÔTE, chacun VÉRIFIÉ : un objet libre doit avoir le nom de
- * son contenu (SHA-1 de `type taille\0contenu`), un paquet doit passer
- * `git verify-pack`. Rien d'existant n'est remplacé. Ce que le jetable aurait
- * reçu d'une commande plantée ne peut donc qu'AJOUTER des objets exacts.
+ * jetable — sur l'HÔTE, chacun COPIÉ dans l'arrivée en étant VÉRIFIÉ, puis posé
+ * sans remplacer : un objet libre doit avoir le nom de son contenu (SHA-1 de
+ * `type taille\0contenu`, taille exacte), un paquet doit passer
+ * `git verify-pack` — sur la copie de l'arrivée, que rien d'autre n'écrit. Ce
+ * que le jetable aurait reçu d'une commande plantée ne peut donc qu'AJOUTER des
+ * objets exacts, dans le temps de la borne.
  */
-async function importObjects(store: string, scratch: Scratch): Promise<void> {
+async function importObjects(
+  store: string,
+  scratch: Scratch,
+  incoming: string,
+  deadline: HostDeadline,
+): Promise<void> {
   const target = join(store, 'store', 'objects');
   for (const dir of await readdir(scratch.objects).catch(() => [] as string[])) {
     if (/^[0-9a-f]{2}$/.test(dir)) {
       for (const name of await readdir(join(scratch.objects, dir))) {
         if (!/^[0-9a-f]{38}$/.test(name)) continue;
-        const src = join(scratch.objects, dir, name);
-        const got = await looseObjectId(src);
-        if (got !== dir + name) {
-          throw new Error(`CHECKPOINT_FOREIGN_OBJECT: ${dir}${name} holds ${got}`);
-        }
         const dst = join(target, dir, name);
         if (existsSync(dst)) continue;
+        const staged = join(incoming, dir + name);
+        await copyFromScratch(
+          join(scratch.objects, dir, name),
+          staged,
+          'CHECKPOINT_FOREIGN_OBJECT',
+          deadline,
+          looseObjectCheck(dir + name),
+        );
         await mkdir(join(target, dir), { recursive: true });
-        await moveFile(src, dst);
+        await installNoReplace(staged, dst);
       }
     } else if (dir === 'pack') {
       const packDir = join(scratch.objects, 'pack');
       for (const name of await readdir(packDir)) {
-        if (!name.endsWith('.idx')) continue;
-        const base = name.slice(0, -'.idx'.length);
-        await run(await gitBinary(), ['verify-pack', join(packDir, name)], {
-          timeout: storeTimeoutMs(),
-          windowsHide: true,
-          env: storeEnv(store),
-        });
-        await mkdir(join(target, 'pack'), { recursive: true });
+        // Le seul nom qu'un git écrit ici ; un autre n'entre pas.
+        const m = /^(pack-(?:[0-9a-f]{40}|[0-9a-f]{64}))\.idx$/.exec(name);
+        if (!m) continue;
+        const base = m[1]!;
+        const staged = join(incoming, base);
         for (const ext of ['.pack', '.idx']) {
-          const dst = join(target, 'pack', base + ext);
-          if (!existsSync(dst)) await moveFile(join(packDir, base + ext), dst);
+          await copyFromScratch(
+            join(packDir, base + ext),
+            staged + ext,
+            'CHECKPOINT_FOREIGN_PACK',
+            deadline,
+          );
         }
+        try {
+          await run(await gitBinary(), ['verify-pack', `${staged}.idx`], {
+            timeout: deadline.remaining(),
+            windowsHide: true,
+            env: storeEnv(store),
+          });
+        } catch (err) {
+          throw deadline.explain(err);
+        }
+        await mkdir(join(target, 'pack'), { recursive: true });
+        // Le paquet avant son index : git découvre un paquet par son `.idx`.
+        await installNoReplace(`${staged}.pack`, join(target, 'pack', `${base}.pack`));
+        await installNoReplace(`${staged}.idx`, join(target, 'pack', `${base}.idx`));
       }
     }
   }
 }
 
-/** Le nom qu'un objet libre DEVRAIT porter : SHA-1 de son contenu décompressé. */
-function looseObjectId(path: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = createHash('sha1');
-    createReadStream(path)
-      .on('error', reject)
-      .pipe(createInflate())
-      .on('error', reject)
-      .on('data', (c: Buffer) => hash.update(c))
-      .on('end', () => resolve(hash.digest('hex')));
-  });
+/** Une entrée d'index, telle que git l'écrit (stage 0, aucun drapeau). */
+interface IndexEntry {
+  /** ctime, mtime, dev, ino, mode, uid, gid, size : 40 octets, gardés tels quels. */
+  readonly stat: Buffer;
+  readonly mode: number;
+  readonly oid: Buffer;
+  readonly path: Buffer;
 }
 
-/** Renomme, ou copie puis supprime si le renommage traverse un volume. */
-async function moveFile(src: string, dst: string): Promise<void> {
-  try {
-    await rename(src, dst);
-  } catch {
-    await copyFile(src, dst);
-    await rm(src, { force: true });
+const INDEX_MODES = new Set([0o100644, 0o100755, 0o120000, 0o160000]);
+
+/**
+ * Lit un index (versions 2 et 3, SHA-1) et n'en garde que les ENTRÉES — en
+ * refusant tout ce qu'un `add -A` honnête n'y pose jamais : une entrée
+ * « assume-unchanged » (git ne regarde plus le fichier), « skip-worktree » ou
+ * « intent-to-add », un stage de fusion, un mode inconnu, un ordre qui n'est pas
+ * celui de git, une extension OBLIGATOIRE (`link`, `sdir` : des entrées
+ * ailleurs). Les extensions facultatives (l'arbre en cache, le cache des
+ * fichiers non suivis, fsmonitor…) sont des CACHES que git refait : elles sont
+ * jetées, et un cache forgé avec elles.
+ */
+function parseIndex(buf: Buffer): IndexEntry[] {
+  const foreign = (why: string): Error => new Error(`CHECKPOINT_FOREIGN_INDEX: ${why}`);
+  if (buf.length < 32 || buf.toString('latin1', 0, 4) !== 'DIRC') throw foreign('not an index');
+  const body = buf.subarray(0, buf.length - 20);
+  if (
+    !createHash('sha1')
+      .update(body)
+      .digest()
+      .equals(buf.subarray(buf.length - 20))
+  ) {
+    throw foreign('its checksum does not match');
   }
+  const version = buf.readUInt32BE(4);
+  if (version !== 2 && version !== 3) throw foreign(`version ${version}`);
+  const count = buf.readUInt32BE(8);
+  const entries: IndexEntry[] = [];
+  let off = 12;
+  for (let i = 0; i < count; i++) {
+    if (off + 62 > body.length) throw foreign('truncated entry');
+    const mode = buf.readUInt32BE(off + 24);
+    const flags = buf.readUInt16BE(off + 60);
+    if (flags & 0x8000) throw foreign('an entry is marked assume-unchanged');
+    if ((flags >> 12) & 3) throw foreign('an entry has a merge stage');
+    let headerSize = 62;
+    if (flags & 0x4000) {
+      if (version !== 3) throw foreign('extended flags in a version 2 index');
+      if (off + 64 > body.length) throw foreign('truncated entry');
+      if (buf.readUInt16BE(off + 62)) throw foreign('an entry is skip-worktree or intent-to-add');
+      headerSize = 64;
+    }
+    const start = off + headerSize;
+    const nul = buf.indexOf(0, start);
+    if (nul < 0 || nul >= body.length) throw foreign('truncated path');
+    const path = buf.subarray(start, nul);
+    if ((flags & 0xfff) !== Math.min(path.length, 0xfff)) throw foreign('path length mismatch');
+    if (!INDEX_MODES.has(mode)) throw foreign(`mode ${mode.toString(8)}`);
+    const previous = entries[entries.length - 1];
+    if (previous && Buffer.compare(previous.path, path) >= 0) throw foreign('entries out of order');
+    entries.push({
+      stat: buf.subarray(off, off + 40),
+      mode,
+      oid: buf.subarray(off + 40, off + 60),
+      path,
+    });
+    off += (headerSize + path.length + 8) & ~7;
+  }
+  while (off < body.length) {
+    if (off + 8 > body.length) throw foreign('truncated extension');
+    const signature = buf.toString('latin1', off, off + 4);
+    if (signature[0]! >= 'a' && signature[0]! <= 'z') {
+      throw foreign(`it requires the "${signature}" extension`);
+    }
+    off += 8 + buf.readUInt32BE(off + 4);
+  }
+  if (off !== body.length) throw foreign('truncated extension');
+  return entries;
+}
+
+/** Un index de version 2, ces entrées et rien d'autre, sa somme SHA-1 à la fin. */
+function writeIndexV2(entries: readonly IndexEntry[]): Buffer {
+  const parts: Buffer[] = [];
+  const header = Buffer.alloc(12);
+  header.write('DIRC', 0, 'latin1');
+  header.writeUInt32BE(2, 4);
+  header.writeUInt32BE(entries.length, 8);
+  parts.push(header);
+  for (const e of entries) {
+    const size = (62 + e.path.length + 8) & ~7;
+    const entry = Buffer.alloc(size);
+    e.stat.copy(entry, 0);
+    e.oid.copy(entry, 40);
+    entry.writeUInt16BE(Math.min(e.path.length, 0xfff), 60);
+    e.path.copy(entry, 62);
+    parts.push(entry);
+  }
+  const body = Buffer.concat(parts);
+  return Buffer.concat([body, createHash('sha1').update(body).digest()]);
+}
+
+/**
+ * Les entrées de `tree`, récursivement : chemin (octets bruts, en latin1) →
+ * `mode oid`. Un git du magasin seul, sur l'hôte, borné par `deadline`.
+ */
+async function treeEntries(
+  store: string,
+  workspace: string,
+  tree: string,
+  deadline: HostDeadline,
+): Promise<Map<string, string>> {
+  const binaire = await gitBinary();
+  const child = await hostGit.spawn(binaire, ['ls-tree', '-r', '-z', '--full-tree', tree], {
+    env: gitEnv(store, workspace, STORE),
+    writableRoots: [],
+    readableRoots: [],
+  });
+  const chunks: Buffer[] = [];
+  child.stdout.on('data', (c: Buffer) => chunks.push(c));
+  child.stderr.resume();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill();
+  }, deadline.remaining());
+  const { code } = await child.closed;
+  clearTimeout(timer);
+  if (timedOut) throw deadline.explain(Object.assign(new Error('ls-tree'), { killed: true }));
+  if (code !== 0) throw new Error(`git ls-tree ${tree} exited with ${code}`);
+  const entries = new Map<string, string>();
+  for (const record of Buffer.concat(chunks).toString('latin1').split('\0')) {
+    if (record === '') continue;
+    const tab = record.indexOf('\t');
+    const [mode, , oid] = record.slice(0, tab).split(' ');
+    entries.set(record.slice(tab + 1), `${mode} ${oid}`);
+  }
+  return entries;
+}
+
+/**
+ * L'index du jetable devient celui du workspace — mais l'hôte ne le prend pas
+ * tel quel (revue passe 6, P1). Le jetable est une racine inscriptible du git
+ * de l'arbre, donc de ce que la config d'un sous-dépôt lui fait lancer : un
+ * index réécrit là (« assume-unchanged » sur un fichier, une entrée vers un
+ * autre contenu) faisait manquer un changement à TOUTES les photos suivantes,
+ * et à l'instantané de sûreté d'une restauration.
+ *
+ * Il est donc lu UNE fois, par l'hôte, sans suivre de lien ; ses entrées
+ * doivent être EXACTEMENT celles de l'arbre que cette photo enregistre (mêmes
+ * chemins, modes et objets) ; et il est RÉÉCRIT avec elles seules, sans un
+ * drapeau ni une extension, daté comme lui. Il n'arrive dans le magasin que par
+ * l'arrivée, que seul l'hôte écrit.
+ *
+ * Ce qui reste hors d'atteinte, et c'est dit : les STATS d'une entrée (date,
+ * taille) ne se vérifient pas sans relire le fichier, ce que l'index existe
+ * pour éviter. Un processus qui peut écrire le jetable peut aussi écrire le
+ * workspace : sous Windows, réécrire un fichier puis lui remettre sa date
+ * (`utimes`) le cache déjà à git, sans toucher l'index — la ctime y est la
+ * date de création, l'inode est nul.
+ */
+async function adoptScratchIndex(
+  store: string,
+  workspace: string,
+  scratch: Scratch,
+  tree: string,
+  incoming: string,
+  deadline: HostDeadline,
+): Promise<void> {
+  const what = 'CHECKPOINT_FOREIGN_INDEX';
+  const { content, mtimeMs } = await readIndexOnce(await openScratchFile(scratch.index, what));
+  const entries = parseIndex(content);
+  const expected = await treeEntries(store, workspace, tree, deadline);
+  if (expected.size !== entries.length) {
+    throw new Error(`${what}: ${entries.length} entries for a tree of ${expected.size}`);
+  }
+  for (const e of entries) {
+    const path = e.path.toString('latin1');
+    if (expected.get(path) !== `${e.mode.toString(8)} ${e.oid.toString('hex')}`) {
+      throw new Error(`${what}: ${e.path.toString('utf8')} is not what the snapshot records`);
+    }
+  }
+  const staged = join(incoming, 'index');
+  await writeFile(staged, writeIndexV2(entries), { flag: 'wx' });
+  await dateLikeIndex(staged, mtimeMs);
+  await rename(staged, join(store, 'indexes', workspaceKey(workspace)));
 }
 
 /** A snapshot that hangs must not hold a tool call. */
@@ -874,15 +1305,18 @@ async function takeSnapshot(
   // L'ARBRE DE TRAVAIL est lu par un git qui n'écrit que le jetable (voir « Qui
   // lance git ») ; le magasin n'est écrit que plus bas, sur l'hôte.
   const scratch = await openScratch(store, workspace, true);
+  const incoming = await openWorkDir(store, 'incoming');
   try {
     const wt = onWorktree(scratch);
     await git(store, workspace, ['add', '-A'], wt, undefined, limitMs);
     const tree = await git(store, workspace, ['write-tree'], wt, undefined, limitMs);
-    // L'arbre que ce git annonce n'est cru qu'importé, vérifié, et d'un arbre.
-    await importObjects(store, scratch);
+    // L'arbre que ce git annonce n'est cru qu'importé, vérifié, et d'un arbre ;
+    // son index, que relu et comparé à cet arbre. Chaque vérification de l'hôte
+    // a la borne d'une commande git.
+    await importObjects(store, scratch, incoming, new HostDeadline(limitMs));
     const kind = await git(store, workspace, ['cat-file', '-t', tree], STORE, undefined, limitMs);
     if (kind !== 'tree') throw new Error(`CHECKPOINT_NOT_A_TREE: ${tree} is a ${kind}`);
-    await keepScratchIndex(store, workspace, scratch);
+    await adoptScratchIndex(store, workspace, scratch, tree, incoming, new HostDeadline(limitMs));
 
     // Nothing changed since the last checkpoint — recording it again would bury
     // the useful ones under identical noise.
@@ -914,6 +1348,7 @@ async function takeSnapshot(
     return { sha, workspace, at, label };
   } finally {
     await closeScratch(scratch);
+    await removeWorkDir(incoming);
   }
 }
 
@@ -1292,13 +1727,15 @@ export async function restoreCheckpoint(
     // lise un arbre.
     const kind = await git(store, workspace, ['cat-file', '-t', sha], STORE);
     if (kind !== 'commit') throw new Error(`CHECKPOINT_NOT_A_COMMIT: ${sha} is a ${kind}`);
-    // L'ARBRE est écrit par un git qui ne peut écrire que lui et le jetable ;
-    // l'index du jetable devient celui du workspace (voir « Qui lance git »).
+    // L'ARBRE est écrit par un git qui ne peut écrire que lui et le jetable
+    // (voir « Qui lance git »). L'index du jetable n'est PAS gardé (revue passe
+    // 6, P1) : celui du magasin reste celui de l'instantané de sûreté, pris
+    // juste avant. Les fichiers que la restauration réécrit n'y ont plus leurs
+    // stats, donc la photo suivante les relit ; les autres n'ont pas bougé.
     const scratch = await openScratch(store, workspace, true);
     try {
       // -f: the working tree is expected to differ, that is the point.
       await git(store, workspace, ['checkout', '-f', sha, '--', '.'], onWorktree(scratch));
-      await keepScratchIndex(store, workspace, scratch);
     } finally {
       await closeScratch(scratch);
     }
