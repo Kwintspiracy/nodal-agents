@@ -115,17 +115,12 @@ function actionForms(base: string): string[] {
 }
 const OUTBOUND_ACTIONS = new Set(OUTBOUND_BASES.flatMap(actionForms));
 /**
- * Après un verbe de lecture, seuls la base et le -ing sont des verbes
- * (`get_and_send`, `checkBeforeSend`, `list_and_notifying`) : un -s y est le
- * pluriel d'un nom (`list_posts`, `get_shares`).
+ * Après un verbe de lecture, seule une BASE sortante est une action, préfixée
+ * ou non de « re » (`get_and_send`, `checkBeforeSend`, `list_then_resend`).
+ * Les formes en -ing, -ed et -s y désignent des choses, jamais des actions
+ * (`list_sending_domains`, `get_posting_rules`, `list_posts`).
  */
-const OUTBOUND_AFTER_READ = new Set(
-  OUTBOUND_BASES.flatMap((b) => [
-    b,
-    `${b}ing`,
-    ...(b.endsWith('e') ? [`${b.slice(0, -1)}ing`] : []),
-  ]),
-);
+const OUTBOUND_AFTER_READ = new Set(OUTBOUND_BASES.flatMap((b) => [b, `re${b}`]));
 
 /** Les verbes qui LISENT : en position d'action, l'outil est une lecture. */
 const READ_VERBS = new Set([
@@ -214,10 +209,14 @@ function isInternalTool(toolName: string): boolean {
  *      courrier (`telegram__chat`, `smtp_relay`) : un envoi.
  * Un faux rouge vaut mieux qu'un faux vert.
  *
- * Toujours une lecture de NOMS (revue Reviewer A, passes 3 à 5) : la vraie
- * prévention est un espace « banc » sans canal (décision du propriétaire,
- * b1). Jusque-là, un essai sur les agents du propriétaire PEUT encore lui
- * envoyer un message ; le banc ne fait que le signaler après coup.
+ * C'est une ALARME, pas une porte (revue Reviewer A, passes 3 à 7). Elle lit
+ * des noms et signale un envoi APRÈS COUP ; elle n'empêche rien et n'a pas
+ * vocation à grandir encore. La porte, c'est l'espace « banc » (#758) : les
+ * vrais essais n'y tournent que derrière un contrôle STRUCTUREL d'avant
+ * essai, qui vérifie qu'aucun outil de l'équipe ne peut envoyer. Jusque-là,
+ * un essai sur les agents du propriétaire PEUT encore lui envoyer un message,
+ * et le banc ne fait que le dire. Une alarme qui sonne dans l'espace banc
+ * signale un trou de cette porte.
  */
 export function isOutboundTool(toolName: string): boolean {
   if (isInternalTool(toolName)) return false;

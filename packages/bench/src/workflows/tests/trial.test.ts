@@ -385,6 +385,12 @@ describe('where a trial may send', () => {
     'getAndSend',
     'checkBeforeSend',
     'slack__list_and_notify',
+    // Passe 7 (P1) : après une lecture, une base sortante préfixée de « re ».
+    'get_sent_then_resend',
+    'list_then_resend',
+    'fetch_then_repost',
+    'check_before_retweet',
+    'search_and_reshare',
   ])('under sends: nothing, %s makes the trial red, named', async (tool) => {
     const green = load('question-green');
     const sent: TreeFacts = {
@@ -416,6 +422,10 @@ describe('where a trial may send', () => {
     'gmail_get_message',
     'blog__search_posts',
     'telegram__get_updates',
+    // Passe 7 (P2) : après une lecture, un -ing est un complément de nom, pas une action.
+    'list_sending_domains',
+    'get_posting_rules',
+    'get_forwarding_rules',
   ])('under sends: nothing, the read %s stays green', async (tool) => {
     const green = load('question-green');
     const read: TreeFacts = {

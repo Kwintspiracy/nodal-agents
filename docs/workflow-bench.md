@@ -332,11 +332,13 @@ scenario is skipped with that reason, no job is started (needs
     connector op (`file_upload`, one underscore), an MCP tool (`x__y`) or a CLI
     tool (`cli:…`) is never internal;
   - a read verb in action position is a read (`list_posts`, `get_posted_at`,
-    `slack__list_channels`, `gmail_get_message`), UNLESS an outbound verb in
-    base or -ing form follows it in the name (`get_and_send`,
-    `list_then_post`, `checkBeforeSend` are sends); after a read verb an -s is
-    a plural noun (`list_posts`), and a messaging service is exempt only on a
-    pure read;
+    `slack__list_channels`, `gmail_get_message`), UNLESS an outbound BASE
+    verb, optionally prefixed with `re`, follows it in the name
+    (`get_and_send`, `checkBeforeSend`, `list_then_resend`,
+    `check_before_retweet` are sends); after a read verb the -ing, -ed and -s
+    forms are things, never actions (`list_posts`, `list_sending_domains`,
+    `get_posting_rules`), and a messaging service is exempt only on a pure
+    read;
   - an outbound verb in action form (send, post, publish, share, forward,
     reply, notify, tweet, upload… as base, -s, -es or -ing) in action position
     is a send (`mcp-telegram__send_message`, `discord__sendMessage`,
@@ -347,10 +349,13 @@ scenario is skipped with that reason, no job is started (needs
     participle describes a thing and does not act (`published_at`,
     `sent_items`, `shared_with_me` stay green).
   A false red is preferred to a false green (a local upload to ComfyUI would be
-  one). **This is still a reading of names, and it reports after the fact.** The
-  real prevention is a bench workspace without channels (owner decision b1);
-  until then a trial on the owner's agents CAN still send him a message, and
-  the bench only says so afterwards.
+  one). **This guard is an ALARM, not a gate.** It reads names and reports a
+  send AFTER THE FACT; it prevents nothing, and it stops growing here (review
+  passes 3 to 7). The gate is the bench space (#758): real trials run only
+  there, behind a STRUCTURAL pre-trial check that no tool of the bench team can
+  send anything. Until then a trial on the owner's agents CAN still send him a
+  message, and the bench only says so. In the bench space, this alarm ringing
+  means the gate has a hole.
 - The real `research` trial of 30/09 called `telegram_send_message` from the
   delegate: a message reached the owner during a bench trial. Its judge said
   green; the declared destination (`nothing`) now makes such a run red.
