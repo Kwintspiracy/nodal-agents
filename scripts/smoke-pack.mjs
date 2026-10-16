@@ -38,6 +38,7 @@ import {
   writeFileSync,
   rmSync,
   readdirSync,
+  openSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -90,6 +91,7 @@ mkdirSync(installDir, { recursive: true });
 mkdirSync(homeDir, { recursive: true });
 
 const env = { ...process.env, HOME: homeDir, USERPROFILE: homeDir };
+const upLog = join(sandbox, 'up.log');
 let failure = null;
 
 try {
@@ -184,9 +186,16 @@ try {
   // running. It must be spawned, not exec'd synchronously: the detached children
   // inherit the parent's stdio handles, so `execFileSync(..., 'inherit')` blocks
   // until they die — observed here, hanging for 25 minutes after the boot had
-  // already succeeded. `stdio: 'ignore'` gives the children nothing to hold.
+  // already succeeded. A FILE holds nothing open the way a pipe does, so the
+  // output of `up` goes to one, printed when the boot fails: until 0.9.7 an
+  // `up` that refused to start said why to nobody.
   step('nodal-agents up  ← the gate');
-  const up = spawn(process.execPath, [cli, 'up'], { env, stdio: 'ignore', detached: false });
+  const upLogFd = openSync(upLog, 'w');
+  const up = spawn(process.execPath, [cli, 'up'], {
+    env,
+    stdio: ['ignore', upLogFd, upLogFd],
+    detached: false,
+  });
   // `up` exits 0 once everything is healthy and leaves the services running, so
   // a plain await would hang. Record the code as it arrives and let the probes
   // below decide — a NON-ZERO exit means the boot failed and there is nothing
@@ -242,6 +251,7 @@ try {
   const webLog = join(homeDir, '.nodalai', 'logs', 'web.log');
   const runnerLog = join(homeDir, '.nodalai', 'logs', 'runner.log');
   for (const [label, path] of [
+    ['nodal-agents up', upLog],
     ['web.log', webLog],
     ['runner.log', runnerLog],
   ]) {

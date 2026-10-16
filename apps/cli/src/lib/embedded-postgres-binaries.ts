@@ -44,8 +44,8 @@
 // (la porte, avec certitude), et des binaires absents (installation
 // incomplète, cause à vérifier). Les deux nomment le paquet et la commande.
 
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, readFileSync, symlinkSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import { importEmbeddedPostgresBinaries } from './embedded-postgres-module.ts';
 
 /** Un lien que `hydrate-symlinks.js` recrée, tel que le manifeste l'écrit. */
@@ -71,7 +71,9 @@ export type BinariesFault =
   /** Le paquet est là, un binaire manque. */
   | 'BINARIES_MISSING'
   /** Le paquet est là, les binaires aussi, les liens promis manquent. */
-  | 'HYDRATION_SKIPPED';
+  | 'HYDRATION_SKIPPED'
+  /** Nodal a tenté de créer ces liens lui-même, et au moins un a échoué. */
+  | 'HYDRATION_FAILED';
 
 export type BinariesVerdict =
   | { readonly ok: true; readonly packageName: string }
@@ -317,4 +319,71 @@ export class EmbeddedPostgresUnavailableError extends Error {
     this.name = 'EmbeddedPostgresUnavailableError';
     this.reason = reason;
   }
+}
+
+// ── Nodal crée lui-même les liens (0.9.7) ─────────────────────────────────────
+//
+// Nodal ne dépend d'aucun script d'installation : npm 11.17 et suivants ne les
+// lancent plus sans approbation, et le 16/10/2026 la CI (Linux, npm 12.2.0) a
+// vu `up` s'arrêter sur ces liens jamais créés. Ce que fait `postinstall`
+// (`scripts/hydrate-symlinks.js` du paquet, lu dans le paquet publié
+// 18.3.0-beta.17) est refait ici, à l'identique : pour chaque entrée de
+// `native/pg-symlinks.json`, un lien RELATIF `target → source`. Idempotent : un lien déjà présent n'est pas touché.
+// Là où le script avalait chaque erreur, celle-ci est dite, avec son code.
+
+/** Les opérations disque, injectées pour les tests. */
+export interface HydrationOps {
+  readonly exists: (path: string) => boolean;
+  readonly symlink: (target: string, path: string) => void;
+}
+
+/** Ce que l'hydratation a fait, et ce qu'elle n'a pas pu faire. */
+export interface HydrationResult {
+  readonly created: readonly string[];
+  readonly failed: readonly { readonly path: string; readonly error: string }[];
+}
+
+/** Créer les liens manquants du manifeste, relatifs, comme le script du paquet. */
+export function hydrateSymlinks(
+  packageDir: string,
+  entries: readonly SymlinkEntry[],
+  ops: HydrationOps,
+): HydrationResult {
+  const created: string[] = [];
+  const failed: { path: string; error: string }[] = [];
+  for (const { source, target } of entries) {
+    const linkPath = join(packageDir, target);
+    if (ops.exists(linkPath)) continue;
+    // Relatif au dossier du lien : déplacer tout le paquet ne le casse pas.
+    const pointsTo = relative(dirname(linkPath), join(packageDir, source));
+    try {
+      ops.symlink(pointsTo, linkPath);
+      created.push(linkPath);
+    } catch (err) {
+      failed.push({ path: linkPath, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return { created, failed };
+}
+
+/**
+ * Hydrater le paquet de CETTE machine. Lève `HYDRATION_FAILED` quand un lien
+ * n'a pas pu être créé : sans lui le postmaster ne charge pas ses bibliothèques.
+ */
+export async function hydrateEmbeddedPostgres(): Promise<HydrationResult> {
+  const binaries = await loadPlatformBinaries();
+  if (binaries === null) return { created: [], failed: [] };
+  const packageDir = platformPackageDir(binaries);
+  const result = hydrateSymlinks(packageDir, readSymlinkManifest(packageDir), {
+    exists: existsSync,
+    symlink: (target, path) => symlinkSync(target, path),
+  });
+  if (result.failed.length > 0) {
+    throw new EmbeddedPostgresUnavailableError(
+      'HYDRATION_FAILED',
+      `Embedded Postgres cannot start: Nodal could not create ${count(result.failed.length, 'library link', 'library links')} the database needs.\n` +
+        result.failed.map((f) => `  ${f.path}: ${f.error}`).join('\n'),
+    );
+  }
+  return result;
 }

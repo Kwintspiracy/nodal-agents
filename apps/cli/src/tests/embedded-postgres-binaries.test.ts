@@ -11,11 +11,20 @@
 // prouve que la résolution du paquet optionnel marche vraiment.
 
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import {
+  mkdtempSync,
+  writeFileSync,
+  mkdirSync,
+  rmSync,
+  readFileSync,
+  readlinkSync,
+  symlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   embeddedPostgresPackageName,
+  hydrateSymlinks,
   inspectEmbeddedPostgres,
   platformPackageDir,
   probeEmbeddedPostgres,
@@ -253,5 +262,84 @@ describe('embedded Postgres manifest and layout @cap:installer-et-demarrer/moteu
     }
     expect(verdict.ok ? '' : verdict.message).toBe('');
     expect(verdict).toEqual({ ok: true, packageName: expected });
+  });
+});
+
+// 0.9.7 — npm 11.17+ skips the package's postinstall, so Nodal creates the
+// links itself (seen on the Linux CI, npm 12.2.0: `up` stopped on them).
+describe('Nodal creates the library links itself @cap:installer-et-demarrer/moteur', () => {
+  const ENTRIES = [
+    { source: 'native/lib/libpq.so.5.18', target: 'native/lib/libpq.so' },
+    { source: 'native/lib/libpq.so.5.18', target: 'native/lib/libpq.so.5' },
+  ];
+
+  // Creating a symlink on Windows needs a privilege CI runners and most users
+  // lack; the Windows package has no links to create anyway (its manifest is []).
+  it.runIf(process.platform !== 'win32')(
+    'creates each missing link, relative, readable through it, and only once',
+    () => {
+      const root = mkdtempSync(join(tmpdir(), 'hydrate-'));
+      try {
+        mkdirSync(join(root, 'native', 'lib'), { recursive: true });
+        writeFileSync(join(root, 'native/lib/libpq.so.5.18'), 'ELF libpq');
+
+        const first = hydrateSymlinks(root, ENTRIES, {
+          exists: (p) => {
+            try {
+              readlinkSync(p);
+              return true;
+            } catch {
+              return false;
+            }
+          },
+          symlink: (target, path) => symlinkSync(target, path),
+        });
+
+        expect(first.failed).toEqual([]);
+        expect(first.created).toEqual([
+          join(root, 'native/lib/libpq.so'),
+          join(root, 'native/lib/libpq.so.5'),
+        ]);
+        expect(readlinkSync(join(root, 'native/lib/libpq.so'))).toBe('libpq.so.5.18');
+        expect(readFileSync(join(root, 'native/lib/libpq.so.5'), 'utf-8')).toBe('ELF libpq');
+
+        const inspection = inspectEmbeddedPostgres({
+          packageName: '@embedded-postgres/linux-x64',
+          binaries: {
+            pg_ctl: join(root, 'native/lib/libpq.so.5.18'),
+            initdb: join(root, 'native/lib/libpq.so.5.18'),
+            postgres: join(root, 'native/lib/libpq.so.5.18'),
+          },
+          packageDir: root,
+          symlinks: ENTRIES,
+          exists: (p) => {
+            try {
+              readFileSync(p);
+              return true;
+            } catch {
+              return false;
+            }
+          },
+        });
+        expect(inspection).toEqual({ ok: true, packageName: '@embedded-postgres/linux-x64' });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('leaves a present link alone and names every link it could not create', () => {
+    const present = join('/pkg', 'native/lib/libpq.so');
+    const result = hydrateSymlinks('/pkg', ENTRIES, {
+      exists: (p) => p === present,
+      symlink: () => {
+        throw new Error('EACCES: permission denied');
+      },
+    });
+
+    expect(result).toEqual({
+      created: [],
+      failed: [{ path: join('/pkg', 'native/lib/libpq.so.5'), error: 'EACCES: permission denied' }],
+    });
   });
 });
