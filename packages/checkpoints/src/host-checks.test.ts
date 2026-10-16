@@ -21,7 +21,17 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { link, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
+import {
+  link,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  rm,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -312,6 +322,46 @@ describe('the scratch index enters the store only checked against the snapshot a
     expect(gitIn(ws, ['--git-dir', join(store, 'store'), 'show', `${next!.sha}:a.txt`])).toBe(
       'changed, longer',
     );
+  });
+
+  it('un index plus gros que ce qu’un index de cet arbre peut peser est refusé SANS être lu', async () => {
+    // Revue passe 7 (P2) : l'index était lu en entier (`readFile`), sans borne
+    // de taille ni de temps. 256 Mo posés par le processus planté : un index
+    // d'un fichier pèse une centaine d'octets, plus ses caches.
+    const programs = tamperingPrograms('write-tree', async (env) => {
+      const index = await open(env['GIT_INDEX_FILE']!, 'r+');
+      try {
+        await index.truncate(256 * 1024 * 1024);
+      } finally {
+        await index.close();
+      }
+    });
+
+    await rejectsWith(
+      snapshot(store, ws, 'one', { programs }),
+      'is 268435456 bytes, more than the',
+    );
+  });
+
+  it('la borne de taille laisse passer l’index honnête d’un arbre large et profond, sous-dépôt compris', async () => {
+    // Le revers de la borne : un index que git a vraiment écrit n'est jamais
+    // refusé. Beaucoup de dossiers (l'arbre en cache pèse par dossier), des
+    // chemins longs, un sous-dépôt (une entrée 160000).
+    for (let i = 0; i < 40; i++) {
+      const dir = join(ws, `d${i}`, 'un-sous-dossier-au-nom-long', `profond-${i}`);
+      await mkdir(dir, { recursive: true });
+      for (let j = 0; j < 5; j++) await writeFile(join(dir, `fichier-${j}.txt`), `${i}-${j}\n`);
+    }
+    const sub = join(ws, 'sous-depot');
+    await mkdir(sub, { recursive: true });
+    gitIn(sub, ['init', '-q']);
+    await writeFile(join(sub, 'x.txt'), 'x\n');
+    gitIn(sub, ['add', 'x.txt']);
+    gitIn(sub, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x']);
+
+    expect(await snapshot(store, ws, 'one')).not.toBeNull();
+    await writeFile(join(ws, 'd0', 'encore.txt'), 'encore\n');
+    expect(await snapshot(store, ws, 'two')).not.toBeNull();
   });
 
   it('un index dont une entrée ne correspond pas à l’arbre photographié est refusé', async () => {

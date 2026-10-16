@@ -17,9 +17,11 @@
 // `sandbox-windows`.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import {
   hostPrograms,
   nodalProgramsSandbox,
@@ -27,6 +29,8 @@ import {
   type ProgramRunner,
 } from '@nodal-agents/sandbox';
 import { initGitRepository } from '../project-git.ts';
+
+const run = promisify(execFile);
 
 const available =
   process.platform === 'win32' && (await nodalProgramsSandbox().status()).state === 'available';
@@ -61,6 +65,20 @@ function plantingFirst(programs: ProgramRunner): ProgramRunner {
 describe.runIf(available)(
   'the web’s git init cannot write outside the project, even through a .git planted at the last moment @cap:travailler-sur-des-fichiers/moteur (Windows, MXC available)',
   () => {
+    it('par les programmes de Nodal, un dossier neuf reçoit un VRAI dépôt (revue passe 7)', async () => {
+      // Sans ce cas, un `git init` confiné qui échoue TOUJOURS (racines mal
+      // passées, `chdir` refusé, modèles illisibles) laissait la CI verte, et
+      // chaque pose de git en production rendait `failed`.
+      const out = await withNodalPrograms((programs) => initGitRepository(projet, programs));
+      expect(out).toEqual({ kind: 'initialised', gitignoreWritten: true });
+      const { stdout } = await run('git', ['rev-parse', '--is-inside-work-tree', '--git-dir'], {
+        cwd: projet,
+        windowsHide: true,
+      });
+      expect(stdout.trim().split(/\r?\n/)).toEqual(['true', '.git']);
+      expect(await readdir(hote)).toEqual([]);
+    });
+
     it('témoin : sur l’hôte, la jonction plantée fait écrire le squelette du dépôt hors du projet', async () => {
       const out = await initGitRepository(projet, plantingFirst(hostPrograms));
       expect(out.kind).toBe('initialised');
