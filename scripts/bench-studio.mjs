@@ -52,8 +52,11 @@ async function main() {
     Number(arg('port') ?? STUDIO_PORT),
     portsDeLaStack(readHostConfig()),
   );
+  // Deux jetons distincts : le filtre pose le premier sur chaque requête admise ;
+  // le second, seule la page le reçoit et le renvoie (anti-CSRF).
   const gate = randomBytes(24).toString('hex');
-  Object.assign(process.env, studioEnv(process.env, port, gate));
+  const csrf = randomBytes(24).toString('hex');
+  Object.assign(process.env, studioEnv(process.env, port, gate, csrf));
 
   // Next réécrit next-env.d.ts pour son dossier de build : remis tel quel dès
   // qu'il a fini de se préparer, et encore à la sortie.
@@ -74,6 +77,7 @@ async function main() {
   const server = createStudioServer({
     port,
     gate,
+    csrf,
     handle: app.getRequestHandler(),
     upgrade: app.getUpgradeHandler(),
   });

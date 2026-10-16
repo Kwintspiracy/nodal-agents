@@ -3,14 +3,27 @@
 // Bench Studio est l'outil LOCAL du propriétaire pour le banc d'essai
 // (`pnpm bench:studio`), jamais livré. Il lance ses essais : son point d'entrée
 // de lancement ne doit être joignable QUE depuis cette machine, même quand la
-// stack de dev tourne en mode LAN (BIND=0.0.0.0). Trois verrous, tous ici :
+// stack de dev tourne en mode LAN (BIND=0.0.0.0), et seulement par ses propres
+// pages, jamais par une autre page ouverte dans le même navigateur. Trois
+// verrous, tous ici :
 //
 //   1. le serveur n'écoute que sur 127.0.0.1 : depuis le réseau, rien ne
 //      répond (pas même un refus HTTP) ;
-//   2. chaque requête est filtrée AVANT Next : une adresse distante qui n'est
-//      pas la boucle locale, ou un Host qui n'est pas un nom de cette machine
-//      (rebinding DNS), reçoit un 403. Une requête admise porte un jeton tiré
-//      au démarrage (`x-bench-studio-gate`, jamais pris au client) : les routes
+//   2. chaque requête est filtrée AVANT Next (`studioRequestRefusal`) :
+//      - une adresse distante qui n'est pas la boucle locale, ou un Host qui
+//        n'est pas un nom de cette machine (rebinding DNS) : 403 ;
+//      - un chemin qui n'est pas Bench Studio : 404. Ce port ne sert jamais les
+//        routes ordinaires du dashboard ;
+//      - une requête qu'une AUTRE page du navigateur envoie (Origin qui n'est
+//        pas celle du studio, Sec-Fetch-Site ni `same-origin` ni `none`) : 403 ;
+//      - toute requête qui change quelque chose (autre que GET/HEAD) sans le
+//        jeton anti-CSRF dans `x-bench-studio-csrf` : 403. Ce jeton, la PAGE le
+//        reçoit du studio (rendu serveur) et le renvoie ; le filtre ne le pose
+//        JAMAIS. Un en-tête personnalisé force un pré-vol CORS, que le studio
+//        n'accorde jamais : un `fetch` en `no-cors` depuis un site tiers ne
+//        peut pas le porter.
+//      Une requête admise porte en plus un jeton tiré au démarrage
+//      (`x-bench-studio-gate`, posé ICI et jamais pris au client) : les routes
 //      du studio refusent toute requête qui ne l'a pas, donc tout serveur Next
 //      lancé autrement que par ce filtre ;
 //   3. il ne touche jamais la stack qui tourne : son propre port (jamais celui
@@ -20,6 +33,7 @@
 // Les fonctions sont pures ou prennent leurs dépendances en paramètre, pour
 // que les tests (scripts/tests/bench-studio.test.mjs) les prouvent sans Next.
 
+import { timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -30,9 +44,14 @@ export const STUDIO_DIST_DIR = '.next-studio';
 /** Le jeton du filtre : dans l'environnement du processus, et sur chaque requête admise. */
 export const STUDIO_GATE_ENV = 'NODAL_BENCH_STUDIO_GATE';
 export const STUDIO_GATE_HEADER = 'x-bench-studio-gate';
+/** Le jeton anti-CSRF : la page le reçoit et le renvoie ; jamais posé par le filtre. */
+export const STUDIO_CSRF_ENV = 'NODAL_BENCH_STUDIO_CSRF';
+export const STUDIO_CSRF_HEADER = 'x-bench-studio-csrf';
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const LOOPBACK_NAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
+const SAFE_METHODS = new Set(['GET', 'HEAD']);
+const OWN_FETCH_SITES = new Set(['same-origin', 'none']);
 
 /**
  * La requête vient-elle de cette machine, pour ce serveur ?
@@ -45,6 +64,58 @@ export function studioRefusal({ remoteAddress, host }, port) {
   if (!m || !LOOPBACK_NAMES.has(m[1]) || (m[2] !== undefined && Number(m[2]) !== port))
     return 'studio_host_not_allowed';
   return null;
+}
+
+/**
+ * Ce que ce port sert : Bench Studio, les fichiers de Next qui le font tourner,
+ * et le logo qu'il affiche. Rien d'autre : ni le dashboard, ni ses routes.
+ */
+export function isStudioPath(url) {
+  const path = String(url ?? '').split('?')[0];
+  return (
+    path === '/bench-studio' ||
+    path.startsWith('/bench-studio/') ||
+    path.startsWith('/_next/') ||
+    path === '/logo-128.png'
+  );
+}
+
+/**
+ * Le filtre entier d'une requête, avant Next. Rend null quand elle est admise,
+ * sinon `{ status, error }`. `req` porte ce que le serveur lit de la requête
+ * (adresse, Host, chemin, méthode, Origin, Sec-Fetch-Site, en-tête anti-CSRF) ;
+ * `studio` porte le port et le jeton anti-CSRF.
+ */
+export function studioRequestRefusal(req, { port, csrf }) {
+  const where = studioRefusal(req, port);
+  if (where) return { status: 403, error: where };
+  if (!isStudioPath(req.url)) return { status: 404, error: 'studio_not_a_studio_route' };
+  // L'origine du studio est celle du Host déjà admis : un nom de cette machine, ce port.
+  if (req.origin !== undefined && req.origin !== `http://${String(req.host).toLowerCase()}`)
+    return { status: 403, error: 'studio_foreign_origin' };
+  if (req.secFetchSite !== undefined && !OWN_FETCH_SITES.has(req.secFetchSite))
+    return { status: 403, error: 'studio_foreign_site' };
+  if (!SAFE_METHODS.has(String(req.method ?? '').toUpperCase())) {
+    const sent = Buffer.from(String(req.csrfHeader ?? ''));
+    const want = Buffer.from(String(csrf ?? ''));
+    if (want.length < 32 || sent.length !== want.length || !timingSafeEqual(sent, want))
+      return { status: 403, error: 'studio_no_csrf_token' };
+  }
+  return null;
+}
+
+/** Ce que le filtre lit d'une requête Node. */
+function seen(req) {
+  const one = (h) => (Array.isArray(h) ? h[0] : h);
+  return {
+    remoteAddress: req.socket.remoteAddress,
+    host: req.headers.host,
+    url: req.url,
+    method: req.method,
+    origin: one(req.headers.origin),
+    secFetchSite: one(req.headers['sec-fetch-site']),
+    csrfHeader: one(req.headers[STUDIO_CSRF_HEADER]),
+  };
 }
 
 /**
@@ -61,12 +132,13 @@ export function assertStudioPort(port, stackPorts) {
   return port;
 }
 
-/** L'environnement du processus Next du studio : le mode studio, rien d'autre de changé. */
-export function studioEnv(base, port, gate) {
+/** L'environnement du processus Next du studio : le mode studio et ses deux jetons. */
+export function studioEnv(base, port, gate, csrf) {
   return {
     ...base,
     [STUDIO_ENV]: '1',
     [STUDIO_GATE_ENV]: gate,
+    [STUDIO_CSRF_ENV]: csrf,
     PORT: String(port),
     NODE_ENV: 'development',
   };
@@ -74,17 +146,15 @@ export function studioEnv(base, port, gate) {
 
 /**
  * Le serveur HTTP du studio. `handle` et `upgrade` sont ceux de Next ; toute
- * requête refusée par `studioRefusal` s'arrête ici, avant eux.
+ * requête refusée par `studioRequestRefusal` s'arrête ici, avant eux, sans
+ * aucun en-tête CORS : un pré-vol n'est jamais accordé.
  */
-export function createStudioServer({ port, gate, handle, upgrade }) {
+export function createStudioServer({ port, gate, csrf, handle, upgrade }) {
   const server = createServer((req, res) => {
-    const why = studioRefusal(
-      { remoteAddress: req.socket.remoteAddress, host: req.headers.host },
-      port,
-    );
+    const why = studioRequestRefusal(seen(req), { port, csrf });
     if (why) {
-      res.writeHead(403, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: why }));
+      res.writeHead(why.status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: why.error }));
       return;
     }
     // Le jeton vient d'ICI, jamais du client : celui qu'il enverrait est écrasé.
@@ -92,7 +162,7 @@ export function createStudioServer({ port, gate, handle, upgrade }) {
     handle(req, res);
   });
   server.on('upgrade', (req, socket, head) => {
-    if (studioRefusal({ remoteAddress: req.socket.remoteAddress, host: req.headers.host }, port)) {
+    if (studioRequestRefusal(seen(req), { port, csrf })) {
       socket.destroy();
       return;
     }

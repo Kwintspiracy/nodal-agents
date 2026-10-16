@@ -6,7 +6,8 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import ThemedToaster from '@/components/ui/ThemedToaster';
-import { assertStudioPage } from '@/lib/bench-studio/server';
+import { assertStudioPage, studioCsrfToken } from '@/lib/bench-studio/server';
+import { CSRF_META } from './_components/studio-fetch';
 import StudioNav from './_components/StudioNav';
 
 export const dynamic = 'force-dynamic';
@@ -16,6 +17,8 @@ export default async function BenchStudioLayout({ children }: { children: ReactN
   await assertStudioPage();
   return (
     <div className="min-h-screen bg-canvas">
+      {/* Le jeton anti-CSRF que les requêtes du studio renvoient (studio-fetch.ts). */}
+      <meta name={CSRF_META} content={studioCsrfToken()} />
       <StudioNav />
       <main>{children}</main>
       <ThemedToaster />

@@ -24,6 +24,7 @@ import Table, {
   Tr,
 } from '@/components/ui/Table';
 import { Panel } from '../../_components/StudioPage';
+import { studioPost } from '../../_components/studio-fetch';
 import VerdictPill from '../../_components/VerdictPill';
 
 interface TrialRow {
@@ -131,7 +132,7 @@ export default function LiveRun({ id, webUrl }: { id: string; webUrl: string }) 
   async function cancel(): Promise<void> {
     setCancelling(true);
     try {
-      const r = await fetch(`/bench-studio/api/runs/${id}/cancel`, { method: 'POST' });
+      const r = await studioPost(`/bench-studio/api/runs/${id}/cancel`);
       const body = (await r.json()) as { ok: true } | { error: string };
       if ('error' in body) toast.error(body.error);
       else toast.success('Cancel requested: no trial starts any more, live trials are cancelled.');

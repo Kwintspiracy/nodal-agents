@@ -28,6 +28,7 @@ import Table, {
 } from '@/components/ui/Table';
 import TextInput from '@/components/ui/TextInput';
 import { Panel } from '../_components/StudioPage';
+import { studioPost } from '../_components/studio-fetch';
 
 interface ScenarioPick {
   id: string;
@@ -93,12 +94,7 @@ export default function RunPanel({
     if (planKey === null) return;
     const ctl = new AbortController();
     const t = setTimeout(() => {
-      void fetch('/bench-studio/api/plan', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: planKey,
-        signal: ctl.signal,
-      })
+      void studioPost('/bench-studio/api/plan', planKey, ctl.signal)
         .then(async (r) => {
           const body = (await r.json()) as PlanView | { error: string };
           setAnswer({
@@ -133,10 +129,10 @@ export default function RunPanel({
     if (!selection) return;
     setLaunching(true);
     try {
-      const r = await fetch('/bench-studio/api/launch', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ selection, trials: trialsN, allowOwnerSends }),
+      const r = await studioPost('/bench-studio/api/launch', {
+        selection,
+        trials: trialsN,
+        allowOwnerSends,
       });
       const body = (await r.json()) as { id: string } | { error: string };
       if ('error' in body) {

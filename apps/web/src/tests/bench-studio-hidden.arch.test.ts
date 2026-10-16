@@ -13,12 +13,15 @@
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  STUDIO_CSRF_ENV,
+  STUDIO_CSRF_HEADER,
   STUDIO_ENV as BENCH_STUDIO_ENV,
   STUDIO_GATE_ENV,
   studioRefusal,
 } from '../lib/bench-studio/guard';
+import { CSRF_META, studioPost } from '../app/(bench-studio)/bench-studio/_components/studio-fetch';
 
 const WEB = resolve(__dirname, '..', '..');
 const SRC = join(WEB, 'src');
@@ -72,21 +75,59 @@ describe('Bench Studio stays inside its own folder', () => {
 
 describe('studio routes refuse what did not come through the studio server', () => {
   const GATE = 'a'.repeat(48);
+  const CSRF = 'c'.repeat(48);
+  const get = (gateHeader: string | null) => ({ gateHeader, method: 'GET', csrfHeader: null });
   it('needs the studio switch AND the gate token of the server, never one of the two', () => {
-    expect(studioRefusal({}, GATE)).toBe('studio_off');
-    expect(studioRefusal({ [BENCH_STUDIO_ENV]: '0', [STUDIO_GATE_ENV]: GATE }, GATE)).toBe(
+    expect(studioRefusal({}, get(GATE))).toBe('studio_off');
+    expect(studioRefusal({ [BENCH_STUDIO_ENV]: '0', [STUDIO_GATE_ENV]: GATE }, get(GATE))).toBe(
       'studio_off',
     );
     // `next dev` lancé à la main en mode studio, même lié au réseau : pas de jeton.
-    expect(studioRefusal({ [BENCH_STUDIO_ENV]: '1' }, null)).toBe('studio_no_gate');
-    expect(studioRefusal({ [BENCH_STUDIO_ENV]: '1', [STUDIO_GATE_ENV]: 'short' }, 'short')).toBe(
-      'studio_no_gate',
-    );
+    expect(studioRefusal({ [BENCH_STUDIO_ENV]: '1' }, get(null))).toBe('studio_no_gate');
+    expect(
+      studioRefusal({ [BENCH_STUDIO_ENV]: '1', [STUDIO_GATE_ENV]: 'short' }, get('short')),
+    ).toBe('studio_no_gate');
     const on = { [BENCH_STUDIO_ENV]: '1', [STUDIO_GATE_ENV]: GATE };
-    expect(studioRefusal(on, null)).toBe('studio_not_behind_filter');
-    expect(studioRefusal(on, 'b'.repeat(48))).toBe('studio_not_behind_filter');
-    expect(studioRefusal(on, GATE.slice(1))).toBe('studio_not_behind_filter');
-    expect(studioRefusal(on, GATE)).toBeNull();
+    expect(studioRefusal(on, get(null))).toBe('studio_not_behind_filter');
+    expect(studioRefusal(on, get('b'.repeat(48)))).toBe('studio_not_behind_filter');
+    expect(studioRefusal(on, get(GATE.slice(1)))).toBe('studio_not_behind_filter');
+    expect(studioRefusal(on, get(GATE))).toBeNull();
+  });
+
+  it('a request that changes something also needs the CSRF token the page received', () => {
+    const on = { [BENCH_STUDIO_ENV]: '1', [STUDIO_GATE_ENV]: GATE, [STUDIO_CSRF_ENV]: CSRF };
+    const post = (csrfHeader: string | null, method = 'POST') => ({
+      gateHeader: GATE,
+      method,
+      csrfHeader,
+    });
+    expect(studioRefusal(on, post(null))).toBe('studio_no_csrf_token');
+    expect(studioRefusal(on, post(GATE))).toBe('studio_no_csrf_token');
+    expect(studioRefusal(on, post(CSRF.slice(1)))).toBe('studio_no_csrf_token');
+    expect(studioRefusal(on, post(null, 'DELETE'))).toBe('studio_no_csrf_token');
+    // Sans jeton configuré, aucune écriture ne passe, même avec un en-tête vide.
+    expect(studioRefusal({ [BENCH_STUDIO_ENV]: '1', [STUDIO_GATE_ENV]: GATE }, post(''))).toBe(
+      'studio_no_csrf_token',
+    );
+    expect(studioRefusal(on, post(CSRF))).toBeNull();
+    expect(studioRefusal(on, post(null, 'GET'))).toBeNull();
+  });
+
+  it('every POST of the studio pages goes through studioPost, which sends the token', () => {
+    const files = walk(STUDIO_APP).filter(
+      (f) =>
+        /\.tsx?$/.test(f) && !f.endsWith(`${sep}studio-fetch.ts`) && !/route\.studio\.ts$/.test(f),
+    );
+    const raw = files.filter((f) =>
+      /method:\s*['"](POST|PUT|PATCH|DELETE)['"]/i.test(readFileSync(f, 'utf8')),
+    );
+    expect(raw.map((f) => relative(WEB, f))).toEqual([]);
+    const callers = files.filter((f) => readFileSync(f, 'utf8').includes('studioPost('));
+    expect(callers.map((f) => f.split(sep).pop()).sort()).toEqual(['LiveRun.tsx', 'RunPanel.tsx']);
+    // Le layout rend le jeton dans la page, là où studioPost le lit.
+    expect(readFileSync(join(STUDIO_APP, 'bench-studio', 'layout.studio.tsx'), 'utf8')).toContain(
+      '<meta name={CSRF_META} content={studioCsrfToken()} />',
+    );
   });
 
   it('every studio route checks the guard before anything else', () => {
@@ -105,5 +146,45 @@ describe('studio routes refuse what did not come through the studio server', () 
     const pages = walk(STUDIO_APP).filter((f) => /(page|layout)\.studio\.tsx$/.test(f));
     for (const f of pages)
       expect(readFileSync(f, 'utf8'), relative(WEB, f)).toContain('await assertStudioPage();');
+  });
+});
+
+describe('studioPost sends the token the page received, and nothing without it', () => {
+  afterEach(() => {
+    document.head.innerHTML = '';
+    vi.unstubAllGlobals();
+  });
+
+  it('reads the token rendered by the layout and puts it in the CSRF header', async () => {
+    const sent: Array<[string, RequestInit | undefined]> = [];
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) => {
+      sent.push([url, init]);
+      return Promise.resolve(new Response('{}'));
+    });
+    document.head.innerHTML = `<meta name="${CSRF_META}" content="${'t'.repeat(48)}">`;
+    await studioPost('/bench-studio/api/launch', { trials: 1 });
+    expect(sent).toEqual([
+      [
+        '/bench-studio/api/launch',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', [STUDIO_CSRF_HEADER]: 't'.repeat(48) },
+          body: '{"trials":1}',
+          signal: undefined,
+        },
+      ],
+    ]);
+  });
+
+  it('a page without the token sends nothing and says so', async () => {
+    const sent: unknown[] = [];
+    vi.stubGlobal('fetch', (...a: unknown[]) => {
+      sent.push(a);
+      return Promise.resolve(new Response('{}'));
+    });
+    await expect(studioPost('/bench-studio/api/launch', {})).rejects.toThrow(
+      'studio_no_csrf_token',
+    );
+    expect(sent).toEqual([]);
   });
 });
