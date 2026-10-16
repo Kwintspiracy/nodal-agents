@@ -4,7 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # release/** : a hotfix is a PR into the branch cut at the release it fixes
+    # (0.9.7 into release/0.9.x, cut at 0.9.6). It gets the same gates as main.
+    branches: [main, 'release/**']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
