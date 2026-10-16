@@ -26,7 +26,7 @@
 //      la valeur pré-remplie ;
 //   4. rien d'autre.
 
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 
@@ -128,39 +128,45 @@ export function nodalDeniedEndpoints(
   return [...ports].map((port) => ({ port }));
 }
 
-export function sandboxDeniedPaths(machine: MachineView = thisMachine()): string[] {
+/**
+ * Ce qu'un conteneur ne peut ni lire ni lister sous le dossier de données de
+ * Nodal (`~/.nodalai`, résolu depuis le home réel, invariant #6) — décision D1 :
+ * « refuser la LECTURE du dossier de données, sauf les workspaces ».
+ *
+ * UNE LISTE D'AUTORISATION INVERSÉE, calculée À CHAQUE ouverture de conteneur :
+ * CHAQUE enfant du dossier est refusé, sauf ceux qui mènent à un chemin que ce
+ * conteneur doit atteindre (`mustReach` : ses dossiers inscriptibles et
+ * lisibles — workspaces, cache d'outils, magasin des checkpoints pour le
+ * conteneur des checkpoints — et les scripts du bac à sable). Un nouveau
+ * fichier sensible est donc refusé sans changer de code.
+ *
+ * On refuse les ENFANTS, pas le dossier lui-même (mesuré le 16/10) : MXC
+ * refuse le `stat` d'un dossier refusé, et git fait un `stat` de chaque
+ * composant du chemin quand il crée un dossier (une ref, `.git/HEAD`) — `git
+ * init`, `commit` et `branch` échouaient dans un workspace sous `~/.nodalai`.
+ * Refuser les enfants garde leur CONTENU illisible (`secrets.key`,
+ * `config.json`, `pg-data`) ; seuls leurs NOMS apparaissent dans le listage du
+ * dossier (accepté, 16/10).
+ *
+ * Limite nommée (`DATA_DIR_LIMIT`) : un enfant créé PENDANT qu'un conteneur
+ * tourne n'est refusé qu'à l'ouverture suivante.
+ */
+export function sandboxDeniedPaths(
+  mustReach: readonly string[],
+  machine: MachineView = thisMachine(),
+): string[] {
   const dataDir = join(machine.home, '.nodalai');
   if (!existsSync(dataDir)) return [];
+  let data = dataDir;
   try {
-    return [realpathSync.native(dataDir)];
+    data = realpathSync.native(dataDir);
   } catch {
-    return [dataDir];
+    /* tel quel */
   }
-}
-
-/**
- * Pour que le conteneur traverse un dossier refusé jusqu'aux chemins qu'il
- * DOIT atteindre (les dossiers de travail sous `~/.nodalai/workspaces`, le
- * cache d'outils, les scripts du bac à sable), on re-concède en LECTURE le
- * sous-dossier de tête qui y mène. Un refus bloque tout son sous-arbre SAUF
- * ce qui est re-concédé (mesuré le 15/10) : `secrets.key`, `config.json`,
- * `pg-data` et la LISTE du dossier restent refusés, mais Node peut résoudre
- * son script d'entrée sous le workspace. Lire l'arbre des workspaces est
- * conforme à l'étape 1 (« la lecture reste ouverte ») ; seul l'écrit est
- * borné, par les racines inscriptibles.
- */
-export function readonlyTraversalRoots(
-  deniedPaths: readonly string[],
-  mustReach: readonly string[],
-): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const add = (p: string): void => {
-    const k = process.platform === 'win32' ? p.toLowerCase() : p;
-    if (seen.has(k)) return;
-    seen.add(k);
-    out.push(p);
-  };
+  const cmp = (p: string): string => (process.platform === 'win32' ? p.toLowerCase() : p);
+  const base = cmp(data.endsWith(sep) ? data : data + sep);
+  // Les enfants de tête qu'un chemin à atteindre traverse.
+  const needed = new Set<string>();
   for (const raw of mustReach) {
     let reach = raw;
     try {
@@ -168,18 +174,20 @@ export function readonlyTraversalRoots(
     } catch {
       /* un chemin pas encore créé : tel quel */
     }
-    for (const d of deniedPaths) {
-      const base = d.endsWith(sep) ? d : d + sep;
-      const matches =
-        process.platform === 'win32'
-          ? reach.toLowerCase().startsWith(base.toLowerCase())
-          : reach.startsWith(base);
-      if (!matches) continue;
-      const seg = reach.slice(base.length).split(/[\\/]/)[0];
-      if (seg) add(join(d, seg));
-    }
+    const r = cmp(reach);
+    if (!r.startsWith(base)) continue;
+    const seg = reach.slice(base.length).split(/[\\/]/)[0];
+    if (seg) needed.add(cmp(seg));
   }
-  return out;
+  let children: string[];
+  try {
+    children = readdirSync(data);
+  } catch {
+    // Illisible pour Nodal lui-même : on refuse le dossier entier plutôt que
+    // de laisser un enfant inconnu ouvert (invariant #4 : jamais moins).
+    return [data];
+  }
+  return children.filter((c) => !needed.has(cmp(c))).map((c) => join(data, c));
 }
 
 /**

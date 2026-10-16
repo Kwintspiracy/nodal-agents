@@ -42,12 +42,7 @@ import { PassThrough } from 'node:stream';
 import type * as MxcSdk from '@microsoft/mxc-sdk/v1';
 import type { ContainerRequest } from '@microsoft/mxc-sdk/v1';
 import { windowsSpawnParts } from './command-line';
-import {
-  sandboxDeniedPaths,
-  readonlyTraversalRoots,
-  nodalDeniedEndpoints,
-  NodalPortsUnknown,
-} from './policy';
+import { sandboxDeniedPaths, nodalDeniedEndpoints, NodalPortsUnknown } from './policy';
 import { startNodalProxy, type NodalProxy } from './proxy';
 import { ensureJobHostScript, sandboxHostDir } from './job-host';
 import { MxcBroker, mxcErrorText, type BrokeredContainer, type MxcErrorFields } from './mxc-broker';
@@ -107,6 +102,9 @@ const RAW_TCP_LIMIT =
   'SANDBOX_NETWORK_RAW_TCP_LOCAL: a confined command reaches local services (ComfyUI, Ollama, a server another command started) and the internet only over HTTP/HTTPS, through the sandbox proxy; a non-HTTP (raw TCP/UDP) client to a local service has no route';
 const CROSS_JOB_LIMIT =
   "SANDBOX_NETWORK_SHARED_LOOPBACK: a server one job starts on 127.0.0.1 is reachable through the sandbox proxy by a command of another job (the machine loopback is shared); Nodal's own ports stay refused";
+/** La limite du refus du dossier de données (policy.ts, `sandboxDeniedPaths`). */
+const DATA_DIR_LIMIT =
+  "SANDBOX_DATA_DIR_NEW_CHILD: Nodal's data folder is refused child by child, computed when a container opens; a child created while a container runs is refused only at the next open, and the names of the folder's children are visible (their contents are not)";
 
 /** La configuration réseau MXC d'un régime, et l'env à ajouter aux commandes. */
 interface NetworkSetup {
@@ -168,25 +166,18 @@ function hostRequest(
   writableRoots: readonly string[],
   environment: Record<string, string>,
   setup: NetworkSetup,
+  readableRoots: readonly string[] = [],
 ): ContainerRequest {
-  const denied = sandboxDeniedPaths();
   return {
     command: `"${process.execPath}" "${script}"`,
     filesystem: {
       readwritePaths: [...writableRoots],
-      // Les lecteurs en lecture ; ET les sous-dossiers de tête qui mènent aux
-      // chemins que le conteneur doit atteindre sous le dossier refusé — les
-      // dossiers de travail, le cache d'outils, les scripts du bac à sable —
-      // pour que Node puisse résoudre son script d'entrée (sinon EPERM sur le
-      // `lstat` du parent refusé, mesuré le 15/10).
-      readonlyPaths: [
-        ...readableDriveRoots(),
-        ...readonlyTraversalRoots(denied, [...writableRoots, sandboxHostDir()]),
-      ],
-      // Le dossier de données de Nodal (secrets.key, config.json, pg-data) :
-      // ni lu ni listé par une commande confinée (D1). Les racines
-      // inscriptibles — dossiers de travail, cache d'outils — l'emportent.
-      deniedPaths: denied,
+      readonlyPaths: readableDriveRoots(),
+      // Le dossier de données de Nodal (D1) : chacun de ses enfants est refusé
+      // sauf ceux qui mènent à ce que CE conteneur doit atteindre — ses dossiers,
+      // les scripts du bac à sable (policy.ts dit pourquoi les enfants, pas le
+      // dossier). Calculé ici, à chaque ouverture, pour tout conteneur.
+      deniedPaths: sandboxDeniedPaths([...writableRoots, ...readableRoots, sandboxHostDir()]),
     },
     network: setup.network,
     ...(setup.containment ? { containment: setup.containment } : {}),
@@ -457,6 +448,7 @@ export function mxcBackend(
   const openContainer = async (
     writableRoots: readonly string[],
     env: Readonly<Record<string, string | undefined>>,
+    readableRoots: readonly string[] = [],
   ): Promise<JobContainer> => {
     try {
       await sdk();
@@ -468,7 +460,9 @@ export function mxcBackend(
     try {
       const net = await setup();
       const b = broker(await brokerNodePath());
-      opened = await b.open(hostRequest(ensureJobHostScript(), writableRoots, environment, net));
+      opened = await b.open(
+        hostRequest(ensureJobHostScript(), writableRoots, environment, net, readableRoots),
+      );
     } catch (e) {
       if (e instanceof BrokerNodeUnavailable || e instanceof NodalPortsUnknown) {
         throw new SandboxStartError(e.message, e.code);
@@ -583,9 +577,14 @@ export function mxcBackend(
     } finally {
       await container?.close();
     }
-    return networkPolicy === 'proxy'
-      ? { state: 'available', backend: MXC_BACKEND_NAME, limits: [RAW_TCP_LIMIT, CROSS_JOB_LIMIT] }
-      : { state: 'available', backend: MXC_BACKEND_NAME };
+    return {
+      state: 'available',
+      backend: MXC_BACKEND_NAME,
+      limits:
+        networkPolicy === 'proxy'
+          ? [DATA_DIR_LIMIT, RAW_TCP_LIMIT, CROSS_JOB_LIMIT]
+          : [DATA_DIR_LIMIT],
+    };
   };
 
   return { probe, openContainer };

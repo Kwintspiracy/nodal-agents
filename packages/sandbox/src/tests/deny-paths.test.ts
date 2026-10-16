@@ -7,12 +7,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  sandboxDeniedPaths,
-  readonlyTraversalRoots,
-  nodalDeniedEndpoints,
-  NodalPortsUnknown,
-} from '../policy';
+import { sandboxDeniedPaths, nodalDeniedEndpoints, NodalPortsUnknown } from '../policy';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -48,46 +43,73 @@ describe('nodalDeniedEndpoints', () => {
   });
 });
 
-describe('sandboxDeniedPaths', () => {
-  it('refuse le dossier de données `~/.nodalai` quand il existe, résolu depuis le home réel (invariant #6)', () => {
+describe('sandboxDeniedPaths — every child of the data dir, except what the container reaches', () => {
+  /** Un dossier de données comme en production. */
+  function layout(): { home: string; data: string } {
     const home = mkdtempSync(join(tmpdir(), 'nodal-home-'));
     dirs.push(home);
-    mkdirSync(join(home, '.nodalai'));
-    const denied = sandboxDeniedPaths({ platform: process.platform, home, env: {} });
-    expect(denied).toEqual([realpathSync.native(join(home, '.nodalai'))]);
+    const data = join(home, '.nodalai');
+    for (const d of ['workspaces/e/ws1', 'tool-cache', 'sandbox', 'checkpoints', 'pg-data'])
+      mkdirSync(join(data, d), { recursive: true });
+    writeFileSync(join(data, 'secrets.key'), 'k');
+    writeFileSync(join(data, 'config.json'), '{}');
+    return { home, data: realpathSync.native(data) };
+  }
+  const names = (paths: string[], data: string): string[] =>
+    paths.map((p) => p.slice(data.length + 1)).sort();
+
+  it('le conteneur d’une commande : tout est refusé sauf workspaces, tool-cache et sandbox', () => {
+    const { home, data } = layout();
+    const m = { platform: process.platform, home, env: {} };
+    const reach = [
+      join(data, 'workspaces', 'e', 'ws1'),
+      join(data, 'tool-cache'),
+      join(data, 'sandbox'),
+    ];
+    expect(names(sandboxDeniedPaths(reach, m), data)).toEqual([
+      'checkpoints',
+      'config.json',
+      'pg-data',
+      'secrets.key',
+    ]);
+  });
+
+  it('le conteneur des checkpoints atteint aussi le magasin', () => {
+    const { home, data } = layout();
+    const m = { platform: process.platform, home, env: {} };
+    const reach = [
+      join(data, 'workspaces', 'e', 'ws1'),
+      join(data, 'checkpoints'),
+      join(data, 'sandbox'),
+    ];
+    expect(names(sandboxDeniedPaths(reach, m), data)).toEqual([
+      'config.json',
+      'pg-data',
+      'secrets.key',
+      'tool-cache',
+    ]);
+  });
+
+  it('un enfant NOUVEAU est refusé sans changer de code (liste d’autorisation inversée)', () => {
+    const { home, data } = layout();
+    writeFileSync(join(data, 'new-secret.pem'), 'x');
+    mkdirSync(join(data, 'backups'));
+    const m = { platform: process.platform, home, env: {} };
+    const denied = names(sandboxDeniedPaths([join(data, 'workspaces', 'e', 'ws1')], m), data);
+    expect(denied).toContain('new-secret.pem');
+    expect(denied).toContain('backups');
+    expect(denied).not.toContain('workspaces');
+  });
+
+  it('ne refuse JAMAIS le dossier lui-même (git en fait un `stat`)', () => {
+    const { home, data } = layout();
+    const m = { platform: process.platform, home, env: {} };
+    expect(sandboxDeniedPaths([join(data, 'workspaces', 'e', 'ws1')], m)).not.toContain(data);
   });
 
   it('ne refuse rien quand le dossier de données n’existe pas', () => {
     const home = mkdtempSync(join(tmpdir(), 'nodal-home-'));
     dirs.push(home);
-    expect(sandboxDeniedPaths({ platform: process.platform, home, env: {} })).toEqual([]);
-  });
-});
-
-describe('readonlyTraversalRoots', () => {
-  it('re-concède le sous-dossier de TÊTE qui mène à chaque chemin sous un dossier refusé', () => {
-    const root = mkdtempSync(join(tmpdir(), 'nodal-rt-'));
-    dirs.push(root);
-    const data = join(root, '.nodalai');
-    const ws = join(data, 'workspaces', 'entity', 'ws1');
-    const cache = join(data, 'tool-cache');
-    const sandbox = join(data, 'sandbox');
-    for (const d of [ws, cache, sandbox]) mkdirSync(d, { recursive: true });
-    const denied = [realpathSync.native(data)];
-    const regrants = readonlyTraversalRoots(denied, [ws, cache, sandbox]);
-    const R = realpathSync.native(data);
-    expect(new Set(regrants)).toEqual(
-      new Set([join(R, 'workspaces'), join(R, 'tool-cache'), join(R, 'sandbox')]),
-    );
-  });
-
-  it('ignore un chemin hors du dossier refusé', () => {
-    const root = mkdtempSync(join(tmpdir(), 'nodal-rt-'));
-    dirs.push(root);
-    const data = join(root, '.nodalai');
-    const outside = join(root, 'elsewhere');
-    for (const d of [data, outside]) mkdirSync(d, { recursive: true });
-    writeFileSync(join(outside, 'f.txt'), 'x');
-    expect(readonlyTraversalRoots([realpathSync.native(data)], [outside])).toEqual([]);
+    expect(sandboxDeniedPaths([], { platform: process.platform, home, env: {} })).toEqual([]);
   });
 });

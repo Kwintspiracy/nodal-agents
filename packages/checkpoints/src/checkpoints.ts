@@ -29,11 +29,13 @@
 // judgement, and an agent that could roll itself back could also roll back the
 // evidence.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, open, rm, utimes, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import type { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 
 import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
@@ -50,6 +52,103 @@ import {
 } from './failure';
 
 const run = promisify(execFile);
+
+// ─── Qui lance git ───────────────────────────────────────────────────────────
+//
+// Tout git d'ici a le WORKSPACE pour arbre de travail (gitEnv). Il en lit donc
+// les sous-dépôts imbriqués : `add -A` et `status` lancent un git enfant DANS
+// chacun pour savoir s'il a bougé, qui lit SA config — mesuré le 16/10, un
+// `core.fsmonitor` planté dans un sous-dépôt s'exécute sur `snapshot`, sur le
+// statut figé et sur `restoreCheckpoint`. Le `GIT_DIR` externe protège la
+// config du dépôt racine, pas celle-là.
+//
+// L'appelant qui tourne là où des commandes confinées écrivent (le runner) passe
+// donc les programmes du bac à sable (`openNodalPrograms` de
+// @nodal-agents/sandbox) : git tourne alors dans un conteneur, sans réseau, avec
+// pour seuls dossiers inscriptibles le workspace et le magasin. Sans eux, git
+// tourne sur l'hôte, comme avant. La forme est celle du `ProgramRunner` du bac à
+// sable, par structure : ce paquet n'en dépend pas (voir index.ts).
+
+/** Ce qu'un lancement de git reçoit. */
+export interface CheckpointProgramOptions {
+  readonly cwd?: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly timeout?: number;
+  readonly maxBuffer?: number;
+  readonly writableRoots: readonly string[];
+  readonly readableRoots: readonly string[];
+}
+
+/** Un git lancé en flux. */
+export interface CheckpointProgramChild {
+  readonly stdout: Readable;
+  readonly stderr: Readable;
+  kill(): void;
+  readonly closed: Promise<{ code: number | null }>;
+}
+
+/** Comment lancer git : `execFile` et `spawn`, sur l'hôte ou dans le bac à sable. */
+export interface CheckpointPrograms {
+  execFile(
+    file: string,
+    args: readonly string[],
+    opts: CheckpointProgramOptions,
+  ): Promise<{ stdout: string; stderr: string }>;
+  spawn(
+    file: string,
+    args: readonly string[],
+    opts: Omit<CheckpointProgramOptions, 'timeout' | 'maxBuffer'>,
+  ): Promise<CheckpointProgramChild>;
+}
+
+/** Git sur l'hôte : `execFile` / `spawn` de Node, exactement comme avant. */
+const hostGit: CheckpointPrograms = {
+  execFile: (file, args, opts) =>
+    run(file, [...args], {
+      ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+      ...(opts.timeout !== undefined ? { timeout: opts.timeout } : {}),
+      ...(opts.maxBuffer !== undefined ? { maxBuffer: opts.maxBuffer } : {}),
+      windowsHide: true,
+      env: opts.env,
+    }),
+  spawn: (file, args, opts) =>
+    new Promise((resolve, reject) => {
+      const child = spawn(file, [...args], { windowsHide: true, env: opts.env });
+      const closed = new Promise<{ code: number | null }>((r) =>
+        child.on('close', (code) => r({ code })),
+      );
+      child.once('error', reject);
+      child.once('spawn', () => {
+        child.off('error', reject);
+        child.on('error', () => undefined); // une erreur tardive finit par `close`
+        resolve({ stdout: child.stdout, stderr: child.stderr, kill: () => child.kill(), closed });
+      });
+    }),
+};
+
+/** Les programmes de l'opération en cours (posés par l'appel exporté). */
+const programsOfOperation = new AsyncLocalStorage<CheckpointPrograms>();
+
+function programs(): CheckpointPrograms {
+  return programsOfOperation.getStore() ?? hostGit;
+}
+
+/** Fait `fn` avec ces programmes ; sans programmes donnés, garde ceux d'au-dessus. */
+function withPrograms<T>(given: CheckpointPrograms | undefined, fn: () => Promise<T>): Promise<T> {
+  return given ? programsOfOperation.run(given, fn) : fn();
+}
+
+/**
+ * Ce que git doit pouvoir écrire : le workspace (son arbre de travail — même
+ * pour lire, MXC refuse un `chdir` dans un dossier en lecture seule) et le
+ * magasin. Le workspace d'abord : c'est le dossier de départ dans le conteneur.
+ */
+function gitRoots(
+  store: string,
+  workspace: string,
+): Pick<CheckpointProgramOptions, 'writableRoots' | 'readableRoots'> {
+  return { writableRoots: [workspace, store], readableRoots: [] };
+}
 
 /** A snapshot that hangs must not hold a tool call. */
 const GIT_TIMEOUT_MS = 30_000;
@@ -345,10 +444,10 @@ async function git(
   /** La borne de CET appel. Seul l'instantané la surcharge — voir storeTimeoutMs. */
   timeoutMs: number = storeTimeoutMs(),
 ): Promise<string> {
-  const { stdout } = await run(await gitBinary(), args, {
+  const { stdout } = await programs().execFile(await gitBinary(), args, {
     timeout: timeoutMs,
-    windowsHide: true,
     env: gitEnv(store, workspace, indexFile),
+    ...gitRoots(store, workspace),
   });
   return stdout.trim();
 }
@@ -365,11 +464,11 @@ async function gitRaw(
   args: string[],
   indexFile?: string,
 ): Promise<string> {
-  const { stdout } = await run(await gitBinary(), args, {
+  const { stdout } = await programs().execFile(await gitBinary(), args, {
     timeout: storeTimeoutMs(),
-    windowsHide: true,
     maxBuffer: 8 * 1024 * 1024,
     env: gitEnv(store, workspace, indexFile),
+    ...gitRoots(store, workspace),
   });
   return stdout;
 }
@@ -413,56 +512,43 @@ async function gitRawCapped(
   // Résolu AVANT d'ouvrir la promesse : `spawn` ne sait pas attendre, et un
   // `git` nu laisserait le système chercher le programme (#251).
   const binaire = await gitBinary();
-  return new Promise((resolve, reject) => {
-    const child = spawn(binaire, args, {
-      windowsHide: true,
-      env: gitEnv(store, workspace, indexFile),
-    });
-    const chunks: Buffer[] = [];
-    let size = 0;
-    let truncated = false;
-    let timedOut = false;
-    let settled = false;
-    const limitMs = storeTimeoutMs();
-    const timer = setTimeout(() => {
-      if (settled || timedOut) return;
-      timedOut = true;
-      // L'arrêt est demandé ; la promesse se règle à `close`, pas avant.
-      child.kill();
-    }, limitMs);
-    child.stdout.on('data', (chunk: Buffer) => {
-      if (truncated) return;
-      chunks.push(chunk);
-      size += chunk.length;
-      if (size > maxBytes) {
-        truncated = true;
-        // Tout ce qu'il fallait est là : inutile de laisser git écrire la suite.
-        child.kill();
-      }
-    });
-    child.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(err);
-    });
-    child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (timedOut) {
-        reject(new Error(`git ${args[0]} timed out after ${limitMs} ms`));
-        return;
-      }
-      if (!truncated && code !== 0 && code !== null) {
-        reject(new Error(`git ${args[0]} exited with ${code}`));
-        return;
-      }
-      const all = Buffer.concat(chunks);
-      const cut = truncated ? cutAtUtf8Boundary(all, maxBytes) : all;
-      resolve({ text: cut.toString('utf8'), truncated });
-    });
+  // Rejette si git ne peut pas démarrer (l'erreur du système, ou celle du bac
+  // à sable) — l'équivalent de l'événement `error` d'avant.
+  const child = await programs().spawn(binaire, args, {
+    env: gitEnv(store, workspace, indexFile),
+    ...gitRoots(store, workspace),
   });
+  const chunks: Buffer[] = [];
+  let size = 0;
+  let truncated = false;
+  let timedOut = false;
+  const limitMs = storeTimeoutMs();
+  const timer = setTimeout(() => {
+    timedOut = true;
+    // L'arrêt est demandé ; la promesse se règle à `close`, pas avant.
+    child.kill();
+  }, limitMs);
+  child.stdout.on('data', (chunk: Buffer) => {
+    if (truncated) return;
+    chunks.push(chunk);
+    size += chunk.length;
+    if (size > maxBytes) {
+      truncated = true;
+      // Tout ce qu'il fallait est là : inutile de laisser git écrire la suite.
+      child.kill();
+    }
+  });
+  // Rien n'est lu de stderr, mais il est vidé : un tuyau plein bloquerait git.
+  child.stderr.resume();
+  const { code } = await child.closed;
+  clearTimeout(timer);
+  if (timedOut) throw new Error(`git ${args[0]} timed out after ${limitMs} ms`);
+  if (!truncated && code !== 0 && code !== null) {
+    throw new Error(`git ${args[0]} exited with ${code}`);
+  }
+  const all = Buffer.concat(chunks);
+  const cut = truncated ? cutAtUtf8Boundary(all, maxBytes) : all;
+  return { text: cut.toString('utf8'), truncated };
 }
 
 /** Create the shared shadow store if it does not exist yet. Idempotent. */
@@ -492,6 +578,8 @@ export interface SnapshotOptions {
    * Par défaut `NODALAI_CHECKPOINT_TIMEOUT_MS`, sinon 30 s.
    */
   timeoutMs?: number;
+  /** Qui lance git (voir « Qui lance git ») ; l'hôte par défaut. */
+  programs?: CheckpointPrograms;
 }
 
 /**
@@ -515,7 +603,9 @@ export async function snapshot(
   const limitMs = storeTimeoutMs(options.timeoutMs);
   const startedAt = Date.now();
   try {
-    return await takeSnapshot(store, workspace, label, limitMs);
+    return await withPrograms(options.programs, () =>
+      takeSnapshot(store, workspace, label, limitMs),
+    );
   } catch (err) {
     throw await qualifyFailure(err, 'snapshot', workspace, limitMs, Date.now() - startedAt);
   }
@@ -701,17 +791,18 @@ export async function statusAgainstFrozenIndex(
   store: string,
   workspace: string,
   indexFile: string,
+  /** Qui lance git (voir « Qui lance git ») ; l'hôte par défaut. */
+  given?: CheckpointPrograms,
 ): Promise<FrozenIndexStatus> {
   try {
-    const { stdout } = await run(
-      await gitBinary(),
-      ['status', '--porcelain', '-z', '--untracked-files=all'],
-      {
+    const binaire = await gitBinary();
+    const { stdout } = await withPrograms(given, () =>
+      programs().execFile(binaire, ['status', '--porcelain', '-z', '--untracked-files=all'], {
         timeout: storeTimeoutMs(),
-        windowsHide: true,
         maxBuffer: FROZEN_STATUS_MAX_BUFFER,
         env: { ...gitEnv(store, workspace, indexFile), GIT_OPTIONAL_LOCKS: '0' },
-      },
+        ...gitRoots(store, workspace),
+      }),
     );
     return { kind: 'status', stdout };
   } catch (err) {
@@ -742,7 +833,16 @@ export async function releaseFrozenIndex(indexFile: string): Promise<void> {
  * courant EST ce commit-là, et sans lui la ligne `job_checkpoints` de ce tour
  * n'aurait aucun sha à porter. Une lecture, jamais une écriture.
  */
-export async function headCheckpoint(store: string, workspace: string): Promise<string | null> {
+export async function headCheckpoint(
+  store: string,
+  workspace: string,
+  /** Qui lance git (voir « Qui lance git ») ; l'hôte par défaut. */
+  given?: CheckpointPrograms,
+): Promise<string | null> {
+  return withPrograms(given, () => readHeadCheckpoint(store, workspace));
+}
+
+async function readHeadCheckpoint(store: string, workspace: string): Promise<string | null> {
   if (!existsSync(join(store, 'store', 'HEAD'))) return null;
   const ref = `refs/nodal/${workspaceKey(workspace)}`;
   // `--verify --quiet` : ref absente ⇒ sortie vide et code 1, donc rejet, d'où
@@ -812,8 +912,12 @@ export function diffFile(
   fromSha: string,
   toSha: string | null,
   relPath: string,
+  /** Qui lance git (voir « Qui lance git ») ; l'hôte par défaut. */
+  given?: CheckpointPrograms,
 ): Promise<FileDiff> {
-  return readingStore(workspace, () => readFileDiff(store, workspace, fromSha, toSha, relPath));
+  return readingStore(workspace, () =>
+    withPrograms(given, () => readFileDiff(store, workspace, fromSha, toSha, relPath)),
+  );
 }
 
 async function readFileDiff(
@@ -910,8 +1014,12 @@ export function listCheckpoints(
   store: string,
   workspace: string,
   limit = 20,
+  /** Qui lance git (voir « Qui lance git ») ; l'hôte par défaut. */
+  given?: CheckpointPrograms,
 ): Promise<Checkpoint[]> {
-  return readingStore(workspace, () => readCheckpointList(store, workspace, limit));
+  return readingStore(workspace, () =>
+    withPrograms(given, () => readCheckpointList(store, workspace, limit)),
+  );
 }
 
 async function readCheckpointList(
@@ -952,10 +1060,14 @@ export async function restoreCheckpoint(
   store: string,
   workspace: string,
   sha: string,
+  /** Qui lance git (voir « Qui lance git ») ; l'hôte par défaut. */
+  given?: CheckpointPrograms,
 ): Promise<{ restored: string; safety: Checkpoint | null }> {
   await ensureStore(store);
-  const safety = await snapshot(store, workspace, `before restoring ${sha.slice(0, 8)}`);
-  // -f: the working tree is expected to differ, that is the point.
-  await git(store, workspace, ['checkout', '-f', sha, '--', '.']);
-  return { restored: sha, safety };
+  return withPrograms(given, async () => {
+    const safety = await snapshot(store, workspace, `before restoring ${sha.slice(0, 8)}`);
+    // -f: the working tree is expected to differ, that is the point.
+    await git(store, workspace, ['checkout', '-f', sha, '--', '.']);
+    return { restored: sha, safety };
+  });
 }

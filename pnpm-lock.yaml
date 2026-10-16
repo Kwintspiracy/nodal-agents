@@ -75,6 +75,9 @@ importers:
       '@nodal-agents/mcp-server':
         specifier: workspace:*
         version: link:../../packages/mcp-server
+      '@nodal-agents/sandbox':
+        specifier: workspace:*
+        version: link:../../packages/sandbox
       '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../../packages/shared

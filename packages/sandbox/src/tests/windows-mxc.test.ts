@@ -115,9 +115,14 @@ describe.runIf(isWindows && tier === 'base-container')(
       const status = await mxcBackend().probe();
       if (await proxyReachable()) {
         expect(status.state, JSON.stringify(status)).toBe('available');
-        expect(status.state === 'available' && status.limits?.[0]).toMatch(
-          /^SANDBOX_NETWORK_RAW_TCP_LOCAL:/,
+        const codes = (status.state === 'available' ? (status.limits ?? []) : []).map(
+          (l) => l.split(':')[0],
         );
+        expect(codes).toEqual([
+          'SANDBOX_DATA_DIR_NEW_CHILD',
+          'SANDBOX_NETWORK_RAW_TCP_LOCAL',
+          'SANDBOX_NETWORK_SHARED_LOOPBACK',
+        ]);
       } else {
         expect(status, JSON.stringify(status)).toMatchObject({
           state: 'unavailable',
@@ -126,12 +131,16 @@ describe.runIf(isWindows && tier === 'base-container')(
       }
     }, 120_000);
 
-    it('régime deny-all (valeur de test de la CI) : `available`, aucun réseau, aucune limite réseau à dire', async () => {
+    it('régime deny-all (valeur de test de la CI) : `available`, aucun réseau, aucune limite réseau à dire (seule celle du dossier de données)', async () => {
       const status = await mxcBackend(undefined, 'deny-all').probe();
-      expect(status, JSON.stringify(status)).toEqual({
+      expect(status, JSON.stringify(status)).toMatchObject({
         state: 'available',
         backend: MXC_BACKEND_NAME,
       });
+      const codes = (status.state === 'available' ? (status.limits ?? []) : []).map(
+        (l) => l.split(':')[0],
+      );
+      expect(codes).toEqual(['SANDBOX_DATA_DIR_NEW_CHILD']);
     }, 120_000);
 
     it('un conteneur que MXC refuse d’ouvrir lève SandboxStartError avec SA raison (ici : LOCALAPPDATA absent)', async () => {

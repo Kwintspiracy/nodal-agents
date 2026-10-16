@@ -60,18 +60,20 @@ export class JobProcessScope {
   async container(
     writableRoots: readonly string[],
     env: Readonly<Record<string, string | undefined>>,
+    /** Dossiers à pouvoir lire sous un dossier refusé (voir `openContainer`). */
+    readableRoots: readonly string[] = [],
   ): Promise<JobContainer> {
     this.assertOpen();
     const backend = this.sandbox.backend;
     if (!backend) throw new Error('SANDBOX_BACKEND_ABSENT');
-    const key = [...writableRoots].sort().join('\n');
+    const key = `${[...writableRoots].sort().join('\n')}\u0000${[...readableRoots].sort().join('\n')}`;
     const existing = this.containers.get(key);
     if (existing) {
       const c = await existing.catch(() => null);
       if (c?.alive) return c;
       this.containers.delete(key);
     }
-    const opening = backend.openContainer(writableRoots, env);
+    const opening = backend.openContainer(writableRoots, env, readableRoots);
     this.containers.set(key, opening);
     try {
       const c = await opening;

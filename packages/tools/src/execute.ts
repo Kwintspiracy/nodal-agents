@@ -54,6 +54,7 @@ import {
   checkpointFailureLogLine,
 } from '@nodal-agents/checkpoints';
 import { stat } from 'node:fs/promises';
+import { withNodalPrograms, type NodalPrograms } from '@nodal-agents/sandbox';
 import { writeMutationIntent, type DirtiedDeliverable } from './verification/intent';
 import { markDeliverablesProduced } from './verification/produced';
 import { bumpEpochsAfterWrite } from './verification/write-epoch';
@@ -1526,6 +1527,23 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
     return null;
   }
 
+  // Les git de la photo tournent dans le bac à sable quand il est là (#628,
+  // audit P1-2) : `snapshot` lance un git enfant dans chaque sous-dépôt
+  // imbriqué du workspace, qui lit SA config — un `core.fsmonitor` planté par
+  // une commande confinée s'y exécutait sur l'hôte. Une session pour toute la
+  // boucle : ses git partagent un conteneur, tué à la fin.
+  return withNodalPrograms((programs) =>
+    checkpointEachWorkspace(toolName, ctx, store, workspaces, programs),
+  );
+}
+
+async function checkpointEachWorkspace(
+  toolName: string,
+  ctx: ToolContext,
+  store: string,
+  workspaces: NonNullable<ToolContext['workspaces']>,
+  programs: NodalPrograms,
+): Promise<string | null> {
   // EVERY workspace, not just the first.
   //
   // This took `ctx.workspaces[0].path` at first, which is not where the write
@@ -1582,7 +1600,9 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
       // borne de 30 s de `git add` ; le mesurer plus large dirait le temps
       // d'autre chose.
       const debutPhoto = Date.now();
-      const cp = await snapshot(store, workspace, `before ${toolName} (job ${ctx.jobId})`);
+      const cp = await snapshot(store, workspace, `before ${toolName} (job ${ctx.jobId})`, {
+        programs,
+      });
       const dureePhoto = Date.now() - debutPhoto;
       if (checkpointedTurns.size >= MAX_REMEMBERED_TURNS) {
         const oldest = checkpointedTurns.values().next().value;
@@ -1592,7 +1612,7 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
       if (cp) console.info(`[checkpoints] ${cp.sha.slice(0, 8)} ${workspace} before ${toolName}`);
       // P11 — la photo devient RETROUVABLE : une ligne (travail, tour, dossier,
       // sha). Ne refuse jamais l'écriture, voir recordTurnCheckpoint.
-      await recordTurnCheckpoint(store, workspace, cp?.sha ?? null, ctx, dureePhoto);
+      await recordTurnCheckpoint(store, workspace, cp?.sha ?? null, ctx, dureePhoto, programs);
     } catch (err) {
       // One workspace that cannot be snapshotted is enough to refuse: we have
       // no way to tell it is not the one about to be written.
@@ -1651,10 +1671,12 @@ async function recordTurnCheckpoint(
    * ne l'apprendre que le jour où elle la dépasse.
    */
   snapshotMs: number,
+  /** Les programmes de la photo : la relecture de la tête tourne au même endroit. */
+  programs: NodalPrograms,
 ): Promise<void> {
   if (ctx.turn === undefined || !ctx.jobId) return;
   try {
-    const resolved = sha ?? (await headCheckpoint(store, workspace));
+    const resolved = sha ?? (await headCheckpoint(store, workspace, programs));
     if (!resolved) return;
     await ctx.db
       .insert(jobCheckpoints)

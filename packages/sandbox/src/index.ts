@@ -74,3 +74,16 @@ export {
   MXC_BACKEND_NAME,
   mxcBackend,
 } from './windows-mxc';
+// Les programmes que Nodal lance lui-même (git) sur un dossier qu'une commande
+// confinée peut écrire : dans le bac à sable, sans réseau (#628, audit P1-2).
+export {
+  openNodalPrograms,
+  withNodalPrograms,
+  nodalProgramsSandbox,
+  hostPrograms,
+  _setNodalProgramsSandboxForTests,
+  type NodalPrograms,
+  type ProgramRunner,
+  type ProgramRunOptions,
+  type ProgramChild,
+} from './nodal-programs';

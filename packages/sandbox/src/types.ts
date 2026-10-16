@@ -108,13 +108,15 @@ export interface SandboxBackend {
   probe(): Promise<SandboxStatus>;
   /**
    * Ouvre un conteneur dont seuls `writableRoots` (déjà résolus) sont
-   * inscriptibles. `env` est l'environnement de son hôte. LÈVE
-   * `SandboxStartError` si le bac à sable ne peut pas l'ouvrir : rien ne
-   * tourne alors sans lui.
+   * inscriptibles. `env` est l'environnement de son hôte. `readableRoots` :
+   * des dossiers qu'il doit pouvoir LIRE même sous un dossier refusé (le
+   * workspace qu'un programme de Nodal lit, #628). LÈVE `SandboxStartError`
+   * si le bac à sable ne peut pas l'ouvrir : rien ne tourne alors sans lui.
    */
   openContainer(
     writableRoots: readonly string[],
     env: Readonly<Record<string, string | undefined>>,
+    readableRoots?: readonly string[],
   ): Promise<JobContainer>;
 }
 
