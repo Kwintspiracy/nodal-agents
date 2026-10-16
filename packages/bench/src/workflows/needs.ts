@@ -114,6 +114,18 @@ function actionForms(base: string): string[] {
   return forms;
 }
 const OUTBOUND_ACTIONS = new Set(OUTBOUND_BASES.flatMap(actionForms));
+/**
+ * Après un verbe de lecture, seuls la base et le -ing sont des verbes
+ * (`get_and_send`, `checkBeforeSend`, `list_and_notifying`) : un -s y est le
+ * pluriel d'un nom (`list_posts`, `get_shares`).
+ */
+const OUTBOUND_AFTER_READ = new Set(
+  OUTBOUND_BASES.flatMap((b) => [
+    b,
+    `${b}ing`,
+    ...(b.endsWith('e') ? [`${b.slice(0, -1)}ing`] : []),
+  ]),
+);
 
 /** Les verbes qui LISENT : en position d'action, l'outil est une lecture. */
 const READ_VERBS = new Set([
@@ -192,7 +204,8 @@ function isInternalTool(toolName: string): boolean {
  * `chat_postMessage`, `drive_upload_file`) :
  *   1. un outil interne du produit (nom exact du registre) n'envoie pas ;
  *   2. un verbe de lecture en position d'action : une lecture (`list_posts`,
- *      `get_posted_at`, `slack__list_channels`) ;
+ *      `get_posted_at`, `slack__list_channels`), SAUF si un verbe sortant
+ *      (base ou -ing) le suit dans le nom (`get_and_send`, `checkBeforeSend`) ;
  *   3. un verbe sortant en forme d'action, en position d'action (`send_message`,
  *      `chat_postMessage`, `file_upload`) : un envoi ;
  *   4. sinon, fermé par défaut : un verbe sortant en forme d'action ailleurs
@@ -212,8 +225,13 @@ export function isOutboundTool(toolName: string): boolean {
   const own = words(bare);
   const isVerb = (x: string | undefined): boolean =>
     x !== undefined && (READ_VERBS.has(x) || OUTBOUND_ACTIONS.has(x));
-  const action = isVerb(own[0]) ? own[0] : isVerb(own[1]) ? own[1] : undefined;
-  if (action !== undefined && READ_VERBS.has(action)) return false;
+  const at = isVerb(own[0]) ? 0 : isVerb(own[1]) ? 1 : -1;
+  const action = at === -1 ? undefined : own[at];
+  // Une lecture, sauf si un envoi la suit dans le même outil (`get_and_send`,
+  // passe 6). Un service de messagerie n'est exempté que sur une lecture PURE
+  // (`slack__list_channels`).
+  if (action !== undefined && READ_VERBS.has(action))
+    return own.slice(at + 1).some((x) => OUTBOUND_AFTER_READ.has(x));
   if (action !== undefined && OUTBOUND_ACTIONS.has(action)) return true;
   const all = words(toolName);
   if (all.some((x) => OUTBOUND_ACTIONS.has(x) || CHANNEL_SERVICES.has(x))) return true;

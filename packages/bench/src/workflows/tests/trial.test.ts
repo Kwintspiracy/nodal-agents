@@ -379,6 +379,12 @@ describe('where a trial may send', () => {
     // Pas de verbe d'action, mais un service de messagerie ou de courrier : fermé par défaut.
     'telegram__chat',
     'smtp_relay',
+    // Passe 6 (P1) : une lecture SUIVIE d'un envoi dans le même outil reste un envoi.
+    'get_and_send',
+    'list_then_post',
+    'getAndSend',
+    'checkBeforeSend',
+    'slack__list_and_notify',
   ])('under sends: nothing, %s makes the trial red, named', async (tool) => {
     const green = load('question-green');
     const sent: TreeFacts = {

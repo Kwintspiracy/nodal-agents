@@ -332,7 +332,11 @@ scenario is skipped with that reason, no job is started (needs
     connector op (`file_upload`, one underscore), an MCP tool (`x__y`) or a CLI
     tool (`cli:…`) is never internal;
   - a read verb in action position is a read (`list_posts`, `get_posted_at`,
-    `slack__list_channels`, `gmail_get_message`);
+    `slack__list_channels`, `gmail_get_message`), UNLESS an outbound verb in
+    base or -ing form follows it in the name (`get_and_send`,
+    `list_then_post`, `checkBeforeSend` are sends); after a read verb an -s is
+    a plural noun (`list_posts`), and a messaging service is exempt only on a
+    pure read;
   - an outbound verb in action form (send, post, publish, share, forward,
     reply, notify, tweet, upload… as base, -s, -es or -ing) in action position
     is a send (`mcp-telegram__send_message`, `discord__sendMessage`,
