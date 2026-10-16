@@ -34,6 +34,11 @@ code.
   Microsoft's runtime and places it next to the database, so there is nothing
   to install. If it cannot, and the system's runtime is too old, `up` stops
   with `VC_RUNTIME_OUTDATED` and the link to Microsoft's installer.
+- **No install script to approve.** Recent npm versions skip install scripts
+  until you approve them (`npm warn allow-scripts`). Nodal needs none: on Linux
+  and macOS, `nodal-agents up` now creates the database's library links that
+  the skipped script would have created, and stops with `HYDRATION_FAILED` if
+  it cannot. The `npm approve-scripts` step in the docs is gone.
 - **WhatsApp pairing shows its QR code.** The dashboard asked the runner on a
   path it does not serve, and WhatsApp refused the version the library
   announced (`405 Connection Failure`). The socket now announces the current

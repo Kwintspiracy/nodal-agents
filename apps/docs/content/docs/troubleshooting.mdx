@@ -312,33 +312,31 @@ npm install -g npm@latest
 npm install -g nodal-agents@latest
 ```
 
-### npm skipped the database binaries
+### `HYDRATION_FAILED`: the database's library links
 
-**Symptom.** The install ended with `npm warn allow-scripts`, and `nodal-agents
-up` stops straight away on a line naming `@embedded-postgres/<platform>`.
+**Symptom.** `nodal-agents up` stops on `Nodal could not create N library links
+the database needs`, followed by each path and its error.
 
-**Cause.** Recent npm versions do not run a package's install scripts until you
-approve them. `@embedded-postgres/<platform>` carries the Postgres binaries
-Nodal boots, and its install step finishes preparing them. Skipped, the embedded
-database has nothing to start.
+**Cause.** Recent npm versions skip install scripts until you approve them, so
+the database package's own script, which creates these links on Linux and
+macOS, does not run. Since 0.9.7 `up` creates them itself. Here it could not,
+usually because your user cannot write to the install directory.
 
-**Fix.** Approve that one package and install again. The name is the one npm
-printed:
+**Fix.** Read the error printed after each path. Install where your user can
+write (a user-owned npm prefix, not `sudo`), then run `nodal-agents up` again.
 
-```bash
-npm approve-scripts @embedded-postgres/windows-x64
-npm install -g nodal-agents@latest
-```
+### `VC_RUNTIME_OUTDATED` on Windows
 
-The other package npm lists (`tesseract.js`) runs fine without its script. See
-[Getting Started](/docs/getting-started#if-npm-asks-you-to-approve-install-scripts).
+**Symptom.** `nodal-agents up` stops on `The database needs the Microsoft Visual
+C++ runtime 14.44 or newer`.
 
-<Callout type="warn">
-  On Windows the gate is harmless. `@embedded-postgres/windows-x64` ships the Postgres executables
-  in its tarball, and the list of links its install step would recreate is empty (2 bytes, `[]`,
-  against 1100 bytes in the Linux package). So a Windows install that fails after that warning fails
-  for another reason: send the output of `nodal-agents up` rather than assuming the gate.
-</Callout>
+**Cause.** The database binaries need a recent Visual C++ runtime. Nodal carries
+one and places it next to the database, but here it could not, and the
+runtime Windows has is older.
+
+**Fix.** Install Microsoft's runtime from the link the message prints
+(`https://aka.ms/vs/17/release/vc_redist.x64.exe`), then run `nodal-agents up`
+again.
 
 ## Related
 
