@@ -4,7 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # release/** : a hotfix is a PR into the branch cut at the release it fixes
+    # (0.9.7 into release/0.9.x, cut at 0.9.6). It gets the same gates as main.
+    branches: [main, 'release/**']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -65,7 +67,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
 
       # Turborepo's own cache, persisted between runs.
@@ -234,7 +236,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
 
       # Une lignée de cache par tranche (voir le commentaire du job `checks`).
@@ -275,7 +277,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
 
       # La lignée `build` est la seule qui pèse (~176 MB : la tâche `build`
@@ -311,9 +313,26 @@ jobs:
   # Its own job, in parallel with the others: it runs a full `next build` plus
   # a real Postgres boot, and folding that into another job would double the
   # feedback loop for every typo-level failure.
+  #
+  # The npm matrix (0.9.7, 16/10/2026): the tarball is installed WITHOUT git,
+  # by the npm users have, then booted. `lts` is the npm the current Node 24
+  # LTS ships, `latest` is npm latest. The npm FLOOR is 11.6.0: since vitest
+  # 4.1.12 was published, every npm below it (Node 24.0 to 24.7 ship such an
+  # npm) crashes with `Cannot read properties of null (reading 'edgesOut')`
+  # inside better-auth's optional peers. The install docs tell users to update.
   pack-smoke:
+    name: pack-smoke (npm ${{ matrix.npm }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Steps bounded below: 10 + 2 + 14 = 26, + 5 min of margin.
+    timeout-minutes: 31
+    strategy:
+      fail-fast: false
+      matrix:
+        npm: [lts, latest]
+    env:
+      NPM_FLOOR: '11.6.0'
+      # Empty = the npm Node ships; otherwise `npx npm@<it>` (smoke-pack.mjs).
+      NODAL_SMOKE_NPM: ${{ matrix.npm == 'latest' && 'latest' || '' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -321,7 +340,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -330,8 +349,12 @@ jobs:
         timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
-      - name: Pack, install clean, boot
-        timeout-minutes: 12
+      - name: The npm under test is at or above the floor
+        timeout-minutes: 2
+        run: node scripts/check-npm-floor.mjs "$NPM_FLOOR"
+
+      - name: Pack, install clean without git, boot
+        timeout-minutes: 14
         run: node scripts/smoke-pack.mjs
 
   # PERF-001 (audit 2026-08-07). 31 spec files, 85 tests, never run by CI —
@@ -367,7 +390,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
 
       - name: Install dependencies

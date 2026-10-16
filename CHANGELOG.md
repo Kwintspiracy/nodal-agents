@@ -10,6 +10,59 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.9.7 — Oct 16, 2026
+
+A hotfix: 0.9.6 could not be installed on a machine without git, its database
+could crash on first start on Windows, and WhatsApp pairing never showed a QR
+code.
+
+**Upgrading: what changes for you**
+
+- **Nodal installs without git again.** On 0.9.6, `npm install -g
+  nodal-agents` stopped with `npm error syscall spawn git` wherever git was not
+  installed. A library behind the WhatsApp channel was fetched from a git
+  repository. It now ships inside the app, and npm no longer fetches it.
+- **npm 11.6 or newer is needed.** Since a package was published upstream on
+  15 October 2026, older npm versions crash during the install with `Cannot
+  read properties of null (reading 'edgesOut')`. This hits 0.9.6 as well.
+  Node 22, and Node 24 up to 24.7, ship such an npm: run `npm install -g
+  npm@latest` first.
+- **The database starts on Windows machines with an old Visual C++ runtime.**
+  On 0.9.6, `nodal-agents up` could stop with `Postgres init script failed …
+  terminated by exception 0xC0000005`: the database needs the Visual C++
+  runtime 14.40 or newer, and Windows had an older one. Nodal now carries
+  Microsoft's runtime and places it next to the database, so there is nothing
+  to install. If it cannot, and the system's runtime is too old, `up` stops
+  with `VC_RUNTIME_OUTDATED` and the link to Microsoft's installer.
+- **No install script to approve.** Recent npm versions skip install scripts
+  until you approve them (`npm warn allow-scripts`). Nodal needs none: on Linux
+  and macOS, `nodal-agents up` now creates the database's library links that
+  the skipped script would have created, and stops with `HYDRATION_FAILED` if
+  it cannot. The `npm approve-scripts` step in the docs is gone.
+- **WhatsApp pairing shows its QR code.** The dashboard asked the runner on a
+  path it does not serve, and WhatsApp refused the version the library
+  announced (`405 Connection Failure`). The socket now announces the current
+  WhatsApp Web version. When that version cannot be fetched, pairing stops
+  with `whatsapp_version_unavailable` instead of trying a version WhatsApp
+  refuses.
+
+**Under the hood**
+
+- The pack no longer lists `@whiskeysockets/baileys` as an npm dependency. The
+  runner bundle already carried it, and the dashboard loads it only when a
+  WhatsApp socket opens, which it never does. If the library is missing where a
+  socket opens, the error is coded `whatsapp_library_unavailable`.
+- `pino` is declared in the pack. The dashboard needs it, and it only resolved
+  because baileys brought it in.
+- The pack smoke test (CI and `release:check`) installs the tarball with git
+  unavailable to npm and boots that install. It also refuses a dependency
+  resolved through git anywhere in the installed tree. CI runs it with the npm
+  of the current Node 24 LTS and with npm latest, and checks the 11.6.0 floor.
+- A test checks that every runner route the dashboard calls is one the runner
+  serves.
+
+---
+
 ## v0.9.6 — Oct 14, 2026
 
 A release about trust in what your agents do on their own. Connector operations

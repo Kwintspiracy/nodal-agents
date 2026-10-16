@@ -19,7 +19,14 @@ import type * as ConfigModule from '../lib/config.ts';
 
 vi.mock('../lib/embedded-postgres-binaries.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof BinariesModule>();
-  return { ...actual, probeEmbeddedPostgres: vi.fn() };
+  return {
+    ...actual,
+    probeEmbeddedPostgres: vi.fn(),
+    hydrateEmbeddedPostgres: vi.fn(),
+    // No platform package: the Windows VC++ step (0b) has nothing to touch,
+    // so the test never writes next to a real postgres.exe.
+    loadPlatformBinaries: vi.fn(async () => null),
+  };
 });
 
 /** Ce que `readConfig` lève : reconnaissable, et impossible à confondre. */
@@ -39,12 +46,14 @@ vi.mock('../lib/config.ts', async (importOriginal) => {
 
 import {
   probeEmbeddedPostgres,
+  hydrateEmbeddedPostgres,
   EmbeddedPostgresUnavailableError,
   type BinariesVerdict,
 } from '../lib/embedded-postgres-binaries.ts';
 import { runUp } from '../commands/up.ts';
 
 const mockProbe = vi.mocked(probeEmbeddedPostgres);
+const mockHydrate = vi.mocked(hydrateEmbeddedPostgres);
 
 const GATE_MESSAGE =
   "npm's install-script gate skipped @embedded-postgres/linux-x64, so 14 library links the database needs were never created.\n" +
@@ -62,6 +71,7 @@ const GATED: BinariesVerdict = {
 
 beforeEach(() => {
   mockProbe.mockReset();
+  mockHydrate.mockReset().mockResolvedValue({ created: [], failed: [] });
 });
 
 describe('up refuses to start on missing database binaries @cap:installer-et-demarrer/moteur', () => {
@@ -80,6 +90,43 @@ describe('up refuses to start on missing database binaries @cap:installer-et-dem
     expect(failure.message).toBe(GATE_MESSAGE);
     expect(failure.reason).toBe('HYDRATION_SKIPPED');
     expect(failure.message).not.toContain(CONFIG_SENTINEL);
+  });
+
+  // 0.9.7: npm 11.17+ skips install scripts, so Nodal creates the links itself.
+  it('links the install script never created are created by up, which then carries on', async () => {
+    mockProbe.mockResolvedValueOnce(GATED).mockResolvedValueOnce({
+      ok: true,
+      packageName: '@embedded-postgres/linux-x64',
+    });
+
+    const err = await runUp().then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    // The sentinel: the install was read again after the hydration, found
+    // complete, and up went on to the config.
+    expect((err as Error).message).toBe(CONFIG_SENTINEL);
+  });
+
+  it('a link up cannot create stops it with HYDRATION_FAILED, before the config', async () => {
+    mockProbe.mockResolvedValue(GATED);
+    mockHydrate.mockRejectedValue(
+      new EmbeddedPostgresUnavailableError(
+        'HYDRATION_FAILED',
+        'Embedded Postgres cannot start: Nodal could not create 1 library link the database needs.\n' +
+          '  /opt/pg/native/lib/libpq.so: EACCES',
+      ),
+    );
+
+    const err = await runUp().then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(EmbeddedPostgresUnavailableError);
+    expect((err as EmbeddedPostgresUnavailableError).reason).toBe('HYDRATION_FAILED');
+    expect((err as Error).message).toContain('libpq.so: EACCES');
   });
 
   it('a complete install is not blocked: up carries on past the check', async () => {

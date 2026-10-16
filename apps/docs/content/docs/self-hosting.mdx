@@ -15,10 +15,9 @@ nodal-agents up
 ```
 
 If npm answers with `npm warn allow-scripts …`, it skipped the install step of
-the packages it lists. One of them matters: approve
-`@embedded-postgres/<platform>` and install again. See
-[Getting Started](/docs/getting-started#if-npm-asks-you-to-approve-install-scripts)
-for the exact commands.
+the packages it lists. Nothing needs approving: `nodal-agents up` does what the
+database package's step would have done. See
+[Getting Started](/docs/getting-started#if-npm-prints-an-allow-scripts-warning).
 
 The first run launches an interactive setup wizard that asks for:
 
