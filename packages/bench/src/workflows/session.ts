@@ -39,6 +39,7 @@ import {
   readStackVersion,
   readTeamTools,
   readUnlistedMcpServers,
+  readAgentWorkspaces,
   readWorkspaceRoots,
 } from './stack';
 import { readResearchSubjects } from './subjects';
@@ -59,6 +60,7 @@ export async function readScenarioEnv(
     workspaceRoots: await readWorkspaceRoots(db, entityId),
     teamTools: await readTeamTools(db, entityId),
     unlistedMcpServers: await readUnlistedMcpServers(db, entityId),
+    agentWorkspaces: await readAgentWorkspaces(db, entityId),
     services,
     startedMs,
   };

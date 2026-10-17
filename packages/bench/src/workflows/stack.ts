@@ -392,6 +392,36 @@ export async function readKeyProviders(db: AnyDrizzleDb, entityId: string): Prom
  * résout lui-même (`workspacesRoot()/<entité>/shared`), puis chaque dossier
  * rattaché à un agent de l'espace. Sans doublon, dans cet ordre.
  */
+/**
+ * Les dossiers de travail de chaque agent actif de l'espace, par son slug, par
+ * la fonction même qui les donne à son run (`resolveRunWorkspaces`) : le juge y
+ * résout le chemin qu'un appel a donné comme le produit l'a résolu.
+ */
+export async function readAgentWorkspaces(
+  db: AnyDrizzleDb,
+  entityId: string,
+): Promise<Record<string, Array<{ label: string; path: string }>>> {
+  const { sql } = await import('@nodal-agents/db');
+  const { resolveRunWorkspaces } = await import('@nodal-agents/tools');
+  const agents = z.array(z.object({ id: z.string(), slug: z.string() })).parse(
+    await executeRows(
+      db,
+      sql`
+        select id::text, slug from agents
+         where entity_id = ${entityId}::uuid and coalesce(active, true) = true
+         order by slug`,
+    ),
+  );
+  const out: Record<string, Array<{ label: string; path: string }>> = {};
+  for (const a of agents) {
+    out[a.slug] = (await resolveRunWorkspaces(db, a.id, entityId)).workspaces.map((w) => ({
+      label: w.label,
+      path: w.path,
+    }));
+  }
+  return out;
+}
+
 export async function readWorkspaceRoots(db: AnyDrizzleDb, entityId: string): Promise<string[]> {
   const { sql } = await import('@nodal-agents/db');
   const { workspacesRoot, SHARED_WORKSPACE_LABEL } = await import('@nodal-agents/tools');

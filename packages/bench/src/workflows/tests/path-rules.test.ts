@@ -185,20 +185,56 @@ describe('decision 1: a product tool available must be used', () => {
     expect(pathRule(cited.reasons)).toEqual([
       `${PRODUCT_TOOL_NOT_USED}: no call of xlsx_read reads ${rel}`,
     ]);
-    const windows = await play(
+  });
+
+  // Revue de #777, passe 3 (P2) : un champ chemin qui finit par le bon chemin
+  // relatif peut désigner une COPIE du fichier posé (backup/nodal-bench/…). Le
+  // chemin de l'appel se résout comme le produit le résout, contre les
+  // dossiers de travail de l'agent qui a fait l'appel, puis se compare au
+  // chemin réel du fichier posé.
+  it.each(READS.map((s) => [s.id, s.productTools!] as const))(
+    'P2 copy (pass 3) — %s: its tool reads a COPY under a folder whose path ends the right way: red',
+    async (id, pt) => {
+      const rel = pt.reads[0]!;
+      const field = pt.tools[0] === 'request_print' ? 'filePath' : 'path';
+      const r = await play(
+        id,
+        { tools: [{ name: pt.tools[0]!, input: { [field]: `backup/${rel}` } }] },
+        (root) => leave(`backup/${rel}`, 'la copie')(root),
+        { teamTools: pt.tools },
+      );
+      expect(pathRule(r.reasons)).toEqual([
+        `${PRODUCT_TOOL_NOT_USED}: no call of ${pt.tools.join(', ')} reads ${rel}`,
+      ]);
+    },
+  );
+
+  it('the file posed, designated three right ways: relative, prefixed by its workspace label, absolute', async () => {
+    const rel = 'nodal-bench/ventes-trimestre.xlsx';
+    for (const path of [rel, `shared/${rel}`, (root: string) => join(root, rel)]) {
+      const r = await play(
+        'excel-read-answer',
+        (root) => ({
+          tools: [
+            { name: 'xlsx_read', input: { path: typeof path === 'string' ? path : path(root) } },
+          ],
+        }),
+        undefined,
+        { teamTools: ['xlsx_read'] },
+      );
+      expect(pathRule(r.reasons)).toEqual([]);
+    }
+  });
+
+  it('the file posed, read through a workspace folder reached by a junction: still designated', async () => {
+    const rel = 'nodal-bench/ventes-trimestre.xlsx';
+    const r = await play(
       'excel-read-answer',
-      {
-        tools: [
-          {
-            name: 'xlsx_read',
-            input: { path: 'C:\\ws\\shared\\nodal-bench\\ventes-trimestre.xlsx' },
-          },
-        ],
-      },
+      { tools: [{ name: 'xlsx_read', input: { path: `shared/${rel}` } }] },
       undefined,
-      { teamTools: ['xlsx_read'] },
+      { teamTools: ['xlsx_read'], linkedRoot: true },
     );
-    expect(pathRule(windows.reasons)).toEqual([]);
+    expect(pathRule(r.reasons)).toEqual([]);
   });
 
   it('a workspace folder reached through a link: the rows carry the real path, and the chain still finds them', async () => {

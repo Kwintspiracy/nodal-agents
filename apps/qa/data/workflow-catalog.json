@@ -457,7 +457,7 @@
         "the final answer names Café moulu and gives 550",
         "nodal-bench/ventes-trimestre.xlsx is byte for byte the fixture (sha-256)",
         "tool_calls: the product tools are xlsx_read; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "ventes-trimestre.xlsx is read by one of them: the path field of a call designates nodal-bench/ventes-trimestre.xlsx"
+        "ventes-trimestre.xlsx is read by one of them: the path field of a call, resolved like the product resolves it against the calling agent's workspace folders (real path), is the file the bench posed at nodal-bench/ventes-trimestre.xlsx"
       ],
       "fixtures": [
         {
@@ -661,7 +661,7 @@
         "the final answer gives 215.30 (any writing): the value is written only in the last row of the document's table",
         "nodal-bench/bon-commande.docx is byte for byte the fixture (sha-256)",
         "tool_calls: the product tools are docx_read; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "bon-commande.docx is read by one of them: the path field of a call designates nodal-bench/bon-commande.docx"
+        "bon-commande.docx is read by one of them: the path field of a call, resolved like the product resolves it against the calling agent's workspace folders (real path), is the file the bench posed at nodal-bench/bon-commande.docx"
       ],
       "fixtures": [
         {
@@ -818,7 +818,7 @@
         "the final answer says 4 slides and gives 49",
         "nodal-bench/offre.pptx is byte for byte the fixture (sha-256)",
         "tool_calls: the product tools are pptx_read; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "offre.pptx is read by one of them: the path field of a call designates nodal-bench/offre.pptx"
+        "offre.pptx is read by one of them: the path field of a call, resolved like the product resolves it against the calling agent's workspace folders (real path), is the file the bench posed at nodal-bench/offre.pptx"
       ],
       "fixtures": [
         {
@@ -1169,7 +1169,7 @@
         "tool_calls: a request_print whose input names facture-impression.pdf, pending, one page when the connector says so",
         "never confirm_print, nothing reached the printer",
         "tool_calls: the product tools are request_print; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "facture-impression.pdf is read by one of them: the path field of a call designates nodal-bench/facture-impression.pdf"
+        "facture-impression.pdf is read by one of them: the path field of a call, resolved like the product resolves it against the calling agent's workspace folders (real path), is the file the bench posed at nodal-bench/facture-impression.pdf"
       ],
       "fixtures": [
         {

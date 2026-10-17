@@ -20,7 +20,7 @@ import { prepareTrial } from '../fixtures';
 import { scenarioById } from '../scenarios';
 import type { ResearchSubject } from '../subjects';
 import { cheminConstate } from '@nodal-agents/tools';
-import { productFileStates, trialReasons } from '../trial';
+import { productFileStates, resolveCallPaths, trialReasons } from '../trial';
 import type { ScenarioEnv } from '../types';
 
 export const ROOT_ID = '00000000-0000-4000-8000-0000000000a1';
@@ -179,6 +179,12 @@ export async function play(
     services: {},
     unlistedMcpServers: [],
     startedMs: 0,
+    // Les agents des jobs du harnais (`root`, `helper`) reçoivent le dossier de
+    // l'essai comme dossier partagé, comme un run du produit.
+    agentWorkspaces: {
+      root: [{ label: 'shared', path: root }],
+      helper: [{ label: 'shared', path: root }],
+    },
     ...(playEnv.subject ? { subject: playEnv.subject } : {}),
   };
   prepareTrial(s, env0.workspaceRoots);
@@ -193,7 +199,8 @@ export async function play(
   const tree: TreeFacts = { ...facts(run), writes: await writesOf(run, root) };
   const observed = await s.observe(tree, env);
   const files = await productFileStates(s, env.workspaceRoots);
-  return { root, reasons: trialReasons(s, tree, observed, env, files), observed };
+  const callPaths = await resolveCallPaths(tree, env);
+  return { root, reasons: trialReasons(s, tree, observed, env, files, callPaths), observed };
 }
 
 /** Un PNG minimal mais valide (signature, IHDR, IDAT, IEND) : ce qu'un en-tête dit, il le dit vraiment. */

@@ -17,6 +17,7 @@ import type { FileWriteFact, JobFact, ToolCallFact, TreeFacts } from './facts';
 import type {
   AnyScenario,
   CitedLink,
+  CallPaths,
   FileState,
   PathJob,
   ProductFileState,
@@ -523,20 +524,19 @@ export function productToolGate(s: AnyScenario, env: Pick<ScenarioEnv, 'teamTool
 const PATH_FIELD = /^(path|file_?path)$/i;
 
 /**
- * L'appel désigne ce fichier par un CHAMP CHEMIN de son entrée, et non par une
- * mention quelconque (un contenu qui cite le fichier, revue de #777, passe 2).
- * Le chemin donné est relatif à un dossier de travail, préfixé de son nom
- * (`shared/…`) ou absolu : il désigne `rel` quand il lui est égal ou finit par
- * `/rel`, séparateurs ramenés à `/`.
+ * Les chemins qu'un appel DONNE, tels qu'écrits dans les champs chemin de son
+ * entrée, jamais une mention quelconque (un contenu qui cite le fichier, revue
+ * de #777, passe 2). Le banc les résout ensuite comme le produit, contre les
+ * dossiers de travail de l'agent qui a fait l'appel (`resolveCallPaths`,
+ * trial.ts) : une copie sous un dossier dont le chemin finit pareil n'est pas
+ * le fichier posé (passe 3).
  */
-function designates(c: ToolCallFact, rel: string): boolean {
+export function pathFieldsOf(c: ToolCallFact): string[] {
   const input = jsonObject(parseJson(c.input));
-  if (!input) return false;
-  return Object.entries(input).some(([k, v]) => {
-    if (!PATH_FIELD.test(k) || typeof v !== 'string') return false;
-    const p = v.replace(/\\/g, '/');
-    return p === rel || p.endsWith(`/${rel}`);
-  });
+  if (!input) return [];
+  return Object.entries(input)
+    .filter(([k, v]) => PATH_FIELD.test(k) && typeof v === 'string')
+    .map(([, v]) => v as string);
 }
 
 const sameState = (a: { kind: string; sha256?: string | null }, b: FileState): boolean =>
@@ -561,6 +561,7 @@ export function productToolReasons(
   facts: TreeFacts,
   env: Pick<ScenarioEnv, 'teamTools'>,
   files: readonly ProductFileState[],
+  callPaths: CallPaths,
 ): string[] {
   const available = availableProductTools(s, env);
   if (available.length === 0 || !s.productTools) return [];
@@ -572,8 +573,11 @@ export function productToolReasons(
       : [`${PRODUCT_TOOL_NOT_USED}: none of ${available.join(', ')} was called`];
   const r: string[] = [];
   for (const rel of reads) {
-    if (!facts.toolCalls.some((c) => isExpected(c.toolName) && designates(c, rel)))
-      r.push(`${PRODUCT_TOOL_NOT_USED}: no call of ${available.join(', ')} reads ${rel}`);
+    const target = files.find((f) => f.rel === rel)?.realPaths ?? [];
+    const read = facts.toolCalls.some(
+      (c, i) => isExpected(c.toolName) && (callPaths[i] ?? []).some((p) => target.includes(p)),
+    );
+    if (!read) r.push(`${PRODUCT_TOOL_NOT_USED}: no call of ${available.join(', ')} reads ${rel}`);
   }
   for (const rel of writes) {
     const file = files.find((f) => f.rel === rel);
@@ -655,7 +659,8 @@ export function productToolJudgedBy(s: AnyScenario): string[] {
         `tool_call_writes: the hash chain of ${base(rel)}, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)`,
     ),
     ...reads.map(
-      (rel) => `${base(rel)} is read by one of them: the path field of a call designates ${rel}`,
+      (rel) =>
+        `${base(rel)} is read by one of them: the path field of a call, resolved like the product resolves it against the calling agent's workspace folders (real path), is the file the bench posed at ${rel}`,
     ),
   ];
 }
