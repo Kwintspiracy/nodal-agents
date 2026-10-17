@@ -1218,6 +1218,22 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
     );
     CREATE INDEX IF NOT EXISTS idx_tool_call_writes_job ON tool_call_writes (job_id);
     CREATE INDEX IF NOT EXISTS idx_tool_call_writes_call ON tool_call_writes (tool_call_id);
+
+    -- tool_call_reads (migration 0149) : pour chaque fichier qu un appel a lu
+    -- avec succes, son chemin reel et l empreinte des octets lus, lies a la
+    -- ligne tool_calls de l appel (donc a son seq).
+    CREATE TABLE IF NOT EXISTS tool_call_reads (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      tool_call_id uuid NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
+      job_id uuid NOT NULL REFERENCES agent_jobs(id) ON DELETE CASCADE,
+      path text NOT NULL,
+      sha256 text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT tool_call_reads_call_path_unique UNIQUE (tool_call_id, path),
+      CONSTRAINT tool_call_reads_sha256_check CHECK (sha256 ~ '^[0-9a-f]{64}$')
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_call_reads_job ON tool_call_reads (job_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_call_reads_path ON tool_call_reads (path);
   `);
 
   const db = drizzle(pg, { schema });

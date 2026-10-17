@@ -250,6 +250,9 @@ export async function readWorkspaceBinary(
       );
       if (!bombCheck.ok) return { ok: false, reason: bombCheck.reason };
     }
+    // The fingerprint of the bytes READ, reported once the read is accepted
+    // (the seam records it in tool_call_reads): a refused read reports nothing.
+    ctx.reportReadContent?.(resolvedPath, createHash('sha256').update(buffer).digest('hex'));
 
     return { ok: true, buffer, resolvedPath };
   } catch (err) {
