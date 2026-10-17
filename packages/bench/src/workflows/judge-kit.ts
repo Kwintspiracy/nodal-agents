@@ -13,11 +13,10 @@
 
 import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 import { DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
-import type { FileWriteFact, JobFact, ToolCallFact, TreeFacts } from './facts';
+import type { FileReadFact, FileWriteFact, JobFact, ToolCallFact, TreeFacts } from './facts';
 import type {
   AnyScenario,
   CitedLink,
-  CallPaths,
   FileState,
   PathJob,
   ProductFileState,
@@ -291,6 +290,20 @@ export const SOURCES_READ: UnverifiedCheck = {
   ticket: '#648',
 };
 
+/**
+ * Le fichier qu'un outil MCP imprime : `request_print` l'ouvre dans le
+ * processus du serveur, la plateforme n'en enregistre aucune lecture
+ * (`tool_call_reads`). Son entrée qui nomme le fichier ne prouve pas quels
+ * octets ont été imprimés.
+ */
+export const PRINTED_FILE_READ: UnverifiedCheck = {
+  check: 'the printed file is the one the bench posed',
+  state: 'not verified',
+  reason:
+    'request_print is an MCP tool: it opens the file in its own process, so the platform records no read of it; its input naming the file does not prove which bytes were printed.',
+  ticket: '#784',
+};
+
 // ─── commandes ───────────────────────────────────────────────────────────────
 
 /** Un outil qui exécute une commande, quel que soit le runtime (produit, CLI). */
@@ -492,6 +505,25 @@ export function factsNotSeenOnTheWeb(
 // commande qui ne fait que LIRE ne change rien : la chaîne tient. Un script qui
 // écrit le contenu AVANT un dernier appel de l'outil du produit rompt la
 // chaîne aussi : l'état avant de cet appel n'est plus celui de la précédente.
+//
+// Un fichier à LIRE suit la même idée : la règle ne reconstruit pas après coup
+// le fichier qu'un appel désignait (revue de #777, passes 3 et 4 : une copie
+// sous un dossier dont le chemin finit pareil, des dossiers d'agent relus au
+// moment du jugement sans le dossier du job). Elle LIT ce que la plateforme a
+// enregistré au moment de la lecture (`tool_call_reads`, #783) : le chemin
+// réel ouvert et l'empreinte des octets lus. La lecture est celle du fichier
+// posé quand un outil attendu a lu, au chemin réel où le banc l'a posé, les
+// octets de la fixture :
+//
+//   - une copie identique ailleurs a la bonne empreinte et un autre chemin :
+//     rouge ;
+//   - le fichier posé, changé avant d'être lu, a le bon chemin et une autre
+//     empreinte : rouge ;
+//   - aucune ligne : « not recorded », rouge, jamais vert.
+//
+// Un outil MCP (`request_print`) ouvre le fichier dans son propre processus :
+// la plateforme n'enregistre aucune lecture, et un scénario ne peut pas
+// l'exiger (#784). Il le dit par un contrôle « not verified ».
 
 /** Le début de la raison du rouge, le même pour tous les scénarios. */
 export const PRODUCT_TOOL_NOT_USED = 'product tool available, not used';
@@ -520,25 +552,6 @@ export function productToolGate(s: AnyScenario, env: Pick<ScenarioEnv, 'teamTool
       ];
 }
 
-/** Les champs d'une entrée qui portent un CHEMIN, par leur nom (`path`, `filePath`, `file_path`). */
-const PATH_FIELD = /^(path|file_?path)$/i;
-
-/**
- * Les chemins qu'un appel DONNE, tels qu'écrits dans les champs chemin de son
- * entrée, jamais une mention quelconque (un contenu qui cite le fichier, revue
- * de #777, passe 2). Le banc les résout ensuite comme le produit, contre les
- * dossiers de travail de l'agent qui a fait l'appel (`resolveCallPaths`,
- * trial.ts) : une copie sous un dossier dont le chemin finit pareil n'est pas
- * le fichier posé (passe 3).
- */
-export function pathFieldsOf(c: ToolCallFact): string[] {
-  const input = jsonObject(parseJson(c.input));
-  if (!input) return [];
-  return Object.entries(input)
-    .filter(([k, v]) => PATH_FIELD.test(k) && typeof v === 'string')
-    .map(([, v]) => v as string);
-}
-
 const sameState = (a: { kind: string; sha256?: string | null }, b: FileState): boolean =>
   a.kind === b.kind && (a.kind !== 'file' || (b.kind === 'file' && a.sha256 === b.sha256));
 
@@ -561,7 +574,6 @@ export function productToolReasons(
   facts: TreeFacts,
   env: Pick<ScenarioEnv, 'teamTools'>,
   files: readonly ProductFileState[],
-  callPaths: CallPaths,
 ): string[] {
   const available = availableProductTools(s, env);
   if (available.length === 0 || !s.productTools) return [];
@@ -573,11 +585,14 @@ export function productToolReasons(
       : [`${PRODUCT_TOOL_NOT_USED}: none of ${available.join(', ')} was called`];
   const r: string[] = [];
   for (const rel of reads) {
-    const target = files.find((f) => f.rel === rel)?.realPaths ?? [];
-    const read = facts.toolCalls.some(
-      (c, i) => isExpected(c.toolName) && (callPaths[i] ?? []).some((p) => target.includes(p)),
-    );
-    if (!read) r.push(`${PRODUCT_TOOL_NOT_USED}: no call of ${available.join(', ')} reads ${rel}`);
+    const file = files.find((f) => f.rel === rel);
+    if (!file) {
+      r.push(
+        `${PRODUCT_TOOL_NOT_USED}: the bench did not prepare ${rel}, so its read cannot be judged`,
+      );
+      continue;
+    }
+    r.push(...readReasons(rel, file, facts.reads, isExpected, available));
   }
   for (const rel of writes) {
     const file = files.find((f) => f.rel === rel);
@@ -590,6 +605,36 @@ export function productToolReasons(
     r.push(...chainReasons(rel, file, facts.writes, isExpected, available));
   }
   return r;
+}
+
+/** La lecture d'un fichier posé : son chemin réel ET l'empreinte de la fixture (voir l'en-tête). */
+function readReasons(
+  rel: string,
+  file: ProductFileState,
+  allReads: readonly FileReadFact[],
+  isExpected: (toolName: string) => boolean,
+  available: readonly string[],
+): string[] {
+  const posed = file.initial;
+  if (posed.kind !== 'file')
+    return [
+      `${PRODUCT_TOOL_NOT_USED}: the bench posed no fixture at ${rel}, so a read of it cannot be judged`,
+    ];
+  const byTool = allReads.filter((x) => isExpected(x.toolName));
+  const atPosed = byTool.filter((x) => x.path === file.posedPath);
+  if (atPosed.some((x) => x.sha256 === posed.sha256)) return [];
+  const tools = available.join(', ');
+  const first = atPosed[0];
+  if (first)
+    return [
+      `${PRODUCT_TOOL_NOT_USED}: ${rel} was read by ${bareToolName(first.toolName)} (seq ${first.seq}), not in the state the bench posed (read ${showState({ kind: 'file', sha256: first.sha256 })}, posed ${showState(posed)})`,
+    ];
+  const copy = byTool.find((x) => x.sha256 === posed.sha256);
+  return [
+    copy
+      ? `${PRODUCT_TOOL_NOT_USED}: no call of ${tools} reads ${rel}; ${bareToolName(copy.toolName)} (seq ${copy.seq}) read an identical copy at another path`
+      : `${PRODUCT_TOOL_NOT_USED}: no call of ${tools} reads ${rel} (no read of it is recorded in tool_call_reads: not recorded)`,
+  ];
 }
 
 /** La chaîne d'empreintes d'un livrable, de l'état préparé à l'état final (voir l'en-tête). */
@@ -660,7 +705,7 @@ export function productToolJudgedBy(s: AnyScenario): string[] {
     ),
     ...reads.map(
       (rel) =>
-        `${base(rel)} is read by one of them: the path field of a call, resolved like the product resolves it against the calling agent's workspace folders (real path), is the file the bench posed at ${rel}`,
+        `tool_call_reads: one of them read ${base(rel)} at the real path where the bench posed it (${rel} in the shared folder), with the sha-256 of the fixture; an identical copy elsewhere, a file changed before the read, or no row (not recorded) is red`,
     ),
   ];
 }

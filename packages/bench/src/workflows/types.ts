@@ -116,17 +116,6 @@ export interface ScenarioEnv {
   /** Début de l'essai (ms). Un fichier plus ancien n'a pas été écrit par lui. */
   readonly startedMs: number;
   /**
-   * Les dossiers de travail de chaque agent actif de l'espace, par son slug,
-   * tels que son run les reçoit (`resolveRunWorkspaces`, @nodal-agents/tools :
-   * le dossier partagé et ses dossiers attachés, avec leurs libellés). Le banc
-   * y résout le chemin qu'un appel donne, comme le produit le résout
-   * (`resolveAndCheckPath`). Absent : rien n'est résolu, et un appel ne
-   * désigne alors aucun fichier (fermé par défaut, jamais vert).
-   */
-  readonly agentWorkspaces?: Readonly<
-    Record<string, ReadonlyArray<{ readonly label: string; readonly path: string }>>
-  >;
-  /**
    * Le sujet calibré de l'essai, posé par runTrial pour un scénario qui déclare
    * `subject` (et seulement pour lui : absent partout ailleurs).
    */
@@ -149,16 +138,14 @@ export interface ProductTools {
    * est celle d'un de ces outils, prouvée par ses octets écrits.
    */
   readonly writes: readonly string[];
-  /** Les fichiers (sous `nodal-bench/`) que ces outils doivent LIRE : le champ chemin d'un appel d'un de ces outils les désigne. */
+  /**
+   * Les fichiers (sous `nodal-bench/`) que ces outils doivent LIRE : une ligne
+   * `tool_call_reads` d'un appel d'un de ces outils porte le chemin réel du
+   * fichier posé ET l'empreinte de la fixture. Seulement pour un outil dont la
+   * plateforme enregistre la lecture : un outil MCP n'en laisse aucune (#784).
+   */
   readonly reads: readonly string[];
 }
-
-/**
- * Les chemins RÉELS que chaque appel de l'arbre a donnés (ses champs chemin,
- * résolus comme le produit les résout pour l'agent qui l'a fait), dans l'ordre
- * de `TreeFacts.toolCalls`. Un chemin qui ne se résout pas n'y est pas.
- */
-export type CallPaths = ReadonlyArray<readonly string[]>;
 
 /** L'état d'un fichier : absent, lu (avec son empreinte sha-256), ou présent mais illisible. */
 export type FileState =
@@ -167,14 +154,18 @@ export type FileState =
   | { readonly kind: 'unreadable' };
 
 /**
- * Un livrable, tel que le banc le connaît hors de la base : ses chemins réels
- * possibles (un par dossier de travail, résolus comme la plateforme les range,
- * `cheminConstate`), l'état où le banc l'a préparé (la fixture posée, sinon
- * absent) et son état sur le disque à la fin de l'essai.
+ * Un fichier du scénario, tel que le banc le connaît hors de la base : ses
+ * chemins réels possibles (un par dossier de travail, résolus comme la
+ * plateforme les range, `cheminConstate`), le chemin réel où le banc POSE sa
+ * fixture (le dossier partagé, `installFixture`), l'état où le banc l'a
+ * préparé (la fixture posée, sinon absent) et son état sur le disque à la fin
+ * de l'essai.
  */
 export interface ProductFileState {
   readonly rel: string;
   readonly realPaths: readonly string[];
+  /** Le chemin réel du fichier sous le dossier partagé, là où `installFixture` le pose. */
+  readonly posedPath: string;
   readonly initial: FileState;
   readonly final: FileState;
 }

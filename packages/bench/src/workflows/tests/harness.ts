@@ -20,7 +20,7 @@ import { prepareTrial } from '../fixtures';
 import { scenarioById } from '../scenarios';
 import type { ResearchSubject } from '../subjects';
 import { cheminConstate } from '@nodal-agents/tools';
-import { productFileStates, resolveCallPaths, trialReasons } from '../trial';
+import { productFileStates, trialReasons } from '../trial';
 import type { ScenarioEnv } from '../types';
 
 export const ROOT_ID = '00000000-0000-4000-8000-0000000000a1';
@@ -51,6 +51,20 @@ export interface Run {
     readonly source?: 'written' | 'read';
     readonly seq?: number;
   }>;
+  /**
+   * Les lignes `tool_call_reads` de l'arbre, telles que la plateforme les
+   * range : `rel` est résolu en chemin réel (`cheminConstate`) sous le dossier
+   * de travail de l'essai, ou sous `under` (un autre dossier, absolu) ; `sha`
+   * est l'empreinte des octets lus. `seq` : l'ordre de l'appel (par défaut,
+   * après les écritures).
+   */
+  readonly reads?: ReadonlyArray<{
+    readonly tool: string;
+    readonly rel: string;
+    readonly sha: string;
+    readonly under?: string;
+    readonly seq?: number;
+  }>;
 }
 
 const stateFields = (st: string, side: 'before' | 'after') => {
@@ -72,6 +86,19 @@ async function writesOf(run: Run, root: string): Promise<TreeFacts['writes']> {
       ...stateFields(w.after, 'after'),
       afterSource: w.source ?? 'written',
     })) as Promise<TreeFacts['writes'][number]>[],
+  );
+}
+
+/** Les lignes `tool_call_reads` d'un essai, résolues sous `root` (ou `under`) comme le seam les range. */
+async function readsOf(run: Run, root: string): Promise<TreeFacts['reads']> {
+  return Promise.all(
+    (run.reads ?? []).map(async (x, i) => ({
+      seq: x.seq ?? 200 + i,
+      jobId: ROOT_ID,
+      toolName: x.tool,
+      path: await cheminConstate(join(x.under ?? root, x.rel)),
+      sha256: x.sha,
+    })),
   );
 }
 
@@ -139,6 +166,8 @@ function ageAll(dir: string, ms: number): void {
 
 export interface Played {
   readonly root: string;
+  /** Le second dossier de travail (`attachedRoot`), sinon null. */
+  readonly attached: string | null;
   readonly reasons: string[];
   readonly observed: unknown;
 }
@@ -153,6 +182,11 @@ export interface PlayEnv {
    * qui n'est pas celui que l'espace déclare.
    */
   readonly linkedRoot?: boolean;
+  /**
+   * Un second dossier de travail, rattaché à un agent (jamais le partagé) :
+   * le banc n'y pose rien, un fichier qui s'y trouve n'est pas la fixture.
+   */
+  readonly attachedRoot?: boolean;
 }
 
 /**
@@ -164,8 +198,8 @@ export interface PlayEnv {
  */
 export async function play(
   id: string,
-  runOrBuild: Run | ((root: string) => Run),
-  work: (root: string) => void | Promise<void> = () => undefined,
+  runOrBuild: Run | ((root: string, attached: string | null) => Run),
+  work: (root: string, attached: string | null) => void | Promise<void> = () => undefined,
   playEnv: PlayEnv = {},
 ): Promise<Played> {
   const s = scenarioById(id);
@@ -173,18 +207,13 @@ export async function play(
   const real = mkdtempSync(join(tmpdir(), `wf-${id}-`));
   const root = playEnv.linkedRoot ? join(tmpdir(), `wf-link-${id}-${Date.now()}`) : real;
   if (playEnv.linkedRoot) symlinkSync(real, root, 'junction');
+  const attached = playEnv.attachedRoot ? mkdtempSync(join(tmpdir(), `wf-att-${id}-`)) : null;
   const env0: ScenarioEnv = {
-    workspaceRoots: [root],
+    workspaceRoots: attached ? [root, attached] : [root],
     teamTools: playEnv.teamTools ?? [],
     services: {},
     unlistedMcpServers: [],
     startedMs: 0,
-    // Les agents des jobs du harnais (`root`, `helper`) reçoivent le dossier de
-    // l'essai comme dossier partagé, comme un run du produit.
-    agentWorkspaces: {
-      root: [{ label: 'shared', path: root }],
-      helper: [{ label: 'shared', path: root }],
-    },
     ...(playEnv.subject ? { subject: playEnv.subject } : {}),
   };
   prepareTrial(s, env0.workspaceRoots);
@@ -193,14 +222,17 @@ export async function play(
   // plus grossière (≈ 16 ms) que Date.now(), et un fichier écrit juste après
   // le début pourrait sembler écrit avant. Un vrai essai dure des secondes.
   const startedMs = Date.now() - 1_000;
-  await work(root);
-  const run = typeof runOrBuild === 'function' ? runOrBuild(root) : runOrBuild;
+  await work(root, attached);
+  const run = typeof runOrBuild === 'function' ? runOrBuild(root, attached) : runOrBuild;
   const env: ScenarioEnv = { ...env0, startedMs };
-  const tree: TreeFacts = { ...facts(run), writes: await writesOf(run, root) };
+  const tree: TreeFacts = {
+    ...facts(run),
+    writes: await writesOf(run, root),
+    reads: await readsOf(run, root),
+  };
   const observed = await s.observe(tree, env);
   const files = await productFileStates(s, env.workspaceRoots);
-  const callPaths = await resolveCallPaths(tree, env);
-  return { root, reasons: trialReasons(s, tree, observed, env, files, callPaths), observed };
+  return { root, attached, reasons: trialReasons(s, tree, observed, env, files), observed };
 }
 
 /** Un PNG minimal mais valide (signature, IHDR, IDAT, IEND) : ce qu'un en-tête dit, il le dit vraiment. */

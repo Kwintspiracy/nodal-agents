@@ -5,14 +5,16 @@
 // le banc a préparé à l'état final du disque, chaque écriture partant de
 // l'état laissé par la précédente, et chaque écriture qui le change étant
 // celle d'un outil attendu, prouvée par les octets qu'il a écrits. Un fichier
-// à lire est désigné par le champ chemin d'un appel d'un outil attendu. Sinon
+// à lire l'est par un outil attendu : une ligne `tool_call_reads` porte son
+// chemin réel (là où le banc l'a posé) ET l'empreinte de la fixture. Sinon
 // l'essai est rouge, « product tool available, not used ». La règle est écrite
 // une fois (judge-kit `productToolReasons`) et appliquée par runTrial à tout
 // scénario qui déclare `productTools` : ces tests la jouent sur CHACUN d'eux.
 //
-// Chaque P2 des passes 1 et 2 de la revue de #777 a ici son test, nommé par
+// Chaque P2 des passes 1 à 4 de la revue de #777 a ici son test, nommé par
 // lui : l'alibi, l'écrivain hors liste, la lecture seule, la sous-chaîne, la
-// fenêtre d'une seconde, l'ordre parallèle.
+// fenêtre d'une seconde, l'ordre parallèle, la copie, la cible fantôme sous un
+// dossier rattaché, le dossier du job.
 
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -21,8 +23,15 @@ import { describe, expect, it } from 'vitest';
 import { buildCatalog } from '../catalog';
 import { TreeFactsSchema } from '../facts';
 import { fileHash, fixturePath } from '../fixtures';
-import { PRODUCT_TOOL_NOT_USED, productToolGate, toolPath } from '../judge-kit';
-import { SCENARIOS, scenarioById } from '../scenarios';
+import {
+  PRINTED_FILE_READ,
+  PRODUCT_TOOL_NOT_USED,
+  productToolGate,
+  productToolReasons,
+  toolPath,
+  unverifiedOf,
+} from '../judge-kit';
+import { PRINT_FILE_REL, SCENARIOS, scenarioById } from '../scenarios';
 import { ROOT_ID, facts, play } from './harness';
 
 const WITH_TOOLS = SCENARIOS.filter((s) => s.productTools);
@@ -63,7 +72,7 @@ describe('decision 1: a product tool available must be used', () => {
           .map((s) => s.id),
       ).toEqual([]);
     expect([WITH_TOOLS.length, WRITES.length, READS.length, NO_FILE.length]).toEqual([
-      18, 12, 4, 2,
+      18, 12, 3, 3,
     ]);
   });
 
@@ -174,67 +183,200 @@ describe('decision 1: a product tool available must be used', () => {
     );
   });
 
-  it('P2 substring (pass 2): a read tool whose OTHER field cites the file does not read it; only its path field counts', async () => {
-    const rel = 'nodal-bench/ventes-trimestre.xlsx';
-    const cited = await play(
-      'excel-read-answer',
-      { tools: [{ name: 'xlsx_read', input: { path: 'tmp/autre.xlsx', note: rel } }] },
-      undefined,
-      { teamTools: ['xlsx_read'] },
-    );
-    expect(pathRule(cited.reasons)).toEqual([
-      `${PRODUCT_TOOL_NOT_USED}: no call of xlsx_read reads ${rel}`,
-    ]);
-  });
-
-  // Revue de #777, passe 3 (P2) : un champ chemin qui finit par le bon chemin
-  // relatif peut désigner une COPIE du fichier posé (backup/nodal-bench/…). Le
-  // chemin de l'appel se résout comme le produit le résout, contre les
-  // dossiers de travail de l'agent qui a fait l'appel, puis se compare au
-  // chemin réel du fichier posé.
+  // Revue de #777, passes 3 et 4 (P2) : la lecture n'est plus reconstruite
+  // après coup depuis le champ chemin d'un appel et les dossiers des agents.
+  // Elle se lit dans `tool_call_reads` : le chemin réel que l'outil a ouvert ET
+  // l'empreinte des octets lus, enregistrés au moment de la lecture (#783).
   it.each(READS.map((s) => [s.id, s.productTools!] as const))(
-    'P2 copy (pass 3) — %s: its tool reads a COPY under a folder whose path ends the right way: red',
+    '%s: its tool read the posed file, at its real path, with the bytes of the fixture: the path rule holds',
     async (id, pt) => {
       const rel = pt.reads[0]!;
-      const field = pt.tools[0] === 'request_print' ? 'filePath' : 'path';
       const r = await play(
         id,
-        { tools: [{ name: pt.tools[0]!, input: { [field]: `backup/${rel}` } }] },
-        (root) => leave(`backup/${rel}`, 'la copie')(root),
+        {
+          tools: [{ name: `office__${pt.tools[0]!}`, input: { path: rel } }],
+          reads: [{ tool: `office__${pt.tools[0]!}`, rel, sha: initialOf(id, rel) }],
+        },
+        undefined,
+        { teamTools: [`office__${pt.tools[0]!}`] },
+      );
+      expect(pathRule(r.reasons)).toEqual([]);
+    },
+  );
+
+  it.each(READS.map((s) => [s.id, s.productTools!] as const))(
+    'P2 copy (pass 3) — %s: its tool read an IDENTICAL copy under a folder whose path ends the right way: same hash, other path, red',
+    async (id, pt) => {
+      const rel = pt.reads[0]!;
+      const r = await play(
+        id,
+        {
+          tools: [{ name: pt.tools[0]!, input: { path: `backup/${rel}` } }],
+          reads: [{ tool: pt.tools[0]!, rel: `backup/${rel}`, sha: initialOf(id, rel), seq: 5 }],
+        },
+        undefined,
         { teamTools: pt.tools },
       );
       expect(pathRule(r.reasons)).toEqual([
-        `${PRODUCT_TOOL_NOT_USED}: no call of ${pt.tools.join(', ')} reads ${rel}`,
+        `${PRODUCT_TOOL_NOT_USED}: no call of ${pt.tools.join(', ')} reads ${rel}; ${pt.tools[0]!} (seq 5) read an identical copy at another path`,
       ]);
     },
   );
 
-  it('the file posed, designated three right ways: relative, prefixed by its workspace label, absolute', async () => {
-    const rel = 'nodal-bench/ventes-trimestre.xlsx';
-    for (const path of [rel, `shared/${rel}`, (root: string) => join(root, rel)]) {
-      const r = await play(
-        'excel-read-answer',
-        (root) => ({
-          tools: [
-            { name: 'xlsx_read', input: { path: typeof path === 'string' ? path : path(root) } },
-          ],
-        }),
-        undefined,
-        { teamTools: ['xlsx_read'] },
-      );
-      expect(pathRule(r.reasons)).toEqual([]);
-    }
-  });
-
-  it('the file posed, read through a workspace folder reached by a junction: still designated', async () => {
+  it('P2 phantom target (pass 4): an identical copy at the same relative path in a folder attached to an agent is not the posed file: red', async () => {
     const rel = 'nodal-bench/ventes-trimestre.xlsx';
     const r = await play(
       'excel-read-answer',
-      { tools: [{ name: 'xlsx_read', input: { path: `shared/${rel}` } }] },
+      (_root, attached) => ({
+        tools: [{ name: 'xlsx_read', input: { path: rel } }],
+        reads: [
+          {
+            tool: 'xlsx_read',
+            rel,
+            sha: initialOf('excel-read-answer', rel),
+            under: attached!,
+            seq: 3,
+          },
+        ],
+      }),
+      undefined,
+      { teamTools: ['xlsx_read'], attachedRoot: true },
+    );
+    expect(pathRule(r.reasons)).toEqual([
+      `${PRODUCT_TOOL_NOT_USED}: no call of xlsx_read reads ${rel}; xlsx_read (seq 3) read an identical copy at another path`,
+    ]);
+  });
+
+  it('P2 the job folder (pass 4, #507): the call designated the file through a folder the judge never knew; the row names the posed file, so it is read', async () => {
+    const rel = 'nodal-bench/ventes-trimestre.xlsx';
+    const r = await play(
+      'excel-read-answer',
+      {
+        tools: [{ name: 'xlsx_read', input: { path: `job/../shared/${rel}` } }],
+        reads: [{ tool: 'xlsx_read', rel, sha: initialOf('excel-read-answer', rel) }],
+      },
+      undefined,
+      { teamTools: ['xlsx_read'] },
+    );
+    expect(pathRule(r.reasons)).toEqual([]);
+  });
+
+  it('the posed file changed before its tool read it: right path, other hash, red with both states', async () => {
+    const rel = 'nodal-bench/ventes-trimestre.xlsx';
+    const posed = initialOf('excel-read-answer', rel);
+    const r = await play(
+      'excel-read-answer',
+      { reads: [{ tool: 'xlsx_read', rel, sha: sha('autre contenu'), seq: 4 }] },
+      undefined,
+      { teamTools: ['xlsx_read'] },
+    );
+    expect(pathRule(r.reasons)).toEqual([
+      `${PRODUCT_TOOL_NOT_USED}: ${rel} was read by xlsx_read (seq 4), not in the state the bench posed (read sha-256 ${sha('autre contenu').slice(0, 12)}, posed sha-256 ${posed.slice(0, 12)})`,
+    ]);
+  });
+
+  it('a call that names the file but left no read row is "not recorded": red, never green, whatever its input says', async () => {
+    const rel = 'nodal-bench/ventes-trimestre.xlsx';
+    const r = await play(
+      'excel-read-answer',
+      { tools: [{ name: 'xlsx_read', input: { path: rel } }] },
+      undefined,
+      { teamTools: ['xlsx_read'] },
+    );
+    expect(pathRule(r.reasons)).toEqual([
+      `${PRODUCT_TOOL_NOT_USED}: no call of xlsx_read reads ${rel} (no read of it is recorded in tool_call_reads: not recorded)`,
+    ]);
+  });
+
+  it('a read of the posed file by ANOTHER tool than the scenario names (file_read of the workbook) does not count', async () => {
+    const rel = 'nodal-bench/ventes-trimestre.xlsx';
+    const r = await play(
+      'excel-read-answer',
+      { reads: [{ tool: 'file_read', rel, sha: initialOf('excel-read-answer', rel) }] },
+      undefined,
+      { teamTools: ['xlsx_read', 'file_read'] },
+    );
+    expect(pathRule(r.reasons)).toEqual([
+      `${PRODUCT_TOOL_NOT_USED}: no call of xlsx_read reads ${rel} (no read of it is recorded in tool_call_reads: not recorded)`,
+    ]);
+  });
+
+  it('one right read is enough: a copy read before it, or the posed file read again later, changes nothing', async () => {
+    const rel = 'nodal-bench/ventes-trimestre.xlsx';
+    const posed = initialOf('excel-read-answer', rel);
+    const r = await play(
+      'excel-read-answer',
+      {
+        reads: [
+          { tool: 'xlsx_read', rel: `backup/${rel}`, sha: posed, seq: 1 },
+          { tool: 'xlsx_read', rel, sha: posed, seq: 2 },
+          { tool: 'xlsx_read', rel, sha: posed, seq: 3 },
+        ],
+      },
+      undefined,
+      { teamTools: ['xlsx_read'] },
+    );
+    expect(pathRule(r.reasons)).toEqual([]);
+  });
+
+  it('the posed file, read through a workspace folder reached by a junction: the row carries the real path, and it is the posed file', async () => {
+    const rel = 'nodal-bench/ventes-trimestre.xlsx';
+    const r = await play(
+      'excel-read-answer',
+      { reads: [{ tool: 'xlsx_read', rel, sha: initialOf('excel-read-answer', rel) }] },
       undefined,
       { teamTools: ['xlsx_read'], linkedRoot: true },
     );
     expect(pathRule(r.reasons)).toEqual([]);
+  });
+
+  it('a file to read that the bench did not prepare, or prepared without a fixture, cannot be judged: red, said, never green', () => {
+    const s = scenarioById('excel-read-answer')!;
+    const rel = s.productTools!.reads[0]!;
+    const tree = {
+      ...facts({}),
+      reads: [
+        {
+          seq: 1,
+          jobId: ROOT_ID,
+          toolName: 'xlsx_read',
+          path: 'C:/ws/x.xlsx',
+          sha256: 'a'.repeat(64),
+        },
+      ],
+    };
+    const env = { teamTools: ['xlsx_read'] };
+    expect(productToolReasons(s, tree, env, [])).toEqual([
+      `${PRODUCT_TOOL_NOT_USED}: the bench did not prepare ${rel}, so its read cannot be judged`,
+    ]);
+    const unposed = {
+      rel,
+      realPaths: ['C:/ws/x.xlsx'],
+      posedPath: 'C:/ws/x.xlsx',
+      initial: { kind: 'absent' as const },
+      final: { kind: 'absent' as const },
+    };
+    expect(productToolReasons(s, tree, env, [unposed])).toEqual([
+      `${PRODUCT_TOOL_NOT_USED}: the bench posed no fixture at ${rel}, so a read of it cannot be judged`,
+    ]);
+  });
+
+  it('print-file: request_print is judged on its call; the file it printed is said "not verified" (#784), never green', async () => {
+    const r = await play(
+      'print-file',
+      { tools: [{ name: 'printer__request_print', input: { filePath: PRINT_FILE_REL } }] },
+      undefined,
+      { teamTools: ['printer__request_print'] },
+    );
+    expect(pathRule(r.reasons)).toEqual([]);
+    expect(unverifiedOf(scenarioById('print-file')!)).toEqual([PRINTED_FILE_READ]);
+    expect(PRINTED_FILE_READ).toMatchObject({ state: 'not verified', ticket: '#784' });
+    const none = await play('print-file', {}, undefined, {
+      teamTools: ['printer__request_print'],
+    });
+    expect(pathRule(none.reasons)).toEqual([
+      `${PRODUCT_TOOL_NOT_USED}: none of request_print was called`,
+    ]);
   });
 
   it('a workspace folder reached through a link: the rows carry the real path, and the chain still finds them', async () => {
@@ -355,18 +497,20 @@ describe('decision 1: a product tool available must be used', () => {
   });
 
   it.each(READS.map((s) => [s.id, s.productTools!] as const))(
-    '%s: its file read by a command only is red; designated by its tool, a command reading it too is fine',
+    '%s: its file read by a command only is red; read by its tool, a command reading it too is fine',
     async (id, pt) => {
       const rel = pt.reads[0]!;
       const cmd = { name: 'run_command', input: { command: `python -c "open('${rel}','rb')"` } };
       const alone = await play(id, { tools: [cmd] }, undefined, { teamTools: pt.tools });
       expect(pathRule(alone.reasons)).toEqual([
-        `${PRODUCT_TOOL_NOT_USED}: no call of ${pt.tools.join(', ')} reads ${rel}`,
+        `${PRODUCT_TOOL_NOT_USED}: no call of ${pt.tools.join(', ')} reads ${rel} (no read of it is recorded in tool_call_reads: not recorded)`,
       ]);
-      const field = pt.tools[0] === 'request_print' ? 'filePath' : 'path';
       const both = await play(
         id,
-        { tools: [{ name: pt.tools[0]!, input: { [field]: `shared/${rel}` } }, cmd] },
+        {
+          tools: [{ name: pt.tools[0]!, input: { path: rel } }, cmd],
+          reads: [{ tool: pt.tools[0]!, rel, sha: initialOf(id, rel) }],
+        },
         undefined,
         { teamTools: pt.tools },
       );

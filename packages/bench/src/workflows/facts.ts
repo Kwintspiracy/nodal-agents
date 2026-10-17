@@ -147,6 +147,21 @@ export const FileWriteFactSchema = z.object({
 });
 export type FileWriteFact = z.infer<typeof FileWriteFactSchema>;
 
+/**
+ * Un fichier qu'un appel d'outil a LU (`tool_call_reads`, #783) : son chemin
+ * réel (la même forme que `tool_call_writes.path`) et l'empreinte des octets
+ * que l'outil a lus, rapportée par le lecteur lui-même au moment de la
+ * lecture. `seq` est celui de la ligne `tool_calls` de l'appel.
+ */
+export const FileReadFactSchema = z.object({
+  seq: z.number(),
+  jobId: z.string(),
+  toolName: z.string(),
+  path: z.string(),
+  sha256: z.string(),
+});
+export type FileReadFact = z.infer<typeof FileReadFactSchema>;
+
 /** L'arbre d'un essai : le job de tête, tout ce qu'il a délégué, et ce qui s'y est passé. */
 export const TreeFactsSchema = z.object({
   rootId: z.string(),
@@ -178,6 +193,12 @@ export const TreeFactsSchema = z.object({
    * ne l'enregistre (#779) : rien n'y est enregistré, jamais « rien écrit ».
    */
   writes: z.array(FileWriteFactSchema).default([]),
+  /**
+   * Les fichiers que chaque appel a lus (`tool_call_reads`), dans l'ordre
+   * `seq`. Absent des fixtures capturées avant que la plateforme ne
+   * l'enregistre (#783) : rien n'y est enregistré, jamais « rien lu ».
+   */
+  reads: z.array(FileReadFactSchema).default([]),
 });
 export type TreeFacts = z.infer<typeof TreeFactsSchema>;
 
@@ -408,6 +429,26 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
        order by tc.seq`,
       ),
     );
+  const reads = z
+    .array(
+      z.object({
+        seq: num,
+        job_id: z.string(),
+        tool_name: z.string(),
+        path: z.string(),
+        sha256: z.string(),
+      }),
+    )
+    .parse(
+      await executeRows(
+        db,
+        sql`
+      select tc.seq::float8 as seq, r.job_id::text, tc.tool_name, r.path, r.sha256
+        from tool_call_reads r join tool_calls tc on tc.id = r.tool_call_id
+       where r.job_id in (${tree})
+       order by tc.seq, r.path`,
+      ),
+    );
   return {
     rootId,
     entityId: root.entity_id,
@@ -489,6 +530,13 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
       afterKind: w.after_kind,
       afterSha256: w.after_sha256,
       afterSource: w.after_source,
+    })),
+    reads: reads.map((r) => ({
+      seq: r.seq,
+      jobId: r.job_id,
+      toolName: r.tool_name,
+      path: r.path,
+      sha256: r.sha256,
     })),
   };
 }

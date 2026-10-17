@@ -27,17 +27,16 @@
 
 import { join } from 'node:path';
 import { benchDeliverables, findInRoots } from './disk';
-import { fileHash, fixturePath, prepareTrial } from './fixtures';
+import { fileHash, fixturePath, prepareTrial, sharedRoot } from './fixtures';
 import type { TreeFacts } from './facts';
 import { isLive, liveJobs, pendingApprovals } from './facts';
-import { cheminConstate, DELIVERY_TOOL_NAMES, resolveAndCheckPath } from '@nodal-agents/tools';
+import { cheminConstate, DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
 import {
   answerOf,
   bareToolName,
   channelSends,
   citedLinks,
   delegatedAgents,
-  pathFieldsOf,
   productToolGate,
   productToolReasons,
   toolPath,
@@ -50,7 +49,6 @@ import type { ForeignActivity } from './stack';
 import { noSubjectReason, pickSubject, requestWithSubject, type ResearchSubject } from './subjects';
 import type {
   AnyScenario,
-  CallPaths,
   FileState,
   ModelUse,
   ProductFileState,
@@ -486,50 +484,14 @@ export function trialReasons(
   observed: unknown,
   env: Pick<ScenarioEnv, 'teamTools'>,
   files: readonly ProductFileState[],
-  callPaths: CallPaths,
 ): string[] {
   return [
     ...new Set([
       ...s.judge(facts, observed),
       ...destinationReasons(s, facts),
-      ...productToolReasons(s, facts, env, files, callPaths),
+      ...productToolReasons(s, facts, env, files),
     ]),
   ];
-}
-
-/**
- * Les chemins réels que chaque appel de l'arbre a donnés : ses champs chemin
- * (`pathFieldsOf`), résolus par la fonction même du produit
- * (`resolveAndCheckPath`) contre les dossiers de travail de l'agent du job qui
- * a fait l'appel (`env.agentWorkspaces`), puis ramenés à la forme des lignes de
- * la plateforme (`cheminConstate`). Un chemin qui ne se résout pas (hors des
- * dossiers de l'agent, libellé manquant) ou un agent dont les dossiers ne sont
- * pas connus ne donne rien : il ne désigne aucun fichier, jamais par défaut.
- */
-export async function resolveCallPaths(
-  facts: TreeFacts,
-  env: Pick<ScenarioEnv, 'agentWorkspaces'>,
-): Promise<string[][]> {
-  const agentOf = new Map(facts.jobs.map((j) => [j.id, j.agentSlug]));
-  const out: string[][] = [];
-  for (const c of facts.toolCalls) {
-    const slug = c.jobId === null ? null : agentOf.get(c.jobId);
-    const workspaces = slug ? env.agentWorkspaces?.[slug] : undefined;
-    const paths: string[] = [];
-    if (workspaces) {
-      for (const p of pathFieldsOf(c)) {
-        try {
-          paths.push(
-            await cheminConstate(await resolveAndCheckPath({ workspaces: [...workspaces] }, p)),
-          );
-        } catch {
-          /* hors des dossiers de l'agent, ou ambigu : il ne désigne rien */
-        }
-      }
-    }
-    out.push(paths);
-  }
-  return out;
 }
 
 /** L'état d'un fichier sur le disque : absent, son empreinte sha-256, ou illisible. */
@@ -546,9 +508,11 @@ function stateOf(path: string | null): FileState {
  * Les fichiers d'un scénario (`productTools.writes` et `reads`), tels que le banc les
  * connaît hors de la base : leurs chemins réels possibles, un par dossier de
  * travail, résolus comme la plateforme les range (`cheminConstate`, le chemin
- * des lignes `tool_call_writes`) ; l'état préparé (la fixture que le banc pose
- * à ce chemin, sinon absent, `prepareTrial` effaçant les sorties) ; et l'état
- * final, celui du plus récent parmi les dossiers de travail.
+ * des lignes `tool_call_writes` et `tool_call_reads`) ; le chemin réel où le
+ * banc pose la fixture (le dossier partagé) ; l'état préparé (la fixture que
+ * le banc pose à ce chemin, sinon absent, `prepareTrial` effaçant les
+ * sorties) ; et l'état final, celui du plus récent parmi les dossiers de
+ * travail.
  */
 export async function productFileStates(
   s: AnyScenario,
@@ -562,6 +526,7 @@ export async function productFileStates(
     out.push({
       rel,
       realPaths,
+      posedPath: await cheminConstate(join(sharedRoot(roots), rel)),
       initial: fixture ? stateOf(fixturePath(fixture.from)) : { kind: 'absent' },
       final: stateOf(findInRoots(roots, rel, 0)[0]?.path ?? null),
     });
@@ -736,7 +701,6 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
       observed,
       envAfter,
       await productFileStates(s, envAfter.workspaceRoots),
-      await resolveCallPaths(facts, envAfter),
     );
   } catch (e) {
     judged = [`the judge failed: ${String(e instanceof Error ? e.message : e)}`];

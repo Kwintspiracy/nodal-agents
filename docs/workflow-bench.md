@@ -205,9 +205,17 @@ declares them, never inside one judge:
     wrote the file (a command, a script, an MCP tool, whatever its name), and
     it is red. A command that only reads the deliverable changes nothing. A
     re-read or a missing row reads as not recorded, never green;
-  - a file to read is read by a product tool: the path field of one of its
-    calls (`path`, `filePath`) designates it, not a mention anywhere in the
-    input.
+  - a file to read is read by a product tool. The rule does not reconstruct
+    the file a call designated: it reads what the platform recorded when the
+    file was read, `tool_call_reads` (#783), the real path the tool opened and
+    the hash of the bytes it read. The read counts when one of the product
+    tools read the real path where the bench posed the file (the shared
+    folder), with the bytes of the fixture. An identical copy elsewhere
+    (same hash, other path), the posed file changed before the read (same
+    path, other hash), or no row (not recorded) is red, never green. An MCP
+    tool (`request_print`) opens the file in its own process and leaves no
+    read: `print-file` judges the call, and says "the printed file is the one
+    the bench posed" as not verified (#784).
 
   Otherwise the trial is red, "product tool available, not used". When none
   is in the team's tools, the trial is skipped with that reason, like a missing

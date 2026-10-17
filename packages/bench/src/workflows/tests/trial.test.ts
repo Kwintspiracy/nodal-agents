@@ -743,8 +743,11 @@ describe('workflow trial: subjects, product tools and the path', () => {
       jobs: after.jobs.map((j) => ({ ...j, status: 'completed' })),
     };
     const w = world({ rootId: after.rootId, snapshots: [done] });
+    // Un dossier partagé vide : le classeur du 30/09 n'y est pas, et le banc
+    // sait où il poserait ses fichiers (un espace sans dossier lève, #4).
+    const shared = mkdtempSync(join(tmpdir(), 'wf-trial-3009-'));
     w.deps.env = async (startedMs) => ({
-      workspaceRoots: [],
+      workspaceRoots: [shared],
       teamTools: ['xlsx_create', 'xlsx_read', 'xlsx_set_cell', 'xlsx_set_range'],
       services: {},
       unlistedMcpServers: [],

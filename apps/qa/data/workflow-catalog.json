@@ -457,7 +457,7 @@
         "the final answer names Café moulu and gives 550",
         "nodal-bench/ventes-trimestre.xlsx is byte for byte the fixture (sha-256)",
         "tool_calls: the product tools are xlsx_read; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "ventes-trimestre.xlsx is read by one of them: the path field of a call, resolved like the product resolves it against the calling agent's workspace folders (real path), is the file the bench posed at nodal-bench/ventes-trimestre.xlsx"
+        "tool_call_reads: one of them read ventes-trimestre.xlsx at the real path where the bench posed it (nodal-bench/ventes-trimestre.xlsx in the shared folder), with the sha-256 of the fixture; an identical copy elsewhere, a file changed before the read, or no row (not recorded) is red"
       ],
       "fixtures": [
         {
@@ -661,7 +661,7 @@
         "the final answer gives 215.30 (any writing): the value is written only in the last row of the document's table",
         "nodal-bench/bon-commande.docx is byte for byte the fixture (sha-256)",
         "tool_calls: the product tools are docx_read; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "bon-commande.docx is read by one of them: the path field of a call, resolved like the product resolves it against the calling agent's workspace folders (real path), is the file the bench posed at nodal-bench/bon-commande.docx"
+        "tool_call_reads: one of them read bon-commande.docx at the real path where the bench posed it (nodal-bench/bon-commande.docx in the shared folder), with the sha-256 of the fixture; an identical copy elsewhere, a file changed before the read, or no row (not recorded) is red"
       ],
       "fixtures": [
         {
@@ -818,7 +818,7 @@
         "the final answer says 4 slides and gives 49",
         "nodal-bench/offre.pptx is byte for byte the fixture (sha-256)",
         "tool_calls: the product tools are pptx_read; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "offre.pptx is read by one of them: the path field of a call, resolved like the product resolves it against the calling agent's workspace folders (real path), is the file the bench posed at nodal-bench/offre.pptx"
+        "tool_call_reads: one of them read offre.pptx at the real path where the bench posed it (nodal-bench/offre.pptx in the shared folder), with the sha-256 of the fixture; an identical copy elsewhere, a file changed before the read, or no row (not recorded) is red"
       ],
       "fixtures": [
         {
@@ -1140,10 +1140,10 @@
     },
     {
       "id": "print-file",
-      "version": 2,
+      "version": 3,
       "activity": "print",
       "title": "Print an existing file",
-      "green": "A print request naming nodal-bench/facture-impression.pdf was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything.",
+      "green": "A print request naming nodal-bench/facture-impression.pdf was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything. Whether the printer read the file the bench posed is not verified yet (#784).",
       "path": "request_print on the file. The bench never confirms: the trial stops at the preview, nothing is printed.",
       "deliverable": "A print request waiting for the owner",
       "productTools": {
@@ -1151,9 +1151,7 @@
           "request_print"
         ],
         "writes": [],
-        "reads": [
-          "nodal-bench/facture-impression.pdf"
-        ]
+        "reads": []
       },
       "subject": null,
       "set": "on-demand",
@@ -1169,7 +1167,7 @@
         "tool_calls: a request_print whose input names facture-impression.pdf, pending, one page when the connector says so",
         "never confirm_print, nothing reached the printer",
         "tool_calls: the product tools are request_print; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "facture-impression.pdf is read by one of them: the path field of a call, resolved like the product resolves it against the calling agent's workspace folders (real path), is the file the bench posed at nodal-bench/facture-impression.pdf"
+        "tool_calls: the tree calls at least one of them"
       ],
       "fixtures": [
         {
@@ -1178,7 +1176,13 @@
         }
       ],
       "outputs": [],
-      "unverified": []
+      "unverified": [
+        {
+          "check": "the printed file is the one the bench posed",
+          "reason": "request_print is an MCP tool: it opens the file in its own process, so the platform records no read of it; its input naming the file does not prove which bytes were printed.",
+          "ticket": "#784"
+        }
+      ]
     },
     {
       "id": "recipe",

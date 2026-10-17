@@ -21,6 +21,7 @@ import {
   JUDGED_COMMON,
   JUDGED_NOBODY_ASKED,
   JUDGED_NO_CHANNEL_SEND,
+  PRINTED_FILE_READ,
   SOURCES_READ,
   bareToolName,
   callsOf,
@@ -257,12 +258,17 @@ const printFile = defineScenario<null>({
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (request_print)
   // s'applique ; une commande qui nomme le fichier l'a imprimé à sa place.
-  version: 2,
+  // v3 : la lecture du fichier n'est plus devinée depuis le chemin de l'appel
+  // (revue de #777, passes 3 et 4). request_print est un outil MCP : la
+  // plateforme n'enregistre pas ce qu'il lit (#784). L'appel est jugé (il
+  // nomme le fichier, il attend), et le fichier imprimé est « not verified ».
+  version: 3,
   title: 'Print an existing file',
-  green: `A print request naming ${PRINT_FILE_REL} was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything.`,
+  green: `A print request naming ${PRINT_FILE_REL} was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything. Whether the printer read the file the bench posed is not verified yet (#784).`,
   path: `request_print on the file. ${PRINT_PATH_END}`,
   deliverable: 'A print request waiting for the owner',
-  productTools: { tools: ['request_print'], writes: [], reads: [PRINT_FILE_REL] },
+  productTools: { tools: ['request_print'], writes: [], reads: [] },
+  unverified: [PRINTED_FILE_READ],
   set: 'on-demand',
   activity: 'print',
   sends: 'nothing',
