@@ -30,8 +30,20 @@ export interface Run {
   /** La réponse finale du job de tête. */
   readonly result?: string;
   readonly status?: string;
-  /** Appels d'outils de l'arbre : nom et entrée (JSON). */
-  readonly tools?: ReadonlyArray<{ name: string; input?: unknown; output?: string; job?: string }>;
+  /**
+   * Appels d'outils de l'arbre : nom et entrée (JSON). `at` (ms), `durationMs`
+   * et `risk` sont ceux d'une ligne `tool_calls` réelle : un outil qui écrit a
+   * sa ligne créée à son début, et sa durée dit sa fin.
+   */
+  readonly tools?: ReadonlyArray<{
+    name: string;
+    input?: unknown;
+    output?: string;
+    job?: string;
+    at?: number;
+    durationMs?: number | null;
+    risk?: 'read' | 'write' | 'destructive' | null;
+  }>;
   /** Un délégué a travaillé (un job enfant). */
   readonly delegated?: boolean;
   readonly approvals?: number;
@@ -75,7 +87,9 @@ export function facts(run: Run): TreeFacts {
       toolName: t.name,
       input: t.input === undefined ? null : JSON.stringify(t.input),
       output: t.output ?? null,
-      createdMs: T0 + 2_000 + i,
+      createdMs: t.at ?? T0 + 2_000 + i,
+      riskLevel: t.risk ?? null,
+      durationMs: t.durationMs ?? null,
     })),
     llmCalls: [],
     approvals: Array.from({ length: run.approvals ?? 0 }, (_, i) => ({

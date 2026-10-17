@@ -301,6 +301,8 @@ describe('where a trial may send', () => {
     input: JSON.stringify(input),
     output: JSON.stringify({ ok: true }),
     createdMs: 0,
+    riskLevel: null,
+    durationMs: null,
   });
 
   it('a scenario that sends to the owner is SKIPPED without --allow-owner-sends, and starts nothing', async () => {
@@ -415,7 +417,15 @@ describe('where a trial may send', () => {
       ...green,
       toolCalls: [
         ...green.toolCalls,
-        { jobId: green.rootId, toolName: tool, input: '{"text":"x"}', output: '{}', createdMs: 0 },
+        {
+          jobId: green.rootId,
+          toolName: tool,
+          input: '{"text":"x"}',
+          output: '{}',
+          createdMs: 0,
+          riskLevel: null,
+          durationMs: null,
+        },
       ],
     };
     const w = world({ rootId: green.rootId, snapshots: [sent] });
@@ -448,7 +458,17 @@ describe('where a trial may send', () => {
     const green = load('question-green');
     const read: TreeFacts = {
       ...green,
-      toolCalls: [{ jobId: green.rootId, toolName: tool, input: '{}', output: '{}', createdMs: 0 }],
+      toolCalls: [
+        {
+          jobId: green.rootId,
+          toolName: tool,
+          input: '{}',
+          output: '{}',
+          createdMs: 0,
+          riskLevel: null,
+          durationMs: null,
+        },
+      ],
     };
     const w = world({ rootId: green.rootId, snapshots: [read] });
     const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
@@ -479,6 +499,8 @@ describe('where a trial may send', () => {
         input: '{}',
         output: '{}',
         createdMs: 0,
+        riskLevel: null,
+        durationMs: null,
       })),
     };
     const w = world({ rootId: green.rootId, snapshots: [quiet] });
@@ -734,7 +756,7 @@ describe('workflow trial: subjects, product tools and the path', () => {
     },
   );
 
-  it('the real file trial of 30/09 wrote the workbook with a Python script while xlsx tools were there: red, by the path rule', async () => {
+  it('the real file trial of 30/09 wrote the workbook with a Python script while xlsx tools were there: red, no xlsx call wrote it', async () => {
     const after = load('file-red-approval');
     // Sans son approbation (et l'annulation qu'elle a causée) : il ne reste que le chemin.
     const done: TreeFacts = {
@@ -752,12 +774,12 @@ describe('workflow trial: subjects, product tools and the path', () => {
     });
     const line = await runTrial(scenarioById('file')!, w.deps, OPTS);
     expect(line.verdict).toBe('red');
-    expect(line.reasons).toContain(
-      'product tool available, not used: none of xlsx_create, xlsx_set_range was called',
-    );
-    expect(line.reasons).toContain(
-      'product tool available, not used: a command handled ventes-bench.xlsx (run_command)',
-    );
+    // Le classeur a été écrit par python (run_command) : aucun appel d'un outil
+    // xlsx qui écrit ne le nomme. La règle ne lit pas la commande, elle attribue
+    // l'écriture : sans appel attendu qui écrit le livrable, rouge.
+    expect(line.reasons.filter((r) => r.startsWith('product tool available'))).toEqual([
+      'product tool available, not used: no writing call of xlsx_create, xlsx_set_range names nodal-bench/ventes-bench.xlsx',
+    ]);
   });
 
   it('the line keeps the path: every tool by name and in order, per job, and the teammate delegated to', async () => {

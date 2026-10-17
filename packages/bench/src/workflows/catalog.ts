@@ -7,7 +7,7 @@
 // `pnpm bench:workflows --catalog` ; catalog.test.ts refuse qu'il diverge du
 // code.
 
-import { productToolJudgedBy } from './judge-kit';
+import { productToolJudgedBy, unverifiedOf } from './judge-kit';
 import { NEED_IDS } from './needs';
 import { SCENARIOS } from './scenarios';
 import { MEASURED_ON_EVERY_TRIAL } from './trial';
@@ -24,7 +24,7 @@ export interface CatalogScenario {
   readonly path: string;
   readonly deliverable: string;
   /** Les outils du produit attendus et les fichiers qu'ils traitent ; null : aucun. */
-  readonly productTools: { tools: string[]; files: string[] } | null;
+  readonly productTools: { tools: string[]; writes: string[]; reads: string[] } | null;
   /** Le genre de sujet calibré que le scénario lit ; null : son sujet est dans sa demande. */
   readonly subject: string | null;
   readonly set: string;
@@ -77,7 +77,11 @@ export function buildCatalog(): Catalog {
       path: s.path,
       deliverable: s.deliverable,
       productTools: s.productTools
-        ? { tools: [...s.productTools.tools], files: [...s.productTools.files] }
+        ? {
+            tools: [...s.productTools.tools],
+            writes: [...s.productTools.writes],
+            reads: [...s.productTools.reads],
+          }
         : null,
       subject: s.subject ?? null,
       set: s.set,
@@ -88,7 +92,7 @@ export function buildCatalog(): Catalog {
       judgedBy: [...s.judgedBy, ...productToolJudgedBy(s)],
       fixtures: (s.fixtures ?? []).map((f) => ({ from: f.from, to: f.to })),
       outputs: [...(s.outputs ?? [])],
-      unverified: (s.unverified ?? []).map((u) => ({
+      unverified: unverifiedOf(s).map((u) => ({
         check: u.check,
         reason: u.reason,
         ticket: u.ticket,

@@ -302,4 +302,26 @@ describe('what the orchestration judges read from the tree', () => {
       options: ['bleu', 'vert'],
     });
   });
+
+  it('reads each tool call with its declared risk level and its duration: what attributes a write', async () => {
+    await pg.exec('delete from tool_calls; delete from agent_jobs;');
+    const root = await job({ status: 'completed' });
+    await pg.query(
+      `insert into tool_calls (entity_id, job_id, tool_name, tool_input, risk_level, duration_ms)
+       values ($1, $2, 'xlsx_read', '{"path":"nodal-bench/stock.xlsx"}'::jsonb, 'read', 12),
+              ($1, $2, 'xlsx_set_range', '{"path":"nodal-bench/stock.xlsx"}'::jsonb, 'write', 340),
+              ($1, $2, 'cli:Bash', '{}'::jsonb, null, null)`,
+      [entityId, root],
+    );
+    const facts = await readTreeFacts(db, root);
+    expect(
+      facts.toolCalls
+        .map((c) => [c.toolName, c.riskLevel, c.durationMs])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    ).toEqual([
+      ['cli:Bash', null, null],
+      ['xlsx_read', 'read', 12],
+      ['xlsx_set_range', 'write', 340],
+    ]);
+  });
 });

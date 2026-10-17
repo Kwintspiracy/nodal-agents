@@ -31,7 +31,20 @@ export const ToolCallFactSchema = z.object({
   /** L'entrée, sérialisée telle que la base la rend (JSON). */
   input: z.string().nullable(),
   output: z.string().nullable(),
+  /**
+   * Création de la ligne (ms). Pour un outil qui ne fait pas que lire, la
+   * ligne est écrite AVANT qu'il tourne (#443) : c'est son début.
+   */
   createdMs: z.number(),
+  /**
+   * Le niveau de risque DÉCLARÉ par l'outil (`tool_calls.risk_level`) : `read`
+   * ne peut rien écrire. Un outil MCP n'est jamais `read` (la plateforme ne
+   * croit pas `readOnlyHint`). NULL sur les lignes `cli:*` et dans les fixtures
+   * capturées avant que le banc ne le lise : incertain, jamais `read`.
+   */
+  riskLevel: z.enum(['read', 'write', 'destructive']).nullable().default(null),
+  /** Durée d'exécution (`tool_calls.duration_ms`) ; null : non enregistrée. */
+  durationMs: z.number().nullable().default(null),
 });
 export type ToolCallFact = z.infer<typeof ToolCallFactSchema>;
 
@@ -206,6 +219,8 @@ const RawTool = z.object({
   tool_input: z.string().nullable(),
   tool_output: z.string().nullable(),
   created_ms: num,
+  risk_level: z.enum(['read', 'write', 'destructive']).nullable(),
+  duration_ms: numOrNull,
 });
 const RawLlm = z.object({
   job_id: z.string().nullable(),
@@ -286,6 +301,7 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
       db,
       sql`
       select job_id::text, tool_name, tool_input::text as tool_input, tool_output,
+             risk_level, duration_ms,
              (extract(epoch from created_at) * 1000)::float8 as created_ms
         from tool_calls where job_id in (${tree}) order by created_at`,
     ),
@@ -374,6 +390,8 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
       input: t.tool_input,
       output: t.tool_output,
       createdMs: t.created_ms,
+      riskLevel: t.risk_level,
+      durationMs: t.duration_ms,
     })),
     llmCalls: llm.map((l) => ({
       jobId: l.job_id,

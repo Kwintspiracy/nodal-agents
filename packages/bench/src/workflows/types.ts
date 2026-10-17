@@ -124,20 +124,28 @@ export interface ScenarioEnv {
 
 /**
  * Les outils du produit par lesquels un scénario doit passer (décision 1 du
- * 17/10) : si l'un d'eux est dans les outils de l'équipe, l'arbre doit en
- * appeler un, et aucun outil de commande ne doit toucher les fichiers du
- * scénario à sa place. Si aucun n'est disponible, l'essai est SAUTÉ. La règle
- * est écrite une fois (judge-kit `productToolReasons`), pour tous.
+ * 17/10) : un livrable ÉCRIT l'est par l'un d'eux, un fichier LU l'est par l'un
+ * d'eux. Si aucun n'est dans les outils de l'équipe, l'essai est SAUTÉ. La
+ * règle est écrite une fois (judge-kit `productToolReasons`), pour tous.
  */
 export interface ProductTools {
-  /** Les noms nus des outils (`xlsx_read`), au moins un. Un seul appelé suffit. */
+  /** Les noms nus des outils (`xlsx_read`), au moins un. */
   readonly tools: readonly string[];
   /**
-   * Les fichiers (sous `nodal-bench/`) que ces outils doivent traiter, lus ou
-   * écrits : un outil de commande dont l'entrée nomme l'un d'eux l'a traité à
-   * leur place. Vide quand le scénario ne porte sur aucun fichier.
+   * Les livrables (sous `nodal-bench/`) que ces outils doivent ÉCRIRE : un
+   * appel d'un de ces outils qui peut écrire (niveau de risque déclaré autre
+   * que `read`) les nomme, et le fichier n'a pas changé après la fin du
+   * dernier de ces appels.
    */
-  readonly files: readonly string[];
+  readonly writes: readonly string[];
+  /** Les fichiers (sous `nodal-bench/`) que ces outils doivent LIRE : un appel d'un de ces outils les nomme. */
+  readonly reads: readonly string[];
+}
+
+/** Un livrable tel que le disque le montre à la fin de l'essai : sa date ; null quand il n'existe pas. */
+export interface ProductFileState {
+  readonly rel: string;
+  readonly mtimeMs: number | null;
 }
 
 /**

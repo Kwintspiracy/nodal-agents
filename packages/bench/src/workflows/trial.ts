@@ -25,7 +25,7 @@
 // nom et dans l'ordre, et les délégations) et classe les liens du texte cité :
 // vus ou non dans une sortie d'outil web (#648, la partie mesurable).
 
-import { benchDeliverables } from './disk';
+import { benchDeliverables, findInRoots } from './disk';
 import { prepareTrial } from './fixtures';
 import type { TreeFacts } from './facts';
 import { isLive, liveJobs, pendingApprovals } from './facts';
@@ -39,13 +39,14 @@ import {
   productToolGate,
   productToolReasons,
   toolPath,
+  unverifiedOf,
 } from './judge-kit';
 import { isMailSender, isOutboundTool, missingNeeds } from './needs';
 import { recipientIds } from './recipients';
 import { redactHome } from './redact';
 import type { ForeignActivity } from './stack';
 import { noSubjectReason, pickSubject, requestWithSubject, type ResearchSubject } from './subjects';
-import type { AnyScenario, ModelUse, ScenarioEnv, TrialLine } from './types';
+import type { AnyScenario, ModelUse, ProductFileState, ScenarioEnv, TrialLine } from './types';
 
 /** La réponse finale gardée sur la ligne : assez pour la lire, pas un rapport entier. */
 export const ANSWER_MAX = 1200;
@@ -169,7 +170,7 @@ function emptyLine(
     stackCommit: o.stackCommit,
     trigger: o.trigger,
     startedAt: new Date(startedMs).toISOString(),
-    unverified: [...(s.unverified ?? [])],
+    unverified: unverifiedOf(s),
     durationMs: null,
     firstModelReplyMs: null,
     jobs: 0,
@@ -473,15 +474,27 @@ export function trialReasons(
   s: AnyScenario,
   facts: TreeFacts,
   observed: unknown,
-  env: Pick<ScenarioEnv, 'teamTools'>,
+  env: Pick<ScenarioEnv, 'teamTools' | 'workspaceRoots'>,
 ): string[] {
   return [
     ...new Set([
       ...s.judge(facts, observed),
       ...destinationReasons(s, facts),
-      ...productToolReasons(s, facts, env),
+      ...productToolReasons(s, facts, env, productFileStates(s, env.workspaceRoots)),
     ]),
   ];
+}
+
+/**
+ * Les livrables d'un scénario (`productTools.writes`) tels que le disque les
+ * montre : la date du plus récent de chaque chemin parmi les dossiers de
+ * travail, null quand il n'existe nulle part.
+ */
+export function productFileStates(s: AnyScenario, roots: readonly string[]): ProductFileState[] {
+  return (s.productTools?.writes ?? []).map((rel) => ({
+    rel,
+    mtimeMs: findInRoots(roots, rel, 0)[0]?.mtimeMs ?? null,
+  }));
 }
 
 function truncate(text: string, max: number): string {

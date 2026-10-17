@@ -190,14 +190,27 @@ Written once in `judge-kit.ts`, applied by `runTrial` to every scenario that
 declares them, never inside one judge:
 
 - **A product tool available must be used (decision 1).** A scenario declares
-  `productTools`: the product tools of its path and the files they handle.
-  When one of them is in the team's tools, the tree must call one, and no
-  command tool (`run_command`, `bash`, `shell`…) may name one of the files, or
-  run a script written during the run that names it; otherwise the trial is
-  red, "product tool available, not used". When none is in the team's tools,
-  the trial is skipped with that reason, like a missing need. PDF and code
-  declare none. What the rule does not see: a script that finds the file
-  without writing its name; nothing records which process wrote a file.
+  `productTools`: the product tools of its path, the deliverables they must
+  WRITE (`writes`) and the files they must READ (`reads`). The rule attributes
+  the write instead of guessing it from a mention of the file name, and it
+  keeps no list of tool names:
+  - a deliverable is written by a product tool: a call of one that may write
+    (its declared `risk_level` is not `read`) names its path, and the file's
+    time on disk is not after that last call's end (the row is created at the
+    call's start, #443, plus `duration_ms`; 1 s of tolerance). A file changed
+    later was changed by something else, whatever its name (an interpreter, an
+    MCP copy tool), and the red reason lists the calls that may write made after
+    it. A command that only reads the deliverable does not change its time, so
+    it is never red;
+  - a file to read is read by a product tool: a call of one names its path. A
+    command may read it too.
+
+  Otherwise the trial is red, "product tool available, not used". When none
+  is in the team's tools, the trial is skipped with that reason, like a missing
+  need. PDF and code declare none. What the rule does not see, said as "not
+  verified" on every scenario with a deliverable (#779): a script that wrote
+  the content BEFORE a final product-tool call on the same file. The file time
+  says who wrote LAST; nothing records which process wrote a file.
 - **The specialist, for in-depth research only (decision 2).** `research`:
   the root searches itself, a delegation is red. `deep-research-*`: handed to a
   teammate, and a delegated job must call a web tool.

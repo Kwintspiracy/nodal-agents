@@ -14,7 +14,15 @@
 import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 import { DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
 import type { JobFact, ToolCallFact, TreeFacts } from './facts';
-import type { AnyScenario, CitedLink, PathJob, ScenarioEnv, UnverifiedCheck } from './types';
+import { declaredRiskLevel } from './needs';
+import type {
+  AnyScenario,
+  CitedLink,
+  PathJob,
+  ProductFileState,
+  ScenarioEnv,
+  UnverifiedCheck,
+} from './types';
 
 /** Le job de tête de l'essai. */
 export function rootJob(facts: TreeFacts): JobFact | undefined {
@@ -458,9 +466,47 @@ export function factsNotSeenOnTheWeb(
 }
 
 // ─── décision 1 : un outil du produit disponible doit servir ─────────────────
+//
+// « Un outil attendu a été appelé » ne suffit pas (revue Reviewer A de #777,
+// passe 1) : un appel d'alibi à `xlsx_read` puis un interpréteur hors de toute
+// liste qui écrit le classeur passait vert ; et deviner l'écriture à la simple
+// MENTION du fichier par une commande rendait rouge une commande qui ne
+// faisait que le relire. La règle ATTRIBUE donc l'écriture, avec ce que la
+// plateforme sait déjà, sans liste de noms d'outils :
+//
+//   - un LIVRABLE (`writes`) a été écrit par un outil attendu : un appel d'un
+//     outil attendu qui peut écrire (niveau de risque DÉCLARÉ autre que
+//     `read`, `tool_calls.risk_level`) nomme son chemin ; et le fichier n'a
+//     plus changé après la fin du dernier de ces appels (sa date sur le
+//     disque contre la ligne de l'appel : créée à son début, #443, plus sa
+//     durée). Un fichier modifié ensuite l'a été par autre chose, quel que soit
+//     son nom ; une commande qui ne fait que le lire ne change pas sa date ;
+//   - un fichier LU (`reads`) l'a été par un outil attendu : un appel nomme
+//     son chemin. Une commande peut le relire en plus, sans rouge.
+//
+// Ce que la règle ne voit pas, dit sur chaque ligne (`PRODUCT_TOOL_WROTE_IT`) :
+// un script qui écrit le contenu AVANT un dernier appel de l'outil du produit
+// sur le même fichier. La date dit qui a écrit en DERNIER, pas qui a écrit le
+// contenu ; aucune ligne de la base ne dit quel processus a écrit un fichier.
 
 /** Le début de la raison du rouge, le même pour tous les scénarios. */
 export const PRODUCT_TOOL_NOT_USED = 'product tool available, not used';
+
+/**
+ * L'écart toléré entre la fin enregistrée de l'appel et la date du fichier :
+ * l'horloge de la base et celle du système de fichiers sont celles de la même
+ * machine, mais la ligne arrondit et la fin d'un appel suit l'écriture de peu.
+ */
+export const WRITE_TOLERANCE_MS = 1_000;
+
+/** Le contrôle que la règle ne tient pas, porté par chaque scénario qui déclare des livrables. */
+export const PRODUCT_TOOL_WROTE_IT: UnverifiedCheck = {
+  check: 'content written by the product tool',
+  state: 'not verified',
+  reason:
+    'The bench sees which tool call wrote the deliverable LAST (its file time against the calls); a script that wrote the content before a final product-tool call on the same file is not seen: nothing records which process wrote a file.',
+  ticket: '#779',
+};
 
 const teamHasTool = (teamTools: readonly string[], bare: string): boolean =>
   teamTools.some((t) => t === bare || t.endsWith(`__${bare}`));
@@ -486,85 +532,106 @@ export function productToolGate(s: AnyScenario, env: Pick<ScenarioEnv, 'teamTool
       ];
 }
 
+/** L'entrée d'un appel, séparateurs ramenés à `/` : un chemin Windows échappé s'y lit comme un autre. */
+function inputPath(c: ToolCallFact): string {
+  return (c.input ?? '').replace(/\\\\/g, '/').replace(/\\/g, '/');
+}
+
+/** L'appel nomme ce chemin relatif (`nodal-bench/x`), quel que soit le dossier qui le précède. */
+function names(c: ToolCallFact, rel: string): boolean {
+  return inputPath(c).includes(rel);
+}
+
+/** Un appel qui peut écrire : niveau de risque déclaré autre que `read`, ou inconnu (fermé par défaut). */
+const mayWrite = (c: ToolCallFact): boolean => c.riskLevel !== 'read';
+
 /**
- * Après l'essai, la règle de chemin : quand un outil du produit attendu est
- * disponible, l'arbre en a appelé au moins un, et aucun outil de commande n'a
- * nommé un fichier du scénario, ni lancé un script écrit pendant l'essai qui
- * le nomme (il l'aurait traité à la place de l'outil). Ce que la règle ne voit
- * pas : un script qui trouve le fichier sans jamais écrire son nom (un
- * parcours de dossier) ; aucune ligne de la base ne dit quel processus a
- * écrit un fichier.
+ * Après l'essai, la règle de chemin (voir l'en-tête de la section). `files` :
+ * les livrables tels que le disque les montre à la fin (`productFileStates`).
  * Un scénario sans outil déclaré, ou dont aucun n'est disponible (sauté
- * avant), ne reçoit aucune raison d'ici.
+ * avant), ne reçoit aucune raison d'ici. Un livrable absent non plus : le juge
+ * du scénario le dit.
  */
 export function productToolReasons(
   s: AnyScenario,
   facts: TreeFacts,
   env: Pick<ScenarioEnv, 'teamTools'>,
+  files: readonly ProductFileState[],
 ): string[] {
   const available = availableProductTools(s, env);
-  if (available.length === 0) return [];
+  if (available.length === 0 || !s.productTools) return [];
+  const expected = facts.toolCalls.filter((c) => available.includes(bareToolName(c.toolName)));
+  const { writes, reads } = s.productTools;
+  if (writes.length === 0 && reads.length === 0)
+    return expected.length > 0
+      ? []
+      : [`${PRODUCT_TOOL_NOT_USED}: none of ${available.join(', ')} was called`];
   const r: string[] = [];
-  const called = new Set(facts.toolCalls.map((c) => bareToolName(c.toolName)));
-  if (!available.some((t) => called.has(t)))
-    r.push(`${PRODUCT_TOOL_NOT_USED}: none of ${available.join(', ')} was called`);
-  const names = (s.productTools?.files ?? []).map((f) => f.split('/').pop()!);
-  if (names.length === 0) return r;
-  const commands = facts.toolCalls.filter((c) => COMMAND_TOOL.test(bareToolName(c.toolName)));
-  const scripts = scriptsNaming(facts, names);
-  // Un fichier par fichier du scénario : nommé par la commande elle-même, sinon
-  // par un script que la commande lance.
-  const hits = names.flatMap((n) => {
-    const direct = commands.filter((c) => (c.input ?? '').includes(n));
-    if (direct.length > 0) return [{ what: n, by: direct }];
-    return [...scripts]
-      .filter(([, named]) => named === n)
-      .map(([script]) => ({
-        what: `${n} through ${script}`,
-        by: commands.filter((c) => (c.input ?? '').includes(script)),
-      }))
-      .filter((h) => h.by.length > 0);
-  });
-  if (hits.length > 0)
-    r.push(
-      `${PRODUCT_TOOL_NOT_USED}: a command handled ${hits.map((h) => h.what).join(', ')} (${[...new Set(hits.flatMap((h) => h.by.map((c) => c.toolName)))].join(', ')})`,
-    );
+  for (const rel of reads) {
+    if (!expected.some((c) => names(c, rel)))
+      r.push(`${PRODUCT_TOOL_NOT_USED}: no call of ${available.join(', ')} names ${rel}`);
+  }
+  // Les outils attendus qui peuvent écrire, tels que le produit les déclare
+  // (un outil hors du registre, MCP ou connecteur, n'est jamais dit lecteur).
+  const writers = available.filter((t) => declaredRiskLevel(t) !== 'read');
+  for (const rel of writes) {
+    const calls = expected.filter((c) => mayWrite(c) && names(c, rel));
+    if (calls.length === 0) {
+      r.push(`${PRODUCT_TOOL_NOT_USED}: no writing call of ${writers.join(', ')} names ${rel}`);
+      continue;
+    }
+    const file = files.find((f) => f.rel === rel);
+    if (!file || file.mtimeMs === null) continue;
+    const last = calls[calls.length - 1]!;
+    if (last.durationMs === null) {
+      r.push(
+        `${PRODUCT_TOOL_NOT_USED}: the last ${bareToolName(last.toolName)} call naming ${rel} has no recorded end, so it cannot be shown to have written the file last`,
+      );
+      continue;
+    }
+    const end = last.createdMs + last.durationMs;
+    if (file.mtimeMs > end + WRITE_TOLERANCE_MS) {
+      const after = facts.toolCalls.filter(
+        (c) => c.createdMs > last.createdMs && mayWrite(c) && !expected.includes(c),
+      );
+      r.push(
+        `${PRODUCT_TOOL_NOT_USED}: ${rel} was changed after the last ${bareToolName(last.toolName)} call (${
+          after.length > 0
+            ? `calls that may write, made after it: ${[...new Set(after.map((c) => c.toolName))].join(', ')}`
+            : 'by no recorded tool call'
+        })`,
+      );
+    }
+  }
   return r;
 }
 
-/** Les extensions d'un fichier qu'une commande exécute. */
-const SCRIPT_FILE = /\.(py|js|mjs|cjs|ts|sh|ps1|bat|cmd|rb|pl)$/i;
-
 /**
- * Les scripts écrits pendant l'essai qui nomment un fichier du scénario : un
- * appel d'outil (hors commande) dont l'entrée a un `path` de script et dont le
- * texte nomme le fichier. Le cas réel du 30/09 (`file-red-approval`) : un
- * `file_write` de `_temp_create_ventes_bench.py` qui écrit ventes-bench.xlsx,
- * puis `python _temp_create_ventes_bench.py`. Rend script → fichier nommé.
+ * Les contrôles qu'un scénario ne vérifie pas : les siens, et ceux que les
+ * règles de chemin ne tiennent pas pour lui (`PRODUCT_TOOL_WROTE_IT` dès qu'il
+ * déclare un livrable). La ligne d'essai et le catalogue les lisent ici.
  */
-function scriptsNaming(facts: TreeFacts, names: readonly string[]): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const c of facts.toolCalls) {
-    if (COMMAND_TOOL.test(bareToolName(c.toolName))) continue;
-    const input = jsonObject(parseJson(c.input));
-    const path = input?.['path'] ?? input?.['file_path'];
-    if (typeof path !== 'string' || !SCRIPT_FILE.test(path)) continue;
-    const named = names.find((n) => (c.input ?? '').includes(n));
-    if (named) out.set(path.split(/[\\/]/).pop()!, named);
-  }
-  return out;
+export function unverifiedOf(s: AnyScenario): UnverifiedCheck[] {
+  return [
+    ...(s.unverified ?? []),
+    ...((s.productTools?.writes.length ?? 0) > 0 ? [PRODUCT_TOOL_WROTE_IT] : []),
+  ];
 }
 
 /** Ce que les règles de chemin lisent pour ce scénario, dit pour Bench Studio. */
 export function productToolJudgedBy(s: AnyScenario): string[] {
   if (!s.productTools) return [];
-  const { tools, files } = s.productTools;
+  const { tools, writes, reads } = s.productTools;
+  const base = (rel: string) => rel.split('/').pop();
   return [
-    `tool_calls: when one of ${tools.join(', ')} is in the team's tools, the tree calls at least one (red: "${PRODUCT_TOOL_NOT_USED}"); when none is, the trial is skipped`,
-    ...(files.length > 0
-      ? [
-          `tool_calls: no command tool (run_command, bash, shell…) names ${files.map((f) => f.split('/').pop()).join(', ')}, or runs a script written during the run that names it; a command that does bypassed the product tool`,
-        ]
+    `tool_calls: the product tools are ${tools.join(', ')}; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: "${PRODUCT_TOOL_NOT_USED}"`,
+    ...(writes.length === 0 && reads.length === 0
+      ? ['tool_calls: the tree calls at least one of them']
       : []),
+    ...writes.map(
+      (rel) =>
+        `${base(rel)} is written by one of them: a call that may write (declared risk level other than read) names ${rel}, and the file's time on disk is not after that last call's end (its start plus its duration, ${WRITE_TOLERANCE_MS} ms of tolerance); a command that only reads it does not count`,
+    ),
+    ...reads.map((rel) => `${base(rel)} is read by one of them: a call names ${rel}`),
   ];
 }
