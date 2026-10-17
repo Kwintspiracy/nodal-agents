@@ -25,11 +25,12 @@
 // nom et dans l'ordre, et les délégations) et classe les liens du texte cité :
 // vus ou non dans une sortie d'outil web (#648, la partie mesurable).
 
+import { join } from 'node:path';
 import { benchDeliverables, findInRoots } from './disk';
-import { prepareTrial } from './fixtures';
+import { fileHash, fixturePath, prepareTrial } from './fixtures';
 import type { TreeFacts } from './facts';
 import { isLive, liveJobs, pendingApprovals } from './facts';
-import { DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
+import { cheminConstate, DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
 import {
   answerOf,
   bareToolName,
@@ -46,7 +47,14 @@ import { recipientIds } from './recipients';
 import { redactHome } from './redact';
 import type { ForeignActivity } from './stack';
 import { noSubjectReason, pickSubject, requestWithSubject, type ResearchSubject } from './subjects';
-import type { AnyScenario, ModelUse, ProductFileState, ScenarioEnv, TrialLine } from './types';
+import type {
+  AnyScenario,
+  FileState,
+  ModelUse,
+  ProductFileState,
+  ScenarioEnv,
+  TrialLine,
+} from './types';
 
 /** La réponse finale gardée sur la ligne : assez pour la lire, pas un rapport entier. */
 export const ANSWER_MAX = 1200;
@@ -474,27 +482,52 @@ export function trialReasons(
   s: AnyScenario,
   facts: TreeFacts,
   observed: unknown,
-  env: Pick<ScenarioEnv, 'teamTools' | 'workspaceRoots'>,
+  env: Pick<ScenarioEnv, 'teamTools'>,
+  files: readonly ProductFileState[],
 ): string[] {
   return [
     ...new Set([
       ...s.judge(facts, observed),
       ...destinationReasons(s, facts),
-      ...productToolReasons(s, facts, env, productFileStates(s, env.workspaceRoots)),
+      ...productToolReasons(s, facts, env, files),
     ]),
   ];
 }
 
+/** L'état d'un fichier sur le disque : absent, son empreinte sha-256, ou illisible. */
+function stateOf(path: string | null): FileState {
+  if (path === null) return { kind: 'absent' };
+  try {
+    return { kind: 'file', sha256: fileHash(path) };
+  } catch {
+    return { kind: 'unreadable' };
+  }
+}
+
 /**
- * Les livrables d'un scénario (`productTools.writes`) tels que le disque les
- * montre : la date du plus récent de chaque chemin parmi les dossiers de
- * travail, null quand il n'existe nulle part.
+ * Les livrables d'un scénario (`productTools.writes`), tels que le banc les
+ * connaît hors de la base : leurs chemins réels possibles, un par dossier de
+ * travail, résolus comme la plateforme les range (`cheminConstate`, le chemin
+ * des lignes `tool_call_writes`) ; l'état préparé (la fixture que le banc pose
+ * à ce chemin, sinon absent, `prepareTrial` effaçant les sorties) ; et l'état
+ * final, celui du plus récent parmi les dossiers de travail.
  */
-export function productFileStates(s: AnyScenario, roots: readonly string[]): ProductFileState[] {
-  return (s.productTools?.writes ?? []).map((rel) => ({
-    rel,
-    mtimeMs: findInRoots(roots, rel, 0)[0]?.mtimeMs ?? null,
-  }));
+export async function productFileStates(
+  s: AnyScenario,
+  roots: readonly string[],
+): Promise<ProductFileState[]> {
+  const out: ProductFileState[] = [];
+  for (const rel of s.productTools?.writes ?? []) {
+    const realPaths = await Promise.all(roots.map((root) => cheminConstate(join(root, rel))));
+    const fixture = (s.fixtures ?? []).find((f) => f.to === rel);
+    out.push({
+      rel,
+      realPaths,
+      initial: fixture ? stateOf(fixturePath(fixture.from)) : { kind: 'absent' },
+      final: stateOf(findInRoots(roots, rel, 0)[0]?.path ?? null),
+    });
+  }
+  return out;
 }
 
 function truncate(text: string, max: number): string {
@@ -658,7 +691,13 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
     if (s.cites) cited = s.cites(facts, observed);
     // Un envoi parti ailleurs que là où le scénario le déclare, ou un outil du
     // produit contourné, interdit le vert quel que soit le juge du scénario.
-    judged = trialReasons(s, facts, observed, envAfter);
+    judged = trialReasons(
+      s,
+      facts,
+      observed,
+      envAfter,
+      await productFileStates(s, envAfter.workspaceRoots),
+    );
   } catch (e) {
     judged = [`the judge failed: ${String(e instanceof Error ? e.message : e)}`];
   }

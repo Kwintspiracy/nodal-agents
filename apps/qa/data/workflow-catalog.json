@@ -377,19 +377,13 @@
         "sheet \"Ventes\": A1 Mois, B1 Unités, A2..A4 Janvier, Février, Mars, B2..B4 the numbers 12, 30, 58",
         "B5 = 100: the number, or SUM(B2:B4) / B2+B3+B4 computed from the cells",
         "tool_calls: the product tools are xlsx_create, xlsx_set_range; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "ventes-bench.xlsx is written by one of them: a call that may write (declared risk level other than read) names nodal-bench/ventes-bench.xlsx, and the file's time on disk is not after that last call's end (its start plus its duration, 1000 ms of tolerance); a command that only reads it does not count"
+        "tool_call_writes: the hash chain of ventes-bench.xlsx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
       ],
       "fixtures": [],
       "outputs": [
         "nodal-bench/ventes-bench.xlsx"
       ],
-      "unverified": [
-        {
-          "check": "content written by the product tool",
-          "reason": "The bench sees which tool call wrote the deliverable LAST (its file time against the calls); a script that wrote the content before a final product-tool call on the same file is not seen: nothing records which process wrote a file.",
-          "ticket": "#779"
-        }
-      ]
+      "unverified": []
     },
     {
       "id": "excel-edit-column",
@@ -423,7 +417,7 @@
         "sheet Stock: D1 \"Valeur\"; D2..D6 = quantity × unit price (a value, a cached result, or a formula the bench computes); D7 their total",
         "columns A to C are exactly the fixture's",
         "tool_calls: the product tools are xlsx_read, xlsx_set_range, xlsx_set_cell; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "stock.xlsx is written by one of them: a call that may write (declared risk level other than read) names nodal-bench/stock.xlsx, and the file's time on disk is not after that last call's end (its start plus its duration, 1000 ms of tolerance); a command that only reads it does not count"
+        "tool_call_writes: the hash chain of stock.xlsx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
       ],
       "fixtures": [
         {
@@ -432,13 +426,7 @@
         }
       ],
       "outputs": [],
-      "unverified": [
-        {
-          "check": "content written by the product tool",
-          "reason": "The bench sees which tool call wrote the deliverable LAST (its file time against the calls); a script that wrote the content before a final product-tool call on the same file is not seen: nothing records which process wrote a file.",
-          "ticket": "#779"
-        }
-      ]
+      "unverified": []
     },
     {
       "id": "excel-read-answer",
@@ -469,7 +457,7 @@
         "the final answer names Café moulu and gives 550",
         "nodal-bench/ventes-trimestre.xlsx is byte for byte the fixture (sha-256)",
         "tool_calls: the product tools are xlsx_read; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "ventes-trimestre.xlsx is read by one of them: a call names nodal-bench/ventes-trimestre.xlsx"
+        "ventes-trimestre.xlsx is read by one of them: the path field of a call designates nodal-bench/ventes-trimestre.xlsx"
       ],
       "fixtures": [
         {
@@ -511,7 +499,7 @@
         "opens nodal-bench/contacts.xlsx with exceljs, written during the trial",
         "sheet \"Contacts\": every cell equals the CSV's, header first, same order, and nothing outside",
         "tool_calls: the product tools are xlsx_create, xlsx_set_range, xlsx_append_rows; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "contacts.xlsx is written by one of them: a call that may write (declared risk level other than read) names nodal-bench/contacts.xlsx, and the file's time on disk is not after that last call's end (its start plus its duration, 1000 ms of tolerance); a command that only reads it does not count"
+        "tool_call_writes: the hash chain of contacts.xlsx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
       ],
       "fixtures": [
         {
@@ -522,13 +510,7 @@
       "outputs": [
         "nodal-bench/contacts.xlsx"
       ],
-      "unverified": [
-        {
-          "check": "content written by the product tool",
-          "reason": "The bench sees which tool call wrote the deliverable LAST (its file time against the calls); a script that wrote the content before a final product-tool call on the same file is not seen: nothing records which process wrote a file.",
-          "ticket": "#779"
-        }
-      ]
+      "unverified": []
     },
     {
       "id": "word-create",
@@ -561,19 +543,13 @@
         "the text names 12 novembre 2026, 14 h and salle B",
         "a table whose header row is Heure / Sujet / Responsable, followed by at least 3 rows with every cell filled",
         "tool_calls: the product tools are docx_create; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "convocation-bench.docx is written by one of them: a call that may write (declared risk level other than read) names nodal-bench/convocation-bench.docx, and the file's time on disk is not after that last call's end (its start plus its duration, 1000 ms of tolerance); a command that only reads it does not count"
+        "tool_call_writes: the hash chain of convocation-bench.docx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
       ],
       "fixtures": [],
       "outputs": [
         "nodal-bench/convocation-bench.docx"
       ],
-      "unverified": [
-        {
-          "check": "content written by the product tool",
-          "reason": "The bench sees which tool call wrote the deliverable LAST (its file time against the calls); a script that wrote the content before a final product-tool call on the same file is not seen: nothing records which process wrote a file.",
-          "ticket": "#779"
-        }
-      ]
+      "unverified": []
     },
     {
       "id": "word-replace",
@@ -605,7 +581,7 @@
         "\"ACME SARL\" appears nowhere and \"Nodal Bench SAS\" exactly 4 times, the table included",
         "every other character of the text is the fixture's",
         "tool_calls: the product tools are docx_replace_text; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "contrat.docx is written by one of them: a call that may write (declared risk level other than read) names nodal-bench/contrat.docx, and the file's time on disk is not after that last call's end (its start plus its duration, 1000 ms of tolerance); a command that only reads it does not count"
+        "tool_call_writes: the hash chain of contrat.docx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
       ],
       "fixtures": [
         {
@@ -614,13 +590,7 @@
         }
       ],
       "outputs": [],
-      "unverified": [
-        {
-          "check": "content written by the product tool",
-          "reason": "The bench sees which tool call wrote the deliverable LAST (its file time against the calls); a script that wrote the content before a final product-tool call on the same file is not seen: nothing records which process wrote a file.",
-          "ticket": "#779"
-        }
-      ]
+      "unverified": []
     },
     {
       "id": "word-append",
@@ -651,7 +621,7 @@
         "opens nodal-bench/compte-rendu.docx; it must be changed during the trial",
         "it starts with the fixture's paragraphs in order, then a heading reading \"Décisions\" and at least three non-empty paragraphs or list items",
         "tool_calls: the product tools are docx_append_paragraphs; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "compte-rendu.docx is written by one of them: a call that may write (declared risk level other than read) names nodal-bench/compte-rendu.docx, and the file's time on disk is not after that last call's end (its start plus its duration, 1000 ms of tolerance); a command that only reads it does not count"
+        "tool_call_writes: the hash chain of compte-rendu.docx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
       ],
       "fixtures": [
         {
@@ -660,13 +630,7 @@
         }
       ],
       "outputs": [],
-      "unverified": [
-        {
-          "check": "content written by the product tool",
-          "reason": "The bench sees which tool call wrote the deliverable LAST (its file time against the calls); a script that wrote the content before a final product-tool call on the same file is not seen: nothing records which process wrote a file.",
-          "ticket": "#779"
-        }
-      ]
+      "unverified": []
     },
     {
       "id": "word-read-answer",
@@ -697,7 +661,7 @@
         "the final answer gives 215.30 (any writing): the value is written only in the last row of the document's table",
         "nodal-bench/bon-commande.docx is byte for byte the fixture (sha-256)",
         "tool_calls: the product tools are docx_read; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "bon-commande.docx is read by one of them: a call names nodal-bench/bon-commande.docx"
+        "bon-commande.docx is read by one of them: the path field of a call designates nodal-bench/bon-commande.docx"
       ],
       "fixtures": [
         {
@@ -737,19 +701,13 @@
         "opens nodal-bench/presentation-bench.pptx, written during the trial; slides in presentation order (p:sldIdLst)",
         "exactly 5 slides; the first reads \"Le recyclage du verre\"; each of the next four holds a title and at least two other paragraphs",
         "tool_calls: the product tools are pptx_create; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "presentation-bench.pptx is written by one of them: a call that may write (declared risk level other than read) names nodal-bench/presentation-bench.pptx, and the file's time on disk is not after that last call's end (its start plus its duration, 1000 ms of tolerance); a command that only reads it does not count"
+        "tool_call_writes: the hash chain of presentation-bench.pptx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
       ],
       "fixtures": [],
       "outputs": [
         "nodal-bench/presentation-bench.pptx"
       ],
-      "unverified": [
-        {
-          "check": "content written by the product tool",
-          "reason": "The bench sees which tool call wrote the deliverable LAST (its file time against the calls); a script that wrote the content before a final product-tool call on the same file is not seen: nothing records which process wrote a file.",
-          "ticket": "#779"
-        }
-      ]
+      "unverified": []
     },
     {
       "id": "ppt-append",
@@ -780,7 +738,7 @@
         "opens nodal-bench/projet.pptx; it must be changed during the trial",
         "4 slides; the first three read exactly as the fixture's, paragraph by paragraph; the fourth reads \"Prochaines étapes\" and at least three more paragraphs",
         "tool_calls: the product tools are pptx_append_slides; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "projet.pptx is written by one of them: a call that may write (declared risk level other than read) names nodal-bench/projet.pptx, and the file's time on disk is not after that last call's end (its start plus its duration, 1000 ms of tolerance); a command that only reads it does not count"
+        "tool_call_writes: the hash chain of projet.pptx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
       ],
       "fixtures": [
         {
@@ -789,13 +747,7 @@
         }
       ],
       "outputs": [],
-      "unverified": [
-        {
-          "check": "content written by the product tool",
-          "reason": "The bench sees which tool call wrote the deliverable LAST (its file time against the calls); a script that wrote the content before a final product-tool call on the same file is not seen: nothing records which process wrote a file.",
-          "ticket": "#779"
-        }
-      ]
+      "unverified": []
     },
     {
       "id": "ppt-replace",
@@ -826,7 +778,7 @@
         "opens nodal-bench/bilan-2025.pptx; it must be changed during the trial",
         "2025 appears nowhere; with 2026 read back as 2025, every slide reads exactly as the fixture's",
         "tool_calls: the product tools are pptx_replace_text; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "bilan-2025.pptx is written by one of them: a call that may write (declared risk level other than read) names nodal-bench/bilan-2025.pptx, and the file's time on disk is not after that last call's end (its start plus its duration, 1000 ms of tolerance); a command that only reads it does not count"
+        "tool_call_writes: the hash chain of bilan-2025.pptx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
       ],
       "fixtures": [
         {
@@ -835,13 +787,7 @@
         }
       ],
       "outputs": [],
-      "unverified": [
-        {
-          "check": "content written by the product tool",
-          "reason": "The bench sees which tool call wrote the deliverable LAST (its file time against the calls); a script that wrote the content before a final product-tool call on the same file is not seen: nothing records which process wrote a file.",
-          "ticket": "#779"
-        }
-      ]
+      "unverified": []
     },
     {
       "id": "ppt-read-answer",
@@ -872,7 +818,7 @@
         "the final answer says 4 slides and gives 49",
         "nodal-bench/offre.pptx is byte for byte the fixture (sha-256)",
         "tool_calls: the product tools are pptx_read; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "offre.pptx is read by one of them: a call names nodal-bench/offre.pptx"
+        "offre.pptx is read by one of them: the path field of a call designates nodal-bench/offre.pptx"
       ],
       "fixtures": [
         {
@@ -974,19 +920,13 @@
         "parses nodal-bench/boulangerie-bench.html with parse5 (elements, never a text search), written during the trial",
         "the title element names \"Au Pain Bench\"; exactly one non-empty h1; a list with three items priced in euros; a footer element holding \"12 rue des Lilas, Lyon\"",
         "tool_calls: the product tools are file_write; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "boulangerie-bench.html is written by one of them: a call that may write (declared risk level other than read) names nodal-bench/boulangerie-bench.html, and the file's time on disk is not after that last call's end (its start plus its duration, 1000 ms of tolerance); a command that only reads it does not count"
+        "tool_call_writes: the hash chain of boulangerie-bench.html, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
       ],
       "fixtures": [],
       "outputs": [
         "nodal-bench/boulangerie-bench.html"
       ],
-      "unverified": [
-        {
-          "check": "content written by the product tool",
-          "reason": "The bench sees which tool call wrote the deliverable LAST (its file time against the calls); a script that wrote the content before a final product-tool call on the same file is not seen: nothing records which process wrote a file.",
-          "ticket": "#779"
-        }
-      ]
+      "unverified": []
     },
     {
       "id": "html-table-csv",
@@ -1019,7 +959,7 @@
         "an inline svg whose rect heights are in the ratio of the CSV's max column (± 5 %)",
         "no script, stylesheet or image loaded from another site",
         "tool_calls: the product tools are file_write; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "meteo-bench.html is written by one of them: a call that may write (declared risk level other than read) names nodal-bench/meteo-bench.html, and the file's time on disk is not after that last call's end (its start plus its duration, 1000 ms of tolerance); a command that only reads it does not count"
+        "tool_call_writes: the hash chain of meteo-bench.html, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
       ],
       "fixtures": [
         {
@@ -1030,13 +970,7 @@
       "outputs": [
         "nodal-bench/meteo-bench.html"
       ],
-      "unverified": [
-        {
-          "check": "content written by the product tool",
-          "reason": "The bench sees which tool call wrote the deliverable LAST (its file time against the calls); a script that wrote the content before a final product-tool call on the same file is not seen: nothing records which process wrote a file.",
-          "ticket": "#779"
-        }
-      ]
+      "unverified": []
     },
     {
       "id": "html-edit",
@@ -1068,7 +1002,7 @@
         "parses nodal-bench/accueil.html; it must be changed during the trial",
         "the title element reads exactly \"Accueil Bench 2026\"; a footer element holds \"© 2026 Nodal Bench\"; headings and paragraphs outside the footer are the fixture's",
         "tool_calls: the product tools are file_edit, file_write; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "accueil.html is written by one of them: a call that may write (declared risk level other than read) names nodal-bench/accueil.html, and the file's time on disk is not after that last call's end (its start plus its duration, 1000 ms of tolerance); a command that only reads it does not count"
+        "tool_call_writes: the hash chain of accueil.html, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
       ],
       "fixtures": [
         {
@@ -1077,13 +1011,7 @@
         }
       ],
       "outputs": [],
-      "unverified": [
-        {
-          "check": "content written by the product tool",
-          "reason": "The bench sees which tool call wrote the deliverable LAST (its file time against the calls); a script that wrote the content before a final product-tool call on the same file is not seen: nothing records which process wrote a file.",
-          "ticket": "#779"
-        }
-      ]
+      "unverified": []
     },
     {
       "id": "comfy-exact-size",
@@ -1241,7 +1169,7 @@
         "tool_calls: a request_print whose input names facture-impression.pdf, pending, one page when the connector says so",
         "never confirm_print, nothing reached the printer",
         "tool_calls: the product tools are request_print; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
-        "facture-impression.pdf is read by one of them: a call names nodal-bench/facture-impression.pdf"
+        "facture-impression.pdf is read by one of them: the path field of a call designates nodal-bench/facture-impression.pdf"
       ],
       "fixtures": [
         {

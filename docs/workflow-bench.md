@@ -191,26 +191,27 @@ declares them, never inside one judge:
 
 - **A product tool available must be used (decision 1).** A scenario declares
   `productTools`: the product tools of its path, the deliverables they must
-  WRITE (`writes`) and the files they must READ (`reads`). The rule attributes
-  the write instead of guessing it from a mention of the file name, and it
-  keeps no list of tool names:
-  - a deliverable is written by a product tool: a call of one that may write
-    (its declared `risk_level` is not `read`) names its path, and the file's
-    time on disk is not after that last call's end (the row is created at the
-    call's start, #443, plus `duration_ms`; 1 s of tolerance). A file changed
-    later was changed by something else, whatever its name (an interpreter, an
-    MCP copy tool), and the red reason lists the calls that may write made after
-    it. A command that only reads the deliverable does not change its time, so
-    it is never red;
-  - a file to read is read by a product tool: a call of one names its path. A
-    command may read it too.
+  WRITE (`writes`) and the files they must READ (`reads`). The rule guesses
+  nothing (two earlier versions did, from a mention of the file name, then
+  from the file's time, and each review found holes). It reads what the
+  platform records of every write, `tool_call_writes` (#779): for each call
+  and each file it targeted, the hash before and after, and whether the after
+  hash is the bytes the tool WROTE (`written`) or a re-read (`read`).
+  - a deliverable follows a hash chain in `seq` order: from the state the
+    bench prepared (its fixture, otherwise no file) through every recorded
+    write, each starting from the state the previous one left, to the file on
+    disk at the end. Every write that changes it is one of the product tools,
+    proven by the bytes it wrote. A break means something that left no record
+    wrote the file (a command, a script, an MCP tool, whatever its name), and
+    it is red. A command that only reads the deliverable changes nothing. A
+    re-read or a missing row reads as not recorded, never green;
+  - a file to read is read by a product tool: the path field of one of its
+    calls (`path`, `filePath`) designates it, not a mention anywhere in the
+    input.
 
   Otherwise the trial is red, "product tool available, not used". When none
   is in the team's tools, the trial is skipped with that reason, like a missing
-  need. PDF and code declare none. What the rule does not see, said as "not
-  verified" on every scenario with a deliverable (#779): a script that wrote
-  the content BEFORE a final product-tool call on the same file. The file time
-  says who wrote LAST; nothing records which process wrote a file.
+  need. PDF and code declare none.
 - **The specialist, for in-depth research only (decision 2).** `research`:
   the root searches itself, a delegation is red. `deep-research-*`: handed to a
   teammate, and a delegated job must call a web tool.

@@ -182,26 +182,14 @@ const CHANNEL_SERVICES = new Set([
  * (`drive_upload_file`, un seul « _ »), outil MCP (`x__y`), outil de CLI
  * (`cli:…`) — n'est pas interne (revue Reviewer A de #756, passe 5).
  */
-let internalTools: ReadonlyMap<string, string> | null = null;
-function builtins(): ReadonlyMap<string, string> {
+let internalTools: ReadonlySet<string> | null = null;
+function isInternalTool(toolName: string): boolean {
   if (internalTools === null) {
     const registry = createToolRegistry();
     registerBuiltins(registry);
-    internalTools = new Map(registry.list().map((t) => [t.name, t.riskLevel]));
+    internalTools = new Set(registry.list().map((t) => t.name));
   }
-  return internalTools;
-}
-function isInternalTool(toolName: string): boolean {
-  return builtins().has(toolName);
-}
-
-/**
- * Le niveau de risque que le produit DÉCLARE pour un de ses outils internes
- * (`read`, `write`, `destructive`), lu dans le registre ; null pour tout autre
- * outil (connecteur, MCP, CLI), dont le banc ne sait rien de plus que la ligne.
- */
-export function declaredRiskLevel(toolName: string): string | null {
-  return builtins().get(toolName) ?? null;
+  return internalTools.has(toolName);
 }
 
 /**

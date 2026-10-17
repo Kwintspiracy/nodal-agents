@@ -31,20 +31,7 @@ export const ToolCallFactSchema = z.object({
   /** L'entrée, sérialisée telle que la base la rend (JSON). */
   input: z.string().nullable(),
   output: z.string().nullable(),
-  /**
-   * Création de la ligne (ms). Pour un outil qui ne fait pas que lire, la
-   * ligne est écrite AVANT qu'il tourne (#443) : c'est son début.
-   */
   createdMs: z.number(),
-  /**
-   * Le niveau de risque DÉCLARÉ par l'outil (`tool_calls.risk_level`) : `read`
-   * ne peut rien écrire. Un outil MCP n'est jamais `read` (la plateforme ne
-   * croit pas `readOnlyHint`). NULL sur les lignes `cli:*` et dans les fixtures
-   * capturées avant que le banc ne le lise : incertain, jamais `read`.
-   */
-  riskLevel: z.enum(['read', 'write', 'destructive']).nullable().default(null),
-  /** Durée d'exécution (`tool_calls.duration_ms`) ; null : non enregistrée. */
-  durationMs: z.number().nullable().default(null),
 });
 export type ToolCallFact = z.infer<typeof ToolCallFactSchema>;
 
@@ -137,6 +124,29 @@ export const ReturnResultFactSchema = z.object({
 });
 export type ReturnResultFact = z.infer<typeof ReturnResultFactSchema>;
 
+/**
+ * Ce qu'un appel d'outil a fait à un fichier qu'il visait (`tool_call_writes`,
+ * #779) : le chemin réel, l'état et l'empreinte avant, l'état et l'empreinte
+ * après, et D'OÙ vient l'empreinte après : `written`, les octets que l'outil a
+ * écrits (une preuve) ; `read`, une relecture du disque (jamais une preuve).
+ * `seq` est celui de la ligne `tool_calls` de l'appel, la seule colonne
+ * d'ordre fiable : deux appels parallèles ont le même instant, jamais le même
+ * `seq`.
+ */
+const FileStateKind = z.enum(['absent', 'file', 'unreadable']);
+export const FileWriteFactSchema = z.object({
+  seq: z.number(),
+  jobId: z.string(),
+  toolName: z.string(),
+  path: z.string(),
+  beforeKind: FileStateKind,
+  beforeSha256: z.string().nullable(),
+  afterKind: FileStateKind,
+  afterSha256: z.string().nullable(),
+  afterSource: z.enum(['written', 'read']),
+});
+export type FileWriteFact = z.infer<typeof FileWriteFactSchema>;
+
 /** L'arbre d'un essai : le job de tête, tout ce qu'il a délégué, et ce qui s'y est passé. */
 export const TreeFactsSchema = z.object({
   rootId: z.string(),
@@ -162,6 +172,12 @@ export const TreeFactsSchema = z.object({
    * lise.
    */
   returnResults: z.array(ReturnResultFactSchema).default([]),
+  /**
+   * Ce que chaque appel a fait à chaque fichier qu'il visait (`tool_call_writes`),
+   * dans l'ordre `seq`. Absent des fixtures capturées avant que la plateforme
+   * ne l'enregistre (#779) : rien n'y est enregistré, jamais « rien écrit ».
+   */
+  writes: z.array(FileWriteFactSchema).default([]),
 });
 export type TreeFacts = z.infer<typeof TreeFactsSchema>;
 
@@ -219,8 +235,6 @@ const RawTool = z.object({
   tool_input: z.string().nullable(),
   tool_output: z.string().nullable(),
   created_ms: num,
-  risk_level: z.enum(['read', 'write', 'destructive']).nullable(),
-  duration_ms: numOrNull,
 });
 const RawLlm = z.object({
   job_id: z.string().nullable(),
@@ -301,7 +315,6 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
       db,
       sql`
       select job_id::text, tool_name, tool_input::text as tool_input, tool_output,
-             risk_level, duration_ms,
              (extract(epoch from created_at) * 1000)::float8 as created_ms
         from tool_calls where job_id in (${tree}) order by created_at`,
     ),
@@ -370,6 +383,31 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
        order by j.created_at, j.id, m.i, p.k`,
       ),
     );
+  const writes = z
+    .array(
+      z.object({
+        seq: num,
+        job_id: z.string(),
+        tool_name: z.string(),
+        path: z.string(),
+        before_kind: FileStateKind,
+        before_sha256: z.string().nullable(),
+        after_kind: FileStateKind,
+        after_sha256: z.string().nullable(),
+        after_source: z.enum(['written', 'read']),
+      }),
+    )
+    .parse(
+      await executeRows(
+        db,
+        sql`
+      select tc.seq::float8 as seq, w.job_id::text, tc.tool_name, w.path,
+             w.before_kind, w.before_sha256, w.after_kind, w.after_sha256, w.after_source
+        from tool_call_writes w join tool_calls tc on tc.id = w.tool_call_id
+       where w.job_id in (${tree})
+       order by tc.seq`,
+      ),
+    );
   return {
     rootId,
     entityId: root.entity_id,
@@ -390,8 +428,6 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
       input: t.tool_input,
       output: t.tool_output,
       createdMs: t.created_ms,
-      riskLevel: t.risk_level,
-      durationMs: t.duration_ms,
     })),
     llmCalls: llm.map((l) => ({
       jobId: l.job_id,
@@ -443,5 +479,16 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
       createdMs: d.created_ms,
     })),
     returnResults: returnResults.map((r) => ({ jobId: r.job_id, input: r.input })),
+    writes: writes.map((w) => ({
+      seq: w.seq,
+      jobId: w.job_id,
+      toolName: w.tool_name,
+      path: w.path,
+      beforeKind: w.before_kind,
+      beforeSha256: w.before_sha256,
+      afterKind: w.after_kind,
+      afterSha256: w.after_sha256,
+      afterSource: w.after_source,
+    })),
   };
 }

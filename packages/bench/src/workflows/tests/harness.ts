@@ -11,7 +11,7 @@
 // dans la forme exacte que `readTreeFacts` rend (le schéma Zod les valide).
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, statSync, utimesSync } from 'node:fs';
+import { mkdtempSync, readdirSync, statSync, symlinkSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync, crc32 } from 'node:zlib';
@@ -19,7 +19,8 @@ import { TreeFactsSchema, type TreeFacts } from '../facts';
 import { prepareTrial } from '../fixtures';
 import { scenarioById } from '../scenarios';
 import type { ResearchSubject } from '../subjects';
-import { trialReasons } from '../trial';
+import { cheminConstate } from '@nodal-agents/tools';
+import { productFileStates, trialReasons } from '../trial';
 import type { ScenarioEnv } from '../types';
 
 export const ROOT_ID = '00000000-0000-4000-8000-0000000000a1';
@@ -30,23 +31,48 @@ export interface Run {
   /** La réponse finale du job de tête. */
   readonly result?: string;
   readonly status?: string;
-  /**
-   * Appels d'outils de l'arbre : nom et entrée (JSON). `at` (ms), `durationMs`
-   * et `risk` sont ceux d'une ligne `tool_calls` réelle : un outil qui écrit a
-   * sa ligne créée à son début, et sa durée dit sa fin.
-   */
-  readonly tools?: ReadonlyArray<{
-    name: string;
-    input?: unknown;
-    output?: string;
-    job?: string;
-    at?: number;
-    durationMs?: number | null;
-    risk?: 'read' | 'write' | 'destructive' | null;
-  }>;
+  /** Appels d'outils de l'arbre : nom et entrée (JSON). */
+  readonly tools?: ReadonlyArray<{ name: string; input?: unknown; output?: string; job?: string }>;
   /** Un délégué a travaillé (un job enfant). */
   readonly delegated?: boolean;
   readonly approvals?: number;
+  /**
+   * Les lignes `tool_call_writes` de l'arbre, telles que la plateforme les
+   * range : `rel` est résolu en chemin réel sous le dossier de travail de
+   * l'essai (`cheminConstate`), comme le seam le fait. Un état est `absent`,
+   * `unreadable` ou l'empreinte sha-256 du contenu. `seq` : l'ordre de l'appel
+   * (par défaut, l'ordre de la liste).
+   */
+  readonly writes?: ReadonlyArray<{
+    readonly tool: string;
+    readonly rel: string;
+    readonly before: string;
+    readonly after: string;
+    readonly source?: 'written' | 'read';
+    readonly seq?: number;
+  }>;
+}
+
+const stateFields = (st: string, side: 'before' | 'after') => {
+  const kind = st === 'absent' || st === 'unreadable' ? st : 'file';
+  return side === 'before'
+    ? { beforeKind: kind, beforeSha256: kind === 'file' ? st : null }
+    : { afterKind: kind, afterSha256: kind === 'file' ? st : null };
+};
+
+/** Les lignes `tool_call_writes` d'un essai, résolues sous `root` comme le seam les range. */
+async function writesOf(run: Run, root: string): Promise<TreeFacts['writes']> {
+  return Promise.all(
+    (run.writes ?? []).map(async (w, i) => ({
+      seq: w.seq ?? 100 + i,
+      jobId: ROOT_ID,
+      toolName: w.tool,
+      path: await cheminConstate(join(root, w.rel)),
+      ...stateFields(w.before, 'before'),
+      ...stateFields(w.after, 'after'),
+      afterSource: w.source ?? 'written',
+    })) as Promise<TreeFacts['writes'][number]>[],
+  );
 }
 
 export function facts(run: Run): TreeFacts {
@@ -87,9 +113,7 @@ export function facts(run: Run): TreeFacts {
       toolName: t.name,
       input: t.input === undefined ? null : JSON.stringify(t.input),
       output: t.output ?? null,
-      createdMs: t.at ?? T0 + 2_000 + i,
-      riskLevel: t.risk ?? null,
-      durationMs: t.durationMs ?? null,
+      createdMs: T0 + 2_000 + i,
     })),
     llmCalls: [],
     approvals: Array.from({ length: run.approvals ?? 0 }, (_, i) => ({
@@ -123,6 +147,12 @@ export interface Played {
 export interface PlayEnv {
   readonly teamTools?: readonly string[];
   readonly subject?: ResearchSubject;
+  /**
+   * Le dossier de travail est atteint par un LIEN (une jonction sous Windows,
+   * un lien symbolique ailleurs) : la plateforme range alors le chemin réel,
+   * qui n'est pas celui que l'espace déclare.
+   */
+  readonly linkedRoot?: boolean;
 }
 
 /**
@@ -140,7 +170,9 @@ export async function play(
 ): Promise<Played> {
   const s = scenarioById(id);
   if (!s) throw new Error(`unknown scenario ${id}`);
-  const root = mkdtempSync(join(tmpdir(), `wf-${id}-`));
+  const real = mkdtempSync(join(tmpdir(), `wf-${id}-`));
+  const root = playEnv.linkedRoot ? join(tmpdir(), `wf-link-${id}-${Date.now()}`) : real;
+  if (playEnv.linkedRoot) symlinkSync(real, root, 'junction');
   const env0: ScenarioEnv = {
     workspaceRoots: [root],
     teamTools: playEnv.teamTools ?? [],
@@ -158,8 +190,10 @@ export async function play(
   await work(root);
   const run = typeof runOrBuild === 'function' ? runOrBuild(root) : runOrBuild;
   const env: ScenarioEnv = { ...env0, startedMs };
-  const observed = await s.observe(facts(run), env);
-  return { root, reasons: trialReasons(s, facts(run), observed, env), observed };
+  const tree: TreeFacts = { ...facts(run), writes: await writesOf(run, root) };
+  const observed = await s.observe(tree, env);
+  const files = await productFileStates(s, env.workspaceRoots);
+  return { root, reasons: trialReasons(s, tree, observed, env, files), observed };
 }
 
 /** Un PNG minimal mais valide (signature, IHDR, IDAT, IEND) : ce qu'un en-tête dit, il le dit vraiment. */

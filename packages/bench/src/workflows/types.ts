@@ -132,20 +132,33 @@ export interface ProductTools {
   /** Les noms nus des outils (`xlsx_read`), au moins un. */
   readonly tools: readonly string[];
   /**
-   * Les livrables (sous `nodal-bench/`) que ces outils doivent ÉCRIRE : un
-   * appel d'un de ces outils qui peut écrire (niveau de risque déclaré autre
-   * que `read`) les nomme, et le fichier n'a pas changé après la fin du
-   * dernier de ces appels.
+   * Les livrables (sous `nodal-bench/`) que ces outils doivent ÉCRIRE : la
+   * chaîne d'empreintes de `tool_call_writes`, dans l'ordre `seq`, va de
+   * l'état préparé par le banc à l'état final du disque, et chaque écriture y
+   * est celle d'un de ces outils, prouvée par ses octets écrits.
    */
   readonly writes: readonly string[];
-  /** Les fichiers (sous `nodal-bench/`) que ces outils doivent LIRE : un appel d'un de ces outils les nomme. */
+  /** Les fichiers (sous `nodal-bench/`) que ces outils doivent LIRE : le champ chemin d'un appel d'un de ces outils les désigne. */
   readonly reads: readonly string[];
 }
 
-/** Un livrable tel que le disque le montre à la fin de l'essai : sa date ; null quand il n'existe pas. */
+/** L'état d'un fichier : absent, lu (avec son empreinte sha-256), ou présent mais illisible. */
+export type FileState =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'file'; readonly sha256: string }
+  | { readonly kind: 'unreadable' };
+
+/**
+ * Un livrable, tel que le banc le connaît hors de la base : ses chemins réels
+ * possibles (un par dossier de travail, résolus comme la plateforme les range,
+ * `cheminConstate`), l'état où le banc l'a préparé (la fixture posée, sinon
+ * absent) et son état sur le disque à la fin de l'essai.
+ */
 export interface ProductFileState {
   readonly rel: string;
-  readonly mtimeMs: number | null;
+  readonly realPaths: readonly string[];
+  readonly initial: FileState;
+  readonly final: FileState;
 }
 
 /**

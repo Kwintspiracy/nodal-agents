@@ -13,11 +13,11 @@
 
 import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 import { DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
-import type { JobFact, ToolCallFact, TreeFacts } from './facts';
-import { declaredRiskLevel } from './needs';
+import type { FileWriteFact, JobFact, ToolCallFact, TreeFacts } from './facts';
 import type {
   AnyScenario,
   CitedLink,
+  FileState,
   PathJob,
   ProductFileState,
   ScenarioEnv,
@@ -467,46 +467,33 @@ export function factsNotSeenOnTheWeb(
 
 // ─── décision 1 : un outil du produit disponible doit servir ─────────────────
 //
-// « Un outil attendu a été appelé » ne suffit pas (revue Reviewer A de #777,
-// passe 1) : un appel d'alibi à `xlsx_read` puis un interpréteur hors de toute
-// liste qui écrit le classeur passait vert ; et deviner l'écriture à la simple
-// MENTION du fichier par une commande rendait rouge une commande qui ne
-// faisait que le relire. La règle ATTRIBUE donc l'écriture, avec ce que la
-// plateforme sait déjà, sans liste de noms d'outils :
+// Deux versions de cette règle devinaient l'écriture : la première à la
+// simple MENTION du fichier par une commande (revue de #777, passe 1 : un
+// alibi passait vert, une commande qui ne faisait que lire passait rouge), la
+// seconde à la DATE du fichier (passe 2 : une sous-chaîne de l'entrée prise
+// pour un chemin, une fenêtre d'une seconde invisible, un « dernier » appel
+// choisi sur l'heure). Elle ne devine plus : elle LIT ce que la plateforme
+// enregistre de chaque écriture (`tool_call_writes`, #779, #780) et suit la
+// CHAÎNE D'EMPREINTES d'un livrable dans l'ordre `seq` :
 //
-//   - un LIVRABLE (`writes`) a été écrit par un outil attendu : un appel d'un
-//     outil attendu qui peut écrire (niveau de risque DÉCLARÉ autre que
-//     `read`, `tool_calls.risk_level`) nomme son chemin ; et le fichier n'a
-//     plus changé après la fin du dernier de ces appels (sa date sur le
-//     disque contre la ligne de l'appel : créée à son début, #443, plus sa
-//     durée). Un fichier modifié ensuite l'a été par autre chose, quel que soit
-//     son nom ; une commande qui ne fait que le lire ne change pas sa date ;
-//   - un fichier LU (`reads`) l'a été par un outil attendu : un appel nomme
-//     son chemin. Une commande peut le relire en plus, sans rouge.
+//   - l'état de départ est celui que le banc a préparé (la fixture posée,
+//     sinon aucun fichier) ;
+//   - chaque écriture enregistrée part de l'état laissé par la précédente
+//     (sinon, quelque chose qui n'a rien enregistré a écrit entre les deux) ;
+//   - chaque écriture qui change le fichier est celle d'un outil attendu, et
+//     son état après est prouvé par les OCTETS QU'IL A ÉCRITS (`written`) ;
+//     une relecture (`read`) n'est pas une preuve : « not recorded » ;
+//   - l'état final du disque est celui de la dernière écriture (sinon, quelque
+//     chose qui n'a rien enregistré a écrit après).
 //
-// Ce que la règle ne voit pas, dit sur chaque ligne (`PRODUCT_TOOL_WROTE_IT`) :
-// un script qui écrit le contenu AVANT un dernier appel de l'outil du produit
-// sur le même fichier. La date dit qui a écrit en DERNIER, pas qui a écrit le
-// contenu ; aucune ligne de la base ne dit quel processus a écrit un fichier.
+// Une commande, un harnais ou un outil MCP qui écrit le livrable ne laisse
+// aucune ligne : la chaîne se rompt, et c'est rouge, quel que soit son nom. Une
+// commande qui ne fait que LIRE ne change rien : la chaîne tient. Un script qui
+// écrit le contenu AVANT un dernier appel de l'outil du produit rompt la
+// chaîne aussi : l'état avant de cet appel n'est plus celui de la précédente.
 
 /** Le début de la raison du rouge, le même pour tous les scénarios. */
 export const PRODUCT_TOOL_NOT_USED = 'product tool available, not used';
-
-/**
- * L'écart toléré entre la fin enregistrée de l'appel et la date du fichier :
- * l'horloge de la base et celle du système de fichiers sont celles de la même
- * machine, mais la ligne arrondit et la fin d'un appel suit l'écriture de peu.
- */
-export const WRITE_TOLERANCE_MS = 1_000;
-
-/** Le contrôle que la règle ne tient pas, porté par chaque scénario qui déclare des livrables. */
-export const PRODUCT_TOOL_WROTE_IT: UnverifiedCheck = {
-  check: 'content written by the product tool',
-  state: 'not verified',
-  reason:
-    'The bench sees which tool call wrote the deliverable LAST (its file time against the calls); a script that wrote the content before a final product-tool call on the same file is not seen: nothing records which process wrote a file.',
-  ticket: '#779',
-};
 
 const teamHasTool = (teamTools: readonly string[], bare: string): boolean =>
   teamTools.some((t) => t === bare || t.endsWith(`__${bare}`));
@@ -532,25 +519,42 @@ export function productToolGate(s: AnyScenario, env: Pick<ScenarioEnv, 'teamTool
       ];
 }
 
-/** L'entrée d'un appel, séparateurs ramenés à `/` : un chemin Windows échappé s'y lit comme un autre. */
-function inputPath(c: ToolCallFact): string {
-  return (c.input ?? '').replace(/\\\\/g, '/').replace(/\\/g, '/');
+/** Les champs d'une entrée qui portent un CHEMIN, par leur nom (`path`, `filePath`, `file_path`). */
+const PATH_FIELD = /^(path|file_?path)$/i;
+
+/**
+ * L'appel désigne ce fichier par un CHAMP CHEMIN de son entrée, et non par une
+ * mention quelconque (un contenu qui cite le fichier, revue de #777, passe 2).
+ * Le chemin donné est relatif à un dossier de travail, préfixé de son nom
+ * (`shared/…`) ou absolu : il désigne `rel` quand il lui est égal ou finit par
+ * `/rel`, séparateurs ramenés à `/`.
+ */
+function designates(c: ToolCallFact, rel: string): boolean {
+  const input = jsonObject(parseJson(c.input));
+  if (!input) return false;
+  return Object.entries(input).some(([k, v]) => {
+    if (!PATH_FIELD.test(k) || typeof v !== 'string') return false;
+    const p = v.replace(/\\/g, '/');
+    return p === rel || p.endsWith(`/${rel}`);
+  });
 }
 
-/** L'appel nomme ce chemin relatif (`nodal-bench/x`), quel que soit le dossier qui le précède. */
-function names(c: ToolCallFact, rel: string): boolean {
-  return inputPath(c).includes(rel);
-}
+const sameState = (a: { kind: string; sha256?: string | null }, b: FileState): boolean =>
+  a.kind === b.kind && (a.kind !== 'file' || (b.kind === 'file' && a.sha256 === b.sha256));
 
-/** Un appel qui peut écrire : niveau de risque déclaré autre que `read`, ou inconnu (fermé par défaut). */
-const mayWrite = (c: ToolCallFact): boolean => c.riskLevel !== 'read';
+const showState = (st: FileState): string =>
+  st.kind === 'file' ? `sha-256 ${st.sha256.slice(0, 12)}` : st.kind;
+
+const beforeOf = (w: FileWriteFact): FileState =>
+  w.beforeKind === 'file' ? { kind: 'file', sha256: w.beforeSha256 ?? '' } : { kind: w.beforeKind };
+const afterOf = (w: FileWriteFact): FileState =>
+  w.afterKind === 'file' ? { kind: 'file', sha256: w.afterSha256 ?? '' } : { kind: w.afterKind };
 
 /**
  * Après l'essai, la règle de chemin (voir l'en-tête de la section). `files` :
- * les livrables tels que le disque les montre à la fin (`productFileStates`).
- * Un scénario sans outil déclaré, ou dont aucun n'est disponible (sauté
- * avant), ne reçoit aucune raison d'ici. Un livrable absent non plus : le juge
- * du scénario le dit.
+ * les livrables tels que le banc les connaît hors de la base
+ * (`productFileStates`). Un scénario sans outil déclaré, ou dont aucun n'est
+ * disponible (sauté avant), ne reçoit aucune raison d'ici.
  */
 export function productToolReasons(
   s: AnyScenario,
@@ -560,62 +564,80 @@ export function productToolReasons(
 ): string[] {
   const available = availableProductTools(s, env);
   if (available.length === 0 || !s.productTools) return [];
-  const expected = facts.toolCalls.filter((c) => available.includes(bareToolName(c.toolName)));
+  const isExpected = (toolName: string): boolean => available.includes(bareToolName(toolName));
   const { writes, reads } = s.productTools;
   if (writes.length === 0 && reads.length === 0)
-    return expected.length > 0
+    return facts.toolCalls.some((c) => isExpected(c.toolName))
       ? []
       : [`${PRODUCT_TOOL_NOT_USED}: none of ${available.join(', ')} was called`];
   const r: string[] = [];
   for (const rel of reads) {
-    if (!expected.some((c) => names(c, rel)))
-      r.push(`${PRODUCT_TOOL_NOT_USED}: no call of ${available.join(', ')} names ${rel}`);
+    if (!facts.toolCalls.some((c) => isExpected(c.toolName) && designates(c, rel)))
+      r.push(`${PRODUCT_TOOL_NOT_USED}: no call of ${available.join(', ')} reads ${rel}`);
   }
-  // Les outils attendus qui peuvent écrire, tels que le produit les déclare
-  // (un outil hors du registre, MCP ou connecteur, n'est jamais dit lecteur).
-  const writers = available.filter((t) => declaredRiskLevel(t) !== 'read');
   for (const rel of writes) {
-    const calls = expected.filter((c) => mayWrite(c) && names(c, rel));
-    if (calls.length === 0) {
-      r.push(`${PRODUCT_TOOL_NOT_USED}: no writing call of ${writers.join(', ')} names ${rel}`);
-      continue;
-    }
     const file = files.find((f) => f.rel === rel);
-    if (!file || file.mtimeMs === null) continue;
-    const last = calls[calls.length - 1]!;
-    if (last.durationMs === null) {
+    if (!file) {
       r.push(
-        `${PRODUCT_TOOL_NOT_USED}: the last ${bareToolName(last.toolName)} call naming ${rel} has no recorded end, so it cannot be shown to have written the file last`,
+        `${PRODUCT_TOOL_NOT_USED}: the bench did not read ${rel} on disk, so its writes cannot be followed`,
       );
       continue;
     }
-    const end = last.createdMs + last.durationMs;
-    if (file.mtimeMs > end + WRITE_TOLERANCE_MS) {
-      const after = facts.toolCalls.filter(
-        (c) => c.createdMs > last.createdMs && mayWrite(c) && !expected.includes(c),
-      );
-      r.push(
-        `${PRODUCT_TOOL_NOT_USED}: ${rel} was changed after the last ${bareToolName(last.toolName)} call (${
-          after.length > 0
-            ? `calls that may write, made after it: ${[...new Set(after.map((c) => c.toolName))].join(', ')}`
-            : 'by no recorded tool call'
-        })`,
-      );
-    }
+    r.push(...chainReasons(rel, file, facts.writes, isExpected, available));
   }
   return r;
 }
 
-/**
- * Les contrôles qu'un scénario ne vérifie pas : les siens, et ceux que les
- * règles de chemin ne tiennent pas pour lui (`PRODUCT_TOOL_WROTE_IT` dès qu'il
- * déclare un livrable). La ligne d'essai et le catalogue les lisent ici.
- */
+/** La chaîne d'empreintes d'un livrable, de l'état préparé à l'état final (voir l'en-tête). */
+function chainReasons(
+  rel: string,
+  file: ProductFileState,
+  allWrites: readonly FileWriteFact[],
+  isExpected: (toolName: string) => boolean,
+  available: readonly string[],
+): string[] {
+  // Dans l'ordre `seq`, quel que soit l'ordre où les lignes arrivent : deux
+  // appels parallèles ont le même instant, jamais le même `seq`.
+  const chain = allWrites
+    .filter((w) => file.realPaths.includes(w.path))
+    .sort((a, b) => a.seq - b.seq);
+  const r: string[] = [];
+  if (!chain.some((w) => isExpected(w.toolName) && w.afterSource === 'written'))
+    r.push(
+      `${PRODUCT_TOOL_NOT_USED}: no write of ${rel} by ${available.join(', ')} is recorded with the bytes it wrote`,
+    );
+  let state: FileState = file.initial;
+  let previous = 'the bench prepared it';
+  for (const w of chain) {
+    const before = beforeOf(w);
+    const after = afterOf(w);
+    const who = `${bareToolName(w.toolName)} (seq ${w.seq})`;
+    if (!sameState(before, state))
+      r.push(
+        `${PRODUCT_TOOL_NOT_USED}: ${rel} was changed between ${previous} and ${who} by something that left no record (it was ${showState(state)}, then ${showState(before)})`,
+      );
+    const changed = !sameState(after, before);
+    if (changed && !isExpected(w.toolName))
+      r.push(
+        `${PRODUCT_TOOL_NOT_USED}: ${rel} was written by ${who}, not one of ${available.join(', ')}`,
+      );
+    else if (changed && w.afterSource !== 'written')
+      r.push(
+        `${PRODUCT_TOOL_NOT_USED}: the write of ${rel} by ${who} is not recorded with the bytes it wrote (a re-read of the disk, never a proof)`,
+      );
+    state = after;
+    previous = who;
+  }
+  if (!sameState(state, file.final))
+    r.push(
+      `${PRODUCT_TOOL_NOT_USED}: ${rel} was changed after ${previous} by something that left no record (expected ${showState(state)}, on disk ${showState(file.final)})`,
+    );
+  return r;
+}
+
+/** Les contrôles qu'un scénario ne vérifie pas : ceux qu'il déclare (la ligne d'essai et le catalogue les lisent ici). */
 export function unverifiedOf(s: AnyScenario): UnverifiedCheck[] {
-  return [
-    ...(s.unverified ?? []),
-    ...((s.productTools?.writes.length ?? 0) > 0 ? [PRODUCT_TOOL_WROTE_IT] : []),
-  ];
+  return [...(s.unverified ?? [])];
 }
 
 /** Ce que les règles de chemin lisent pour ce scénario, dit pour Bench Studio. */
@@ -630,8 +652,10 @@ export function productToolJudgedBy(s: AnyScenario): string[] {
       : []),
     ...writes.map(
       (rel) =>
-        `${base(rel)} is written by one of them: a call that may write (declared risk level other than read) names ${rel}, and the file's time on disk is not after that last call's end (its start plus its duration, ${WRITE_TOLERANCE_MS} ms of tolerance); a command that only reads it does not count`,
+        `tool_call_writes: the hash chain of ${base(rel)}, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)`,
     ),
-    ...reads.map((rel) => `${base(rel)} is read by one of them: a call names ${rel}`),
+    ...reads.map(
+      (rel) => `${base(rel)} is read by one of them: the path field of a call designates ${rel}`,
+    ),
   ];
 }

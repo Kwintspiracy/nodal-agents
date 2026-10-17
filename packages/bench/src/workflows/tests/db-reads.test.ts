@@ -303,25 +303,36 @@ describe('what the orchestration judges read from the tree', () => {
     });
   });
 
-  it('reads each tool call with its declared risk level and its duration: what attributes a write', async () => {
-    await pg.exec('delete from tool_calls; delete from agent_jobs;');
+  it('reads what each call of the tree did to each file it targeted, in seq order, with the source of the after hash', async () => {
+    await pg.exec('delete from tool_call_writes; delete from tool_calls; delete from agent_jobs;');
     const root = await job({ status: 'completed' });
+    const stranger = await job({ status: 'completed' });
+    const call = async (jobId: string, tool: string): Promise<string> => {
+      const r = await pg.query<{ id: string }>(
+        `insert into tool_calls (entity_id, job_id, tool_name) values ($1, $2, $3) returning id::text`,
+        [entityId, jobId, tool],
+      );
+      return r.rows[0]!.id;
+    };
+    const create = await call(root, 'xlsx_create');
+    const edit = await call(root, 'xlsx_set_range');
+    const other = await call(stranger, 'file_write');
+    const a = 'a'.repeat(64);
+    const b = 'b'.repeat(64);
     await pg.query(
-      `insert into tool_calls (entity_id, job_id, tool_name, tool_input, risk_level, duration_ms)
-       values ($1, $2, 'xlsx_read', '{"path":"nodal-bench/stock.xlsx"}'::jsonb, 'read', 12),
-              ($1, $2, 'xlsx_set_range', '{"path":"nodal-bench/stock.xlsx"}'::jsonb, 'write', 340),
-              ($1, $2, 'cli:Bash', '{}'::jsonb, null, null)`,
-      [entityId, root],
+      `insert into tool_call_writes (tool_call_id, job_id, path, before_kind, before_sha256, after_kind, after_sha256, after_source)
+       values ($1, $4, 'C:/ws/nodal-bench/v.xlsx', 'file', $6, 'file', $7, 'written'),
+              ($2, $4, 'C:/ws/nodal-bench/v.xlsx', 'absent', null, 'file', $6, 'written'),
+              ($3, $5, 'C:/ws/autre.txt', 'absent', null, 'file', $7, 'read')`,
+      [edit, create, other, root, stranger, a, b],
     );
     const facts = await readTreeFacts(db, root);
     expect(
-      facts.toolCalls
-        .map((c) => [c.toolName, c.riskLevel, c.durationMs])
-        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+      facts.writes.map((w) => [w.toolName, w.path, w.beforeKind, w.afterSha256, w.afterSource]),
     ).toEqual([
-      ['cli:Bash', null, null],
-      ['xlsx_read', 'read', 12],
-      ['xlsx_set_range', 'write', 340],
+      ['xlsx_create', 'C:/ws/nodal-bench/v.xlsx', 'absent', a, 'written'],
+      ['xlsx_set_range', 'C:/ws/nodal-bench/v.xlsx', 'file', b, 'written'],
     ]);
+    expect(facts.writes[0]!.seq).toBeLessThan(facts.writes[1]!.seq);
   });
 });

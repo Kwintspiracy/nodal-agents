@@ -1,22 +1,28 @@
 // path-rules.test.ts — les règles de CHEMIN du catalogue du 17/10, sur tous les scénarios.
 //
-// Décision 1 : un outil du produit disponible doit servir. Un livrable est
-// ÉCRIT par un outil attendu (un appel qui peut écrire le nomme, et le fichier
-// n'a plus changé après la fin de ce dernier appel) ; un fichier à lire est LU
-// par un outil attendu (un appel le nomme). Sinon l'essai est rouge, « product
-// tool available, not used ». La règle est écrite une fois (judge-kit
-// `productToolReasons`) et appliquée par runTrial à tout scénario qui déclare
-// `productTools` : ces tests la jouent sur CHACUN d'eux, pas sur le seul
-// scénario qui l'a fait naître.
+// Décision 1 : un outil du produit disponible doit servir. Un livrable suit une
+// CHAÎNE D'EMPREINTES (`tool_call_writes`, dans l'ordre `seq`) : de l'état que
+// le banc a préparé à l'état final du disque, chaque écriture partant de
+// l'état laissé par la précédente, et chaque écriture qui le change étant
+// celle d'un outil attendu, prouvée par les octets qu'il a écrits. Un fichier
+// à lire est désigné par le champ chemin d'un appel d'un outil attendu. Sinon
+// l'essai est rouge, « product tool available, not used ». La règle est écrite
+// une fois (judge-kit `productToolReasons`) et appliquée par runTrial à tout
+// scénario qui déclare `productTools` : ces tests la jouent sur CHACUN d'eux.
+//
+// Chaque P2 des passes 1 et 2 de la revue de #777 a ici son test, nommé par
+// lui : l'alibi, l'écrivain hors liste, la lecture seule, la sous-chaîne, la
+// fenêtre d'une seconde, l'ordre parallèle.
 
+import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildCatalog } from '../catalog';
 import { TreeFactsSchema } from '../facts';
+import { fileHash, fixturePath } from '../fixtures';
 import { PRODUCT_TOOL_NOT_USED, productToolGate, toolPath } from '../judge-kit';
-import { declaredRiskLevel } from '../needs';
-import { SCENARIOS } from '../scenarios';
+import { SCENARIOS, scenarioById } from '../scenarios';
 import { ROOT_ID, facts, play } from './harness';
 
 const WITH_TOOLS = SCENARIOS.filter((s) => s.productTools);
@@ -27,15 +33,20 @@ const NO_FILE = WITH_TOOLS.filter(
 );
 const pathRule = (reasons: string[]): string[] =>
   reasons.filter((x) => x.startsWith(PRODUCT_TOOL_NOT_USED));
-/** Les outils du scénario qui peuvent écrire, tels que le produit les déclare. */
-const writersOf = (tools: readonly string[]): string[] =>
-  tools.filter((t) => declaredRiskLevel(t) !== 'read');
-/** Ce que le travail d'un agent laisse : le livrable écrit maintenant, au chemin déclaré. */
-const writeNow =
-  (rel: string) =>
+const sha = (s: string): string => createHash('sha256').update(s).digest('hex');
+/** Les outils d'un scénario qui écrivent : tous sauf ses lecteurs (`*_read`). */
+const writersOf = (tools: readonly string[]): string[] => tools.filter((t) => !t.endsWith('_read'));
+/** L'état où le banc prépare un livrable : l'empreinte de sa fixture, sinon absent. */
+function initialOf(id: string, rel: string): string {
+  const f = (scenarioById(id)!.fixtures ?? []).find((x) => x.to === rel);
+  return f ? fileHash(fixturePath(f.from)) : 'absent';
+}
+/** Ce que le travail d'un agent laisse : `content` au chemin du livrable. */
+const leave =
+  (rel: string, content: string) =>
   (root: string): void => {
     mkdirSync(dirname(join(root, rel)), { recursive: true });
-    writeFileSync(join(root, rel), 'written');
+    writeFileSync(join(root, rel), content);
   };
 
 describe('decision 1: a product tool available must be used', () => {
@@ -57,44 +68,18 @@ describe('decision 1: a product tool available must be used', () => {
   });
 
   it.each(WRITES.map((s) => [s.id, s.productTools!] as const))(
-    '%s: no writing call of its tools names its deliverable: red, whatever else was called',
-    async (id, pt) => {
-      const rel = pt.writes[0]!;
-      const reads = pt.tools.filter((t) => declaredRiskLevel(t) === 'read');
-      const r = await play(
-        id,
-        {
-          // Un appel d'alibi d'un outil de lecture du produit, s'il en a un, ne compte pas.
-          tools: reads.map((t) => ({ name: t, input: { path: rel }, risk: 'read' as const })),
-        },
-        undefined,
-        { teamTools: pt.tools },
-      );
-      expect(pathRule(r.reasons)).toEqual([
-        `${PRODUCT_TOOL_NOT_USED}: no writing call of ${writersOf(pt.tools).join(', ')} names ${rel}`,
-      ]);
-    },
-  );
-
-  it.each(WRITES.map((s) => [s.id, s.productTools!] as const))(
-    '%s: its tool, even under a server prefix, wrote the deliverable last: the path rule is satisfied',
+    '%s: its tool wrote the deliverable, recorded with its bytes, from the prepared state to the disk: the path rule holds',
     async (id, pt) => {
       const rel = pt.writes[0]!;
       const tool = writersOf(pt.tools)[0]!;
       const r = await play(
         id,
-        () => ({
-          tools: [
-            {
-              name: `office__${tool}`,
-              input: { path: `shared/${rel}` },
-              risk: 'write',
-              at: Date.now(),
-              durationMs: 400,
-            },
+        {
+          writes: [
+            { tool: `office__${tool}`, rel, before: initialOf(id, rel), after: sha('livre') },
           ],
-        }),
-        writeNow(rel),
+        },
+        leave(rel, 'livre'),
         { teamTools: [`office__${tool}`] },
       );
       expect(pathRule(r.reasons)).toEqual([]);
@@ -102,102 +87,105 @@ describe('decision 1: a product tool available must be used', () => {
   );
 
   it.each(WRITES.map((s) => [s.id, s.productTools!] as const))(
-    '%s: its deliverable changed after its tool ended, by a tool on no list: red, naming the calls made after',
+    'P2 alibi (pass 1) — %s: a read by the product tool, the deliverable written by a script: no recorded write, red',
+    async (id, pt) => {
+      const rel = pt.writes[0]!;
+      const reader = pt.tools.find((t) => t.endsWith('_read'));
+      const r = await play(
+        id,
+        {
+          tools: [
+            ...(reader ? [{ name: reader, input: { path: rel } }] : []),
+            { name: 'notebook__python_repl', input: { code: 'wb.save(p)' } },
+          ],
+        },
+        leave(rel, 'ecrit par un script'),
+        { teamTools: pt.tools },
+      );
+      expect(pathRule(r.reasons)[0]).toBe(
+        `${PRODUCT_TOOL_NOT_USED}: no write of ${rel} by ${pt.tools.join(', ')} is recorded with the bytes it wrote`,
+      );
+    },
+  );
+
+  it.each(WRITES.map((s) => [s.id, s.productTools!] as const))(
+    'P2 writer on no list (pass 1) and the one-second window (pass 2) — %s: the deliverable changed after its tool wrote it, whatever wrote it and however soon: red',
     async (id, pt) => {
       const rel = pt.writes[0]!;
       const tool = writersOf(pt.tools)[0]!;
       const r = await play(
         id,
-        () => ({
-          tools: [
-            {
-              name: tool,
-              input: { path: rel },
-              risk: 'write',
-              at: Date.now() - 60_000,
-              durationMs: 300,
-            },
-            {
-              name: 'fs__copy_file',
-              input: { from: 'tmp/x', to: 'out' },
-              risk: 'write',
-              at: Date.now() - 2_000,
-              durationMs: 100,
-            },
-          ],
-        }),
-        writeNow(rel),
+        {
+          tools: [{ name: 'fs__copy_file', input: { from: 'tmp/x', to: rel } }],
+          writes: [{ tool, rel, before: initialOf(id, rel), after: sha('par l outil'), seq: 7 }],
+        },
+        leave(rel, 'remplace aussitot'),
         { teamTools: pt.tools },
       );
       expect(pathRule(r.reasons)).toEqual([
-        `${PRODUCT_TOOL_NOT_USED}: ${rel} was changed after the last ${tool} call (calls that may write, made after it: fs__copy_file)`,
+        `${PRODUCT_TOOL_NOT_USED}: ${rel} was changed after ${tool} (seq 7) by something that left no record (expected sha-256 ${sha('par l outil').slice(0, 12)}, on disk sha-256 ${sha('remplace aussitot').slice(0, 12)})`,
       ]);
     },
   );
 
   it.each(WRITES.map((s) => [s.id, s.productTools!] as const))(
-    '%s: a command that only READS the deliverable after its tool wrote it is never red for it',
+    'P2 read only (pass 1) — %s: a command that only READS the deliverable after its tool wrote it is never red for it',
     async (id, pt) => {
       const rel = pt.writes[0]!;
       const tool = writersOf(pt.tools)[0]!;
       const r = await play(
         id,
-        () => ({
+        {
           tools: [
-            { name: tool, input: { path: rel }, risk: 'write', at: Date.now(), durationMs: 400 },
             {
               name: 'run_command',
-              input: { command: `ls -l ${rel} && type ${rel}` },
-              risk: 'write',
-              at: Date.now() + 500,
-              durationMs: 50,
+              input: { command: `ls -l ${rel} && python -c "open('${rel}','rb')"` },
             },
           ],
-        }),
-        writeNow(rel),
+          writes: [{ tool, rel, before: initialOf(id, rel), after: sha('livre') }],
+        },
+        leave(rel, 'livre'),
         { teamTools: pt.tools },
       );
       expect(pathRule(r.reasons)).toEqual([]);
     },
   );
 
-  it.each(READS.map((s) => [s.id, s.productTools!] as const))(
-    '%s: its file read by a command only is red; read by its tool, a command reading it too is fine',
-    async (id, pt) => {
-      const rel = pt.reads[0]!;
-      const cmd = {
-        name: 'run_command',
-        input: { command: `python -c "open('${rel}','rb')"` },
-        risk: 'write' as const,
-      };
-      const alone = await play(id, { tools: [cmd] }, undefined, { teamTools: pt.tools });
-      expect(pathRule(alone.reasons)).toEqual([
-        `${PRODUCT_TOOL_NOT_USED}: no call of ${pt.tools.join(', ')} names ${rel}`,
-      ]);
-      const both = await play(
-        id,
-        { tools: [{ name: pt.tools[0]!, input: { path: rel } }, cmd] },
-        undefined,
-        { teamTools: pt.tools },
-      );
-      expect(pathRule(both.reasons)).toEqual([]);
-    },
-  );
-
-  it('a read by the product tool of ANOTHER file is no read of the scenario file (an alibi)', async () => {
+  it('P2 substring (pass 2): a write of ANOTHER file whose content cites the deliverable is no write of it', async () => {
+    const rel = 'nodal-bench/boulangerie-bench.html';
     const r = await play(
+      'html-landing',
+      {
+        tools: [
+          {
+            name: 'file_write',
+            input: { path: 'nodal-bench/autre.html', content: `<a href="${rel}">voir</a>` },
+          },
+        ],
+        writes: [
+          { tool: 'file_write', rel: 'nodal-bench/autre.html', before: 'absent', after: sha('x') },
+        ],
+      },
+      leave(rel, 'ecrit par un script'),
+      { teamTools: ['file_write'] },
+    );
+    expect(pathRule(r.reasons)[0]).toBe(
+      `${PRODUCT_TOOL_NOT_USED}: no write of ${rel} by file_write is recorded with the bytes it wrote`,
+    );
+  });
+
+  it('P2 substring (pass 2): a read tool whose OTHER field cites the file does not read it; only its path field counts', async () => {
+    const rel = 'nodal-bench/ventes-trimestre.xlsx';
+    const cited = await play(
       'excel-read-answer',
-      { tools: [{ name: 'xlsx_read', input: { path: 'tmp/ventes-trimestre.xlsx' } }] },
+      { tools: [{ name: 'xlsx_read', input: { path: 'tmp/autre.xlsx', note: rel } }] },
       undefined,
       { teamTools: ['xlsx_read'] },
     );
-    expect(pathRule(r.reasons)).toEqual([
-      `${PRODUCT_TOOL_NOT_USED}: no call of xlsx_read names nodal-bench/ventes-trimestre.xlsx`,
+    expect(pathRule(cited.reasons)).toEqual([
+      `${PRODUCT_TOOL_NOT_USED}: no call of xlsx_read reads ${rel}`,
     ]);
-  });
-
-  it('a path written the Windows way, escaped in the JSON input, still names the file', async () => {
-    const r = await play(
+    const windows = await play(
       'excel-read-answer',
       {
         tools: [
@@ -210,8 +198,145 @@ describe('decision 1: a product tool available must be used', () => {
       undefined,
       { teamTools: ['xlsx_read'] },
     );
+    expect(pathRule(windows.reasons)).toEqual([]);
+  });
+
+  it('a workspace folder reached through a link: the rows carry the real path, and the chain still finds them', async () => {
+    const rel = 'nodal-bench/ventes-bench.xlsx';
+    const r = await play(
+      'file',
+      { writes: [{ tool: 'xlsx_create', rel, before: 'absent', after: sha('final') }] },
+      leave(rel, 'final'),
+      { teamTools: ['xlsx_create', 'xlsx_set_range'], linkedRoot: true },
+    );
     expect(pathRule(r.reasons)).toEqual([]);
   });
+
+  it('P2 parallel order (pass 2): the chain follows seq, whatever order the rows come in', async () => {
+    const rel = 'nodal-bench/stock.xlsx';
+    const initial = initialOf('excel-edit-column', rel);
+    const r = await play(
+      'excel-edit-column',
+      {
+        writes: [
+          { tool: 'xlsx_set_cell', rel, before: sha('A'), after: sha('B'), seq: 12 },
+          { tool: 'xlsx_set_range', rel, before: initial, after: sha('A'), seq: 11 },
+        ],
+      },
+      leave(rel, 'B'),
+      { teamTools: ['xlsx_read', 'xlsx_set_range', 'xlsx_set_cell'] },
+    );
+    expect(pathRule(r.reasons)).toEqual([]);
+  });
+
+  it('a script that wrote the content BEFORE a last product-tool write breaks the chain: red, between which calls said', async () => {
+    const rel = 'nodal-bench/ventes-bench.xlsx';
+    const r = await play(
+      'file',
+      {
+        writes: [
+          {
+            tool: 'xlsx_set_range',
+            rel,
+            before: sha('par un script'),
+            after: sha('final'),
+            seq: 4,
+          },
+        ],
+      },
+      leave(rel, 'final'),
+      { teamTools: ['xlsx_create', 'xlsx_set_range'] },
+    );
+    expect(pathRule(r.reasons)).toEqual([
+      `${PRODUCT_TOOL_NOT_USED}: ${rel} was changed between the bench prepared it and xlsx_set_range (seq 4) by something that left no record (it was absent, then sha-256 ${sha('par un script').slice(0, 12)})`,
+    ]);
+  });
+
+  it('a write recorded as a re-read is not a proof: "not recorded", never green', async () => {
+    const rel = 'nodal-bench/ventes-bench.xlsx';
+    const r = await play(
+      'file',
+      {
+        writes: [
+          {
+            tool: 'xlsx_create',
+            rel,
+            before: 'absent',
+            after: sha('final'),
+            source: 'read',
+            seq: 3,
+          },
+        ],
+      },
+      leave(rel, 'final'),
+      { teamTools: ['xlsx_create', 'xlsx_set_range'] },
+    );
+    expect(pathRule(r.reasons)).toEqual([
+      `${PRODUCT_TOOL_NOT_USED}: no write of ${rel} by xlsx_create, xlsx_set_range is recorded with the bytes it wrote`,
+      `${PRODUCT_TOOL_NOT_USED}: the write of ${rel} by xlsx_create (seq 3) is not recorded with the bytes it wrote (a re-read of the disk, never a proof)`,
+    ]);
+  });
+
+  it('a recorded write by a tool that is not one of the scenario: red, named', async () => {
+    const rel = 'nodal-bench/ventes-bench.xlsx';
+    const r = await play(
+      'file',
+      {
+        writes: [
+          { tool: 'xlsx_create', rel, before: 'absent', after: sha('cree'), seq: 1 },
+          { tool: 'file_write', rel, before: sha('cree'), after: sha('final'), seq: 2 },
+        ],
+      },
+      leave(rel, 'final'),
+      { teamTools: ['xlsx_create', 'xlsx_set_range', 'file_write'] },
+    );
+    expect(pathRule(r.reasons)).toEqual([
+      `${PRODUCT_TOOL_NOT_USED}: ${rel} was written by file_write (seq 2), not one of xlsx_create, xlsx_set_range`,
+    ]);
+  });
+
+  it('a call that left the file as it was (same hash before and after) is part of the chain, never a breach', async () => {
+    const rel = 'nodal-bench/ventes-bench.xlsx';
+    const r = await play(
+      'file',
+      {
+        writes: [
+          { tool: 'xlsx_create', rel, before: 'absent', after: sha('final'), seq: 1 },
+          {
+            tool: 'file_edit',
+            rel,
+            before: sha('final'),
+            after: sha('final'),
+            source: 'read',
+            seq: 2,
+          },
+        ],
+      },
+      leave(rel, 'final'),
+      { teamTools: ['xlsx_create', 'xlsx_set_range'] },
+    );
+    expect(pathRule(r.reasons)).toEqual([]);
+  });
+
+  it.each(READS.map((s) => [s.id, s.productTools!] as const))(
+    '%s: its file read by a command only is red; designated by its tool, a command reading it too is fine',
+    async (id, pt) => {
+      const rel = pt.reads[0]!;
+      const cmd = { name: 'run_command', input: { command: `python -c "open('${rel}','rb')"` } };
+      const alone = await play(id, { tools: [cmd] }, undefined, { teamTools: pt.tools });
+      expect(pathRule(alone.reasons)).toEqual([
+        `${PRODUCT_TOOL_NOT_USED}: no call of ${pt.tools.join(', ')} reads ${rel}`,
+      ]);
+      const field = pt.tools[0] === 'request_print' ? 'filePath' : 'path';
+      const both = await play(
+        id,
+        { tools: [{ name: pt.tools[0]!, input: { [field]: `shared/${rel}` } }, cmd] },
+        undefined,
+        { teamTools: pt.tools },
+      );
+      expect(pathRule(both.reasons)).toEqual([]);
+    },
+  );
 
   it.each(NO_FILE.map((s) => [s.id, s.productTools!.tools] as const))(
     '%s: no file to attribute, so one call of its tool is the rule',
@@ -226,38 +351,6 @@ describe('decision 1: a product tool available must be used', () => {
       expect(pathRule(one.reasons)).toEqual([]);
     },
   );
-
-  it('a writing call with no recorded end cannot be shown to have written last: red, said so', async () => {
-    const r = await play(
-      'file',
-      () => ({
-        tools: [
-          {
-            name: 'xlsx_create',
-            input: { path: 'nodal-bench/ventes-bench.xlsx' },
-            risk: 'write',
-            at: Date.now(),
-            durationMs: null,
-          },
-        ],
-      }),
-      writeNow('nodal-bench/ventes-bench.xlsx'),
-      { teamTools: ['xlsx_create', 'xlsx_set_range'] },
-    );
-    expect(pathRule(r.reasons)).toEqual([
-      `${PRODUCT_TOOL_NOT_USED}: the last xlsx_create call naming nodal-bench/ventes-bench.xlsx has no recorded end, so it cannot be shown to have written the file last`,
-    ]);
-  });
-
-  it('every scenario with a deliverable says, not verified, that the content may come from a script before a last product-tool write', () => {
-    for (const c of buildCatalog().scenarios.filter(
-      (x) => (x.productTools?.writes.length ?? 0) > 0,
-    ))
-      expect(c.unverified.map((u) => [u.check, u.ticket])).toContainEqual([
-        'content written by the product tool',
-        '#779',
-      ]);
-  });
 
   it('without any of its tools in the team, the rule says nothing: runTrial skips the trial before', async () => {
     for (const s of WITH_TOOLS) {
@@ -283,9 +376,10 @@ describe('decision 1: a product tool available must be used', () => {
     expect(pdf.reasons).toEqual([]);
   });
 
-  it('every scenario with product tools says the rule in how it is judged (Bench Studio reads it)', () => {
+  it('every scenario with product tools says the rule in how it is judged (Bench Studio reads it), and carries no file-time check any more', () => {
     for (const c of buildCatalog().scenarios.filter((x) => x.productTools)) {
       expect(c.judgedBy.some((j) => j.includes(`"${PRODUCT_TOOL_NOT_USED}"`))).toBe(true);
+      expect(c.unverified.map((u) => u.check)).not.toContain('content written by the product tool');
     }
   });
 });
@@ -301,8 +395,6 @@ describe('the path of a tree', () => {
           input: null,
           output: null,
           createdMs: 1,
-          riskLevel: 'read',
-          durationMs: 5,
         },
         {
           jobId: null,
@@ -310,8 +402,6 @@ describe('the path of a tree', () => {
           input: null,
           output: null,
           createdMs: 2,
-          riskLevel: 'write',
-          durationMs: 5,
         },
       ],
     });
@@ -319,70 +409,5 @@ describe('the path of a tree', () => {
       { job: ROOT_ID.slice(0, 8), agent: 'root', parent: null, tools: ['web_search'] },
       { job: 'no job', agent: null, parent: null, tools: ['run_command'] },
     ]);
-  });
-});
-
-// Revue Reviewer A de #777, passe 1 : les deux P2 de la règle « outil du produit contourné ».
-describe('review pass 1 of #777: the deliverable must be WRITTEN by a product tool', () => {
-  const STOCK = 'nodal-bench/stock.xlsx';
-  const TOOLS = ['xlsx_read', 'xlsx_set_range', 'xlsx_set_cell'];
-  const write = (root: string): void => {
-    writeFileSync(join(root, 'nodal-bench', 'stock.xlsx'), 'rewritten by a script');
-  };
-
-  it('P2 false green: an alibi read by the product tool, then an interpreter outside any list writes the file', async () => {
-    const r = await play(
-      'excel-edit-column',
-      () => ({
-        tools: [
-          {
-            name: 'xlsx_read',
-            input: { path: STOCK },
-            risk: 'read',
-            at: Date.now() - 60_000,
-            durationMs: 50,
-          },
-          {
-            name: 'notebook__python_repl',
-            input: { code: 'wb.save(p)' },
-            risk: 'write',
-            at: Date.now() - 1_000,
-            durationMs: 900,
-          },
-        ],
-      }),
-      write,
-      { teamTools: TOOLS },
-    );
-    expect(r.reasons.filter((x) => x.startsWith(PRODUCT_TOOL_NOT_USED))).toEqual([
-      `${PRODUCT_TOOL_NOT_USED}: no writing call of xlsx_set_range, xlsx_set_cell names ${STOCK}`,
-    ]);
-  });
-
-  it('P2 false red: the product tool writes, then a command only READS the file: green on the path', async () => {
-    const r = await play(
-      'excel-edit-column',
-      () => ({
-        tools: [
-          {
-            name: 'xlsx_set_range',
-            input: { path: STOCK },
-            risk: 'write',
-            at: Date.now(),
-            durationMs: 500,
-          },
-          {
-            name: 'run_command',
-            input: { command: `python -c "print(open('${STOCK}','rb').read()[:4])"` },
-            risk: 'write',
-            at: Date.now() + 600,
-            durationMs: 300,
-          },
-        ],
-      }),
-      write,
-      { teamTools: TOOLS },
-    );
-    expect(r.reasons.filter((x) => x.startsWith(PRODUCT_TOOL_NOT_USED))).toEqual([]);
   });
 });
