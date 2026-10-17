@@ -66,6 +66,8 @@ describe('buildProviderArgs', () => {
       'stream-json',
       '--verbose',
       '--strict-mcp-config',
+      '--setting-sources',
+      'user',
       '--disallowedTools',
       CLAUDE_READONLY_DISALLOWED,
     ]);

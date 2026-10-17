@@ -613,6 +613,13 @@
     {
       "page": "guides/coding",
       "pageTitle": "Coding with an agent",
+      "heading": "Claude runs ignore the settings of the folder they work in",
+      "url": "/nodal-agents/docs/guides/coding#claude-runs-ignore-the-settings-of-the-folder-they-work-in",
+      "text": "Nodal starts Claude Code with --setting-sources user: it loads your own Claude settings (~/.claude) and nothing from the workspace folder it runs in. This is a security boundary, not a preference. A workspace is a folder that commands, and the agent itself, can write. Claude Code runs the hooks of a .claude/settings.json as shell commands on your machine, outside the sandbox, with no confirmation when it runs headless. Measured on claude 2.1.301: a project SessionStart and a UserPromptSubmit hook both ran. Without this flag, a command that writes that file would run on your machine at the next Claude turn in that folder. The trade-off, stated plainly: what the CLI reads from the folder rides the same switch, so these no longer apply to Nodal runs: the folder's hooks, permission rules, CLAUDE.md, .claude/skills, .claude/agents and .claude/commands. Put what an agent needs in the agent itself in Nodal (its instructions, skills and tools). Your own user skills, agents, plugins and hooks, the extra folders you attach to the agent, and the agent's instructions are unchanged. To check it yourself, on any machine, after any Claude Code upgrade: node scripts/probe-claude-setting-sources.mjs It runs two real turns in a throwaway folder (with and without the flag), prints what each one loaded, and exits 1 if a project hook ran with the flag. It costs two small model calls."
+    },
+    {
+      "page": "guides/coding",
+      "pageTitle": "Coding with an agent",
       "heading": "Approval",
       "url": "/nodal-agents/docs/guides/coding#approval",
       "text": "The agent proposes the task; the job suspends; you see the full task text, the mode, the working directory and the agent's stated purpose before anything runs. Approve and the run starts. Reject and the agent gets an error it can act on. Yolo mode skips this gate per agent, on the Autonomy tab — the same control and the same caveats as shell commands."

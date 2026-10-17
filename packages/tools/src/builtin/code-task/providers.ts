@@ -20,6 +20,7 @@
 
 import {
   CLAUDE_SHELL_TOOLS,
+  claudeSettingSourcesFlags,
   claudeShellFlags,
   claudeShellTools,
   cliShellPosture,
@@ -162,7 +163,16 @@ export function buildProviderArgs(
     // `--verbose` is what makes stream-json actually emit the full event stream
     // in print mode; the runtime path (claude-turn.ts) has shipped this pair
     // for a while, so the shape is known-good rather than assumed.
-    const args = ['-p', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config'];
+    const args = [
+      '-p',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--strict-mcp-config',
+      // The workspace's own settings (hooks run on the host) are never loaded;
+      // one definition shared with claude-turn.ts, see claude-setting-sources.ts.
+      ...claudeSettingSourcesFlags(),
+    ];
     // A flag, and it works in print mode — the runtime path (claude-turn.ts)
     // has shipped it for a while, which is what made this half cheap.
     if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);

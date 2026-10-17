@@ -36,7 +36,7 @@ import {
   CLAUDE_READONLY_DISALLOWED,
   type NormalizedCliResult,
 } from '@nodal-agents/tools';
-import { claudeShellFlags } from '@nodal-agents/shared';
+import { claudeSettingSourcesFlags, claudeShellFlags } from '@nodal-agents/shared';
 
 export interface ClaudeTurnEvent {
   kind: 'tool_use' | 'tool_result' | 'assistant_text';
@@ -139,6 +139,9 @@ export function buildClaudeTurnArgs(opts: ClaudeTurnOptions, personalityFile: st
     // --verbose (verified on the recorded fixture).
     '--verbose',
     '--strict-mcp-config',
+    // Only the owner's own settings: a workspace's `.claude/settings.json` hooks
+    // would run on the host, outside the sandbox (see claude-setting-sources.ts).
+    ...claudeSettingSourcesFlags(),
     '--append-system-prompt-file',
     personalityFile,
   ];
