@@ -19,17 +19,19 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { findInRoots, readText } from '../disk';
 import type { TreeFacts } from '../facts';
-import { fileHash, fixturePath, installed, sharedRoot } from '../fixtures';
-import { REGIONS } from '../fixture-data';
+import { fileHash, fixturePath, sharedRoot } from '../fixtures';
 import {
   COMMAND_TOOL,
   JUDGED_COMMON,
   SCRIPT_RUNNER,
+  answerOf,
   bareToolName,
   commandRuns,
   commonReasons,
   parseJson,
+  textHasNumber,
 } from '../judge-kit';
 import { defineScenario, type AnyScenario, type UnverifiedCheck } from '../types';
 
@@ -147,10 +149,16 @@ function judgeProject(facts: TreeFacts, project: string, o: ProjectObservation):
   return r;
 }
 
+/** Le chemin des projets : le script EST le sujet, aucun outil du produit n'est attendu. */
+const PROJECT_PATH =
+  'Read, run the tests, fix, run them again. Measured: a command tool or a code CLI (Claude Code, Codex).';
+
 function codeProject(o: {
   id: string;
   title: string;
   green: string;
+  path?: string;
+  deliverable: string;
   project: string;
   source: string;
   instruction: string;
@@ -164,6 +172,8 @@ function codeProject(o: {
     version: 1,
     title: o.title,
     green: o.green,
+    path: o.path ?? PROJECT_PATH,
+    deliverable: o.deliverable,
     set: 'on-demand',
     activity: 'code',
     sends: 'nothing',
@@ -196,78 +206,122 @@ function codeProject(o: {
 
 const SHARED = "dans l'espace de travail partagé";
 
-// ─── code-data ───────────────────────────────────────────────────────────────
+// ─── code : récupérer un fichier et le traiter par script ────────────────────
+//
+// La fusion de `code` (télécharger un fichier public, lancer un script) et de
+// `code-data` (un total par catégorie, écrit en JSON) : la même capacité, un
+// seul essai. Le fichier est figé par son commit, son contenu ne peut plus
+// changer ; le banc recalcule les totaux sur le fichier RÉELLEMENT téléchargé.
 
-export const DATA_CSV_REL = 'nodal-bench/ventes-regions.csv';
-export const DATA_JSON_REL = 'nodal-bench/ca-par-region.json';
+/** Un fichier public figé par son commit : son contenu ne peut plus changer. */
+export const CODE_URL =
+  'https://raw.githubusercontent.com/mwaskom/seaborn-data/8504c04d4b02ac56527949baafb416e5864698b6/iris.csv';
+export const CODE_REL = 'nodal-bench/iris.csv';
+export const CODE_JSON_REL = 'nodal-bench/iris-totaux.json';
+const CODE_ROWS = 150;
+/** Le total de petal_length par espèce de ce fichier : ce qui prouve qu'il est intact. */
+export const CODE_TOTALS: Readonly<Record<string, number>> = {
+  setosa: 73.1,
+  versicolor: 213,
+  virginica: 277.6,
+};
 
-/** Le chiffre d'affaires par région, recalculé par le banc sur le CSV, au centime. */
-export function revenueByRegion(csv: string): Record<string, number> {
-  const [head, ...rows] = csv.replace(/\r\n/g, '\n').trim().split('\n');
-  const h = (head ?? '').split(',');
-  const [reg, qty, price] = ['region', 'quantite', 'prix_unitaire'].map((k) => h.indexOf(k));
-  const cents: Record<string, number> = {};
-  for (const line of rows) {
-    const f = line.split(',');
-    const c = Math.round(Number(f[qty!]) * Math.round(Number(f[price!]) * 100));
-    cents[f[reg!]!] = (cents[f[reg!]!] ?? 0) + c;
+/** Recalcule les totaux de petal_length par espèce sur un CSV, au centième. */
+export function petalTotalsBySpecies(csv: string): {
+  rows: number;
+  totals: Record<string, number>;
+} {
+  const lines = csv.replace(/\r\n/g, '\n').trim().split('\n');
+  const header = (lines[0] ?? '').split(',').map((h) => h.trim());
+  const len = header.indexOf('petal_length');
+  const sp = header.indexOf('species');
+  const hundredths: Record<string, number> = {};
+  for (const l of lines.slice(1)) {
+    const f = l.split(',');
+    const species = (f[sp] ?? '').trim();
+    hundredths[species] = (hundredths[species] ?? 0) + Math.round(Number(f[len]) * 100);
   }
-  return Object.fromEntries(Object.entries(cents).map(([k, v]) => [k, v / 100]));
+  return {
+    rows: lines.length - 1,
+    totals: Object.fromEntries(Object.entries(hundredths).map(([k, v]) => [k, v / 100])),
+  };
 }
 
-interface DataObservation {
-  readonly csvHash: string | null;
+interface FetchObservation {
+  readonly csv: { fresh: boolean; rows: number; totals: Record<string, number> } | null;
   readonly json: { fresh: boolean; text: string } | null;
 }
 
-const codeData = defineScenario<DataObservation>({
-  id: 'code-data',
-  version: 1,
-  title: 'A data script: revenue per region from a CSV',
-  green: `A Python or Node script ran, ${DATA_JSON_REL} was written during the run and holds, for each of the ${REGIONS.length} regions and nothing else, the revenue the bench recomputes from the untouched CSV (to the cent), and nobody was asked anything.`,
-  set: 'on-demand',
+const sameTotals = (a: Record<string, number>, b: Readonly<Record<string, number>>): boolean =>
+  Object.keys(a).length === Object.keys(b).length &&
+  Object.entries(b).every(([k, v]) => typeof a[k] === 'number' && Math.abs(a[k]! - v) <= 0.005);
+
+const fetchAndProcess = defineScenario<FetchObservation>({
+  // L'identifiant du premier des deux scénarios fusionnés (code, code-data).
+  id: 'code',
+  // v2 (catalogue du 17/10) : un total par catégorie écrit en JSON et donné
+  // dans la réponse, au lieu d'une seule somme imprimée par le script.
+  version: 2,
+  title: 'Fetch a file and process it with a script',
+  green: `The CSV was downloaded into ${CODE_REL} during the run and is the pinned file (${CODE_ROWS} rows, its totals); a Python or Node script ran; ${CODE_JSON_REL} was written during the run with exactly one total per species, equal to what the bench recomputes from the downloaded file (to the hundredth); the answer gives each total; nobody was asked anything.`,
+  path: 'A download, then a Python or Node script. Measured: the command tool or code CLI that ran it.',
+  deliverable: `${CODE_JSON_REL} and the answer`,
+  set: 'nightly',
   activity: 'code',
   sends: 'nothing',
   instruction:
-    `Le fichier ${DATA_CSV_REL} ${SHARED} contient des ventes (une ligne par vente). Écris et ` +
-    'exécute un script Python ou Node qui calcule le chiffre d’affaires (quantité × prix unitaire) ' +
-    `total par région, puis écris le résultat dans ${DATA_JSON_REL} sous la forme ` +
-    '{"Nord": 1234.56, …}, arrondi au centime.',
+    `Télécharge ${CODE_URL} dans ton espace de travail, sous ${CODE_REL}. Puis écris et exécute un ` +
+    'script Python (ou Node) qui calcule le total de la colonne petal_length pour chaque espèce ' +
+    `(colonne species), écris le résultat dans ${CODE_JSON_REL} sous la forme ` +
+    '{"<espèce>": <total>, …}, et donne-moi les totaux.',
   timeoutMs: 15 * MIN,
   judgedBy: [
     ...JUDGED_COMMON,
+    `opens ${CODE_REL}, written during the trial: ${CODE_ROWS} data rows and the totals of the pinned file (${Object.entries(
+      CODE_TOTALS,
+    )
+      .map(([k, v]) => `${k} ${v}`)
+      .join(', ')})`,
     'tool_calls: a command tool ran a Python or Node script',
-    `${DATA_CSV_REL} is byte for byte the fixture (sha-256)`,
-    `opens ${DATA_JSON_REL} (written during the trial) and parses it as JSON`,
-    `it holds exactly the keys ${REGIONS.join(', ')}; each value equals the revenue the bench recomputes from the CSV (quantity × unit price, to the cent)`,
+    `opens ${CODE_JSON_REL} (written during the trial) and parses it as JSON: exactly one key per species, each value the total the bench recomputes from the downloaded CSV (± 0.005)`,
+    'the final answer gives each total',
   ],
-  fixtures: [{ from: 'data/ventes-regions.csv', to: DATA_CSV_REL }],
-  outputs: [DATA_JSON_REL],
+  outputs: [CODE_REL, CODE_JSON_REL],
   async observe(_facts, env) {
-    const csv = installed(env.workspaceRoots, DATA_CSV_REL, env.startedMs);
-    const json = installed(env.workspaceRoots, DATA_JSON_REL, env.startedMs);
+    const [csv] = findInRoots(env.workspaceRoots, CODE_REL, env.startedMs);
+    const [json] = findInRoots(env.workspaceRoots, CODE_JSON_REL, env.startedMs);
     return {
-      csvHash: csv.exists ? fileHash(csv.path) : null,
-      json: json.exists ? { fresh: json.fresh, text: readFileSync(json.path, 'utf8') } : null,
+      csv: csv ? { fresh: csv.fresh, ...petalTotalsBySpecies(readText(csv.path)) } : null,
+      json: json ? { fresh: json.fresh, text: readText(json.path) } : null,
     };
   },
   judge(facts, o) {
     const r = commonReasons(facts);
-    const fixture = fixturePath('data/ventes-regions.csv');
-    if (o.csvHash !== fileHash(fixture)) r.push(`${DATA_CSV_REL} was changed or removed`);
+    if (!o.csv) r.push(`the CSV was not downloaded into ${CODE_REL}`);
+    else {
+      if (!o.csv.fresh) r.push(`${CODE_REL} exists but was not written during the run`);
+      if (o.csv.rows !== CODE_ROWS || !sameTotals(o.csv.totals, CODE_TOTALS))
+        r.push(
+          `the downloaded file is not the pinned one (${o.csv.rows} rows, totals ${JSON.stringify(o.csv.totals)})`,
+        );
+    }
     if (commandRuns(facts, SCRIPT_RUNNER).length === 0) r.push('no Python or Node script ran');
-    if (!o.json) return [...r, `no file ${DATA_JSON_REL}`];
-    if (!o.json.fresh) r.push(`${DATA_JSON_REL} was not written during the run`);
+    const want = o.csv?.totals ?? CODE_TOTALS;
+    const answer = answerOf(facts);
+    const notGiven = Object.entries(want).filter(([, v]) => !textHasNumber(answer, v, 1));
+    if (notGiven.length > 0)
+      r.push(`the answer does not give the total of ${notGiven.map(([k]) => k).join(', ')}`);
+    if (!o.json) return [...r, `no file ${CODE_JSON_REL}`];
+    if (!o.json.fresh) r.push(`${CODE_JSON_REL} was not written during the run`);
     const got = parseJson(o.json.text.replace(/^﻿/, ''));
     if (!got || typeof got !== 'object' || Array.isArray(got))
-      return [...r, `${DATA_JSON_REL} is not a JSON object`];
-    const want = revenueByRegion(readFileSync(fixture, 'utf8'));
+      return [...r, `${CODE_JSON_REL} is not a JSON object`];
     const g = got as Record<string, unknown>;
-    for (const [region, value] of Object.entries(want)) {
-      const v = g[region];
+    for (const [species, value] of Object.entries(want)) {
+      const v = g[species];
       if (typeof v !== 'number')
-        r.push(`${region} is ${JSON.stringify(v ?? null)}, expected ${value}`);
-      else if (Math.abs(v - value) > 0.005) r.push(`${region} is ${v}, expected ${value}`);
+        r.push(`${species} is ${JSON.stringify(v ?? null)}, expected ${value}`);
+      else if (Math.abs(v - value) > 0.005) r.push(`${species} is ${v}, expected ${value}`);
     }
     const extra = Object.keys(g).filter((k) => !(k in want));
     if (extra.length > 0) r.push(`unexpected keys: ${extra.join(', ')}`);
@@ -279,8 +333,27 @@ const codeData = defineScenario<DataObservation>({
 
 export const CODE_SCENARIOS: AnyScenario[] = [
   codeProject({
+    id: 'code-bugfix',
+    title: 'Fix a bug reported by tests',
+    deliverable: 'src/facture.js, fixed',
+    green:
+      "src/facture.js was changed, every test of nodal-bench/facture-tva passes in the agent's last test run, the test files are untouched, and nobody was asked anything; the bench does not re-run the suite (#753).",
+    project: 'facture-tva',
+    source: 'src/facture.js',
+    instruction:
+      `Les tests du projet nodal-bench/facture-tva ${SHARED} échouent. Trouve et corrige le ou ` +
+      'les bugs dans src/facture.js pour que `npm test` passe, sans modifier les tests.',
+    extraJudgedBy: ['src/facture.js differs from the fixture (the bug file was changed)'],
+    extraJudge(o) {
+      return o.sourceHash === fileHash(join(fixturePath('code/facture-tva'), 'src', 'facture.js'))
+        ? ['src/facture.js was not changed']
+        : [];
+    },
+  }),
+  codeProject({
     id: 'code-http-server',
-    title: 'Implement a local HTTP service until its test suite passes',
+    title: 'Write code from a tested specification',
+    deliverable: 'src/server.js, written',
     green:
       "In the agent's last test run every test of nodal-bench/http-somme passes (the suite starts a local HTTP server), the test files are untouched, and nobody was asked anything; the bench does not re-run the suite (#753).",
     project: 'http-somme',
@@ -291,7 +364,8 @@ export const CODE_SCENARIOS: AnyScenario[] = [
   }),
   codeProject({
     id: 'code-install-dep',
-    title: 'Install an npm dependency and use it',
+    title: 'Install a dependency and use it',
+    deliverable: 'package.json, node_modules and src/slug.js',
     green:
       "slugify is declared in package.json and installed in node_modules, src/slug.js imports it, every test of nodal-bench/slug-titre passes in the agent's last test run, the test files are untouched, and nobody was asked anything; the bench does not re-run the suite (#753).",
     project: 'slug-titre',
@@ -333,22 +407,5 @@ export const CODE_SCENARIOS: AnyScenario[] = [
       return r;
     },
   }),
-  codeProject({
-    id: 'code-bugfix',
-    title: 'Fix a bug that makes a test suite fail',
-    green:
-      "src/facture.js was changed, every test of nodal-bench/facture-tva passes in the agent's last test run, the test files are untouched, and nobody was asked anything; the bench does not re-run the suite (#753).",
-    project: 'facture-tva',
-    source: 'src/facture.js',
-    instruction:
-      `Les tests du projet nodal-bench/facture-tva ${SHARED} échouent. Trouve et corrige le ou ` +
-      'les bugs dans src/facture.js pour que `npm test` passe, sans modifier les tests.',
-    extraJudgedBy: ['src/facture.js differs from the fixture (the bug file was changed)'],
-    extraJudge(o) {
-      return o.sourceHash === fileHash(join(fixturePath('code/facture-tva'), 'src', 'facture.js'))
-        ? ['src/facture.js was not changed']
-        : [];
-    },
-  }),
-  codeData,
+  fetchAndProcess,
 ];

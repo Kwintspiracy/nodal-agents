@@ -36,4 +36,6 @@ export {
   dollars,
   AVANT_LA_MATRICE,
   aideDeColonne,
+  cheminDe,
+  type Chemin,
 } from '../workflows/results';

@@ -24,6 +24,7 @@ import {
   aideDeColonne,
   SEUIL_RALENTI,
   aRegarder,
+  cheminDe,
   colonneDe,
   comparerVersions,
   construireMatrice,
@@ -35,6 +36,7 @@ import {
   resumerColonne,
   resumerSerie,
   resumerWorkflows,
+  serieClose,
   workflowsARegarder,
 } from '../../packages/bench/src/workflows/results.ts';
 
@@ -111,6 +113,36 @@ function dollars(n) {
 }
 
 /**
+ * Le chemin d'un essai (`cheminDe`, results.ts) : les outils de chaque job dans
+ * l'ordre, puis les liens cités, vus ou non dans une sortie d'outil web. Une
+ * ligne d'avant le catalogue du 17/10 le dit : non enregistré, jamais « aucun
+ * outil ».
+ */
+function cheminHtml(c) {
+  if (!c.enregistre)
+    return '<p class="wf-nd">Not recorded on this run (written before the catalogue of 2026-10-17).</p>';
+  const jobs = c.jobs
+    .map(
+      (j) =>
+        `<li><span class="mono">${esc(j.job)}</span> ${esc(j.agent ?? '?')}${j.parent ? ` <span class="wf-nd">(delegated by ${esc(j.parent)})</span>` : ''}: ${
+          j.outils.length === 0
+            ? '<span class="wf-nd">no tool</span>'
+            : `<span class="mono">${j.outils.map(esc).join(' → ')}</span>`
+        }</li>`,
+    )
+    .join('');
+  const vus = (c.liens ?? []).filter((x) => x.vu).length;
+  const nonVus = (c.liens ?? []).filter((x) => !x.vu);
+  const liens =
+    c.liens === null
+      ? ''
+      : c.liens.length === 0
+        ? '<p class="wf-nd">No link cited.</p>'
+        : `<p>${c.liens.length} link${c.liens.length > 1 ? 's' : ''} cited: ${vus} seen in a web tool output, ${nonVus.length} not${nonVus.length > 0 ? ` (<span class="mono">${nonVus.map((x) => esc(x.url)).join(', ')}</span>)` : ''}.</p>`;
+  return `<ul class="wf-livrables">${jobs}</ul>${liens}`;
+}
+
+/**
  * Le détail du dernier essai : les modèles de chaque job (demandé et effectif,
  * fournisseur, effort, secours, jetons de cache à part), les livrables et la
  * réponse. Une ligne écrite avant le banc v2 ne porte rien de cela : la carte
@@ -145,14 +177,27 @@ function dernierEssai(l) {
       ? '<p class="wf-sous">No file left under nodal-bench/.</p>'
       : `<ul class="wf-livrables">${l.deliverables.map((d) => `<li class="mono">${esc(d.path)}${d.bytes ? ` <span class="wf-nd">${nombreJetons(d.bytes)}B</span>` : ''}</li>`).join('')}</ul>`;
   return `<details class="wf-detail">
-    <summary>Last run, ${esc(String(l.startedAt).slice(0, 16).replace('T', ' '))} UTC: models, deliverables, answer</summary>
+    <summary>Last run, ${esc(String(l.startedAt).slice(0, 16).replace('T', ' '))} UTC: models, path, deliverables, answer</summary>
     ${modeles}
+    <p class="wf-sous">Path</p>${cheminHtml(cheminDe(l))}
     <p class="wf-sous">Deliverables</p>${livrables}
     <p class="wf-sous">Answer</p>${l.answer ? `<blockquote class="wf-reponse">${esc(l.answer)}</blockquote>` : '<p class="wf-nd">No answer text.</p>'}
   </details>`;
 }
 
-function carte(serie) {
+/**
+ * Ce qu'une série close dit d'elle-même : son identifiant n'est plus au
+ * catalogue, retiré ou renommé. Ses essais restent les siens, jamais rangés
+ * sous le nouvel identifiant.
+ */
+function mentionClose(close) {
+  if (close === null) return '';
+  return close.renommeEn
+    ? `<span class="pastille pastille--inconnu">closed series</span> <span class="wf-nd">renamed <span class="mono">${esc(close.renommeEn)}</span>; its runs stay here, never compared with the new series</span>`
+    : '<span class="pastille pastille--inconnu">closed series</span> <span class="wf-nd">retired from the catalogue</span>';
+}
+
+function carte(serie, close = null) {
   const dernier = serie.derniers[serie.derniers.length - 1];
   const rouge = [...serie.derniers].reverse().find((l) => l.verdict !== 'green');
   const lignesVersion = [...serie.parVersion]
@@ -172,6 +217,7 @@ function carte(serie) {
     <h3>${esc(serie.titre)}</h3>
     <span class="mono wf-id">${esc(serie.scenario)} · v${esc(serie.version ?? '?')}${serie.jeu === 'on-demand' ? ' · on demand' : ''}</span>
   </header>
+  ${close ? `<p class="wf-sous">${mentionClose(close)}</p>` : ''}
   ${serie.vert ? `<p class="wf-vert"><b>Green means:</b> ${esc(serie.vert)}</p>` : ''}
   ${controlesNonVerifies(dernier)}
   <p class="wf-sous">Last ${serie.derniers.length} run${serie.derniers.length > 1 ? 's' : ''}, oldest first</p>
@@ -322,7 +368,7 @@ export function htmlMatrice(m) {
     const lignes = scenarios
       .map(
         (s) =>
-          `<div class="wf-l wf-l--scen" role="row"><div role="rowheader"><a href="#wf-${esc(s.id)}" class="mono">${esc(s.id)}</a><span class="wf-titre">${esc(s.titre)}</span>${s.besoins.length > 0 ? `<span class="wf-besoins">needs ${esc(s.besoins.join(', '))}</span>` : ''}</div>${cols.map((c) => cellule(s.cellules.get(c))).join('')}</div>`,
+          `<div class="wf-l wf-l--scen" role="row"><div role="rowheader"><a href="#wf-${esc(s.id)}" class="mono">${esc(s.id)}</a><span class="wf-titre">${esc(s.titre)}</span>${s.close ? `<span class="wf-besoins">${mentionClose(s.close)}</span>` : ''}${s.besoins.length > 0 ? `<span class="wf-besoins">needs ${esc(s.besoins.join(', '))}</span>` : ''}</div>${cols.map((c) => cellule(s.cellules.get(c))).join('')}</div>`,
       )
       .join('');
     return `<details class="wf-act" id="wf-act-${esc(activite)}"><summary class="wf-l wf-l--act" role="row"><div role="rowheader"><b>${esc(nom)}</b> <span class="wf-nd">${scenarios.length} scenario${scenarios.length > 1 ? 's' : ''}</span></div>${cols.map((c) => celluleActivite(scenarios, c)).join('')}</summary>${lignes}</details>`;
@@ -444,13 +490,17 @@ export function htmlWorkflows({ lignes, illisibles }, catalogue = null) {
     const vide = `<p class="wf-vide">No workflow run is recorded yet, so nothing here is measured. The runs are recorded on the machine that hosts the stack, by <code>pnpm bench:workflows</code>.</p>`;
     return `${STYLE}${alerte}${vide}${m ? panneau(phrase, '', matrice) : ''}`;
   }
-  const ralentis = series.filter((x) => x.ralenti).length;
-  const derniersVerdicts = series.map((x) => x.derniers[x.derniers.length - 1]?.verdict);
+  // Une série close ne compte ni dans les rouges ni dans les ralentis : plus
+  // aucun essai ne la changera. Elle est dite à part.
+  const ouvertes = series.filter((x) => serieClose(x.scenario, catalogue) === null);
+  const closes = series.length - ouvertes.length;
+  const ralentis = ouvertes.filter((x) => x.ralenti).length;
+  const derniersVerdicts = ouvertes.map((x) => x.derniers[x.derniers.length - 1]?.verdict);
   const rouges = derniersVerdicts.filter(aRegarder).length;
   const sautes = derniersVerdicts.filter((v) => v === 'skipped').length;
   const jamais = catalogue
     ? catalogue.scenarios.filter((s) => !series.some((x) => x.scenario === s.id)).length
     : 0;
-  const chapo = `<p class="chapo">${series.length} workflow${series.length > 1 ? 's' : ''}: <b>${rouges} not green on their last run</b>${sautes > 0 ? `, ${sautes} skipped` : ''}${ralentis > 0 ? `, <b>${ralentis} slower than on the previous version</b>` : ''}${jamais > 0 ? `; ${jamais} more never run` : ''}.</p>`;
-  return `${STYLE}${alerte}${m ? panneau(phrase, chapo, matrice) : chapo}<h3 class="wf-h">Scenario details</h3><div class="wf-grille">${series.map(carte).join('\n')}</div>`;
+  const chapo = `<p class="chapo">${series.length} workflow${series.length > 1 ? 's' : ''}: <b>${rouges} not green on their last run</b>${sautes > 0 ? `, ${sautes} skipped` : ''}${ralentis > 0 ? `, <b>${ralentis} slower than on the previous version</b>` : ''}${jamais > 0 ? `; ${jamais} more never run` : ''}${closes > 0 ? `; ${closes} closed series (retired or renamed), counted in none of these` : ''}.</p>`;
+  return `${STYLE}${alerte}${m ? panneau(phrase, chapo, matrice) : chapo}<h3 class="wf-h">Scenario details</h3><div class="wf-grille">${series.map((x) => carte(x, serieClose(x.scenario, catalogue))).join('\n')}</div>`;
 }

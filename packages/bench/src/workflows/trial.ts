@@ -17,22 +17,60 @@
 //   4. Un scénario dont un besoin manque (pas de ComfyUI, pas d'imprimante, un
 //      agent qui sait envoyer un e-mail) est SAUTÉ avec cette raison, sans
 //      lancer de job (`needs.ts`) : ni rouge, rien n'a été essayé ; ni tu, la
-//      ligne `skipped` le dit.
+//      ligne `skipped` le dit. De même quand aucun outil du produit qu'il
+//      déclare n'est dans l'équipe, ou qu'aucun sujet calibré n'existe pour
+//      lui (`subjects.ts`, #776).
+//
+// Chaque ligne garde aussi le CHEMIN de l'essai (les outils de chaque job, par
+// nom et dans l'ordre, et les délégations) et classe les liens du texte cité :
+// vus ou non dans une sortie d'outil web (#648, la partie mesurable).
 
-import { benchDeliverables } from './disk';
-import { prepareTrial } from './fixtures';
+import { join } from 'node:path';
+import { benchDeliverables, findInRoots } from './disk';
+import { fileHash, fixturePath, prepareTrial, sharedRoot } from './fixtures';
 import type { TreeFacts } from './facts';
 import { isLive, liveJobs, pendingApprovals } from './facts';
-import { DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
-import { bareToolName, channelSends } from './judge-kit';
+import { cheminConstate, DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
+import {
+  answerOf,
+  bareToolName,
+  channelSends,
+  citedLinks,
+  delegatedAgents,
+  productToolGate,
+  productToolReasons,
+  toolPath,
+  unverifiedOf,
+} from './judge-kit';
 import { isMailSender, isOutboundTool, missingNeeds } from './needs';
 import { recipientIds } from './recipients';
 import { redactHome } from './redact';
 import type { ForeignActivity } from './stack';
-import type { AnyScenario, ModelUse, ScenarioEnv, TrialLine } from './types';
+import { noSubjectReason, pickSubject, requestWithSubject, type ResearchSubject } from './subjects';
+import type {
+  AnyScenario,
+  FileState,
+  ModelUse,
+  ProductFileState,
+  ScenarioEnv,
+  TrialLine,
+} from './types';
 
 /** La réponse finale gardée sur la ligne : assez pour la lire, pas un rapport entier. */
 export const ANSWER_MAX = 1200;
+
+/**
+ * Ce que CHAQUE ligne mesure, quel que soit le scénario (anglais : la carte du
+ * Studio). Une mesure n'est pas un verdict : seules les règles d'un scénario
+ * (son juge, ses outils du produit, sa destination) rendent un essai rouge.
+ */
+export const MEASURED_ON_EVERY_TRIAL = [
+  'The path: the tools each job called, by name and in order, and the teammates delegated to',
+  'The questions asked and the approvals requested',
+  'Each link cited: seen or not in a web tool output of the run (#648)',
+  'The duration and the time to the first model reply',
+  'The model calls, the tokens and the cost; the model asked for and the one that answered',
+] as const;
 
 export interface TrialDeps {
   now(): number;
@@ -45,6 +83,8 @@ export interface TrialDeps {
   env(startedMs: number): Promise<ScenarioEnv>;
   /** Le modèle configuré de l'agent racine, lu au début de l'essai. */
   rootModel(): Promise<string | null>;
+  /** Les sujets de recherche calibrés (`readResearchSubjects`) ; un fichier mal formé lève. */
+  subjects(): readonly ResearchSubject[];
   log(line: string): void;
   /** Où en est l'essai, pour qui le suit en direct (Bench Studio). Facultatif. */
   progress?(event: TrialProgress): void;
@@ -138,13 +178,17 @@ function emptyLine(
     stackCommit: o.stackCommit,
     trigger: o.trigger,
     startedAt: new Date(startedMs).toISOString(),
-    unverified: [...(s.unverified ?? [])],
+    unverified: unverifiedOf(s),
     durationMs: null,
     firstModelReplyMs: null,
     jobs: 0,
     agents: [],
     models: [],
     toolCalls: 0,
+    path: [],
+    delegatedTo: [],
+    links: [],
+    subject: null,
     llmCalls: 0,
     cliRuns: 0,
     inputTokens: 0,
@@ -206,6 +250,8 @@ export function measure(
   | 'agents'
   | 'models'
   | 'toolCalls'
+  | 'path'
+  | 'delegatedTo'
   | 'llmCalls'
   | 'cliRuns'
   | 'inputTokens'
@@ -259,6 +305,8 @@ export function measure(
       ]),
     ],
     toolCalls: facts.toolCalls.length,
+    path: toolPath(facts),
+    delegatedTo: delegatedAgents(facts),
     llmCalls: facts.llmCalls.length,
     cliRuns: facts.cliRuns.length,
     inputTokens,
@@ -424,6 +472,68 @@ export function destinationReasons(s: AnyScenario, facts: TreeFacts): string[] {
   return [];
 }
 
+/**
+ * Tout ce qui rend un essai rouge, une fois l'arbre fini : le juge du
+ * scénario, la destination des envois, et la règle de chemin des outils du
+ * produit. La même composition pour runTrial et pour les tests (harness.ts) ;
+ * une raison déjà dite n'est pas répétée.
+ */
+export function trialReasons(
+  s: AnyScenario,
+  facts: TreeFacts,
+  observed: unknown,
+  env: Pick<ScenarioEnv, 'teamTools'>,
+  files: readonly ProductFileState[],
+): string[] {
+  return [
+    ...new Set([
+      ...s.judge(facts, observed),
+      ...destinationReasons(s, facts),
+      ...productToolReasons(s, facts, env, files),
+    ]),
+  ];
+}
+
+/** L'état d'un fichier sur le disque : absent, son empreinte sha-256, ou illisible. */
+function stateOf(path: string | null): FileState {
+  if (path === null) return { kind: 'absent' };
+  try {
+    return { kind: 'file', sha256: fileHash(path) };
+  } catch {
+    return { kind: 'unreadable' };
+  }
+}
+
+/**
+ * Les fichiers d'un scénario (`productTools.writes` et `reads`), tels que le banc les
+ * connaît hors de la base : leurs chemins réels possibles, un par dossier de
+ * travail, résolus comme la plateforme les range (`cheminConstate`, le chemin
+ * des lignes `tool_call_writes` et `tool_call_reads`) ; le chemin réel où le
+ * banc pose la fixture (le dossier partagé) ; l'état préparé (la fixture que
+ * le banc pose à ce chemin, sinon absent, `prepareTrial` effaçant les
+ * sorties) ; et l'état final, celui du plus récent parmi les dossiers de
+ * travail.
+ */
+export async function productFileStates(
+  s: AnyScenario,
+  roots: readonly string[],
+): Promise<ProductFileState[]> {
+  const out: ProductFileState[] = [];
+  const pt = s.productTools;
+  for (const rel of [...(pt?.writes ?? []), ...(pt?.reads ?? [])]) {
+    const realPaths = await Promise.all(roots.map((root) => cheminConstate(join(root, rel))));
+    const fixture = (s.fixtures ?? []).find((f) => f.to === rel);
+    out.push({
+      rel,
+      realPaths,
+      posedPath: await cheminConstate(join(sharedRoot(roots), rel)),
+      initial: fixture ? stateOf(fixturePath(fixture.from)) : { kind: 'absent' },
+      final: stateOf(findInRoots(roots, rel, 0)[0]?.path ?? null),
+    });
+  }
+  return out;
+}
+
 function truncate(text: string, max: number): string {
   return text.length <= max
     ? text
@@ -456,10 +566,20 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
   // (un classeur ouvert dans Excel verrouille son fichier sous Windows) devient
   // UNE ligne `error` avec sa raison. Un rejet emporterait les scénarios suivants.
   let rootModel: string | null = null;
+  let subject: ResearchSubject | null = null;
+  let request = s.instruction;
   try {
     rootModel = await deps.rootModel();
     const envBefore = await deps.env(deps.now());
-    const missing = [...destinationGate(s, o), ...missingNeeds(s.needs ?? [], envBefore)];
+    let missing = [...destinationGate(s, o), ...missingNeeds(s.needs ?? [], envBefore)];
+    // Les outils du produit ensuite, une fois les besoins là : une imprimante
+    // absente se dit par son besoin, pas deux fois.
+    if (missing.length === 0) missing = productToolGate(s, envBefore);
+    if (missing.length === 0 && s.subject) {
+      subject = pickSubject(s.subject, deps.subjects());
+      if (subject === null) missing = [noSubjectReason(s.subject)];
+      else request = requestWithSubject(s.instruction, subject);
+    }
     if (missing.length > 0) {
       return { ...emptyLine(s, o, deps.now(), rootModel), verdict: 'skipped', reasons: missing };
     }
@@ -476,7 +596,7 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
   const startedMs = deps.now();
   let session: { jobId: string; close(): Promise<void> };
   try {
-    session = await deps.start(s.instruction, benchCaller(s));
+    session = await deps.start(request, benchCaller(s));
   } catch (e) {
     return {
       ...emptyLine(s, o, startedMs, rootModel),
@@ -563,21 +683,35 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
   }
   let judged: string[];
   let deliverables: TrialLine['deliverables'] = [];
+  let cited: string | null = answerOf(facts);
   deps.progress?.({ step: 'judging', rootJobId: rootId });
   try {
-    const envAfter = await deps.env(startedMs);
+    const envAfter: ScenarioEnv = {
+      ...(await deps.env(startedMs)),
+      ...(subject ? { subject } : {}),
+    };
     deliverables = benchDeliverables(envAfter.workspaceRoots, startedMs);
-    judged = s.judge(facts, await s.observe(facts, envAfter));
+    const observed = await s.observe(facts, envAfter);
+    if (s.cites) cited = s.cites(facts, observed);
+    // Un envoi parti ailleurs que là où le scénario le déclare, ou un outil du
+    // produit contourné, interdit le vert quel que soit le juge du scénario.
+    judged = trialReasons(
+      s,
+      facts,
+      observed,
+      envAfter,
+      await productFileStates(s, envAfter.workspaceRoots),
+    );
   } catch (e) {
     judged = [`the judge failed: ${String(e instanceof Error ? e.message : e)}`];
   }
-  // Un envoi parti ailleurs que là où le scénario le déclare interdit le vert,
-  // quel que soit le juge du scénario (une raison déjà dite n'est pas répétée).
-  const reasons = [...new Set([...benchReasons, ...judged, ...destinationReasons(s, facts)])];
+  const reasons = [...new Set([...benchReasons, ...judged])];
   const result = facts.jobs.find((j) => j.id === facts.rootId)?.result ?? null;
   return {
     ...emptyLine(s, o, startedMs, rootModel),
     ...measure(facts),
+    links: citedLinks(facts, cited),
+    subject: subject?.id ?? null,
     rootJobId: rootId,
     cancelled,
     deliverables,

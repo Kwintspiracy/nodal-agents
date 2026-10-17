@@ -29,6 +29,7 @@ describe('Bench Studio plays no session (launch waits for #769)', () => {
       'FIXTURES_DIR',
       'LAUNCH_DISABLED_REASON',
       'aideDeColonne',
+      'cheminDe',
       'createStudioRuntime',
       'dollars',
       'duree',
@@ -82,14 +83,12 @@ describe('studio reads', () => {
     expect(none.plan.cells.map((c) => [c.scenario, c.model, c.trials])).toEqual([
       ['file', "the agents' own models", 2],
       ['excel-edit-column', "the agents' own models", 2],
-      ['excel-new-sheet', "the agents' own models", 2],
       ['excel-read-answer', "the agents' own models", 2],
       ['excel-csv-import', "the agents' own models", 2],
     ]);
     expect(none.scenarios).toEqual([
       'file',
       'excel-edit-column',
-      'excel-new-sheet',
       'excel-read-answer',
       'excel-csv-import',
     ]);

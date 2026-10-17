@@ -131,51 +131,129 @@ scenario's past runs (input, cached and output tokens, current version only,
 skipped and error runs excluded). A cell without a past run or without a
 catalog price says so; it is never priced at zero.
 
-## Scenarios
+## Scenarios (the catalogue of 2026-10-17)
 
-| id | set | green means |
+Quentin validated the catalogue on 2026-10-17. Each scenario is named by **what
+it tests**, never by the subject of its request: two trials judged the same way
+are the same trial, and only one is kept. 37 scenarios (the memory scenario of
+the page waits for a bench that chains two conversations; see below).
+`pnpm bench:workflows --list` prints each one's French request and its green
+sentence; Bench Studio shows its card: what it tests, the expected path, the
+deliverable, "Green if", what every trial measures, what is not verified, and
+the example request last.
+
+| activity | scenarios | expected path |
 |---|---|---|
-| `question` | nightly | the answer names Canberra, no delegation, nobody asked |
-| `research` | nightly | delegated, the delegate called a web tool, the report cites at least one source link. Sources read: not verified (#648) |
-| `deep-research-obsidian` | nightly | delegated, a note written in the vault during the run (folder `Nodal Bench` or tag `#nodal-bench`), 1500+ characters, 3+ source links. Sources read: not verified (#648) |
-| `file` | nightly | `nodal-bench/ventes-bench.xlsx` written during the run, exact cells read back with exceljs |
-| `code` | nightly | pinned CSV downloaded into `nodal-bench/iris.csv`, a Python or Node run printed 277.6, zero approval |
-| `print` | nightly | a pending print request holding the note, nothing sent to the printer |
-| `recipe` | nightly | a pending one-page print request with a photo. Whether the photo comes from the recipe page read: not verified (#648) |
-| `comfyui-telegram` | on-demand | an image file written during the run, and a confirmed send of that image |
-| `mcp-answer` | nightly | the job result gives 391, `nodal-bench/calcul-bench.txt` written with it, nothing sent to a messaging channel (guards #649) |
-| `undoable-action` | nightly | `nodal-bench/tour-eiffel-bench.md` written, nothing sent to a channel in place of the e-mail, the root ended on an explained block: the e-mail to `bench@example.invalid` cannot be sent (#654) |
-| `undoable-action-delegated` | nightly | the same through a teammate (`nodal-bench/pont-du-gard-bench.md`): delegated, file written, the root ended on an explained block (#654) |
-| `delegate-fails` | nightly | delegated, a delegated job failed (its source file does not exist), no copy made, the root ended on its own explained block, not `completed` and not killed by an anti-loop cap |
-| `ask-before-acting` | on-demand | a question card offering "bleu" and "vert", the run waited on it until the bench stopped it, nothing wrote or named `nodal-bench/couleur-bench.txt`, nobody answered |
+| question | `question`, `question-weekday` | the root answers alone; a delegation is red. The weekday's tool calculation is measured, not required |
+| research | `research` | the root alone with a web tool (decision 2); a delegation is red. Calibrated subject (#776) |
+| deep-research | `deep-research-report` (report in `nodal-bench/rapport.md`), `deep-research-obsidian` (a note in the vault) | handed to the specialist: no delegated job calling a web tool is red. Calibrated subject (#776) |
+| code | `code-bugfix`, `code-http-server`, `code-install-dep`, `code` | the script IS the subject: no product tool. `code` downloads the pinned iris CSV and writes one total per species in `nodal-bench/iris-totaux.json` |
+| excel | `file`, `excel-edit-column`, `excel-read-answer`, `excel-csv-import` | `xlsx_*` product tools (decision 1) |
+| word | `word-create` (heading, paragraphs and a table), `word-replace`, `word-append`, `word-read-answer` | `docx_*` product tools |
+| powerpoint | `ppt-create`, `ppt-append`, `ppt-replace`, `ppt-read-answer` | `pptx_*` product tools |
+| pdf | `pdf-read-total`, `pdf-from-markdown` | no product PDF tool: a command or a skill is the right path, measured |
+| html-page | `html-landing`, `html-table-csv` (a table and an SVG chart of the CSV), `html-edit` | `file_write` / `file_edit` |
+| image-comfyui | `comfy-exact-size`, `comfy-variants`, `comfyui-telegram` | a ComfyUI workflow; need `comfyui` |
+| print | `print` (a dictated shopping list), `print-file`, `recipe` | `request_print`; need `printer`; never confirmed |
+| orchestration | `mcp-answer`, `undoable-action`, `undoable-action-delegated`, `delegate-fails`, `ask-before-acting` | the path IS the verdict (below) |
 
-The first eight scenarios are also red when the root did not end `completed`,
-or when the run raised an approval or a question. The orchestration scenarios
-state their own end in their green sentence: an impossible request must end
-on an explained block, and `ask-before-acting` must stop on its question.
+Retired on 2026-10-17, with why: `question-percent`, `question-seconds`,
+`question-river` (the same trial as `question` on another subject);
+`research-penicillin`, `-transistor`, `-rabies`, `-voyager` and
+`deep-research-gps`, `-gutenberg`, `-apollo` (facts known from memory: they
+tested "give your sources", not research); `excel-new-sheet` (the same
+capability as `excel-edit-column`); `word-table`, `pdf-read-pages`,
+`pdf-create`, `html-svg-chart`, `print-list`, `code-data` (merged into the
+scenario named above); `comfy-square`, `comfy-landscape` (the same capability
+as the portrait format). A merge keeps the id of the first scenario listed:
+an id is the key of a series. **An id that names a subject the scenario no
+longer tests is renamed after what it tests** (`RENAMED_IDS`, catalog.ts):
+`deep-research-dna` became `deep-research-report` (its subject is calibrated,
+no longer DNA), `comfy-portrait` became `comfy-exact-size` (it proves exact
+dimensions; square and landscape merged into it). Every other id still says
+what its scenario tests. The lines of an old id stay under it as a **closed
+series**: the portal and Bench Studio show it marked "closed series, renamed X"
+(or "retired"), never file its runs under the new id, and count it in no
+summary of a column or an activity and in no "to look at". The new id starts
+its own series at version 1. A kept scenario whose request or judge changed
+raised its `version`, so its new series is never compared with the old one.
+Old lines of a retired id stay in `workflows.ndjson`; the portal still shows
+them under their recorded activity.
 
-## Scenarios by activity (bench v2)
+Every scenario is also red when the root did not end `completed`, or when the
+run raised an approval or a question, except the orchestration scenarios,
+which state their own end in their green sentence.
 
-42 more scenarios, `on-demand` (they run with `--activity`, `--only` or
-`--set release`; putting some in the nightly set is the owner's call, since
-every one costs model calls). None has an external effect or needs an
-external account. Each is red when the root did not end `completed` or when
-anything was asked. `pnpm bench:workflows --list` prints each one's French
-request and its one-sentence green.
+### Path rules
 
-| activity | scenarios | judged on |
-|---|---|---|
-| question | `question-percent`, `question-weekday`, `question-seconds`, `question-river` | facts in the answer (a number in any writing, a name), no delegation |
-| research | `research-penicillin`, `research-transistor`, `research-rabies`, `research-voyager` | a web tool called by some job of the tree, stable historical facts in the answer, links on 2+ distinct sites. Sources read: not verified (#648) |
-| deep-research | `deep-research-dna`, `-gps`, `-gutenberg`, `-apollo` | a Markdown report under `nodal-bench/` written during the run: 3000+ characters, 3+ headings, links on 4+ sites, the facts; a web call. Sources read: not verified |
-| code | `code-http-server`, `code-install-dep`, `code-bugfix`, `code-data` | a Node project from `fixtures/code` with a failing suite (one starts a local HTTP server): every fixture test must pass by name in the agent's own last test run (TAP or spec lines of its command tool), test files byte for byte; the bench never re-runs the suite (not verified, #753); `slugify` declared, installed and imported; the bug file changed; revenue per region recomputed from the untouched CSV, to the cent |
-| excel | `excel-edit-column`, `excel-new-sheet`, `excel-read-answer`, `excel-csv-import` | the workbook reopened with exceljs; formulas without a cached result are computed by the bench (`evaluateCell`: arithmetic, references across sheets, SUM/AVERAGE/MIN/MAX/ROUND/PRODUCT; anything else is said, never guessed); the fixture's cells unchanged; a read leaves the file byte for byte |
-| word | `word-create`, `word-replace`, `word-append`, `word-table` | text by mammoth (the product's `docx_read`), headings and tables from the OOXML; a replacement leaves every other character of the fixture's text |
-| powerpoint | `ppt-create`, `ppt-append`, `ppt-replace`, `ppt-read-answer` | slides in presentation order from the OOXML; the fixture's slides unchanged paragraph by paragraph |
-| pdf | `pdf-read-total`, `pdf-read-pages`, `pdf-create`, `pdf-from-markdown` | pdf-parse (the product's PDF extractor): page count and page text |
-| html-page | `html-landing`, `html-table-csv`, `html-edit`, `html-svg-chart` | parse5 elements, never a text search in the source: title, h1, list items with prices, footer, table rows equal to the CSV, body outside the footer unchanged, no external resource, SVG bars in the 12 : 30 : 58 ratio |
-| image-comfyui | `comfy-square`, `comfy-variants`, `comfy-portrait`, `comfy-landscape` | need `comfyui`; PNG files written during the run under `nodal-bench/comfy-*`, count and size read from the file header, variants all different, nothing sent |
-| print | `print-file`, `print-list` | need `printer`; a pending request naming the fixture file, or holding the whole list; never confirmed, nothing on paper |
+Written once in `judge-kit.ts`, applied by `runTrial` to every scenario that
+declares them, never inside one judge:
+
+- **A product tool available must be used (decision 1).** A scenario declares
+  `productTools`: the product tools of its path, the deliverables they must
+  WRITE (`writes`) and the files they must READ (`reads`). The rule guesses
+  nothing (two earlier versions did, from a mention of the file name, then
+  from the file's time, and each review found holes). It reads what the
+  platform records of every write, `tool_call_writes` (#779): for each call
+  and each file it targeted, the hash before and after, and whether the after
+  hash is the bytes the tool WROTE (`written`) or a re-read (`read`).
+  - a deliverable follows a hash chain in `seq` order: from the state the
+    bench prepared (its fixture, otherwise no file) through every recorded
+    write, each starting from the state the previous one left, to the file on
+    disk at the end. Every write that changes it is one of the product tools,
+    proven by the bytes it wrote. A break means something that left no record
+    wrote the file (a command, a script, an MCP tool, whatever its name), and
+    it is red. A command that only reads the deliverable changes nothing. A
+    re-read or a missing row reads as not recorded, never green;
+  - a file to read is read by a product tool. The rule does not reconstruct
+    the file a call designated: it reads what the platform recorded when the
+    file was read, `tool_call_reads` (#783), the real path the tool opened and
+    the hash of the bytes it read. The read counts when one of the product
+    tools read the real path where the bench posed the file (the shared
+    folder), with the bytes of the fixture. An identical copy elsewhere
+    (same hash, other path), the posed file changed before the read (same
+    path, other hash), or no row (not recorded) is red, never green. An MCP
+    tool (`request_print`) opens the file in its own process and leaves no
+    read: `print-file` judges the call, and says "the printed file is the one
+    the bench posed" as not verified (#784). A string of the call's input
+    names a file only when it is, as a whole, the absolute path of an existing
+    regular file (`designation.ts`); anything else (a text starting with a
+    path, a folder, a missing path, quotes, `file://`) is text and never a
+    reason. The call names the posed file when one string names it, by its
+    real path, and no string names another existing file. Network and device
+    paths are refused by the product's own guard (`windowsPathViolation`)
+    before any filesystem call. A relative path is red: Nodal's MCP client
+    hands arguments to the server verbatim, with no `roots` and no `cwd`, so
+    the server inherits the runner's working directory, never the shared
+    folder.
+
+  Otherwise the trial is red, "product tool available, not used". When none
+  is in the team's tools, the trial is skipped with that reason, like a missing
+  need. PDF and code declare none.
+- **The specialist, for in-depth research only (decision 2).** `research`:
+  the root searches itself, a delegation is red. `deep-research-*`: handed to a
+  teammate, and a delegated job must call a web tool.
+
+### Calibrated research subjects (decision 3, #776)
+
+A research subject is accepted only if every compared model, asked without
+tools, is wrong or refuses at least 2 times out of 3. The research scenarios
+read theirs from `packages/bench/subjects/research-subjects.json`
+(`subjects.ts`; their request carries `{subject}`). While no calibrated subject
+of their kind exists, they are **skipped**: "no calibrated research subject"
+and the ticket. There is never a default subject. A file whose calibration does
+not meet the rule is an error, never a subject accepted silently. The
+calibration itself comes with the LLM judge.
+
+### Seen on the web (#648, the measurable part)
+
+Each link a research answer or report cites is classified **seen** when it is
+in the output of a web tool of the tree that did not receive it as input (a
+page fetched from memory that only echoes its own address, a 404, is not
+seen), and **not seen** otherwise. The expected facts of the subject must be
+held by a web tool output too: the proof they come from the web, not the
+model's memory. For a research scenario an unseen link is red; every trial
+records its links on its line (`links`).
 
 Fixtures live in `packages/bench/fixtures/` (`make-fixtures.ts` writes the
 office ones from `fixture-data.ts`; a scenario is frozen, so is its fixture).
@@ -270,8 +348,8 @@ Both #662 and #531 need the same platform affordance: a way for an MCP client
 to continue a conversation with `run_task`. Until then the bench says they are
 not covered rather than fake them.
 
-**Sources read: not verified.** Whether a cited source was really read is not
-judged. Four review passes of the bench (#634) found four leaks in the judge
+**Sources read: not verified.** Whether a cited source was really READ is not
+judged; whether it was SEEN in a web tool output is (above). Four review passes of the bench (#634) found four leaks in the judge
 that guessed it from tool outputs: a link the model wrote counted as read; a
 failed CLI fetch in plain text counted; a failed MCP fetch serialized as a
 string counted; then Firecrawl and Apify reads were invisible and a long 404
@@ -280,7 +358,7 @@ really read, and guessing it from N output shapes does not converge. Quentin
 decided on 30/09 to take the check out until the platform records every web
 read (#648).
 
-The check is not silent. `research`, `deep-research-obsidian` and `recipe`
+The check is not silent. `research`, `deep-research-report`, `deep-research-obsidian` and `recipe`
 declare it (`unverified` in `scenarios.ts`), every result line of theirs
 carries it as `{ check: "sources read", state: "not verified", reason, ticket }`,
 whatever the verdict, and the Workflows page shows it in grey on the card and
@@ -290,6 +368,14 @@ run is green on what is judged, never on this.
 A scenario is frozen once merged. Changing its request or its judge means
 raising its `version`: the portal then starts a new series instead of
 comparing two different things.
+
+**Memory, from one conversation to the next: not covered yet.** The catalogue
+of 2026-10-17 has a memory scenario in two steps (state a preference, then, in
+a new conversation, ask something that depends on it). A trial today is ONE
+`run_task`: the bench cannot chain two conversations. Its general form (a
+scenario declares `steps`, each a fresh `run_task`, the judge reading one tree
+per step) changes the signature of every judge, and the bench must not count
+a preference left by an earlier trial; it comes in its own change.
 
 The vault is found, never configured: a vault is a workspace folder of the
 workspace that holds `.obsidian/`. The printer is found the same way: an
@@ -435,7 +521,12 @@ combination: `requested` and `effective` model, `provider`, `via` api or
 cli, `reasoningEffort`, `failover`, `calls`, tokens and cost), `deliverables`
 (the files written under `nodal-bench/` during the trial, path and size) and
 `answer` (the root's final answer, 1200 characters at most, home folder
-masked). The file stays append-only and older lines still render: the portal
+masked). Since the catalogue of 2026-10-17, also: `path` (per job, its agent,
+the job that delegated it and the tools it called, by name and in order),
+`delegatedTo` (the agents of the delegated jobs), `links` (the links of the
+answer, or of the report a scenario names, each `seen` or not) and `subject`
+(the calibrated subject played, or `null`). A line without `path` says
+"not recorded", never "no tool". The file stays append-only and older lines still render: the portal
 says "not recorded on this run" for what they do not carry, and takes their
 activity from the catalog. They go in one matrix column, "before the matrix":
 `models` says which models ANSWERED, not which one the run was set to.

@@ -45,6 +45,25 @@ export interface CatalogLike {
     readonly needs?: readonly string[];
     readonly set?: string;
   }>;
+  /** Les identifiants renommés, ancien → nouveau (absent des catalogues d'avant le 17/10). */
+  readonly renamed?: Readonly<Record<string, string>>;
+}
+
+/** Une série close : son identifiant n'est plus au catalogue. `renommeEn` : le nouvel identifiant, s'il a été renommé. */
+export interface SerieClose {
+  renommeEn: string | null;
+}
+
+/**
+ * Une série dont l'identifiant n'est plus au catalogue est CLOSE : retirée, ou
+ * renommée (un identifiant qui nommait un sujet que le scénario ne teste
+ * plus). Ses lignes restent sous leur identifiant, jamais rangées sous le
+ * nouveau : deux juges différents ne se comparent pas. Sans catalogue, rien
+ * n'est dit close (null).
+ */
+export function serieClose(id: string, catalogue: CatalogLike | null): SerieClose | null {
+  if (!catalogue || catalogue.scenarios.some((s) => s.id === id)) return null;
+  return { renommeEn: catalogue.renamed?.[id] ?? null };
 }
 
 /**
@@ -252,11 +271,17 @@ export const aRegarder = (verdict: string | undefined): boolean =>
 /**
  * Les workflows à regarder (rouges ou en erreur au dernier essai, ou ralentis).
  * Un dernier essai sauté (un besoin absent, la stack occupée) n'y entre pas :
- * il est gris, jamais rouge.
+ * il est gris, jamais rouge. Une série close (`serieClose`) non plus : plus
+ * aucun essai ne la changera.
  */
-export function workflowsARegarder({ lignes }: { lignes: readonly ResultLine[] }): number {
+export function workflowsARegarder(
+  { lignes }: { lignes: readonly ResultLine[] },
+  catalogue: CatalogLike | null = null,
+): number {
   return resumerWorkflows(lignes).filter(
-    (x) => aRegarder(x.derniers[x.derniers.length - 1]?.verdict) || x.ralenti !== null,
+    (x) =>
+      serieClose(x.scenario, catalogue) === null &&
+      (aRegarder(x.derniers[x.derniers.length - 1]?.verdict) || x.ralenti !== null),
   ).length;
 }
 
@@ -361,6 +386,8 @@ export interface ScenarioDeMatrice {
   besoins: readonly string[];
   jeu: string | null;
   anciens: number;
+  /** null : au catalogue. Sinon une série close, retirée ou renommée. */
+  close: SerieClose | null;
   cellules: Map<string, Cellule>;
 }
 
@@ -440,6 +467,7 @@ export function construireMatrice(
       besoins: cat?.needs ?? derniere?.needs ?? [],
       jeu: cat?.set ?? derniere?.set ?? null,
       anciens: toutes.length - serie.length,
+      close: serieClose(id, catalogue),
       cellules: new Map([...parColonne.entries()].map(([c, ls]) => [c, resumerCellule(ls)])),
     };
   });
@@ -451,8 +479,12 @@ export function construireMatrice(
     ),
   ];
   // Le résumé de chaque colonne : ce que Quentin compare d'un modèle à l'autre.
+  // Une série close (retirée, renommée) garde sa ligne dans la matrice, mais
+  // n'entre dans aucun résumé : les modèles se comparent sur le catalogue en
+  // cours, jamais sur des juges qui n'existent plus.
+  const ouvertes = scenarios.filter((s) => s.close === null);
   const montres = (col: string): ResultLine[] =>
-    scenarios.flatMap((s) => s.cellules.get(col)?.derniers ?? []);
+    ouvertes.flatMap((s) => s.cellules.get(col)?.derniers ?? []);
   const resumes = new Map(colonnes.map((c) => [c, resumerColonne(montres(c))]));
   const dates = colonnes
     .flatMap(montres)
@@ -471,12 +503,67 @@ export function construireMatrice(
         resumes: new Map(
           colonnes.map((c) => [
             c,
-            resumerColonne(deLActivite.flatMap((s) => s.cellules.get(c)?.derniers ?? [])),
+            resumerColonne(
+              deLActivite
+                .filter((s) => s.close === null)
+                .flatMap((s) => s.cellules.get(c)?.derniers ?? []),
+            ),
           ]),
         ),
       };
     }),
   };
+}
+
+// ─── Le chemin d'un essai ────────────────────────────────────────────────────
+
+export interface JobDuChemin {
+  job: string;
+  agent: string | null;
+  parent: string | null;
+  outils: string[];
+}
+
+/**
+ * Le chemin qu'une ligne a gardé : les outils de chaque job, par nom et dans
+ * l'ordre, les coéquipiers délégués, et les liens cités classés vus / non vus.
+ * Une ligne écrite avant le catalogue du 17/10 ne porte pas `path` : son
+ * chemin est NON ENREGISTRÉ, jamais « aucun outil » (une liste vide dirait
+ * qu'aucun outil n'a été appelé). Le portail et Bench Studio le lisent ici.
+ */
+export type Chemin =
+  | { enregistre: false }
+  | {
+      enregistre: true;
+      jobs: JobDuChemin[];
+      delegues: string[];
+      /** null : la ligne ne classe pas ses liens. */
+      liens: Array<{ url: string; vu: boolean }> | null;
+    };
+
+export function cheminDe(l: Partial<ResultLine>): Chemin {
+  const path = l['path'];
+  if (!Array.isArray(path)) return { enregistre: false };
+  const jobs = (path as unknown[]).map((j) => {
+    const x = (j ?? {}) as { job?: unknown; agent?: unknown; parent?: unknown; tools?: unknown };
+    return {
+      job: String(x.job ?? '?'),
+      agent: typeof x.agent === 'string' ? x.agent : null,
+      parent: typeof x.parent === 'string' ? x.parent : null,
+      outils: Array.isArray(x.tools) ? x.tools.map(String) : [],
+    };
+  });
+  const delegues = Array.isArray(l['delegatedTo'])
+    ? (l['delegatedTo'] as unknown[]).map(String)
+    : [];
+  const links = l['links'];
+  const liens = Array.isArray(links)
+    ? (links as unknown[]).map((k) => {
+        const x = (k ?? {}) as { url?: unknown; seen?: unknown };
+        return { url: String(x.url ?? ''), vu: x.seen === true };
+      })
+    : null;
+  return { enregistre: true, jobs, delegues, liens };
 }
 
 // ─── Mise en forme ───────────────────────────────────────────────────────────

@@ -9,6 +9,31 @@
 import type { TreeFacts } from './facts';
 
 /**
+ * Le genre d'un sujet de recherche calibré (subjects.ts, #776) : `research`, un
+ * fait cherché par la racine seule ; `deep-research`, un sujet confié au
+ * spécialiste.
+ */
+export const SUBJECT_KINDS = ['research', 'deep-research'] as const;
+export type SubjectKind = (typeof SUBJECT_KINDS)[number];
+
+/** Un fait attendu d'un sujet, tel que le fichier l'écrit : sérialisable (une observation le garde tel quel). */
+export interface SubjectFact {
+  readonly says: string;
+  readonly pattern: string;
+  readonly flags: string;
+}
+
+/** Un sujet calibré, tel que `readResearchSubjects` le rend. */
+export interface ResearchSubject {
+  readonly id: string;
+  readonly kind: SubjectKind;
+  readonly request: string;
+  readonly facts: readonly SubjectFact[];
+  /** Les modèles sur lesquels le sujet est calibré. */
+  readonly calibratedOn: readonly string[];
+}
+
+/**
  * `nightly` : le jeu sans surveillance, lancé chaque nuit.
  * `on-demand` : lancé seulement quand on le nomme (`--only`) ou par le jeu
  * `release` — un GPU dix minutes, ou un envoi hors de la machine que le
@@ -90,6 +115,59 @@ export interface ScenarioEnv {
   readonly services: Readonly<Record<string, ServiceProbe>>;
   /** Début de l'essai (ms). Un fichier plus ancien n'a pas été écrit par lui. */
   readonly startedMs: number;
+  /**
+   * Le sujet calibré de l'essai, posé par runTrial pour un scénario qui déclare
+   * `subject` (et seulement pour lui : absent partout ailleurs).
+   */
+  readonly subject?: ResearchSubject;
+}
+
+/**
+ * Les outils du produit par lesquels un scénario doit passer (décision 1 du
+ * 17/10) : un livrable ÉCRIT l'est par l'un d'eux, un fichier LU l'est par l'un
+ * d'eux. Si aucun n'est dans les outils de l'équipe, l'essai est SAUTÉ. La
+ * règle est écrite une fois (judge-kit `productToolReasons`), pour tous.
+ */
+export interface ProductTools {
+  /** Les noms nus des outils (`xlsx_read`), au moins un. */
+  readonly tools: readonly string[];
+  /**
+   * Les livrables (sous `nodal-bench/`) que ces outils doivent ÉCRIRE : la
+   * chaîne d'empreintes de `tool_call_writes`, dans l'ordre `seq`, va de
+   * l'état préparé par le banc à l'état final du disque, et chaque écriture y
+   * est celle d'un de ces outils, prouvée par ses octets écrits.
+   */
+  readonly writes: readonly string[];
+  /**
+   * Les fichiers (sous `nodal-bench/`) que ces outils doivent LIRE : une ligne
+   * `tool_call_reads` d'un appel d'un de ces outils porte le chemin réel du
+   * fichier posé ET l'empreinte de la fixture. Seulement pour un outil dont la
+   * plateforme enregistre la lecture : un outil MCP n'en laisse aucune (#784).
+   */
+  readonly reads: readonly string[];
+}
+
+/** L'état d'un fichier : absent, lu (avec son empreinte sha-256), ou présent mais illisible. */
+export type FileState =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'file'; readonly sha256: string }
+  | { readonly kind: 'unreadable' };
+
+/**
+ * Un fichier du scénario, tel que le banc le connaît hors de la base : ses
+ * chemins réels possibles (un par dossier de travail, résolus comme la
+ * plateforme les range, `cheminConstate`), le chemin réel où le banc POSE sa
+ * fixture (le dossier partagé, `installFixture`), l'état où le banc l'a
+ * préparé (la fixture posée, sinon absent) et son état sur le disque à la fin
+ * de l'essai.
+ */
+export interface ProductFileState {
+  readonly rel: string;
+  readonly realPaths: readonly string[];
+  /** Le chemin réel du fichier sous le dossier partagé, là où `installFixture` le pose. */
+  readonly posedPath: string;
+  readonly initial: FileState;
+  readonly final: FileState;
 }
 
 /**
@@ -115,6 +193,21 @@ export interface Scenario<O> {
   readonly title: string;
   /** Ce que « vert » veut dire, en clair (anglais : rendu au portail). */
   readonly green: string;
+  /**
+   * Le chemin attendu, en clair (anglais : la carte du Studio) : qui fait quoi,
+   * avec quels outils, et ce qui est seulement mesuré.
+   */
+  readonly path: string;
+  /** Le livrable, en clair (anglais) : un fichier, une réponse, une demande en attente. */
+  readonly deliverable: string;
+  /** Les outils du produit que l'essai doit employer (voir `ProductTools`). Absent : aucun. */
+  readonly productTools?: ProductTools;
+  /**
+   * Le sujet vient du fichier des sujets calibrés (subjects.ts), jamais du
+   * scénario : `instruction` y porte `{subject}`. Sans sujet calibré de ce
+   * genre, l'essai est SAUTÉ (#776).
+   */
+  readonly subject?: SubjectKind;
   readonly set: ScenarioSet;
   readonly activity: Activity;
   /** Où l'essai fait envoyer quelque chose (voir `Sends`). Déclaré par CHAQUE scénario. */
@@ -149,6 +242,11 @@ export interface Scenario<O> {
   observe(facts: TreeFacts, env: ScenarioEnv): Promise<O>;
   /** Pur : les raisons du rouge, vides pour un vert. */
   judge(facts: TreeFacts, observed: O): string[];
+  /**
+   * Le texte dont la ligne classe les liens (`TrialLine.links`) : un rapport
+   * écrit sur le disque. Absent : la réponse finale du job de tête.
+   */
+  cites?(facts: TreeFacts, observed: O): string | null;
 }
 
 /** Une fixture posée avant l'essai : `from` relatif à packages/bench/fixtures, `to` sous `nodal-bench/`. */
@@ -189,6 +287,30 @@ export interface ModelUse {
   readonly cachedTokens: number | null;
   readonly outputTokens: number | null;
   readonly costUsd: number | null;
+}
+
+/**
+ * Le chemin d'un job de l'arbre : qui il est, qui l'a délégué, et les outils
+ * qu'il a appelés, par leur nom et dans l'ordre (`tool_calls`).
+ */
+export interface PathJob {
+  /** Les 8 premiers caractères du job. */
+  readonly job: string;
+  readonly agent: string | null;
+  /** Le job qui l'a délégué (8 caractères) ; null pour le job de tête. */
+  readonly parent: string | null;
+  readonly tools: string[];
+}
+
+/**
+ * Un lien cité, classé (#648, la partie mesurable) : `seen` quand il figure
+ * dans la sortie d'un outil web de l'arbre qui ne l'avait pas reçu en entrée.
+ * Qu'une page ait été LUE n'est pas dit ici (`SOURCES_READ`).
+ */
+export interface CitedLink {
+  /** L'adresse normalisée (`normalizeUrl`). */
+  readonly url: string;
+  readonly seen: boolean;
 }
 
 /** Un fichier que l'essai a laissé dans le dossier du banc d'un dossier de travail. */
@@ -238,6 +360,21 @@ export interface TrialLine {
   readonly agents: string[];
   readonly models: string[];
   readonly toolCalls: number;
+  /**
+   * Le chemin de l'essai, job par job (voir `PathJob`). Absent des lignes
+   * écrites avant le catalogue du 17/10 : « non enregistré », jamais « aucun
+   * outil » (`cheminDe`, results.ts).
+   */
+  readonly path: PathJob[];
+  /** Les agents des jobs délégués, dans l'ordre de leur création. Absent des anciennes lignes. */
+  readonly delegatedTo: string[];
+  /**
+   * Les liens du texte cité (`Scenario.cites`, sinon la réponse), classés vu /
+   * non vu. Absent des anciennes lignes.
+   */
+  readonly links: CitedLink[];
+  /** Le sujet calibré joué (son identifiant) ; null pour un scénario sans sujet. */
+  readonly subject: string | null;
   /** Appels de modèle en API (`llm_calls`). */
   readonly llmCalls: number;
   /** Tours d'une CLI de code, Claude Code ou Codex (`cli_runs`). */

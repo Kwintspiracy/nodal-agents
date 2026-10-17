@@ -124,6 +124,44 @@ export const ReturnResultFactSchema = z.object({
 });
 export type ReturnResultFact = z.infer<typeof ReturnResultFactSchema>;
 
+/**
+ * Ce qu'un appel d'outil a fait à un fichier qu'il visait (`tool_call_writes`,
+ * #779) : le chemin réel, l'état et l'empreinte avant, l'état et l'empreinte
+ * après, et D'OÙ vient l'empreinte après : `written`, les octets que l'outil a
+ * écrits (une preuve) ; `read`, une relecture du disque (jamais une preuve).
+ * `seq` est celui de la ligne `tool_calls` de l'appel, la seule colonne
+ * d'ordre fiable : deux appels parallèles ont le même instant, jamais le même
+ * `seq`.
+ */
+const FileStateKind = z.enum(['absent', 'file', 'unreadable']);
+export const FileWriteFactSchema = z.object({
+  seq: z.number(),
+  jobId: z.string(),
+  toolName: z.string(),
+  path: z.string(),
+  beforeKind: FileStateKind,
+  beforeSha256: z.string().nullable(),
+  afterKind: FileStateKind,
+  afterSha256: z.string().nullable(),
+  afterSource: z.enum(['written', 'read']),
+});
+export type FileWriteFact = z.infer<typeof FileWriteFactSchema>;
+
+/**
+ * Un fichier qu'un appel d'outil a LU (`tool_call_reads`, #783) : son chemin
+ * réel (la même forme que `tool_call_writes.path`) et l'empreinte des octets
+ * que l'outil a lus, rapportée par le lecteur lui-même au moment de la
+ * lecture. `seq` est celui de la ligne `tool_calls` de l'appel.
+ */
+export const FileReadFactSchema = z.object({
+  seq: z.number(),
+  jobId: z.string(),
+  toolName: z.string(),
+  path: z.string(),
+  sha256: z.string(),
+});
+export type FileReadFact = z.infer<typeof FileReadFactSchema>;
+
 /** L'arbre d'un essai : le job de tête, tout ce qu'il a délégué, et ce qui s'y est passé. */
 export const TreeFactsSchema = z.object({
   rootId: z.string(),
@@ -149,6 +187,18 @@ export const TreeFactsSchema = z.object({
    * lise.
    */
   returnResults: z.array(ReturnResultFactSchema).default([]),
+  /**
+   * Ce que chaque appel a fait à chaque fichier qu'il visait (`tool_call_writes`),
+   * dans l'ordre `seq`. Absent des fixtures capturées avant que la plateforme
+   * ne l'enregistre (#779) : rien n'y est enregistré, jamais « rien écrit ».
+   */
+  writes: z.array(FileWriteFactSchema).default([]),
+  /**
+   * Les fichiers que chaque appel a lus (`tool_call_reads`), dans l'ordre
+   * `seq`. Absent des fixtures capturées avant que la plateforme ne
+   * l'enregistre (#783) : rien n'y est enregistré, jamais « rien lu ».
+   */
+  reads: z.array(FileReadFactSchema).default([]),
 });
 export type TreeFacts = z.infer<typeof TreeFactsSchema>;
 
@@ -354,6 +404,51 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
        order by j.created_at, j.id, m.i, p.k`,
       ),
     );
+  const writes = z
+    .array(
+      z.object({
+        seq: num,
+        job_id: z.string(),
+        tool_name: z.string(),
+        path: z.string(),
+        before_kind: FileStateKind,
+        before_sha256: z.string().nullable(),
+        after_kind: FileStateKind,
+        after_sha256: z.string().nullable(),
+        after_source: z.enum(['written', 'read']),
+      }),
+    )
+    .parse(
+      await executeRows(
+        db,
+        sql`
+      select tc.seq::float8 as seq, w.job_id::text, tc.tool_name, w.path,
+             w.before_kind, w.before_sha256, w.after_kind, w.after_sha256, w.after_source
+        from tool_call_writes w join tool_calls tc on tc.id = w.tool_call_id
+       where w.job_id in (${tree})
+       order by tc.seq`,
+      ),
+    );
+  const reads = z
+    .array(
+      z.object({
+        seq: num,
+        job_id: z.string(),
+        tool_name: z.string(),
+        path: z.string(),
+        sha256: z.string(),
+      }),
+    )
+    .parse(
+      await executeRows(
+        db,
+        sql`
+      select tc.seq::float8 as seq, r.job_id::text, tc.tool_name, r.path, r.sha256
+        from tool_call_reads r join tool_calls tc on tc.id = r.tool_call_id
+       where r.job_id in (${tree})
+       order by tc.seq, r.path`,
+      ),
+    );
   return {
     rootId,
     entityId: root.entity_id,
@@ -425,5 +520,23 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
       createdMs: d.created_ms,
     })),
     returnResults: returnResults.map((r) => ({ jobId: r.job_id, input: r.input })),
+    writes: writes.map((w) => ({
+      seq: w.seq,
+      jobId: w.job_id,
+      toolName: w.tool_name,
+      path: w.path,
+      beforeKind: w.before_kind,
+      beforeSha256: w.before_sha256,
+      afterKind: w.after_kind,
+      afterSha256: w.after_sha256,
+      afterSource: w.after_source,
+    })),
+    reads: reads.map((r) => ({
+      seq: r.seq,
+      jobId: r.job_id,
+      toolName: r.tool_name,
+      path: r.path,
+      sha256: r.sha256,
+    })),
   };
 }

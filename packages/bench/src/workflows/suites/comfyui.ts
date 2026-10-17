@@ -114,6 +114,11 @@ function comfy(o: {
     id: o.id,
     version: 1,
     title: o.title,
+    path:
+      o.count === 1
+        ? 'A ComfyUI workflow. Needs ComfyUI on the machine.'
+        : 'A ComfyUI workflow, several generations. Needs ComfyUI on the machine.',
+    deliverable: o.count === 1 ? `One PNG in ${o.dir}/` : `${o.count} PNG files in ${o.dir}/`,
     green: `Exactly ${o.count} PNG file(s)${o.name ? ` named ${o.name}` : ''} written during the run under ${o.dir}/, each ${o.width} × ${o.height} pixels read from the file header${o.count > 1 ? ', all different' : ''}, nothing sent to a messaging channel, and nobody was asked anything.`,
     set: 'on-demand',
     activity: 'image-comfyui',
@@ -142,28 +147,13 @@ function comfy(o: {
 }
 
 export const COMFYUI_SCENARIOS: AnyScenario[] = [
+  // Fusion de comfy-portrait, comfy-square et comfy-landscape : la même
+  // capacité, des dimensions exactes, qu'un format non carré prouve. Renommé
+  // d'après ce qu'il teste ; les lignes de comfy-portrait restent une série
+  // close (`RENAMED_IDS`, catalog.ts).
   comfy({
-    id: 'comfy-square',
-    title: 'One square image from ComfyUI, at the size asked',
-    subject: "d'un phare sur une falaise au coucher du soleil",
-    dir: 'nodal-bench/comfy-phare',
-    name: 'phare.png',
-    count: 1,
-    width: 1024,
-    height: 1024,
-  }),
-  comfy({
-    id: 'comfy-variants',
-    title: 'Three different variants from ComfyUI',
-    subject: "d'un chat roux qui dort sur un rebord de fenêtre",
-    dir: 'nodal-bench/comfy-variantes',
-    count: 3,
-    width: 768,
-    height: 768,
-  }),
-  comfy({
-    id: 'comfy-portrait',
-    title: 'A portrait-format image from ComfyUI',
+    id: 'comfy-exact-size',
+    title: 'Respect exact dimensions',
     subject: "d'un astronaute dans une forêt",
     dir: 'nodal-bench/comfy-portrait',
     name: 'astronaute.png',
@@ -172,13 +162,12 @@ export const COMFYUI_SCENARIOS: AnyScenario[] = [
     height: 1152,
   }),
   comfy({
-    id: 'comfy-landscape',
-    title: 'A landscape-format image from ComfyUI',
-    subject: "d'une ville futuriste la nuit",
-    dir: 'nodal-bench/comfy-paysage',
-    name: 'ville.png',
-    count: 1,
-    width: 1216,
-    height: 832,
+    id: 'comfy-variants',
+    title: 'Produce several distinct variants',
+    subject: "d'un chat roux qui dort sur un rebord de fenêtre",
+    dir: 'nodal-bench/comfy-variantes',
+    count: 3,
+    width: 768,
+    height: 768,
   }),
 ];

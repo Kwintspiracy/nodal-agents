@@ -302,4 +302,71 @@ describe('what the orchestration judges read from the tree', () => {
       options: ['bleu', 'vert'],
     });
   });
+
+  it('reads what each call of the tree did to each file it targeted, in seq order, with the source of the after hash', async () => {
+    await pg.exec('delete from tool_call_writes; delete from tool_calls; delete from agent_jobs;');
+    const root = await job({ status: 'completed' });
+    const stranger = await job({ status: 'completed' });
+    const call = async (jobId: string, tool: string): Promise<string> => {
+      const r = await pg.query<{ id: string }>(
+        `insert into tool_calls (entity_id, job_id, tool_name) values ($1, $2, $3) returning id::text`,
+        [entityId, jobId, tool],
+      );
+      return r.rows[0]!.id;
+    };
+    const create = await call(root, 'xlsx_create');
+    const edit = await call(root, 'xlsx_set_range');
+    const other = await call(stranger, 'file_write');
+    const a = 'a'.repeat(64);
+    const b = 'b'.repeat(64);
+    await pg.query(
+      `insert into tool_call_writes (tool_call_id, job_id, path, before_kind, before_sha256, after_kind, after_sha256, after_source)
+       values ($1, $4, 'C:/ws/nodal-bench/v.xlsx', 'file', $6, 'file', $7, 'written'),
+              ($2, $4, 'C:/ws/nodal-bench/v.xlsx', 'absent', null, 'file', $6, 'written'),
+              ($3, $5, 'C:/ws/autre.txt', 'absent', null, 'file', $7, 'read')`,
+      [edit, create, other, root, stranger, a, b],
+    );
+    const facts = await readTreeFacts(db, root);
+    expect(
+      facts.writes.map((w) => [w.toolName, w.path, w.beforeKind, w.afterSha256, w.afterSource]),
+    ).toEqual([
+      ['xlsx_create', 'C:/ws/nodal-bench/v.xlsx', 'absent', a, 'written'],
+      ['xlsx_set_range', 'C:/ws/nodal-bench/v.xlsx', 'file', b, 'written'],
+    ]);
+    expect(facts.writes[0]!.seq).toBeLessThan(facts.writes[1]!.seq);
+  });
+
+  it('reads what each call of the tree read (tool_call_reads), in seq order, with its real path and hash, never a stranger read', async () => {
+    await pg.exec(
+      'delete from tool_call_reads; delete from tool_call_writes; delete from tool_calls; delete from agent_jobs;',
+    );
+    const root = await job({ status: 'completed' });
+    const stranger = await job({ status: 'completed' });
+    const call = async (jobId: string, tool: string): Promise<string> => {
+      const r = await pg.query<{ id: string }>(
+        `insert into tool_calls (entity_id, job_id, tool_name) values ($1, $2, $3) returning id::text`,
+        [entityId, jobId, tool],
+      );
+      return r.rows[0]!.id;
+    };
+    const first = await call(root, 'xlsx_read');
+    const second = await call(root, 'file_read');
+    const other = await call(stranger, 'xlsx_read');
+    const a = 'a'.repeat(64);
+    const b = 'b'.repeat(64);
+    // Insérées dans le désordre : l'ordre rendu est celui des appels (`seq`).
+    await pg.query(
+      `insert into tool_call_reads (tool_call_id, job_id, path, sha256)
+       values ($2, $4, 'C:/ws/shared/nodal-bench/notes.txt', $7),
+              ($1, $4, 'C:/ws/shared/nodal-bench/v.xlsx', $6),
+              ($3, $5, 'C:/ws/shared/nodal-bench/v.xlsx', $7)`,
+      [first, second, other, root, stranger, a, b],
+    );
+    const facts = await readTreeFacts(db, root);
+    expect(facts.reads.map((x) => [x.toolName, x.path, x.sha256, x.jobId])).toEqual([
+      ['xlsx_read', 'C:/ws/shared/nodal-bench/v.xlsx', a, root],
+      ['file_read', 'C:/ws/shared/nodal-bench/notes.txt', b, root],
+    ]);
+    expect(facts.reads[0]!.seq).toBeLessThan(facts.reads[1]!.seq);
+  });
 });

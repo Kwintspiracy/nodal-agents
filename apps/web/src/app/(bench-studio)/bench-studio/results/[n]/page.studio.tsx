@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
   aideDeColonne,
+  cheminDe,
   dollars,
   duree,
   nombreJetons,
@@ -65,6 +66,7 @@ export default async function TrialPage({ params }: { params: Promise<{ n: strin
   const modelUse = list<ModelUseRow>(l['modelUse']);
   const answer = str(l['answer']);
   const rootJobId = str(l['rootJobId']);
+  const path = cheminDe(l);
 
   return (
     <StudioPage
@@ -147,6 +149,49 @@ export default async function TrialPage({ params }: { params: Promise<{ n: strin
                 <p className="text-body-13 text-ink-4">The root job left no answer.</p>
               ) : (
                 <CodeBlock code={answer} lang="text" lineNumbers={false} className="" />
+              )}
+            </Panel>
+            <Panel title="Path">
+              {!path.enregistre ? (
+                <p className="text-body-13 text-ink-4">
+                  Not recorded on this trial (written before the catalogue of 2026-10-17).
+                </p>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <ul className="flex flex-col gap-2">
+                    {path.jobs.map((j) => (
+                      <li key={j.job} className="text-body-13 text-ink-2">
+                        <span className="text-medium-13 text-ink">
+                          {j.agent ?? 'unknown agent'}
+                        </span>{' '}
+                        <span className="text-mono-11 text-ink-4">
+                          {j.job}
+                          {j.parent ? ` · delegated by ${j.parent}` : ''}
+                        </span>
+                        <span className="mt-0.5 block font-mono text-mono-12 text-ink-3">
+                          {j.outils.length === 0 ? 'no tool' : j.outils.join(' → ')}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  {path.liens !== null && path.liens.length > 0 && (
+                    <p className="text-body-13 text-ink-2">
+                      {path.liens.length} link(s) cited: {path.liens.filter((x) => x.vu).length}{' '}
+                      seen in a web tool output
+                      {path.liens.some((x) => !x.vu) && (
+                        <>
+                          , not seen:{' '}
+                          <span className="font-mono text-mono-12">
+                            {path.liens
+                              .filter((x) => !x.vu)
+                              .map((x) => x.url)
+                              .join(', ')}
+                          </span>
+                        </>
+                      )}
+                    </p>
+                  )}
+                </div>
               )}
             </Panel>
             <Panel title="Deliverables">

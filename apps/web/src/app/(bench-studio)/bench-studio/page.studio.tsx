@@ -29,7 +29,7 @@ export default async function CatalogPage() {
   return (
     <StudioPage
       title="Catalog"
-      subtitle={`${catalog.scenarios.length} scenarios in ${byActivity.length} activities. Open one to read the exact request, what green means and how it is judged.`}
+      subtitle={`${catalog.scenarios.length} scenarios in ${byActivity.length} activities, each named by what it tests. Open one to read its expected path, its deliverable, what green means, and an example request.`}
     >
       <div className="mb-6 flex flex-col gap-3">
         {needs.reachable ? (
@@ -80,13 +80,16 @@ export default async function CatalogPage() {
                         title={s.title}
                         meta={`${s.id} · v${s.version}${s.unverified.length > 0 ? ` · ${s.unverified.length} not verified` : ''}`}
                         description={
-                          s.needs.length > 0 && (
-                            <span className="mt-1 flex flex-wrap gap-1 sm:hidden">
-                              {s.needs.map((n) => (
-                                <NeedStatus key={n} needs={needs} need={n} />
-                              ))}
-                            </span>
-                          )
+                          <>
+                            <span className="block">{s.path}</span>
+                            {s.needs.length > 0 && (
+                              <span className="mt-1 flex flex-wrap gap-1 sm:hidden">
+                                {s.needs.map((n) => (
+                                  <NeedStatus key={n} needs={needs} need={n} />
+                                ))}
+                              </span>
+                            )}
+                          </>
                         }
                       >
                         {s.title}

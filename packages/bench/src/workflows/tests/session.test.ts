@@ -35,6 +35,7 @@ vi.mock('../mcp', () => ({
 }));
 vi.mock('../paths', () => ({
   RESULTS_FILE: join(mkdtempSync(join(tmpdir(), 'session-')), 'workflows.ndjson'),
+  SUBJECTS_FILE: join(mkdtempSync(join(tmpdir(), 'session-subjects-')), 'research-subjects.json'),
 }));
 vi.mock('../lock', async (orig) => ({
   ...(await orig<typeof import('../lock')>()),
