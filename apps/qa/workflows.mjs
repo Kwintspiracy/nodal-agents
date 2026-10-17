@@ -24,6 +24,7 @@ import {
   aideDeColonne,
   SEUIL_RALENTI,
   aRegarder,
+  cheminDe,
   colonneDe,
   comparerVersions,
   construireMatrice,
@@ -111,6 +112,36 @@ function dollars(n) {
 }
 
 /**
+ * Le chemin d'un essai (`cheminDe`, results.ts) : les outils de chaque job dans
+ * l'ordre, puis les liens cités, vus ou non dans une sortie d'outil web. Une
+ * ligne d'avant le catalogue du 17/10 le dit : non enregistré, jamais « aucun
+ * outil ».
+ */
+function cheminHtml(c) {
+  if (!c.enregistre)
+    return '<p class="wf-nd">Not recorded on this run (written before the catalogue of 2026-10-17).</p>';
+  const jobs = c.jobs
+    .map(
+      (j) =>
+        `<li><span class="mono">${esc(j.job)}</span> ${esc(j.agent ?? '?')}${j.parent ? ` <span class="wf-nd">(delegated by ${esc(j.parent)})</span>` : ''}: ${
+          j.outils.length === 0
+            ? '<span class="wf-nd">no tool</span>'
+            : `<span class="mono">${j.outils.map(esc).join(' → ')}</span>`
+        }</li>`,
+    )
+    .join('');
+  const vus = (c.liens ?? []).filter((x) => x.vu).length;
+  const nonVus = (c.liens ?? []).filter((x) => !x.vu);
+  const liens =
+    c.liens === null
+      ? ''
+      : c.liens.length === 0
+        ? '<p class="wf-nd">No link cited.</p>'
+        : `<p>${c.liens.length} link${c.liens.length > 1 ? 's' : ''} cited: ${vus} seen in a web tool output, ${nonVus.length} not${nonVus.length > 0 ? ` (<span class="mono">${nonVus.map((x) => esc(x.url)).join(', ')}</span>)` : ''}.</p>`;
+  return `<ul class="wf-livrables">${jobs}</ul>${liens}`;
+}
+
+/**
  * Le détail du dernier essai : les modèles de chaque job (demandé et effectif,
  * fournisseur, effort, secours, jetons de cache à part), les livrables et la
  * réponse. Une ligne écrite avant le banc v2 ne porte rien de cela : la carte
@@ -145,8 +176,9 @@ function dernierEssai(l) {
       ? '<p class="wf-sous">No file left under nodal-bench/.</p>'
       : `<ul class="wf-livrables">${l.deliverables.map((d) => `<li class="mono">${esc(d.path)}${d.bytes ? ` <span class="wf-nd">${nombreJetons(d.bytes)}B</span>` : ''}</li>`).join('')}</ul>`;
   return `<details class="wf-detail">
-    <summary>Last run, ${esc(String(l.startedAt).slice(0, 16).replace('T', ' '))} UTC: models, deliverables, answer</summary>
+    <summary>Last run, ${esc(String(l.startedAt).slice(0, 16).replace('T', ' '))} UTC: models, path, deliverables, answer</summary>
     ${modeles}
+    <p class="wf-sous">Path</p>${cheminHtml(cheminDe(l))}
     <p class="wf-sous">Deliverables</p>${livrables}
     <p class="wf-sous">Answer</p>${l.answer ? `<blockquote class="wf-reponse">${esc(l.answer)}</blockquote>` : '<p class="wf-nd">No answer text.</p>'}
   </details>`;

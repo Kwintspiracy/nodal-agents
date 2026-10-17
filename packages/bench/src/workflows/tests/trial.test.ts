@@ -14,6 +14,7 @@ import { TreeFactsSchema, type TreeFacts } from '../facts';
 import { scenarioById } from '../scenarios';
 import { busyReason, measure, runTrial, type TrialDeps, type TrialOptions } from '../trial';
 import type { ForeignActivity } from '../stack';
+import type { ResearchSubject } from '../subjects';
 import type { AnyScenario } from '../types';
 
 const FIX = join(__dirname, 'fixtures');
@@ -36,6 +37,15 @@ const OPTS: TrialOptions = {
 
 const IDLE: ForeignActivity = { jobs: [], lastChatMs: null };
 
+/** Un sujet calibré, posé pour les essais de recherche (subjects.ts) : celui de l'essai réel du 30/09. */
+const CMB: ResearchSubject = {
+  id: 'test-cmb',
+  kind: 'research',
+  request: 'la découverte du fond diffus cosmologique : qui, quand, comment',
+  facts: [{ says: 'name Penzias', pattern: '\\bpenzias\\b', flags: 'i' }],
+  calibratedOn: ['test'],
+};
+
 interface World {
   deps: TrialDeps;
   started: string[];
@@ -52,6 +62,7 @@ function world(opts: {
   snapshots: TreeFacts[];
   afterCancel?: TreeFacts;
   foreign?: ForeignActivity[];
+  subjects?: ResearchSubject[];
 }): World {
   const clock = { now: Date.parse('2026-09-30T03:00:00Z') };
   const started: string[] = [];
@@ -88,6 +99,7 @@ function world(opts: {
       startedMs,
     }),
     rootModel: async () => 'z-ai/glm-5.3',
+    subjects: () => opts.subjects ?? [],
     log: () => undefined,
   };
   return { deps, started, cancelled, clock };
@@ -228,7 +240,12 @@ describe('workflow trial safety rules', () => {
     });
     const line = await runTrial(scenarioById('print')!, w.deps, OPTS);
     expect(w.started).toHaveLength(1);
-    expect(line.verdict).toBe('green');
+    // L'essai réel de la v1 imprimait la note « Nodal bench » : sous la v2 (la
+    // liste de courses), il est rouge pour son texte, et pour rien d'autre.
+    expect(line.verdict).toBe('red');
+    expect(line.reasons).toEqual([
+      'no print request holds the whole list (pain, lait, œufs, tomates, café)',
+    ]);
   });
 
   it('a refused run_task is an ERROR line with the server words, never a silent pass', async () => {
@@ -502,7 +519,7 @@ describe('what happens before a trial starts', () => {
     const w = world({ rootId: green.rootId, snapshots: [green] });
     w.deps.env = async (startedMs) => ({
       workspaceRoots: [mkdtempSync(join(tmpdir(), 'wf-prep-'))],
-      teamTools: [],
+      teamTools: ['xlsx_create'],
       services: {},
       unlistedMcpServers: [],
       startedMs,
@@ -607,16 +624,11 @@ describe('an unverified check travels on every line of its scenario', () => {
     ticket: '#648',
   };
 
-  it('a research trial green on its own judge says sources read: not verified', async () => {
+  it('a research trial that ran says sources read: not verified, whatever its verdict', async () => {
     const green = load('research-green');
-    // Le vrai essai du 30/09 a aussi envoyé un message Telegram (voir le cas suivant) : on le retire ici.
-    const quiet: TreeFacts = {
-      ...green,
-      toolCalls: green.toolCalls.filter((c) => c.toolName !== 'telegram_send_message'),
-    };
-    const w = world({ rootId: green.rootId, snapshots: [quiet] });
+    const w = world({ rootId: green.rootId, snapshots: [green], subjects: [CMB] });
     const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
-    expect(line.verdict).toBe('green');
+    expect(w.started).toHaveLength(1);
     expect(line.unverified).toEqual([expect.objectContaining(SOURCES)]);
   });
 
@@ -626,11 +638,13 @@ describe('an unverified check travels on every line of its scenario', () => {
   // vert ; la destination déclarée (`nothing`) le refuse désormais.
   it('the real research trial of 30/09 sent a Telegram message: red for that, whatever its judge says', async () => {
     const green = load('research-green');
-    expect(scenarioById('research')!.judge(green, null)).toEqual([]);
-    const w = world({ rootId: green.rootId, snapshots: [green] });
+    expect(scenarioById('research')!.judge(green, { subject: CMB })).not.toContain(
+      'a send tool was called (telegram_send_message)',
+    );
+    const w = world({ rootId: green.rootId, snapshots: [green], subjects: [CMB] });
     const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
     expect(line.verdict).toBe('red');
-    expect(line.reasons).toEqual(['a send tool was called (telegram_send_message)']);
+    expect(line.reasons).toContain('a send tool was called (telegram_send_message)');
   });
 
   it('a skipped trial says it too: the check is a property of the scenario, not of a green run', async () => {
@@ -657,5 +671,138 @@ describe('an unverified check travels on every line of its scenario', () => {
     const w = world({ rootId: green.rootId, snapshots: [green] });
     const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
     expect(line.unverified).toEqual([]);
+  });
+});
+
+// Le catalogue du 17/10 : un sujet calibré, les outils du produit, le chemin gardé.
+describe('workflow trial: subjects, product tools and the path', () => {
+  it('a research scenario with no calibrated subject is SKIPPED with the reason and the ticket; nothing starts', async () => {
+    const green = load('research-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
+    expect(w.started).toEqual([]);
+    expect(line.verdict).toBe('skipped');
+    expect(line.reasons).toEqual([
+      'no calibrated research subject (kind research) in packages/bench/subjects/research-subjects.json: the trial does not run on a subject models know from memory (#776)',
+    ]);
+    expect(line.subject).toBeNull();
+  });
+
+  it('a calibrated subject goes into the request word for word, and the line names it', async () => {
+    const green = load('research-green');
+    const w = world({ rootId: green.rootId, snapshots: [green], subjects: [CMB] });
+    const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
+    expect(w.started).toEqual([
+      'Trouve sur le web la réponse à cette question, et donne tes sources avec leurs liens : la découverte du fond diffus cosmologique : qui, quand, comment',
+    ]);
+    expect(line.subject).toBe('test-cmb');
+  });
+
+  it('a subject of the other kind is no subject: the deep research is skipped, the simple one runs', async () => {
+    const green = load('research-green');
+    const w = world({ rootId: green.rootId, snapshots: [green], subjects: [CMB] });
+    const deep = await runTrial(scenarioById('deep-research-dna')!, w.deps, OPTS);
+    expect(deep.verdict).toBe('skipped');
+    expect(deep.reasons[0]).toMatch(/^no calibrated research subject \(kind deep-research\)/);
+  });
+
+  it('an unreadable subjects file is an ERROR line with its words, never a skip or a default subject', async () => {
+    const green = load('research-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    w.deps.subjects = () => {
+      throw new Error('workflow_subjects_unreadable: x is not JSON');
+    };
+    const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
+    expect(w.started).toEqual([]);
+    expect(line.verdict).toBe('error');
+    expect(line.reasons).toEqual([
+      'the trial could not be prepared: workflow_subjects_unreadable: x is not JSON',
+    ]);
+  });
+
+  it.each(['file', 'word-create', 'ppt-read-answer', 'html-edit'])(
+    '%s: no product tool of the scenario in the team SKIPS it with that reason; nothing starts',
+    async (id) => {
+      const green = load('question-green');
+      const w = world({ rootId: green.rootId, snapshots: [green] });
+      const line = await runTrial(scenarioById(id)!, w.deps, OPTS);
+      expect(w.started).toEqual([]);
+      expect(line.verdict).toBe('skipped');
+      expect(line.reasons).toEqual([
+        `no agent of this workspace has the product tool this scenario is about (${scenarioById(id)!.productTools!.tools.join(', ')})`,
+      ]);
+    },
+  );
+
+  it('the real file trial of 30/09 wrote the workbook with a Python script while xlsx tools were there: red, by the path rule', async () => {
+    const after = load('file-red-approval');
+    // Sans son approbation (et l'annulation qu'elle a causée) : il ne reste que le chemin.
+    const done: TreeFacts = {
+      ...after,
+      approvals: [],
+      jobs: after.jobs.map((j) => ({ ...j, status: 'completed' })),
+    };
+    const w = world({ rootId: after.rootId, snapshots: [done] });
+    w.deps.env = async (startedMs) => ({
+      workspaceRoots: [],
+      teamTools: ['xlsx_create', 'xlsx_read', 'xlsx_set_cell', 'xlsx_set_range'],
+      services: {},
+      unlistedMcpServers: [],
+      startedMs,
+    });
+    const line = await runTrial(scenarioById('file')!, w.deps, OPTS);
+    expect(line.verdict).toBe('red');
+    expect(line.reasons).toContain(
+      'product tool available, not used: none of xlsx_create, xlsx_set_range was called',
+    );
+    expect(line.reasons).toContain(
+      'product tool available, not used: a command handled ventes-bench.xlsx (run_command)',
+    );
+  });
+
+  it('the line keeps the path: every tool by name and in order, per job, and the teammate delegated to', async () => {
+    const after = load('file-red-approval');
+    const w = world({ rootId: after.rootId, snapshots: [beforeCancel(after)], afterCancel: after });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.toolCalls).toBe(9);
+    expect(line.path).toEqual([
+      {
+        job: '75bbf3d0',
+        agent: 'alfred',
+        parent: null,
+        tools: ['skill_view', 'load_tools', 'assign_researcher'],
+      },
+      {
+        job: '074e7161',
+        agent: 'researcher',
+        parent: '75bbf3d0',
+        tools: [
+          'skill_view',
+          'file_write',
+          'load_tools',
+          'run_command',
+          'run_command',
+          'run_command',
+        ],
+      },
+    ]);
+    expect(line.delegatedTo).toEqual(['researcher']);
+  });
+
+  it('the line classifies the links of the answer: on the real research trial, the Nobel page alone unseen', async () => {
+    const green = load('research-green');
+    const w = world({ rootId: green.rootId, snapshots: [green], subjects: [CMB] });
+    const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
+    expect(line.links).toHaveLength(15);
+    expect(line.links.filter((l) => !l.seen).map((l) => l.url)).toEqual([
+      'nobelprize.org/prizes/physics/1978/summary',
+    ]);
+  });
+
+  it('a skipped line records an empty path, not a missing one: nothing ran', async () => {
+    const green = load('question-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    const line = await runTrial(scenarioById('file')!, w.deps, OPTS);
+    expect(line).toMatchObject({ verdict: 'skipped', path: [], delegatedTo: [], links: [] });
   });
 });

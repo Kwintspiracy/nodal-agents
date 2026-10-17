@@ -4,11 +4,17 @@
 // modèle ni ne croit ce qu'il affirme : une délégation est un job enfant, un
 // envoi est une sortie d'outil qui dit `ok`. Qu'une source citée ait été LUE
 // n'est pas jugé ici : aucune ligne de la base ne le dit de façon fiable (#648).
+// Qu'un lien ou un fait ait été VU dans la sortie d'un outil web, si : c'est
+// une ligne `tool_calls` (`citedLinks`, `factsNotSeenOnTheWeb`).
+//
+// Les règles de CHEMIN (décision 1 du 17/10 : un outil du produit disponible
+// doit servir) sont écrites ici une fois et s'appliquent à tout scénario qui
+// déclare `productTools`, par runTrial, jamais dans un juge particulier.
 
 import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 import { DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
 import type { JobFact, ToolCallFact, TreeFacts } from './facts';
-import type { UnverifiedCheck } from './types';
+import type { AnyScenario, CitedLink, PathJob, ScenarioEnv, UnverifiedCheck } from './types';
 
 /** Le job de tête de l'essai. */
 export function rootJob(facts: TreeFacts): JobFact | undefined {
@@ -322,12 +328,12 @@ export function missingFacts(
   return facts.filter((f) => !f.holds(text)).map((f) => `${where} does not ${f.says}`);
 }
 
-/** Le job de tête a répondu lui-même : une délégation est un rouge, nommé. */
-export function noDelegation(facts: TreeFacts): string[] {
+/** Le job de tête a fait le travail lui-même : une délégation est un rouge, nommé (`what` : ce qui a été délégué). */
+export function noDelegation(facts: TreeFacts, what = 'a direct question'): string[] {
   const d = delegatedJobs(facts);
   return d.length === 0
     ? []
-    : [`delegated a direct question (${d.map((j) => j.agentSlug ?? j.id.slice(0, 8)).join(', ')})`];
+    : [`delegated ${what} (${d.map((j) => j.agentSlug ?? j.id.slice(0, 8)).join(', ')})`];
 }
 
 /** Un job de l'arbre, quel qu'il soit, a appelé un outil web. */
@@ -338,4 +344,227 @@ export function treeCalledTheWeb(facts: TreeFacts): boolean {
 /** Les hôtes distincts des adresses d'un texte : deux pages d'un même site comptent pour un. */
 export function hostsIn(text: string | null): string[] {
   return [...new Set(urlsIn(text).map((u) => u.split('/')[0]!))];
+}
+
+// ─── le chemin ───────────────────────────────────────────────────────────────
+
+/**
+ * Le chemin de l'arbre, job par job dans l'ordre de leur création : l'agent,
+ * le job qui l'a délégué, et les outils appelés, par leur nom et dans l'ordre.
+ * Un appel sans job connu de l'arbre est rangé sous un job `no job`, jamais
+ * perdu.
+ */
+export function toolPath(facts: TreeFacts): PathJob[] {
+  const ids = new Set(facts.jobs.map((j) => j.id));
+  const path: PathJob[] = facts.jobs.map((j) => ({
+    job: j.id.slice(0, 8),
+    agent: j.agentSlug,
+    parent: j.parentJobId === null ? null : j.parentJobId.slice(0, 8),
+    tools: facts.toolCalls.filter((c) => c.jobId === j.id).map((c) => c.toolName),
+  }));
+  const orphans = facts.toolCalls.filter((c) => c.jobId === null || !ids.has(c.jobId));
+  if (orphans.length > 0)
+    path.push({ job: 'no job', agent: null, parent: null, tools: orphans.map((c) => c.toolName) });
+  return path;
+}
+
+/** Les agents des jobs délégués, dans l'ordre de leur création. */
+export function delegatedAgents(facts: TreeFacts): string[] {
+  return delegatedJobs(facts).map((j) => j.agentSlug ?? j.id.slice(0, 8));
+}
+
+/** Le job de tête a appelé un outil web lui-même. */
+export function rootCalledTheWeb(facts: TreeFacts): boolean {
+  return facts.toolCalls.some((c) => c.jobId === facts.rootId && isWebTool(c));
+}
+
+/** Un job délégué a appelé un outil web. Ce que cet appel a rendu n'est pas jugé ici. */
+export function delegateCalledTheWeb(facts: TreeFacts): boolean {
+  const kids = new Set(delegatedJobs(facts).map((j) => j.id));
+  return facts.toolCalls.some((c) => c.jobId !== null && kids.has(c.jobId) && isWebTool(c));
+}
+
+// ─── vu sur le web (#648, la partie mesurable) ───────────────────────────────
+
+/**
+ * Le texte d'une sortie d'outil, chaînes JSON défaites : une sortie JSON est
+ * lue par ses valeurs texte (un « é » échappé y redevient un « é »), toute
+ * autre sortie telle quelle.
+ */
+function outputText(output: string | null): string {
+  if (output === null) return '';
+  const parsed = parseJson(output);
+  if (parsed === null || typeof parsed !== 'object') return output;
+  const out: string[] = [];
+  const walk = (v: unknown): void => {
+    if (typeof v === 'string') out.push(v);
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+  };
+  walk(parsed);
+  return out.join('\n');
+}
+
+/**
+ * Les adresses VUES dans l'arbre : celles qu'une sortie d'outil web porte, sans
+ * celles que ce même appel avait reçues en entrée. Une page demandée et
+ * introuvable (« 404 https://x ») ne rend donc pas son adresse « vue » :
+ * l'appel ne fait que la répéter. C'est la fuite n°4 de #634, fermée par la
+ * forme de la règle et non par un cas particulier.
+ */
+export function urlsSeenOnTheWeb(facts: TreeFacts): Set<string> {
+  const seen = new Set<string>();
+  for (const c of facts.toolCalls.filter(isWebTool)) {
+    const asked = new Set(urlsIn(c.input));
+    for (const u of urlsIn(c.output)) if (!asked.has(u)) seen.add(u);
+  }
+  return seen;
+}
+
+/** Chaque lien d'un texte, classé vu ou non vu (voir `urlsSeenOnTheWeb`). */
+export function citedLinks(facts: TreeFacts, text: string | null): CitedLink[] {
+  const seen = urlsSeenOnTheWeb(facts);
+  return urlsIn(text).map((url) => ({ url, seen: seen.has(url) }));
+}
+
+/** La raison du rouge quand des liens cités n'ont été vus dans aucune sortie d'outil web. */
+export function unseenLinkReasons(links: readonly CitedLink[], where: string): string[] {
+  const unseen = links.filter((l) => !l.seen).map((l) => l.url);
+  return unseen.length === 0
+    ? []
+    : [
+        `${where} cites ${unseen.length} link(s) seen in no web tool output of the run: ${unseen.slice(0, 5).join(', ')}${unseen.length > 5 ? ', …' : ''}`,
+      ];
+}
+
+/**
+ * Les faits attendus qu'AUCUNE sortie d'outil web de l'arbre ne porte : la
+ * preuve qu'un fait vient du web et non de la mémoire du modèle.
+ */
+export function factsNotSeenOnTheWeb(
+  facts: TreeFacts,
+  expected: readonly ExpectedFact[],
+): string[] {
+  const web = facts.toolCalls
+    .filter(isWebTool)
+    .map((c) => outputText(c.output))
+    .join('\n');
+  return expected
+    .filter((f) => !f.holds(web))
+    .map(
+      (f) =>
+        `no web tool output of the run holds the fact (${f.says}): it may come from the model's memory`,
+    );
+}
+
+// ─── décision 1 : un outil du produit disponible doit servir ─────────────────
+
+/** Le début de la raison du rouge, le même pour tous les scénarios. */
+export const PRODUCT_TOOL_NOT_USED = 'product tool available, not used';
+
+const teamHasTool = (teamTools: readonly string[], bare: string): boolean =>
+  teamTools.some((t) => t === bare || t.endsWith(`__${bare}`));
+
+/** Les outils du produit du scénario que l'équipe a ; vide quand le scénario n'en déclare pas. */
+export function availableProductTools(
+  s: AnyScenario,
+  env: Pick<ScenarioEnv, 'teamTools'>,
+): string[] {
+  return (s.productTools?.tools ?? []).filter((t) => teamHasTool(env.teamTools, t));
+}
+
+/**
+ * Avant tout lancement : un scénario qui déclare des outils du produit et dont
+ * AUCUN n'est dans les outils de l'équipe est sauté, avec cette raison.
+ */
+export function productToolGate(s: AnyScenario, env: Pick<ScenarioEnv, 'teamTools'>): string[] {
+  if (!s.productTools) return [];
+  return availableProductTools(s, env).length > 0
+    ? []
+    : [
+        `no agent of this workspace has the product tool this scenario is about (${s.productTools.tools.join(', ')})`,
+      ];
+}
+
+/**
+ * Après l'essai, la règle de chemin : quand un outil du produit attendu est
+ * disponible, l'arbre en a appelé au moins un, et aucun outil de commande n'a
+ * nommé un fichier du scénario, ni lancé un script écrit pendant l'essai qui
+ * le nomme (il l'aurait traité à la place de l'outil). Ce que la règle ne voit
+ * pas : un script qui trouve le fichier sans jamais écrire son nom (un
+ * parcours de dossier) ; aucune ligne de la base ne dit quel processus a
+ * écrit un fichier.
+ * Un scénario sans outil déclaré, ou dont aucun n'est disponible (sauté
+ * avant), ne reçoit aucune raison d'ici.
+ */
+export function productToolReasons(
+  s: AnyScenario,
+  facts: TreeFacts,
+  env: Pick<ScenarioEnv, 'teamTools'>,
+): string[] {
+  const available = availableProductTools(s, env);
+  if (available.length === 0) return [];
+  const r: string[] = [];
+  const called = new Set(facts.toolCalls.map((c) => bareToolName(c.toolName)));
+  if (!available.some((t) => called.has(t)))
+    r.push(`${PRODUCT_TOOL_NOT_USED}: none of ${available.join(', ')} was called`);
+  const names = (s.productTools?.files ?? []).map((f) => f.split('/').pop()!);
+  if (names.length === 0) return r;
+  const commands = facts.toolCalls.filter((c) => COMMAND_TOOL.test(bareToolName(c.toolName)));
+  const scripts = scriptsNaming(facts, names);
+  // Un fichier par fichier du scénario : nommé par la commande elle-même, sinon
+  // par un script que la commande lance.
+  const hits = names.flatMap((n) => {
+    const direct = commands.filter((c) => (c.input ?? '').includes(n));
+    if (direct.length > 0) return [{ what: n, by: direct }];
+    return [...scripts]
+      .filter(([, named]) => named === n)
+      .map(([script]) => ({
+        what: `${n} through ${script}`,
+        by: commands.filter((c) => (c.input ?? '').includes(script)),
+      }))
+      .filter((h) => h.by.length > 0);
+  });
+  if (hits.length > 0)
+    r.push(
+      `${PRODUCT_TOOL_NOT_USED}: a command handled ${hits.map((h) => h.what).join(', ')} (${[...new Set(hits.flatMap((h) => h.by.map((c) => c.toolName)))].join(', ')})`,
+    );
+  return r;
+}
+
+/** Les extensions d'un fichier qu'une commande exécute. */
+const SCRIPT_FILE = /\.(py|js|mjs|cjs|ts|sh|ps1|bat|cmd|rb|pl)$/i;
+
+/**
+ * Les scripts écrits pendant l'essai qui nomment un fichier du scénario : un
+ * appel d'outil (hors commande) dont l'entrée a un `path` de script et dont le
+ * texte nomme le fichier. Le cas réel du 30/09 (`file-red-approval`) : un
+ * `file_write` de `_temp_create_ventes_bench.py` qui écrit ventes-bench.xlsx,
+ * puis `python _temp_create_ventes_bench.py`. Rend script → fichier nommé.
+ */
+function scriptsNaming(facts: TreeFacts, names: readonly string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const c of facts.toolCalls) {
+    if (COMMAND_TOOL.test(bareToolName(c.toolName))) continue;
+    const input = jsonObject(parseJson(c.input));
+    const path = input?.['path'] ?? input?.['file_path'];
+    if (typeof path !== 'string' || !SCRIPT_FILE.test(path)) continue;
+    const named = names.find((n) => (c.input ?? '').includes(n));
+    if (named) out.set(path.split(/[\\/]/).pop()!, named);
+  }
+  return out;
+}
+
+/** Ce que les règles de chemin lisent pour ce scénario, dit pour Bench Studio. */
+export function productToolJudgedBy(s: AnyScenario): string[] {
+  if (!s.productTools) return [];
+  const { tools, files } = s.productTools;
+  return [
+    `tool_calls: when one of ${tools.join(', ')} is in the team's tools, the tree calls at least one (red: "${PRODUCT_TOOL_NOT_USED}"); when none is, the trial is skipped`,
+    ...(files.length > 0
+      ? [
+          `tool_calls: no command tool (run_command, bash, shell…) names ${files.map((f) => f.split('/').pop()).join(', ')}, or runs a script written during the run that names it; a command that does bypassed the product tool`,
+        ]
+      : []),
+  ];
 }

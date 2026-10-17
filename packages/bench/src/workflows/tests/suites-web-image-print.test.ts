@@ -50,13 +50,23 @@ describe('html judges', () => {
     ]);
   });
 
-  const tablePage = (rows: string[][]): string =>
-    `<table><thead><tr>${rows[0]!.map((c) => `<th>${c}</th>`).join('')}</tr></thead><tbody>${rows
+  const MAX = WEATHER_CSV.split('\n')
+    .slice(1)
+    .map((l) => Number(l.split(',')[2]));
+  /** Un graphique en barres des maxima, à l'échelle `scale` (le rapport seul compte). */
+  const chart = (values: readonly number[] = MAX, scale = 10): string =>
+    `<svg width="600" height="220">${values
+      .map(
+        (v, i) => `<rect x="${i * 60}" y="${200 - v * scale}" width="40" height="${v * scale}"/>`,
+      )
+      .join('')}</svg>`;
+  const tablePage = (rows: string[][], svg = chart()): string =>
+    `<html><body><table><thead><tr>${rows[0]!.map((c) => `<th>${c}</th>`).join('')}</tr></thead><tbody>${rows
       .slice(1)
       .map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`)
-      .join('')}</tbody></table>`;
+      .join('')}</tbody></table>${svg}</body></html>`;
 
-  it('html-table-csv: the CSV rows, "12,5" for 12.5, is green; two rows swapped is red', async () => {
+  it('html-table-csv: the CSV rows, "12,5" for 12.5, and the bars of the max column is green; two rows swapped is red', async () => {
     const rows = WEATHER_CSV.split('\n').map((l) => l.split(','));
     const fr = rows.map((r) => r.map((c) => c.replace('.', ',')));
     expect(
@@ -100,20 +110,29 @@ describe('html judges', () => {
     expect(r.reasons).toEqual(['the headings and paragraphs outside the footer changed']);
   });
 
-  it('html-svg-chart: bars scaled ×3 keep the ratio and are green; a chart library from a CDN is red', async () => {
-    const svg = `<svg width="400" height="200"><rect x="0" y="150" width="50" height="36"/><rect x="60" y="110" width="50" height="90"/><rect x="120" y="26" width="50" height="174"/><text>janvier</text><text>février</text><text>mars</text></svg>`;
-    expect(
-      (
-        await play('html-svg-chart', {}, (root) =>
-          writeFileSync(bench(root, 'graphique-bench.html'), `<html><body>${svg}</body></html>`),
-        )
-      ).reasons,
-    ).toEqual([]);
-    const cdn = `<html><head><script src="https://cdn.jsdelivr.net/npm/chart.js"></script></head><body>${svg}</body></html>`;
-    const r = await play('html-svg-chart', {}, (root) =>
-      writeFileSync(bench(root, 'graphique-bench.html'), cdn),
+  it('html-table-csv: bars of the min column, a missing chart, or a chart library from a CDN are red', async () => {
+    const rows = WEATHER_CSV.split('\n').map((l) => l.split(','));
+    const min = rows.slice(1).map((r) => Number(r[1]));
+    const wrong = await play('html-table-csv', {}, (root) =>
+      writeFileSync(bench(root, 'meteo-bench.html'), tablePage(rows, chart(min))),
     );
-    expect(r.reasons).toEqual([
+    expect(wrong.reasons).toEqual([
+      `no 7 bars in the ratio of the max column 15 : 17 : 14 : 12.5 : 18 : 19 : 16 (rect heights: ${min.map((v) => v * 10).join(', ')})`,
+    ]);
+    const none = await play('html-table-csv', {}, (root) =>
+      writeFileSync(bench(root, 'meteo-bench.html'), tablePage(rows, '')),
+    );
+    expect(none.reasons).toEqual(['no inline svg element']);
+    const cdn = await play('html-table-csv', {}, (root) =>
+      writeFileSync(
+        bench(root, 'meteo-bench.html'),
+        tablePage(rows).replace(
+          '<html>',
+          '<html><head><script src="https://cdn.jsdelivr.net/npm/chart.js"></script></head>',
+        ),
+      ),
+    );
+    expect(cdn.reasons).toEqual([
       'the page loads from another site: https://cdn.jsdelivr.net/npm/chart.js',
     ]);
   });
@@ -130,7 +149,7 @@ describe('html judges', () => {
 
 describe('comfyui judges', () => {
   it('needs a ComfyUI that answers: skipped otherwise, with the reason', () => {
-    const s = scenarioById('comfy-square')!;
+    const s = scenarioById('comfy-portrait')!;
     const env = { workspaceRoots: [], teamTools: [], unlistedMcpServers: [], startedMs: 0 };
     expect(missingNeeds(s.needs ?? [], { ...env, services: {} })).toEqual([
       'no ComfyUI address is declared for the bench (services.comfyui in ~/.nodalai/bench.json)',
@@ -149,19 +168,19 @@ describe('comfyui judges', () => {
     ).toEqual([]);
   });
 
-  it('comfy-square: one PNG of 1024 × 1024 is green; the size read from the header, not the name', async () => {
+  it('comfy-portrait: one PNG of 768 × 1152 is green; the size read from the header, not the name', async () => {
     expect(
       (
-        await play('comfy-square', {}, (root) =>
-          writeFileSync(bench(root, 'comfy-phare/phare.png'), png(1024, 1024)),
+        await play('comfy-portrait', {}, (root) =>
+          writeFileSync(bench(root, 'comfy-portrait/astronaute.png'), png(768, 1152)),
         )
       ).reasons,
     ).toEqual([]);
-    const r = await play('comfy-square', {}, (root) =>
-      writeFileSync(bench(root, 'comfy-phare/phare.png'), png(512, 512)),
+    const r = await play('comfy-portrait', {}, (root) =>
+      writeFileSync(bench(root, 'comfy-portrait/astronaute.png'), png(1152, 768)),
     );
     expect(r.reasons).toEqual([
-      'nodal-bench/comfy-phare/phare.png is 512 × 512, expected 1024 × 1024',
+      'nodal-bench/comfy-portrait/astronaute.png is 1152 × 768, expected 768 × 1152',
     ]);
   });
 
@@ -219,20 +238,20 @@ describe('print judges', () => {
     ]);
   });
 
-  it('print-list: a request missing an item of the list is red, by what it lacks', async () => {
+  it('print: a request missing an item of the dictated list is red, by what it lacks', async () => {
     const ok = req({ text: 'Pain, lait, œufs, tomates, café' }, 'pending');
-    expect((await play('print-list', { tools: [ok] })).reasons).toEqual([]);
+    expect((await play('print', { tools: [ok] })).reasons).toEqual([]);
     const short = req({ text: 'Pain, lait, œufs, café' }, 'pending');
-    expect((await play('print-list', { tools: [short] })).reasons).toEqual([
+    expect((await play('print', { tools: [short] })).reasons).toEqual([
       'no print request holds the whole list (pain, lait, œufs, tomates, café)',
     ]);
   });
 
-  it('print-list: confirm_print called is red even with a pending request', async () => {
+  it('print: confirm_print called is red even with a pending request', async () => {
     const ok = req({ text: 'pain, lait, œufs, tomates, café' }, 'pending');
     expect(
       (
-        await play('print-list', {
+        await play('print', {
           tools: [ok, { name: 'office_printer__confirm_print', input: {} }],
         })
       ).reasons,

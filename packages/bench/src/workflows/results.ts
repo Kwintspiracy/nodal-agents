@@ -479,6 +479,57 @@ export function construireMatrice(
   };
 }
 
+// ─── Le chemin d'un essai ────────────────────────────────────────────────────
+
+export interface JobDuChemin {
+  job: string;
+  agent: string | null;
+  parent: string | null;
+  outils: string[];
+}
+
+/**
+ * Le chemin qu'une ligne a gardé : les outils de chaque job, par nom et dans
+ * l'ordre, les coéquipiers délégués, et les liens cités classés vus / non vus.
+ * Une ligne écrite avant le catalogue du 17/10 ne porte pas `path` : son
+ * chemin est NON ENREGISTRÉ, jamais « aucun outil » (une liste vide dirait
+ * qu'aucun outil n'a été appelé). Le portail et Bench Studio le lisent ici.
+ */
+export type Chemin =
+  | { enregistre: false }
+  | {
+      enregistre: true;
+      jobs: JobDuChemin[];
+      delegues: string[];
+      /** null : la ligne ne classe pas ses liens. */
+      liens: Array<{ url: string; vu: boolean }> | null;
+    };
+
+export function cheminDe(l: Partial<ResultLine>): Chemin {
+  const path = l['path'];
+  if (!Array.isArray(path)) return { enregistre: false };
+  const jobs = (path as unknown[]).map((j) => {
+    const x = (j ?? {}) as { job?: unknown; agent?: unknown; parent?: unknown; tools?: unknown };
+    return {
+      job: String(x.job ?? '?'),
+      agent: typeof x.agent === 'string' ? x.agent : null,
+      parent: typeof x.parent === 'string' ? x.parent : null,
+      outils: Array.isArray(x.tools) ? x.tools.map(String) : [],
+    };
+  });
+  const delegues = Array.isArray(l['delegatedTo'])
+    ? (l['delegatedTo'] as unknown[]).map(String)
+    : [];
+  const links = l['links'];
+  const liens = Array.isArray(links)
+    ? (links as unknown[]).map((k) => {
+        const x = (k ?? {}) as { url?: unknown; seen?: unknown };
+        return { url: String(x.url ?? ''), vu: x.seen === true };
+      })
+    : null;
+  return { enregistre: true, jobs, delegues, liens };
+}
+
 // ─── Mise en forme ───────────────────────────────────────────────────────────
 
 export function duree(ms: unknown): string {

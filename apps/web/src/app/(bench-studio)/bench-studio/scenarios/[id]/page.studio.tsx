@@ -54,27 +54,59 @@ export default async function ScenarioPage({ params }: { params: Promise<{ id: s
     >
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="flex min-w-0 flex-col gap-5">
-          <Panel title="Request sent">
-            <p className="mb-3 text-body-13 text-ink-3">
-              Sent word for word to the root agent through{' '}
-              <span className="font-mono">run_task</span>, the way the owner would ask.
-            </p>
-            <CodeBlock code={s.instruction} lang="text" lineNumbers={false} className="" />
-          </Panel>
-          <Panel title="Green means">
-            <p className="text-body-14 text-ink">{s.green}</p>
-          </Panel>
-          <Panel title="How it is judged">
-            <ol className="flex flex-col gap-2.5">
-              {s.judgedBy.map((j, i) => (
-                <li key={i} className="flex gap-3 text-body-13 text-ink-2">
-                  <span className="mt-0.5 text-mono-11 text-ink-4">
-                    {String(i + 1).padStart(2, '0')}
+          <Panel title="Expected path">
+            <p className="text-body-14 text-ink">{s.path}</p>
+            {s.productTools && (
+              <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                <span className="mr-1 text-medium-12 text-ink-4">Product tools</span>
+                {s.productTools.tools.map((t) => (
+                  <span
+                    key={t}
+                    className="rounded-md border border-rule-2 px-1.5 py-0.5 font-mono text-mono-12 text-ink-2"
+                  >
+                    {t}
                   </span>
-                  <span>{j}</span>
-                </li>
+                ))}
+              </div>
+            )}
+            {s.subject && (
+              <p className="mt-3 text-body-13 text-ink-3">
+                The subject is a calibrated one (kind <span className="font-mono">{s.subject}</span>
+                ), read from the bench&apos;s subjects file, never written in the request. With
+                none, the trial is skipped.
+              </p>
+            )}
+          </Panel>
+          <Panel title="Deliverable">
+            <p className="text-body-14 text-ink">{s.deliverable}</p>
+          </Panel>
+          <Panel title="Green if">
+            <p className="text-body-14 text-ink">{s.green}</p>
+            <details className="mt-4">
+              <summary className="cursor-pointer text-medium-12 text-ink-3 hover:text-ink">
+                How the bench checks it ({s.judgedBy.length})
+              </summary>
+              <ol className="mt-3 flex flex-col gap-2.5">
+                {s.judgedBy.map((j, i) => (
+                  <li key={i} className="flex gap-3 text-body-13 text-ink-2">
+                    <span className="mt-0.5 text-mono-11 text-ink-4">
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
+                    <span>{j}</span>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          </Panel>
+          <Panel title="Measured on every trial">
+            <p className="mb-2 text-body-13 text-ink-3">
+              Shown on each trial and in the comparisons. A measure never makes a trial red.
+            </p>
+            <ul className="flex list-disc flex-col gap-1 pl-5 text-body-13 text-ink-2">
+              {catalog.measured.map((m) => (
+                <li key={m}>{m}</li>
               ))}
-            </ol>
+            </ul>
           </Panel>
           {s.unverified.length > 0 && (
             <Banner variant="warn" title="Not verified">
@@ -87,38 +119,19 @@ export default async function ScenarioPage({ params }: { params: Promise<{ id: s
               </ul>
             </Banner>
           )}
-          <Panel
-            title="Recent trials"
-            aside={
-              <Link
-                href="/bench-studio/results"
-                className="text-medium-12 text-ink-3 hover:text-ink"
-              >
-                All results
-              </Link>
-            }
-          >
-            {recent.length === 0 ? (
-              <p className="text-body-13 text-ink-4">No trial of this version yet.</p>
-            ) : (
-              <ul className="flex flex-col divide-y divide-rule-2">
-                {recent.slice(0, 8).map((t, i) => (
-                  <li key={`${t.n}-${i}`} className="flex flex-wrap items-center gap-3 py-2">
-                    <VerdictPill verdict={t.verdict} />
-                    <span className="text-mono-12 text-ink-3">{when(t.startedAt)}</span>
-                    <span className="text-body-13 text-ink-2">{t.column}</span>
-                    {t.n !== null && (
-                      <Link
-                        href={`/bench-studio/results/${t.n}`}
-                        className="ml-auto text-medium-12 text-ink-3 hover:text-ink"
-                      >
-                        Open trial
-                      </Link>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
+          <Panel title="Example request">
+            <p className="mb-3 text-body-13 text-ink-3">
+              Sent word for word to the root agent through{' '}
+              <span className="font-mono">run_task</span>, the way the owner would ask.
+              {s.subject && (
+                <>
+                  {' '}
+                  <span className="font-mono">{'{subject}'}</span> is replaced by the calibrated
+                  subject.
+                </>
+              )}
+            </p>
+            <CodeBlock code={s.instruction} lang="text" lineNumbers={false} className="" />
           </Panel>
         </div>
 
@@ -201,6 +214,39 @@ export default async function ScenarioPage({ params }: { params: Promise<{ id: s
                 {s.outputs.map((o) => (
                   <li key={o} className="text-mono-12 text-ink-2">
                     {o}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+          <Panel
+            title="Recent trials"
+            aside={
+              <Link
+                href="/bench-studio/results"
+                className="text-medium-12 text-ink-3 hover:text-ink"
+              >
+                All results
+              </Link>
+            }
+          >
+            {recent.length === 0 ? (
+              <p className="text-body-13 text-ink-4">No trial of this version yet.</p>
+            ) : (
+              <ul className="flex flex-col divide-y divide-rule-2">
+                {recent.slice(0, 8).map((t, i) => (
+                  <li key={`${t.n}-${i}`} className="flex flex-wrap items-center gap-3 py-2">
+                    <VerdictPill verdict={t.verdict} />
+                    <span className="text-mono-12 text-ink-3">{when(t.startedAt)}</span>
+                    <span className="text-body-13 text-ink-2">{t.column}</span>
+                    {t.n !== null && (
+                      <Link
+                        href={`/bench-studio/results/${t.n}`}
+                        className="ml-auto text-medium-12 text-ink-3 hover:text-ink"
+                      >
+                        Open trial
+                      </Link>
+                    )}
                   </li>
                 ))}
               </ul>

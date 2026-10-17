@@ -22,10 +22,8 @@ describe('selectScenarios', () => {
       expect(ids(selectScenarios(sel))).not.toContain('comfyui-telegram');
     }
     expect(ids(selectScenarios({ activity: ['image-comfyui'] }))).toEqual([
-      'comfy-square',
-      'comfy-variants',
       'comfy-portrait',
-      'comfy-landscape',
+      'comfy-variants',
     ]);
   });
 

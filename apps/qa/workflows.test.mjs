@@ -558,6 +558,46 @@ describe('la matrice activités × modèles', () => {
     expect(c).toContain('Canberra &lt;b&gt;');
   });
 
+  it('le chemin d’une ligne d’avant le catalogue du 17/10 est « non enregistré », jamais « aucun outil »', () => {
+    const c = carteDe(
+      htmlWorkflows({ lignes: [QUESTION_V2], illisibles: 0 }, CATALOGUE),
+      'question',
+    );
+    expect(c).toContain('Not recorded on this run (written before the catalogue of 2026-10-17).');
+    expect(c).not.toContain('no tool');
+  });
+
+  it('le chemin d’une ligne qui le garde : les outils de chaque job dans l’ordre, la délégation, les liens vus et non vus', () => {
+    const avecChemin = {
+      ...QUESTION_V2,
+      path: [
+        { job: '41466740', agent: 'alfred', parent: null, tools: [] },
+        {
+          job: 'eee6c3ed',
+          agent: 'researcher',
+          parent: '41466740',
+          tools: ['web_search', 'tavily_extract'],
+        },
+      ],
+      delegatedTo: ['researcher'],
+      links: [
+        { url: 'arxiv.org/abs/1411.0172', seen: true },
+        { url: 'nobelprize.org/prizes/physics/1978/summary', seen: false },
+      ],
+    };
+    const c = carteDe(
+      htmlWorkflows({ lignes: [avecChemin], illisibles: 0 }, CATALOGUE),
+      'question',
+    );
+    expect(c).toContain('<span class="wf-nd">no tool</span>');
+    expect(c).toContain(
+      'researcher <span class="wf-nd">(delegated by 41466740)</span>: <span class="mono">web_search → tavily_extract</span>',
+    );
+    expect(c).toContain(
+      '2 links cited: 1 seen in a web tool output, 1 not (<span class="mono">nobelprize.org/prizes/physics/1978/summary</span>).',
+    );
+  });
+
   it('la carte d’une ligne d’avant la v2 le dit, sans inventer', () => {
     const c = carteDe(htmlWorkflows({ lignes: [QUESTION_VERTE], illisibles: 0 }), 'question');
     expect(c).toContain('not recorded on this run (written before bench v2)');
@@ -568,7 +608,7 @@ describe('la matrice activités × modèles', () => {
       readFileSync(new URL('./data/workflow-catalog.json', import.meta.url), 'utf8'),
     );
     expect(c.activities).toContain('orchestration');
-    expect(c.scenarios.length).toBeGreaterThan(40);
+    expect(c.scenarios.length).toBe(37);
     expect(() => lireCatalogue('{"activities":[]}')).toThrow('does not have the shape');
     expect(() => lireCatalogue('pas du json')).toThrow('is not JSON');
   });

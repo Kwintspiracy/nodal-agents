@@ -56,25 +56,75 @@ describe('the workflow catalog', () => {
     }
   });
 
-  it('the activities asked for phase 1 have at least four scenarios each', () => {
-    const per = (a: string): number => SCENARIOS.filter((s) => s.activity === a).length;
-    const short = [
-      'question',
-      'research',
-      'deep-research',
-      'code',
-      'excel',
-      'word',
-      'powerpoint',
-      'pdf',
-      'html-page',
-      'image-comfyui',
-      'print',
-      'orchestration',
-    ]
-      .map((a) => ({ activity: a, scenarios: per(a) }))
-      .filter((x) => x.scenarios < 4);
-    expect(short).toEqual([]);
+  // Le catalogue validé par Quentin le 17/10 (page « Refonte du catalogue du
+  // banc ») : un scénario par façon d'échouer, rangé par activité, dans cet
+  // ordre. Le scénario mémoire attend que le banc sache enchaîner deux
+  // conversations (une demande en plusieurs étapes) : il n'est pas dans ce lot.
+  const CATALOG_OF_2026_10_17: Record<string, string[]> = {
+    question: ['question', 'question-weekday'],
+    research: ['research'],
+    'deep-research': ['deep-research-dna', 'deep-research-obsidian'],
+    code: ['code-bugfix', 'code-http-server', 'code-install-dep', 'code'],
+    excel: ['file', 'excel-edit-column', 'excel-read-answer', 'excel-csv-import'],
+    word: ['word-create', 'word-replace', 'word-append', 'word-read-answer'],
+    powerpoint: ['ppt-create', 'ppt-append', 'ppt-replace', 'ppt-read-answer'],
+    pdf: ['pdf-read-total', 'pdf-from-markdown'],
+    'html-page': ['html-landing', 'html-table-csv', 'html-edit'],
+    'image-comfyui': ['comfy-portrait', 'comfy-variants', 'comfyui-telegram'],
+    print: ['print', 'print-file', 'recipe'],
+    orchestration: [
+      'mcp-answer',
+      'undoable-action',
+      'undoable-action-delegated',
+      'delegate-fails',
+      'ask-before-acting',
+    ],
+  };
+  const DROPPED = [
+    'question-percent',
+    'question-seconds',
+    'question-river',
+    'research-penicillin',
+    'research-transistor',
+    'research-rabies',
+    'research-voyager',
+    'deep-research-gps',
+    'deep-research-gutenberg',
+    'deep-research-apollo',
+    'excel-new-sheet',
+    'word-table',
+    'pdf-read-pages',
+    'pdf-create',
+    'html-svg-chart',
+    'comfy-square',
+    'comfy-landscape',
+    'print-list',
+    'code-data',
+  ];
+
+  it('is the catalogue of 2026-10-17: these scenarios, in this order, by activity', () => {
+    const got: Record<string, string[]> = {};
+    for (const s of SCENARIOS) (got[s.activity] ??= []).push(s.id);
+    expect(got).toEqual(CATALOG_OF_2026_10_17);
+    expect(SCENARIOS).toHaveLength(37);
+    expect(SCENARIOS.map((s) => s.id).filter((id) => DROPPED.includes(id))).toEqual([]);
+  });
+
+  it('every card says its path and its deliverable; a subject scenario carries the {subject} slot', () => {
+    for (const s of buildCatalog().scenarios) {
+      expect({ id: s.id, path: s.path.length > 15, deliverable: s.deliverable.length > 5 }).toEqual(
+        {
+          id: s.id,
+          path: true,
+          deliverable: true,
+        },
+      );
+      expect({ id: s.id, slot: s.instruction.includes('{subject}') }).toEqual({
+        id: s.id,
+        slot: s.subject !== null,
+      });
+    }
+    expect(buildCatalog().measured.length).toBeGreaterThan(3);
   });
 
   it('no new scenario names a real recipient: no e-mail address but the reserved .invalid one', () => {

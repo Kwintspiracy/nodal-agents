@@ -4,6 +4,9 @@
 // du runner) et regarde les éléments eux-mêmes : la balise title, le h1, les
 // lignes d'un tableau, les rectangles d'un SVG. Jamais une recherche de texte
 // dans la source, qui prendrait un commentaire pour un titre.
+//
+// Pas d'outil dédié aux pages : file_write et file_edit sont les outils du
+// produit, qu'un script ne doit pas remplacer (décision 1 du 17/10).
 
 import { readFileSync } from 'node:fs';
 import { findInRoots, readText } from '../disk';
@@ -61,9 +64,13 @@ const landing = defineScenario<PageObservation>({
     `parses ${LANDING_REL} with parse5 (elements, never a text search), written during the trial`,
     `the title element names "${SHOP}"; exactly one non-empty h1; a list with three items priced in euros; a footer element holding "${ADDRESS}"`,
   ],
-  version: 1,
-  title: 'Write a small standalone web page',
-  green: `${LANDING_REL} was written during the run: its title element names "${SHOP}", it has exactly one non-empty h1, a list of at least three items each with a price in euros, a footer element holding "${ADDRESS}", and nobody was asked anything.`,
+  // v2 (catalogue du 17/10) : la règle des outils du produit (file_write) s'applique.
+  version: 2,
+  title: 'Create a structured standalone page',
+  path: 'file_write. A script in its place is red.',
+  deliverable: LANDING_REL,
+  productTools: { tools: ['file_write'], files: [LANDING_REL] },
+  green: `${LANDING_REL} was written during the run through file_write (no command in its place): its title element names "${SHOP}", it has exactly one non-empty h1, a list of at least three items each with a price in euros, a footer element holding "${ADDRESS}", and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'html-page',
   sends: 'nothing',
@@ -104,6 +111,8 @@ const landing = defineScenario<PageObservation>({
 
 export const WEATHER_CSV_REL = 'nodal-bench/meteo.csv';
 export const WEATHER_HTML_REL = 'nodal-bench/meteo-bench.html';
+/** La colonne du CSV que le graphique dessine. */
+const CHART_COLUMN = 'max';
 
 /** Deux cellules égales : même texte, ou même nombre quelle que soit la virgule. */
 function sameCell(got: string, want: string): boolean {
@@ -124,17 +133,26 @@ const tableCsv = defineScenario<TableObservation>({
     ...JUDGED_COMMON,
     `parses ${WEATHER_HTML_REL} with parse5, written during the trial`,
     `a table whose rows equal ${WEATHER_CSV_REL} (header first, same order; 12,5 equals 12.5); the CSV untouched`,
+    `an inline svg whose rect heights are in the ratio of the CSV's ${CHART_COLUMN} column (± 5 %)`,
+    'no script, stylesheet or image loaded from another site',
   ],
-  version: 1,
-  title: 'Show a CSV as an HTML table, row for row',
-  green: `${WEATHER_HTML_REL} was written during the run with a table whose rows are exactly the CSV's (header first, then one row per day, same order, same values), the CSV is untouched, and nobody was asked anything.`,
+  // v2 (catalogue du 17/10) : fusion de html-svg-chart (le graphique SVG des
+  // mêmes données, sans ressource externe), et la règle des outils du produit.
+  version: 2,
+  title: 'Lay out data: a table and a chart',
+  green: `${WEATHER_HTML_REL} was written during the run through file_write (no command in its place) with a table whose rows are exactly the CSV's (header first, then one row per day, same order, same values) and an inline SVG bar chart of the ${CHART_COLUMN} temperatures in the right proportions (± 5 %); it loads nothing from another site, the CSV is untouched, and nobody was asked anything.`,
+  path: 'Read the CSV, then file_write. A script in its place is red.',
+  deliverable: WEATHER_HTML_REL,
+  productTools: { tools: ['file_write'], files: [WEATHER_HTML_REL] },
   set: 'on-demand',
   activity: 'html-page',
   sends: 'nothing',
   instruction:
     `Crée une page ${WEATHER_HTML_REL} dans ton espace de travail qui affiche les données de ` +
     `${WEATHER_CSV_REL} (${SHARED.replace("de l'", "dans l'")}) dans un tableau HTML : une ligne ` +
-    "d'en-tête, puis une ligne par jour, dans le même ordre.",
+    "d'en-tête, puis une ligne par jour, dans le même ordre. Sous le tableau, dessine en SVG un " +
+    'diagramme en barres des températures maximales (colonne max). La page doit être autonome, ' +
+    'sans bibliothèque ni ressource externe.',
   timeoutMs: 10 * MIN,
   fixtures: [{ from: 'office/meteo.csv', to: WEATHER_CSV_REL }],
   outputs: [WEATHER_HTML_REL],
@@ -172,6 +190,19 @@ const tableCsv = defineScenario<TableObservation>({
       if (got.length !== row.length || row.some((cell, c) => !sameCell(got[c] ?? '', cell)))
         r.push(`row ${i + 1} reads ${JSON.stringify(got)}, expected ${JSON.stringify(row)}`);
     });
+    const ext = externalResources(els);
+    if (ext.length > 0) r.push(`the page loads from another site: ${ext.join(', ')}`);
+    if (by(els, 'svg').length === 0) return [...r, 'no inline svg element'];
+    const col = want[0]!.indexOf(CHART_COLUMN);
+    const values = want.slice(1).map((row) => Number(row[col]));
+    const heights = by(els, 'rect')
+      .filter((e) => e.ancestors.includes('svg'))
+      .map((e) => Number(e.attrs['height']))
+      .filter(Number.isFinite);
+    if (!barsMatch(heights, values))
+      r.push(
+        `no ${values.length} bars in the ratio of the ${CHART_COLUMN} column ${values.join(' : ')} (rect heights: ${heights.join(', ') || 'none'})`,
+      );
     return r;
   },
 });
@@ -208,9 +239,13 @@ const edit = defineScenario<PageObservation>({
     `parses ${HOME_REL}; it must be changed during the trial`,
     `the title element reads exactly "${NEW_TITLE}"; a footer element holds "${FOOTER}"; headings and paragraphs outside the footer are the fixture's`,
   ],
-  version: 1,
-  title: 'Edit an existing web page: its title and a new footer',
-  green: `${HOME_REL} was changed during the run: its title element reads exactly "${NEW_TITLE}", a footer element holds "${FOOTER}", the headings and paragraphs outside the footer are exactly the fixture's, and nobody was asked anything.`,
+  // v2 (catalogue du 17/10) : la règle des outils du produit (file_edit, file_write) s'applique.
+  version: 2,
+  title: 'Edit a page without breaking the rest',
+  path: 'file_read, then file_edit. A script in their place is red.',
+  deliverable: `${HOME_REL}, changed`,
+  productTools: { tools: ['file_edit', 'file_write'], files: [HOME_REL] },
+  green: `${HOME_REL} was changed during the run through the product's file tools (no command in their place): its title element reads exactly "${NEW_TITLE}", a footer element holds "${FOOTER}", the headings and paragraphs outside the footer are exactly the fixture's, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'html-page',
   sends: 'nothing',
@@ -243,16 +278,9 @@ const edit = defineScenario<PageObservation>({
   },
 });
 
-// ─── html-svg-chart ──────────────────────────────────────────────────────────
+// ─── le graphique ────────────────────────────────────────────────────────────
 
-export const CHART_REL = 'nodal-bench/graphique-bench.html';
-const SALES: ReadonlyArray<[string, number]> = [
-  ['janvier', 12],
-  ['février', 30],
-  ['mars', 58],
-];
-
-/** Trois rectangles dont les hauteurs sont dans le rapport des ventes (à 5 % près). */
+/** Des rectangles dont les hauteurs sont dans le rapport des valeurs (à 5 % près). */
 export function barsMatch(heights: readonly number[], values: readonly number[]): boolean {
   const hs = heights.filter((h) => h > 0);
   const [v0, ...rest] = values;
@@ -263,51 +291,4 @@ export function barsMatch(heights: readonly number[], values: readonly number[])
   return false;
 }
 
-const svgChart = defineScenario<PageObservation>({
-  id: 'html-svg-chart',
-  judgedBy: [
-    ...JUDGED_COMMON,
-    `parses ${CHART_REL} with parse5, written during the trial`,
-    'no script, stylesheet or image loaded from another site; an inline svg whose rect heights are in the ratio 12 : 30 : 58 (± 5 %); the page names janvier, février and mars',
-  ],
-  version: 1,
-  title: 'Draw a bar chart in inline SVG',
-  green: `${CHART_REL} was written during the run, loads nothing from another site, holds an inline svg with bars (rect) whose heights are in the ratio 12 : 30 : 58 within 5 %, names janvier, février and mars, and nobody was asked anything.`,
-  set: 'on-demand',
-  activity: 'html-page',
-  sends: 'nothing',
-  instruction:
-    `Crée une page ${CHART_REL} dans ton espace de travail : une page autonome (sans bibliothèque ` +
-    'ni ressource externe) qui affiche en SVG un diagramme en barres des ventes : ' +
-    `${SALES.map(([m, v]) => `${m} ${v}`).join(', ')}.`,
-  timeoutMs: 10 * MIN,
-  outputs: [CHART_REL],
-  observe: async (_facts, env) => observeCreated(env.workspaceRoots, CHART_REL, env.startedMs),
-  judge(facts, o) {
-    const { r, els } = pageReasons(CHART_REL, o);
-    r.unshift(...commonReasons(facts));
-    if (!els) return r;
-    const ext = externalResources(els);
-    if (ext.length > 0) r.push(`the page loads from another site: ${ext.join(', ')}`);
-    if (by(els, 'svg').length === 0) return [...r, 'no inline svg element'];
-    const heights = by(els, 'rect')
-      .filter((e) => e.ancestors.includes('svg'))
-      .map((e) => Number(e.attrs['height']))
-      .filter(Number.isFinite);
-    if (
-      !barsMatch(
-        heights,
-        SALES.map(([, v]) => v),
-      )
-    )
-      r.push(
-        `no three bars in the ratio 12 : 30 : 58 (rect heights: ${heights.join(', ') || 'none'})`,
-      );
-    const text = lower(els.find((e) => e.tag === 'html')?.text ?? '');
-    const missing = SALES.map(([m]) => m).filter((m) => !text.includes(m));
-    if (missing.length > 0) r.push(`the page does not name ${missing.join(', ')}`);
-    return r;
-  },
-});
-
-export const HTML_SCENARIOS: AnyScenario[] = [landing, tableCsv, edit, svgChart];
+export const HTML_SCENARIOS: AnyScenario[] = [landing, tableCsv, edit];

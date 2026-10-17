@@ -14,9 +14,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { TreeFactsSchema, type TreeFacts } from '../facts';
-import { fileName, scenarioById, totalIsRight, virginicaPetalSum, FILE_REL } from '../scenarios';
+import { fileName, scenarioById, totalIsRight, FILE_REL, SHOPPING } from '../scenarios';
+import { CODE_TOTALS, petalTotalsBySpecies } from '../suites/code';
+import type { ResearchSubject } from '../subjects';
 import { readXlsxGrid, type SheetGrid } from '../disk';
-import { normalizeUrl, textHasNumber, urlsIn } from '../judge-kit';
+import { answerOf, citedLinks, normalizeUrl, textHasNumber, urlsIn } from '../judge-kit';
 import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 
 const FIX = join(__dirname, 'fixtures');
@@ -90,32 +92,74 @@ describe('workflow judges on real trials', () => {
     ]);
   });
 
-  it('code: the real green trial is green — file downloaded, script ran, 277.6 in the answer', () => {
+  // L'essai réel de `code` v1 (30/09) : le fichier épinglé téléchargé, un script
+  // Python lancé, la seule somme de virginica donnée. La v2 (fusion avec
+  // code-data) demande un total par espèce, en JSON et dans la réponse :
+  // l'observation de la v1 dit le fichier frais de 150 lignes, celui que
+  // CODE_TOTALS décrit (sa somme de virginica, 277.6, est celle relue alors).
+  const codeV1 = (): { f: Fixture; observed: unknown } => {
     const f = fixture('code-green');
-    expect(judge(f)).toEqual([]);
+    const v1 = f.observed as { found: { fresh: boolean }; dataRows: number; recomputed: number };
+    expect(v1.recomputed).toBe(CODE_TOTALS['virginica']);
+    return {
+      f,
+      observed: {
+        csv: { fresh: v1.found.fresh, rows: v1.dataRows, totals: { ...CODE_TOTALS } },
+        json: null,
+      },
+    };
+  };
+
+  it('code: the real v1 trial, judged by v2, is red for what v2 adds — never for its script run', () => {
+    const { f, observed } = codeV1();
+    expect(judge(f, f.facts, observed)).toEqual([
+      'the answer does not give the total of setosa, versicolor',
+      'no file nodal-bench/iris-totaux.json',
+    ]);
   });
 
-  it('code: a value the model states without any script run is red', () => {
-    const f = fixture('code-green');
-    // Mêmes lignes, sans les appels de commande : la valeur n'a plus été calculée par un script.
+  it('code: the same trial without its command calls is red for the missing script', () => {
+    const { f, observed } = codeV1();
     const facts: TreeFacts = {
       ...f.facts,
       toolCalls: f.facts.toolCalls.filter((c) => c.toolName !== 'run_command'),
     };
-    expect(judge(f, facts)).toEqual(['no Python or Node run printed 277.6']);
+    expect(judge(f, facts, observed)).toContain('no Python or Node script ran');
   });
 });
 
+// L'essai réel de `print` v1 (30/09) imprimait la note « Nodal bench » ; la v2
+// imprime la liste de courses de print-list. Les cas ci-dessous gardent ses
+// lignes réelles (le connecteur, ses statuts, ses aperçus) et ne réécrivent
+// que le texte demandé : `asV2`.
+function printV2(): Fixture {
+  const f = fixture('print-green');
+  return {
+    ...f,
+    facts: {
+      ...f.facts,
+      toolCalls: f.facts.toolCalls.map((c) =>
+        c.toolName.endsWith('__request_print')
+          ? { ...c, input: JSON.stringify({ text: `Liste : ${SHOPPING.join(', ')}.` }) }
+          : c,
+      ),
+    },
+  };
+}
+
 describe('print judge on a real trial', () => {
-  it('print: the real trial is green — a pending request holding the note, nothing sent to paper', () => {
+  it('print: the real v1 trial is red under v2 only for its text — the request itself is pending', () => {
     const f = fixture('print-green');
     const req = f.facts.toolCalls.find((c) => c.toolName.endsWith('__request_print'))!;
     expect(JSON.parse(req.output!)).toMatchObject({ status: 'pending' });
-    expect(judge(f)).toEqual([]);
+    expect(judge(f)).toEqual([
+      'no print request holds the whole list (pain, lait, œufs, tomates, café)',
+    ]);
+    expect(judge(printV2())).toEqual([]);
   });
 
   it('print: the same request seen reaching the printer is red — paper without the owner', () => {
-    const f = fixture('print-green');
+    const f = printV2();
     const facts: TreeFacts = {
       ...f.facts,
       toolCalls: f.facts.toolCalls.map((c) =>
@@ -189,7 +233,7 @@ describe('print judge on a real trial', () => {
 
   for (const [name, shape] of Object.entries(SHAPES)) {
     it(`print: ${name} — read the same, green, and red once paper goes out`, () => {
-      const f = fixture('print-green');
+      const f = printV2();
       expect(judge(f, { ...f.facts, toolCalls: f.facts.toolCalls.map(rewrite(shape)) })).toEqual(
         [],
       );
@@ -202,7 +246,7 @@ describe('print judge on a real trial', () => {
   it('print: JSON quoted in the middle of a sentence is not a payload — no false request', () => {
     // Valid JSON up to the end of the block, but opened mid-line: a server
     // explaining its format, not answering with it.
-    const f = fixture('print-green');
+    const f = printV2();
     const prose = () => ({
       format: MCP_TOOL_OUTPUT_FORMAT,
       content: [
@@ -218,14 +262,16 @@ describe('print judge on a real trial', () => {
   });
 
   it('print: a request for some other text is not this scenario', () => {
-    const f = fixture('print-green');
+    const f = printV2();
     const facts: TreeFacts = {
       ...f.facts,
       toolCalls: f.facts.toolCalls.map((c) =>
         c.toolName.endsWith('__request_print') ? { ...c, input: '{"text":"autre chose"}' } : c,
       ),
     };
-    expect(judge(f, facts)).toEqual(['no print request holds the text "Nodal bench"']);
+    expect(judge(f, facts)).toEqual([
+      'no print request holds the whole list (pain, lait, œufs, tomates, café)',
+    ]);
   });
 });
 
@@ -240,30 +286,64 @@ describe('recipe and research judges on real trials', () => {
     ]);
   });
 
-  it('research: the real trial is green — delegated, the delegate called web tools, the report cites links', () => {
+  // L'essai réel de `research` v3 (30/09, le fond diffus cosmologique) : la
+  // racine a délégué, le délégué a cherché. Sous la v4 (décision 2 du 17/10),
+  // une recherche simple est faite par la racine : cet essai est rouge pour sa
+  // délégation. Son sujet n'était pas calibré : le juge le reçoit ici comme un
+  // sujet de test, avec les faits que la réponse réelle porte.
+  const CMB: ResearchSubject = {
+    id: 'test-cmb',
+    kind: 'research',
+    request: 'la découverte du fond diffus cosmologique',
+    facts: [
+      { says: 'name Penzias', pattern: '\\bpenzias\\b', flags: 'i' },
+      { says: 'give 1965', pattern: '\\b1965\\b', flags: '' },
+    ],
+    calibratedOn: ['test'],
+  };
+
+  it('research: the real v3 trial is red under v4 for its delegation — and for its root never searching', () => {
     const f = fixture('research-green');
-    expect(f.facts.jobs.length).toBeGreaterThan(1);
-    expect(judge(f)).toEqual([]);
+    expect(judge(f, f.facts, { subject: CMB })).toEqual([
+      'delegated a simple research (researcher)',
+      'the root called no web tool',
+      'the answer cites 1 link(s) seen in no web tool output of the run: nobelprize.org/prizes/physics/1978/summary',
+    ]);
   });
 
-  it('research: a report without any source link is red', () => {
+  it('research: on the real trial, 14 of the 15 links cited were seen in a web output; the Nobel page was not', () => {
+    const f = fixture('research-green');
+    const links = citedLinks(f.facts, answerOf(f.facts));
+    expect(links).toHaveLength(15);
+    expect(links.filter((l) => !l.seen)).toEqual([
+      { url: 'nobelprize.org/prizes/physics/1978/summary', seen: false },
+    ]);
+  });
+
+  it('research: the real facts are held by the web outputs of the delegate — they came from the web', () => {
+    const f = fixture('research-green');
+    const reasons = judge(f, f.facts, { subject: CMB });
+    expect(reasons.some((r) => r.startsWith('no web tool output of the run holds the fact'))).toBe(
+      false,
+    );
+  });
+
+  it('research: the same trial with its web outputs removed: the facts may come from memory, every link unseen', () => {
     const f = fixture('research-green');
     const facts: TreeFacts = {
       ...f.facts,
-      jobs: f.facts.jobs.map((j) =>
-        j.id === f.facts.rootId ? { ...j, result: 'Rapport, sans aucune source.' } : j,
+      toolCalls: f.facts.toolCalls.map((c) =>
+        /web_search|tavily/.test(c.toolName) ? { ...c, output: null } : c,
       ),
     };
-    expect(judge(f, facts)).toEqual(['no source link in the report']);
-  });
-
-  it('research: a delegate that called no web tool is red, whatever files it read', () => {
-    const f = fixture('research-green');
-    const facts: TreeFacts = {
-      ...f.facts,
-      toolCalls: f.facts.toolCalls.filter((c) => !/web_search|tavily/.test(c.toolName)),
-    };
-    expect(judge(f, facts)).toEqual(['the delegate called no web tool']);
+    const reasons = judge(f, facts, { subject: CMB });
+    expect(reasons).toContain(
+      "no web tool output of the run holds the fact (name Penzias): it may come from the model's memory",
+    );
+    expect(reasons).toContain(
+      "no web tool output of the run holds the fact (give 1965): it may come from the model's memory",
+    );
+    expect(reasons.find((r) => r.startsWith('the answer cites 15 link(s)'))).toBeDefined();
   });
 
   it.each([
@@ -272,60 +352,102 @@ describe('recipe and research judges on real trials', () => {
     'apify_web_browse',
     'mcp_fetch__fetch_html',
     'cli:WebFetch',
-  ])('research: a delegate that went on the web with %s did call a web tool', (name) => {
+  ])('research: a root that went on the web with %s did search itself', (name) => {
     const f = fixture('research-green');
-    const facts: TreeFacts = {
-      ...f.facts,
-      toolCalls: f.facts.toolCalls.map((c) =>
-        /web_search|tavily/.test(c.toolName) ? { ...c, toolName: name } : c,
-      ),
-    };
-    expect(judge(f, facts)).toEqual([]);
-  });
-
-  it('research: an answer without delegation is red', () => {
-    const f = fixture('research-green');
+    // Le travail du délégué, rendu au job de tête, sous un autre outil web : la délégation disparaît.
     const facts: TreeFacts = {
       ...f.facts,
       jobs: f.facts.jobs.filter((j) => j.id === f.facts.rootId),
+      toolCalls: f.facts.toolCalls
+        .filter((c) => !/telegram/.test(c.toolName))
+        .map((c) => ({
+          ...c,
+          jobId: f.facts.rootId,
+          toolName: /web_search|tavily/.test(c.toolName) ? name : c.toolName,
+        })),
     };
-    expect(judge(f, facts)).toContain('the research was not delegated');
+    expect(judge(f, facts, { subject: CMB })).toEqual([
+      'the answer cites 1 link(s) seen in no web tool output of the run: nobelprize.org/prizes/physics/1978/summary',
+    ]);
   });
 });
 
 describe('deep research into the vault, on a real trial', () => {
-  interface VaultObs {
+  // L'essai réel de `deep-research-obsidian` v3 (Champollion) : délégué, le
+  // délégué sur le web (Tavily), une note marquée de 8 liens. L'observation
+  // capturée alors ne gardait pas le texte de la note, seulement ses liens et
+  // sa taille : la v4 lit le texte. Les tests posent donc une note de test
+  // portant les VRAIS liens de l'essai, jugée sur ses VRAIES sorties d'outils.
+  interface VaultObsV3 {
     vaults: string[];
     notes: Array<{ vault: string; rel: string; chars: number; urls: string[]; marked: boolean }>;
     truncated: boolean;
   }
   const f = fixture('deep-research-obsidian-green');
-  const obs = f.observed as VaultObs;
-  const note = obs.notes[0]!;
+  const v3 = f.observed as VaultObsV3;
+  const real = v3.notes[0]!;
+  const SUBJECT: ResearchSubject = {
+    id: 'test-champollion',
+    kind: 'deep-research',
+    request: 'le déchiffrement des hiéroglyphes par Champollion',
+    facts: [
+      { says: 'name Champollion', pattern: 'champollion', flags: 'i' },
+      { says: 'give 1822', pattern: '\\b1822\\b', flags: '' },
+    ],
+    calibratedOn: ['test'],
+  };
+  const noteText = (urls: readonly string[]): string =>
+    [
+      '# Champollion',
+      '## La pierre de Rosette',
+      '## La lettre à M. Dacier (1822)',
+      '## Sources',
+      ...urls.map((u) => `- https://${u}`),
+    ].join('\n');
+  const obs = (urls: readonly string[], marked = true) => ({
+    subject: SUBJECT,
+    vaults: v3.vaults,
+    truncated: false,
+    notes: [{ ...real, marked, urls: [...urls], text: noteText(urls) }],
+  });
 
-  it('the real trial is green: delegated, a marked note of 12 k characters with 8 links', () => {
-    expect(note.marked).toBe(true);
-    expect(note.urls.length).toBe(8);
-    expect(judge(f)).toEqual([]);
+  it('the real trial: delegated, the delegate on the web, its 8 links all seen — green', () => {
+    expect(real.urls).toHaveLength(8);
+    expect(judge(f, f.facts, obs(real.urls))).toEqual([]);
   });
 
   it('no vault among the workspace folders is RED with that reason, never skipped', () => {
-    expect(judge(f, f.facts, { vaults: [], notes: [], truncated: false })).toEqual([
+    expect(
+      judge(f, f.facts, { subject: SUBJECT, vaults: [], notes: [], truncated: false }),
+    ).toEqual([
       'no Obsidian vault is configured: no workspace folder of this workspace holds a .obsidian folder',
     ]);
   });
 
   it('a note outside the bench folder and without the tag is red: the bench could not find it to clean it', () => {
-    const o: VaultObs = { ...obs, notes: [{ ...note, rel: 'Research\\x.md', marked: false }] };
+    const o = obs(real.urls, false);
+    o.notes[0] = { ...o.notes[0]!, rel: 'Research\\x.md' };
     expect(judge(f, f.facts, o)).toEqual([
       'the note Research\\x.md is neither in "Nodal Bench" nor tagged #nodal-bench',
     ]);
   });
 
-  it('a note with two links is red', () => {
-    expect(
-      judge(f, f.facts, { ...obs, notes: [{ ...note, urls: note.urls.slice(0, 2) }] }),
-    ).toEqual(['the note cites 2 source link(s), fewer than 3']);
+  it('a note on three sites, one of them never seen in the run, is red twice, each said', () => {
+    const urls = [...real.urls.slice(0, 2), 'invented.example/champollion'];
+    expect(judge(f, f.facts, obs(urls))).toEqual([
+      'the note links 3 site(s) (3 link(s)), fewer than 4',
+      'the note cites 1 link(s) seen in no web tool output of the run: invented.example/champollion',
+    ]);
+  });
+
+  it('the root doing it alone (its own two web searches, no teammate) is red', () => {
+    const facts: TreeFacts = {
+      ...f.facts,
+      jobs: f.facts.jobs.filter((j) => j.id === f.facts.rootId),
+    };
+    expect(judge(f, facts, obs(real.urls))[0]).toBe(
+      'the in-depth research was not handed to a teammate: the root did it alone',
+    );
   });
 });
 
@@ -389,10 +511,13 @@ describe('what the judges read', () => {
     expect(fileName('c.pdf')).toBe('c.pdf');
   });
 
-  it('recomputes the expected value on the pinned CSV', () => {
+  it('recomputes the totals per species, CRLF and float sums included', () => {
     const csv =
       'sepal_length,sepal_width,petal_length,petal_width,species\r\n5.1,3.5,1.4,0.2,setosa\r\n6.3,3.3,6.0,2.5,virginica\r\n5.8,2.7,5.1,1.9,virginica\r\n';
-    expect(virginicaPetalSum(csv)).toEqual({ rows: 3, sum: 11.1 });
+    expect(petalTotalsBySpecies(csv)).toEqual({
+      rows: 3,
+      totals: { setosa: 1.4, virginica: 11.1 },
+    });
   });
 
   it('finds a number however the answer writes it, and not a longer one', () => {
@@ -420,7 +545,7 @@ describe('what the judges read', () => {
 // « sources read » à l'état « not verified », et aucun juge ne rend un vert qui
 // l'affirmerait.
 describe('sources read: not verified, never judged, never silent', () => {
-  const CONCERNED = ['research', 'deep-research-obsidian', 'recipe'];
+  const CONCERNED = ['research', 'deep-research-dna', 'deep-research-obsidian', 'recipe'];
 
   it.each(CONCERNED)(
     '%s carries the named check, not verified, with its reason and ticket',
@@ -444,7 +569,7 @@ describe('sources read: not verified, never judged, never silent', () => {
     for (const id of others) expect(scenarioById(id)!.unverified ?? []).toEqual([]);
   });
 
-  it('research: invented links are no longer judged — the judge is silent on them, the check says not verified', () => {
+  it('research: an invented link is judged now — unseen in any web output — while "read" stays not verified', () => {
     const f = fixture('research-green');
     const facts: TreeFacts = {
       ...f.facts,
@@ -454,7 +579,9 @@ describe('sources read: not verified, never judged, never silent', () => {
           : j,
       ),
     };
-    expect(judge(f, facts)).toEqual([]);
+    expect(citedLinks(facts, answerOf(facts))).toEqual([
+      { url: 'invented.example/cmb-discovery', seen: false },
+    ]);
     expect(scenarioById('research')!.unverified?.[0]?.state).toBe('not verified');
   });
 

@@ -41,6 +41,7 @@ import {
   readUnlistedMcpServers,
   readWorkspaceRoots,
 } from './stack';
+import { readResearchSubjects } from './subjects';
 import { DEFAULT_TRIAL_OPTIONS, runTrial, type TrialDeps, type TrialProgress } from './trial';
 import type { AnyScenario, ScenarioEnv, ServiceProbe, TrialLine } from './types';
 
@@ -145,6 +146,7 @@ export async function runBench(
           foreign: () => readForeignActivity(db, DEFAULT_TRIAL_OPTIONS.chatQuietMs),
           env: (startedMs) => readScenarioEnv(db, target.entityId, startedMs),
           rootModel: () => readRootModel(db, target.entityId),
+          subjects: () => readResearchSubjects(),
           log: (l) => hooks.log(l),
           progress: (e) => hooks.progress?.(s, at, e),
         };

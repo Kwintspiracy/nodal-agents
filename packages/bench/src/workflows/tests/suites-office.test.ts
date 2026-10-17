@@ -12,7 +12,7 @@ import JSZip from 'jszip';
 import { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow } from 'docx';
 import PptxGenJS from 'pptxgenjs';
 import { describe, expect, it } from 'vitest';
-import { CONTACTS_CSV, MEETING_MD, NOTES, PROJECT_DECK, REVIEW_DECK, STOCK } from '../fixture-data';
+import { CONTACTS_CSV, MEETING_MD, PROJECT_DECK, REVIEW_DECK, STOCK } from '../fixture-data';
 import type { SheetGrid } from '../disk';
 import { evaluateCell } from '../office';
 import { makePdf } from '../pdf-write';
@@ -98,24 +98,6 @@ describe('excel judges', () => {
     expect(r.reasons[0]).toBe('nodal-bench/stock.xlsx was not changed during the run');
   });
 
-  it('excel-new-sheet: a sheet of AVERAGE formulas across sheets is green; a missing pupil is red', async () => {
-    const write = (skip: string | null) => (root: string) =>
-      editWorkbook(join(root, 'nodal-bench', 'notes.xlsx'), (wb) => {
-        const ws = wb.addWorksheet('Moyennes');
-        NOTES.rows.forEach(([name], i) => {
-          if (name === skip) return;
-          ws.getCell(`A${i + 1}`).value = name;
-          ws.getCell(`B${i + 1}`).value = {
-            formula: `ROUND(AVERAGE(Notes!B${i + 2}:D${i + 2}),2)`,
-          } as ExcelJS.CellValue;
-        });
-      });
-    expect((await play('excel-new-sheet', {}, write(null))).reasons).toEqual([]);
-    expect((await play('excel-new-sheet', {}, write('Bruno'))).reasons).toEqual([
-      'no row for Bruno in "Moyennes"',
-    ]);
-  });
-
   it('excel-read-answer: the right answer and an untouched file is green; a saved file is red', async () => {
     const answer = 'Le Café moulu, avec 550 ventes sur le trimestre.';
     expect((await play('excel-read-answer', { result: answer })).reasons).toEqual([]);
@@ -165,17 +147,52 @@ const para = (text: string): string =>
 const heading = (text: string): string =>
   `<w:p><w:pPr><w:pStyle w:val="Titre1"/></w:pPr><w:r><w:t>${text}</w:t></w:r></w:p>`;
 
+const docxTable = (rows: ReadonlyArray<readonly string[]>): Table =>
+  new Table({
+    rows: rows.map(
+      (row) =>
+        new TableRow({
+          children: row.map((c) => new TableCell({ children: [new Paragraph(c)] })),
+        }),
+    ),
+  });
+const AGENDA = [
+  ['Heure', 'Sujet', 'Responsable'],
+  ['14 h', 'Bilan du trimestre', 'Alice'],
+  ['14 h 30', 'Budget', 'Bruno'],
+  ['15 h', 'Questions diverses', 'Chloé'],
+];
+const CONVOCATION = [
+  new Paragraph({ text: 'Convocation', heading: HeadingLevel.HEADING_1 }),
+  new Paragraph({ text: 'L’équipe est convoquée le 12 novembre 2026.' }),
+  new Paragraph({ text: 'La réunion commence à 14 h.' }),
+  new Paragraph({ text: 'Elle se tient en salle B.' }),
+];
+
 describe('word judges', () => {
-  it('word-create: a heading and three paragraphs naming date, hour and room is green', async () => {
+  it('word-create: a heading, three paragraphs naming date, hour and room, and the agenda table is green', async () => {
     const r = await play('word-create', {}, (root) =>
-      writeDocx(bench(root, 'convocation-bench.docx'), [
-        new Paragraph({ text: 'Convocation', heading: HeadingLevel.HEADING_1 }),
-        new Paragraph({ text: 'L’équipe est convoquée le 12 novembre 2026.' }),
-        new Paragraph({ text: 'La réunion commence à 14 h.' }),
-        new Paragraph({ text: 'Elle se tient en salle B.' }),
-      ]),
+      writeDocx(bench(root, 'convocation-bench.docx'), [...CONVOCATION, docxTable(AGENDA)]),
     );
     expect(r.reasons).toEqual([]);
+  });
+
+  it('word-create: no agenda table, or a row left empty, is red, by what it lacks', async () => {
+    expect(
+      (
+        await play('word-create', {}, (root) =>
+          writeDocx(bench(root, 'convocation-bench.docx'), CONVOCATION),
+        )
+      ).reasons,
+    ).toEqual(['no table with the header Heure / Sujet / Responsable (0 table(s))']);
+    const holed = [...AGENDA.slice(0, 3), ['15 h', '', 'Chloé']];
+    expect(
+      (
+        await play('word-create', {}, (root) =>
+          writeDocx(bench(root, 'convocation-bench.docx'), [...CONVOCATION, docxTable(holed)]),
+        )
+      ).reasons,
+    ).toEqual(['the agenda table has 2 filled row(s), fewer than 3']);
   });
 
   it('word-create: "Convocation" as plain bold text is not a heading', async () => {
@@ -183,9 +200,30 @@ describe('word judges', () => {
       writeDocx(bench(root, 'convocation-bench.docx'), [
         new Paragraph({ text: 'Convocation' }),
         new Paragraph({ text: 'Le 12 novembre 2026 à 14 h en salle B.' }),
+        docxTable(AGENDA),
       ]),
     );
     expect(r.reasons).toEqual(['no heading paragraph reads "Convocation"']);
+  });
+
+  it('word-read-answer: the total before tax read from the table is green; a computed or wrong total is red', async () => {
+    expect(
+      (
+        await play('word-read-answer', {
+          result: 'Le total HT du bon de commande est de 215,30 €.',
+        })
+      ).reasons,
+    ).toEqual([]);
+    expect(
+      (await play('word-read-answer', { result: 'Le total TTC est de 258,36 €.' })).reasons,
+    ).toEqual(['the answer does not give 215.30']);
+  });
+
+  it('word-read-answer: the document saved again is red, even with the right answer', async () => {
+    const r = await play('word-read-answer', { result: '215,30 € HT.' }, (root) =>
+      writeDocx(bench(root, 'bon-commande.docx'), [new Paragraph({ text: 'Bon de commande' })]),
+    );
+    expect(r.reasons).toEqual(['nodal-bench/bon-commande.docx was changed or removed']);
   });
 
   it('word-replace: every occurrence replaced, table included, nothing else changed: green', async () => {
@@ -233,33 +271,6 @@ describe('word judges', () => {
       ),
     );
     expect(r.reasons[0]).toMatch(/^paragraph 1 is "Décisions", expected the fixture's$/);
-  });
-
-  it('word-table: the header and the five weekdays is green; a missing Friday is red', async () => {
-    const table = (days: string[]) =>
-      new Table({
-        rows: [
-          ['Jour', 'Tâche', 'Responsable'],
-          ...days.map((d) => [d, 'Inventaire', 'Alice']),
-        ].map(
-          (row) =>
-            new TableRow({
-              children: row.map((c) => new TableCell({ children: [new Paragraph(c)] })),
-            }),
-        ),
-      });
-    const days = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi'];
-    expect(
-      (
-        await play('word-table', {}, (root) =>
-          writeDocx(bench(root, 'planning-bench.docx'), [table(days)]),
-        )
-      ).reasons,
-    ).toEqual([]);
-    const r = await play('word-table', {}, (root) =>
-      writeDocx(bench(root, 'planning-bench.docx'), [table(days.slice(0, 4))]),
-    );
-    expect(r.reasons).toEqual(['no row for vendredi']);
   });
 });
 
@@ -373,46 +384,6 @@ describe('pdf judges', () => {
     ]);
   });
 
-  it('pdf-read-pages: "trois pages" and the chapter title is green', async () => {
-    expect(
-      (
-        await play('pdf-read-pages', {
-          result: 'Le guide fait trois pages ; la page 2 s’intitule « Chapitre 2 : Installation ».',
-        })
-      ).reasons,
-    ).toEqual([]);
-  });
-
-  it('pdf-create: one page holding the three lines is green; two pages is red', async () => {
-    const lines = [
-      'Attestation de participation',
-      'Nous attestons que Camille Martin a participé.',
-      'Fait le 15 octobre 2026',
-    ];
-    expect(
-      (
-        await play('pdf-create', {}, (root) =>
-          writeFileSync(bench(root, 'attestation-bench.pdf'), makePdf([lines])),
-        )
-      ).reasons,
-    ).toEqual([]);
-    const r = await play('pdf-create', {}, (root) =>
-      writeFileSync(
-        bench(root, 'attestation-bench.pdf'),
-        makePdf([lines.slice(0, 2), lines.slice(2)]),
-      ),
-    );
-    expect(r.reasons).toEqual(['2 page(s), expected 1']);
-  });
-
-  it('pdf-create: a file that is not a PDF is red, with the reader’s words', async () => {
-    const r = await play('pdf-create', {}, (root) =>
-      writeFileSync(bench(root, 'attestation-bench.pdf'), 'pas un pdf'),
-    );
-    expect(r.reasons).toHaveLength(1);
-    expect(r.reasons[0]).toMatch(/^nodal-bench\/attestation-bench\.pdf cannot be read as a PDF: /);
-  });
-
   it('pdf-from-markdown: every heading and item is green; a dropped item is named', async () => {
     const all = MEETING_MD.split('\n')
       .filter((l) => l.trim() !== '')
@@ -431,5 +402,13 @@ describe('pdf judges', () => {
       ),
     );
     expect(r.reasons).toEqual(['the PDF text does not hold: "Recruter un designer"']);
+  });
+
+  it('pdf-from-markdown: a file that is not a PDF is red, with the reader’s words', async () => {
+    const r = await play('pdf-from-markdown', {}, (root) =>
+      writeFileSync(bench(root, 'notes-reunion.pdf'), 'pas un pdf'),
+    );
+    expect(r.reasons).toHaveLength(1);
+    expect(r.reasons[0]).toMatch(/^nodal-bench\/notes-reunion\.pdf cannot be read as a PDF: /);
   });
 });

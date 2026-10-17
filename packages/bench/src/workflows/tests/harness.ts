@@ -18,6 +18,8 @@ import { deflateSync, crc32 } from 'node:zlib';
 import { TreeFactsSchema, type TreeFacts } from '../facts';
 import { prepareTrial } from '../fixtures';
 import { scenarioById } from '../scenarios';
+import type { ResearchSubject } from '../subjects';
+import { trialReasons } from '../trial';
 import type { ScenarioEnv } from '../types';
 
 export const ROOT_ID = '00000000-0000-4000-8000-0000000000a1';
@@ -103,24 +105,35 @@ export interface Played {
   readonly observed: unknown;
 }
 
+/** Ce que l'espace de l'essai offre : les outils de l'équipe, le sujet calibré joué. */
+export interface PlayEnv {
+  readonly teamTools?: readonly string[];
+  readonly subject?: ResearchSubject;
+}
+
 /**
  * Joue le scénario `id` : prepare → `work(root)` (le travail de l'agent) →
- * observe → judge. Rend les raisons du rouge (vide = vert).
+ * observe → les raisons de runTrial (`trialReasons` : le juge, la
+ * destination, les outils du produit). Rend les raisons du rouge (vide = vert).
+ * Sans `teamTools`, l'équipe n'a aucun outil du produit : la règle de chemin
+ * ne dit rien (runTrial aurait sauté l'essai).
  */
 export async function play(
   id: string,
   runOrBuild: Run | ((root: string) => Run),
   work: (root: string) => void | Promise<void> = () => undefined,
+  playEnv: PlayEnv = {},
 ): Promise<Played> {
   const s = scenarioById(id);
   if (!s) throw new Error(`unknown scenario ${id}`);
   const root = mkdtempSync(join(tmpdir(), `wf-${id}-`));
   const env0: ScenarioEnv = {
     workspaceRoots: [root],
-    teamTools: [],
+    teamTools: playEnv.teamTools ?? [],
     services: {},
     unlistedMcpServers: [],
     startedMs: 0,
+    ...(playEnv.subject ? { subject: playEnv.subject } : {}),
   };
   prepareTrial(s, env0.workspaceRoots);
   ageAll(root, Date.now() - 3_600_000);
@@ -132,7 +145,7 @@ export async function play(
   const run = typeof runOrBuild === 'function' ? runOrBuild(root) : runOrBuild;
   const env: ScenarioEnv = { ...env0, startedMs };
   const observed = await s.observe(facts(run), env);
-  return { root, reasons: s.judge(facts(run), observed), observed };
+  return { root, reasons: trialReasons(s, facts(run), observed, env), observed };
 }
 
 /** Un PNG minimal mais valide (signature, IHDR, IDAT, IEND) : ce qu'un en-tête dit, il le dit vraiment. */

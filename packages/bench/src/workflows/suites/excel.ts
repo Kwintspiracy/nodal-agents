@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { readXlsxGrid, findInRoots, type SheetGrid } from '../disk';
 import { fileHash, fixturePath, installed } from '../fixtures';
-import { CONTACTS_CSV, NOTES, QUARTER, STOCK } from '../fixture-data';
+import { CONTACTS_CSV, QUARTER, STOCK } from '../fixture-data';
 import {
   JUDGED_COMMON,
   answerOf,
@@ -93,9 +93,13 @@ const editColumn = defineScenario<WorkbookObservation>({
     'sheet Stock: D1 "Valeur"; D2..D6 = quantity × unit price (a value, a cached result, or a formula the bench computes); D7 their total',
     "columns A to C are exactly the fixture's",
   ],
-  version: 1,
-  title: 'Add a computed column and its total to an existing workbook',
-  green: `${STOCK_REL} was changed during the run: D1 reads "Valeur", D2 to D6 hold quantity × unit price, D7 their total (values or formulas the bench computes), columns A to C are exactly the fixture's, and nobody was asked anything.`,
+  // v2 (catalogue du 17/10) : la règle des outils du produit (xlsx_*) s'applique.
+  version: 2,
+  title: 'Edit a workbook without damaging the rest',
+  path: 'xlsx_read, then xlsx_set_range. A script in their place is red.',
+  deliverable: `${STOCK_REL}, changed`,
+  productTools: { tools: ['xlsx_read', 'xlsx_set_range', 'xlsx_set_cell'], files: [STOCK_REL] },
+  green: `${STOCK_REL} was changed during the run through the product's Excel tools (no command in their place): D1 reads "Valeur", D2 to D6 hold quantity × unit price, D7 their total (values or formulas the bench computes), columns A to C are exactly the fixture's, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'excel',
   sends: 'nothing',
@@ -138,66 +142,6 @@ const editColumn = defineScenario<WorkbookObservation>({
   },
 });
 
-// ─── excel-new-sheet ─────────────────────────────────────────────────────────
-
-export const NOTES_REL = 'nodal-bench/notes.xlsx';
-const AVERAGES = 'Moyennes';
-
-const newSheet = defineScenario<WorkbookObservation>({
-  id: 'excel-new-sheet',
-  judgedBy: [
-    ...JUDGED_COMMON,
-    `opens ${NOTES_REL} with exceljs; it must be changed during the trial`,
-    `a sheet "${AVERAGES}": for each pupil, the name in column A and the mean of the three marks in column B (± 0.005, formulas computed)`,
-    `the "${NOTES.sheet}" sheet is exactly the fixture's`,
-  ],
-  version: 1,
-  title: 'Add a sheet of averages to an existing workbook',
-  green: `${NOTES_REL} was changed during the run: a sheet "${AVERAGES}" gives, for each of the ${NOTES.rows.length} pupils, their name in column A and the mean of their three marks in column B (to the hundredth, value or formula), the "${NOTES.sheet}" sheet is exactly the fixture's, and nobody was asked anything.`,
-  set: 'on-demand',
-  activity: 'excel',
-  sends: 'nothing',
-  instruction:
-    `Dans le classeur ${NOTES_REL} ${SHARED}, ajoute une feuille « ${AVERAGES} » avec, en colonne A, ` +
-    'le nom de chaque élève et, en colonne B, la moyenne de ses trois notes, arrondie à deux décimales.',
-  timeoutMs: 10 * MIN,
-  fixtures: [{ from: 'office/notes.xlsx', to: NOTES_REL }],
-  async observe(_facts, env) {
-    const f = installed(env.workspaceRoots, NOTES_REL, env.startedMs);
-    return observeWorkbook(f.exists ? f.path : null, f.fresh);
-  },
-  judge(facts, o) {
-    const r = commonReasons(facts);
-    if (!o.found) return [...r, `${NOTES_REL} is gone`];
-    if (!o.found.fresh) r.push(`${NOTES_REL} was not changed during the run`);
-    if (!o.sheets) return [...r, `${NOTES_REL} cannot be read as a workbook: ${o.readError}`];
-    r.push(...untouched(o.sheets, NOTES.sheet, NOTES.header, NOTES.rows));
-    const sheet = findSheet(o.sheets, AVERAGES);
-    if (!sheet)
-      return [...r, `no sheet "${AVERAGES}" (sheets: ${o.sheets.map((s) => s.name).join(', ')})`];
-    const rows = Object.keys(sheet.cells)
-      .filter((a) => /^A\d+$/.test(a))
-      .map((a) => Number(a.slice(1)));
-    for (const [name, ...marks] of NOTES.rows) {
-      const want = marks.reduce((a, b) => a + b, 0) / marks.length;
-      const row = rows.find((n) => {
-        const v = shown(o.sheets!, sheet.name, `A${n}`);
-        return typeof v === 'string' && same(v, name);
-      });
-      if (row === undefined) {
-        r.push(`no row for ${name} in "${AVERAGES}"`);
-        continue;
-      }
-      const got = shown(o.sheets, sheet.name, `B${row}`);
-      if (typeof got !== 'number' || !near(got, want))
-        r.push(
-          `${name}: B${row} is ${why(o.sheets, sheet.name, `B${row}`)}, expected ${want.toFixed(2)}`,
-        );
-    }
-    return r;
-  },
-});
-
 // ─── excel-read-answer ───────────────────────────────────────────────────────
 
 export const QUARTER_REL = 'nodal-bench/ventes-trimestre.xlsx';
@@ -215,9 +159,13 @@ const readAnswer = defineScenario<{ hash: string | null }>({
     `the final answer names ${bestProduct().name} and gives ${bestProduct().total}`,
     `${QUARTER_REL} is byte for byte the fixture (sha-256)`,
   ],
-  version: 1,
-  title: 'Answer a question from an existing workbook, without changing it',
-  green: `The answer names "${bestProduct().name}" and its quarter total ${bestProduct().total}, ${QUARTER_REL} is byte for byte the fixture, and nobody was asked anything.`,
+  // v2 (catalogue du 17/10) : la règle des outils du produit (xlsx_read) s'applique.
+  version: 2,
+  title: 'Read a workbook and answer',
+  green: `The answer names "${bestProduct().name}" and its quarter total ${bestProduct().total}, read through xlsx_read (no command in its place), ${QUARTER_REL} is byte for byte the fixture, and nobody was asked anything.`,
+  path: 'xlsx_read. A script in its place is red.',
+  deliverable: 'The answer, in the conversation',
+  productTools: { tools: ['xlsx_read'], files: [QUARTER_REL] },
   set: 'on-demand',
   activity: 'excel',
   sends: 'nothing',
@@ -260,9 +208,16 @@ const csvImport = defineScenario<WorkbookObservation>({
     `opens ${CONTACTS_XLSX_REL} with exceljs, written during the trial`,
     `sheet "${CONTACTS_SHEET}": every cell equals the CSV's, header first, same order, and nothing outside`,
   ],
-  version: 1,
-  title: 'Turn a CSV into a workbook, row for row',
-  green: `${CONTACTS_XLSX_REL} was written during the run with a sheet "${CONTACTS_SHEET}" whose rows are exactly the CSV's (header first, same order, nothing more), and nobody was asked anything.`,
+  // v2 (catalogue du 17/10) : la règle des outils du produit (xlsx_*) s'applique.
+  version: 2,
+  title: 'Convert data faithfully',
+  path: 'Read the CSV, then xlsx_create. A script in its place is red.',
+  deliverable: CONTACTS_XLSX_REL,
+  productTools: {
+    tools: ['xlsx_create', 'xlsx_set_range', 'xlsx_append_rows'],
+    files: [CONTACTS_XLSX_REL],
+  },
+  green: `${CONTACTS_XLSX_REL} was written during the run through the product's Excel tools (no command in their place) with a sheet "${CONTACTS_SHEET}" whose rows are exactly the CSV's (header first, same order, nothing more), and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'excel',
   sends: 'nothing',
@@ -319,4 +274,4 @@ const csvImport = defineScenario<WorkbookObservation>({
 /** Le CSV de la fixture, aussi exporté pour les tests. */
 export { CONTACTS_CSV };
 
-export const EXCEL_SCENARIOS: AnyScenario[] = [editColumn, newSheet, readAnswer, csvImport];
+export const EXCEL_SCENARIOS: AnyScenario[] = [editColumn, readAnswer, csvImport];

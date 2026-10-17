@@ -17,7 +17,7 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FIXTURES_DIR } from '../fixtures';
 import { scenarioById } from '../scenarios';
-import { revenueByRegion, declaredTests, testResultsIn } from '../suites/code';
+import { CODE_TOTALS, declaredTests, petalTotalsBySpecies, testResultsIn } from '../suites/code';
 import { play, runNodeTests, type Run } from './harness';
 
 const solve = (project: string) => (root: string) =>
@@ -308,37 +308,54 @@ describe('code-install-dep judge', () => {
   });
 });
 
-describe('code-data judge', () => {
-  const RAN = { name: 'run_command', input: { command: 'python calc.py' } };
-  const csv = (): string => readFileSync(join(FIXTURES_DIR, 'data', 'ventes-regions.csv'), 'utf8');
-  const writeJson = (value: unknown) => (root: string) => {
-    mkdirSync(join(root, 'nodal-bench'), { recursive: true });
-    writeFileSync(join(root, 'nodal-bench', 'ca-par-region.json'), JSON.stringify(value));
-  };
+// `code` (fusion de code et code-data) : le fichier public figé, téléchargé,
+// puis un total par espèce écrit en JSON et donné dans la réponse. Le CSV est
+// le VRAI fichier épinglé (son commit), copié une fois dans les fixtures de
+// test : le banc recalcule sur ce que l'agent a téléchargé, et ce test sur ce
+// que le dépôt public sert.
+describe('code judge: fetch a file and process it with a script', () => {
+  const PINNED = readFileSync(join(__dirname, 'fixtures', 'iris-pinned.csv'), 'utf8');
+  const RAN = { name: 'run_command', input: { command: 'python totaux.py' } };
+  const ANSWER = 'Totaux de petal_length : setosa 73,1 ; versicolor 213,0 ; virginica 277,6.';
+  const work =
+    (csv: string | null, json: unknown) =>
+    (root: string): void => {
+      mkdirSync(join(root, 'nodal-bench'), { recursive: true });
+      if (csv !== null) writeFileSync(join(root, 'nodal-bench', 'iris.csv'), csv);
+      if (json !== undefined)
+        writeFileSync(join(root, 'nodal-bench', 'iris-totaux.json'), JSON.stringify(json));
+    };
 
-  it('the revenue is recomputed to the cent, for the five regions', () => {
-    const want = revenueByRegion(csv());
-    expect(Object.keys(want).sort()).toEqual(['Centre', 'Est', 'Nord', 'Ouest', 'Sud']);
-    for (const v of Object.values(want)) expect(Math.round(v * 100)).toBe(v * 100);
+  it('the totals recomputed on the real pinned file are the declared ones', () => {
+    expect(petalTotalsBySpecies(PINNED)).toEqual({ rows: 150, totals: { ...CODE_TOTALS } });
   });
 
-  it('green: the right numbers, written by a script', async () => {
-    expect(
-      (await play('code-data', { tools: [RAN] }, writeJson(revenueByRegion(csv())))).reasons,
-    ).toEqual([]);
+  it('green: the pinned file downloaded, a script ran, the JSON and the answer give the totals', async () => {
+    const r = await play('code', { result: ANSWER, tools: [RAN] }, work(PINNED, CODE_TOTALS));
+    expect(r.reasons).toEqual([]);
   });
 
-  it('red: a wrong region total and an extra key are named; no script is named too', async () => {
-    const want = revenueByRegion(csv());
+  it('red: another file, no script, a wrong total, an extra key and a total missing from the answer, each named', async () => {
+    const tampered = PINNED.replace('5.1,3.5,1.4,0.2,setosa', '5.1,3.5,2.4,0.2,setosa');
     const r = await play(
-      'code-data',
-      {},
-      writeJson({ ...want, Nord: want['Nord']! + 1, Total: 1 }),
+      'code',
+      { result: 'setosa 74,1 et virginica 277,6.' },
+      work(tampered, { ...CODE_TOTALS, setosa: 73.1, total: 563.7 }),
     );
     expect(r.reasons).toEqual([
+      'the downloaded file is not the pinned one (150 rows, totals {"setosa":74.1,"versicolor":213,"virginica":277.6})',
       'no Python or Node script ran',
-      `Nord is ${want['Nord']! + 1}, expected ${want['Nord']}`,
-      'unexpected keys: Total',
+      'the answer does not give the total of versicolor',
+      'setosa is 73.1, expected 74.1',
+      'unexpected keys: total',
+    ]);
+  });
+
+  it('red: nothing downloaded and no JSON written, said as such', async () => {
+    const r = await play('code', { result: ANSWER, tools: [RAN] });
+    expect(r.reasons).toEqual([
+      'the CSV was not downloaded into nodal-bench/iris.csv',
+      'no file nodal-bench/iris-totaux.json',
     ]);
   });
 });
