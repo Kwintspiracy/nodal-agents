@@ -113,7 +113,13 @@ export function registerNodalInstance(
     writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
     renameSync(tmp, file);
   } catch (err) {
-    rmSync(tmp, { force: true });
+    // Nettoyage seulement : sous Linux, `force` n'avale pas ENOTDIR quand un
+    // FICHIER occupe la place du dossier, et c'est l'erreur d'origine qui compte.
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      /* rien à nettoyer */
+    }
     const why = err instanceof Error ? err.message : String(err);
     throw new NodalInstancesError(
       `Cannot register this instance in ${nodalInstancesDir(userHome, platform)} (${why}). ` +
