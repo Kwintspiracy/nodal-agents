@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { HOME_HTML, WEATHER_CSV } from '../fixture-data';
 import { missingNeeds } from '../needs';
-import { scenarioById } from '../scenarios';
+import { PRINT_FILE_REL, scenarioById } from '../scenarios';
 import { barsMatch } from '../suites/html';
 import { play, png } from './harness';
 
@@ -223,19 +223,93 @@ describe('print judges', () => {
     output: JSON.stringify({ id: 'p1', status, preview: { pages: 1 } }),
   });
 
-  it('print-file: a pending request naming the fixture file is green; a submitted one is red', async () => {
-    const input = { filePath: 'C:/ws/shared/nodal-bench/facture-impression.pdf' };
-    const ok = await play('print-file', { tools: [req(input, 'pending')] });
+  it('print-file: a pending request naming the posed file by its absolute path is green; a submitted one is red', async () => {
+    const at = (root: string) => ({ filePath: join(root, PRINT_FILE_REL) });
+    const ok = await play('print-file', (root) => ({ tools: [req(at(root), 'pending')] }));
     expect(ok.reasons).toEqual([]);
     expect(
       readFileSync(join(ok.root, 'nodal-bench', 'facture-impression.pdf'))
         .subarray(0, 5)
         .toString(),
     ).toBe('%PDF-');
-    expect((await play('print-file', { tools: [req(input, 'submitted')] })).reasons).toEqual([
+    expect(
+      (await play('print-file', (root) => ({ tools: [req(at(root), 'submitted')] }))).reasons,
+    ).toEqual([
       'the print request is submitted, not pending',
       'a print request went to the printer without the owner',
     ]);
+  });
+
+  // Revue de #777, passe 5 (P2) : la demande était retenue dès que son entrée
+  // CONTENAIT le nom du fichier. Elle ne l'est plus que si un chemin absolu de
+  // son entrée EST le fichier posé (designation.ts), et aucun autre fichier.
+  const NOT_NAMED = 'no print request names the posed file by its absolute path (the last one';
+  it.each([
+    [
+      'a copy of it under backup/, by its absolute path',
+      (root: string) => ({ filePath: join(root, 'backup', PRINT_FILE_REL) }),
+      'names another file by its absolute path)',
+    ],
+    [
+      'another file, with the name of the posed one in a note',
+      (root: string) => ({
+        filePath: join(root, 'nodal-bench', 'autre.pdf'),
+        note: 'facture-impression.pdf',
+      }),
+      'names another file by its absolute path)',
+    ],
+    [
+      'a relative path to another file, the name only inside a sentence',
+      () => ({ filePath: 'nodal-bench/autre.pdf', note: 'imprime facture-impression.pdf stp' }),
+      'names it only inside a text)',
+    ],
+    [
+      'the file name only',
+      () => ({ filePath: 'facture-impression.pdf' }),
+      'names only the file name)',
+    ],
+    [
+      'the path relative to the shared folder',
+      () => ({ filePath: PRINT_FILE_REL }),
+      'names it by a relative path, which an MCP server resolves against its own working directory, not the shared folder)',
+    ],
+    [
+      'the path with the shared/ label of the file tools',
+      () => ({ filePath: `shared/${PRINT_FILE_REL}` }),
+      'names it by a relative path, which an MCP server resolves against its own working directory, not the shared folder)',
+    ],
+    [
+      'the posed file AND another file',
+      (root: string) => ({
+        filePath: join(root, PRINT_FILE_REL),
+        attachment: join(root, 'nodal-bench', 'autre.pdf'),
+      }),
+      'names the posed file and another file by their absolute paths)',
+    ],
+  ])('P2 targeting (pass 5) — print-file: %s is red, with its reason', async (_, input, why) => {
+    const r = await play(
+      'print-file',
+      (root) => ({ tools: [req(input(root), 'pending')] }),
+      (root) => {
+        mkdirSync(join(root, 'backup', 'nodal-bench'), { recursive: true });
+        writeFileSync(
+          join(root, 'backup', PRINT_FILE_REL),
+          readFileSync(join(root, PRINT_FILE_REL)),
+        );
+        writeFileSync(join(root, 'nodal-bench', 'autre.pdf'), '%PDF-1.4 autre');
+      },
+    );
+    expect(r.reasons).toEqual([`${NOT_NAMED} ${why}`]);
+  });
+
+  it('print-file: the posed file reached through a junction to the workspace is still the posed file: green', async () => {
+    const r = await play(
+      'print-file',
+      (root) => ({ tools: [req({ filePath: join(root, PRINT_FILE_REL) }, 'pending')] }),
+      undefined,
+      { linkedRoot: true },
+    );
+    expect(r.reasons).toEqual([]);
   });
 
   it('print: a request missing an item of the dictated list is red, by what it lacks', async () => {

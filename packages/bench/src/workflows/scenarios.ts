@@ -15,7 +15,8 @@
 // FIGÉS une fois fusionnés. Changer une demande ou un juge = monter `version`.
 
 import { existsSync, statSync } from 'node:fs';
-import { extname } from 'node:path';
+import { extname, join } from 'node:path';
+import { cheminConstate } from '@nodal-agents/tools';
 import type { TreeFacts } from './facts';
 import {
   JUDGED_COMMON,
@@ -37,6 +38,8 @@ import {
   textHasNumber,
 } from './judge-kit';
 import { findInRoots, readText, readXlsxGrid, type CellValue, type SheetGrid } from './disk';
+import { fileDesignation, type FileDesignation } from './designation';
+import { sharedRoot } from './fixtures';
 import { DEEP_RESEARCH_SCENARIOS, QUESTION_SCENARIOS, RESEARCH_SCENARIOS } from './suites/answers';
 import { CODE_SCENARIOS } from './suites/code';
 import { COMFYUI_SCENARIOS } from './suites/comfyui';
@@ -249,11 +252,14 @@ function pendingPrint(
 
 export const PRINT_FILE_REL = 'nodal-bench/facture-impression.pdf';
 
-const printFile = defineScenario<null>({
+/** Ce que l'entrée de chaque demande d'impression dit du fichier posé, par entrée (`designation.ts`). */
+type PrintTargets = Readonly<Record<string, FileDesignation>>;
+
+const printFile = defineScenario<PrintTargets>({
   id: 'print-file',
   judgedBy: [
     ...JUDGED_COMMON,
-    `tool_calls: a request_print whose input names ${fileName(PRINT_FILE_REL)}, pending, one page when the connector says so`,
+    `tool_calls: a request_print whose input names the posed file by its absolute path (the real path of ${PRINT_FILE_REL} in the shared folder, links resolved) and no other file; pending, one page when the connector says so`,
     'never confirm_print, nothing reached the printer',
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (request_print)
@@ -262,9 +268,13 @@ const printFile = defineScenario<null>({
   // (revue de #777, passes 3 et 4). request_print est un outil MCP : la
   // plateforme n'enregistre pas ce qu'il lit (#784). L'appel est jugé (il
   // nomme le fichier, il attend), et le fichier imprimé est « not verified ».
+  // Passe 5 : « il nomme le fichier » veut dire qu'un chemin absolu de son
+  // entrée EST le fichier posé (designation.ts), jamais que son nom y figure.
+  // La version reste 3 : aucun essai n'a tourné en v3 (cette PR n'est pas
+  // fusionnée).
   version: 3,
   title: 'Print an existing file',
-  green: `A print request naming ${PRINT_FILE_REL} was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything. Whether the printer read the file the bench posed is not verified yet (#784).`,
+  green: `A print request naming the posed ${PRINT_FILE_REL} by its absolute path, and no other file, was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything. Whether the printer read the file the bench posed is not verified yet (#784).`,
   path: `request_print on the file. ${PRINT_PATH_END}`,
   deliverable: 'A print request waiting for the owner',
   productTools: { tools: ['request_print'], writes: [], reads: [] },
@@ -276,12 +286,28 @@ const printFile = defineScenario<null>({
   instruction: `Imprime le fichier ${PRINT_FILE_REL} de l'espace de travail partagé.`,
   timeoutMs: 10 * MIN,
   fixtures: [{ from: 'office/facture-bench.pdf', to: PRINT_FILE_REL }],
-  observe: async () => null,
-  judge(facts) {
-    const name = fileName(PRINT_FILE_REL);
+  async observe(facts, env) {
+    const posed = await cheminConstate(join(sharedRoot(env.workspaceRoots), PRINT_FILE_REL));
+    const out: Record<string, FileDesignation> = {};
+    for (const c of callsOf(facts, 'request_print')) {
+      const input = c.input ?? '';
+      out[input] ??= await fileDesignation(input, posed, PRINT_FILE_REL);
+    }
+    return out;
+  },
+  judge(facts, targets) {
+    const designation = (q: { input: string }): FileDesignation =>
+      targets[q.input] ?? { kind: 'not', why: 'was not read by the bench' };
+    const last = printRequests(facts).at(-1);
+    const d = last ? designation(last) : null;
+    const why = d?.kind === 'not' ? d.why : undefined;
     return [
       ...commonReasons(facts),
-      ...pendingPrint(facts, (q) => q.input.includes(name), `names ${name}`),
+      ...pendingPrint(
+        facts,
+        (q) => designation(q).kind === 'posed',
+        `names the posed file by its absolute path${why ? ` (the last one ${why})` : ''}`,
+      ),
     ];
   },
 });

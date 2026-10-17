@@ -215,7 +215,13 @@ declares them, never inside one judge:
     path, other hash), or no row (not recorded) is red, never green. An MCP
     tool (`request_print`) opens the file in its own process and leaves no
     read: `print-file` judges the call, and says "the printed file is the one
-    the bench posed" as not verified (#784).
+    the bench posed" as not verified (#784). The call names the posed file
+    only when a string of its input is, as a whole, an absolute path whose
+    real path is the posed file's, and no other absolute path in it names
+    another file (`designation.ts`). A relative path is red: the runner hands
+    arguments to an MCP server verbatim, and the server resolves them against
+    its own working directory. A file name alone, or the name inside a text,
+    is red too.
 
   Otherwise the trial is red, "product tool available, not used". When none
   is in the team's tools, the trial is skipped with that reason, like a missing
