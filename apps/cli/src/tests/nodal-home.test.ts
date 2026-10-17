@@ -70,6 +70,9 @@ describe('the CLI under NODALAI_HOME @cap:installer-et-demarrer/moteur', () => {
     );
     expect(cfg.readConfig()?.ports).toEqual(CONFIG.ports);
     expect(existsSync(join(user, '.nodalai'))).toBe(false);
+    // Declared to the other instances on this machine (openNodalHome).
+    const { readNodalInstances } = await import('@nodal-agents/shared/nodal-instances');
+    expect(readNodalInstances(user).map((r) => r.home)).toEqual([homeB]);
   });
 
   it('puts the launcher and postgres logs under the home', async () => {

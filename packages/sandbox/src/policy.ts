@@ -167,6 +167,23 @@ export function nodalDeniedEndpoints(
  *
  * Limite nommée (`DATA_DIR_LIMIT`) : un enfant créé PENDANT qu'un conteneur
  * tourne n'est refusé qu'à l'ouverture suivante.
+ *
+ * UNE SEULE RÈGLE entre « le conteneur doit atteindre X » et « D est une donnée
+ * d'une instance » — D étant un enfant d'un dossier de Nodal, ou une entrée
+ * déplacée hors de son dossier (revue de #787, passe 2) :
+ *
+ *   X est D, ou X est SOUS D          → D ouvert (le conteneur y travaille :
+ *                                        le magasin des checkpoints, un cache,
+ *                                        le dossier de workspaces)
+ *   X CONTIENT D, ou sans rapport     → D refusé (une donnée d'instance sous
+ *                                        un dossier de travail reste fermée)
+ *   X EST un dossier de Nodal         → REFUS de l'ouverture, nommé
+ *                                        (`NodalHomeReachError`)
+ *
+ * Le dernier cas est le seul où les deux promesses ne tiennent pas ensemble :
+ * travailler DANS un dossier de Nodal, c'est y lire ses enfants, donc sa clé
+ * maîtresse et sa configuration ; refuser ses enfants, c'est casser le job en
+ * silence. On ne choisit ni l'un ni l'autre : on refuse d'ouvrir, en le disant.
  */
 export function sandboxDeniedPaths(
   mustReach: readonly string[],
@@ -189,12 +206,35 @@ export function sandboxDeniedPaths(
       if (!isWithin(entry, i.home)) moved.set(pathKey(entry), entry);
     }
   }
+  for (const home of homes.values()) {
+    if (!existsSync(home)) continue;
+    const reach = mustReach.find((r) => pathKey(r) === pathKey(home));
+    if (reach !== undefined) throw new NodalHomeReachError(reach);
+  }
   const denied = [
     ...[...homes.values()].flatMap((home) => deniedChildrenOf(home, mustReach)),
     ...[...moved.values()].flatMap((entry) => deniedMovedEntry(entry, mustReach)),
   ];
   // Sans doublon : deux dossiers qui résolvent au même (une jonction) donnent les mêmes refus.
   return [...new Set(denied)];
+}
+
+/**
+ * Un chemin que le conteneur doit atteindre est le dossier d'une instance de
+ * Nodal (NODALAI_HOME, `~/.nodalai`, ou une instance inscrite). Y travailler
+ * exposerait sa clé maîtresse et sa configuration ; en refuser le contenu
+ * casserait le job. L'ouverture est refusée.
+ */
+export class NodalHomeReachError extends Error {
+  readonly code = 'SANDBOX_REACH_IS_NODAL_HOME';
+  constructor(readonly path: string) {
+    super(
+      `SANDBOX_REACH_IS_NODAL_HOME: ${path} is the home folder of a Nodal instance. ` +
+        'A confined command cannot work in it without reading that instance’s secrets. ' +
+        'Point the workspace at a folder of its own, or move that instance (NODALAI_HOME).',
+    );
+    this.name = 'NodalHomeReachError';
+  }
 }
 
 /** Le chemin réel quand il existe, sinon tel quel, résolu. */

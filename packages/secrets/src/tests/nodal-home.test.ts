@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readNodalInstances } from '@nodal-agents/shared/nodal-instances';
 import { _resetMasterKeyCacheForTests, loadOrCreateMasterKey, masterKeyPath } from '../index';
 
 let root: string;
@@ -35,6 +36,8 @@ describe('the master key under NODALAI_HOME', () => {
     const key = loadOrCreateMasterKey();
     expect(Buffer.from(readFileSync(join(homeB, 'secrets.key'), 'utf8'), 'base64')).toEqual(key);
     expect(existsSync(join(user, '.nodalai'))).toBe(false);
+    // Declared to the other instances before the key exists (openNodalHome).
+    expect(readNodalInstances(user).map((r) => r.home)).toEqual([homeB]);
   });
 
   it('two instances get two different keys', () => {

@@ -7,6 +7,7 @@ import type { Context } from 'hono';
 import { serve } from '@hono/node-server';
 import { pathToFileURL } from 'url';
 import { parseEnv } from './env.ts';
+import { openNodalHome } from '@nodal-agents/shared/nodal-instances';
 import { createRunnerDeps } from './deps.ts';
 import { healthRoute } from './routes/health.ts';
 import { agentRoute, triggerWorker } from './routes/agent.ts';
@@ -324,6 +325,10 @@ export function installProcessErrorHandlers(): void {
 async function main(): Promise<void> {
   installProcessErrorHandlers();
   const runnerEnv = parseEnv();
+  // Before anything reads or writes the home (secrets.key, workspaces, the
+  // sandbox): declare this instance to the others, then create it. A runner
+  // started without `up` is declared all the same (#787, review pass 2).
+  openNodalHome();
   const deps = await createRunnerDeps(runnerEnv);
 
   // One-shot: encrypt any plaintext entity_llm_keys.api_key rows in place

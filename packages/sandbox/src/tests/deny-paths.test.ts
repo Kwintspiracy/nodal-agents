@@ -8,7 +8,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { nodalInstancesDir, registerNodalInstance } from '@nodal-agents/shared/nodal-instances';
-import { sandboxDeniedPaths, nodalDeniedEndpoints, NodalPortsUnknown } from '../policy';
+import {
+  sandboxDeniedPaths,
+  nodalDeniedEndpoints,
+  NodalHomeReachError,
+  NodalPortsUnknown,
+} from '../policy';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -254,5 +259,74 @@ describe('sandboxDeniedPaths — every registered instance, and entries moved ou
     expect(() => sandboxDeniedPaths([], m)).toThrow(
       /broken\.json is not a valid Nodal instance entry/,
     );
+  });
+});
+
+// Revue de #787, passe 2 : UNE règle entre « doit atteindre X » et « donnée
+// d'instance D », quelle que soit leur relation — pour un dossier de Nodal comme
+// pour une entrée déplacée (policy.ts, en tête de sandboxDeniedPaths).
+describe('sandboxDeniedPaths — one rule for every relation between a reach and instance data', () => {
+  function layout(): { home: string; a: string; b: string } {
+    const home = realpathSync.native(mkdtempSync(join(tmpdir(), 'nodal-rel-')));
+    dirs.push(home);
+    const a = join(home, '.nodalai');
+    const b = join(home, 'proj', 'nodal-b');
+    for (const root of [a, b]) {
+      for (const d of ['workspaces/e/ws1', 'sandbox', 'pg-data'])
+        mkdirSync(join(root, d), { recursive: true });
+      writeFileSync(join(root, 'secrets.key'), 'k');
+      writeFileSync(join(root, 'config.json'), '{}');
+    }
+    registerNodalInstance({ NODALAI_HOME: b }, home);
+    return { home, a, b };
+  }
+  const machine = (home: string, env: Record<string, string> = {}) => ({
+    platform: process.platform,
+    home,
+    env,
+  });
+
+  it('home, reach INSIDE it: the child it goes through stays open, the secrets stay denied', () => {
+    const { home, b } = layout();
+    const denied = sandboxDeniedPaths([join(b, 'workspaces', 'e', 'ws1')], machine(home));
+    expect(denied).not.toContain(join(b, 'workspaces'));
+    for (const c of ['secrets.key', 'config.json', 'pg-data']) expect(denied).toContain(join(b, c));
+  });
+
+  it('home, reach CONTAINING it: every child of the home is denied, the rest of the reach is not', () => {
+    const { home, b } = layout();
+    const denied = sandboxDeniedPaths([join(home, 'proj')], machine(home));
+    expect(denied.filter((p) => p.startsWith(b + sep)).sort()).toEqual(
+      ['config.json', 'pg-data', 'sandbox', 'secrets.key', 'workspaces'].map((c) => join(b, c)),
+    );
+    expect(denied).not.toContain(join(home, 'proj'));
+  });
+
+  it('home, reach EQUAL to it: the container is refused, named, instead of a silent choice', () => {
+    const { home, b } = layout();
+    expect(() => sandboxDeniedPaths([b], machine(home))).toThrow(NodalHomeReachError);
+    expect(() => sandboxDeniedPaths([b], machine(home))).toThrow(
+      `SANDBOX_REACH_IS_NODAL_HOME: ${b} is the home folder of a Nodal instance`,
+    );
+    // The current instance's own home, and the default one, follow the same rule.
+    const { home: h2, a } = layout();
+    expect(() => sandboxDeniedPaths([a], machine(h2))).toThrow(NodalHomeReachError);
+  });
+
+  it('moved entry: open when reached exactly or through, denied when the reach contains it', () => {
+    const { home } = layout();
+    const moved = join(home, 'elsewhere', 'checkpoints');
+    mkdirSync(join(moved, 'store'), { recursive: true });
+    const env = { NODALAI_CHECKPOINTS_ROOT: moved };
+    expect(sandboxDeniedPaths([moved], machine(home, env))).not.toContain(moved);
+    expect(sandboxDeniedPaths([join(moved, 'store')], machine(home, env))).not.toContain(moved);
+    expect(sandboxDeniedPaths([join(home, 'elsewhere')], machine(home, env))).toContain(moved);
+  });
+
+  it('a home that no longer exists refuses nothing, even when a reach names it', () => {
+    const { home } = layout();
+    const gone = join(home, 'gone');
+    registerNodalInstance({ NODALAI_HOME: gone }, home);
+    expect(() => sandboxDeniedPaths([gone], machine(home))).not.toThrow();
   });
 });

@@ -24,7 +24,13 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync
 import { homedir } from 'node:os';
 import { posix, win32 } from 'node:path';
 import { z } from 'zod';
-import { NODAL_HOME_OVERRIDES, type NodalHomeEntry, nodalHome, nodalHomeEntry } from './nodal-home';
+import {
+  NODAL_HOME_OVERRIDES,
+  type NodalHomeEntry,
+  ensureNodalHome,
+  nodalHome,
+  nodalHomeEntry,
+} from './nodal-home';
 
 /** Le nom du dossier du registre, sous le dossier personnel de l'utilisateur. */
 const REGISTRY_DIR_NAME = '.nodalai-instances';
@@ -128,6 +134,26 @@ export function registerNodalInstance(
     );
   }
   return file;
+}
+
+/**
+ * OUVRIR le dossier d'une instance : l'inscrire au registre, PUIS le créer.
+ * C'est l'unique porte par laquelle un processus commence à écrire dans un
+ * dossier de Nodal — le CLI (`ensureConfigDir`), le runner au démarrage
+ * (`server.ts`), la clé maîtresse avant d'être écrite (`@nodal-agents/secrets`).
+ * Une instance démarrée sans `up` (runner seul, outil de test, `up` mort en
+ * route) est donc connue des autres AVANT que la moindre donnée existe.
+ * L'inscription d'abord : un dossier qui ne peut pas être créé laisse une
+ * entrée périmée, sans effet ; l'ordre inverse laisserait des secrets non
+ * déclarés.
+ */
+export function openNodalHome(
+  env: Env = process.env,
+  userHome: string = homedir(),
+  platform: NodeJS.Platform = process.platform,
+): string {
+  registerNodalInstance(env, userHome, platform);
+  return ensureNodalHome(nodalHome(env, userHome, platform));
 }
 
 /** Retire l'entrée de l'instance de ces variables ; absente, rien à faire. */

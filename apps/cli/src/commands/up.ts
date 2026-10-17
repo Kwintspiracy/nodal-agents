@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path';
 import {
   readConfig,
   writeConfig,
+  ensureConfigDir,
   CONFIG_FILE,
   LOG_DIR,
   PG_DATA_DIR,
@@ -75,7 +76,6 @@ import {
 } from '../lib/processes.ts';
 import { createClient, assertMasterKeyRestorable } from '@nodal-agents/db';
 import { startHealthWatchdog, probeRunnerHealth, type Watchdog } from '../lib/watchdog.ts';
-import { registerNodalInstance } from '@nodal-agents/shared/nodal-instances';
 
 async function killSilent(child: SpawnResult): Promise<void> {
   // Kill the whole process tree — see killProcessTree for the Windows
@@ -256,13 +256,12 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     config = defaultConfig;
   }
 
-  // ── 1.1 Declare this instance (NODALAI_HOME) ──────────────────────────────
-  // Its home and the real place of each entry go into the per-user registry
-  // (packages/shared/src/nodal-instances.ts): the sandbox of EVERY instance on
-  // this machine reads it, so that none of their confined commands can read
-  // this one's secrets. A failure stops `up`, it does not leave this instance
-  // unknown to the others.
-  registerNodalInstance();
+  // ── 1.1 Open this instance's home (NODALAI_HOME) ─────────────────────────
+  // Every boot, not only the first: an existing config writes nothing, and the
+  // home must still be declared in the per-user registry before Postgres or
+  // the runner touch it (packages/shared/src/nodal-instances.ts, openNodalHome).
+  // A failure stops `up`.
+  ensureConfigDir();
 
   // Fail fast on a dangerous config combination (local-trust + LAN bind =
   // unauthenticated RCE surface) BEFORE starting Postgres or spawning any

@@ -9,6 +9,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { execFileSync } from 'node:child_process';
 import { dirname } from 'node:path';
 import { nodalHomePath } from '@nodal-agents/shared/nodal-home';
+import { openNodalHome } from '@nodal-agents/shared/nodal-instances';
 
 /**
  * Restrict a secret file to its owner on ALL platforms (FA-5, audit sécu
@@ -75,6 +76,11 @@ export function loadOrCreateMasterKey(path: string = masterKeyPath()): Buffer {
     return buf;
   }
 
+  // The key of an instance comes into existence here: the instance is declared
+  // in the registry first (openNodalHome), so the sandbox of every other
+  // instance refuses this file from its first byte. A key written at another
+  // path (an explicit path, as tests do) belongs to no instance.
+  if (path === masterKeyPath()) openNodalHome();
   const dir = dirname(path);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const buf = randomBytes(KEY_BYTES);

@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import {
   NodalInstancesError,
   nodalInstancesDir,
+  openNodalHome,
   readNodalInstances,
   registerNodalInstance,
   unregisterNodalInstance,
@@ -90,5 +91,19 @@ describe('the instance registry', () => {
   it('says why it cannot register, instead of carrying on unregistered', () => {
     writeFileSync(join(user, '.nodalai-instances'), 'a file in the way');
     expect(() => registerNodalInstance({}, user)).toThrow(/Cannot register this instance/);
+  });
+
+  it('openNodalHome declares the instance BEFORE creating its home', () => {
+    const b = join(user, 'nodal-b');
+    expect(openNodalHome({ NODALAI_HOME: b }, user)).toBe(b);
+    expect(existsSync(b)).toBe(true);
+    expect(readNodalInstances(user).map((r) => r.home)).toEqual([b]);
+
+    // A home that cannot be created is still declared: a stale entry costs
+    // nothing, undeclared data would be readable by the others.
+    writeFileSync(join(user, 'occupied'), 'x');
+    const c = join(user, 'occupied', 'home');
+    expect(() => openNodalHome({ NODALAI_HOME: c }, user)).toThrow(/cannot be created/);
+    expect(readNodalInstances(user).map((r) => r.home)).toContain(c);
   });
 });

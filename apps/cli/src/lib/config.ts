@@ -5,7 +5,8 @@ import { dirname, join } from 'path';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { randomBytes } from 'crypto';
-import { ensureNodalHome, nodalHome, nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
+import { nodalHome, nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
+import { openNodalHome } from '@nodal-agents/shared/nodal-instances';
 
 /**
  * Restrict config.json (workerSecret / authSecret / LLM + OAuth secrets) to its
@@ -170,9 +171,10 @@ export const LOG_DIR = join(CONFIG_DIR, 'logs');
 export const PG_DATA_DIR = join(CONFIG_DIR, 'pg-data');
 
 export function ensureConfigDir(): void {
-  // Le dossier lui-même d'abord : s'il ne peut pas être créé, le message nomme
-  // le dossier et la variable, au lieu d'un EACCES sur un sous-dossier.
-  ensureNodalHome(CONFIG_DIR);
+  // Le dossier lui-même d'abord, par la porte commune : inscrit au registre des
+  // instances (le bac à sable des AUTRES le refuse dès lors), puis créé. S'il ne
+  // peut pas l'être, le message nomme le dossier et la variable.
+  openNodalHome();
   // NODALAI_CONFIG_PATH peut mettre config.json ailleurs que sous le dossier.
   mkdirSync(dirname(CONFIG_FILE), { recursive: true });
   for (const dir of [CONFIG_DIR, PID_DIR, LOG_DIR, PG_DATA_DIR]) {
