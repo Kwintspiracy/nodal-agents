@@ -73,7 +73,7 @@ a test account or a send, which waits on an owner decision, and the portal
 says "no scenario yet".
 
 A scenario also declares its **needs** (`needs.ts`): `comfyui`,
-`obsidian-vault`, `printer`, `no-mail-sender`. A missing need SKIPS the trial,
+`obsidian-vault`, `printer`, `bench-printer`, `no-mail-sender`. A missing need SKIPS the trial,
 with its reason, without starting a job: a `skipped` line, grey on the
 portal, never red (nothing was tried). One mechanism for every scenario; it
 replaced the per-scenario `requires`, which made such a trial red.
@@ -83,6 +83,9 @@ replaced the per-scenario `requires`, which made such a trial red.
   within 3 s. Nothing about the owner's machine is written in the code.
 - `obsidian-vault`: a workspace folder holding `.obsidian/`.
 - `printer`: an agent of the workspace has `request_print`.
+- `bench-printer`: the bench's own recording printer (decision D2), a print
+  MCP server that records the file it received and its sha-256. It does not
+  exist yet, so the need is always missing and `print-file` is skipped.
 - `no-mail-sender`: no agent of the workspace can send e-mail, and no MCP
   server of the team has unknown tools (see below).
 
@@ -214,18 +217,11 @@ declares them, never inside one judge:
     (same hash, other path), the posed file changed before the read (same
     path, other hash), or no row (not recorded) is red, never green. An MCP
     tool (`request_print`) opens the file in its own process and leaves no
-    read: `print-file` judges the call, and says "the printed file is the one
-    the bench posed" as not verified (#784). A string of the call's input
-    names a file only when it is, as a whole, the absolute path of an existing
-    regular file (`designation.ts`); anything else (a text starting with a
-    path, a folder, a missing path, quotes, `file://`) is text and never a
-    reason. The call names the posed file when one string names it, by its
-    real path, and no string names another existing file. Network and device
-    paths are refused by the product's own guard (`windowsPathViolation`)
-    before any filesystem call. A relative path is red: Nodal's MCP client
-    hands arguments to the server verbatim, with no `roots` and no `cwd`, so
-    the server inherits the runner's working directory, never the shared
-    folder.
+    read (#784). Reading the arguments of a print server cannot tell which
+    field it prints (review of #777, passes 5 to 7), so the bench does not try:
+    `print-file` needs the bench's own recording printer (`bench-printer`,
+    decision D2), which will say which file it received and its sha-256.
+    Until it exists, `print-file` is skipped with that reason.
 
   Otherwise the trial is red, "product tool available, not used". When none
   is in the team's tools, the trial is skipped with that reason, like a missing

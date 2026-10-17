@@ -237,6 +237,17 @@ export function isOutboundTool(toolName: string): boolean {
   return own[0] === 'message';
 }
 
+/**
+ * L'imprimante du banc (décision D2 de la page du banc) : un serveur MCP
+ * d'impression que le banc fournit, et qui ENREGISTRE le fichier qu'il a reçu
+ * et son empreinte. Lire les arguments d'un serveur d'impression ne dit pas
+ * quel champ il imprime (revue de #777, passes 5 à 7) : seul le serveur qui
+ * reçoit le fichier peut dire lequel. Tant qu'elle n'existe pas, un scénario
+ * qui juge le fichier imprimé est sauté, avec cette raison.
+ */
+export const BENCH_PRINTER_MISSING =
+  "the bench's recording printer does not exist yet (decision D2): only a print server that records the file it received and its sha-256 can tell which file was printed (#784)";
+
 /** Pourquoi le besoin manque, ou null quand il est là. */
 const CHECKS: Record<Need, (env: ScenarioEnv) => string | null> = {
   comfyui(env) {
@@ -253,6 +264,9 @@ const CHECKS: Record<Need, (env: ScenarioEnv) => string | null> = {
     return teamHas(env, 'request_print')
       ? null
       : 'no agent of this workspace has request_print (no printer connector configured)';
+  },
+  'bench-printer'() {
+    return BENCH_PRINTER_MISSING;
   },
   'no-mail-sender'(env) {
     // Fermé par défaut : un serveur MCP dont les outils ne sont pas connus peut

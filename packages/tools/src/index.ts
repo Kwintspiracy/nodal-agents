@@ -288,10 +288,6 @@ export type { RoutineLintResult } from './builtin/meta-ops/routine-lint';
 // its workspace list with this label and the D1 overwrite gate keys off it —
 // exported so the two sides can never drift apart.
 export { SHARED_WORKSPACE_LABEL } from './builtin/file-ops/workspace';
-// Le refus des chemins qu'il est dangereux même de sonder (UNC, périphérique,
-// flux NTFS), avant tout stat() : exporté pour le juge du banc, qui sonde des
-// chaînes écrites par un agent (designation.ts), jamais une copie de la règle.
-export { windowsPathViolation } from './builtin/file-ops/workspace';
 export {
   resolveWorkspaceList,
   resolveRunWorkspaces,
