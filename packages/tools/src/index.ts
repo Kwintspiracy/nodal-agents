@@ -228,6 +228,8 @@ export {
   extractClaudeUsage,
   extractClaudeModelUsage,
   CLAUDE_READONLY_DISALLOWED,
+  readWorkspaceMemory,
+  WORKSPACE_MEMORY_MAX_BYTES,
   assertAgentBudget,
   recordCliRun,
   acquireWorkspaceLock,
