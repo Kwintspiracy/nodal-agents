@@ -32,6 +32,10 @@
     "The duration and the time to the first model reply",
     "The model calls, the tokens and the cost; the model asked for and the one that answered"
   ],
+  "renamed": {
+    "deep-research-dna": "deep-research-report",
+    "comfy-portrait": "comfy-exact-size"
+  },
   "scenarios": [
     {
       "id": "question",
@@ -121,8 +125,8 @@
       ]
     },
     {
-      "id": "deep-research-dna",
-      "version": 2,
+      "id": "deep-research-report",
+      "version": 1,
       "activity": "deep-research",
       "title": "In-depth research delivered as a Markdown report",
       "green": "The research was handed to a teammate who called a web tool; nodal-bench/rapport.md was written during the run with at least 3 section headings and links to 4 different sites, every link seen in a web tool output; it holds the calibrated subject's facts and a web tool output holds them too; nobody was asked anything. Whether the pages were really read is not verified yet (#648).",
@@ -995,7 +999,7 @@
       "unverified": []
     },
     {
-      "id": "comfy-portrait",
+      "id": "comfy-exact-size",
       "version": 1,
       "activity": "image-comfyui",
       "title": "Respect exact dimensions",

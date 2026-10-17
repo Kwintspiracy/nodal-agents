@@ -22,7 +22,7 @@ describe('selectScenarios', () => {
       expect(ids(selectScenarios(sel))).not.toContain('comfyui-telegram');
     }
     expect(ids(selectScenarios({ activity: ['image-comfyui'] }))).toEqual([
-      'comfy-portrait',
+      'comfy-exact-size',
       'comfy-variants',
     ]);
   });

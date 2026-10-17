@@ -40,11 +40,25 @@ export interface CatalogScenario {
   readonly unverified: Array<{ check: string; reason: string; ticket: string }>;
 }
 
+/**
+ * Les identifiants renommés d'après ce que le scénario teste (catalogue du
+ * 17/10) : un identifiant qui nommait un sujet que le scénario ne teste plus.
+ * Un identifiant est la clé d'une série : les lignes de l'ancien restent sous
+ * lui, une SÉRIE CLOSE que le portail montre comme telle et ne mélange jamais
+ * avec la nouvelle (`serieClose`, results.ts). Ancien → nouveau.
+ */
+export const RENAMED_IDS: Readonly<Record<string, string>> = {
+  'deep-research-dna': 'deep-research-report',
+  'comfy-portrait': 'comfy-exact-size',
+};
+
 export interface Catalog {
   readonly activities: string[];
   readonly needs: string[];
   /** Ce que chaque essai mesure, quel que soit le scénario. */
   readonly measured: string[];
+  /** Les identifiants renommés, ancien → nouveau (`RENAMED_IDS`). */
+  readonly renamed: Record<string, string>;
   readonly scenarios: CatalogScenario[];
 }
 
@@ -53,6 +67,7 @@ export function buildCatalog(): Catalog {
     activities: [...ACTIVITIES],
     needs: [...NEED_IDS],
     measured: [...MEASURED_ON_EVERY_TRIAL],
+    renamed: { ...RENAMED_IDS },
     scenarios: SCENARIOS.map((s) => ({
       id: s.id,
       version: s.version,

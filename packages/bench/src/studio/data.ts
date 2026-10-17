@@ -241,6 +241,8 @@ export function studioResults(file: string = RESULTS_FILE) {
         version: s.version,
         title: s.titre,
         needs: [...s.besoins],
+        /** null : au catalogue ; sinon une série close (retirée ou renommée), jamais mêlée aux résumés. */
+        closed: s.close,
         cells: [...s.cellules.entries()].map(([column, c]) => ({
           column,
           tried: c.essais,

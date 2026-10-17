@@ -147,10 +147,12 @@ function comfy(o: {
 }
 
 export const COMFYUI_SCENARIOS: AnyScenario[] = [
-  // L'identifiant du premier des trois scénarios fusionnés (portrait, square,
-  // landscape) : la même capacité, un format non carré la prouve.
+  // Fusion de comfy-portrait, comfy-square et comfy-landscape : la même
+  // capacité, des dimensions exactes, qu'un format non carré prouve. Renommé
+  // d'après ce qu'il teste ; les lignes de comfy-portrait restent une série
+  // close (`RENAMED_IDS`, catalog.ts).
   comfy({
-    id: 'comfy-portrait',
+    id: 'comfy-exact-size',
     title: 'Respect exact dimensions',
     subject: "d'un astronaute dans une forêt",
     dir: 'nodal-bench/comfy-portrait',

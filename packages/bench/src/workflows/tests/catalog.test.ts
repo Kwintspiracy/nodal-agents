@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { buildCatalog, catalogText } from '../catalog';
+import { RENAMED_IDS, buildCatalog, catalogText } from '../catalog';
 import { FIXTURES_DIR } from '../fixtures';
 import { NEED_IDS } from '../needs';
 import { SCENARIOS } from '../scenarios';
@@ -63,14 +63,14 @@ describe('the workflow catalog', () => {
   const CATALOG_OF_2026_10_17: Record<string, string[]> = {
     question: ['question', 'question-weekday'],
     research: ['research'],
-    'deep-research': ['deep-research-dna', 'deep-research-obsidian'],
+    'deep-research': ['deep-research-report', 'deep-research-obsidian'],
     code: ['code-bugfix', 'code-http-server', 'code-install-dep', 'code'],
     excel: ['file', 'excel-edit-column', 'excel-read-answer', 'excel-csv-import'],
     word: ['word-create', 'word-replace', 'word-append', 'word-read-answer'],
     powerpoint: ['ppt-create', 'ppt-append', 'ppt-replace', 'ppt-read-answer'],
     pdf: ['pdf-read-total', 'pdf-from-markdown'],
     'html-page': ['html-landing', 'html-table-csv', 'html-edit'],
-    'image-comfyui': ['comfy-portrait', 'comfy-variants', 'comfyui-telegram'],
+    'image-comfyui': ['comfy-exact-size', 'comfy-variants', 'comfyui-telegram'],
     print: ['print', 'print-file', 'recipe'],
     orchestration: [
       'mcp-answer',
@@ -108,6 +108,18 @@ describe('the workflow catalog', () => {
     expect(got).toEqual(CATALOG_OF_2026_10_17);
     expect(SCENARIOS).toHaveLength(37);
     expect(SCENARIOS.map((s) => s.id).filter((id) => DROPPED.includes(id))).toEqual([]);
+  });
+
+  it('a renamed id points to a scenario of the catalogue, and its old id is gone from it (a closed series)', () => {
+    const ids = SCENARIOS.map((s) => s.id);
+    for (const [old, now] of Object.entries(RENAMED_IDS)) {
+      expect({ old, inCatalogue: ids.includes(old) }).toEqual({ old, inCatalogue: false });
+      expect({ now, inCatalogue: ids.includes(now) }).toEqual({ now, inCatalogue: true });
+    }
+    expect(buildCatalog().renamed).toEqual({
+      'deep-research-dna': 'deep-research-report',
+      'comfy-portrait': 'comfy-exact-size',
+    });
   });
 
   it('every card says its path and its deliverable; a subject scenario carries the {subject} slot', () => {

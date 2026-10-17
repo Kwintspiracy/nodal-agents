@@ -701,7 +701,7 @@ describe('workflow trial: subjects, product tools and the path', () => {
   it('a subject of the other kind is no subject: the deep research is skipped, the simple one runs', async () => {
     const green = load('research-green');
     const w = world({ rootId: green.rootId, snapshots: [green], subjects: [CMB] });
-    const deep = await runTrial(scenarioById('deep-research-dna')!, w.deps, OPTS);
+    const deep = await runTrial(scenarioById('deep-research-report')!, w.deps, OPTS);
     expect(deep.verdict).toBe('skipped');
     expect(deep.reasons[0]).toMatch(/^no calibrated research subject \(kind deep-research\)/);
   });

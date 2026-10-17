@@ -609,7 +609,96 @@ describe('la matrice activités × modèles', () => {
     );
     expect(c.activities).toContain('orchestration');
     expect(c.scenarios.length).toBe(37);
+    expect(c.renamed).toEqual({
+      'deep-research-dna': 'deep-research-report',
+      'comfy-portrait': 'comfy-exact-size',
+    });
     expect(() => lireCatalogue('{"activities":[]}')).toThrow('does not have the shape');
     expect(() => lireCatalogue('pas du json')).toThrow('is not JSON');
+  });
+});
+
+// Un identifiant qui nommait un sujet que le scénario ne teste plus est renommé
+// (catalogue du 17/10 : deep-research-dna → deep-research-report). Ses lignes
+// restent sous l'ancien identifiant, une série CLOSE : jamais rangée sous le
+// nouveau, jamais comptée dans les résumés ni dans les « à regarder ».
+describe('une série close (identifiant renommé ou retiré)', () => {
+  const carteDe = (html, id) => {
+    const debut = html.indexOf(`id="wf-${id}"`);
+    return html.slice(debut, html.indexOf('</article>', debut));
+  };
+  const CAT_RENOMME = {
+    activities: ['deep-research'],
+    needs: [],
+    renamed: { 'deep-research-dna': 'deep-research-report' },
+    scenarios: [
+      {
+        id: 'deep-research-report',
+        version: 1,
+        activity: 'deep-research',
+        title: 'In-depth research delivered as a Markdown report',
+        green: 'x',
+        set: 'on-demand',
+        needs: [],
+      },
+    ],
+  };
+  const base = { ...QUESTION_V2, activity: 'deep-research', rootModel: 'z-ai/glm-5.3' };
+  const ANCIENNE = {
+    ...base,
+    scenario: 'deep-research-dna',
+    scenarioVersion: 2,
+    title: 'An in-depth report on the discovery of the DNA double helix',
+    startedAt: '2026-10-10T01:00:00.000Z',
+    verdict: 'red',
+    reasons: ['the report does not name Photo 51'],
+  };
+  const NOUVELLE = {
+    ...base,
+    scenario: 'deep-research-report',
+    scenarioVersion: 1,
+    title: 'In-depth research delivered as a Markdown report',
+    startedAt: '2026-10-18T01:00:00.000Z',
+    verdict: 'green',
+    reasons: [],
+  };
+
+  it('les lignes de l’ancien identifiant restent sous lui, marquées close et renommée ; la nouvelle série ne porte que les siennes', () => {
+    const m = construireMatrice([ANCIENNE, NOUVELLE], CAT_RENOMME);
+    const scen = m.activites[0].scenarios;
+    expect(scen.map((s) => [s.id, s.close])).toEqual([
+      ['deep-research-report', null],
+      ['deep-research-dna', { renommeEn: 'deep-research-report' }],
+    ]);
+    const cell = (id) => scen.find((s) => s.id === id).cellules.get('z-ai/glm-5.3');
+    expect(cell('deep-research-report').derniers.map((l) => l.verdict)).toEqual(['green']);
+    expect(cell('deep-research-dna').derniers.map((l) => l.verdict)).toEqual(['red']);
+  });
+
+  it('une série close n’entre dans aucun résumé : la colonne et l’activité ne comptent que la série ouverte', () => {
+    const m = construireMatrice([ANCIENNE, NOUVELLE], CAT_RENOMME);
+    expect(m.resumes.get('z-ai/glm-5.3')).toMatchObject({ tentes: 1, verts: 1 });
+    expect(m.activites[0].resumes.get('z-ai/glm-5.3')).toMatchObject({ tentes: 1, verts: 1 });
+  });
+
+  it('son dernier rouge n’est pas « à regarder » ; sans catalogue, rien n’est dit clos', () => {
+    expect(workflowsARegarder({ lignes: [ANCIENNE, NOUVELLE] }, CAT_RENOMME)).toBe(0);
+    expect(workflowsARegarder({ lignes: [ANCIENNE, NOUVELLE] })).toBe(1);
+  });
+
+  it('la page le dit : la carte de la série close, et le chapô qui la compte à part', () => {
+    const html = htmlWorkflows({ lignes: [ANCIENNE, NOUVELLE], illisibles: 0 }, CAT_RENOMME);
+    expect(carteDe(html, 'deep-research-dna')).toContain(
+      'closed series</span> <span class="wf-nd">renamed <span class="mono">deep-research-report</span>',
+    );
+    expect(carteDe(html, 'deep-research-report')).not.toContain('closed series');
+    expect(html).toContain('<b>0 not green on their last run</b>');
+    expect(html).toContain('1 closed series (retired or renamed), counted in none of these');
+  });
+
+  it('un identifiant retiré sans successeur est dit retiré', () => {
+    const retire = { ...ANCIENNE, scenario: 'research-penicillin' };
+    const html = htmlWorkflows({ lignes: [retire, NOUVELLE], illisibles: 0 }, CAT_RENOMME);
+    expect(carteDe(html, 'research-penicillin')).toContain('retired from the catalogue');
   });
 });

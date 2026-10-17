@@ -2015,7 +2015,7 @@ td.dette{color:var(--ko);font-weight:600}
       }</b></a>
       <a href="#ecarts">Gaps <b>${ecarts().length}</b></a>
       <a href="#parcours">Journeys <b>${s.resume.specsE2eJoueesParLaCi}/${s.resume.specsE2e}</b></a>
-      <a href="#workflows">Workflows <b>${workflowsARegarder(workflows)}</b></a>
+      <a href="#workflows">Workflows <b>${workflowsARegarder(workflows, catalogueWorkflows)}</b></a>
       <p class="rubrique">How it runs</p>
       <a href="#vue" class="discret">Code coverage</a>
       <a href="#banc" class="discret">Bench <b>${s.banc.sections.length}</b></a>

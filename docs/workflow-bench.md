@@ -146,14 +146,14 @@ the example request last.
 |---|---|---|
 | question | `question`, `question-weekday` | the root answers alone; a delegation is red. The weekday's tool calculation is measured, not required |
 | research | `research` | the root alone with a web tool (decision 2); a delegation is red. Calibrated subject (#776) |
-| deep-research | `deep-research-dna` (report in `nodal-bench/rapport.md`), `deep-research-obsidian` (a note in the vault) | handed to the specialist: no delegated job calling a web tool is red. Calibrated subject (#776) |
+| deep-research | `deep-research-report` (report in `nodal-bench/rapport.md`), `deep-research-obsidian` (a note in the vault) | handed to the specialist: no delegated job calling a web tool is red. Calibrated subject (#776) |
 | code | `code-bugfix`, `code-http-server`, `code-install-dep`, `code` | the script IS the subject: no product tool. `code` downloads the pinned iris CSV and writes one total per species in `nodal-bench/iris-totaux.json` |
 | excel | `file`, `excel-edit-column`, `excel-read-answer`, `excel-csv-import` | `xlsx_*` product tools (decision 1) |
 | word | `word-create` (heading, paragraphs and a table), `word-replace`, `word-append`, `word-read-answer` | `docx_*` product tools |
 | powerpoint | `ppt-create`, `ppt-append`, `ppt-replace`, `ppt-read-answer` | `pptx_*` product tools |
 | pdf | `pdf-read-total`, `pdf-from-markdown` | no product PDF tool: a command or a skill is the right path, measured |
 | html-page | `html-landing`, `html-table-csv` (a table and an SVG chart of the CSV), `html-edit` | `file_write` / `file_edit` |
-| image-comfyui | `comfy-portrait`, `comfy-variants`, `comfyui-telegram` | a ComfyUI workflow; need `comfyui` |
+| image-comfyui | `comfy-exact-size`, `comfy-variants`, `comfyui-telegram` | a ComfyUI workflow; need `comfyui` |
 | print | `print` (a dictated shopping list), `print-file`, `recipe` | `request_print`; need `printer`; never confirmed |
 | orchestration | `mcp-answer`, `undoable-action`, `undoable-action-delegated`, `delegate-fails`, `ask-before-acting` | the path IS the verdict (below) |
 
@@ -166,7 +166,16 @@ capability as `excel-edit-column`); `word-table`, `pdf-read-pages`,
 `pdf-create`, `html-svg-chart`, `print-list`, `code-data` (merged into the
 scenario named above); `comfy-square`, `comfy-landscape` (the same capability
 as the portrait format). A merge keeps the id of the first scenario listed:
-an id is the key of a series. A kept scenario whose request or judge changed
+an id is the key of a series. **An id that names a subject the scenario no
+longer tests is renamed after what it tests** (`RENAMED_IDS`, catalog.ts):
+`deep-research-dna` became `deep-research-report` (its subject is calibrated,
+no longer DNA), `comfy-portrait` became `comfy-exact-size` (it proves exact
+dimensions; square and landscape merged into it). Every other id still says
+what its scenario tests. The lines of an old id stay under it as a **closed
+series**: the portal and Bench Studio show it marked "closed series, renamed X"
+(or "retired"), never file its runs under the new id, and count it in no
+summary of a column or an activity and in no "to look at". The new id starts
+its own series at version 1. A kept scenario whose request or judge changed
 raised its `version`, so its new series is never compared with the old one.
 Old lines of a retired id stay in `workflows.ndjson`; the portal still shows
 them under their recorded activity.
@@ -317,7 +326,7 @@ really read, and guessing it from N output shapes does not converge. Quentin
 decided on 30/09 to take the check out until the platform records every web
 read (#648).
 
-The check is not silent. `research`, `deep-research-dna`, `deep-research-obsidian` and `recipe`
+The check is not silent. `research`, `deep-research-report`, `deep-research-obsidian` and `recipe`
 declare it (`unverified` in `scenarios.ts`), every result line of theirs
 carries it as `{ check: "sources read", state: "not verified", reason, ticket }`,
 whatever the verdict, and the Workflows page shows it in grey on the card and

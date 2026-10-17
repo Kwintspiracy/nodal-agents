@@ -231,10 +231,11 @@ interface ReportObservation {
 }
 
 const deepResearchReport = defineScenario<ReportObservation>({
-  // L'identifiant du premier des quatre scénarios fusionnés (dna, gps,
-  // gutenberg, apollo) : un identifiant est la clé d'une série, il ne se
-  // renomme pas. Le sujet n'est plus l'ADN, il est calibré.
-  id: 'deep-research-dna',
+  // Fusion des quatre deep-research-dna, -gps, -gutenberg, -apollo. Renommé
+  // d'après ce qu'il teste (un rapport) : son sujet n'est plus l'ADN, il est
+  // calibré. Les lignes de deep-research-dna restent une série close
+  // (`RENAMED_IDS`, catalog.ts).
+  id: 'deep-research-report',
   judgedBy: [
     ...JUDGED_COMMON,
     'the subject is the first calibrated subject of kind deep-research; none: skipped (#776)',
@@ -242,11 +243,12 @@ const deepResearchReport = defineScenario<ReportObservation>({
     `opens ${REPORT_REL} in the workspace folders: it must exist and be written during the trial`,
     ...REPORT_JUDGED,
   ],
-  // v2 (catalogue du 17/10) : un sujet calibré, confié au spécialiste, le
-  // rapport dans nodal-bench/rapport.md, chaque lien et chaque fait vus dans
-  // une sortie d'outil web. Le minimum de 3 000 caractères disparaît : la
-  // spécification juge des sections, des sites et des faits, pas une longueur.
-  version: 2,
+  // v1 de ce nouvel identifiant (catalogue du 17/10) : un sujet calibré, confié
+  // au spécialiste, le rapport dans nodal-bench/rapport.md, chaque lien et
+  // chaque fait vus dans une sortie d'outil web. Le minimum de 3 000 caractères
+  // de deep-research-dna disparaît : la spécification juge des sections, des
+  // sites et des faits, pas une longueur.
+  version: 1,
   title: 'In-depth research delivered as a Markdown report',
   green: `The research was handed to a teammate who called a web tool; ${REPORT_REL} was written during the run with at least ${REPORT_MIN_HEADINGS} section headings and links to ${REPORT_MIN_HOSTS} different sites, every link seen in a web tool output; it holds the calibrated subject's facts and a web tool output holds them too; nobody was asked anything. Whether the pages were really read is not verified yet (#648).`,
   path: 'Handed to the research specialist, who has the web tools (Firecrawl, Tavily…): the root doing it alone is red. The searches and pages opened are measured.',

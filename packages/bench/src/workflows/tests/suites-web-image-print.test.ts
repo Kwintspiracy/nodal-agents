@@ -149,7 +149,7 @@ describe('html judges', () => {
 
 describe('comfyui judges', () => {
   it('needs a ComfyUI that answers: skipped otherwise, with the reason', () => {
-    const s = scenarioById('comfy-portrait')!;
+    const s = scenarioById('comfy-exact-size')!;
     const env = { workspaceRoots: [], teamTools: [], unlistedMcpServers: [], startedMs: 0 };
     expect(missingNeeds(s.needs ?? [], { ...env, services: {} })).toEqual([
       'no ComfyUI address is declared for the bench (services.comfyui in ~/.nodalai/bench.json)',
@@ -168,15 +168,15 @@ describe('comfyui judges', () => {
     ).toEqual([]);
   });
 
-  it('comfy-portrait: one PNG of 768 × 1152 is green; the size read from the header, not the name', async () => {
+  it('comfy-exact-size: one PNG of 768 × 1152 is green; the size read from the header, not the name', async () => {
     expect(
       (
-        await play('comfy-portrait', {}, (root) =>
+        await play('comfy-exact-size', {}, (root) =>
           writeFileSync(bench(root, 'comfy-portrait/astronaute.png'), png(768, 1152)),
         )
       ).reasons,
     ).toEqual([]);
-    const r = await play('comfy-portrait', {}, (root) =>
+    const r = await play('comfy-exact-size', {}, (root) =>
       writeFileSync(bench(root, 'comfy-portrait/astronaute.png'), png(1152, 768)),
     );
     expect(r.reasons).toEqual([
@@ -195,18 +195,18 @@ describe('comfyui judges', () => {
     ]);
   });
 
-  it('comfy-portrait: a JPEG renamed .png is red; an image sent on Telegram is red', async () => {
+  it('comfy-exact-size: a JPEG renamed .png is red; an image sent on Telegram is red', async () => {
     // Un en-tête JPEG (SOI, APP0 JFIF, SOF0 768 × 1152, EOI) : le bon format… sauf que ce n'est pas un PNG.
     const jpeg = Buffer.from([
       255, 216, 255, 224, 0, 16, 74, 70, 73, 70, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 255, 192, 0, 17, 8,
       4, 128, 3, 0, 3, 1, 34, 0, 2, 17, 1, 3, 17, 1, 255, 217,
     ]);
-    const r = await play('comfy-portrait', {}, (root) =>
+    const r = await play('comfy-exact-size', {}, (root) =>
       writeFileSync(bench(root, 'comfy-portrait/astronaute.png'), jpeg),
     );
     expect(r.reasons).toEqual(['nodal-bench/comfy-portrait/astronaute.png is jpg, not PNG']);
     const sent = await play(
-      'comfy-portrait',
+      'comfy-exact-size',
       { tools: [{ name: 'send_image', input: { source: 'astronaute.png' } }] },
       (root) => writeFileSync(bench(root, 'comfy-portrait/astronaute.png'), png(768, 1152)),
     );

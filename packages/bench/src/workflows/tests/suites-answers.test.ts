@@ -216,7 +216,7 @@ describe('deep research (handed to the specialist, a calibrated subject, a repor
 
   it('green: delegated, the delegate searched, sections, four sites seen, the facts seen', async () => {
     const r = await play(
-      'deep-research-dna',
+      'deep-research-report',
       { tools: [kidSearch], delegated: true },
       write(report()),
       DEEP,
@@ -226,7 +226,7 @@ describe('deep research (handed to the specialist, a calibrated subject, a repor
 
   it('the root doing the in-depth research alone is red (decision 2)', async () => {
     const r = await play(
-      'deep-research-dna',
+      'deep-research-report',
       { tools: [search(SITES, FOUND)] },
       write(report()),
       DEEP,
@@ -238,7 +238,7 @@ describe('deep research (handed to the specialist, a calibrated subject, a repor
 
   it('a delegate that never went on the web is red, whatever the root searched', async () => {
     const r = await play(
-      'deep-research-dna',
+      'deep-research-report',
       { tools: [search(SITES, FOUND)], delegated: true },
       write(report()),
       DEEP,
@@ -248,7 +248,7 @@ describe('deep research (handed to the specialist, a calibrated subject, a repor
 
   it('no report written is red, and says where', async () => {
     const r = await play(
-      'deep-research-dna',
+      'deep-research-report',
       { tools: [kidSearch], delegated: true },
       undefined,
       DEEP,
@@ -259,7 +259,7 @@ describe('deep research (handed to the specialist, a calibrated subject, a repor
   it('flat, under-sourced, unseen and missing a fact: each said', async () => {
     const thin = '# Kerbénec\nUn phare. https://a.example/x';
     const r = await play(
-      'deep-research-dna',
+      'deep-research-report',
       { tools: [kidSearch], delegated: true },
       write(thin),
       DEEP,

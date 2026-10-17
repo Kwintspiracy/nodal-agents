@@ -545,7 +545,7 @@ describe('what the judges read', () => {
 // « sources read » à l'état « not verified », et aucun juge ne rend un vert qui
 // l'affirmerait.
 describe('sources read: not verified, never judged, never silent', () => {
-  const CONCERNED = ['research', 'deep-research-dna', 'deep-research-obsidian', 'recipe'];
+  const CONCERNED = ['research', 'deep-research-report', 'deep-research-obsidian', 'recipe'];
 
   it.each(CONCERNED)(
     '%s carries the named check, not verified, with its reason and ticket',
