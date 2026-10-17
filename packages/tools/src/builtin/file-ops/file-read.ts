@@ -1,5 +1,6 @@
 // file-ops/file-read.ts — read a workspace-scoped file with line pagination
 
+import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
@@ -111,13 +112,15 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
         // maxBytes is a TOCTOU defense: the file could grow past the stat()
         // check above between here and stream completion (concurrent writer
         // on a shared workspace) — readLinesWindowed aborts if that happens.
-        const { windowLines, totalLines } = await readLinesWindowed(
+        const { windowLines, totalLines, sha256 } = await readLinesWindowed(
           path,
           startIdx,
           startIdx + limit,
           undefined,
           MAX_READ_FILE_BYTES,
         );
+        // Les octets LUS (tout le flux), rapportés au seam (tool_call_reads).
+        ctx.reportReadContent?.(path, sha256);
         const endIdx = Math.min(totalLines, startIdx + limit);
         return {
           ok: true,
@@ -129,7 +132,10 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
         };
       }
 
-      const raw = await readFile(path, 'utf8');
+      const bytes = await readFile(path);
+      // Les octets LUS, rapportés au seam (tool_call_reads) ; puis décodés comme avant.
+      ctx.reportReadContent?.(path, createHash('sha256').update(bytes).digest('hex'));
+      const raw = bytes.toString('utf8');
       const allLines = raw.split('\n');
       const endIdx = Math.min(allLines.length, startIdx + limit);
       const selectedContent = allLines.slice(startIdx, endIdx).join('\n');

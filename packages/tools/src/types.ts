@@ -277,6 +277,14 @@ export interface ToolContext {
    */
   reportWrittenContent?: (absPath: string, sha256: string) => void;
   /**
+   * Rapporte l'empreinte (sha-256) des OCTETS qu'un outil vient de LIRE à
+   * `absPath`, le chemin résolu qu'il a ouvert (le pendant de
+   * `reportWrittenContent`). Le seam la range dans `tool_call_reads` : c'est
+   * elle, et non le chemin que l'agent a écrit, qui dit plus tard quel fichier
+   * a été lu, et dans quel état. Appelée seulement quand la lecture a réussi.
+   */
+  reportReadContent?: (absPath: string, sha256: string) => void;
+  /**
    * Pose une question à une personne PENDANT l'appel en cours, et attend sa
    * réponse — le chemin de l'élicitation MCP (`elicitation/create`, mode
    * formulaire). Injecté par le runner, qui écrit la demande, l'envoie là où la

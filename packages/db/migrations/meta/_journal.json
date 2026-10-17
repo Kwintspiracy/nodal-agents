@@ -1030,6 +1030,13 @@
       "when": 1786004000000,
       "tag": "0148_tool_call_writes",
       "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1786004100000,
+      "tag": "0149_tool_call_reads",
+      "breakpoints": true
     }
   ]
 }

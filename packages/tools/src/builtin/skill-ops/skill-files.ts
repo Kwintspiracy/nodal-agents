@@ -14,6 +14,7 @@
 // boundary logic is intentionally self-contained — it does NOT touch the
 // universal workspace guard, so this feature cannot regress file_* security.
 
+import { createHash } from 'node:crypto';
 import { readFile, realpath, stat, readdir, writeFile, mkdir } from 'node:fs/promises';
 import {
   resolve as resolvePath,
@@ -253,13 +254,15 @@ export const skillFileReadTool: ToolDefinition<
         // string. See file-ops/read-lines.ts for the parity contract. maxBytes
         // guards against the file growing past the stat() check above between
         // here and stream completion (TOCTOU on a concurrently-written skill folder).
-        const { windowLines, totalLines } = await readLinesWindowed(
+        const { windowLines, totalLines, sha256 } = await readLinesWindowed(
           path,
           startIdx,
           startIdx + limit,
           undefined,
           MAX_READ_FILE_BYTES,
         );
+        // Les octets LUS (tout le flux), rapportés au seam (tool_call_reads).
+        ctx.reportReadContent?.(path, sha256);
         const endIdx = Math.min(totalLines, startIdx + limit);
         return {
           ok: true,
@@ -271,7 +274,10 @@ export const skillFileReadTool: ToolDefinition<
         };
       }
 
-      const raw = await readFile(path, 'utf8');
+      const lu = await readFile(path);
+      // Les octets LUS, rapportés au seam (tool_call_reads) ; puis décodés comme avant.
+      ctx.reportReadContent?.(path, createHash('sha256').update(lu).digest('hex'));
+      const raw = lu.toString('utf8');
       const allLines = raw.split('\n');
       const endIdx = Math.min(allLines.length, startIdx + limit);
       return {
