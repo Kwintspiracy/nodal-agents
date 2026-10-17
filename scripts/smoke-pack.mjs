@@ -42,6 +42,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { isolatedNodalEnv } from './lib/nodal-home.mjs';
 import { fileURLToPath } from 'node:url';
 import { findGitDependencySpecs, formatGitDependencySpecs } from './lib/git-dependency-specs.mjs';
 
@@ -90,7 +91,10 @@ const homeDir = join(sandbox, 'home');
 mkdirSync(installDir, { recursive: true });
 mkdirSync(homeDir, { recursive: true });
 
-const env = { ...process.env, HOME: homeDir, USERPROFILE: homeDir };
+// NODALAI_HOME posé sous ce dossier, et les variables étroites du shell retirées :
+// sans cela, un développeur qui en porte une enverrait l'essai dans SON instance.
+const env = isolatedNodalEnv(process.env, homeDir);
+const nodalDir = env.NODALAI_HOME;
 const upLog = join(sandbox, 'up.log');
 let failure = null;
 
@@ -207,7 +211,7 @@ try {
 
   // Move off the default ports. Written directly rather than via a flag the CLI
   // does not expose; the shape mirrors what `init` produced one line above.
-  const configPath = join(homeDir, '.nodalai', 'config.json');
+  const configPath = join(nodalDir, 'config.json');
   const config = JSON.parse(readFileSync(configPath, 'utf-8'));
   config.ports = PORTS;
   // Loopback + local-trust is the DEFAULT a normal user gets from the wizard,
@@ -284,8 +288,8 @@ try {
 } catch (err) {
   failure = err;
   console.error(`\n❌ Packed install failed to boot: ${err instanceof Error ? err.message : err}`);
-  const webLog = join(homeDir, '.nodalai', 'logs', 'web.log');
-  const runnerLog = join(homeDir, '.nodalai', 'logs', 'runner.log');
+  const webLog = join(nodalDir, 'logs', 'web.log');
+  const runnerLog = join(nodalDir, 'logs', 'runner.log');
   for (const [label, path] of [
     ['nodal-agents up', upLog],
     ['web.log', webLog],

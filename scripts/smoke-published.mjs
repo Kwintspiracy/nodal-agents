@@ -32,6 +32,7 @@ import { execFileSync, execSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { isolatedNodalEnv } from './lib/nodal-home.mjs';
 
 const WANTED = process.argv[2] ?? 'latest';
 
@@ -59,7 +60,10 @@ const installDir = join(sandbox, 'install');
 const homeDir = join(sandbox, 'home');
 mkdirSync(installDir, { recursive: true });
 mkdirSync(homeDir, { recursive: true });
-const env = { ...process.env, HOME: homeDir, USERPROFILE: homeDir };
+// NODALAI_HOME posé sous ce dossier, et les variables étroites du shell retirées :
+// sans cela, un développeur qui en porte une enverrait l'essai dans SON instance.
+const env = isolatedNodalEnv(process.env, homeDir);
+const nodalDir = env.NODALAI_HOME;
 const cli = join(installDir, 'node_modules', 'nodal-agents', 'cli.js');
 
 let child = null;
@@ -99,7 +103,7 @@ try {
 
   step('Configuring');
   execFileSync(process.execPath, [cli, 'init', '--non-interactive'], { env, stdio: 'inherit' });
-  const configPath = join(homeDir, '.nodalai', 'config.json');
+  const configPath = join(nodalDir, 'config.json');
   const config = JSON.parse(readFileSync(configPath, 'utf-8'));
   config.ports = PORTS;
   config.bind = 'loopback';

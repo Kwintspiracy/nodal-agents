@@ -7,6 +7,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
+import { nodalInstancesDir, registerNodalInstance } from '@nodal-agents/shared/nodal-instances';
 import { sandboxDeniedPaths, nodalDeniedEndpoints, NodalPortsUnknown } from '../policy';
 
 const dirs: string[] = [];
@@ -173,5 +174,85 @@ describe('sandboxDeniedPaths with NODALAI_HOME — this instance and the default
     expect(() =>
       sandboxDeniedPaths([], { platform: process.platform, home, env: { NODALAI_HOME: 'b' } }),
     ).toThrow(/NODALAI_HOME must be an absolute path/);
+  });
+});
+
+// Revue de #787, passe 1 : TOUTES les instances de l'utilisateur, par le registre
+// (packages/shared/src/nodal-instances.ts), et les entrées déplacées hors de leur
+// dossier par une variable étroite.
+describe('sandboxDeniedPaths — every registered instance, and entries moved out of their home', () => {
+  function instance(root: string): string {
+    for (const d of ['workspaces/e/ws1', 'tool-cache', 'sandbox', 'pg-data'])
+      mkdirSync(join(root, d), { recursive: true });
+    writeFileSync(join(root, 'secrets.key'), 'k');
+    writeFileSync(join(root, 'config.json'), '{}');
+    return realpathSync.native(root);
+  }
+  function machineRoot(): string {
+    const home = mkdtempSync(join(tmpdir(), 'nodal-reg-'));
+    dirs.push(home);
+    return realpathSync.native(home);
+  }
+
+  it('a confined command of the DEFAULT instance cannot read a registered instance’s secrets', () => {
+    const home = machineRoot();
+    const a = instance(join(home, '.nodalai'));
+    const b = instance(join(home, 'nodal-b'));
+    registerNodalInstance({ NODALAI_HOME: b }, home);
+    const denied = sandboxDeniedPaths([join(a, 'workspaces', 'e', 'ws1'), join(a, 'sandbox')], {
+      platform: process.platform,
+      home,
+      env: {},
+    });
+    for (const secret of ['secrets.key', 'config.json', 'pg-data'])
+      expect(denied).toContain(join(b, secret));
+    // A's own folders that the container reaches stay reachable.
+    expect(denied).not.toContain(join(a, 'workspaces'));
+    expect(denied).not.toContain(join(a, 'sandbox'));
+  });
+
+  it('an entry a narrower variable moved outside the homes is denied, for this instance and a registered one', () => {
+    const home = machineRoot();
+    const a = instance(join(home, '.nodalai'));
+    const b = instance(join(home, 'nodal-b'));
+    const bConfig = join(home, 'elsewhere-b', 'config.json');
+    mkdirSync(join(home, 'elsewhere-b'));
+    writeFileSync(bConfig, '{"workerSecret":"B"}');
+    registerNodalInstance({ NODALAI_HOME: b, NODALAI_CONFIG_PATH: bConfig }, home);
+    const aConfig = join(home, 'elsewhere-a', 'config.json');
+    const aStore = join(home, 'elsewhere-a', 'checkpoints');
+    const aCache = join(home, 'elsewhere-a', 'tool-cache');
+    for (const d of [aStore, aCache]) mkdirSync(d, { recursive: true });
+    writeFileSync(aConfig, '{"workerSecret":"A"}');
+    const env = {
+      NODALAI_CONFIG_PATH: aConfig,
+      NODALAI_CHECKPOINTS_ROOT: aStore,
+      NODALAI_TOOL_CACHE_ROOT: aCache,
+    };
+    const denied = sandboxDeniedPaths([join(a, 'workspaces', 'e', 'ws1'), aCache], {
+      platform: process.platform,
+      home,
+      env,
+    });
+    expect(denied).toContain(bConfig);
+    expect(denied).toContain(aConfig);
+    // Not reached by this container: the moved store is denied whole.
+    expect(denied).toContain(aStore);
+    // Reached (a writable root): the moved cache stays open.
+    expect(denied).not.toContain(aCache);
+  });
+
+  it('a stale entry costs nothing, a malformed one fails loud', () => {
+    const home = machineRoot();
+    const a = instance(join(home, '.nodalai'));
+    registerNodalInstance({ NODALAI_HOME: join(home, 'gone') }, home);
+    const m = { platform: process.platform, home, env: {} };
+    expect(sandboxDeniedPaths([join(a, 'sandbox')], m).sort()).toEqual(
+      ['config.json', 'pg-data', 'secrets.key', 'tool-cache', 'workspaces'].map((c) => join(a, c)),
+    );
+    writeFileSync(join(nodalInstancesDir(home), 'broken.json'), '{ not json');
+    expect(() => sandboxDeniedPaths([], m)).toThrow(
+      /broken\.json is not a valid Nodal instance entry/,
+    );
   });
 });

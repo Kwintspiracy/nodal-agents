@@ -29,7 +29,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
-import { defaultNodalHome, nodalHome, nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
+import { defaultNodalHome, nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
+import { nodalInstanceRecord, readNodalInstances } from '@nodal-agents/shared/nodal-instances';
 
 /** Ce que l'appelant déclare pour UNE commande. */
 export interface ConfinementPolicy {
@@ -134,13 +135,20 @@ export function nodalDeniedEndpoints(
  * Nodal — décision D1 : « refuser la LECTURE du dossier de données, sauf les
  * workspaces ».
  *
- * QUELS DOSSIERS (NODALAI_HOME). Celui de CETTE instance (`nodalHome`), ET le
- * dossier par défaut `~/.nodalai` quand c'est un autre : une seconde instance
- * posée à côté de celle de l'utilisateur ne doit pas lire, par ses commandes
- * confinées, la clé maîtresse et la configuration de la première. La même règle
- * s'applique aux deux. Limite : une troisième instance, dans un dossier choisi
- * ailleurs, n'est connue d'aucune autre (aucun registre des instances) ; ses
- * enfants ne sont refusés que par ses propres conteneurs.
+ * QUELLES INSTANCES (NODALAI_HOME). TOUTES celles de cet utilisateur : CETTE
+ * instance (calculée depuis son environnement, inscrite ou non), le dossier par
+ * défaut `~/.nodalai` (le seul connu d'avance, qui peut tourner une version
+ * d'avant le registre), et chaque instance du registre (`readNodalInstances`,
+ * packages/shared/src/nodal-instances.ts — `up` y inscrit la sienne). Une
+ * commande confinée de l'une ne lit la clé maîtresse, la configuration ni la
+ * base d'AUCUNE. Une entrée périmée ne coûte rien : un chemin absent n'est pas
+ * refusé. Un registre illisible fait échouer l'ouverture du conteneur, nommé.
+ *
+ * LES DOSSIERS DÉPLACÉS. Une entrée qu'une variable étroite envoie HORS de son
+ * dossier (`NODALAI_CONFIG_PATH`, `NODALAI_CHECKPOINTS_ROOT`…) est traitée
+ * comme un enfant de tête : permise si un chemin à atteindre est elle ou passe
+ * par elle, refusée ENTIÈRE sinon. Une entrée restée dans son dossier relève de
+ * la règle des enfants ci-dessous.
  *
  * UNE LISTE D'AUTORISATION INVERSÉE, calculée À CHAQUE ouverture de conteneur :
  * CHAQUE enfant du dossier est refusé, sauf ceux qui mènent à un chemin que ce
@@ -164,17 +172,60 @@ export function sandboxDeniedPaths(
   mustReach: readonly string[],
   machine: MachineView = thisMachine(),
 ): string[] {
-  const homes = [nodalHome(machine.env, machine.home, machine.platform)];
-  const fallback = defaultNodalHome(machine.home, machine.platform);
-  if (!sameDir(homes[0]!, fallback, machine.platform)) homes.push(fallback);
-  // Sans doublon : un NODALAI_HOME qui est une jonction vers ~/.nodalai résout au même dossier.
-  return [...new Set(homes.flatMap((home) => deniedChildrenOf(home, mustReach)))];
+  const current = nodalInstanceRecord(machine.env, machine.home, machine.platform);
+  const instances = [
+    { home: current.home, moved: Object.values(current.entries) },
+    { home: defaultNodalHome(machine.home, machine.platform), moved: [] },
+    ...readNodalInstances(machine.home, machine.platform).map((r) => ({
+      home: r.home,
+      moved: Object.values(r.entries),
+    })),
+  ];
+  const homes = new Map<string, string>();
+  const moved = new Map<string, string>();
+  for (const i of instances) {
+    homes.set(pathKey(i.home), i.home);
+    for (const entry of i.moved) {
+      if (!isWithin(entry, i.home)) moved.set(pathKey(entry), entry);
+    }
+  }
+  const denied = [
+    ...[...homes.values()].flatMap((home) => deniedChildrenOf(home, mustReach)),
+    ...[...moved.values()].flatMap((entry) => deniedMovedEntry(entry, mustReach)),
+  ];
+  // Sans doublon : deux dossiers qui résolvent au même (une jonction) donnent les mêmes refus.
+  return [...new Set(denied)];
 }
 
-function sameDir(a: string, b: string, platform: NodeJS.Platform): boolean {
-  const ra = resolve(a);
-  const rb = resolve(b);
-  return platform === 'win32' ? ra.toLowerCase() === rb.toLowerCase() : ra === rb;
+/** Le chemin réel quand il existe, sinon tel quel, résolu. */
+function real(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+function pathKey(path: string): string {
+  const r = real(path);
+  return process.platform === 'win32' ? r.toLowerCase() : r;
+}
+
+/** `child` est `parent` ou descend de lui (chemins réels, casse repliée sous Windows). */
+function isWithin(child: string, parent: string): boolean {
+  const c = pathKey(child);
+  const p = pathKey(parent);
+  return c === p || c.startsWith(p.endsWith(sep) ? p : p + sep);
+}
+
+/**
+ * Une entrée déplacée hors de son dossier : permise si un chemin à atteindre
+ * est elle ou passe par elle, refusée entière sinon. Absente : rien à refuser.
+ */
+function deniedMovedEntry(entry: string, mustReach: readonly string[]): string[] {
+  if (!existsSync(entry)) return [];
+  if (mustReach.some((reach) => isWithin(reach, entry))) return [];
+  return [real(entry)];
 }
 
 /** Les enfants d'UN dossier de données à refuser, sauf ceux que `mustReach` traverse. */

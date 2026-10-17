@@ -31,11 +31,11 @@ export const FICHIER_DE_CONFIG = '~/.nodalai/config.json';
  * courant et il est légitime. Tout le reste JETTE, en nommant le fichier et la
  * cause — le même échec fort qu'un port invalide (invariant #4).
  */
-export function configHoteDepuis({ texte, err } = {}) {
+export function configHoteDepuis({ texte, err, chemin = FICHIER_DE_CONFIG } = {}) {
   if (err) {
     if (err.code === 'ENOENT') return null;
     throw new Error(
-      `cannot read ${FICHIER_DE_CONFIG}: ${err.code ?? err.message ?? 'unknown error'} ` +
+      `cannot read ${chemin}: ${err.code ?? err.message ?? 'unknown error'} ` +
         `(the file is there but unreadable; fix it or move it away)`,
     );
   }
@@ -49,12 +49,10 @@ export function configHoteDepuis({ texte, err } = {}) {
   } catch (cause) {
     // Le BOM UTF-8 tombe ici : `JSON.parse` refuse le caractère invisible de
     // tête, et PowerShell en pose un avec `Set-Content -Encoding utf8`.
-    throw new Error(`cannot parse ${FICHIER_DE_CONFIG}: ${cause.message}`);
+    throw new Error(`cannot parse ${chemin}: ${cause.message}`);
   }
   if (lu === null || typeof lu !== 'object' || Array.isArray(lu)) {
-    throw new Error(
-      `${FICHIER_DE_CONFIG} does not hold a JSON object (read ${JSON.stringify(lu)})`,
-    );
+    throw new Error(`${chemin} does not hold a JSON object (read ${JSON.stringify(lu)})`);
   }
   return lu;
 }
@@ -72,13 +70,13 @@ export function configHoteDepuis({ texte, err } = {}) {
  * demandé, laisserait la vraie stack invisible, et le build la tuerait. C'est
  * exactement l'invariant #4 — pas de repli intelligent silencieux.
  */
-export function portsDeLaStack(config) {
+export function portsDeLaStack(config, chemin = FICHIER_DE_CONFIG) {
   const lu = (cle) => {
     const v = config?.ports?.[cle];
     if (v === undefined || v === null) return DEFAUTS[cle];
     if (!Number.isInteger(v) || v <= 0 || v >= 65536) {
       throw new Error(
-        `ports.${cle} = ${JSON.stringify(v)} in ~/.nodalai/config.json is not a port ` +
+        `ports.${cle} = ${JSON.stringify(v)} in ${chemin} is not a port ` +
           `(expected an integer between 1 and 65535)`,
       );
     }
