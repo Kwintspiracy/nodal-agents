@@ -1143,7 +1143,7 @@
       "version": 3,
       "activity": "print",
       "title": "Print an existing file",
-      "green": "A print request naming the posed nodal-bench/facture-impression.pdf by its absolute path, and no other file, was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything. Whether the printer read the file the bench posed is not verified yet (#784).",
+      "green": "A print request naming the posed nodal-bench/facture-impression.pdf by its absolute path, and no other existing file, was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything. Whether the printer read the file the bench posed is not verified yet (#784).",
       "path": "request_print on the file. The bench never confirms: the trial stops at the preview, nothing is printed.",
       "deliverable": "A print request waiting for the owner",
       "productTools": {
@@ -1164,7 +1164,7 @@
       "judgedBy": [
         "agent_jobs: the root job of the trial ended completed",
         "approval_requests: the tree raised no approval and no question (the bench never answers one)",
-        "tool_calls: a request_print whose input names the posed file by its absolute path (the real path of nodal-bench/facture-impression.pdf in the shared folder, links resolved) and no other file; pending, one page when the connector says so",
+        "tool_calls: a request_print whose input names the posed file: a string of it is, as a whole, the absolute path of an existing file whose real path is nodal-bench/facture-impression.pdf in the shared folder, and no other string names another existing file; pending, one page when the connector says so",
         "never confirm_print, nothing reached the printer",
         "tool_calls: the product tools are request_print; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
         "tool_calls: the tree calls at least one of them"

@@ -259,7 +259,7 @@ const printFile = defineScenario<PrintTargets>({
   id: 'print-file',
   judgedBy: [
     ...JUDGED_COMMON,
-    `tool_calls: a request_print whose input names the posed file by its absolute path (the real path of ${PRINT_FILE_REL} in the shared folder, links resolved) and no other file; pending, one page when the connector says so`,
+    `tool_calls: a request_print whose input names the posed file: a string of it is, as a whole, the absolute path of an existing file whose real path is ${PRINT_FILE_REL} in the shared folder, and no other string names another existing file; pending, one page when the connector says so`,
     'never confirm_print, nothing reached the printer',
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (request_print)
@@ -268,13 +268,15 @@ const printFile = defineScenario<PrintTargets>({
   // (revue de #777, passes 3 et 4). request_print est un outil MCP : la
   // plateforme n'enregistre pas ce qu'il lit (#784). L'appel est jugé (il
   // nomme le fichier, il attend), et le fichier imprimé est « not verified ».
-  // Passe 5 : « il nomme le fichier » veut dire qu'un chemin absolu de son
-  // entrée EST le fichier posé (designation.ts), jamais que son nom y figure.
+  // Passes 5 et 6 : « il nomme le fichier » veut dire qu'une chaîne de son
+  // entrée est, en entier, le chemin absolu d'un fichier existant qui EST le
+  // fichier posé, et qu'aucune autre n'y désigne un autre fichier existant
+  // (designation.ts) ; jamais que son nom y figure.
   // La version reste 3 : aucun essai n'a tourné en v3 (cette PR n'est pas
   // fusionnée).
   version: 3,
   title: 'Print an existing file',
-  green: `A print request naming the posed ${PRINT_FILE_REL} by its absolute path, and no other file, was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything. Whether the printer read the file the bench posed is not verified yet (#784).`,
+  green: `A print request naming the posed ${PRINT_FILE_REL} by its absolute path, and no other existing file, was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything. Whether the printer read the file the bench posed is not verified yet (#784).`,
   path: `request_print on the file. ${PRINT_PATH_END}`,
   deliverable: 'A print request waiting for the owner',
   productTools: { tools: ['request_print'], writes: [], reads: [] },
