@@ -22,6 +22,7 @@ import {
   normalize as pathNormalize,
 } from 'node:path';
 import { homedir } from 'node:os';
+import { nodalHome, nodalHomePath } from '@nodal-agents/shared/nodal-home';
 import { execFile } from 'node:child_process';
 import { parseServiceJson, type AutostartStatus, type AutostartView } from './autostart-view.ts';
 import {
@@ -261,7 +262,7 @@ import { readRepairAttempts } from './verification-repairs-read.ts';
 import { readDeclaredUnverified } from './declared-deliverables-read.ts';
 import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
 import { env } from './env.ts';
-import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
+import { NODALAI_CONFIG_PATH, mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import {
   SERVICE_LOG_NAMES,
   readServiceLogTail,
@@ -370,7 +371,7 @@ async function assertMonoUserHostInstall(): Promise<ActionResult<never> | null> 
   if (rows.length > 1) {
     return fail(
       'multi_user_host',
-      'This action changes configuration for the entire host and is only allowed on a single-user install. With multiple accounts, edit ~/.nodalai/config.json directly on the server.',
+      `This action changes configuration for the entire host and is only allowed on a single-user install. With multiple accounts, edit ${NODALAI_CONFIG_PATH} directly on the server.`,
     );
   }
   return null;
@@ -3601,12 +3602,12 @@ export interface WhatsAppPairingResult {
   identityLabel: string | null;
 }
 
-/** `~/.nodalai/whatsapp/<bindingId>` — a `useMultiFileAuthState` folder
+/** `<Nodal home>/whatsapp/<bindingId>` — a `useMultiFileAuthState` folder
  *  holding this binding's linked-device keys (see socket-manager.ts's
- *  header: treat it like a credential store). Mirrors cli-config.ts's
- *  `homedir()`-based resolution of `~/.nodalai` for the same host. */
+ *  header: treat it like a credential store). Under the home of THIS
+ *  instance (NODALAI_HOME, or ~/.nodalai), like cli-config.ts. */
 function whatsAppSessionDir(bindingId: string): string {
-  return pathJoin(homedir(), '.nodalai', 'whatsapp', bindingId);
+  return nodalHomePath('whatsapp', bindingId);
 }
 
 /**
@@ -8807,9 +8808,9 @@ function mcpClientsView(): McpServerSwitchView['clients'] {
   const argv = readCliArgv(process.env['NODAL_CLI_ARGV']);
   if (argv === null) return null;
   return {
-    claudeCode: claudeCodeCommand(argv),
+    claudeCode: claudeCodeCommand(argv, nodalHome()),
     claudeDesktop: JSON.stringify(
-      { mcpServers: { [MCP_SERVER_NAME]: claudeDesktopEntry(argv) } },
+      { mcpServers: { [MCP_SERVER_NAME]: claudeDesktopEntry(argv, nodalHome()) } },
       null,
       2,
     ),
@@ -8873,7 +8874,11 @@ export async function addNodalToClaudeDesktopAction(): Promise<
       );
     }
     const file = claudeDesktopConfigPath(process.platform, process.env, homedir(), pathJoin);
-    const written = await writeNodalIntoClaudeDesktop(file, claudeDesktopEntry(argv), new Date());
+    const written = await writeNodalIntoClaudeDesktop(
+      file,
+      claudeDesktopEntry(argv, nodalHome()),
+      new Date(),
+    );
     return ok(written);
   } catch (err) {
     if (err instanceof DesktopNotInstalledError)
@@ -12135,7 +12140,7 @@ export async function updateAuthSettingsAction(
     if (!existing) {
       return fail(
         'cli_config_missing',
-        'Cannot find ~/.nodalai/config.json — run `nodal-agents init` first.',
+        `Cannot find ${NODALAI_CONFIG_PATH} — run \`nodal-agents init\` first.`,
       );
     }
 
@@ -12296,7 +12301,7 @@ export async function updateNetworkSettingsAction(
       if (msg === 'cli_config_missing') {
         return fail(
           'cli_config_missing',
-          'Cannot find ~/.nodalai/config.json — run `nodal-agents init` first.',
+          `Cannot find ${NODALAI_CONFIG_PATH} — run \`nodal-agents init\` first.`,
         );
       }
       throw err;

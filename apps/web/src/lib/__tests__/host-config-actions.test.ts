@@ -47,6 +47,7 @@ vi.mock('@nodal-agents/auth', async (importOriginal) => {
 });
 
 vi.mock('@/lib/cli-config.ts', () => ({
+  NODALAI_CONFIG_PATH: '/tmp/test/config.json',
   readNodalaiConfig: () => ({ auth: { mode: 'local-trust' }, bind: 'loopback' }),
   mergeNodalaiConfig: () => {},
 }));
@@ -78,6 +79,8 @@ describe('mono-user host config guard', () => {
     const result = await updateAuthSettingsAction({ mode: 'local-trust', clearGoogle: false });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('multi_user_host');
+    // The config file of THIS instance (NODALAI_HOME), not a fixed ~/.nodalai.
+    if (!result.ok) expect(result.message).toContain('edit /tmp/test/config.json directly');
   });
 
   it('updateNetworkSettingsAction is refused once a second user account exists', async () => {

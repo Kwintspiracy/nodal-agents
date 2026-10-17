@@ -30,6 +30,9 @@ const {
 const { writeNodalIntoClaudeDesktop, DesktopNotInstalledError } =
   await import('../claude-desktop-config.ts');
 
+/** Le dossier de l'instance (NODALAI_HOME), écrit dans ce que le client lance. */
+const HOME = 'C:\\Users\\q\\.nodalai';
+
 const DEV = [
   'C:\\Program Files\\nodejs\\node.exe',
   '--import',
@@ -46,8 +49,9 @@ describe('la commande de chaque client, pour CETTE install @cap:connecter-un-ser
   });
 
   it('Claude Code : la commande entière, tout chemin Windows entre guillemets', () => {
-    expect(claudeCodeCommand(DEV)).toBe(
-      'claude mcp add nodal -- "C:\\Program Files\\nodejs\\node.exe" --import ' +
+    expect(claudeCodeCommand(DEV, HOME)).toBe(
+      'claude mcp add nodal -e "NODALAI_HOME=C:\\Users\\q\\.nodalai" -- ' +
+        '"C:\\Program Files\\nodejs\\node.exe" --import ' +
         'file:///D:/APPS/NodalAI/node_modules/tsx/dist/loader.mjs ' +
         '"D:\\APPS\\NodalAI\\apps\\cli\\src\\index.ts" mcp serve',
     );
@@ -64,16 +68,31 @@ describe('la commande de chaque client, pour CETTE install @cap:connecter-un-ser
     ],
     ['install macOS / Linux', ['/usr/local/bin/node', '/home/q/.npm/_npx/a1/cli.js']],
   ])('Claude Code : %s, chaque antislash sous guillemets', (_label, argv) => {
-    const command = claudeCodeCommand(argv);
+    const command = claudeCodeCommand(argv, HOME);
     for (const arg of argv) {
       expect(command).toContain(arg.includes('\\') || arg.includes(' ') ? `"${arg}"` : ` ${arg} `);
     }
   });
 
   it('Claude Desktop : le node en commande, le reste en arguments, et aucun secret', () => {
-    const entry = claudeDesktopEntry(DEV);
-    expect(entry).toEqual({ command: DEV[0], args: [...DEV.slice(1), 'mcp', 'serve'] });
+    const entry = claudeDesktopEntry(DEV, HOME);
+    expect(entry).toEqual({
+      command: DEV[0],
+      args: [...DEV.slice(1), 'mcp', 'serve'],
+      env: { NODALAI_HOME: HOME },
+    });
     expect(JSON.stringify(entry)).not.toMatch(/postgres|DATABASE_URL|password/i);
+  });
+
+  // NODALAI_HOME : deux instances, deux serveurs MCP qui lisent chacun SA base.
+  it('chaque client lance le serveur MCP de l’instance qui a donné la commande', () => {
+    const b = '/srv/nodal b';
+    expect(claudeCodeCommand(['/usr/bin/node', '/opt/cli.js'], b)).toBe(
+      'claude mcp add nodal -e "NODALAI_HOME=/srv/nodal b" -- /usr/bin/node /opt/cli.js mcp serve',
+    );
+    expect(claudeDesktopEntry(['/usr/bin/node', '/opt/cli.js'], b).env).toEqual({
+      NODALAI_HOME: b,
+    });
   });
 
   it('le fichier de Claude Desktop, par système', () => {
@@ -95,7 +114,7 @@ describe('la commande de chaque client, pour CETTE install @cap:connecter-un-ser
 });
 
 describe('withNodalEntry — la config de Claude Desktop @cap:connecter-un-service/moteur', () => {
-  const entry = claudeDesktopEntry(DEV);
+  const entry = claudeDesktopEntry(DEV, HOME);
 
   it('garde les autres serveurs et les autres clés, et pose `nodal`', () => {
     const existing = JSON.stringify({
@@ -150,7 +169,7 @@ describe('writeNodalIntoClaudeDesktop — sur le disque @cap:connecter-un-servic
 
     const r = await writeNodalIntoClaudeDesktop(
       file,
-      claudeDesktopEntry(DEV),
+      claudeDesktopEntry(DEV, HOME),
       new Date('2026-09-27T12:00:00Z'),
     );
 
@@ -163,7 +182,7 @@ describe('writeNodalIntoClaudeDesktop — sur le disque @cap:connecter-un-servic
   it('sans dossier Claude, rien n’est créé : Claude Desktop n’est pas installé ici', async () => {
     const file = path.join(root, 'Claude', 'claude_desktop_config.json');
     await expect(
-      writeNodalIntoClaudeDesktop(file, claudeDesktopEntry(DEV), new Date()),
+      writeNodalIntoClaudeDesktop(file, claudeDesktopEntry(DEV, HOME), new Date()),
     ).rejects.toBeInstanceOf(DesktopNotInstalledError);
     expect(await readdir(root)).toEqual([]);
   });
@@ -174,7 +193,7 @@ describe('writeNodalIntoClaudeDesktop — sur le disque @cap:connecter-un-servic
     const file = path.join(dir, 'claude_desktop_config.json');
     await writeFile(file, '{ broken', 'utf8');
     await expect(
-      writeNodalIntoClaudeDesktop(file, claudeDesktopEntry(DEV), new Date()),
+      writeNodalIntoClaudeDesktop(file, claudeDesktopEntry(DEV, HOME), new Date()),
     ).rejects.toThrow(/not valid JSON/);
     expect(await readFile(file, 'utf8')).toBe('{ broken');
     expect(await readdir(dir)).toEqual(['claude_desktop_config.json']);

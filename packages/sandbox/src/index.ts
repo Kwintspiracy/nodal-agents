@@ -25,6 +25,7 @@ export {
   resolveWritableRoots,
   sandboxDeniedPaths,
   nodalDeniedEndpoints,
+  NodalHomeReachError,
   NodalPortsUnknown,
   toolCacheEnv,
   toolCacheRoot,

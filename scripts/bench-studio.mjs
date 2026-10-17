@@ -14,10 +14,10 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { configHoteDepuis, portsDeLaStack } from './lib/live-stack.mjs';
+import { nodalHomeEntry } from './lib/nodal-home.mjs';
 import {
   STUDIO_HOST,
   STUDIO_PORT,
@@ -36,13 +36,14 @@ function arg(name) {
   return i !== -1 ? process.argv[i + 1] : undefined;
 }
 
+/** Le config.json de l'instance visée (NODALAI_HOME), comme le CLI le lit. */
+const HOST_CONFIG = nodalHomeEntry('config.json');
+
 function readHostConfig() {
   try {
-    return configHoteDepuis({
-      texte: readFileSync(join(homedir(), '.nodalai', 'config.json'), 'utf8'),
-    });
+    return configHoteDepuis({ texte: readFileSync(HOST_CONFIG, 'utf8'), chemin: HOST_CONFIG });
   } catch (err) {
-    if (err && err.code) return configHoteDepuis({ err });
+    if (err && err.code) return configHoteDepuis({ err, chemin: HOST_CONFIG });
     throw err;
   }
 }
@@ -50,7 +51,7 @@ function readHostConfig() {
 async function main() {
   const port = assertStudioPort(
     Number(arg('port') ?? STUDIO_PORT),
-    portsDeLaStack(readHostConfig()),
+    portsDeLaStack(readHostConfig(), HOST_CONFIG),
   );
   // Deux jetons distincts : le filtre pose le premier sur chaque requête admise ;
   // le second, seule la page le reçoit et le renvoie (anti-CSRF).

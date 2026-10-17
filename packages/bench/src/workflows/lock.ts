@@ -35,11 +35,11 @@
 
 import { randomUUID } from 'node:crypto';
 import { linkSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
+import { nodalHomePath } from '@nodal-agents/shared/nodal-home';
 import { z } from 'zod';
 
-export const BENCH_LOCK_FILE = join(homedir(), '.nodalai', 'bench', 'workflows.lock');
+export const BENCH_LOCK_FILE = nodalHomePath('bench', 'workflows.lock');
 
 const HolderSchema = z.object({
   pid: z.number().int().positive(),

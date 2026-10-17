@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@microsoft/mxc-sdk": "1.0.0"
+    "@microsoft/mxc-sdk": "1.0.0",
+    "@nodal-agents/shared": "workspace:*"
   },
   "devDependencies": {
     "@nodal-agents/test-kit": "workspace:*",

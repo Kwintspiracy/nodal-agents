@@ -4,10 +4,12 @@
 // longues viennent d'abord.
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { entityWorkspaceRoots, sharedWorkspacePath } from '../workspace-roots.ts';
 
 const ENTITY = '00000000-0000-0000-0000-000000000002';
+// `resolve`, not `join`: under Windows `\srv\ws` depends on the current drive,
+// and a path variable of Nodal must be fully qualified (packages/shared/src/nodal-home.ts).
 const saved = process.env['NODALAI_WORKSPACES_ROOT'];
 
 afterEach(() => {
@@ -28,15 +30,15 @@ function dbWith(paths: string[]) {
 
 describe('sharedWorkspacePath', () => {
   it('suit NODALAI_WORKSPACES_ROOT quand il est posé : <racine>/<entité>/shared', () => {
-    process.env['NODALAI_WORKSPACES_ROOT'] = join('/srv', 'ws');
-    expect(sharedWorkspacePath(ENTITY)).toBe(join('/srv', 'ws', ENTITY, 'shared'));
+    process.env['NODALAI_WORKSPACES_ROOT'] = resolve('/srv', 'ws');
+    expect(sharedWorkspacePath(ENTITY)).toBe(join(resolve('/srv', 'ws'), ENTITY, 'shared'));
   });
 });
 
 describe('entityWorkspaceRoots', () => {
   it('ajoute le dossier partagé aux racines des agents, les plus longues d’abord, sans doublon', async () => {
-    process.env['NODALAI_WORKSPACES_ROOT'] = join('/srv', 'ws');
-    const shared = join('/srv', 'ws', ENTITY, 'shared');
+    process.env['NODALAI_WORKSPACES_ROOT'] = resolve('/srv', 'ws');
+    const shared = join(resolve('/srv', 'ws'), ENTITY, 'shared');
     const roots = await entityWorkspaceRoots(
       dbWith(['C:\\Users\\q\\Documents\\Dev', 'D:\\Vault', 'C:\\Users\\q\\Documents\\Dev']),
       ENTITY,
@@ -45,9 +47,9 @@ describe('entityWorkspaceRoots', () => {
   });
 
   it('une entité sans dossier d’agent a quand même sa racine partagée', async () => {
-    process.env['NODALAI_WORKSPACES_ROOT'] = join('/srv', 'ws');
+    process.env['NODALAI_WORKSPACES_ROOT'] = resolve('/srv', 'ws');
     expect(await entityWorkspaceRoots(dbWith([]), ENTITY)).toEqual([
-      join('/srv', 'ws', ENTITY, 'shared'),
+      join(resolve('/srv', 'ws'), ENTITY, 'shared'),
     ]);
   });
 });

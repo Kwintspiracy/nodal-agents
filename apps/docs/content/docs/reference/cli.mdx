@@ -222,14 +222,18 @@ These environment variables change CLI behavior:
 | -------- | ------ |
 | `NODALAI_NO_BROWSER=1` | Skip opening the browser after `up`. Useful on headless servers and CI runners with no desktop. |
 | `NODALAI_PG_LOG=1` | Verbose embedded-Postgres logging during startup — surfaces the real Postgres error instead of a generic failure. Use when Postgres won't start. |
-| `NODALAI_CHECKPOINTS_ROOT` | Move the shadow checkpoint store away from `~/.nodalai/checkpoints/`. Read by the runner and by `nodal-agents checkpoints` alike. |
-| `NODALAI_WORKSPACES_ROOT` | Move the per-workspace file tree away from `~/.nodalai/workspaces/`. |
+| `NODALAI_HOME` | Nodal's home folder, as an absolute path (default `~/.nodalai`). Everything in the [data directory](#data-directory) moves with it. See [Running a second instance](#running-a-second-instance). |
+| `NODALAI_CONFIG_PATH` | Put `config.json` elsewhere than in the home folder. Read by the CLI and the dashboard alike. |
+| `NODALAI_CHECKPOINTS_ROOT` | Move the shadow checkpoint store away from `<home>/checkpoints/`. Read by the runner and by `nodal-agents checkpoints` alike. |
+| `NODALAI_WORKSPACES_ROOT` | Move the per-workspace file tree away from `<home>/workspaces/`. |
 
-Ports and bind mode are **not** environment variables — they live in `~/.nodalai/config.json` (defaults: web `3000`, runner `3001`, Postgres `25432`). Change them via `nodal-agents init` or by editing the config file. `up` automatically rotates any occupied or OS-reserved port to a free neighbour and persists the new value.
+Each path variable must be an absolute path. An empty or relative value stops the CLI with an error that names the variable: Nodal never falls back to `~/.nodalai` on its own. A narrower variable (`NODALAI_CONFIG_PATH`, `NODALAI_WORKSPACES_ROOT`, `NODALAI_CHECKPOINTS_ROOT`) wins over `NODALAI_HOME` for its own entry only; everything else follows the home.
+
+Ports and bind mode are **not** environment variables — they live in `<home>/config.json` (defaults: web `3000`, runner `3001`, Postgres `25432`). Change them via `nodal-agents init` or by editing the config file. `up` automatically rotates any occupied or OS-reserved port to a free neighbour and persists the new value.
 
 ## Data directory
 
-All persistent state lives under `~/.nodalai/`:
+All persistent state lives under Nodal's home folder: `~/.nodalai/` by default, or the folder `NODALAI_HOME` names:
 
 ```
 ~/.nodalai/
@@ -243,3 +247,34 @@ All persistent state lives under `~/.nodalai/`:
 ```
 
 To wipe everything, use `nodal-agents reset` (preferred — it stops services first) rather than deleting the folder by hand.
+
+## Running a second instance
+
+`NODALAI_HOME` gives a fully separate Nodal on the same machine: its own config, database, master key, logs, workspaces and checkpoints, its own ports, and its own processes. Use it for a test install next to your own, or a throwaway one you delete afterwards.
+
+1. Set the variable for this terminal, then start the instance once:
+
+   ```bash
+   # macOS / Linux
+   export NODALAI_HOME="$HOME/nodal-test"
+   nodal-agents up
+   ```
+
+   ```powershell
+   # Windows (PowerShell)
+   $env:NODALAI_HOME = "$HOME\nodal-test"
+   nodal-agents up
+   ```
+
+   The first run writes `config.json` in that folder with the default ports (3000, 3001, 25432). While your usual install holds them, `up` stops there and names the file.
+2. Give the new instance its own ports: edit `ports` (`web`, `runner`, `postgres`) in `$NODALAI_HOME/config.json`, then run `nodal-agents up` again. Change them even when your usual install is stopped, or the two will collide the next time both start.
+3. Every command that should reach this instance (`down`, `logs`, `checkpoints`, `mcp serve`, `service`) needs the variable set. Without it, the command talks to your usual install.
+4. To throw the instance away: `nodal-agents down` with the variable set, then delete the folder.
+
+What stays separate, and how:
+
+- **Already running.** `up` refuses to start an instance that is already up, judged by its own data folder. Your usual install does not count, and is never stopped or signalled.
+- **Ports.** Each instance reads its own `config.json`. If its ports are held by another instance, `up` refuses and names the file to edit; it never kills a process it did not start.
+- **Start with the machine.** Each instance has its own registration (`nodal-agents service install`). The one in `~/.nodalai` keeps its usual name ("Nodal Agents", `ai.nodal.agents`, `nodal-agents.service`); any other gets a short id taken from its folder. Removing one leaves the others.
+- **MCP clients.** The command the dashboard gives for Claude Code and Claude Desktop carries `NODALAI_HOME`, so the client reaches the instance that gave it. Both register under the name `nodal`: connecting a client to a second instance replaces the first in that client.
+- **Sandbox.** Every instance records itself in `~/.nodalai-instances/` before it writes anything in its home, whether `up` or the runner alone opens it (one small file of paths per instance, no secrets; `reset` removes it). A confined command of any instance cannot read the data of any recorded instance, nor of `~/.nodalai`: home folders, and a `config.json` or a folder that a narrower variable moved elsewhere. The folders the command works in stay open. An entry left by an instance deleted by hand costs nothing; an unreadable one stops confined commands with an error naming the file. A workspace that IS the home folder of an instance is refused when a command opens (`SANDBOX_REACH_IS_NODAL_HOME`): working in it would mean reading that instance's secrets.

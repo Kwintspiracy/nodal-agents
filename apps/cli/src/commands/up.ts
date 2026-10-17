@@ -6,7 +6,15 @@ import open from 'open';
 import { randomBytes } from 'crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { readConfig, writeConfig, LOG_DIR, PG_DATA_DIR, type Config } from '../lib/config.ts';
+import {
+  readConfig,
+  writeConfig,
+  ensureConfigDir,
+  CONFIG_FILE,
+  LOG_DIR,
+  PG_DATA_DIR,
+  type Config,
+} from '../lib/config.ts';
 import {
   startEmbeddedPostgres,
   runMigrations,
@@ -248,6 +256,13 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     config = defaultConfig;
   }
 
+  // ── 1.1 Open this instance's home (NODALAI_HOME) ─────────────────────────
+  // Every boot, not only the first: an existing config writes nothing, and the
+  // home must still be declared in the per-user registry before Postgres or
+  // the runner touch it (packages/shared/src/nodal-instances.ts, openNodalHome).
+  // A failure stops `up`.
+  ensureConfigDir();
+
   // Fail fast on a dangerous config combination (local-trust + LAN bind =
   // unauthenticated RCE surface) BEFORE starting Postgres or spawning any
   // process — resolveAuthMode throws; see apps/cli/src/lib/env.ts.
@@ -401,7 +416,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     throw new Error(
       `Port conflict with a process that is not ours:\n${lines}\n\n` +
         `  Nodal-Agents will not kill a process it did not start — it could be your own\n` +
-        `  work. Stop it yourself, or change the port in ~/.nodalai/config.json.`,
+        `  work. Stop it yourself, or change the port in ${CONFIG_FILE}.`,
     );
   }
 
@@ -717,7 +732,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       console.log(line.trimStart().startsWith('-') ? chalk.gray(line) : chalk.yellow(line));
     }
     writeConfig(config);
-    console.log(chalk.gray('  Updated ~/.nodalai/config.json.\n'));
+    console.log(chalk.gray(`  Updated ${CONFIG_FILE}.\n`));
   }
 
   // Now that ports are finalised, derive the user-facing URLs.

@@ -23,8 +23,7 @@
 // `runSections` records the section error rather than reporting a silent 0.
 
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
 import type { Metric, Section } from '../types';
 
 /** The task replayed each run — the exact one from the incident (job f1852d35). */
@@ -42,7 +41,7 @@ interface LocalConfig {
 }
 
 function readLocalConfig(): LocalConfig {
-  const path = join(homedir(), '.nodalai', 'config.json');
+  const path = nodalHomeEntry('config.json');
   let raw: string;
   try {
     raw = readFileSync(path, 'utf8');

@@ -13,6 +13,7 @@ import {
   formatViolations,
   scanForProjectKeyCopies,
   scanForMcpToolPrefixCopies,
+  scanForNodalHomeCopies,
   scanForMutatingSpawnOutsideIntent,
   scanForDirectTerminalCompleted,
   scanForCompleteJobCallers,
@@ -349,5 +350,38 @@ describe('scanForMcpToolPrefixCopies (#661)', () => {
       ],
     });
     expect(v).toEqual([]);
+  });
+});
+
+describe('scanForNodalHomeCopies (NODALAI_HOME)', () => {
+  let own: string;
+  beforeAll(() => {
+    own = mkdtempSync(join(tmpdir(), 'archi-home-'));
+    // Les trois guillemets, chacun dans le calcul que le dépôt recopiait.
+    writeFileSync(join(own, 'single.ts'), "const d = join(homedir(), '.nodalai', 'logs');\n");
+    writeFileSync(join(own, 'double.ts'), 'const d = join(homedir(), ".nodalai");\n');
+    writeFileSync(join(own, 'tick.tsx'), 'const d = path.join(home, `.nodalai`);\n');
+    // Un message et un commentaire nomment le dossier sans le calculer.
+    writeFileSync(
+      join(own, 'message.ts'),
+      "// lit ~/.nodalai/config.json\nthrow new Error('missing ~/.nodalai/config.json');\n",
+    );
+    writeFileSync(join(own, 'host.ts'), "const DEFAULT_DIR_NAME = '.nodalai';\n");
+  });
+  afterAll(() => rmSync(own, { recursive: true, force: true }));
+
+  it('finds a hand-built home path under every quote, and not a path written in prose', () => {
+    const v = scanForNodalHomeCopies({ srcDir: own, skipFiles: ['host.ts'] });
+    expect(v.map((x) => `${x.file.split(/[\\/]/).pop()}:${x.line}`).sort()).toEqual([
+      'double.ts:1',
+      'single.ts:1',
+      'tick.tsx:1',
+    ]);
+    expect(v.every((x) => x.rule === 'nodal-home-copy')).toBe(true);
+  });
+
+  it('reports the host file too when it is not skipped', () => {
+    const v = scanForNodalHomeCopies({ srcDir: own });
+    expect(v.some((x) => x.file.endsWith('host.ts'))).toBe(true);
   });
 });

@@ -22,6 +22,8 @@
 // The decision is a pure function. The probes it consumes cannot be run in a
 // suite without a live stack, and the rule is the part worth holding still.
 
+import { CONFIG_FILE } from './config.ts';
+
 /** What the two probes found, with no interpretation. */
 export interface RunningStackEvidence {
   /** True only when the runner answered `/api/health` with 200. */
@@ -89,7 +91,10 @@ export function decideStart(evidence: RunningStackEvidence): StartVerdict {
  * So the message states the two facts, and then says what to do when they do
  * not add up to "my stack is up".
  */
-export function formatAlreadyRunning(evidence: RunningStackEvidence): string {
+export function formatAlreadyRunning(
+  evidence: RunningStackEvidence,
+  configFile: string = CONFIG_FILE,
+): string {
   const parts = [
     evidence.runnerPid === null ? null : `runner pid ${evidence.runnerPid}`,
     evidence.webPid === null ? null : `web pid ${evidence.webPid}`,
@@ -103,7 +108,7 @@ export function formatAlreadyRunning(evidence: RunningStackEvidence): string {
     `  configured runner port, and postmaster.pid in our data directory names a live\n` +
     `  postmaster. That is usually this install, up and serving.\n` +
     `  If it is NOT yours: check ${runnerRef} to see whose server is on that port, free the\n` +
-    `  port or change it in ~/.nodalai/config.json, then run \`up\` again.`
+    `  port or change it in ${configFile}, then run \`up\` again.`
   );
 }
 

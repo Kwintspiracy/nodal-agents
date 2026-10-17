@@ -16,6 +16,7 @@ import {
   assertNoViolations,
   scanForProjectKeyCopies,
   scanForMcpToolPrefixCopies,
+  scanForNodalHomeCopies,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
@@ -51,6 +52,25 @@ describe('architecture invariants', () => {
         }),
       );
     }
+  });
+
+  it('hosts the ONE Nodal home folder — no hand-built `.nodalai` path in apps/, packages/ or scripts/', () => {
+    // Repo-wide, like the MCP prefix above: the copies lived in a dozen
+    // packages and in the repo scripts, and each one ignored NODALAI_HOME.
+    // JavaScript too: the scripts are .mjs (they reach the rule through
+    // scripts/lib/nodal-home.mjs).
+    const repo = join(srcDir, '..', '..', '..');
+    const violations = ['apps', 'packages', 'scripts'].flatMap((root) =>
+      scanForNodalHomeCopies({
+        srcDir: join(repo, root),
+        skipDirs: ['node_modules', 'tests', '__tests__', 'dist', '.next', '.turbo', 'coverage'],
+        extensions: ['.ts', '.tsx', '.js', '.mjs', '.cjs'],
+        // test-kit cannot depend on shared (shared's tests depend on it):
+        // its test clusters avoid the DEFAULT install's ports, said there.
+        skipFiles: ['packages/shared/src/nodal-home.ts', 'packages/test-kit/src/real-postgres.ts'],
+      }),
+    );
+    assertNoViolations('chemin ~/.nodalai recopié', violations);
   });
 
   it('hosts the ONE path identity rule — no second copy even inside this package', () => {
