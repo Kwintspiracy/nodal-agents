@@ -12,8 +12,7 @@
 //
 // Found by writing the test that pinned the two together, not by re-reading.
 
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
 
 /**
  * Absolute path to the shared shadow checkpoint store:
@@ -29,5 +28,6 @@ import { join } from 'node:path';
  * reachable without knowing which path to ask for.
  */
 export function checkpointsRoot(): string {
-  return process.env['NODALAI_CHECKPOINTS_ROOT'] ?? join(homedir(), '.nodalai', 'checkpoints');
+  // NODALAI_CHECKPOINTS_ROOT, sinon <dossier de Nodal>/checkpoints (NODALAI_HOME).
+  return nodalHomeEntry('checkpoints');
 }

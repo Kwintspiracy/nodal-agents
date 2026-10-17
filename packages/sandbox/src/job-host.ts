@@ -62,8 +62,8 @@
 
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
 
 /** Délai laissé aux flux d'une commande après la fin de son processus racine. */
 export const DRAIN_MS = 200;
@@ -140,7 +140,7 @@ function run(m) {
  * sont) ; surchargeable pour les tests, comme les autres dossiers de Nodal.
  */
 export function sandboxHostDir(): string {
-  return process.env['NODALAI_SANDBOX_DIR'] ?? join(homedir(), '.nodalai', 'sandbox');
+  return nodalHomeEntry('sandbox');
 }
 
 /**

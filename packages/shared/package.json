@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./exclusive-create": "./src/exclusive-create.ts",
     "./git-binary": "./src/git-binary.ts",
+    "./nodal-home": "./src/nodal-home.ts",
     "./node-guard": "./src/node-guard.ts",
     "./node-version": "./src/node-version.ts"
   },

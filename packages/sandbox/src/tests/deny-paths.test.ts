@@ -6,7 +6,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { sandboxDeniedPaths, nodalDeniedEndpoints, NodalPortsUnknown } from '../policy';
 
 const dirs: string[] = [];
@@ -111,5 +111,67 @@ describe('sandboxDeniedPaths — every child of the data dir, except what the co
     const home = mkdtempSync(join(tmpdir(), 'nodal-home-'));
     dirs.push(home);
     expect(sandboxDeniedPaths([], { platform: process.platform, home, env: {} })).toEqual([]);
+  });
+});
+
+// NODALAI_HOME : deux instances sur la même machine. Celle de l'utilisateur
+// dans ~/.nodalai, une seconde ailleurs. Les commandes confinées de la seconde
+// ne lisent ni ses propres secrets ni ceux de la première.
+describe('sandboxDeniedPaths with NODALAI_HOME — this instance and the default one', () => {
+  function instance(root: string): string {
+    for (const d of ['workspaces/e/ws1', 'tool-cache', 'sandbox', 'pg-data'])
+      mkdirSync(join(root, d), { recursive: true });
+    writeFileSync(join(root, 'secrets.key'), 'k');
+    writeFileSync(join(root, 'config.json'), '{}');
+    return realpathSync.native(root);
+  }
+
+  it('the second instance denies its own children AND the default home’s secrets', () => {
+    const home = mkdtempSync(join(tmpdir(), 'nodal-home-'));
+    dirs.push(home);
+    const first = instance(join(home, '.nodalai'));
+    const second = instance(join(home, 'nodal-b'));
+    const m = { platform: process.platform, home, env: { NODALAI_HOME: second } };
+    const reach = [
+      join(second, 'workspaces', 'e', 'ws1'),
+      join(second, 'tool-cache'),
+      join(second, 'sandbox'),
+    ];
+    const denied = sandboxDeniedPaths(reach, m);
+    expect(denied.filter((p) => p.startsWith(second + sep)).sort()).toEqual(
+      ['config.json', 'pg-data', 'secrets.key'].map((c) => join(second, c)),
+    );
+    // The default home is not this instance's: nothing of it is reached, all
+    // of it is denied — workspaces included.
+    expect(denied.filter((p) => p.startsWith(first + sep)).sort()).toEqual(
+      ['config.json', 'pg-data', 'sandbox', 'secrets.key', 'tool-cache', 'workspaces'].map((c) =>
+        join(first, c),
+      ),
+    );
+  });
+
+  it('NODALAI_HOME naming the default home denies it once, not twice', () => {
+    const home = mkdtempSync(join(tmpdir(), 'nodal-home-'));
+    dirs.push(home);
+    const first = instance(join(home, '.nodalai'));
+    const m = { platform: process.platform, home, env: { NODALAI_HOME: join(home, '.nodalai') } };
+    const denied = sandboxDeniedPaths([join(first, 'workspaces', 'e', 'ws1')], m);
+    expect(denied).toHaveLength(new Set(denied).size);
+    expect(denied.map((p) => p.slice(first.length + 1)).sort()).toEqual([
+      'config.json',
+      'pg-data',
+      'sandbox',
+      'secrets.key',
+      'tool-cache',
+    ]);
+  });
+
+  it('a relative NODALAI_HOME is refused, never read as ~/.nodalai', () => {
+    const home = mkdtempSync(join(tmpdir(), 'nodal-home-'));
+    dirs.push(home);
+    instance(join(home, '.nodalai'));
+    expect(() =>
+      sandboxDeniedPaths([], { platform: process.platform, home, env: { NODALAI_HOME: 'b' } }),
+    ).toThrow(/NODALAI_HOME must be an absolute path/);
   });
 });

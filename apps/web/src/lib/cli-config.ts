@@ -1,17 +1,16 @@
 import 'server-only';
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
 
 /**
  * Path to the CLI's config file. Web and CLI co-exist on the same host;
  * both edit this file (CLI on `nodal-agents init`, web on Settings → Security).
  *
- * Override with `NODALAI_CONFIG_PATH` for tests / non-default home.
+ * `<NODALAI_HOME>/config.json` — the home the CLI handed to this process — and
+ * `NODALAI_CONFIG_PATH` still wins for this one file, for the CLI as well.
  */
-export const NODALAI_CONFIG_PATH =
-  process.env['NODALAI_CONFIG_PATH'] ?? join(homedir(), '.nodalai', 'config.json');
+export const NODALAI_CONFIG_PATH = nodalHomeEntry('config.json');
 
 /**
  * Read the config JSON. Returns null when the file is missing OR malformed —

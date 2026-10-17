@@ -1,13 +1,14 @@
 // AES-256-GCM encryption with a filesystem-stored master key.
 // Storage format: enc:v1:{iv_b64}:{tag_b64}:{ct_b64}
-// The master key lives at ~/.nodalai/secrets.key (mode 0600 on Unix; Windows
+// The master key lives at <Nodal home>/secrets.key — NODALAI_HOME, or ~/.nodalai
+// (packages/shared/src/nodal-home.ts) — (mode 0600 on Unix; Windows
 // relies on the user's profile directory ACL being user-private by default).
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
+import { nodalHomePath } from '@nodal-agents/shared/nodal-home';
 
 /**
  * Restrict a secret file to its owner on ALL platforms (FA-5, audit sécu
@@ -42,7 +43,7 @@ const IV_BYTES = 12;
 let cachedMasterKey: Buffer | null = null;
 
 export function masterKeyPath(): string {
-  return join(homedir(), '.nodalai', 'secrets.key');
+  return nodalHomePath('secrets.key');
 }
 
 /**

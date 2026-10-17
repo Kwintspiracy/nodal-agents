@@ -23,6 +23,7 @@ import {
   type RunningStackEvidence,
 } from '../lib/already-running.ts';
 import { findFreePort } from '../lib/ports.ts';
+import { CONFIG_FILE } from '../lib/config.ts';
 
 const servers: Server[] = [];
 const dirs: string[] = [];
@@ -151,7 +152,14 @@ describe('formatAlreadyRunning @cap:installer-et-demarrer/moteur', () => {
     // at, what to do about the port, and that `up` is then worth retrying.
     expect(msg).toContain('If it is NOT yours');
     expect(msg).toContain('pid 111');
-    expect(msg).toContain('~/.nodalai/config.json');
+    // The config file of THIS instance, the one NODALAI_HOME names.
+    expect(msg).toContain(CONFIG_FILE);
+    expect(
+      formatAlreadyRunning(
+        { runnerHealthy: true, postmasterPid: 41956, runnerPid: 111, webPid: 222 },
+        '/srv/b/config.json',
+      ),
+    ).toContain('change it in /srv/b/config.json');
   });
 
   it('points at the port itself when no runner pid could be measured', () => {

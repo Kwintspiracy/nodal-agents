@@ -16,6 +16,7 @@ import {
   assertNoViolations,
   scanForProjectKeyCopies,
   scanForMcpToolPrefixCopies,
+  scanForNodalHomeCopies,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
@@ -48,6 +49,27 @@ describe('architecture invariants', () => {
           srcDir: join(repo, root),
           skipDirs: ['node_modules', 'tests', '__tests__', 'dist', '.next', '.turbo', 'coverage'],
           skipFiles: ['packages/shared/src/mcp-tool-prefix.ts'],
+        }),
+      );
+    }
+  });
+
+  it('hosts the ONE Nodal home folder — no hand-built `.nodalai` path in apps/ or packages/', () => {
+    // Repo-wide, like the MCP prefix above: the copies lived in a dozen
+    // packages, and each one ignored NODALAI_HOME.
+    const repo = join(srcDir, '..', '..', '..');
+    for (const root of ['apps', 'packages']) {
+      assertNoViolations(
+        'chemin ~/.nodalai recopié',
+        scanForNodalHomeCopies({
+          srcDir: join(repo, root),
+          skipDirs: ['node_modules', 'tests', '__tests__', 'dist', '.next', '.turbo', 'coverage'],
+          // test-kit cannot depend on shared (shared's tests depend on it):
+          // its test clusters avoid the DEFAULT install's ports, said there.
+          skipFiles: [
+            'packages/shared/src/nodal-home.ts',
+            'packages/test-kit/src/real-postgres.ts',
+          ],
         }),
       );
     }

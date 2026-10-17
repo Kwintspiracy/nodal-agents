@@ -29,6 +29,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
+import { defaultNodalHome, nodalHome, nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
 
 /** Ce que l'appelant déclare pour UNE commande. */
 export interface ConfinementPolicy {
@@ -47,7 +48,7 @@ export interface ConfinementPolicy {
  * `npm install` confiné ne doit jamais écrire dans le vrai dossier personnel.
  */
 export function toolCacheRoot(): string {
-  return process.env['NODALAI_TOOL_CACHE_ROOT'] ?? join(homedir(), '.nodalai', 'tool-cache');
+  return nodalHomeEntry('tool-cache');
 }
 
 /**
@@ -130,8 +131,16 @@ export function nodalDeniedEndpoints(
 
 /**
  * Ce qu'un conteneur ne peut ni lire ni lister sous le dossier de données de
- * Nodal (`~/.nodalai`, résolu depuis le home réel, invariant #6) — décision D1 :
- * « refuser la LECTURE du dossier de données, sauf les workspaces ».
+ * Nodal — décision D1 : « refuser la LECTURE du dossier de données, sauf les
+ * workspaces ».
+ *
+ * QUELS DOSSIERS (NODALAI_HOME). Celui de CETTE instance (`nodalHome`), ET le
+ * dossier par défaut `~/.nodalai` quand c'est un autre : une seconde instance
+ * posée à côté de celle de l'utilisateur ne doit pas lire, par ses commandes
+ * confinées, la clé maîtresse et la configuration de la première. La même règle
+ * s'applique aux deux. Limite : une troisième instance, dans un dossier choisi
+ * ailleurs, n'est connue d'aucune autre (aucun registre des instances) ; ses
+ * enfants ne sont refusés que par ses propres conteneurs.
  *
  * UNE LISTE D'AUTORISATION INVERSÉE, calculée À CHAQUE ouverture de conteneur :
  * CHAQUE enfant du dossier est refusé, sauf ceux qui mènent à un chemin que ce
@@ -155,7 +164,21 @@ export function sandboxDeniedPaths(
   mustReach: readonly string[],
   machine: MachineView = thisMachine(),
 ): string[] {
-  const dataDir = join(machine.home, '.nodalai');
+  const homes = [nodalHome(machine.env, machine.home, machine.platform)];
+  const fallback = defaultNodalHome(machine.home, machine.platform);
+  if (!sameDir(homes[0]!, fallback, machine.platform)) homes.push(fallback);
+  // Sans doublon : un NODALAI_HOME qui est une jonction vers ~/.nodalai résout au même dossier.
+  return [...new Set(homes.flatMap((home) => deniedChildrenOf(home, mustReach)))];
+}
+
+function sameDir(a: string, b: string, platform: NodeJS.Platform): boolean {
+  const ra = resolve(a);
+  const rb = resolve(b);
+  return platform === 'win32' ? ra.toLowerCase() === rb.toLowerCase() : ra === rb;
+}
+
+/** Les enfants d'UN dossier de données à refuser, sauf ceux que `mustReach` traverse. */
+function deniedChildrenOf(dataDir: string, mustReach: readonly string[]): string[] {
   if (!existsSync(dataDir)) return [];
   let data = dataDir;
   try {

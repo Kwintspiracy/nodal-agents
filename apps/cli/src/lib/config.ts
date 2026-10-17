@@ -1,11 +1,11 @@
 // config.ts — config schema, read/write helpers, and config directory management
 
 import { z } from 'zod';
-import { homedir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { randomBytes } from 'crypto';
+import { ensureNodalHome, nodalHome, nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
 
 /**
  * Restrict config.json (workerSecret / authSecret / LLM + OAuth secrets) to its
@@ -160,13 +160,21 @@ export type LlmProvider = NonNullable<Config['llm']>['provider'];
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
-export const CONFIG_DIR = join(homedir(), '.nodalai');
-export const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+// Le dossier de Nodal : `NODALAI_HOME`, ou `~/.nodalai` (packages/shared/src/nodal-home.ts).
+// Lu une fois, au chargement : une valeur invalide fait échouer le CLI au
+// démarrage (index.ts le dit proprement), jamais à mi-chemin d'un `up`.
+export const CONFIG_DIR = nodalHome();
+export const CONFIG_FILE = nodalHomeEntry('config.json');
 export const PID_DIR = join(CONFIG_DIR, 'pids');
 export const LOG_DIR = join(CONFIG_DIR, 'logs');
 export const PG_DATA_DIR = join(CONFIG_DIR, 'pg-data');
 
 export function ensureConfigDir(): void {
+  // Le dossier lui-même d'abord : s'il ne peut pas être créé, le message nomme
+  // le dossier et la variable, au lieu d'un EACCES sur un sous-dossier.
+  ensureNodalHome(CONFIG_DIR);
+  // NODALAI_CONFIG_PATH peut mettre config.json ailleurs que sous le dossier.
+  mkdirSync(dirname(CONFIG_FILE), { recursive: true });
   for (const dir of [CONFIG_DIR, PID_DIR, LOG_DIR, PG_DATA_DIR]) {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });

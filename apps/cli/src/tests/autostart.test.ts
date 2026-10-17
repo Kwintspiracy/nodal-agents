@@ -21,8 +21,10 @@
 
 import { describe, it, expect } from 'vitest';
 import { join } from 'path';
+import { nodalInstanceId } from '@nodal-agents/shared/nodal-home';
 import {
   autostartArgv,
+  autostartNames,
   installAutostart,
   launchAgentPlist,
   readAutostartStatus,
@@ -81,13 +83,14 @@ describe('les textes inscrits, par système @cap:installer-et-demarrer/moteur', 
   const argv = [...PUBLISHED, 'up'];
 
   it('Linux : une unité utilisateur, relancée sur échec, voulue par la session', () => {
-    expect(systemdUserUnit(argv)).toBe(`[Unit]
+    expect(systemdUserUnit(argv, '/home/pi/.nodalai')).toBe(`[Unit]
 Description=Nodal Agents
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
+Environment=NODALAI_HOME=/home/pi/.nodalai
 ExecStart=/usr/bin/node /usr/lib/node_modules/nodal-agents/dist/index.js up
 Restart=on-failure
 RestartSec=10
@@ -98,8 +101,12 @@ WantedBy=default.target
   });
 
   it('macOS : un LaunchAgent au chargement, gardé en vie sur échec', () => {
-    const plist = launchAgentPlist(argv, '/Users/q/.nodalai/logs');
+    const plist = launchAgentPlist(argv, '/Users/q/.nodalai/logs', '/Users/q/.nodalai');
     expect(plist).toContain('<string>ai.nodal.agents</string>');
+    expect(plist).toContain(
+      '<key>EnvironmentVariables</key>\n  <dict>\n    <key>NODALAI_HOME</key>\n' +
+        '    <string>/Users/q/.nodalai</string>\n  </dict>',
+    );
     expect(plist).toContain(
       '    <string>/usr/bin/node</string>\n    <string>/usr/lib/node_modules/nodal-agents/dist/index.js</string>\n    <string>up</string>',
     );
@@ -108,8 +115,9 @@ WantedBy=default.target
   });
 
   it('Windows : le script de la tâche, un chemin à espaces entre guillemets', () => {
-    expect(windowsLauncherScript([...WIN_DEV, 'up'])).toBe(
-      '@echo off\r\n"C:\\Program Files\\nodejs\\node.exe" --import ' +
+    expect(windowsLauncherScript([...WIN_DEV, 'up'], 'C:\\Users\\q\\My Nodal')).toBe(
+      '@echo off\r\nset "NODALAI_HOME=C:\\Users\\q\\My Nodal"\r\n' +
+        '"C:\\Program Files\\nodejs\\node.exe" --import ' +
         'file:///D:/APPS/NodalAI/node_modules/tsx/dist/loader.mjs ' +
         'D:\\APPS\\NodalAI\\apps\\cli\\src\\index.ts up\r\n',
     );
@@ -202,10 +210,12 @@ type RegValue = { type: string; data: string };
 /** Un faux système : des fichiers en mémoire, et un gestionnaire qui répond comme le vrai. */
 function fauxSysteme(
   platform: NodeJS.Platform,
-  opts: { legacyTask?: boolean; taskDeleteDenied?: boolean } = {},
+  opts: { legacyTask?: boolean; taskDeleteDenied?: boolean; legacyTaskName?: string } = {},
 ) {
   const files = new Map<string, string>();
-  const tasks = new Set<string>(opts.legacyTask === true ? [WINDOWS_TASK_NAME] : []);
+  const tasks = new Set<string>(
+    opts.legacyTask === true ? [opts.legacyTaskName ?? WINDOWS_TASK_NAME] : [],
+  );
   const registry = new Map<string, Map<string, RegValue>>();
   const enabledUnits = new Set<string>();
   const calls: string[] = [];
@@ -397,5 +407,82 @@ describe('inscrire, puis relire le système @cap:installer-et-demarrer/moteur', 
     const s = await installAutostart(['/usr/bin/node', '/home/pi/.npm/_npx/x/index.js'], sys.fx);
     expect(s.state).toBe('unsupported');
     expect(sys.files.size).toBe(0);
+  });
+});
+
+// NODALAI_HOME : deux instances côte à côte, chacune son inscription. Le faux
+// système est PARTAGÉ (un registre, un jeu de fichiers) : c'est la machine.
+describe('une inscription par instance (NODALAI_HOME) @cap:installer-et-demarrer/moteur', () => {
+  const HOME_B_WIN = 'C:\\Users\\q\\nodal-b';
+  const idB = nodalInstanceId(HOME_B_WIN, 'C:\\Users\\q', 'win32')!;
+
+  it('le dossier par défaut garde ses noms ; un autre dossier a les siens', () => {
+    expect(autostartNames(null)).toEqual({
+      windowsEntry: 'Nodal Agents',
+      windowsTask: WINDOWS_TASK_NAME,
+      label: 'ai.nodal.agents',
+      systemdUnit: SYSTEMD_UNIT,
+    });
+    expect(autostartNames('ab12cd34')).toEqual({
+      windowsEntry: 'Nodal Agents ab12cd34',
+      windowsTask: 'Nodal Agents ab12cd34',
+      label: 'ai.nodal.agents.ab12cd34',
+      systemdUnit: 'nodal-agents-ab12cd34.service',
+    });
+  });
+
+  it('Windows : B s’inscrit sous son nom, avec SON dossier ; la retirer laisse A en place', async () => {
+    const sys = fauxSysteme('win32');
+    await installAutostart(WIN_DEV, sys.fx);
+    const fxB: AutostartEffects = { ...sys.fx, nodalDir: HOME_B_WIN };
+    expect(await installAutostart(WIN_DEV, fxB)).toEqual({ state: 'at_login' });
+
+    const run = sys.registry.get(RUN)!;
+    expect([...run.keys()].sort()).toEqual(['Nodal Agents', `Nodal Agents ${idB}`]);
+    const scriptB = join(HOME_B_WIN, 'autostart.cmd');
+    expect(run.get(`Nodal Agents ${idB}`)?.data).toContain(`/c "${scriptB}"`);
+    expect(sys.files.get(scriptB)).toContain(`set "NODALAI_HOME=${HOME_B_WIN}"`);
+    const scriptA = join('C:\\Users\\q\\.nodalai', 'autostart.cmd');
+    expect(sys.files.get(scriptA)).toContain('set "NODALAI_HOME=C:\\Users\\q\\.nodalai"');
+
+    expect(await uninstallAutostart(fxB)).toEqual({ state: 'off' });
+    expect([...run.keys()]).toEqual(['Nodal Agents']);
+    expect(sys.files.has(scriptA)).toBe(true);
+    expect(await readAutostartStatus(sys.fx)).toEqual({ state: 'at_login' });
+  });
+
+  it('Windows : B n’efface jamais l’ancienne tâche planifiée de A', async () => {
+    const sys = fauxSysteme('win32', { legacyTask: true });
+    await installAutostart(WIN_DEV, { ...sys.fx, nodalDir: HOME_B_WIN });
+    expect(sys.tasks.has(WINDOWS_TASK_NAME)).toBe(true);
+    expect(sys.calls).not.toContain(`schtasks /Delete /F /TN ${WINDOWS_TASK_NAME}`);
+    expect(sys.calls).toContain(`schtasks /Query /TN ${WINDOWS_TASK_NAME} ${idB}`);
+  });
+
+  it('Linux : B a son unité, qui porte son dossier ; A reste activée', async () => {
+    const sys = fauxSysteme('linux');
+    await installAutostart(PUBLISHED, sys.fx);
+    const fxB: AutostartEffects = { ...sys.fx, nodalDir: '/srv/nodal-b' };
+    await installAutostart(PUBLISHED, fxB);
+    const unitB = `nodal-agents-${nodalInstanceId('/srv/nodal-b', '/home/pi', 'linux')}.service`;
+    expect([...sys.enabledUnits].sort()).toEqual([SYSTEMD_UNIT, unitB].sort());
+    expect(sys.files.get(join('/home/pi', '.config', 'systemd', 'user', unitB))).toContain(
+      'Environment=NODALAI_HOME=/srv/nodal-b\n',
+    );
+    await uninstallAutostart(fxB);
+    expect([...sys.enabledUnits]).toEqual([SYSTEMD_UNIT]);
+  });
+
+  it('macOS : B a son LaunchAgent, sous son label', async () => {
+    const sys = fauxSysteme('darwin');
+    await installAutostart(PUBLISHED, sys.fx);
+    await installAutostart(PUBLISHED, { ...sys.fx, nodalDir: '/srv/nodal-b' });
+    const labelB = `ai.nodal.agents.${nodalInstanceId('/srv/nodal-b', '/home/pi', 'darwin')}`;
+    const plistB = sys.files.get(join('/home/pi', 'Library', 'LaunchAgents', `${labelB}.plist`));
+    expect(plistB).toContain(`<string>${labelB}</string>`);
+    expect(plistB).toContain('<string>/srv/nodal-b</string>');
+    expect(
+      sys.files.has(join('/home/pi', 'Library', 'LaunchAgents', 'ai.nodal.agents.plist')),
+    ).toBe(true);
   });
 });

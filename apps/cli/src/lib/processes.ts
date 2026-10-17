@@ -1104,7 +1104,7 @@ export async function assertWebRenders(url: string, timeoutMs = 300_000): Promis
   }
   throw new Error(
     `Web responds on /api/health but page render fails (HTTP ${lastStatus || 'unreachable'}). ` +
-      'Check the web log (~/.nodalai/logs/web.log) for the underlying error.',
+      `Check the web log (${join(LOG_DIR, 'web.log')}) for the underlying error.`,
   );
 }
 

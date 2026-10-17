@@ -11,9 +11,9 @@
 //     jugé sur le fichier, sur le disque).
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
+import { nodalHomeEntry, nodalHomePath } from '@nodal-agents/shared/nodal-home';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { AgentId, EntityId } from '@nodal-agents/orchestration';
 import { executeRows } from './facts';
@@ -31,7 +31,7 @@ const LocalConfigSchema = z.object({
 
 /** L'URL de la base de la stack locale, lue dans ~/.nodalai/config.json comme le fait le CLI. */
 export function stackDatabaseUrl(): string {
-  const path = join(homedir(), '.nodalai', 'config.json');
+  const path = nodalHomeEntry('config.json');
   if (!existsSync(path)) {
     throw new Error(
       `workflow_no_stack: ${path} is missing, the stack never started on this machine`,
@@ -49,7 +49,7 @@ export function stackDatabaseUrl(): string {
  * 3000 par défaut, comme le CLI) : Bench Studio y renvoie pour ouvrir un run.
  */
 export function stackWebUrl(): string {
-  const path = join(homedir(), '.nodalai', 'config.json');
+  const path = nodalHomeEntry('config.json');
   const cfg = existsSync(path)
     ? LocalConfigSchema.parse(JSON.parse(readFileSync(path, 'utf8')))
     : { ports: undefined };
@@ -63,7 +63,7 @@ export function stackWebUrl(): string {
  * Absente : aucun service n'est déclaré, et les scénarios qui en demandent un
  * sont sautés en le disant.
  */
-export const BENCH_CONFIG_FILE = join(homedir(), '.nodalai', 'bench.json');
+export const BENCH_CONFIG_FILE = nodalHomePath('bench.json');
 
 const BenchConfigSchema = z
   .object({
