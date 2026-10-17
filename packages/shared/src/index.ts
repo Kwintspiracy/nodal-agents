@@ -57,6 +57,7 @@ export * from './group-prefix';
 export * from './project-roots';
 export * from './cli-write-tools';
 export * from './cli-shell';
+export * from './claude-setting-sources';
 export * from './constated-writes';
 export * from './project-subfolder';
 export * from './verify-command-discovery';
