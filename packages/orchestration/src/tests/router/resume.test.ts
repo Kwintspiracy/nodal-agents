@@ -679,7 +679,7 @@ describe('resumeDelegated — what a stopped child wrote, as it is now (#491) @c
   });
 
   // Revue Codex de #491, passe 4 : une écriture SANS empreinte (shell, harnais
-  // CLI, bureautique) donnait « not_written_by_child » puis « NOTHING
+  // CLI, et la bureautique jusqu'à #780) donnait « not_written_by_child » puis « NOTHING
   // usable », et le parent refaisait le travail — le bug d'origine par une
   // autre porte. NULL veut dire « contenu non vérifiable », pas « pas écrit ».
   it('a file the child wrote WITHOUT a fingerprint is its work, to re-read, never NOTHING usable', async () => {

@@ -12,7 +12,7 @@
 
 import { readFile, writeFile, rename, unlink, stat } from 'node:fs/promises';
 import { dirname, basename } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import JSZip from 'jszip';
 import type { ToolContext } from '../../types';
@@ -311,6 +311,10 @@ export async function writeWorkspaceBinary(
       await unlink(tmp).catch(() => undefined);
       throw err;
     }
+    // The fingerprint of the bytes WRITTEN, like the file tools' atomic writer
+    // (#505, `writeFileAtomically`): the seam records it, never a re-read of the
+    // disk, which another writer may have changed since the rename (#780).
+    ctx.reportWrittenContent?.(resolvedPath, createHash('sha256').update(buffer).digest('hex'));
 
     return { ok: true, written: true, bytes: buffer.length, path: resolvedPath };
   } catch (err) {
