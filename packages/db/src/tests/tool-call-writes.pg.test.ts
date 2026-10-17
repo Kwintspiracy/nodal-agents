@@ -61,6 +61,7 @@ describe('migration 0148_tool_call_writes @cap:travailler-sur-des-fichiers/moteu
       expect(cols.map((c) => [c.column_name, c.is_nullable])).toEqual([
         ['after_kind', 'NO'],
         ['after_sha256', 'YES'],
+        ['after_source', 'NO'],
         ['before_kind', 'NO'],
         ['before_sha256', 'YES'],
         ['created_at', 'NO'],
@@ -109,6 +110,7 @@ describe('migration 0148_tool_call_writes @cap:travailler-sur-des-fichiers/moteu
         beforeSha256: null,
         afterKind: 'file',
         afterSha256: A,
+        afterSource: 'written',
       });
       const rows = await db
         .select({
@@ -117,6 +119,7 @@ describe('migration 0148_tool_call_writes @cap:travailler-sur-des-fichiers/moteu
           path: toolCallWrites.path,
           before: toolCallWrites.beforeKind,
           after: toolCallWrites.afterSha256,
+          source: toolCallWrites.afterSource,
         })
         .from(toolCallWrites)
         .innerJoin(toolCalls, eq(toolCalls.id, toolCallWrites.toolCallId));
@@ -127,6 +130,7 @@ describe('migration 0148_tool_call_writes @cap:travailler-sur-des-fichiers/moteu
           path: 'C:/ws/shared/notes.txt',
           before: 'absent',
           after: A,
+          source: 'written',
         },
       ]);
     } finally {
@@ -155,13 +159,35 @@ describe('migration 0148_tool_call_writes @cap:travailler-sur-des-fichiers/moteu
       { beforeKind: 'file', beforeSha256: B, afterKind: 'unreadable', afterSha256: A },
       'tool_call_writes_after_sha_check',
     ],
+    [
+      'an after source that is neither written nor read',
+      {
+        beforeKind: 'file',
+        beforeSha256: B,
+        afterKind: 'file',
+        afterSha256: A,
+        afterSource: 'guessed',
+      },
+      'tool_call_writes_after_source_check',
+    ],
+    [
+      'written bytes on a file that is not there',
+      {
+        beforeKind: 'file',
+        beforeSha256: B,
+        afterKind: 'absent',
+        afterSha256: null,
+        afterSource: 'written',
+      },
+      'tool_call_writes_written_is_file_check',
+    ],
   ])('refuses %s, by its named constraint', async (name, row, constraint) => {
     const { db, close } = createClient(harness().url, { max: 1 });
     let refus: unknown = null;
     try {
       await db.execute(
-        sql`INSERT INTO tool_call_writes (tool_call_id, job_id, path, before_kind, before_sha256, after_kind, after_sha256)
-            VALUES (${seme.callId}, ${seme.jobId}, ${`x-${name}`}, ${row.beforeKind}, ${row.beforeSha256}, ${row.afterKind}, ${row.afterSha256})`,
+        sql`INSERT INTO tool_call_writes (tool_call_id, job_id, path, before_kind, before_sha256, after_kind, after_sha256, after_source)
+            VALUES (${seme.callId}, ${seme.jobId}, ${`x-${name}`}, ${row.beforeKind}, ${row.beforeSha256}, ${row.afterKind}, ${row.afterSha256}, ${'afterSource' in row ? row.afterSource : 'read'})`,
       );
     } catch (err) {
       refus = err;

@@ -912,10 +912,11 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       throw err;
     } finally {
       // Ce que CET APPEL a fait à chaque fichier visé (#779) : l'empreinte
-      // d'avant, prise plus haut, et celle d'après, relue ici, au plus près de
-      // l'écriture. Pour tout appel qui a tourné, réussi ou non, et pour toute
-      // cible fichier, quel que soit l'outil. Ne lève jamais : une ligne non
-      // rangée se journalise et se lit « non enregistré ».
+      // d'avant, prise plus haut, et celle d'après : les octets que l'outil a
+      // ÉCRITS quand il les a rapportés (`contenusEcrits`), sinon une relecture
+      // dite comme telle. Pour tout appel qui a tourné, réussi ou non, et pour
+      // toute cible fichier, quel que soit l'outil. Ne lève jamais : une ligne
+      // non rangée se journalise et se lit « non enregistré ».
       if (mutationTargets && filesBefore) {
         await recordToolCallWrites({
           db: ctx.db,
@@ -924,6 +925,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
           toolName: auditTool.name,
           targets: mutationTargets,
           before: filesBefore,
+          written: contenusEcrits,
         });
       }
       if (mutationDeliverables.length > 0) {

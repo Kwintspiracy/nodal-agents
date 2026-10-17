@@ -1200,6 +1200,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       before_sha256 text,
       after_kind text NOT NULL,
       after_sha256 text,
+      after_source text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(),
       CONSTRAINT tool_call_writes_call_path_unique UNIQUE (tool_call_id, path),
       CONSTRAINT tool_call_writes_before_kind_check
@@ -1209,7 +1210,11 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       CONSTRAINT tool_call_writes_before_sha_check
         CHECK ((before_kind = 'file') = (before_sha256 IS NOT NULL)),
       CONSTRAINT tool_call_writes_after_sha_check
-        CHECK ((after_kind = 'file') = (after_sha256 IS NOT NULL))
+        CHECK ((after_kind = 'file') = (after_sha256 IS NOT NULL)),
+      CONSTRAINT tool_call_writes_after_source_check
+        CHECK (after_source IN ('written', 'read')),
+      CONSTRAINT tool_call_writes_written_is_file_check
+        CHECK (after_source <> 'written' OR after_kind = 'file')
     );
     CREATE INDEX IF NOT EXISTS idx_tool_call_writes_job ON tool_call_writes (job_id);
     CREATE INDEX IF NOT EXISTS idx_tool_call_writes_call ON tool_call_writes (tool_call_id);

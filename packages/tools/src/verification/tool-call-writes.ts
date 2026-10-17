@@ -34,8 +34,16 @@ const sha = (f: FileFingerprint): string | null => (f.kind === 'file' ? f.sha256
 
 /**
  * Range, pour l'appel `toolCallId`, une ligne par cible FICHIER : l'état pris
- * avant l'outil (`before`) et celui relu maintenant. Rend le nombre de lignes
- * rangées. Ne lève jamais : un échec est journalisé et rend 0.
+ * avant l'outil (`before`), et l'état après. Rend le nombre de lignes rangées.
+ * Ne lève jamais : un échec est journalisé et rend 0.
+ *
+ * L'ÉTAT APRÈS EST L'EMPREINTE DES OCTETS ÉCRITS quand l'outil la rapporte
+ * (`written`, la carte que remplit `ctx.reportWrittenContent` : l'écrivain
+ * atomique des outils fichier, et celui des outils Office). Sinon, et
+ * seulement sinon, c'est une relecture du disque, dite `read` sur la ligne :
+ * une relecture peut voir le contenu d'un autre écrivain passé entre le
+ * `rename` de l'appel et elle, et créditerait l'appel d'un contenu qui n'est
+ * pas le sien (revue Reviewer A de #780, passe 1 ; la même règle que #505).
  *
  * Sans ligne d'appel (`toolCallId` absent : un appel hors job, dont la
  * plateforme ne pose pas de marque) ni job, il n'y a rien à quoi rattacher
@@ -48,10 +56,17 @@ export async function recordToolCallWrites(input: {
   readonly toolName: string;
   readonly targets: readonly MutationTarget[];
   readonly before: FileSnapshot;
+  /** Les empreintes des octets que l'outil a écrits, par chemin (`reportWrittenContent`). */
+  readonly written: ReadonlyMap<string, string>;
 }): Promise<number> {
   const { db, toolCallId, jobId } = input;
   if (!toolCallId || !jobId) return 0;
   try {
+    // Les clés ramenées au chemin RÉEL, comme les cibles : deux orthographes
+    // du même fichier se rejoignent.
+    const ecrits = new Map<string, string>();
+    for (const [chemin, empreinte] of input.written)
+      ecrits.set(await cheminConstate(chemin), empreinte);
     const vus = new Set<string>();
     const values = [];
     for (const t of input.targets) {
@@ -62,15 +77,17 @@ export async function recordToolCallWrites(input: {
       if (vus.has(path)) continue;
       vus.add(path);
       const was = input.before.get(t.path) ?? ABSENT;
-      const now = await fingerprint(t.path);
+      const ecrit = ecrits.get(path);
+      const now: FileFingerprint | null = ecrit === undefined ? await fingerprint(t.path) : null;
       values.push({
         toolCallId,
         jobId,
         path,
         beforeKind: was.kind,
         beforeSha256: sha(was),
-        afterKind: now.kind,
-        afterSha256: sha(now),
+        ...(ecrit === undefined
+          ? { afterKind: now!.kind, afterSha256: sha(now!), afterSource: 'read' as const }
+          : { afterKind: 'file' as const, afterSha256: ecrit, afterSource: 'written' as const }),
       });
     }
     if (values.length === 0) return 0;

@@ -22,6 +22,14 @@ import { toolCalls } from './tool_calls.ts';
 /** L'état d'un fichier, tel que le seam l'a lu. */
 export type ToolCallFileKind = 'absent' | 'file' | 'unreadable';
 
+/**
+ * D'où vient l'empreinte « après » : `written`, les octets que l'outil a
+ * écrits (rapportés par l'écrivain atomique, `reportWrittenContent`) ; `read`,
+ * une relecture du disque quand l'outil n'a rien rapporté. Une relecture peut
+ * voir le contenu d'un autre écrivain : elle n'est jamais une preuve.
+ */
+export type ToolCallAfterSource = 'written' | 'read';
+
 export const toolCallWrites = pgTable(
   'tool_call_writes',
   {
@@ -39,6 +47,7 @@ export const toolCallWrites = pgTable(
     beforeSha256: text('before_sha256'),
     afterKind: text('after_kind').notNull().$type<ToolCallFileKind>(),
     afterSha256: text('after_sha256'),
+    afterSource: text('after_source').notNull().$type<ToolCallAfterSource>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -60,6 +69,11 @@ export const toolCallWrites = pgTable(
     check(
       'tool_call_writes_after_sha_check',
       sql`(${table.afterKind} = 'file') = (${table.afterSha256} IS NOT NULL)`,
+    ),
+    check('tool_call_writes_after_source_check', sql`${table.afterSource} IN ('written', 'read')`),
+    check(
+      'tool_call_writes_written_is_file_check',
+      sql`${table.afterSource} <> 'written' OR ${table.afterKind} = 'file'`,
     ),
   ],
 );

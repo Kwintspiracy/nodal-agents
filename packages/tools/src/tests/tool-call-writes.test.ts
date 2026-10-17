@@ -26,7 +26,8 @@ import { createToolRegistry } from '../registry';
 import { registerBuiltins } from '../builtin';
 import { executeTool } from '../execute';
 import { cheminConstate } from '../verification/record-constat';
-import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
+import type { z } from 'zod';
+import type { ApprovalRule, ExecuteOptions, ToolContext, ToolDefinition } from '../types';
 
 const registry = createToolRegistry();
 registerBuiltins(registry);
@@ -250,5 +251,110 @@ describe('tool_call_writes: what each call did to each file it targeted @cap:tra
       ),
     ).toBe(true);
     expect(await lignes(jobId)).toEqual([]);
+  });
+});
+
+// Revue Reviewer A de #780, passe 1 (P2) : l'empreinte « après » doit être celle
+// des octets que l'outil a ÉCRITS quand il la rapporte, jamais une relecture qui
+// créditerait l'appel du contenu d'un autre écrivain passé juste après lui.
+describe('review pass 1 of #780: the after hash is the bytes the tool wrote @cap:travailler-sur-des-fichiers/moteur', () => {
+  /**
+   * Le VRAI `file_write` du registre (même nom, même cible déclarée, même
+   * écrivain atomique), suivi d'un AUTRE écrivain qui passe entre son `rename`
+   * et la relecture du seam : un autre job de l'espace partagé.
+   */
+  function fileWriteThenIntruder(): ToolDefinition<z.ZodTypeAny, unknown> {
+    const real = outil('file_write');
+    return {
+      ...real,
+      execute: async (input: unknown, c: ToolContext) => {
+        const out = await real.execute(input as never, c);
+        await writeFile(join(ws, (input as { path: string }).path), 'ecrit par B, un autre job');
+        return out;
+      },
+    } as unknown as ToolDefinition<z.ZodTypeAny, unknown>;
+  }
+
+  async function ligneAvecSource(jobId: string) {
+    return db
+      .select({
+        afterKind: toolCallWrites.afterKind,
+        afterSha256: toolCallWrites.afterSha256,
+        afterSource: toolCallWrites.afterSource,
+      })
+      .from(toolCallWrites)
+      .where(eq(toolCallWrites.jobId, jobId));
+  }
+
+  it('another writer between the rename and the re-read: the row keeps the bytes the call wrote, marked written', async () => {
+    const jobId = await jobNeuf();
+    const res = await executeTool(
+      fileWriteThenIntruder(),
+      { path: 'course.txt', content: 'ecrit par A' },
+      ctx(jobId),
+      autoApprove(),
+    );
+    expect(res.outcome).toBe('success');
+    expect(await readFile(join(ws, 'course.txt'), 'utf8')).toBe('ecrit par B, un autre job');
+    expect(await ligneAvecSource(jobId)).toEqual([
+      { afterKind: 'file', afterSha256: sha('ecrit par A'), afterSource: 'written' },
+    ]);
+  });
+
+  it.each([
+    ['file_write', 'a.txt', { content: 'x' }],
+    ['xlsx_create', 'b.xlsx', { sheet: 'S' }],
+    ['docx_create', 'c.docx', { paragraphs: [{ text: 'Titre', heading: 1 }] }],
+    ['pptx_create', 'd.pptx', { slides: [{ title: 'Intro', bullets: ['A'] }] }],
+  ])(
+    '%s reports the bytes it wrote: after source written, equal to the file it left',
+    async (nom, fichier, extra) => {
+      const jobId = await jobNeuf();
+      expect((await appel(jobId, nom, { path: fichier, ...extra })).outcome).toBe('success');
+      expect(await ligneAvecSource(jobId)).toEqual([
+        {
+          afterKind: 'file',
+          afterSha256: await shaOnDisk(join(ws, fichier)),
+          afterSource: 'written',
+        },
+      ]);
+    },
+  );
+
+  it('a file-target tool that writes WITHOUT reporting its bytes: the after state is a re-read, and the row says so', async () => {
+    // Le même nom et la même cible déclarée que `file_write`, mais une écriture
+    // hors de l'écrivain atomique : rien n'est rapporté au seam.
+    const real = outil('file_write');
+    const silent = {
+      ...real,
+      execute: async (input: unknown) => {
+        await writeFile(join(ws, (input as { path: string }).path), 'ecrit sans rapport');
+        return { ok: true };
+      },
+    } as unknown as ToolDefinition<z.ZodTypeAny, unknown>;
+    const jobId = await jobNeuf();
+    const res = await executeTool(
+      silent,
+      { path: 'muet.txt', content: 'ignore' },
+      ctx(jobId),
+      autoApprove(),
+    );
+    expect(res.outcome).toBe('success');
+    expect(await ligneAvecSource(jobId)).toEqual([
+      { afterKind: 'file', afterSha256: sha('ecrit sans rapport'), afterSource: 'read' },
+    ]);
+  });
+
+  it('a call that wrote nothing has no written bytes: its after state is a re-read, and the row says so', async () => {
+    const jobId = await jobNeuf();
+    await writeFile(join(ws, 'garde.txt'), 'contenu');
+    await appel(jobId, 'file_edit', {
+      path: 'garde.txt',
+      old_string: 'absent ici',
+      new_string: 'x',
+    });
+    expect(await ligneAvecSource(jobId)).toEqual([
+      { afterKind: 'file', afterSha256: sha('contenu'), afterSource: 'read' },
+    ]);
   });
 });

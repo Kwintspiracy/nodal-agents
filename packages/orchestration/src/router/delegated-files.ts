@@ -32,9 +32,10 @@
 //   written_by_child_unchanged  présent, et identique à ce que l'enfant a écrit
 //   changed_since_child_wrote   présent, mais différent de ce qu'il a écrit
 //   written_by_child_unverified présent, écrit par l'enfant (son constat est
-//                               là) mais SANS empreinte — shell, harnais CLI,
-//                               bureautique : on ne peut pas prouver qu'il n'a
-//                               pas changé depuis, le parent le relit
+//                               là) mais SANS empreinte — shell, harnais CLI
+//                               (les outils Office rapportent la leur depuis
+//                               #780) : on ne peut pas prouver qu'il n'a pas
+//                               changé depuis, le parent le relit
 //   not_written_by_child        présent, aucune écriture de l'enfant constatée
 //   absent                      ENOENT, et seulement ENOENT
 //   unknown: <code>             toute autre erreur : on ne sait pas, on le dit
