@@ -7,7 +7,31 @@
 // différentes.
 
 import type { TreeFacts } from './facts';
-import type { ResearchSubject, SubjectKind } from './subjects';
+
+/**
+ * Le genre d'un sujet de recherche calibré (subjects.ts, #776) : `research`, un
+ * fait cherché par la racine seule ; `deep-research`, un sujet confié au
+ * spécialiste.
+ */
+export const SUBJECT_KINDS = ['research', 'deep-research'] as const;
+export type SubjectKind = (typeof SUBJECT_KINDS)[number];
+
+/** Un fait attendu d'un sujet, tel que le fichier l'écrit : sérialisable (une observation le garde tel quel). */
+export interface SubjectFact {
+  readonly says: string;
+  readonly pattern: string;
+  readonly flags: string;
+}
+
+/** Un sujet calibré, tel que `readResearchSubjects` le rend. */
+export interface ResearchSubject {
+  readonly id: string;
+  readonly kind: SubjectKind;
+  readonly request: string;
+  readonly facts: readonly SubjectFact[];
+  /** Les modèles sur lesquels le sujet est calibré. */
+  readonly calibratedOn: readonly string[];
+}
 
 /**
  * `nightly` : le jeu sans surveillance, lancé chaque nuit.

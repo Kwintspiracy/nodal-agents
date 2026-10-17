@@ -18,12 +18,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { matches, type ExpectedFact } from './judge-kit';
 import { SUBJECTS_FILE } from './paths';
+import { SUBJECT_KINDS, type ResearchSubject, type SubjectFact, type SubjectKind } from './types';
 
-/** `research` : un fait, cherché par la racine seule. `deep-research` : un sujet, confié au spécialiste. */
-export const SUBJECT_KINDS = ['research', 'deep-research'] as const;
-export type SubjectKind = (typeof SUBJECT_KINDS)[number];
-
-export { SUBJECTS_FILE };
+export { SUBJECTS_FILE, SUBJECT_KINDS, type ResearchSubject, type SubjectFact, type SubjectKind };
 export const SUBJECTS_TICKET = '#776';
 
 /** La raison du saut, quand aucun sujet calibré de ce genre n'existe. */
@@ -63,22 +60,6 @@ const SubjectSchema = z.object({
     .min(1),
 });
 const FileSchema = z.object({ subjects: z.array(SubjectSchema) });
-
-/** Un fait attendu, tel que le fichier l'écrit : sérialisable (une observation le garde tel quel). */
-export interface SubjectFact {
-  readonly says: string;
-  readonly pattern: string;
-  readonly flags: string;
-}
-
-export interface ResearchSubject {
-  readonly id: string;
-  readonly kind: SubjectKind;
-  readonly request: string;
-  readonly facts: readonly SubjectFact[];
-  /** Les modèles sur lesquels le sujet est calibré. */
-  readonly calibratedOn: readonly string[];
-}
 
 /** Les faits d'un sujet, prêts pour `missingFacts` (le motif a été compilé à la lecture). */
 export function subjectFacts(subject: Pick<ResearchSubject, 'facts'>): ExpectedFact[] {
