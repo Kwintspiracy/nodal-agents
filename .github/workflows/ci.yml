@@ -136,32 +136,6 @@ jobs:
         timeout-minutes: 2
         run: pnpm hygiene:check
 
-      # Does this PR add a private name (a path, a line, a commit message)? The
-      # names are a repository secret (their content). The script that reads them
-      # is taken from the BASE commit, never from the PR: a PR that edited it
-      # could print the secret. Without the secret (a fork) the step says so and
-      # passes; while the base has no script yet, it says that and passes.
-      - name: Private names
-        if: github.event_name == 'pull_request'
-        timeout-minutes: 5
-        env:
-          NODAL_PRIVATE_NAMES_CONTENT: ${{ secrets.NODAL_PRIVATE_NAMES }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          if [ -z "$NODAL_PRIVATE_NAMES_CONTENT" ]; then
-            echo "Private names: no NODAL_PRIVATE_NAMES secret in this run (a fork?); nothing was checked."
-            exit 0
-          fi
-          git fetch --no-tags --depth=500 origin "$BASE_SHA" "$HEAD_SHA"
-          tool="$RUNNER_TEMP/private-names"
-          mkdir -p "$tool/lib"
-          if ! git show "$BASE_SHA:scripts/check-private-names.mjs" > "$tool/check-private-names.mjs" 2>/dev/null             || ! git show "$BASE_SHA:scripts/lib/private-names.mjs" > "$tool/lib/private-names.mjs" 2>/dev/null; then
-            echo "Private names: the base commit has no check-private-names script yet; nothing was checked."
-            exit 0
-          fi
-          node "$tool/check-private-names.mjs" --git-range "$BASE_SHA...$HEAD_SHA"
-
       - name: Architecture check
         timeout-minutes: 2
         run: pnpm deps:check

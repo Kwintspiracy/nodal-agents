@@ -116,16 +116,29 @@ export function entriesInPath(path, names) {
   return [...entries].sort((a, b) => a - b);
 }
 
-/** Hits of `lines` (`[{ line, text }]`, joined by newlines): one `{ line, entries }` per start line. */
+/**
+ * Hits of `lines` (`[{ line, text, added? }]`, joined by newlines): one
+ * `{ line, entries }` per line where a name starts. A line without `added` counts
+ * as added. When some lines are unchanged context, a name counts only if it
+ * overlaps an added line (a name wholly in unchanged lines is not a hit).
+ */
 export function scanLines(lines, names) {
   const starts = [];
   let text = '';
   for (const l of lines) {
     starts.push(text.length);
-    text += `${l.text}\n`;
+    text += `${l.text}
+`;
   }
+  const hasContext = lines.some((l) => l.added === false);
   const byLine = new Map();
   for (const s of findInText(text, names)) {
+    const overlapsAdded =
+      !hasContext ||
+      lines.some(
+        (l, i) => l.added !== false && s.start < starts[i] + l.text.length + 1 && s.end > starts[i],
+      );
+    if (!overlapsAdded) continue;
     let lo = 0;
     let hi = starts.length - 1;
     while (lo < hi) {

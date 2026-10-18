@@ -94,28 +94,38 @@ function addedPaths(diffArgs) {
 }
 
 /**
- * One streaming pass over `git diff -U0`: the added lines of each text file are
- * scanned when the file ends; a binary or oversized file is reported unread.
+ * One streaming pass over `git diff -U1`. Per hunk, the added lines are scanned
+ * together with the unchanged line on each side, so a name split between an
+ * unchanged line and an added one is seen; a name wholly inside unchanged lines is
+ * not a hit (it is not part of what the change adds). A binary or oversized file is
+ * reported unread.
  */
 async function scanNetDiff(diffArgs, names, report) {
   let file = null;
   let inHeader = false;
-  let lines = [];
+  let hunk = [];
+  let fileHits = [];
   let bytes = 0;
   let oversize = false;
   let next = 0;
 
+  const endHunk = () => {
+    if (hunk.length > 0) fileHits.push(...scanLines(hunk, names));
+    hunk = [];
+  };
   const flush = () => {
-    if (file === null) return;
-    if (oversize) report.unread.push({ where: file, why: 'size' });
-    else for (const h of scanLines(lines, names)) report.hits.push({ where: file, ...h });
+    endHunk();
+    if (file !== null) {
+      if (oversize) report.unread.push({ where: file, why: 'size' });
+      else for (const h of fileHits) report.hits.push({ where: file, ...h });
+    }
     file = null;
-    lines = [];
+    fileHits = [];
     bytes = 0;
     oversize = false;
   };
 
-  await gitLines(['diff', '-U0', '--no-color', '--no-ext-diff', '-M', ...diffArgs], (raw) => {
+  await gitLines(['diff', '-U1', '--no-color', '--no-ext-diff', '-M', ...diffArgs], (raw) => {
     if (raw.startsWith('diff --git ')) {
       flush();
       inHeader = true;
@@ -125,16 +135,19 @@ async function scanNetDiff(diffArgs, names, report) {
     } else if (inHeader && raw.startsWith('Binary files ')) {
       const m = / and b\/(.*) differ$/.exec(raw);
       if (m) report.unread.push({ where: m[1], why: 'binary' });
-    } else if (inHeader && raw.startsWith('GIT binary patch')) {
-      // Reported through its `Binary files` line when git prints one.
     } else if (raw.startsWith('@@')) {
+      endHunk();
       inHeader = false;
       next = Number(/\+(\d+)/.exec(raw)?.[1] ?? 1);
-    } else if (!inHeader && raw.startsWith('+') && file !== null && !oversize) {
+    } else if (!inHeader && file !== null && !oversize && (raw[0] === '+' || raw[0] === ' ')) {
       const text = raw.slice(1);
       bytes += text.length + 1;
-      if (bytes > MAX_TEXT) oversize = true;
-      else lines.push({ line: next, text });
+      if (bytes > MAX_TEXT) {
+        oversize = true;
+        hunk = [];
+      } else {
+        hunk.push({ line: next, text, added: raw[0] === '+' });
+      }
       next++;
     }
   });

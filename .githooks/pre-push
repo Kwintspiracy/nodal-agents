@@ -8,6 +8,9 @@
 # default ~/.nodalai/private-names.txt); with no list the check says so and passes.
 # Skipped on request: NODAL_SKIP_HYGIENE=1.
 #
+# Tags: a tag push adds no content, so `refs/tags/*` is skipped (the message of an
+# annotated tag is not read).
+#
 # Two different failures, two different messages: exit 1 is a HIT (a private name
 # is in what you push); exit 2 is a check that could not run, which is not a hit
 # and is never reported as one.
@@ -38,17 +41,25 @@ cannot_run() {
   exit 1
 }
 
+[ -f scripts/check-private-names.mjs ] ||
+  cannot_run "scripts/check-private-names.mjs is missing from this checkout"
+
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$local_sha" = "$zero" ] && continue # a deletion pushes no commit
+  case "$local_ref" in refs/tags/*) continue ;; esac # a tag adds no content
   if [ "$remote_sha" != "$zero" ] && git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
     base="$remote_sha"
   else
     base=$(default_base "$local_sha") || cannot_run "no default branch to compare $local_ref with"
   fi
 
+  # A HIT is exit 1 AND the script's own verdict line. Node failing to start the
+  # script (a missing module, a syntax error) also exits 1 and prints no such line:
+  # that is a check that could not run, never a hit.
   rc=0
-  node scripts/check-private-names.mjs --git-range "$base...$local_sha" || rc=$?
-  if [ "$rc" = "1" ]; then
+  out=$(node scripts/check-private-names.mjs --git-range "$base...$local_sha") || rc=$?
+  [ -n "$out" ] && printf '%s\n' "$out"
+  if [ "$rc" = "1" ] && printf '%s\n' "$out" | grep -Eq '^check-private-names: [0-9]+ hit\(s\) in '; then
     echo "pre-push: a private name is in what you are pushing (see above). Push refused."
     exit 1
   elif [ "$rc" != "0" ]; then

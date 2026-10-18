@@ -141,6 +141,27 @@ describe('--git-range: the net change', () => {
     noName(r);
   });
 
+  it('a name split between an UNCHANGED line and an ADDED line is a hit', () => {
+    const dir = newRepo();
+    commit(dir, { 'a.txt': `intro\n${FIRST}\nrest\n` }, 'base a');
+    const base = head(dir);
+    commit(dir, { 'a.txt': `intro\n${FIRST}\nlink\nrest\n` }, 'add the second half');
+    const r = run(['--git-range', `${base}...HEAD`], { cwd: dir });
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain('a.txt:2  matches private-names entry 2');
+    noName(r);
+  });
+
+  it('a name wholly in an unchanged line next to an added line is NOT a hit', () => {
+    const dir = newRepo();
+    commit(dir, { 'a.txt': `intro\n${SECOND}\nrest\n` }, 'base a');
+    const base = head(dir);
+    commit(dir, { 'a.txt': `intro\n${SECOND}\nadded\nrest\n` }, 'add a line');
+    const r = run(['--git-range', `${base}...HEAD`], { cwd: dir });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('no hit');
+  });
+
   it('reports the second entry by its own number', () => {
     const dir = newRepo();
     const base = head(dir);
@@ -435,6 +456,41 @@ describe.skipIf(!hasSh)('.githooks/pre-push', () => {
     expect(r.stdout).not.toContain('a private name is in what you are pushing');
   });
 
+  it('a tag push adds no content: it is skipped', () => {
+    const dir = repoWithScripts();
+    git(dir, 'checkout', '-q', '-b', 'feat');
+    commit(dir, { 'bad.txt': `${SECOND}\n` }, 'bad');
+    const r = spawnSync('sh', [HOOK], {
+      cwd: dir,
+      encoding: 'utf8',
+      input: `refs/tags/v1 ${head(dir)} refs/tags/v1 ${ZERO}\n`,
+      env: { ...process.env, NODAL_PRIVATE_NAMES: listFile },
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).not.toContain('private name');
+  });
+
+  it('a script that cannot start is a check that could not run, never a hit', () => {
+    const dir = repoWithScripts();
+    git(dir, 'checkout', '-q', '-b', 'feat');
+    rmSync(join(dir, 'scripts', 'lib'), { recursive: true });
+    commit(dir, { 'bad.txt': `${SECOND}\n` }, 'bad');
+    const r = push(dir, head(dir), ZERO);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain('could NOT run');
+    expect(r.stdout).not.toContain('a private name is in what you are pushing');
+  });
+
+  it('a script missing from the checkout is a check that could not run', () => {
+    const dir = newRepo();
+    git(dir, 'checkout', '-q', '-b', 'feat');
+    commit(dir, { 'ok.txt': 'fine\n' }, 'ok');
+    const r = push(dir, head(dir), ZERO);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain('is missing from this checkout');
+    expect(r.stdout).not.toContain('a private name is in what you are pushing');
+  });
+
   it('NODAL_SKIP_HYGIENE=1 skips, and says so', () => {
     const dir = repoWithScripts();
     const r = push(dir, head(dir), ZERO, { NODAL_SKIP_HYGIENE: '1' });
@@ -443,10 +499,33 @@ describe.skipIf(!hasSh)('.githooks/pre-push', () => {
   });
 });
 
-describe.skipIf(!hasSh)('the CI step takes the script from the BASE commit', () => {
+describe('the CI workflow', () => {
+  const workflow = readFileSync(
+    resolve(SCRIPTS, '..', '.github', 'workflows', 'private-names.yml'),
+    'utf8',
+  );
   const ci = readFileSync(resolve(SCRIPTS, '..', '.github', 'workflows', 'ci.yml'), 'utf8');
-  const block = ci.slice(ci.indexOf('- name: Private names'));
-  const after = block.slice(block.indexOf('run: |\n') + 'run: |\n'.length);
+
+  it('runs on pull_request_target, read-only, and checks out the base (no ref)', () => {
+    expect(workflow).toMatch(/^on:\n {2}pull_request_target:/m);
+    expect(workflow).toMatch(/^permissions:\n {2}contents: read\n/m);
+    // Nothing from the PR is checked out: no `ref:` anywhere, the PR head is fetched as data.
+    expect(workflow).not.toMatch(/^\s*ref:/m);
+    expect(workflow).toContain('git fetch --no-tags origin "pull/$PR_NUMBER/head:refs/pr/head"');
+  });
+
+  it('is not a step of ci.yml, whose workflow file comes from the PR', () => {
+    expect(ci).not.toContain('check-private-names');
+    expect(ci).not.toContain('NODAL_PRIVATE_NAMES');
+  });
+});
+
+describe.skipIf(!hasSh)('the CI step runs what the BASE holds', () => {
+  const workflow = readFileSync(
+    resolve(SCRIPTS, '..', '.github', 'workflows', 'private-names.yml'),
+    'utf8',
+  );
+  const after = workflow.slice(workflow.indexOf('run: |\n') + 'run: |\n'.length);
   const stepScript = after
     .split('\n')
     .reduce(
@@ -458,13 +537,15 @@ describe.skipIf(!hasSh)('the CI step takes the script from the BASE commit', () 
     )
     .lines.join('\n');
 
-  /** An `origin` (a plain repo reached by file URL) with a base on main and a PR on `pr`. */
+  /**
+   * An `origin` with the base on main and the PR on `refs/pull/7/head`; a clone that
+   * has the BASE checked out, as `pull_request_target` does.
+   */
   function setup({ baseHasScripts, prEditsScript }) {
     const origin = baseHasScripts ? repoWithScripts() : newRepo();
     const base = head(origin);
     git(origin, 'checkout', '-q', '-b', 'pr');
     if (prEditsScript) {
-      // A PR that tries to read the secret: it prints the environment's list.
       commit(
         origin,
         {
@@ -475,40 +556,39 @@ describe.skipIf(!hasSh)('the CI step takes the script from the BASE commit', () 
       );
     }
     commit(origin, { 'added.txt': `${SECOND}\n` }, 'adds a name');
-    const prHead = head(origin);
+    git(origin, 'update-ref', 'refs/pull/7/head', head(origin));
     const clone = mkdtempSync(join(root, 'clone-'));
-    git(clone, 'init', '-q', '-b', 'pr');
+    git(clone, 'init', '-q', '-b', 'main');
     git(clone, 'remote', 'add', 'origin', pathToFileURL(origin).href);
-    git(clone, 'fetch', '-q', 'origin', 'pr');
-    git(clone, 'checkout', '-q', '-f', prHead);
-    return { clone, base, prHead };
+    git(clone, 'fetch', '-q', 'origin', 'main');
+    git(clone, 'checkout', '-q', '-f', base);
+    return { clone, base };
   }
 
-  const runStep = ({ clone, base, prHead }, secret = LIST) =>
+  const runStep = ({ clone, base }, secret = LIST) =>
     spawnSync('sh', ['-c', stepScript], {
       cwd: clone,
       encoding: 'utf8',
       env: {
         ...process.env,
         NODAL_PRIVATE_NAMES_CONTENT: secret,
+        PR_NUMBER: '7',
         BASE_SHA: base,
-        HEAD_SHA: prHead,
-        RUNNER_TEMP: mkdtempSync(join(root, 'runner-')),
       },
     });
 
-  it('finds the step', () => {
-    expect(stepScript).toContain('git show "$BASE_SHA:scripts/check-private-names.mjs"');
+  it('finds the step script', () => {
+    expect(stepScript).toContain('node scripts/check-private-names.mjs --git-range');
   });
 
-  it('runs the base script on the PR range and finds the name', () => {
+  it('finds the name the PR adds, with the base script', () => {
     const r = runStep(setup({ baseHasScripts: true, prEditsScript: false }));
     expect(r.status).toBe(1);
     expect(r.stdout).toContain('added.txt:1  matches private-names entry 3');
     noName(r);
   }, 60000);
 
-  it('a PR that rewrites the script cannot make it print the secret', () => {
+  it('a PR that rewrites the script cannot make it print the secret: the PR is only fetched', () => {
     const r = runStep(setup({ baseHasScripts: true, prEditsScript: true }));
     expect(`${r.stdout}${r.stderr}`).not.toContain('SENTINEL');
     expect(r.status).toBe(1);
@@ -519,7 +599,7 @@ describe.skipIf(!hasSh)('the CI step takes the script from the BASE commit', () 
   it('says so and passes when the base has no script yet, or when there is no secret', () => {
     let r = runStep(setup({ baseHasScripts: false, prEditsScript: false }));
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain('base commit has no check-private-names script yet');
+    expect(r.stdout).toContain('base branch has no check-private-names script yet');
     r = runStep(setup({ baseHasScripts: true, prEditsScript: false }), '');
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('no NODAL_PRIVATE_NAMES secret');
