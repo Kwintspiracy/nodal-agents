@@ -5,7 +5,7 @@ import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { approvalRequests, agentJobs, entities } from '@nodal-agents/db';
+import { approvalRequests, agentJobs, entities, entityMembers, users } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createLlmClient, createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -13,6 +13,12 @@ import type { AuthProvider, AuthSession } from '@nodal-agents/auth';
 import { createApp } from '../../server.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
+
+/**
+ * Qui répond (#799) : le web, appelant de confiance, nomme le compte de sa
+ * session. Ces tests parlent au nom d'un compte de test.
+ */
+const RESPONDER_ID = '00000000-0000-4000-8000-00000000a11e';
 
 let db: TestDb;
 let app: ReturnType<typeof createApp>;
@@ -99,7 +105,10 @@ describe('POST /api/approve', () => {
       new Request('http://localhost/api/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ approvalRequestId: '00000000-0000-0000-0000-000000000001' }),
+        body: JSON.stringify({
+          responderUserId: RESPONDER_ID,
+          approvalRequestId: '00000000-0000-0000-0000-000000000001',
+        }),
       }),
     );
     expect(res.status).toBe(400);
@@ -111,6 +120,7 @@ describe('POST /api/approve', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          responderUserId: RESPONDER_ID,
           approvalRequestId: '00000000-0000-0000-0000-000000000099',
           decision: 'approve',
         }),
@@ -140,7 +150,11 @@ describe('POST /api/approve', () => {
       new Request('http://localhost/api/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ approvalRequestId: approvalId, decision: 'approve' }),
+        body: JSON.stringify({
+          responderUserId: RESPONDER_ID,
+          approvalRequestId: approvalId,
+          decision: 'approve',
+        }),
       }),
     );
 
@@ -189,6 +203,7 @@ describe('POST /api/approve', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          responderUserId: RESPONDER_ID,
           approvalRequestId: approvalId,
           decision: 'reject',
           notes: 'Not authorized',
@@ -226,7 +241,11 @@ describe('POST /api/approve', () => {
       new Request('http://localhost/api/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ approvalRequestId: approval!.id, decision: 'approve' }),
+        body: JSON.stringify({
+          responderUserId: RESPONDER_ID,
+          approvalRequestId: approval!.id,
+          decision: 'approve',
+        }),
       }),
     );
 
@@ -276,7 +295,7 @@ describe('POST /api/approve — la question d’un serveur MCP (0145) @cap:appro
       new Request('http://localhost/api/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ responderUserId: RESPONDER_ID, ...body }),
       }),
     );
   }
@@ -389,7 +408,11 @@ describe('POST /api/approve — entity authorization (bearer-token mode)', () =>
       new Request('http://localhost/api/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-test-session': '1' },
-        body: JSON.stringify({ approvalRequestId: approvalId, decision: 'approve' }),
+        body: JSON.stringify({
+          responderUserId: RESPONDER_ID,
+          approvalRequestId: approvalId,
+          decision: 'approve',
+        }),
       }),
     );
 
@@ -438,7 +461,11 @@ describe('POST /api/approve — entity authorization (bearer-token mode)', () =>
       new Request('http://localhost/api/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-test-session': '1' },
-        body: JSON.stringify({ approvalRequestId: approval!.id, decision: 'approve' }),
+        body: JSON.stringify({
+          responderUserId: RESPONDER_ID,
+          approvalRequestId: approval!.id,
+          decision: 'approve',
+        }),
       }),
     );
 
@@ -471,7 +498,11 @@ describe('POST /api/approve — entity authorization (bearer-token mode)', () =>
       new Request('http://localhost/api/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-secret' },
-        body: JSON.stringify({ approvalRequestId: approval!.id, decision: 'approve' }),
+        body: JSON.stringify({
+          responderUserId: RESPONDER_ID,
+          approvalRequestId: approval!.id,
+          decision: 'approve',
+        }),
       }),
     );
 
@@ -481,5 +512,62 @@ describe('POST /api/approve — entity authorization (bearer-token mode)', () =>
       .from(approvalRequests)
       .where(eq(approvalRequests.id, approval!.id));
     expect(approvalRow[0]?.status).toBe('approved');
+  });
+
+  it('#799 — an untrusted session caller answers as ITS session, whatever the body names', async () => {
+    await dbZ
+      .insert(entityMembers)
+      .values({ entityId: seedZ.entityId, userId: seedZ.userId, role: 'admin' })
+      .onConflictDoNothing();
+    const [me] = await dbZ.select().from(users).where(eq(users.id, seedZ.userId));
+    const [head] = await dbZ
+      .insert(agentJobs)
+      .values({
+        entityId: seedZ.entityId,
+        agentId: seedZ.agentId,
+        channel: 'api',
+        task: 'head',
+        status: 'awaiting_delegation',
+      })
+      .returning();
+    const [child] = await dbZ
+      .insert(agentJobs)
+      .values({
+        entityId: seedZ.entityId,
+        agentId: seedZ.agentId,
+        channel: 'internal',
+        task: 'child',
+        status: 'awaiting_approval',
+        parentJobId: head!.id,
+      })
+      .returning();
+    const [approval] = await dbZ
+      .insert(approvalRequests)
+      .values({
+        entityId: seedZ.entityId,
+        jobId: child!.id,
+        toolName: 'run_command',
+        toolInput: { command: 'ls' },
+        status: 'pending',
+      })
+      .returning();
+
+    const res = await appBearer.fetch(
+      new Request('http://localhost/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-test-session': '1' },
+        body: JSON.stringify({
+          // Named by the body, and ignored: the session says who answers.
+          responderUserId: RESPONDER_ID,
+          approvalRequestId: approval!.id,
+          decision: 'reject',
+          notes: 'stop',
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const [headRow] = await dbZ.select().from(agentJobs).where(eq(agentJobs.id, head!.id));
+    expect(headRow!.inbox).toHaveLength(1);
+    expect(headRow!.inbox[0]!.content).toContain(` · by: admin user:${me!.email} · `);
   });
 });

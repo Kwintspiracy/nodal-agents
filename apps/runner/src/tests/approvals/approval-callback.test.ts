@@ -475,7 +475,7 @@ describe('handleApprovalCallback — Toujours autoriser', () => {
     expect(ap!.resolvedBy).toBe('telegram');
     // Aucune note : la règle ci-dessus est la trace du geste, comme sur le
     // dashboard. `notes` ne garde que les mots de la personne, que la tête du
-    // run reçoit tels quels (approvals/owner-words.ts).
+    // run reçoit tels quels (approvals/card-words.ts).
     expect(ap!.notes).toBeNull();
   });
 

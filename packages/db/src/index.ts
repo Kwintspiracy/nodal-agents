@@ -111,6 +111,7 @@ export type {
   ConversationJobDelivery,
   LockedRunHead,
   RunHeadDelivery,
+  RunHeadLookup,
 } from './repos/conversation-inbox.ts';
 export {
   withinRunScope,

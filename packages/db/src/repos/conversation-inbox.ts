@@ -213,6 +213,11 @@ export type RunHeadDelivery =
       readonly status: string | null;
     };
 
+/** La tête trouvée et verrouillée, ou pourquoi elle ne l'est pas (chaîne de parents rompue). */
+export type RunHeadLookup =
+  | { readonly found: true; readonly head: LockedRunHead }
+  | { readonly found: false; readonly reason: string };
+
 /**
  * Trouve la tête du run de `jobId` et verrouille sa ligne, à appeler DANS la
  * transaction de l'appelant, AVANT toute autre ligne qu'elle écrit : l'ordre
@@ -220,13 +225,17 @@ export type RunHeadDelivery =
  * d'approbation). Une fin concurrente de la tête attend ce verrou, et son
  * déclencheur (migration 0141) voit alors ce qui a été écrit dans sa file.
  *
- * Une chaîne rompue — un parent introuvable, ou plus de 64 niveaux — est
- * une erreur dite, jamais une tête devinée (invariant #4).
+ * Une chaîne rompue — un job ou un parent introuvable dans cette entité, une
+ * boucle, plus de 64 niveaux — n'est jamais une tête devinée : elle est
+ * RENDUE avec sa raison (`found: false`), sans rien verrouiller, et c'est à
+ * l'appelant de la dire. Elle ne lève pas : l'appelant écrit peut-être autre
+ * chose dans la même transaction (la décision d'une personne) qui ne doit
+ * pas dépendre de cette recherche.
  */
 export async function lockRunHead(
   db: AnyDrizzleDb,
   input: { entityId: string; jobId: string },
-): Promise<LockedRunHead> {
+): Promise<RunHeadLookup> {
   const seen = new Set<string>();
   let id = input.jobId;
   for (;;) {
@@ -235,14 +244,15 @@ export async function lockRunHead(
       .from(agentJobs)
       .where(and(eq(agentJobs.id, id), eq(agentJobs.entityId, input.entityId)));
     if (!row) {
-      throw new Error(
-        `lockRunHead: job ${id} (in the parent chain of ${input.jobId}) is not in this entity`,
-      );
+      return {
+        found: false,
+        reason: `job ${id} (in the parent chain of ${input.jobId}) is not in this entity`,
+      };
     }
     if (row.parentJobId === null) break;
     seen.add(id);
     if (seen.has(row.parentJobId) || seen.size >= 64) {
-      throw new Error(`lockRunHead: the parent chain of job ${input.jobId} does not end`);
+      return { found: false, reason: `the parent chain of job ${input.jobId} does not end` };
     }
     id = row.parentJobId;
   }
@@ -251,8 +261,8 @@ export async function lockRunHead(
     .from(agentJobs)
     .where(eq(agentJobs.id, id))
     .for('update');
-  if (!head) throw new Error(`lockRunHead: the head ${id} of job ${input.jobId} disappeared`);
-  return { fromJobId: input.jobId, id, status: head.status };
+  if (!head) return { found: false, reason: `the head ${id} of job ${input.jobId} disappeared` };
+  return { found: true, head: { fromJobId: input.jobId, id, status: head.status } };
 }
 
 /**

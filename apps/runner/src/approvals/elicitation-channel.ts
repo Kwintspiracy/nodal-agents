@@ -31,6 +31,7 @@ import {
 } from '@nodal-agents/db';
 import {
   applyElicitationOp,
+  cardWordsNotice,
   applyTypedElicitationValue,
   elicitationDraftRevision,
   describeElicitationErrors,
@@ -301,6 +302,11 @@ export async function handleElicitationTap(args: {
       approvalRequestId: state.approvalRequestId,
       decision: 'reject',
       resolvedBy: origin.channel,
+      answeredBy: {
+        channel: origin.channel,
+        agentId: origin.receivingAgentId,
+        conversationId: origin.conversationId,
+      },
     });
     return r.ok
       ? { handled: true, notice: 'Declined.' }
@@ -320,12 +326,21 @@ export async function handleElicitationTap(args: {
       approvalRequestId: state.approvalRequestId,
       decision: 'approve',
       resolvedBy: origin.channel,
+      answeredBy: {
+        channel: origin.channel,
+        agentId: origin.receivingAgentId,
+        conversationId: origin.conversationId,
+      },
       content: state.draft.values,
       // Tranchée sur les valeurs que Send a lues : un geste qui les change
       // entre-temps fait refuser l'envoi, jamais envoyer les anciennes.
       expectedDraft: state.storedDraft,
     });
-    if (r.ok) return { handled: true, notice: 'Answered.' };
+    if (r.ok) {
+      // Une réponse qui n'a pas atteint la tête du run se dit avec (#799).
+      const handOff = cardWordsNotice(r.handOff);
+      return { handled: true, notice: handOff === null ? 'Answered.' : `Answered. ${handOff}` };
+    }
     if (r.code === 'draft_changed') {
       const fresh = await loadElicitationCard(db, state.approvalRequestId);
       if (fresh.ok) await redraw(db, card, fresh.state.approvalRequestId);

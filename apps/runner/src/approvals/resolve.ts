@@ -8,12 +8,13 @@
 
 import { eq, and, isNull, sql, lockRunHead, writeToRunHeadInbox } from '@nodal-agents/db';
 import { approvalRequests, agentJobs, agents } from '@nodal-agents/db';
-import type { AnyDrizzleDb, RunHeadDelivery } from '@nodal-agents/db';
+import type { AnyDrizzleDb, RunHeadLookup } from '@nodal-agents/db';
 import { z } from 'zod';
 import {
   FREE_ANSWER_MAX,
   readElicitationToolInput,
   validateElicitationContent,
+  type CardWordsHandOff,
   type ElicitationContentError,
   type ElicitationValue,
 } from '@nodal-agents/shared';
@@ -21,8 +22,10 @@ import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resumeJobAfterApprovalResolution } from './resume.ts';
 import { settleApprovalCards } from './card-settlement.ts';
-import { ownerWordsOnCard } from './owner-words.ts';
-import type { ApprovalDecision } from './owner-words.ts';
+import { cardCarriesWords, personWordsOnCard } from './card-words.ts';
+import type { ApprovalDecision } from './card-words.ts';
+import { readResponder } from './responders.ts';
+import type { AnsweredBy } from './responders.ts';
 
 export type { ApprovalDecision };
 
@@ -42,6 +45,13 @@ export interface ResolveApprovalInput {
   decision: ApprovalDecision;
   /** Provenance of the decision — recorded in approval_requests.resolved_by. */
   resolvedBy: string;
+  /**
+   * QUI a répondu (#799) : la personne du dashboard / de l'API, ou la
+   * conversation de canal d'où vient le geste. OBLIGATOIRE : les mots remis à
+   * la tête du run disent le rôle que les données donnent à ce répondant,
+   * jamais un propriétaire présumé (`responders.ts`).
+   */
+  answeredBy: AnsweredBy;
   notes?: string | null;
   /**
    * L'option choisie, pour une ligne `kind = 'question'` (P10a). Le LIBELLÉ,
@@ -105,6 +115,12 @@ export type ResolveApprovalResult =
        * no separate trigger is needed (Lot A1, NODALAI_APPROVAL_GRACE_MS).
        */
       resumed: 'worker' | 'in_process';
+      /**
+       * Ce que sont devenus les mots de la personne au-delà de l'agent de la
+       * carte (#799). La décision, elle, est écrite quoi qu'il en soit ;
+       * `cardWordsNotice` dit à la personne quand ils ne sont allés qu'à lui.
+       */
+      handOff: CardWordsHandOff;
     }
   | {
       ok: false;
@@ -258,33 +274,40 @@ export async function resolveApprovalDecision(
   // overwriting the decision that already won.
   //
   // Ce que la personne a écrit sur la carte va AUSSI à la tête du run
-  // (owner-words.ts), dans la MÊME transaction que la décision : la décision et
+  // (card-words.ts), dans la MÊME transaction que la décision : la décision et
   // la remise sont écrites ensemble, ou aucune. La ligne de la tête est
   // verrouillée AVANT celle de la demande, l'ordre de l'arrêt (`cancelJobTree`).
   const notes = input.notes ?? null;
-  const words = ownerWordsOnCard({
-    kind,
-    decision: input.decision,
-    resolvedBy: input.resolvedBy,
-    holderJobId: jobId,
-    holderAgentSlug: await holderSlug(deps.db, job.agentId ?? null),
-    toolName: approval.toolName,
-    notes,
-    answer: answerToStore,
-    response: responseToStore,
-  });
+  const words = cardCarriesWords({ notes, answer: answerToStore, response: responseToStore })
+    ? personWordsOnCard({
+        kind,
+        decision: input.decision,
+        resolvedBy: input.resolvedBy,
+        responder: await readResponder(
+          deps.db as AnyDrizzleDb,
+          input.answeredBy,
+          approval.entityId ?? job.entityId ?? null,
+        ),
+        holderJobId: jobId,
+        holderAgentSlug: await holderSlug(deps.db, job.agentId ?? null),
+        toolName: approval.toolName,
+        notes,
+        answer: answerToStore,
+        response: responseToStore,
+      })
+    : null;
+  // La décision ne dépend JAMAIS de la remise (revue Reviewer A de #799,
+  // passe 1) : une tête introuvable est rendue avec sa raison, et la décision
+  // s'écrit quand même. Seule la remise manque, et elle est dite.
   const headEntityId = job.entityId;
-  if (words !== null && headEntityId === null) {
-    throw new Error(
-      `resolveApprovalDecision: job ${jobId} has no entity, the head of its run cannot be found`,
-    );
-  }
-  const { updated, toHead } = await deps.db.transaction(async (tx) => {
+  const { updated, handOff } = await deps.db.transaction(async (tx) => {
     const t = tx as unknown as AnyDrizzleDb;
-    const head =
-      words === null || headEntityId === null
+    const head: RunHeadLookup | null =
+      words === null
         ? null
-        : await lockRunHead(t, { entityId: headEntityId, jobId });
+        : headEntityId === null
+          ? { found: false, reason: `job ${jobId} has no entity` }
+          : await lockRunHead(t, { entityId: headEntityId, jobId });
     const rows = await t
       .update(approvalRequests)
       .set({
@@ -303,22 +326,37 @@ export async function resolveApprovalDecision(
         ),
       )
       .returning({ id: approvalRequests.id });
-    const delivery: RunHeadDelivery | null =
-      rows.length === 0 || head === null || words === null
-        ? null
-        : await writeToRunHeadInbox(t, head, {
-            text: words,
-            fromApprovalRequestId: input.approvalRequestId,
-          });
-    return { updated: rows, toHead: delivery };
+    let result: CardWordsHandOff = { kind: 'no_words' };
+    if (rows.length > 0 && words !== null && head !== null) {
+      if (!head.found) {
+        result = { kind: 'no_head', reason: head.reason };
+      } else {
+        const d = await writeToRunHeadInbox(t, head.head, {
+          text: words,
+          fromApprovalRequestId: input.approvalRequestId,
+        });
+        result = d.delivered
+          ? { kind: 'delivered', headJobId: d.headJobId }
+          : d.reason === 'is_head'
+            ? { kind: 'is_head' }
+            : { kind: 'head_finished', headJobId: d.headJobId, status: d.status };
+      }
+    }
+    return { updated: rows, handOff: result };
   });
-  if (toHead?.delivered === false && toHead.reason === 'not_live') {
+  if (handOff.kind === 'head_finished') {
     // La tête a fini : la personne a répondu à un délégué qui tourne encore
     // sous elle. Personne n'attend plus ces mots en haut ; l'agent de la
-    // carte les a dans son résultat d'outil.
+    // carte les a dans son résultat d'outil, et la personne le lit.
     console.warn(
-      `[approval] the head ${toHead.headJobId} of job ${jobId} is ${toHead.status ?? 'gone'}: ` +
+      `[approval] the head ${handOff.headJobId} of job ${jobId} is ${handOff.status ?? 'gone'}: ` +
         `the words on approval ${input.approvalRequestId} reach only the agent holding the card`,
+    );
+  } else if (handOff.kind === 'no_head') {
+    console.error(
+      `[approval] the head of the run of job ${jobId} cannot be found (${handOff.reason}): ` +
+        `the decision on approval ${input.approvalRequestId} is written, its words reach only ` +
+        'the agent holding the card',
     );
   }
 
@@ -366,6 +404,7 @@ export async function resolveApprovalDecision(
       answer: null,
       chatId: (job as { chatId?: string | null }).chatId ?? null,
       resumed: 'in_process',
+      handOff,
     };
   }
 
@@ -392,6 +431,7 @@ export async function resolveApprovalDecision(
       answer: answerToStore,
       chatId: (job as { chatId?: string | null }).chatId ?? null,
       resumed: 'in_process',
+      handOff,
     };
   }
   if (outcome.resumed === null) {
@@ -408,6 +448,7 @@ export async function resolveApprovalDecision(
     answer: answerToStore,
     chatId: (job as { chatId?: string | null }).chatId ?? null,
     resumed: 'worker',
+    handOff,
   };
 }
 

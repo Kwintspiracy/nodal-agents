@@ -92,6 +92,7 @@ describe('resolveApprovalDecision — atomic claim (F-14)', () => {
       .returning();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval!.id,
       decision: 'approve',
       resolvedBy: 'api',
@@ -116,11 +117,13 @@ describe('resolveApprovalDecision — atomic claim (F-14)', () => {
 
     const [resultA, resultB] = await Promise.all([
       resolveApprovalDecision(makeDeps(), testEnv, {
+        answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
         approvalRequestId: approvalId,
         decision: 'approve',
         resolvedBy: 'telegram',
       }),
       resolveApprovalDecision(makeDeps(), testEnv, {
+        answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
         approvalRequestId: approvalId,
         decision: 'reject',
         resolvedBy: 'api',
@@ -169,6 +172,7 @@ describe('resolveApprovalDecision — atomic claim (F-14)', () => {
     await db.update(agentJobs).set({ status: 'cancelled' }).where(eq(agentJobs.id, seed.jobId));
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval!.id,
       decision: 'approve',
       resolvedBy: 'telegram',
@@ -208,6 +212,7 @@ describe('resolveApprovalDecision — atomic claim (F-14)', () => {
       .returning();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval!.id,
       decision: 'approve',
       resolvedBy: 'api',
@@ -233,6 +238,7 @@ describe('resolveApprovalDecision — atomic claim (F-14)', () => {
 
   it('resolving an unknown approval id returns approval_not_found', async () => {
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: '00000000-0000-0000-0000-000000000099',
       decision: 'approve',
       resolvedBy: 'api',
