@@ -1,11 +1,15 @@
 #!/bin/sh
 # Versioned pre-push hook (enabled with the others by `pnpm hooks:install`).
 #
-# Runs scripts/check-private-names.mjs on the commits about to be pushed: their
-# added lines and their messages. The list of private names lives outside the
-# repository (NODAL_PRIVATE_NAMES, default ~/.nodalai/private-names.txt); with no
-# list the check says so and passes. Skipped on request: NODAL_SKIP_HYGIENE=1.
+# Runs scripts/check-private-names.mjs on the commits about to be pushed: every
+# file version they add and their messages. The list of private names lives
+# outside the repository (NODAL_PRIVATE_NAMES, default ~/.nodalai/private-names.txt);
+# with no list the check says so and passes. Skipped on request: NODAL_SKIP_HYGIENE=1.
 # Without the versioned hooks path: git config core.hooksPath .githooks
+#
+# Two different failures, two different messages: exit 1 is a HIT (a private name
+# is in what you push); exit 2 is a check that could not run, which is not a hit
+# and is never reported as one.
 
 set -e
 
@@ -18,12 +22,24 @@ zero=0000000000000000000000000000000000000000
 
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$local_sha" = "$zero" ] && continue # a deletion pushes no commit
-  if [ "$remote_sha" = "$zero" ]; then
-    # New branch: what it adds over origin/main, else its whole history.
-    base=$(git merge-base origin/main "$local_sha" 2>/dev/null || true)
-    range="${base:+$base..}$local_sha"
+  base=""
+  if [ "$remote_sha" != "$zero" ] && git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+    base="$remote_sha"
   else
-    range="$remote_sha..$local_sha"
+    # New branch, or a remote tip this clone does not have: what the push adds
+    # over origin/main, else its whole history.
+    base=$(git merge-base origin/main "$local_sha" 2>/dev/null || true)
   fi
-  node scripts/check-private-names.mjs --git-range "$range"
+  range="${base:+$base..}$local_sha"
+
+  rc=0
+  node scripts/check-private-names.mjs --git-range "$range" || rc=$?
+  if [ "$rc" = "1" ]; then
+    echo "pre-push: a private name is in what you are pushing (see above). Push refused."
+    exit 1
+  elif [ "$rc" != "0" ]; then
+    echo "pre-push: the private-names check could NOT run (exit $rc, see above): this is not a hit."
+    echo "  Fix the cause, or skip once with: NODAL_SKIP_HYGIENE=1 git push"
+    exit 1
+  fi
 done

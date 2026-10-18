@@ -19,12 +19,15 @@ const PRINTER_BRAND = new RegExp(
 // name (its slug, in any spelling) is not decidable from here; that protection is
 // `scripts/check-private-names.mjs`, which reads the names from a list kept
 // outside the repository.
-const CONNECTOR_TOOL = /print_now|request_print|\b[a-z0-9][a-z0-9-]*__[a-z][a-z0-9_]*\b/;
+const CONNECTOR_TOOL = /print_now|request_print|\b[a-z0-9][a-z0-9_-]*__[a-z][a-z0-9_]*\b/i;
 
 describe('connector tool guard', () => {
   it.each([
     ['a prefixed tool name', 'call x__tool first'],
     ['a dashed server prefix', 'call my-server__list_things'],
+    ['a real MCP tool shape', 'call mcp_playwright__browser_close'],
+    ['an underscored prefix', 'call a_b__c'],
+    ['a capitalised prefix', 'call Acme__print'],
     ['the print tool', 'call request_print'],
     ['the direct print tool', 'then print_now'],
   ])('rejects %s', (_label, text) => {

@@ -2,48 +2,109 @@
 // check-private-names.mjs — fail when a private name reaches what is published.
 //
 // The names are read from a list kept OUTSIDE the repository (see
-// lib/private-names.mjs): path from NODAL_PRIVATE_NAMES, default
-// ~/.nodalai/private-names.txt, one name per line, `#` for comments. Each name is
-// matched ignoring case and ignoring spaces, dashes and underscores, so every
-// spelling of it is caught. A hit prints `file:line` and the line number of the
-// entry in the list, never the name.
+// lib/private-names.mjs): the file at NODAL_PRIVATE_NAMES (default
+// ~/.nodalai/private-names.txt), or, for a CI secret, the list itself in
+// NODAL_PRIVATE_NAMES_CONTENT. One name per line, `#` for comments. Each name is
+// matched ignoring case, whitespace (line breaks too), dashes and underscores, in
+// file contents (UTF-8, UTF-16, base64) and in file and folder names. A hit prints
+// `file:line` and the line number of the entry in the list; every printed string
+// goes through `mask`, so a name never appears, not even in a path.
 //
 // Targets (any number):
-//   --git-staged         the lines added to the index
-//   --git-range <a>..<b> the lines added by those commits, and their messages;
+//   --git-staged         the files in the index
+//   --git-range <a>..<b> every file version and commit message those commits add;
 //                        `<b>` alone scans the whole history of <b>
-//   <directory>          every text file under it (the pack)
+//   <directory>          every file under it (the pack), names included
 //
-// No list configured: said on stdout, exit 0. Any hit: exit 1. Bad usage: exit 2.
+// No list configured: said on stdout, exit 0. Any hit: exit 1. Usage error or a
+// check that could not run (git failing, unreadable file): exit 2, never a hit.
 
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { formatHit, listPath, loadList, scanDiff, scanText } from './lib/private-names.mjs';
+import { readdirSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import {
+  entriesInPath,
+  formatHit,
+  mask,
+  resolveList,
+  scanBuffer,
+  scanFile,
+  scanText,
+} from './lib/private-names.mjs';
 
-const NUL = String.fromCharCode(0);
-const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
-const MAX_FILE = 20_000_000;
+const MAX_BUFFER = 1024 * 1024 * 1024;
 
-const git = (args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024 });
+const git = (args, encoding = 'utf8') =>
+  execFileSync('git', args, { encoding, maxBuffer: MAX_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] });
 
-function scanDirectory(dir, names, hits) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      scanDirectory(path, names, hits);
-    } else if (entry.isFile() && statSync(path).size <= MAX_FILE) {
-      const text = readFileSync(path, 'utf8');
-      if (text.includes(NUL)) continue; // binary
-      for (const h of scanText(text, names)) hits.push({ where: path, ...h });
+function scanDirectory(root, names, hits) {
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      const shown = relative(root, path) || entry.name;
+      const inName = entriesInPath(entry.name, names);
+      if (inName.length > 0) hits.push({ where: join(root, shown), line: 0, entries: inName });
+      if (entry.isDirectory()) {
+        walk(path);
+      } else if (entry.isFile()) {
+        for (const h of scanFile(path, statSync(path).size, names)) {
+          hits.push({ where: join(root, shown), ...h });
+        }
+      }
+    }
+  };
+  walk(root);
+}
+
+/** `[{ blob, path }]` of the entries of `git diff-tree` / `git diff --raw -z` output. */
+function parseRaw(out) {
+  const tokens = out.split('\0');
+  const files = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const meta = /^:(\d+) (\d+) \w+ (\w+) \w+/.exec(tokens[i]);
+    if (!meta) continue;
+    const path = tokens[++i];
+    if (meta[2] !== '160000') files.push({ blob: meta[3], path });
+  }
+  return files;
+}
+
+function scanVersions(files, label, names, hits, seen) {
+  for (const { blob, path } of files) {
+    const key = `${blob}\0${path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const where = label ? `${path} @ ${label}` : path;
+    const inName = entriesInPath(path, names);
+    if (inName.length > 0) hits.push({ where, line: 0, entries: inName });
+    for (const h of scanBuffer(git(['cat-file', 'blob', blob], 'buffer'), names)) {
+      hits.push({ where, ...h });
     }
   }
 }
 
+function scanStaged(names, hits) {
+  const out = git(['diff', '--cached', '--raw', '-z', '--no-renames', '--diff-filter=ACMRT']);
+  scanVersions(parseRaw(out), '', names, hits, new Set());
+}
+
 function scanRange(range, names, hits) {
-  const [from, to] = range.includes('..') ? range.split('..') : [null, range];
-  hits.push(...scanDiff(git(['diff', '-U0', '--no-color', from ?? EMPTY_TREE, to]), names));
-  const log = git(['log', '--format=%x01%h%n%B', ...(from ? [`${from}..${to}`] : [to])]);
+  const seen = new Set();
+  const shas = git(['rev-list', '--no-merges', range]).split('\n').filter(Boolean);
+  for (const sha of shas) {
+    const raw = git([
+      'diff-tree',
+      '-r',
+      '-z',
+      '--root',
+      '--no-commit-id',
+      '--no-renames',
+      '--diff-filter=ACMRT',
+      sha,
+    ]);
+    scanVersions(parseRaw(raw), sha.slice(0, 8), names, hits, seen);
+  }
+  const log = git(['log', '--format=%x01%h%n%B', range]);
   for (const block of log.split('\u0001').filter(Boolean)) {
     const [sha, ...body] = block.split('\n');
     for (const h of scanText(body.join('\n'), names)) {
@@ -52,20 +113,19 @@ function scanRange(range, names, hits) {
   }
 }
 
-function main(argv) {
-  const path = listPath();
-  const names = loadList(path);
+function main(argv, out) {
+  const { names, source } = resolveList();
   if (names === null) {
-    console.log(
-      `check-private-names: no private-names list configured (${path} is absent); nothing was checked.`,
+    out(
+      `check-private-names: no private-names list configured (${source} is absent); nothing was checked.`,
     );
-    return 0;
+    return { code: 0, names: [] };
   }
   if (names.length === 0) {
-    console.log(
-      `check-private-names: the private-names list (${path}) has no entry; nothing was checked.`,
+    out(
+      `check-private-names: the private-names list (${source}) has no entry; nothing was checked.`,
     );
-    return 0;
+    return { code: 0, names };
   }
 
   const hits = [];
@@ -73,7 +133,7 @@ function main(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--git-staged') {
-      hits.push(...scanDiff(git(['diff', '--cached', '-U0', '--no-color']), names));
+      scanStaged(names, hits);
       targets.push(arg);
     } else if (arg === '--git-range') {
       const range = argv[++i];
@@ -87,24 +147,35 @@ function main(argv) {
   }
   if (targets.length === 0) {
     console.error('check-private-names: give --git-staged, --git-range <a>..<b> or a directory.');
-    return 2;
+    return { code: 2, names };
   }
-  for (const hit of hits) console.log(formatHit(hit));
+  for (const hit of hits) out(formatHit(hit, names));
   if (hits.length > 0) {
-    console.log(
-      `check-private-names: ${hits.length} hit(s) in ${targets.join(', ')}. The names are in ${path}; they are not printed.`,
+    out(
+      `check-private-names: ${hits.length} hit(s) in ${targets.join(', ')}. The names are in ${source}; they are not printed.`,
     );
-    return 1;
+    return { code: 1, names };
   }
-  console.log(
-    `check-private-names: ${names.length} name(s) checked in ${targets.join(', ')}, no hit.`,
-  );
-  return 0;
+  out(`check-private-names: ${names.length} name(s) checked in ${targets.join(', ')}, no hit.`);
+  return { code: 0, names };
 }
 
+let known = [];
 try {
-  process.exit(main(process.argv.slice(2)));
+  // The targets echoed in a message are masked like everything else.
+  const lines = [];
+  const result = main(process.argv.slice(2), (line) => lines.push(line));
+  known = result.names;
+  for (const line of lines) console.log(mask(line, known));
+  process.exit(result.code);
 } catch (err) {
-  console.error(`check-private-names: ${err.message}`);
+  try {
+    known = resolveList().names ?? [];
+  } catch {
+    /* the list itself is unreadable: nothing to mask with */
+  }
+  console.error(
+    `check-private-names: could not run the check: ${mask(String(err.message), known)}`,
+  );
   process.exit(2);
 }
