@@ -121,11 +121,6 @@ const ADDRESSES_NO_PLATFORM: ReadonlyArray<{ file: string; line: string; why: st
   },
   {
     file: 'apps/runner/src/job/execute.ts',
-    line: 'if (isFreshExecution && job.entityId && job.agentId && job.chatId) {',
-    why: 'whether to replay the thread history, read by conversation id, not by chat',
-  },
-  {
-    file: 'apps/runner/src/job/execute.ts',
     line: "if (replyTo.to !== 'channel' || !job.chatId) return null;",
     why: "replyTo.channel is the chat's recorded channel (replyDestination, designatedChatChannel)",
   },

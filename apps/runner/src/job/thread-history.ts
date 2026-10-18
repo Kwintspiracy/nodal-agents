@@ -496,24 +496,25 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
   // Un bloc par tour : un message de la personne, et ce que l'agent y a
   // répondu. On garde ou on jette un tour entier, jamais une moitié.
   const blocks: ModelMessage[][] = [];
-  for (const r of chronological) {
-    if (r.role === 'user') {
-      if (!r.createdAt) throw new Error('thread history: a chat_messages row has no created_at');
+  for (const row of chronological) {
+    if (row.role === 'user') {
+      if (!row.createdAt) throw new Error('thread history: a chat_messages row has no created_at');
       blocks.push([
-        { role: 'user', content: datedTurn(truncate(r.content), r.createdAt, opts.timezone) },
+        { role: 'user', content: datedTurn(truncate(row.content), row.createdAt, opts.timezone) },
       ]);
       continue;
     }
-    const notes = Array.isArray(r.runnerNotes) ? r.runnerNotes : [];
-    const own = r.jobId && r.resultKind !== 'relay' ? withoutRunnerNotes(r.result, notes) : null;
-    const relay = r.jobId && r.resultKind === 'relay' ? (r.result ?? '').trim() : '';
-    const said = [r.content.trim(), (own ?? '').trim()].filter((t) => t !== '').join('\n\n');
-    const recordLines = r.jobId
+    const runnerNotes = Array.isArray(row.runnerNotes) ? row.runnerNotes : [];
+    const own =
+      row.jobId && row.resultKind !== 'relay' ? withoutRunnerNotes(row.result, runnerNotes) : null;
+    const relay = row.jobId && row.resultKind === 'relay' ? (row.result ?? '').trim() : '';
+    const said = [row.content.trim(), (own ?? '').trim()].filter((t) => t !== '').join('\n\n');
+    const recordLines = row.jobId
       ? [
-          ...formatTaskLedgerLines(taskLedger.get(r.jobId) ?? []),
-          ...formatInlineDelegationLines(inlineLedger.get(r.jobId) ?? []),
+          ...formatTaskLedgerLines(taskLedger.get(row.jobId) ?? []),
+          ...formatInlineDelegationLines(inlineLedger.get(row.jobId) ?? []),
           ...(relay !== '' ? [truncate(relay)] : []),
-          ...notes,
+          ...runnerNotes,
         ]
       : [];
     const turn: ModelMessage[] = [
