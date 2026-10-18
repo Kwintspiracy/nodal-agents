@@ -1,0 +1,68 @@
+#!/bin/sh
+# Versioned pre-push hook (enabled with the others by `pnpm hooks:install`).
+#
+# Asks scripts/check-private-names.mjs one question about each pushed branch: does
+# the NET change it adds over the remote (or, for a new branch, over its merge-base
+# with the default branch) hold a private name, in a path, a line or a commit
+# message? The list of names lives outside the repository (NODAL_PRIVATE_NAMES,
+# default `private-names.txt` in Nodal's home folder, which NODALAI_HOME moves); with no list the check says so and passes.
+# Skipped on request: NODAL_SKIP_HYGIENE=1.
+#
+# Tags: a tag push adds no content, so `refs/tags/*` is skipped (the message of an
+# annotated tag is not read).
+#
+# Two different failures, two different messages: exit 1 is a HIT (a private name
+# is in what you push); exit 2 is a check that could not run, which is not a hit
+# and is never reported as one.
+
+set -e
+
+if [ "$NODAL_SKIP_HYGIENE" = "1" ]; then
+  echo "pre-push: skipped (NODAL_SKIP_HYGIENE=1)"
+  exit 0
+fi
+
+zero=0000000000000000000000000000000000000000
+
+# The base of a branch the remote does not know: its merge-base with the default
+# branch. Never the whole history.
+default_base() {
+  for ref in origin/HEAD origin/main origin/master main master; do
+    if git rev-parse --verify --quiet "$ref^{commit}" >/dev/null; then
+      git merge-base "$ref" "$1" 2>/dev/null && return 0
+    fi
+  done
+  return 1
+}
+
+cannot_run() {
+  echo "pre-push: the private-names check could NOT run: $1 (this is not a hit)."
+  echo "  Fix the cause, or skip once with: NODAL_SKIP_HYGIENE=1 git push"
+  exit 1
+}
+
+[ -f scripts/check-private-names.mjs ] ||
+  cannot_run "scripts/check-private-names.mjs is missing from this checkout"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue # a deletion pushes no commit
+  case "$local_ref" in refs/tags/*) continue ;; esac # a tag adds no content
+  if [ "$remote_sha" != "$zero" ] && git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+    base="$remote_sha"
+  else
+    base=$(default_base "$local_sha") || cannot_run "no default branch to compare $local_ref with"
+  fi
+
+  # A HIT is exit 1 AND the script's own verdict line. Node failing to start the
+  # script (a missing module, a syntax error) also exits 1 and prints no such line:
+  # that is a check that could not run, never a hit.
+  rc=0
+  out=$(node scripts/check-private-names.mjs --git-range "$base...$local_sha") || rc=$?
+  [ -n "$out" ] && printf '%s\n' "$out"
+  if [ "$rc" = "1" ] && printf '%s\n' "$out" | grep -Eq '^check-private-names: [0-9]+ hit\(s\) in '; then
+    echo "pre-push: a private name is in what you are pushing (see above). Push refused."
+    exit 1
+  elif [ "$rc" != "0" ]; then
+    cannot_run "exit $rc, see above"
+  fi
+done

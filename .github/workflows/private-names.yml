@@ -1,0 +1,64 @@
+name: Private names
+
+# Does this pull request add a private name (a path, a line, a commit message)?
+#
+# The names are a repository secret (their content). Under `pull_request` the
+# workflow file itself comes from the PR, so a PR could rewrite a step to print the
+# secret. Under `pull_request_target` the workflow AND every script it runs come
+# from the BASE branch: the checkout below is the base (no `ref:`), and the PR head
+# is only ever fetched as git objects (`git fetch origin pull/<n>/head`), read by
+# `git diff` / `git log`. Nothing from the PR is checked out, built or executed, so
+# the secret is reachable only by code already reviewed and merged.
+#
+# What this still cannot stop: someone who can push to the base branch (a repository
+# admin) editing this workflow or the script there. That is the trust boundary of
+# any secret in a repository.
+#
+# Without the secret (it is not set) the job says so and passes; while the base has
+# no script yet, it says that and passes.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-names-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  private-names:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The default ref of `pull_request_target` is the base branch. Never set
+      # `ref:` to the PR head here. Full history: the net change is computed from
+      # the merge-base, which a shallow clone may not hold.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Check the PR for private names
+        timeout-minutes: 5
+        env:
+          NODAL_PRIVATE_NAMES_CONTENT: ${{ secrets.NODAL_PRIVATE_NAMES }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$NODAL_PRIVATE_NAMES_CONTENT" ]; then
+            echo "Private names: no NODAL_PRIVATE_NAMES secret in this run; nothing was checked."
+            exit 0
+          fi
+          if [ ! -f scripts/check-private-names.mjs ]; then
+            echo "Private names: the base branch has no check-private-names script yet; nothing was checked."
+            exit 0
+          fi
+          git fetch --no-tags origin "pull/$PR_NUMBER/head:refs/pr/head"
+          node scripts/check-private-names.mjs --git-range "$BASE_SHA...refs/pr/head"
