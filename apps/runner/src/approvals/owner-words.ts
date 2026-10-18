@@ -19,7 +19,8 @@
 // des données (invariant #2, cadre de carte autorisé le 04/10). Aucune
 // consigne : ce que la tête en fait, c'est sa personnalité qui le dit.
 
-import type { ApprovalDecision } from './resolve.ts';
+/** La décision prise sur une carte — celle que `resolveApprovalDecision` écrit. */
+export type ApprovalDecision = 'approve' | 'reject';
 
 /** La marque du cadre, comme `[REJECTED]` pour un refus. */
 export const OWNER_ON_CARD_MARK = '[OWNER_ON_CARD]';

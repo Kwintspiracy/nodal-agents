@@ -22,8 +22,9 @@ import type { RunnerEnv } from '../env.ts';
 import { resumeJobAfterApprovalResolution } from './resume.ts';
 import { settleApprovalCards } from './card-settlement.ts';
 import { ownerWordsOnCard } from './owner-words.ts';
+import type { ApprovalDecision } from './owner-words.ts';
 
-export type ApprovalDecision = 'approve' | 'reject';
+export type { ApprovalDecision };
 
 /**
  * Les options TELLES QUE LA LIGNE les porte (P10a) — relues depuis
