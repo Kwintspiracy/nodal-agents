@@ -253,7 +253,7 @@ const printFile = defineScenario<null>({
   id: 'print-file',
   judgedBy: [
     ...JUDGED_COMMON,
-    "skipped until the bench's recording printer exists (need bench-printer, decision D2): which file was printed is read from what that printer received, never from the arguments of the call",
+    "skipped until the bench's recording printer exists (need bench-printer, #794): which file was printed is read from what that printer received, never from the arguments of the call",
     'tool_calls: a request_print, pending, one page when the connector says so',
     'never confirm_print, nothing reached the printer',
   ],
@@ -263,11 +263,11 @@ const printFile = defineScenario<null>({
   // (revue de #777, passes 3 et 4).
   // v4 : les passes 5 à 7 ont montré que lire les arguments d'un serveur
   // d'impression ne dit pas quel champ il imprime. Le fichier imprimé se
-  // jugera sur ce que l'imprimante du banc aura REÇU (décision D2) ; d'ici
-  // là, le scénario est sauté (besoin `bench-printer`).
+  // jugera sur ce que l'imprimante du banc aura REÇU (#794) ; d'ici là, le
+  // scénario est sauté (besoin `bench-printer`).
   version: 4,
   title: 'Print an existing file',
-  green: `A print request for ${PRINT_FILE_REL} was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything. Skipped until the bench's recording printer exists, which will say which file it received.`,
+  green: `A print request for ${PRINT_FILE_REL} was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything. Skipped until the bench's recording printer exists (#794), which will say which file it received.`,
   path: `request_print on the file. ${PRINT_PATH_END}`,
   deliverable: 'A print request waiting for the owner',
   productTools: { tools: ['request_print'], writes: [], reads: [] },
@@ -275,7 +275,7 @@ const printFile = defineScenario<null>({
   set: 'on-demand',
   activity: 'print',
   sends: 'nothing',
-  needs: ['printer', 'bench-printer'],
+  needs: ['bench-printer'],
   instruction: `Imprime le fichier ${PRINT_FILE_REL} de l'espace de travail partagé.`,
   timeoutMs: 10 * MIN,
   fixtures: [{ from: 'office/facture-bench.pdf', to: PRINT_FILE_REL }],
@@ -297,7 +297,8 @@ const print = defineScenario<null>({
   ],
   // v2 (catalogue du 17/10) : la liste de courses de print-list remplace la
   // note « Nodal bench », et la règle des outils du produit s'applique.
-  version: 2,
+  // v3 : sur l'imprimante du banc seulement (#794), jamais sur une vraie.
+  version: 3,
   title: 'Print a dictated text',
   green:
     'A print request holding every item of the dictated list was created through request_print and is pending: through Nodal the printer connector never prints without a human click, and nothing reached the printer. One page, nobody asked anything.',
@@ -307,7 +308,7 @@ const print = defineScenario<null>({
   set: 'nightly',
   activity: 'print',
   sends: 'nothing',
-  needs: ['printer'],
+  needs: ['bench-printer'],
   instruction: `Imprime sur une seule page cette liste de courses : ${SHOPPING.join(', ')}.`,
   timeoutMs: 10 * MIN,
   observe: async () => null,
@@ -339,7 +340,8 @@ const recipe = defineScenario<RecipeObservation>({
   // v3 (#634) : « la photo vient de la page de recette lue » n'est plus jugé
   // (`SOURCES_READ`, #648) ; v2 le devinait à partir des sorties de lecture.
   // v4 (catalogue du 17/10) : la règle des outils du produit (request_print).
-  version: 4,
+  // v5 : sur l'imprimante du banc seulement (#794), jamais sur une vraie.
+  version: 5,
   title: 'Compose a rich page with an image',
   green:
     'A pending print request of one page was created through request_print, with a photo; nothing reached the printer and nobody was asked anything. Whether the photo comes from the recipe page the agent read is not verified yet (#648).',
@@ -349,7 +351,7 @@ const recipe = defineScenario<RecipeObservation>({
   set: 'nightly',
   activity: 'print',
   sends: 'nothing',
-  needs: ['printer'],
+  needs: ['bench-printer'],
   instruction:
     "Imprime une recette de caviar d'aubergines, sur une seule page, style magazine, avec la photo de la recette elle-même.",
   timeoutMs: 20 * MIN,

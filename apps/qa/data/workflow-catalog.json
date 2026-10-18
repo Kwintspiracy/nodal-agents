@@ -22,7 +22,6 @@
   "needs": [
     "comfyui",
     "obsidian-vault",
-    "printer",
     "bench-printer",
     "no-mail-sender"
   ],
@@ -1106,7 +1105,7 @@
     },
     {
       "id": "print",
-      "version": 2,
+      "version": 3,
       "activity": "print",
       "title": "Print a dictated text",
       "green": "A print request holding every item of the dictated list was created through request_print and is pending: through Nodal the printer connector never prints without a human click, and nothing reached the printer. One page, nobody asked anything.",
@@ -1122,7 +1121,7 @@
       "subject": null,
       "set": "nightly",
       "needs": [
-        "printer"
+        "bench-printer"
       ],
       "sends": "nothing",
       "instruction": "Imprime sur une seule page cette liste de courses : pain, lait, œufs, tomates, café.",
@@ -1144,7 +1143,7 @@
       "version": 4,
       "activity": "print",
       "title": "Print an existing file",
-      "green": "A print request for nodal-bench/facture-impression.pdf was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything. Skipped until the bench's recording printer exists, which will say which file it received.",
+      "green": "A print request for nodal-bench/facture-impression.pdf was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything. Skipped until the bench's recording printer exists (#794), which will say which file it received.",
       "path": "request_print on the file. The bench never confirms: the trial stops at the preview, nothing is printed.",
       "deliverable": "A print request waiting for the owner",
       "productTools": {
@@ -1157,7 +1156,6 @@
       "subject": null,
       "set": "on-demand",
       "needs": [
-        "printer",
         "bench-printer"
       ],
       "sends": "nothing",
@@ -1166,7 +1164,7 @@
       "judgedBy": [
         "agent_jobs: the root job of the trial ended completed",
         "approval_requests: the tree raised no approval and no question (the bench never answers one)",
-        "skipped until the bench's recording printer exists (need bench-printer, decision D2): which file was printed is read from what that printer received, never from the arguments of the call",
+        "skipped until the bench's recording printer exists (need bench-printer, #794): which file was printed is read from what that printer received, never from the arguments of the call",
         "tool_calls: a request_print, pending, one page when the connector says so",
         "never confirm_print, nothing reached the printer",
         "tool_calls: the product tools are request_print; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
@@ -1189,7 +1187,7 @@
     },
     {
       "id": "recipe",
-      "version": 4,
+      "version": 5,
       "activity": "print",
       "title": "Compose a rich page with an image",
       "green": "A pending print request of one page was created through request_print, with a photo; nothing reached the printer and nobody was asked anything. Whether the photo comes from the recipe page the agent read is not verified yet (#648).",
@@ -1205,7 +1203,7 @@
       "subject": null,
       "set": "nightly",
       "needs": [
-        "printer"
+        "bench-printer"
       ],
       "sends": "nothing",
       "instruction": "Imprime une recette de caviar d'aubergines, sur une seule page, style magazine, avec la photo de la recette elle-même.",

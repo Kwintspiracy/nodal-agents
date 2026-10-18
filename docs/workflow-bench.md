@@ -73,7 +73,7 @@ a test account or a send, which waits on an owner decision, and the portal
 says "no scenario yet".
 
 A scenario also declares its **needs** (`needs.ts`): `comfyui`,
-`obsidian-vault`, `printer`, `bench-printer`, `no-mail-sender`. A missing need SKIPS the trial,
+`obsidian-vault`, `bench-printer`, `no-mail-sender`. A missing need SKIPS the trial,
 with its reason, without starting a job: a `skipped` line, grey on the
 portal, never red (nothing was tried). One mechanism for every scenario; it
 replaced the per-scenario `requires`, which made such a trial red.
@@ -82,10 +82,12 @@ replaced the per-scenario `requires`, which made such a trial red.
   (`{"services": {"comfyui": "http://127.0.0.1:8188"}}`) that answers a GET
   within 3 s. Nothing about the owner's machine is written in the code.
 - `obsidian-vault`: a workspace folder holding `.obsidian/`.
-- `printer`: an agent of the workspace has `request_print`.
-- `bench-printer`: the bench's own recording printer (decision D2), a print
-  MCP server that records the file it received and its sha-256. It does not
-  exist yet, so the need is always missing and `print-file` is skipped.
+- `bench-printer`: the bench's own recording printer (#794), a print MCP
+  server that records what it received. Every print scenario (`print`,
+  `print-file`, `recipe`) needs it: a bench trial never prints on a real
+  printer, and an agent having `request_print` (the owner's real connector)
+  does not count. It does not exist yet, so the need is always missing and
+  the three print scenarios are skipped, with the reason.
 - `no-mail-sender`: no agent of the workspace can send e-mail, and no MCP
   server of the team has unknown tools (see below).
 
@@ -157,7 +159,7 @@ the example request last.
 | pdf | `pdf-read-total`, `pdf-from-markdown` | no product PDF tool: a command or a skill is the right path, measured |
 | html-page | `html-landing`, `html-table-csv` (a table and an SVG chart of the CSV), `html-edit` | `file_write` / `file_edit` |
 | image-comfyui | `comfy-exact-size`, `comfy-variants`, `comfyui-telegram` | a ComfyUI workflow; need `comfyui` |
-| print | `print` (a dictated shopping list), `print-file`, `recipe` | `request_print`; need `printer`; never confirmed |
+| print | `print` (a dictated shopping list), `print-file`, `recipe` | `request_print`; need `bench-printer` (#794), never a real printer; never confirmed |
 | orchestration | `mcp-answer`, `undoable-action`, `undoable-action-delegated`, `delegate-fails`, `ask-before-acting` | the path IS the verdict (below) |
 
 Retired on 2026-10-17, with why: `question-percent`, `question-seconds`,
@@ -220,8 +222,8 @@ declares them, never inside one judge:
     read (#784). Reading the arguments of a print server cannot tell which
     field it prints (review of #777, passes 5 to 7), so the bench does not try:
     `print-file` needs the bench's own recording printer (`bench-printer`,
-    decision D2), which will say which file it received and its sha-256.
-    Until it exists, `print-file` is skipped with that reason.
+    #794), which will say which file it received. Until it exists,
+    `print-file` is skipped with that reason, like every print scenario.
 
   Otherwise the trial is red, "product tool available, not used". When none
   is in the team's tools, the trial is skipped with that reason, like a missing
@@ -374,10 +376,10 @@ per step) changes the signature of every judge, and the bench must not count
 a preference left by an earlier trial; it comes in its own change.
 
 The vault is found, never configured: a vault is a workspace folder of the
-workspace that holds `.obsidian/`. The printer is found the same way: an
-agent of the workspace that has `request_print`. When either is missing, the
-scenario is skipped with that reason, no job is started (needs
-`obsidian-vault`, `printer`).
+workspace that holds `.obsidian/`. When it is missing, the scenario is
+skipped with that reason, no job is started (need `obsidian-vault`). The
+print scenarios never use the owner's printer: they need the bench's own
+recording printer (`bench-printer`, #794), and are skipped until it exists.
 
 ## Safety on the owner's stack
 

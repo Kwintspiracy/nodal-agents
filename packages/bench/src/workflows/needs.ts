@@ -1,7 +1,7 @@
 // workflows/needs.ts — ce qu'un scénario demande à la machine, et ce qui manque.
 //
 // Un scénario déclare ses besoins par leur NOM (`needs`) : un service local
-// (ComfyUI), un coffre Obsidian, une imprimante, ou l'assurance qu'aucun
+// (ComfyUI), un coffre Obsidian, l'imprimante du banc, ou l'assurance qu'aucun
 // courrier ne peut partir. Un besoin absent fait SAUTER l'essai, avec sa
 // raison, sans lancer de job : ni rouge (rien n'a été essayé), ni silence (la
 // ligne `skipped` le dit, le portail l'affiche en gris).
@@ -30,11 +30,6 @@ function words(toolName: string): string[] {
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
-}
-
-/** L'outil de l'équipe qui porte ce nom nu, quel que soit le préfixe de son serveur. */
-export function teamHas(env: Pick<ScenarioEnv, 'teamTools'>, bare: string): boolean {
-  return env.teamTools.some((t) => t === bare || t.endsWith(`__${bare}`));
 }
 
 /**
@@ -238,15 +233,17 @@ export function isOutboundTool(toolName: string): boolean {
 }
 
 /**
- * L'imprimante du banc (décision D2 de la page du banc) : un serveur MCP
- * d'impression que le banc fournit, et qui ENREGISTRE le fichier qu'il a reçu
- * et son empreinte. Lire les arguments d'un serveur d'impression ne dit pas
- * quel champ il imprime (revue de #777, passes 5 à 7) : seul le serveur qui
- * reçoit le fichier peut dire lequel. Tant qu'elle n'existe pas, un scénario
- * qui juge le fichier imprimé est sauté, avec cette raison.
+ * L'imprimante du banc (#794) : un serveur MCP d'impression que le banc
+ * fournit, et qui ENREGISTRE ce qu'il a reçu. Tout essai d'impression du banc
+ * tourne sur elle, jamais sur une vraie imprimante (décision du propriétaire,
+ * 18/10 : « je ne vais pas imprimer 50 000 tests ») ; avoir `request_print`
+ * dans l'équipe, c'est avoir le connecteur réel du propriétaire, et ne compte
+ * pas. Lire les arguments d'un serveur d'impression ne dit pas non plus quel
+ * fichier il imprime (revue de #777, passes 5 à 7) : seul le serveur qui le
+ * reçoit le sait. Tant qu'elle n'existe pas, le besoin manque, toujours.
  */
 export const BENCH_PRINTER_MISSING =
-  "the bench's recording printer does not exist yet (decision D2): only a print server that records the file it received and its sha-256 can tell which file was printed (#784)";
+  "the bench's recording printer does not exist yet (#794): print trials never use a real printer, and only a printer that records what it received can tell which file was printed";
 
 /** Pourquoi le besoin manque, ou null quand il est là. */
 const CHECKS: Record<Need, (env: ScenarioEnv) => string | null> = {
@@ -259,11 +256,6 @@ const CHECKS: Record<Need, (env: ScenarioEnv) => string | null> = {
   },
   'obsidian-vault'(env) {
     return obsidianVaults(env.workspaceRoots).length > 0 ? null : NO_VAULT;
-  },
-  printer(env) {
-    return teamHas(env, 'request_print')
-      ? null
-      : 'no agent of this workspace has request_print (no printer connector configured)';
   },
   'bench-printer'() {
     return BENCH_PRINTER_MISSING;

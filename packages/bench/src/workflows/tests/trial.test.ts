@@ -11,7 +11,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { TreeFactsSchema, type TreeFacts } from '../facts';
-import { scenarioById } from '../scenarios';
+import { SCENARIOS, scenarioById } from '../scenarios';
+import { BENCH_PRINTER_MISSING } from '../needs';
 import { busyReason, measure, runTrial, type TrialDeps, type TrialOptions } from '../trial';
 import type { ForeignActivity } from '../stack';
 import type { ResearchSubject } from '../subjects';
@@ -218,33 +219,42 @@ describe('workflow trial safety rules', () => {
     const line = await runTrial(scenarioById('print')!, w.deps, OPTS);
     expect(w.started).toEqual([]);
     expect(line.verdict).toBe('skipped');
-    expect(line.reasons).toEqual([
-      'no agent of this workspace has request_print (no printer connector configured)',
-    ]);
+    expect(line.reasons).toEqual([BENCH_PRINTER_MISSING]);
     expect(line).toMatchObject({
       activity: 'print',
-      needs: ['printer'],
+      needs: ['bench-printer'],
       rootModel: 'z-ai/glm-5.3',
     });
   });
 
-  it('the same need met lets the trial run: the printer is seen under its MCP server prefix', async () => {
-    const green = load('print-green');
-    const w = world({ rootId: green.rootId, snapshots: [green] });
-    w.deps.env = async (startedMs) => ({
-      workspaceRoots: [],
-      teamTools: ['office_printer__request_print'],
-      services: {},
-      unlistedMcpServers: [],
-      startedMs,
-    });
-    const line = await runTrial(scenarioById('print')!, w.deps, OPTS);
-    expect(w.started).toHaveLength(1);
-    // L'essai réel de la v1 imprimait la note « Nodal bench » : sous la v2 (la
-    // liste de courses), il est rouge pour son texte, et pour rien d'autre.
-    expect(line.verdict).toBe('red');
-    expect(line.reasons).toEqual([
-      'no print request holds the whole list (pain, lait, œufs, tomates, café)',
+  // Décision du propriétaire, 18/10 : un essai d'impression du banc ne parle
+  // jamais à une vraie imprimante. Tout scénario de l'activité `print` attend
+  // l'imprimante du banc (#794), même quand l'équipe a request_print (le
+  // connecteur réel du propriétaire) : il est sauté, avec la raison, et rien
+  // ne démarre.
+  it.each(SCENARIOS.filter((s) => s.activity === 'print').map((s) => s.id))(
+    "%s: a print scenario never runs on the team's real printer: without the bench's recording printer it is skipped, with the reason",
+    async (id) => {
+      const green = load('print-green');
+      const w = world({ rootId: green.rootId, snapshots: [green] });
+      w.deps.env = async (startedMs) => ({
+        workspaceRoots: [],
+        teamTools: ['office_printer__request_print', 'office_printer__get_print_request'],
+        services: {},
+        unlistedMcpServers: [],
+        startedMs,
+      });
+      const line = await runTrial(scenarioById(id)!, w.deps, OPTS);
+      expect(w.started).toEqual([]);
+      expect([line.verdict, line.reasons]).toEqual(['skipped', [BENCH_PRINTER_MISSING]]);
+    },
+  );
+
+  it('the print scenarios are print, print-file and recipe: the rule above is played on each', () => {
+    expect(SCENARIOS.filter((s) => s.activity === 'print').map((s) => s.id)).toEqual([
+      'print',
+      'print-file',
+      'recipe',
     ]);
   });
 

@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { HOME_HTML, WEATHER_CSV } from '../fixture-data';
-import { BENCH_PRINTER_MISSING, missingNeeds } from '../needs';
+import { missingNeeds } from '../needs';
 import { PRINT_FILE_REL, scenarioById } from '../scenarios';
 import { barsMatch } from '../suites/html';
 import { play, png } from './harness';
@@ -238,25 +238,6 @@ describe('print judges', () => {
       'the print request is submitted, not pending',
       'a print request went to the printer without the owner',
     ]);
-  });
-
-  // Revue de #777, passes 5 à 7 : lire les arguments d'un serveur d'impression
-  // ne dit pas quel champ il imprime. print-file attend l'imprimante du banc
-  // (décision D2), qui dira quel fichier elle a reçu : d'ici là, il est SAUTÉ.
-  it("print-file needs the bench's recording printer, which does not exist yet: skipped with that reason, wherever it runs", () => {
-    const s = scenarioById('print-file')!;
-    expect(s.needs).toContain('bench-printer');
-    const env = {
-      workspaceRoots: [],
-      teamTools: ['office_printer__request_print'],
-      services: {},
-      unlistedMcpServers: [],
-      startedMs: 0,
-    };
-    expect(missingNeeds(s.needs ?? [], env)).toEqual([BENCH_PRINTER_MISSING]);
-    expect(
-      ['print', 'recipe'].map((id) => missingNeeds(scenarioById(id)!.needs ?? [], env)),
-    ).toEqual([[], []]);
   });
 
   it('print: a request missing an item of the dictated list is red, by what it lacks', async () => {

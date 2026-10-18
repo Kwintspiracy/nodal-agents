@@ -74,13 +74,7 @@ export type Activity = (typeof ACTIVITIES)[number];
  * Les besoins qu'un scénario peut déclarer (vérifiés par needs.ts). Un nom hors
  * de cette liste ne compile pas.
  */
-export const NEED_IDS = [
-  'comfyui',
-  'obsidian-vault',
-  'printer',
-  'bench-printer',
-  'no-mail-sender',
-] as const;
+export const NEED_IDS = ['comfyui', 'obsidian-vault', 'bench-printer', 'no-mail-sender'] as const;
 export type Need = (typeof NEED_IDS)[number];
 
 /**
