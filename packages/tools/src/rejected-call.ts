@@ -30,7 +30,15 @@
 //   - un AUTRE run : la décision appartient au run où elle a été prise. Si le
 //     propriétaire veut qu'on réessaie, il le dit, et c'est un nouveau run.
 
-import { approvalRequests, toolCalls, and, eq, gte, desc, sql } from '@nodal-agents/db';
+import {
+  approvalRequests,
+  toolCalls,
+  and,
+  eq,
+  gte,
+  sql,
+  approvalsNewestFirst,
+} from '@nodal-agents/db';
 import { canonicalJson } from '@nodal-agents/shared';
 import { PURPOSE_KEY } from './purpose';
 import type { ToolContext } from './types';
@@ -118,9 +126,9 @@ export async function priorRejectionOfSameCall(
     // La DERNIÈRE décision sur cet appel, pas la première que la base rend
     // (revue Codex de #492, passe 4) : refusé, devenu caduc, puis refusé de
     // nouveau, c'est le second refus qui répond. L'heure de la décision (une
-    // décision sans heure en dernier), puis l'id pour départager deux
-    // décisions de la même heure.
-    .orderBy(sql`${approvalRequests.resolvedAt} desc nulls last`, desc(approvalRequests.id));
+    // décision sans heure en dernier), puis l'ordre de création pour départager
+    // deux décisions de la même heure.
+    .orderBy(sql`${approvalRequests.resolvedAt} desc nulls last`, approvalsNewestFirst);
   const action = actionOf(input, purposeIsArgument);
   const same = rows.find((r) => actionOf(r.toolInput, purposeIsArgument) === action);
   if (!same) return null;

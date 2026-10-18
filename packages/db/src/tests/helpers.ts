@@ -459,8 +459,12 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       gate_reasons jsonb,
       -- mirrors migration 0135 (#566) : l'exécution réservée d'un appel approuvé
       execution_claim integer,
-      execution_output jsonb
+      execution_output jsonb,
+      -- mirrors migration 0150 (#801) : l'ordre de création
+      seq bigserial
     );
+    -- mirrors migration 0150 (#801)
+    CREATE INDEX IF NOT EXISTS idx_approval_requests_seq ON approval_requests (seq);
 
     -- mirrors migration 0140 (#637) : où chaque carte d'approbation a été livrée
     CREATE TABLE IF NOT EXISTS approval_card_messages (
