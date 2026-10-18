@@ -176,7 +176,7 @@ const file = defineScenario<FileObservation>({
 // ─── print & recipe (connecteur d'imprimante) ────────────────────────────────
 
 /**
- * Ce que le connecteur HP rend à `request_print` (son structuredContent, lu par
+ * Ce que le connecteur d'imprimante rend à `request_print` (son structuredContent, lu par
  * `mcpStructured`, sans le jeton de confirmation) : un id, un statut, un aperçu.
  */
 interface PrintRequestView {

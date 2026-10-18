@@ -420,7 +420,7 @@ recording printer (`bench-printer`, #794), and are skipped until it exists.
   while it holds the lock. Stopping is shared with the trial loop: once asked,
   no new trial starts, a `run_task` call in flight is awaited (30 s at most),
   and only then are the live trials swept.
-- Printing: through Nodal the HP connector cannot print without a human. Its
+- Printing: through Nodal the printer connector cannot print without a human. Its
   confirmation token is stripped from what the model sees
   (`summarize()` in the connector), Nodal drops `_meta`, and the Print action
   of the connector's approval card is disabled for this client (`via: none`,
