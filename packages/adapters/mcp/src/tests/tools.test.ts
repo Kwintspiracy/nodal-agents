@@ -213,10 +213,17 @@ describe('mcpToolToToolDefinition', () => {
 
     expect(out).toEqual({
       format: MCP_TOOL_OUTPUT_FORMAT,
-      content: [{ type: 'image', mimeType: 'image/png', bytes: 3 }],
+      content: [
+        {
+          type: 'image',
+          mimeType: 'image/png',
+          bytes: 3,
+          toModel: { attached: false, reason: 'this run does not pass images to a model' },
+        },
+      ],
     });
     expect(read(def, out)).toBe(
-      "[Image returned by the tool (image/png, 3 B): not passed to you. Nodal does not give a tool's image to the model.]",
+      '[Image returned by the tool (image/png, 3 B): not passed to you: this run does not pass images to a model.]',
     );
   });
 

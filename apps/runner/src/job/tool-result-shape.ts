@@ -27,6 +27,28 @@ export const EVICTED_TOOL_RESULT_MARKER =
 export const EVICTED_TOOL_INPUT_MARKER =
   '[earlier tool-call arguments elided to fit the context window]';
 
+/**
+ * A tool result's output as text, for every reader that has only text to give:
+ * a text value as written, a value serialized, and an output that carries
+ * images (`content`, `ctx.attachImage`) as its text with each image said — an
+ * image is not text, and where only text goes (a delegation's side results,
+ * the reflection transcript, the run record a recheck reads) it is not
+ * carried. That is said, never dropped, and the base64 never becomes text.
+ */
+export function toolResultOutputText(output: { type?: unknown; value?: unknown }): string {
+  if (typeof output.value === 'string') return output.value;
+  if (output.type === 'content' && Array.isArray(output.value)) {
+    return (output.value as Array<{ type?: unknown; text?: unknown; mediaType?: unknown }>)
+      .map((v) =>
+        v.type === 'text' && typeof v.text === 'string'
+          ? v.text
+          : `[An image (${typeof v.mediaType === 'string' ? v.mediaType : 'image'}) was attached to this result; it is not carried here. Read it again to see it.]`,
+      )
+      .join('\n');
+  }
+  return JSON.stringify(output.value ?? null);
+}
+
 export type ToolResultShape =
   /** Ce que l'outil a rendu. */
   | 'ok'

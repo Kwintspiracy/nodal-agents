@@ -1,9 +1,9 @@
 // file-ops/file-read.ts — read a workspace-scoped file with line pagination
 
 import { createHash } from 'node:crypto';
-import { readFile, stat } from 'node:fs/promises';
+import { open, readFile, stat } from 'node:fs/promises';
 import { z } from 'zod';
-import type { ToolDefinition } from '../../types';
+import type { ToolContext, ToolDefinition } from '../../types';
 import { failureText, readCard } from '../../presenters';
 import {
   resolveAndCheckPath,
@@ -12,6 +12,7 @@ import {
   WorkspaceError,
 } from './workspace';
 import { readLinesWindowed, ReadLinesCapExceededError } from './read-lines';
+import { MAX_MODEL_IMAGE_BYTES, formatBytes, sniffImageMediaType } from '../../model-images';
 
 export const FileReadInputSchema = z.object({
   path: z
@@ -46,7 +47,50 @@ export type FileReadOutput =
       end_line: number;
       truncated: boolean;
     }
+  /**
+   * An image file, handed to the model with this result (`ctx.attachImage`):
+   * the row keeps its type and size, never its bytes.
+   */
+  | { ok: true; image: { media_type: string; bytes: number } }
   | { ok: false; reason: string };
+
+/** The first bytes of a file, enough for `sniffImageMediaType`. */
+const SNIFF_BYTES = 16;
+
+async function readHead(path: string): Promise<Uint8Array> {
+  const handle = await open(path, 'r');
+  try {
+    const buf = Buffer.alloc(SNIFF_BYTES);
+    const { bytesRead } = await handle.read(buf, 0, SNIFF_BYTES, 0);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * An image file, read whole: attached for the model when it takes images, and
+ * refused, saying why, when it does not. Never its bytes as text.
+ */
+function imageResult(
+  input: FileReadInput,
+  absPath: string,
+  bytes: Buffer,
+  mediaType: string,
+  ctx: ToolContext,
+): FileReadOutput {
+  const what = `"${input.path}" is an image (${mediaType}, ${formatBytes(bytes.length)})`;
+  const outcome = ctx.attachImage?.({ mediaType, data: bytes.toString('base64') }) ?? {
+    attached: false as const,
+    reason: 'this run does not pass images to a model',
+  };
+  if (!outcome.attached) {
+    return { ok: false, reason: `${what}, and it was not read: ${outcome.reason}.` };
+  }
+  // Les octets LUS, rapportés au seam (tool_call_reads), comme pour un texte.
+  ctx.reportReadContent?.(absPath, createHash('sha256').update(bytes).digest('hex'));
+  return { ok: true, image: { media_type: mediaType, bytes: bytes.length } };
+}
 
 export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOutput> = {
   name: 'file_read',
@@ -57,21 +101,28 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
     'Read the contents of a file in the agent workspace. Returns lines with start_line / ' +
     'end_line markers. Use `offset` and `limit` to paginate large files. Files above ~1 MiB ' +
     'MUST be paginated — request smaller chunks. Files above 50 MiB are refused outright, ' +
-    'even with offset/limit — use `file_search` to locate content, or split the file.',
+    'even with offset/limit — use `file_search` to locate content, or split the file. ' +
+    'An image file (PNG, JPEG, GIF, WebP, up to 1 MiB) is returned as the image itself when ' +
+    'your model takes images as input; otherwise the call says why it was not read.',
   inputSchema: FileReadInputSchema,
   riskLevel: 'read',
   egress: 'none',
   loading: 'eager',
   card: 'read',
   present: ({ input, output }) =>
-    output.ok
+    output.ok && 'image' in output
       ? readCard({
           path: input.path,
-          text: output.content,
-          truncated: output.truncated,
-          sections: output.total_lines,
+          text: `${output.image.media_type}, ${output.image.bytes} bytes`,
         })
-      : failureText(output.reason),
+      : output.ok
+        ? readCard({
+            path: input.path,
+            text: output.content,
+            truncated: output.truncated,
+            sections: output.total_lines,
+          })
+        : failureText(output.reason),
   execute: async (input, ctx) => {
     try {
       const path = await resolveAndCheckPath(ctx, input.path);
@@ -101,6 +152,18 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
       const startIdx = Math.max(0, offset - 1);
 
       if (info.size > MAX_READ_BYTES) {
+        // An image is read whole or not at all: no line window of it means
+        // anything, and above the whole-read cap it is not passed.
+        const largeImage = sniffImageMediaType(await readHead(path));
+        if (largeImage !== null) {
+          return {
+            ok: false,
+            reason:
+              `"${input.path}" is an image (${largeImage}, ${formatBytes(info.size)}), and it was ` +
+              `not read: an image can be passed at ${formatBytes(MAX_MODEL_IMAGE_BYTES)} at most; ` +
+              `a smaller copy (scaled down, or JPEG) can be.`,
+          };
+        }
         if (input.offset === undefined && input.limit === undefined) {
           return {
             ok: false,
@@ -133,6 +196,8 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
       }
 
       const bytes = await readFile(path);
+      const imageType = sniffImageMediaType(bytes.subarray(0, SNIFF_BYTES));
+      if (imageType !== null) return imageResult(input, path, bytes, imageType, ctx);
       // Les octets LUS, rapportés au seam (tool_call_reads) ; puis décodés comme avant.
       ctx.reportReadContent?.(path, createHash('sha256').update(bytes).digest('hex'));
       const raw = bytes.toString('utf8');

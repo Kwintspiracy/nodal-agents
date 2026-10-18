@@ -127,6 +127,7 @@ import type {
   ToolProvisioning,
   ApprovalGateRequest,
   ToolExecutionResult,
+  ModelImageInput,
 } from '@nodal-agents/tools';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import {
@@ -203,6 +204,7 @@ import {
   EXPIRED_MARK,
   REJECTED_MARK,
   toolResultShape,
+  toolResultOutputText,
 } from './tool-result-shape.ts';
 import { unansweredToolCalls } from './close-transcript.ts';
 import {
@@ -612,6 +614,45 @@ function visionRoutingNote(path: string): string {
   );
 }
 
+/** A tool-result part whose output carries an image a tool attached. */
+function isToolResultWithImage(p: unknown): boolean {
+  const out = (p as { type?: unknown; output?: { type?: unknown; value?: unknown } } | null)
+    ?.output;
+  return (
+    (p as { type?: unknown } | null)?.type === 'tool-result' &&
+    out?.type === 'content' &&
+    Array.isArray(out.value) &&
+    out.value.some((v) => (v as { type?: unknown } | null)?.type === 'image-data')
+  );
+}
+
+function carriesToolResultImage(m: ModelMessage): boolean {
+  return m.role === 'tool' && Array.isArray(m.content) && m.content.some(isToolResultWithImage);
+}
+
+/** The same tool message, each attached image replaced by the sentence that says it was not passed. */
+function withoutToolResultImages(m: ModelMessage): ModelMessage {
+  const content = (m.content as unknown[]).map((p) => {
+    if (!isToolResultWithImage(p)) return p;
+    const part = p as { output: { value: Array<{ type: string; mediaType?: string }> } };
+    return {
+      ...(p as object),
+      output: {
+        type: 'content',
+        value: part.output.value.map((v) =>
+          v.type === 'image-data'
+            ? {
+                type: 'text',
+                text: `[An image (${v.mediaType ?? 'image'}) was attached to this result: not passed to you, your current model does not take images as input.]`,
+              }
+            : v,
+        ),
+      },
+    };
+  });
+  return { ...m, content } as ModelMessage;
+}
+
 /**
  * Resolve image attachments for the LLM call WITHOUT mutating the stored messages
  * — the persisted messages keep the lean file PATH, which also lets the path
@@ -634,12 +675,21 @@ async function hydrateForLlm(
     !/^(https?:|data:)/i.test((p as { image: string }).image);
 
   const needs = messages.some(
-    (m) => m.role === 'user' && Array.isArray(m.content) && m.content.some(isLocalImagePart),
+    (m) =>
+      (m.role === 'user' && Array.isArray(m.content) && m.content.some(isLocalImagePart)) ||
+      (!canSeeImages && carriesToolResultImage(m)),
   );
   if (!needs) return messages;
 
   const out: ModelMessage[] = [];
   for (const m of messages) {
+    // An image a tool attached reaches only a model that sees: the tool asked
+    // (`ctx.modelImageInput`), so this holds only for a transcript written
+    // under another model (the agent's model changed before a resume).
+    if (!canSeeImages && carriesToolResultImage(m)) {
+      out.push(withoutToolResultImages(m));
+      continue;
+    }
     if (m.role !== 'user' || !Array.isArray(m.content)) {
       out.push(m);
       continue;
@@ -2233,6 +2283,15 @@ async function runJobTracked(
   const canSeeImages =
     llmClient.capabilities.vision === true || modelCanSeeImages(llmClient.config.model);
   const imageCache = new Map<string, Uint8Array>();
+  // What a tool that comes back with an image is told (`ctx.attachImage`,
+  // packages/tools/src/model-images.ts): the same fact, for every tool call of
+  // this job.
+  const modelImageInput: ModelImageInput = canSeeImages
+    ? { sees: true }
+    : {
+        sees: false,
+        reason: `the model this agent runs (${llmClient.config.model}) does not take images as input`,
+      };
 
   // ── 4. Orchestrator? ──────────────────────────────────────────────────────────
   // A unified orchestrator receives BOTH delegation toolsets (assign_* + create_task)
@@ -3067,7 +3126,18 @@ async function runJobTracked(
   // ── 11.6 ToolResultOutput type + coerce helper (shared by resume step + loop) ──
   // AI SDK v6 ToolResultPart.output is a discriminated union; we coerce all raw
   // tool outputs here so every writer uses the same canonical shape.
-  type ToolResultOutput = { type: 'text'; value: string } | { type: 'json'; value: unknown };
+  // `content`: a success that came back with images (`ctx.attachImage`), the
+  // tool's text first, then each image — what `packages/llm` sends to every
+  // provider in the form it takes (`withToolResultImagesAsUserParts`).
+  type ToolResultOutput =
+    | { type: 'text'; value: string }
+    | { type: 'json'; value: unknown }
+    | {
+        type: 'content';
+        value: Array<
+          { type: 'text'; text: string } | { type: 'image-data'; data: string; mediaType: string }
+        >;
+      };
   //
   // INJECT-001. `toolName` is what decides whether the payload gets framed as
   // external data (see `wrapUntrusted`). It is OPTIONAL on purpose: the callers
@@ -3129,13 +3199,29 @@ async function runJobTracked(
     tool: ToolDefinition<z.ZodTypeAny, unknown>,
     toolName: string,
     result: Exclude<ToolExecutionResult, { outcome: 'awaiting_approval' }>,
-  ): ToolResultOutput =>
-    result.outcome === 'success'
-      ? toResultOutput(toolOutputForModel(tool, result.output), toolName)
-      : toErrorOutput(result.error, {
-          raisedBy: result.raisedByTool ? toolName : undefined,
-          mayHaveDelivered: result.mayHaveDelivered === true,
-        });
+  ): ToolResultOutput => {
+    if (result.outcome !== 'success') {
+      return toErrorOutput(result.error, {
+        raisedBy: result.raisedByTool ? toolName : undefined,
+        mayHaveDelivered: result.mayHaveDelivered === true,
+      });
+    }
+    const read = toResultOutput(toolOutputForModel(tool, result.output), toolName);
+    // The images the tool attached (`ctx.attachImage`, admitted against this
+    // job's model) follow its text, in the order it attached them.
+    if (!result.images || result.images.length === 0) return read;
+    return {
+      type: 'content',
+      value: [
+        { type: 'text', text: toolResultOutputText(read) },
+        ...result.images.map((i) => ({
+          type: 'image-data' as const,
+          data: i.data,
+          mediaType: i.mediaType,
+        })),
+      ],
+    };
+  };
 
   // ── 11.6.5 Shared: execute already-resolved approval requests in-process ─────
   // Runs an approved tool (bypassing its gate — a human already reviewed this
@@ -3352,6 +3438,7 @@ async function runJobTracked(
                   resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
                     resolveAgentToolNames(db, targetAgentId, placement),
                   requestUserInput,
+                  modelImageInput,
                 },
                 {
                   approvalRules: resumeApprovalRules,
@@ -3464,8 +3551,7 @@ async function runJobTracked(
           // call (#566): a later request of the same tool must keep its marker.
           if (tb.toolName !== req.toolName) return block;
           if (req.executedAt !== null && tb.toolCallId !== req.toolCallId) return block;
-          const outputText =
-            tb.output.type === 'text' ? tb.output.value : JSON.stringify(tb.output.value);
+          const outputText = toolResultOutputText(tb.output);
           if (!outputText.includes(AWAITING_APPROVAL_MARK)) return block;
           // Replace with the real (or rejection) output.
           return { ...tb, output: replacementOutput };
@@ -5744,6 +5830,7 @@ async function runJobTracked(
         resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
           resolveAgentToolNames(db, targetAgentId, placement),
         requestUserInput,
+        modelImageInput,
       };
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
@@ -6062,6 +6149,7 @@ async function runJobTracked(
                 ...(speechGenerator ? { speechGenerator } : {}),
                 resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
                   resolveAgentToolNames(db, targetAgentId, placement),
+                modelImageInput,
               },
               {
                 approvalRules: approvalRuleList,
@@ -6123,10 +6211,9 @@ async function runJobTracked(
                 type: 'tool_result' as const,
                 tool_use_id: b.toolCallId,
                 toolName: b.toolName,
-                content:
-                  b.output.type === 'text'
-                    ? b.output.value
-                    : JSON.stringify(b.output.value ?? null),
+                // An attached image is not carried by a side result: its text
+                // says so (`toolResultOutputText`).
+                content: toolResultOutputText(b.output),
               }));
 
               const delegation = await handleDelegation(

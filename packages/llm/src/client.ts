@@ -11,7 +11,11 @@ import {
   LLMOutputLimitError,
 } from './errors';
 import { CAPABILITY_MATRIX } from './providers/registry';
-import { validateMessageStructure, withoutNamelessToolCalls } from './message-structure';
+import {
+  validateMessageStructure,
+  withoutNamelessToolCalls,
+  withToolResultImagesAsUserParts,
+} from './message-structure';
 import { knownContextWindow, modelOutputCap } from '@nodal-agents/shared';
 import { reportedUsage } from './reported-usage';
 import { REPORTS_OUTPUT_USAGE } from './providers/usage-reporting';
@@ -257,7 +261,8 @@ function buildModel(config: ProviderConfig): LanguageModel {
 
 /**
  * Extract messages from the args object if present, make them replayable by
- * every provider (`withoutNamelessToolCalls`), and validate structure.
+ * every provider (`withToolResultImagesAsUserParts`, `withoutNamelessToolCalls`),
+ * and validate structure.
  * Only runs when ModelMessage[] messages are provided.
  * Omit<Message, 'id'>[] (useChat format) is passed through without validation —
  * those are legacy messages and not produced by our orchestrators.
@@ -268,7 +273,9 @@ function prepareMessages<A>(args: A): A {
   // Only validate if the first message looks like a ModelMessage (has role + content)
   const first = messages[0] as Record<string, unknown> | undefined;
   if (!first || typeof first['role'] !== 'string' || !('content' in first)) return args;
-  const replayable = withoutNamelessToolCalls(messages as ModelMessage[]);
+  const replayable = withoutNamelessToolCalls(
+    withToolResultImagesAsUserParts(messages as ModelMessage[]),
+  );
   validateMessageStructure(replayable);
   return { ...args, messages: replayable };
 }
