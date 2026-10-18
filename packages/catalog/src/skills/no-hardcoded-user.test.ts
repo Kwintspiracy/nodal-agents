@@ -14,6 +14,27 @@ const PRINTER_BRAND = new RegExp(
   'i',
 );
 
+// A skill names no connector at all: neither a tool (`<server>__<tool>`, the print
+// tool names) nor a bare server slug shaped like `<word>-connector`, `<word>_printer`.
+const CONNECTOR_NAMING = /print_now|request_print|__|\b[a-z0-9]+[-_](connector|printer)\b/i;
+
+describe('connector naming guard', () => {
+  const dash = ['office', 'printer'].join('-');
+  const under = ['acme', 'connector'].join('_');
+  it.each([
+    ['a bare slug with a dash', `use the ${dash} server`],
+    ['a bare slug with an underscore', `use the ${under} server`],
+    ['a prefixed tool name', 'call x__tool first'],
+    ['the print tool', 'call request_print'],
+  ])('rejects %s', (_label, text) => {
+    expect(text).toMatch(CONNECTOR_NAMING);
+  });
+
+  it('accepts plain wording', () => {
+    expect(CONNECTOR_NAMING.test('print the page on the connected printer')).toBe(false);
+  });
+});
+
 describe('system skill catalog — no hardcoded per-user values (I-5)', () => {
   it('no skill content mentions "Quentin"', () => {
     for (const skill of systemSkills) {
@@ -100,7 +121,7 @@ describe('print-request skill', () => {
   it('names no connector-specific print tool', () => {
     const text = `${skill?.description}
 ${skill?.content}`;
-    expect(text).not.toMatch(/print_now|request_print|__/);
+    expect(text).not.toMatch(CONNECTOR_NAMING);
   });
 
   it('lays out inside the printable area the print tool reports, full-bleed only on request', () => {
