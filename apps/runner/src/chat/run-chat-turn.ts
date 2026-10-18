@@ -107,12 +107,11 @@ export const CHAT_TOOLS: Record<
       'full toolset — connectors, skills, delegation to your team, and (as the workspace ROOT) ' +
       'creating agents, skills, MCP servers, connectors or automations. Use it for ANY action: ' +
       'send, fetch, create, configure, publish, or multi-step work.\n' +
-      'The user’s own messages since your last call reach the job exactly as they wrote them: ' +
-      'the platform passes them on, you do not retype them. `instruction` is YOUR NOTE beside ' +
-      'them, and the job reads it as yours, not as the user’s: leave it empty when their words ' +
-      'say it all. Write in it only what the job could not know without you, from earlier in ' +
-      'this conversation (what was already decided or produced). Do NOT add scope, a method, a ' +
-      'check or a delivery the user did not ask for — that is the worker’s own judgment.\n' +
+      'The user’s message reaches the job exactly as they wrote it, with the earlier turns of ' +
+      'this conversation: the platform passes them on, you do not retype them. `instruction` ' +
+      'is YOUR NOTE beside them, and the job reads it as yours, not as the user’s: leave it ' +
+      'empty when their words say it all. Do NOT add scope, a method, a check or a delivery ' +
+      'the user did not ask for — that is the worker’s own judgment.\n' +
       'Never decline an action the user asks for — escalate it here. For plain conversation or ' +
       'recalling facts, reply in text instead (do not call this).\n' +
       'While a job launched from this conversation is still running, a call starts a reply turn ' +
@@ -587,11 +586,6 @@ export async function runChatTurn(opts: {
     .orderBy(desc(chatMessages.createdAt))
     .limit(HISTORY_CANDIDATE_LIMIT);
 
-  // Ce que la personne a dit depuis la dernière remise : ce qu'un `run_task`
-  // de ce tour transmettra tel quel (handoff.ts). Lu sur les lignes ci-dessus,
-  // AVANT que l'historique ne les retourne.
-  const personsWords = personsWordsSinceLastHandoff(rows);
-
   // Delegated-task visibility (2026-07-12 incident — see task-ledger.ts): one
   // batched query for every escalated job's own create_task fan-out, keyed by
   // jobId (= agent_tasks.root_job_id).
@@ -885,13 +879,15 @@ export async function runChatTurn(opts: {
   //     The spawned job runs the ROOT with its full toolset (delegating to
   //     sub-agents → the dispatch cards). The chat just shows its progress.
   if (runTask) {
-    // LA REMISE (handoff.ts). La tâche du job est ce que la personne a dit,
-    // pris dans la conversation par la plateforme : jamais le texte du modèle.
-    // Ce que le modèle écrit dans `instruction` est sa note, que le travailleur
-    // lit après ces mots, sous un cadre qui dit qu'elle n'est pas d'elle.
+    // LA REMISE (handoff.ts). La tâche du job est le message de la personne,
+    // tel qu'elle l'a écrit — comme sur tout canal : jamais le texte du modèle.
+    // Les tours d'avant lui arrivent par l'historique du fil, comme sur tout
+    // canal (thread-history.ts, `loadDashboardHistory`). Ce que le modèle écrit
+    // dans `instruction` est sa note, que le travailleur lit après ces mots,
+    // sous un cadre qui dit qu'elle n'est pas d'elle.
     const note = handoffNote(
       String((runTask.input as { instruction?: unknown } | undefined)?.instruction ?? ''),
-      personsWords,
+      message,
     );
     // Tour de réponse ou tête d'un fil au repos : la décision de toute entrée
     // (#531), prise sous le verrou de la conversation.
@@ -903,7 +899,7 @@ export async function runChatTurn(opts: {
         agentId,
         status: 'pending',
         channel: 'dashboard',
-        task: personsWords,
+        task: message,
         handoffNote: note,
         // Jobs page grouping (migration 0059): this channel already has a
         // real conversation entity (the dashboard sidebar thread) — stamp
@@ -913,7 +909,7 @@ export async function runChatTurn(opts: {
         // dossier où cette conversation travaille, sans attendre qu'une
         // écriture l'y rattache.
         projectId: conv.currentProjectId,
-        messages: openingMessages(personsWords, note),
+        messages: openingMessages(message, note),
       },
     });
     const job = { id: turn.jobId };
@@ -1016,34 +1012,6 @@ export async function runChatTurn(opts: {
   }
 
   return { ok: true, reply: replyText, streamed };
-}
-
-/**
- * Ce que la personne a dit depuis la dernière REMISE de cette conversation —
- * le dernier message de l'agent qui a lancé un job : ses messages d'après, du
- * plus ancien au plus récent, tels qu'elle les a écrits. C'est ce qu'un
- * `run_task` de ce tour transmet (handoff.ts) : le message du tour, et ceux
- * qu'aucun job n'a encore reçus — la demande à laquelle le front a répondu en
- * texte, puis la correction qui l'a fait agir. Ce qui précède la dernière
- * remise, un job l'a déjà reçu ; ce que le travailleur doit en savoir, le
- * front le dit dans sa note.
- *
- * `rows` : les messages du fil, du plus RÉCENT au plus ancien, celui du tour
- * en tête. Ils ne sont jamais vides — le tour vient d'écrire le sien — et une
- * liste vide est une panne dite (invariant #4), jamais une tâche inventée.
- */
-export function personsWordsSinceLastHandoff(
-  rows: ReadonlyArray<{ role: string; content: string; jobId: string | null }>,
-): string {
-  const words: string[] = [];
-  for (const r of rows) {
-    if (r.role === 'assistant' && r.jobId) break;
-    if (r.role === 'user') words.push(r.content);
-  }
-  if (words.length === 0) {
-    throw new Error("run-chat-turn: no message of the person to hand on (this turn's is missing)");
-  }
-  return words.reverse().join('\n\n');
 }
 
 /**

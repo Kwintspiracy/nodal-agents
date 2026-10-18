@@ -185,9 +185,6 @@ async function conversationAvecTravail(status: string | null): Promise<void> {
     })
     .returning({ id: agentJobs.id });
   premierJob = j!.id;
-  // Des heures DISTINCTES, comme dans un vrai fil où la personne tape entre
-  // deux tours : à la même heure, l'ordre du fil — qui dit ce que la remise
-  // suivante transmet — serait celui du hasard.
   await db.insert(chatMessages).values([
     {
       entityId: seed.entityId,
@@ -195,7 +192,6 @@ async function conversationAvecTravail(status: string | null): Promise<void> {
       conversationId,
       role: 'user',
       content: 'nodal-agents',
-      createdAt: new Date(Date.now() - 120_000),
     },
     {
       entityId: seed.entityId,
@@ -204,7 +200,6 @@ async function conversationAvecTravail(status: string | null): Promise<void> {
       role: 'assistant',
       content: 'On it.',
       jobId: premierJob,
-      createdAt: new Date(Date.now() - 60_000),
     },
   ]);
 }
@@ -414,8 +409,6 @@ describe('runChatTurn — un travail du fil court déjà (#453, #531) @cap:parle
 
     expect(a.ok && b.ok).toBe(true);
     const nouvelles = (await travauxDuFil()).filter((j) => j.id !== premierJob);
-    // Chaque tour remet ce que la personne a dit depuis la remise d'avant :
-    // le second, sa seule correction.
     expect(nouvelles).toEqual([
       {
         id: expect.any(String) as string,

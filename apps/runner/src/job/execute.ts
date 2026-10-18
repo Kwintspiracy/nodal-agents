@@ -3050,7 +3050,11 @@ async function runJobTracked(
   // Frais : rien que son ouverture — la tâche, et la note d'une remise s'il y
   // en a une. Un job repris porte au moins un tour de l'assistant.
   const isFreshExecution = messages.length > 0 && messages.every((m) => m.role === 'user');
-  if (isFreshExecution && job.entityId && job.agentId && job.chatId) {
+  // Tout tour d'une conversation, sur tout canal : un job du tableau de bord
+  // n'a pas de `chat_id`, et c'était la seule raison pour laquelle il ne
+  // recevait aucun historique (handoff.ts). `loadThreadHistory` dit lui-même
+  // quels canaux en ont un, et rend [] sans conversation.
+  if (isFreshExecution && job.entityId && job.agentId && job.conversationId) {
     try {
       const history = await loadThreadHistory({
         db,

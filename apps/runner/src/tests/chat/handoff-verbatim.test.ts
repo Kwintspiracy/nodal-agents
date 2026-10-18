@@ -12,23 +12,25 @@
 // de test, vrai client LLM construit depuis la clé de l'agent, et la requête
 // telle que le fournisseur la reçoit, lue à la frontière `fetch` :
 //
-//   - tableau de bord : la tâche est ce que la personne a écrit depuis la
-//     dernière remise (la demande restée sans job, puis la correction), prise
-//     par la plateforme ; l'instruction du front est sa note. Le travailleur
-//     reçoit les mots seuls dans leur message, puis la note sous son cadre ;
+//   - tableau de bord : la tâche est le message de la personne, tel qu'elle
+//     l'a écrit ; l'instruction du front est sa note. Le travailleur reçoit
+//     les tours d'avant de la conversation comme tout canal (historique du fil,
+//     la personne mot pour mot et datée), puis le message seul, puis la note
+//     sous son cadre — la forme de l'incident (la correction lance un NOUVEAU
+//     job) comme celle d'une première réponse en texte ;
 //   - un front qui n'ajoute rien : aucune note, un seul message ;
-//   - après une remise, seuls les messages d'après sont transmis ;
 //   - une langue autre que le français, avec et sans note ;
+//   - l'historique borné comme celui d'un canal (MAX_TURNS, BUDGET_CHARS) ;
 //   - Telegram et Discord : un tour de réponse né d'une correction transmet au
 //     travail en cours les mots TAPÉS, et son propre texte comme sa note.
 //
 // Mutations vérifiées (chacune rougit au moins un cas ci-dessous) :
-//   - `task: personsWords` remplacé par l'instruction du modèle (l'ancien
+//   - `task: message` remplacé par l'instruction du modèle (l'ancien
 //     comportement) → les cas du tableau de bord rougissent ;
-//   - `personsWordsSinceLastHandoff` qui ne garde que le message du tour →
-//     « a correction after a text-only reply » rougit ;
-//   - la frontière de la dernière remise ignorée (`break` retiré) → « only
-//     what the person said since » rougit ;
+//   - l'historique réservé aux jobs qui ont un `chat_id` (l'ancienne garde
+//     d'execute.ts) → les deux cas de correction rougissent ;
+//   - le message du tour laissé dans l'historique → idem (il y est deux fois) ;
+//   - le budget retiré de `loadDashboardHistory` → « bounded » rougit ;
 //   - `openingMessages` qui colle la note au message de la personne → les
 //     requêtes du travailleur rougissent ;
 //   - `message_conversation_run` qui remet le texte du modèle comme les mots
@@ -64,6 +66,7 @@ import type { RunnerDeps } from '../../deps.ts';
 import { runChatTurn } from '../../chat/run-chat-turn.ts';
 import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
 import { executeJob } from '../../job/execute.ts';
+import { BUDGET_CHARS } from '../../job/thread-history.ts';
 import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
 import { takeChannelTurn } from '../../channels/turn.ts';
 
@@ -125,6 +128,8 @@ function textOf(content: unknown): string {
 
 const userTexts = (messages: Sent) =>
   messages.filter((m) => m.role === 'user').map((m) => textOf(m.content));
+const assistantTexts = (messages: Sent) =>
+  messages.filter((m) => m.role === 'assistant').map((m) => textOf(m.content));
 
 /**
  * Le réseau. Le FRONT (l'appel qui propose `run_task`) répond par `front` :
@@ -253,64 +258,73 @@ const REQUEST =
   "Je voudrais imprimer une feuille d'exercice d'écriture des chiffres de 0 à 9. " +
   "Fais-moi une proposition que je puisse l'avoir avant de l'imprimer.";
 const CORRECTION = 'Les chiffres doivent se tracer en un seul trait : pas de barre au 7, ni au 1.';
+const PROPOSAL = 'Voici la proposition : feuille_chiffres.pdf. Rien n’est imprimé.';
 const FRONT_NOTE =
   'Corrige la feuille : chiffres en un seul trait. Vérifie visuellement le rendu ' +
   "(capture d'écran) avant de répondre. NE PAS IMPRIMER : l'utilisateur veut valider l'aperçu.";
 
 describe('the chat front hands the person’s request on as they wrote it; what it adds is its note @cap:parler-a-un-agent/moteur', () => {
-  it('dashboard — a correction after a text-only reply: both messages reach the worker verbatim, the front’s additions apart under their frame', async () => {
+  it('dashboard — the incident’s shape: the correction starts a NEW job, whose worker reads the first request verbatim in the thread history, and the front’s additions apart under their frame', async () => {
     const conversationId = await dashboardConversation();
-    // Premier message : le front répond en texte, aucun job.
-    expect(
-      await chatTurn(conversationId, REQUEST, { text: 'Voici une proposition de feuille.' }),
-    ).toBeUndefined();
-    // La correction : le front lance le travail, avec ses propres ajouts.
+    // Premier message : le front lance un job, qui livre une proposition.
+    const first = await chatTurn(conversationId, REQUEST, {
+      text: 'Je lance la création de la proposition.',
+      instruction: 'Prépare une proposition de feuille, sans imprimer.',
+    });
+    await db
+      .update(agentJobs)
+      .set({ status: 'completed', result: PROPOSAL })
+      .where(eq(agentJobs.id, first!));
+    // La correction : un NOUVEAU job, avec les ajouts du front.
     const jobId = await chatTurn(conversationId, CORRECTION, {
       text: 'Je corrige.',
       instruction: FRONT_NOTE,
     });
     expect(jobId).toBeTruthy();
+    expect(jobId).not.toBe(first);
 
-    // La ligne : les mots de la personne, dans l'ordre ; la note du front, à part.
-    expect(await jobRow(jobId!)).toEqual({
-      task: `${REQUEST}\n\n${CORRECTION}`,
-      handoffNote: FRONT_NOTE,
-    });
+    // La ligne : le message de la personne ; la note du front, à part.
+    expect(await jobRow(jobId!)).toEqual({ task: CORRECTION, handoffNote: FRONT_NOTE });
 
-    // La requête RÉELLE du travailleur : les mots seuls dans leur message, puis
-    // la note sous son cadre. Rien de ce que le front a écrit n'est dans le
-    // message de la personne.
+    // La requête RÉELLE du travailleur : le premier message de la personne mot
+    // pour mot (daté) et la réponse d'alors, puis la correction seule dans son
+    // message, puis la note sous son cadre. La contrainte « avant de
+    // l'imprimer » est lue dans les mots de la personne, pas dans ceux du front.
     const sent = await workerRequest(jobId!);
-    expect(userTexts(sent)).toEqual([
-      `${REQUEST}\n\n${CORRECTION}`,
-      `${HANDOFF_NOTE_FRAME}\n${FRONT_NOTE}`,
+    const users = userTexts(sent);
+    expect(users).toHaveLength(3);
+    expect(users[0]).toMatch(/^\[[^\]]+\] /);
+    expect(users[0]!.endsWith(`] ${REQUEST}`)).toBe(true);
+    expect(users.slice(1)).toEqual([CORRECTION, `${HANDOFF_NOTE_FRAME}\n${FRONT_NOTE}`]);
+    expect(assistantTexts(sent)).toEqual([
+      `Je lance la création de la proposition.\n\n${PROPOSAL}`,
     ]);
   }, 30_000);
 
-  it('dashboard — a front that adds nothing: the worker receives the person’s words alone, and no note is kept', async () => {
+  it('dashboard — a correction after a text-only reply: the first request and the reply reach the worker as the thread’s history', async () => {
     const conversationId = await dashboardConversation();
+    expect(
+      await chatTurn(conversationId, REQUEST, { text: 'Voici une proposition de feuille.' }),
+    ).toBeUndefined();
+    const jobId = await chatTurn(conversationId, CORRECTION, { instruction: FRONT_NOTE });
+
+    expect(await jobRow(jobId!)).toEqual({ task: CORRECTION, handoffNote: FRONT_NOTE });
+    const sent = await workerRequest(jobId!);
+    const users = userTexts(sent);
+    expect(users[0]!.endsWith(`] ${REQUEST}`)).toBe(true);
+    expect(users.slice(1)).toEqual([CORRECTION, `${HANDOFF_NOTE_FRAME}\n${FRONT_NOTE}`]);
+    expect(assistantTexts(sent)).toEqual(['Voici une proposition de feuille.']);
+  }, 30_000);
+
+  it('dashboard — a front that adds nothing: the worker receives the person’s words alone, and no note is kept', async () => {
     const words = 'Envoie le rapport du T3 à Mathilde.';
-    const empty = await chatTurn(conversationId, words, { instruction: '' });
+    const empty = await chatTurn(await dashboardConversation(), words, { instruction: '' });
     const repeated = await chatTurn(await dashboardConversation(), words, { instruction: words });
 
     for (const jobId of [empty!, repeated!]) {
       expect(await jobRow(jobId)).toEqual({ task: words, handoffNote: null });
       expect(userTexts(await workerRequest(jobId))).toEqual([words]);
     }
-  }, 30_000);
-
-  it('dashboard — after a hand-off, only what the person said since reaches the next one', async () => {
-    const conversationId = await dashboardConversation();
-    const first = await chatTurn(conversationId, REQUEST, { instruction: 'Fais la feuille.' });
-    expect(first).toBeTruthy();
-    const second = await chatTurn(conversationId, CORRECTION, {
-      instruction: 'La feuille déjà proposée dans ce fil.',
-    });
-
-    expect(await jobRow(second!)).toEqual({
-      task: CORRECTION,
-      handoffNote: 'La feuille déjà proposée dans ce fil.',
-    });
   }, 30_000);
 
   it('dashboard — a non-French request, with and without a note, travels unchanged', async () => {
@@ -329,6 +343,30 @@ describe('the chat front hands the person’s request on as they wrote it; what 
       `${HANDOFF_NOTE_FRAME}\n${note}`,
     ]);
   }, 30_000);
+
+  it('dashboard — the history is bounded like a channel’s: the oldest turns fall first, never the request', async () => {
+    const conversationId = await dashboardConversation();
+    // Douze tours de 2 000 caractères : plus que MAX_TURNS, plus que BUDGET_CHARS.
+    for (let i = 0; i < 12; i++) {
+      await chatTurn(conversationId, `TOUR-${String(i).padStart(2, '0')} ${'x'.repeat(2_000)}`, {
+        text: `réponse ${i}`,
+      });
+    }
+    const jobId = await chatTurn(conversationId, CORRECTION, { instruction: '' });
+    const sent = await workerRequest(jobId!);
+    const users = userTexts(sent);
+    const replayed = users.slice(0, -1).map((u) => /TOUR-(\d\d)/.exec(u)?.[1]);
+    // Les plus récents seulement, dans l'ordre, et la demande à la fin.
+    expect(replayed.length).toBeGreaterThan(0);
+    expect(replayed.length).toBeLessThanOrEqual(8);
+    expect(replayed[replayed.length - 1]).toBe('11');
+    expect(users[users.length - 1]).toBe(CORRECTION);
+    const historyChars = sent
+      .slice(0, -1)
+      .filter((m) => m.role !== 'system')
+      .reduce((n, m) => n + textOf(m.content).length, 0);
+    expect(historyChars).toBeLessThanOrEqual(BUDGET_CHARS);
+  }, 60_000);
 });
 
 describe('a reply turn on a channel passes the person’s words on as typed, its own text as its note @cap:parler-par-canal-externe/moteur', () => {
