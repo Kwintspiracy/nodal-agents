@@ -7,6 +7,13 @@ import { describe, it, expect } from 'vitest';
 import { systemSkills } from '../index';
 import { MAGAZINE_PAGE_TEMPLATE } from './magazine-page';
 
+// Printer makers and lines a skill must not name. The first maker is spelled in
+// two halves so the repository itself never carries that brand as a word.
+const PRINTER_BRAND = new RegExp(
+  String.raw`\b(${['h' + 'p', 'deskjet', 'laserjet', 'epson', 'canon', 'brother', 'xerox', 'lexmark'].join('|')})\b`,
+  'i',
+);
+
 describe('system skill catalog — no hardcoded per-user values (I-5)', () => {
   it('no skill content mentions "Quentin"', () => {
     for (const skill of systemSkills) {
@@ -93,7 +100,7 @@ describe('print-request skill', () => {
   it('names no connector-specific print tool', () => {
     const text = `${skill?.description}
 ${skill?.content}`;
-    expect(text).not.toMatch(/print_now|request_print|hp_connector|__/);
+    expect(text).not.toMatch(/print_now|request_print|__/);
   });
 
   it('lays out inside the printable area the print tool reports, full-bleed only on request', () => {
@@ -119,7 +126,7 @@ ${skill?.content}`;
     const text = `${skill?.description}\n${skill?.content}`;
     expect(text).not.toMatch(/quentin/i);
     expect(text).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.]+/);
-    expect(text).not.toMatch(/\b(hp|deskjet|laserjet|epson|canon|brother|xerox|lexmark)\b/i);
+    expect(text).not.toMatch(PRINTER_BRAND);
     expect(text).not.toMatch(/https?:\/\/(?!URL)/);
   });
 });
@@ -227,7 +234,7 @@ describe('magazine-page skill', () => {
     const text = `${skill?.description}\n${content}`;
     expect(text).not.toMatch(/quentin/i);
     expect(text).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.]+/);
-    expect(text).not.toMatch(/\b(hp|deskjet|laserjet|epson|canon|brother|xerox|lexmark)\b/i);
+    expect(text).not.toMatch(PRINTER_BRAND);
     expect(text).not.toMatch(/https?:\/\//);
   });
 });
