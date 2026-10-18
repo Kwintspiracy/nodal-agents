@@ -554,6 +554,13 @@ describe('the CI workflow', () => {
     expect(workflow).toContain('git fetch --no-tags origin "pull/$PR_NUMBER/head:refs/pr/head"');
   });
 
+  it('disables the setup-node package-manager cache (no pnpm is installed in this job)', () => {
+    // setup-node@v5 reads `packageManager: pnpm@...` from the root package.json and
+    // fails with "Unable to locate executable file: pnpm" unless the cache is off.
+    const step = workflow.slice(workflow.indexOf('actions/setup-node@v5'));
+    expect(step.slice(0, step.indexOf('- name:'))).toMatch(/^\s+package-manager-cache: false$/m);
+  });
+
   it('is not a step of ci.yml, whose workflow file comes from the PR', () => {
     expect(ci).not.toContain('check-private-names');
     expect(ci).not.toContain('NODAL_PRIVATE_NAMES');
