@@ -222,8 +222,10 @@ declares them, never inside one judge:
     read (#784). Reading the arguments of a print server cannot tell which
     field it prints (review of #777, passes 5 to 7), so the bench does not try:
     `print-file` needs the bench's own recording printer (`bench-printer`,
-    #794), which will say which file it received. Until it exists,
-    `print-file` is skipped with that reason, like every print scenario.
+    #794), which will say which file it received. Its judge is closed: it
+    is green only when that printer's record shows the content of the posed
+    file (its sha-256) and no other file. Until the record exists the judge
+    is never green, and the trial is skipped like every print scenario.
 
   Otherwise the trial is red, "product tool available, not used". When none
   is in the team's tools, the trial is skipped with that reason, like a missing
@@ -452,9 +454,13 @@ recording printer (`bench-printer`, #794), and are skipped until it exists.
     `get_posting_rules`), and a messaging service is exempt only on a pure
     read;
   - an outbound verb in action form (send, post, publish, share, forward,
-    reply, notify, tweet, upload… as base, -s, -es or -ing) in action position
-    is a send (`mcp-telegram__send_message`, `discord__sendMessage`,
-    `slack__file_upload`);
+    reply, notify, tweet, upload, print… as base, -s, -es or -ing) in action
+    position is a send (`mcp-telegram__send_message`, `discord__sendMessage`,
+    `slack__file_upload`). Printing is one: paper leaves the machine like a
+    message does, so `request_print` or `confirm_print` in ANY scenario makes
+    the trial red, and a printer read (`list_printers`) does not. After a read
+    verb the base `print` still counts, so `get_print_request` is red too:
+    closed, like `get_post`;
   - otherwise, closed: an outbound verb in action form anywhere in the name
     (`blog__create_posts`, `notify__push`), a name starting with "message", or
     a messaging or mail service (`telegram__chat`, `smtp_relay`) is a send. A
@@ -465,9 +471,12 @@ recording printer (`bench-printer`, #794), and are skipped until it exists.
   send AFTER THE FACT; it prevents nothing, and it stops growing here (review
   passes 3 to 7). The gate is the bench space (#758): real trials run only
   there, behind a STRUCTURAL pre-trial check that no tool of the bench team can
-  send anything. Until then a trial on the owner's agents CAN still send him a
-  message, and the bench only says so. In the bench space, this alarm ringing
-  means the gate has a hole.
+  send anything, on a throwaway instance with no real connector, printer
+  included. Until then a trial on the owner's agents CAN still send him a
+  message or print at his place, and the bench only says so. In the bench
+  space, this alarm ringing means the gate has a hole. The bench's own
+  printer (#794) will expose a print tool too: its exemption will come from
+  its server's identity, never from its tool's name.
 - The real `research` trial of 30/09 called `telegram_send_message` from the
   delegate: a message reached the owner during a bench trial. Its judge said
   green; the declared destination (`nothing`) now makes such a run red.

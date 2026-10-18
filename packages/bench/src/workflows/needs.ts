@@ -88,6 +88,8 @@ export function isMailSender(toolName: string): boolean {
  * Les verbes qui font sortir quelque chose de la machine. Leur forme d'ACTION
  * (base, -s, -es, -ing, e final tombé) compte ; un participe (posted, shared,
  * sent) décrit une chose (`published_at`, `sent_items`), il n'agit pas.
+ * Imprimer en est un (revue de #777, passe 8) : du papier sort, comme un
+ * message part ; un essai du banc n'imprime jamais sur une vraie imprimante.
  */
 const OUTBOUND_BASES = [
   'send',
@@ -101,6 +103,7 @@ const OUTBOUND_BASES = [
   'broadcast',
   'upload',
   'dm',
+  'print',
 ];
 function actionForms(base: string): string[] {
   const forms = [base, `${base}s`, `${base}es`, `${base}ing`];
@@ -208,10 +211,14 @@ function isInternalTool(toolName: string): boolean {
  * des noms et signale un envoi APRÈS COUP ; elle n'empêche rien et n'a pas
  * vocation à grandir encore. La porte, c'est l'espace « banc » (#758) : les
  * vrais essais n'y tournent que derrière un contrôle STRUCTUREL d'avant
- * essai, qui vérifie qu'aucun outil de l'équipe ne peut envoyer. Jusque-là,
- * un essai sur les agents du propriétaire PEUT encore lui envoyer un message,
- * et le banc ne fait que le dire. Une alarme qui sonne dans l'espace banc
- * signale un trou de cette porte.
+ * essai, qui vérifie qu'aucun outil de l'équipe ne peut envoyer, et une
+ * instance jetable sans aucun connecteur réel, imprimante comprise. Jusque-là,
+ * un essai sur les agents du propriétaire PEUT encore lui envoyer un message
+ * ou imprimer chez lui, et le banc ne fait que le dire. Une alarme qui sonne
+ * dans l'espace banc signale un trou de cette porte.
+ *
+ * L'imprimante du banc (#794) exposera elle aussi un outil d'impression : son
+ * exemption viendra de l'IDENTITÉ de son serveur, jamais du nom de son outil.
  */
 export function isOutboundTool(toolName: string): boolean {
   if (isInternalTool(toolName)) return false;

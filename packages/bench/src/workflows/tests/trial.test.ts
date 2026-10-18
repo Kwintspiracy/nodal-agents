@@ -13,7 +13,14 @@ import { describe, expect, it } from 'vitest';
 import { TreeFactsSchema, type TreeFacts } from '../facts';
 import { SCENARIOS, scenarioById } from '../scenarios';
 import { BENCH_PRINTER_MISSING } from '../needs';
-import { busyReason, measure, runTrial, type TrialDeps, type TrialOptions } from '../trial';
+import {
+  busyReason,
+  destinationReasons,
+  measure,
+  runTrial,
+  type TrialDeps,
+  type TrialOptions,
+} from '../trial';
 import type { ForeignActivity } from '../stack';
 import type { ResearchSubject } from '../subjects';
 import type { AnyScenario } from '../types';
@@ -464,6 +471,76 @@ describe('where a trial may send', () => {
     const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
     expect(line.reasons).toEqual([]);
   });
+
+  // Revue de #777, passe 8 (P2) : « jamais une vraie imprimante » ne tenait
+  // qu'au besoin des trois scénarios d'impression. Imprimer est une action
+  // sur le monde, comme envoyer : la même classification (`isOutboundTool`)
+  // rend rouge TOUT essai qui appelle un outil d'impression, quel que soit
+  // son scénario. Une lecture (`list_printers`) ne l'est pas.
+  const PRINT_CALLS = [
+    'office_printer__request_print',
+    'office_printer__confirm_print',
+    'printer__print_document',
+    'cups__print',
+  ];
+  const nonPrint = SCENARIOS.filter((s) => s.activity !== 'print' && s.sends === 'nothing');
+  it.each(PRINT_CALLS)(
+    'a print call (%s) is red with its reason in every non-print scenario, never only in the print ones',
+    (tool) => {
+      expect(nonPrint.length).toBeGreaterThan(10);
+      const green = load('question-green');
+      const printed: TreeFacts = {
+        ...green,
+        toolCalls: [
+          { jobId: green.rootId, toolName: tool, input: '{}', output: '{}', createdMs: 0 },
+        ],
+      };
+      for (const s of nonPrint)
+        expect([s.id, destinationReasons(s, printed)]).toEqual([
+          s.id,
+          [`an outbound tool was called (${tool})`],
+        ]);
+    },
+  );
+
+  it('end to end: a question trial whose agent called request_print then confirm_print is red, named', async () => {
+    const green = load('question-green');
+    const printed: TreeFacts = {
+      ...green,
+      toolCalls: [
+        ...green.toolCalls,
+        ...['office_printer__request_print', 'office_printer__confirm_print'].map((toolName) => ({
+          jobId: green.rootId,
+          toolName,
+          input: '{}',
+          output: '{}',
+          createdMs: 0,
+        })),
+      ],
+    };
+    const w = world({ rootId: green.rootId, snapshots: [printed] });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect([line.verdict, line.reasons]).toEqual([
+      'red',
+      [
+        'an outbound tool was called (office_printer__request_print, office_printer__confirm_print)',
+      ],
+    ]);
+  });
+
+  it.each(['office_printer__list_printers', 'printer__get_printers', 'printer__list_jobs'])(
+    'a printer read (%s) stays green in every non-print scenario',
+    (tool) => {
+      const green = load('question-green');
+      const read: TreeFacts = {
+        ...green,
+        toolCalls: [
+          { jobId: green.rootId, toolName: tool, input: '{}', output: '{}', createdMs: 0 },
+        ],
+      };
+      for (const s of nonPrint) expect([s.id, destinationReasons(s, read)]).toEqual([s.id, []]);
+    },
+  );
 
   it('internal tools stay quiet: files, office documents, the dashboard, return_result', async () => {
     const green = load('question-green');

@@ -249,11 +249,20 @@ function pendingPrint(
 
 export const PRINT_FILE_REL = 'nodal-bench/facture-impression.pdf';
 
+/**
+ * Le fichier imprimé ne se juge que sur ce que l'imprimante du banc a REÇU
+ * (#794), jamais sur les arguments d'un appel (revue de #777, passes 5 à 7).
+ * Tant que cet enregistrement n'existe pas, le juge de print-file est fermé :
+ * cette raison, toujours.
+ */
+export const PRINT_RECORD_MISSING =
+  "the printed file is judged only from the bench printer's record (#794), and there is none";
+
 const printFile = defineScenario<null>({
   id: 'print-file',
   judgedBy: [
     ...JUDGED_COMMON,
-    "skipped until the bench's recording printer exists (need bench-printer, #794): which file was printed is read from what that printer received, never from the arguments of the call",
+    "the bench printer's record (#794): the content it received has the sha-256 of the posed file, and no other file was printed; until that record exists, never green",
     'tool_calls: a request_print, pending, one page when the connector says so',
     'never confirm_print, nothing reached the printer',
   ],
@@ -265,9 +274,12 @@ const printFile = defineScenario<null>({
   // d'impression ne dit pas quel champ il imprime. Le fichier imprimé se
   // jugera sur ce que l'imprimante du banc aura REÇU (#794) ; d'ici là, le
   // scénario est sauté (besoin `bench-printer`).
+  // Passe 8 : le juge est FERMÉ. Sans l'enregistrement de l'imprimante du
+  // banc, il ne rend jamais vert, quelle que soit la demande. La version reste
+  // 4 : aucun essai n'a tourné en v4 (sauté partout, PR non fusionnée).
   version: 4,
   title: 'Print an existing file',
-  green: `A print request for ${PRINT_FILE_REL} was created through request_print (no command in its place) and is pending, of one page when the connector says so; nothing reached the printer and nobody was asked anything. Skipped until the bench's recording printer exists (#794), which will say which file it received.`,
+  green: `The bench printer's record (#794) shows it received the content of the posed ${PRINT_FILE_REL} (its sha-256) and no other file, through a request_print (no command in its place) that is pending, of one page when the connector says so; nobody was asked anything.`,
   path: `request_print on the file. ${PRINT_PATH_END}`,
   deliverable: 'A print request waiting for the owner',
   productTools: { tools: ['request_print'], writes: [], reads: [] },
@@ -281,7 +293,11 @@ const printFile = defineScenario<null>({
   fixtures: [{ from: 'office/facture-bench.pdf', to: PRINT_FILE_REL }],
   observe: async () => null,
   judge(facts) {
-    return [...commonReasons(facts), ...pendingPrint(facts, () => true, 'was kept')];
+    return [
+      ...commonReasons(facts),
+      ...pendingPrint(facts, () => true, 'was kept'),
+      PRINT_RECORD_MISSING,
+    ];
   },
 });
 
