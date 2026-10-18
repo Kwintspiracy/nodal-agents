@@ -54,6 +54,7 @@ import {
   isUnderPath,
   normPath,
 } from './code-projects.ts';
+import { ClaimOwnerSchema } from './claim-owner-schema.ts';
 import {
   canonicalChangePath,
   extractChange,
@@ -12323,11 +12324,6 @@ export async function updateNetworkSettingsAction(
 // under an advisory lock that zero accounts exist, so this is one-shot. Trust
 // model is the same as first-user sign-up on a fresh install (TOFU): whoever
 // reaches the login page first owns the install.
-
-const ClaimOwnerSchema = z.object({
-  email: z.string().trim().max(200).email(),
-  password: z.string().min(8).max(200),
-});
 
 export async function claimOwnerAccountAction(raw: unknown): Promise<ActionResult<null>> {
   try {

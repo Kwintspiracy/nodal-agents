@@ -17,7 +17,7 @@
     "@nodal-agents/shared": "workspace:*",
     "@nodal-agents/tools": "workspace:*",
     "apify-client": "^2.23.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "^25.7.0",
