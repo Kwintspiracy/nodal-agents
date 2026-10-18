@@ -69,8 +69,10 @@ export interface ProviderCapabilities {
   toolUse: boolean;
   /** Provider supports Anthropic-style prompt caching (extended TTL cache headers) */
   promptCaching: boolean;
-  /** Provider supports image/vision inputs */
-  vision: boolean;
+  // No `vision` here: whether a model takes images is a fact about the MODEL,
+  // read from one place for every reader (`modelCanSeeImages`,
+  // @nodal-agents/shared/model-catalog). A per-provider flag said "sees" for
+  // every model of a provider, text-only ones included (review of #798).
   /** Provider supports native structured outputs (JSON mode / schema enforcement) */
   structuredOutputs: boolean;
   /** Provider supports streaming responses */

@@ -133,7 +133,6 @@ function makeMockLlmClient(textResponse = 'Task complete.'): RunnerDeps['llmClie
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },
@@ -442,7 +441,6 @@ describe('runCronTick (integration)', () => {
       capabilities: {
         toolUse: true,
         promptCaching: false,
-        vision: false,
         structuredOutputs: false,
         streaming: false,
       },

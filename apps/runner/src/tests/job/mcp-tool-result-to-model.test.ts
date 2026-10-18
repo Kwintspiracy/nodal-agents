@@ -237,6 +237,40 @@ describe('an MCP tool result reaches the model as the server wrote it @cap:conne
     });
   }, 60_000);
 
+  it('more image bytes than a request carries: the call attaches what fits, says the rest, and the row keeps no byte', async () => {
+    const { jobId, entityId, agentId } = await seedJob(db, { model: MODEL, role: 'agent' });
+    await seedServer(entityId, agentId, 'pages', 'many-images');
+    await db
+      .insert(approvalRules)
+      .values({ entityId, agentId: null, toolName: 'pages__report', action: 'auto_approve' });
+
+    const { bodies } = await run(jobId, [
+      { calls: [{ name: 'pages__report', args: { purpose: 'Render the pages.' } }] },
+      { text: 'Done.' },
+    ]);
+
+    const next = bodies[1]!;
+    const page = (k: number) =>
+      `data:image/png;base64,${Buffer.alloc(1024 * 1024, k).toString('base64')}`;
+    // Ten 1 MiB images fill the 10 MiB a request carries: the first ten pages.
+    expect(imageUrls(next)).toEqual(Array.from({ length: 10 }, (_, k) => page(k)));
+    const [result] = toolResults(next);
+    expect(result).toContain(
+      '[Image returned by the tool (image/png, 1.0 MiB): attached to this result.]',
+    );
+    expect(result).toContain(
+      '[Image returned by the tool (image/png, 1.0 MiB): not passed to you: this call already ' +
+        'attached 10 image(s) (10.0 MiB), and a request to a model carries at most 20 images and ' +
+        '10.0 MiB of them.]',
+    );
+    const row = JSON.stringify(await recordedOutput(jobId, 'pages__report'));
+    expect(row).not.toContain(
+      Buffer.alloc(1024 * 1024, 0)
+        .toString('base64')
+        .slice(0, 64),
+    );
+  }, 120_000);
+
   it('more text than the budget: the text is cut and says so, the machine form survives whole', async () => {
     const { jobId, entityId, agentId } = await seedJob(db, { model: MODEL, role: 'agent' });
     await seedServer(entityId, agentId, 'verbose', 'long');

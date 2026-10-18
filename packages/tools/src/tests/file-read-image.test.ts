@@ -17,6 +17,8 @@ import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { toolCalls, eq } from '@nodal-agents/db';
+import { MODEL_REQUEST_MAX_IMAGES, MODEL_REQUEST_MAX_IMAGE_BYTES } from '@nodal-agents/shared';
+import { z } from 'zod';
 import { executeTool } from '../execute';
 import { fileReadTool } from '../builtin/file-ops/file-read';
 import {
@@ -226,5 +228,46 @@ describe('the one rule for every image a tool attaches @cap:travailler-sur-des-f
     expect(admitModelImage(SEES, { mediaType: 'image/png', data: atCap })).toEqual({
       attached: true,
     });
+  });
+});
+
+describe('one call attaches no more than one request carries @cap:travailler-sur-des-fichiers/moteur', () => {
+  /** A tool that hands `count` images of `bytes` each to the seam, and returns what became of them. */
+  function attaching(count: number, bytes: number) {
+    return {
+      name: 'attach_many',
+      description: 'test tool',
+      inputSchema: z.object({}),
+      riskLevel: 'read',
+      card: 'generic',
+      execute: async (_input: unknown, c: ToolContext) =>
+        Array.from({ length: count }, (_, k) =>
+          c.attachImage?.({
+            mediaType: 'image/png',
+            data: Buffer.alloc(bytes, k).toString('base64'),
+          }),
+        ),
+    };
+  }
+
+  it('by count: the first 20 are attached, each one past them is refused with the budget named', async () => {
+    const r = await executeTool(attaching(23, 10) as never, {}, ctx(SEES), opts);
+    if (r.outcome !== 'success') throw new Error('expected success');
+    expect(r.images).toHaveLength(MODEL_REQUEST_MAX_IMAGES);
+    const refused = (r.output as Array<{ attached: boolean; reason?: string }>).filter(
+      (o) => !o.attached,
+    );
+    expect(refused).toHaveLength(3);
+    expect(refused[0]?.reason).toBe(
+      'this call already attached 20 image(s) (200 B), and a request to a model carries at ' +
+        'most 20 images and 10.0 MiB of them',
+    );
+  });
+
+  it('by bytes: 1 MiB images, as many as fit 10 MiB', async () => {
+    const r = await executeTool(attaching(12, MAX_MODEL_IMAGE_BYTES) as never, {}, ctx(SEES), opts);
+    if (r.outcome !== 'success') throw new Error('expected success');
+    expect(r.images).toHaveLength(MODEL_REQUEST_MAX_IMAGE_BYTES / MAX_MODEL_IMAGE_BYTES);
+    expect((r.output as Array<{ attached: boolean }>).filter((o) => !o.attached)).toHaveLength(2);
   });
 });

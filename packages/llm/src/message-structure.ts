@@ -2,7 +2,11 @@
 // Ports the invariants from AgentOne/agent/resilience.py
 
 import type { ModelMessage } from 'ai';
-import { wrapUntrusted } from '@nodal-agents/shared';
+import {
+  MODEL_REQUEST_MAX_IMAGES,
+  MODEL_REQUEST_MAX_IMAGE_BYTES,
+  wrapUntrusted,
+} from '@nodal-agents/shared';
 import { MessageStructureError } from './errors';
 
 /**
@@ -287,4 +291,84 @@ export function withToolResultImagesAsUserParts(messages: ModelMessage[]): Model
     out.push({ role: 'user', content: parts });
   }
   return changed ? out : messages;
+}
+
+/** Decoded bytes of an image part's data; 0 for a URL (its size is not known here). */
+function imagePartBytes(image: unknown): number {
+  if (image instanceof Uint8Array) return image.byteLength;
+  if (image instanceof ArrayBuffer) return image.byteLength;
+  if (image instanceof URL) return 0;
+  if (typeof image !== 'string') return 0;
+  if (/^https?:/i.test(image)) return 0;
+  const data = image.startsWith('data:') ? image.slice(image.indexOf(',') + 1) : image;
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
+}
+
+function sizeOf(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+/** An image part of a user message: `image`, or a `file` whose type is an image. */
+function isImagePart(
+  p: unknown,
+): p is { type: string; image?: unknown; data?: unknown; mediaType?: string } {
+  const part = p as { type?: unknown; mediaType?: unknown } | null;
+  return (
+    part?.type === 'image' ||
+    (part?.type === 'file' &&
+      typeof part.mediaType === 'string' &&
+      part.mediaType.startsWith('image/'))
+  );
+}
+
+/**
+ * The images of one request, within ONE budget for every provider
+ * (`MODEL_REQUEST_MAX_IMAGES`, `MODEL_REQUEST_MAX_IMAGE_BYTES`,
+ * @nodal-agents/shared, where the numbers and their sources are): the newest
+ * are sent, an older one past the budget is replaced by a sentence that says an
+ * image was there and is no longer sent — never dropped in silence.
+ *
+ * Every image of a request is in a user message by then: a channel photo where
+ * the runner put it, a tool's image where `withToolResultImagesAsUserParts`
+ * moved it. Applied to the request only: the transcript keeps the images.
+ */
+export function withinImageBudget(messages: ModelMessage[]): ModelMessage[] {
+  let count = 0;
+  let bytes = 0;
+  const dropped = new Map<unknown, string>();
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role !== 'user' || !Array.isArray(m.content)) continue;
+    for (let j = m.content.length - 1; j >= 0; j--) {
+      const p = m.content[j];
+      if (!isImagePart(p)) continue;
+      const size = imagePartBytes(p.type === 'image' ? p.image : p.data);
+      if (count < MODEL_REQUEST_MAX_IMAGES && bytes + size <= MODEL_REQUEST_MAX_IMAGE_BYTES) {
+        count += 1;
+        bytes += size;
+        continue;
+      }
+      dropped.set(
+        p,
+        `[An earlier image (${p.mediaType ?? 'image'}, ${sizeOf(size)}) is no longer sent: a ` +
+          `request carries the ${MODEL_REQUEST_MAX_IMAGES} newest images and ` +
+          `${sizeOf(MODEL_REQUEST_MAX_IMAGE_BYTES)} of them at most. Read it again if you need it.]`,
+      );
+    }
+  }
+  if (dropped.size === 0) return messages;
+  return messages.map((m) => {
+    if (m.role !== 'user' || !Array.isArray(m.content)) return m;
+    if (!m.content.some((p) => dropped.has(p))) return m;
+    return {
+      ...m,
+      content: m.content.map((p) => {
+        const text = dropped.get(p);
+        return text === undefined ? p : { type: 'text' as const, text };
+      }),
+    };
+  });
 }

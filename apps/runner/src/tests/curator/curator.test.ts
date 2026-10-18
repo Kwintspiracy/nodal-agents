@@ -125,7 +125,6 @@ function makeScriptedClient(turns: ScriptedTurn[]): RunnerDeps['llmClient'] {
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },

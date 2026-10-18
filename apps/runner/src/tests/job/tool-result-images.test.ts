@@ -30,8 +30,10 @@ import {
   agentWorkspaces,
   approvalRequests,
   approvalRules,
+  entityLlmKeys,
   eq,
 } from '@nodal-agents/db';
+import { encrypt } from '@nodal-agents/secrets';
 import type { JobId } from '@nodal-agents/orchestration';
 import { executeJob } from '../../job/execute.ts';
 import {
@@ -288,10 +290,7 @@ describe('an image and a delegation @cap:organiser-equipe/moteur', () => {
     expect(system).not.toContain('route image tasks here');
     const lineOf = (name: string): string =>
       system.split('\n- **').find((l) => l.startsWith(`${name}**`)) ?? '';
-    expect(lineOf('Checker')).toContain(
-      `Images: its model (${SEEING}) takes images as input. An image attached to this ` +
-        'conversation travels with its assign tool, not with create_task.',
-    );
+    expect(lineOf('Checker')).toContain(`Images: its model (${SEEING}) takes images as input.`);
     expect(lineOf('Coder')).not.toBe('');
     expect(lineOf('Coder')).not.toContain('Images:');
 
@@ -303,6 +302,12 @@ describe('an image and a delegation @cap:organiser-equipe/moteur', () => {
     expect(firstMessage).not.toContain(PNG_B64);
     expect(firstMessage).not.toContain('"type":"image"');
     expect(JSON.stringify(childBodies[0])).not.toContain(PNG_B64);
+    // The line and what the child actually received, side by side: the line
+    // may only promise an image travels if the child's payload carries one.
+    const lineClaimsDelivery = /travel|carried|attached|reaches/i.test(lineOf('Checker'));
+    const childReceivedImage =
+      firstMessage.includes('"type":"image"') || imageUrls(childBodies[0] as Body).length > 0;
+    expect(!lineClaimsDelivery || childReceivedImage).toBe(true);
 
     // The child reads the file from its own folder, and sees it.
     expect(imageUrls(childBodies[0] as Body)).toEqual([]);
@@ -352,6 +357,100 @@ describe('an image read in the turn that delegates @cap:organiser-equipe/moteur'
     expect(JSON.stringify(resumed)).not.toContain(PNG_B64);
     expect(toolText(resumed)).toContain(
       '[An image (image/png) was attached to this result; it is not carried here. Read it again to see it.]',
+    );
+  });
+});
+
+describe('whether a model sees is read per model, never per provider @cap:choisir-modele/moteur', () => {
+  /** An Anthropic Messages stream: one tool call, or a closing text. */
+  function anthropicSse(turn: number, path: string): string {
+    const head = {
+      type: 'message_start',
+      message: {
+        id: `msg_${turn}`,
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-instant-1.2',
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 0 },
+      },
+    };
+    const body =
+      turn === 1
+        ? [
+            {
+              type: 'content_block_start',
+              index: 0,
+              content_block: { type: 'tool_use', id: 'toolu_1', name: 'file_read', input: {} },
+            },
+            {
+              type: 'content_block_delta',
+              index: 0,
+              delta: { type: 'input_json_delta', partial_json: JSON.stringify({ path }) },
+            },
+          ]
+        : [
+            { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+            { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Done.' } },
+          ];
+    const tail = [
+      { type: 'content_block_stop', index: 0 },
+      {
+        type: 'message_delta',
+        delta: { stop_reason: turn === 1 ? 'tool_use' : 'end_turn', stop_sequence: null },
+        usage: { output_tokens: 2 },
+      },
+      { type: 'message_stop' },
+    ];
+    return [head, ...body, ...tail]
+      .map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`)
+      .join('');
+  }
+
+  it('a text-only model of a provider whose other models see is refused the image, and told why', async () => {
+    const { jobId, entityId, agentId } = await seedJob(db, { model: SEEING, role: 'agent' });
+    await giveFolder(agentId, entityId);
+    // An Anthropic key, and an Anthropic model that takes text only.
+    const [key] = await db
+      .insert(entityLlmKeys)
+      .values({
+        entityId,
+        provider: 'anthropic',
+        apiKey: encrypt('sk-ant-test'),
+        baseUrl: null,
+        nickname: 'Anthropic (test)',
+        isActive: true,
+      })
+      .returning();
+    if (!key) throw new Error('failed to seed the anthropic key');
+    await db
+      .update(agents)
+      .set({ llmKeyId: key.id, model: 'claude-instant-1.2' })
+      .where(eq(agents.id, agentId));
+
+    const sent: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (!url.includes('/messages')) throw new Error(`unexpected fetch ${url}`);
+        sent.push(String(init?.body));
+        return new Response(anthropicSse(sent.length, join(dir, 'apercu.png')), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }),
+    );
+    await executeJob(jobId as JobId, makeDeps(db), testEnv);
+    vi.unstubAllGlobals();
+
+    const after = sent[1];
+    if (!after) throw new Error('the model was never called after the tool ran');
+    expect(after).not.toContain(PNG_B64);
+    expect(after).toContain(
+      'the model this agent runs (claude-instant-1.2) does not take images as input',
     );
   });
 });

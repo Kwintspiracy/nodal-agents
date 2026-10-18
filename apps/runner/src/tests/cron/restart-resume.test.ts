@@ -160,7 +160,6 @@ function modele(tours: Tour[]): { llm: RunnerDeps['llmClient']; relacher: () => 
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },

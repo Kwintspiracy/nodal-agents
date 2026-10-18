@@ -122,7 +122,6 @@ function makeScriptedClient(turns: ScriptedTurn[]): RunnerDeps['llmClient'] {
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },
@@ -814,7 +813,6 @@ describe('reflection — non-blocking', () => {
       capabilities: {
         toolUse: true,
         promptCaching: false,
-        vision: false,
         structuredOutputs: false,
         streaming: false,
       },

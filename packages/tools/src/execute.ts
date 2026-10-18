@@ -832,7 +832,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
     reportReadContent: (absPath, sha256) => contenusLus.set(absPath, sha256),
     attachImage: (image) => {
-      const outcome = admitModelImage(ctx.modelImageInput, image);
+      const outcome = admitModelImage(ctx.modelImageInput, image, imagesForModel);
       if (outcome.attached) imagesForModel.push(image);
       return outcome;
     },

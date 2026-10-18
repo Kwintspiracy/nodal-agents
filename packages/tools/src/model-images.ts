@@ -12,6 +12,7 @@
 // the tool result the model reads. The `tool_calls` row never keeps the bytes:
 // it is an audit, not a store.
 
+import { MODEL_REQUEST_MAX_IMAGES, MODEL_REQUEST_MAX_IMAGE_BYTES } from '@nodal-agents/shared';
 import { MAX_READ_BYTES } from './builtin/file-ops/workspace';
 
 import type { ImageAttachOutcome, ModelImageInput, ToolImage } from './types';
@@ -88,11 +89,16 @@ export function sniffImageMediaType(head: Uint8Array): string | null {
 
 /**
  * Whether `image` may reach the model of this call, and if not, why. The one
- * rule `executeTool` applies to every image a tool attaches.
+ * rule `executeTool` applies to every image a tool attaches. `attached` is
+ * what this call already attached: one call never attaches more than one
+ * request carries (`MODEL_REQUEST_MAX_IMAGES`, `MODEL_REQUEST_MAX_IMAGE_BYTES`,
+ * @nodal-agents/shared), whatever the tool — an MCP server returning thirty
+ * images included.
  */
 export function admitModelImage(
   input: ModelImageInput | undefined,
   image: ToolImage,
+  attached: readonly ToolImage[] = [],
 ): ImageAttachOutcome {
   if (input === undefined) {
     return {
@@ -116,6 +122,19 @@ export function admitModelImage(
       reason:
         `the image is ${formatBytes(bytes)}, above the ${formatBytes(MAX_MODEL_IMAGE_BYTES)} ` +
         `an image can be passed at; a smaller copy (scaled down, or JPEG) can be`,
+    };
+  }
+  const already = attached.reduce((sum, i) => sum + base64DecodedBytes(i.data), 0);
+  if (
+    attached.length >= MODEL_REQUEST_MAX_IMAGES ||
+    already + bytes > MODEL_REQUEST_MAX_IMAGE_BYTES
+  ) {
+    return {
+      attached: false,
+      reason:
+        `this call already attached ${attached.length} image(s) (${formatBytes(already)}), and a ` +
+        `request to a model carries at most ${MODEL_REQUEST_MAX_IMAGES} images and ` +
+        `${formatBytes(MODEL_REQUEST_MAX_IMAGE_BYTES)} of them`,
     };
   }
   return { attached: true };

@@ -395,25 +395,26 @@ export async function buildTeamBlock(
   // only. Run 039f8666 followed it to a forum persona to check a PNG in the
   // shared folder; nothing had carried that file to it.
   //
-  // What a delegation carries, read in the code: the image ATTACHMENTS of the
-  // parent's conversation (a channel photo, a path part in its messages),
-  // copied into the child's first message by `handleDelegation`
-  // (router/delegate.ts) — through an assign tool only, `create_task` copies
-  // none — and resolved for the child's own model by the runner. A file in a
-  // folder is never carried: the teammate reaches it through its own Folders
-  // (listed on its line) and its own read tool.
+  // What a delegation carries, read in the code, differs by the image: the
+  // ATTACHMENTS of the parent's conversation (a channel photo, a path part in
+  // its user messages) are copied into the child's first message by
+  // `handleDelegation` (router/delegate.ts), through an assign tool only; an
+  // image a TOOL returned to the parent (file_read, an MCP block) is not, and
+  // neither is a file in a folder — the teammate opens it itself, from its own
+  // Folders (listed on its line). A sentence about "an image travels" was true
+  // for one of these paths and false on the incident's own (review of #798),
+  // so the line claims no delivery at all: it says what the model takes.
   //
-  // On the Nodal runtime the model that runs is `agents.model`. On a CLI
-  // runtime it is the CLI's own setting, and the CLI turn receives the task as
-  // text (`job.task`, cli-runtime/run-job.ts): no attachment reaches it. Nodal
-  // knows nothing true to say there, so it says nothing. Who to send an image
-  // task to is the orchestrator's decision, from the facts and the purpose.
+  // On the Nodal runtime the model that runs is `agents.model`, and whether it
+  // takes images is read from the one per-model source (`modelCanSeeImages`),
+  // the same the runner applies to that teammate's own tool results. On a CLI
+  // runtime the model is the CLI's own setting, and the CLI turn receives the
+  // task as text (`job.task`, cli-runtime/run-job.ts): Nodal knows nothing
+  // true to say there, so it says nothing. Who to send an image task to is the
+  // orchestrator's decision, from the facts and the purpose.
   function formatImagesTag(runtime: string, model: string | null): string {
     if (runtime !== 'nodal' || model === null || !modelCanSeeImages(model)) return '';
-    const travels = canDelegate
-      ? ' An image attached to this conversation travels with its assign tool, not with create_task.'
-      : '';
-    return `\n  Images: its model (${model}) takes images as input.${travels}`;
+    return `\n  Images: its model (${model}) takes images as input.`;
   }
 
   // Unified orchestrator: every orchestrator receives BOTH delegation toolsets at

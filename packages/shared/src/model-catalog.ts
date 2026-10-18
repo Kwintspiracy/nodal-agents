@@ -1621,15 +1621,17 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
 //
 // What the regeneration surfaced: 11 catalogued ids were absent — but only 8
 // of them were actually blind, and NOT the ones the raw list suggests. The
-// runner's test (execute.ts) is an OR:
+// runner's test (execute.ts) was then an OR with a per-PROVIDER flag
+// (`CAPABILITY_MATRIX` marked anthropic / openai / google vision:true
+// wholesale), so native `claude-opus-5` was never blind — the provider flag
+// carried it — while an OpenRouter-routed model had only this set.
 //
-//   canSeeImages = llmClient.capabilities.vision === true || modelCanSeeImages(id)
-//
-// and CAPABILITY_MATRIX marks the anthropic / openai / google providers
-// vision:true wholesale. So native `claude-opus-5` was never blind — the
-// provider flag carried it. The `openrouter` provider is vision:false
-// ("depends on underlying model; conservative default"), which leaves this set
-// as the ONLY thing standing between an OpenRouter-routed model and an image.
+// Since the review of #798 this set is the ONE source, for every reader (the
+// runner's image rule, hydrateForLlm, the team block): the provider flag is
+// gone, because it said "sees" for a text-only model of those providers too.
+// Every native anthropic / openai / google id the catalog lists is in this set
+// (checked when the flag was removed); an uncatalogued id is refused images,
+// and told why.
 // Measured on main before the fix: the 3 native forms saw fine, the 8
 // OpenRouter forms (anthropic/claude-opus-5 and its sonnet/fable twins — the
 // -fast twins were catalogued then, and dropped on 2026-09-22 (#416): OpenRouter

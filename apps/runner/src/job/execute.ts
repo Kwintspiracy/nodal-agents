@@ -2280,8 +2280,10 @@ async function runJobTracked(
   // child). Whether THIS agent can see it depends on its model — computed once;
   // each LLM call resolves the path into bytes (vision) or a routing note
   // (non-vision) via hydrateForLlm WITHOUT touching the stored/persisted messages.
-  const canSeeImages =
-    llmClient.capabilities.vision === true || modelCanSeeImages(llmClient.config.model);
+  // One source, per model, for every reader: the attach rule, hydrateForLlm and
+  // the team block (review of #798: a per-provider flag said "sees" for every
+  // model of anthropic, openai and google, text-only ones included).
+  const canSeeImages = modelCanSeeImages(llmClient.config.model);
   const imageCache = new Map<string, Uint8Array>();
   // What a tool that comes back with an image is told (`ctx.attachImage`,
   // packages/tools/src/model-images.ts): the same fact, for every tool call of

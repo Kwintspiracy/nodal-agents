@@ -15,6 +15,7 @@ import {
   validateMessageStructure,
   withoutNamelessToolCalls,
   withToolResultImagesAsUserParts,
+  withinImageBudget,
 } from './message-structure';
 import { knownContextWindow, modelOutputCap } from '@nodal-agents/shared';
 import { reportedUsage } from './reported-usage';
@@ -261,7 +262,8 @@ function buildModel(config: ProviderConfig): LanguageModel {
 
 /**
  * Extract messages from the args object if present, make them replayable by
- * every provider (`withToolResultImagesAsUserParts`, `withoutNamelessToolCalls`),
+ * every provider (`withToolResultImagesAsUserParts`, `withinImageBudget`,
+ * `withoutNamelessToolCalls`),
  * and validate structure.
  * Only runs when ModelMessage[] messages are provided.
  * Omit<Message, 'id'>[] (useChat format) is passed through without validation —
@@ -274,7 +276,7 @@ function prepareMessages<A>(args: A): A {
   const first = messages[0] as Record<string, unknown> | undefined;
   if (!first || typeof first['role'] !== 'string' || !('content' in first)) return args;
   const replayable = withoutNamelessToolCalls(
-    withToolResultImagesAsUserParts(messages as ModelMessage[]),
+    withinImageBudget(withToolResultImagesAsUserParts(messages as ModelMessage[])),
   );
   validateMessageStructure(replayable);
   return { ...args, messages: replayable };
