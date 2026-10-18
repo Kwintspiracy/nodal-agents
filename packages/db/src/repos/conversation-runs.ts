@@ -23,7 +23,7 @@ import { LIVE_JOB_STATUSES, TERMINAL_STATUSES } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agentJobs } from '../schema/jobs.ts';
 import { agentTasks } from '../schema/tasks.ts';
-import { approvalRequests } from '../schema/approvals.ts';
+import { approvalRequests, approvalsOldestFirst } from '../schema/approvals.ts';
 import { agents } from '../schema/agents.ts';
 
 /** Statuts d'une tâche du tableau qui n'a pas fini — ceux que l'arrêt coupe. */
@@ -372,7 +372,7 @@ export async function listConversationRuns(
         eq(approvalRequests.status, 'pending'),
       ),
     )
-    .orderBy(asc(approvalRequests.requestedAt), asc(approvalRequests.id));
+    .orderBy(approvalsOldestFirst);
 
   // Chaque job concerné → sa tête, en remontant `parent_job_id` (borné par la
   // profondeur de délégation ; `parentOf` garde la boucle finie).

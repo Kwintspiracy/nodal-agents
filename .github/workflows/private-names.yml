@@ -44,6 +44,10 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
+          # No package manager here: the job runs a plain node script. Without this,
+          # setup-node reads `packageManager: pnpm@...` from package.json and fails
+          # ("Unable to locate executable file: pnpm").
+          package-manager-cache: false
 
       - name: Check the PR for private names
         timeout-minutes: 5

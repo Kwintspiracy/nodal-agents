@@ -13,7 +13,7 @@
 // plomberie neuve dans le runner : c'est la même que les approbations.
 
 import { z } from 'zod';
-import { and, eq, desc, approvalRequests } from '@nodal-agents/db';
+import { and, eq, desc, approvalRequests, approvalsNewestFirst } from '@nodal-agents/db';
 import type { ToolDefinition, ToolContext } from '../types';
 
 /** Bornes de la question et de ses options — une carte se lit, elle n'archive pas. */
@@ -79,7 +79,7 @@ async function findAnsweredQuestionRow(
         eq(approvalRequests.status, 'approved'),
       ),
     )
-    .orderBy(desc(approvalRequests.resolvedAt))
+    .orderBy(desc(approvalRequests.resolvedAt), approvalsNewestFirst)
     .limit(1);
   return row ?? null;
 }
