@@ -1007,6 +1007,21 @@ describe('ConversationFeedView — le handoff', () => {
     expect(html).not.toContain('Handed to the work');
     expect(html).not.toContain('aria-expanded');
   });
+
+  it('la note de l’agent qui a remis la demande (handoff.ts) se dit comme la sienne, à part de la demande @cap:parler-a-un-agent/ecran', () => {
+    const avecNote: ConversationFeed = {
+      ...feedAvecHandoff,
+      items: [
+        feedAvecHandoff.items[0]!,
+        { kind: 'handoff-note', text: 'Rien n’est imprimé avant son accord. END-OF-NOTE' },
+      ],
+    };
+    const html = renderToStaticMarkup(<ConversationFeedView feed={avecNote} />);
+    expect(html).toContain('Agent&#x27;s note');
+    expect(html).toContain('END-OF-NOTE');
+    expect(html).not.toContain('Nodal reminded the agent');
+    expect(html).not.toContain('Handed to the work');
+  });
 });
 
 // ─── Le travail sous sa ligne de résumé (#135, #132) ─────────────────────────

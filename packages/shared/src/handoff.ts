@@ -100,3 +100,16 @@ export function openingText(task: string, note: string | null | undefined): stri
   const n = handoffNote(note, task);
   return n === null ? task : `${task}\n\n${framedHandoffNote(n)}`;
 }
+
+/**
+ * La note qu'un message porte, SANS son cadre — ce qu'un écran montre à la
+ * personne, sous son propre libellé —, ou `null` si ce message n'est pas une
+ * note. Lue à la marque, jamais au texte.
+ */
+export function handoffNoteOf(message: unknown): string | null {
+  if (!isHandoffNoteMessage(message)) return null;
+  const content = (message as { content?: unknown }).content;
+  if (typeof content !== 'string') return null;
+  const framed = `${HANDOFF_NOTE_FRAME}\n`;
+  return content.startsWith(framed) ? content.slice(framed.length) : content;
+}

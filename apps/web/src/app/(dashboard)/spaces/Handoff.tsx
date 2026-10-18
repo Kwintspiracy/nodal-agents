@@ -1,6 +1,7 @@
 'use client';
 
-// Handoff.tsx — la consigne que le chat a passée au travail, repliable.
+// Handoff.tsx — ce qui a été passé au travail, repliable : la demande, ou la
+// note que l'agent a écrite à côté (handoff.ts), chacune sous son libellé.
 //
 // Un composant client à part, parce qu'il tient un état (ouvert/fermé) et que
 // le fil (`ConversationFeedView`) est rendu côté serveur.
@@ -17,7 +18,14 @@ import DisclosureButton from '@/components/ui/DisclosureButton';
  * données. Le texte est dans le flux dans les deux états — le clip est visuel,
  * jamais une coupe du contenu.
  */
-export default function Handoff({ text }: { text: string }) {
+export default function Handoff({
+  text,
+  label = 'Handed to the work',
+}: {
+  text: string;
+  /** Qui parle : la demande passée au travail, ou la note de l'agent. */
+  label?: string;
+}) {
   const [open, setOpen] = useState(false);
   // Rien à déplier, rien à annoncer. Constat C9 de la revue Codex de la PR #66 :
   // le séparateur `·` ne dépendait que de l'état replié, et un tour dont le
@@ -37,7 +45,7 @@ export default function Handoff({ text }: { text: string }) {
         insetY="default"
         className="h-auto"
       >
-        <span className="shrink-0 text-mono-11 text-ink-4">Handed to the work</span>
+        <span className="shrink-0 text-mono-11 text-ink-4">{label}</span>
         {!open && (
           <span className="min-w-0 flex-1 truncate text-left text-mono-11 text-ink-4">
             · {text}
