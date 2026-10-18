@@ -17,11 +17,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import QuestionCard from '../QuestionCard.tsx';
 import ConversationFeedView from '../ConversationFeedView.tsx';
 import type { ConversationFeed } from '@/lib/conversation-feed.ts';
+import { cardWordsNotice } from '@nodal-agents/shared';
 
 const resolveApprovalAction = vi.hoisted(() =>
   vi.fn(async () => ({
     ok: true as const,
-    data: { jobId: 'j', decision: 'approve', answer: null },
+    data: { jobId: 'j', decision: 'approve', answer: null, handOff: { kind: 'no_words' } },
   })),
 );
 const refresh = vi.hoisted(() => vi.fn());
@@ -30,7 +31,8 @@ vi.mock('@/lib/actions.ts', () => ({
   resolveApprovalAction,
   setAgentApprovalRuleAction: vi.fn(),
 }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
+vi.mock('sonner', () => ({ toast }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
 
 const OPTIONS = ['The repo README', 'A new file in notes'];
@@ -82,6 +84,7 @@ async function click(label: string): Promise<void> {
 beforeEach(() => {
   resolveApprovalAction.mockClear();
   refresh.mockClear();
+  toast.warning.mockClear();
 });
 
 describe('QuestionCard — dans le fil', () => {
@@ -119,6 +122,29 @@ describe('QuestionCard — dans le fil', () => {
       answer: OPTIONS[1],
     });
     expect(refresh).toHaveBeenCalled();
+  });
+
+  it('#799 — la réponse n’a atteint que l’agent de la carte (son run a fini) : la personne le lit', async () => {
+    resolveApprovalAction.mockResolvedValueOnce({
+      ok: true as const,
+      data: {
+        jobId: 'j',
+        decision: 'approve',
+        answer: null,
+        handOff: { kind: 'head_finished', headJobId: 'h', status: 'completed' },
+      },
+    } as never);
+    await render(<QuestionCard prompt={PROMPT} options={OPTIONS} question={pending} />);
+    await click(OPTIONS[0]!);
+    expect(toast.warning).toHaveBeenCalledWith(
+      cardWordsNotice({ kind: 'head_finished', headJobId: 'h', status: 'completed' }),
+    );
+  });
+
+  it('#799 — une réponse remise à la tête du run : aucun avertissement', async () => {
+    await render(<QuestionCard prompt={PROMPT} options={OPTIONS} question={pending} />);
+    await click(OPTIONS[0]!);
+    expect(toast.warning).not.toHaveBeenCalled();
   });
 
   it('« Something else » ouvre un champ EN PLACE, et c’est son texte qui part, dit comme libre', async () => {

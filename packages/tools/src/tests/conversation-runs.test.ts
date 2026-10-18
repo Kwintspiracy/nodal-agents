@@ -43,8 +43,12 @@ beforeAll(async () => {
 
 type Channel = 'telegram' | 'discord' | 'slack' | 'whatsapp' | 'dashboard';
 
-// Chaque job naît une seconde après le précédent : l'ordre des runs listés est
-// celui des messages, jamais un départage au hasard des identifiants.
+// Chaque job — et chaque demande d'approbation — naît une seconde après le
+// précédent : l'ordre listé est celui des messages, jamais un départage au
+// hasard des identifiants. Une demande sans `requestedAt` explicite prend le
+// `now()` de la base, à la milliseconde : deux demandes insérées coup sur coup
+// partagent alors parfois la même valeur, et `uuid` aléatoire les départage
+// (le test échouait ainsi une fois sur quatre sous charge).
 let clock = Date.parse('2026-09-28T03:00:00Z');
 
 async function insertJob(values: {
@@ -119,6 +123,7 @@ async function seedConversation(channel: Channel) {
       toolName: 'run_command',
       toolInput: { command: 'python main.py' },
       kind: 'approval',
+      requestedAt: new Date((clock += 1000)),
     })
     .returning({ id: approvalRequests.id });
   const [question] = await db
@@ -130,6 +135,7 @@ async function seedConversation(channel: Channel) {
       toolName: 'ask_user',
       toolInput: { question: 'Which style?', options: ['oil', 'ink'] },
       kind: 'question',
+      requestedAt: new Date((clock += 1000)),
     })
     .returning({ id: approvalRequests.id });
   const [task] = await db

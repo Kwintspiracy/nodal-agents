@@ -51,6 +51,11 @@ export interface InboxEntry {
    * de cette entrée la porte en `handoff_note`.
    */
   note?: string;
+  /**
+   * La carte (`approval_requests.id`) d'où vient l'entrée, quand c'est la
+   * réponse de la personne à la carte d'un délégué, remise à la tête du run.
+   */
+  fromApprovalRequestId?: string;
 }
 
 /** Le message qu'une entrée vidée devient dans la transcription. */

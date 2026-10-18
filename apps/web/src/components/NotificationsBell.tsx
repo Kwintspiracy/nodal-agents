@@ -5,6 +5,7 @@ import { useLayer } from '@/lib/layers.ts';
 import Link from 'next/link';
 import { Bell, ArrowClockwise, Warning } from '@phosphor-icons/react';
 import { toast } from 'sonner';
+import { toastCardWordsHandOff } from '@/lib/card-words-notice.ts';
 import { resolveApprovalAction } from '@/lib/actions';
 import IconButton from '@/components/ui/IconButton';
 import RowActionButton from '@/components/ui/RowActionButton';
@@ -67,6 +68,7 @@ function ApproveButton({
         toast.error(r.message);
       } else {
         toast.success('Approved');
+        toastCardWordsHandOff(r.data.handOff);
         // ATTENDUE, comme sur la page Approvals : le bouton se réactive sur le
         // nouveau nombre, jamais sur l'ancien.
         await onApproved();

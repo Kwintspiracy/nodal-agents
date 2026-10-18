@@ -78,7 +78,7 @@ stored state. »*
   `ab46445c` — « v0.8.8 (Aug 28), announced on Discord #announcements ».
   Verdict : rien de nouveau. Correct.
 - Run du 08/09 à 01:00 : **la même requête rend en tête un fait sur le vault
-  Obsidian HP AI Training**. L'agent conclut « aucune version précédente en
+  Obsidian AI Training**. L'agent conclut « aucune version précédente en
   mémoire (premier run) », poste l'annonce sur `#announcements`
   (`conversationId 1511202553420054671`, message `1546686789001945099`) et
   enregistre un fait neuf.

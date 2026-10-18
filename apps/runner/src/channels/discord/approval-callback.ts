@@ -28,7 +28,7 @@ import {
 } from '../../telegram/approval-callback.ts';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
 import { requeueApprovalCard } from '../../approvals/card-settlement.ts';
-import { readQuestionToolInput } from '@nodal-agents/shared';
+import { cardWordsNotice, readQuestionToolInput } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import type { DiscordInteractionAck } from './types.ts';
@@ -243,6 +243,7 @@ export async function handleDiscordApprovalInteraction(args: {
       decision: 'approve',
       answer: chosen,
       resolvedBy: 'discord',
+      answeredBy: { channel: 'discord', agentId: target.agentId, conversationId: target.channelId },
     });
     if (!answered.ok) {
       await ack.ephemeralReply('Could not apply — try the dashboard.');
@@ -250,6 +251,9 @@ export async function handleDiscordApprovalInteraction(args: {
     }
     // La carte est réécrite par resolveApprovalDecision → settleApprovalCards
     // (#637, un seul écrivain).
+    // Une réponse qui n'a pas atteint la tête du run se dit à qui l'a donnée (#799).
+    const notice = cardWordsNotice(answered.handOff);
+    if (notice !== null) await ack.ephemeralReply(notice);
     return { handled: true, decision: 'answer', jobId: answered.jobId, answer: chosen };
   }
 
@@ -268,6 +272,7 @@ export async function handleDiscordApprovalInteraction(args: {
     approvalRequestId: parsed.approvalRequestId,
     decision: parsed.decision,
     resolvedBy: 'discord',
+    answeredBy: { channel: 'discord', agentId: target.agentId, conversationId: target.channelId },
   });
 
   if (!result.ok) {

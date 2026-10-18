@@ -3,7 +3,7 @@
 //
 // Job 465446e7 (2026-09-29): asked to print a recipe, the root never delegated
 // to the only teammate holding the printing MCP server — its roster line read
-// "Connectors: …, hp-connector", a bare slug. The entry now carries the
+// "Connectors: …, office-printer", a bare slug. The entry now carries the
 // capability, from the data alone and in one form for every connector and MCP
 // server: one name per operation or tool the teammate actually holds.
 
@@ -140,13 +140,13 @@ describe('buildTeamBlock — a Connectors entry says what the teammate can do (#
     const t = await seedTeam();
     await attachMcp(
       t,
-      'hp-connector',
+      'office-printer',
       ['list_printers', 'request_print', 'preview_print_job'],
       null,
     );
 
     expect(await connectorsLine(t.orchId)).toBe(
-      'hp-connector (list_printers, request_print, preview_print_job)',
+      'office-printer (list_printers, request_print, preview_print_job)',
     );
   });
 
@@ -194,10 +194,10 @@ describe('buildTeamBlock — a Connectors entry says what the teammate can do (#
       'search_images',
     ];
     expect(names.indexOf('request_print')).toBe(11);
-    await attachMcp(t, 'hp-connector', names, null);
+    await attachMcp(t, 'office-printer', names, null);
 
     const line = await connectorsLine(t.orchId);
-    expect(line).toBe(`hp-connector (${names.join(', ')})`);
+    expect(line).toBe(`office-printer (${names.join(', ')})`);
     expect(line).not.toContain('more');
   });
 
@@ -249,11 +249,11 @@ describe('buildTeamBlock — a Connectors entry says what the teammate can do (#
   it('several entries on one line, separated so a tool list never reads as another entry', async () => {
     const t = await seedTeam();
     await attachConnector(t, 'tavily', null);
-    await attachMcp(t, 'hp-connector', ['list_printers', 'request_print'], null);
+    await attachMcp(t, 'office-printer', ['list_printers', 'request_print'], null);
 
     const tavily = ADAPTER_REGISTRY['tavily']!.operations.map((o) => o.name);
     expect(await connectorsLine(t.orchId)).toBe(
-      `tavily (${tavily.join(', ')}); hp-connector (list_printers, request_print)`,
+      `tavily (${tavily.join(', ')}); office-printer (list_printers, request_print)`,
     );
   });
 

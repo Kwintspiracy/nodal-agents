@@ -16,6 +16,8 @@ declare module 'hono' {
   interface ContextVariableMap {
     callerTrusted: boolean;
     callerEntityId: string | undefined;
+    /** The session's user, for an untrusted caller (#799: who answered a card). */
+    callerUserId: string | undefined;
   }
 }
 

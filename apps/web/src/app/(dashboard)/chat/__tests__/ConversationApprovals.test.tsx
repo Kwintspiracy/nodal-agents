@@ -128,7 +128,7 @@ describe('approvals in the conversation (#469) @cap:approuver-une-action/ecran',
   it('"Approve once" answers from the thread: the card leaves and the thread is re-read', async () => {
     resolveApprovalAction.mockResolvedValue({
       ok: true,
-      data: { jobId: 'j1', decision: 'approve', answer: null },
+      data: { jobId: 'j1', decision: 'approve', answer: null, handOff: { kind: 'no_words' } },
     });
     await render();
 
@@ -179,7 +179,7 @@ describe('approvals in the conversation (#469) @cap:approuver-une-action/ecran',
   it('a read that lands after the answer does not bring the card back', async () => {
     resolveApprovalAction.mockResolvedValue({
       ok: true,
-      data: { jobId: 'j1', decision: 'approve', answer: null },
+      data: { jobId: 'j1', decision: 'approve', answer: null, handOff: { kind: 'no_words' } },
     });
     await render();
     await act(async () => {
