@@ -26,6 +26,7 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { catalogText } from './catalog';
 import { readTreeFacts } from './facts';
+import { productToolJudgedBy, unverifiedOf } from './judge-kit';
 import { BenchStop } from './lock';
 import {
   formatPlan,
@@ -75,8 +76,9 @@ function printList(): void {
     );
     console.log(`  ${s.title}`);
     console.log(`  Green: ${s.green}`);
-    for (const j of s.judgedBy) console.log(`  Judged: ${j}`);
-    for (const c of s.unverified ?? []) {
+    // Le juge du scénario, puis les règles de chemin, comme le catalogue (catalog.ts).
+    for (const j of [...s.judgedBy, ...productToolJudgedBy(s)]) console.log(`  Judged: ${j}`);
+    for (const c of unverifiedOf(s)) {
       console.log(`  Not verified: ${c.check} (${c.ticket}): ${c.reason}`);
     }
     console.log(`  Request: ${s.instruction}\n`);

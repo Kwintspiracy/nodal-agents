@@ -16,17 +16,6 @@ export const STOCK = {
   ] as Array<[string, number, number]>,
 };
 
-export const NOTES = {
-  sheet: 'Notes',
-  header: ['Élève', 'Maths', 'Français', 'Histoire'],
-  rows: [
-    ['Alice', 14, 12, 16],
-    ['Bruno', 9, 13, 11],
-    ['Chloé', 17, 15, 18],
-    ['David', 11, 8, 12.5],
-  ] as Array<[string, number, number, number]>,
-};
-
 export const QUARTER = {
   sheet: 'Ventes',
   header: ['Produit', 'Janvier', 'Février', 'Mars'],
@@ -76,6 +65,27 @@ export const MINUTES = {
   ],
 };
 
+/**
+ * Le bon de commande que « lire un document et répondre » fait lire : la
+ * valeur demandée (le total HT) n'est écrite que dans la dernière ligne du
+ * tableau, jamais dans un paragraphe.
+ */
+export const ORDER = {
+  title: 'Bon de commande BC-2026-0457',
+  paragraphs: [
+    'Fournisseur : Papeterie du Rhône, 8 quai Perrache, Lyon.',
+    'Livraison demandée avant le 30 octobre 2026, à l’accueil du bâtiment B.',
+  ],
+  table: [
+    ['Article', 'Quantité', 'Prix unitaire', 'Total'],
+    ['Ramettes de papier A4', '12', '4,90 €', '58,80 €'],
+    ['Cartouches d’encre', '3', '36,50 €', '109,50 €'],
+    ['Classeurs', '20', '2,35 €', '47,00 €'],
+    ['Total HT', '', '', '215,30 €'],
+  ],
+  totalHt: 215.3,
+};
+
 export const PROJECT_DECK = [
   ['Projet Atlas', 'Point d’avancement'],
   [
@@ -112,12 +122,6 @@ export const INVOICE_PDF = [
 ];
 export const INVOICE_NUMBER = 'FB-2026-117';
 export const INVOICE_TOTAL = 1234.56;
-
-export const GUIDE_PDF = [
-  ['Guide de démarrage', 'Chapitre 1 : Présentation', 'Ce guide présente l’outil en trois étapes.'],
-  ['Chapitre 2 : Installation', 'Téléchargez l’installateur puis lancez-le.'],
-  ['Chapitre 3 : Premiers pas', 'Créez votre premier projet.'],
-];
 
 export const MEETING_MD = `# Réunion produit du 9 octobre 2026
 
@@ -160,30 +164,3 @@ export const HOME_HTML = `<!doctype html>
 </body>
 </html>
 `;
-
-/** Un générateur pseudo-aléatoire déterministe (LCG) : la même fixture à chaque écriture. */
-function lcg(seed: number): () => number {
-  let s = seed >>> 0;
-  return () => {
-    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-    return s / 2 ** 32;
-  };
-}
-
-export const REGIONS = ['Nord', 'Sud', 'Est', 'Ouest', 'Centre'];
-
-export function salesCsv(): string {
-  const rnd = lcg(20261015);
-  const products = ['Lampe', 'Chaise', 'Table', 'Étagère', 'Tapis'];
-  const lines = ['date,region,produit,quantite,prix_unitaire'];
-  for (let i = 0; i < 120; i++) {
-    const day = String(1 + Math.floor(rnd() * 28)).padStart(2, '0');
-    const month = String(1 + Math.floor(rnd() * 9)).padStart(2, '0');
-    const region = REGIONS[Math.floor(rnd() * REGIONS.length)]!;
-    const product = products[Math.floor(rnd() * products.length)]!;
-    const qty = 1 + Math.floor(rnd() * 20);
-    const price = (5 + Math.floor(rnd() * 9500) / 100).toFixed(2);
-    lines.push(`2026-${month}-${day},${region},${product},${qty},${price}`);
-  }
-  return lines.join('\n');
-}

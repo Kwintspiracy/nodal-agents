@@ -6,9 +6,9 @@
 // texte d'origine de la fixture, à l'identique.
 
 import { findInRoots } from '../disk';
-import { fixturePath, installed } from '../fixtures';
-import { CONTRACT, MINUTES } from '../fixture-data';
-import { JUDGED_COMMON, commonReasons } from '../judge-kit';
+import { fileHash, fixturePath, installed } from '../fixtures';
+import { CONTRACT, MINUTES, ORDER } from '../fixture-data';
+import { JUDGED_COMMON, answerOf, commonReasons, hasNumber, missingFacts } from '../judge-kit';
 import { isHeading, readDocx, normalizeSpace, type DocxView } from '../office';
 import { defineScenario, type AnyScenario } from '../types';
 
@@ -49,9 +49,11 @@ function docReasons(rel: string, o: DocObservation): { r: string[]; doc: DocxVie
 const count = (text: string, needle: string): number => text.split(needle).length - 1;
 const lower = (s: string): string => normalizeSpace(s).toLowerCase();
 
-// ─── word-create ─────────────────────────────────────────────────────────────
+// ─── word-create (avec le tableau de word-table) ─────────────────────────────
 
 export const CONVOCATION_REL = 'nodal-bench/convocation-bench.docx';
+const AGENDA_COLUMNS = ['Heure', 'Sujet', 'Responsable'];
+const AGENDA_ROWS = 3;
 
 const create = defineScenario<DocObservation>({
   id: 'word-create',
@@ -60,17 +62,24 @@ const create = defineScenario<DocObservation>({
     `opens ${CONVOCATION_REL}, written during the trial: text with mammoth, paragraphs and styles from the OOXML`,
     'a heading paragraph (Heading/Titre/Title style or an outline level) reads "Convocation", followed by at least three body paragraphs',
     'the text names 12 novembre 2026, 14 h and salle B',
+    `a table whose header row is ${AGENDA_COLUMNS.join(' / ')}, followed by at least ${AGENDA_ROWS} rows with every cell filled`,
   ],
-  version: 1,
-  title: 'Write a Word document with a heading and body paragraphs',
-  green: `${CONVOCATION_REL} was written during the run, opens as a Word document, has a heading paragraph reading "Convocation" followed by at least three body paragraphs, names 12 novembre 2026, 14 h and salle B, and nobody was asked anything.`,
+  // v2 (catalogue du 17/10) : fusion de word-table (le tableau de l'ordre du
+  // jour), et la règle des outils du produit (docx_create) s'applique.
+  version: 2,
+  title: 'Create a structured document',
+  green: `${CONVOCATION_REL} was written during the run through docx_create (no command in its place), opens as a Word document, has a heading paragraph reading "Convocation" followed by at least three body paragraphs, names 12 novembre 2026, 14 h and salle B, holds a table headed ${AGENDA_COLUMNS.join(' / ')} with ${AGENDA_ROWS} filled rows, and nobody was asked anything.`,
+  path: 'docx_create. A script in its place is red.',
+  deliverable: CONVOCATION_REL,
+  productTools: { tools: ['docx_create'], writes: [CONVOCATION_REL], reads: [] },
   set: 'on-demand',
   activity: 'word',
   sends: 'nothing',
   instruction:
     `Crée un document Word ${CONVOCATION_REL} dans ton espace de travail : un titre « Convocation » ` +
     '(en style de titre), puis trois paragraphes qui convoquent l’équipe à une réunion le ' +
-    '12 novembre 2026 à 14 h en salle B.',
+    '12 novembre 2026 à 14 h en salle B, puis l’ordre du jour dans un tableau de trois colonnes ' +
+    `(${AGENDA_COLUMNS.join(', ')}) avec ${AGENDA_ROWS} lignes remplies.`,
   timeoutMs: 10 * MIN,
   outputs: [CONVOCATION_REL],
   async observe(_facts, env) {
@@ -92,6 +101,20 @@ const create = defineScenario<DocObservation>({
     if (!t.includes('12 novembre 2026')) r.push('the document does not name 12 novembre 2026');
     if (!/\b14\s?h/.test(t)) r.push('the document does not name 14 h');
     if (!/salle b\b/.test(t)) r.push('the document does not name salle B');
+    const agenda = doc.tables.find(
+      (x) => x[0] && AGENDA_COLUMNS.every((c, i) => lower(x[0]![i] ?? '') === c.toLowerCase()),
+    );
+    if (!agenda) {
+      r.push(
+        `no table with the header ${AGENDA_COLUMNS.join(' / ')} (${doc.tables.length} table(s))`,
+      );
+      return r;
+    }
+    const filled = agenda
+      .slice(1)
+      .filter((row) => row.length >= 3 && row.slice(0, 3).every((c) => c.trim() !== ''));
+    if (filled.length < AGENDA_ROWS)
+      r.push(`the agenda table has ${filled.length} filled row(s), fewer than ${AGENDA_ROWS}`);
     return r;
   },
 });
@@ -108,9 +131,13 @@ const replace = defineScenario<DocObservation>({
     `"${CONTRACT.from}" appears nowhere and "${CONTRACT.to}" exactly ${CONTRACT.occurrences} times, the table included`,
     "every other character of the text is the fixture's",
   ],
-  version: 1,
-  title: 'Replace a name everywhere in an existing Word document, changing nothing else',
-  green: `${CONTRACT_REL} was changed during the run: "${CONTRACT.from}" appears nowhere, "${CONTRACT.to}" appears exactly ${CONTRACT.occurrences} times (the table included), every other character of the text is the fixture's, and nobody was asked anything.`,
+  // v2 (catalogue du 17/10) : la règle des outils du produit (docx_replace_text) s'applique.
+  version: 2,
+  title: 'Replace a text everywhere, changing nothing else',
+  path: 'docx_replace_text. A script in its place is red.',
+  deliverable: `${CONTRACT_REL}, changed`,
+  productTools: { tools: ['docx_replace_text'], writes: [CONTRACT_REL], reads: [] },
+  green: `${CONTRACT_REL} was changed during the run through docx_replace_text (no command in its place): "${CONTRACT.from}" appears nowhere, "${CONTRACT.to}" appears exactly ${CONTRACT.occurrences} times (the table included), every other character of the text is the fixture's, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'word',
   sends: 'nothing',
@@ -153,9 +180,13 @@ const append = defineScenario<DocObservation>({
     `opens ${MINUTES_REL}; it must be changed during the trial`,
     'it starts with the fixture\'s paragraphs in order, then a heading reading "Décisions" and at least three non-empty paragraphs or list items',
   ],
-  version: 1,
-  title: 'Append a section at the end of an existing Word document',
-  green: `${MINUTES_REL} was changed during the run: it still starts with the fixture's ${MINUTES.paragraphs.length + 1} paragraphs, in order, then has a heading reading "Décisions" followed by at least three non-empty paragraphs or list items, and nobody was asked anything.`,
+  // v2 (catalogue du 17/10) : la règle des outils du produit (docx_append_paragraphs) s'applique.
+  version: 2,
+  title: 'Add a section without touching the rest',
+  path: 'docx_append_paragraphs. A script in its place is red.',
+  deliverable: `${MINUTES_REL}, changed`,
+  productTools: { tools: ['docx_append_paragraphs'], writes: [MINUTES_REL], reads: [] },
+  green: `${MINUTES_REL} was changed during the run through docx_append_paragraphs (no command in its place): it still starts with the fixture's ${MINUTES.paragraphs.length + 1} paragraphs, in order, then has a heading reading "Décisions" followed by at least three non-empty paragraphs or list items, and nobody was asked anything.`,
   set: 'on-demand',
   activity: 'word',
   sends: 'nothing',
@@ -191,57 +222,46 @@ const append = defineScenario<DocObservation>({
   },
 });
 
-// ─── word-table ──────────────────────────────────────────────────────────────
+// ─── word-read-answer ────────────────────────────────────────────────────────
 
-export const PLANNING_REL = 'nodal-bench/planning-bench.docx';
-const DAYS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi'];
-const COLUMNS = ['Jour', 'Tâche', 'Responsable'];
+export const ORDER_REL = 'nodal-bench/bon-commande.docx';
 
-const table = defineScenario<DocObservation>({
-  id: 'word-table',
+const readAnswer = defineScenario<{ hash: string | null }>({
+  id: 'word-read-answer',
   judgedBy: [
     ...JUDGED_COMMON,
-    `opens ${PLANNING_REL}, written during the trial; reads its tables from the OOXML`,
-    `a table whose header row is ${COLUMNS.join(' / ')} and whose next five rows start with lundi to vendredi, every cell filled`,
+    `the final answer gives ${ORDER.totalHt.toFixed(2)} (any writing): the value is written only in the last row of the document's table`,
+    `${ORDER_REL} is byte for byte the fixture (sha-256)`,
   ],
   version: 1,
-  title: 'Write a Word document holding a table',
-  green: `${PLANNING_REL} was written during the run with a table whose header row is ${COLUMNS.join(' / ')} and whose next five rows start with lundi to vendredi, in order, every cell filled, and nobody was asked anything.`,
+  title: 'Read a document and answer',
+  green: `The answer gives the order's total before tax, ${ORDER.totalHt.toFixed(2)} €, read through docx_read (no command in its place); ${ORDER_REL} is byte for byte the fixture; nobody was asked anything.`,
+  path: 'docx_read. A script in its place is red.',
+  deliverable: 'The answer, in the conversation',
+  productTools: { tools: ['docx_read'], writes: [], reads: [ORDER_REL] },
   set: 'on-demand',
   activity: 'word',
   sends: 'nothing',
-  instruction:
-    `Crée un document Word ${PLANNING_REL} dans ton espace de travail avec un tableau de trois ` +
-    `colonnes (${COLUMNS.join(', ')}) et une ligne par jour, du lundi au vendredi.`,
+  instruction: `Quel est le montant total HT du bon de commande ${ORDER_REL} ${SHARED} ?`,
   timeoutMs: 10 * MIN,
-  outputs: [PLANNING_REL],
+  fixtures: [{ from: 'office/bon-commande.docx', to: ORDER_REL }],
   async observe(_facts, env) {
-    const [hit] = findInRoots(env.workspaceRoots, PLANNING_REL, env.startedMs);
-    return observeDoc(hit?.path ?? null, hit?.fresh ?? false);
+    const f = installed(env.workspaceRoots, ORDER_REL, env.startedMs);
+    return { hash: f.exists ? fileHash(f.path) : null };
   },
   judge(facts, o) {
-    const { r, doc } = docReasons(PLANNING_REL, o);
-    r.unshift(...commonReasons(facts));
-    if (!doc) return r;
-    const t = doc.tables.find(
-      (x) => x[0] && COLUMNS.every((c, i) => lower(x[0]![i] ?? '') === c.toLowerCase()),
+    const r = commonReasons(facts);
+    r.push(
+      ...missingFacts(
+        answerOf(facts),
+        [hasNumber(ORDER.totalHt, 2, `give ${ORDER.totalHt.toFixed(2)}`)],
+        'the answer',
+      ),
     );
-    if (!t) {
-      r.push(`no table with the header ${COLUMNS.join(' / ')} (${doc.tables.length} table(s))`);
-      return r;
-    }
-    DAYS.forEach((day, i) => {
-      const row = t[i + 1];
-      if (!row) r.push(`no row for ${day}`);
-      else {
-        if (lower(row[0] ?? '') !== day)
-          r.push(`row ${i + 2} starts with ${JSON.stringify(row[0] ?? '')}, expected ${day}`);
-        if (row.length < 3 || row.slice(0, 3).some((c) => c.trim() === ''))
-          r.push(`row ${i + 2} (${day}) has an empty cell`);
-      }
-    });
+    if (o.hash !== fileHash(fixturePath('office/bon-commande.docx')))
+      r.push(`${ORDER_REL} was changed or removed`);
     return r;
   },
 });
 
-export const WORD_SCENARIOS: AnyScenario[] = [create, replace, append, table];
+export const WORD_SCENARIOS: AnyScenario[] = [create, replace, append, readAnswer];

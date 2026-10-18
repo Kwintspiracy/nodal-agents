@@ -11,9 +11,29 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { TreeFactsSchema, type TreeFacts } from '../facts';
-import { scenarioById } from '../scenarios';
-import { busyReason, measure, runTrial, type TrialDeps, type TrialOptions } from '../trial';
+import { SCENARIOS, scenarioById } from '../scenarios';
+import { BENCH_PRINTER_MISSING } from '../needs';
+import {
+  DELIVERY_TOOL_NAMES,
+  createSendAudioTool,
+  createSendFileTool,
+  createSendImageTool,
+  createSendVideoTool,
+  createSendVoiceTool,
+  createTelegramSendMessageTool,
+} from '@nodal-agents/tools';
+import {
+  DELIVERY_CONTENT_FIELDS,
+  DELIVERY_TARGET_FIELDS,
+  busyReason,
+  destinationReasons,
+  measure,
+  runTrial,
+  type TrialDeps,
+  type TrialOptions,
+} from '../trial';
 import type { ForeignActivity } from '../stack';
+import type { ResearchSubject } from '../subjects';
 import type { AnyScenario } from '../types';
 
 const FIX = join(__dirname, 'fixtures');
@@ -36,6 +56,15 @@ const OPTS: TrialOptions = {
 
 const IDLE: ForeignActivity = { jobs: [], lastChatMs: null };
 
+/** Un sujet calibré, posé pour les essais de recherche (subjects.ts) : celui de l'essai réel du 30/09. */
+const CMB: ResearchSubject = {
+  id: 'test-cmb',
+  kind: 'research',
+  request: 'la découverte du fond diffus cosmologique : qui, quand, comment',
+  facts: [{ says: 'name Penzias', pattern: '\\bpenzias\\b', flags: 'i' }],
+  calibratedOn: ['test'],
+};
+
 interface World {
   deps: TrialDeps;
   started: string[];
@@ -52,6 +81,7 @@ function world(opts: {
   snapshots: TreeFacts[];
   afterCancel?: TreeFacts;
   foreign?: ForeignActivity[];
+  subjects?: ResearchSubject[];
 }): World {
   const clock = { now: Date.parse('2026-09-30T03:00:00Z') };
   const started: string[] = [];
@@ -88,6 +118,7 @@ function world(opts: {
       startedMs,
     }),
     rootModel: async () => 'z-ai/glm-5.3',
+    subjects: () => opts.subjects ?? [],
     log: () => undefined,
   };
   return { deps, started, cancelled, clock };
@@ -206,29 +237,43 @@ describe('workflow trial safety rules', () => {
     const line = await runTrial(scenarioById('print')!, w.deps, OPTS);
     expect(w.started).toEqual([]);
     expect(line.verdict).toBe('skipped');
-    expect(line.reasons).toEqual([
-      'no agent of this workspace has request_print (no printer connector configured)',
-    ]);
+    expect(line.reasons).toEqual([BENCH_PRINTER_MISSING]);
     expect(line).toMatchObject({
       activity: 'print',
-      needs: ['printer'],
+      needs: ['bench-printer'],
       rootModel: 'z-ai/glm-5.3',
     });
   });
 
-  it('the same need met lets the trial run: the printer is seen under its MCP server prefix', async () => {
-    const green = load('print-green');
-    const w = world({ rootId: green.rootId, snapshots: [green] });
-    w.deps.env = async (startedMs) => ({
-      workspaceRoots: [],
-      teamTools: ['office_printer__request_print'],
-      services: {},
-      unlistedMcpServers: [],
-      startedMs,
-    });
-    const line = await runTrial(scenarioById('print')!, w.deps, OPTS);
-    expect(w.started).toHaveLength(1);
-    expect(line.verdict).toBe('green');
+  // Décision du propriétaire, 18/10 : un essai d'impression du banc ne parle
+  // jamais à une vraie imprimante. Tout scénario de l'activité `print` attend
+  // l'imprimante du banc (#794), même quand l'équipe a request_print (le
+  // connecteur réel du propriétaire) : il est sauté, avec la raison, et rien
+  // ne démarre.
+  it.each(SCENARIOS.filter((s) => s.activity === 'print').map((s) => s.id))(
+    "%s: a print scenario never runs on the team's real printer: without the bench's recording printer it is skipped, with the reason",
+    async (id) => {
+      const green = load('print-green');
+      const w = world({ rootId: green.rootId, snapshots: [green] });
+      w.deps.env = async (startedMs) => ({
+        workspaceRoots: [],
+        teamTools: ['office_printer__request_print', 'office_printer__get_print_request'],
+        services: {},
+        unlistedMcpServers: [],
+        startedMs,
+      });
+      const line = await runTrial(scenarioById(id)!, w.deps, OPTS);
+      expect(w.started).toEqual([]);
+      expect([line.verdict, line.reasons]).toEqual(['skipped', [BENCH_PRINTER_MISSING]]);
+    },
+  );
+
+  it('the print scenarios are print, print-file and recipe: the rule above is played on each', () => {
+    expect(SCENARIOS.filter((s) => s.activity === 'print').map((s) => s.id)).toEqual([
+      'print',
+      'print-file',
+      'recipe',
+    ]);
   });
 
   it('a refused run_task is an ERROR line with the server words, never a silent pass', async () => {
@@ -337,7 +382,7 @@ describe('where a trial may send', () => {
     const sent: TreeFacts = {
       ...green,
       toolCalls: [
-        { ...sendTool({ source: 'x.png', chat_id: '-1001234567890' }), jobId: green.rootId },
+        { ...sendTool({ source: 'x.png', chatId: '-1001234567890' }), jobId: green.rootId },
       ],
     };
     const w = world({ rootId: green.rootId, snapshots: [sent] });
@@ -345,7 +390,7 @@ describe('where a trial may send', () => {
     const line = await runTrial(ownerQuestion, w.deps, { ...OPTS, allowOwnerSends: true });
     expect(line.verdict).toBe('red');
     expect(line.reasons).toEqual([
-      "a send names a recipient other than the owner (-1001234567890): sends: owner allows only the owner's own chat",
+      "a product delivery names an explicit target (send_image: chatId=-1001234567890): sends: owner allows only the owner's own chat",
     ]);
   });
 
@@ -438,6 +483,258 @@ describe('where a trial may send', () => {
     expect(line.reasons).toEqual([]);
   });
 
+  // Revue de #777, passe 8 (P2) : « jamais une vraie imprimante » ne tenait
+  // qu'au besoin des trois scénarios d'impression. Imprimer est une action
+  // sur le monde, comme envoyer : la même classification (`isOutboundTool`)
+  // rend rouge tout essai qui appelle un outil d'impression. Ici sous
+  // `sends: nothing` ; sous `owner`, voir la passe 9 plus bas. Une lecture
+  // (`list_printers`) ne l'est pas.
+  const PRINT_CALLS = [
+    'office_printer__request_print',
+    'office_printer__confirm_print',
+    'printer__print_document',
+    'cups__print',
+  ];
+  const nonPrint = SCENARIOS.filter((s) => s.activity !== 'print' && s.sends === 'nothing');
+  it.each(PRINT_CALLS)(
+    'a print call (%s) is red with its reason in every non-print scenario, never only in the print ones',
+    (tool) => {
+      expect(nonPrint.length).toBeGreaterThan(10);
+      const green = load('question-green');
+      const printed: TreeFacts = {
+        ...green,
+        toolCalls: [
+          { jobId: green.rootId, toolName: tool, input: '{}', output: '{}', createdMs: 0 },
+        ],
+      };
+      for (const s of nonPrint)
+        expect([s.id, destinationReasons(s, printed)]).toEqual([
+          s.id,
+          [`an outbound tool was called (${tool})`],
+        ]);
+    },
+  );
+
+  it('end to end: a question trial whose agent called request_print then confirm_print is red, named', async () => {
+    const green = load('question-green');
+    const printed: TreeFacts = {
+      ...green,
+      toolCalls: [
+        ...green.toolCalls,
+        ...['office_printer__request_print', 'office_printer__confirm_print'].map((toolName) => ({
+          jobId: green.rootId,
+          toolName,
+          input: '{}',
+          output: '{}',
+          createdMs: 0,
+        })),
+      ],
+    };
+    const w = world({ rootId: green.rootId, snapshots: [printed] });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect([line.verdict, line.reasons]).toEqual([
+      'red',
+      [
+        'an outbound tool was called (office_printer__request_print, office_printer__confirm_print)',
+      ],
+    ]);
+  });
+
+  it.each(['office_printer__list_printers', 'printer__get_printers', 'printer__list_jobs'])(
+    'a printer read (%s) stays green in every non-print scenario',
+    (tool) => {
+      const green = load('question-green');
+      const read: TreeFacts = {
+        ...green,
+        toolCalls: [
+          { jobId: green.rootId, toolName: tool, input: '{}', output: '{}', createdMs: 0 },
+        ],
+      };
+      for (const s of nonPrint) expect([s.id, destinationReasons(s, read)]).toEqual([s.id, []]);
+    },
+  );
+
+  // Revue de #777, passe 9 (P2) : sous `sends: owner`, seuls les outils de
+  // livraison étaient lus (pour leur destinataire) ; une impression ou tout
+  // autre outil sortant passait vert. `owner` permet UNE chose sortante : une
+  // livraison au chat du propriétaire. Tout autre outil sortant est rouge,
+  // quel que soit le `sends` du scénario.
+  const OWNER = SCENARIOS.filter((s) => s.sends === 'owner');
+  const callOf = (toolName: string, input: object = {}) => ({
+    jobId: load('question-green').rootId as string | null,
+    toolName,
+    input: JSON.stringify(input),
+    output: JSON.stringify({ ok: true }),
+    createdMs: 0,
+  });
+  const withCalls = (...calls: ReturnType<typeof callOf>[]): TreeFacts => ({
+    ...load('question-green'),
+    toolCalls: calls,
+  });
+
+  it('every scenario declares nothing or owner: the outbound rule below covers them all', () => {
+    expect(OWNER.length).toBeGreaterThan(0);
+    expect(SCENARIOS.filter((s) => s.sends !== 'nothing' && s.sends !== 'owner')).toEqual([]);
+  });
+
+  it.each([...PRINT_CALLS, 'slack__chat_postMessage', 'gdrive__file_publish', 'notify__push'])(
+    'under sends: owner, %s is red with its reason in every owner scenario, beside the owner delivery',
+    (tool) => {
+      for (const s of OWNER)
+        expect([
+          s.id,
+          destinationReasons(s, withCalls(callOf('send_image', { source: 'x.png' }), callOf(tool))),
+        ]).toEqual([s.id, [`an outbound tool was called (${tool})`]]);
+    },
+  );
+
+  it("under sends: owner, the delivery to the owner's own chat stays green, and one to someone else stays red", () => {
+    for (const s of OWNER) {
+      expect([
+        s.id,
+        destinationReasons(s, withCalls(callOf('send_image', { source: 'x.png' }))),
+      ]).toEqual([s.id, []]);
+      expect([
+        s.id,
+        destinationReasons(
+          s,
+          withCalls(callOf('send_image', { source: 'x.png', chatId: '-1001234567890' })),
+        ),
+      ]).toEqual([
+        s.id,
+        [
+          "a product delivery names an explicit target (send_image: chatId=-1001234567890): sends: owner allows only the owner's own chat",
+        ],
+      ]);
+    }
+  });
+
+  it('the real comfyui-telegram trial (its normal path: a skill script, then send_image) stays green on the destination rule', () => {
+    const real = load('comfyui-telegram-green');
+    expect(destinationReasons(scenarioById('comfyui-telegram')!, real)).toEqual([]);
+  });
+
+  // Revue de #777, passe 10 (P2) : l'exemption de `owner` se décidait sur le
+  // nom NU (`bareToolName` retire `cli:` et `serveur__`) et sur tout envoi de
+  // courrier. Une exemption se décide sur l'IDENTITÉ de l'outil : seuls les
+  // outils de livraison du produit, à leur nom EXACT, tel que le runner les
+  // range (sans préfixe), livrent au chat de la conversation. Un outil MCP ou
+  // de CLI du même nom nu n'est pas celui du produit ; un courrier n'est pas
+  // le chat du propriétaire, et son destinataire ne se vérifie pas.
+  it('the runner records the product delivery tools by their exact, unprefixed name (real captured trials)', () => {
+    expect(
+      load('comfyui-telegram-green')
+        .toolCalls.map((c) => c.toolName)
+        .filter((n) => n.includes('send')),
+    ).toEqual(['send_image']);
+  });
+
+  it.each([
+    ['x__send_image', {}],
+    ['cli:send_image', {}],
+    ['x__telegram_send_message', { text: 'fait' }],
+    ['gmail__send_email', { to: 'boss', subject: 'x' }],
+    ['outlook_send_mail', { recipient: 'the team' }],
+  ])(
+    'under sends: owner, %s looks like a delivery but is not the product one: red, outbound, in every owner scenario',
+    (tool, input) => {
+      for (const s of OWNER)
+        expect([s.id, destinationReasons(s, withCalls(callOf(tool, input)))]).toEqual([
+          s.id,
+          [`an outbound tool was called (${tool})`],
+        ]);
+    },
+  );
+
+  it.each(['send_image', 'send_file', 'telegram_send_message'])(
+    "under sends: owner, the product's own %s (exact name, no recipient) stays green in every owner scenario",
+    (tool) => {
+      for (const s of OWNER)
+        expect([s.id, destinationReasons(s, withCalls(callOf(tool, { source: 'x.png' })))]).toEqual(
+          [s.id, []],
+        );
+    },
+  );
+
+  // Revue de #777, passe 11 (P2) : sous `owner`, le destinataire d'une
+  // livraison du produit était cherché dans le TEXTE de son entrée
+  // (`recipientIds` : courriels, téléphones, identifiants de 9 chiffres et
+  // plus). Les outils acceptent tout `chatId` `^-?\d+$` et livrent à toute
+  // conversation approuvée : `chatId: '1234567'` passait vert. La règle est
+  // STRUCTURELLE : une livraison du produit qui nomme une cible (un champ de
+  // destination de son schéma) est rouge ; sans cible, le produit livre au
+  // propriétaire de la conversation.
+  const TARGETED = (tool: string, what: string) =>
+    `a product delivery names an explicit target (${tool}: ${what}): sends: owner allows only the owner's own chat`;
+  it.each([
+    ['send_file', { source: 'report.pdf', chatId: '1234567' }, 'chatId=1234567'],
+    ['send_image', { source: 'x.png', chatId: '1234567' }, 'chatId=1234567'],
+    ['telegram_send_message', { text: 'fait', chatId: '1234567' }, 'chatId=1234567'],
+    ['send_video', { source: 'v.mp4', chatId: '-42' }, 'chatId=-42'],
+    ['send_image', { source: 'x.png', channel: 'slack' }, 'channel=slack'],
+  ])(
+    'under sends: owner, the product %s with an explicit target is red, in every owner scenario',
+    (tool, input, what) => {
+      for (const s of OWNER)
+        expect([s.id, destinationReasons(s, withCalls(callOf(tool, input)))]).toEqual([
+          s.id,
+          [TARGETED(tool, what)],
+        ]);
+    },
+  );
+
+  it('under sends: owner, a product delivery with a field the bench does not know is red: it may name a target', () => {
+    for (const s of OWNER)
+      expect([
+        s.id,
+        destinationReasons(s, withCalls(callOf('send_image', { source: 'x.png', chat_id: '7' }))),
+      ]).toEqual([
+        s.id,
+        [
+          'a product delivery carries a field the bench does not know (send_image: chat_id): it may name a target, so sends: owner refuses it',
+        ],
+      ]);
+  });
+
+  it('under sends: owner, a delivery whose source URL holds 14 digits stays green: no text is scanned', () => {
+    for (const s of OWNER)
+      expect([
+        s.id,
+        destinationReasons(
+          s,
+          withCalls(
+            callOf('send_image', {
+              source: 'http://127.0.0.1:8188/view?filename=img_20261018123456.png',
+              caption: 'n° -1001234567890',
+              purpose: 'Livrer au propriétaire.',
+            }),
+          ),
+        ),
+      ]).toEqual([s.id, []]);
+  });
+
+  it('every field of every product delivery tool is known to the bench, as a target or as content: a new field fails here', () => {
+    const tools = [
+      createTelegramSendMessageTool(),
+      createSendImageTool(),
+      createSendFileTool(),
+      createSendVideoTool(),
+      createSendAudioTool(),
+      createSendVoiceTool(),
+    ];
+    expect(tools.map((t) => t.name).sort()).toEqual([...DELIVERY_TOOL_NAMES].sort());
+    const known = new Set<string>([...DELIVERY_TARGET_FIELDS, ...DELIVERY_CONTENT_FIELDS]);
+    for (const t of tools) {
+      const fields = Object.keys((t.inputSchema as unknown as { shape: object }).shape);
+      expect([t.name, fields.filter((f) => !known.has(f))]).toEqual([t.name, []]);
+    }
+    // Les cibles du produit, lues dans ses schémas : chacune est bien un champ d'au moins un outil.
+    for (const f of DELIVERY_TARGET_FIELDS)
+      expect(tools.some((t) => f in (t.inputSchema as unknown as { shape: object }).shape)).toBe(
+        true,
+      );
+  });
+
   it('internal tools stay quiet: files, office documents, the dashboard, return_result', async () => {
     const green = load('question-green');
     const quiet: TreeFacts = {
@@ -502,7 +799,7 @@ describe('what happens before a trial starts', () => {
     const w = world({ rootId: green.rootId, snapshots: [green] });
     w.deps.env = async (startedMs) => ({
       workspaceRoots: [mkdtempSync(join(tmpdir(), 'wf-prep-'))],
-      teamTools: [],
+      teamTools: ['xlsx_create'],
       services: {},
       unlistedMcpServers: [],
       startedMs,
@@ -607,16 +904,11 @@ describe('an unverified check travels on every line of its scenario', () => {
     ticket: '#648',
   };
 
-  it('a research trial green on its own judge says sources read: not verified', async () => {
+  it('a research trial that ran says sources read: not verified, whatever its verdict', async () => {
     const green = load('research-green');
-    // Le vrai essai du 30/09 a aussi envoyé un message Telegram (voir le cas suivant) : on le retire ici.
-    const quiet: TreeFacts = {
-      ...green,
-      toolCalls: green.toolCalls.filter((c) => c.toolName !== 'telegram_send_message'),
-    };
-    const w = world({ rootId: green.rootId, snapshots: [quiet] });
+    const w = world({ rootId: green.rootId, snapshots: [green], subjects: [CMB] });
     const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
-    expect(line.verdict).toBe('green');
+    expect(w.started).toHaveLength(1);
     expect(line.unverified).toEqual([expect.objectContaining(SOURCES)]);
   });
 
@@ -626,11 +918,13 @@ describe('an unverified check travels on every line of its scenario', () => {
   // vert ; la destination déclarée (`nothing`) le refuse désormais.
   it('the real research trial of 30/09 sent a Telegram message: red for that, whatever its judge says', async () => {
     const green = load('research-green');
-    expect(scenarioById('research')!.judge(green, null)).toEqual([]);
-    const w = world({ rootId: green.rootId, snapshots: [green] });
+    expect(scenarioById('research')!.judge(green, { subject: CMB })).not.toContain(
+      'a send tool was called (telegram_send_message)',
+    );
+    const w = world({ rootId: green.rootId, snapshots: [green], subjects: [CMB] });
     const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
     expect(line.verdict).toBe('red');
-    expect(line.reasons).toEqual(['a send tool was called (telegram_send_message)']);
+    expect(line.reasons).toContain('a send tool was called (telegram_send_message)');
   });
 
   it('a skipped trial says it too: the check is a property of the scenario, not of a green run', async () => {
@@ -657,5 +951,141 @@ describe('an unverified check travels on every line of its scenario', () => {
     const w = world({ rootId: green.rootId, snapshots: [green] });
     const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
     expect(line.unverified).toEqual([]);
+  });
+});
+
+// Le catalogue du 17/10 : un sujet calibré, les outils du produit, le chemin gardé.
+describe('workflow trial: subjects, product tools and the path', () => {
+  it('a research scenario with no calibrated subject is SKIPPED with the reason and the ticket; nothing starts', async () => {
+    const green = load('research-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
+    expect(w.started).toEqual([]);
+    expect(line.verdict).toBe('skipped');
+    expect(line.reasons).toEqual([
+      'no calibrated research subject (kind research) in packages/bench/subjects/research-subjects.json: the trial does not run on a subject models know from memory (#776)',
+    ]);
+    expect(line.subject).toBeNull();
+  });
+
+  it('a calibrated subject goes into the request word for word, and the line names it', async () => {
+    const green = load('research-green');
+    const w = world({ rootId: green.rootId, snapshots: [green], subjects: [CMB] });
+    const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
+    expect(w.started).toEqual([
+      'Trouve sur le web la réponse à cette question, et donne tes sources avec leurs liens : la découverte du fond diffus cosmologique : qui, quand, comment',
+    ]);
+    expect(line.subject).toBe('test-cmb');
+  });
+
+  it('a subject of the other kind is no subject: the deep research is skipped, the simple one runs', async () => {
+    const green = load('research-green');
+    const w = world({ rootId: green.rootId, snapshots: [green], subjects: [CMB] });
+    const deep = await runTrial(scenarioById('deep-research-report')!, w.deps, OPTS);
+    expect(deep.verdict).toBe('skipped');
+    expect(deep.reasons[0]).toMatch(/^no calibrated research subject \(kind deep-research\)/);
+  });
+
+  it('an unreadable subjects file is an ERROR line with its words, never a skip or a default subject', async () => {
+    const green = load('research-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    w.deps.subjects = () => {
+      throw new Error('workflow_subjects_unreadable: x is not JSON');
+    };
+    const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
+    expect(w.started).toEqual([]);
+    expect(line.verdict).toBe('error');
+    expect(line.reasons).toEqual([
+      'the trial could not be prepared: workflow_subjects_unreadable: x is not JSON',
+    ]);
+  });
+
+  it.each(['file', 'word-create', 'ppt-read-answer', 'html-edit'])(
+    '%s: no product tool of the scenario in the team SKIPS it with that reason; nothing starts',
+    async (id) => {
+      const green = load('question-green');
+      const w = world({ rootId: green.rootId, snapshots: [green] });
+      const line = await runTrial(scenarioById(id)!, w.deps, OPTS);
+      expect(w.started).toEqual([]);
+      expect(line.verdict).toBe('skipped');
+      expect(line.reasons).toEqual([
+        `no agent of this workspace has the product tool this scenario is about (${scenarioById(id)!.productTools!.tools.join(', ')})`,
+      ]);
+    },
+  );
+
+  it('the real file trial of 30/09 wrote the workbook with a Python script while xlsx tools were there: red, no xlsx write recorded', async () => {
+    const after = load('file-red-approval');
+    // Sans son approbation (et l'annulation qu'elle a causée) : il ne reste que le chemin.
+    const done: TreeFacts = {
+      ...after,
+      approvals: [],
+      jobs: after.jobs.map((j) => ({ ...j, status: 'completed' })),
+    };
+    const w = world({ rootId: after.rootId, snapshots: [done] });
+    // Un dossier partagé vide : le classeur du 30/09 n'y est pas, et le banc
+    // sait où il poserait ses fichiers (un espace sans dossier lève, #4).
+    const shared = mkdtempSync(join(tmpdir(), 'wf-trial-3009-'));
+    w.deps.env = async (startedMs) => ({
+      workspaceRoots: [shared],
+      teamTools: ['xlsx_create', 'xlsx_read', 'xlsx_set_cell', 'xlsx_set_range'],
+      services: {},
+      unlistedMcpServers: [],
+      startedMs,
+    });
+    const line = await runTrial(scenarioById('file')!, w.deps, OPTS);
+    expect(line.verdict).toBe('red');
+    // Le classeur a été écrit par python (run_command) : aucune écriture d'un
+    // outil xlsx n'est enregistrée (un essai d'avant #779 n'en enregistre
+    // aucune, et un script n'en laisse jamais) : rouge, jamais vert.
+    expect(line.reasons.filter((r) => r.startsWith('product tool available'))).toEqual([
+      'product tool available, not used: no write of nodal-bench/ventes-bench.xlsx by xlsx_create, xlsx_set_range is recorded with the bytes it wrote',
+    ]);
+  });
+
+  it('the line keeps the path: every tool by name and in order, per job, and the teammate delegated to', async () => {
+    const after = load('file-red-approval');
+    const w = world({ rootId: after.rootId, snapshots: [beforeCancel(after)], afterCancel: after });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.toolCalls).toBe(9);
+    expect(line.path).toEqual([
+      {
+        job: '75bbf3d0',
+        agent: 'alfred',
+        parent: null,
+        tools: ['skill_view', 'load_tools', 'assign_researcher'],
+      },
+      {
+        job: '074e7161',
+        agent: 'researcher',
+        parent: '75bbf3d0',
+        tools: [
+          'skill_view',
+          'file_write',
+          'load_tools',
+          'run_command',
+          'run_command',
+          'run_command',
+        ],
+      },
+    ]);
+    expect(line.delegatedTo).toEqual(['researcher']);
+  });
+
+  it('the line classifies the links of the answer: on the real research trial, the Nobel page alone unseen', async () => {
+    const green = load('research-green');
+    const w = world({ rootId: green.rootId, snapshots: [green], subjects: [CMB] });
+    const line = await runTrial(scenarioById('research')!, w.deps, OPTS);
+    expect(line.links).toHaveLength(15);
+    expect(line.links.filter((l) => !l.seen).map((l) => l.url)).toEqual([
+      'nobelprize.org/prizes/physics/1978/summary',
+    ]);
+  });
+
+  it('a skipped line records an empty path, not a missing one: nothing ran', async () => {
+    const green = load('question-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    const line = await runTrial(scenarioById('file')!, w.deps, OPTS);
+    expect(line).toMatchObject({ verdict: 'skipped', path: [], delegatedTo: [], links: [] });
   });
 });

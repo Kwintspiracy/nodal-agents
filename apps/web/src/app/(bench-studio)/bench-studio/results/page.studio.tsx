@@ -147,8 +147,14 @@ export default async function ResultsPage() {
                         <Tr key={s.id}>
                           <Td className="max-w-[18rem]">
                             <CellTitle
-                              href={`/bench-studio/scenarios/${s.id}`}
-                              meta={`${s.id} · v${s.version ?? '?'}`}
+                              href={s.closed ? undefined : `/bench-studio/scenarios/${s.id}`}
+                              meta={`${s.id} · v${s.version ?? '?'}${
+                                s.closed
+                                  ? s.closed.renommeEn
+                                    ? ` · closed series, renamed ${s.closed.renommeEn}`
+                                    : ' · closed series, retired'
+                                  : ''
+                              }`}
                               title={s.title}
                             >
                               {s.title}
