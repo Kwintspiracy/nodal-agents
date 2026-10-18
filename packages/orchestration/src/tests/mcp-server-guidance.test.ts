@@ -122,7 +122,7 @@ describe('MCP server guidance in the prompt @cap:connecter-un-service/moteur', (
   it('one block per server whose tool the job holds; none for a server that publishes nothing or whose tools it does not hold', async () => {
     const entityId = await workspace();
     const agent = await agentIn(entityId, 'printer-user');
-    const printer = await server(entityId, 'hp-printer', PRINT_GUIDE);
+    const printer = await server(entityId, 'office-printer', PRINT_GUIDE);
     const files = await server(entityId, 'files', FILES_GUIDE);
     const silent = await server(entityId, 'silent-srv', null);
     const unused = await server(entityId, 'unused-srv', 'Never shown.');
@@ -136,15 +136,15 @@ describe('MCP server guidance in the prompt @cap:connecter-un-service/moteur', (
     const prompt = await buildSystemPrompt(
       agent,
       db,
-      job('hp_printer__request_print', 'files__read', 'silent_srv__ping'),
+      job('office_printer__request_print', 'files__read', 'silent_srv__ping'),
     );
 
-    expect(prompt).toContain(FRAME('hp-printer'));
+    expect(prompt).toContain(FRAME('office-printer'));
     expect(prompt).toContain(PRINT_GUIDE);
     expect(prompt).toContain(FRAME('files'));
     expect(prompt).toContain(FILES_GUIDE);
     // Ordered by slug: a stable prompt is a cacheable prompt.
-    expect(prompt.indexOf(FRAME('files'))).toBeLessThan(prompt.indexOf(FRAME('hp-printer')));
+    expect(prompt.indexOf(FRAME('files'))).toBeLessThan(prompt.indexOf(FRAME('office-printer')));
 
     expect(prompt).not.toContain(FRAME('silent-srv'));
     expect(prompt).not.toContain(FRAME('unused-srv'));
@@ -161,7 +161,7 @@ describe('MCP server guidance in the prompt @cap:connecter-un-service/moteur', (
   it('a job that holds none of the server tools gets nothing — the chat surface, a job whose server failed to connect', async () => {
     const entityId = await workspace();
     const agent = await agentIn(entityId, 'chat-user');
-    await attach(entityId, agent, await server(entityId, 'hp-printer', PRINT_GUIDE));
+    await attach(entityId, agent, await server(entityId, 'office-printer', PRINT_GUIDE));
 
     const chat = await buildSystemPrompt(agent, db, {
       origin: 'api',

@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import type { ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { toastCardWordsHandOff } from '@/lib/card-words-notice.ts';
 import { CaretRight, PencilSimple } from '@phosphor-icons/react';
 import { resolveApprovalAction } from '@/lib/actions.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton';
@@ -98,6 +99,7 @@ export default function QuestionCard({ prompt, options, question }: QuestionCard
         return;
       }
       toast.success(free ? 'Answered' : `Answered: ${answer}`);
+      toastCardWordsHandOff(r.data.handOff);
       // Le fil est rendu côté serveur : sans ce rafraîchissement, la carte
       // resterait en attente jusqu'au prochain passage de LiveRefresh.
       router.refresh();
@@ -124,6 +126,7 @@ export default function QuestionCard({ prompt, options, question }: QuestionCard
         return;
       }
       toast.success('Declined');
+      toastCardWordsHandOff(r.data.handOff);
       setDeclining(false);
       setNotes('');
       router.refresh();

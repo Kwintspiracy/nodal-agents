@@ -2762,6 +2762,7 @@ describe('resolveApprovalAction', () => {
         JSON.stringify({
           jobId: 'aaaaaaaa-0000-0000-0000-000000000097',
           decision: 'approve',
+          handOff: { kind: 'no_words' },
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
@@ -2790,6 +2791,7 @@ describe('resolveApprovalAction', () => {
           jobId: 'aaaaaaaa-0000-0000-0000-000000000091',
           status: 'pending',
           decision: 'approve',
+          handOff: { kind: 'no_words' },
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
@@ -2800,9 +2802,33 @@ describe('resolveApprovalAction', () => {
       decision: 'approve',
     });
     expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.handOff).toEqual({ kind: 'no_words' });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const headers = (fetchSpy.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
     expect(headers['Authorization']).toBe('Bearer test-bearer-789');
+    fetchSpy.mockRestore();
+  });
+
+  it('#799 — a runner reply that does not say where the words went is an error said', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000098' }]) as typeof currentDb;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          jobId: 'aaaaaaaa-0000-0000-0000-000000000099',
+          decision: 'reject',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const { resolveApprovalAction } = await import('../src/lib/actions.ts');
+    const r = await resolveApprovalAction({
+      approvalRequestId: 'aaaaaaaa-0000-0000-0000-000000000098',
+      decision: 'reject',
+      notes: 'stop',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('runner_contract');
     fetchSpy.mockRestore();
   });
 

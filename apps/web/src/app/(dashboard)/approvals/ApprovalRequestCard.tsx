@@ -2,6 +2,7 @@
 
 import { useRef, useState, useTransition } from 'react';
 import { toast } from 'sonner';
+import { toastCardWordsHandOff } from '@/lib/card-words-notice.ts';
 import { ShieldCheck, Warning } from '@phosphor-icons/react';
 import {
   resolveApprovalAction,
@@ -170,6 +171,7 @@ function ApprovalDecisionCard({
       ...(reason ? { notes: reason } : {}),
     });
     if (result.ok) {
+      toastCardWordsHandOff(result.data.handOff);
       await refresh();
       onResolved?.();
     }

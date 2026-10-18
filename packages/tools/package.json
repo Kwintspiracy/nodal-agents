@@ -30,7 +30,7 @@
     "officeparser": "^7.1.0",
     "pptx-automizer": "^0.8.2",
     "pptxgenjs": "^4.0.1",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@nodal-agents/test-kit": "workspace:*",
