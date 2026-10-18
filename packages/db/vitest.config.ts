@@ -1,4 +1,5 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig, mergeConfig } from 'vitest/config';
+import { baseConfig, EXCLUDE } from '../../vitest.base.ts';
 
 /**
  * Les suites `*.pg.test.ts` démarrent un VRAI Postgres embarqué — ici pour
@@ -18,10 +19,9 @@ import { defineConfig } from 'vitest/config';
  * qui porte la garantie. Le message ci-dessous le dit dans le journal du job
  * plutôt que de laisser croire à une suite complète.
  *
- * ⚠️ Cette config par paquet SHADOWE entièrement la `vitest.config.ts` de la
- * racine : ses réglages (globals, environment, timeouts généreux) doivent être
- * répliqués ici, sinon les tests de ce paquet retombent sur le défaut de 5 s et
- * flakent sur un runner CI sursouscrit.
+ * ⚠️ Cette config par paquet SHADOWE la `vitest.config.ts` de la racine : elle
+ * fusionne donc `vitest.base.ts` (timeouts, environnement, exclusions), la seule
+ * source de ces réglages, et ne redit que ce qui lui est propre.
  */
 const isWindowsCi = process.platform === 'win32' && !!process.env['CI'];
 if (isWindowsCi) {
@@ -30,39 +30,31 @@ if (isWindowsCi) {
   );
 }
 
-const EXCLUDE = [
-  '**/node_modules/**',
-  '**/dist/**',
-  '**/.next/**',
-  '**/.turbo/**',
-  '**/.claude/**',
-];
 const PG_TESTS = '**/*.pg.test.ts';
 
-export default defineConfig({
-  test: {
-    globals: true,
-    environment: 'node',
-    exclude: EXCLUDE,
-    testTimeout: 60_000,
-    hookTimeout: 60_000,
-    // Les `.pg` partagent UN Postgres par run (#471) : voir la config racine et
-    // packages/test-kit/src/shared-postgres.ts. Pas de projet `pg` du tout sur
-    // Windows CI, où ils ne tournent pas.
-    projects: [
-      { extends: true, test: { name: 'unit', exclude: [...EXCLUDE, PG_TESTS] } },
-      ...(isWindowsCi
-        ? []
-        : [
-            {
-              extends: true,
-              test: {
-                name: 'pg',
-                include: [PG_TESTS],
-                globalSetup: ['../test-kit/src/pg-global-setup.ts'],
+export default mergeConfig(
+  baseConfig,
+  defineConfig({
+    test: {
+      globals: true,
+      // Les `.pg` partagent UN Postgres par run (#471) : voir la config racine et
+      // packages/test-kit/src/shared-postgres.ts. Pas de projet `pg` du tout sur
+      // Windows CI, où ils ne tournent pas.
+      projects: [
+        { extends: true, test: { name: 'unit', exclude: [...EXCLUDE, PG_TESTS] } },
+        ...(isWindowsCi
+          ? []
+          : [
+              {
+                extends: true,
+                test: {
+                  name: 'pg',
+                  include: [PG_TESTS],
+                  globalSetup: ['../test-kit/src/pg-global-setup.ts'],
+                },
               },
-            },
-          ]),
-    ],
-  },
-});
+            ]),
+      ],
+    },
+  }),
+);

@@ -1,4 +1,5 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig, mergeConfig } from 'vitest/config';
+import { baseConfig } from '../../vitest.base.ts';
 
 /**
  * Les suites `*.pg.test.ts` démarrent un VRAI Postgres embarqué (deux
@@ -31,40 +32,36 @@ if (isWindowsCi) {
 
 const PG_TESTS = '**/*.pg.test.ts';
 
-export default defineConfig({
-  test: {
-    setupFiles: [
-      '../../packages/test-kit/src/setup-workspaces-root.ts',
-      // Les programmes de Nodal sur l'hôte dans cette suite (le fichier dit pourquoi).
-      './src/tests/setup-nodal-programs-host.ts',
-    ],
-    // Les `.pg` partagent UN Postgres par run (#471) : voir la config racine et
-    // packages/test-kit/src/shared-postgres.ts. Pas de projet `pg` du tout sur
-    // Windows CI, où ils ne tournent pas.
-    projects: [
-      {
-        extends: true,
-        test: { name: 'unit', exclude: ['**/node_modules/**', '**/dist/**', PG_TESTS] },
-      },
-      ...(isWindowsCi
-        ? []
-        : [
-            {
-              extends: true,
-              test: {
-                name: 'pg',
-                include: [PG_TESTS],
-                globalSetup: ['../../packages/test-kit/src/pg-global-setup.ts'],
+export default mergeConfig(
+  baseConfig,
+  defineConfig({
+    test: {
+      setupFiles: [
+        '../../packages/test-kit/src/setup-workspaces-root.ts',
+        // Les programmes de Nodal sur l'hôte dans cette suite (le fichier dit pourquoi).
+        './src/tests/setup-nodal-programs-host.ts',
+      ],
+      // Les `.pg` partagent UN Postgres par run (#471) : voir la config racine et
+      // packages/test-kit/src/shared-postgres.ts. Pas de projet `pg` du tout sur
+      // Windows CI, où ils ne tournent pas.
+      projects: [
+        {
+          extends: true,
+          test: { name: 'unit', exclude: ['**/node_modules/**', '**/dist/**', PG_TESTS] },
+        },
+        ...(isWindowsCi
+          ? []
+          : [
+              {
+                extends: true,
+                test: {
+                  name: 'pg',
+                  include: [PG_TESTS],
+                  globalSetup: ['../../packages/test-kit/src/pg-global-setup.ts'],
+                },
               },
-            },
-          ]),
-    ],
-    // This per-package config SHADOWS the root vitest.config.ts entirely —
-    // the root's generous timeouts must be replicated here or runner tests
-    // fall back to the 5s default and flake on oversubscribed CI runners
-    // (see the root config's comment; observed on install.test.ts, CI run
-    // 29939729072: 100MB-buffer zip-guard tests + pglite spin-up > 5s).
-    testTimeout: 60_000,
-    hookTimeout: 60_000,
-  },
-});
+            ]),
+      ],
+    },
+  }),
+);
