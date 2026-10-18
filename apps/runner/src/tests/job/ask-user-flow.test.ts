@@ -252,6 +252,7 @@ describe('ask_user — la boucle complète dans le runner', () => {
     // ── Phase 2 : un humain choisit, par le VRAI chemin de résolution ────────
     await db.update(agentJobs).set({ status: 'awaiting_approval' }).where(eq(agentJobs.id, job.id));
     const resolved = await resolveApprovalDecision(makeDeps(llmClient), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: pending!.id,
       decision: 'approve',
       answer: OPTIONS[1]!,
@@ -337,6 +338,7 @@ describe('ask_user — la boucle complète dans le runner', () => {
       .from(approvalRequests)
       .where(and(eq(approvalRequests.jobId, job.id), eq(approvalRequests.toolCallId, 'tc-q-a')));
     const resolved = await resolveApprovalDecision(makeDeps(llmClient), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: pending!.id,
       decision: 'approve',
       answer: OPTIONS[0]!,
@@ -379,6 +381,7 @@ describe('ask_user — la boucle complète dans le runner', () => {
       .where(and(eq(approvalRequests.jobId, job.id), eq(approvalRequests.kind, 'question')));
     await db.update(agentJobs).set({ status: 'awaiting_approval' }).where(eq(agentJobs.id, job.id));
     const declined = await resolveApprovalDecision(makeDeps(llmClient), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: pending!.id,
       decision: 'reject',
       notes: 'None of these fits',

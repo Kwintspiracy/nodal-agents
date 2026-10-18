@@ -27,6 +27,7 @@ import {
 import { showApprovalCard, requeueApprovalCard } from '../approvals/card-settlement.ts';
 import { upsertAutoApproveRule, getApprovalRule, restoreApprovalRule } from '../approvals/rules.ts';
 import {
+  cardWordsNotice,
   readQuestionToolInput,
   ShellGateReasonsSchema,
   type ShellGateReason,
@@ -280,6 +281,7 @@ export async function handleApprovalCallback(
       decision: 'approve',
       answer: chosen,
       resolvedBy: 'telegram',
+      answeredBy: { channel: 'telegram', agentId: target.agentId, conversationId: jobChatId },
     });
     if (!answered.ok) {
       await answerTelegramCallback(botToken, cb.id, 'Could not apply — try the dashboard.', true);
@@ -287,7 +289,17 @@ export async function handleApprovalCallback(
     }
     // La carte (réponse, boutons retirés) est réécrite par
     // resolveApprovalDecision → settleApprovalCards : un seul écrivain (#637).
-    await answerTelegramCallback(botToken, cb.id, `✅ ${chosen}`);
+    // Une réponse qui n'a pas atteint la tête du run se dit ici (#799).
+    const notice = cardWordsNotice(answered.handOff);
+    await answerTelegramCallback(
+      botToken,
+      cb.id,
+      notice === null
+        ? `✅ ${chosen}`
+        : `✅ ${chosen}
+${notice}`,
+      notice !== null,
+    );
     return { handled: true, decision: 'answer', jobId: answered.jobId, answer: chosen };
   }
 
@@ -457,8 +469,12 @@ export async function handleApprovalCallback(
       confirmed = await resolveApprovalDecision(deps, env, {
         approvalRequestId: parsed.approvalRequestId,
         decision: 'approve',
+        // Aucune note : la règle posée plus haut EST la trace du geste, comme
+        // pour « Always allow » du dashboard. `notes` garde les mots de la
+        // personne, que la tête du run reçoit tels quels (card-words.ts) ;
+        // une phrase de la plateforme y passerait pour les siens.
         resolvedBy: 'telegram',
-        notes: 'Always allowed from the Telegram card.',
+        answeredBy: { channel: 'telegram', agentId: target.agentId, conversationId: jobChatId },
       });
     } catch (err) {
       await restoreApprovalRule(deps.db, {
@@ -495,6 +511,7 @@ export async function handleApprovalCallback(
     approvalRequestId: parsed.approvalRequestId,
     decision: parsed.decision,
     resolvedBy: 'telegram',
+    answeredBy: { channel: 'telegram', agentId: target.agentId, conversationId: jobChatId },
   });
 
   if (!result.ok) {

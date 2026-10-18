@@ -37,6 +37,12 @@ export const ApproveRequestSchema = z.object({
    * question d'un serveur MCP). Validé par le cœur contre la ligne.
    */
   content: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * #799 — QUI a répondu : le compte de la personne connectée, que le web lit
+   * dans SA session. Obligatoire pour un appelant de confiance (le web) ; un
+   * appelant non sûr est la session elle-même, et ce champ est ignoré.
+   */
+  responderUserId: z.string().guid().optional(),
 });
 
 // ─── approveRoute ─────────────────────────────────────────────────────────────
@@ -52,12 +58,18 @@ export async function approveRoute(
     return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
   }
 
-  const { approvalRequestId, decision, notes, answer, free, content } = parsed.data;
+  const { approvalRequestId, decision, notes, answer, free, content, responderUserId } =
+    parsed.data;
 
   // Authorization (finding #4/#5): an untrusted session bearer-token caller
   // may only resolve an approval belonging to its own entity — trusted
   // callers (web via WORKER_SECRET) keep the pre-existing unscoped lookup.
   const expectedEntityId = c.get('callerTrusted') ? undefined : c.get('callerEntityId');
+  // Qui a répondu (#799) : la session pour un appelant non sûr, ce que le web
+  // a lu dans la sienne pour un appelant de confiance. Sans lui, la réponse
+  // est refusée plutôt qu'attribuée à quelqu'un de supposé.
+  const userId = c.get('callerTrusted') ? responderUserId : c.get('callerUserId');
+  if (userId === undefined) return c.json({ error: 'responder_required' }, 400);
 
   // Dashboard-driven resolution → resolvedBy: 'api'. Shares the channel-neutral
   // core with the Telegram inline-button path (approvals/resolve.ts).
@@ -65,6 +77,7 @@ export async function approveRoute(
     approvalRequestId,
     decision,
     resolvedBy: 'api',
+    answeredBy: { userId },
     notes: notes ?? null,
     answer: answer ?? null,
     ...(free === true ? { free: true } : {}),
@@ -105,5 +118,17 @@ export async function approveRoute(
   const status = result.resumed === 'in_process' ? 'processing' : 'pending';
   // `answer` revient à l'appelant pour qu'il dise CE QUI a été retenu — la
   // carte Telegram se réécrit avec, le toast web l'affiche. null hors question.
-  return c.json({ ok: true, jobId: result.jobId, status, decision, answer: result.answer }, 200);
+  // `handOff` (#799) : ce que sont devenus les mots de la personne au-delà de
+  // l'agent de la carte ; le web le dit quand ils ne sont allés qu'à lui.
+  return c.json(
+    {
+      ok: true,
+      jobId: result.jobId,
+      status,
+      decision,
+      answer: result.answer,
+      handOff: result.handOff,
+    },
+    200,
+  );
 }

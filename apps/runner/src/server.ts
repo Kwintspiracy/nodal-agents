@@ -205,6 +205,7 @@ export function createApp(
         if (session && session.entityId) {
           c.set('callerTrusted', false);
           c.set('callerEntityId', session.entityId);
+          c.set('callerUserId', session.userId);
           await next();
           return;
         }

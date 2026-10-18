@@ -131,6 +131,7 @@ describe('a loaded tool stays offered across the life of its job @cap:assigner-o
     expect(pending?.toolName).toBe('create_schedule');
     await db.update(agentJobs).set({ status: 'awaiting_approval' }).where(eq(agentJobs.id, jobId));
     const resolved = await resolveApprovalDecision(deps, testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: pending!.id,
       decision: 'approve',
       resolvedBy: 'api',

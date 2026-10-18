@@ -133,7 +133,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(resolveApprovalAction).mockResolvedValue({
     ok: true,
-    data: { jobId: 'j1', decision: 'approve', answer: null },
+    data: { jobId: 'j1', decision: 'approve', answer: null, handOff: { kind: 'no_words' } },
   });
 });
 

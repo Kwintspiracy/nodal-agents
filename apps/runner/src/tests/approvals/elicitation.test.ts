@@ -190,6 +190,7 @@ describe('la question d’un serveur MCP, posée et attendue sans suspendre @cap
     expect(await jobStatus()).toBe('processing');
 
     await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: row.id,
       decision: 'reject',
       resolvedBy: 'api',
@@ -201,6 +202,7 @@ describe('la question d’un serveur MCP, posée et attendue sans suspendre @cap
     const answer = ask()(request());
     const row = await pendingElicitation();
     const resolved = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: row.id,
       decision: 'approve',
       resolvedBy: 'api',
@@ -220,6 +222,7 @@ describe('la question d’un serveur MCP, posée et attendue sans suspendre @cap
     const answer = ask()(request());
     const row = await pendingElicitation();
     await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: row.id,
       decision: 'reject',
       resolvedBy: 'api',
@@ -290,6 +293,7 @@ describe('resolveApprovalDecision — une élicitation @cap:approuver-une-action
   it('envoyer sans contenu est refusé, la ligne reste ouverte', async () => {
     const row = await insertElicitation();
     const r = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: row.id,
       decision: 'approve',
       resolvedBy: 'api',
@@ -301,6 +305,7 @@ describe('resolveApprovalDecision — une élicitation @cap:approuver-une-action
   it('un contenu hors du formulaire est refusé, champ par champ', async () => {
     const row = await insertElicitation();
     const r = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: row.id,
       decision: 'approve',
       resolvedBy: 'api',
@@ -322,6 +327,7 @@ describe('resolveApprovalDecision — une élicitation @cap:approuver-une-action
   it('un contenu valide est gardé, et le job n’est PAS relancé', async () => {
     const row = await insertElicitation();
     const r = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: row.id,
       decision: 'approve',
       resolvedBy: 'api',
@@ -335,6 +341,7 @@ describe('resolveApprovalDecision — une élicitation @cap:approuver-une-action
   it('une option de question sur une élicitation est refusée', async () => {
     const row = await insertElicitation();
     const r = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: row.id,
       decision: 'approve',
       resolvedBy: 'telegram',
@@ -357,6 +364,7 @@ describe('resolveApprovalDecision — une élicitation @cap:approuver-une-action
       })
       .returning();
     const r = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: row!.id,
       decision: 'approve',
       resolvedBy: 'api',

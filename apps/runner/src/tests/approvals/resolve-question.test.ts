@@ -122,6 +122,7 @@ describe('resolveApprovalDecision — une question', () => {
     const approval = await insertQuestion();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval.id,
       decision: 'approve',
       answer: OPTIONS[1]!,
@@ -141,6 +142,7 @@ describe('resolveApprovalDecision — une question', () => {
     const approval = await insertQuestion();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval.id,
       decision: 'approve',
       answer: `  ${OPTIONS[0]}  `,
@@ -155,6 +157,7 @@ describe('resolveApprovalDecision — une question', () => {
     const approval = await insertQuestion();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval.id,
       decision: 'approve',
       answer: 'Somewhere else entirely',
@@ -174,6 +177,7 @@ describe('resolveApprovalDecision — une question', () => {
     const texte = 'Le fichier est dans D:/ventes, sous un autre nom : ventes-sept.xlsx';
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval.id,
       decision: 'approve',
       answer: `  ${texte}  `,
@@ -193,6 +197,7 @@ describe('resolveApprovalDecision — une question', () => {
     const approval = await insertQuestion();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval.id,
       decision: 'approve',
       answer: '   ',
@@ -212,6 +217,7 @@ describe('resolveApprovalDecision — une question', () => {
     const approval = await insertQuestion();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval.id,
       decision: 'approve',
       answer: 'x'.repeat(FREE_ANSWER_MAX + 1),
@@ -231,6 +237,7 @@ describe('resolveApprovalDecision — une question', () => {
     const texte = 'y'.repeat(FREE_ANSWER_MAX);
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval.id,
       decision: 'approve',
       answer: `  ${texte}  `,
@@ -249,6 +256,7 @@ describe('resolveApprovalDecision — une question', () => {
     const approval = await insertQuestion();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval.id,
       decision: 'reject',
       answer: 'Autre chose',
@@ -263,6 +271,7 @@ describe('resolveApprovalDecision — une question', () => {
     const approval = await insertQuestion();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval.id,
       decision: 'approve',
       resolvedBy: 'api',
@@ -276,6 +285,7 @@ describe('resolveApprovalDecision — une question', () => {
     const approval = await insertQuestion({ toolInput: { question: 'Which?', options: 'nope' } });
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval.id,
       decision: 'approve',
       answer: 'nope',
@@ -290,6 +300,7 @@ describe('resolveApprovalDecision — une question', () => {
     const approval = await insertQuestion();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval.id,
       decision: 'reject',
       notes: 'None of these fits',
@@ -309,6 +320,7 @@ describe('resolveApprovalDecision — une question', () => {
     const approval = await insertQuestion();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval.id,
       decision: 'reject',
       answer: OPTIONS[0]!,
@@ -335,6 +347,7 @@ describe('resolveApprovalDecision — une approbation ordinaire', () => {
       .returning();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval!.id,
       decision: 'approve',
       answer: 'Autre chose',
@@ -365,6 +378,7 @@ describe('resolveApprovalDecision — une approbation ordinaire', () => {
       .returning();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval!.id,
       decision: 'approve',
       answer: 'ls',
@@ -389,6 +403,7 @@ describe('resolveApprovalDecision — une approbation ordinaire', () => {
       .returning();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approval!.id,
       decision: 'approve',
       resolvedBy: 'api',

@@ -473,7 +473,10 @@ describe('handleApprovalCallback — Toujours autoriser', () => {
     const [ap] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
     expect(ap!.status).toBe('approved');
     expect(ap!.resolvedBy).toBe('telegram');
-    expect(ap!.notes).toContain('Always allowed');
+    // Aucune note : la règle ci-dessus est la trace du geste, comme sur le
+    // dashboard. `notes` ne garde que les mots de la personne, que la tête du
+    // run reçoit tels quels (approvals/card-words.ts).
+    expect(ap!.notes).toBeNull();
   });
 
   it('annulation (wb) : la carte d’origine est restaurée avec ses TROIS boutons, rien résolu', async () => {

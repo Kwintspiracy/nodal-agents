@@ -418,6 +418,8 @@ describe('/api/approve auth — bearer fallback (cross-process call from web)', 
         body: JSON.stringify({
           approvalRequestId: '00000000-0000-0000-0000-000000000099',
           decision: 'approve',
+          // #799 — the web, a trusted caller, names its session's account.
+          responderUserId: '00000000-0000-4000-8000-00000000a11e',
         }),
       }),
     );

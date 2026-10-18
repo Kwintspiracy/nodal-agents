@@ -569,6 +569,7 @@ describe('un brouillon s’écrit sur celui qui a été lu @cap:approuver-une-ac
       .set({ draft: { values: { color: 'grayscale', copies: 2 }, awaiting: null } })
       .where(eq(approvalRequests.id, id));
     const r = await resolveApprovalDecision(deps, env, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: id,
       decision: 'approve',
       resolvedBy: 'telegram',
