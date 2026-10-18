@@ -14,24 +14,37 @@ const PRINTER_BRAND = new RegExp(
   'i',
 );
 
-// A skill names no connector at all: neither a tool (`<server>__<tool>`, the print
-// tool names) nor a bare server slug shaped like `<word>-connector`, `<word>_printer`.
-const CONNECTOR_NAMING = /print_now|request_print|__|\b[a-z0-9]+[-_](connector|printer)\b/i;
+// A system skill names no connector-specific TOOL: not the print tools, and not a
+// `<server>-slug__<tool>` name. This is all the guard claims. A connector's own
+// name (its slug, in any spelling) is not decidable from here; that protection is
+// `scripts/check-private-names.mjs`, which reads the names from a list kept
+// outside the repository.
+const CONNECTOR_TOOL = /print_now|request_print|\b[a-z0-9][a-z0-9-]*__[a-z][a-z0-9_]*\b/;
 
-describe('connector naming guard', () => {
-  const dash = ['office', 'printer'].join('-');
-  const under = ['acme', 'connector'].join('_');
+describe('connector tool guard', () => {
   it.each([
-    ['a bare slug with a dash', `use the ${dash} server`],
-    ['a bare slug with an underscore', `use the ${under} server`],
     ['a prefixed tool name', 'call x__tool first'],
+    ['a dashed server prefix', 'call my-server__list_things'],
     ['the print tool', 'call request_print'],
+    ['the direct print tool', 'then print_now'],
   ])('rejects %s', (_label, text) => {
-    expect(text).toMatch(CONNECTOR_NAMING);
+    expect(text).toMatch(CONNECTOR_TOOL);
   });
 
-  it('accepts plain wording', () => {
-    expect(CONNECTOR_NAMING.test('print the page on the connected printer')).toBe(false);
+  it.each([
+    ['markdown emphasis', 'a __bold__ word and __proto__'],
+    ['a connector word alone', 'print on the direct-printer or the label-printer'],
+  ])('accepts %s', (_label, text) => {
+    expect(CONNECTOR_TOOL.test(text)).toBe(false);
+  });
+
+  it('is met by every system skill', () => {
+    for (const skill of systemSkills) {
+      const text = `${skill.description}
+${skill.content}`;
+      expect(text, skill.slug).not.toMatch(CONNECTOR_TOOL);
+    }
+    expect(MAGAZINE_PAGE_TEMPLATE).not.toMatch(CONNECTOR_TOOL);
   });
 });
 
@@ -121,7 +134,7 @@ describe('print-request skill', () => {
   it('names no connector-specific print tool', () => {
     const text = `${skill?.description}
 ${skill?.content}`;
-    expect(text).not.toMatch(CONNECTOR_NAMING);
+    expect(text).not.toMatch(CONNECTOR_TOOL);
   });
 
   it('lays out inside the printable area the print tool reports, full-bleed only on request', () => {
