@@ -747,7 +747,6 @@ function mockLlm(responses: MockTurn[], prompts: unknown[]): RunnerDeps['llmClie
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },
