@@ -87,7 +87,8 @@ export function findInText(text, names) {
   const found = [];
   for (const n of names) {
     for (let p = norm.indexOf(n.form); p >= 0; p = norm.indexOf(n.form, p + 1)) {
-      found.push({ entry: n.entry, start: at[p], end: at[p + n.form.length - 1] + 1 });
+      const kept = at.slice(p, p + n.form.length);
+      found.push({ entry: n.entry, start: kept[0], end: kept[kept.length - 1] + 1, kept });
     }
   }
   return found;
@@ -119,33 +120,34 @@ export function entriesInPath(path, names) {
 /**
  * Hits of `lines` (`[{ line, text, added? }]`, joined by newlines): one
  * `{ line, entries }` per line where a name starts. A line without `added` counts
- * as added. When some lines are unchanged context, a name counts only if it
- * overlaps an added line (a name wholly in unchanged lines is not a hit).
+ * as added. When some lines are unchanged context, a name counts only if one of
+ * its own letters (its separators do not count) is on an added line.
  */
 export function scanLines(lines, names) {
   const starts = [];
   let text = '';
   for (const l of lines) {
     starts.push(text.length);
-    text += `${l.text}
-`;
+    text += `${l.text}\n`;
   }
   const hasContext = lines.some((l) => l.added === false);
-  const byLine = new Map();
-  for (const s of findInText(text, names)) {
-    const overlapsAdded =
-      !hasContext ||
-      lines.some(
-        (l, i) => l.added !== false && s.start < starts[i] + l.text.length + 1 && s.end > starts[i],
-      );
-    if (!overlapsAdded) continue;
+  const lineAt = (pos) => {
     let lo = 0;
     let hi = starts.length - 1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
-      if (starts[mid] <= s.start) lo = mid;
+      if (starts[mid] <= pos) lo = mid;
       else hi = mid - 1;
     }
+    return lo;
+  };
+  const byLine = new Map();
+  for (const s of findInText(text, names)) {
+    // With unchanged context around, a name counts only if one of its own letters
+    // sits on an added line: separators between two halves already present (an
+    // inserted blank line, a rule) are not what makes it a name.
+    if (hasContext && !s.kept.some((pos) => lines[lineAt(pos)].added !== false)) continue;
+    const lo = lineAt(s.start);
     const line = lines[lo].line;
     byLine.set(line, new Set([...(byLine.get(line) ?? []), s.entry]));
   }

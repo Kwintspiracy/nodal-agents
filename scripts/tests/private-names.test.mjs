@@ -152,6 +152,20 @@ describe('--git-range: the net change', () => {
     noName(r);
   });
 
+  it.each([
+    ['an empty line', ''],
+    ['a dashed rule', '---'],
+    ['an underscore rule', '___'],
+  ])('%s inserted between two halves already in the base is NOT a hit', (_l, inserted) => {
+    const dir = newRepo();
+    commit(dir, { 'a.txt': `intro\n${FIRST}\nlink\nrest\n` }, 'base a');
+    const base = head(dir);
+    commit(dir, { 'a.txt': `intro\n${FIRST}\n${inserted}\nlink\nrest\n` }, 'separator only');
+    const r = run(['--git-range', `${base}...HEAD`], { cwd: dir });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('no hit');
+  });
+
   it('a name wholly in an unchanged line next to an added line is NOT a hit', () => {
     const dir = newRepo();
     commit(dir, { 'a.txt': `intro\n${SECOND}\nrest\n` }, 'base a');

@@ -19,7 +19,9 @@
 //
 // What this does NOT see, on purpose: a name added by an intermediate commit and
 // removed again before `head` (the net change never holds it; it stays in the
-// history that was pushed), and the content of binary files.
+// history that was pushed), the content of binary files, and a name that a change
+// CREATES by deleting a separator-only line (a blank line, a rule) between two
+// halves already present: no added line holds any of its letters.
 //
 // Never silent about what it did not read: a binary file, or a text file above
 // MAX_TEXT bytes, is listed as `not read: <path> (binary|size)` and counted. That
