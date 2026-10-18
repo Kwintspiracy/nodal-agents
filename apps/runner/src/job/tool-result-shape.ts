@@ -29,6 +29,15 @@ export const EVICTED_TOOL_RESULT_MARKER =
 export const EVICTED_TOOL_INPUT_MARKER =
   '[earlier tool-call arguments elided to fit the context window]';
 
+/** A `file:` URL as a path; null for one no path can be read from (relative, bad `%`). */
+function pathOfFileUrl(url: string): string | null {
+  try {
+    return fileURLToPath(url);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * A tool result's output as text, for every reader that has only text to give:
  * a text value as written, a value serialized, and an output that carries
@@ -46,7 +55,7 @@ export function toolResultOutputText(output: { type?: unknown; value?: unknown }
         // A tool's image is kept as a file (job/model-images.ts): its path is
         // what can be read again.
         const at =
-          typeof v.url === 'string' && v.url.startsWith('file:') ? fileURLToPath(v.url) : null;
+          typeof v.url === 'string' && v.url.startsWith('file:') ? pathOfFileUrl(v.url) : null;
         return at === null
           ? '[An image was attached to this result; it is not carried here.]'
           : `[An image was attached to this result, saved at ${at}; it is not carried here. Read it again to see it.]`;

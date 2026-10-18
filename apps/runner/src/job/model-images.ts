@@ -18,7 +18,7 @@
 // sentence that names its file, which the agent can read again.
 
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { ModelMessage } from 'ai';
 import { MODEL_REQUEST_MAX_IMAGES, MODEL_REQUEST_MAX_IMAGE_BYTES } from '@nodal-agents/shared';
@@ -82,23 +82,88 @@ export function visionRoutingNote(path: string, reason: string): string {
   );
 }
 
-/** A person's image: a user-message `image` part holding a local path. */
-function personImagePath(p: unknown): string | null {
-  const part = p as { type?: unknown; image?: unknown } | null;
-  if (part?.type !== 'image' || typeof part.image !== 'string') return null;
-  return /^(https?:|data:)/i.test(part.image) ? null : part.image;
+/**
+ * Where an image of the transcript is, whatever shape its part has (review of
+ * #798, pass 3): a file (a channel photo's path, a tool image's `file:` URL),
+ * bytes already inline (`image-data`, `file-data` / `media` of an image type,
+ * a `data:` URL, a byte array), or a remote URL the provider fetches itself.
+ */
+type ImageSource =
+  | { kind: 'file'; path: string }
+  | { kind: 'inline'; bytes: number; mediaType: string | undefined }
+  | { kind: 'remote'; url: string };
+
+/** Decoded size of base64, without decoding it. */
+function base64Size(data: string): number {
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
 }
 
-/** A tool's image: an `image-url` part of a tool result holding a `file:` URL. */
-function toolImagePath(p: unknown): string | null {
-  const part = p as { type?: unknown; url?: unknown } | null;
-  if (part?.type !== 'image-url' || typeof part.url !== 'string') return null;
-  if (!part.url.startsWith('file:')) return null;
+/** A `file:` URL as a path, or null when it is not one a path can be read from. */
+function pathOfFileUrl(url: string): string | null {
   try {
-    return fileURLToPath(part.url);
+    return fileURLToPath(url);
   } catch {
     return null;
   }
+}
+
+/** The source of a string or URL that names an image: a file, inline data, or remote. */
+function sourceOfLocation(location: string, mediaType: string | undefined): ImageSource | null {
+  if (/^data:/i.test(location)) {
+    const comma = location.indexOf(',');
+    const type = /^data:([^;,]+)/i.exec(location)?.[1] ?? mediaType;
+    return { kind: 'inline', bytes: base64Size(location.slice(comma + 1)), mediaType: type };
+  }
+  if (/^https?:/i.test(location)) return { kind: 'remote', url: location };
+  if (/^file:/i.test(location)) {
+    const path = pathOfFileUrl(location);
+    return path === null ? null : { kind: 'file', path };
+  }
+  return null;
+}
+
+function byteLength(data: unknown): number | null {
+  if (data instanceof Uint8Array) return data.byteLength;
+  if (data instanceof ArrayBuffer) return data.byteLength;
+  return null;
+}
+
+/** An image part of a user message: `image` (path, URL, data URL, bytes) or a `file` of an image type. */
+function personImageSource(p: unknown): ImageSource | null {
+  const part = p as { type?: unknown; image?: unknown; data?: unknown; mediaType?: unknown } | null;
+  const mediaType = typeof part?.mediaType === 'string' ? part.mediaType : undefined;
+  let value: unknown;
+  if (part?.type === 'image') value = part.image;
+  else if (part?.type === 'file' && mediaType?.startsWith('image/')) value = part.data;
+  else return null;
+  if (value instanceof URL) return sourceOfLocation(value.href, mediaType);
+  const size = byteLength(value);
+  if (size !== null) return { kind: 'inline', bytes: size, mediaType };
+  if (typeof value !== 'string') return null;
+  // A channel photo: the absolute path its handler saved (telegram, discord),
+  // always with its extension. Base64 never holds a dot, even when it starts
+  // with `/` as a JPEG's does (`/9j/…`).
+  if (isAbsolute(value) && /\.[a-z0-9]{2,5}$/i.test(value)) return { kind: 'file', path: value };
+  // A URL (`data:`, `https:`, `file:`), else base64 bytes.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return sourceOfLocation(value, mediaType);
+  return { kind: 'inline', bytes: base64Size(value), mediaType };
+}
+
+/** An image part of a tool result's `content`: `image-url`, `image-data`, or `file-data` / `media` of an image type. */
+function toolImageSource(p: unknown): ImageSource | null {
+  const part = p as { type?: unknown; url?: unknown; data?: unknown; mediaType?: unknown } | null;
+  const mediaType = typeof part?.mediaType === 'string' ? part.mediaType : undefined;
+  if (part?.type === 'image-url' && typeof part.url === 'string') {
+    return sourceOfLocation(part.url, mediaType);
+  }
+  const isImageData =
+    part?.type === 'image-data' ||
+    ((part?.type === 'file-data' || part?.type === 'media') && mediaType?.startsWith('image/'));
+  if (isImageData && typeof part.data === 'string') {
+    return { kind: 'inline', bytes: base64Size(part.data), mediaType };
+  }
+  return null;
 }
 
 function typeOfPath(path: string): string {
@@ -106,26 +171,41 @@ function typeOfPath(path: string): string {
   return TYPE_OF_EXTENSION[ext] ?? 'image';
 }
 
+function typeOf(source: ImageSource): string {
+  if (source.kind === 'file') return typeOfPath(source.path);
+  if (source.kind === 'inline') return source.mediaType ?? 'image';
+  return 'image';
+}
+
+/** Where the agent can find the image again, said in the sentence that replaces it. */
+function whereItIs(source: ImageSource): string {
+  if (source.kind === 'file') return `It is saved at ${source.path}: read it again if you need it.`;
+  if (source.kind === 'remote') return `It is at ${source.url}.`;
+  return 'It was not kept as a file, so it cannot be read again.';
+}
+
 type Origin = 'person' | 'tool';
 
 interface ImageRef {
   origin: Origin;
-  path: string;
+  source: ImageSource;
+  /** The part as the transcript holds it. */
+  part: unknown;
   /** Message index, then the part's place: [partIndex] or [resultIndex, valueIndex]. */
   at: [number, number, number?];
   /** What replaces the part in the request. */
   sent?: unknown;
 }
 
-/** Every image of the transcript, in order. */
+/** Every image of the transcript, in order, whatever the shape of its part. */
 function inventory(messages: readonly ModelMessage[]): ImageRef[] {
   const refs: ImageRef[] = [];
   messages.forEach((m, i) => {
     if (!Array.isArray(m.content)) return;
     if (m.role === 'user') {
       (m.content as unknown[]).forEach((p, j) => {
-        const path = personImagePath(p);
-        if (path !== null) refs.push({ origin: 'person', path, at: [i, j] });
+        const source = personImageSource(p);
+        if (source !== null) refs.push({ origin: 'person', source, part: p, at: [i, j] });
       });
     }
     if (m.role === 'tool') {
@@ -134,8 +214,8 @@ function inventory(messages: readonly ModelMessage[]): ImageRef[] {
         if ((r as { type?: unknown }).type !== 'tool-result' || out?.type !== 'content') return;
         if (!Array.isArray(out.value)) return;
         out.value.forEach((v, k) => {
-          const path = toolImagePath(v);
-          if (path !== null) refs.push({ origin: 'tool', path, at: [i, j, k] });
+          const source = toolImageSource(v);
+          if (source !== null) refs.push({ origin: 'tool', source, part: v, at: [i, j, k] });
         });
       });
     }
@@ -169,11 +249,12 @@ const text = (t: string) => ({ type: 'text' as const, text: t });
 
 /**
  * The request's messages, its images resolved, WITHOUT touching the stored
- * transcript. For a model that sees, the person's images first, then the
- * tools', newest first within each, while they fit the budget: those are read
- * into bytes; any other is replaced by a sentence naming its file. For a model
- * that does not, every image is replaced by the reason. Returns the same array
- * when the transcript holds no image.
+ * transcript. Every image part counts, whatever its shape (`inventory`). For a
+ * model that sees, the person's images first, then the tools', newest first
+ * within each, while they fit the budget: a file is read into bytes, an inline
+ * or remote image is sent as it is; any other is replaced by a sentence saying
+ * where it is. For a model that does not, every image is replaced by the
+ * reason. Returns the same array when the transcript holds no image.
  */
 export async function hydrateForLlm(
   messages: ModelMessage[],
@@ -185,11 +266,17 @@ export async function hydrateForLlm(
 
   if (!input.sees) {
     for (const r of refs) {
+      const where =
+        r.source.kind === 'file'
+          ? `saved at ${r.source.path}`
+          : r.source.kind === 'remote'
+            ? `at ${r.source.url}`
+            : 'not kept as a file';
       r.sent =
         r.origin === 'person'
-          ? text(visionRoutingNote(r.path, input.reason))
+          ? text(visionRoutingNote(where, input.reason))
           : text(
-              `[An image (${typeOfPath(r.path)}) was attached to this result, saved at ${r.path}: ` +
+              `[An image (${typeOf(r.source)}) was attached to this result, ${where}: ` +
                 `not passed to you: ${input.reason}.]`,
             );
     }
@@ -201,23 +288,40 @@ export async function hydrateForLlm(
       ...refs.filter((r) => r.origin === 'tool').reverse(),
     ];
     for (const r of order) {
-      const size = await sizeOf(r.path, cache);
+      const source = r.source;
+      const size =
+        source.kind === 'file'
+          ? await sizeOf(source.path, cache)
+          : source.kind === 'inline'
+            ? source.bytes
+            : 0;
       const fits =
         size !== null &&
         count < MODEL_REQUEST_MAX_IMAGES &&
         bytes + size <= MODEL_REQUEST_MAX_IMAGE_BYTES;
-      const data = fits ? await bytesOf(r.path, cache) : null;
-      if (size === null || (fits && data === null)) {
-        r.sent = text(`[An image could not be loaded from ${r.path}.]`);
+      if (size === null) {
+        r.sent = text(`[An image could not be loaded from ${(source as { path: string }).path}.]`);
         continue;
       }
-      if (!fits || data === null) {
+      if (!fits) {
         r.sent = text(
-          `[An earlier image (${typeOfPath(r.path)}, ${formatBytes(size)}) is no longer sent: a ` +
+          `[An earlier image (${typeOf(source)}, ${formatBytes(size)}) is no longer sent: a ` +
             `request carries ${MODEL_REQUEST_MAX_IMAGES} images and ` +
             `${formatBytes(MODEL_REQUEST_MAX_IMAGE_BYTES)} of them at most, the ones the person ` +
-            `sent first, then the newest. It is saved at ${r.path}: read it again if you need it.]`,
+            `sent first, then the newest. ${whereItIs(source)}]`,
         );
+        continue;
+      }
+      if (source.kind !== 'file') {
+        // Inline or remote: already in a form the request carries.
+        count += 1;
+        bytes += size;
+        r.sent = r.part;
+        continue;
+      }
+      const data = await bytesOf(source.path, cache);
+      if (data === null) {
+        r.sent = text(`[An image could not be loaded from ${source.path}.]`);
         continue;
       }
       count += 1;
@@ -228,7 +332,7 @@ export async function hydrateForLlm(
           : {
               type: 'image-data',
               data: Buffer.from(data).toString('base64'),
-              mediaType: typeOfPath(r.path),
+              mediaType: typeOfPath(source.path),
             };
     }
   }
