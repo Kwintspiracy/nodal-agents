@@ -147,20 +147,20 @@ sentence; Bench Studio shows its card: what it tests, the expected path, the
 deliverable, "Green if", what every trial measures, what is not verified, and
 the example request last.
 
-| activity | scenarios | expected path |
-|---|---|---|
-| question | `question`, `question-weekday` | the root answers alone; a delegation is red. The weekday's tool calculation is measured, not required |
-| research | `research` | the root alone with a web tool (decision 2); a delegation is red. Calibrated subject (#776) |
-| deep-research | `deep-research-report` (report in `nodal-bench/rapport.md`), `deep-research-obsidian` (a note in the vault) | handed to the specialist: no delegated job calling a web tool is red. Calibrated subject (#776) |
-| code | `code-bugfix`, `code-http-server`, `code-install-dep`, `code` | the script IS the subject: no product tool. `code` downloads the pinned iris CSV and writes one total per species in `nodal-bench/iris-totaux.json` |
-| excel | `file`, `excel-edit-column`, `excel-read-answer`, `excel-csv-import` | `xlsx_*` product tools (decision 1) |
-| word | `word-create` (heading, paragraphs and a table), `word-replace`, `word-append`, `word-read-answer` | `docx_*` product tools |
-| powerpoint | `ppt-create`, `ppt-append`, `ppt-replace`, `ppt-read-answer` | `pptx_*` product tools |
-| pdf | `pdf-read-total`, `pdf-from-markdown` | no product PDF tool: a command or a skill is the right path, measured |
-| html-page | `html-landing`, `html-table-csv` (a table and an SVG chart of the CSV), `html-edit` | `file_write` / `file_edit` |
-| image-comfyui | `comfy-exact-size`, `comfy-variants`, `comfyui-telegram` | a ComfyUI workflow; need `comfyui` |
-| print | `print` (a dictated shopping list), `print-file`, `recipe` | `request_print`; need `bench-printer` (#794), never a real printer; never confirmed |
-| orchestration | `mcp-answer`, `undoable-action`, `undoable-action-delegated`, `delegate-fails`, `ask-before-acting` | the path IS the verdict (below) |
+| activity      | scenarios                                                                                                   | expected path                                                                                                                                       |
+| ------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| question      | `question`, `question-weekday`                                                                              | the root answers alone; a delegation is red. The weekday's tool calculation is measured, not required                                               |
+| research      | `research`                                                                                                  | the root alone with a web tool (decision 2); a delegation is red. Calibrated subject (#776)                                                         |
+| deep-research | `deep-research-report` (report in `nodal-bench/rapport.md`), `deep-research-obsidian` (a note in the vault) | handed to the specialist: no delegated job calling a web tool is red. Calibrated subject (#776)                                                     |
+| code          | `code-bugfix`, `code-http-server`, `code-install-dep`, `code`                                               | the script IS the subject: no product tool. `code` downloads the pinned iris CSV and writes one total per species in `nodal-bench/iris-totaux.json` |
+| excel         | `file`, `excel-edit-column`, `excel-read-answer`, `excel-csv-import`                                        | `xlsx_*` product tools (decision 1)                                                                                                                 |
+| word          | `word-create` (heading, paragraphs and a table), `word-replace`, `word-append`, `word-read-answer`          | `docx_*` product tools                                                                                                                              |
+| powerpoint    | `ppt-create`, `ppt-append`, `ppt-replace`, `ppt-read-answer`                                                | `pptx_*` product tools                                                                                                                              |
+| pdf           | `pdf-read-total`, `pdf-from-markdown`                                                                       | no product PDF tool: a command or a skill is the right path, measured                                                                               |
+| html-page     | `html-landing`, `html-table-csv` (a table and an SVG chart of the CSV), `html-edit`                         | `file_write` / `file_edit`                                                                                                                          |
+| image-comfyui | `comfy-exact-size`, `comfy-variants`, `comfyui-telegram`                                                    | a ComfyUI workflow; need `comfyui`                                                                                                                  |
+| print         | `print` (a dictated shopping list), `print-file`, `recipe`                                                  | `request_print`; need `bench-printer` (#794), never a real printer; never confirmed                                                                 |
+| orchestration | `mcp-answer`, `undoable-action`, `undoable-action-delegated`, `delegate-fails`, `ask-before-acting`         | the path IS the verdict (below)                                                                                                                     |
 
 Retired on 2026-10-17, with why: `question-percent`, `question-seconds`,
 `question-river` (the same trial as `question` on another subject);
@@ -230,6 +230,7 @@ declares them, never inside one judge:
   Otherwise the trial is red, "product tool available, not used". When none
   is in the team's tools, the trial is skipped with that reason, like a missing
   need. PDF and code declare none.
+
 - **The specialist, for in-depth research only (decision 2).** `research`:
   the root searches itself, a delegation is red. `deep-research-*`: handed to a
   teammate, and a delegated job must call a web tool.
@@ -438,9 +439,14 @@ recording printer (`bench-printer`, #794), and are skipped until it exists.
   runner records it (`send_image`, `telegram_send_message`…, unprefixed). An
   MCP or CLI tool with the same bare name (`x__send_image`,
   `cli:send_image`) is not the product's, and a mail send is not the owner's
-  chat (its recipient cannot be verified): both are outbound, so red. A
-  product delivery that names an explicit recipient is red, and every other
-  outbound tool (a print, a post, a publish) is red too, by the rule below. Today only `comfyui-telegram` (an
+  chat (its recipient cannot be verified): both are outbound, so red. The
+  check of the product's delivery is structural, never a pattern searched in
+  its text: with no target the product delivers to the conversation's owner,
+  and a delivery that names a target (a destination field of its schema,
+  `chatId` or `channel`, whatever its value) is red, because the tools
+  deliver to any approved conversation, a member's included. A field the
+  bench does not know is red too: it may name a target. Every other outbound
+  tool (a print, a post, a publish) is red too, by the rule below. Today only `comfyui-telegram` (an
   image to the owner's Telegram, 10+ minutes of GPU) declares `owner`.
 - The judge fails CLOSED, whatever the scenario's own judge says: any tool
   that may have sent something makes the trial red, naming the tool, under
@@ -477,17 +483,17 @@ recording printer (`bench-printer`, #794), and are skipped until it exists.
     a messaging or mail service (`telegram__chat`, `smtp_relay`) is a send. A
     participle describes a thing and does not act (`published_at`,
     `sent_items`, `shared_with_me` stay green).
-  A false red is preferred to a false green (a local upload to ComfyUI would be
-  one). **This guard is an ALARM, not a gate.** It reads names and reports a
-  send AFTER THE FACT; it prevents nothing, and it stops growing here (review
-  passes 3 to 7). The gate is the bench space (#758): real trials run only
-  there, behind a STRUCTURAL pre-trial check that no tool of the bench team can
-  send anything, on a throwaway instance with no real connector, printer
-  included. Until then a trial on the owner's agents CAN still send him a
-  message or print at his place, and the bench only says so. In the bench
-  space, this alarm ringing means the gate has a hole. The bench's own
-  printer (#794) will expose a print tool too: its exemption will come from
-  its server's identity, never from its tool's name.
+    A false red is preferred to a false green (a local upload to ComfyUI would be
+    one). **This guard is an ALARM, not a gate.** It reads names and reports a
+    send AFTER THE FACT; it prevents nothing, and it stops growing here (review
+    passes 3 to 7). The gate is the bench space (#758): real trials run only
+    there, behind a STRUCTURAL pre-trial check that no tool of the bench team can
+    send anything, on a throwaway instance with no real connector, printer
+    included. Until then a trial on the owner's agents CAN still send him a
+    message or print at his place, and the bench only says so. In the bench
+    space, this alarm ringing means the gate has a hole. The bench's own
+    printer (#794) will expose a print tool too: its exemption will come from
+    its server's identity, never from its tool's name.
 - The real `research` trial of 30/09 called `telegram_send_message` from the
   delegate: a message reached the owner during a bench trial. Its judge said
   green; the declared destination (`nothing`) now makes such a run red.
