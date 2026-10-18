@@ -439,37 +439,46 @@ export function destinationGate(
 
 /**
  * Après l'essai : ce qui est réellement parti contre la destination déclarée.
- * `nothing` : aucune livraison de réponse, aucun outil d'envoi du produit, et
- * — fermé par défaut — aucun outil dont le nom porte un verbe sortant ou vise
- * un canal (`isOutboundTool`), nommé dans la raison. `owner` : l'envoi va au
- * chat par défaut du propriétaire ; un envoi qui nomme un destinataire
- * explicite est refusé.
+ * Une seule règle pour tout outil sortant (`isOutboundTool` : un verbe sortant,
+ * impression comprise, ou un canal, fermé par défaut), quel que soit le
+ * `sends` du scénario : il est rouge, nommé dans la raison. La seule
+ * exemption est la livraison que `sends` permet :
+ *   - `nothing` : aucune. Une livraison de réponse ou un outil d'envoi du
+ *     produit est rouge aussi (`channelSends`) ;
+ *   - `owner` : UNE chose sortante, une livraison au chat du propriétaire (un
+ *     outil de livraison du produit, ou un envoi de courrier). Elle garde sa
+ *     vérification : un destinataire explicite n'est pas le propriétaire
+ *     (revue de #777, passe 9 : une impression passait verte sous `owner`).
+ * Un scénario `test-account:` n'est jamais lancé (aucun compte de test n'est
+ * branché, `destinationGate`) : rien n'est jugé ici pour lui.
  */
 export function destinationReasons(s: AnyScenario, facts: TreeFacts): string[] {
-  if (s.sends === 'nothing') {
-    const delivery = new Set<string>(DELIVERY_TOOL_NAMES);
-    const outbound = facts.toolCalls
-      .filter((c) => isOutboundTool(c.toolName) && !delivery.has(bareToolName(c.toolName)))
-      .map((c) => c.toolName);
-    return [
-      ...channelSends(facts),
-      ...(outbound.length > 0
-        ? [`an outbound tool was called (${[...new Set(outbound)].join(', ')})`]
-        : []),
-    ];
-  }
-  if (s.sends === 'owner') {
-    const delivery = new Set<string>(DELIVERY_TOOL_NAMES);
-    const named = facts.toolCalls
-      .filter((c) => delivery.has(bareToolName(c.toolName)) || isMailSender(c.toolName))
-      .flatMap((c) => recipientIds(c.input ?? ''));
-    return named.length > 0
+  if (s.sends !== 'nothing' && s.sends !== 'owner') return [];
+  const delivery = new Set<string>(DELIVERY_TOOL_NAMES);
+  const isDelivery = (toolName: string): boolean => delivery.has(bareToolName(toolName));
+  const isOwnerDelivery = (toolName: string): boolean =>
+    s.sends === 'owner' && (isDelivery(toolName) || isMailSender(toolName));
+  const outbound = facts.toolCalls
+    .filter(
+      (c) => isOutboundTool(c.toolName) && !isDelivery(c.toolName) && !isOwnerDelivery(c.toolName),
+    )
+    .map((c) => c.toolName);
+  const outboundReasons =
+    outbound.length > 0
+      ? [`an outbound tool was called (${[...new Set(outbound)].join(', ')})`]
+      : [];
+  if (s.sends === 'nothing') return [...channelSends(facts), ...outboundReasons];
+  const named = facts.toolCalls
+    .filter((c) => isOwnerDelivery(c.toolName))
+    .flatMap((c) => recipientIds(c.input ?? ''));
+  return [
+    ...(named.length > 0
       ? [
           `a send names a recipient other than the owner (${[...new Set(named)].join(', ')}): sends: owner allows only the owner's own chat`,
         ]
-      : [];
-  }
-  return [];
+      : []),
+    ...outboundReasons,
+  ];
 }
 
 /**

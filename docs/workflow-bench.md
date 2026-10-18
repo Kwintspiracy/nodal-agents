@@ -432,12 +432,18 @@ recording printer (`bench-printer`, #794), and are skipped until it exists.
   ("envoie-la-moi", "send it to me", "sur Telegram" with no named recipient)
   unless it declares `owner`. An `owner` scenario is in no set, no activity, no
   matrix and not in the nightly run: it runs only when named with `--only` AND
-  given `--allow-owner-sends`, otherwise it is skipped with that reason; a send
-  that names an explicit recipient is red. Today only `comfyui-telegram` (an
+  given `--allow-owner-sends`, otherwise it is skipped with that reason. It
+  allows exactly ONE outbound thing: a delivery to the owner's own chat (a
+  product delivery tool, or a mail send); a send that names an explicit
+  recipient is red, and every other outbound tool (a print, a post, a
+  publish) is red too, by the rule below. Today only `comfyui-telegram` (an
   image to the owner's Telegram, 10+ minutes of GPU) declares `owner`.
-- Under `nothing` the judge fails CLOSED: a reply delivered to a channel, a
-  send tool of the product, or any tool that may have sent something makes the
-  trial red, naming the tool, whatever the scenario's own judge says. A tool
+- The judge fails CLOSED, whatever the scenario's own judge says: any tool
+  that may have sent something makes the trial red, naming the tool, under
+  `nothing` and under `owner` alike (`destinationReasons`, review of #777
+  pass 9). Under `nothing`, a reply delivered to a channel or a send tool of
+  the product is red too; under `owner`, the delivery to the owner is the one
+  exemption. A tool
   is decided by its ACTION verb, at its position (the first word of its name,
   or the second after a service prefix: `gmail_send_email`,
   `chat_postMessage`, `drive_upload_file`):
@@ -457,8 +463,9 @@ recording printer (`bench-printer`, #794), and are skipped until it exists.
     reply, notify, tweet, upload, print… as base, -s, -es or -ing) in action
     position is a send (`mcp-telegram__send_message`, `discord__sendMessage`,
     `slack__file_upload`). Printing is one: paper leaves the machine like a
-    message does, so `request_print` or `confirm_print` in ANY scenario makes
-    the trial red, and a printer read (`list_printers`) does not. After a read
+    message does, so `request_print` or `confirm_print` makes the trial red
+    in any scenario (under `owner` too, see below), and a printer read
+    (`list_printers`) does not. After a read
     verb the base `print` still counts, so `get_print_request` is red too:
     closed, like `get_post`;
   - otherwise, closed: an outbound verb in action form anywhere in the name
