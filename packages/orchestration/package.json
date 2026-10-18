@@ -20,7 +20,7 @@
     "@nodal-agents/runner-adapters": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
     "@nodal-agents/tools": "workspace:*",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@nodal-agents/test-kit": "workspace:*",
