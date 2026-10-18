@@ -1037,6 +1037,13 @@
       "when": 1786004100000,
       "tag": "0149_tool_call_reads",
       "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "7",
+      "when": 1786090500000,
+      "tag": "0150_approval_requests_seq",
+      "breakpoints": true
     }
   ]
 }

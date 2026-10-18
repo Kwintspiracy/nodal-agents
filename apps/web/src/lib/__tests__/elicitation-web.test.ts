@@ -134,6 +134,28 @@ beforeAll(async () => {
     },
   ]);
 
+  const [answered] = await testDb
+    .insert(approvalRequests)
+    .values({
+      entityId: seed.entityId,
+      jobId: ids.job,
+      agentId: seed.agentId,
+      toolName: 'printer__request_print',
+      toolInput: { server: 'printer', message: 'Which tray?', requestedSchema: SCHEMA },
+      toolCallId: 'call_print_0',
+      kind: 'elicitation',
+      status: 'approved',
+      response: { paper: 'A4', copies: 2, print: true },
+      // Posée AVANT la question en attente, et insérée avant elle : le fil range
+      // les demandes dans l'ordre de CRÉATION (`seq`, #801), pas par l'heure.
+      requestedAt: new Date(Date.now() - 60_000),
+      resolvedAt: new Date(),
+      resolvedBy: 'api',
+      executedAt: new Date(),
+    })
+    .returning({ id: approvalRequests.id });
+  ids.answered = answered!.id;
+
   const [pending] = await testDb
     .insert(approvalRequests)
     .values({
@@ -167,27 +189,6 @@ beforeAll(async () => {
       caption: null,
     },
   ]);
-
-  const [answered] = await testDb
-    .insert(approvalRequests)
-    .values({
-      entityId: seed.entityId,
-      jobId: ids.job,
-      agentId: seed.agentId,
-      toolName: 'printer__request_print',
-      toolInput: { server: 'printer', message: 'Which tray?', requestedSchema: SCHEMA },
-      toolCallId: 'call_print_0',
-      kind: 'elicitation',
-      status: 'approved',
-      response: { paper: 'A4', copies: 2, print: true },
-      // Posée AVANT la question en attente : le fil les range dans cet ordre.
-      requestedAt: new Date(Date.now() - 60_000),
-      resolvedAt: new Date(),
-      resolvedBy: 'api',
-      executedAt: new Date(),
-    })
-    .returning({ id: approvalRequests.id });
-  ids.answered = answered!.id;
 
   const [approval] = await testDb
     .insert(approvalRequests)

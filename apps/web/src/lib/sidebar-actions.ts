@@ -39,6 +39,7 @@ import {
   agentSchedules,
   approvalRequests,
   webhookTriggers,
+  approvalsNewestFirst,
 } from '@nodal-agents/db';
 import { requireAuth } from '@nodal-agents/auth';
 import { explainApproval, readElicitationToolInput } from '@nodal-agents/shared';
@@ -244,7 +245,7 @@ export async function listSidebarRecentApprovalsAction(
       )
       // Par date de RÉPONSE : c'est l'ordre dans lequel la personne les a
       // rendues, et donc celui dans lequel elle les retrouve.
-      .orderBy(desc(approvalRequests.resolvedAt), desc(approvalRequests.id))
+      .orderBy(desc(approvalRequests.resolvedAt), approvalsNewestFirst)
       .limit(parsed.data);
     return ok(
       rows.map((r) => {
