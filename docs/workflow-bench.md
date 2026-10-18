@@ -433,17 +433,21 @@ recording printer (`bench-printer`, #794), and are skipped until it exists.
   unless it declares `owner`. An `owner` scenario is in no set, no activity, no
   matrix and not in the nightly run: it runs only when named with `--only` AND
   given `--allow-owner-sends`, otherwise it is skipped with that reason. It
-  allows exactly ONE outbound thing: a delivery to the owner's own chat (a
-  product delivery tool, or a mail send); a send that names an explicit
-  recipient is red, and every other outbound tool (a print, a post, a
-  publish) is red too, by the rule below. Today only `comfyui-telegram` (an
+  allows exactly ONE outbound thing: the product's delivery to the owner's
+  chat, recognised by the tool's identity, its exact registered name as the
+  runner records it (`send_image`, `telegram_send_message`…, unprefixed). An
+  MCP or CLI tool with the same bare name (`x__send_image`,
+  `cli:send_image`) is not the product's, and a mail send is not the owner's
+  chat (its recipient cannot be verified): both are outbound, so red. A
+  product delivery that names an explicit recipient is red, and every other
+  outbound tool (a print, a post, a publish) is red too, by the rule below. Today only `comfyui-telegram` (an
   image to the owner's Telegram, 10+ minutes of GPU) declares `owner`.
 - The judge fails CLOSED, whatever the scenario's own judge says: any tool
   that may have sent something makes the trial red, naming the tool, under
   `nothing` and under `owner` alike (`destinationReasons`, review of #777
   pass 9). Under `nothing`, a reply delivered to a channel or a send tool of
-  the product is red too; under `owner`, the delivery to the owner is the one
-  exemption. A tool
+  the product is red too; under `owner`, the one exemption is the product's
+  delivery to the owner's chat. A tool
   is decided by its ACTION verb, at its position (the first word of its name,
   or the second after a service prefix: `gmail_send_email`,
   `chat_postMessage`, `drive_upload_file`):

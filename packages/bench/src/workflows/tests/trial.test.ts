@@ -603,6 +603,48 @@ describe('where a trial may send', () => {
     expect(destinationReasons(scenarioById('comfyui-telegram')!, real)).toEqual([]);
   });
 
+  // Revue de #777, passe 10 (P2) : l'exemption de `owner` se décidait sur le
+  // nom NU (`bareToolName` retire `cli:` et `serveur__`) et sur tout envoi de
+  // courrier. Une exemption se décide sur l'IDENTITÉ de l'outil : seuls les
+  // outils de livraison du produit, à leur nom EXACT, tel que le runner les
+  // range (sans préfixe), livrent au chat de la conversation. Un outil MCP ou
+  // de CLI du même nom nu n'est pas celui du produit ; un courrier n'est pas
+  // le chat du propriétaire, et son destinataire ne se vérifie pas.
+  it('the runner records the product delivery tools by their exact, unprefixed name (real captured trials)', () => {
+    expect(
+      load('comfyui-telegram-green')
+        .toolCalls.map((c) => c.toolName)
+        .filter((n) => n.includes('send')),
+    ).toEqual(['send_image']);
+  });
+
+  it.each([
+    ['x__send_image', {}],
+    ['cli:send_image', {}],
+    ['x__telegram_send_message', { text: 'fait' }],
+    ['gmail__send_email', { to: 'boss', subject: 'x' }],
+    ['outlook_send_mail', { recipient: 'the team' }],
+  ])(
+    'under sends: owner, %s looks like a delivery but is not the product one: red, outbound, in every owner scenario',
+    (tool, input) => {
+      for (const s of OWNER)
+        expect([s.id, destinationReasons(s, withCalls(callOf(tool, input)))]).toEqual([
+          s.id,
+          [`an outbound tool was called (${tool})`],
+        ]);
+    },
+  );
+
+  it.each(['send_image', 'send_file', 'telegram_send_message'])(
+    "under sends: owner, the product's own %s (exact name, no recipient) stays green in every owner scenario",
+    (tool) => {
+      for (const s of OWNER)
+        expect([s.id, destinationReasons(s, withCalls(callOf(tool, { source: 'x.png' })))]).toEqual(
+          [s.id, []],
+        );
+    },
+  );
+
   it('internal tools stay quiet: files, office documents, the dashboard, return_result', async () => {
     const green = load('question-green');
     const quiet: TreeFacts = {

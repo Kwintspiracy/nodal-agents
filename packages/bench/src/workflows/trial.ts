@@ -33,7 +33,6 @@ import { isLive, liveJobs, pendingApprovals } from './facts';
 import { cheminConstate, DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
 import {
   answerOf,
-  bareToolName,
   channelSends,
   citedLinks,
   delegatedAgents,
@@ -42,7 +41,7 @@ import {
   toolPath,
   unverifiedOf,
 } from './judge-kit';
-import { isMailSender, isOutboundTool, missingNeeds } from './needs';
+import { isOutboundTool, missingNeeds } from './needs';
 import { recipientIds } from './recipients';
 import { redactHome } from './redact';
 import type { ForeignActivity } from './stack';
@@ -445,23 +444,27 @@ export function destinationGate(
  * exemption est la livraison que `sends` permet :
  *   - `nothing` : aucune. Une livraison de réponse ou un outil d'envoi du
  *     produit est rouge aussi (`channelSends`) ;
- *   - `owner` : UNE chose sortante, une livraison au chat du propriétaire (un
- *     outil de livraison du produit, ou un envoi de courrier). Elle garde sa
- *     vérification : un destinataire explicite n'est pas le propriétaire
- *     (revue de #777, passe 9 : une impression passait verte sous `owner`).
+ *   - `owner` : UNE chose sortante, la livraison du PRODUIT au chat du
+ *     propriétaire. Elle garde sa vérification : un destinataire explicite
+ *     n'est pas le propriétaire (revue de #777, passe 9 : une impression
+ *     passait verte sous `owner`).
+ * L'exemption se décide sur l'IDENTITÉ de l'outil, jamais sur un nom qui lui
+ * ressemble (passe 10) : un outil de livraison du produit, à son nom EXACT,
+ * tel que le runner le range dans `tool_calls` (sans préfixe :
+ * `DELIVERY_TOOL_NAMES`). Un outil MCP ou de CLI du même nom nu
+ * (`x__send_image`, `cli:send_image`) n'est pas le sien : il est sortant. Un
+ * envoi de courrier non plus : ce n'est pas le chat du propriétaire, et son
+ * destinataire ne se vérifie pas ; fermé par défaut, il est rouge.
  * Un scénario `test-account:` n'est jamais lancé (aucun compte de test n'est
  * branché, `destinationGate`) : rien n'est jugé ici pour lui.
  */
 export function destinationReasons(s: AnyScenario, facts: TreeFacts): string[] {
   if (s.sends !== 'nothing' && s.sends !== 'owner') return [];
   const delivery = new Set<string>(DELIVERY_TOOL_NAMES);
-  const isDelivery = (toolName: string): boolean => delivery.has(bareToolName(toolName));
-  const isOwnerDelivery = (toolName: string): boolean =>
-    s.sends === 'owner' && (isDelivery(toolName) || isMailSender(toolName));
+  /** Un outil de livraison du produit, à son nom exact : jamais un préfixe retiré. */
+  const isProductDelivery = (toolName: string): boolean => delivery.has(toolName);
   const outbound = facts.toolCalls
-    .filter(
-      (c) => isOutboundTool(c.toolName) && !isDelivery(c.toolName) && !isOwnerDelivery(c.toolName),
-    )
+    .filter((c) => isOutboundTool(c.toolName) && !isProductDelivery(c.toolName))
     .map((c) => c.toolName);
   const outboundReasons =
     outbound.length > 0
@@ -469,7 +472,7 @@ export function destinationReasons(s: AnyScenario, facts: TreeFacts): string[] {
       : [];
   if (s.sends === 'nothing') return [...channelSends(facts), ...outboundReasons];
   const named = facts.toolCalls
-    .filter((c) => isOwnerDelivery(c.toolName))
+    .filter((c) => isProductDelivery(c.toolName))
     .flatMap((c) => recipientIds(c.input ?? ''));
   return [
     ...(named.length > 0
