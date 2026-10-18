@@ -241,7 +241,7 @@ describe('a transcript that carries an image, resumed under a model that does no
     // The tool message reaches the provider serialized: the path is JSON-escaped there.
     const savedInJson = JSON.stringify(savedPath).slice(1, -1);
     expect(toolText(first)).toContain(
-      `[An image (image/png) was attached to this result, saved at ${savedInJson}: not passed to ` +
+      `[An image was attached to this result, saved at ${savedInJson}: not passed to ` +
         `you: the model this agent runs (${BLIND}) does not take images as input.]`,
     );
   });
