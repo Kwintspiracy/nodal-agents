@@ -101,10 +101,18 @@ export {
 export {
   startConversationTurn,
   deliverToConversationJob,
+  lockRunHead,
+  writeToRunHeadInbox,
   drainJobInbox,
   pendingHeadsOfConversation,
 } from './repos/conversation-inbox.ts';
-export type { ConversationTurn, ConversationJobDelivery } from './repos/conversation-inbox.ts';
+export type {
+  ConversationTurn,
+  ConversationJobDelivery,
+  LockedRunHead,
+  RunHeadDelivery,
+  RunHeadLookup,
+} from './repos/conversation-inbox.ts';
 export {
   withinRunScope,
   recordClaim,

@@ -306,7 +306,7 @@ beforeEach(() => {
   vi.mocked(listApprovalsAction).mockResolvedValue({ ok: true, data: [] });
   vi.mocked(resolveApprovalAction).mockResolvedValue({
     ok: true,
-    data: { jobId: 'j1', decision: 'approve', answer: null },
+    data: { jobId: 'j1', decision: 'approve', answer: null, handOff: { kind: 'no_words' } },
   });
   vi.mocked(setAgentApprovalRuleAction).mockResolvedValue({ ok: true, data: undefined });
 });
@@ -360,7 +360,10 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
     let luAvantLaReponse = true;
     vi.mocked(resolveApprovalAction).mockImplementation(async () => {
       luAvantLaReponse = vi.mocked(listApprovalsAction).mock.calls.length > 0;
-      return { ok: true, data: { jobId: 'j1', decision: 'approve', answer: null } };
+      return {
+        ok: true,
+        data: { jobId: 'j1', decision: 'approve', answer: null, handOff: { kind: 'no_words' } },
+      };
     });
     await monter(carteApprobation());
     await cliquer('Approve once');

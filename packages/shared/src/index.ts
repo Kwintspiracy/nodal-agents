@@ -70,6 +70,7 @@ export * from './failure-codes';
 export * from './job-result-kind';
 export * from './runner-record';
 export * from './conversation-inbox';
+export * from './card-words';
 export * from './mcp-server';
 export * from './mcp-tool-prefix';
 export * from './running-version';

@@ -20,7 +20,7 @@
     "googleapis": "^171.4.0",
     "mammoth": "^1.9.0",
     "pdf-parse": "^2.4.5",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "^25.7.0",

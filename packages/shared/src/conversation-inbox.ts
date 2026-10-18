@@ -37,6 +37,11 @@ export interface InboxEntry {
   receivedAt: string;
   /** Le job qui l'a transmis (un tour de réponse), quand il y en a un. */
   fromJobId?: string;
+  /**
+   * La carte (`approval_requests.id`) d'où vient l'entrée, quand c'est la
+   * réponse de la personne à la carte d'un délégué, remise à la tête du run.
+   */
+  fromApprovalRequestId?: string;
 }
 
 /** Le message qu'une entrée vidée devient dans la transcription. */

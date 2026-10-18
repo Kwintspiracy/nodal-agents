@@ -34,7 +34,7 @@
     "mammoth": "^1.12.0",
     "parse5": "8.0.1",
     "pdf-parse": "^2.4.5",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@nodal-agents/runner-adapters": "workspace:*",

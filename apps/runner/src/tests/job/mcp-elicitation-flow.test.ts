@@ -312,6 +312,7 @@ describe('une question de serveur MCP, de bout en bout @cap:approuver-une-action
     expect(during!.status).toBe('processing');
 
     const resolved = await resolveApprovalDecision(makeDeps(makeMockLlmClient([FINISH])), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: questionId,
       decision: 'approve',
       resolvedBy: 'api',
@@ -343,6 +344,7 @@ describe('une question de serveur MCP, de bout en bout @cap:approuver-une-action
     );
     const questionId = await waitForQuestion(jobId);
     await resolveApprovalDecision(makeDeps(makeMockLlmClient([FINISH])), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: questionId,
       decision: 'reject',
       resolvedBy: 'api',
@@ -392,6 +394,7 @@ describe('une question de serveur MCP, de bout en bout @cap:approuver-une-action
     // La personne refuse l'appel : le job reprend.
     await db.update(agentJobs).set({ status: 'awaiting_approval' }).where(eq(agentJobs.id, jobId));
     await resolveApprovalDecision(makeDeps(llm), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: gate!.id,
       decision: 'reject',
       resolvedBy: 'api',
@@ -431,6 +434,7 @@ describe('l’attente d’une réponse n’est pas du temps travaillé @cap:appr
     const WAIT_MS = 3_000;
     await new Promise((r) => setTimeout(r, WAIT_MS));
     await resolveApprovalDecision(makeDeps(makeMockLlmClient([FINISH])), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: questionId,
       decision: 'approve',
       resolvedBy: 'api',

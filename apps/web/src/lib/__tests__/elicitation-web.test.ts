@@ -256,7 +256,13 @@ function runnerReplies(body: unknown, status = 200) {
 
 describe('resolveApprovalAction sur une élicitation @cap:approuver-une-action/moteur', () => {
   it('Envoyer transporte le contenu jusqu’au runner, tel que la personne l’a rempli', async () => {
-    const fetchSpy = runnerReplies({ ok: true, jobId: ids.job, decision: 'approve', answer: null });
+    const fetchSpy = runnerReplies({
+      ok: true,
+      jobId: ids.job,
+      decision: 'approve',
+      answer: null,
+      handOff: { kind: 'no_words' },
+    });
     const { resolveApprovalAction } = await import('../actions.ts');
     const r = await resolveApprovalAction({
       approvalRequestId: ids.pending,
@@ -270,6 +276,8 @@ describe('resolveApprovalAction sur une élicitation @cap:approuver-une-action/m
       approvalRequestId: ids.pending,
       decision: 'approve',
       content: { paper: 'A4', copies: 3, print: true },
+      // #799 — qui répond : le compte de la session, jamais un champ du client.
+      responderUserId: seed.userId,
     });
     fetchSpy.mockRestore();
   });
@@ -302,12 +310,22 @@ describe('resolveApprovalAction sur une élicitation @cap:approuver-une-action/m
   });
 
   it('Refuser part sans contenu', async () => {
-    const fetchSpy = runnerReplies({ ok: true, jobId: ids.job, decision: 'reject', answer: null });
+    const fetchSpy = runnerReplies({
+      ok: true,
+      jobId: ids.job,
+      decision: 'reject',
+      answer: null,
+      handOff: { kind: 'no_words' },
+    });
     const { resolveApprovalAction } = await import('../actions.ts');
     const r = await resolveApprovalAction({ approvalRequestId: ids.pending, decision: 'reject' });
     expect(r.ok).toBe(true);
     const body = JSON.parse(String((fetchSpy.mock.calls[0]![1] as RequestInit).body));
-    expect(body).toEqual({ approvalRequestId: ids.pending, decision: 'reject' });
+    expect(body).toEqual({
+      approvalRequestId: ids.pending,
+      decision: 'reject',
+      responderUserId: seed.userId,
+    });
     fetchSpy.mockRestore();
   });
 

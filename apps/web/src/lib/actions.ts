@@ -54,6 +54,7 @@ import {
   isUnderPath,
   normPath,
 } from './code-projects.ts';
+import { ClaimOwnerSchema } from './claim-owner-schema.ts';
 import {
   canonicalChangePath,
   extractChange,
@@ -276,6 +277,7 @@ import {
   MCP_CATALOG,
   AgentSlugSchema,
   FREE_ANSWER_MAX,
+  type CardWordsHandOff,
   readElicitationToolInput,
   validateElicitationContent,
   describeElicitationErrors,
@@ -6503,9 +6505,15 @@ const ResolveApprovalSchema = z.object({
  * Auth: signs the request with WORKER_SECRET (the runner's /api/approve
  * middleware accepts session OR bearer; cross-process cookies don't work).
  */
-export async function resolveApprovalAction(
-  raw: unknown,
-): Promise<ActionResult<{ jobId: string; decision: string; answer: string | null }>> {
+export async function resolveApprovalAction(raw: unknown): Promise<
+  ActionResult<{
+    jobId: string;
+    decision: string;
+    answer: string | null;
+    /** #799 — ce que sont devenus les mots de la personne au-delà de l'agent de la carte. */
+    handOff: CardWordsHandOff;
+  }>
+> {
   try {
     const session = await getSession();
     const parsed = ResolveApprovalSchema.safeParse(raw);
@@ -6577,7 +6585,9 @@ export async function resolveApprovalAction(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${env.WORKER_SECRET}`,
         },
-        body: JSON.stringify(parsed.data),
+        // #799 — qui répond : le compte de CETTE session, jamais un champ
+        // venu du client. Le runner le dit à la tête du run avec son rôle.
+        body: JSON.stringify({ ...parsed.data, responderUserId: session.userId }),
       });
     } catch (err) {
       console.error('[resolveApprovalAction] fetch failed', err);
@@ -6598,11 +6608,29 @@ export async function resolveApprovalAction(
       return fail(code, `Runner rejected: ${code}`);
     }
 
-    const body = (await res.json()) as { jobId: string; decision: string; answer?: string | null };
+    const body = (await res.json()) as {
+      jobId: string;
+      decision: string;
+      answer?: string | null;
+      handOff?: CardWordsHandOff;
+    };
+    // Un runner qui ne dit pas ce que sont devenus les mots est une erreur
+    // dite (invariant #4), jamais une remise supposée faite.
+    if (body.handOff === undefined) {
+      return fail(
+        'runner_contract',
+        'The answer is recorded, but the runner did not say whether its run got your words.',
+      );
+    }
     revalidatePath('/approvals');
     revalidatePath('/logs');
     revalidatePath(`/jobs/${body.jobId}`);
-    return ok({ jobId: body.jobId, decision: body.decision, answer: body.answer ?? null });
+    return ok({
+      jobId: body.jobId,
+      decision: body.decision,
+      answer: body.answer ?? null,
+      handOff: body.handOff,
+    });
   } catch (err) {
     console.error('[resolveApprovalAction]', err);
     return fail('db_error', 'Failed to resolve approval');
@@ -12323,11 +12351,6 @@ export async function updateNetworkSettingsAction(
 // under an advisory lock that zero accounts exist, so this is one-shot. Trust
 // model is the same as first-user sign-up on a fresh install (TOFU): whoever
 // reaches the login page first owns the install.
-
-const ClaimOwnerSchema = z.object({
-  email: z.string().trim().max(200).email(),
-  password: z.string().min(8).max(200),
-});
 
 export async function claimOwnerAccountAction(raw: unknown): Promise<ActionResult<null>> {
   try {

@@ -325,6 +325,7 @@ describe('approval cards follow their request @cap:approuver-une-action/moteur',
     fetchMock.mockClear();
 
     const res = await resolveApprovalDecision(deps, testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approvalId,
       decision: 'reject',
       resolvedBy: 'api',
@@ -433,6 +434,7 @@ describe('approval cards follow their request @cap:approuver-une-action/moteur',
     fetchMock.mockClear();
 
     const res = await resolveApprovalDecision(deps, testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approvalId,
       decision: 'approve',
       answer: 'Large',
@@ -485,6 +487,7 @@ describe('approval cards follow their request @cap:approuver-une-action/moteur',
   it('a card is rewritten once: the sweep after an answer finds nothing left to do', async () => {
     const { approvalId } = await telegramCard();
     await resolveApprovalDecision(deps, testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approvalId,
       decision: 'approve',
       resolvedBy: 'api',
@@ -518,6 +521,7 @@ describe('a failed edit is not a success @cap:approuver-une-action/moteur', () =
       discordEditMock.mockImplementationOnce(async () => ({ ok: false, error: 'HTTP 500' }));
 
       await resolveApprovalDecision(deps, testEnv, {
+        answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
         approvalRequestId: approvalId,
         decision: 'approve',
         resolvedBy: 'api',
@@ -578,6 +582,7 @@ describe('a failed edit is not a success @cap:approuver-une-action/moteur', () =
       const { approvalId } = await discordCard();
       discordEditMock.mockImplementation(async () => ({ ok: false, error: 'Unknown Message' }));
       await resolveApprovalDecision(deps, testEnv, {
+        answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
         approvalRequestId: approvalId,
         decision: 'reject',
         resolvedBy: 'api',
@@ -621,6 +626,7 @@ describe('a failed edit is not a success @cap:approuver-une-action/moteur', () =
       fetchMock.mockClear();
 
       await resolveApprovalDecision(deps, testEnv, {
+        answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
         approvalRequestId: approvalId,
         decision: 'approve',
         resolvedBy: 'api',
@@ -808,6 +814,7 @@ describe('a tap on the card: one write, the same text @cap:approuver-une-action/
     fetchMock.mockClear();
     onNextTelegramEdit = async () => {
       await resolveApprovalDecision(deps, testEnv, {
+        answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
         approvalRequestId: approvalId,
         decision: 'reject',
         resolvedBy: 'api',
@@ -834,6 +841,7 @@ describe('every write of a card goes through the card protocol @cap:approuver-un
       const { approvalId } = await telegramCard();
       failTelegramEdits = true;
       await resolveApprovalDecision(deps, testEnv, {
+        answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
         approvalRequestId: approvalId,
         decision: 'approve',
         resolvedBy: 'api',
@@ -908,6 +916,7 @@ describe('every write of a card goes through the card protocol @cap:approuver-un
     expect(completedTelegramEdits.at(-1)?.['text']).toContain('Always allow run_command');
     onNextTelegramEdit = async () => {
       await resolveApprovalDecision(deps, testEnv, {
+        answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
         approvalRequestId: approvalId,
         decision: 'approve',
         resolvedBy: 'api',
@@ -937,6 +946,7 @@ describe('every write of a card goes through the card protocol @cap:approuver-un
         '⏳ Still pending — run_command. Tap a button below to decide — or resolve it from the dashboard.',
       );
       await resolveApprovalDecision(deps, testEnv, {
+        answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
         approvalRequestId: approvalId,
         decision: 'reject',
         resolvedBy: 'api',
@@ -957,6 +967,7 @@ describe('every write of a card goes through the card protocol @cap:approuver-un
   it('a confirmation tap on a request already closed never puts buttons back', async () => {
     const { approvalId } = await telegramCard();
     await resolveApprovalDecision(deps, testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: approvalId,
       decision: 'reject',
       resolvedBy: 'api',

@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { toastCardWordsHandOff } from '@/lib/card-words-notice.ts';
 import { PlugsConnected } from '@phosphor-icons/react';
 import {
   elicitationActionLabels,
@@ -114,6 +115,7 @@ export default function ElicitationCard({ elicitation, onResolved }: Elicitation
         return;
       }
       toast.success('Answered');
+      toastCardWordsHandOff(r.data.handOff);
       await after();
     });
   }
@@ -129,6 +131,7 @@ export default function ElicitationCard({ elicitation, onResolved }: Elicitation
         return;
       }
       toast.success('Declined');
+      toastCardWordsHandOff(r.data.handOff);
       await after();
     });
   }
