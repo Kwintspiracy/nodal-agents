@@ -10,23 +10,37 @@
 --
 -- `seq` est cet ordre : une séquence, une valeur par insertion, croissante.
 --
--- Les lignes DÉJÀ écrites sont numérotées dans l'ordre (requested_at, id), pas
--- dans l'ordre physique de la table : c'est le meilleur ordre que l'on ait, et
--- seules les égalités d'heure y restent arbitraires. Toute ligne écrite après la
--- migration reçoit un numéro supérieur à tout le remplissage. Le nom de la
--- séquence est celui que `bigserial` donnerait (`approval_requests_seq_seq`),
--- pour que le schéma Drizzle et la base disent la même chose.
+-- COMMENT LES LIGNES DÉJÀ ÉCRITES SONT NUMÉROTÉES, ET CE QUE ÇA COÛTE (revue
+-- passe 1 de #803). Drizzle applique toutes les migrations en attente dans UNE
+-- transaction : le premier `ALTER` garde son verrou exclusif jusqu'à la fin, donc
+-- le coût de cette migration est le temps pendant lequel la table est fermée aux
+-- écritures. Mesuré sur un vrai Postgres, une insertion concurrente attendant
+-- toute la migration :
+--   - `UPDATE … SET seq = row_number() OVER (ORDER BY requested_at, id)` :
+--     100 000 lignes ≈ 1,7 s ; 1 000 000 lignes ≈ 30 s (29,4 s d'`UPDATE`, qui
+--     réécrit chaque ligne et met à jour les quatre index de la table) ;
+--   - `ALTER COLUMN seq TYPE bigint USING (…requested_at…)`, ci-dessous :
+--     1 000 000 lignes ≈ 4,1 s (une réécriture de la table, les index reconstruits
+--     une fois) ; SET NOT NULL 0,07 s ; index 0,3 s.
+-- C'est la seconde forme qui est retenue.
+--
+-- Prix de cette forme : une ligne déjà écrite reçoit les MICROSECONDES de
+-- `requested_at` (époque Unix), pas un rang 1, 2, 3… Leur ordre relatif est celui
+-- de l'heure ; deux lignes déjà écrites de la même microseconde restent sans
+-- ordre entre elles (elles ne l'avaient pas non plus avant). Une ligne écrite
+-- après la migration reçoit un numéro de la séquence, qui repart au-dessus du
+-- plus grand numéro du remplissage : toute ligne neuve est après toute ligne
+-- ancienne. Une `requested_at` NULL vaut 0 : la plus ancienne.
+--
+-- Le nom de la séquence est celui que `bigserial` donnerait
+-- (`approval_requests_seq_seq`), pour que le schéma Drizzle et la base disent la
+-- même chose.
 CREATE SEQUENCE IF NOT EXISTS "approval_requests_seq_seq";
 
 ALTER TABLE "approval_requests" ADD COLUMN IF NOT EXISTS "seq" bigint;
 
-UPDATE "approval_requests" AS a
-SET "seq" = n.rn
-FROM (
-  SELECT "id", row_number() OVER (ORDER BY "requested_at", "id") AS rn
-  FROM "approval_requests"
-) AS n
-WHERE a."id" = n."id" AND a."seq" IS NULL;
+ALTER TABLE "approval_requests" ALTER COLUMN "seq" TYPE bigint
+  USING (COALESCE(extract(epoch from "requested_at") * 1000000, 0))::bigint;
 
 SELECT setval(
   'approval_requests_seq_seq',

@@ -108,9 +108,80 @@ describe('approval_requests creation order @cap:approuver-une-action/moteur', ()
   });
 });
 
+/**
+ * Les ordonnancements d'`approval_requests` par l'heure seule que `source` contient.
+ *
+ * Deux formes, les deux lues : le builder Drizzle (`.orderBy(...)` dont
+ * l'argument nomme `approvalRequests.requestedAt`, parenthèses imbriquées
+ * comprises) et le SQL brut (un littéral — gabarit ou chaîne — qui nomme la table
+ * `approval_requests` ET porte un `order by` sur `requested_at`).
+ *
+ * CE QU'ELLE NE VOIT PAS : une colonne passée par un alias (`const col =
+ * approvalRequests.requestedAt; … .orderBy(col)`), un `order by` construit en
+ * plusieurs morceaux de chaîne concaténés, et une requête sur la table dont le
+ * nom est dans une variable. Ces formes-là restent à la relecture.
+ */
+export function requestedAtOrderings(source: string): string[] {
+  const found: string[] = [];
+  let at = source.indexOf('.orderBy(');
+  while (at !== -1) {
+    let depth = 0;
+    let i = at + '.orderBy'.length;
+    const start = i + 1;
+    for (; i < source.length; i++) {
+      if (source[i] === '(') depth++;
+      else if (source[i] === ')' && --depth === 0) break;
+    }
+    const args = source.slice(start, i);
+    if (args.includes('approvalRequests.requestedAt')) found.push(`.orderBy(${args})`);
+    at = source.indexOf('.orderBy(', i);
+  }
+  for (const literal of source.match(/`[^`]*`|'[^'\n]*'|"[^"\n]*"/g) ?? []) {
+    if (!/\bapproval_requests\b/i.test(literal)) continue;
+    const m = /\border\s+by\b[^;]*\brequested_at\b/i.exec(literal);
+    if (m) found.push(m[0]);
+  }
+  return found;
+}
+
+describe('the guard that no reader orders approval_requests by requested_at @cap:approuver-une-action/moteur', () => {
+  it('flags the Drizzle builder form, nested parentheses included', () => {
+    expect(
+      requestedAtOrderings('db.select().from(t).orderBy(desc(approvalRequests.requestedAt))'),
+    ).toHaveLength(1);
+    expect(requestedAtOrderings('x.orderBy(approvalRequests.requestedAt)')).toHaveLength(1);
+  });
+
+  it('flags raw SQL on approval_requests, in a template and in a string', () => {
+    expect(
+      requestedAtOrderings(
+        'sql`select id from approval_requests where job_id in (${tree}) order by requested_at`',
+      ),
+    ).toHaveLength(1);
+    expect(
+      requestedAtOrderings("run('SELECT * FROM approval_requests ORDER BY job_id, requested_at')"),
+    ).toHaveLength(1);
+  });
+
+  it('lets the creation order and other tables through', () => {
+    expect(requestedAtOrderings('x.orderBy(approvalsOldestFirst)')).toEqual([]);
+    expect(
+      requestedAtOrderings('sql`select id from approval_requests where j = 1 order by seq`'),
+    ).toEqual([]);
+    expect(requestedAtOrderings('sql`select id from tool_calls order by requested_at`')).toEqual(
+      [],
+    );
+    // Two statements side by side: the order by of one is not the other's.
+    expect(
+      requestedAtOrderings(
+        'a(sql`select 1 from approval_requests`); b(sql`select 1 from x order by requested_at`)',
+      ),
+    ).toEqual([]);
+  });
+});
+
 // Les lecteurs vivent dans trois paquets et deux apps : on ne peut pas tous les
-// lancer ici. Cette garde lit leurs sources — plus aucun `orderBy` d'une
-// requête sur `approval_requests` ne s'appuie sur l'heure seule.
+// lancer ici. Cette garde lit leurs sources.
 describe('no reader orders approval_requests by requested_at @cap:approuver-une-action/moteur', () => {
   const root = join(__dirname, '..', '..', '..', '..');
   const skip = new Set([
@@ -129,35 +200,23 @@ describe('no reader orders approval_requests by requested_at @cap:approuver-une-
       const p = join(dir, name);
       const st = statSync(p);
       if (st.isDirectory()) sources(p, out);
-      else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name)) out.push(p);
+      else if (/\.(ts|tsx|mjs|js)$/.test(name) && !/\.test\.[a-z]+$/.test(name)) out.push(p);
     }
     return out;
   }
 
-  /** Le texte entre les parenthèses de chaque `.orderBy(…)`, parenthèses imbriquées comprises. */
-  function orderByArguments(text: string): string[] {
-    const found: string[] = [];
-    let at = text.indexOf('.orderBy(');
-    while (at !== -1) {
-      let depth = 0;
-      let i = at + '.orderBy'.length;
-      const start = i + 1;
-      for (; i < text.length; i++) {
-        if (text[i] === '(') depth++;
-        else if (text[i] === ')' && --depth === 0) break;
-      }
-      found.push(text.slice(start, i));
-      at = text.indexOf('.orderBy(', i);
-    }
-    return found;
-  }
-
-  it('finds none in apps/ and packages/', () => {
+  it('finds none in apps/, packages/ and scripts/', () => {
     const offenders: string[] = [];
-    for (const top of ['apps', 'packages']) {
-      for (const file of sources(join(root, top))) {
-        const text = readFileSync(file, 'utf8');
-        if (orderByArguments(text).some((a) => a.includes('approvalRequests.requestedAt'))) {
+    for (const top of ['apps', 'packages', 'scripts']) {
+      let dir: string;
+      try {
+        dir = join(root, top);
+        statSync(dir);
+      } catch {
+        continue;
+      }
+      for (const file of sources(dir)) {
+        if (requestedAtOrderings(readFileSync(file, 'utf8')).length > 0) {
           offenders.push(relative(root, file).split(sep).join('/'));
         }
       }

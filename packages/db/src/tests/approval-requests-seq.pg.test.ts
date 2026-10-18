@@ -50,7 +50,7 @@ describe('migration 0150_approval_requests_seq @cap:approuver-une-action/moteur'
     }
   });
 
-  it('numbers rows already written by (requested_at, id) and keeps counting above them', async () => {
+  it('orders rows already written by their time and keeps counting above them', async () => {
     const sql = postgres(harness().url, { max: 1 });
     try {
       const [user] = await sql`INSERT INTO users (email) VALUES ('seq@example.com') RETURNING id`;
@@ -71,7 +71,12 @@ describe('migration 0150_approval_requests_seq @cap:approuver-une-action/moteur'
           RETURNING id`;
         ids.push(row!.id as string);
       }
-      // L'état d'avant la migration : pas de numéro, pas de contrainte.
+      // A row with no requested_at at all: the oldest.
+      const [undated] = await sql`
+        INSERT INTO approval_requests (entity_id, job_id, agent_id, tool_name, tool_input, requested_at)
+        VALUES (${entity!.id}, ${job!.id}, ${agent!.id}, 'run_command', '{}'::jsonb, NULL)
+        RETURNING id`;
+      // The state before the migration: no numbers, no constraint.
       await sql`ALTER TABLE approval_requests ALTER COLUMN seq DROP NOT NULL`;
       await sql`UPDATE approval_requests SET seq = NULL`;
       await sql.unsafe(
@@ -82,16 +87,16 @@ describe('migration 0150_approval_requests_seq @cap:approuver-une-action/moteur'
       );
 
       const rows = await sql`
-        SELECT id, seq::int AS seq FROM approval_requests WHERE job_id = ${job!.id} ORDER BY seq`;
-      // Numérotées dans l'ordre de l'heure, pas dans celui de l'insertion.
-      expect(rows.map((r) => r.id)).toEqual([ids[1], ids[2], ids[0]]);
-      expect(rows.map((r) => r.seq)).toEqual([1, 2, 3]);
-      // Une ligne écrite ensuite reçoit un numéro supérieur à tout le remplissage.
+        SELECT id, seq::text AS seq FROM approval_requests WHERE job_id = ${job!.id} ORDER BY seq`;
+      // Time order, not insertion order; the undated row first.
+      expect(rows.map((r) => r.id)).toEqual([undated!.id, ids[1], ids[2], ids[0]]);
+      expect(rows[1]!.seq).toBe(String(Date.parse(at[1]!) * 1000));
+      // A row written afterwards gets a number above every backfilled one.
       const [later] = await sql`
         INSERT INTO approval_requests (entity_id, job_id, agent_id, tool_name, tool_input)
         VALUES (${entity!.id}, ${job!.id}, ${agent!.id}, 'run_command', '{}'::jsonb)
-        RETURNING seq::int AS seq`;
-      expect(later!.seq).toBe(4);
+        RETURNING seq::text AS seq`;
+      expect(BigInt(later!.seq)).toBeGreaterThan(BigInt(rows[3]!.seq));
     } finally {
       await sql.end();
     }

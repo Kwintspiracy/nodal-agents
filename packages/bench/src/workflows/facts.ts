@@ -369,7 +369,7 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
       select id::text, job_id::text, kind, status, tool_name, tool_input::text as tool_input,
              resolved_by,
              (extract(epoch from requested_at) * 1000)::float8 as requested_ms
-        from approval_requests where job_id in (${tree}) order by requested_at`,
+        from approval_requests where job_id in (${tree}) order by seq`,
     ),
   );
   const deliveries = z.array(RawDelivery).parse(

@@ -125,6 +125,8 @@ export const approvalRequests = pgTable(
   (table) => [
     index('idx_approval_requests_entity_id').on(table.entityId),
     index('idx_approval_status').on(table.status, table.requestedAt),
+    // 0150 (#801) : les lecteurs rangent par `seq`.
+    index('idx_approval_requests_seq').on(table.seq),
     index('idx_approval_requests_agent_id').on(table.agentId),
     index('idx_approval_requests_job_id').on(table.jobId),
     check(

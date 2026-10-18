@@ -463,6 +463,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- mirrors migration 0150 (#801) : l'ordre de création
       seq bigserial
     );
+    -- mirrors migration 0150 (#801)
+    CREATE INDEX IF NOT EXISTS idx_approval_requests_seq ON approval_requests (seq);
 
     -- mirrors migration 0140 (#637) : où chaque carte d'approbation a été livrée
     CREATE TABLE IF NOT EXISTS approval_card_messages (
