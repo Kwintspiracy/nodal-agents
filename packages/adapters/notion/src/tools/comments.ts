@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-notion — comment tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { Client } from '@notionhq/client';
 import { mapNotionError } from '../errors';
 import { chunkRichText } from '../helpers/property-coerce';
@@ -35,12 +35,11 @@ export type ListCommentsOutput = {
 
 export function createListCommentsTool(
   client: Client,
-): ToolDefinition<typeof ListCommentsInput, ListCommentsOutput> {
+): ConnectorToolDefinition<typeof ListCommentsInput, ListCommentsOutput> {
   return {
     name: 'notion_list_comments',
     description: 'List comments on a Notion page or block.',
     inputSchema: ListCommentsInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const res = await client.comments.list({
@@ -83,12 +82,11 @@ export type AddCommentOutput = {
 
 export function createAddCommentTool(
   client: Client,
-): ToolDefinition<typeof AddCommentInput, AddCommentOutput> {
+): ConnectorToolDefinition<typeof AddCommentInput, AddCommentOutput> {
   return {
     name: 'notion_add_comment',
     description: 'Add a comment to a Notion page.',
     inputSchema: AddCommentInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const comment = await client.comments.create({

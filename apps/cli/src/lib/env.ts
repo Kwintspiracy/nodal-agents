@@ -2,7 +2,7 @@
 
 import { randomBytes } from 'crypto';
 import { resolve } from 'path';
-import type { Config } from './config.ts';
+import { CONFIG_DIR, type Config } from './config.ts';
 import { readInstalledVersion } from './version.ts';
 import { LEGACY_PG_PASSWORD, buildPgUrl } from './postgres.ts';
 
@@ -82,7 +82,16 @@ export function buildEnvForRunner(config: Config, databaseUrl: string): ChildEnv
     PORT: String(config.ports.runner),
     BIND: bind,
     APP_URL: `http://localhost:${config.ports.runner}`,
+    // Le port du tableau de bord, pour que le bac à sable refuse l'accès du
+    // web de Nodal à une commande confinée (#628, D2 — nodalDeniedEndpoints).
+    // Le runner ne sert pas le web ; il a juste besoin de connaître son port.
+    WEB_PORT: String(config.ports.web),
     NODE_ENV: 'production',
+    // Le dossier de CETTE instance, résolu : le runner y lit secrets.key, y
+    // range workspaces, checkpoints et bac à sable. Posé explicitement, même
+    // pour le dossier par défaut, pour qu'un enfant ne dépende jamais de ce
+    // que le shell du lanceur portait.
+    NODALAI_HOME: CONFIG_DIR,
   };
 
   // The version this install runs, the one `nodal-agents --version` prints
@@ -184,6 +193,9 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): ChildEnv {
 
   const env: ChildEnv = {
     DATABASE_URL: databaseUrl,
+    // Le dossier de CETTE instance, comme pour le runner : config.json, logs,
+    // WhatsApp, et la commande `mcp serve` que l'écran MCP donne aux clients.
+    NODALAI_HOME: CONFIG_DIR,
     // 127.0.0.1, not localhost: on Windows localhost prefers IPv6 (::1), letting a
     // foreign IPv6 server on the runner port silently steal the web→runner traffic.
     RUNNER_URL: `http://127.0.0.1:${config.ports.runner}`,

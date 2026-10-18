@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { nodalHomeEntry, nodalHomePath } from '@nodal-agents/shared/nodal-home';
 import { test as base, expect, type Locator, type Page } from '@playwright/test';
 import { createClient } from '@nodal-agents/db';
 import type { CredentialType } from '@nodal-agents/shared';
@@ -294,7 +293,8 @@ function resolveDbUrl(): string {
   const override = process.env['NODALAI_E2E_DB_URL'];
   if (override) return override;
 
-  const pidFile = join(homedir(), '.nodalai', 'pg-data', 'postmaster.pid');
+  // The stack of THIS instance (NODALAI_HOME, or ~/.nodalai).
+  const pidFile = nodalHomePath('pg-data', 'postmaster.pid');
   let port: number;
   try {
     const line = readFileSync(pidFile, 'utf8').split('\n')[3]?.trim() ?? '';
@@ -312,8 +312,7 @@ function resolveDbUrl(): string {
     );
   }
 
-  const configPath =
-    process.env['NODALAI_CONFIG_PATH'] ?? join(homedir(), '.nodalai', 'config.json');
+  const configPath = nodalHomeEntry('config.json');
   let password = 'nodalai';
   try {
     const cfg = JSON.parse(readFileSync(configPath, 'utf8')) as { postgresPassword?: unknown };

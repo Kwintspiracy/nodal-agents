@@ -142,6 +142,11 @@ function pickAnyFreePort(): Promise<number> {
  * Aucun secret n'est lu ici : seulement les trois numéros de port. Une
  * configuration absente ou illisible rend la liste vide — il n'y a alors pas
  * d'installation à protéger.
+ *
+ * L'installation du dossier PAR DÉFAUT seulement, pas celle que `NODALAI_HOME`
+ * désignerait : test-kit ne peut pas dépendre de `@nodal-agents/shared` (qui
+ * calcule ce dossier), shared dépendant de test-kit pour ses propres tests.
+ * Les ports tirés ici sont éphémères, très au-dessus de ceux du produit.
  */
 export function installedPorts(
   configPath: string = join(homedir(), '.nodalai', 'config.json'),

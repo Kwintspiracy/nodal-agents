@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentJobs, entities, eq } from '@nodal-agents/db';
+import { agents, agentJobs, entities, entityMembers, eq } from '@nodal-agents/db';
 import { buildNodalMcpServer } from './server';
 import { MCP_MAX_JOBS_IN_FLIGHT } from '@nodal-agents/shared';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -212,6 +212,63 @@ describe('le contrat run_task', () => {
   });
 });
 
+describe("l'espace attendu : une assertion qui refuse avant d'écrire, jamais un choix (#769)", () => {
+  const jobsOf = async (entityId: string) =>
+    db.select({ id: agentJobs.id }).from(agentJobs).where(eq(agentJobs.entityId, entityId));
+
+  it("un espace attendu qui n'est pas celui du serveur : refus codé, et AUCUNE ligne agent_jobs", async () => {
+    const ws = await nouveauWorkspace('attendu-faux');
+    const client = await connect(ws.agentId);
+    for (const expected of [seed.entityId, autreEntiteId]) {
+      const res = await client.callTool({
+        name: 'run_task',
+        arguments: { instruction: 'ne doit pas exister', expectedWorkspaceId: expected },
+      });
+      expect(res.isError).toBe(true);
+      expect((res.content as Array<{ text: string }>)[0]!.text).toBe(
+        `mcp_workspace_mismatch: this server creates jobs in workspace ${ws.entityId}, ` +
+          `not in ${expected} as the caller expects. Nothing was created.`,
+      );
+    }
+    expect(await jobsOf(ws.entityId)).toEqual([]);
+    expect(await jobsOf(autreEntiteId)).toEqual([]);
+    await client.close();
+  });
+
+  it("l'espace du serveur déclaré : le job est créé là, comme sans le champ", async () => {
+    const ws = await nouveauWorkspace('attendu-juste');
+    const client = await connect(ws.agentId);
+    for (const args of [{ expectedWorkspaceId: ws.entityId }, {}]) {
+      const res = await client.callTool({
+        name: 'run_task',
+        arguments: { instruction: 'petite tache', ...args },
+      });
+      expect(res.isError).not.toBe(true);
+    }
+    const jobs = await db
+      .select({ entityId: agentJobs.entityId, agentId: agentJobs.agentId })
+      .from(agentJobs)
+      .where(eq(agentJobs.entityId, ws.entityId));
+    expect(jobs).toEqual([
+      { entityId: ws.entityId, agentId: ws.agentId },
+      { entityId: ws.entityId, agentId: ws.agentId },
+    ]);
+    await client.close();
+  });
+
+  it("le champ ne déplace rien : il n'accepte qu'un identifiant, et le serveur garde son espace", async () => {
+    const ws = await nouveauWorkspace('attendu-forme');
+    const client = await connect(ws.agentId);
+    const res = await client.callTool({
+      name: 'run_task',
+      arguments: { instruction: 'x', expectedWorkspaceId: 'autre-workspace' },
+    });
+    expect(res.isError).toBe(true);
+    expect(await jobsOf(ws.entityId)).toEqual([]);
+    await client.close();
+  });
+});
+
 describe('le plafond PAR DÉFAUT est la constante que la carte Settings affiche', () => {
   it('sans option, le serveur refuse le job qui dépasserait MCP_MAX_JOBS_IN_FLIGHT', async () => {
     // La carte lit la même constante : si le serveur en appliquait une autre,
@@ -264,16 +321,15 @@ describe('le plafond refuse les valeurs qui ne plafonnent rien', () => {
 });
 
 describe("l'identité par défaut vient de la base, pas d'une config", () => {
-  it("résout l'agent racine du workspace quand aucun agentId n'est donné", async () => {
-    // Invariant #6 : « quel agent orchestre » varie par installation. Un nom
-    // d'agent dans une config d'exemple aurait été un réglage par utilisateur
-    // codé en dur — Quentin l'a relevé au moment où j'allais l'écrire.
-    const { entities: entitiesTable } = await import('@nodal-agents/db');
-    await db
-      .update(entitiesTable)
-      .set({ rootAgentId: seed.agentId })
-      .where(eq(entitiesTable.id, seed.entityId));
-    // L'autre entité du fichier n'a PAS de racine : une seule candidate.
+  // Chaque cas part d'un état connu : les racines et les adhésions qu'un cas
+  // pose ne fuient pas dans le suivant (l'ordre des cas ne décide de rien).
+  afterEach(async () => {
+    await db.update(entities).set({ rootAgentId: null });
+    await db.delete(entityMembers);
+  });
+
+  /** Ce que le serveur sert par défaut : l'agent du job qu'un `run_task` crée. */
+  async function defaultAgentOfAJob(): Promise<string> {
     const server = await buildNodalMcpServer({ db });
     const [clientT, serverT] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'test', version: '0.0.1' });
@@ -286,21 +342,104 @@ describe("l'identité par défaut vient de la base, pas d'une config", () => {
       jobId: string;
     };
     const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, body.jobId)).limit(1);
-    expect(job!.agentId, "le job n'est pas signé par l'agent racine").toBe(seed.agentId);
     // Et la provenance déclarée est enregistrée — étiquette, jamais identité.
     expect((job!.triggerContext as { caller?: string }).caller).toBe('test-runner');
     await client.close();
+    return job!.agentId!;
+  }
+
+  it("résout l'agent racine de l'espace dont la personne est membre", async () => {
+    // Invariant #6 : « quel agent orchestre » varie par installation. Un nom
+    // d'agent dans une config d'exemple aurait été un réglage par utilisateur
+    // codé en dur — Quentin l'a relevé au moment où j'allais l'écrire.
+    // L'installation d'aujourd'hui : un espace, son propriétaire membre.
+    await db
+      .update(entities)
+      .set({ rootAgentId: seed.agentId })
+      .where(eq(entities.id, seed.entityId));
+    await db.insert(entityMembers).values({ entityId: seed.entityId, userId: seed.userId });
+    expect(await defaultAgentOfAJob(), "le job n'est pas signé par l'agent racine").toBe(
+      seed.agentId,
+    );
   });
 
-  it('refuse de choisir quand PLUSIEURS workspaces ont une racine', async () => {
-    // Un serveur qui tirerait le premier au hasard signerait des jobs au nom
-    // d'un agent que personne n'a désigné.
-    const { entities: entitiesTable } = await import('@nodal-agents/db');
+  it("une entité SANS membre qui a une racine ne change rien : le serveur sert toujours l'espace de la personne", async () => {
+    // Le cas qui bloquait : un second espace (copie d'équipe pilotée par un
+    // outil) avec sa propre racine. Avant, deux racines = refus, et le client
+    // MCP du propriétaire, qui n'épingle aucun agent, cessait de marcher.
+    const copie = await nouveauWorkspace('copie-sans-membre');
     await db
-      .update(entitiesTable)
+      .update(entities)
       .set({ rootAgentId: seed.agentId })
-      .where(eq(entitiesTable.id, autreEntiteId));
-    await expect(buildNodalMcpServer({ db })).rejects.toThrow(/mcp_ambiguous_root_agent/);
+      .where(eq(entities.id, seed.entityId));
+    await db
+      .update(entities)
+      .set({ rootAgentId: copie.agentId })
+      .where(eq(entities.id, copie.entityId));
+    await db.insert(entityMembers).values({ entityId: seed.entityId, userId: seed.userId });
+    expect(await defaultAgentOfAJob()).toBe(seed.agentId);
+  });
+
+  it("l'espace de la personne est servi quel que soit l'ordre de création des entités", async () => {
+    // Même règle, l'autre ordre : la copie sans membre est plus ANCIENNE que
+    // l'espace servi. Un « premier trouvé » prendrait la copie ici.
+    const plusVieille = await nouveauWorkspace('copie-ancienne');
+    await db
+      .update(entities)
+      .set({ rootAgentId: plusVieille.agentId, createdAt: new Date('2020-01-01') })
+      .where(eq(entities.id, plusVieille.entityId));
+    const espace = await nouveauWorkspace('espace-membre');
+    await db
+      .update(entities)
+      .set({ rootAgentId: espace.agentId })
+      .where(eq(entities.id, espace.entityId));
+    await db.insert(entityMembers).values({ entityId: espace.entityId, userId: seed.userId });
+    expect(await defaultAgentOfAJob()).toBe(espace.agentId);
+  });
+
+  it('refuse de choisir quand la personne est membre de PLUSIEURS espaces qui ont une racine', async () => {
+    // Le tableau de bord laisse créer plusieurs espaces : un serveur qui
+    // tirerait le premier signerait des jobs au nom d'un agent que personne
+    // n'a désigné.
+    await db
+      .update(entities)
+      .set({ rootAgentId: seed.agentId })
+      .where(eq(entities.id, seed.entityId));
+    await db
+      .update(entities)
+      .set({ rootAgentId: seed.agentId })
+      .where(eq(entities.id, autreEntiteId));
+    await db.insert(entityMembers).values([
+      { entityId: seed.entityId, userId: seed.userId },
+      { entityId: autreEntiteId, userId: seed.userId },
+    ]);
+    await expect(buildNodalMcpServer({ db })).rejects.toThrow(
+      /mcp_ambiguous_root_agent: 2 workspaces have a root agent \((Test Entity, Autre Workspace|Autre Workspace, Test Entity)\)/,
+    );
+  });
+
+  it("refuse en le disant quand seule une entité sans membre a une racine, et la sert si on l'épingle", async () => {
+    const copie = await nouveauWorkspace('copie-seule');
+    await db
+      .update(entities)
+      .set({ rootAgentId: copie.agentId })
+      .where(eq(entities.id, copie.entityId));
+    await db.insert(entityMembers).values({ entityId: seed.entityId, userId: seed.userId });
+    await expect(buildNodalMcpServer({ db })).rejects.toThrow(
+      /mcp_no_root_agent: .*1 workspace\(s\) without members have one; they are served only when their agent is pinned/,
+    );
+    // Épinglée, elle est servie : la règle par défaut ne retire rien à l'épinglage.
+    await expect(buildNodalMcpServer({ db, agentId: copie.agentId })).resolves.toBeDefined();
+  });
+
+  it("refuse quand aucune entité n'a de racine, sans parler d'entités sans membre", async () => {
+    await db.insert(entityMembers).values({ entityId: seed.entityId, userId: seed.userId });
+    const err = await buildNodalMcpServer({ db }).then(
+      () => null,
+      (e: unknown) => (e instanceof Error ? e.message : String(e)),
+    );
+    expect(err).toMatch(/^mcp_no_root_agent: /);
+    expect(err).not.toMatch(/without members/);
   });
 });
 

@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-notion — notion_search tool
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { Client } from '@notionhq/client';
 import { mapNotionError } from '../errors';
 import { extractTitle } from '../helpers/property-coerce';
@@ -32,13 +32,14 @@ export type SearchOutput = {
   }>;
 };
 
-export function createSearchTool(client: Client): ToolDefinition<typeof SearchInput, SearchOutput> {
+export function createSearchTool(
+  client: Client,
+): ConnectorToolDefinition<typeof SearchInput, SearchOutput> {
   return {
     name: 'notion_search',
     description:
       'Search across all pages and databases in Notion. Returns matching page titles, IDs, and URLs.',
     inputSchema: SearchInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const body: Parameters<typeof client.search>[0] = {

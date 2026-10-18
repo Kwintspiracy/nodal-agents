@@ -2,7 +2,7 @@
 // Verifies: tool count, unique names, correct risk levels, schema validation
 
 import { describe, it, expect } from 'vitest';
-import { createDocsTools } from '../index';
+import { createDocsTools, DOCS_OPERATIONS } from '../index';
 import { z } from 'zod';
 
 // Use a fake token — tools are instantiated but never called here
@@ -34,15 +34,15 @@ describe('createDocsTools integration', () => {
     }
   });
 
-  it('read tools have riskLevel read', () => {
+  it('read operations have risk read in the descriptor', () => {
     const readTools = ['docs_get', 'docs_get_text'];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(DOCS_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of readTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be read`).toBe('read');
+      expect(toolMap[name]?.risk, `${name} should be read`).toBe('read');
     }
   });
 
-  it('write tools have riskLevel write', () => {
+  it('write operations have risk write in the descriptor', () => {
     const writeTools = [
       'docs_create',
       'docs_insert_text',
@@ -56,17 +56,17 @@ describe('createDocsTools integration', () => {
       'docs_apply_named_style',
       'docs_batch_update',
     ];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(DOCS_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of writeTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be write`).toBe('write');
+      expect(toolMap[name]?.risk, `${name} should be write`).toBe('write');
     }
   });
 
-  it('destructive tools have riskLevel destructive', () => {
+  it('destructive operations have risk destructive in the descriptor', () => {
     const destructiveTools = ['docs_delete_content_range'];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(DOCS_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of destructiveTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be destructive`).toBe('destructive');
+      expect(toolMap[name]?.risk, `${name} should be destructive`).toBe('destructive');
     }
   });
 
@@ -85,17 +85,17 @@ describe('createDocsTools integration', () => {
 
   // Tool count breakdown
   it('has exactly 2 read tools', () => {
-    const readCount = tools.filter((t) => t.riskLevel === 'read').length;
+    const readCount = DOCS_OPERATIONS.filter((o) => o.risk === 'read').length;
     expect(readCount).toBe(2);
   });
 
   it('has exactly 11 write tools', () => {
-    const writeCount = tools.filter((t) => t.riskLevel === 'write').length;
+    const writeCount = DOCS_OPERATIONS.filter((o) => o.risk === 'write').length;
     expect(writeCount).toBe(11);
   });
 
   it('has exactly 1 destructive tool', () => {
-    const destructiveCount = tools.filter((t) => t.riskLevel === 'destructive').length;
+    const destructiveCount = DOCS_OPERATIONS.filter((o) => o.risk === 'destructive').length;
     expect(destructiveCount).toBe(1);
   });
 

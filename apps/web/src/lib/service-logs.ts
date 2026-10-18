@@ -12,8 +12,8 @@
 // web tournant par construction sur la même machine que les services.
 
 import { existsSync, statSync, openSync, readSync, closeSync, truncateSync, rmSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { nodalHomePath } from '@nodal-agents/shared/nodal-home';
 
 export const SERVICE_LOG_NAMES = ['runner', 'web'] as const;
 export type ServiceLogName = (typeof SERVICE_LOG_NAMES)[number];
@@ -23,7 +23,7 @@ export type ServiceLogGeneration = 'current' | 'archive';
 export const SERVICE_LOG_TAIL_BYTES = 64 * 1024;
 
 export function serviceLogsDir(): string {
-  return join(homedir(), '.nodalai', 'logs');
+  return nodalHomePath('logs');
 }
 
 export function serviceLogPath(

@@ -17,6 +17,7 @@ import {
   CHECKPOINT_COVERAGE_NOTE,
 } from '@nodal-agents/checkpoints';
 import type { Checkpoint } from '@nodal-agents/checkpoints';
+import { withNodalPrograms } from '@nodal-agents/sandbox';
 
 function ago(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -30,7 +31,8 @@ function ago(iso: string): string {
 
 export async function runCheckpointsList(workspace?: string): Promise<void> {
   const ws = resolve(workspace ?? process.cwd());
-  const list = await listCheckpoints(checkpointsRoot(), ws);
+  // Le magasin seul : sur l'hôte, sans arbre de travail (checkpoints.ts).
+  const list = await listCheckpoints(checkpointsRoot(), ws, 20);
 
   if (list.length === 0) {
     console.log(chalk.yellow(`No checkpoints for ${ws}`));
@@ -77,7 +79,12 @@ export async function runCheckpointsRestore(sha: string, workspace?: string): Pr
   }
 
   console.log(chalk.yellow(`Restoring ${match.sha.slice(0, 8)} — ${match.label}`));
-  const res = await restoreCheckpoint(checkpointsRoot(), ws, match.sha);
+  // La restauration a besoin du bac à sable plus que tout : mesuré le 16/10, un
+  // sous-dépôt imbriqué du workspace fait exécuter sa config par
+  // `restoreCheckpoint` (son instantané de sécurité, puis le `checkout`).
+  const res = await withNodalPrograms((programs) =>
+    restoreCheckpoint(checkpointsRoot(), ws, match.sha, programs),
+  );
   console.log(chalk.green(`  Restored ${ws}`));
   console.log(chalk.gray(`  ${CHECKPOINT_COVERAGE_NOTE}`));
 

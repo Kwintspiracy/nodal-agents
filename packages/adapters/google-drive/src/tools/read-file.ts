@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-drive — drive_read_file tool
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { drive_v3 } from 'googleapis';
 import { mapDriveError, DriveAdapterError } from '../errors';
 import { extractFileText, FILE_SIZE_CAP_BYTES } from '../extractors/index';
@@ -25,13 +25,12 @@ export type ReadFileOutput = {
 
 export function createReadFileTool(
   drive: drive_v3.Drive,
-): ToolDefinition<typeof ReadFileInput, ReadFileOutput> {
+): ConnectorToolDefinition<typeof ReadFileInput, ReadFileOutput> {
   return {
     name: 'drive_read_file',
     description:
       'Read the text content of a file from Google Drive. Handles Google Docs (exported as plain text), plain text, DOCX, PDF, XLSX. Use drive_list_files first to get the file ID.',
     inputSchema: ReadFileInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         // 1. Fetch metadata

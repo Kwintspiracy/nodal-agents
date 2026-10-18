@@ -27,6 +27,7 @@ export const assignSkillTool: ToolDefinition<typeof AssignSkillInput, AssignSkil
     'Idempotent: safe to call even if the skill is already assigned.',
   inputSchema: AssignSkillInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {

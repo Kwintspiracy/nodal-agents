@@ -1113,6 +1113,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       source text NOT NULL DEFAULT 'job'
         CONSTRAINT verification_runs_source_check CHECK (source IN ('job','reviewer')),
       source_job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
+      -- 0147 (#628) — confined, or the stable code of why not.
+      sandbox text,
       created_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_verification_runs_job_created
@@ -1185,6 +1187,53 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
     -- 0130 : l'empreinte du contenu écrit, et la recherche par chemin.
     CREATE INDEX IF NOT EXISTS idx_constated_writes_path_created
       ON constated_writes (path, created_at DESC);
+
+    -- tool_call_writes (migration 0148, #779) : pour chaque cible FICHIER d un
+    -- appel qui a tourne, l empreinte du contenu avant et apres, liee a la
+    -- ligne tool_calls de l appel (donc a son seq).
+    CREATE TABLE IF NOT EXISTS tool_call_writes (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      tool_call_id uuid NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
+      job_id uuid NOT NULL REFERENCES agent_jobs(id) ON DELETE CASCADE,
+      path text NOT NULL,
+      before_kind text NOT NULL,
+      before_sha256 text,
+      after_kind text NOT NULL,
+      after_sha256 text,
+      after_source text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT tool_call_writes_call_path_unique UNIQUE (tool_call_id, path),
+      CONSTRAINT tool_call_writes_before_kind_check
+        CHECK (before_kind IN ('absent', 'file', 'unreadable')),
+      CONSTRAINT tool_call_writes_after_kind_check
+        CHECK (after_kind IN ('absent', 'file', 'unreadable')),
+      CONSTRAINT tool_call_writes_before_sha_check
+        CHECK ((before_kind = 'file') = (before_sha256 IS NOT NULL)),
+      CONSTRAINT tool_call_writes_after_sha_check
+        CHECK ((after_kind = 'file') = (after_sha256 IS NOT NULL)),
+      CONSTRAINT tool_call_writes_after_source_check
+        CHECK (after_source IN ('written', 'read')),
+      CONSTRAINT tool_call_writes_written_is_file_check
+        CHECK (after_source <> 'written' OR after_kind = 'file')
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_call_writes_job ON tool_call_writes (job_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_call_writes_call ON tool_call_writes (tool_call_id);
+
+    -- tool_call_reads (migration 0149) : pour chaque fichier qu un appel a lu
+    -- avec succes, son chemin reel et l empreinte des octets lus, lies a la
+    -- ligne tool_calls de l appel (donc a son seq).
+    CREATE TABLE IF NOT EXISTS tool_call_reads (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      tool_call_id uuid NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
+      job_id uuid NOT NULL REFERENCES agent_jobs(id) ON DELETE CASCADE,
+      path text NOT NULL,
+      sha256 text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT tool_call_reads_call_path_unique UNIQUE (tool_call_id, path),
+      CONSTRAINT tool_call_reads_sha256_check CHECK (sha256 ~ '^[0-9a-f]{64}$')
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_call_reads_job ON tool_call_reads (job_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_call_reads_path ON tool_call_reads (path);
   `);
 
   const db = drizzle(pg, { schema });

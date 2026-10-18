@@ -69,10 +69,6 @@ describe('drive_create_folder', () => {
       code: 'drive_unauthorized',
     });
   });
-
-  it('has riskLevel write', () => {
-    expect(createCreateFolderTool(drive).riskLevel).toBe('write');
-  });
 });
 
 // ── drive_move_file ───────────────────────────────────────────────────────────
@@ -130,10 +126,6 @@ describe('drive_move_file', () => {
       tool.execute({ file_id: 'missing', new_parent_id: 'folder' }, {} as never),
     ).rejects.toMatchObject({ code: 'drive_not_found' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createMoveFileTool(drive).riskLevel).toBe('write');
-  });
 });
 
 // ── drive_rename_file ─────────────────────────────────────────────────────────
@@ -166,10 +158,6 @@ describe('drive_rename_file', () => {
     await expect(tool.execute({ file_id: 'x', new_name: 'y' }, {} as never)).rejects.toMatchObject({
       code: 'drive_unauthorized',
     });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createRenameFileTool(drive).riskLevel).toBe('write');
   });
 });
 
@@ -222,9 +210,5 @@ describe('drive_copy_file', () => {
     await expect(tool.execute({ file_id: 'missing' }, {} as never)).rejects.toMatchObject({
       code: 'drive_not_found',
     });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createCopyFileTool(drive).riskLevel).toBe('write');
   });
 });

@@ -60,6 +60,12 @@ connector: destructive operations (delete, overwrite) can be switched off for
 one agent while the rest of the connector stays available. Every connector page
 in the reference marks which of its tools are destructive.
 
+An operation marked ⚠ on the Connectors tab (sending an email, publishing a
+site, deleting a file, an event or a record) asks for your approval before it
+runs, unless the agent's **Approvals** tab carries a rule for it. Under the
+`destructive_gate` autonomy level a destructive operation still asks and the
+others run; under `fully_autonomous`, none asks.
+
 Credentials are fetched from the database at execution time — they are never
 baked into a job at enqueue time.
 
@@ -285,7 +291,10 @@ than a guess.
 The client gets exactly one tool, `run_task`: it creates a **tracked job** for
 your workspace's root agent (or a chosen agent by slug) and returns the job id
 immediately. The work itself runs asynchronously through the normal loop —
-the agent's own tools, approval rules, budgets, and delegation.
+the agent's own tools, approval rules, budgets, and delegation. A client that
+must not land anywhere else can state the workspace it expects
+(`expectedWorkspaceId`): if the server serves another one, the call is refused
+before any job is created.
 
 Nobody typed these runs, so they have no conversation: they land in their own
 **MCP folder** under Channels, whose rows open [the run

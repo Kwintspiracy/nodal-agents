@@ -33,6 +33,7 @@
     "@nodal-agents/memory": "workspace:*",
     "@nodal-agents/orchestration": "workspace:*",
     "@nodal-agents/runner-adapters": "workspace:*",
+    "@nodal-agents/sandbox": "workspace:*",
     "@nodal-agents/secrets": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
     "@phosphor-icons/react": "^2.1.10",
@@ -53,6 +54,7 @@
   },
   "devDependencies": {
     "@figma/code-connect": "1.4.9",
+    "@nodal-agents/bench": "workspace:*",
     "@nodal-agents/test-kit": "workspace:*",
     "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4.3.0",

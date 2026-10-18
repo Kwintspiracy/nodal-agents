@@ -113,6 +113,8 @@ export {
   extractClaudeUsage,
   extractClaudeModelUsage,
   CLAUDE_READONLY_DISALLOWED,
+  readWorkspaceMemory,
+  WORKSPACE_MEMORY_MAX_BYTES,
   assertAgentBudget,
   recordCliRun,
   acquireWorkspaceLock,
@@ -150,10 +152,13 @@ export {
   runCommandSequence,
   killProcessTree,
   isGreen,
+  sandboxReport,
+  sandboxFact,
   SHELL_POLICY_VERSION,
   DEFAULT_MAX_OUTPUT_CHARS,
 } from './shell-engine';
 export type {
+  CommandConfinement,
   CommandOutcome,
   CommandRunResult,
   CommandSpec,
@@ -161,6 +166,7 @@ export type {
   SequenceResult,
   SequenceStepResult,
   SequenceOptions,
+  SandboxReport,
 } from './shell-engine';
 
 /**

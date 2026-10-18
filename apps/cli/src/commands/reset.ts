@@ -1,8 +1,9 @@
-// reset.ts — nuke ~/.nodalai/ and start fresh
+// reset.ts — nuke this instance's home (NODALAI_HOME, or ~/.nodalai/) and start fresh
 
 import chalk from 'chalk';
 import prompts from 'prompts';
 import { rmSync, existsSync } from 'fs';
+import { unregisterNodalInstance } from '@nodal-agents/shared/nodal-instances';
 import { CONFIG_DIR } from '../lib/config.ts';
 import { runDown } from './down.ts';
 
@@ -34,6 +35,8 @@ export async function runReset(options: { yes?: boolean } = {}): Promise<void> {
   } else {
     console.log(chalk.gray(`  ${CONFIG_DIR} was already empty`));
   }
+  // Its entry in the registry of instances goes with it (an `up` writes it back).
+  unregisterNodalInstance();
 
   console.log('');
   console.log(chalk.green('  Reset complete.'));

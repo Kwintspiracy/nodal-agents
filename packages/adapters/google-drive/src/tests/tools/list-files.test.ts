@@ -90,8 +90,4 @@ describe('drive_list_files', () => {
       code: 'drive_forbidden',
     });
   });
-
-  it('has riskLevel read', () => {
-    expect(createListFilesTool(drive).riskLevel).toBe('read');
-  });
 });

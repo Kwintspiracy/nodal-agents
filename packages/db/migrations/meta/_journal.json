@@ -1016,6 +1016,27 @@
       "when": 1786003800000,
       "tag": "0146_elicitation_draft",
       "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1786003900000,
+      "tag": "0147_verification_runs_sandbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1786004000000,
+      "tag": "0148_tool_call_writes",
+      "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1786004100000,
+      "tag": "0149_tool_call_reads",
+      "breakpoints": true
     }
   ]
 }

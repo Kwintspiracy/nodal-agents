@@ -82,10 +82,9 @@ describe('makeFirecrawlCrawlStartTool', () => {
     );
   });
 
-  it('has riskLevel read and correct name', () => {
+  it('has the correct name', () => {
     const tool = makeFirecrawlCrawlStartTool(getClient());
     expect(tool.name).toBe('firecrawl_crawl_start');
-    expect(tool.riskLevel).toBe('read');
   });
 });
 
@@ -271,9 +270,8 @@ describe('makeFirecrawlCrawlStatusTool', () => {
     );
   });
 
-  it('has riskLevel read and correct name', () => {
+  it('has the correct name', () => {
     const tool = makeFirecrawlCrawlStatusTool(getClient());
     expect(tool.name).toBe('firecrawl_crawl_status');
-    expect(tool.riskLevel).toBe('read');
   });
 });

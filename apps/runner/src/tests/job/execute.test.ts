@@ -221,7 +221,7 @@ function makeMockLlmClient(
       const last = options.prompt[options.prompt.length - 1];
       const isRecheck =
         last?.role === 'user' &&
-        last.content.some((part) => part.type === 'text' && part.text === ACTION_RECHECK);
+        last.content.some((part) => part.type === 'text' && part.text.endsWith(ACTION_RECHECK));
       if (isRecheck) {
         const scripted = recheckResponses?.shift();
         return {
@@ -329,10 +329,12 @@ function makeMockLlmClient(
     },
     generateText: (args) => {
       const msgs = (args as { messages?: Array<{ content?: unknown }> }).messages ?? [];
-      if (capturedToolKeysPerCall && msgs[msgs.length - 1]?.content !== ACTION_RECHECK) {
+      const lastContent = msgs[msgs.length - 1]?.content;
+      const isRecheck = typeof lastContent === 'string' && lastContent.endsWith(ACTION_RECHECK);
+      if (capturedToolKeysPerCall && !isRecheck) {
         capturedToolKeysPerCall.push(offeredToolNames(args));
       }
-      if (capturedToolDescriptions && msgs[msgs.length - 1]?.content !== ACTION_RECHECK) {
+      if (capturedToolDescriptions && !isRecheck) {
         const tools = (args as { tools?: Record<string, { description?: string }> }).tools ?? {};
         capturedToolDescriptions.push(
           Object.fromEntries(Object.entries(tools).map(([n, t]) => [n, t.description ?? ''])),
@@ -8808,6 +8810,17 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
       .insert(entities)
       .values({ userId: user!.id, name: 'B3 Entity', slug: `e-b3-${ts}` })
       .returning();
+    // The workspace's OWN key: a key of another workspace is never used
+    // (resolveAgentLlmClient, bench space 16/10). Same settings as the seed's.
+    const { entityLlmKeys } = await import('@nodal-agents/db');
+    const [seedKey] = await db
+      .select()
+      .from(entityLlmKeys)
+      .where(eq(entityLlmKeys.id, seed.llmKeyId));
+    const [key] = await db
+      .insert(entityLlmKeys)
+      .values({ ...seedKey!, id: undefined, entityId: entity!.id })
+      .returning();
     const [root] = await db
       .insert(agents)
       .values({
@@ -8815,7 +8828,7 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
         name: 'B3 Root',
         slug: `b3-root-${ts}`,
         personality: 'root',
-        llmKeyId: seed.llmKeyId,
+        llmKeyId: key!.id,
         role: 'orchestrator',
         orchestratorMode: 'router',
         telegramBotToken: 'root-secret-token',
@@ -8830,7 +8843,7 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
         name: 'B3 Worker',
         slug: `b3-worker-${ts}`,
         personality: 'worker',
-        llmKeyId: seed.llmKeyId,
+        llmKeyId: key!.id,
         role: 'agent',
         telegramBotToken: null,
         systemAgent: true,
@@ -8941,6 +8954,15 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
       .insert(entities)
       .values({ userId: user!.id, name: 'B3bis Entity', slug: `e-b3bis-${ts}` })
       .returning();
+    const { entityLlmKeys } = await import('@nodal-agents/db');
+    const [seedKey] = await db
+      .select()
+      .from(entityLlmKeys)
+      .where(eq(entityLlmKeys.id, seed.llmKeyId));
+    const [key] = await db
+      .insert(entityLlmKeys)
+      .values({ ...seedKey!, id: undefined, entityId: entity!.id })
+      .returning();
     const [orch] = await db
       .insert(agents)
       .values({
@@ -8948,7 +8970,7 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
         name: 'B3bis Orchestrator',
         slug: `b3bis-orch-${ts}`,
         personality: 'orch',
-        llmKeyId: seed.llmKeyId,
+        llmKeyId: key!.id,
         role: 'orchestrator',
         orchestratorMode: 'router',
         telegramBotToken: 'orch-root-token',
@@ -8964,7 +8986,7 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
         name: 'B3bis Child',
         slug: childSlug,
         personality: 'child',
-        llmKeyId: seed.llmKeyId,
+        llmKeyId: key!.id,
         role: 'agent',
         telegramBotToken: null,
         systemAgent: true,
@@ -9216,11 +9238,15 @@ describe('executeJob — une preuve rouge rejoue UN tour @cap:verifier-un-livrab
     // DEUX tours : le premier a livré, le second a réparé.
     expect(prompts).toHaveLength(2);
     const second = JSON.stringify(prompts[1]);
-    expect(second).toContain('The proof of your delivery failed');
+    expect(second).toContain('The proof of your deliverable failed');
+    // #711 : le tour répare le LIVRABLE ; il ne refait pas ce qui l'accompagnait.
+    expect(second).not.toContain('deliver again');
+    expect(second).toContain('Do not repeat anything you already did outside it');
+    expect(second).toContain('This is your last repair turn');
     expect(second).toContain('Exit code: 4');
     expect(second).toContain('AssertionError: expected 1 to be 2');
     // Le premier tour, lui, ne pouvait pas connaître le rouge.
-    expect(JSON.stringify(prompts[0])).not.toContain('The proof of your delivery failed');
+    expect(JSON.stringify(prompts[0])).not.toContain('The proof of your deliverable failed');
 
     const [ligne] = await db
       .select({ status: agentJobs.status, chainCount: agentJobs.chainCount })

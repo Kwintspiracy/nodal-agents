@@ -54,6 +54,7 @@ import {
   checkpointFailureLogLine,
 } from '@nodal-agents/checkpoints';
 import { stat } from 'node:fs/promises';
+import { withNodalPrograms, type NodalPrograms } from '@nodal-agents/sandbox';
 import { writeMutationIntent, type DirtiedDeliverable } from './verification/intent';
 import { markDeliverablesProduced } from './verification/produced';
 import { bumpEpochsAfterWrite } from './verification/write-epoch';
@@ -75,6 +76,8 @@ import {
   kindSurDisque,
   recordConstatedWrites,
 } from './verification/record-constat';
+import { recordToolCallReads } from './verification/tool-call-reads';
+import { recordToolCallWrites } from './verification/tool-call-writes';
 import { attachProductionToProject } from './projects/attach';
 import { loadDeclaredCodeRoots, projectRootPredicate } from './projects/declared';
 
@@ -815,11 +818,15 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // Les empreintes des octets que l'outil ÉCRIT (#505) : rangées avec le
   // constat, jamais relues sur le disque après coup.
   const contenusEcrits = new Map<string, string>();
+  // Les empreintes des octets que l'outil LIT (le pendant des écritures) :
+  // rangées dans `tool_call_reads` une fois la ligne d'audit écrite.
+  const contenusLus = new Map<string, string>();
   const execCtx: ToolContext = {
     ...ctx,
     ...(mutationTargets === null ? {} : { declaredMutationTargets: mutationTargets }),
     ...(porteLaisseePasserSansPersonne ? { sharedOverwriteUnattended: true } : {}),
     reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
+    reportReadContent: (absPath, sha256) => contenusLus.set(absPath, sha256),
   };
   // ── 2.95 La MARQUE d'intention, AVANT tout outil qui ne fait pas que lire ──
   //
@@ -909,6 +916,23 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       raisedByExecute = true;
       throw err;
     } finally {
+      // Ce que CET APPEL a fait à chaque fichier visé (#779) : l'empreinte
+      // d'avant, prise plus haut, et celle d'après : les octets que l'outil a
+      // ÉCRITS quand il les a rapportés (`contenusEcrits`), sinon une relecture
+      // dite comme telle. Pour tout appel qui a tourné, réussi ou non, et pour
+      // toute cible fichier, quel que soit l'outil. Ne lève jamais : une ligne
+      // non rangée se journalise et se lit « non enregistré ».
+      if (mutationTargets && filesBefore) {
+        await recordToolCallWrites({
+          db: ctx.db,
+          toolCallId: marque,
+          jobId: ctx.jobId,
+          toolName: auditTool.name,
+          targets: mutationTargets,
+          before: filesBefore,
+          written: contenusEcrits,
+        });
+      }
       if (mutationDeliverables.length > 0) {
         try {
           await bumpEpochsAfterWrite(ctx.db, ctx.entityId, mutationDeliverables);
@@ -920,7 +944,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       }
     }
     const durationMs = Date.now() - startMs;
-    await _writeToolCall(
+    const ligneAudit = await _writeToolCall(
       ctx,
       auditTool,
       validatedInput,
@@ -930,6 +954,15 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       marque,
       true,
     );
+    // Ce que CET APPEL a lu (tool_call_reads) : sur sa ligne d'audit, qu'un
+    // outil de lecture n'a qu'à présent. Ne lève jamais.
+    await recordToolCallReads({
+      db: ctx.db,
+      toolCallId: ligneAudit,
+      jobId: ctx.jobId,
+      toolName: auditTool.name,
+      read: contenusLus,
+    });
 
     // ── 3.5 Le REGISTRE des projets (P5), APRÈS l'écriture ────────────────────
     //
@@ -1183,7 +1216,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       raisedByExecute && err instanceof ToolFailedWithOutput
         ? { ...result, output: err.output }
         : result;
-    await _writeToolCall(
+    const ligneAudit = await _writeToolCall(
       ctx,
       auditTool,
       validatedInput,
@@ -1193,6 +1226,14 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       marque,
       true,
     );
+    // Un outil qui a lu puis échoué a LU : ses lectures réussies sont rangées.
+    await recordToolCallReads({
+      db: ctx.db,
+      toolCallId: ligneAudit,
+      jobId: ctx.jobId,
+      toolName: auditTool.name,
+      read: contenusLus,
+    });
     return result;
   } finally {
     // Les copies figées d'index (#590) que l'après n'a pas relues : l'outil a
@@ -1526,6 +1567,23 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
     return null;
   }
 
+  // Les git de la photo tournent dans le bac à sable quand il est là (#628,
+  // audit P1-2) : `snapshot` lance un git enfant dans chaque sous-dépôt
+  // imbriqué du workspace, qui lit SA config — un `core.fsmonitor` planté par
+  // une commande confinée s'y exécutait sur l'hôte. Une session pour toute la
+  // boucle : ses git partagent un conteneur, tué à la fin.
+  return withNodalPrograms((programs) =>
+    checkpointEachWorkspace(toolName, ctx, store, workspaces, programs),
+  );
+}
+
+async function checkpointEachWorkspace(
+  toolName: string,
+  ctx: ToolContext,
+  store: string,
+  workspaces: NonNullable<ToolContext['workspaces']>,
+  programs: NodalPrograms,
+): Promise<string | null> {
   // EVERY workspace, not just the first.
   //
   // This took `ctx.workspaces[0].path` at first, which is not where the write
@@ -1582,7 +1640,9 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
       // borne de 30 s de `git add` ; le mesurer plus large dirait le temps
       // d'autre chose.
       const debutPhoto = Date.now();
-      const cp = await snapshot(store, workspace, `before ${toolName} (job ${ctx.jobId})`);
+      const cp = await snapshot(store, workspace, `before ${toolName} (job ${ctx.jobId})`, {
+        programs,
+      });
       const dureePhoto = Date.now() - debutPhoto;
       if (checkpointedTurns.size >= MAX_REMEMBERED_TURNS) {
         const oldest = checkpointedTurns.values().next().value;
@@ -1687,7 +1747,7 @@ async function _writeToolCall(
    * which never ran; the reaper does not count those as effects.
    */
   ran = false,
-): Promise<void> {
+): Promise<string | null> {
   const toolName = tool.name;
   // P1 (plan « De la maquette au produit »): the row carries the card the tool
   // DECLARES — as declared, never recomputed nor rabattue — and the payload its
@@ -1724,33 +1784,40 @@ async function _writeToolCall(
           durationMs,
         })
         .where(eq(toolCalls.id, markId));
-      return;
+      return markId;
     }
-    await ctx.db.insert(toolCalls).values({
-      entityId: ctx.entityId,
-      jobId: ctx.jobId,
-      executionStarted: ran,
-      toolName,
-      card,
-      presented,
-      presentationError,
-      // P7 (0095) : le niveau de risque DÉCLARÉ, tel quel — jamais recalculé.
-      // C'est le seul classement dont l'écran dispose pour un connecteur tiers,
-      // dont la carte `generic` ne distingue pas une lecture d'une écriture.
-      riskLevel: tool.riskLevel,
-      // NOUVEAU-1: the audit trail is never re-executed, so we store a
-      // secret-redacted copy — create_connector/create_mcp API keys and stdio
-      // env values must not sit in cleartext in tool_calls or render to the
-      // logs dashboard (LogsTable). The real value already reached the tool's
-      // execute() above; only this copy is masked.
-      toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
-      toolOutput: output,
-      durationMs,
-      // étape D: turn + tool_use id make this row joinable to the transcript
-      // and to llm_calls — the full-copy output was previously unlinkable.
-      turn: ctx.turn ?? null,
-      toolCallId: ctx.toolCallId ?? null,
-    });
+    // L'id de la ligne revient à l'appelant : les lectures de l'appel
+    // (`tool_call_reads`) s'y rattachent, un outil de lecture n'ayant pas de
+    // marque posée avant de tourner.
+    const [row] = await ctx.db
+      .insert(toolCalls)
+      .values({
+        entityId: ctx.entityId,
+        jobId: ctx.jobId,
+        executionStarted: ran,
+        toolName,
+        card,
+        presented,
+        presentationError,
+        // P7 (0095) : le niveau de risque DÉCLARÉ, tel quel — jamais recalculé.
+        // C'est le seul classement dont l'écran dispose pour un connecteur tiers,
+        // dont la carte `generic` ne distingue pas une lecture d'une écriture.
+        riskLevel: tool.riskLevel,
+        // NOUVEAU-1: the audit trail is never re-executed, so we store a
+        // secret-redacted copy — create_connector/create_mcp API keys and stdio
+        // env values must not sit in cleartext in tool_calls or render to the
+        // logs dashboard (LogsTable). The real value already reached the tool's
+        // execute() above; only this copy is masked.
+        toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
+        toolOutput: output,
+        durationMs,
+        // étape D: turn + tool_use id make this row joinable to the transcript
+        // and to llm_calls — the full-copy output was previously unlinkable.
+        turn: ctx.turn ?? null,
+        toolCallId: ctx.toolCallId ?? null,
+      })
+      .returning({ id: toolCalls.id });
+    return row?.id ?? null;
   } catch (err) {
     // Audit write failure must never crash the tool execution path — but it
     // must never be INVISIBLE either (reproducibility audit 2026-08-19: the
@@ -1760,6 +1827,7 @@ async function _writeToolCall(
       `[tools] tool_calls audit insert failed (job=${ctx.jobId}, tool=${toolName}):`,
       err,
     );
+    return null;
   }
 }
 

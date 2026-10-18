@@ -7,7 +7,12 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./git-binary": "./src/git-binary.ts"
+    "./exclusive-create": "./src/exclusive-create.ts",
+    "./git-binary": "./src/git-binary.ts",
+    "./nodal-home": "./src/nodal-home.ts",
+    "./nodal-instances": "./src/nodal-instances.ts",
+    "./node-guard": "./src/node-guard.ts",
+    "./node-version": "./src/node-version.ts"
   },
   "scripts": {
     "lint": "eslint src",

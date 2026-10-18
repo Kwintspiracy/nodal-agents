@@ -38,6 +38,7 @@ import { execFileSync, execSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { isolatedNodalEnv } from './lib/nodal-home.mjs';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -108,7 +109,10 @@ const installDir = join(sandbox, 'install');
 const homeDir = join(sandbox, 'home');
 mkdirSync(installDir, { recursive: true });
 mkdirSync(homeDir, { recursive: true });
-const env = { ...process.env, HOME: homeDir, USERPROFILE: homeDir };
+// NODALAI_HOME posé sous ce dossier, et les variables étroites du shell retirées :
+// sans cela, un développeur qui en porte une enverrait l'essai dans SON instance.
+const env = isolatedNodalEnv(process.env, homeDir);
+const nodalDir = env.NODALAI_HOME;
 const cli = join(installDir, 'node_modules', 'nodal-agents', 'cli.js');
 
 let failure = null;
@@ -128,7 +132,7 @@ try {
 
   step('Configuring the old install');
   execFileSync(process.execPath, [cli, 'init', '--non-interactive'], { env, stdio: 'inherit' });
-  const configPath = join(homeDir, '.nodalai', 'config.json');
+  const configPath = join(nodalDir, 'config.json');
   const config = JSON.parse(readFileSync(configPath, 'utf-8'));
   config.ports = PORTS;
   config.bind = 'loopback';
@@ -148,9 +152,9 @@ try {
   // ── 2. Prove there is real state to preserve ───────────────────────────────
   step('Checking the old install left real state behind');
   const stateFiles = [
-    join(homeDir, '.nodalai', 'config.json'),
-    join(homeDir, '.nodalai', 'secrets.key'),
-    join(homeDir, '.nodalai', 'pg-data', 'PG_VERSION'),
+    join(nodalDir, 'config.json'),
+    join(nodalDir, 'secrets.key'),
+    join(nodalDir, 'pg-data', 'PG_VERSION'),
   ];
   const present = stateFiles.filter((f) => existsSync(f));
   for (const f of present) ok(`present: ${f.replace(homeDir, '~')}`);

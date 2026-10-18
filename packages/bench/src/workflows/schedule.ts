@@ -7,20 +7,34 @@
 //
 // Outil de développement de CETTE machine, posé par un geste explicite : rien
 // ne l'installe tout seul. La tâche lance un petit script `.cmd` (écrit dans
-// ~/.nodalai/bench/) qui se place dans ce dépôt et appelle
+// <dossier de Nodal>/bench/) qui se place dans ce dépôt et appelle
 // `pnpm bench:workflows --scheduled`, sa sortie ajoutée à un journal à côté.
+// Une tâche PAR INSTANCE (NODALAI_HOME) : le script pose le dossier de
+// l'instance qui l'a planifiée, et le nom de la tâche porte son identifiant
+// hors du dossier par défaut, comme l'inscription au démarrage du CLI.
 // Elle tourne dans la session de l'utilisateur (celle où tourne la stack), et
 // le banc lui-même renonce si le propriétaire travaille.
 
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  NODALAI_HOME_ENV,
+  nodalHome,
+  nodalHomePath,
+  nodalInstanceId,
+} from '@nodal-agents/shared/nodal-home';
 
 export const TASK_NAME = 'Nodal-Agents workflow bench';
+
+/** Le nom de la tâche d'une instance : celui d'avant pour le dossier par défaut. */
+export function benchTaskName(instance: string | null): string {
+  return instance === null ? TASK_NAME : `${TASK_NAME} ${instance}`;
+}
+
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
-const DIR = join(homedir(), '.nodalai', 'bench');
+const DIR = nodalHomePath('bench');
 const SCRIPT = join(DIR, 'run-workflows.cmd');
 const LOG = join(DIR, 'workflows.log');
 
@@ -30,10 +44,11 @@ function arg(name: string): string | undefined {
 }
 
 /** Le script que la tâche lance. Pur, pour être relu et testé. */
-export function wrapperScript(repo: string, log: string): string {
+export function wrapperScript(repo: string, log: string, home: string): string {
   return [
     '@echo off',
     'rem Nodal-Agents workflow bench, launched by the scheduled task. See packages/bench/src/workflows/schedule.ts',
+    `set "${NODALAI_HOME_ENV}=${home}"`,
     `cd /d "${repo}"`,
     `echo ==== %DATE% %TIME% >> "${log}"`,
     `call pnpm bench:workflows --scheduled >> "${log}" 2>&1`,
@@ -47,14 +62,14 @@ export function wrapperScript(repo: string, log: string): string {
  * espaces doit arriver à schtasks sous la forme `"\"C:\x y\a.cmd\""`, que
  * la citation automatique de Node ne produit pas. Pur.
  */
-export function createArgs(at: string, script: string): string[] {
+export function createArgs(at: string, script: string, task: string = TASK_NAME): string[] {
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(at)) throw new Error(`--at wants HH:MM (24 h), got ${at}`);
   if (script.includes('"'))
     throw new Error(`the script path cannot hold a double quote: ${script}`);
   return [
     '/Create',
     '/TN',
-    `"${TASK_NAME}"`,
+    `"${task}"`,
     '/TR',
     `"\\"${script}\\""`,
     '/SC',
@@ -79,22 +94,23 @@ function main(): void {
       `the scheduled task is a Windows tool. Elsewhere, add to crontab: 0 3 * * * cd "${REPO}" && pnpm bench:workflows --scheduled`,
     );
   }
+  const task = benchTaskName(nodalInstanceId());
   if (action === 'install') {
     const at = arg('at') ?? '03:00';
-    const args = createArgs(at, SCRIPT);
+    const args = createArgs(at, SCRIPT, task);
     if (process.argv.includes('--dry-run')) {
-      console.log(`would write ${SCRIPT}:\n${wrapperScript(REPO, LOG)}`);
+      console.log(`would write ${SCRIPT}:\n${wrapperScript(REPO, LOG, nodalHome())}`);
       console.log(`would run: schtasks ${args.join(' ')}`);
       return;
     }
     mkdirSync(DIR, { recursive: true });
-    writeFileSync(SCRIPT, wrapperScript(REPO, LOG));
+    writeFileSync(SCRIPT, wrapperScript(REPO, LOG, nodalHome()));
     schtasks(args);
-    console.log(`"${TASK_NAME}" runs every day at ${at}: ${SCRIPT}, log in ${LOG}`);
+    console.log(`"${task}" runs every day at ${at}: ${SCRIPT}, log in ${LOG}`);
     return;
   }
   if (action === 'remove') {
-    schtasks(['/Delete', '/TN', `"${TASK_NAME}"`, '/F']);
+    schtasks(['/Delete', '/TN', `"${task}"`, '/F']);
     return;
   }
   throw new Error('usage: schedule.ts install [--at HH:MM] [--dry-run] | remove');

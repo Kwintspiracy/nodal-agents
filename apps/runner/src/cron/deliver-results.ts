@@ -40,6 +40,7 @@ import { checkRootJobComplete } from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
+import { releaseJobProcessesIfEnded } from '../job/process-scopes.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { maybeResumeParent } from '../job/execute.ts';
 import type { ExecuteJobResult } from '../job/execute.ts';
@@ -317,6 +318,9 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
     } else {
       landed = await cancelRootJob(db, rootJobId, compiledResult);
     }
+    // #628 : le root est fini (ou l'était déjà) — ce que ses commandes, ses
+    // preuves comprises, ont laissé tourner meurt avec lui.
+    await releaseJobProcessesIfEnded(db, rootJobId);
     if (!landed) {
       // The root became terminal under our marker (a user cancel racing the
       // tick). Nothing to deliver, nothing to resume — and the marker is gone
@@ -383,6 +387,7 @@ async function synthesizePayload(
 ): Promise<string> {
   const [ag] = await db
     .select({
+      entityId: agents.entityId,
       llmKeyId: agents.llmKeyId,
       fallbackChain: agents.fallbackChain,
       model: agents.model,
@@ -413,6 +418,7 @@ async function synthesizePayload(
 async function synthesizeForChannel(
   db: AnyDrizzleDb,
   agent: {
+    entityId: string | null;
     llmKeyId: string | null;
     fallbackChain: unknown;
     model: string | null;
@@ -425,6 +431,7 @@ async function synthesizeForChannel(
     const resolved = await resolveAgentLlmClient(
       db,
       {
+        entityId: agent.entityId,
         llmKeyId: agent.llmKeyId,
         fallbackChain: (agent.fallbackChain ?? null) as
           | readonly { keyId: string; model: string; reasoningEffort?: string }[]

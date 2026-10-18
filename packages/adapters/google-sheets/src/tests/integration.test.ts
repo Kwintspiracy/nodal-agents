@@ -2,7 +2,7 @@
 // Verifies: tool count, unique names, correct risk levels, schema validation
 
 import { describe, it, expect } from 'vitest';
-import { createSheetsTools } from '../index';
+import { createSheetsTools, SHEETS_OPERATIONS } from '../index';
 import { z } from 'zod';
 
 // Use a fake token — tools are instantiated but never called here
@@ -34,7 +34,7 @@ describe('createSheetsTools integration', () => {
     }
   });
 
-  it('read tools have riskLevel read', () => {
+  it('read operations have risk read in the descriptor', () => {
     const readTools = [
       'sheets_read_range',
       'sheets_read_all',
@@ -42,13 +42,13 @@ describe('createSheetsTools integration', () => {
       'sheets_get_metadata',
       'sheets_find_rows',
     ];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(SHEETS_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of readTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be read`).toBe('read');
+      expect(toolMap[name]?.risk, `${name} should be read`).toBe('read');
     }
   });
 
-  it('write tools have riskLevel write', () => {
+  it('write operations have risk write in the descriptor', () => {
     const writeTools = [
       'sheets_write_range',
       'sheets_append_row',
@@ -65,17 +65,17 @@ describe('createSheetsTools integration', () => {
       'sheets_clear_basic_filter',
       'sheets_sort_range',
     ];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(SHEETS_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of writeTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be write`).toBe('write');
+      expect(toolMap[name]?.risk, `${name} should be write`).toBe('write');
     }
   });
 
-  it('destructive tools have riskLevel destructive', () => {
+  it('destructive operations have risk destructive in the descriptor', () => {
     const destructiveTools = ['sheets_delete_sheet'];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(SHEETS_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of destructiveTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be destructive`).toBe('destructive');
+      expect(toolMap[name]?.risk, `${name} should be destructive`).toBe('destructive');
     }
   });
 
@@ -94,17 +94,17 @@ describe('createSheetsTools integration', () => {
 
   // Tool count breakdown
   it('has exactly 5 read tools', () => {
-    const readCount = tools.filter((t) => t.riskLevel === 'read').length;
+    const readCount = SHEETS_OPERATIONS.filter((o) => o.risk === 'read').length;
     expect(readCount).toBe(5);
   });
 
   it('has exactly 14 write tools', () => {
-    const writeCount = tools.filter((t) => t.riskLevel === 'write').length;
+    const writeCount = SHEETS_OPERATIONS.filter((o) => o.risk === 'write').length;
     expect(writeCount).toBe(14);
   });
 
   it('has exactly 1 destructive tool', () => {
-    const destructiveCount = tools.filter((t) => t.riskLevel === 'destructive').length;
+    const destructiveCount = SHEETS_OPERATIONS.filter((o) => o.risk === 'destructive').length;
     expect(destructiveCount).toBe(1);
   });
 

@@ -7,6 +7,7 @@
 // If the model's quote is wrong by one char, we fail loud — the model sees
 // the error and corrects. Empirically far more reliable across model families.
 
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { writeFileAtomically } from './atomic-write';
 import { z } from 'zod';
@@ -76,6 +77,7 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
     'untouched lines.',
   inputSchema: FileEditInputSchema,
   riskLevel: 'write',
+  egress: 'none',
   loading: 'eager',
   card: 'files',
   present: ({ input, output }) =>
@@ -131,7 +133,10 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
       if (await isProtectedWorkflowTemplate(ctx, path)) {
         return { ok: false, reason: WORKFLOW_TEMPLATE_PROTECTED_MESSAGE };
       }
-      const original = await readFile(path, 'utf8');
+      const lu = await readFile(path);
+      // Les octets LUS, rapportés au seam (tool_call_reads) ; puis décodés comme avant.
+      ctx.reportReadContent?.(path, createHash('sha256').update(lu).digest('hex'));
+      const original = lu.toString('utf8');
       if (!original.includes(input.old_string)) {
         return {
           ok: false,

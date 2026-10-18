@@ -1,11 +1,13 @@
 // server.ts — Hono app entry point
 // Wires all routes, middleware, and starts the HTTP server.
 
+import '@nodal-agents/shared/node-guard';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { serve } from '@hono/node-server';
 import { pathToFileURL } from 'url';
 import { parseEnv } from './env.ts';
+import { openNodalHome } from '@nodal-agents/shared/nodal-instances';
 import { createRunnerDeps } from './deps.ts';
 import { healthRoute } from './routes/health.ts';
 import { agentRoute, triggerWorker } from './routes/agent.ts';
@@ -43,6 +45,8 @@ import { migratePlaintextSecretsToEncrypted } from './bootstrap/migrate-plaintex
 import { backfillMemoryEmbeddings } from './bootstrap/backfill-embeddings.ts';
 import { backfillRegisteredProjects } from './bootstrap/backfill-registered-projects.ts';
 import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
+import { closeAllJobProcessScopes, getSandboxStatus } from '@nodal-agents/sandbox';
+import { startJobProcessSweep } from './job/process-scopes.ts';
 import { AuthError, checkRequestOrigin } from '@nodal-agents/auth';
 import { isValidWorkerSecret } from './lib/worker-secret.ts';
 import './lib/runner-auth-context.ts';
@@ -321,6 +325,10 @@ export function installProcessErrorHandlers(): void {
 async function main(): Promise<void> {
   installProcessErrorHandlers();
   const runnerEnv = parseEnv();
+  // Before anything reads or writes the home (secrets.key, workspaces, the
+  // sandbox): declare this instance to the others, then create it. A runner
+  // started without `up` is declared all the same (#787, review pass 2).
+  openNodalHome();
   const deps = await createRunnerDeps(runnerEnv);
 
   // One-shot: encrypt any plaintext entity_llm_keys.api_key rows in place
@@ -455,10 +463,21 @@ async function main(): Promise<void> {
   // P5b : les projets de l'onglet Code sont déclarés au registre — Spaces les
   // liste sans un clic. Même discipline : après serve(), jamais attendu.
   startRegistryBackfillBackground(deps);
+  // #628 : le bac à sable des commandes est sondé au démarrage, pas à la
+  // première commande — sa disponibilité (ou la raison de son absence, avec
+  // son code) est ainsi dans le journal du runner dès le boot. Jamais
+  // attendu : la sonde lance une commande confinée triviale.
+  void getSandboxStatus();
+  // #628 : les processus d'un job meurent quand le job est fini — un Stop sur
+  // un job suspendu compris, qu'aucun run ne voit passer.
+  const processSweep = startJobProcessSweep(deps.db);
 
   // Graceful shutdown
   const shutdown = async (): Promise<void> => {
     ticker?.stop();
+    processSweep.stop();
+    // Ce que les commandes des jobs ont laissé tourner ne survit pas au runner.
+    await closeAllJobProcessScopes();
     await telegramManager?.stop();
     await discordManager?.stop();
     await slackManager?.stop();

@@ -9,11 +9,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { copyFile, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { normalizePath } from '@nodal-agents/shared';
+import { hostPrograms, type ProgramRunOptions, type ProgramRunner } from '@nodal-agents/sandbox';
 import { GITIGNORE_MINIMAL, initGitRepository } from '../project-git.ts';
 import { resolveGitBinary, _resetGitBinaryCache } from '@nodal-agents/shared/git-binary';
 
@@ -70,7 +71,7 @@ describe('initGitRepository @cap:travailler-sur-des-fichiers/moteur', () => {
   it('pose un vrai dépôt et son .gitignore', async () => {
     const p = await dossier('neuf');
 
-    const out = await initGitRepository(p);
+    const out = await initGitRepository(p, hostPrograms);
 
     expect(out).toEqual({ kind: 'initialised', gitignoreWritten: true });
     expect(existsSync(join(p, '.git'))).toBe(true);
@@ -99,7 +100,7 @@ describe('initGitRepository @cap:travailler-sur-des-fichiers/moteur', () => {
     await run('git', ['init'], { cwd: p, windowsHide: true });
     await writeFile(join(p, '.gitignore'), 'le mien\n');
 
-    const out = await initGitRepository(p);
+    const out = await initGitRepository(p, hostPrograms);
 
     expect(out).toEqual({ kind: 'already' });
     // Le `.gitignore` de quelqu'un d'autre n'est pas un défaut à corriger.
@@ -110,7 +111,7 @@ describe('initGitRepository @cap:travailler-sur-des-fichiers/moteur', () => {
     const p = await dossier('avec-ignore');
     await writeFile(join(p, '.gitignore'), 'rien/\n');
 
-    const out = await initGitRepository(p);
+    const out = await initGitRepository(p, hostPrograms);
 
     expect(out).toEqual({ kind: 'initialised', gitignoreWritten: false });
     expect(existsSync(join(p, '.git'))).toBe(true);
@@ -127,14 +128,14 @@ describe('initGitRepository @cap:travailler-sur-des-fichiers/moteur', () => {
     const enfant = join(parent, 'projet');
     await mkdir(enfant, { recursive: true });
 
-    const out = await initGitRepository(enfant);
+    const out = await initGitRepository(enfant, hostPrograms);
 
     expect(out).toEqual({ kind: 'initialised', gitignoreWritten: true });
     expect(existsSync(join(enfant, '.git'))).toBe(true);
   });
 
   it('un dossier qui n’existe pas ne fait pas planter l’écran : l’échec est RENDU', async () => {
-    const out = await initGitRepository(join(racine, 'nulle-part'));
+    const out = await initGitRepository(join(racine, 'nulle-part'), hostPrograms);
 
     expect(out.kind).toBe('failed');
   });
@@ -174,10 +175,117 @@ describe('quel git est lancé @cap:travailler-sur-des-fichiers/moteur', () => {
 
     // ET la pose marche encore : si le faux avait été lancé, `git init` aurait
     // échoué et le dossier n'aurait pas de dépôt.
-    const out = await initGitRepository(p);
+    const out = await initGitRepository(p, hostPrograms);
     expect(out.kind).toBe('initialised');
     expect(existsSync(join(p, '.git'))).toBe(true);
 
     _resetGitBinaryCache();
+  });
+});
+
+// #628, passe 5 : `initGitRepository` tourne sur l'HÔTE (le serveur web) dans
+// un dossier de projet, que des commandes confinées écrivent. Ce qu'il peut y
+// lire ou y suivre, prouvé ici plutôt que supposé.
+describe('initGitRepository runs nothing a confined command planted @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('la course : un `.git` planté entre le test et `git init` — git le réinitialise sans RIEN lancer de ce que sa config nomme', async () => {
+    // `initGitRepository` répond `already` dès qu'un `.git` existe : le seul
+    // chemin où `git init` lit un dépôt planté est une commande qui le crée
+    // entre ce test et le lancement. On joue CE `git init`-là, avec les mêmes
+    // options que le module, sur un dépôt piégé de toutes les façons qu'un
+    // `.git/config` ou `.git/hooks` a de nommer une commande.
+    const p = await dossier('course');
+    await run('git', ['init', '-q'], { cwd: p, windowsHide: true });
+    const marker = join(racine, 'MARKER');
+    const hook = join(racine, 'hook.cjs');
+    await writeFile(hook, `require('fs').appendFileSync(${JSON.stringify(marker)}, 'ran');\n`);
+    const cmd = `node "${hook.split('\\').join('/')}"`;
+    for (const [k, v] of [
+      ['core.fsmonitor', cmd],
+      ['filter.evil.clean', cmd],
+      ['filter.evil.smudge', cmd],
+      ['core.pager', cmd],
+      ['core.editor', cmd],
+      ['core.hooksPath', join(p, '.git', 'hooks')],
+    ] as const) {
+      await run('git', ['config', k, v], { cwd: p, windowsHide: true });
+    }
+    await writeFile(join(p, '.gitattributes'), '* filter=evil\n');
+    for (const h of ['post-checkout', 'post-commit', 'pre-commit', 'post-index-change']) {
+      await writeFile(join(p, '.git', 'hooks', h), `#!/bin/sh\n${cmd}\n`, { mode: 0o755 });
+    }
+    const binaire = (await resolveGitBinary())!;
+    await run(binaire, ['init'], { cwd: p, timeout: 10_000, windowsHide: true });
+    expect(existsSync(marker), 'git init ran a command the planted repository named').toBe(false);
+  });
+
+  it('un `.gitignore` planté comme LIEN vers l’hôte n’est jamais suivi : rien n’est écrit hors du projet', async () => {
+    const p = await dossier('lien');
+    const dehors = join(racine, 'hors-du-projet.txt');
+    try {
+      await symlink(dehors, join(p, '.gitignore'), 'file');
+    } catch (e) {
+      // Sous Windows, créer un lien symbolique demande un privilège (ou le mode
+      // développeur) : sans lui, une commande confinée ne peut pas en poser
+      // non plus, et le cas ne se joue pas. Dit, pas sauté en silence.
+      const code = (e as NodeJS.ErrnoException).code;
+      expect(code, String(e)).toBe('EPERM');
+      return;
+    }
+    const out = await initGitRepository(p, hostPrograms);
+    expect(out).toEqual({ kind: 'initialised', gitignoreWritten: false });
+    expect(
+      existsSync(dehors),
+      'the planted link was followed: a file was written on the host',
+    ).toBe(false);
+  });
+});
+
+// #628, passe 6 (P1) : le test d'existence et `git init` ne sont pas un seul
+// geste. `git init` passe donc par les programmes de Nodal, comme tout git
+// lancé sur un dossier que des commandes confinées écrivent ; que le bac à
+// sable fasse respecter la racine donnée est prouvé sous MXC
+// (project-git-sandboxed.test.ts).
+describe('initGitRepository runs git through the programs it is given @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('git init passe par les programmes donnés, le projet pour SEULE racine inscriptible', async () => {
+    const p = await dossier('par-les-programmes');
+    const launches: { file: string; args: readonly string[]; opts: ProgramRunOptions }[] = [];
+    const recording: ProgramRunner = {
+      execFile(file, args, opts) {
+        launches.push({ file, args, opts });
+        return hostPrograms.execFile(file, args, opts);
+      },
+      spawn: (file, args, opts) => hostPrograms.spawn(file, args, opts),
+    };
+
+    const out = await initGitRepository(p, recording);
+
+    expect(out).toEqual({ kind: 'initialised', gitignoreWritten: true });
+    expect(launches.map((l) => ({ args: l.args, cwd: l.opts.cwd }))).toEqual([
+      { args: ['init'], cwd: normalizePath(p) },
+    ]);
+    expect(launches[0]!.opts.writableRoots).toEqual([normalizePath(p)]);
+    expect(launches[0]!.opts.readableRoots).toEqual([]);
+    expect(launches[0]!.file).toBe(await resolveGitBinary());
+  });
+
+  it('un `.git` qui est un lien PENDANT est un nom présent : rien n’est lancé, sur tous les systèmes', async () => {
+    // `access` suivait le lien : présent sous Windows (jonction), absent sous
+    // POSIX (lien symbolique), et `git init` partait. `lstat` lit le nom.
+    const p = await dossier('lien-pendant');
+    const cible = join(racine, 'ailleurs', 'rien');
+    await mkdir(join(racine, 'ailleurs'), { recursive: true });
+    await symlink(cible, join(p, '.git'), process.platform === 'win32' ? 'junction' : 'dir');
+    const launches: string[] = [];
+    const recording: ProgramRunner = {
+      execFile(file, args, opts) {
+        launches.push(args.join(' '));
+        return hostPrograms.execFile(file, args, opts);
+      },
+      spawn: (file, args, opts) => hostPrograms.spawn(file, args, opts),
+    };
+
+    expect(await initGitRepository(p, recording)).toEqual({ kind: 'already' });
+    expect(launches).toEqual([]);
+    expect(existsSync(cible)).toBe(false);
   });
 });

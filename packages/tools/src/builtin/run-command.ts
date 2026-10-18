@@ -11,12 +11,15 @@
 //
 // SECURITY MODEL (be honest): cwd is locked to the agent's workspace as a
 // CONVENIENCE, not a sandbox — a shell command escapes trivially (`cd ..`,
-// absolute paths, `node -e fs.rm(...)`). The real controls are (1) the approval
+// absolute paths, `node -e fs.rm(...)`). The controls are (1) the approval
 // gate (a human reviews the exact command before it runs), (2) the per-agent
-// opt-in skill, and (3) the per-agent command allowlist (command-allowlist.ts)
+// opt-in skill, (3) the per-agent command allowlist (command-allowlist.ts)
 // — which says WHICH PROGRAM may start, and is what makes an auto-approved
-// shell defensible for a narrow job. This is the same trust model as Claude
-// Code's Bash tool, plus that third control.
+// shell defensible for a narrow job — and (4) since #628, the OS sandbox
+// (@nodal-agents/sandbox) WHEN IT IS AVAILABLE on this machine: the command
+// can then only WRITE inside the agent's folders (ctx.workspaces, the job's
+// folder included), its own temp dir and the tool caches. Reading and the
+// network stay open. Where no sandbox exists yet, (1)-(3) are all there is.
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
@@ -28,9 +31,16 @@ import {
   PROCESS_PATHS_RULE,
   SHARED_WORKSPACE_LABEL,
 } from './file-ops/workspace';
+import { jobProcessScope } from '@nodal-agents/sandbox';
 import { buildChildEnv } from './child-env';
 import { planAllowedRun } from './command-allowlist';
-import { runShellCommand, type CommandRunResult } from './shell-engine';
+import {
+  SANDBOX_RESULT_RULE,
+  runShellCommand,
+  sandboxReport,
+  type CommandRunResult,
+  type SandboxReport,
+} from './shell-engine';
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
 
@@ -107,6 +117,13 @@ export interface RunCommandOutput {
   cwd: string;
   /** How the command's paths are addressed (#592) — for the model. */
   paths: string;
+  /**
+   * Whether Nodal's OS sandbox confined the command (#628): when it did, the
+   * folders it could write to and the writes it was refused (the OS line
+   * quoted, with the path when that line names one); when it did not, the
+   * stable code saying why.
+   */
+  sandbox: SandboxReport;
 }
 
 // ─── Tool ───────────────────────────────────────────────────────────────────
@@ -134,9 +151,12 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
     'approval before it runs; the user can enable an auto-run ("Yolo") mode per agent. A non-zero ' +
     'exit code is returned to you (not an error) — read stderr and adapt. Once a command succeeds and gives you the output you need, STOP and deliver your answer with return_result (or dashboard_publish) — do NOT call run_command again for the same goal (re-running it just re-prompts the user for approval). ' +
     'Your owner may restrict WHICH PROGRAMS this tool may start (a per-agent command allowlist). WITH SUCH A LIST THERE IS NO SHELL: write ONE program, its arguments, and double quotes to group an argument that contains spaces (e.g. node -e "console.log(1)"). No chaining (&&, ;, |), no redirection (>, <), no variables (%VAR%, $VAR), no single quotes. A command using any of those is refused with the character named, so rewrite it as a single program call - run several commands as several calls. The refusal applies to THIS tool only; other tools that start processes are not covered by it. ' +
+    SANDBOX_RESULT_RULE +
+    ' ' +
     PROCESS_PATHS_RULE,
   inputSchema: runCommandSchema,
   riskLevel: 'destructive',
+  egress: 'process',
   card: 'terminal',
   present: ({ input, output }) =>
     terminalCard({
@@ -225,6 +245,14 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
       timeoutMs,
       env: childEnv,
       keep: 'head',
+      // Où la commande peut écrire sous le bac à sable : les dossiers de
+      // l'agent pour ce run, dossier du job et partagé compris — la liste
+      // même que les outils de fichiers adressent.
+      confinement: { writableRoots: (ctx.workspaces ?? []).map((w) => w.path) },
+      // Ce que la commande laisse tourner vit jusqu'à la fin du JOB, puis
+      // meurt quand le runner ferme son périmètre ; le Stop la tue.
+      scope: jobProcessScope(ctx.jobId),
+      ...(ctx.signal ? { signal: ctx.signal } : {}),
     });
     return {
       ...toRunCommandOutput(run),
@@ -241,6 +269,7 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
 function toRunCommandOutput(run: CommandRunResult): Omit<RunCommandOutput, 'paths'> {
   const o = run.outcome;
   return {
+    sandbox: sandboxReport(run),
     exitCode: o.kind === 'exit' ? o.exitCode : null,
     stdout: run.stdout,
     stderr:

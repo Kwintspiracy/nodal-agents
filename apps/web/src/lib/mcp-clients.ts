@@ -9,7 +9,10 @@
 // `apps/cli/src/lib/env.ts`) : le node qui l'exécute, ses options de
 // chargement et son script. `nodal-agents mcp serve` écrit à la main ne marche
 // ni sur un poste de dev (pas de CLI global) ni sur une install lancée par npx.
-// Aucun secret n'y figure : `mcp serve` relit lui-même ~/.nodalai/config.json.
+// Aucun secret n'y figure : `mcp serve` relit lui-même le config.json de
+// l'instance. LE DOSSIER DE L'INSTANCE (`NODALAI_HOME`) est écrit dans ce que
+// le client lance, pour toutes, dossier par défaut compris : sans lui, le
+// serveur MCP d'une seconde instance lirait la base de la première.
 //
 // Pur : aucun accès disque ici. L'écriture dans la config de Claude Desktop vit
 // dans `claude-desktop-config.ts`.
@@ -57,17 +60,27 @@ function shellArg(arg: string): string {
   return /^[\w@%+=:,./-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '\\"')}"`;
 }
 
-/** La commande à taper pour Claude Code. */
-export function claudeCodeCommand(cliArgv: readonly string[]): string {
-  return `claude mcp add ${MCP_SERVER_NAME} -- ${mcpServeArgv(cliArgv).map(shellArg).join(' ')}`;
+/** La variable qui désigne le dossier de l'instance (packages/shared/src/nodal-home.ts). */
+const HOME_ENV = 'NODALAI_HOME';
+
+/** La commande à taper pour Claude Code. `home` : le dossier de CETTE instance. */
+export function claudeCodeCommand(cliArgv: readonly string[], home: string): string {
+  return (
+    `claude mcp add ${MCP_SERVER_NAME} -e ${shellArg(`${HOME_ENV}=${home}`)} -- ` +
+    mcpServeArgv(cliArgv).map(shellArg).join(' ')
+  );
 }
 
-export type DesktopServerEntry = { command: string; args: string[] };
+export type DesktopServerEntry = {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+};
 
-/** L'entrée `mcpServers.nodal` de Claude Desktop. */
-export function claudeDesktopEntry(cliArgv: readonly string[]): DesktopServerEntry {
+/** L'entrée `mcpServers.nodal` de Claude Desktop. `home` : le dossier de CETTE instance. */
+export function claudeDesktopEntry(cliArgv: readonly string[], home: string): DesktopServerEntry {
   const [command, ...args] = mcpServeArgv(cliArgv);
-  return { command: command!, args };
+  return { command: command!, args, env: { [HOME_ENV]: home } };
 }
 
 /**

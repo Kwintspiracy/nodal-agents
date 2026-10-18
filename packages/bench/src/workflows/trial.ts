@@ -14,13 +14,62 @@
 //   3. Il ne laisse aucun run vivant : dépassement, erreur, interruption — tout
 //      finit par une annulation de l'arbre entier (`cancelJobTree`, le chemin du
 //      bouton Stop).
-//   4. Un scénario dont la condition manque (pas de coffre, pas d'imprimante)
-//      est ROUGE avec cette raison, sans lancer de job : jamais sauté en silence.
+//   4. Un scénario dont un besoin manque (pas de ComfyUI, pas d'imprimante, un
+//      agent qui sait envoyer un e-mail) est SAUTÉ avec cette raison, sans
+//      lancer de job (`needs.ts`) : ni rouge, rien n'a été essayé ; ni tu, la
+//      ligne `skipped` le dit. De même quand aucun outil du produit qu'il
+//      déclare n'est dans l'équipe, ou qu'aucun sujet calibré n'existe pour
+//      lui (`subjects.ts`, #776).
+//
+// Chaque ligne garde aussi le CHEMIN de l'essai (les outils de chaque job, par
+// nom et dans l'ordre, et les délégations) et classe les liens du texte cité :
+// vus ou non dans une sortie d'outil web (#648, la partie mesurable).
 
+import { join } from 'node:path';
+import { benchDeliverables, findInRoots } from './disk';
+import { fileHash, fixturePath, prepareTrial, sharedRoot } from './fixtures';
 import type { TreeFacts } from './facts';
 import { isLive, liveJobs, pendingApprovals } from './facts';
+import { cheminConstate, DELIVERY_TOOL_NAMES, PURPOSE_KEY } from '@nodal-agents/tools';
+import {
+  answerOf,
+  channelSends,
+  citedLinks,
+  delegatedAgents,
+  parseJson,
+  productToolGate,
+  productToolReasons,
+  toolPath,
+  unverifiedOf,
+} from './judge-kit';
+import { isOutboundTool, missingNeeds } from './needs';
+import { redactHome } from './redact';
 import type { ForeignActivity } from './stack';
-import type { AnyScenario, ScenarioEnv, TrialLine } from './types';
+import { noSubjectReason, pickSubject, requestWithSubject, type ResearchSubject } from './subjects';
+import type {
+  AnyScenario,
+  FileState,
+  ModelUse,
+  ProductFileState,
+  ScenarioEnv,
+  TrialLine,
+} from './types';
+
+/** La réponse finale gardée sur la ligne : assez pour la lire, pas un rapport entier. */
+export const ANSWER_MAX = 1200;
+
+/**
+ * Ce que CHAQUE ligne mesure, quel que soit le scénario (anglais : la carte du
+ * Studio). Une mesure n'est pas un verdict : seules les règles d'un scénario
+ * (son juge, ses outils du produit, sa destination) rendent un essai rouge.
+ */
+export const MEASURED_ON_EVERY_TRIAL = [
+  'The path: the tools each job called, by name and in order, and the teammates delegated to',
+  'The questions asked and the approvals requested',
+  'Each link cited: seen or not in a web tool output of the run (#648)',
+  'The duration and the time to the first model reply',
+  'The model calls, the tokens and the cost; the model asked for and the one that answered',
+] as const;
 
 export interface TrialDeps {
   now(): number;
@@ -31,8 +80,30 @@ export interface TrialDeps {
   cancel(entityId: string, rootId: string): Promise<unknown>;
   foreign(): Promise<ForeignActivity>;
   env(startedMs: number): Promise<ScenarioEnv>;
+  /** Le modèle configuré de l'agent racine, lu au début de l'essai. */
+  rootModel(): Promise<string | null>;
+  /** Les sujets de recherche calibrés (`readResearchSubjects`) ; un fichier mal formé lève. */
+  subjects(): readonly ResearchSubject[];
   log(line: string): void;
+  /** Où en est l'essai, pour qui le suit en direct (Bench Studio). Facultatif. */
+  progress?(event: TrialProgress): void;
 }
+
+/** Une étape d'un essai, telle que runTrial la traverse. */
+export type TrialProgress =
+  | { readonly step: 'waiting'; readonly why: string }
+  | { readonly step: 'preparing' }
+  | { readonly step: 'started'; readonly rootJobId: string }
+  | {
+      readonly step: 'running';
+      readonly rootJobId: string;
+      readonly jobs: number;
+      readonly liveJobs: number;
+      readonly toolCalls: number;
+      readonly elapsedMs: number;
+    }
+  | { readonly step: 'judging'; readonly rootJobId: string }
+  | { readonly step: 'done'; readonly verdict: TrialLine['verdict'] };
 
 export interface TrialOptions {
   readonly pollMs: number;
@@ -44,15 +115,21 @@ export interface TrialOptions {
   readonly trigger: TrialLine['trigger'];
   readonly nodalVersion: string;
   readonly stackCommit: string | null;
+  /** Le modèle que la matrice impose ; null : les agents sur leurs propres modèles. */
+  readonly modelUnderTest: string | null;
+  /** `--allow-owner-sends` : seul ce drapeau laisse partir un scénario qui envoie au propriétaire. */
+  readonly allowOwnerSends: boolean;
 }
 
-export const DEFAULT_TRIAL_OPTIONS: Omit<TrialOptions, 'trigger' | 'nodalVersion' | 'stackCommit'> =
-  {
-    pollMs: 2_000,
-    idleWaitMs: 30 * 60_000,
-    idlePollMs: 30_000,
-    chatQuietMs: 5 * 60_000,
-  };
+export const DEFAULT_TRIAL_OPTIONS: Omit<
+  TrialOptions,
+  'trigger' | 'nodalVersion' | 'stackCommit' | 'modelUnderTest' | 'allowOwnerSends'
+> = {
+  pollMs: 2_000,
+  idleWaitMs: 30 * 60_000,
+  idlePollMs: 30_000,
+  chatQuietMs: 5 * 60_000,
+};
 
 export function benchCaller(s: AnyScenario): string {
   return `nodal-bench/${s.id}/v${s.version}`;
@@ -83,6 +160,7 @@ function emptyLine(
   s: AnyScenario,
   o: TrialOptions,
   startedMs: number,
+  rootModel: string | null = null,
 ): Omit<TrialLine, 'verdict' | 'reasons'> {
   return {
     scenario: s.id,
@@ -90,25 +168,39 @@ function emptyLine(
     title: s.title,
     green: s.green,
     set: s.set,
+    activity: s.activity,
+    needs: [...(s.needs ?? [])],
+    sends: s.sends,
+    modelUnderTest: o.modelUnderTest,
+    rootModel,
     nodalVersion: o.nodalVersion,
     stackCommit: o.stackCommit,
     trigger: o.trigger,
     startedAt: new Date(startedMs).toISOString(),
-    unverified: [...(s.unverified ?? [])],
+    unverified: unverifiedOf(s),
     durationMs: null,
     firstModelReplyMs: null,
     jobs: 0,
     agents: [],
     models: [],
     toolCalls: 0,
+    path: [],
+    delegatedTo: [],
+    links: [],
+    subject: null,
     llmCalls: 0,
     cliRuns: 0,
     inputTokens: 0,
+    cachedTokens: 0,
+    cacheWriteTokens: 0,
     outputTokens: 0,
     costUsd: 0,
     approvals: 0,
     rootJobId: null,
     cancelled: false,
+    modelUse: [],
+    deliverables: [],
+    answer: null,
   };
 }
 
@@ -122,6 +214,13 @@ function sumOrNull(values: ReadonlyArray<number | null>): number | null {
   return total;
 }
 
+/** L'entrée d'un tour de CLI, ramenée à la sémantique des appels d'API (cache compris). */
+function cliInput(c: TreeFacts['cliRuns'][number]): number | null {
+  return c.inputTokens === null || c.cachedTokens === null
+    ? null
+    : c.inputTokens + c.cachedTokens + (c.cacheCreationTokens ?? 0);
+}
+
 /**
  * Les mesures d'un arbre : durée, jetons, coût, modèles. Pur.
  *
@@ -131,7 +230,9 @@ function sumOrNull(values: ReadonlyArray<number | null>): number | null {
  *     cache, les lectures et écritures de cache à part. Elles sont rajoutées,
  *     pour que les deux se comparent.
  * Un appel qui a échoué ne consomme rien de mesurable ; un appel qui a répondu
- * sans rapporter ses jetons rend la mesure ABSENTE (null), jamais zéro.
+ * sans rapporter ses jetons rend la mesure ABSENTE (null), jamais zéro. Les
+ * lectures et écritures de cache sont aussi dites à part (`cachedTokens`,
+ * `cacheWriteTokens`) : elles sont comprises dans l'entrée, pas en plus.
  *
  * Le coût est ce qui est FACTURÉ à l'appel : les appels d'API, et les runs de
  * CLI payés par une clé. Un run sous abonnement n'est pas facturé à l'appel ;
@@ -148,12 +249,17 @@ export function measure(
   | 'agents'
   | 'models'
   | 'toolCalls'
+  | 'path'
+  | 'delegatedTo'
   | 'llmCalls'
   | 'cliRuns'
   | 'inputTokens'
+  | 'cachedTokens'
+  | 'cacheWriteTokens'
   | 'outputTokens'
   | 'costUsd'
   | 'approvals'
+  | 'modelUse'
 > {
   const root = facts.jobs.find((j) => j.id === facts.rootId);
   const ends = facts.jobs.map((j) => j.updatedMs ?? j.createdMs);
@@ -163,15 +269,19 @@ export function measure(
   const answered = facts.llmCalls.filter((l) => l.error === null);
   const inputTokens = sumOrNull([
     ...answered.map((l) => l.inputTokens),
-    ...facts.cliRuns.map((c) =>
-      c.inputTokens === null || c.cachedTokens === null
-        ? null
-        : c.inputTokens + c.cachedTokens + (c.cacheCreationTokens ?? 0),
-    ),
+    ...facts.cliRuns.map(cliInput),
   ]);
   const outputTokens = sumOrNull([
     ...answered.map((l) => l.outputTokens),
     ...facts.cliRuns.map((c) => c.outputTokens),
+  ]);
+  const cachedTokens = sumOrNull([
+    ...answered.map((l) => l.cachedTokens),
+    ...facts.cliRuns.map((c) => c.cachedTokens),
+  ]);
+  const cacheWriteTokens = sumOrNull([
+    ...answered.map((l) => l.cacheCreationTokens),
+    ...facts.cliRuns.map((c) => c.cacheCreationTokens),
   ]);
   const billed = [
     ...answered.map((l) => l.costUsd),
@@ -194,13 +304,100 @@ export function measure(
       ]),
     ],
     toolCalls: facts.toolCalls.length,
+    path: toolPath(facts),
+    delegatedTo: delegatedAgents(facts),
     llmCalls: facts.llmCalls.length,
     cliRuns: facts.cliRuns.length,
     inputTokens,
+    cachedTokens,
+    cacheWriteTokens,
     outputTokens,
     costUsd: cost === null ? null : Number(cost.toFixed(4)),
     approvals: facts.approvals.length,
+    modelUse: modelUse(facts),
   };
+}
+
+type ModelKey = Omit<
+  ModelUse,
+  'calls' | 'inputTokens' | 'cachedTokens' | 'outputTokens' | 'costUsd'
+>;
+interface Consumption {
+  readonly input: number | null;
+  readonly cached: number | null;
+  readonly output: number | null;
+  readonly cost: number | null;
+}
+
+/**
+ * Les modèles de chaque job : un groupe par job et par combinaison demandé /
+ * effectif / fournisseur / effort / secours, dans l'ordre des appels. Un appel
+ * d'API qui a échoué compte comme appel (il a été fait) mais pas dans les
+ * jetons ni le coût, comme `measure`. Une valeur absente d'un appel rend le
+ * total du groupe absent (null), jamais sous-estimé. Le coût d'un tour de CLI
+ * sous abonnement n'est pas facturé : absent.
+ */
+export function modelUse(facts: TreeFacts): ModelUse[] {
+  const agentOf = new Map(facts.jobs.map((j) => [j.id, j.agentSlug]));
+  const groups = new Map<string, { key: ModelKey; calls: number; used: Consumption[] }>();
+  const add = (key: ModelKey, used: Consumption | null): void => {
+    const k = JSON.stringify(key);
+    const g = groups.get(k) ?? { key, calls: 0, used: [] };
+    g.calls++;
+    if (used) g.used.push(used);
+    groups.set(k, g);
+  };
+  const ofJob = (jobId: string | null) => ({
+    job: (jobId ?? 'no job').slice(0, 8),
+    agent: jobId === null ? null : (agentOf.get(jobId) ?? null),
+  });
+  for (const l of facts.llmCalls) {
+    add(
+      {
+        ...ofJob(l.jobId),
+        via: 'api',
+        requested: l.modelRequested,
+        effective: l.model,
+        provider: l.provider,
+        reasoningEffort: l.reasoningEffort,
+        failover: l.failover,
+      },
+      l.error === null
+        ? { input: l.inputTokens, cached: l.cachedTokens, output: l.outputTokens, cost: l.costUsd }
+        : null,
+    );
+  }
+  for (const c of facts.cliRuns) {
+    add(
+      {
+        ...ofJob(c.jobId),
+        via: 'cli',
+        requested: c.modelRequested,
+        effective:
+          c.models.length > 0 ? c.models.join(' + ') : `${c.provider} CLI, model not reported`,
+        provider: c.provider,
+        reasoningEffort: null,
+        failover: null,
+      },
+      {
+        input: cliInput(c),
+        cached: c.cachedTokens,
+        output: c.outputTokens,
+        cost: c.source === 'subscription' ? null : c.costUsd,
+      },
+    );
+  }
+  return [...groups.values()].map((g) => {
+    const cost = sumOrNull(g.used.map((u) => u.cost));
+    return {
+      ...g.key,
+      calls: g.calls,
+      inputTokens: sumOrNull(g.used.map((u) => u.input)),
+      cachedTokens: sumOrNull(g.used.map((u) => u.cached)),
+      outputTokens: sumOrNull(g.used.map((u) => u.output)),
+      costUsd: cost === null ? null : Number(cost.toFixed(4)),
+    };
+  });
 }
 
 /** Attend que le propriétaire ait fini. Rend null quand la stack est libre, sinon la raison du renoncement. */
@@ -214,37 +411,240 @@ export async function waitForIdle(deps: TrialDeps, o: TrialOptions): Promise<str
       return `the stack was busy for ${Math.round(waited / 60_000)} min: ${why}`;
     }
     deps.log(`  waiting, the owner is working (${why})`);
+    deps.progress?.({ step: 'waiting', why });
     await deps.sleep(o.idlePollMs);
   }
 }
 
 /**
- * Un essai complet : attendre la stack libre, préparer, lancer, surveiller,
- * annuler si besoin, juger. Rend TOUJOURS une ligne ; n'en écrit aucune.
+ * Avant tout lancement : un scénario qui envoie au propriétaire ne part
+ * qu'avec `--allow-owner-sends` ; un scénario qui envoie à un compte de test
+ * ne part pas tant qu'aucun compte de test n'est branché.
+ */
+export function destinationGate(
+  s: AnyScenario,
+  o: Pick<TrialOptions, 'allowOwnerSends'>,
+): string[] {
+  if (s.sends === 'owner' && !o.allowOwnerSends)
+    return [
+      "this scenario sends to the owner's own account (sends: owner): it runs only with --allow-owner-sends",
+    ];
+  if (s.sends.startsWith('test-account:'))
+    return [
+      `this scenario sends to the test account "${s.sends.slice('test-account:'.length)}", and no test account is wired yet`,
+    ];
+  return [];
+}
+
+/**
+ * Après l'essai : ce qui est réellement parti contre la destination déclarée.
+ * Une seule règle pour tout outil sortant (`isOutboundTool` : un verbe sortant,
+ * impression comprise, ou un canal, fermé par défaut), quel que soit le
+ * `sends` du scénario : il est rouge, nommé dans la raison. La seule
+ * exemption est la livraison que `sends` permet :
+ *   - `nothing` : aucune. Une livraison de réponse ou un outil d'envoi du
+ *     produit est rouge aussi (`channelSends`) ;
+ *   - `owner` : UNE chose sortante, la livraison du PRODUIT au chat du
+ *     propriétaire (revue de #777, passe 9 : une impression passait verte
+ *     sous `owner`). Sans cible, le produit livre au propriétaire de la
+ *     conversation ; une livraison qui NOMME une cible (un champ de
+ *     destination de son schéma, `DELIVERY_TARGET_FIELDS`) est rouge, quelle
+ *     que soit sa valeur : les outils livrent à toute conversation approuvée,
+ *     celle d'un membre comprise (passe 11 : un texte cherché par motif
+ *     laissait passer `chatId: '1234567'`). Un champ que le banc ne connaît
+ *     pas est rouge aussi : il pourrait nommer une cible.
+ * L'exemption se décide sur l'IDENTITÉ de l'outil, jamais sur un nom qui lui
+ * ressemble (passe 10) : un outil de livraison du produit, à son nom EXACT,
+ * tel que le runner le range dans `tool_calls` (sans préfixe :
+ * `DELIVERY_TOOL_NAMES`). Un outil MCP ou de CLI du même nom nu
+ * (`x__send_image`, `cli:send_image`) n'est pas le sien : il est sortant. Un
+ * envoi de courrier non plus : ce n'est pas le chat du propriétaire, et son
+ * destinataire ne se vérifie pas ; fermé par défaut, il est rouge.
+ * Un scénario `test-account:` n'est jamais lancé (aucun compte de test n'est
+ * branché, `destinationGate`) : rien n'est jugé ici pour lui.
+ */
+export function destinationReasons(s: AnyScenario, facts: TreeFacts): string[] {
+  if (s.sends !== 'nothing' && s.sends !== 'owner') return [];
+  const delivery = new Set<string>(DELIVERY_TOOL_NAMES);
+  /** Un outil de livraison du produit, à son nom exact : jamais un préfixe retiré. */
+  const isProductDelivery = (toolName: string): boolean => delivery.has(toolName);
+  const outbound = facts.toolCalls
+    .filter((c) => isOutboundTool(c.toolName) && !isProductDelivery(c.toolName))
+    .map((c) => c.toolName);
+  const outboundReasons =
+    outbound.length > 0
+      ? [`an outbound tool was called (${[...new Set(outbound)].join(', ')})`]
+      : [];
+  if (s.sends === 'nothing') return [...channelSends(facts), ...outboundReasons];
+  const targetReasons = facts.toolCalls
+    .filter((c) => isProductDelivery(c.toolName))
+    .flatMap((c) => deliveryTargetReasons(c.toolName, c.input));
+  return [...new Set(targetReasons), ...outboundReasons];
+}
+
+/**
+ * Les champs d'une livraison du produit qui en choisissent la DESTINATION,
+ * lus dans les schémas des outils de livraison (@nodal-agents/tools,
+ * communication/) : `chatId` (une conversation) et `channel` (une autre
+ * plateforme). Sans eux, le produit livre à la conversation du job.
+ */
+export const DELIVERY_TARGET_FIELDS = ['chatId', 'channel'] as const;
+/**
+ * Les champs de leur CONTENU, et la raison que la plateforme ajoute à toute
+ * demande (`PURPOSE_KEY`). trial.test.ts compare ces deux listes aux schémas
+ * réels : un champ nouveau d'un outil de livraison y échoue.
+ */
+export const DELIVERY_CONTENT_FIELDS = [
+  'source',
+  'filename',
+  'caption',
+  'text',
+  PURPOSE_KEY,
+] as const;
+
+/** Pourquoi une livraison du produit ne va pas, ou pas sûrement, au chat du propriétaire. */
+function deliveryTargetReasons(toolName: string, input: string | null): string[] {
+  const parsed = parseJson(input);
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
+    return [
+      `a product delivery whose input cannot be read (${toolName}): sends: owner cannot tell where it went`,
+    ];
+  const fields = parsed as Record<string, unknown>;
+  const targets = DELIVERY_TARGET_FIELDS.filter(
+    (f) => fields[f] !== undefined && fields[f] !== null && fields[f] !== '',
+  ).map((f) => `${f}=${String(fields[f])}`);
+  const known = new Set<string>([...DELIVERY_TARGET_FIELDS, ...DELIVERY_CONTENT_FIELDS]);
+  const unknown = Object.keys(fields).filter((k) => !known.has(k));
+  return [
+    ...(targets.length > 0
+      ? [
+          `a product delivery names an explicit target (${toolName}: ${targets.join(', ')}): sends: owner allows only the owner's own chat`,
+        ]
+      : []),
+    ...(unknown.length > 0
+      ? [
+          `a product delivery carries a field the bench does not know (${toolName}: ${unknown.join(', ')}): it may name a target, so sends: owner refuses it`,
+        ]
+      : []),
+  ];
+}
+
+/**
+ * Tout ce qui rend un essai rouge, une fois l'arbre fini : le juge du
+ * scénario, la destination des envois, et la règle de chemin des outils du
+ * produit. La même composition pour runTrial et pour les tests (harness.ts) ;
+ * une raison déjà dite n'est pas répétée.
+ */
+export function trialReasons(
+  s: AnyScenario,
+  facts: TreeFacts,
+  observed: unknown,
+  env: Pick<ScenarioEnv, 'teamTools'>,
+  files: readonly ProductFileState[],
+): string[] {
+  return [
+    ...new Set([
+      ...s.judge(facts, observed),
+      ...destinationReasons(s, facts),
+      ...productToolReasons(s, facts, env, files),
+    ]),
+  ];
+}
+
+/** L'état d'un fichier sur le disque : absent, son empreinte sha-256, ou illisible. */
+function stateOf(path: string | null): FileState {
+  if (path === null) return { kind: 'absent' };
+  try {
+    return { kind: 'file', sha256: fileHash(path) };
+  } catch {
+    return { kind: 'unreadable' };
+  }
+}
+
+/**
+ * Les fichiers d'un scénario (`productTools.writes` et `reads`), tels que le banc les
+ * connaît hors de la base : leurs chemins réels possibles, un par dossier de
+ * travail, résolus comme la plateforme les range (`cheminConstate`, le chemin
+ * des lignes `tool_call_writes` et `tool_call_reads`) ; le chemin réel où le
+ * banc pose la fixture (le dossier partagé) ; l'état préparé (la fixture que
+ * le banc pose à ce chemin, sinon absent, `prepareTrial` effaçant les
+ * sorties) ; et l'état final, celui du plus récent parmi les dossiers de
+ * travail.
+ */
+export async function productFileStates(
+  s: AnyScenario,
+  roots: readonly string[],
+): Promise<ProductFileState[]> {
+  const out: ProductFileState[] = [];
+  const pt = s.productTools;
+  for (const rel of [...(pt?.writes ?? []), ...(pt?.reads ?? [])]) {
+    const realPaths = await Promise.all(roots.map((root) => cheminConstate(join(root, rel))));
+    const fixture = (s.fixtures ?? []).find((f) => f.to === rel);
+    out.push({
+      rel,
+      realPaths,
+      posedPath: await cheminConstate(join(sharedRoot(roots), rel)),
+      initial: fixture ? stateOf(fixturePath(fixture.from)) : { kind: 'absent' },
+      final: stateOf(findInRoots(roots, rel, 0)[0]?.path ?? null),
+    });
+  }
+  return out;
+}
+
+function truncate(text: string, max: number): string {
+  return text.length <= max
+    ? text
+    : `${text.slice(0, max)}… (${text.length - max} more characters)`;
+}
+
+/**
+ * Un essai complet : attendre la stack libre, vérifier les besoins, préparer,
+ * lancer, surveiller, annuler si besoin, juger. Rend TOUJOURS une ligne ;
+ * n'en écrit aucune. Chaque étape est signalée à `deps.progress`, la fin
+ * comprise, quelle que soit la sortie.
  */
 export async function runTrial(
   s: AnyScenario,
   deps: TrialDeps,
   o: TrialOptions,
 ): Promise<TrialLine> {
+  const line = await runTrialSteps(s, deps, o);
+  deps.progress?.({ step: 'done', verdict: line.verdict });
+  return line;
+}
+
+async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): Promise<TrialLine> {
   const busy = await waitForIdle(deps, o);
   if (busy !== null) {
     return { ...emptyLine(s, o, deps.now()), verdict: 'skipped', reasons: [busy] };
   }
 
-  // Lire l'espace, vérifier les prérequis, préparer : tout ce qui lève ici
+  // Lire l'espace, vérifier les besoins, préparer : tout ce qui lève ici
   // (un classeur ouvert dans Excel verrouille son fichier sous Windows) devient
   // UNE ligne `error` avec sa raison. Un rejet emporterait les scénarios suivants.
+  let rootModel: string | null = null;
+  let subject: ResearchSubject | null = null;
+  let request = s.instruction;
   try {
+    rootModel = await deps.rootModel();
     const envBefore = await deps.env(deps.now());
-    const missing = s.requires?.(envBefore) ?? [];
-    if (missing.length > 0) {
-      return { ...emptyLine(s, o, deps.now()), verdict: 'red', reasons: missing };
+    let missing = [...destinationGate(s, o), ...missingNeeds(s.needs ?? [], envBefore)];
+    // Les outils du produit ensuite, une fois les besoins là : une imprimante
+    // absente se dit par son besoin, pas deux fois.
+    if (missing.length === 0) missing = productToolGate(s, envBefore);
+    if (missing.length === 0 && s.subject) {
+      subject = pickSubject(s.subject, deps.subjects());
+      if (subject === null) missing = [noSubjectReason(s.subject)];
+      else request = requestWithSubject(s.instruction, subject);
     }
-    s.prepare?.(envBefore);
+    if (missing.length > 0) {
+      return { ...emptyLine(s, o, deps.now(), rootModel), verdict: 'skipped', reasons: missing };
+    }
+    deps.progress?.({ step: 'preparing' });
+    prepareTrial(s, envBefore.workspaceRoots);
   } catch (e) {
     return {
-      ...emptyLine(s, o, deps.now()),
+      ...emptyLine(s, o, deps.now(), rootModel),
       verdict: 'error',
       reasons: [`the trial could not be prepared: ${String(e instanceof Error ? e.message : e)}`],
     };
@@ -253,15 +653,16 @@ export async function runTrial(
   const startedMs = deps.now();
   let session: { jobId: string; close(): Promise<void> };
   try {
-    session = await deps.start(s.instruction, benchCaller(s));
+    session = await deps.start(request, benchCaller(s));
   } catch (e) {
     return {
-      ...emptyLine(s, o, startedMs),
+      ...emptyLine(s, o, startedMs, rootModel),
       verdict: 'error',
       reasons: [String(e instanceof Error ? e.message : e)],
     };
   }
   const rootId = session.jobId;
+  deps.progress?.({ step: 'started', rootJobId: rootId });
   let entityId: string | null = null;
 
   let cancelled = false;
@@ -283,6 +684,14 @@ export async function runTrial(
     for (;;) {
       const facts = await deps.read(rootId);
       entityId = facts.entityId;
+      deps.progress?.({
+        step: 'running',
+        rootJobId: rootId,
+        jobs: facts.jobs.length,
+        liveJobs: liveJobs(facts).length,
+        toolCalls: facts.toolCalls.length,
+        elapsedMs: deps.now() - startedMs,
+      });
       const asking = pendingApprovals(facts);
       if (asking.length > 0) {
         await cancel(`it asked: ${asking.map((a) => `${a.kind} ${a.toolName}`).join(', ')}`);
@@ -319,7 +728,7 @@ export async function runTrial(
     facts = await deps.read(rootId);
   } catch (e) {
     return {
-      ...emptyLine(s, o, startedMs),
+      ...emptyLine(s, o, startedMs, rootModel),
       rootJobId: rootId,
       cancelled,
       verdict: 'error',
@@ -330,17 +739,40 @@ export async function runTrial(
     };
   }
   let judged: string[];
+  let deliverables: TrialLine['deliverables'] = [];
+  let cited: string | null = answerOf(facts);
+  deps.progress?.({ step: 'judging', rootJobId: rootId });
   try {
-    judged = s.judge(facts, await s.observe(facts, await deps.env(startedMs)));
+    const envAfter: ScenarioEnv = {
+      ...(await deps.env(startedMs)),
+      ...(subject ? { subject } : {}),
+    };
+    deliverables = benchDeliverables(envAfter.workspaceRoots, startedMs);
+    const observed = await s.observe(facts, envAfter);
+    if (s.cites) cited = s.cites(facts, observed);
+    // Un envoi parti ailleurs que là où le scénario le déclare, ou un outil du
+    // produit contourné, interdit le vert quel que soit le juge du scénario.
+    judged = trialReasons(
+      s,
+      facts,
+      observed,
+      envAfter,
+      await productFileStates(s, envAfter.workspaceRoots),
+    );
   } catch (e) {
     judged = [`the judge failed: ${String(e instanceof Error ? e.message : e)}`];
   }
-  const reasons = [...benchReasons, ...judged];
+  const reasons = [...new Set([...benchReasons, ...judged])];
+  const result = facts.jobs.find((j) => j.id === facts.rootId)?.result ?? null;
   return {
-    ...emptyLine(s, o, startedMs),
+    ...emptyLine(s, o, startedMs, rootModel),
     ...measure(facts),
+    links: citedLinks(facts, cited),
+    subject: subject?.id ?? null,
     rootJobId: rootId,
     cancelled,
+    deliverables,
+    answer: result === null ? null : truncate(redactHome(result), ANSWER_MAX),
     verdict: reasons.length === 0 ? 'green' : 'red',
     reasons,
   };

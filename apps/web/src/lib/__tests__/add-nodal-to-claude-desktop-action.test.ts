@@ -72,6 +72,7 @@ const ARGV = [
 
 const saved = {
   argv: process.env['NODAL_CLI_ARGV'],
+  nodalHome: process.env['NODALAI_HOME'],
   appData: process.env['APPDATA'],
   xdg: process.env['XDG_CONFIG_HOME'],
 };
@@ -92,6 +93,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   restoreEnv('NODAL_CLI_ARGV', saved.argv);
+  restoreEnv('NODALAI_HOME', saved.nodalHome);
 });
 
 afterAll(async () => {
@@ -129,6 +131,7 @@ describe('addNodalToClaudeDesktopAction @cap:connecter-un-service/moteur', () =>
     const { claudeDesktopConfigPath } = await import('../mcp-clients.ts');
     sessionUserId = seed.userId;
     process.env['NODAL_CLI_ARGV'] = JSON.stringify(ARGV);
+    delete process.env['NODALAI_HOME'];
     const file = claudeDesktopConfigPath(process.platform, process.env, home, path.join);
     await mkdir(path.dirname(file), { recursive: true });
 
@@ -137,10 +140,35 @@ describe('addNodalToClaudeDesktopAction @cap:connecter-un-service/moteur', () =>
       ok: true,
       data: { path: file, backupPath: null, replaced: false },
     });
+    // Sans NODALAI_HOME, le dossier par défaut, écrit en clair. Le module
+    // partagé n'est pas transformé par vitest : il voit le VRAI homedir(), que
+    // le faux `node:os` de ce fichier n'atteint pas. Rien n'y est écrit.
+    const { defaultNodalHome } = await import('@nodal-agents/shared/nodal-home');
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
       mcpServers: {
-        nodal: { command: ARGV[0], args: [ARGV[1], 'mcp', 'serve'] },
+        nodal: {
+          command: ARGV[0],
+          args: [ARGV[1], 'mcp', 'serve'],
+          env: { NODALAI_HOME: defaultNodalHome() },
+        },
       },
+    });
+  });
+
+  it('une seconde instance (NODALAI_HOME) écrit SON dossier dans l’entrée', async () => {
+    const { addNodalToClaudeDesktopAction } = await import('../actions.ts');
+    const { claudeDesktopConfigPath } = await import('../mcp-clients.ts');
+    sessionUserId = seed.userId;
+    process.env['NODAL_CLI_ARGV'] = JSON.stringify(ARGV);
+    const second = path.join(home, 'nodal-b');
+    process.env['NODALAI_HOME'] = second;
+    const file = claudeDesktopConfigPath(process.platform, process.env, home, path.join);
+    await mkdir(path.dirname(file), { recursive: true });
+
+    const result = await addNodalToClaudeDesktopAction();
+    expect(result).toMatchObject({ ok: true });
+    expect(JSON.parse(await readFile(file, 'utf8')).mcpServers.nodal.env).toEqual({
+      NODALAI_HOME: second,
     });
   });
 

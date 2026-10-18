@@ -200,6 +200,7 @@ export const listConversationRunsTool: ToolDefinition<
     'this conversation is still running.',
   inputSchema: ListConversationRunsInputSchema,
   riskLevel: 'read',
+  egress: 'none',
   card: 'text',
   execute: async (_input, ctx) => {
     const { conversationId, ownHeadJobId } = await callerScope(ctx.db, ctx.entityId, ctx.jobId);
@@ -260,6 +261,7 @@ export const stopConversationRunTool: ToolDefinition<
     'run is never stopped by this tool.',
   inputSchema: StopConversationRunInputSchema,
   riskLevel: 'write',
+  egress: 'none',
   card: 'text',
   execute: async (input, ctx) => {
     const { conversationId, ownHeadJobId } = await callerScope(ctx.db, ctx.entityId, ctx.jobId);
@@ -390,6 +392,7 @@ export const messageConversationRunTool: ToolDefinition<
     'has already finished, or that is not in this conversation.',
   inputSchema: MessageConversationRunInputSchema,
   riskLevel: 'write',
+  egress: 'none',
   card: 'text',
   execute: async (input, ctx) => {
     const { conversationId, ownHeadJobId } = await callerScope(ctx.db, ctx.entityId, ctx.jobId);

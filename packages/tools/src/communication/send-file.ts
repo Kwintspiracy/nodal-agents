@@ -13,6 +13,7 @@
 
 import { z } from 'zod';
 import { getAdapter } from '@nodal-agents/delivery';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
   resolveBotToken,
@@ -124,6 +125,7 @@ Fail conditions:
     inputSchema: SendFileInput,
 
     riskLevel: 'write',
+    egress: 'channel',
     card: 'sent',
     present: ({ input, output }) =>
       sentCard({
@@ -170,6 +172,8 @@ Fail conditions:
         // Local file path — confined to workspaces/skill store/temp dir (F2).
         const realPath = await assertLocalSourceAllowed(src, ctx);
         bytes = await readFile(realPath);
+        // Les octets LUS pour l'envoi, rapportés au seam (tool_call_reads).
+        ctx.reportReadContent?.(realPath, createHash('sha256').update(bytes).digest('hex'));
 
         derivedName = src.split(/[\\/]/).pop() || 'file';
       }

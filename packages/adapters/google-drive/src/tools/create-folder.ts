@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-drive — drive_create_folder tool
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { drive_v3 } from 'googleapis';
 import { mapDriveError } from '../errors';
 
@@ -21,12 +21,11 @@ export type CreateFolderOutput = {
 
 export function createCreateFolderTool(
   drive: drive_v3.Drive,
-): ToolDefinition<typeof CreateFolderInput, CreateFolderOutput> {
+): ConnectorToolDefinition<typeof CreateFolderInput, CreateFolderOutput> {
   return {
     name: 'drive_create_folder',
     description: 'Create a new folder in Google Drive.',
     inputSchema: CreateFolderInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const resource: drive_v3.Schema$File = {

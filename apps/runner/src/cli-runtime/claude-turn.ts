@@ -34,9 +34,10 @@ import {
   extractClaudeUsage,
   extractClaudeModelUsage,
   CLAUDE_READONLY_DISALLOWED,
+  readWorkspaceMemory,
   type NormalizedCliResult,
 } from '@nodal-agents/tools';
-import { claudeShellFlags } from '@nodal-agents/shared';
+import { claudeSettingSourcesFlags, claudeShellFlags } from '@nodal-agents/shared';
 
 export interface ClaudeTurnEvent {
   kind: 'tool_use' | 'tool_result' | 'assistant_text';
@@ -139,6 +140,9 @@ export function buildClaudeTurnArgs(opts: ClaudeTurnOptions, personalityFile: st
     // --verbose (verified on the recorded fixture).
     '--verbose',
     '--strict-mcp-config',
+    // Only the owner's own settings: a workspace's `.claude/settings.json` hooks
+    // would run on the host, outside the sandbox (see claude-setting-sources.ts).
+    ...claudeSettingSourcesFlags(),
     '--append-system-prompt-file',
     personalityFile,
   ];
@@ -382,6 +386,23 @@ export class ClaudeCliNotFoundError extends Error {
   }
 }
 
+/**
+ * The persona file's content: the agent's persona from DB, then the workspace's
+ * CLAUDE.md files as quoted text. `--setting-sources user` (#782) stops Claude
+ * from loading them itself, and a file Nodal reads cannot run anything. The
+ * agent's attached folders are the cwd (the first one) and the extra ones; the
+ * one containing the cwd bounds the read (workspace-memory.ts).
+ */
+export async function composeClaudePersona(
+  opts: Pick<ClaudeTurnOptions, 'personality' | 'cwd' | 'extraWriteDirs'>,
+): Promise<string> {
+  const memory = await readWorkspaceMemory({
+    cwd: opts.cwd,
+    roots: [opts.cwd, ...(opts.extraWriteDirs ?? [])],
+  });
+  return memory ? `${opts.personality}\n\n${memory.text}` : opts.personality;
+}
+
 /** Run one turn. Rejects only for setup failures (binary missing); every
  *  runtime failure comes back as a structured result (fail loud, not thrown). */
 export async function runClaudeTurn(opts: ClaudeTurnOptions): Promise<ClaudeTurnResult> {
@@ -392,7 +413,7 @@ export async function runClaudeTurn(opts: ClaudeTurnOptions): Promise<ClaudeTurn
   // enter argv (cmd.exe re-parses it on the .cmd-shim path — injection).
   const personaDir = await mkdtemp(join(tmpdir(), 'nodal-cli-turn-'));
   const personaFile = join(personaDir, 'persona.txt');
-  await writeFile(personaFile, opts.personality, 'utf8');
+  await writeFile(personaFile, await composeClaudePersona(opts), 'utf8');
 
   try {
     return await spawnClaudeTurn(opts, cli, personaFile);

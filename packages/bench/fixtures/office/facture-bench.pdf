@@ -1,0 +1,43 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 253 >>
+stream
+BT
+/F1 12 Tf
+16 TL
+72 770 Td
+(FACTURE) Tj T*
+(Facture n\260 FB-2026-117) Tj T*
+(Date : 2 octobre 2026) Tj T*
+(Client : Atelier Bench) Tj T*
+(Prestation de conseil : 1 028,80 EUR HT) Tj T*
+(TVA 20 % : 205,76 EUR) Tj T*
+(Total TTC : 1 234,56 EUR) Tj T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000212 00000 n 
+0000000338 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+642
+%%EOF

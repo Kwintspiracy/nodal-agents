@@ -1,0 +1,15 @@
+{
+  "name": "nodal-agents-sandbox-windows",
+  "version": "1.0.0",
+  "description": "Windows-only carrier of Microsoft MXC for the Nodal-Agents OS sandbox (#628). Installs only on win32; on other platforms npm skips it and its native dependency tree (node-pty) is never fetched.",
+  "license": "MIT",
+  "os": [
+    "win32"
+  ],
+  "dependencies": {
+    "@microsoft/mxc-sdk": "1.0.0"
+  },
+  "files": [
+    "README.md"
+  ]
+}

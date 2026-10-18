@@ -440,6 +440,7 @@ export const xlsxReadTool: ToolDefinition<typeof XlsxReadInput, XlsxReadOutput> 
     'Set max_rows to control how many rows are returned per sheet.',
   inputSchema: XlsxReadInput,
   riskLevel: 'read',
+  egress: 'none',
   card: 'table',
   present: ({ output }) =>
     output.ok
@@ -529,6 +530,7 @@ export const xlsxSetCellTool: ToolDefinition<typeof XlsxSetCellInput, XlsxSetCel
     'path atomically.',
   inputSchema: XlsxSetCellInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
@@ -594,6 +596,7 @@ export const xlsxSetRangeTool: ToolDefinition<typeof XlsxSetRangeInput, XlsxSetR
     'Other cells outside the range are preserved. Atomic save.',
   inputSchema: XlsxSetRangeInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
@@ -665,6 +668,7 @@ export const xlsxAppendRowsTool: ToolDefinition<typeof XlsxAppendRowsInput, Xlsx
       'Existing data is preserved.',
     inputSchema: XlsxAppendRowsInput,
     riskLevel: 'write',
+    egress: 'none',
     card: 'files',
     present: ({ input, output }) =>
       output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
@@ -724,6 +728,7 @@ export const xlsxAddSheetTool: ToolDefinition<typeof XlsxAddSheetInput, XlsxAddS
   description: 'Add a new (empty) worksheet to an existing Excel workbook.',
   inputSchema: XlsxAddSheetInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
@@ -779,6 +784,7 @@ export const xlsxCreateTool: ToolDefinition<typeof XlsxCreateInput, XlsxCreateOu
     'Fails if the file already exists unless overwrite:true is passed.',
   inputSchema: XlsxCreateInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   // The card names the file as the agent named it (`input.path`), like every
   // other xlsx tool — `output.path` is the resolved absolute path, and the
@@ -833,6 +839,7 @@ export const xlsxDeleteRowsTool: ToolDefinition<typeof XlsxDeleteRowsInput, Xlsx
       'with xlsx_read first. Requires an explicit approval rule or agent-level overwrite consent.',
     inputSchema: XlsxDeleteRowsInput,
     riskLevel: 'destructive',
+    egress: 'none',
     card: 'files',
     present: ({ input, output }) =>
       output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
@@ -963,6 +970,7 @@ export const xlsxFormatRangeTool: ToolDefinition<
     'currency/percentage/date.',
   inputSchema: XlsxFormatRangeInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
@@ -1093,6 +1101,7 @@ export const xlsxInsertRowsTool: ToolDefinition<typeof XlsxInsertRowsInput, Xlsx
       'last row, this inserts in the middle of existing data.',
     inputSchema: XlsxInsertRowsInput,
     riskLevel: 'write',
+    egress: 'none',
     card: 'files',
     present: ({ input, output }) =>
       output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
@@ -1161,6 +1170,7 @@ export const xlsxDeleteColumnsTool: ToolDefinition<
     'xlsx_read first. Requires an explicit approval rule or agent-level overwrite consent.',
   inputSchema: XlsxDeleteColumnsInput,
   riskLevel: 'destructive',
+  egress: 'none',
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
@@ -1232,6 +1242,7 @@ export const xlsxInsertColumnsTool: ToolDefinition<
     'formulae that reference them) right.',
   inputSchema: XlsxInsertColumnsInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
@@ -1298,6 +1309,7 @@ export const xlsxMergeCellsTool: ToolDefinition<typeof XlsxMergeCellsInput, Xlsx
       'become part of the merge.',
     inputSchema: XlsxMergeCellsInput,
     riskLevel: 'write',
+    egress: 'none',
     card: 'files',
     present: ({ input, output }) =>
       output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
@@ -1365,6 +1377,7 @@ export const xlsxUnmergeCellsTool: ToolDefinition<
   description: 'Undo a previous cell merge, restoring the range to independent cells.',
   inputSchema: XlsxUnmergeCellsInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
@@ -1452,6 +1465,7 @@ export const xlsxSetColumnWidthsTool: ToolDefinition<
     'approximation, not a pixel-perfect Excel autofit.',
   inputSchema: XlsxSetColumnWidthsInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
@@ -1553,6 +1567,7 @@ export const xlsxFreezePanesTool: ToolDefinition<
     'existing freeze.',
   inputSchema: XlsxFreezePanesInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
@@ -1629,6 +1644,7 @@ export const xlsxFindCellsTool: ToolDefinition<typeof XlsxFindCellsInput, XlsxFi
     'instead of guessing coordinates from xlsx_read.',
   inputSchema: XlsxFindCellsInput,
   riskLevel: 'read',
+  egress: 'none',
   card: 'search',
   present: ({ input, output }) =>
     output.ok

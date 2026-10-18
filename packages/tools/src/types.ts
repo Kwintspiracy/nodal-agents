@@ -22,6 +22,19 @@ import type { JobPlacement } from './job-placement';
 // RiskLevel is OperationRiskLevel — single source of truth from @nodal-agents/shared
 export type RiskLevel = OperationRiskLevel;
 
+/**
+ * What a tool reaches on its own (see `ToolDefinition.egress`):
+ * - `none`: Nodal's database and the workspace's files, nothing else;
+ * - `channel`: a human channel (Telegram, Discord, Slack), the delivery tools;
+ * - `model-provider`: a configured model provider, with content the tool sends
+ *   (speech synthesis, embeddings), beyond the job's own model call;
+ * - `internet`: hosts on the open internet (a search);
+ * - `process`: a process it starts, which can reach anything (a shell, a skill
+ *   script, a coding CLI), at the call or later: `declare_verification`'s
+ *   commands run when the job finishes.
+ */
+export type ToolEgress = 'none' | 'channel' | 'model-provider' | 'internet' | 'process';
+
 // Re-exported so a tool file declaring `resolveMutationTargets` or `card`
 // imports its argument type from the same place as the field itself.
 export type { MutationTarget, ToolCard, ToolCardPayload };
@@ -37,6 +50,14 @@ export interface ToolContext {
   jobId: string;
   agentId: string;
   entityId: string;
+  /**
+   * The job's Stop (#750): aborted when the job's row no longer lets this run
+   * act — the Stop button, a cancellation, a job reaped or reclaimed. A tool
+   * that starts a process kills it when this fires (the shared shell engine
+   * does, for run_command, run_skill_script and the proof commands). Set by the
+   * runner around tool execution; absent in lightweight test contexts.
+   */
+  signal?: AbortSignal;
   db: AnyDrizzleDb;
   /**
    * Job-loop turn this call belongs to (étape D — written into tool_calls.turn
@@ -256,6 +277,14 @@ export interface ToolContext {
    */
   reportWrittenContent?: (absPath: string, sha256: string) => void;
   /**
+   * Rapporte l'empreinte (sha-256) des OCTETS qu'un outil vient de LIRE à
+   * `absPath`, le chemin résolu qu'il a ouvert (le pendant de
+   * `reportWrittenContent`). Le seam la range dans `tool_call_reads` : c'est
+   * elle, et non le chemin que l'agent a écrit, qui dit plus tard quel fichier
+   * a été lu, et dans quel état. Appelée seulement quand la lecture a réussi.
+   */
+  reportReadContent?: (absPath: string, sha256: string) => void;
+  /**
    * Pose une question à une personne PENDANT l'appel en cours, et attend sa
    * réponse — le chemin de l'élicitation MCP (`elicitation/create`, mode
    * formulaire). Injecté par le runner, qui écrit la demande, l'envoie là où la
@@ -391,6 +420,20 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
   summary?: string;
   inputSchema: TInput;
   riskLevel: OperationRiskLevel;
+  /**
+   * What this tool, BY ITSELF, reaches beyond Nodal's own database and disk,
+   * besides the job's model call (`ToolEgress`). A DECLARATION, like
+   * `riskLevel` and `mutatesWorkspace`: no scanner can prove what a function
+   * contacts. A workspace that must send nothing (the bench space) reads it to
+   * say which tools its pre-trial check does not cover, instead of keeping a
+   * list of names of its own.
+   *
+   * Optional in the TYPE (connector and MCP tools are classified by their
+   * origin), required for every tool the PRODUCT ships: the test over the
+   * served-tool catalog (`servedToolDefinitions`, @nodal-agents/orchestration)
+   * names any that does not declare it.
+   */
+  egress?: ToolEgress;
   /**
    * Whether the model receives this tool's SCHEMA on every turn (`eager`) or
    * only once the job has loaded it (`deferred`, issue #612).
@@ -650,6 +693,24 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
   toModelOutput?(output: TOutput): string;
   execute: (input: z.infer<TInput>, ctx: ToolContext) => Promise<TOutput>;
 }
+
+/**
+ * A tool as a connector adapter builds it (`packages/adapters/*`), before it
+ * reaches a job: everything but its risk and its default approval (issue #735).
+ *
+ * Those two come from the adapter's operation descriptor
+ * (`OperationDescriptor.risk` / `requiresApproval`), the one source the
+ * Connectors and Approvals tabs already read. `ADAPTER_REGISTRY`
+ * (`@nodal-agents/runner-adapters`) applies them to every tool it hands out.
+ * A connector tool that declared its own risk was a second source, free to
+ * disagree with the first, and did: Gmail's send said `write` where its
+ * descriptor said `destructive`, and no descriptor's `requiresApproval` ever
+ * reached the gate.
+ */
+export type ConnectorToolDefinition<TInput extends z.ZodTypeAny, TOutput> = Omit<
+  ToolDefinition<TInput, TOutput>,
+  'riskLevel' | 'defaultApproval'
+>;
 
 /**
  * The value the model reads for a successful call of `tool`: its declared

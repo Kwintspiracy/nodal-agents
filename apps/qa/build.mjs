@@ -45,7 +45,7 @@ import {
 } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 import { fontFacesDuPortail } from './polices.mjs';
-import { lireWorkflows, htmlWorkflows, workflowsARegarder } from './workflows.mjs';
+import { lireCatalogue, lireWorkflows, htmlWorkflows, workflowsARegarder } from './workflows.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const DATA = join(ICI, 'data');
@@ -543,11 +543,17 @@ const workflows = lireWorkflows(
     ? readFileSync(join(DATA, 'workflows.ndjson'), 'utf8')
     : '',
 );
+// Le catalogue des scénarios, écrit par le banc (`--catalog`) : l'ordre des
+// activités et les scénarios jamais joués. Absent, la matrice n'est pas
+// rendue ; illisible, la construction s'arrête (lireCatalogue le dit).
+const catalogueWorkflows = existsSync(join(DATA, 'workflow-catalog.json'))
+  ? lireCatalogue(readFileSync(join(DATA, 'workflow-catalog.json'), 'utf8'))
+  : null;
 function vueWorkflows() {
   return `
 <section id="workflows" class="vue">
   ${entete('workflows', 'Workflows')}
-  ${htmlWorkflows(workflows)}
+  ${htmlWorkflows(workflows, catalogueWorkflows)}
 </section>`;
 }
 
@@ -2009,7 +2015,7 @@ td.dette{color:var(--ko);font-weight:600}
       }</b></a>
       <a href="#ecarts">Gaps <b>${ecarts().length}</b></a>
       <a href="#parcours">Journeys <b>${s.resume.specsE2eJoueesParLaCi}/${s.resume.specsE2e}</b></a>
-      <a href="#workflows">Workflows <b>${workflowsARegarder(workflows)}</b></a>
+      <a href="#workflows">Workflows <b>${workflowsARegarder(workflows, catalogueWorkflows)}</b></a>
       <p class="rubrique">How it runs</p>
       <a href="#vue" class="discret">Code coverage</a>
       <a href="#banc" class="discret">Bench <b>${s.banc.sections.length}</b></a>

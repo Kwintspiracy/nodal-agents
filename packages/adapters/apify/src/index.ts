@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-apify — public API
-// Single factory: createApifyTools(opts) → ToolDefinition[]
+// Single factory: createApifyTools(opts) → ConnectorToolDefinition[]
 
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createApifyClient } from './client.ts';
 import {
@@ -21,7 +21,8 @@ export type ApifyAdapterOptions = {
 
 /**
  * Create all 5 Apify tools using the provided access token.
- * Returns a flat ToolDefinition[] ready to register in a ToolRegistry.
+ * Returns a flat ConnectorToolDefinition[]: risk and default approval come
+ * from the operation descriptors, applied by ADAPTER_REGISTRY (issue #735).
  *
  * Tool count: 5
  * Write (1): apify_run_actor  (spawns a run and consumes Apify credits)
@@ -30,7 +31,7 @@ export type ApifyAdapterOptions = {
  */
 export function createApifyTools(
   opts: ApifyAdapterOptions,
-): ToolDefinition<z.ZodTypeAny, unknown>[] {
+): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   if (!opts.accessToken) {
     throw new Error('ApifyAdapterOptions: accessToken must be a non-empty string.');
   }
@@ -46,7 +47,7 @@ export function createApifyTools(
 
     // Write tools (1)
     makeApifyRunActorTool(client),
-  ] as unknown as ToolDefinition<z.ZodTypeAny, unknown>[];
+  ] as unknown as ConnectorToolDefinition<z.ZodTypeAny, unknown>[];
 }
 
 // Re-export error types for consumers

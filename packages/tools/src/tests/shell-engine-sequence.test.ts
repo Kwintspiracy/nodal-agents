@@ -10,15 +10,25 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommandSequence } from '../builtin/shell-engine';
 import { buildChildEnv } from '../builtin/child-env';
+import { JobProcessScope } from '@nodal-agents/sandbox';
 
 let dir: string;
 const node = process.execPath;
 const env = buildChildEnv(process.env);
+/** Le périmètre de ces commandes, fermé en fin de suite : rien ne leur survit. */
+const scope = new JobProcessScope('shell-engine-test');
+/** Le dossier de test est le seul inscriptible : le moteur l'exige de chaque appelant. */
+const confinement = {
+  get writableRoots() {
+    return [dir];
+  },
+};
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'nodal-seq-'));
 });
 afterAll(async () => {
+  await scope.close();
   for (let i = 0; i < 5; i++) {
     try {
       await rm(dir, { recursive: true, force: true });
@@ -49,6 +59,8 @@ describe('runCommandSequence', () => {
     const seen: number[] = [];
     const r = await runCommandSequence([{ command: ok, timeoutSeconds: 20 }], {
       cwd: dir,
+      confinement,
+      scope,
       env,
       onCommandDone: async (s) => {
         seen.push(s.rank);
@@ -68,7 +80,7 @@ describe('runCommandSequence', () => {
         { command: a, timeoutSeconds: 20 },
         { command: b, timeoutSeconds: 20 },
       ],
-      { cwd: dir, env, onCommandDone: async () => {} },
+      { cwd: dir, env, confinement, scope, onCommandDone: async () => {} },
     );
     expect(r.verdict).toBe('green');
     expect(r.results.map((x) => x.stdout)).toEqual(['a', 'b']);
@@ -88,7 +100,7 @@ describe('runCommandSequence', () => {
         { command: red, timeoutSeconds: 20 },
         { command: third, timeoutSeconds: 20 },
       ],
-      { cwd: dir, env, onCommandDone: async () => {} },
+      { cwd: dir, env, confinement, scope, onCommandDone: async () => {} },
     );
     expect(r.verdict).toBe('red');
     expect(r.results.length).toBe(2);
@@ -108,7 +120,7 @@ describe('runCommandSequence', () => {
         { command: ok, timeoutSeconds: 20 },
         { command: slow, timeoutSeconds: 1 },
       ],
-      { cwd: dir, env, onCommandDone: async () => {} },
+      { cwd: dir, env, confinement, scope, onCommandDone: async () => {} },
     );
     expect(r.verdict).toBe('infra_error');
     expect(r.stoppedAtRank).toBe(1);
@@ -133,6 +145,8 @@ describe('runCommandSequence', () => {
       ],
       {
         cwd: dir,
+        confinement,
+        scope,
         env,
         onCommandDone: async (s) => {
           if (s.rank === 0) {
@@ -163,6 +177,8 @@ describe('runCommandSequence', () => {
         ],
         {
           cwd: dir,
+          confinement,
+          scope,
           env,
           onCommandDone: async () => {
             throw new Error('PERSIST_FAILED');
@@ -176,11 +192,11 @@ describe('runCommandSequence', () => {
 
   it('liste vide ou trop longue ⇒ VERIFY_COMMANDS_INVALID, rien n’est lancé', async () => {
     await expect(
-      runCommandSequence([], { cwd: dir, env, onCommandDone: async () => {} }),
+      runCommandSequence([], { cwd: dir, env, confinement, scope, onCommandDone: async () => {} }),
     ).rejects.toThrow('VERIFY_COMMANDS_INVALID');
     const six = Array.from({ length: 6 }, (_, i) => ({ command: `echo ${i}`, timeoutSeconds: 5 }));
     await expect(
-      runCommandSequence(six, { cwd: dir, env, onCommandDone: async () => {} }),
+      runCommandSequence(six, { cwd: dir, env, confinement, scope, onCommandDone: async () => {} }),
     ).rejects.toThrow('VERIFY_COMMANDS_INVALID');
   });
 });

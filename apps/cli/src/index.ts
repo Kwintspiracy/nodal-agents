@@ -2,9 +2,22 @@
 // index.ts — nodal-agents CLI entry point
 // Registered as `nodal-agents` binary in package.json bin field.
 
+import '@nodal-agents/shared/node-guard';
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { assertNodalHomeSettings } from '@nodal-agents/shared/nodal-home';
 import { getInstalledVersion } from './lib/version.ts';
+
+// NODALAI_HOME (ou une variable plus étroite, NODALAI_CONFIG_PATH…) vide ou
+// relative : refusée ICI, avant toute commande, avec le message seul. Chaque
+// commande charge config.ts, qui la relit ; sans cette garde, le refus
+// sortirait en pile d'appels du premier import.
+try {
+  assertNodalHomeSettings();
+} catch (err) {
+  console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}
 
 const program = new Command();
 

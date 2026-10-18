@@ -2,22 +2,30 @@
 //
 // Tests:
 //   1. local-auth single-user → seeds correctly (the case Quentin hit)
-//   2. local-auth multi-user  → skips (>1 entities)
-//   3. local-trust            → unchanged behavior (seeds for the single entity)
+//   2. local-auth multi-user  → skips (>1 member workspaces)
+//   3. local-trust            → unchanged behavior (seeds for the single workspace)
+//   4. a member-less entity (a team copy driven by a tool) changes nothing
+//
+// Every workspace a person uses has an entity_members row (seedLocalUser, the
+// sign-up hook, createWorkspaceAction): the tests give theirs one, like a
+// real install.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, count } from '@nodal-agents/db';
-import { entityLlmKeys, agents, entities, users } from '@nodal-agents/db';
+import { entityLlmKeys, agents, entities, entityMembers, users } from '@nodal-agents/db';
 import {
   _setMasterKeyForTests,
   _resetMasterKeyCacheForTests,
   decrypt,
   encrypt,
 } from '@nodal-agents/secrets';
-import { seedDefaultLlmKey } from '../../bootstrap/seed-llm-key.ts';
+import {
+  seedDefaultLlmKey,
+  _resetSeedLlmKeyWarningsForTests,
+} from '../../bootstrap/seed-llm-key.ts';
 import type { RunnerEnv } from '../../env.ts';
 
 // Inject a deterministic test master key so the seeder's encrypt() call doesn't
@@ -69,6 +77,17 @@ function makeEnv(
   };
 }
 
+/** A workspace a person uses: the entity and its owner's membership. */
+async function memberWorkspace(db: TestDb, userId: string, name: string): Promise<string> {
+  const [entity] = await db
+    .insert(entities)
+    .values({ userId, name, slug: `${name.toLowerCase()}-${randomBytes(4).toString('hex')}` })
+    .returning();
+  if (!entity) throw new Error('seed entity');
+  await db.insert(entityMembers).values({ entityId: entity.id, userId, role: 'owner' });
+  return entity.id;
+}
+
 describe('seedDefaultLlmKey (Brique 25 guard)', () => {
   it('local-auth single-user: seeds entity_llm_keys and wires agents when exactly 1 entity exists', async () => {
     const { db } = await spinUpTestDb();
@@ -86,6 +105,7 @@ describe('seedDefaultLlmKey (Brique 25 guard)', () => {
       .values({ userId: user.id, name: 'E1', slug: `e1-${Date.now()}` })
       .returning();
     if (!entity) throw new Error('seed entity');
+    await db.insert(entityMembers).values({ entityId: entity.id, userId: user.id });
 
     const [agent] = await db
       .insert(agents)
@@ -123,10 +143,10 @@ describe('seedDefaultLlmKey (Brique 25 guard)', () => {
     expect(agentRow?.llmKeyId).not.toBeNull();
   });
 
-  it('local-auth multi-user: skips seeding when >1 entities exist', async () => {
+  it('local-auth multi-user: skips seeding when >1 member workspaces exist', async () => {
     const { db } = await spinUpTestDb();
 
-    // Create 2 users + 2 entities
+    // Create 2 users, each with their own workspace
     const [u1] = await db
       .insert(users)
       .values({ email: `multi-u1-${Date.now()}@example.com` })
@@ -137,8 +157,8 @@ describe('seedDefaultLlmKey (Brique 25 guard)', () => {
       .returning();
     if (!u1 || !u2) throw new Error('seed users');
 
-    await db.insert(entities).values({ userId: u1.id, name: 'E1', slug: `e1m-${Date.now()}` });
-    await db.insert(entities).values({ userId: u2.id, name: 'E2', slug: `e2m-${Date.now()}` });
+    await memberWorkspace(db as TestDb, u1.id, 'E1');
+    await memberWorkspace(db as TestDb, u2.id, 'E2');
 
     await seedDefaultLlmKey(db as TestDb, makeEnv('local-auth'));
 
@@ -146,6 +166,88 @@ describe('seedDefaultLlmKey (Brique 25 guard)', () => {
     const [afterCount] = await (db as TestDb).select({ n: count() }).from(entityLlmKeys);
     expect(afterCount?.n).toBe(0);
   });
+
+  it('one person with two workspaces: skips, the env key belongs to neither in particular', async () => {
+    const { db } = await spinUpTestDb();
+    const [user] = await db
+      .insert(users)
+      .values({ email: `two-ws-${Date.now()}@example.com` })
+      .returning();
+    if (!user) throw new Error('seed user');
+    await memberWorkspace(db as TestDb, user.id, 'Home');
+    await memberWorkspace(db as TestDb, user.id, 'Second');
+
+    await seedDefaultLlmKey(db as TestDb, makeEnv('local-trust'));
+
+    const [afterCount] = await (db as TestDb).select({ n: count() }).from(entityLlmKeys);
+    expect(afterCount?.n).toBe(0);
+  });
+
+  it.each(['older', 'newer'] as const)(
+    'a member-less entity (%s than the workspace) does not switch the seed off, and gets nothing',
+    async (age) => {
+      // The case the bench space created: a copy of the team, nobody's
+      // workspace. Counting every entity made the owner's workspace lose its
+      // seed; taking the "first" one could have seeded the copy.
+      const { db } = await spinUpTestDb();
+      const [user] = await db
+        .insert(users)
+        .values({ email: `copy-${age}-${Date.now()}@example.com` })
+        .returning();
+      if (!user) throw new Error('seed user');
+
+      const insertCopy = async () => {
+        const [copy] = await db
+          .insert(entities)
+          .values({
+            userId: user.id,
+            name: 'Copy',
+            slug: `copy-${randomBytes(4).toString('hex')}`,
+            createdAt: age === 'older' ? new Date('2020-01-01') : new Date('2100-01-01'),
+          })
+          .returning();
+        if (!copy) throw new Error('seed copy');
+        await db.insert(agents).values({
+          entityId: copy.id,
+          name: 'CopyAgent',
+          slug: `copy-agent-${Date.now()}`,
+          personality: 'test',
+          llmKeyId: null,
+        });
+        return copy.id;
+      };
+      const copyId = await insertCopy();
+      const homeId = await memberWorkspace(db as TestDb, user.id, 'Home');
+      const [agent] = await db
+        .insert(agents)
+        .values({
+          entityId: homeId,
+          name: 'HomeAgent',
+          slug: `home-agent-${Date.now()}`,
+          personality: 'test',
+          llmKeyId: null,
+        })
+        .returning();
+      if (!agent) throw new Error('seed agent');
+
+      await seedDefaultLlmKey(db as TestDb, makeEnv('local-trust'));
+
+      const keys = await (db as TestDb)
+        .select({ id: entityLlmKeys.id, entityId: entityLlmKeys.entityId })
+        .from(entityLlmKeys);
+      expect(keys.map((k) => k.entityId)).toEqual([homeId]);
+      const [agentRow] = await (db as TestDb)
+        .select({ llmKeyId: agents.llmKeyId })
+        .from(agents)
+        .where(eq(agents.id, agent.id));
+      expect(agentRow?.llmKeyId).toBe(keys[0]!.id);
+      const copyAgents = await (db as TestDb)
+        .select({ llmKeyId: agents.llmKeyId })
+        .from(agents)
+        .where(eq(agents.entityId, copyId));
+      expect(copyAgents).toEqual([{ llmKeyId: null }]);
+    },
+  );
 
   it('local-trust: seeds correctly for the single entity (unchanged behavior)', async () => {
     const { db } = await spinUpTestDb();
@@ -161,6 +263,7 @@ describe('seedDefaultLlmKey (Brique 25 guard)', () => {
       .values({ userId: user.id, name: 'TrustE', slug: `trust-e-${Date.now()}` })
       .returning();
     if (!entity) throw new Error('seed entity');
+    await db.insert(entityMembers).values({ entityId: entity.id, userId: user.id });
 
     // Agent without llmKeyId
     const [agent] = await db
@@ -236,6 +339,7 @@ describe('seedDefaultLlmKey (Brique 25 guard)', () => {
       .values({ userId: user.id, name: 'DE', slug: `de-${Date.now()}` })
       .returning();
     if (!entity) throw new Error('seed entity');
+    await db.insert(entityMembers).values({ entityId: entity.id, userId: user.id });
 
     // The entity already went through a normal seed boot: the default env
     // key exists (as `seedDefaultLlmKey` itself would have created it).
@@ -299,6 +403,7 @@ describe('seedDefaultLlmKey (Brique 25 guard)', () => {
       .values({ userId: user.id, name: 'IE', slug: `ie-${Date.now()}` })
       .returning();
     if (!entity) throw new Error('seed entity');
+    await db.insert(entityMembers).values({ entityId: entity.id, userId: user.id });
 
     // Call twice
     await seedDefaultLlmKey(db as TestDb, makeEnv('local-trust'));
@@ -309,5 +414,70 @@ describe('seedDefaultLlmKey (Brique 25 guard)', () => {
       .from(entityLlmKeys)
       .where(eq(entityLlmKeys.entityId, entity.id));
     expect(afterCount?.n).toBe(1);
+  });
+
+  describe('a skipped seed is said, once', () => {
+    beforeEach(() => _resetSeedLlmKeyWarningsForTests());
+
+    async function warningsOf(run: () => Promise<void>): Promise<string[]> {
+      const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        await run();
+        return spy.mock.calls.map((c) => String(c[0]));
+      } finally {
+        spy.mockRestore();
+      }
+    }
+
+    it('a lone entity WITHOUT a member: no key, and the cause and the remedy are logged once', async () => {
+      // Before the member rule, one entity was enough to seed. An install whose
+      // only entity has no entity_members row would now lose its seed in silence.
+      const { db } = await spinUpTestDb();
+      const [user] = await db
+        .insert(users)
+        .values({ email: `lone-${Date.now()}@example.com` })
+        .returning();
+      await db
+        .insert(entities)
+        .values({ userId: user!.id, name: 'Lone', slug: `lone-${Date.now()}` });
+
+      const first = await warningsOf(() => seedDefaultLlmKey(db as TestDb, makeEnv('local-auth')));
+      expect(first).toHaveLength(1);
+      expect(first[0]).toMatch(
+        /^\[runner\] seed_llm_key_skipped: 1 workspace\(s\) exist but none has a member/,
+      );
+      expect(first[0]).toContain('seedLocalUser restores');
+      expect(first[0]).toContain('Settings > LLM keys');
+      const [keys] = await (db as TestDb).select({ n: count() }).from(entityLlmKeys);
+      expect(keys?.n).toBe(0);
+
+      // The cron retries every tick: said once per process, not every two minutes.
+      const again = await warningsOf(() => seedDefaultLlmKey(db as TestDb, makeEnv('local-auth')));
+      expect(again).toEqual([]);
+    });
+
+    it('a fresh install with no entity at all stays silent (first boot before sign-up)', async () => {
+      const { db } = await spinUpTestDb();
+      expect(
+        await warningsOf(() => seedDefaultLlmKey(db as TestDb, makeEnv('local-auth'))),
+      ).toEqual([]);
+    });
+
+    it('several member workspaces: said only when one of them has no key, naming it', async () => {
+      const { db } = await spinUpTestDb();
+      const [user] = await db
+        .insert(users)
+        .values({ email: `several-${Date.now()}@example.com` })
+        .returning();
+      const keyed = await memberWorkspace(db as TestDb, user!.id, 'Keyed');
+      await memberWorkspace(db as TestDb, user!.id, 'Keyless');
+      await db.insert(entityLlmKeys).values({ entityId: keyed, provider: 'openai-compatible' });
+
+      const w = await warningsOf(() => seedDefaultLlmKey(db as TestDb, makeEnv('local-auth')));
+      expect(w).toHaveLength(1);
+      expect(w[0]).toContain('2 workspaces have a member');
+      expect(w[0]).toContain('Keyless has no key');
+      expect(w[0]).not.toContain('Keyed,');
+    });
   });
 });

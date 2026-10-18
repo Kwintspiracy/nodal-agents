@@ -5,6 +5,7 @@
 // `path` begins with a known workspace label, searches only that workspace.
 // Hidden / vendor dirs (.git, node_modules) are skipped by default for perf.
 
+import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { z } from 'zod';
@@ -94,6 +95,7 @@ export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSe
     'omit to search all workspaces. Skips .git/node_modules/dist by default.',
   inputSchema: FileSearchInputSchema,
   riskLevel: 'read',
+  egress: 'none',
   loading: 'eager',
   card: 'search',
   present: ({ input, output }) =>
@@ -181,7 +183,11 @@ export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSe
           if (info.size > MAX_SEARCH_FILE_BYTES) continue;
           let body: string;
           try {
-            body = await readFile(full, 'utf8');
+            const lu = await readFile(full);
+            // Chaque fichier dont le contenu est fouillé est LU : rapporté au seam
+            // (tool_call_reads), comme toute lecture d'un outil.
+            ctx.reportReadContent?.(full, createHash('sha256').update(lu).digest('hex'));
+            body = lu.toString('utf8');
           } catch {
             continue; // binary or unreadable — skip
           }

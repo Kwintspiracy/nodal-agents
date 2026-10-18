@@ -12,7 +12,8 @@ import { MODEL_CATALOG } from '@nodal-agents/shared';
 
 /**
  * Resolve the provider an agent's model will run against:
- *   - the agent's own llmKeyId, if set;
+ *   - the agent's own llmKeyId, if set AND it belongs to this entity (a key of
+ *     another workspace is never this agent's, same rule as resolve-llm);
  *   - else the entity's active LLM key.
  * Returns null when the entity has no usable key (caller skips validation).
  */
@@ -25,7 +26,7 @@ export async function resolveAgentProvider(
     const [k] = await db
       .select({ provider: entityLlmKeys.provider, id: entityLlmKeys.id })
       .from(entityLlmKeys)
-      .where(eq(entityLlmKeys.id, llmKeyId));
+      .where(and(eq(entityLlmKeys.id, llmKeyId), eq(entityLlmKeys.entityId, entityId)));
     if (k) return { provider: k.provider, keyId: k.id };
   }
   const [active] = await db

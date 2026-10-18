@@ -22,10 +22,10 @@
 
 import { execSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { configHoteDepuis, portsDeLaStack, verdictStackVivante } from './lib/live-stack.mjs';
+import { nodalHomeEntry } from './lib/nodal-home.mjs';
 import { sonderUnPort } from './lib/sonde.mjs';
 import { poserLeDrapeau, brancherLeRetrait } from './lib/release-check-flag.mjs';
 import { lancerOuRapporter } from './lib/echec-de-commande.mjs';
@@ -64,12 +64,18 @@ brancherLeRetrait(repoRoot);
 // vit dans `scripts/lib/sonde.mjs` et se teste contre un vrai serveur. Il ne
 // reste ici que la lecture du fichier de configuration et la décision.
 
-/** La lecture BRUTE du fichier ; le verdict, lui, est pur et vit dans la lib. */
+/**
+ * La lecture BRUTE du fichier ; le verdict, lui, est pur et vit dans la lib.
+ * Le config.json de l'instance que NODALAI_HOME désigne, résolu HORS du `try` :
+ * une variable mal réglée arrête la commande, elle ne devient pas « fichier
+ * absent » (ports par défaut, et la stack qui tourne ailleurs serait tuée).
+ */
+const FICHIER_LU = nodalHomeEntry('config.json');
 const lectureDeLaConfig = (() => {
   try {
-    return { texte: readFileSync(join(homedir(), '.nodalai', 'config.json'), 'utf8') };
+    return { texte: readFileSync(FICHIER_LU, 'utf8'), chemin: FICHIER_LU };
   } catch (err) {
-    return { err };
+    return { err, chemin: FICHIER_LU };
   }
 })();
 
@@ -79,7 +85,7 @@ try {
   // pas, on le dit et on sort — AVANT toute écriture, donc avant que
   // `build-pack` ne vide `pack/`. Un fichier simplement ABSENT garde les ports
   // par défaut : c'est le cas courant, et il est légitime.
-  portsASonder = portsDeLaStack(configHoteDepuis(lectureDeLaConfig));
+  portsASonder = portsDeLaStack(configHoteDepuis(lectureDeLaConfig), FICHIER_LU);
 } catch (err) {
   console.log(`\n✗ ${err.message}`);
   process.exit(1);
@@ -226,6 +232,12 @@ if (skipSlow) {
     return 'aucune erreur';
   });
   step('Tests', () => {
+    // release:check tourne sur la machine de l'owner (Windows base-container),
+    // le SEUL endroit où le filtrage du bac à sable (régime proxy) est prouvé.
+    // On EXIGE donc que la suite proxy s'y exécute vraiment : si le proxy
+    // devenait injoignable, elle doit rougir, pas se sauter en silence (#628,
+    // P2-5). Ce drapeau n'est lu QUE par le test, jamais par le code produit.
+    process.env['NODAL_SANDBOX_REQUIRE_PROXY'] = '1';
     shLive('pnpm test');
     return 'suite verte';
   });

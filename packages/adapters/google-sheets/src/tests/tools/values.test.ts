@@ -138,10 +138,6 @@ describe('sheets_read_range', () => {
     expect(sheets.spreadsheets.values.get).toHaveBeenCalled();
     expect(result.rows).toBe(3);
   });
-
-  it('has riskLevel read', () => {
-    expect(createReadRangeTool(sheets).riskLevel).toBe('read');
-  });
 });
 
 // ── sheets_read_all ────────────────────────────────────────────────────────
@@ -208,10 +204,6 @@ describe('sheets_read_all', () => {
       tool.execute({ spreadsheet_id: 'abc', sheet_name: 'Sheet1' }, {} as never),
     ).rejects.toMatchObject({ code: 'sheets_range_too_large' });
   });
-
-  it('has riskLevel read', () => {
-    expect(createReadAllTool(sheets).riskLevel).toBe('read');
-  });
 });
 
 // ── sheets_batch_read_ranges ───────────────────────────────────────────────
@@ -256,10 +248,6 @@ describe('sheets_batch_read_ranges', () => {
     await expect(
       tool.execute({ spreadsheet_id: 'abc', ranges: ['A1:B2'] }, {} as never),
     ).rejects.toMatchObject({ code: 'sheets_unauthorized' });
-  });
-
-  it('has riskLevel read', () => {
-    expect(createBatchReadRangesTool(sheets).riskLevel).toBe('read');
   });
 });
 
@@ -308,10 +296,6 @@ describe('sheets_write_range', () => {
       tool.execute({ spreadsheet_id: 'abc', range: '', values: [['x']] }, {} as never),
     ).rejects.toMatchObject({ code: 'sheets_invalid_range' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createWriteRangeTool(sheets).riskLevel).toBe('write');
-  });
 });
 
 // ── sheets_append_row ──────────────────────────────────────────────────────
@@ -345,10 +329,6 @@ describe('sheets_append_row', () => {
       tool.execute({ spreadsheet_id: 'abc', range: 'Sheet1', values: [['x']] }, {} as never),
     ).rejects.toMatchObject({ code: 'sheets_forbidden' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createAppendRowTool(sheets).riskLevel).toBe('write');
-  });
 });
 
 // ── sheets_clear_range ─────────────────────────────────────────────────────
@@ -380,10 +360,6 @@ describe('sheets_clear_range', () => {
     await expect(
       tool.execute({ spreadsheet_id: 'abc', range: 'A1:B2' }, {} as never),
     ).rejects.toMatchObject({ code: 'sheets_unauthorized' });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createClearRangeTool(sheets).riskLevel).toBe('write');
   });
 });
 
@@ -439,10 +415,6 @@ describe('sheets_batch_update_values', () => {
         {} as never,
       ),
     ).rejects.toMatchObject({ code: 'sheets_rate_limited' });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createBatchUpdateValuesTool(sheets).riskLevel).toBe('write');
   });
 });
 
@@ -576,10 +548,6 @@ describe('sheets_find_rows', () => {
     );
     expect(result.rowCount).toBe(0);
     expect(result.rows).toHaveLength(0);
-  });
-
-  it('has riskLevel read', () => {
-    expect(createFindRowsTool(sheets).riskLevel).toBe('read');
   });
 });
 

@@ -98,10 +98,6 @@ describe('notion_get_page', () => {
       code: 'notion_not_found',
     });
   });
-
-  it('has riskLevel read', () => {
-    expect(createGetPageTool(client).riskLevel).toBe('read');
-  });
 });
 
 // ── notion_get_page_content ───────────────────────────────────────────────────
@@ -192,10 +188,6 @@ describe('notion_get_page_content', () => {
       code: 'notion_rate_limited',
     });
   });
-
-  it('has riskLevel read', () => {
-    expect(createGetPageContentTool(client).riskLevel).toBe('read');
-  });
 });
 
 // ── notion_create_page ────────────────────────────────────────────────────────
@@ -270,10 +262,6 @@ describe('notion_create_page', () => {
       tool.execute({ parent_page_id: 'p1', title: 'Fail' }, {} as never),
     ).rejects.toMatchObject({ code: 'notion_unauthorized' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createCreatePageTool(client).riskLevel).toBe('write');
-  });
 });
 
 // ── notion_update_page ────────────────────────────────────────────────────────
@@ -319,10 +307,6 @@ describe('notion_update_page', () => {
       tool.execute({ page_id: 'missing', properties: { x: 'y' } }, {} as never),
     ).rejects.toMatchObject({ code: 'notion_not_found' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createUpdatePageTool(client).riskLevel).toBe('write');
-  });
 });
 
 // ── notion_archive_page ───────────────────────────────────────────────────────
@@ -358,9 +342,5 @@ describe('notion_archive_page', () => {
     await expect(tool.execute({ page_id: 'x' }, {} as never)).rejects.toMatchObject({
       code: 'notion_unauthorized',
     });
-  });
-
-  it('has riskLevel destructive', () => {
-    expect(createArchivePageTool(client).riskLevel).toBe('destructive');
   });
 });

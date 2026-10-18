@@ -219,12 +219,14 @@ export async function runReflection(
     // on REFLECTION_MODEL it is translated per that model's own control.
     reflectionModel !== undefined
       ? {
+          entityId,
           llmKeyId: agentRow.llmKeyId,
           fallbackChain: null,
           model: reflectionModel,
           reasoningEffort: agentRow.reasoningEffort ?? null,
         }
       : {
+          entityId,
           llmKeyId: agentRow.llmKeyId,
           fallbackChain: agentRow.fallbackChain ?? null,
           model: agentRow.model ?? '',

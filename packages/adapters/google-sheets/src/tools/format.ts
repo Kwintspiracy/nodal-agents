@@ -2,7 +2,7 @@
 // format_range, resize_columns, freeze_panes
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { sheets_v4 } from 'googleapis';
 import { mapSheetsError, SheetsAdapterError } from '../errors';
 import {
@@ -77,14 +77,13 @@ export type FormatRangeOutput = {
 
 export function createFormatRangeTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof FormatRangeInput, FormatRangeOutput> {
+): ConnectorToolDefinition<typeof FormatRangeInput, FormatRangeOutput> {
   return {
     name: 'sheets_format_range',
     description:
       'Apply formatting to a cell range in a Google Sheet: bold, italic, font size, background color, ' +
       'text color, number format, and alignment. Uses zero-based row/column indices.',
     inputSchema: FormatRangeInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const format: sheets_v4.Schema$CellFormat = {};
@@ -203,14 +202,13 @@ export type ResizeColumnsOutput = {
 
 export function createResizeColumnsTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof ResizeColumnsInput, ResizeColumnsOutput> {
+): ConnectorToolDefinition<typeof ResizeColumnsInput, ResizeColumnsOutput> {
   return {
     name: 'sheets_resize_columns',
     description:
       'Resize columns in a Google Sheet. Provide pixel_size for a fixed width, ' +
       'or omit to auto-resize columns to fit their content.',
     inputSchema: ResizeColumnsInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const request =
@@ -271,14 +269,13 @@ export type FreezePanesOutput = {
 
 export function createFreezePanesTool(
   sheets: sheets_v4.Sheets,
-): ToolDefinition<typeof FreezePanesInput, FreezePanesOutput> {
+): ConnectorToolDefinition<typeof FreezePanesInput, FreezePanesOutput> {
   return {
     name: 'sheets_freeze_panes',
     description:
       'Freeze rows and/or columns in a Google Sheet so they stay visible while scrolling. ' +
       'Set frozen_row_count=1 to freeze the header row. Set to 0 to unfreeze.',
     inputSchema: FreezePanesInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const frozenRows = input.frozen_row_count ?? 0;

@@ -100,8 +100,4 @@ describe('drive_export_file', () => {
       tool.execute({ file_id: 'x', mime_type: 'text/plain' }, {} as never),
     ).rejects.toMatchObject({ code: 'drive_forbidden' });
   });
-
-  it('has riskLevel read', () => {
-    expect(createExportFileTool(drive).riskLevel).toBe('read');
-  });
 });

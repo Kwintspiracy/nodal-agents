@@ -7,7 +7,7 @@ Nodal-Agents is self-hosted by design. The npm package bundles everything: an em
 
 ## Install
 
-Requires **Node 22+**.
+Requires **Node 24+**.
 
 ```bash
 npm install -g nodal-agents
@@ -15,10 +15,9 @@ nodal-agents up
 ```
 
 If npm answers with `npm warn allow-scripts …`, it skipped the install step of
-the packages it lists. One of them matters: approve
-`@embedded-postgres/<platform>` and install again. See
-[Getting Started](/docs/getting-started#if-npm-asks-you-to-approve-install-scripts)
-for the exact commands.
+the packages it lists. Nothing needs approving: `nodal-agents up` does what the
+database package's step would have done. See
+[Getting Started](/docs/getting-started#if-npm-prints-an-allow-scripts-warning).
 
 The first run launches an interactive setup wizard that asks for:
 
@@ -41,7 +40,7 @@ If a configured port is occupied on startup, `nodal-agents up` automatically rot
 
 ## Data directory
 
-All persistent data lives at `~/.nodalai/`:
+All persistent data lives at `~/.nodalai/`, or in the folder the `NODALAI_HOME` environment variable names (an absolute path). To run a second, separate instance next to your own, see [Running a second instance](/docs/reference/cli#running-a-second-instance).
 
 ```
 ~/.nodalai/

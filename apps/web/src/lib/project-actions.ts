@@ -25,6 +25,7 @@ import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
 // L'aplatissement LEXICAL d'un chemin (`.` et `..`), par la plateforme.
 import { normalize as posixNormalize } from 'node:path/posix';
 import { initGitRepository } from './project-git.ts';
+import { withNodalPrograms } from '@nodal-agents/sandbox';
 // La règle du projet LISTÉ, partagée par la barre latérale et par la page.
 import {
   excludedPathsWhere,
@@ -1605,7 +1606,7 @@ export async function createProjectAction(
     // et l'écran dira que rien n'a été posé (invariant #4).
     let gitInitializedAt: Date | null = null;
     if (input.initGit) {
-      const pose = await initGitRepository(path);
+      const pose = await withNodalPrograms((programs) => initGitRepository(path, programs));
       if (pose.kind === 'initialised') gitInitializedAt = new Date();
       else if (pose.kind === 'failed') {
         console.warn(`[projects] PROJECT_GIT_INIT_FAILED key=${key} reason=${pose.reason}`);

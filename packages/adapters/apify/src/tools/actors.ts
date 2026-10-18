@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-apify — actor run tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { ApifyClient } from '../client.ts';
 import { wrapApifyError } from '../errors.ts';
 
@@ -102,13 +102,12 @@ function normalizeBrowseItem(raw: unknown): WebBrowseResult {
  */
 export function makeApifyWebBrowseTool(
   client: ApifyClient,
-): ToolDefinition<typeof WebBrowseInput, WebBrowseOutput> {
+): ConnectorToolDefinition<typeof WebBrowseInput, WebBrowseOutput> {
   return {
     name: 'apify_web_browse',
     description:
       'Scrape a web page or run a web search and get the content back in ONE call (synchronous — no polling). Pass a URL to scrape that page, or search terms to get the top results. Use this as the DEFAULT web tool. Consumes a small amount of Apify credits per call.',
     inputSchema: WebBrowseInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const run = await client.actor('apify/rag-web-browser').call(
@@ -183,13 +182,12 @@ export type RunActorOutput = {
  */
 export function makeApifyRunActorTool(
   client: ApifyClient,
-): ToolDefinition<typeof RunActorInput, RunActorOutput> {
+): ConnectorToolDefinition<typeof RunActorInput, RunActorOutput> {
   return {
     name: 'apify_run_actor',
     description:
       'Start an Apify actor run and wait for it to finish (blocking, bounded — default 30 min, override with waitSecs). Returns the run ID, output dataset ID, and final status (which may still be RUNNING if the wait elapsed first). This tool consumes Apify platform credits — use apify_get_dataset_items to retrieve results after the run succeeds.',
     inputSchema: RunActorInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const run = await client.actor(input.actorId).call(input.input, {
@@ -225,13 +223,12 @@ export type GetRunOutput = {
 
 export function makeApifyGetRunTool(
   client: ApifyClient,
-): ToolDefinition<typeof GetRunInput, GetRunOutput> {
+): ConnectorToolDefinition<typeof GetRunInput, GetRunOutput> {
   return {
     name: 'apify_get_run',
     description:
       'Retrieve metadata for an Apify actor run by its run ID. Returns status, actor ID, dataset ID, and timestamps.',
     inputSchema: GetRunInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const run = await client.run(input.runId).get();

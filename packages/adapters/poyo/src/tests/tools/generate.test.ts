@@ -19,7 +19,6 @@ describe('makePoyoGenerateImageTool', () => {
   it('exposes the right name and risk level', () => {
     const tool = makePoyoGenerateImageTool(makeClient(), FAST);
     expect(tool.name).toBe('poyo_generate_image');
-    expect(tool.riskLevel).toBe('write');
   });
 
   it('submits model+prompt+size (defaults applied) and returns the finished image URLs', async () => {

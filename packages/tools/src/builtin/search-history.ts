@@ -49,6 +49,7 @@ export const searchHistoryTool: ToolDefinition<typeof SearchHistoryInputSchema, 
     'limit — reach for it when the answer is likely in past work but not in your injected memory.',
   inputSchema: SearchHistoryInputSchema,
   riskLevel: 'read',
+  egress: 'none',
   card: 'search',
   present: ({ input, output }) =>
     searchCard({

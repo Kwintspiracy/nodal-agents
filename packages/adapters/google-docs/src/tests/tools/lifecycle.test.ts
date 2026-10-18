@@ -75,10 +75,6 @@ describe('docs_create', () => {
       code: 'docs_forbidden',
     });
   });
-
-  it('has riskLevel write', () => {
-    expect(createCreateDocTool(docs).riskLevel).toBe('write');
-  });
 });
 
 // ── docs_get ───────────────────────────────────────────────────────────────
@@ -219,10 +215,6 @@ describe('docs_get', () => {
       code: 'docs_document_too_large',
     });
   });
-
-  it('has riskLevel read', () => {
-    expect(createGetDocTool(docs).riskLevel).toBe('read');
-  });
 });
 
 // ── docs_get_text ──────────────────────────────────────────────────────────
@@ -318,9 +310,5 @@ describe('docs_get_text', () => {
     await expect(tool.execute({ document_id: 'missing' }, {} as never)).rejects.toMatchObject({
       code: 'docs_not_found',
     });
-  });
-
-  it('has riskLevel read', () => {
-    expect(createGetDocTextTool(docs).riskLevel).toBe('read');
   });
 });

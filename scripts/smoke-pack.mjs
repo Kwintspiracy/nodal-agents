@@ -38,10 +38,13 @@ import {
   writeFileSync,
   rmSync,
   readdirSync,
+  openSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { isolatedNodalEnv } from './lib/nodal-home.mjs';
 import { fileURLToPath } from 'node:url';
+import { findGitDependencySpecs, formatGitDependencySpecs } from './lib/git-dependency-specs.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packDir = join(repoRoot, 'pack');
@@ -88,19 +91,72 @@ const homeDir = join(sandbox, 'home');
 mkdirSync(installDir, { recursive: true });
 mkdirSync(homeDir, { recursive: true });
 
-const env = { ...process.env, HOME: homeDir, USERPROFILE: homeDir };
+// NODALAI_HOME posé sous ce dossier, et les variables étroites du shell retirées :
+// sans cela, un développeur qui en porte une enverrait l'essai dans SON instance.
+const env = isolatedNodalEnv(process.env, homeDir);
+const nodalDir = env.NODALAI_HOME;
+const upLog = join(sandbox, 'up.log');
 let failure = null;
 
 try {
-  step(`Installing into ${installDir}`);
+  // ── 3a. The install that boots is made WITHOUT git ───────────────────────
+  // 0.9.6 installed only where git exists: @whiskeysockets/baileys declared
+  // libsignal as a git URL, and npm failed with `spawn git ENOENT` on every
+  // machine without git. CI runners have git, so the install passed here and
+  // broke for users. npm runs git through its `git` setting; naming a command
+  // that exists nowhere is what a machine without git looks like to npm (the
+  // same `spawn … ENOENT`), on every OS. Stripping git from PATH is not
+  // portable: on Linux /usr/bin holds git next to the sh npm runs scripts with.
+  //
+  // The npm doing it is the one a user has: NODAL_SMOKE_NPM=<version|tag>
+  // installs with that npm (`npx npm@<it>`), else the npm on PATH. The CI runs
+  // both the npm of the current Node LTS and npm latest: a registry change that
+  // breaks an npm users have (16/10/2026: vitest 4.1.12 crashed every npm below
+  // 11.6.0 inside better-auth's optional peers) turns CI red, not their install.
+  const npm = process.env.NODAL_SMOKE_NPM ? `npx -y npm@${process.env.NODAL_SMOKE_NPM}` : 'npm';
+  const npmVersion = execSync(`${npm} --version`, { encoding: 'utf-8' }).trim();
+  const NO_GIT = 'nodal-smoke-no-git';
+  step(`Installing into ${installDir} with npm ${npmVersion}, git unavailable to npm`);
   execSync('npm init -y', { cwd: installDir, stdio: 'ignore' });
-  execSync(`npm install "${join(packDir, tarball)}" --no-audit --no-fund --loglevel=error`, {
-    cwd: installDir,
-    stdio: 'inherit',
-  });
+  try {
+    execSync(`${npm} install "${join(packDir, tarball)}" --no-audit --no-fund --loglevel=error`, {
+      cwd: installDir,
+      stdio: 'pipe',
+      encoding: 'utf-8',
+      env: { ...process.env, npm_config_git: NO_GIT },
+    });
+  } catch (e) {
+    const output = `${e.stdout ?? ''}${e.stderr ?? ''}`;
+    process.stderr.write(output);
+    if (output.includes(`spawn ${NO_GIT}`)) {
+      throw new Error(
+        'the tarball needs git to install: npm tried to run git for a dependency, ' +
+          'and a machine without git fails right here (`spawn git ENOENT`)',
+      );
+    }
+    throw new Error(`npm ${npmVersion} cannot install the tarball (see its output above)`);
+  }
 
   const cli = join(installDir, 'node_modules', 'nodal-agents', 'cli.js');
   if (!existsSync(cli)) throw new Error(`installed package has no cli.js at ${cli}`);
+
+  // ── 3b. No dependency resolved through git ────────────────────────────────
+  // Scanned on a second install made WITH git, where every package is present:
+  // without git npm drops an optional dependency that needs it in silence, so
+  // the scan of the install above would never see it.
+  const withGitDir = join(sandbox, 'install-with-git');
+  step(`No dependency resolved through git (scan of an install made with git)`);
+  mkdirSync(withGitDir, { recursive: true });
+  execSync('npm init -y', { cwd: withGitDir, stdio: 'ignore' });
+  execSync(`${npm} install "${join(packDir, tarball)}" --no-audit --no-fund --loglevel=error`, {
+    cwd: withGitDir,
+    stdio: 'inherit',
+  });
+  const gitReport = formatGitDependencySpecs(
+    findGitDependencySpecs(join(withGitDir, 'node_modules')),
+  );
+  if (gitReport) throw new Error(gitReport);
+  console.log('  ✔ every installed dependency comes from the registry');
 
   // ── 4. Dependency + chunk integrity on the INSTALLED tree ──────────────────
   step('verify-install (deps resolve, chunks present)');
@@ -113,13 +169,49 @@ try {
     { stdio: 'inherit' },
   );
 
+  // ── 4b. The Windows sandbox carrier never lands on Linux (#628, D3) ────────
+  // `nodal-agents-sandbox-windows` is `"os": ["win32"]`, so on this Linux
+  // runner npm must skip it — and with it `@microsoft/mxc-sdk` and the native
+  // `node-pty`. None of the three may appear anywhere in the installed tree.
+  if (process.platform !== 'win32') {
+    step('no Windows-only sandbox deps on Linux (#628)');
+    const nm = join(installDir, 'node_modules');
+    for (const dep of ['nodal-agents-sandbox-windows', '@microsoft/mxc-sdk', 'node-pty']) {
+      const direct = join(nm, ...dep.split('/'));
+      if (existsSync(direct)) {
+        throw new Error(`${dep} was installed on ${process.platform}: ${direct}`);
+      }
+    }
+    // Deep check: not hoisted anywhere under the install either.
+    const offenders = [];
+    const walk = (d, depth) => {
+      if (depth > 6) return;
+      let entries;
+      try {
+        entries = readdirSync(d, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (!e.isDirectory()) continue;
+        if (e.name === 'node-pty' || e.name === 'mxc-sdk') offenders.push(join(d, e.name));
+        if (e.name === 'node_modules' || e.name.startsWith('@')) walk(join(d, e.name), depth + 1);
+      }
+    };
+    walk(nm, 0);
+    if (offenders.length) {
+      throw new Error(`Windows-only sandbox deps found on Linux:\n${offenders.join('\n')}`);
+    }
+    console.log('  none of nodal-agents-sandbox-windows / @microsoft/mxc-sdk / node-pty present ✓');
+  }
+
   // ── 5. Configure ───────────────────────────────────────────────────────────
   step('nodal-agents init --non-interactive');
   execFileSync(process.execPath, [cli, 'init', '--non-interactive'], { env, stdio: 'inherit' });
 
   // Move off the default ports. Written directly rather than via a flag the CLI
   // does not expose; the shape mirrors what `init` produced one line above.
-  const configPath = join(homeDir, '.nodalai', 'config.json');
+  const configPath = join(nodalDir, 'config.json');
   const config = JSON.parse(readFileSync(configPath, 'utf-8'));
   config.ports = PORTS;
   // Loopback + local-trust is the DEFAULT a normal user gets from the wizard,
@@ -134,9 +226,16 @@ try {
   // running. It must be spawned, not exec'd synchronously: the detached children
   // inherit the parent's stdio handles, so `execFileSync(..., 'inherit')` blocks
   // until they die — observed here, hanging for 25 minutes after the boot had
-  // already succeeded. `stdio: 'ignore'` gives the children nothing to hold.
+  // already succeeded. A FILE holds nothing open the way a pipe does, so the
+  // output of `up` goes to one, printed when the boot fails: until 0.9.7 an
+  // `up` that refused to start said why to nobody.
   step('nodal-agents up  ← the gate');
-  const up = spawn(process.execPath, [cli, 'up'], { env, stdio: 'ignore', detached: false });
+  const upLogFd = openSync(upLog, 'w');
+  const up = spawn(process.execPath, [cli, 'up'], {
+    env,
+    stdio: ['ignore', upLogFd, upLogFd],
+    detached: false,
+  });
   // `up` exits 0 once everything is healthy and leaves the services running, so
   // a plain await would hang. Record the code as it arrives and let the probes
   // below decide — a NON-ZERO exit means the boot failed and there is nothing
@@ -189,9 +288,10 @@ try {
 } catch (err) {
   failure = err;
   console.error(`\n❌ Packed install failed to boot: ${err instanceof Error ? err.message : err}`);
-  const webLog = join(homeDir, '.nodalai', 'logs', 'web.log');
-  const runnerLog = join(homeDir, '.nodalai', 'logs', 'runner.log');
+  const webLog = join(nodalDir, 'logs', 'web.log');
+  const runnerLog = join(nodalDir, 'logs', 'runner.log');
   for (const [label, path] of [
+    ['nodal-agents up', upLog],
     ['web.log', webLog],
     ['runner.log', runnerLog],
   ]) {

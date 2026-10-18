@@ -14,6 +14,9 @@
 // lets it run unattended, and the LAN master-switch neutralizes that rule
 // outside local-trust (the runner lists code_task in CODE_EXECUTION_TOOLS).
 
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { delegationCard } from '../../presenters';
@@ -35,6 +38,7 @@ import {
   type NormalizedCliResult,
 } from './providers';
 import { assertSandboxEnforced } from './sandbox';
+import { readWorkspaceMemory } from './workspace-memory';
 import {
   assertAgentBudget,
   assertCliProviderEnabled,
@@ -65,6 +69,16 @@ export {
   CODE_TASK_KEY_PREFIX,
 } from './db';
 export { CLAUDE_READONLY_DISALLOWED } from './providers';
+export {
+  readWorkspaceMemory,
+  findImportTokens,
+  WORKSPACE_MEMORY_MAX_BYTES,
+  WORKSPACE_MEMORY_MAX_IMPORT_DEPTH,
+  WORKSPACE_MEMORY_MAX_RULE_FILES,
+  type WorkspaceMemory,
+  type WorkspaceMemoryFile,
+  type WorkspaceMemoryNote,
+} from './workspace-memory';
 export {
   buildProviderArgs,
   parseClaudeOutput,
@@ -231,6 +245,7 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     `The CLI is a process too: in the task text, name files relative to its working directory or by absolute path. ${PROCESS_PATHS_RULE}`,
   inputSchema: codeTaskSchema,
   riskLevel: 'destructive',
+  egress: 'process',
   // Une DÉLÉGATION, pas des fichiers : la sortie est la réponse finale d'un
   // autre agent (le CLI), son coût, sa durée, son code de sortie — jamais une
   // liste de fichiers ni un diff (revue passe 11 : « `files` décrit quelque
@@ -363,11 +378,6 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
       : ((await findResumableSession(ctx.db, ctx.agentId, input.provider, sessionKey)) ??
         undefined);
 
-    const args = buildProviderArgs(input.provider, mode, {
-      model,
-      effort,
-      ...(resumeSessionId ? { resumeSessionId } : {}),
-    });
     const timeoutMs = (input.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
 
     // One WRITE run per workspace at a time. The lock key is the workspace
@@ -378,7 +388,29 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
       await acquireWorkspaceLock(ctx.db, lockPath, ctx.jobId, ctx.agentId);
     }
 
+    // The workspace's CLAUDE.md files, handed to Claude as text (claude only:
+    // Codex reads its own AGENTS.md). Created inside the try so the finally
+    // removes it whatever happens.
+    let memoryDir: string | null = null;
     try {
+      let memoryFile: string | undefined;
+      if (input.provider === 'claude') {
+        const memory = await readWorkspaceMemory({
+          cwd,
+          roots: (ctx.workspaces ?? []).map((w) => w.path),
+        });
+        if (memory) {
+          memoryDir = await mkdtemp(join(tmpdir(), 'nodal-code-task-'));
+          memoryFile = join(memoryDir, 'project-instructions.txt');
+          await writeFile(memoryFile, memory.text, 'utf8');
+        }
+      }
+      const args = buildProviderArgs(input.provider, mode, {
+        model,
+        effort,
+        ...(resumeSessionId ? { resumeSessionId } : {}),
+        ...(memoryFile ? { appendSystemPromptFile: memoryFile } : {}),
+      });
       // The task travels via stdin — the only injection-safe channel for
       // free text on the Windows .cmd shim path (process.ts).
       // Live audit: each CLI-internal tool call becomes a tool_calls row AS IT
@@ -553,6 +585,7 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
         paths: await processAddressing(ctx.workspaces ?? [], cwd),
       };
     } finally {
+      if (memoryDir) await rm(memoryDir, { recursive: true, force: true }).catch(() => {});
       if (lockPath) {
         await releaseWorkspaceLock(ctx.db, lockPath, ctx.jobId);
       }

@@ -81,10 +81,6 @@ describe('notion_get_block', () => {
       code: 'notion_not_found',
     });
   });
-
-  it('has riskLevel read', () => {
-    expect(createGetBlockTool(client).riskLevel).toBe('read');
-  });
 });
 
 // ── notion_append_blocks ──────────────────────────────────────────────────────
@@ -175,10 +171,6 @@ describe('notion_append_blocks', () => {
       ),
     ).rejects.toMatchObject({ code: 'notion_unauthorized' });
   });
-
-  it('has riskLevel write', () => {
-    expect(createAppendBlocksTool(client).riskLevel).toBe('write');
-  });
 });
 
 // ── notion_update_block ───────────────────────────────────────────────────────
@@ -214,10 +206,6 @@ describe('notion_update_block', () => {
       code: 'notion_not_found',
     });
   });
-
-  it('has riskLevel write', () => {
-    expect(createUpdateBlockTool(client).riskLevel).toBe('write');
-  });
 });
 
 // ── notion_delete_block ───────────────────────────────────────────────────────
@@ -247,9 +235,5 @@ describe('notion_delete_block', () => {
     await expect(tool.execute({ block_id: 'x' }, {} as never)).rejects.toMatchObject({
       code: 'notion_rate_limited',
     });
-  });
-
-  it('has riskLevel destructive', () => {
-    expect(createDeleteBlockTool(client).riskLevel).toBe('destructive');
   });
 });

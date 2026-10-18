@@ -2,7 +2,7 @@
 // docs_insert_paragraph, docs_insert_page_break, docs_insert_table, docs_insert_image
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { docs_v1 } from 'googleapis';
 import { mapDocsError, DocsAdapterError } from '../errors';
 import {
@@ -54,7 +54,7 @@ export type InsertParagraphOutput = {
 
 export function createInsertParagraphTool(
   docs: docs_v1.Docs,
-): ToolDefinition<typeof InsertParagraphInput, InsertParagraphOutput> {
+): ConnectorToolDefinition<typeof InsertParagraphInput, InsertParagraphOutput> {
   return {
     name: 'docs_insert_paragraph',
     description:
@@ -62,7 +62,6 @@ export function createInsertParagraphTool(
       'Optionally apply a named paragraph style (HEADING_1…HEADING_6, TITLE, SUBTITLE, NORMAL_TEXT). ' +
       'A paragraph in Docs is defined by a trailing \\n — this is appended automatically.',
     inputSchema: InsertParagraphInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const insertedText = input.text.endsWith('\n') ? input.text : input.text + '\n';
@@ -109,14 +108,13 @@ export type InsertPageBreakOutput = {
 
 export function createInsertPageBreakTool(
   docs: docs_v1.Docs,
-): ToolDefinition<typeof InsertPageBreakInput, InsertPageBreakOutput> {
+): ConnectorToolDefinition<typeof InsertPageBreakInput, InsertPageBreakOutput> {
   return {
     name: 'docs_insert_page_break',
     description:
       'Insert a page break at a specific index in a Google Document. ' +
       'Useful for separating sections onto distinct pages.',
     inputSchema: InsertPageBreakInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         await docs.documents.batchUpdate({
@@ -155,14 +153,13 @@ export type InsertTableOutput = {
 
 export function createInsertTableTool(
   docs: docs_v1.Docs,
-): ToolDefinition<typeof InsertTableInput, InsertTableOutput> {
+): ConnectorToolDefinition<typeof InsertTableInput, InsertTableOutput> {
   return {
     name: 'docs_insert_table',
     description:
       'Insert a table with N rows × M columns at a specific index in a Google Document. ' +
       'After insertion, use docs_insert_text to populate individual cells.',
     inputSchema: InsertTableInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         await docs.documents.batchUpdate({
@@ -218,14 +215,13 @@ export type InsertImageOutput = {
 
 export function createInsertImageTool(
   docs: docs_v1.Docs,
-): ToolDefinition<typeof InsertImageInput, InsertImageOutput> {
+): ConnectorToolDefinition<typeof InsertImageInput, InsertImageOutput> {
   return {
     name: 'docs_insert_image',
     description:
       'Insert an inline image from a public URL at a specific index in a Google Document. ' +
       'Optionally specify width/height in points. The image URL must be publicly accessible.',
     inputSchema: InsertImageInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         await docs.documents.batchUpdate({

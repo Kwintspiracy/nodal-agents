@@ -9,6 +9,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { hashPassword } from 'better-auth/crypto';
 import type { BetterAuthOptions } from 'better-auth';
 import {
+  asc,
   eq,
   sql,
   users,
@@ -99,11 +100,17 @@ export class LocalAuthProvider implements AuthProvider {
 
     const userId = result.user.id;
 
-    // Map better-auth user id → entity via entity_members table.
+    // Map better-auth user id → entity via entity_members table. A user can
+    // be a member of several workspaces (the dashboard creates them); the
+    // session's DEFAULT is the oldest one, every time — never whichever row
+    // Postgres happens to return first. The active-workspace cookie
+    // (apps/web/src/lib/server.ts applyActiveEntity) overrides it.
     const rows = await this.#db
       .select({ entityId: entityMembers.entityId })
       .from(entityMembers)
-      .where(eq(entityMembers.userId, userId));
+      .innerJoin(entities, eq(entities.id, entityMembers.entityId))
+      .where(eq(entityMembers.userId, userId))
+      .orderBy(asc(entities.createdAt), asc(entities.id));
 
     let entityId: string;
     if (rows.length > 0 && rows[0]) {

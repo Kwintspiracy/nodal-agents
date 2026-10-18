@@ -58,11 +58,6 @@ describe('makeApifyRunActorTool', () => {
     expect(tool.name).toBe('apify_run_actor');
   });
 
-  it('riskLevel is write', () => {
-    const tool = makeApifyRunActorTool(makeClient());
-    expect(tool.riskLevel).toBe('write');
-  });
-
   it('inputSchema requires actorId, input is optional', () => {
     const tool = makeApifyRunActorTool(makeClient());
     expect(() => tool.inputSchema.parse({})).toThrow();
@@ -182,11 +177,6 @@ describe('makeApifyGetRunTool', () => {
     expect(tool.name).toBe('apify_get_run');
   });
 
-  it('riskLevel is read', () => {
-    const tool = makeApifyGetRunTool(makeClient());
-    expect(tool.riskLevel).toBe('read');
-  });
-
   it('inputSchema requires runId', () => {
     const tool = makeApifyGetRunTool(makeClient());
     expect(() => tool.inputSchema.parse({})).toThrow();
@@ -281,11 +271,10 @@ describe('makeApifyWebBrowseTool', () => {
     return { client, actorFn, actorCall, datasetFn, listItems };
   }
 
-  it('tool name is apify_web_browse and riskLevel is read', () => {
+  it('tool name is apify_web_browse', () => {
     const { client } = makeBrowseClient([]);
     const tool = makeApifyWebBrowseTool(client);
     expect(tool.name).toBe('apify_web_browse');
-    expect(tool.riskLevel).toBe('read');
   });
 
   it('inputSchema requires a non-empty query; maxResults optional', () => {

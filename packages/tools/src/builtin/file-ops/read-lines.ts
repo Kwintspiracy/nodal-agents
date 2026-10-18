@@ -14,6 +14,7 @@
 // chunks, and the lines that actually fall inside [startIdx, endIdxCeiling) —
 // never the full line array or the full file content.
 
+import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 
@@ -25,6 +26,8 @@ export interface WindowedLinesResult {
   windowLines: string[];
   /** Total number of lines in the file — identical to `content.split('\n').length`. */
   totalLines: number;
+  /** The sha-256 of every byte the stream read: the whole file, which is always read to its end. */
+  sha256: string;
 }
 
 /**
@@ -74,11 +77,15 @@ export async function readLinesWindowed(
   let bytesRead = 0;
   let aborted = false;
 
+  // Le flux est lu jusqu'au bout (il faut compter les lignes) : son empreinte
+  // est celle de TOUT le fichier lu, rapportée au seam par file_read.
+  const hash = createHash('sha256');
   await new Promise<void>((resolvePromise, reject) => {
     const stream = createReadStream(path, { highWaterMark: chunkBytes });
     stream.on('data', (chunk: Buffer) => {
       if (aborted) return;
       bytesRead += chunk.length;
+      hash.update(chunk);
       if (maxBytes !== undefined && bytesRead > maxBytes) {
         aborted = true;
         stream.destroy();
@@ -117,5 +124,5 @@ export async function readLinesWindowed(
     });
   });
 
-  return { windowLines, totalLines: lineIdx };
+  return { windowLines, totalLines: lineIdx, sha256: hash.digest('hex') };
 }

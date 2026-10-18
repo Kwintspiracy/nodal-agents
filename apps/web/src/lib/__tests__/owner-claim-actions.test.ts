@@ -53,6 +53,7 @@ vi.mock('@nodal-agents/auth', async (importOriginal) => {
 });
 
 vi.mock('@/lib/cli-config.ts', () => ({
+  NODALAI_CONFIG_PATH: '/tmp/test/config.json',
   readNodalaiConfig: () => fakeConfig,
   mergeNodalaiConfig: (patch: Record<string, unknown>) => {
     fakeConfig = { ...fakeConfig, ...patch };

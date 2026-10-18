@@ -27,9 +27,11 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { scanServerChunks, formatMissingChunks } from './lib/next-chunk-integrity.mjs';
 import { pinToInstalledVersions, formatUnresolved } from './lib/pin-runtime-deps.mjs';
+import { packEngines } from './lib/pack-engines.mjs';
 import { shouldPackMigrationFile } from './lib/migration-pack-filter.mjs';
 import { mesurerCommande, verdictPic, plancherPour } from './lib/build-heap-sampler.mjs';
 import { scanTracesOutsideRoot, formatTracesOutsideRoot } from './lib/next-trace-scope.mjs';
+import { findStudioTraces } from './lib/bench-studio-absent.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
@@ -375,6 +377,25 @@ if (!existsSync(docsIndexSrc)) {
 cpSync(docsIndexSrc, resolve(packDir, 'docs-index.json'));
 console.log('✔ Docs index staged: docs-index.json');
 
+// ─── 6c. The Visual C++ runtime for the embedded Postgres on Windows (0.9.7) ─
+// Microsoft's redistributable DLLs, which `up` places next to postgres.exe so
+// that a machine with an old System32 runtime boots without installing
+// anything (apps/cli/src/lib/vc-runtime.ts). Shipped on every platform: the
+// tarball is one for all. Fails loud when a file is missing: `up` would refuse
+// to start on Windows, so the pack must not be built without them.
+const vcRuntimeSrc = resolve(repoRoot, 'apps/cli/vc-runtime/x64');
+const vcRuntimeDlls = ['msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'];
+const vcRuntimeMissing = vcRuntimeDlls.filter((d) => !existsSync(resolve(vcRuntimeSrc, d)));
+if (vcRuntimeMissing.length > 0) {
+  console.error(`✖ apps/cli/vc-runtime/x64 is missing ${vcRuntimeMissing.join(', ')}.`);
+  process.exit(1);
+}
+mkdirSync(resolve(packDir, 'vc-runtime/x64'), { recursive: true });
+for (const dll of vcRuntimeDlls) {
+  cpSync(resolve(vcRuntimeSrc, dll), resolve(packDir, 'vc-runtime/x64', dll));
+}
+console.log(`✔ VC++ runtime staged: vc-runtime/x64 (${vcRuntimeDlls.join(', ')})`);
+
 // ─── 7. Pack package.json ───────────────────────────────────────────────────
 // Runtime deps only. The versions written below are RANGES for readability, but
 // every one of them is rewritten to the EXACT installed version by
@@ -400,10 +421,16 @@ const packPkg = {
     'nodal-agents': './cli.js',
   },
   type: 'module',
-  engines: {
-    node: '>=22',
-  },
-  files: ['cli.js', 'runner.js', 'web/**', 'migrations/**', 'docs-index.json', 'README.md'],
+  engines: packEngines(repoRoot),
+  files: [
+    'cli.js',
+    'runner.js',
+    'web/**',
+    'migrations/**',
+    'vc-runtime/**',
+    'docs-index.json',
+    'README.md',
+  ],
   dependencies: {
     // ── CLI deps
     chalk: '^5.4.1',
@@ -459,10 +486,18 @@ const packPkg = {
     // runner still boots fine (it bundles its own copies) — caught live on
     // the 0.7.8 pack ritual, invisible to verify-install until declared.)
     'discord.js': '^14.26.5',
-    // EXACT pin, no caret: ^6.7.23 resolves to 6.17.16 (chronologically OLDER
-    // despite the higher number), deprecated with a message-spoofing CVE.
-    // Mirrors packages/delivery/package.json.
-    '@whiskeysockets/baileys': '6.7.23',
+    // NOT @whiskeysockets/baileys (0.9.7). 6.7.x declares libsignal as a git
+    // URL, so installing it from npm spawns git: 0.9.6 failed with
+    // `spawn git ENOENT` on every machine without it. The runner bundle
+    // (apps/runner/build.mjs) inlines baileys and libsignal; the dashboard only
+    // imports the delivery package, which loads baileys when a socket opens
+    // (packages/delivery/src/channels/whatsapp/socket-manager.ts), and never
+    // opens one. smoke-pack.mjs refuses any git-resolved dependency.
+    //
+    // pino: imported by that same delivery package at module load, so every
+    // dashboard route requires it. It used to resolve only because baileys
+    // brought it in transitively; declared now that baileys is gone.
+    pino: '^9.6.0',
     // ── Web deps (Next.js standalone server requires these at runtime)
     next: '^16.2.6',
     react: '19.2.4',
@@ -474,6 +509,26 @@ const packPkg = {
     // dependency declaration. **Not a runtime risk** — we ship a
     // pre-built .next/ and postcss is build-only. Drops to clean
     // when Next 16.3 stable releases (currently canary).
+  },
+  // OS sandbox, Windows backend (#628, D3): Microsoft MXC, carried by a
+  // Windows-ONLY package. OPTIONAL, exact pin.
+  //
+  // `nodal-agents-sandbox-windows` declares `"os": ["win32"]` and depends on
+  // `@microsoft/mxc-sdk@1.0.0`. npm installs it only on Windows, where the SDK
+  // is hoisted and the runner's `import("@microsoft/mxc-sdk/v1")` resolves it.
+  // On Linux/macOS npm SKIPS it (os mismatch), so neither the SDK nor its
+  // native dependency `node-pty` is fetched or compiled — no node-gyp, no C
+  // toolchain, no install failure. The runner then reports
+  // SANDBOX_BACKEND_MISSING at boot (the state the D2 banner reads).
+  //
+  // Why the indirection: declaring `@microsoft/mxc-sdk` DIRECTLY as optional
+  // still made npm TRY it on Linux (fetch node-pty, attempt a build, drop it)
+  // — slow and noisy. `"os"` only gates a DEPENDENCY, not an inline package,
+  // so the gate needs its own published package. Published by Quentin from
+  // packaging/sandbox-windows/ (its README has the steps); the version here
+  // and there move together when the SDK is upgraded. Not pinned by §7a.
+  optionalDependencies: {
+    'nodal-agents-sandbox-windows': '1.0.0',
   },
   // Ship exceljs INSIDE the tarball instead of letting `npm install -g` fetch it.
   // exceljs is stale and drags in deprecated transitives (glob@7 "security",
@@ -547,6 +602,23 @@ if (bundled.length > 0) {
 // ─── 8. README ──────────────────────────────────────────────────────────────
 if (existsSync(resolve(repoRoot, 'README.md'))) {
   cpSync(resolve(repoRoot, 'README.md'), resolve(packDir, 'README.md'));
+}
+
+// ─── 8a. Bench Studio absent ────────────────────────────────────────────────
+//
+// Bench Studio (`pnpm bench:studio`) est l'outil LOCAL du propriétaire : ses
+// routes ne sont des routes qu'en mode studio (apps/web/next.config.ts), et un
+// build de production dans ce mode est refusé. Ce qui sort ici est vérifié
+// quand même, sur le pack lui-même : c'est lui que npm publiera. Le smoke-test
+// du pack (CI pack-smoke, release:check) passe par ce script.
+{
+  const traces = findStudioTraces(packDir);
+  if (traces.length > 0) {
+    throw new Error(
+      `Bench Studio is in the pack; it is a local tool and must never ship:\n${traces.map((t) => `  ${t}`).join('\n')}`,
+    );
+  }
+  console.log('\n✔ No Bench Studio trace in the pack');
 }
 
 // ─── 8b. Size gate ──────────────────────────────────────────────────────────

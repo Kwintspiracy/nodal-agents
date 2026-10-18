@@ -5,8 +5,16 @@ import ora from 'ora';
 import open from 'open';
 import { randomBytes } from 'crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { readConfig, writeConfig, LOG_DIR, PG_DATA_DIR, type Config } from '../lib/config.ts';
+import { dirname, join } from 'node:path';
+import {
+  readConfig,
+  writeConfig,
+  ensureConfigDir,
+  CONFIG_FILE,
+  LOG_DIR,
+  PG_DATA_DIR,
+  type Config,
+} from '../lib/config.ts';
 import {
   startEmbeddedPostgres,
   runMigrations,
@@ -19,8 +27,11 @@ import {
 } from '../lib/postgres.ts';
 import {
   probeEmbeddedPostgres,
+  hydrateEmbeddedPostgres,
+  loadPlatformBinaries,
   EmbeddedPostgresUnavailableError,
 } from '../lib/embedded-postgres-binaries.ts';
+import { ensureVcRuntime, formatVersion, shippedVcRuntimeDir } from '../lib/vc-runtime.ts';
 import { seedDefaultUserEntityAgent } from '../lib/seed.ts';
 import {
   buildEnvForRunner,
@@ -181,9 +192,38 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // couches plus bas, sans jamais nommer la porte `allowScripts` des npm
   // récents ni la commande qui la lève. Le détail du constat est dans
   // lib/embedded-postgres-binaries.ts.
-  const binaries = await probeEmbeddedPostgres();
+  let binaries = await probeEmbeddedPostgres();
+  // npm 11.17+ no longer runs install scripts unapproved: the library links the
+  // package's postinstall would create are created here instead, then the
+  // install is read again (0.9.7, lib/embedded-postgres-binaries.ts).
+  if (!binaries.ok && binaries.reason === 'HYDRATION_SKIPPED') {
+    await hydrateEmbeddedPostgres();
+    binaries = await probeEmbeddedPostgres();
+  }
   if (!binaries.ok) {
     throw new EmbeddedPostgresUnavailableError(binaries.reason, binaries.message);
+  }
+
+  // ── 0b. Windows: the VC++ runtime the database binaries need (0.9.7) ──────
+  //
+  // Placed next to postgres.exe from the copy the pack carries, so that a
+  // machine with an old System32 runtime boots without installing anything.
+  // Why, measured, and the fallback: lib/vc-runtime.ts.
+  if (process.platform === 'win32') {
+    const platform = await loadPlatformBinaries();
+    if (platform !== null) {
+      const outcome = ensureVcRuntime({
+        binDir: dirname(platform.postgres),
+        shippedDir: shippedVcRuntimeDir(),
+        systemDir: join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32'),
+      });
+      if (outcome.kind === 'system') {
+        console.log(
+          `  Visual C++ runtime: using the system's ${formatVersion(outcome.version)} ` +
+            `(could not place Nodal's copy: ${outcome.copyError})`,
+        );
+      }
+    }
   }
 
   // ── 1. Load config (write a no-friction default if missing) ───────────────
@@ -215,6 +255,13 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     writeConfig(defaultConfig);
     config = defaultConfig;
   }
+
+  // ── 1.1 Open this instance's home (NODALAI_HOME) ─────────────────────────
+  // Every boot, not only the first: an existing config writes nothing, and the
+  // home must still be declared in the per-user registry before Postgres or
+  // the runner touch it (packages/shared/src/nodal-instances.ts, openNodalHome).
+  // A failure stops `up`.
+  ensureConfigDir();
 
   // Fail fast on a dangerous config combination (local-trust + LAN bind =
   // unauthenticated RCE surface) BEFORE starting Postgres or spawning any
@@ -369,7 +416,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     throw new Error(
       `Port conflict with a process that is not ours:\n${lines}\n\n` +
         `  Nodal-Agents will not kill a process it did not start — it could be your own\n` +
-        `  work. Stop it yourself, or change the port in ~/.nodalai/config.json.`,
+        `  work. Stop it yourself, or change the port in ${CONFIG_FILE}.`,
     );
   }
 
@@ -685,7 +732,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       console.log(line.trimStart().startsWith('-') ? chalk.gray(line) : chalk.yellow(line));
     }
     writeConfig(config);
-    console.log(chalk.gray('  Updated ~/.nodalai/config.json.\n'));
+    console.log(chalk.gray(`  Updated ${CONFIG_FILE}.\n`));
   }
 
   // Now that ports are finalised, derive the user-facing URLs.

@@ -31,10 +31,9 @@ const mockCtx = {} as ToolContext;
 describe('makeTavilySearchTool', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('returns tool with correct name and riskLevel', () => {
+  it('returns tool with correct name', () => {
     const tool = makeTavilySearchTool(makeClient());
     expect(tool.name).toBe('tavily_search');
-    expect(tool.riskLevel).toBe('read');
   });
 
   it('passes query and options to client.search and maps response', async () => {
@@ -187,10 +186,9 @@ describe('makeTavilySearchTool', () => {
 describe('makeTavilyExtractTool', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('returns tool with correct name and riskLevel', () => {
+  it('returns tool with correct name', () => {
     const tool = makeTavilyExtractTool(makeClient());
     expect(tool.name).toBe('tavily_extract');
-    expect(tool.riskLevel).toBe('read');
   });
 
   it('passes urls and options to client.extract and maps response', async () => {
@@ -302,10 +300,9 @@ describe('makeTavilyExtractTool', () => {
 describe('makeTavilyCrawlTool', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('returns tool with correct name and riskLevel', () => {
+  it('returns tool with correct name', () => {
     const tool = makeTavilyCrawlTool(makeClient());
     expect(tool.name).toBe('tavily_crawl');
-    expect(tool.riskLevel).toBe('read');
   });
 
   it('passes url and options to client.crawl and maps response', async () => {

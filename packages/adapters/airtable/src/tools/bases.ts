@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-airtable — bases and tables tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { AirtableClient } from '../client.ts';
 import { wrapAirtableError } from '../errors.ts';
 
@@ -21,13 +21,12 @@ export type ListBasesOutput = {
 
 export function makeAirtableListBasesTool(
   client: AirtableClient,
-): ToolDefinition<typeof ListBasesInput, ListBasesOutput> {
+): ConnectorToolDefinition<typeof ListBasesInput, ListBasesOutput> {
   return {
     name: 'airtable_list_bases',
     description:
       'List all Airtable bases the integration has access to. Returns base IDs and names needed for other airtable_ tools.',
     inputSchema: ListBasesInput,
-    riskLevel: 'read',
     async execute(_input) {
       try {
         const data = (await client.get('/meta/bases')) as {
@@ -68,13 +67,12 @@ export type ListTablesOutput = {
 
 export function makeAirtableListTablesTool(
   client: AirtableClient,
-): ToolDefinition<typeof ListTablesInput, ListTablesOutput> {
+): ConnectorToolDefinition<typeof ListTablesInput, ListTablesOutput> {
   return {
     name: 'airtable_list_tables',
     description:
       'List all tables in an Airtable base including their field schemas. Use this to discover table IDs and field names before reading or writing records.',
     inputSchema: ListTablesInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const data = (await client.get(`/meta/bases/${input.baseId}/tables`)) as {

@@ -43,7 +43,7 @@ jobs:
     # tout le reste du job tient en ~80 s. Un plafond à 25 min coupait donc les
     # runs à cache froid — c'est ce qui a annulé le job de #87 à 24 min sans
     # qu'aucun test ne soit rouge (issue #89). 24,8 + 30 % = 32,2, arrondi à 35.
-    timeout-minutes: 70
+    timeout-minutes: 76
     steps:
       - uses: actions/checkout@v5
 
@@ -54,7 +54,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
 
       # Turborepo's own cache, persisted between runs, keyed per OS because
@@ -82,6 +82,14 @@ jobs:
       - name: Typecheck
         timeout-minutes: 10
         run: pnpm typecheck
+
+      # Signatures Authenticode des DLL du runtime VC++ : seul Windows sait les
+      # vérifier, et un PowerShell à froid dans la suite unitaire parallèle a
+      # dépassé 80 s (2026-10-17). Étape à part, AVANT « Unit tests », donc sur
+      # un runner qui n'est pas encore saturé.
+      - name: Verify VC++ runtime signatures
+        timeout-minutes: 6
+        run: node scripts/verify-vc-runtime-signatures.mjs
 
       # Le plafond de concurrence turbo (3) vit dans `turbo.json` depuis #292 :
       # `--concurrency` est un drapeau TURBO, et le passer par `pnpm test -- …`

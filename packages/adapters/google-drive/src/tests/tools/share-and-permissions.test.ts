@@ -76,10 +76,6 @@ describe('drive_share_file', () => {
       code: 'drive_forbidden',
     });
   });
-
-  it('has riskLevel write', () => {
-    expect(createShareFileTool(drive).riskLevel).toBe('write');
-  });
 });
 
 // ── drive_list_permissions ────────────────────────────────────────────────────
@@ -137,9 +133,5 @@ describe('drive_list_permissions', () => {
     await expect(tool.execute({ file_id: 'x' }, {} as never)).rejects.toMatchObject({
       code: 'drive_unauthorized',
     });
-  });
-
-  it('has riskLevel read', () => {
-    expect(createListPermissionsTool(drive).riskLevel).toBe('read');
   });
 });

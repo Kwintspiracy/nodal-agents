@@ -5,9 +5,18 @@ description: Install Nodal-Agents and run your first agent in a couple of minute
 
 ## Prerequisites
 
-**Node.js ≥ 22** is required (the package declares `engines: node >= 22`). `npm`
+**Node.js ≥ 24** is required (the package declares `engines: node >= 24`). `npm`
 ships with Node, so if you have a recent Node you already have npm. No external
 Postgres, no Redis, no cloud config.
+
+**npm ≥ 11.6** is required. Older npm versions crash during the install
+(`Cannot read properties of null (reading 'edgesOut')`) on a package published
+upstream on 15 October 2026. Node 24 up to 24.7 ships such an npm.
+Check with `npm -v`, and update npm first if it is older:
+
+```bash
+npm install -g npm@latest
+```
 
 ## Install
 
@@ -19,50 +28,21 @@ nodal-agents up
 Prefer not to install anything globally? `npx nodal-agents up` runs the same
 stack from a one-off download.
 
-### If npm asks you to approve install scripts
+### If npm prints an allow-scripts warning
 
 Recent npm versions do not run a package's install scripts until you approve
 them. On a fresh install you may see this:
 
 ```
-npm warn allow-scripts 4 packages have install scripts not yet covered by allowScripts:
-npm warn allow-scripts   @embedded-postgres/windows-x64@18.3.0-beta.17 (install: (install scripts present))
-npm warn allow-scripts   @whiskeysockets/baileys@6.7.23 (preinstall: node ./engine-requirements.js)
-npm warn allow-scripts   protobufjs@7.6.6 (postinstall: node scripts/postinstall)
+npm warn allow-scripts 2 packages have install scripts not yet covered by allowScripts:
+npm warn allow-scripts   @embedded-postgres/windows-x64@18.3.0-beta.17 (postinstall: node scripts/hydrate-symlinks.js)
 npm warn allow-scripts   tesseract.js@7.0.0 (postinstall: opencollective-postinstall || true)
-npm warn allow-scripts Run npm approve-scripts --allow-scripts-pending to review, or npm approve-scripts <pkg> to allow.
 ```
 
-**Only one of those packages matters.** `@embedded-postgres/<platform>` carries
-the Postgres binaries Nodal boots, and its install step finishes preparing them.
-The other three run fine without their scripts. Approve that one package, then
-install again:
-
-```bash
-npm approve-scripts @embedded-postgres/darwin-arm64
-npm install -g nodal-agents@latest
-```
-
-Use the name for your machine. It is the one npm printed in the warning, and
-there is exactly one per platform: `darwin-arm64` (Apple Silicon), `darwin-x64`
-(Intel Mac), `windows-x64`, or, on Linux, `linux-x64`, `linux-arm64`,
-`linux-arm`, `linux-ia32`, `linux-ppc64`.
-
-<Callout type="info">
-  Skip this if your npm printed no such warning. Older npm has no `approve-scripts` command at all
-  (npm 11.5.2, for one), and nothing to approve.
-</Callout>
-
-**On Windows the gate is harmless.** The published
-`@embedded-postgres/windows-x64` ships the Postgres executables inside the
-tarball, and its install step has nothing to do there: the list of links it
-would recreate is empty. Measured on the registry with
-`npm pack @embedded-postgres/windows-x64@18.3.0-beta.17 --dry-run --json`:
-1502 files, `native/bin/postgres.exe` among them, and a `native/pg-symlinks.json`
-of 2 bytes, which is `[]`. The same file weighs 1100 bytes in the Linux package.
-So if `nodal-agents up` still fails on Windows after that warning, the cause is
-elsewhere. Send the output of `nodal-agents up` with your report rather than
-approving scripts and hoping.
+**There is nothing to approve.** Since 0.9.7 Nodal needs none of these
+scripts. The database package's script only creates library links (none on
+Windows, 14 to 17 on Linux and macOS), and `nodal-agents up` creates them
+itself on first start. The other script only prints a message.
 
 ## First run: the setup wizard
 

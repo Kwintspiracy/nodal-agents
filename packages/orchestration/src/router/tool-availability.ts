@@ -11,7 +11,7 @@
 // for computeToolWhitelist — a false negative here just means no warning;
 // the runner's real gate is what actually enforces availability.
 
-import { eq } from '@nodal-agents/db';
+import { eq, listChannelBindings } from '@nodal-agents/db';
 import {
   agents,
   entities,
@@ -33,6 +33,8 @@ import {
 import { TASK_TOOL_NAMES } from '../planner/task-tool-names';
 import {
   metaToolsForAgent,
+  META_TOOL_BY_GRANT,
+  OUTWARD_GRANTS,
   parseRootGrants,
   META_TOOL_NAMES,
   mcpToolPrefix,
@@ -95,7 +97,36 @@ export async function computeAgentToolNames(
   db: AnyDrizzleDb,
   opts: { hasDeliveryRecipient: boolean },
 ): Promise<Set<string>> {
+  return (await computeAgentToolOrigins(agentId, entityId, db, opts)).names;
+}
+
+/**
+ * A tool of the agent that reaches OUTSIDE Nodal, and through what: a channel
+ * credential (the delivery tools), a connector (a third-party service), an MCP
+ * server, or a root grant whose meta-tool brings a new connector or MCP server
+ * in (`OUTWARD_GRANTS`).
+ */
+export interface OutboundTool {
+  tool: string;
+  origin: 'channel' | 'connector' | 'mcp' | 'grant';
+  /** What lends it: `telegram token`, `discord binding`, a connector or server slug, a grant key. */
+  via: string;
+}
+
+/**
+ * The same computation as `computeAgentToolNames`, with the origin of every
+ * tool that reaches outside Nodal kept on the way. One rule, two readings: the
+ * tool names (B2 brief validation) and the outbound ones (a workspace that must
+ * be able to send nothing, like the bench space, checks it before each trial).
+ */
+export async function computeAgentToolOrigins(
+  agentId: AgentId,
+  entityId: EntityId,
+  db: AnyDrizzleDb,
+  opts: { hasDeliveryRecipient: boolean },
+): Promise<{ names: Set<string>; outbound: OutboundTool[] }> {
   const names = new Set<string>(ALWAYS_ON_TOOLS);
+  const outbound: OutboundTool[] = [];
 
   const [agentRow] = await db
     .select({
@@ -107,8 +138,16 @@ export async function computeAgentToolNames(
     .limit(1);
 
   if (opts.hasDeliveryRecipient) {
-    let deliveryToken = agentRow?.telegramBotToken ?? null;
-    if (!deliveryToken) {
+    // What arms the delivery tools in execute.ts: the agent's own Telegram
+    // token, or an enabled Discord / Slack binding of its own.
+    const credentials: string[] = [];
+    if (agentRow?.telegramBotToken) credentials.push('telegram token');
+    for (const b of await listChannelBindings(db, agentId as string)) {
+      if (b.enabled && (b.channel === 'discord' || b.channel === 'slack')) {
+        credentials.push(`${b.channel} binding`);
+      }
+    }
+    if (!agentRow?.telegramBotToken) {
       // B3 — a delegated worker without its own token inherits the entity's
       // root agent's token. Mirrors execute.ts's resolution exactly (same
       // entity-scoped root lookup), so a brief mentioning send_image for a
@@ -119,10 +158,13 @@ export async function computeAgentToolNames(
         .innerJoin(agents, eq(agents.id, entities.rootAgentId))
         .where(eq(entities.id, entityId as string))
         .limit(1);
-      deliveryToken = rootRow?.telegramBotToken ?? null;
+      if (rootRow?.telegramBotToken) credentials.push("the root agent's telegram token");
     }
-    if (deliveryToken) {
-      for (const n of DELIVERY_TOOL_NAMES) names.add(n);
+    if (credentials.length > 0) {
+      for (const n of DELIVERY_TOOL_NAMES) {
+        names.add(n);
+        for (const via of credentials) outbound.push({ tool: n, origin: 'channel', via });
+      }
     }
   }
 
@@ -157,7 +199,10 @@ export async function computeAgentToolNames(
       r.enabledOperations === null
         ? allToolNames
         : allToolNames.filter((n) => r.enabledOperations!.includes(n));
-    for (const n of kept) names.add(n);
+    for (const n of kept) {
+      names.add(n);
+      outbound.push({ tool: n, origin: 'connector', via: r.slug });
+    }
   }
 
   const mcpRows = await db
@@ -181,7 +226,10 @@ export async function computeAgentToolNames(
       ? new Set((r.enabledTools as unknown[]).filter((n): n is string => typeof n === 'string'))
       : null;
     const kept = enabled === null ? available : available.filter((n) => enabled.has(n));
-    for (const n of kept) names.add(`${prefix}__${n}`);
+    for (const n of kept) {
+      names.add(`${prefix}__${n}`);
+      outbound.push({ tool: `${prefix}__${n}`, origin: 'mcp', via: r.serverSlug });
+    }
   }
 
   // ROOT meta-tools — only relevant when this agent IS the entity's root.
@@ -194,13 +242,21 @@ export async function computeAgentToolNames(
     // Même retrait qu'execute.ts : sans `may_change_team`, les trois outils
     // d'équipe ne sont pas dans la liste (issue #137), donc un brief qui les
     // nomme doit être signalé comme visant un outil indisponible.
-    const metaNames = metaToolsForAgent(parseRootGrants(entityRow.rootGrants), {
+    const grants = parseRootGrants(entityRow.rootGrants);
+    const metaNames = metaToolsForAgent(grants, {
       mayChangeTeam: agentRow?.mayChangeTeam ?? false,
     });
     for (const n of metaNames) names.add(n);
+    for (const grant of OUTWARD_GRANTS) {
+      if (!grants[grant]) continue;
+      const lent: readonly string[] = [META_TOOL_BY_GRANT[grant]].flat();
+      for (const n of lent) {
+        if (metaNames.includes(n)) outbound.push({ tool: n, origin: 'grant', via: grant });
+      }
+    }
   }
 
-  return names;
+  return { names, outbound };
 }
 
 /**

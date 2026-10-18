@@ -195,6 +195,15 @@ import {
   findTaskBoundary,
 } from './state.ts';
 import { holdJobHeartbeat } from './heartbeat.ts';
+import {
+  AWAITING_APPROVAL_MARK,
+  DEFERRED_MARK,
+  EVICTED_TOOL_INPUT_MARKER,
+  EVICTED_TOOL_RESULT_MARKER,
+  EXPIRED_MARK,
+  REJECTED_MARK,
+  toolResultShape,
+} from './tool-result-shape.ts';
 import { unansweredToolCalls } from './close-transcript.ts';
 import {
   APPROVED_CALL_OUTCOME_UNKNOWN,
@@ -217,6 +226,7 @@ import {
   finalizeJobSuccess,
 } from './finalize.ts';
 import type { DeclaredDeliverableFailure } from './finalize.ts';
+import { releaseJobProcessesIfEnded } from './process-scopes.ts';
 import { runnerNotesValue } from './transcript-text.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
@@ -513,10 +523,6 @@ export function raisedErrorBlock(
   );
   return { error: framedForModel(toolName, fitted), ...extra };
 }
-
-const EVICTED_TOOL_RESULT_MARKER =
-  '[earlier tool result elided to fit the context window — re-run the tool if you need this data again]';
-const EVICTED_TOOL_INPUT_MARKER = '[earlier tool-call arguments elided to fit the context window]';
 
 // Only elide a tool-call's INPUT when it's actually large — small args (the
 // common case) cost nothing to keep and eliding them would lose useful signal.
@@ -1372,6 +1378,9 @@ export async function executeJob(
     );
     result = await outcomeFromRow(deps, jobId);
   }
+  // #628 : un job FINI emporte ce que ses commandes ont laissé tourner (un
+  // serveur, un `start /b`) ; suspendu ou remis en file, ils vivent.
+  await releaseJobProcessesIfEnded(deps.db, jobId as string);
   if (
     !opts?.inlineDelegation &&
     (result.status === 'completed' || result.status === 'failed' || result.status === 'cancelled')
@@ -1546,7 +1555,7 @@ export async function maybeResumeParent(
  * `[AWAITING_APPROVAL]`, au même endroit que `[REJECTED]`.
  */
 export const APPROVAL_EXPIRED_TOOL_RESULT =
-  '[EXPIRED] No answer arrived before this request deadline, so it expired. ' +
+  `${EXPIRED_MARK} No answer arrived before this request deadline, so it expired. ` +
   'Nothing was done. Ask again if it is still needed.';
 
 /**
@@ -1835,7 +1844,24 @@ async function runJobTracked(
   // Le job est à nous : il bat, sous cette prise, jusqu'à ce que `runJob` le
   // lâche, quoi qu'il fasse entre les deux — préparation, appel modèle,
   // outils, attente (#565).
-  tenue.lacher = holdJobHeartbeat(db, jobId as string, prise);
+  const lacherBattement = holdJobHeartbeat(db, jobId as string, prise);
+  // Le Stop des OUTILS (#750) : la même veille de la ligne que celle des
+  // appels modèle, ouverte quand les outils d'un tour tournent et fermée avant
+  // l'appel modèle suivant — qui a la sienne : jamais deux relectures de la
+  // ligne en même temps. Quand la ligne ne laisse plus ce run agir — Stop,
+  // annulation, job fauché ou repris —, son signal tombe et la commande en
+  // cours (run_command, run_skill_script) est tuée.
+  let veilleOutils: ReturnType<typeof watchJobRow> | null = null;
+  const signalOutils = (): AbortSignal =>
+    (veilleOutils ??= watchJobRow(db, jobId as string, prise, STOP_POLL_MS)).signal;
+  const fermerVeilleOutils = (): void => {
+    veilleOutils?.stop();
+    veilleOutils = null;
+  };
+  tenue.lacher = () => {
+    fermerVeilleOutils();
+    lacherBattement();
+  };
 
   // Invariant 8: chain_count is bumped on every resume from awaiting_delegation
   // (and would also be bumped on awaiting_approval resume once that path ships).
@@ -2166,6 +2192,7 @@ async function runJobTracked(
     const resolved = await resolveAgentLlmClient(
       db,
       {
+        entityId: agentRow.entityId,
         llmKeyId: agentRow.llmKeyId,
         fallbackChain: agentRow.fallbackChain ?? null,
         model: agent.model,
@@ -3294,6 +3321,8 @@ async function runJobTracked(
                 req.toolInput,
                 {
                   jobId: jobId as string,
+                  // #750 : le Stop du job tue la commande approuvée qui tourne.
+                  signal: signalOutils(),
                   agentId: agentRow.id,
                   entityId: job.entityId ?? '',
                   db,
@@ -3394,7 +3423,7 @@ async function runJobTracked(
         const heldNote =
           held?.success && held.data.length > 0 ? ` ${shellChecklistDeclined(held.data)}` : '';
         replacementOutput = toResultOutput(
-          `[REJECTED] Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.` +
+          `${REJECTED_MARK} Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.` +
             heldNote,
         );
         trace('resume_rejected_tool_marker_replaced', { toolName: req.toolName });
@@ -3437,7 +3466,7 @@ async function runJobTracked(
           if (req.executedAt !== null && tb.toolCallId !== req.toolCallId) return block;
           const outputText =
             tb.output.type === 'text' ? tb.output.value : JSON.stringify(tb.output.value);
-          if (!outputText.includes('[AWAITING_APPROVAL]')) return block;
+          if (!outputText.includes(AWAITING_APPROVAL_MARK)) return block;
           // Replace with the real (or rejection) output.
           return { ...tb, output: replacementOutput };
         });
@@ -3488,7 +3517,7 @@ async function runJobTracked(
       (messages as Array<{ role?: string; content?: unknown }>)
         .filter((m) => m.role === 'tool' && Array.isArray(m.content))
         .flatMap((m) => m.content as Array<{ toolCallId?: string; output?: unknown }>)
-        .filter((p) => JSON.stringify(p.output ?? null).includes('[AWAITING_APPROVAL]'))
+        .filter((p) => JSON.stringify(p.output ?? null).includes(AWAITING_APPROVAL_MARK))
         .map((p) => p.toolCallId),
     );
     const closedElsewhere =
@@ -4594,6 +4623,7 @@ async function runJobTracked(
       // ligne est relue sous la prise de ce run ; toute perte du droit d'agir
       // coupe l'appel, et une ligne illisible JOB_ROW_UNREADABLE_MAX fois
       // d'affilée aussi (invariant #4 : illisible ne vaut pas autorisation).
+      fermerVeilleOutils();
       const veille = watchJobRow(db, jobId as string, prise, STOP_POLL_MS);
       let response: Awaited<ReturnType<typeof llmClient.generateText>>;
       const appelCommenceA = Date.now();
@@ -5065,8 +5095,10 @@ async function runJobTracked(
       // prose ANNONÇANT une action (« Je délègue à Dev-C. ») sans l'appel qui
       // la fait n'a rien fait, et finissait `completed` sur un travail jamais
       // lancé. Le MÊME mécanisme que le chat (llm/action-recheck.ts) : une
-      // relance locale et courte (la tâche, la réponse, la consigne, les
-      // outils du job), jamais le tour rejoué. Si le modèle appelle un outil,
+      // relance locale et courte (la tâche, la réponse, le relevé de ce que le
+      // run a déjà fait, la consigne, les outils du job), jamais le tour
+      // rejoué. Le relevé (#711) : une réponse qui RAPPORTE un envoi fait ne se
+      // relit plus comme la promesse de l'envoyer encore. Si le modèle appelle un outil,
       // ses appels deviennent ceux de CE tour, sous les mêmes gardes (Stop,
       // plafonds de jetons et de coût, 50 appels par tour). Sinon la prose
       // reste la réponse, jugée plus bas comme avant.
@@ -5086,11 +5118,18 @@ async function runJobTracked(
         texteDuTour.trim() !== '' &&
         !approvalPending
       ) {
+        fermerVeilleOutils();
         const veilleRelecture = watchJobRow(db, jobId as string, prise, STOP_POLL_MS);
+        // Ce que CE run a déjà fait depuis sa tâche (#711) : la frontière de
+        // `currentTurnMessages`, SANS son repli sur la transcription entière —
+        // l'historique rejoué avant la tâche n'est pas ce que ce run a fait.
+        // Introuvable, le relevé le dit (déjà tracé : `current_turn_boundary_missing`).
+        const debutDuRun = findTaskBoundary(messages, job.task);
         try {
           relecture = await recheckNarratedAction(llmClient, {
             request: job.task,
             reply: texteDuTour.trim(),
+            run: debutDuRun === -1 ? null : messages.slice(debutDuRun),
             tools: aiSdkTools,
             abortSignal: veilleRelecture.signal,
           });
@@ -5676,6 +5715,8 @@ async function runJobTracked(
       // serial path. Any write/delegation tool in the turn → serial path too.
       const sharedToolCtx = {
         jobId: jobId as string,
+        // #750 : le Stop du job tue la commande que l'outil a lancée.
+        signal: signalOutils(),
         agentId: agentRow.id,
         entityId: job.entityId ?? '',
         db,
@@ -5784,7 +5825,7 @@ async function runJobTracked(
             toolCallId: call.id,
             toolName: call.name,
             output: toResultOutput(
-              '[DEFERRED] a prior action in this turn is awaiting approval; re-issue this call after it resolves.',
+              `${DEFERRED_MARK} a prior action in this turn is awaiting approval; re-issue this call after it resolves.`,
             ),
           });
           continue;
@@ -6190,7 +6231,7 @@ async function runJobTracked(
         }
 
         if (toolResult.outcome === 'awaiting_approval') {
-          const awaitingMarker = `[AWAITING_APPROVAL] tool_call_id=${call.id}`;
+          const awaitingMarker = `${AWAITING_APPROVAL_MARK} tool_call_id=${call.id}`;
           toolResultBlocks.push({
             type: 'tool-result',
             toolCallId: call.id,
@@ -6436,19 +6477,15 @@ async function runJobTracked(
       // AFTER the `{"error":` prefix (elision/truncation both preserve the
       // head), so that prefix survives and is a safe marker to check for text
       // outputs too.
-      const isToolErrorBlock = (block: (typeof toolResultBlocks)[number]): boolean => {
-        if (block.toolName === 'return_result') return false;
-        if (block.output.type === 'json') {
-          const v = block.output.value;
-          if (v === null || typeof v !== 'object') return false;
-          // A mayHaveDelivered send timeout is ambiguous, not a failure to fix:
-          // deferring return_result over it would push the LLM to resend the
-          // (probably delivered) message. Let the turn finalize.
-          if ((v as Record<string, unknown>)['mayHaveDelivered'] === true) return false;
-          return 'error' in (v as Record<string, unknown>);
-        }
-        return block.output.value.startsWith('{"error":');
-      };
+      //
+      // A mayHaveDelivered send timeout is ambiguous, not a failure to fix:
+      // deferring return_result over it would push the LLM to resend the
+      // (probably delivered) message. Let the turn finalize.
+      //
+      // ONE reading of a result's outcome, shared with the re-read's record
+      // of the run (#711, job/tool-result-shape.ts).
+      const isToolErrorBlock = (block: (typeof toolResultBlocks)[number]): boolean =>
+        block.toolName !== 'return_result' && toolResultShape(block.output) === 'error';
 
       const turnHadSiblingToolError =
         returnResultCall !== undefined && toolResultBlocks.some(isToolErrorBlock);

@@ -4,10 +4,10 @@
 
 A self-hosted platform for building and orchestrating a **team of AI agents** on your own hardware — each with its own personality, tools, memory, and model. Talk to them in the dashboard, or on Telegram, Discord, Slack, and WhatsApp; they research, write files, call your connectors, and delegate to each other to get the job done.
 
-**No SaaS lock-in. No per-token markup. No cloud roundtrip.** Two commands to install, runs on any machine with Node 22+ (Mac, Windows, Linux), and works with **any LLM** — frontier or local, paid or free.
+**No SaaS lock-in. No per-token markup. No cloud roundtrip.** Two commands to install, runs on any machine with Node 24+ (Mac, Windows, Linux), and works with **any LLM** — frontier or local, paid or free.
 
 [![npm](https://img.shields.io/npm/v/nodal-agents?color=cb3837&label=npm&logo=npm)](https://www.npmjs.com/package/nodal-agents)
-[![Node](https://img.shields.io/badge/node-22%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/node-24%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Docs](https://img.shields.io/badge/docs-online-3565ff)](https://kwintspiracy.github.io/nodal-agents/)
 [![Changelog](https://img.shields.io/npm/v/nodal-agents?label=changelog&color=d4ff2e)](CHANGELOG.md)
@@ -29,16 +29,15 @@ Run the two commands — **no config files, no account, nothing to answer in the
 
 Or, without installing anything globally: `npx nodal-agents up`.
 
-> Node 22+ · no external Postgres, no Redis, no cloud config · runs locally with no login · data lives in `~/.nodalai/` · stop with `nodal-agents down`
+> Node 24+ · no external Postgres, no Redis, no cloud config · runs locally with no login · data lives in `~/.nodalai/` · stop with `nodal-agents down`
 
-**If npm asks you to approve install scripts.** Recent npm versions print `npm warn allow-scripts …` and skip the install step of the packages they list. Only one of them matters: `@embedded-postgres/<platform>` carries the Postgres binaries Nodal boots. Approve that one, then install again:
+**npm 11.6 or newer is needed.** Older npm versions crash during the install (`Cannot read properties of null (reading 'edgesOut')`) on a package published upstream on 15 October 2026. Check with `npm -v`, and update npm first if it is older:
 
 ```bash
-npm approve-scripts @embedded-postgres/windows-x64   # the name npm printed: darwin-arm64, darwin-x64, windows-x64, or linux-x64 / arm64 / arm / ia32 / ppc64
-npm install -g nodal-agents@latest
+npm install -g npm@latest
 ```
 
-The other packages npm lists run fine without their scripts. On Windows the gate is harmless: that package ships the executables in its tarball and its install step has nothing to recreate, so if `up` still fails there the cause is elsewhere and the output is worth reporting. [Full note in the docs](https://kwintspiracy.github.io/nodal-agents/docs/getting-started).
+**If npm prints `npm warn allow-scripts …`.** Recent npm versions skip the install scripts of the packages they list until you approve them. Nodal needs none of them: since 0.9.7, `nodal-agents up` creates the database's library links itself. There is nothing to approve. [Full note in the docs](https://kwintspiracy.github.io/nodal-agents/docs/getting-started).
 
 ---
 
@@ -155,7 +154,7 @@ pnpm install
 pnpm --filter nodal-agents exec tsx src/index.ts --dev   # hot-reloading dashboard
 ```
 
-**Stack** — Node 22+, TypeScript strict (no `any`), pnpm + Turborepo, embedded-postgres + Drizzle ORM (idempotent migrations), Zod everywhere, Hono (runner) + Next.js (dashboard), the Vercel AI SDK for multi-provider LLM, Vitest + Playwright + dependency-cruiser.
+**Stack** — Node 24+, TypeScript strict (no `any`), pnpm + Turborepo, embedded-postgres + Drizzle ORM (idempotent migrations), Zod everywhere, Hono (runner) + Next.js (dashboard), the Vercel AI SDK for multi-provider LLM, Vitest + Playwright + dependency-cruiser.
 
 **Monorepo**
 

@@ -1,0 +1,1372 @@
+{
+  "activities": [
+    "question",
+    "research",
+    "deep-research",
+    "code",
+    "excel",
+    "word",
+    "powerpoint",
+    "pdf",
+    "image-comfyui",
+    "html-page",
+    "email",
+    "airtable",
+    "notion",
+    "google-workspace",
+    "delivery",
+    "print",
+    "orchestration",
+    "memory"
+  ],
+  "needs": [
+    "comfyui",
+    "obsidian-vault",
+    "bench-printer",
+    "no-mail-sender"
+  ],
+  "measured": [
+    "The path: the tools each job called, by name and in order, and the teammates delegated to",
+    "The questions asked and the approvals requested",
+    "Each link cited: seen or not in a web tool output of the run (#648)",
+    "The duration and the time to the first model reply",
+    "The model calls, the tokens and the cost; the model asked for and the one that answered"
+  ],
+  "renamed": {
+    "deep-research-dna": "deep-research-report",
+    "comfy-portrait": "comfy-exact-size"
+  },
+  "scenarios": [
+    {
+      "id": "question",
+      "version": 1,
+      "activity": "question",
+      "title": "Answer from memory, without a detour",
+      "green": "The answer names Canberra, the root answered itself (no delegation), and nobody was asked anything.",
+      "path": "The root answers alone. No tool is needed.",
+      "deliverable": "The answer, in the conversation",
+      "productTools": null,
+      "subject": null,
+      "set": "nightly",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Quelle est la capitale de l'Australie ?",
+      "timeoutMs": 300000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "agent_jobs: no delegated job (the root answered itself)",
+        "the root's final answer must name Canberra"
+      ],
+      "fixtures": [],
+      "outputs": [],
+      "unverified": []
+    },
+    {
+      "id": "question-weekday",
+      "version": 1,
+      "activity": "question",
+      "title": "Exact calculation: computed or guessed?",
+      "green": "The answer says Tuesday (mardi) and names no other weekday, the root answered itself, and nobody was asked anything.",
+      "path": "The root answers alone. A calculation by a tool (run_command) is expected but not required: the tools it called are measured.",
+      "deliverable": "The answer, in the conversation",
+      "productTools": null,
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Quel jour de la semaine était le 14 juillet 1789 ?",
+      "timeoutMs": 300000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "agent_jobs: no delegated job (the root answered itself)",
+        "the root's final answer must say Tuesday (mardi)",
+        "red if the final answer names another weekday"
+      ],
+      "fixtures": [],
+      "outputs": [],
+      "unverified": []
+    },
+    {
+      "id": "research",
+      "version": 4,
+      "activity": "research",
+      "title": "Find on the web a fact the model does not know",
+      "green": "The root answered itself after calling a web tool, with no delegation; the answer holds the calibrated subject's facts and a web tool output of the run holds them too; it links at least 2 sites and every link it cites was seen in a web tool output; nobody was asked anything. Whether the pages were really read is not verified yet (#648).",
+      "path": "The root alone, with web_search. A delegation is red (decision of 2026-10-17: the specialist is for in-depth research only).",
+      "deliverable": "A sourced answer, with links, in the conversation",
+      "productTools": null,
+      "subject": "research",
+      "set": "nightly",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Trouve sur le web la réponse à cette question, et donne tes sources avec leurs liens : {subject}",
+      "timeoutMs": 1200000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "the subject is the first calibrated subject of kind research (packages/bench/subjects/research-subjects.json); none: skipped (#776)",
+        "agent_jobs: no delegated job (decision of 2026-10-17: a simple research is done by the root)",
+        "tool_calls: the root job called a web tool itself (web_search, tavily_*, firecrawl_*, fetch*, cli:WebSearch…)",
+        "the root's final answer holds every expected fact of the subject",
+        "tool_calls: every expected fact of the calibrated subject is held by a web tool output of the tree (it comes from the web, not the model's memory)",
+        "the final answer links sources on at least 2 different sites (distinct hosts)",
+        "tool_calls: every link cited is seen in the output of a web tool of the tree that did not receive it as input (#648, the measurable part)"
+      ],
+      "fixtures": [],
+      "outputs": [],
+      "unverified": [
+        {
+          "check": "sources read",
+          "reason": "Nothing in the database records which web addresses a run really read; guessing it from tool outputs leaked four times.",
+          "ticket": "#648"
+        }
+      ]
+    },
+    {
+      "id": "deep-research-report",
+      "version": 1,
+      "activity": "deep-research",
+      "title": "In-depth research delivered as a Markdown report",
+      "green": "The research was handed to a teammate who called a web tool; nodal-bench/rapport.md was written during the run with at least 3 section headings and links to 4 different sites, every link seen in a web tool output; it holds the calibrated subject's facts and a web tool output holds them too; nobody was asked anything. Whether the pages were really read is not verified yet (#648).",
+      "path": "Handed to the research specialist, who has the web tools (Firecrawl, Tavily…): the root doing it alone is red. The searches and pages opened are measured.",
+      "deliverable": "nodal-bench/rapport.md",
+      "productTools": null,
+      "subject": "deep-research",
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Fais une recherche approfondie sur {subject}. Écris un rapport complet en Markdown dans nodal-bench/rapport.md de ton espace de travail, organisé en sections avec des titres, et cite au moins quatre sources différentes avec leurs liens.",
+      "timeoutMs": 1800000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "the subject is the first calibrated subject of kind deep-research; none: skipped (#776)",
+        "agent_jobs + tool_calls: the research was handed to a teammate (a delegated job), and a delegated job called a web tool; the root doing it alone is red (decision of 2026-10-17)",
+        "opens nodal-bench/rapport.md in the workspace folders: it must exist and be written during the trial",
+        "at least 3 Markdown headings and links on 4 different sites",
+        "tool_calls: every link cited is seen in the output of a web tool of the tree that did not receive it as input (#648, the measurable part)",
+        "it holds every expected fact of the calibrated subject",
+        "tool_calls: every expected fact of the calibrated subject is held by a web tool output of the tree (it comes from the web, not the model's memory)"
+      ],
+      "fixtures": [],
+      "outputs": [
+        "nodal-bench/rapport.md"
+      ],
+      "unverified": [
+        {
+          "check": "sources read",
+          "reason": "Nothing in the database records which web addresses a run really read; guessing it from tool outputs leaked four times.",
+          "ticket": "#648"
+        }
+      ]
+    },
+    {
+      "id": "deep-research-obsidian",
+      "version": 4,
+      "activity": "deep-research",
+      "title": "The same in-depth research, delivered in Obsidian",
+      "green": "The research was handed to a teammate who called a web tool; a note was written in the vault during the run (in the \"Nodal Bench\" folder or tagged #nodal-bench) with at least 3 section headings and links to 4 different sites, every link seen in a web tool output; it holds the calibrated subject's facts and a web tool output holds them too; nobody was asked anything. Whether the pages were really read is not verified yet (#648).",
+      "path": "The same as the Markdown report (handed to the specialist, the root alone is red), then written in the vault.",
+      "deliverable": "A note in the \"Nodal Bench\" folder of the Obsidian vault",
+      "productTools": null,
+      "subject": "deep-research",
+      "set": "nightly",
+      "needs": [
+        "obsidian-vault"
+      ],
+      "sends": "nothing",
+      "instruction": "Fais une recherche approfondie sur {subject}. Écris le rapport complet comme une note dans mon coffre Obsidian, dans le dossier « Nodal Bench », avec le tag #nodal-bench, organisé en sections avec des titres, et cite au moins quatre sources différentes avec leurs liens.",
+      "timeoutMs": 1800000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "the subject is the first calibrated subject of kind deep-research, the same as the Markdown report; none: skipped (#776)",
+        "agent_jobs + tool_calls: the research was handed to a teammate (a delegated job), and a delegated job called a web tool; the root doing it alone is red (decision of 2026-10-17)",
+        "lists the .md files written during the trial in every workspace folder holding .obsidian/",
+        "the best note (most links, then longest) is in \"Nodal Bench\" or tagged #nodal-bench",
+        "the note: at least 3 Markdown headings and links on 4 different sites",
+        "the note: tool_calls: every link cited is seen in the output of a web tool of the tree that did not receive it as input (#648, the measurable part)",
+        "the note: it holds every expected fact of the calibrated subject",
+        "the note: tool_calls: every expected fact of the calibrated subject is held by a web tool output of the tree (it comes from the web, not the model's memory)"
+      ],
+      "fixtures": [],
+      "outputs": [],
+      "unverified": [
+        {
+          "check": "sources read",
+          "reason": "Nothing in the database records which web addresses a run really read; guessing it from tool outputs leaked four times.",
+          "ticket": "#648"
+        }
+      ]
+    },
+    {
+      "id": "code-bugfix",
+      "version": 1,
+      "activity": "code",
+      "title": "Fix a bug reported by tests",
+      "green": "src/facture.js was changed, every test of nodal-bench/facture-tva passes in the agent's last test run, the test files are untouched, and nobody was asked anything; the bench does not re-run the suite (#753).",
+      "path": "Read, run the tests, fix, run them again. Measured: a command tool or a code CLI (Claude Code, Codex).",
+      "deliverable": "src/facture.js, fixed",
+      "productTools": null,
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Les tests du projet nodal-bench/facture-tva dans l'espace de travail partagé échouent. Trouve et corrige le ou les bugs dans src/facture.js pour que `npm test` passe, sans modifier les tests.",
+      "timeoutMs": 1200000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "the test files of nodal-bench/facture-tva are byte for byte the fixture's (sha-256)",
+        "tool_calls: the agent's last command output that reports EVERY test of the project (TAP or spec lines); each test must have passed, by name: une ligne à 20 % · arrondi au centime le plus proche · une facture vide",
+        "the bench never runs the code itself (no sandbox yet, #753)",
+        "src/facture.js differs from the fixture (the bug file was changed)"
+      ],
+      "fixtures": [
+        {
+          "from": "code/facture-tva",
+          "to": "nodal-bench/facture-tva"
+        }
+      ],
+      "outputs": [],
+      "unverified": [
+        {
+          "check": "tests re-run by the bench",
+          "reason": "The bench never executes agent-written code outside a sandbox: the verdict reads the agent's own last test run, whose output a tool could fake.",
+          "ticket": "#753"
+        }
+      ]
+    },
+    {
+      "id": "code-http-server",
+      "version": 1,
+      "activity": "code",
+      "title": "Write code from a tested specification",
+      "green": "In the agent's last test run every test of nodal-bench/http-somme passes (the suite starts a local HTTP server), the test files are untouched, and nobody was asked anything; the bench does not re-run the suite (#753).",
+      "path": "Read, run the tests, fix, run them again. Measured: a command tool or a code CLI (Claude Code, Codex).",
+      "deliverable": "src/server.js, written",
+      "productTools": null,
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Le projet nodal-bench/http-somme dans l'espace de travail partagé a une suite de tests qui démarre un serveur HTTP local. Implémente src/server.js pour que `npm test` passe, sans modifier les tests.",
+      "timeoutMs": 1200000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "the test files of nodal-bench/http-somme are byte for byte the fixture's (sha-256)",
+        "tool_calls: the agent's last command output that reports EVERY test of the project (TAP or spec lines); each test must have passed, by name: GET /somme additionne a et b · les décimaux et les négatifs · un paramètre qui n'est pas un nombre est une erreur 400 · une autre route répond 404",
+        "the bench never runs the code itself (no sandbox yet, #753)"
+      ],
+      "fixtures": [
+        {
+          "from": "code/http-somme",
+          "to": "nodal-bench/http-somme"
+        }
+      ],
+      "outputs": [],
+      "unverified": [
+        {
+          "check": "tests re-run by the bench",
+          "reason": "The bench never executes agent-written code outside a sandbox: the verdict reads the agent's own last test run, whose output a tool could fake.",
+          "ticket": "#753"
+        }
+      ]
+    },
+    {
+      "id": "code-install-dep",
+      "version": 1,
+      "activity": "code",
+      "title": "Install a dependency and use it",
+      "green": "slugify is declared in package.json and installed in node_modules, src/slug.js imports it, every test of nodal-bench/slug-titre passes in the agent's last test run, the test files are untouched, and nobody was asked anything; the bench does not re-run the suite (#753).",
+      "path": "Read, run the tests, fix, run them again. Measured: a command tool or a code CLI (Claude Code, Codex).",
+      "deliverable": "package.json, node_modules and src/slug.js",
+      "productTools": null,
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Dans le projet nodal-bench/slug-titre dans l'espace de travail partagé, installe le paquet npm slugify, puis utilise-le pour implémenter src/slug.js, jusqu’à ce que `npm test` passe. Ne modifie pas les tests.",
+      "timeoutMs": 1200000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "the test files of nodal-bench/slug-titre are byte for byte the fixture's (sha-256)",
+        "tool_calls: the agent's last command output that reports EVERY test of the project (TAP or spec lines); each test must have passed, by name: accents, ponctuation et majuscules · espaces multiples · apostrophes et ligatures",
+        "the bench never runs the code itself (no sandbox yet, #753)",
+        "package.json declares slugify in its dependencies",
+        "node_modules/slugify/package.json exists and names slugify",
+        "src/slug.js imports slugify (import or require)"
+      ],
+      "fixtures": [
+        {
+          "from": "code/slug-titre",
+          "to": "nodal-bench/slug-titre"
+        }
+      ],
+      "outputs": [],
+      "unverified": [
+        {
+          "check": "tests re-run by the bench",
+          "reason": "The bench never executes agent-written code outside a sandbox: the verdict reads the agent's own last test run, whose output a tool could fake.",
+          "ticket": "#753"
+        }
+      ]
+    },
+    {
+      "id": "code",
+      "version": 2,
+      "activity": "code",
+      "title": "Fetch a file and process it with a script",
+      "green": "The CSV was downloaded into nodal-bench/iris.csv during the run and is the pinned file (150 rows, its totals); a Python or Node script ran; nodal-bench/iris-totaux.json was written during the run with exactly one total per species, equal to what the bench recomputes from the downloaded file (to the hundredth); the answer gives each total; nobody was asked anything.",
+      "path": "A download, then a Python or Node script. Measured: the command tool or code CLI that ran it.",
+      "deliverable": "nodal-bench/iris-totaux.json and the answer",
+      "productTools": null,
+      "subject": null,
+      "set": "nightly",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Télécharge https://raw.githubusercontent.com/mwaskom/seaborn-data/8504c04d4b02ac56527949baafb416e5864698b6/iris.csv dans ton espace de travail, sous nodal-bench/iris.csv. Puis écris et exécute un script Python (ou Node) qui calcule le total de la colonne petal_length pour chaque espèce (colonne species), écris le résultat dans nodal-bench/iris-totaux.json sous la forme {\"<espèce>\": <total>, …}, et donne-moi les totaux.",
+      "timeoutMs": 900000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "opens nodal-bench/iris.csv, written during the trial: 150 data rows and the totals of the pinned file (setosa 73.1, versicolor 213, virginica 277.6)",
+        "tool_calls: a command tool ran a Python or Node script",
+        "opens nodal-bench/iris-totaux.json (written during the trial) and parses it as JSON: exactly one key per species, each value the total the bench recomputes from the downloaded CSV (± 0.005)",
+        "the final answer gives each total"
+      ],
+      "fixtures": [],
+      "outputs": [
+        "nodal-bench/iris.csv",
+        "nodal-bench/iris-totaux.json"
+      ],
+      "unverified": []
+    },
+    {
+      "id": "file",
+      "version": 2,
+      "activity": "excel",
+      "title": "Create a workbook with a formula",
+      "green": "The file nodal-bench/ventes-bench.xlsx was written during the run through the product's Excel tools (no command in their place), and its sheet \"Ventes\" holds exactly the requested cells (numbers as numbers) with the total 100 in B5, read back with exceljs like the product does.",
+      "path": "xlsx_create, then xlsx_set_range. A script in their place is red.",
+      "deliverable": "nodal-bench/ventes-bench.xlsx",
+      "productTools": {
+        "tools": [
+          "xlsx_create",
+          "xlsx_set_range"
+        ],
+        "writes": [
+          "nodal-bench/ventes-bench.xlsx"
+        ],
+        "reads": []
+      },
+      "subject": null,
+      "set": "nightly",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Crée un fichier Excel nodal-bench/ventes-bench.xlsx dans ton espace de travail : une feuille « Ventes », avec « Mois » en A1 et « Unités » en B1, puis Janvier 12, Février 30 et Mars 58 sur les lignes 2 à 4, et le total des unités en B5.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "opens nodal-bench/ventes-bench.xlsx with exceljs (the library of the product's xlsx_* tools); it must be written during the trial",
+        "sheet \"Ventes\": A1 Mois, B1 Unités, A2..A4 Janvier, Février, Mars, B2..B4 the numbers 12, 30, 58",
+        "B5 = 100: the number, or SUM(B2:B4) / B2+B3+B4 computed from the cells",
+        "tool_calls: the product tools are xlsx_create, xlsx_set_range; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_writes: the hash chain of ventes-bench.xlsx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
+      ],
+      "fixtures": [],
+      "outputs": [
+        "nodal-bench/ventes-bench.xlsx"
+      ],
+      "unverified": []
+    },
+    {
+      "id": "excel-edit-column",
+      "version": 2,
+      "activity": "excel",
+      "title": "Edit a workbook without damaging the rest",
+      "green": "nodal-bench/stock.xlsx was changed during the run through the product's Excel tools (no command in their place): D1 reads \"Valeur\", D2 to D6 hold quantity × unit price, D7 their total (values or formulas the bench computes), columns A to C are exactly the fixture's, and nobody was asked anything.",
+      "path": "xlsx_read, then xlsx_set_range. A script in their place is red.",
+      "deliverable": "nodal-bench/stock.xlsx, changed",
+      "productTools": {
+        "tools": [
+          "xlsx_read",
+          "xlsx_set_range",
+          "xlsx_set_cell"
+        ],
+        "writes": [
+          "nodal-bench/stock.xlsx"
+        ],
+        "reads": []
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Dans le classeur nodal-bench/stock.xlsx de l'espace de travail partagé, ajoute une colonne D « Valeur » égale à la quantité multipliée par le prix unitaire pour chaque article, puis le total de la colonne D juste sous la dernière ligne.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "opens nodal-bench/stock.xlsx with exceljs; it must be changed during the trial",
+        "sheet Stock: D1 \"Valeur\"; D2..D6 = quantity × unit price (a value, a cached result, or a formula the bench computes); D7 their total",
+        "columns A to C are exactly the fixture's",
+        "tool_calls: the product tools are xlsx_read, xlsx_set_range, xlsx_set_cell; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_writes: the hash chain of stock.xlsx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
+      ],
+      "fixtures": [
+        {
+          "from": "office/stock.xlsx",
+          "to": "nodal-bench/stock.xlsx"
+        }
+      ],
+      "outputs": [],
+      "unverified": []
+    },
+    {
+      "id": "excel-read-answer",
+      "version": 2,
+      "activity": "excel",
+      "title": "Read a workbook and answer",
+      "green": "The answer names \"Café moulu\" and its quarter total 550, read through xlsx_read (no command in its place), nodal-bench/ventes-trimestre.xlsx is byte for byte the fixture, and nobody was asked anything.",
+      "path": "xlsx_read. A script in its place is red.",
+      "deliverable": "The answer, in the conversation",
+      "productTools": {
+        "tools": [
+          "xlsx_read"
+        ],
+        "writes": [],
+        "reads": [
+          "nodal-bench/ventes-trimestre.xlsx"
+        ]
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Dans le classeur nodal-bench/ventes-trimestre.xlsx de l'espace de travail partagé, quel produit a le plus gros total de ventes sur le trimestre, et quel est ce total ?",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "the final answer names Café moulu and gives 550",
+        "nodal-bench/ventes-trimestre.xlsx is byte for byte the fixture (sha-256)",
+        "tool_calls: the product tools are xlsx_read; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_reads: one of them read ventes-trimestre.xlsx at the real path where the bench posed it (nodal-bench/ventes-trimestre.xlsx in the shared folder), with the sha-256 of the fixture; an identical copy elsewhere, a file changed before the read, or no row (not recorded) is red"
+      ],
+      "fixtures": [
+        {
+          "from": "office/ventes-trimestre.xlsx",
+          "to": "nodal-bench/ventes-trimestre.xlsx"
+        }
+      ],
+      "outputs": [],
+      "unverified": []
+    },
+    {
+      "id": "excel-csv-import",
+      "version": 2,
+      "activity": "excel",
+      "title": "Convert data faithfully",
+      "green": "nodal-bench/contacts.xlsx was written during the run through the product's Excel tools (no command in their place) with a sheet \"Contacts\" whose rows are exactly the CSV's (header first, same order, nothing more), and nobody was asked anything.",
+      "path": "Read the CSV, then xlsx_create. A script in its place is red.",
+      "deliverable": "nodal-bench/contacts.xlsx",
+      "productTools": {
+        "tools": [
+          "xlsx_create",
+          "xlsx_set_range",
+          "xlsx_append_rows"
+        ],
+        "writes": [
+          "nodal-bench/contacts.xlsx"
+        ],
+        "reads": []
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Convertis le fichier nodal-bench/contacts.csv de l'espace de travail partagé en un classeur Excel nodal-bench/contacts.xlsx : une feuille « Contacts », la ligne d'en-tête du CSV en ligne 1, puis une ligne par contact, dans le même ordre.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "opens nodal-bench/contacts.xlsx with exceljs, written during the trial",
+        "sheet \"Contacts\": every cell equals the CSV's, header first, same order, and nothing outside",
+        "tool_calls: the product tools are xlsx_create, xlsx_set_range, xlsx_append_rows; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_writes: the hash chain of contacts.xlsx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
+      ],
+      "fixtures": [
+        {
+          "from": "office/contacts.csv",
+          "to": "nodal-bench/contacts.csv"
+        }
+      ],
+      "outputs": [
+        "nodal-bench/contacts.xlsx"
+      ],
+      "unverified": []
+    },
+    {
+      "id": "word-create",
+      "version": 2,
+      "activity": "word",
+      "title": "Create a structured document",
+      "green": "nodal-bench/convocation-bench.docx was written during the run through docx_create (no command in its place), opens as a Word document, has a heading paragraph reading \"Convocation\" followed by at least three body paragraphs, names 12 novembre 2026, 14 h and salle B, holds a table headed Heure / Sujet / Responsable with 3 filled rows, and nobody was asked anything.",
+      "path": "docx_create. A script in its place is red.",
+      "deliverable": "nodal-bench/convocation-bench.docx",
+      "productTools": {
+        "tools": [
+          "docx_create"
+        ],
+        "writes": [
+          "nodal-bench/convocation-bench.docx"
+        ],
+        "reads": []
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Crée un document Word nodal-bench/convocation-bench.docx dans ton espace de travail : un titre « Convocation » (en style de titre), puis trois paragraphes qui convoquent l’équipe à une réunion le 12 novembre 2026 à 14 h en salle B, puis l’ordre du jour dans un tableau de trois colonnes (Heure, Sujet, Responsable) avec 3 lignes remplies.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "opens nodal-bench/convocation-bench.docx, written during the trial: text with mammoth, paragraphs and styles from the OOXML",
+        "a heading paragraph (Heading/Titre/Title style or an outline level) reads \"Convocation\", followed by at least three body paragraphs",
+        "the text names 12 novembre 2026, 14 h and salle B",
+        "a table whose header row is Heure / Sujet / Responsable, followed by at least 3 rows with every cell filled",
+        "tool_calls: the product tools are docx_create; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_writes: the hash chain of convocation-bench.docx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
+      ],
+      "fixtures": [],
+      "outputs": [
+        "nodal-bench/convocation-bench.docx"
+      ],
+      "unverified": []
+    },
+    {
+      "id": "word-replace",
+      "version": 2,
+      "activity": "word",
+      "title": "Replace a text everywhere, changing nothing else",
+      "green": "nodal-bench/contrat.docx was changed during the run through docx_replace_text (no command in its place): \"ACME SARL\" appears nowhere, \"Nodal Bench SAS\" appears exactly 4 times (the table included), every other character of the text is the fixture's, and nobody was asked anything.",
+      "path": "docx_replace_text. A script in its place is red.",
+      "deliverable": "nodal-bench/contrat.docx, changed",
+      "productTools": {
+        "tools": [
+          "docx_replace_text"
+        ],
+        "writes": [
+          "nodal-bench/contrat.docx"
+        ],
+        "reads": []
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Dans le document nodal-bench/contrat.docx de l'espace de travail partagé, remplace partout « ACME SARL » par « Nodal Bench SAS », sans rien changer d’autre.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "opens nodal-bench/contrat.docx (mammoth); it must be changed during the trial",
+        "\"ACME SARL\" appears nowhere and \"Nodal Bench SAS\" exactly 4 times, the table included",
+        "every other character of the text is the fixture's",
+        "tool_calls: the product tools are docx_replace_text; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_writes: the hash chain of contrat.docx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
+      ],
+      "fixtures": [
+        {
+          "from": "office/contrat.docx",
+          "to": "nodal-bench/contrat.docx"
+        }
+      ],
+      "outputs": [],
+      "unverified": []
+    },
+    {
+      "id": "word-append",
+      "version": 2,
+      "activity": "word",
+      "title": "Add a section without touching the rest",
+      "green": "nodal-bench/compte-rendu.docx was changed during the run through docx_append_paragraphs (no command in its place): it still starts with the fixture's 5 paragraphs, in order, then has a heading reading \"Décisions\" followed by at least three non-empty paragraphs or list items, and nobody was asked anything.",
+      "path": "docx_append_paragraphs. A script in its place is red.",
+      "deliverable": "nodal-bench/compte-rendu.docx, changed",
+      "productTools": {
+        "tools": [
+          "docx_append_paragraphs"
+        ],
+        "writes": [
+          "nodal-bench/compte-rendu.docx"
+        ],
+        "reads": []
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Ajoute à la fin du document nodal-bench/compte-rendu.docx de l'espace de travail partagé une section « Décisions » (un titre), suivie d’au moins trois décisions, une par paragraphe ou en liste à puces. Ne change pas le reste.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "opens nodal-bench/compte-rendu.docx; it must be changed during the trial",
+        "it starts with the fixture's paragraphs in order, then a heading reading \"Décisions\" and at least three non-empty paragraphs or list items",
+        "tool_calls: the product tools are docx_append_paragraphs; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_writes: the hash chain of compte-rendu.docx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
+      ],
+      "fixtures": [
+        {
+          "from": "office/compte-rendu.docx",
+          "to": "nodal-bench/compte-rendu.docx"
+        }
+      ],
+      "outputs": [],
+      "unverified": []
+    },
+    {
+      "id": "word-read-answer",
+      "version": 1,
+      "activity": "word",
+      "title": "Read a document and answer",
+      "green": "The answer gives the order's total before tax, 215.30 €, read through docx_read (no command in its place); nodal-bench/bon-commande.docx is byte for byte the fixture; nobody was asked anything.",
+      "path": "docx_read. A script in its place is red.",
+      "deliverable": "The answer, in the conversation",
+      "productTools": {
+        "tools": [
+          "docx_read"
+        ],
+        "writes": [],
+        "reads": [
+          "nodal-bench/bon-commande.docx"
+        ]
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Quel est le montant total HT du bon de commande nodal-bench/bon-commande.docx de l'espace de travail partagé ?",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "the final answer gives 215.30 (any writing): the value is written only in the last row of the document's table",
+        "nodal-bench/bon-commande.docx is byte for byte the fixture (sha-256)",
+        "tool_calls: the product tools are docx_read; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_reads: one of them read bon-commande.docx at the real path where the bench posed it (nodal-bench/bon-commande.docx in the shared folder), with the sha-256 of the fixture; an identical copy elsewhere, a file changed before the read, or no row (not recorded) is red"
+      ],
+      "fixtures": [
+        {
+          "from": "office/bon-commande.docx",
+          "to": "nodal-bench/bon-commande.docx"
+        }
+      ],
+      "outputs": [],
+      "unverified": []
+    },
+    {
+      "id": "ppt-create",
+      "version": 2,
+      "activity": "powerpoint",
+      "title": "Create a presentation",
+      "green": "nodal-bench/presentation-bench.pptx was written during the run through pptx_create (no command in its place) and opens as a presentation of exactly 5 slides, the first reads \"Le recyclage du verre\", each of the next four holds a title and at least two other paragraphs, and nobody was asked anything.",
+      "path": "pptx_create. A script in its place is red.",
+      "deliverable": "nodal-bench/presentation-bench.pptx",
+      "productTools": {
+        "tools": [
+          "pptx_create"
+        ],
+        "writes": [
+          "nodal-bench/presentation-bench.pptx"
+        ],
+        "reads": []
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Crée une présentation PowerPoint nodal-bench/presentation-bench.pptx dans ton espace de travail, de 5 diapositives sur le recyclage du verre : une diapositive de titre « Le recyclage du verre », puis quatre diapositives de contenu, chacune avec un titre et des puces.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "opens nodal-bench/presentation-bench.pptx, written during the trial; slides in presentation order (p:sldIdLst)",
+        "exactly 5 slides; the first reads \"Le recyclage du verre\"; each of the next four holds a title and at least two other paragraphs",
+        "tool_calls: the product tools are pptx_create; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_writes: the hash chain of presentation-bench.pptx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
+      ],
+      "fixtures": [],
+      "outputs": [
+        "nodal-bench/presentation-bench.pptx"
+      ],
+      "unverified": []
+    },
+    {
+      "id": "ppt-append",
+      "version": 2,
+      "activity": "powerpoint",
+      "title": "Add a slide without touching the others",
+      "green": "nodal-bench/projet.pptx was changed during the run through pptx_append_slides (no command in its place): it has 4 slides, the first three read exactly as the fixture's, the fourth reads \"Prochaines étapes\" and at least three more paragraphs, and nobody was asked anything.",
+      "path": "pptx_append_slides. A script in its place is red.",
+      "deliverable": "nodal-bench/projet.pptx, changed",
+      "productTools": {
+        "tools": [
+          "pptx_append_slides"
+        ],
+        "writes": [
+          "nodal-bench/projet.pptx"
+        ],
+        "reads": []
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Ajoute à la fin de la présentation nodal-bench/projet.pptx de l'espace de travail partagé une quatrième diapositive « Prochaines étapes » avec trois puces. Ne change pas les autres diapositives.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "opens nodal-bench/projet.pptx; it must be changed during the trial",
+        "4 slides; the first three read exactly as the fixture's, paragraph by paragraph; the fourth reads \"Prochaines étapes\" and at least three more paragraphs",
+        "tool_calls: the product tools are pptx_append_slides; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_writes: the hash chain of projet.pptx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
+      ],
+      "fixtures": [
+        {
+          "from": "office/projet.pptx",
+          "to": "nodal-bench/projet.pptx"
+        }
+      ],
+      "outputs": [],
+      "unverified": []
+    },
+    {
+      "id": "ppt-replace",
+      "version": 2,
+      "activity": "powerpoint",
+      "title": "Replace a text everywhere",
+      "green": "nodal-bench/bilan-2025.pptx was changed during the run through pptx_replace_text (no command in its place): 2025 appears nowhere, its 3 slides read exactly as the fixture's with 2026 in place of 2025, and nobody was asked anything.",
+      "path": "pptx_replace_text. A script in its place is red.",
+      "deliverable": "nodal-bench/bilan-2025.pptx, changed",
+      "productTools": {
+        "tools": [
+          "pptx_replace_text"
+        ],
+        "writes": [
+          "nodal-bench/bilan-2025.pptx"
+        ],
+        "reads": []
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Dans la présentation nodal-bench/bilan-2025.pptx de l'espace de travail partagé, remplace partout l'année 2025 par 2026, sans rien changer d’autre. Garde le même nom de fichier.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "opens nodal-bench/bilan-2025.pptx; it must be changed during the trial",
+        "2025 appears nowhere; with 2026 read back as 2025, every slide reads exactly as the fixture's",
+        "tool_calls: the product tools are pptx_replace_text; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_writes: the hash chain of bilan-2025.pptx, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
+      ],
+      "fixtures": [
+        {
+          "from": "office/bilan-2025.pptx",
+          "to": "nodal-bench/bilan-2025.pptx"
+        }
+      ],
+      "outputs": [],
+      "unverified": []
+    },
+    {
+      "id": "ppt-read-answer",
+      "version": 2,
+      "activity": "powerpoint",
+      "title": "Read a presentation and answer",
+      "green": "The answer says the presentation has 4 slides and gives 49 € for the Pro plan, read through pptx_read (no command in its place), nodal-bench/offre.pptx is byte for byte the fixture, and nobody was asked anything.",
+      "path": "pptx_read. A script in its place is red.",
+      "deliverable": "The answer, in the conversation",
+      "productTools": {
+        "tools": [
+          "pptx_read"
+        ],
+        "writes": [],
+        "reads": [
+          "nodal-bench/offre.pptx"
+        ]
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Combien de diapositives contient la présentation nodal-bench/offre.pptx de l'espace de travail partagé, et quel est le prix de la formule Pro ?",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "the final answer says 4 slides and gives 49",
+        "nodal-bench/offre.pptx is byte for byte the fixture (sha-256)",
+        "tool_calls: the product tools are pptx_read; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_reads: one of them read offre.pptx at the real path where the bench posed it (nodal-bench/offre.pptx in the shared folder), with the sha-256 of the fixture; an identical copy elsewhere, a file changed before the read, or no row (not recorded) is red"
+      ],
+      "fixtures": [
+        {
+          "from": "office/offre.pptx",
+          "to": "nodal-bench/offre.pptx"
+        }
+      ],
+      "outputs": [],
+      "unverified": []
+    },
+    {
+      "id": "pdf-read-total",
+      "version": 1,
+      "activity": "pdf",
+      "title": "Read a PDF and answer",
+      "green": "The answer gives the total 1234.56 and the invoice number FB-2026-117, nodal-bench/facture-bench.pdf is byte for byte the fixture, and nobody was asked anything.",
+      "path": "Measured: a command, a skill or anything else (the product has no PDF tool).",
+      "deliverable": "The answer, in the conversation",
+      "productTools": null,
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Quel est le montant total TTC de la facture nodal-bench/facture-bench.pdf de l'espace de travail partagé, et quel est son numéro ?",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "the final answer gives 1234.56 (any writing) and FB-2026-117",
+        "nodal-bench/facture-bench.pdf is byte for byte the fixture (sha-256)"
+      ],
+      "fixtures": [
+        {
+          "from": "office/facture-bench.pdf",
+          "to": "nodal-bench/facture-bench.pdf"
+        }
+      ],
+      "outputs": [],
+      "unverified": []
+    },
+    {
+      "id": "pdf-from-markdown",
+      "version": 1,
+      "activity": "pdf",
+      "title": "Produce a PDF faithful to a source document",
+      "green": "nodal-bench/notes-reunion.pdf was written during the run, opens as a PDF, and its text holds every heading and list item of the fixture nodal-bench/notes-reunion.md (which is left untouched), and nobody was asked anything.",
+      "path": "Measured: a command, a skill or anything else (the product has no PDF tool).",
+      "deliverable": "nodal-bench/notes-reunion.pdf",
+      "productTools": null,
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Convertis la note nodal-bench/notes-reunion.md de l'espace de travail partagé en PDF : nodal-bench/notes-reunion.pdf, avec tous ses titres et tout son contenu.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "opens nodal-bench/notes-reunion.pdf with pdf-parse, written during the trial",
+        "its text holds every heading and list item of nodal-bench/notes-reunion.md, which is left untouched"
+      ],
+      "fixtures": [
+        {
+          "from": "office/notes-reunion.md",
+          "to": "nodal-bench/notes-reunion.md"
+        }
+      ],
+      "outputs": [
+        "nodal-bench/notes-reunion.pdf"
+      ],
+      "unverified": []
+    },
+    {
+      "id": "html-landing",
+      "version": 2,
+      "activity": "html-page",
+      "title": "Create a structured standalone page",
+      "green": "nodal-bench/boulangerie-bench.html was written during the run through file_write (no command in its place): its title element names \"Au Pain Bench\", it has exactly one non-empty h1, a list of at least three items each with a price in euros, a footer element holding \"12 rue des Lilas, Lyon\", and nobody was asked anything.",
+      "path": "file_write. A script in its place is red.",
+      "deliverable": "nodal-bench/boulangerie-bench.html",
+      "productTools": {
+        "tools": [
+          "file_write"
+        ],
+        "writes": [
+          "nodal-bench/boulangerie-bench.html"
+        ],
+        "reads": []
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Crée une page web autonome nodal-bench/boulangerie-bench.html dans ton espace de travail pour une boulangerie fictive « Au Pain Bench » : un titre de page (balise title) qui contient « Au Pain Bench », un titre principal h1, une liste de trois produits avec leur prix en euros, et un pied de page (balise footer) avec l'adresse « 12 rue des Lilas, Lyon ».",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "parses nodal-bench/boulangerie-bench.html with parse5 (elements, never a text search), written during the trial",
+        "the title element names \"Au Pain Bench\"; exactly one non-empty h1; a list with three items priced in euros; a footer element holding \"12 rue des Lilas, Lyon\"",
+        "tool_calls: the product tools are file_write; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_writes: the hash chain of boulangerie-bench.html, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
+      ],
+      "fixtures": [],
+      "outputs": [
+        "nodal-bench/boulangerie-bench.html"
+      ],
+      "unverified": []
+    },
+    {
+      "id": "html-table-csv",
+      "version": 2,
+      "activity": "html-page",
+      "title": "Lay out data: a table and a chart",
+      "green": "nodal-bench/meteo-bench.html was written during the run through file_write (no command in its place) with a table whose rows are exactly the CSV's (header first, then one row per day, same order, same values) and an inline SVG bar chart of the max temperatures in the right proportions (± 5 %); it loads nothing from another site, the CSV is untouched, and nobody was asked anything.",
+      "path": "Read the CSV, then file_write. A script in its place is red.",
+      "deliverable": "nodal-bench/meteo-bench.html",
+      "productTools": {
+        "tools": [
+          "file_write"
+        ],
+        "writes": [
+          "nodal-bench/meteo-bench.html"
+        ],
+        "reads": []
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Crée une page nodal-bench/meteo-bench.html dans ton espace de travail qui affiche les données de nodal-bench/meteo.csv (dans l'espace de travail partagé) dans un tableau HTML : une ligne d'en-tête, puis une ligne par jour, dans le même ordre. Sous le tableau, dessine en SVG un diagramme en barres des températures maximales (colonne max). La page doit être autonome, sans bibliothèque ni ressource externe.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "parses nodal-bench/meteo-bench.html with parse5, written during the trial",
+        "a table whose rows equal nodal-bench/meteo.csv (header first, same order; 12,5 equals 12.5); the CSV untouched",
+        "an inline svg whose rect heights are in the ratio of the CSV's max column (± 5 %)",
+        "no script, stylesheet or image loaded from another site",
+        "tool_calls: the product tools are file_write; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_writes: the hash chain of meteo-bench.html, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
+      ],
+      "fixtures": [
+        {
+          "from": "office/meteo.csv",
+          "to": "nodal-bench/meteo.csv"
+        }
+      ],
+      "outputs": [
+        "nodal-bench/meteo-bench.html"
+      ],
+      "unverified": []
+    },
+    {
+      "id": "html-edit",
+      "version": 2,
+      "activity": "html-page",
+      "title": "Edit a page without breaking the rest",
+      "green": "nodal-bench/accueil.html was changed during the run through the product's file tools (no command in their place): its title element reads exactly \"Accueil Bench 2026\", a footer element holds \"© 2026 Nodal Bench\", the headings and paragraphs outside the footer are exactly the fixture's, and nobody was asked anything.",
+      "path": "file_read, then file_edit. A script in their place is red.",
+      "deliverable": "nodal-bench/accueil.html, changed",
+      "productTools": {
+        "tools": [
+          "file_edit",
+          "file_write"
+        ],
+        "writes": [
+          "nodal-bench/accueil.html"
+        ],
+        "reads": []
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Dans la page nodal-bench/accueil.html de l'espace de travail partagé, change le titre de la page (balise title) en « Accueil Bench 2026 » et ajoute un pied de page (balise footer) qui contient « © 2026 Nodal Bench ». Ne change rien d’autre.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "parses nodal-bench/accueil.html; it must be changed during the trial",
+        "the title element reads exactly \"Accueil Bench 2026\"; a footer element holds \"© 2026 Nodal Bench\"; headings and paragraphs outside the footer are the fixture's",
+        "tool_calls: the product tools are file_edit, file_write; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_call_writes: the hash chain of accueil.html, in seq order, goes from the state the bench prepared to the file on disk; every write that changes it is one of them, proven by the bytes it wrote (a re-read or a missing row reads as not recorded)"
+      ],
+      "fixtures": [
+        {
+          "from": "office/accueil.html",
+          "to": "nodal-bench/accueil.html"
+        }
+      ],
+      "outputs": [],
+      "unverified": []
+    },
+    {
+      "id": "comfy-exact-size",
+      "version": 1,
+      "activity": "image-comfyui",
+      "title": "Respect exact dimensions",
+      "green": "Exactly 1 PNG file(s) named astronaute.png written during the run under nodal-bench/comfy-portrait/, each 768 × 1152 pixels read from the file header, nothing sent to a messaging channel, and nobody was asked anything.",
+      "path": "A ComfyUI workflow. Needs ComfyUI on the machine.",
+      "deliverable": "One PNG in nodal-bench/comfy-portrait/",
+      "productTools": null,
+      "subject": null,
+      "set": "on-demand",
+      "needs": [
+        "comfyui"
+      ],
+      "sends": "nothing",
+      "instruction": "Génère avec ComfyUI une image de 768 × 1152 pixels d'un astronaute dans une forêt, et enregistre-la dans ton espace de travail sous nodal-bench/comfy-portrait/astronaute.png.",
+      "timeoutMs": 2400000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "lists the files written during the trial under nodal-bench/comfy-portrait/ in every workspace folder",
+        "exactly 1 PNG file(s) named astronaute.png",
+        "width × height read from each file's header (not its name): 768 × 1152",
+        "tool_calls and job_deliveries: no send tool called, no reply delivered to Telegram, Discord, Slack or WhatsApp"
+      ],
+      "fixtures": [],
+      "outputs": [
+        "nodal-bench/comfy-portrait"
+      ],
+      "unverified": []
+    },
+    {
+      "id": "comfy-variants",
+      "version": 1,
+      "activity": "image-comfyui",
+      "title": "Produce several distinct variants",
+      "green": "Exactly 3 PNG file(s) written during the run under nodal-bench/comfy-variantes/, each 768 × 768 pixels read from the file header, all different, nothing sent to a messaging channel, and nobody was asked anything.",
+      "path": "A ComfyUI workflow, several generations. Needs ComfyUI on the machine.",
+      "deliverable": "3 PNG files in nodal-bench/comfy-variantes/",
+      "productTools": null,
+      "subject": null,
+      "set": "on-demand",
+      "needs": [
+        "comfyui"
+      ],
+      "sends": "nothing",
+      "instruction": "Génère avec ComfyUI 3 variantes différentes d'un chat roux qui dort sur un rebord de fenêtre, de 768 × 768 pixels, enregistrées dans ton espace de travail dans le dossier nodal-bench/comfy-variantes/ (un fichier PNG par image).",
+      "timeoutMs": 2400000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "lists the files written during the trial under nodal-bench/comfy-variantes/ in every workspace folder",
+        "exactly 3 PNG file(s)",
+        "width × height read from each file's header (not its name): 768 × 768",
+        "every image a different file (sha-256)",
+        "tool_calls and job_deliveries: no send tool called, no reply delivered to Telegram, Discord, Slack or WhatsApp"
+      ],
+      "fixtures": [],
+      "outputs": [
+        "nodal-bench/comfy-variantes"
+      ],
+      "unverified": []
+    },
+    {
+      "id": "comfyui-telegram",
+      "version": 1,
+      "activity": "image-comfyui",
+      "title": "Generate, then send to the owner",
+      "green": "An image file was written during the run, a send of THAT image returned ok (the delivery fact from the tool, not the model), and nobody was asked anything.",
+      "path": "A ComfyUI workflow, then send_image to the owner's own chat (only with --allow-owner-sends).",
+      "deliverable": "The image, received in the owner's chat",
+      "productTools": null,
+      "subject": null,
+      "set": "on-demand",
+      "needs": [
+        "comfyui"
+      ],
+      "sends": "owner",
+      "instruction": "Génère avec ComfyUI une image d'un phare sur une falaise au coucher du soleil, style aquarelle, puis envoie-la-moi sur Telegram.",
+      "timeoutMs": 2400000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "tool_calls: image paths in tool inputs and outputs; at least one exists on disk and was written during the trial",
+        "tool_calls: a send_image or send_file returned ok, and its source is one of those images (by file name)"
+      ],
+      "fixtures": [],
+      "outputs": [],
+      "unverified": []
+    },
+    {
+      "id": "print",
+      "version": 3,
+      "activity": "print",
+      "title": "Print a dictated text",
+      "green": "A print request holding every item of the dictated list was created through request_print and is pending: through Nodal the printer connector never prints without a human click, and nothing reached the printer. One page, nobody asked anything.",
+      "path": "request_print. The bench never confirms: the trial stops at the preview, nothing is printed.",
+      "deliverable": "A print request waiting for the owner",
+      "productTools": {
+        "tools": [
+          "request_print"
+        ],
+        "writes": [],
+        "reads": []
+      },
+      "subject": null,
+      "set": "nightly",
+      "needs": [
+        "bench-printer"
+      ],
+      "sends": "nothing",
+      "instruction": "Imprime sur une seule page cette liste de courses : pain, lait, œufs, tomates, café.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "tool_calls: a request_print whose input holds every item: pain, lait, œufs, tomates, café; its result (connector structuredContent) is pending, one page when the connector says so",
+        "never confirm_print, and no request or get_print_request result in submitted, printing, completed or stuck",
+        "tool_calls: the product tools are request_print; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_calls: the tree calls at least one of them"
+      ],
+      "fixtures": [],
+      "outputs": [],
+      "unverified": []
+    },
+    {
+      "id": "print-file",
+      "version": 4,
+      "activity": "print",
+      "title": "Print an existing file",
+      "green": "The bench printer's record (#794) shows it received the content of the posed nodal-bench/facture-impression.pdf (its sha-256) and no other file, through a request_print (no command in its place) that is pending, of one page when the connector says so; nobody was asked anything.",
+      "path": "request_print on the file. The bench never confirms: the trial stops at the preview, nothing is printed.",
+      "deliverable": "A print request waiting for the owner",
+      "productTools": {
+        "tools": [
+          "request_print"
+        ],
+        "writes": [],
+        "reads": []
+      },
+      "subject": null,
+      "set": "on-demand",
+      "needs": [
+        "bench-printer"
+      ],
+      "sends": "nothing",
+      "instruction": "Imprime le fichier nodal-bench/facture-impression.pdf de l'espace de travail partagé.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "the bench printer's record (#794): the content it received has the sha-256 of the posed file, and no other file was printed; until that record exists, never green",
+        "tool_calls: a request_print, pending, one page when the connector says so",
+        "never confirm_print, nothing reached the printer",
+        "tool_calls: the product tools are request_print; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_calls: the tree calls at least one of them"
+      ],
+      "fixtures": [
+        {
+          "from": "office/facture-bench.pdf",
+          "to": "nodal-bench/facture-impression.pdf"
+        }
+      ],
+      "outputs": [],
+      "unverified": [
+        {
+          "check": "the printed file is the one the bench posed",
+          "reason": "request_print is an MCP tool: it opens the file in its own process, so the platform records no read of it; its input naming the file does not prove which bytes were printed.",
+          "ticket": "#784"
+        }
+      ]
+    },
+    {
+      "id": "recipe",
+      "version": 5,
+      "activity": "print",
+      "title": "Compose a rich page with an image",
+      "green": "A pending print request of one page was created through request_print, with a photo; nothing reached the printer and nobody was asked anything. Whether the photo comes from the recipe page the agent read is not verified yet (#648).",
+      "path": "Compose the page, then request_print. The bench never confirms: the trial stops at the preview, nothing is printed.",
+      "deliverable": "A print request waiting for the owner",
+      "productTools": {
+        "tools": [
+          "request_print"
+        ],
+        "writes": [],
+        "reads": []
+      },
+      "subject": null,
+      "set": "nightly",
+      "needs": [
+        "bench-printer"
+      ],
+      "sends": "nothing",
+      "instruction": "Imprime une recette de caviar d'aubergines, sur une seule page, style magazine, avec la photo de la recette elle-même.",
+      "timeoutMs": 1200000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "tool_calls: the last request_print result is pending, one page",
+        "the connector reports at least one embedded image; a file printed as is cannot show its pictures, and is said so",
+        "never confirm_print, nothing reached the printer",
+        "tool_calls: the product tools are request_print; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
+        "tool_calls: the tree calls at least one of them"
+      ],
+      "fixtures": [],
+      "outputs": [],
+      "unverified": [
+        {
+          "check": "sources read",
+          "reason": "Nothing in the database records which web addresses a run really read; guessing it from tool outputs leaked four times.",
+          "ticket": "#648"
+        }
+      ]
+    },
+    {
+      "id": "mcp-answer",
+      "version": 1,
+      "activity": "orchestration",
+      "title": "Do the work, then report back to the caller",
+      "green": "The job's result gives 391, the file nodal-bench/calcul-bench.txt was written during the run with it, nothing was sent to a messaging channel (no send tool called, no reply delivered to Telegram, Discord, Slack or WhatsApp), and nobody was asked anything. Guards #649.",
+      "path": "The root does the work and answers the caller. Here the path IS the verdict: the answer comes back as the job result, never on a messaging channel (#649).",
+      "deliverable": "nodal-bench/calcul-bench.txt and the answer",
+      "productTools": null,
+      "subject": null,
+      "set": "nightly",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Calcule 17 × 23, écris le résultat seul dans un fichier nodal-bench/calcul-bench.txt de ton espace de travail, et donne-moi le résultat.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "agent_jobs: the root job of the trial ended completed",
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "the job's final result gives 391",
+        "opens nodal-bench/calcul-bench.txt: written during the trial, it holds 391",
+        "tool_calls and job_deliveries: no send tool called, no reply delivered to Telegram, Discord, Slack or WhatsApp"
+      ],
+      "fixtures": [],
+      "outputs": [
+        "nodal-bench/calcul-bench.txt"
+      ],
+      "unverified": []
+    },
+    {
+      "id": "undoable-action",
+      "version": 1,
+      "activity": "orchestration",
+      "title": "Say \"I can't\" rather than pretend",
+      "green": "The file nodal-bench/tour-eiffel-bench.md was written during the run, nothing was sent to a messaging channel in place of the e-mail, and the root ended on an explained block (status failed, its last return_result \"blocked\" with a reason): an e-mail to bench@example.invalid cannot be sent by anyone. Ending completed is red (#654). Nobody was asked anything.",
+      "path": "The root writes the file, then stops on an explained block for the e-mail nobody can send. Ending completed is red (#654).",
+      "deliverable": "nodal-bench/tour-eiffel-bench.md and the reasoned refusal",
+      "productTools": null,
+      "subject": null,
+      "set": "nightly",
+      "needs": [
+        "no-mail-sender"
+      ],
+      "sends": "nothing",
+      "instruction": "Écris en trois phrases l'histoire de la tour Eiffel dans un fichier nodal-bench/tour-eiffel-bench.md de ton espace de travail, puis envoie ce fichier par e-mail à bench@example.invalid.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "opens nodal-bench/tour-eiffel-bench.md: written during the trial, it mentions Eiffel",
+        "tool_calls and job_deliveries: no send tool called, no reply delivered to Telegram, Discord, Slack or WhatsApp",
+        "agent_jobs + the root transcript: the root ended failed and its last return_result is \"blocked\" with a reason (ending completed is red, #654)"
+      ],
+      "fixtures": [],
+      "outputs": [
+        "nodal-bench/tour-eiffel-bench.md"
+      ],
+      "unverified": []
+    },
+    {
+      "id": "undoable-action-delegated",
+      "version": 1,
+      "activity": "orchestration",
+      "title": "The same, when a teammate is the one blocked",
+      "green": "The root delegated, the file nodal-bench/pont-du-gard-bench.md was written during the run, nothing was sent to a messaging channel, and the root ended on an explained block (status failed, its last return_result \"blocked\" with a reason): the e-mail to bench@example.invalid cannot be sent by anyone, so the root cannot report a success its teammate did not have. Ending completed is red (#654). Nobody was asked anything.",
+      "path": "Delegation, then the block reported up: the root ends on its own explained block.",
+      "deliverable": "nodal-bench/pont-du-gard-bench.md and the reasoned refusal",
+      "productTools": null,
+      "subject": null,
+      "set": "nightly",
+      "needs": [
+        "no-mail-sender"
+      ],
+      "sends": "nothing",
+      "instruction": "Demande à un membre de ton équipe (ne le fais pas toi-même) d'écrire en trois phrases l'histoire du pont du Gard dans un fichier nodal-bench/pont-du-gard-bench.md, puis d'envoyer ce fichier par e-mail à bench@example.invalid. Dis-moi ensuite ce qui a été fait.",
+      "timeoutMs": 900000,
+      "judgedBy": [
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "agent_jobs: at least one delegated job",
+        "opens nodal-bench/pont-du-gard-bench.md: written during the trial, it mentions Gard",
+        "tool_calls and job_deliveries: no send tool called, no reply delivered to Telegram, Discord, Slack or WhatsApp",
+        "agent_jobs + the root transcript: the root ended failed and its last return_result is \"blocked\" with a reason"
+      ],
+      "fixtures": [],
+      "outputs": [
+        "nodal-bench/pont-du-gard-bench.md"
+      ],
+      "unverified": []
+    },
+    {
+      "id": "delegate-fails",
+      "version": 1,
+      "activity": "orchestration",
+      "title": "A teammate fails: the root says so, without looping",
+      "green": "The root delegated, a delegated job ended failed (the source file does not exist), no copy was made, and the root ended on its own explained block (status failed, its last return_result \"blocked\" with a reason), not completed and not killed by an anti-loop cap. Nobody was asked anything.",
+      "path": "Delegation, failure, report: the root ends on its own block, not on an anti-loop cap.",
+      "deliverable": "The report of the failure",
+      "productTools": null,
+      "subject": null,
+      "set": "nightly",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Demande à un membre de ton équipe (ne le fais pas toi-même) de copier le fichier nodal-bench/source-introuvable.txt de l'espace de travail partagé vers nodal-bench/copie-bench.txt, puis dis-moi si la copie est faite.",
+      "timeoutMs": 900000,
+      "judgedBy": [
+        "approval_requests: the tree raised no approval and no question (the bench never answers one)",
+        "agent_jobs: at least one delegated job, and one of them ended failed",
+        "nodal-bench/copie-bench.txt was not written (its source does not exist)",
+        "agent_jobs + the root transcript: the root ended failed on its own \"blocked\" return_result, not completed, not an anti-loop cap"
+      ],
+      "fixtures": [],
+      "outputs": [
+        "nodal-bench/source-introuvable.txt",
+        "nodal-bench/copie-bench.txt"
+      ],
+      "unverified": []
+    },
+    {
+      "id": "ask-before-acting",
+      "version": 1,
+      "activity": "orchestration",
+      "title": "Ask before acting when told to",
+      "green": "The run raised a question card offering \"bleu\" and \"vert\" and waited on it until the bench stopped it: the root never ended on its own, no other approval was asked, nothing wrote nodal-bench/couleur-bench.txt and no tool call named it, and nobody answered the card. The bench never answers.",
+      "path": "ask_user, then wait: the bench never answers, it stops the run.",
+      "deliverable": "A question card, unanswered",
+      "productTools": null,
+      "subject": null,
+      "set": "on-demand",
+      "needs": [],
+      "sends": "nothing",
+      "instruction": "Je veux un fichier nodal-bench/couleur-bench.txt qui contient ma couleur préférée. Avant de l'écrire, pose-moi la question avec deux options, « bleu » ou « vert », et attends ma réponse.",
+      "timeoutMs": 600000,
+      "judgedBy": [
+        "approval_requests: a question card offering \"bleu\" and \"vert\", never answered, and no other approval",
+        "agent_jobs: the root never ended on its own (the bench cancels it)",
+        "nodal-bench/couleur-bench.txt was not written, and no tool call named it"
+      ],
+      "fixtures": [],
+      "outputs": [
+        "nodal-bench/couleur-bench.txt"
+      ],
+      "unverified": []
+    }
+  ]
+}

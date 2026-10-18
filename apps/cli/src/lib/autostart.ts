@@ -32,11 +32,22 @@
 // Elle ne DÉMARRE rien tout de suite : une stack tourne déjà quand on bascule
 // l'interrupteur, et une seconde se heurterait à ses ports.
 //
+// UNE INSCRIPTION PAR INSTANCE (NODALAI_HOME). Deux instances côte à côte ont
+// chacune la leur : les noms uniques par utilisateur (valeur Run, label
+// launchd, unité systemd) portent l'identifiant de l'instance
+// (`nodalInstanceId`), et l'instance du dossier par défaut garde les noms
+// d'avant, pour que l'inscription déjà posée reste la sienne. Le dossier est
+// ÉCRIT dans ce que le démarrage lance (`NODALAI_HOME`, pour toutes, défaut
+// compris) : sans lui, l'inscription d'une seconde instance démarrerait la
+// première. Gérer l'inscription d'une instance ne touche jamais celle d'une
+// autre.
+//
 // Ce module est PUR (textes et lectures de réponses) sauf `runAutostart`, qui
 // reçoit ses effets (fichiers, commandes) en paramètre : les tests ne touchent
 // ni le registre de la machine, ni ses fichiers.
 
 import { join } from 'path';
+import { NODALAI_HOME_ENV, nodalInstanceId } from '@nodal-agents/shared/nodal-home';
 
 export const AUTOSTART_LABEL = 'ai.nodal.agents';
 /** Le nom de la valeur sous Run (celui que `reg query` affiche). */
@@ -53,6 +64,39 @@ export const WINDOWS_APPROVED_KEY =
 /** La tâche planifiée des premières versions de #451, que l'inscription et le retrait effacent. */
 export const WINDOWS_TASK_NAME = 'Nodal Agents';
 export const SYSTEMD_UNIT = 'nodal-agents.service';
+
+/** Les noms qu'une instance occupe auprès du système. */
+export interface AutostartNames {
+  /** La valeur sous Run (Windows). */
+  readonly windowsEntry: string;
+  /** La tâche planifiée héritée des premières versions (Windows). */
+  readonly windowsTask: string;
+  /** Le label du LaunchAgent (macOS). */
+  readonly label: string;
+  /** L'unité systemd utilisateur (Linux). */
+  readonly systemdUnit: string;
+}
+
+/**
+ * Les noms d'une instance : ceux d'avant pour le dossier par défaut
+ * (`instance` null), suffixés par l'identifiant de l'instance sinon.
+ */
+export function autostartNames(instance: string | null): AutostartNames {
+  if (instance === null) {
+    return {
+      windowsEntry: WINDOWS_ENTRY_NAME,
+      windowsTask: WINDOWS_TASK_NAME,
+      label: AUTOSTART_LABEL,
+      systemdUnit: SYSTEMD_UNIT,
+    };
+  }
+  return {
+    windowsEntry: `${WINDOWS_ENTRY_NAME} ${instance}`,
+    windowsTask: `${WINDOWS_TASK_NAME} ${instance}`,
+    label: `${AUTOSTART_LABEL}.${instance}`,
+    systemdUnit: `nodal-agents-${instance}.service`,
+  };
+}
 
 /** L'état, tel que le système le dit. */
 export type AutostartStatus =
@@ -96,9 +140,12 @@ function cmdArg(arg: string): string {
   return /^[\w@%+=:,./\\-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '""')}"`;
 }
 
-/** Le script `.cmd` que la valeur Run lance. */
-export function windowsLauncherScript(argv: readonly string[]): string {
-  return `@echo off\r\n${argv.map(cmdArg).join(' ')}\r\n`;
+/**
+ * Le script `.cmd` que la valeur Run lance. `set "X=…"` : la forme de cmd qui
+ * garde un chemin à espaces entier, guillemets exclus de la valeur.
+ */
+export function windowsLauncherScript(argv: readonly string[], home: string): string {
+  return `@echo off\r\nset "${NODALAI_HOME_ENV}=${home}"\r\n${argv.map(cmdArg).join(' ')}\r\n`;
 }
 
 /**
@@ -130,18 +177,28 @@ function xmlEscape(s: string): string {
 }
 
 /** Le LaunchAgent macOS. */
-export function launchAgentPlist(argv: readonly string[], logDir: string): string {
+export function launchAgentPlist(
+  argv: readonly string[],
+  logDir: string,
+  home: string,
+  label: string = AUTOSTART_LABEL,
+): string {
   const args = argv.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>${AUTOSTART_LABEL}</string>
+  <string>${xmlEscape(label)}</string>
   <key>ProgramArguments</key>
   <array>
 ${args}
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>${NODALAI_HOME_ENV}</key>
+    <string>${xmlEscape(home)}</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -164,7 +221,7 @@ function systemdArg(arg: string): string {
 }
 
 /** L'unité systemd utilisateur. */
-export function systemdUserUnit(argv: readonly string[]): string {
+export function systemdUserUnit(argv: readonly string[], home: string): string {
   return `[Unit]
 Description=Nodal Agents
 After=network-online.target
@@ -172,6 +229,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+Environment=${systemdArg(`${NODALAI_HOME_ENV}=${home}`)}
 ExecStart=${argv.map(systemdArg).join(' ')}
 Restart=on-failure
 RestartSec=10
@@ -235,7 +293,10 @@ export type AutostartEffects = {
   platform: NodeJS.Platform;
   home: string;
   user: string;
-  /** Le dossier de Nodal (~/.nodalai), pour le script Windows et les journaux. */
+  /**
+   * Le dossier de CETTE instance (NODALAI_HOME, ou ~/.nodalai) : le script
+   * Windows et les journaux y vivent, et il fixe les noms de l'inscription.
+   */
   nodalDir: string;
   run: (cmd: string, args: readonly string[]) => Promise<CommandAnswer | null>;
   writeFile: (path: string, text: string) => Promise<void>;
@@ -244,12 +305,17 @@ export type AutostartEffects = {
   mkdir: (path: string) => Promise<void>;
 };
 
-function macPlistPath(home: string): string {
-  return join(home, 'Library', 'LaunchAgents', `${AUTOSTART_LABEL}.plist`);
+/** Les noms de l'instance que ces effets désignent. */
+function namesOf(fx: AutostartEffects): AutostartNames {
+  return autostartNames(nodalInstanceId(fx.nodalDir, fx.home, fx.platform));
 }
 
-function systemdUnitPath(home: string): string {
-  return join(home, '.config', 'systemd', 'user', SYSTEMD_UNIT);
+function macPlistPath(fx: AutostartEffects): string {
+  return join(fx.home, 'Library', 'LaunchAgents', `${namesOf(fx).label}.plist`);
+}
+
+function systemdUnitPath(fx: AutostartEffects): string {
+  return join(fx.home, '.config', 'systemd', 'user', namesOf(fx).systemdUnit);
 }
 
 function windowsScriptPath(nodalDir: string): string {
@@ -257,17 +323,18 @@ function windowsScriptPath(nodalDir: string): string {
 }
 
 function regQuery(fx: AutostartEffects, key: string): Promise<CommandAnswer | null> {
-  return fx.run('reg', ['query', key, '/v', WINDOWS_ENTRY_NAME]);
+  return fx.run('reg', ['query', key, '/v', namesOf(fx).windowsEntry]);
 }
 
 /** Retire la valeur si elle existe ; un refus se dit. */
 async function regDeleteIfPresent(fx: AutostartEffects, key: string): Promise<void> {
   const q = await regQuery(fx, key);
   if (q === null || q.exitCode !== 0) return;
-  const r = await fx.run('reg', ['delete', key, '/v', WINDOWS_ENTRY_NAME, '/f']);
+  const entry = namesOf(fx).windowsEntry;
+  const r = await fx.run('reg', ['delete', key, '/v', entry, '/f']);
   if (r === null || r.exitCode !== 0) {
     throw new Error(
-      `Windows refused to remove "${WINDOWS_ENTRY_NAME}" from ${key}: ${r?.stdout.trim() || 'no answer'}`,
+      `Windows refused to remove "${entry}" from ${key}: ${r?.stdout.trim() || 'no answer'}`,
     );
   }
 }
@@ -279,14 +346,15 @@ async function regDeleteIfPresent(fx: AutostartEffects, key: string): Promise<vo
  * n'a changé et le message donne la commande exacte.
  */
 async function removeLegacyTask(fx: AutostartEffects): Promise<void> {
-  const q = await fx.run('schtasks', ['/Query', '/TN', WINDOWS_TASK_NAME]);
+  const task = namesOf(fx).windowsTask;
+  const q = await fx.run('schtasks', ['/Query', '/TN', task]);
   if (q === null || q.exitCode !== 0) return;
-  const r = await fx.run('schtasks', ['/Delete', '/F', '/TN', WINDOWS_TASK_NAME]);
+  const r = await fx.run('schtasks', ['/Delete', '/F', '/TN', task]);
   if (r === null || r.exitCode !== 0) {
     throw new Error(
-      `An older "${WINDOWS_TASK_NAME}" scheduled task exists and Windows refused to remove it ` +
+      `An older "${task}" scheduled task exists and Windows refused to remove it ` +
         `(${r?.stdout.trim() || 'no answer'}). Remove it from an administrator terminal: ` +
-        `schtasks /Delete /TN "${WINDOWS_TASK_NAME}" /F`,
+        `schtasks /Delete /TN "${task}" /F`,
     );
   }
 }
@@ -300,9 +368,9 @@ export async function readAutostartStatus(fx: AutostartEffects): Promise<Autosta
     }
     return readWindowsStatus(run, approved);
   }
-  if (fx.platform === 'darwin') return readMacStatus(await fx.exists(macPlistPath(fx.home)));
+  if (fx.platform === 'darwin') return readMacStatus(await fx.exists(macPlistPath(fx)));
   if (fx.platform === 'linux') {
-    const enabled = await fx.run('systemctl', ['--user', 'is-enabled', SYSTEMD_UNIT]);
+    const enabled = await fx.run('systemctl', ['--user', 'is-enabled', namesOf(fx).systemdUnit]);
     // `is-enabled` répond 1 et « disabled »/« not-found » pour une unité
     // absente : c'est une réponse. Aucune réponse du tout (pas de binaire, pas
     // de bus utilisateur) est l'absence de session.
@@ -328,12 +396,12 @@ export async function installAutostart(
   if (fx.platform === 'win32') {
     await removeLegacyTask(fx);
     const script = windowsScriptPath(fx.nodalDir);
-    await fx.writeFile(script, windowsLauncherScript(argv));
+    await fx.writeFile(script, windowsLauncherScript(argv, fx.nodalDir));
     const r = await fx.run('reg', [
       'add',
       WINDOWS_RUN_KEY,
       '/v',
-      WINDOWS_ENTRY_NAME,
+      namesOf(fx).windowsEntry,
       '/t',
       'REG_EXPAND_SZ',
       '/d',
@@ -348,15 +416,18 @@ export async function installAutostart(
   } else if (fx.platform === 'darwin') {
     const dir = join(fx.home, 'Library', 'LaunchAgents');
     await fx.mkdir(dir);
-    await fx.writeFile(macPlistPath(fx.home), launchAgentPlist(argv, join(fx.nodalDir, 'logs')));
+    await fx.writeFile(
+      macPlistPath(fx),
+      launchAgentPlist(argv, join(fx.nodalDir, 'logs'), fx.nodalDir, namesOf(fx).label),
+    );
   } else if (fx.platform === 'linux') {
     const before = await readAutostartStatus(fx);
     if (before.state === 'unsupported') return before;
     await fx.mkdir(join(fx.home, '.config', 'systemd', 'user'));
-    await fx.writeFile(systemdUnitPath(fx.home), systemdUserUnit(argv));
+    await fx.writeFile(systemdUnitPath(fx), systemdUserUnit(argv, fx.nodalDir));
     for (const args of [
       ['--user', 'daemon-reload'],
-      ['--user', 'enable', SYSTEMD_UNIT],
+      ['--user', 'enable', namesOf(fx).systemdUnit],
     ]) {
       const r = await fx.run('systemctl', args);
       if (r === null || r.exitCode !== 0) {
@@ -379,10 +450,10 @@ export async function uninstallAutostart(fx: AutostartEffects): Promise<Autostar
     await regDeleteIfPresent(fx, WINDOWS_APPROVED_KEY);
     await fx.removeFile(windowsScriptPath(fx.nodalDir));
   } else if (fx.platform === 'darwin') {
-    await fx.removeFile(macPlistPath(fx.home));
+    await fx.removeFile(macPlistPath(fx));
   } else if (fx.platform === 'linux') {
-    await fx.run('systemctl', ['--user', 'disable', SYSTEMD_UNIT]);
-    await fx.removeFile(systemdUnitPath(fx.home));
+    await fx.run('systemctl', ['--user', 'disable', namesOf(fx).systemdUnit]);
+    await fx.removeFile(systemdUnitPath(fx));
     await fx.run('systemctl', ['--user', 'daemon-reload']);
   }
   return readAutostartStatus(fx);

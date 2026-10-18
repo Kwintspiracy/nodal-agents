@@ -296,6 +296,31 @@ export function scanForProjectKeyCopies(opts: ScanOptions): Violation[] {
 }
 
 /**
+ * Le dossier de Nodal se calcule en UN endroit : `packages/shared/src/nodal-home.ts`
+ * (`nodalHome`, `nodalHomePath`, `nodalHomeEntry`).
+ *
+ * Il avait une vingtaine de copies `join(homedir(), <le nom du dossier>, …)`
+ * (CLI, secrets, web, bac à sable, banc). Une copie de plus ignore
+ * `NODALAI_HOME` : une seconde instance lit alors la clé maîtresse ou la base
+ * de la première, sans que rien ne rougisse.
+ *
+ * L'empreinte est le nom du dossier comme SEGMENT littéral : seul entre deux
+ * guillemets simples, doubles ou obliques, comme un argument de `join`. Un message ou un
+ * commentaire qui écrit `~/.nodalai/config.json` n'est pas un segment et n'est
+ * pas visé. Non attrapé : un nom assemblé à l'exécution.
+ *
+ * Seule exception, passée en `skipFiles` : `test-kit/src/real-postgres.ts`.
+ * test-kit ne peut pas dépendre de shared (shared dépend de test-kit pour ses
+ * tests) ; ses clusters de test évitent les ports de l'installation PAR DÉFAUT.
+ */
+export function scanForNodalHomeCopies(opts: ScanOptions): Violation[] {
+  return scanForPattern(opts, {
+    pattern: /['"`]\.nodalai['"`]/,
+    rule: 'nodal-home-copy',
+  });
+}
+
+/**
  * The MCP tool prefix (`my-server` → `my_server`) lives in ONE place:
  * `packages/shared/src/mcp-tool-prefix.ts` (#661).
  *

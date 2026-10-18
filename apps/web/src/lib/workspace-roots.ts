@@ -22,8 +22,8 @@
 // personnel), sinon la racine ne se retire pas et un fichier peut compter
 // deux fois — rien ne le vérifie ici.
 
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
 import { agentWorkspaces, agents, and, codeProjects, eq, isNotNull } from '@nodal-agents/db';
 import { projectKey } from '@nodal-agents/shared';
 import type { getDb } from './server.ts';
@@ -31,14 +31,10 @@ import type { getDb } from './server.ts';
 /**
  * Le dossier partagé de l'entité — le MÊME calcul que le runner
  * (`packages/tools/src/builtin/file-ops/workspaces-root.ts`) :
- * `<NODALAI_WORKSPACES_ROOT | ~/.nodalai/workspaces>/<entityId>/shared`.
+ * `<NODALAI_WORKSPACES_ROOT | <dossier de Nodal>/workspaces>/<entityId>/shared`.
  */
 export function sharedWorkspacePath(entityId: string): string {
-  return join(
-    process.env['NODALAI_WORKSPACES_ROOT'] ?? join(homedir(), '.nodalai', 'workspaces'),
-    entityId,
-    'shared',
-  );
+  return join(nodalHomeEntry('workspaces'), entityId, 'shared');
 }
 
 /** Ce que `entityWorkspaceRoots` lit de la base : de quoi enchaîner la requête. */

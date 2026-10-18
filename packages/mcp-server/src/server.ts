@@ -20,7 +20,16 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { agents, agentJobs, entities, and, eq, inArray, isNotNull } from '@nodal-agents/db';
+import {
+  agents,
+  agentJobs,
+  entities,
+  and,
+  eq,
+  inArray,
+  listMemberWorkspaces,
+  countMemberlessRootWorkspaces,
+} from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { MCP_MAX_JOBS_IN_FLIGHT } from '@nodal-agents/shared';
 import { runTaskInputSchema, RUN_TASK_DESCRIPTION } from './tools';
@@ -36,9 +45,10 @@ export interface McpServerOptions {
    * OPTIONNEL, et c'est un invariant (#6, pas de réglage par utilisateur codé
    * en dur) : « quel agent orchestre » varie d'une installation à l'autre, donc
    * aucun nom d'agent ne doit vivre dans une config d'exemple. Absent, le
-   * serveur résout l'AGENT RACINE du workspace — `entities.root_agent_id`, une
-   * donnée par installation. Ambigu (plusieurs workspaces) ⇒ échec fort qui
-   * liste les choix, jamais un tirage silencieux.
+   * serveur résout l'AGENT RACINE de l'espace dont la personne est membre —
+   * `entities.root_agent_id`, une donnée par installation. Ambigu (plusieurs
+   * espaces avec une racine) ⇒ échec fort qui liste les choix, jamais un
+   * tirage silencieux.
    */
   agentId?: string;
   name?: string;
@@ -113,29 +123,37 @@ async function assertMcpEnabled(db: AnyDrizzleDb, entityId: string): Promise<voi
 }
 
 /**
- * L'identité par défaut : l'agent racine du workspace, lu en base.
+ * L'identité par défaut : l'agent racine de l'espace de la personne qui lance
+ * le serveur, lu en base.
  *
- * Une installation n'a en général qu'un workspace ; s'il y en a plusieurs, on
- * refuse de choisir — un serveur qui tirerait le premier au hasard signerait
- * des jobs au nom d'un agent que personne n'a désigné.
+ * Un serveur stdio a la confiance du shell qui le lance : il parle pour la
+ * personne de cette installation, donc pour SON espace — une entité dont elle
+ * est membre (`listMemberWorkspaces`, la règle du sélecteur d'espaces du
+ * tableau de bord). Une entité sans membre (un espace d'essai piloté par un
+ * outil) n'est l'espace de personne : on ne la sert que si on la désigne par
+ * un agent épinglé. Plusieurs espaces avec une racine : on refuse de choisir —
+ * un serveur qui tirerait le premier signerait des jobs au nom d'un agent que
+ * personne n'a désigné.
  */
 async function resolveRootAgentId(db: AnyDrizzleDb): Promise<string> {
-  const rows = await db
-    .select({ entityName: entities.name, rootAgentId: entities.rootAgentId })
-    .from(entities)
-    .where(isNotNull(entities.rootAgentId));
+  const rows = await listMemberWorkspaces(db, { withRootAgent: true });
 
   if (rows.length === 1 && rows[0]!.rootAgentId) return rows[0]!.rootAgentId;
 
   if (rows.length === 0) {
+    const memberless = await countMemberlessRootWorkspaces(db);
     throw new Error(
-      'mcp_no_root_agent: no workspace has a root agent configured. Pass agentId ' +
-        'explicitly, or set a root agent in the dashboard.',
+      'mcp_no_root_agent: no workspace you are a member of has a root agent configured. ' +
+        (memberless > 0
+          ? `${memberless} workspace(s) without members have one; they are served only ` +
+            'when their agent is pinned (NODAL_MCP_AGENT_ID). '
+          : '') +
+        'Pass agentId explicitly, or set a root agent in the dashboard.',
     );
   }
   throw new Error(
     `mcp_ambiguous_root_agent: ${rows.length} workspaces have a root agent ` +
-      `(${rows.map((r) => r.entityName).join(', ')}). Pass agentId explicitly to ` +
+      `(${rows.map((r) => r.name).join(', ')}). Pass agentId explicitly to ` +
       `choose which one this server speaks for.`,
   );
 }
@@ -203,7 +221,23 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
     },
     async (args: unknown) => {
       try {
-        const { instruction, caller, agent: targetSlug } = runTaskInputSchema.parse(args);
+        const {
+          instruction,
+          caller,
+          agent: targetSlug,
+          expectedWorkspaceId,
+        } = runTaskInputSchema.parse(args);
+
+        // L'espace attendu par l'appelant, vérifié AVANT toute lecture ou
+        // écriture (#769) : un appelant dont l'épinglage aurait cassé voit son
+        // appel refusé ici, au lieu d'un job créé, et d'un runner réveillé,
+        // dans un espace qu'il n'a pas visé. Sans le champ, rien ne change.
+        if (expectedWorkspaceId !== undefined && expectedWorkspaceId !== entityId) {
+          throw new Error(
+            `mcp_workspace_mismatch: this server creates jobs in workspace ${entityId}, ` +
+              `not in ${expectedWorkspaceId} as the caller expects. Nothing was created.`,
+          );
+        }
 
         // La CIBLE se choisit, l'ENTITÉ jamais — c'est la ligne exacte que la
         // v1 avait franchie. Choisir un agent DANS le workspace équivaut à

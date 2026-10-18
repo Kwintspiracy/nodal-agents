@@ -72,10 +72,6 @@ describe('gmail_list_threads', () => {
       code: 'gmail_unauthorized',
     });
   });
-
-  it('has riskLevel read', () => {
-    expect(createListThreadsTool(gmail).riskLevel).toBe('read');
-  });
 });
 
 describe('gmail_get_thread', () => {
@@ -164,10 +160,6 @@ describe('gmail_get_thread', () => {
       code: 'gmail_message_not_found',
     });
   });
-
-  it('has riskLevel read', () => {
-    expect(createGetThreadTool(gmail).riskLevel).toBe('read');
-  });
 });
 
 describe('gmail_modify_thread_labels', () => {
@@ -188,10 +180,6 @@ describe('gmail_modify_thread_labels', () => {
     );
 
     expect(result.threadId).toBe('thread-1');
-  });
-
-  it('has riskLevel write', () => {
-    expect(createModifyThreadLabelsTool(gmail).riskLevel).toBe('write');
   });
 });
 
@@ -222,9 +210,5 @@ describe('gmail_trash_thread', () => {
     await expect(tool.execute({ thread_id: 'missing' }, {} as never)).rejects.toMatchObject({
       code: 'gmail_message_not_found',
     });
-  });
-
-  it('has riskLevel write', () => {
-    expect(createTrashThreadTool(gmail).riskLevel).toBe('write');
   });
 });

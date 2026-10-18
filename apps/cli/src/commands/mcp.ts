@@ -19,7 +19,7 @@
 // de chalk, pas de spinner. Toute erreur part sur stderr (voir launch.ts, constat
 // passe 7 : une bannière pnpm sur stdout suffisait à invalider le serveur).
 
-import { readConfig, type Config } from '../lib/config.ts';
+import { readConfig, CONFIG_FILE, type Config } from '../lib/config.ts';
 import { buildDatabaseUrl } from '../lib/env.ts';
 
 export interface McpServeOptions {
@@ -40,7 +40,7 @@ export function resolveMcpServeOptions(
 ): McpServeOptions {
   if (!config) {
     throw new Error(
-      'mcp_config_missing: ~/.nodalai/config.json not found or unreadable. ' +
+      `mcp_config_missing: ${CONFIG_FILE} not found or unreadable. ` +
         'Run `nodal-agents init` (or `nodal-agents up` once) before connecting MCP clients.',
     );
   }

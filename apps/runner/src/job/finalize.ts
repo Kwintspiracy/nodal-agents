@@ -101,6 +101,7 @@ import {
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { DecisionStatus, JobResultKind } from '@nodal-agents/shared';
 import { readProofRepairAttempts } from '@nodal-agents/shared';
+import { resolveRunWorkspaces, withJobFolder } from '@nodal-agents/tools';
 import { getVerifier } from '../verification/registry.ts';
 import { buildRepairBrief } from '../verification/repair-brief.ts';
 import type { RepairBriefCommand } from '../verification/repair-brief.ts';
@@ -109,6 +110,7 @@ import type {
   LoadedConfig,
   ProofCommandRecord,
   ProofResult,
+  ProofScope,
   ReadyConfig,
 } from '../verification/registry.ts';
 import { TERMINAL_STATUSES, completeJob, failJob, lastTextOfRun } from './state.ts';
@@ -467,6 +469,14 @@ interface OpenedJob {
    * plutôt que le défaut, et personne ne s'en sert.
    */
   readonly maxReparations: number;
+  /**
+   * Où les commandes de preuve peuvent écrire (#628) : les dossiers que le
+   * run de ce job reçoit — ceux de l'agent, le partagé, le dossier attaché à
+   * la demande —, résolus par les MÊMES fonctions que l'exécution du job
+   * (`resolveRunWorkspaces` + `withJobFolder`). Lus en transaction 1, avec
+   * le reste de ce qui décide de la preuve.
+   */
+  readonly proofScope: ProofScope;
 }
 
 function defaultLog(code: string, data: Record<string, unknown>): void {
@@ -720,6 +730,9 @@ async function ouvrirReparation(
         // ce que l'agent doit rouvrir, pas une clé repliée en casse.
         deliverable: rouge.plan.displayPath ?? rouge.plan.canonicalKey,
         record,
+        // Ce qui restera à CE livrable après ce tour (#711) : sa réserve à lui,
+        // jamais celle d'un autre. Au bout de la sienne, il compte zéro.
+        turnsLeft: Math.max(0, max - (rouge.plan.repairAttempts + 1)),
       });
     }
   }
@@ -792,6 +805,8 @@ export async function finalizeJobSuccess(
       .select({
         entityId: agentJobs.entityId,
         status: agentJobs.status,
+        agentId: agentJobs.agentId,
+        jobFolder: agentJobs.jobFolder,
       })
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId))
@@ -925,7 +940,19 @@ export async function finalizeJobSuccess(
       }
     }
 
-    return { entityId: job.entityId, plans, maxReparations };
+    // LES DOSSIERS DE LA PREUVE (#628), seulement quand une preuve va tourner.
+    // Un job sans agent n'a pas de dossiers à lui : sa preuve n'écrit que
+    // dans le dossier attaché à la demande, s'il y en a un — jamais partout.
+    let writableRoots: string[] = [];
+    if (plans.some((p) => p.config.kind === 'ready')) {
+      const agentFolders =
+        job.agentId === null
+          ? []
+          : (await resolveRunWorkspaces(tx, job.agentId, job.entityId)).workspaces;
+      writableRoots = withJobFolder(agentFolders, job.jobFolder).map((w) => w.path);
+    }
+
+    return { entityId: job.entityId, plans, maxReparations, proofScope: { writableRoots, jobId } };
   });
 
   if (!opened) return alreadyTerminal;
@@ -940,36 +967,41 @@ export async function finalizeJobSuccess(
     if (plan.config.kind !== 'ready') continue;
     const ready: ReadyConfig = plan.config;
     const sequenceId = newSequenceId();
-    const proof = await plan.verifier.runProof(ready, async (record: ProofCommandRecord) => {
-      try {
-        await db.insert(verificationRuns).values({
-          jobId,
-          entityId: opened.entityId,
-          deliverableType: plan.deliverableType,
-          canonicalKey: plan.canonicalKey,
-          manifestHash: ready.manifestHash,
-          sequenceId,
-          commandRank: record.rank,
-          command: record.command,
-          exitCode: record.exitCode,
-          outcomeKind: record.outcomeKind,
-          stdoutTail: record.stdoutTail,
-          stderrTail: record.stderrTail,
-          durationMs: record.durationMs,
-          verdict: record.verdict,
-          testedGeneration: plan.generation,
-          testedEpoch: ready.epoch,
-        });
-      } catch (error) {
-        persistenceFailed = true;
-        log(VERIFY_PERSISTENCE_FAILED, {
-          jobId,
-          key: plan.canonicalKey,
-          rank: record.rank,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    });
+    const proof = await plan.verifier.runProof(
+      ready,
+      async (record: ProofCommandRecord) => {
+        try {
+          await db.insert(verificationRuns).values({
+            jobId,
+            entityId: opened.entityId,
+            deliverableType: plan.deliverableType,
+            canonicalKey: plan.canonicalKey,
+            manifestHash: ready.manifestHash,
+            sequenceId,
+            commandRank: record.rank,
+            command: record.command,
+            exitCode: record.exitCode,
+            outcomeKind: record.outcomeKind,
+            stdoutTail: record.stdoutTail,
+            stderrTail: record.stderrTail,
+            durationMs: record.durationMs,
+            verdict: record.verdict,
+            testedGeneration: plan.generation,
+            testedEpoch: ready.epoch,
+            sandbox: record.sandbox ?? null,
+          });
+        } catch (error) {
+          persistenceFailed = true;
+          log(VERIFY_PERSISTENCE_FAILED, {
+            jobId,
+            key: plan.canonicalKey,
+            rank: record.rank,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+      opened.proofScope,
+    );
     proofs.set(plan.stateId, proof);
   }
 

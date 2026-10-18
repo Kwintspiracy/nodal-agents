@@ -22,6 +22,7 @@ import {
   normalize as pathNormalize,
 } from 'node:path';
 import { homedir } from 'node:os';
+import { nodalHome, nodalHomePath } from '@nodal-agents/shared/nodal-home';
 import { execFile } from 'node:child_process';
 import { parseServiceJson, type AutostartStatus, type AutostartView } from './autostart-view.ts';
 import {
@@ -67,6 +68,7 @@ import {
 } from './file-change-groups.ts';
 import { faconsDeConstater, rapprocherConstat } from './constated-files.ts';
 import { initGitRepository } from './project-git.ts';
+import { withNodalPrograms } from '@nodal-agents/sandbox';
 import {
   entityWorkspaceRoots,
   entityDeclaredCodeRoots,
@@ -260,7 +262,7 @@ import { readRepairAttempts } from './verification-repairs-read.ts';
 import { readDeclaredUnverified } from './declared-deliverables-read.ts';
 import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
 import { env } from './env.ts';
-import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
+import { NODALAI_CONFIG_PATH, mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import {
   SERVICE_LOG_NAMES,
   readServiceLogTail,
@@ -369,7 +371,7 @@ async function assertMonoUserHostInstall(): Promise<ActionResult<never> | null> 
   if (rows.length > 1) {
     return fail(
       'multi_user_host',
-      'This action changes configuration for the entire host and is only allowed on a single-user install. With multiple accounts, edit ~/.nodalai/config.json directly on the server.',
+      `This action changes configuration for the entire host and is only allowed on a single-user install. With multiple accounts, edit ${NODALAI_CONFIG_PATH} directly on the server.`,
     );
   }
   return null;
@@ -3600,12 +3602,12 @@ export interface WhatsAppPairingResult {
   identityLabel: string | null;
 }
 
-/** `~/.nodalai/whatsapp/<bindingId>` — a `useMultiFileAuthState` folder
+/** `<Nodal home>/whatsapp/<bindingId>` — a `useMultiFileAuthState` folder
  *  holding this binding's linked-device keys (see socket-manager.ts's
- *  header: treat it like a credential store). Mirrors cli-config.ts's
- *  `homedir()`-based resolution of `~/.nodalai` for the same host. */
+ *  header: treat it like a credential store). Under the home of THIS
+ *  instance (NODALAI_HOME, or ~/.nodalai), like cli-config.ts. */
 function whatsAppSessionDir(bindingId: string): string {
-  return pathJoin(homedir(), '.nodalai', 'whatsapp', bindingId);
+  return nodalHomePath('whatsapp', bindingId);
 }
 
 /**
@@ -3651,10 +3653,16 @@ export async function startWhatsAppPairingAction(agentId: string): Promise<Actio
       return fail('config_error', 'Runner secret not configured');
     }
     try {
-      const res = await fetch(
-        `${env.RUNNER_URL}/api/whatsapp-pairing?agentId=${encodeURIComponent(agentId)}`,
-        { method: 'POST', headers: { Authorization: `Bearer ${env.WORKER_SECRET}` } },
-      );
+      // The runner's route (apps/runner/src/routes/whatsapp-pairing.ts) reads
+      // `agentId` from a JSON body.
+      const res = await fetch(`${env.RUNNER_URL}/api/whatsapp/pairing`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ agentId }),
+      });
       if (!res.ok) {
         return fail('pairing_start_failed', `Runner rejected pairing start (${res.status})`);
       }
@@ -3675,7 +3683,7 @@ export async function startWhatsAppPairingAction(agentId: string): Promise<Actio
 /**
  * Polled every ~2s by WhatsAppConfigForm while pairing. Returns 'disconnected'
  * (no runner call) when there's no binding at all — otherwise proxies the
- * runner's GET /api/whatsapp-pairing for the live status/QR, denormalizing
+ * runner's GET /api/whatsapp/pairing for the live status/QR, denormalizing
  * `identityLabel` from the binding's `bot_identity` (best-effort — the
  * runner is expected to keep it in sync once the socket reaches 'open').
  */
@@ -3706,7 +3714,7 @@ export async function getWhatsAppPairingStatusAction(
     let res: Response;
     try {
       res = await fetch(
-        `${env.RUNNER_URL}/api/whatsapp-pairing?agentId=${encodeURIComponent(agentId)}`,
+        `${env.RUNNER_URL}/api/whatsapp/pairing?agentId=${encodeURIComponent(agentId)}`,
         { headers: { Authorization: `Bearer ${env.WORKER_SECRET}` } },
       );
     } catch (fetchErr) {
@@ -8800,9 +8808,9 @@ function mcpClientsView(): McpServerSwitchView['clients'] {
   const argv = readCliArgv(process.env['NODAL_CLI_ARGV']);
   if (argv === null) return null;
   return {
-    claudeCode: claudeCodeCommand(argv),
+    claudeCode: claudeCodeCommand(argv, nodalHome()),
     claudeDesktop: JSON.stringify(
-      { mcpServers: { [MCP_SERVER_NAME]: claudeDesktopEntry(argv) } },
+      { mcpServers: { [MCP_SERVER_NAME]: claudeDesktopEntry(argv, nodalHome()) } },
       null,
       2,
     ),
@@ -8866,7 +8874,11 @@ export async function addNodalToClaudeDesktopAction(): Promise<
       );
     }
     const file = claudeDesktopConfigPath(process.platform, process.env, homedir(), pathJoin);
-    const written = await writeNodalIntoClaudeDesktop(file, claudeDesktopEntry(argv), new Date());
+    const written = await writeNodalIntoClaudeDesktop(
+      file,
+      claudeDesktopEntry(argv, nodalHome()),
+      new Date(),
+    );
     return ok(written);
   } catch (err) {
     if (err instanceof DesktopNotInstalledError)
@@ -12128,7 +12140,7 @@ export async function updateAuthSettingsAction(
     if (!existing) {
       return fail(
         'cli_config_missing',
-        'Cannot find ~/.nodalai/config.json — run `nodal-agents init` first.',
+        `Cannot find ${NODALAI_CONFIG_PATH} — run \`nodal-agents init\` first.`,
       );
     }
 
@@ -12289,7 +12301,7 @@ export async function updateNetworkSettingsAction(
       if (msg === 'cli_config_missing') {
         return fail(
           'cli_config_missing',
-          'Cannot find ~/.nodalai/config.json — run `nodal-agents init` first.',
+          `Cannot find ${NODALAI_CONFIG_PATH} — run \`nodal-agents init\` first.`,
         );
       }
       throw err;
@@ -15764,7 +15776,7 @@ export async function setCodeProjectInitGitAction(
       });
     }
 
-    const pose = await initGitRepository(projet.path);
+    const pose = await withNodalPrograms((programs) => initGitRepository(projet.path, programs));
     if (pose.kind === 'failed') {
       // L'option n'est PAS écrite : elle dirait que ce dossier est versionné
       // alors qu'il ne l'est pas. L'échec se dit, et l'interrupteur reste où

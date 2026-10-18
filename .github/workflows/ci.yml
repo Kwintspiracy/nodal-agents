@@ -4,7 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # release/** : a hotfix is a PR into the branch cut at the release it fixes
+    # (0.9.7 into release/0.9.x, cut at 0.9.6). It gets the same gates as main.
+    branches: [main, 'release/**']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -65,7 +67,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
 
       # Turborepo's own cache, persisted between runs.
@@ -234,7 +236,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
 
       # Une lignée de cache par tranche (voir le commentaire du job `checks`).
@@ -275,7 +277,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
 
       # La lignée `build` est la seule qui pèse (~176 MB : la tâche `build`
@@ -297,6 +299,13 @@ jobs:
         timeout-minutes: 8
         run: pnpm build
 
+      # Bench Studio (`pnpm bench:studio`) est un outil local, jamais livré : un
+      # build ordinaire ne doit en porter ni route ni chunk. Le pack fait la même
+      # vérification dans build-pack (pack-smoke, release:check).
+      - name: No Bench Studio in the web build
+        timeout-minutes: 2
+        run: node scripts/check-no-bench-studio.mjs apps/web/.next
+
   # ── Pack smoke test ─────────────────────────────────────────────────────────
   # SUPPLY-001 (audit 2026-08-07). `pnpm build` builds the WORKSPACE; it says
   # nothing about the TARBALL. Two releases shipped a dead dashboard because
@@ -311,9 +320,26 @@ jobs:
   # Its own job, in parallel with the others: it runs a full `next build` plus
   # a real Postgres boot, and folding that into another job would double the
   # feedback loop for every typo-level failure.
+  #
+  # The npm matrix (0.9.7, 16/10/2026): the tarball is installed WITHOUT git,
+  # by the npm users have, then booted. `lts` is the npm the current Node 24
+  # LTS ships, `latest` is npm latest. The npm FLOOR is 11.6.0: since vitest
+  # 4.1.12 was published, every npm below it (Node 24.0 to 24.7 ship such an
+  # npm) crashes with `Cannot read properties of null (reading 'edgesOut')`
+  # inside better-auth's optional peers. The install docs tell users to update.
   pack-smoke:
+    name: pack-smoke (npm ${{ matrix.npm }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Steps bounded below: 10 + 2 + 14 = 26, + 5 min of margin.
+    timeout-minutes: 31
+    strategy:
+      fail-fast: false
+      matrix:
+        npm: [lts, latest]
+    env:
+      NPM_FLOOR: '11.6.0'
+      # Empty = the npm Node ships; otherwise `npx npm@<it>` (smoke-pack.mjs).
+      NODAL_SMOKE_NPM: ${{ matrix.npm == 'latest' && 'latest' || '' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -321,7 +347,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -330,8 +356,12 @@ jobs:
         timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
-      - name: Pack, install clean, boot
-        timeout-minutes: 12
+      - name: The npm under test is at or above the floor
+        timeout-minutes: 2
+        run: node scripts/check-npm-floor.mjs "$NPM_FLOOR"
+
+      - name: Pack, install clean without git, boot
+        timeout-minutes: 14
         run: node scripts/smoke-pack.mjs
 
   # PERF-001 (audit 2026-08-07). 31 spec files, 85 tests, never run by CI —
@@ -367,7 +397,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -450,3 +480,57 @@ jobs:
           path: ${{ runner.temp }}/stack.log
           retention-days: 7
           if-no-files-found: ignore
+
+  # ── Le bac à sable Windows, prouvé sur chaque PR (#628) ─────────────────────
+  # `windows-11-arm` est la seule image hébergée où MXC choisit le palier
+  # `base-container`, celui que le bac à sable accepte (sonde du 15/10 :
+  # Windows 11 10.0.26200.9457 arm64 → base-container ; windows-2022 et
+  # windows-2025 → appcontainer-dacl, que le bac à sable refuse). La batterie
+  # de confinement y tourne donc pour de vrai, au lieu d'être sautée par nom
+  # comme sur `ci-windows.yml`.
+  #
+  # Node 26 : MXC exige ≥ 24.21 ou ≥ 26.8 sous Windows ; `26` donne la dernière.
+  #
+  # Rien que les suites du bac à sable : le reste de Windows est l'affaire de
+  # `ci-windows.yml`, sur main et chaque nuit.
+  sandbox-windows:
+    runs-on: windows-11-arm
+    # Mesuré sur la sonde du 15/10 (run 38671844833) : install ~6 min à froid
+    # sur cette image, la batterie moins d'une minute. Borne du job = somme des
+    # étapes (15 + 2 + 10) + 5 pour les étapes de mise en place.
+    timeout-minutes: 32
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '26'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        timeout-minutes: 15
+        run: pnpm install --frozen-lockfile
+
+      # La batterie se SAUTE par nom sur un autre palier. Si GitHub changeait
+      # cette image, le job deviendrait vert sans rien prouver : il refuse
+      # donc de continuer sans base-container, le palier cité.
+      - name: MXC isolation tier must be base-container
+        timeout-minutes: 2
+        working-directory: packages/sandbox
+        run: >-
+          node --input-type=module -e "const m = await import('@microsoft/mxc-sdk/v1');
+          const s = m.getPlatformSupport(); console.log(JSON.stringify(s));
+          if (s.isolationTier !== 'base-container') { console.error('expected base-container, got ' + s.isolationTier); process.exit(1); }"
+
+      - name: Sandbox suites
+        timeout-minutes: 10
+        run: >-
+          npx vitest run
+          packages/sandbox
+          packages/tools/src/tests/sandbox-confinement-windows.test.ts
+          packages/tools/src/tests/sandbox-engine.test.ts
+          packages/tools/src/tests/sandbox-report.test.ts
+          apps/runner/src/tests/verification/sandbox-three-paths.test.ts
+          apps/web/src/lib/__tests__/project-git-sandboxed.test.ts

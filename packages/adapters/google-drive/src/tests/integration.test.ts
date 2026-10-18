@@ -2,7 +2,7 @@
 // Verifies: tool count, unique names, correct risk levels, schema validation
 
 import { describe, it, expect } from 'vitest';
-import { createDriveTools } from '../index';
+import { createDriveTools, DRIVE_OPERATIONS } from '../index';
 import { z } from 'zod';
 
 // Use a fake token — tools are instantiated but never called here
@@ -34,7 +34,7 @@ describe('createDriveTools integration', () => {
     }
   });
 
-  it('read tools have riskLevel read', () => {
+  it('read operations have risk read in the descriptor', () => {
     const readTools = [
       'drive_list_files',
       'drive_read_file',
@@ -42,32 +42,31 @@ describe('createDriveTools integration', () => {
       'drive_list_permissions',
       'drive_export_file',
     ];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(DRIVE_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of readTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be read`).toBe('read');
+      expect(toolMap[name]?.risk, `${name} should be read`).toBe('read');
     }
   });
 
-  it('write tools have riskLevel write', () => {
+  it('write operations have risk write in the descriptor', () => {
     const writeTools = [
       'drive_upload_file',
       'drive_create_folder',
       'drive_move_file',
       'drive_rename_file',
       'drive_copy_file',
-      'drive_share_file',
     ];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const toolMap = Object.fromEntries(DRIVE_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of writeTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be write`).toBe('write');
+      expect(toolMap[name]?.risk, `${name} should be write`).toBe('write');
     }
   });
 
-  it('destructive tools have riskLevel destructive', () => {
-    const destructiveTools = ['drive_delete_file'];
-    const toolMap = Object.fromEntries(tools.map((t) => [t.name, t]));
+  it('destructive operations have risk destructive in the descriptor', () => {
+    const destructiveTools = ['drive_delete_file', 'drive_share_file'];
+    const toolMap = Object.fromEntries(DRIVE_OPERATIONS.map((o) => [o.slug, o]));
     for (const name of destructiveTools) {
-      expect(toolMap[name]?.riskLevel, `${name} should be destructive`).toBe('destructive');
+      expect(toolMap[name]?.risk, `${name} should be destructive`).toBe('destructive');
     }
   });
 
@@ -86,18 +85,18 @@ describe('createDriveTools integration', () => {
 
   // Tool count breakdown
   it('has exactly 5 read tools', () => {
-    const readCount = tools.filter((t) => t.riskLevel === 'read').length;
+    const readCount = DRIVE_OPERATIONS.filter((o) => o.risk === 'read').length;
     expect(readCount).toBe(5);
   });
 
-  it('has exactly 6 write tools', () => {
-    const writeCount = tools.filter((t) => t.riskLevel === 'write').length;
-    expect(writeCount).toBe(6);
+  it('has exactly 5 write tools', () => {
+    const writeCount = DRIVE_OPERATIONS.filter((o) => o.risk === 'write').length;
+    expect(writeCount).toBe(5);
   });
 
-  it('has exactly 1 destructive tool', () => {
-    const destructiveCount = tools.filter((t) => t.riskLevel === 'destructive').length;
-    expect(destructiveCount).toBe(1);
+  it('has exactly 2 destructive tools', () => {
+    const destructiveCount = DRIVE_OPERATIONS.filter((o) => o.risk === 'destructive').length;
+    expect(destructiveCount).toBe(2);
   });
 
   // Schema spot-checks

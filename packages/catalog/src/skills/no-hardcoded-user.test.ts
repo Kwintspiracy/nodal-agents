@@ -25,7 +25,75 @@ describe('print-request skill', () => {
     expect(skill?.name).toBe('Print requests');
     expect(skill?.requiredBuiltins).toEqual([]);
     expect(skill?.kind ?? 'capability').toBe('capability');
-    expect(skill?.content).toContain('the only valid answer is a print preview');
+  });
+
+  // Each rule is asserted on the sentence that carries it, not on loose words:
+  // a rule restated elsewhere, or missing its qualifier, must not pass.
+  const sentenceWith = (text: string, needle: string): string[] =>
+    text
+      .split(/\n|(?<=[.;:])\s+(?=[A-Z])/)
+      .map((x) => x.trim())
+      .filter((x) => x.includes(needle));
+
+  it('lets the settings decide the print tool: allowed (not available) keys both modes, no unconditional preview', () => {
+    const c = skill?.content ?? '';
+    const d = skill?.description ?? '';
+    expect(c).not.toContain('the only valid answer');
+    expect(d).not.toContain('only valid answer');
+    // Both modes are keyed on "allowed"; "available" is never the criterion.
+    expect(c).toContain(
+      'print it with an allowed print tool**: a preview they can approve when a preview tool is allowed, direct printing when direct printing is allowed (when both are allowed, the preview)',
+    );
+    expect(c).not.toMatch(/when such a tool is available/);
+    expect(c).toContain("The owner's settings decide which one, never this skill");
+    // The only sentence that mentions the Print button is conditional on the preview mode.
+    const button = sentenceWith(c, 'Print button');
+    expect(button).toHaveLength(1);
+    expect(button[0]).toMatch(/with a preview, [^;]*Print button/);
+    expect(button[0]).toMatch(/with direct printing, the job status the print tool returned/);
+    expect(c).not.toMatch(/A preview is shown/);
+  });
+
+  it('falls back only to another ALLOWED print tool, never retries a blocked one', () => {
+    const c = skill?.content ?? '';
+    const only = sentenceWith(c, 'Use only a print tool');
+    expect(only).toHaveLength(1);
+    expect(only[0]).toBe('- Use only a print tool your settings allow.');
+    expect(sentenceWith(c, 'Never use one they do not allow')).toEqual([
+      'Never use one they do not allow.',
+    ]);
+    const fallback = sentenceWith(c, 'refused as blocked by the owner');
+    expect(fallback).toHaveLength(1);
+    expect(fallback[0]).toContain('or fails, do not retry it and do not stop');
+    expect(fallback[0]).toContain('move to another allowed print tool, if there is one');
+    const d = skill?.description ?? '';
+    expect(d).toContain(
+      'Use only a print tool the settings allow; if it is refused as blocked, do not retry it and use another allowed one.',
+    );
+  });
+
+  it('gives up when NO allowed print tool can be used (refused, failed or not allowed), saying so once', () => {
+    const c = skill?.content ?? '';
+    const giveUp = sentenceWith(c, 'Give up only when');
+    expect(giveUp).toHaveLength(1);
+    expect(giveUp[0]).toBe(
+      '- Give up only when no allowed print tool can be used (none is allowed, or every allowed one was refused or failed), no printer can print, or the content cannot be read anywhere: then say so once, with the reason.',
+    );
+  });
+
+  it('never says it printed before the print tool reports the job, in either mode', () => {
+    const never = sentenceWith(skill?.content ?? '', 'Never say it printed');
+    expect(never).toHaveLength(1);
+    expect(never[0]).toBe(
+      'Never say it printed before the print tool reports the job as accepted or completed, whichever mode you used.',
+    );
+    expect(skill?.content).toContain('With direct printing there is no pending request to replace');
+  });
+
+  it('names no connector-specific print tool', () => {
+    const text = `${skill?.description}
+${skill?.content}`;
+    expect(text).not.toMatch(/print_now|request_print|hp_connector|__/);
   });
 
   it('lays out inside the printable area the print tool reports, full-bleed only on request', () => {

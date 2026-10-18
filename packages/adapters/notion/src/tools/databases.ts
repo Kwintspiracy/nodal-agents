@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-notion — database tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { Client } from '@notionhq/client';
 import { mapNotionError } from '../errors';
 import {
@@ -49,13 +49,12 @@ export type QueryDatabaseOutput = {
 
 export function createQueryDatabaseTool(
   client: Client,
-): ToolDefinition<typeof QueryDatabaseInput, QueryDatabaseOutput> {
+): ConnectorToolDefinition<typeof QueryDatabaseInput, QueryDatabaseOutput> {
   return {
     name: 'notion_query_database',
     description:
       'Query a Notion database with optional filters. Without a filter, returns all entries. Returns rows with their properties.',
     inputSchema: QueryDatabaseInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         let hitMax = false;
@@ -124,13 +123,12 @@ export type GetDatabaseOutput = {
 
 export function createGetDatabaseTool(
   client: Client,
-): ToolDefinition<typeof GetDatabaseInput, GetDatabaseOutput> {
+): ConnectorToolDefinition<typeof GetDatabaseInput, GetDatabaseOutput> {
   return {
     name: 'notion_get_database',
     description:
       'Get the schema of a Notion database (column names, types, and select/multi_select options). Call this to discover database structure before querying or creating rows.',
     inputSchema: GetDatabaseInput,
-    riskLevel: 'read',
     async execute(input) {
       try {
         const db = await client.databases.retrieve({ database_id: input.database_id });
@@ -189,13 +187,12 @@ export type CreateDatabaseEntryOutput = {
 
 export function createCreateDatabaseEntryTool(
   client: Client,
-): ToolDefinition<typeof CreateDatabaseEntryInput, CreateDatabaseEntryOutput> {
+): ConnectorToolDefinition<typeof CreateDatabaseEntryInput, CreateDatabaseEntryOutput> {
   return {
     name: 'notion_create_database_entry',
     description:
       'Create a new row (entry) in a Notion database. Use notion_get_database first to discover property names and types.',
     inputSchema: CreateDatabaseEntryInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         // Fetch schema for proper type coercion
@@ -267,13 +264,12 @@ export type UpdateDatabaseEntryOutput = {
 
 export function createUpdateDatabaseEntryTool(
   client: Client,
-): ToolDefinition<typeof UpdateDatabaseEntryInput, UpdateDatabaseEntryOutput> {
+): ConnectorToolDefinition<typeof UpdateDatabaseEntryInput, UpdateDatabaseEntryOutput> {
   return {
     name: 'notion_update_database_entry',
     description:
       'Update properties of a Notion database row. Use notion_get_database to discover property names and types.',
     inputSchema: UpdateDatabaseEntryInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         let dbSchema: Record<string, { type: string }> | null = null;
@@ -375,13 +371,12 @@ function buildColumnSchema(type: z.infer<typeof ColumnTypeSchema>): Record<strin
 
 export function createCreateDatabaseTool(
   client: Client,
-): ToolDefinition<typeof CreateDatabaseInput, CreateDatabaseOutput> {
+): ConnectorToolDefinition<typeof CreateDatabaseInput, CreateDatabaseOutput> {
   return {
     name: 'notion_create_database',
     description:
       'Create a new database inside a Notion page. Define columns with their types (title, rich_text, select, multi_select, number, checkbox, url, date, email).',
     inputSchema: CreateDatabaseInput,
-    riskLevel: 'write',
     async execute(input) {
       try {
         const properties: Record<string, unknown> = {};
@@ -427,13 +422,12 @@ export type UpdateDatabaseOutput = {
 
 export function createUpdateDatabaseTool(
   client: Client,
-): ToolDefinition<typeof UpdateDatabaseInput, UpdateDatabaseOutput> {
+): ConnectorToolDefinition<typeof UpdateDatabaseInput, UpdateDatabaseOutput> {
   return {
     name: 'notion_update_database',
     description:
       'Update a database schema — add new columns or rename the database. Cannot modify existing column types (Notion API limitation).',
     inputSchema: UpdateDatabaseInput,
-    riskLevel: 'write',
     async execute(input) {
       if (!input.title && !input.new_columns) {
         throw mapNotionError(new Error('Provide title and/or new_columns to update.'));

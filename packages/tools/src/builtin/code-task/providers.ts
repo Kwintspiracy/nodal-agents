@@ -20,6 +20,7 @@
 
 import {
   CLAUDE_SHELL_TOOLS,
+  claudeSettingSourcesFlags,
   claudeShellFlags,
   claudeShellTools,
   cliShellPosture,
@@ -125,6 +126,13 @@ export interface ProviderRunOptions {
   model?: string;
   effort?: string;
   /**
+   * A file whose content is appended to Claude's system prompt
+   * (`--append-system-prompt-file`): the workspace's project instructions, read
+   * by Nodal itself since `--setting-sources user` stops Claude from loading
+   * them (workspace-memory.ts). Claude only; Codex reads its own AGENTS.md.
+   */
+  appendSystemPromptFile?: string;
+  /**
    * Resume a previous CLI session instead of starting cold.
    *
    * The two CLIs express this differently, and the difference is structural
@@ -162,9 +170,21 @@ export function buildProviderArgs(
     // `--verbose` is what makes stream-json actually emit the full event stream
     // in print mode; the runtime path (claude-turn.ts) has shipped this pair
     // for a while, so the shape is known-good rather than assumed.
-    const args = ['-p', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config'];
+    const args = [
+      '-p',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--strict-mcp-config',
+      // The workspace's own settings (hooks run on the host) are never loaded;
+      // one definition shared with claude-turn.ts, see claude-setting-sources.ts.
+      ...claudeSettingSourcesFlags(),
+    ];
     // A flag, and it works in print mode — the runtime path (claude-turn.ts)
     // has shipped it for a while, which is what made this half cheap.
+    if (opts.appendSystemPromptFile) {
+      args.push('--append-system-prompt-file', opts.appendSystemPromptFile);
+    }
     if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
     if (opts.model) args.push('--model', opts.model);
     if (opts.effort) args.push('--effort', opts.effort);

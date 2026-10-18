@@ -8,10 +8,10 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { obsidianVaults } from '../scenarios';
+import { obsidianVaults } from '../needs';
 import { readStackCommit, readStackVersion } from '../stack';
 import { redactHome } from '../redact';
-import { createArgs, wrapperScript } from '../schedule';
+import { benchTaskName, createArgs, wrapperScript } from '../schedule';
 
 const SHA = '0123456789abcdef0123456789abcdef01234567';
 
@@ -95,9 +95,13 @@ describe('what a fixture may carry into a public repository', () => {
 
 describe('the nightly task', () => {
   it('runs the bench from the repository, marked scheduled, its output appended to a log', () => {
-    expect(wrapperScript('D:\\x y\\NodalAI', 'C:\\h\\workflows.log').split('\r\n')).toEqual([
+    expect(
+      wrapperScript('D:\\x y\\NodalAI', 'C:\\h\\workflows.log', 'C:\\h').split('\r\n'),
+    ).toEqual([
       '@echo off',
       'rem Nodal-Agents workflow bench, launched by the scheduled task. See packages/bench/src/workflows/schedule.ts',
+      // The home of the instance that scheduled it (NODALAI_HOME), never the default by accident.
+      'set "NODALAI_HOME=C:\\h"',
       'cd /d "D:\\x y\\NodalAI"',
       'echo ==== %DATE% %TIME% >> "C:\\h\\workflows.log"',
       'call pnpm bench:workflows --scheduled >> "C:\\h\\workflows.log" 2>&1',
@@ -119,5 +123,13 @@ describe('the nightly task', () => {
       '/F',
     ]);
     expect(() => createArgs('3h', 'C:\\a.cmd')).toThrow('--at wants HH:MM');
+  });
+
+  it('is one task per instance: the default keeps its name, another home gets its own', () => {
+    expect(benchTaskName(null)).toBe('Nodal-Agents workflow bench');
+    expect(benchTaskName('ab12cd34')).toBe('Nodal-Agents workflow bench ab12cd34');
+    expect(createArgs('03:00', 'C:\\a.cmd', benchTaskName('ab12cd34'))[2]).toBe(
+      '"Nodal-Agents workflow bench ab12cd34"',
+    );
   });
 });

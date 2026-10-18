@@ -47,6 +47,7 @@ export const createSkillTool: ToolDefinition<typeof CreateSkillInput, CreateSkil
     SKILL_AUTHORING_GUIDE,
   inputSchema: CreateSkillInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {

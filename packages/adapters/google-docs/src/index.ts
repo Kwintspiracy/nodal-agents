@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-docs — public API
-// Single factory: createDocsTools(opts) → ToolDefinition[]
+// Single factory: createDocsTools(opts) → ConnectorToolDefinition[]
 
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createDocsClient } from './client';
 
@@ -48,7 +48,8 @@ export type DocsAdapterOptions =
 
 /**
  * Create all 14 Google Docs tools using the provided OAuth access token.
- * Returns a flat ToolDefinition[] ready to register in a ToolRegistry.
+ * Returns a flat ConnectorToolDefinition[]: risk and default approval come
+ * from the operation descriptors, applied by ADAPTER_REGISTRY (issue #735).
  *
  * Tool count: 14
  * Read (2):        docs_get, docs_get_text
@@ -58,7 +59,9 @@ export type DocsAdapterOptions =
  *                  docs_batch_update
  * Destructive (1): docs_delete_content_range
  */
-export function createDocsTools(opts: DocsAdapterOptions): ToolDefinition<z.ZodTypeAny, unknown>[] {
+export function createDocsTools(
+  opts: DocsAdapterOptions,
+): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   const getAccessToken =
     'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
   const docs = createDocsClient(getAccessToken);
@@ -83,7 +86,7 @@ export function createDocsTools(opts: DocsAdapterOptions): ToolDefinition<z.ZodT
 
     // Destructive tools (1)
     createDeleteContentRangeTool(docs),
-  ] as unknown as ToolDefinition<z.ZodTypeAny, unknown>[];
+  ] as unknown as ConnectorToolDefinition<z.ZodTypeAny, unknown>[];
 }
 
 // Re-export error types for consumers

@@ -129,8 +129,9 @@ export async function recordConstatedWrites(input: {
   /**
    * L'empreinte des OCTETS que l'outil a écrits, par chemin (#505,
    * `ctx.reportWrittenContent`). Un chemin absent de cette carte n'a pas
-   * d'empreinte : une écriture que l'outil n'a pas décrite (shell, harnais,
-   * bureautique) n'accorde aucune propriété.
+   * d'empreinte : une écriture que l'outil n'a pas décrite (shell, harnais)
+   * n'accorde aucune propriété. Les outils Office la rapportent depuis #780
+   * (`writeWorkspaceBinary`), comme les outils fichier.
    */
   readonly contenusEcrits?: ReadonlyMap<string, string>;
 }): Promise<number> {

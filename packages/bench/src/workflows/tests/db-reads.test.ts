@@ -202,3 +202,171 @@ describe('the live bench trials, and only them', () => {
     expect(rows.map((r) => r.id)).not.toContain(benchDone);
   });
 });
+
+describe('what the orchestration judges read from the tree', () => {
+  it('reads the return_result calls from the transcript, the deliveries and the card input, of the tree only', async () => {
+    await pg.exec(
+      'delete from job_deliveries; delete from approval_requests; delete from agent_jobs;',
+    );
+    const root = await job({ status: 'failed' });
+    const kid = await job({ parent: root, status: 'failed' });
+    const stranger = await job({ status: 'completed' });
+    const transcript = (status: string, reason: string) =>
+      JSON.stringify([
+        { role: 'user', content: 'copie le fichier' },
+        { role: 'assistant', content: 'texte seul, pas de partie' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'c0',
+              toolName: 'return_result',
+              input: { status: 'success', reason: 'first try' },
+            },
+          ],
+        },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Je termine.' },
+            { type: 'tool-call', toolCallId: 'c1', toolName: 'file_read', input: { path: 'x' } },
+            {
+              type: 'tool-call',
+              toolCallId: 'c2',
+              toolName: 'return_result',
+              input: { status, reason },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'tool-result', toolCallId: 'c2', toolName: 'return_result' }],
+        },
+      ]);
+    await pg.query(`update agent_jobs set messages = $2::jsonb where id = $1`, [
+      root,
+      transcript('blocked', 'the copy failed'),
+    ]);
+    // Un transcript plus ancien : l'entrée sous `args`.
+    await pg.query(`update agent_jobs set messages = $2::jsonb where id = $1`, [
+      kid,
+      JSON.stringify([
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'k',
+              toolName: 'return_result',
+              args: { status: 'blocked', reason: 'missing source' },
+            },
+          ],
+        },
+      ]),
+    ]);
+    await pg.query(`update agent_jobs set messages = $2::jsonb where id = $1`, [
+      stranger,
+      transcript('success', ''),
+    ]);
+    await pg.query(
+      `insert into job_deliveries (job_id, channel, chat_id, payload, outcome, idempotency_key)
+       values ($1, 'telegram', '42', '391', 'confirmed', 'k-root'), ($2, 'telegram', '42', 'x', 'confirmed', 'k-stranger')`,
+      [root, stranger],
+    );
+    await pg.query(
+      `insert into approval_requests (entity_id, job_id, tool_name, tool_input, kind, status)
+       values ($1, $2, 'ask_user', $3::jsonb, 'question', 'pending')`,
+      [entityId, kid, JSON.stringify({ question: 'Couleur ?', options: ['bleu', 'vert'] })],
+    );
+
+    const facts = await readTreeFacts(db, root);
+
+    // Par job, dans l'ordre du transcript : c'est ce que les juges lisent
+    // (le DERNIER appel d'un job). L'ordre entre deux jobs nés dans la même
+    // milliseconde n'a pas de sens.
+    const callsOf = (jobId: string) =>
+      facts.returnResults.filter((r) => r.jobId === jobId).map((r) => JSON.parse(r.input!));
+    expect(facts.returnResults).toHaveLength(3);
+    expect(callsOf(root)).toEqual([
+      { status: 'success', reason: 'first try' },
+      { status: 'blocked', reason: 'the copy failed' },
+    ]);
+    expect(callsOf(kid)).toEqual([{ status: 'blocked', reason: 'missing source' }]);
+    expect(facts.deliveries.map((d) => [d.jobId, d.channel, d.outcome])).toEqual([
+      [root, 'telegram', 'confirmed'],
+    ]);
+    expect(facts.approvals).toHaveLength(1);
+    expect(JSON.parse(facts.approvals[0]!.input!)).toEqual({
+      question: 'Couleur ?',
+      options: ['bleu', 'vert'],
+    });
+  });
+
+  it('reads what each call of the tree did to each file it targeted, in seq order, with the source of the after hash', async () => {
+    await pg.exec('delete from tool_call_writes; delete from tool_calls; delete from agent_jobs;');
+    const root = await job({ status: 'completed' });
+    const stranger = await job({ status: 'completed' });
+    const call = async (jobId: string, tool: string): Promise<string> => {
+      const r = await pg.query<{ id: string }>(
+        `insert into tool_calls (entity_id, job_id, tool_name) values ($1, $2, $3) returning id::text`,
+        [entityId, jobId, tool],
+      );
+      return r.rows[0]!.id;
+    };
+    const create = await call(root, 'xlsx_create');
+    const edit = await call(root, 'xlsx_set_range');
+    const other = await call(stranger, 'file_write');
+    const a = 'a'.repeat(64);
+    const b = 'b'.repeat(64);
+    await pg.query(
+      `insert into tool_call_writes (tool_call_id, job_id, path, before_kind, before_sha256, after_kind, after_sha256, after_source)
+       values ($1, $4, 'C:/ws/nodal-bench/v.xlsx', 'file', $6, 'file', $7, 'written'),
+              ($2, $4, 'C:/ws/nodal-bench/v.xlsx', 'absent', null, 'file', $6, 'written'),
+              ($3, $5, 'C:/ws/autre.txt', 'absent', null, 'file', $7, 'read')`,
+      [edit, create, other, root, stranger, a, b],
+    );
+    const facts = await readTreeFacts(db, root);
+    expect(
+      facts.writes.map((w) => [w.toolName, w.path, w.beforeKind, w.afterSha256, w.afterSource]),
+    ).toEqual([
+      ['xlsx_create', 'C:/ws/nodal-bench/v.xlsx', 'absent', a, 'written'],
+      ['xlsx_set_range', 'C:/ws/nodal-bench/v.xlsx', 'file', b, 'written'],
+    ]);
+    expect(facts.writes[0]!.seq).toBeLessThan(facts.writes[1]!.seq);
+  });
+
+  it('reads what each call of the tree read (tool_call_reads), in seq order, with its real path and hash, never a stranger read', async () => {
+    await pg.exec(
+      'delete from tool_call_reads; delete from tool_call_writes; delete from tool_calls; delete from agent_jobs;',
+    );
+    const root = await job({ status: 'completed' });
+    const stranger = await job({ status: 'completed' });
+    const call = async (jobId: string, tool: string): Promise<string> => {
+      const r = await pg.query<{ id: string }>(
+        `insert into tool_calls (entity_id, job_id, tool_name) values ($1, $2, $3) returning id::text`,
+        [entityId, jobId, tool],
+      );
+      return r.rows[0]!.id;
+    };
+    const first = await call(root, 'xlsx_read');
+    const second = await call(root, 'file_read');
+    const other = await call(stranger, 'xlsx_read');
+    const a = 'a'.repeat(64);
+    const b = 'b'.repeat(64);
+    // Insérées dans le désordre : l'ordre rendu est celui des appels (`seq`).
+    await pg.query(
+      `insert into tool_call_reads (tool_call_id, job_id, path, sha256)
+       values ($2, $4, 'C:/ws/shared/nodal-bench/notes.txt', $7),
+              ($1, $4, 'C:/ws/shared/nodal-bench/v.xlsx', $6),
+              ($3, $5, 'C:/ws/shared/nodal-bench/v.xlsx', $7)`,
+      [first, second, other, root, stranger, a, b],
+    );
+    const facts = await readTreeFacts(db, root);
+    expect(facts.reads.map((x) => [x.toolName, x.path, x.sha256, x.jobId])).toEqual([
+      ['xlsx_read', 'C:/ws/shared/nodal-bench/v.xlsx', a, root],
+      ['file_read', 'C:/ws/shared/nodal-bench/notes.txt', b, root],
+    ]);
+    expect(facts.reads[0]!.seq).toBeLessThan(facts.reads[1]!.seq);
+  });
+});

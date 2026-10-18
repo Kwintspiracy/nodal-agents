@@ -4,7 +4,7 @@ import chalk from 'chalk';
 import prompts from 'prompts';
 import ora from 'ora';
 import { randomBytes } from 'crypto';
-import { writeConfig, readConfig, type Config } from '../lib/config.ts';
+import { writeConfig, readConfig, CONFIG_FILE, type Config } from '../lib/config.ts';
 import { LLM_PRESETS, fetchModels, isEndpointReachable } from '../lib/llm-presets.ts';
 
 function generateSecret(bytes = 32): string {
@@ -198,7 +198,7 @@ export async function runInit(
   writeConfig(config);
 
   console.log('');
-  console.log(chalk.green('  Config saved to ~/.nodalai/config.json'));
+  console.log(chalk.green(`  Config saved to ${CONFIG_FILE}`));
 
   if ((bind as string) === 'lan') {
     console.log('');

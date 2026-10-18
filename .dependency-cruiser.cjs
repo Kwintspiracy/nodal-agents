@@ -28,6 +28,8 @@ module.exports = {
           '(^|/)app/(page|layout|loading|error|not-found|template|default|globals)\\.(tsx?|css)$',
           '(^|/)proxy\\.ts$',
           '(^|/)next-env\\.d\\.ts$',
+          // Workflow bench fixtures: projects COPIED into a workspace before a trial, never imported.
+          '^packages/bench/fixtures/',
         ],
       },
       to: {},
@@ -96,7 +98,7 @@ module.exports = {
     // and was producing 25 of the 26 no-orphans warnings — every emitted chunk
     // is by definition imported by nothing. Warnings nobody can act on train
     // people to ignore the report.
-    exclude: { path: '(^|/)(\\.next|out)/' },
+    exclude: { path: '(^|/)(\\.next|\\.next-studio|out)/' },
     // Not tsconfig.json: this one adds apps/web's `@/*` path alias, which the
     // root config does not carry. See tsconfig.depcruise.json for why.
     tsConfig: { fileName: 'tsconfig.depcruise.json' },

@@ -1,5 +1,5 @@
 // @nodal-agents/adapter-tavily — public API
-// Single factory: createTavilyTools(opts) → ToolDefinition[]
+// Single factory: createTavilyTools(opts) → ConnectorToolDefinition[]
 //
 // Tools exposed (3 total — all read-level):
 //   tavily_search   — web search via Tavily
@@ -10,7 +10,7 @@
 // All three tools (search, extract, crawl) are natively supported by the SDK.
 // No hand-rolled HTTP anywhere in this adapter.
 
-import type { ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createTavilyClient } from './client.ts';
 import {
@@ -29,14 +29,15 @@ export type TavilyAdapterOptions = {
 
 /**
  * Create all 3 Tavily tools using the provided API key.
- * Returns a flat ToolDefinition[] ready to register in a ToolRegistry.
+ * Returns a flat ConnectorToolDefinition[]: risk and default approval come
+ * from the operation descriptors, applied by ADAPTER_REGISTRY (issue #735).
  *
  * Tool count: 3
  * Read (3): tavily_search, tavily_extract, tavily_crawl
  */
 export function createTavilyTools(
   opts: TavilyAdapterOptions,
-): ToolDefinition<z.ZodTypeAny, unknown>[] {
+): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   if (!opts.accessToken) {
     throw new Error('TavilyAdapterOptions: accessToken must be a non-empty string.');
   }
@@ -47,7 +48,7 @@ export function createTavilyTools(
     makeTavilySearchTool(client),
     makeTavilyExtractTool(client),
     makeTavilyCrawlTool(client),
-  ] as unknown as ToolDefinition<z.ZodTypeAny, unknown>[];
+  ] as unknown as ConnectorToolDefinition<z.ZodTypeAny, unknown>[];
 }
 
 // Re-export error types for consumers

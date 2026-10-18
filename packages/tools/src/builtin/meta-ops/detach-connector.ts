@@ -29,6 +29,7 @@ export const detachConnectorTool: ToolDefinition<
     'Reversible with attach_connector. Idempotent.',
   inputSchema: DetachConnectorInput,
   riskLevel: 'write',
+  egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
