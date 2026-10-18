@@ -15,10 +15,7 @@ const PRINTER_BRAND = new RegExp(
 );
 
 // A system skill names no connector-specific TOOL: not the print tools, and not a
-// `<server>-slug__<tool>` name. This is all the guard claims. A connector's own
-// name (its slug, in any spelling) is not decidable from here; that protection is
-// `scripts/check-private-names.mjs`, which reads the names from a list kept
-// outside the repository.
+// `<server>-slug__<tool>` name. This is all the guard claims.
 const CONNECTOR_TOOL = /print_now|request_print|\b[a-z0-9][a-z0-9_-]*__[a-z][a-z0-9_]*\b/i;
 
 describe('connector tool guard', () => {
