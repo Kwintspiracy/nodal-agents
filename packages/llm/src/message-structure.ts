@@ -311,17 +311,14 @@ function sizeOf(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
-/** An image part of a user message: `image`, or a `file` whose type is an image. */
-function isImagePart(
-  p: unknown,
-): p is { type: string; image?: unknown; data?: unknown; mediaType?: string } {
-  const part = p as { type?: unknown; mediaType?: unknown } | null;
-  return (
-    part?.type === 'image' ||
-    (part?.type === 'file' &&
-      typeof part.mediaType === 'string' &&
-      part.mediaType.startsWith('image/'))
-  );
+/** An image part of a user message (`image`, or a `file` whose type is an image), read as data. */
+function imagePartOf(p: unknown): { data: unknown; mediaType: string | undefined } | null {
+  const part = p as { type?: unknown; image?: unknown; data?: unknown; mediaType?: unknown } | null;
+  const mediaType = typeof part?.mediaType === 'string' ? part.mediaType : undefined;
+  if (part?.type === 'image') return { data: part.image, mediaType };
+  if (part?.type === 'file' && mediaType?.startsWith('image/'))
+    return { data: part.data, mediaType };
+  return null;
 }
 
 /**
@@ -344,8 +341,9 @@ export function withinImageBudget(messages: ModelMessage[]): ModelMessage[] {
     if (m?.role !== 'user' || !Array.isArray(m.content)) continue;
     for (let j = m.content.length - 1; j >= 0; j--) {
       const p = m.content[j];
-      if (!isImagePart(p)) continue;
-      const size = imagePartBytes(p.type === 'image' ? p.image : p.data);
+      const image = imagePartOf(p);
+      if (image === null) continue;
+      const size = imagePartBytes(image.data);
       if (count < MODEL_REQUEST_MAX_IMAGES && bytes + size <= MODEL_REQUEST_MAX_IMAGE_BYTES) {
         count += 1;
         bytes += size;
@@ -353,7 +351,7 @@ export function withinImageBudget(messages: ModelMessage[]): ModelMessage[] {
       }
       dropped.set(
         p,
-        `[An earlier image (${p.mediaType ?? 'image'}, ${sizeOf(size)}) is no longer sent: a ` +
+        `[An earlier image (${image.mediaType ?? 'image'}, ${sizeOf(size)}) is no longer sent: a ` +
           `request carries the ${MODEL_REQUEST_MAX_IMAGES} newest images and ` +
           `${sizeOf(MODEL_REQUEST_MAX_IMAGE_BYTES)} of them at most. Read it again if you need it.]`,
       );
