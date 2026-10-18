@@ -7,11 +7,12 @@ import {
   jsonb,
   timestamp,
   integer,
+  bigserial,
   index,
   check,
   unique,
 } from 'drizzle-orm/pg-core';
-import { sql } from 'drizzle-orm';
+import { asc, desc, sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
 import { agentJobs } from './jobs.ts';
@@ -83,6 +84,18 @@ export const approvalRequests = pgTable(
      */
     gateReasons: jsonb('gate_reasons'),
     requestedAt: timestamp('requested_at', { withTimezone: true }).defaultNow(),
+    /**
+     * L'ORDRE DE CRÉATION (0150, #801), et la seule colonne qui le porte. `id`
+     * est un uuid aléatoire et `requested_at` a la précision de la milliseconde :
+     * deux demandes créées coup sur coup (deux appels MCP d'une même pré-passe qui
+     * sollicitent la personne, deux runs) peuvent porter la même heure, et leur
+     * ordre tombait alors au hasard, d'un rafraîchissement à l'autre. Une lecture
+     * qui range des demandes les range par cette colonne (`approvalsOldestFirst`,
+     * `approvalsNewestFirst`), jamais par l'heure. `tool_calls.seq` ne peut pas
+     * servir : la ligne `tool_calls` d'un appel retenu n'existe pas encore quand
+     * sa demande est posée, et une élicitation n'en a pas toujours.
+     */
+    seq: bigserial('seq', { mode: 'number' }),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
     resolvedBy: text('resolved_by'),
     expiresAt: timestamp('expires_at', { withTimezone: true }).default(
@@ -287,3 +300,12 @@ export const approvalRules = pgTable(
 
 export type ApprovalRuleRow = typeof approvalRules.$inferSelect;
 export type ApprovalRuleInsert = typeof approvalRules.$inferInsert;
+
+/**
+ * LE rangement des demandes d'approbation, pour tout lecteur (#801) : l'ordre de
+ * création, lu sur `seq`. Un lecteur n'écrit pas son propre `orderBy` sur
+ * `requested_at` — deux demandes de la même milliseconde n'auraient alors
+ * aucun ordre — il passe par l'une de ces deux expressions.
+ */
+export const approvalsOldestFirst = asc(approvalRequests.seq);
+export const approvalsNewestFirst = desc(approvalRequests.seq);
