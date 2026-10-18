@@ -359,7 +359,7 @@ describe('what remains in an inbox when its job finishes is never lost (trigger,
         // Le projet COURANT de la conversation, comme toute tête qui y naît.
         projectId,
         // Ses messages restent vides : la boucle ouvre toute tête par la même
-        // fonction, `openingMessages` (handoff.ts, migration 0150).
+        // fonction, `openingMessages` (handoff.ts, migration 0151).
         messages: [],
         handoffNote: null,
         relaunchedFromJobId: running,
@@ -370,7 +370,7 @@ describe('what remains in an inbox when its job finishes is never lost (trigger,
     },
   );
 
-  it("the relaunched head carries the person's words as its task and the relaying model's note apart, never merged (migration 0150)", async () => {
+  it("the relaunched head carries the person's words as its task and the relaying model's note apart, never merged (migration 0151)", async () => {
     const running = await head('processing');
     await forward(
       running,

@@ -117,7 +117,7 @@ export const agentJobs = pgTable(
      */
     task: text('task').notNull(),
     /**
-     * Ce que le modèle qui a remis la demande a écrit à côté (migration 0150) :
+     * Ce que le modèle qui a remis la demande a écrit à côté (migration 0151) :
      * sa NOTE, que le travailleur lit sous un cadre qui dit qu'elle n'est pas
      * de la personne. NULL quand personne n'a relayé la demande, ou que le
      * relais n'a rien ajouté. Remplace `original_task`, jamais écrite.

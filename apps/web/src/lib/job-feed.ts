@@ -21,6 +21,7 @@ import {
   toolCalls,
   llmCalls,
   approvalRequests,
+  approvalsOldestFirst,
 } from '@nodal-agents/db';
 import {
   parseReviewVerdictOutput,
@@ -336,7 +337,7 @@ export async function assembleJobFeeds(
           eq(approvalRequests.kind, 'question'),
         ),
       )
-      .orderBy(approvalRequests.requestedAt),
+      .orderBy(approvalsOldestFirst),
     // 0145 — les questions des SERVEURS MCP de ces travaux (élicitations), en
     // attente et tranchées : la carte en attente est la seule surface du fil
     // qui y répond, la tranchée garde ce qui a été envoyé. Filtrées en SQL sur
@@ -359,7 +360,7 @@ export async function assembleJobFeeds(
           eq(approvalRequests.kind, 'elicitation'),
         ),
       )
-      .orderBy(approvalRequests.requestedAt),
+      .orderBy(approvalsOldestFirst),
   ]);
 
   /** Range les lignes sous leur job, en gardant l'ordre de la requête. */

@@ -187,7 +187,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       status text DEFAULT 'pending' CHECK (status IN ('pending','processing','completed','failed','awaiting_approval','awaiting_delegation','cancelled')),
       channel text NOT NULL CHECK (channel IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord','dashboard','webhook','mcp')),
       task text NOT NULL,
-      -- mirrors migration 0150 : la note de qui a remis la demande (handoff.ts).
+      -- mirrors migration 0151 : la note de qui a remis la demande (handoff.ts).
       handoff_note text,
       chat_id text,
       chat_channel text,
@@ -320,7 +320,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
         (SELECT c.current_project_id FROM conversations c WHERE c.id = NEW.conversation_id),
         'pending',
         premier ->> 'task',
-        -- mirrors migration 0150 : la note suit la tête ; la boucle ouvre ses messages.
+        -- mirrors migration 0151 : la note suit la tête ; la boucle ouvre ses messages.
         premier ->> 'note',
         '[]'::jsonb,
         left_behind - 0,
@@ -462,8 +462,12 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       gate_reasons jsonb,
       -- mirrors migration 0135 (#566) : l'exécution réservée d'un appel approuvé
       execution_claim integer,
-      execution_output jsonb
+      execution_output jsonb,
+      -- mirrors migration 0151 (#801) : l'ordre de création
+      seq bigserial
     );
+    -- mirrors migration 0151 (#801)
+    CREATE INDEX IF NOT EXISTS idx_approval_requests_seq ON approval_requests (seq);
 
     -- mirrors migration 0140 (#637) : où chaque carte d'approbation a été livrée
     CREATE TABLE IF NOT EXISTS approval_card_messages (

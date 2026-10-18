@@ -17,6 +17,7 @@ import {
   ownJobRow,
   drainJobInbox,
   pendingHeadsOfConversation,
+  approvalsOldestFirst,
 } from '@nodal-agents/db';
 import {
   agentJobs,
@@ -3518,7 +3519,7 @@ async function runJobTracked(
           gatesACall(),
         ),
       )
-      .orderBy(approvalRequests.requestedAt);
+      .orderBy(approvalsOldestFirst);
 
     // A request an EARLIER run of this job closed — it ran the call and
     // recorded the result, then lost the job before its transcript was saved
@@ -3546,7 +3547,7 @@ async function runJobTracked(
                   gatesACall(),
                 ),
               )
-              .orderBy(approvalRequests.requestedAt)
+              .orderBy(approvalsOldestFirst)
           ).filter((r) => r.toolCallId !== null && marqueursEnAttente.has(r.toolCallId));
 
     // Filter to resolved (approved or rejected) rows; anything still 'pending'
@@ -3967,7 +3968,7 @@ async function runJobTracked(
               gatesACall(),
             ),
           )
-          .orderBy(approvalRequests.requestedAt);
+          .orderBy(approvalsOldestFirst);
         if (openRows.length === 0 || openRows.some((r) => r.status === 'pending')) {
           continue; // at least one request is still awaiting a decision
         }

@@ -171,6 +171,7 @@ import {
   dropApprovalRulesForDetachedSkill,
   readAgentBudgetState,
   cancelJobTree,
+  approvalsNewestFirst,
 } from '@nodal-agents/db';
 import {
   deliverableStatuses,
@@ -6294,7 +6295,7 @@ export async function listApprovalsAction(
         ),
       )
       .where(where)
-      .orderBy(desc(approvalRequests.requestedAt))
+      .orderBy(approvalsNewestFirst)
       .limit(APPROVALS_READ_LIMIT);
 
     // La TÊTE de chaque chaîne (18/09). Une seule remontée pour toute la page,

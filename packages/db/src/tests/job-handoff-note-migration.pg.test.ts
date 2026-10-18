@@ -1,8 +1,8 @@
-// job-handoff-note-migration.pg.test.ts — migration 0150 against a REAL Postgres.
+// job-handoff-note-migration.pg.test.ts — migration 0151 against a REAL Postgres.
 //
 // WHAT THIS PROVES (handoff.ts, @nodal-agents/shared):
 //   - `original_task`, never written by any code, is gone; `handoff_note` is
-//     there, and the journal orders 0150 after 0149;
+//     there, and the journal orders 0151 after 0150;
 //   - the backfill gives a chat hand-off made before the column its front's
 //     text as its note (the chat replays it as the front's own call), and
 //     touches no other job;
@@ -10,7 +10,7 @@
 //     the relaying model's note in `handoff_note`, never merged, and leaves
 //     its messages for the loop to open (`openingMessages`).
 //
-// The backfill is proven by REPLAYING the file 0150 (idempotent) on rows
+// The backfill is proven by REPLAYING the file 0151 (idempotent) on rows
 // written without a note, after migrating to the end.
 
 import { describe, it, expect, afterAll } from 'vitest';
@@ -56,16 +56,16 @@ async function seed(db: Db): Promise<{ entityId: string; agentId: string }> {
 }
 
 const migration = fileURLToPath(
-  new URL('../../migrations/0150_job_handoff_note.sql', import.meta.url),
+  new URL('../../migrations/0151_job_handoff_note.sql', import.meta.url),
 );
 
-describe('migration 0150_job_handoff_note @cap:parler-a-un-agent/moteur', () => {
+describe('migration 0151_job_handoff_note @cap:parler-a-un-agent/moteur', () => {
   it('starts a real Postgres and applies the REAL migrations — red if the binary is missing, not skipped', async () => {
     pg = await startRealPostgres();
     await runMigrations(pg.url, { patchVectorAsText: true });
   }, 120_000);
 
-  it('original_task is gone, handoff_note is there, and 0150 is journaled after 0149', async () => {
+  it('original_task is gone, handoff_note is there, and 0151 is journaled after 0150', async () => {
     const { db, close } = createClient(harness().url, { max: 1 });
     try {
       const cols = await rows<{ column_name: string }>(
@@ -85,7 +85,7 @@ describe('migration 0150_job_handoff_note @cap:parler-a-un-agent/moteur', () => 
       ),
     ) as { entries: Array<{ tag: string; when: number }> };
     const when = (tag: string) => journal.entries.find((e) => e.tag === tag)?.when ?? 0;
-    expect(when('0150_job_handoff_note')).toBeGreaterThan(when('0149_tool_call_reads'));
+    expect(when('0151_job_handoff_note')).toBeGreaterThan(when('0150_approval_requests_seq'));
   });
 
   it('the backfill gives a past chat hand-off its front’s text as its note, and no other job a note', async () => {
