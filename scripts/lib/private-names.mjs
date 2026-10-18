@@ -17,11 +17,15 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { nodalHome } from './nodal-home.mjs';
 
-/** Where the list file is read from: NODAL_PRIVATE_NAMES, else ~/.nodalai/private-names.txt. */
+/**
+ * Where the list file is read from: NODAL_PRIVATE_NAMES, else `private-names.txt` in
+ * Nodal's home folder, which NODALAI_HOME moves (the one rule, see nodal-home.mjs).
+ */
 export function listPath(env = process.env, home = homedir()) {
   const fromEnv = env.NODAL_PRIVATE_NAMES?.trim();
-  return fromEnv ? fromEnv : join(home, '.nodalai', 'private-names.txt');
+  return fromEnv ? fromEnv : join(nodalHome(env, home), 'private-names.txt');
 }
 
 function isWhitespace(ch) {

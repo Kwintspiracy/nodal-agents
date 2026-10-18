@@ -267,7 +267,7 @@ if (skipSlow) {
   });
 
   step('Aucun nom privé dans le pack', () => {
-    // La liste vit hors du dépôt (NODAL_PRIVATE_NAMES, sinon ~/.nodalai/private-names.txt).
+    // La liste vit hors du dépôt (NODAL_PRIVATE_NAMES, sinon private-names.txt dans le dossier de Nodal, que NODALAI_HOME déplace).
     // Sans liste, le script le DIT et passe ; un pack absent est signalé absent (code 2).
     // Les fichiers binaires ou trop gros sont listés « not read » : relayés, pas ignorés.
     let out;

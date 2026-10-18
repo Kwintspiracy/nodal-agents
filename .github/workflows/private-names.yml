@@ -46,6 +46,7 @@ jobs:
           node-version: '24'
 
       - name: Check the PR for private names
+        timeout-minutes: 5
         env:
           NODAL_PRIVATE_NAMES_CONTENT: ${{ secrets.NODAL_PRIVATE_NAMES }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

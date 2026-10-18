@@ -2,7 +2,7 @@
 // check-private-names.mjs — does what a push, a PR or a pack ADDS hold a private name?
 //
 // The names come from a list kept OUTSIDE the repository (see lib/private-names.mjs):
-// the file at NODAL_PRIVATE_NAMES (default ~/.nodalai/private-names.txt), or, for a
+// the file at NODAL_PRIVATE_NAMES (default `private-names.txt` in Nodal's home folder, which NODALAI_HOME moves), or, for a
 // CI secret, the list itself in NODAL_PRIVATE_NAMES_CONTENT. One name per line, `#`
 // for comments. A name is matched ignoring case, whitespace (line breaks too),
 // dashes and underscores. A hit prints `file:line` and the entry's line number in

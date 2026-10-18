@@ -401,6 +401,23 @@ describe('the list and the exit codes', () => {
     expect(r.stdout).toContain('a.txt:1  matches private-names entry 2');
   });
 
+  it('with no explicit path the list is in the Nodal home folder, which NODALAI_HOME moves', () => {
+    const home = mkdtempSync(join(root, 'nodal-home-'));
+    writeFileSync(join(home, 'private-names.txt'), `${SECOND}\n`);
+    const dir = mkdtempSync(join(root, 'pack-'));
+    writeFileSync(join(dir, 'a.txt'), `${SECOND}\n`);
+    const r = run([dir], { env: { NODAL_PRIVATE_NAMES: '', NODALAI_HOME: home } });
+    expect(r.status).toBe(1);
+    expect(r.stdout).toMatch(/a\.txt:1 {2}matches private-names entry 1/);
+    noName(r);
+  });
+
+  it('a malformed NODALAI_HOME fails loud (exit 2), never a fallback to the default folder', () => {
+    const r = run([root], { env: { NODAL_PRIVATE_NAMES: '', NODALAI_HOME: 'relative/dir' } });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('could not run the check');
+  });
+
   it('asked for no target: usage error, exit 2', () => {
     expect(run([]).status).toBe(2);
   });
@@ -419,7 +436,16 @@ function repoWithScripts() {
     join(SCRIPTS, 'lib', 'private-names.mjs'),
     join(dir, 'scripts', 'lib', 'private-names.mjs'),
   );
-  git(dir, 'add', 'scripts');
+  mkdirSync(join(dir, 'packages', 'shared', 'src'), { recursive: true });
+  copyFileSync(
+    join(SCRIPTS, 'lib', 'nodal-home.mjs'),
+    join(dir, 'scripts', 'lib', 'nodal-home.mjs'),
+  );
+  copyFileSync(
+    join(SCRIPTS, '..', 'packages', 'shared', 'src', 'nodal-home.ts'),
+    join(dir, 'packages', 'shared', 'src', 'nodal-home.ts'),
+  );
+  git(dir, 'add', 'scripts', 'packages');
   git(dir, 'commit', '-q', '-m', 'scripts');
   return dir;
 }
