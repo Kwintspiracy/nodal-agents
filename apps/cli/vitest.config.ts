@@ -22,5 +22,17 @@ export default defineConfig({
     // these tests spend most of their time waiting on the OS rather than on the
     // CPU, so little parallelism was being bought in the first place.
     fileParallelism: false,
+    // The vitest default (5 s per test) is the only config in the monorepo that
+    // was left at it, and this suite spawns REAL processes: `nodal-home.test.ts`
+    // starts the CLI through tsx (`node --import tsx src/index.ts`), which is
+    // ~0.5 s on a free 24-core machine and 4 to 10 s on two contended cores
+    // (measured 2026-10-18: pinned to 2 cores with 6 busy loops, 4 runs out of 4
+    // timed out at 5000 ms on the 'bad NODALAI_HOME' cases, while the spawn
+    // itself finishes). Windows CI went red on exactly this (run 39158880706).
+    // The spawn already carries its own 60 s bound; the test must not be cut
+    // earlier than the process it waits for. Same value as the root, runner and
+    // db configs.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
   },
 });
