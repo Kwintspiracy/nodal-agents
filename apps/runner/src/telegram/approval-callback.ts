@@ -457,8 +457,11 @@ export async function handleApprovalCallback(
       confirmed = await resolveApprovalDecision(deps, env, {
         approvalRequestId: parsed.approvalRequestId,
         decision: 'approve',
+        // Aucune note : la règle posée plus haut EST la trace du geste, comme
+        // pour « Always allow » du dashboard. `notes` garde les mots de la
+        // personne, que la tête du run reçoit tels quels (owner-words.ts) ;
+        // une phrase de la plateforme y passerait pour les siens.
         resolvedBy: 'telegram',
-        notes: 'Always allowed from the Telegram card.',
       });
     } catch (err) {
       await restoreApprovalRule(deps.db, {

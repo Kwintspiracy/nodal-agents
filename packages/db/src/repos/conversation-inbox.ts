@@ -188,6 +188,106 @@ export async function deliverToConversationJob(
 }
 
 /**
+ * La tête d'un run, VERROUILLÉE : le job sans parent au sommet de la chaîne
+ * `parent_job_id` de `jobId` (`jobId` lui-même s'il n'a pas de parent).
+ * Seul `writeToRunHeadInbox` la lit.
+ */
+export interface LockedRunHead {
+  /** Le job de départ. */
+  readonly fromJobId: string;
+  readonly id: string;
+  readonly status: string | null;
+}
+
+/** Ce que l'écriture dans la file de la tête d'un run a donné. */
+export type RunHeadDelivery =
+  | { readonly delivered: true; readonly headJobId: string; readonly entryId: string }
+  | {
+      readonly delivered: false;
+      /**
+       * `is_head` : le job de départ EST la tête, il lit déjà ce qui le
+       * concerne ; `not_live` : la tête a fini, rien n'est écrit.
+       */
+      readonly reason: 'is_head' | 'not_live';
+      readonly headJobId: string;
+      readonly status: string | null;
+    };
+
+/**
+ * Trouve la tête du run de `jobId` et verrouille sa ligne, à appeler DANS la
+ * transaction de l'appelant, AVANT toute autre ligne qu'elle écrit : l'ordre
+ * de verrous de l'arrêt (`cancelJobTree` : les jobs, puis les demandes
+ * d'approbation). Une fin concurrente de la tête attend ce verrou, et son
+ * déclencheur (migration 0141) voit alors ce qui a été écrit dans sa file.
+ *
+ * Une chaîne rompue — un parent introuvable, ou plus de 64 niveaux — est
+ * une erreur dite, jamais une tête devinée (invariant #4).
+ */
+export async function lockRunHead(
+  db: AnyDrizzleDb,
+  input: { entityId: string; jobId: string },
+): Promise<LockedRunHead> {
+  const seen = new Set<string>();
+  let id = input.jobId;
+  for (;;) {
+    const [row] = await db
+      .select({ parentJobId: agentJobs.parentJobId })
+      .from(agentJobs)
+      .where(and(eq(agentJobs.id, id), eq(agentJobs.entityId, input.entityId)));
+    if (!row) {
+      throw new Error(
+        `lockRunHead: job ${id} (in the parent chain of ${input.jobId}) is not in this entity`,
+      );
+    }
+    if (row.parentJobId === null) break;
+    seen.add(id);
+    if (seen.has(row.parentJobId) || seen.size >= 64) {
+      throw new Error(`lockRunHead: the parent chain of job ${input.jobId} does not end`);
+    }
+    id = row.parentJobId;
+  }
+  const [head] = await db
+    .select({ status: agentJobs.status })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, id))
+    .for('update');
+  if (!head) throw new Error(`lockRunHead: the head ${id} of job ${input.jobId} disappeared`);
+  return { fromJobId: input.jobId, id, status: head.status };
+}
+
+/**
+ * Écrit `text` dans la file de la tête verrouillée par `lockRunHead`, dans la
+ * même transaction. Rien n'est écrit quand le job de départ est la tête
+ * elle-même, ni quand elle a fini : le dire est le travail de l'appelant.
+ */
+export async function writeToRunHeadInbox(
+  db: AnyDrizzleDb,
+  head: LockedRunHead,
+  input: { text: string; fromApprovalRequestId: string },
+): Promise<RunHeadDelivery> {
+  if (input.text.trim() === '') throw new Error('writeToRunHeadInbox: the message has no text');
+  if (head.id === head.fromJobId) {
+    return { delivered: false, reason: 'is_head', headJobId: head.id, status: head.status };
+  }
+  if (head.status === null || !(LIVE_JOB_STATUSES as readonly string[]).includes(head.status)) {
+    return { delivered: false, reason: 'not_live', headJobId: head.id, status: head.status };
+  }
+  const entry: InboxEntry = {
+    id: crypto.randomUUID(),
+    task: input.text,
+    content: input.text,
+    receivedAt: new Date().toISOString(),
+    fromJobId: head.fromJobId,
+    fromApprovalRequestId: input.fromApprovalRequestId,
+  };
+  await db
+    .update(agentJobs)
+    .set({ inbox: sql`${agentJobs.inbox} || ${JSON.stringify([entry])}::jsonb` })
+    .where(eq(agentJobs.id, head.id));
+  return { delivered: true, headJobId: head.id, entryId: entry.id };
+}
+
+/**
  * Vide la file du job que CE run tient (sous sa prise, #566) et rend ce qu'elle
  * contenait, prêt à entrer dans la transcription (marqué, `inboxMessage`) —
  * avec ce qui restait dans la file de ses descendants FINIS, à toute

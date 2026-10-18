@@ -6,8 +6,9 @@
 // executes or rejects the gated tool in execute.ts step 11.7). `resolvedBy`
 // records WHERE the decision came from ('api' = dashboard, 'telegram' = button).
 
-import { eq, and, isNull, sql } from '@nodal-agents/db';
-import { approvalRequests, agentJobs } from '@nodal-agents/db';
+import { eq, and, isNull, sql, lockRunHead, writeToRunHeadInbox } from '@nodal-agents/db';
+import { approvalRequests, agentJobs, agents } from '@nodal-agents/db';
+import type { AnyDrizzleDb, RunHeadDelivery } from '@nodal-agents/db';
 import { z } from 'zod';
 import {
   FREE_ANSWER_MAX,
@@ -20,6 +21,7 @@ import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resumeJobAfterApprovalResolution } from './resume.ts';
 import { settleApprovalCards } from './card-settlement.ts';
+import { ownerWordsOnCard } from './owner-words.ts';
 
 export type ApprovalDecision = 'approve' | 'reject';
 
@@ -253,24 +255,71 @@ export async function resolveApprovalDecision(
   // data layer: only the first writer's row is affected; the loser sees
   // rowCount 0 and is told `already_resolved` instead of silently
   // overwriting the decision that already won.
-  const updated = await deps.db
-    .update(approvalRequests)
-    .set({
-      status: input.decision === 'approve' ? 'approved' : 'rejected',
-      resolvedAt: new Date(),
-      resolvedBy: input.resolvedBy,
-      notes: input.notes ?? null,
-      answer: answerToStore,
-      response: responseToStore,
-    })
-    .where(
-      and(
-        eq(approvalRequests.id, input.approvalRequestId),
-        eq(approvalRequests.status, 'pending'),
-        ...(input.expectedDraft === undefined ? [] : [draftIs(input.expectedDraft)]),
-      ),
-    )
-    .returning({ id: approvalRequests.id });
+  //
+  // Ce que la personne a écrit sur la carte va AUSSI à la tête du run
+  // (owner-words.ts), dans la MÊME transaction que la décision : la décision et
+  // la remise sont écrites ensemble, ou aucune. La ligne de la tête est
+  // verrouillée AVANT celle de la demande, l'ordre de l'arrêt (`cancelJobTree`).
+  const notes = input.notes ?? null;
+  const words = ownerWordsOnCard({
+    kind,
+    decision: input.decision,
+    resolvedBy: input.resolvedBy,
+    holderJobId: jobId,
+    holderAgentSlug: await holderSlug(deps.db, job.agentId ?? null),
+    toolName: approval.toolName,
+    notes,
+    answer: answerToStore,
+    response: responseToStore,
+  });
+  const headEntityId = job.entityId;
+  if (words !== null && headEntityId === null) {
+    throw new Error(
+      `resolveApprovalDecision: job ${jobId} has no entity, the head of its run cannot be found`,
+    );
+  }
+  const { updated, toHead } = await deps.db.transaction(async (tx) => {
+    const t = tx as unknown as AnyDrizzleDb;
+    const head =
+      words === null || headEntityId === null
+        ? null
+        : await lockRunHead(t, { entityId: headEntityId, jobId });
+    const rows = await t
+      .update(approvalRequests)
+      .set({
+        status: input.decision === 'approve' ? 'approved' : 'rejected',
+        resolvedAt: new Date(),
+        resolvedBy: input.resolvedBy,
+        notes,
+        answer: answerToStore,
+        response: responseToStore,
+      })
+      .where(
+        and(
+          eq(approvalRequests.id, input.approvalRequestId),
+          eq(approvalRequests.status, 'pending'),
+          ...(input.expectedDraft === undefined ? [] : [draftIs(input.expectedDraft)]),
+        ),
+      )
+      .returning({ id: approvalRequests.id });
+    const delivery: RunHeadDelivery | null =
+      rows.length === 0 || head === null || words === null
+        ? null
+        : await writeToRunHeadInbox(t, head, {
+            text: words,
+            fromApprovalRequestId: input.approvalRequestId,
+          });
+    return { updated: rows, toHead: delivery };
+  });
+  if (toHead?.delivered === false && toHead.reason === 'not_live') {
+    // La tête a fini : la personne a répondu à un délégué qui tourne encore
+    // sous elle. Personne n'attend plus ces mots en haut ; l'agent de la
+    // carte les a dans son résultat d'outil.
+    console.warn(
+      `[approval] the head ${toHead.headJobId} of job ${jobId} is ${toHead.status ?? 'gone'}: ` +
+        `the words on approval ${input.approvalRequestId} reach only the agent holding the card`,
+    );
+  }
 
   if (updated.length === 0) {
     // Lost the race — re-read to report the status the winner left behind.
@@ -359,4 +408,15 @@ export async function resolveApprovalDecision(
     chatId: (job as { chatId?: string | null }).chatId ?? null,
     resumed: 'worker',
   };
+}
+
+/** Le slug de l'agent qui tient la carte, pour le cadre ; null s'il n'en a pas. */
+async function holderSlug(db: AnyDrizzleDb, agentId: string | null): Promise<string | null> {
+  if (agentId === null) return null;
+  const [row] = await db
+    .select({ slug: agents.slug })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .limit(1);
+  return row?.slug ?? null;
 }
