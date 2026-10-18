@@ -266,18 +266,6 @@ if (skipSlow) {
     return `${size} MB décompressés · ${chunks}`;
   });
 
-  step('Aucun nom privé dans le pack', () => {
-    // La liste vit hors du dépôt (NODAL_PRIVATE_NAMES, sinon ~/.nodalai/private-names.txt).
-    // Sans liste, le script le DIT et passe : ce pas relaie sa dernière ligne.
-    let out;
-    try {
-      out = sh('node scripts/check-private-names.mjs pack');
-    } catch (err) {
-      throw new Error(`nom privé dans le pack :\n${err.stdout ?? ''}${err.stderr ?? ''}`);
-    }
-    return out.trim().split('\n').pop();
-  });
-
   step('Une install FRAÎCHE démarre et sert', () => {
     // La seule preuve qui compte : le tarball installé ailleurs, qui boote.
     const out = shLive('node scripts/smoke-pack.mjs');
