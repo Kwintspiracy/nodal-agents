@@ -232,6 +232,15 @@ describe('an MCP tool result reaches the model as the server wrote it @cap:conne
     expect(printer).toContain(MIXED_FOR_MODEL);
     // The approved call's image reaches the model too: the same conversion.
     expect(imageUrls(resumed.bodies[0]!)).toEqual([MIXED_IMAGE_URL]);
+    // The approved call's recorded result (#566) names the saved file, never its bytes.
+    const [approved] = await db
+      .select({ output: approvalRequests.executionOutput })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, request.id));
+    expect(JSON.stringify(approved?.output)).toContain('"type":"image-url"');
+    expect(JSON.stringify(approved?.output)).not.toContain(
+      Buffer.alloc(3072, 7).toString('base64'),
+    );
     expect(await recordedOutput(jobId, 'printer_gated__report')).toMatchObject({
       structuredContent: MIXED_STRUCTURED,
     });
@@ -263,12 +272,21 @@ describe('an MCP tool result reaches the model as the server wrote it @cap:conne
         'attached 10 image(s) (10.0 MiB), and a request to a model carries at most 20 images and ' +
         '10.0 MiB of them.]',
     );
+    // No row keeps a byte: not the audit row, not the transcript every
+    // checkpoint rewrites (`agent_jobs.messages`), which names the saved files.
+    const firstPage = Buffer.alloc(1024 * 1024, 0)
+      .toString('base64')
+      .slice(0, 64);
     const row = JSON.stringify(await recordedOutput(jobId, 'pages__report'));
-    expect(row).not.toContain(
-      Buffer.alloc(1024 * 1024, 0)
-        .toString('base64')
-        .slice(0, 64),
-    );
+    expect(row).not.toContain(firstPage);
+    const [job] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    const transcript = JSON.stringify(job?.messages);
+    expect(transcript).not.toContain(firstPage);
+    const saved = [...transcript.matchAll(/"url":"(file:[^"]+)"/g)].map((m) => m[1]);
+    expect(saved).toHaveLength(10);
   }, 120_000);
 
   it('more text than the budget: the text is cut and says so, the machine form survives whole', async () => {

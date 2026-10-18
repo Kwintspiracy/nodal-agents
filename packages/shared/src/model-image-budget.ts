@@ -1,8 +1,10 @@
 // model-image-budget.ts — how many images, and how many bytes of them, one
 // request to a model carries. One budget for every provider, read in two
 // places that must agree: the tool seam (`admitModelImage`, @nodal-agents/tools:
-// what one call may attach) and the request builder (`withinImageBudget`,
-// @nodal-agents/llm: what one request sends, newest first).
+// what one call may attach) and the request builder (`hydrateForLlm`,
+// apps/runner/src/job/model-images.ts, where every image of a job's request
+// becomes bytes: what one request sends — the person's images first, then the
+// tools', newest first within each).
 //
 // Why a budget at all (review of #798, P2-3): an image stays in the
 // transcript and is sent again on every turn until compaction retires its

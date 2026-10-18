@@ -18,7 +18,8 @@
 // fetch boundary.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, realpath } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, realpath } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
@@ -117,6 +118,17 @@ function toolText(b: Body): string {
     .join('\n');
 }
 
+/** The job row as stored: its transcript must name files, never hold their bytes. */
+async function storedMessages(jobId: string): Promise<string> {
+  const [row] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+  return JSON.stringify(row?.messages ?? null);
+}
+
+/** The paths of the tool images a stored transcript names (`file:` URLs). */
+function savedImagePaths(stored: string): string[] {
+  return [...stored.matchAll(/"url":"(file:[^"]+)"/g)].map((m) => fileURLToPath(m[1] ?? ''));
+}
+
 const readBoth = (): ScriptedReply => ({
   calls: [
     { name: 'file_read', args: { path: join(dir, 'apercu.png') } },
@@ -158,6 +170,16 @@ describe('a tool result that carries an image reaches the model @cap:travailler-
         /^\[The image below was returned by your tool call \S+ \(file_read\)\./,
       ),
     ]);
+
+    // The row keeps the PATHS of saved copies, beside the channel photos, never a byte.
+    const stored = await storedMessages(jobId);
+    expect(stored).not.toContain(PNG_B64);
+    expect(stored).not.toContain(JPEG_B64);
+    const saved = savedImagePaths(stored);
+    expect(saved).toHaveLength(2);
+    for (const path of saved) expect(path).toContain(join('shared', 'tools', jobId));
+    expect(await readFile(saved[0] ?? '')).toEqual(PNG);
+    expect(await readFile(saved[1] ?? '')).toEqual(JPEG);
   });
 
   it('a model that does not see: the call says why, and no image or byte leaves', async () => {
@@ -196,7 +218,9 @@ describe('a transcript that carries an image, resumed under a model that does no
     ]);
     const [suspended] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
     expect(suspended?.status).toBe('awaiting_approval');
-    expect(JSON.stringify(suspended?.messages)).toContain(PNG_B64);
+    expect(JSON.stringify(suspended?.messages)).not.toContain(PNG_B64);
+    const [savedPath] = savedImagePaths(JSON.stringify(suspended?.messages));
+    if (!savedPath) throw new Error('the suspended transcript names no saved image');
 
     // The owner moves the agent to a model that does not see, then approves.
     await db.update(agents).set({ model: BLIND }).where(eq(agents.id, agentId));
@@ -214,9 +238,11 @@ describe('a transcript that carries an image, resumed under a model that does no
     if (!first) throw new Error('the resumed job never called the model');
     expect(imageUrls(first)).toEqual([]);
     expect(JSON.stringify(first)).not.toContain(PNG_B64);
+    // The tool message reaches the provider serialized: the path is JSON-escaped there.
+    const savedInJson = JSON.stringify(savedPath).slice(1, -1);
     expect(toolText(first)).toContain(
-      '[An image (image/png) was attached to this result: not passed to you, your current ' +
-        'model does not take images as input.]',
+      `[An image (image/png) was attached to this result, saved at ${savedInJson}: not passed to ` +
+        `you: the model this agent runs (${BLIND}) does not take images as input.]`,
     );
   });
 });
@@ -355,8 +381,9 @@ describe('an image read in the turn that delegates @cap:organiser-equipe/moteur'
     const resumed = parent.at(-1);
     if (!resumed || parent.length < 2) throw new Error('the parent never resumed');
     expect(JSON.stringify(resumed)).not.toContain(PNG_B64);
-    expect(toolText(resumed)).toContain(
-      '[An image (image/png) was attached to this result; it is not carried here. Read it again to see it.]',
+    // The side result names the saved copy: the image can be read again.
+    expect(toolText(resumed)).toMatch(
+      /\[An image was attached to this result, saved at [^\]]+tools[^\]]+; it is not carried here\. Read it again to see it\.\]/,
     );
   });
 });
@@ -449,8 +476,113 @@ describe('whether a model sees is read per model, never per provider @cap:choisi
     const after = sent[1];
     if (!after) throw new Error('the model was never called after the tool ran');
     expect(after).not.toContain(PNG_B64);
+    // Not in the list of models known to take images: said as such, not as blind.
     expect(after).toContain(
-      'the model this agent runs (claude-instant-1.2) does not take images as input',
+      'the model this agent runs (claude-instant-1.2) is not known to take images as input',
+    );
+  });
+});
+
+describe('the image budget of a request: the person first, then the newest tool images @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('a tool filling the budget never pushes out the photo the person sent; an evicted image names its file', async () => {
+    const { jobId, entityId, agentId } = await seedJob(db, { model: SEEING, role: 'agent' });
+    await giveFolder(agentId, entityId);
+    // The person's photo, as a channel handler attaches it: a path in the user message.
+    const photo = join(dir, 'chart-from-the-person.jpg');
+    await writeFile(photo, Buffer.concat([JPEG, Buffer.alloc(100 * 1024, 1)]));
+    await db
+      .update(agentJobs)
+      .set({
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'What does this chart show?' },
+              { type: 'image', image: photo },
+            ],
+          },
+        ],
+      })
+      .where(eq(agentJobs.id, jobId));
+    // Eleven screenshots of 1 MiB, one call each: more than the 10 MiB a request carries.
+    const shots = Array.from({ length: 11 }, (_, k) => join(dir, `shot-${k}.png`));
+    for (const [k, path] of shots.entries()) {
+      await writeFile(
+        path,
+        Buffer.concat([PNG.subarray(0, 8), Buffer.alloc(1024 * 1024 - 8, k + 1)]),
+      );
+    }
+    const bodies = await run(jobId, [
+      { calls: shots.map((path) => ({ name: 'file_read', args: { path } })) },
+    ]);
+
+    const after = bodies[1];
+    if (!after) throw new Error('expected a second request');
+    const urls = imageUrls(after);
+    // The person's photo is sent, whatever the tools fetched after it.
+    expect(urls).toContain(`data:image/jpeg;base64,${(await readFile(photo)).toString('base64')}`);
+    // 100 KB + 9 × 1 MiB fit the 10 MiB; the two OLDEST screenshots do not.
+    expect(urls).toHaveLength(10);
+    const saved = savedImagePaths(await storedMessages(jobId));
+    expect(saved).toHaveLength(11);
+    const evicted =
+      JSON.stringify(after).match(/\[An earlier image \(image\/png, 1\.0 MiB\)[^\]]*\]/g) ?? [];
+    expect(evicted).toHaveLength(2);
+    // Each names the saved copy it stands for: the agent can read it again.
+    for (const [k, sentence] of evicted.entries()) {
+      expect(sentence).toContain(`saved at ${JSON.stringify(saved[k]).slice(1, -1)}`);
+    }
+  });
+});
+
+describe('a photo the person sent reaches a model that sees, however its id is spelled @cap:choisir-modele/moteur', () => {
+  it.each([
+    ['a dated twin', 'anthropic/claude-haiku-4.5-20251001'],
+    ['a -latest alias of a seeing model', 'anthropic/claude-sonnet-5.5-latest'],
+  ])('%s (%s): the photo is sent', async (_what, model) => {
+    const { jobId } = await seedJob(db, { model, role: 'agent' });
+    const photo = join(dir, `photo-for-${jobId}.jpg`);
+    await writeFile(photo, JPEG);
+    await db
+      .update(agentJobs)
+      .set({
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'What is in this photo?' },
+              { type: 'image', image: photo },
+            ],
+          },
+        ],
+      })
+      .where(eq(agentJobs.id, jobId));
+    const bodies = await run(jobId, [{ text: 'A photo.' }]);
+    expect(imageUrls(bodies[0] as Body)).toEqual([`data:image/jpeg;base64,${JPEG_B64}`]);
+  });
+
+  it('an id Nodal does not know: the photo is not sent, and the note says the model is not known to take images', async () => {
+    const { jobId } = await seedJob(db, { model: 'some-vendor/unlisted-model-7', role: 'agent' });
+    const photo = join(dir, `photo-for-${jobId}.jpg`);
+    await writeFile(photo, JPEG);
+    await db
+      .update(agentJobs)
+      .set({
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'And this?' },
+              { type: 'image', image: photo },
+            ],
+          },
+        ],
+      })
+      .where(eq(agentJobs.id, jobId));
+    const bodies = await run(jobId, [{ text: 'I cannot see it.' }]);
+    expect(imageUrls(bodies[0] as Body)).toEqual([]);
+    expect(JSON.stringify(bodies[0])).toContain(
+      'the model this agent runs (some-vendor/unlisted-model-7) is not known to take images as input',
     );
   });
 });

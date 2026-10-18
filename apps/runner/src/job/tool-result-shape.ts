@@ -11,6 +11,8 @@
 // Les marques écrites par le runner vivent ici aussi : la boucle les écrit, le
 // relevé les lit, et un texte recopié à deux endroits finit par diverger.
 
+import { fileURLToPath } from 'node:url';
+
 /** Un appel suspendu le temps qu'une personne approuve ou réponde. */
 export const AWAITING_APPROVAL_MARK = '[AWAITING_APPROVAL]';
 /** Un appel qu'une personne a refusé. */
@@ -38,12 +40,17 @@ export const EVICTED_TOOL_INPUT_MARKER =
 export function toolResultOutputText(output: { type?: unknown; value?: unknown }): string {
   if (typeof output.value === 'string') return output.value;
   if (output.type === 'content' && Array.isArray(output.value)) {
-    return (output.value as Array<{ type?: unknown; text?: unknown; mediaType?: unknown }>)
-      .map((v) =>
-        v.type === 'text' && typeof v.text === 'string'
-          ? v.text
-          : `[An image (${typeof v.mediaType === 'string' ? v.mediaType : 'image'}) was attached to this result; it is not carried here. Read it again to see it.]`,
-      )
+    return (output.value as Array<{ type?: unknown; text?: unknown; url?: unknown }>)
+      .map((v) => {
+        if (v.type === 'text' && typeof v.text === 'string') return v.text;
+        // A tool's image is kept as a file (job/model-images.ts): its path is
+        // what can be read again.
+        const at =
+          typeof v.url === 'string' && v.url.startsWith('file:') ? fileURLToPath(v.url) : null;
+        return at === null
+          ? '[An image was attached to this result; it is not carried here.]'
+          : `[An image was attached to this result, saved at ${at}; it is not carried here. Read it again to see it.]`;
+      })
       .join('\n');
   }
   return JSON.stringify(output.value ?? null);

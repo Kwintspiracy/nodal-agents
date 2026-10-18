@@ -45,7 +45,6 @@ export {
   validateMessageStructure,
   withoutNamelessToolCalls,
   withToolResultImagesAsUserParts,
-  withinImageBudget,
 } from './message-structure';
 
 // Retry utility

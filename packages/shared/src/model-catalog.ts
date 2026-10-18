@@ -1738,20 +1738,82 @@ for (const entries of Object.values(MODEL_CATALOG)) {
 }
 
 /**
- * Does this model accept image input? Keyed by model id (the canonical truth from
- * the providers). Unknown/custom → false (conservative: don't send an image to a
- * model we can't confirm sees them, which would error the provider call).
+ * The one way an id typed by a person or returned by a provider is matched to
+ * a known model (review of #798, pass 2): `claude-haiku-4-5` and
+ * `claude-haiku-4-5-20251001` are one model, so are `anthropic/claude-sonnet-4.6`
+ * and `claude-sonnet-4-6`, and `mistral-large-latest` and `mistral-large`.
+ *
+ * The key is the id lowercased, without its vendor prefix (`anthropic/`), with
+ * `.` read as `-`, and without a trailing date (`-20251001`, `-2025-10-01`) or
+ * `-latest`. Nothing else: a family is never guessed from a prefix
+ * (`gpt-5-nano` is not `gpt-5`), because a guess would claim a capability for
+ * a model nobody checked. `model-catalog.test.ts` proves no text-only model of
+ * the catalog shares a key with one that sees.
  */
-export function modelCanSeeImages(modelId: string): boolean {
-  return VISION_MODEL_IDS.has(modelId);
+export function modelIdKey(modelId: string): string {
+  let key = modelId.trim().toLowerCase();
+  const slash = key.lastIndexOf('/');
+  if (slash >= 0) key = key.slice(slash + 1);
+  key = key.replace(/\./g, '-');
+  key = key.replace(/-latest$/, '');
+  key = key.replace(/-(\d{8}|\d{4}-\d{2}-\d{2})$/, '');
+  return key;
 }
 
-/** Look up a curated entry by (provider, modelId). Returns undefined for custom/unknown. */
+const VISION_MODEL_KEYS = new Set([...VISION_MODEL_IDS].map(modelIdKey));
+const CATALOG_MODEL_KEYS = new Set(
+  Object.values(MODEL_CATALOG).flatMap((entries) => entries.map((e) => modelIdKey(e.modelId))),
+);
+
+/**
+ * Does this model accept image input? Read through `modelIdKey`, the same match
+ * as `findModelCatalogEntry`. An id that matches no model that sees → false
+ * (conservative: never send an image to a model nobody confirmed takes one);
+ * `modelImageInputFor` says which of the two reasons applies.
+ */
+export function modelCanSeeImages(modelId: string): boolean {
+  return VISION_MODEL_IDS.has(modelId) || VISION_MODEL_KEYS.has(modelIdKey(modelId));
+}
+
+/**
+ * What a model takes, for every reader that hands it images (the runner's tool
+ * seam and its request builder), with the reason when it takes none: a model
+ * Nodal knows to be text-only, or one Nodal does not know at all — never the
+ * second said as the first.
+ */
+export function modelImageInputFor(
+  modelId: string,
+): { sees: true } | { sees: false; reason: string } {
+  if (modelCanSeeImages(modelId)) return { sees: true };
+  return CATALOG_MODEL_KEYS.has(modelIdKey(modelId))
+    ? {
+        sees: false,
+        reason: `the model this agent runs (${modelId}) does not take images as input`,
+      }
+    : {
+        sees: false,
+        reason:
+          `the model this agent runs (${modelId}) is not known to take images as input: ` +
+          'it is not in the list of models Nodal knows to take them',
+      };
+}
+
+/**
+ * Look up a curated entry by (provider, modelId): the exact id, else the one
+ * entry of that provider with the same `modelIdKey` (an alias or a dated twin).
+ * Undefined for a custom or unknown id, and when two entries share the key.
+ */
 export function findModelCatalogEntry(
   provider: string,
   modelId: string,
 ): ModelCatalogEntry | undefined {
-  return MODEL_CATALOG[provider]?.find((e) => e.modelId === modelId);
+  const entries = MODEL_CATALOG[provider];
+  if (!entries) return undefined;
+  const exact = entries.find((e) => e.modelId === modelId);
+  if (exact) return exact;
+  const key = modelIdKey(modelId);
+  const same = entries.filter((e) => modelIdKey(e.modelId) === key);
+  return same.length === 1 ? same[0] : undefined;
 }
 
 /**
