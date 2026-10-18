@@ -18,8 +18,12 @@ export const AgentJobSchema = z
     agent_id: z.string().guid().nullable(),
     status: JobStatusSchema,
     channel: JobChannelSchema,
+    // The request in the words of whoever made it — for a turn of a
+    // conversation, the person's own words, taken by the platform (handoff.ts).
     task: z.string().min(1),
-    original_task: z.string().nullable(),
+    // What the model that handed the request on wrote beside it: its note,
+    // never the person's words. Null when nobody relayed it or it added nothing.
+    handoff_note: z.string().nullable(),
     chat_id: z.string().nullable(),
     // Groups jobs from the same conversational thread (migration 0059) — see
     // apps/runner/src/job/conversation-id.ts for the stamping rule. Null for
@@ -65,7 +69,7 @@ export const AgentJobInsertSchema = AgentJobSchema.omit({
   parent_request_id: true,
 }).extend({
   status: JobStatusSchema.default('pending'),
-  original_task: z.string().nullable().optional(),
+  handoff_note: z.string().nullable().optional(),
   chat_id: z.string().nullable().optional(),
   conversation_id: z.string().guid().nullable().optional(),
   system_prompt: z.string().nullable().optional(),

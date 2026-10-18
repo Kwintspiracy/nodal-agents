@@ -122,7 +122,7 @@ describe('AgentJobSchema round-trip', () => {
       status: 'completed' as const,
       channel: 'telegram' as const,
       task: 'Do something',
-      original_task: null,
+      handoff_note: null,
       chat_id: '12345',
       conversation_id: null,
       system_prompt: null,

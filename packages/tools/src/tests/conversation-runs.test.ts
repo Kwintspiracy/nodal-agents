@@ -426,7 +426,12 @@ describe('message_conversation_run: a reply turn passes the person’s words on 
       .select({ inbox: agentJobs.inbox })
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId));
-    return row!.inbox.map((e) => ({ task: e.task, fromJobId: e.fromJobId }));
+    return row!.inbox.map((e) => ({
+      task: e.task,
+      content: e.content,
+      note: e.note,
+      fromJobId: e.fromJobId,
+    }));
   }
 
   it.each(['telegram', 'dashboard'] as const)(
@@ -450,11 +455,23 @@ describe('message_conversation_run: a reply turn passes the person’s words on 
           'At its next step, and before it concludes: its answer takes the message into account.',
       });
       expect(toDelegate.job_id).toBe(conv.child1);
+      // Les mots de la personne sont ceux de la tâche du tour de réponse, pris
+      // par la plateforme ; ce que le modèle a écrit est sa note, à part.
       expect(await inboxOf(conv.head1)).toEqual([
-        { task: 'Range-le dans le dossier partagé à la fin.', fromJobId: conv.caller },
+        {
+          task: 'Arrête !!!',
+          content: 'Arrête !!!',
+          note: 'Range-le dans le dossier partagé à la fin.',
+          fromJobId: conv.caller,
+        },
       ]);
       expect(await inboxOf(conv.child1)).toEqual([
-        { task: 'Style : encre.', fromJobId: conv.caller },
+        {
+          task: 'Arrête !!!',
+          content: 'Arrête !!!',
+          note: 'Style : encre.',
+          fromJobId: conv.caller,
+        },
       ]);
     },
   );

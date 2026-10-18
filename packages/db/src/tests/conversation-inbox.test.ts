@@ -35,7 +35,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { and, asc, eq, isNull } from 'drizzle-orm';
-import { isInboxMessage } from '@nodal-agents/shared';
+import { HANDOFF_NOTE_FRAME, isHandoffNoteMessage, isInboxMessage } from '@nodal-agents/shared';
 import { spinUpTestDb, seedMinimal } from './helpers.ts';
 import type { TestDb } from './helpers.ts';
 import { agentJobs, codeProjects, conversations } from '../schema/index.ts';
@@ -138,13 +138,14 @@ function send(text: string) {
   });
 }
 
-/** Ce qu'un tour de réponse transmet au job `jobId`. */
-function forward(jobId: string, text: string) {
+/** Ce qu'un tour de réponse transmet au job `jobId` : les mots, et sa note s'il en écrit une. */
+function forward(jobId: string, text: string, note?: string) {
   return deliverToConversationJob(any(), {
     entityId: seed.entityId,
     conversationId,
     jobId,
     text,
+    ...(note !== undefined ? { note } : {}),
   });
 }
 
@@ -159,6 +160,7 @@ async function headsOfConversation() {
       conversationId: agentJobs.conversationId,
       projectId: agentJobs.projectId,
       messages: agentJobs.messages,
+      handoffNote: agentJobs.handoffNote,
       inbox: agentJobs.inbox,
       answersWhileJobId: agentJobs.answersWhileJobId,
       relaunchedFromJobId: agentJobs.relaunchedFromJobId,
@@ -356,7 +358,10 @@ describe('what remains in an inbox when its job finishes is never lost (trigger,
         conversationId,
         // Le projet COURANT de la conversation, comme toute tête qui y naît.
         projectId,
-        messages: [{ role: 'user', content: 'et mets-le dans le dossier partagé' }],
+        // Ses messages restent vides : la boucle ouvre toute tête par la même
+        // fonction, `openingMessages` (handoff.ts, migration 0150).
+        messages: [],
+        handoffNote: null,
         relaunchedFromJobId: running,
         answersWhileJobId: null,
       });
@@ -364,6 +369,49 @@ describe('what remains in an inbox when its job finishes is never lost (trigger,
       expect(await pendingHeadsOfConversation(any(), running)).toEqual([relaunched!.id]);
     },
   );
+
+  it("the relaunched head carries the person's words as its task and the relaying model's note apart, never merged (migration 0150)", async () => {
+    const running = await head('processing');
+    await forward(
+      running,
+      'Les chiffres sans barre, en un seul trait.',
+      'Elle corrige le modèle 4.',
+    );
+
+    await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, running));
+
+    const [, relaunched] = await headsOfConversation();
+    expect(relaunched).toMatchObject({
+      status: 'pending',
+      task: 'Les chiffres sans barre, en un seul trait.',
+      handoffNote: 'Elle corrige le modèle 4.',
+      messages: [],
+      relaunchedFromJobId: running,
+    });
+  });
+
+  it("a drained entry gives the person's words, marked as passed on, then the relaying model's note under its frame — two messages", async () => {
+    const running = await head('processing');
+    await forward(
+      running,
+      'Write the digits in one stroke.',
+      'She is correcting the worksheet draft.',
+    );
+    await forward(running, 'Merci !');
+
+    const drained = await drainAsRun(running);
+
+    expect(drained.map((m) => m.content)).toEqual([
+      'Write the digits in one stroke.',
+      `${HANDOFF_NOTE_FRAME}\nShe is correcting the worksheet draft.`,
+      'Merci !',
+    ]);
+    expect(drained.map((m) => [isInboxMessage(m), isHandoffNoteMessage(m)])).toEqual([
+      [true, false],
+      [false, true],
+      [true, false],
+    ]);
+  });
 
   it('a delegate that finishes before reading its inbox gives birth to nothing: its parent reads the message on its next turn', async () => {
     const running = await head('awaiting_delegation');

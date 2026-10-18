@@ -9,6 +9,11 @@
 //
 // Mutation vérifiée : le déclencheur retiré (helpers.ts) → ce test rougit (le
 // message reste dans la file d'un job terminé, aucune tête ne le porte).
+//
+// La note de qui transmet (handoff.ts) suit la tête relancée, et la CLI la lit
+// après les mots de la personne, sous son cadre. Mutation vérifiée :
+// `message: job.task` (l'ancienne ouverture) → « the relaunched head's CLI
+// turn » rougit.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
@@ -27,6 +32,7 @@ import {
   deliverToConversationJob,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { HANDOFF_NOTE_FRAME } from '@nodal-agents/shared';
 import type { CliTurnOptions, CliTurnResult } from '../../cli-runtime/provider.ts';
 import type * as ProviderModule from '../../cli-runtime/provider.ts';
 import type * as OrchestrationModule from '@nodal-agents/orchestration';
@@ -188,6 +194,77 @@ describe('a job served by a CLI reads its inbox AFTER its turn, through a new he
         { status: 'completed', task: 'Fais-moi un portrait', inbox: [] },
         { status: 'pending', task: FOLLOW_UP, inbox: [] },
       ]);
+    },
+    30_000,
+  );
+
+  it.each(['claude-code', 'codex'] as const)(
+    "%s: the relaunched head's CLI turn reads the person's words, then the relaying model's note under its frame",
+    async (runtime) => {
+      await db.update(agents).set({ runtime }).where(eq(agents.id, seed.agentId));
+      const [conv] = await db
+        .insert(conversations)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '6',
+        })
+        .returning({ id: conversations.id });
+      const conversationId = conv!.id;
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '6',
+          conversationId,
+          task: 'Fais-moi un portrait',
+          status: 'processing',
+        })
+        .returning({ id: agentJobs.id });
+      const note = 'Elle parle du portrait en cours.';
+      await deliverToConversationJob(db as unknown as AnyDrizzleDb, {
+        entityId: seed.entityId,
+        conversationId,
+        jobId: job!.id,
+        text: FOLLOW_UP,
+        note,
+      });
+      await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, job!.id));
+      const [relaunched] = await db
+        .select({ id: agentJobs.id, task: agentJobs.task, handoffNote: agentJobs.handoffNote })
+        .from(agentJobs)
+        .where(and(eq(agentJobs.conversationId, conversationId), eq(agentJobs.status, 'pending')));
+      expect(relaunched).toMatchObject({ task: FOLLOW_UP, handoffNote: note });
+      await db
+        .update(agentJobs)
+        .set({ status: 'processing' })
+        .where(eq(agentJobs.id, relaunched!.id));
+
+      fakeRun.mockReset();
+      fakeRun.mockImplementationOnce(async () => finished('rangé'));
+      await runCliRuntimeJob({
+        db: db as unknown as Parameters<typeof runCliRuntimeJob>[0]['db'],
+        jobId: relaunched!.id,
+        job: {
+          entityId: seed.entityId,
+          chatId: '6',
+          channel: 'telegram',
+          conversationId,
+          task: relaunched!.task,
+          handoffNote: relaunched!.handoffNote,
+          triggerContext: null,
+        },
+        agentRow: { ...baseAgent, runtime },
+        workspaces: [{ label: 'ws0', path: workspace }],
+        claimGeneration: 0,
+      });
+
+      expect(fakeRun.mock.calls[0]?.[0].message).toBe(
+        `${FOLLOW_UP}\n\n${HANDOFF_NOTE_FRAME}\n${note}`,
+      );
     },
     30_000,
   );

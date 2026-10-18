@@ -49,7 +49,7 @@ import { recheckNarratedAction } from '../llm/action-recheck.ts';
 import type { RunnerDeps } from '../deps.ts';
 import { cutReplyNote, stoppedReplyNote } from './turn-stop.ts';
 import { LLMOutputLimitError, LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
-import type { BrakeStop } from '@nodal-agents/shared';
+import { handoffNote, openingMessages, type BrakeStop } from '@nodal-agents/shared';
 import { watchCallProgress } from '../job/call-progress.ts';
 
 // F-12 (audit #2): the old HISTORY_LIMIT=20 bounded history by TURN COUNT, not
@@ -107,19 +107,18 @@ export const CHAT_TOOLS: Record<
       'full toolset — connectors, skills, delegation to your team, and (as the workspace ROOT) ' +
       'creating agents, skills, MCP servers, connectors or automations. Use it for ANY action: ' +
       'send, fetch, create, configure, publish, or multi-step work.\n' +
-      'CONVEY THE REQUEST FAITHFULLY. The WHAT is the user’s, not yours: pass their actual ' +
-      'words and data through (verbatim where it matters — a pasted file, an exact phrasing). ' +
-      'Do NOT invent scope, sub-topics, sources, an analysis plan, a method, or a delivery the ' +
-      'user did not state — that is the worker’s own skills and judgment, and pre-deciding it ' +
-      'risks drifting from what the user asked. Add only what the user explicitly said (e.g. a ' +
-      'destination they named). If the conversation spans turns, make the instruction ' +
-      'self-contained by carrying the user’s intent across turns — NOT by enriching it.\n' +
+      'The user’s own messages since your last call reach the job exactly as they wrote them: ' +
+      'the platform passes them on, you do not retype them. `instruction` is YOUR NOTE beside ' +
+      'them, and the job reads it as yours, not as the user’s: leave it empty when their words ' +
+      'say it all. Write in it only what the job could not know without you, from earlier in ' +
+      'this conversation (what was already decided or produced). Do NOT add scope, a method, a ' +
+      'check or a delivery the user did not ask for — that is the worker’s own judgment.\n' +
       'Never decline an action the user asks for — escalate it here. For plain conversation or ' +
       'recalling facts, reply in text instead (do not call this).\n' +
       'While a job launched from this conversation is still running, a call starts a reply turn ' +
       'that sees that job and decides: pass the person’s words on to it, stop it, or start ' +
       'other work beside it. The message is never assumed to be about the running job.',
-    inputSchema: z.object({ instruction: z.string().min(1).max(16000) }),
+    inputSchema: z.object({ instruction: z.string().max(16000) }),
   },
 };
 
@@ -228,7 +227,8 @@ interface HistoryRow {
   /** Réponse coupée par une horloge (#458) : le modèle doit le savoir aussi. */
   cutReason?: string | null;
   jobId: string | null;
-  jobTask: string | null;
+  /** La note que ce tour avait écrite à côté des mots de la personne (handoff.ts). */
+  jobHandoffNote: string | null;
   jobStatus: string | null;
   jobResult: string | null;
   jobError: string | null;
@@ -283,7 +283,9 @@ function buildHistoryBlock(
             type: 'tool-call' as const,
             toolCallId,
             toolName: 'run_task',
-            input: { instruction: truncateFn(r.jobTask ?? '') },
+            // Ce que le front avait écrit : sa note. Les mots de la personne
+            // sont déjà là, dans ses messages rejoués juste avant.
+            input: { instruction: truncateFn(r.jobHandoffNote ?? '') },
           },
         ],
       },
@@ -574,7 +576,7 @@ export async function runChatTurn(opts: {
       stopped: chatMessages.stopped,
       cutReason: chatMessages.cutReason,
       jobId: chatMessages.jobId,
-      jobTask: agentJobs.task,
+      jobHandoffNote: agentJobs.handoffNote,
       jobStatus: agentJobs.status,
       jobResult: agentJobs.result,
       jobError: agentJobs.error,
@@ -584,6 +586,11 @@ export async function runChatTurn(opts: {
     .where(eq(chatMessages.conversationId, conversationId))
     .orderBy(desc(chatMessages.createdAt))
     .limit(HISTORY_CANDIDATE_LIMIT);
+
+  // Ce que la personne a dit depuis la dernière remise : ce qu'un `run_task`
+  // de ce tour transmettra tel quel (handoff.ts). Lu sur les lignes ci-dessus,
+  // AVANT que l'historique ne les retourne.
+  const personsWords = personsWordsSinceLastHandoff(rows);
 
   // Delegated-task visibility (2026-07-12 incident — see task-ledger.ts): one
   // batched query for every escalated job's own create_task fan-out, keyed by
@@ -878,18 +885,14 @@ export async function runChatTurn(opts: {
   //     The spawned job runs the ROOT with its full toolset (delegating to
   //     sub-agents → the dispatch cards). The chat just shows its progress.
   if (runTask) {
-    const instruction =
-      String((runTask.input as { instruction?: unknown } | undefined)?.instruction ?? '').trim() ||
-      message;
-    // SAFETY NET against intent drift: the worker must always see the USER's
-    // actual words, not only the orchestrator's framing. If the instruction did
-    // not already carry them (an orchestrator reworded/compressed despite the steer), append
-    // the user's exact message as the source of truth. Dedup when it's already in.
-    const probe = message.trim().slice(0, 160);
-    const workerContent =
-      probe.length > 0 && !instruction.includes(probe)
-        ? `${instruction}\n\n[User's exact request, verbatim — this is the source of truth; the line above is only framing]\n${message}`
-        : instruction;
+    // LA REMISE (handoff.ts). La tâche du job est ce que la personne a dit,
+    // pris dans la conversation par la plateforme : jamais le texte du modèle.
+    // Ce que le modèle écrit dans `instruction` est sa note, que le travailleur
+    // lit après ces mots, sous un cadre qui dit qu'elle n'est pas d'elle.
+    const note = handoffNote(
+      String((runTask.input as { instruction?: unknown } | undefined)?.instruction ?? ''),
+      personsWords,
+    );
     // Tour de réponse ou tête d'un fil au repos : la décision de toute entrée
     // (#531), prise sous le verrou de la conversation.
     const turn = await startConversationTurn(db, {
@@ -900,7 +903,8 @@ export async function runChatTurn(opts: {
         agentId,
         status: 'pending',
         channel: 'dashboard',
-        task: instruction,
+        task: personsWords,
+        handoffNote: note,
         // Jobs page grouping (migration 0059): this channel already has a
         // real conversation entity (the dashboard sidebar thread) — stamp
         // that id directly rather than re-deriving it from a gap heuristic.
@@ -909,7 +913,7 @@ export async function runChatTurn(opts: {
         // dossier où cette conversation travaille, sans attendre qu'une
         // écriture l'y rattache.
         projectId: conv.currentProjectId,
-        messages: [{ role: 'user', content: workerContent }],
+        messages: openingMessages(personsWords, note),
       },
     });
     const job = { id: turn.jobId };
@@ -1012,6 +1016,34 @@ export async function runChatTurn(opts: {
   }
 
   return { ok: true, reply: replyText, streamed };
+}
+
+/**
+ * Ce que la personne a dit depuis la dernière REMISE de cette conversation —
+ * le dernier message de l'agent qui a lancé un job : ses messages d'après, du
+ * plus ancien au plus récent, tels qu'elle les a écrits. C'est ce qu'un
+ * `run_task` de ce tour transmet (handoff.ts) : le message du tour, et ceux
+ * qu'aucun job n'a encore reçus — la demande à laquelle le front a répondu en
+ * texte, puis la correction qui l'a fait agir. Ce qui précède la dernière
+ * remise, un job l'a déjà reçu ; ce que le travailleur doit en savoir, le
+ * front le dit dans sa note.
+ *
+ * `rows` : les messages du fil, du plus RÉCENT au plus ancien, celui du tour
+ * en tête. Ils ne sont jamais vides — le tour vient d'écrire le sien — et une
+ * liste vide est une panne dite (invariant #4), jamais une tâche inventée.
+ */
+export function personsWordsSinceLastHandoff(
+  rows: ReadonlyArray<{ role: string; content: string; jobId: string | null }>,
+): string {
+  const words: string[] = [];
+  for (const r of rows) {
+    if (r.role === 'assistant' && r.jobId) break;
+    if (r.role === 'user') words.push(r.content);
+  }
+  if (words.length === 0) {
+    throw new Error("run-chat-turn: no message of the person to hand on (this turn's is missing)");
+  }
+  return words.reverse().join('\n\n');
 }
 
 /**

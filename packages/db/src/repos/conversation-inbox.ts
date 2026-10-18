@@ -29,8 +29,13 @@
 //     relancer, et le rend.
 
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { LIVE_JOB_STATUSES, TERMINAL_STATUSES, inboxMessage } from '@nodal-agents/shared';
-import type { InboxEntry, InboxMessage } from '@nodal-agents/shared';
+import {
+  LIVE_JOB_STATUSES,
+  TERMINAL_STATUSES,
+  handoffNote,
+  inboxMessages,
+} from '@nodal-agents/shared';
+import type { HandoffNoteMessage, InboxEntry, InboxMessage } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agentJobs } from '../schema/jobs.ts';
 import { ownJobRow, RUN_ACTS_WHILE } from './run-claim.ts';
@@ -137,7 +142,9 @@ export type ConversationJobDelivery =
 /**
  * Écrit `text` dans la file du job `jobId` — une tête ou un délégué de la
  * conversation `conversationId`, encore vivant. Il la lira à son prochain tour,
- * et avant de conclure. La ligne est verrouillée : une fin concurrente
+ * et avant de conclure. `text` est ce que la personne a dit, tel quel ;
+ * `note`, ce que le modèle qui transmet écrit à côté (handoff.ts) : le job la
+ * lit après les mots, sous son cadre, jamais comme les mots de la personne. La ligne est verrouillée : une fin concurrente
  * l'attend et voit l'entrée (une tête la relance, un délégué la laisse à son
  * parent), ou elle a gagné et la remise est refusée — jamais une entrée écrite
  * dans la file d'un job fini.
@@ -149,12 +156,15 @@ export async function deliverToConversationJob(
     conversationId: string;
     jobId: string;
     text: string;
+    /** La note de qui transmet, s'il en écrit une. */
+    note?: string;
     /** Le job qui transmet, s'il y en a un. */
     fromJobId?: string;
   },
 ): Promise<ConversationJobDelivery> {
   const { entityId, conversationId, jobId, text } = input;
   if (text.trim() === '') throw new Error('deliverToConversationJob: the message has no text');
+  const note = handoffNote(input.note, text);
   return db.transaction(async (tx) => {
     const t = tx as unknown as AnyDrizzleDb;
     const [row] = await t
@@ -178,6 +188,7 @@ export async function deliverToConversationJob(
       content: text,
       receivedAt: new Date().toISOString(),
       ...(input.fromJobId ? { fromJobId: input.fromJobId } : {}),
+      ...(note !== null ? { note } : {}),
     };
     await t
       .update(agentJobs)
@@ -189,7 +200,7 @@ export async function deliverToConversationJob(
 
 /**
  * Vide la file du job que CE run tient (sous sa prise, #566) et rend ce qu'elle
- * contenait, prêt à entrer dans la transcription (marqué, `inboxMessage`) —
+ * contenait, prêt à entrer dans la transcription (marqué, `inboxMessages`) —
  * avec ce qui restait dans la file de ses descendants FINIS, à toute
  * profondeur : un message transmis à un délégué qui a terminé avant de le lire
  * revient à son premier ancêtre vivant (le déclencheur de fin de job le lui
@@ -203,7 +214,10 @@ export async function deliverToConversationJob(
  * Rend `[]` quand il n'y a rien, et quand le run ne tient plus le job : ce
  * n'est pas à lui de la lire, la transition terminale s'en chargera.
  */
-export async function drainJobInbox(db: AnyDrizzleDb, jobId: string): Promise<InboxMessage[]> {
+export async function drainJobInbox(
+  db: AnyDrizzleDb,
+  jobId: string,
+): Promise<Array<InboxMessage | HandoffNoteMessage>> {
   // Les descendants FINIS de ce job, à toute profondeur, en ne traversant que
   // des jobs finis : un descendant encore vivant lit lui-même sa file et celle
   // des siens.
@@ -254,7 +268,7 @@ export async function drainJobInbox(db: AnyDrizzleDb, jobId: string): Promise<In
       .for('update');
     const entries = [...row.inbox, ...descendants.flatMap((d) => d.inbox)];
     if (entries.length === 0) return [];
-    const drained = entries.map(inboxMessage);
+    const drained = entries.flatMap(inboxMessages);
     await t
       .update(agentJobs)
       .set({

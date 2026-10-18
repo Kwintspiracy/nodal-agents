@@ -331,6 +331,12 @@ export const stopConversationRunTool: ToolDefinition<
 // délégué encore vivant —, que ce job lit à son prochain pas et avant de
 // conclure. « Je te donne suite à la fin » n'est donc pas une promesse en
 // l'air : c'est une note dans la file de la tête, lue avant sa conclusion.
+//
+// CE QUE LA PERSONNE A DIT N'EST PAS RETAPÉ (handoff.ts) : la plateforme met
+// dans la file la tâche de la tête de l'appelant — les mots de qui a demandé,
+// pour un tour de conversation la personne elle-même — et le `message` du
+// modèle va à côté, comme sa note. Le job visé lit les deux, et sait lequel
+// est de la personne.
 
 export const MessageConversationRunInputSchema = z.object({
   job_id: z
@@ -346,8 +352,9 @@ export const MessageConversationRunInputSchema = z.object({
     .min(1)
     .max(8000)
     .describe(
-      "What that job should take into account, written for it: the person's words, and what " +
-        'they change for its work.',
+      "Your note to that job. The person's own words reach it as they wrote them, passed by " +
+        'the platform beside this note: write only what they change for its work, never a ' +
+        'retyped version of them.',
     ),
 });
 
@@ -387,7 +394,9 @@ export const messageConversationRunTool: ToolDefinition<
     'Pass a message to work STILL RUNNING in this conversation: the head of a run (its ' +
     '`run_id`) or one of its delegated jobs (its `job_id`). The job reads it at its next step ' +
     'and before it concludes, so this is how the running work takes an update into account, ' +
-    "or how a follow-up is handled when that work finishes. Use it when the person's message " +
+    "or how a follow-up is handled when that work finishes. The person's own words reach the " +
+    'job as they wrote them, passed by the platform; your `message` travels beside them as ' +
+    "your note. Use it when the person's message " +
     'concerns that work; for something else, start other work instead. Refused for a job that ' +
     'has already finished, or that is not in this conversation.',
   inputSchema: MessageConversationRunInputSchema,
@@ -402,11 +411,22 @@ export const messageConversationRunTool: ToolDefinition<
           'account yourself.',
       );
     }
+    // Les mots de la personne : la tâche de la tête de ce run, telle qu'elle
+    // l'a écrite (handoff.ts). Le message du modèle est sa note.
+    const [head] = await ctx.db
+      .select({ task: agentJobs.task })
+      .from(agentJobs)
+      .where(and(eq(agentJobs.id, ownHeadJobId), eq(agentJobs.entityId, ctx.entityId)))
+      .limit(1);
+    if (!head) {
+      throw new Error(`conversation_runs_error: the head ${ownHeadJobId} of this run is gone.`);
+    }
     const result = await deliverToConversationJob(ctx.db, {
       entityId: ctx.entityId,
       conversationId,
       jobId: input.job_id,
-      text: input.message,
+      text: head.task,
+      note: input.message,
       fromJobId: ctx.jobId,
     });
     if (!result.delivered) {

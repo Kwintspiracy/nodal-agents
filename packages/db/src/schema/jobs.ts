@@ -108,8 +108,21 @@ export const agentJobs = pgTable(
     agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'cascade' }),
     status: text('status').default('pending'),
     channel: text('channel').notNull(),
+    /**
+     * La demande, dans les mots de qui l'a faite. Pour un tour de conversation,
+     * les mots de la PERSONNE, pris par la plateforme et jamais retapés par un
+     * modèle (handoff.ts, @nodal-agents/shared) : le message tapé sur un canal,
+     * les messages du chat qu'une remise `run_task` transmet, ceux qu'un tour de
+     * réponse transmet à un travail en cours.
+     */
     task: text('task').notNull(),
-    originalTask: text('original_task'),
+    /**
+     * Ce que le modèle qui a remis la demande a écrit à côté (migration 0150) :
+     * sa NOTE, que le travailleur lit sous un cadre qui dit qu'elle n'est pas
+     * de la personne. NULL quand personne n'a relayé la demande, ou que le
+     * relais n'a rien ajouté. Remplace `original_task`, jamais écrite.
+     */
+    handoffNote: text('handoff_note'),
     chatId: text('chat_id'),
     /**
      * Le canal sur lequel `chat_id` a été RÉSOLU (#649, migration 0143), posé
