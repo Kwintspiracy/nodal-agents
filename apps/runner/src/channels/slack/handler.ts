@@ -27,6 +27,7 @@ import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { triggerWorker } from '../../routes/agent.ts';
 import { sanitizeSenderName, checkConversationAuthorization } from '../shared.ts';
+import { groupMessagePrefix } from '../../person-for-model.ts';
 import { takeChannelTurn, type ChannelStopResult } from '../turn.ts';
 import type { SlackInboundMessage } from './types.ts';
 
@@ -175,7 +176,7 @@ export async function handleSlackMessage(args: {
       if (!targetAuth.authorized) return targetAuth.result;
     }
   } else if (isChannel) {
-    groupPrefix = `[Message from ${senderName}]: `;
+    groupPrefix = groupMessagePrefix(senderName);
   }
 
   // La fin du parcours est commune aux quatre canaux (channels/turn.ts) : `/new`,

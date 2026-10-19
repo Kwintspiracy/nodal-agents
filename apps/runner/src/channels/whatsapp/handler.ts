@@ -30,6 +30,7 @@ import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { triggerWorker } from '../../routes/agent.ts';
 import { sanitizeSenderName, checkConversationAuthorization } from '../shared.ts';
+import { groupMessagePrefix } from '../../person-for-model.ts';
 import { takeChannelTurn, isPlatformCommand, type ChannelStopResult } from '../turn.ts';
 
 export interface WhatsAppHandleResult {
@@ -83,6 +84,10 @@ export async function handleWhatsAppMessage(args: {
   const text = message.text ?? '';
   if (!text.trim() && !message.mediaPlaceholder) return { skipped: 'no_content' };
 
+  // Le nom montré au PROPRIÉTAIRE sur une demande d'accès : à défaut de nom,
+  // le JID, qui porte le numéro de téléphone — il décide d'autoriser
+  // quelqu'un, il doit savoir qui. Ce JID ne va JAMAIS au modèle (#810) : le
+  // préfixe de groupe ne prend que le nom (`groupMessagePrefix`).
   const senderName = sanitizeSenderName(message.senderName ?? message.senderJid);
   const conversationId = message.conversationId;
   const kind: 'private' | 'group' = message.isGroup ? 'group' : 'private';
@@ -161,7 +166,7 @@ export async function handleWhatsAppMessage(args: {
       if (!targetAuth.authorized) return targetAuth.result;
     }
   } else if (message.isGroup) {
-    groupPrefix = `[Message from ${senderName}]: `;
+    groupPrefix = groupMessagePrefix(message.senderName ?? '');
   }
 
   if (!taskText.trim() && message.mediaPlaceholder) {

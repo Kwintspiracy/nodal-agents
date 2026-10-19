@@ -26,6 +26,7 @@ import type { RunnerEnv } from '../../env.ts';
 import { triggerWorker } from '../../routes/agent.ts';
 import { pruneTelegramWorkspace } from '../../telegram/handler.ts';
 import { sanitizeSenderName, checkConversationAuthorization } from '../shared.ts';
+import { groupMessagePrefix } from '../../person-for-model.ts';
 import { takeChannelTurn, isPlatformCommand, type ChannelStopResult } from '../turn.ts';
 import type { DiscordInboundMessage } from './types.ts';
 
@@ -198,7 +199,7 @@ export async function handleDiscordMessage(args: {
       if (!body) return { skipped: 'mention_no_text' };
     }
     taskText = body;
-    groupPrefix = `[Message from ${senderName}]: `;
+    groupPrefix = groupMessagePrefix(senderName);
   }
 
   if (!taskText.trim() && imageAttachment) {

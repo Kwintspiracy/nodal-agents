@@ -14,6 +14,11 @@
 //     pour les autres canaux).
 // Aucune ligne qui donne le rôle : `unlisted`, dit tel quel, jamais un rôle
 // supposé.
+//
+// L'identité part chez le fournisseur du modèle avec les mots : elle est
+// écrite par `personForModel` (#810) — l'id du compte, jamais son e-mail ;
+// l'id de la conversation du canal, celui que le modèle lit partout ailleurs
+// et que ses outils d'envoi acceptent.
 
 import { and, eq } from '@nodal-agents/db';
 import {
@@ -24,6 +29,7 @@ import {
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { Responder } from './card-words.ts';
+import { personForModel } from '../person-for-model.ts';
 
 /** Celui qui a répondu, tel que le chemin de la réponse le connaît. */
 export type AnsweredBy =
@@ -42,7 +48,7 @@ export async function readResponder(
 ): Promise<Responder> {
   if ('userId' in answeredBy) {
     const [user] = await db
-      .select({ email: users.email })
+      .select({ id: users.id })
       .from(users)
       .where(eq(users.id, answeredBy.userId))
       .limit(1);
@@ -61,7 +67,11 @@ export async function readResponder(
             .limit(1);
     return {
       role: member?.role ?? UNLISTED_ROLE,
-      identity: `user:${user?.email ?? answeredBy.userId}`,
+      identity: personForModel({
+        kind: 'account',
+        userId: answeredBy.userId,
+        found: user !== undefined,
+      }),
     };
   }
   const { channel, agentId, conversationId } = answeredBy;
@@ -88,5 +98,8 @@ export async function readResponder(
             ),
           )
           .limit(1);
-  return { role: row?.role ?? UNLISTED_ROLE, identity: `${channel}:${conversationId}` };
+  return {
+    role: row?.role ?? UNLISTED_ROLE,
+    identity: personForModel({ kind: 'conversation', channel, conversationId }),
+  };
 }

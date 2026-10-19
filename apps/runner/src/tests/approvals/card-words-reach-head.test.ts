@@ -42,7 +42,13 @@
 //   - le rôle lu dans `entity_members` remplacé par 'owner' → « un MEMBRE »
 //     rougit ;
 //   - la phrase retirée de la réponse Telegram → « la personne le lit sur
-//     TELEGRAM » rougit.
+//     TELEGRAM » rougit ;
+//   - (#810) l'identité d'un compte remise à `user:<email>` → les quatre tests
+//     du dashboard et de l'API, et « un compte qui n'existe plus », rougissent ;
+//   - (#810) le compte introuvable écrit `user:<id>` sans le dire → « un compte
+//     qui n'existe plus » rougit ;
+//   - (#820) l'identité d'une conversation remplacée par `<canal>:<id de la
+//     ligne d'allowlist>` → les deux tests Telegram et Discord rougissent.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -55,13 +61,16 @@ import {
   agentJobs,
   agents,
   approvalRequests,
+  channelAllowedConversations,
   conversations,
   entities,
   entityMembers,
   telegramAllowedChats,
   users,
   eq,
+  isConversationAllowed,
 } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { cardWordsNotice, isInboxMessage } from '@nodal-agents/shared';
 import type { InboxEntry } from '@nodal-agents/shared';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
@@ -149,6 +158,8 @@ let ownerUserId = '';
 let ownerEmail = '';
 let memberUserId = '';
 let memberEmail = '';
+/** La ligne qui autorise la conversation Telegram : son id ne doit JAMAIS servir d'adresse (#820). */
+let telegramAllowedId = '';
 
 function makeDeps(llmClient?: RunnerDeps['llmClient']): RunnerDeps {
   const registry = createToolRegistry();
@@ -184,13 +195,17 @@ beforeAll(async () => {
     .update(agents)
     .set({ role: 'agent', systemAgent: true, telegramBotToken: '123:fake' })
     .where(eq(agents.id, rootAgentId));
-  await db.insert(telegramAllowedChats).values({
-    entityId: seed.entityId,
-    agentId: rootAgentId,
-    chatId: CHAT_ID,
-    role: 'owner',
-    status: 'active',
-  });
+  const [allowed] = await db
+    .insert(telegramAllowedChats)
+    .values({
+      entityId: seed.entityId,
+      agentId: rootAgentId,
+      chatId: CHAT_ID,
+      role: 'owner',
+      status: 'active',
+    })
+    .returning({ id: telegramAllowedChats.id });
+  telegramAllowedId = allowed!.id;
   const [seedAgent] = await db.select().from(agents).where(eq(agents.id, rootAgentId));
   reviewerSlug = `reviewer-${randomUUID().slice(0, 8)}`;
   const [reviewer] = await db
@@ -385,7 +400,7 @@ describe('les mots de la personne sur une carte vont à la tête du run @cap:app
     expect(headRow.inbox).toHaveLength(1);
     const entry = headRow.inbox[0]!;
     expect(entry.content).toBe(
-      `${PERSON_ON_CARD_MARK} · by: owner user:${ownerEmail} · agent: ${reviewerSlug} · ` +
+      `${PERSON_ON_CARD_MARK} · by: owner user:${ownerUserId} · agent: ${reviewerSlug} · ` +
         `job: ${child} · ` +
         'tool: mcp_playwright__browser_run_code_unsafe · card: approval · decision: rejected · via: api\n' +
         `note:\n${NOTE}`,
@@ -677,7 +692,7 @@ describe('la décision ne dépend jamais de la remise, et le cadre dit qui a ré
     const inbox = await inboxOf(head);
     expect(inbox).toHaveLength(1);
     expect(
-      inbox[0]!.content.startsWith(`${PERSON_ON_CARD_MARK} · by: member user:${memberEmail} · `),
+      inbox[0]!.content.startsWith(`${PERSON_ON_CARD_MARK} · by: member user:${memberUserId} · `),
     ).toBe(true);
     expect(inbox[0]!.content).not.toContain('owner');
   });
@@ -696,6 +711,225 @@ describe('la décision ne dépend jamais de la remise, et le cadre dit qui a ré
     const [row] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, card));
     expect(row!.status).toBe('pending');
     expect(await inboxOf(head)).toEqual([]);
+  });
+});
+
+// ─── #810 : ce que le modèle lit d'une personne ──────────────────────────────
+
+/** L'API : une session (bearer) qui n'est pas le web — son compte est celui de la session. */
+async function answerFromApiSession(
+  body: Record<string, unknown>,
+  sessionUserId: string,
+): Promise<Response> {
+  const app = new Hono();
+  app.use('*', async (c, next) => {
+    c.set('callerTrusted' as never, false as never);
+    c.set('callerUserId' as never, sessionUserId as never);
+    c.set('callerEntityId' as never, seed.entityId as never);
+    await next();
+  });
+  app.post('/api/approve', (c) => approveRoute(c, makeDeps(), env));
+  return app.request('/api/approve', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Le segment `by: <rôle> <identité>` du cadre. */
+function bySegment(content: string): string | undefined {
+  const header = content.split('\n')[0]!;
+  return header.split(' · ').find((part) => part.startsWith('by: '));
+}
+
+/** Une conversation de canal autorisée (hors Telegram), et l'id de sa ligne. */
+async function allowConversation(
+  channel: string,
+  conversationId: string,
+  role: string,
+): Promise<string> {
+  const [row] = await db
+    .insert(channelAllowedConversations)
+    .values({
+      entityId: seed.entityId,
+      agentId: rootAgentId,
+      channel,
+      conversationId,
+      kind: 'private',
+      role,
+      status: 'active',
+    })
+    .returning({ id: channelAllowedConversations.id });
+  return row!.id;
+}
+
+describe('#810 — le modèle lit un rôle et un id opaque, jamais une donnée de contact @cap:approuver-une-action/moteur', () => {
+  it('le DASHBOARD : la file de la tête et sa requête au modèle portent user:<id>, jamais l’e-mail', async () => {
+    const head = await insertHead();
+    const child = await insertChild(head, reviewerAgentId);
+    const card = await insertCard(child, reviewerAgentId);
+
+    const res = await answerFromDashboard({
+      approvalRequestId: card,
+      decision: 'reject',
+      notes: NOTE,
+    });
+    expect(res.status).toBe(200);
+    const [entry] = await inboxOf(head);
+    expect(bySegment(entry!.content)).toBe(`by: owner user:${ownerUserId}`);
+    expect(entry!.content).not.toContain(ownerEmail);
+
+    // Ce qui part réellement chez le fournisseur : la requête de la tête.
+    await db
+      .update(agentJobs)
+      .set({ status: 'failed', error: 'cannot print' })
+      .where(eq(agentJobs.id, child));
+    await resumeDelegated(
+      head as JobId,
+      child as JobId,
+      { status: 'failed', summary: '', error: 'cannot print' },
+      db,
+    );
+    const prompts: unknown[] = [];
+    await executeJob(
+      head as JobId,
+      makeDeps(
+        mockLlm(
+          [
+            {
+              text: 'ok',
+              toolCalls: [
+                { toolCallId: 'rr-810', toolName: 'return_result', args: { status: 'success' } },
+              ],
+            },
+          ],
+          prompts,
+        ),
+      ),
+      env,
+    );
+    expect(prompts[0], 'la tête n’a fait aucune requête').toBeDefined();
+    const body = JSON.stringify(prompts[0]);
+    expect(body).toContain(`by: owner user:${ownerUserId}`);
+    expect(body).not.toContain(ownerEmail);
+  });
+
+  it('l’API (une session, pas le web) : user:<id> du compte de la session, jamais son e-mail', async () => {
+    const head = await insertHead();
+    const child = await insertChild(head, reviewerAgentId);
+    const card = await insertCard(child, reviewerAgentId);
+
+    const res = await answerFromApiSession(
+      { approvalRequestId: card, decision: 'approve', notes: 'une seule capture' },
+      memberUserId,
+    );
+    expect(res.status).toBe(200);
+    const [entry] = await inboxOf(head);
+    expect(bySegment(entry!.content)).toBe(`by: member user:${memberUserId}`);
+    expect(entry!.content).not.toContain(memberEmail);
+  });
+
+  it('un compte qui n’existe plus : la forme le dit, fixe, au lieu d’en changer en silence', async () => {
+    const head = await insertHead();
+    const child = await insertChild(head, reviewerAgentId);
+    const card = await insertCard(child, reviewerAgentId);
+    const goneUserId = randomUUID();
+
+    const r = await resolveApprovalDecision(makeDeps(), env, {
+      approvalRequestId: card,
+      decision: 'reject',
+      resolvedBy: 'api',
+      answeredBy: { userId: goneUserId },
+      notes: NOTE,
+    });
+    expect(r.ok).toBe(true);
+    const [entry] = await inboxOf(head);
+    expect(bySegment(entry!.content)).toBe(
+      `by: unlisted user:${goneUserId} (no account with this id)`,
+    );
+  });
+
+  // Le `by:` d'un canal est dans le MÊME espace d'adresses que ce que les
+  // outils d'envoi acceptent : l'id de conversation du canal, jamais l'id
+  // d'une ligne à nous (revue Reviewer A de #820, passe 1). La preuve est
+  // celle des outils eux-mêmes : `isConversationAllowed`, la garde de
+  // `resolveRecipientChatId`, accepte l'id lu dans le `by:`.
+  it('TELEGRAM : l’id du chat, celui que les outils d’envoi acceptent, jamais l’id de la ligne', async () => {
+    const head = await insertHead();
+    const child = await insertChild(head, reviewerAgentId);
+    const card = await insertCard(child, reviewerAgentId, {
+      toolName: 'ask_user',
+      toolInput: { question: 'Where should I write it?', options: OPTIONS },
+      kind: 'question',
+    });
+
+    const r = await handleApprovalCallback({
+      update: telegramTap(`apr:${card}:o0`),
+      receivingAgentId: rootAgentId,
+      botToken: '123:fake',
+      deps: makeDeps(),
+      env,
+    });
+    expect(r.handled).toBe(true);
+    const [entry] = await inboxOf(head);
+    expect(bySegment(entry!.content)).toBe(`by: owner telegram:${CHAT_ID}`);
+    expect(entry!.content).not.toContain(telegramAllowedId);
+    const address = bySegment(entry!.content)!.slice('by: owner telegram:'.length);
+    expect(
+      await isConversationAllowed(db as unknown as AnyDrizzleDb, {
+        entityId: seed.entityId,
+        agentId: rootAgentId,
+        channel: 'telegram',
+        conversationId: address,
+      }),
+    ).toBe(true);
+  });
+
+  it('DISCORD, et tout autre canal : l’id de la conversation du canal, jamais l’id de la ligne', async () => {
+    const channelId = `chan-${randomUUID().slice(0, 8)}`;
+    const allowedId = await allowConversation('discord', channelId, 'member');
+    const head = await insertHead();
+    const child = await insertChild(head, reviewerAgentId);
+    const card = await insertCard(child, reviewerAgentId);
+
+    // La forme exacte que `channels/discord/approval-callback.ts` passe.
+    const r = await resolveApprovalDecision(makeDeps(), env, {
+      approvalRequestId: card,
+      decision: 'reject',
+      resolvedBy: 'discord',
+      answeredBy: { channel: 'discord', agentId: rootAgentId, conversationId: channelId },
+      notes: NOTE,
+    });
+    expect(r.ok).toBe(true);
+    const [entry] = await inboxOf(head);
+    expect(bySegment(entry!.content)).toBe(`by: member discord:${channelId}`);
+    expect(entry!.content).not.toContain(allowedId);
+    expect(
+      await isConversationAllowed(db as unknown as AnyDrizzleDb, {
+        entityId: seed.entityId,
+        agentId: rootAgentId,
+        channel: 'discord',
+        conversationId: bySegment(entry!.content)!.slice('by: member discord:'.length),
+      }),
+    ).toBe(true);
+  });
+
+  it('une conversation qu’aucune ligne n’autorise : le rôle le dit, l’adresse reste celle du canal', async () => {
+    const channelId = `slack-${randomUUID().slice(0, 8)}`;
+    const head = await insertHead();
+    const child = await insertChild(head, reviewerAgentId);
+    const card = await insertCard(child, reviewerAgentId);
+
+    const r = await resolveApprovalDecision(makeDeps(), env, {
+      approvalRequestId: card,
+      decision: 'reject',
+      resolvedBy: 'slack',
+      answeredBy: { channel: 'slack', agentId: rootAgentId, conversationId: channelId },
+      notes: NOTE,
+    });
+    expect(r.ok).toBe(true);
+    const [entry] = await inboxOf(head);
+    expect(bySegment(entry!.content)).toBe(`by: unlisted slack:${channelId}`);
   });
 });
 
