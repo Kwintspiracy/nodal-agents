@@ -14,6 +14,10 @@
 //     pour les autres canaux).
 // Aucune ligne qui donne le rôle : `unlisted`, dit tel quel, jamais un rôle
 // supposé.
+//
+// L'identité part chez le fournisseur du modèle avec les mots : elle est
+// écrite par `personForModel` (#810) — l'id du compte, l'id de la ligne qui
+// autorise la conversation, jamais un e-mail ni l'identifiant du canal.
 
 import { and, eq } from '@nodal-agents/db';
 import {
@@ -24,6 +28,7 @@ import {
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { Responder } from './card-words.ts';
+import { personForModel } from '../person-for-model.ts';
 
 /** Celui qui a répondu, tel que le chemin de la réponse le connaît. */
 export type AnsweredBy =
@@ -42,7 +47,7 @@ export async function readResponder(
 ): Promise<Responder> {
   if ('userId' in answeredBy) {
     const [user] = await db
-      .select({ email: users.email })
+      .select({ id: users.id })
       .from(users)
       .where(eq(users.id, answeredBy.userId))
       .limit(1);
@@ -61,14 +66,18 @@ export async function readResponder(
             .limit(1);
     return {
       role: member?.role ?? UNLISTED_ROLE,
-      identity: `user:${user?.email ?? answeredBy.userId}`,
+      identity: personForModel({
+        kind: 'account',
+        userId: answeredBy.userId,
+        found: user !== undefined,
+      }),
     };
   }
   const { channel, agentId, conversationId } = answeredBy;
   const [row] =
     channel === 'telegram'
       ? await db
-          .select({ role: telegramAllowedChats.role })
+          .select({ id: telegramAllowedChats.id, role: telegramAllowedChats.role })
           .from(telegramAllowedChats)
           .where(
             and(
@@ -78,7 +87,7 @@ export async function readResponder(
           )
           .limit(1)
       : await db
-          .select({ role: channelAllowedConversations.role })
+          .select({ id: channelAllowedConversations.id, role: channelAllowedConversations.role })
           .from(channelAllowedConversations)
           .where(
             and(
@@ -88,5 +97,12 @@ export async function readResponder(
             ),
           )
           .limit(1);
-  return { role: row?.role ?? UNLISTED_ROLE, identity: `${channel}:${conversationId}` };
+  return {
+    role: row?.role ?? UNLISTED_ROLE,
+    identity: personForModel({
+      kind: 'conversation',
+      channel,
+      allowedConversationId: row?.id ?? null,
+    }),
+  };
 }

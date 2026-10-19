@@ -28,6 +28,7 @@ import type { RunnerEnv } from '../env.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { TERMINAL_STATUSES } from '../job/state.ts';
 import { sanitizeSenderName, escapeRegex } from '../channels/shared.ts';
+import { groupMessagePrefix } from '../person-for-model.ts';
 import { takeChannelTurn, isPlatformCommand, type ChannelStopResult } from '../channels/turn.ts';
 
 export interface HandleResult {
@@ -238,7 +239,7 @@ export async function handleTelegramUpdate(args: {
       if (!body) return { skipped: 'mention_no_text' };
     }
     taskText = body;
-    groupPrefix = `[Message from ${senderName}${senderUsername ? ` (@${senderUsername})` : ''}]: `;
+    groupPrefix = groupMessagePrefix(senderName, senderUsername || null);
   }
 
   // A photo with no caption still becomes a job — give it a neutral task so the

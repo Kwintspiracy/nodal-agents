@@ -47,12 +47,12 @@ function dm(
 
 function groupMessage(
   text: string,
-  opts: { mentionsSelf?: boolean; conversationId?: string } = {},
+  opts: { mentionsSelf?: boolean; conversationId?: string; senderName?: string | null } = {},
 ): WhatsAppInboundMessage {
   return {
     conversationId: opts.conversationId ?? 'group-1@g.us',
     senderJid: '15550000007@s.whatsapp.net',
-    senderName: 'Alice',
+    senderName: opts.senderName === undefined ? 'Alice' : opts.senderName,
     text,
     timestamp: Date.now(),
     isGroup: true,
@@ -292,6 +292,37 @@ describe('handleWhatsAppMessage — group mention gating (mentionsSelf)', () => 
     expect(job?.chatId).toBe('group-2@g.us');
     expect(job?.task).toContain('[Message from Alice]');
     expect(job?.task).toContain('@bot what time is it');
+  });
+
+  // #810 : le JID d'un participant EST son numéro de téléphone. Sans nom
+  // affiché, l'ancien préfixe écrivait ce JID dans la tâche — le numéro partait
+  // chez le fournisseur du modèle. Le préfixe ne prend que le nom, et dit
+  // `Someone` quand il n'y en a pas, comme pour tout canal (`sanitizeSenderName`).
+  it('a group sender WITHOUT a display name: the task never carries the phone in their JID @cap:parler-par-canal-externe/moteur', async () => {
+    const agentId = await freshBot();
+    await claimOwner(agentId, dm('bootstrap owner', 'dm-owner-nameless'));
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId,
+      channel: 'whatsapp',
+      conversationId: 'group-nameless@g.us',
+      kind: 'group',
+      role: 'member',
+      status: 'active',
+    });
+    const result = await call(
+      agentId,
+      groupMessage('@bot imprime la liste', {
+        mentionsSelf: true,
+        conversationId: 'group-nameless@g.us',
+        senderName: null,
+      }),
+    );
+    expect(result.jobId).toBeDefined();
+
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
+    expect(job?.task).toBe('[Message from Someone]: @bot imprime la liste');
+    expect(job?.task).not.toContain('15550000007');
   });
 
   it('a group message when the bot has no owner yet is skipped (no_owner_group)', async () => {

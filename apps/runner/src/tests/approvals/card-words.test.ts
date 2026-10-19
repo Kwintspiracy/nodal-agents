@@ -15,7 +15,7 @@ const BASE: CardWordsInput = {
   kind: 'approval',
   decision: 'reject',
   resolvedBy: 'api',
-  responder: { role: 'owner', identity: 'user:local@nodalai.local' },
+  responder: { role: 'owner', identity: 'user:0d4c0f1e-0000-4000-8000-0000000000aa' },
   holderJobId: '5700457b-0000-4000-8000-000000000001',
   holderAgentSlug: 'reviewer-a',
   toolName: 'mcp_playwright__browser_run_code_unsafe',
@@ -28,7 +28,7 @@ describe('personWordsOnCard @cap:approuver-une-action/moteur', () => {
   it('cite la note d’un refus mot pour mot, sous le cadre de la carte', () => {
     const text = personWordsOnCard({ ...BASE, notes: "arrete la review, imprime c'est bon!" });
     expect(text).toBe(
-      `${PERSON_ON_CARD_MARK} · by: owner user:local@nodalai.local · agent: reviewer-a · ` +
+      `${PERSON_ON_CARD_MARK} · by: owner user:0d4c0f1e-0000-4000-8000-0000000000aa · agent: reviewer-a · ` +
         `job: ${BASE.holderJobId} · ` +
         'tool: mcp_playwright__browser_run_code_unsafe · card: approval · decision: rejected · via: api\n' +
         "note:\narrete la review, imprime c'est bon!",
@@ -83,7 +83,7 @@ describe('personWordsOnCard @cap:approuver-une-action/moteur', () => {
     expect(text).not.toContain('agent:');
     expect(
       text?.startsWith(
-        `${PERSON_ON_CARD_MARK} · by: owner user:local@nodalai.local · job: ${BASE.holderJobId}`,
+        `${PERSON_ON_CARD_MARK} · by: owner user:0d4c0f1e-0000-4000-8000-0000000000aa · job: ${BASE.holderJobId}`,
       ),
     ).toBe(true);
   });
@@ -91,20 +91,20 @@ describe('personWordsOnCard @cap:approuver-une-action/moteur', () => {
   it('un MEMBRE qui répond est dit membre : rien ne le fait passer pour le propriétaire', () => {
     const text = personWordsOnCard({
       ...BASE,
-      responder: { role: 'member', identity: 'user:invite@example.com' },
+      responder: { role: 'member', identity: 'user:0d4c0f1e-0000-4000-8000-0000000000bb' },
       notes: 'imprime',
     });
-    expect(text).toContain(' · by: member user:invite@example.com · ');
+    expect(text).toContain(' · by: member user:0d4c0f1e-0000-4000-8000-0000000000bb · ');
     expect(text).not.toContain('owner');
   });
 
   it('un répondant qu’aucune ligne ne décrit est dit tel quel', () => {
     const text = personWordsOnCard({
       ...BASE,
-      responder: { role: 'unlisted', identity: 'telegram:777000222' },
+      responder: { role: 'unlisted', identity: 'telegram:(no allowed conversation)' },
       notes: 'stop',
     });
-    expect(text).toContain(' · by: unlisted telegram:777000222 · ');
+    expect(text).toContain(' · by: unlisted telegram:(no allowed conversation) · ');
   });
 
   it('cardCarriesWords lit les mêmes champs que le message cite', () => {
