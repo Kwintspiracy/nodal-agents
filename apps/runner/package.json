@@ -31,7 +31,7 @@
     "@slack/web-api": "^7.19.0",
     "@xmldom/xmldom": "0.9.12",
     "cron-parser": "^5.5.0",
-    "discord.js": "^14.26.5",
+    "discord.js": "^14.27.0",
     "fflate": "^0.8.3",
     "hono": "^4.12.18",
     "parse5": "8.0.1",
