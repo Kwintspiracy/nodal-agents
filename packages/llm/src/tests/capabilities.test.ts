@@ -21,12 +21,17 @@ const PROVIDERS: ProviderName[] = [
 const CAPABILITY_KEYS: (keyof ProviderCapabilities)[] = [
   'toolUse',
   'promptCaching',
-  'vision',
   'structuredOutputs',
   'streaming',
 ];
 
 describe('CAPABILITY_MATRIX', () => {
+  it('says nothing about images: whether a model sees is per model (modelCanSeeImages), never per provider', () => {
+    for (const provider of PROVIDERS) {
+      expect(Object.keys(CAPABILITY_MATRIX[provider]), provider).not.toContain('vision');
+    }
+  });
+
   it('has an entry for every ProviderName', () => {
     for (const provider of PROVIDERS) {
       expect(CAPABILITY_MATRIX).toHaveProperty(provider);
@@ -43,11 +48,10 @@ describe('CAPABILITY_MATRIX', () => {
   });
 
   // Provider-specific assertions based on known reality
-  it('Anthropic supports toolUse, promptCaching, vision, streaming — not structuredOutputs', () => {
+  it('Anthropic supports toolUse, promptCaching, streaming — not structuredOutputs', () => {
     const caps = CAPABILITY_MATRIX.anthropic;
     expect(caps.toolUse).toBe(true);
     expect(caps.promptCaching).toBe(true);
-    expect(caps.vision).toBe(true);
     expect(caps.structuredOutputs).toBe(false);
     expect(caps.streaming).toBe(true);
   });
@@ -61,18 +65,16 @@ describe('CAPABILITY_MATRIX', () => {
     expect(CAPABILITY_MATRIX.ollama.streaming).toBe(true);
   });
 
-  it('OpenAI supports toolUse, vision, structuredOutputs, streaming — not promptCaching', () => {
+  it('OpenAI supports toolUse, structuredOutputs, streaming — not promptCaching', () => {
     const caps = CAPABILITY_MATRIX.openai;
     expect(caps.toolUse).toBe(true);
-    expect(caps.vision).toBe(true);
     expect(caps.structuredOutputs).toBe(true);
     expect(caps.streaming).toBe(true);
     expect(caps.promptCaching).toBe(false);
   });
 
-  it('openai-compatible is conservative: no vision, no promptCaching, no structuredOutputs', () => {
+  it('openai-compatible is conservative: no promptCaching, no structuredOutputs', () => {
     const caps = CAPABILITY_MATRIX['openai-compatible'];
-    expect(caps.vision).toBe(false);
     expect(caps.promptCaching).toBe(false);
     expect(caps.structuredOutputs).toBe(false);
     expect(caps.toolUse).toBe(true); // still expected to work

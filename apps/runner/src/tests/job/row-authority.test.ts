@@ -152,7 +152,6 @@ function modele(tours: Tour[]): RunnerDeps['llmClient'] {
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },

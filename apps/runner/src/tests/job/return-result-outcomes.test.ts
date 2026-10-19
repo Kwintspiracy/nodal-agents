@@ -113,7 +113,6 @@ function capturingClient(captured: Captured[]): RunnerDeps['llmClient'] {
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },

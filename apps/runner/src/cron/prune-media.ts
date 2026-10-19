@@ -7,13 +7,17 @@
 //     (apps/runner/src/telegram/handler.ts attachInboundPhoto)
 //   <workspacesRoot>/<entityId>/shared/discord/<channelId>/<jobId>.<ext>
 //     (apps/runner/src/channels/discord/handler.ts attachInboundImage)
+// and the images a job's tools fetched, beside them, one folder per job:
+//   <workspacesRoot>/<entityId>/shared/tools/<jobId>/<toolCallId>-<n>.<ext>
+//     (apps/runner/src/job/model-images.ts saveToolImages)
 //
 // DB retention (packages/db's pruneOldJobs) only deletes the agent_jobs row —
 // it must never touch the filesystem (only the runner owns workspace paths).
 // Once a job is pruned, its media file is unreferenced forever, so leaving it
 // on disk grows the workspace unbounded. This walks every entity's
-// shared/{telegram,discord} directories looking for a file whose basename
-// (sans extension) matches one of the pruned job ids, and deletes it.
+// shared/{telegram,discord,tools} directories for what belongs to a pruned
+// job — a file whose basename (sans extension) is its id, or a folder named
+// after it — and deletes it.
 //
 // Best-effort PER FILE (a locked file must not fail the whole phase) but
 // LOUD: every failure is console.warn'd so it stays diagnosable.
@@ -23,7 +27,7 @@ import type { Dirent } from 'node:fs';
 import { join, basename, extname } from 'node:path';
 
 /** Channel subdirectories under <entityId>/shared/ that hold inbound media. */
-const MEDIA_CHANNEL_DIRS = ['telegram', 'discord'] as const;
+const MEDIA_CHANNEL_DIRS = ['telegram', 'discord', 'tools'] as const;
 
 export interface PruneMediaResult {
   filesDeleted: number;
@@ -76,10 +80,12 @@ export async function pruneJobMediaFiles(
         const files = await safeReaddir(convoPath);
         if (!files) continue;
 
+        // A folder named after the pruned job holds only that job's media.
+        const wholeFolder = jobIdSet.has(convoDir.name);
         for (const file of files) {
           if (!file.isFile()) continue;
           const stem = basename(file.name, extname(file.name));
-          if (!jobIdSet.has(stem)) continue;
+          if (!wholeFolder && !jobIdSet.has(stem)) continue;
 
           const filePath = join(convoPath, file.name);
           try {

@@ -11,6 +11,9 @@ import {
   modelToolsSupport,
   modelOptionLabel,
   modelCanSeeImages,
+  modelIdKey,
+  modelImageInputFor,
+  VISION_MODEL_IDS,
   modelOutputCap,
   TURN_OUTPUT_TOKEN_CAP,
   modelGroupLabel,
@@ -682,5 +685,62 @@ describe('modelOutputCap @cap:suivre-execution/moteur', () => {
         }
       }
     }
+  });
+});
+
+describe('one match from an id to a known model: modelIdKey (review of #798, pass 2) @cap:choisir-modele/moteur', () => {
+  it('an alias, a dated twin, a provider prefix and -latest read as the model they name', () => {
+    // Alias of a dated id in the set.
+    expect(modelCanSeeImages('claude-haiku-4-5')).toBe(true);
+    // Dated twin of an undated id in the set, both date spellings.
+    expect(modelCanSeeImages('claude-sonnet-4-6-20250929')).toBe(true);
+    expect(modelCanSeeImages('gpt-5-2025-08-07')).toBe(true);
+    // Provider prefix and dots: the OpenRouter spelling of a native id.
+    expect(modelCanSeeImages('anthropic/claude-sonnet-4-6')).toBe(true);
+    expect(modelCanSeeImages('moonshotai/kimi-k2.6')).toBe(true);
+    // -latest.
+    expect(modelCanSeeImages('mistral-large')).toBe(true);
+    expect(modelIdKey('Claude-Haiku-4-5-20251001')).toBe('claude-haiku-4-5');
+  });
+
+  it('a family is never guessed: an id that names no known model does not see', () => {
+    expect(modelCanSeeImages('gpt-4o')).toBe(false);
+    expect(modelCanSeeImages('gemini-2.0-flash')).toBe(false);
+    expect(modelCanSeeImages('gpt-5-nano')).toBe(false);
+    expect(modelCanSeeImages('claude-instant-1.2')).toBe(false);
+  });
+
+  it('no text-only model of the catalog shares its key with a model that sees', () => {
+    const seeing = new Set([...VISION_MODEL_IDS].map(modelIdKey));
+    const textOnly = Object.values(MODEL_CATALOG)
+      .flat()
+      .filter((e) => !VISION_MODEL_IDS.has(e.modelId))
+      .map((e) => e.modelId);
+    expect(textOnly.length).toBeGreaterThan(0);
+    expect(textOnly.filter((id) => seeing.has(modelIdKey(id)))).toEqual([]);
+  });
+
+  it('the reason says which it is: a known text-only model, or one Nodal does not know', () => {
+    expect(modelImageInputFor('claude-haiku-4-5')).toEqual({ sees: true });
+    expect(modelImageInputFor('z-ai/glm-5.3')).toEqual({
+      sees: false,
+      reason: 'the model this agent runs (z-ai/glm-5.3) does not take images as input',
+    });
+    expect(modelImageInputFor('gpt-4o')).toEqual({
+      sees: false,
+      reason:
+        'the model this agent runs (gpt-4o) is not known to take images as input: it is not in ' +
+        'the list of models Nodal knows to take them',
+    });
+  });
+
+  it('findModelCatalogEntry reads an alias the same way', () => {
+    expect(findModelCatalogEntry('anthropic', 'claude-haiku-4-5')?.modelId).toBe(
+      'claude-haiku-4-5-20251001',
+    );
+    expect(findModelCatalogEntry('anthropic', 'claude-sonnet-4-6-20250929')?.modelId).toBe(
+      'claude-sonnet-4-6',
+    );
+    expect(findModelCatalogEntry('anthropic', 'claude-instant-1.2')).toBeUndefined();
   });
 });

@@ -59,7 +59,8 @@ export const PROVIDER_PRESETS = {
  * models for a given provider. Orchestration only requires toolUse.
  *
  * promptCaching: only Anthropic supports the extended-TTL cache_control header.
- * vision: provider + at least one mainstream model supports image input.
+ * Whether a model takes images is not here: it is per model
+ * (`modelCanSeeImages`, @nodal-agents/shared/model-catalog), the one source.
  * structuredOutputs: native schema-enforced JSON mode.
  * streaming: provider supports streamed responses.
  */
@@ -67,76 +68,60 @@ export const CAPABILITY_MATRIX: Record<ProviderName, ProviderCapabilities> = {
   anthropic: {
     toolUse: true,
     promptCaching: true,
-    vision: true,
     structuredOutputs: false, // Anthropic uses tool-based structured output, not native schema mode
     streaming: true,
   },
   openai: {
     toolUse: true,
     promptCaching: false,
-    vision: true,
     structuredOutputs: true,
     streaming: true,
   },
   ollama: {
     toolUse: true,
     promptCaching: false, // local inference, no caching layer
-    vision: false, // model-dependent; conservative default
     structuredOutputs: true, // Ollama supports JSON mode
     streaming: true,
   },
   'openai-compatible': {
     toolUse: true,
     promptCaching: false,
-    vision: false, // model-dependent; conservative default
     structuredOutputs: false,
     streaming: true,
   },
   google: {
     toolUse: true,
     promptCaching: false,
-    vision: true,
     structuredOutputs: true,
     streaming: true,
   },
   mistral: {
     toolUse: true,
     promptCaching: false,
-    vision: false,
     structuredOutputs: true,
     streaming: true,
   },
   groq: {
     toolUse: true,
     promptCaching: false,
-    vision: false,
     structuredOutputs: true,
     streaming: true,
   },
   openrouter: {
     toolUse: true,
     promptCaching: false, // depends on underlying model; conservative default
-    vision: false, // depends on underlying model; conservative default
     structuredOutputs: false,
     streaming: true,
   },
   deepseek: {
     toolUse: true,
     promptCaching: false, // DeepSeek does not support Anthropic-style cache_control headers
-    vision: false, // deepseek-chat and deepseek-reasoner are text-only
     structuredOutputs: false,
     streaming: true,
   },
   minimax: {
     toolUse: true,
     promptCaching: false, // MiniMax's Anthropic endpoint does not support cache_control
-    // This matrix entry is a provider-level default, deliberately conservative
-    // (see the module doc above). `VISION_MODEL_IDS` in
-    // `@nodal-agents/shared/model-catalog` is the AUTHORITATIVE per-MODEL
-    // source of truth, stamped onto each catalog entry's own
-    // `capabilities.vision` — that's what the runner and UI actually consult;
-    // this flag is never read for a per-model vision decision.
-    vision: false,
     structuredOutputs: false,
     streaming: true,
   },
@@ -145,11 +130,6 @@ export const CAPABILITY_MATRIX: Record<ProviderName, ProviderCapabilities> = {
     // Moonshot's own docs don't mention cache_control-style extended prompt
     // caching for the Kimi K2 line.
     promptCaching: false,
-    // Provider-level default (conservative) — see the minimax entry's comment
-    // above. Kimi K2.6/K2.7-code are confirmed multimodal (WebFetch against
-    // openrouter.ai + platform.kimi.ai/docs, 2026-07) and stamped true via
-    // VISION_MODEL_IDS.
-    vision: false,
     structuredOutputs: false,
     streaming: true,
   },

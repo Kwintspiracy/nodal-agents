@@ -114,7 +114,6 @@ function makeMockLlmClient(responses: MockResponse[]): RunnerDeps['llmClient'] {
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },

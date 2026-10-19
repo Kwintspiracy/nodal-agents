@@ -107,7 +107,6 @@ function makeScriptedClient(turns: ScriptedTurn[]): {
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },

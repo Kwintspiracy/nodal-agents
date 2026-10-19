@@ -30,6 +30,7 @@ export * from './system-prompt-cache';
 export * from './connector-catalog';
 export * from './community-skill-catalog';
 export * from './model-catalog';
+export * from './model-image-budget';
 export * from './speech-models';
 export * from './mcp-catalog';
 export * from './timezone';
