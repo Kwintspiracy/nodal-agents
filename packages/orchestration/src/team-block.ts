@@ -388,6 +388,35 @@ export async function buildTeamBlock(
     return '\n  Shell commands: yes';
   }
 
+  // What a teammate's model takes, said as a fact and only where it holds. The
+  // line used to read "LLM: can see images (vision) — route image tasks here",
+  // from the model alone: an ORDER, given whatever the agent is for, and a
+  // promise ("the image travels") the delegation keeps for one kind of image
+  // only. Run 039f8666 followed it to a forum persona to check a PNG in the
+  // shared folder; nothing had carried that file to it.
+  //
+  // What a delegation carries, read in the code, differs by the image: the
+  // ATTACHMENTS of the parent's conversation (a channel photo, a path part in
+  // its user messages) are copied into the child's first message by
+  // `handleDelegation` (router/delegate.ts), through an assign tool only; an
+  // image a TOOL returned to the parent (file_read, an MCP block) is not, and
+  // neither is a file in a folder — the teammate opens it itself, from its own
+  // Folders (listed on its line). A sentence about "an image travels" was true
+  // for one of these paths and false on the incident's own (review of #798),
+  // so the line claims no delivery at all: it says what the model takes.
+  //
+  // On the Nodal runtime the model that runs is `agents.model`, and whether it
+  // takes images is read from the one per-model source (`modelCanSeeImages`),
+  // the same the runner applies to that teammate's own tool results. On a CLI
+  // runtime the model is the CLI's own setting, and the CLI turn receives the
+  // task as text (`job.task`, cli-runtime/run-job.ts): Nodal knows nothing
+  // true to say there, so it says nothing. Who to send an image task to is the
+  // orchestrator's decision, from the facts and the purpose.
+  function formatImagesTag(runtime: string, model: string | null): string {
+    if (runtime !== 'nodal' || model === null || !modelCanSeeImages(model)) return '';
+    return `\n  Images: its model (${model}) takes images as input.`;
+  }
+
   // Unified orchestrator: every orchestrator receives BOTH delegation toolsets at
   // runtime (assign_* for in-line/sequential delegation, create_task for parallel
   // fan-out — see apps/runner/src/job/execute.ts tool selection). So the prompt
@@ -515,12 +544,7 @@ export async function buildTeamBlock(
     // What the agent is FOR (summary of its personality) — drives correct routing.
     const purpose = summarizePurpose(agentPersonality);
     const purposeTag = purpose ? `\n  Purpose: ${purpose}` : '';
-    // Surface the agent's LLM vision capability so the orchestrator can route an
-    // image to a teammate that can actually SEE it (the image travels with the
-    // delegation). Only shown when true — a positive capability the model routes on.
-    const visionTag = modelCanSeeImages(agentModel ?? '')
-      ? '\n  LLM: can see images (vision) — route image tasks here'
-      : '';
+    const visionTag = formatImagesTag(agentRuntime, agentModel);
     const skills = skillMap.get(subAgentId) ?? [];
     const skillsTag =
       skills.length > 0

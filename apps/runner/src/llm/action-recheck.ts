@@ -38,7 +38,11 @@
 import type { ModelMessage } from 'ai';
 import type { NodalLlmClient } from '@nodal-agents/llm';
 import { cutForContext, elideBinary, unwrapUntrusted, wrapUntrusted } from '@nodal-agents/shared';
-import { EVICTED_TOOL_INPUT_MARKER, toolResultShape } from '../job/tool-result-shape.ts';
+import {
+  EVICTED_TOOL_INPUT_MARKER,
+  toolResultOutputText,
+  toolResultShape,
+} from '../job/tool-result-shape.ts';
 
 export const ACTION_RECHECK =
   'Re-read your previous reply against the record above of what this run has done since the ' +
@@ -95,12 +99,13 @@ function argumentsOf(input: unknown): string {
 /** Le texte d'un résultat : le message d'un bloc `{ error }` quand c'est un texte, sinon tout. */
 function resultText(output: unknown): string {
   const value = (output as { value?: unknown } | null)?.value;
-  if (typeof value === 'string') return value;
   if (value !== null && typeof value === 'object') {
     const err = (value as { error?: unknown }).error;
     if (typeof err === 'string') return err;
   }
-  return JSON.stringify(value === undefined ? (output ?? null) : value);
+  if (value === undefined) return JSON.stringify(output ?? null);
+  // An output carrying images says them, never their base64 (`content`).
+  return toolResultOutputText(output as { type?: unknown; value?: unknown });
 }
 
 /**

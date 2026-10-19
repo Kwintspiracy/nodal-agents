@@ -135,3 +135,23 @@ describe('pruneJobMediaFiles', () => {
     await expect(readFile(targetFile, 'utf8')).resolves.toContain('job-12');
   });
 });
+
+describe('pruneJobMediaFiles — the images a job tools fetched', () => {
+  it('deletes the pruned job folder under shared/tools, and only it', async () => {
+    const dirOf = (jobId: string) => join(root, 'entity-1', 'shared', 'tools', jobId);
+    for (const jobId of ['job-pruned-aaa', 'job-surviving-bbb']) {
+      await mkdir(dirOf(jobId), { recursive: true });
+      await writeFile(join(dirOf(jobId), 'call_1-1.png'), 'png');
+      await writeFile(join(dirOf(jobId), 'call_2-1.jpg'), 'jpg');
+    }
+
+    const result = await pruneJobMediaFiles(root, ['job-pruned-aaa']);
+
+    expect(result.filesDeleted).toBe(2);
+    expect(await readdir(dirOf('job-pruned-aaa'))).toEqual([]);
+    expect((await readdir(dirOf('job-surviving-bbb'))).sort()).toEqual([
+      'call_1-1.png',
+      'call_2-1.jpg',
+    ]);
+  });
+});

@@ -41,7 +41,11 @@ export { buildLlmCallObservation, emitLlmCall } from './observe';
 export type { LlmCallObservation, LlmCallObserver, LlmClientMeta } from './observe';
 
 // Message structure validation
-export { validateMessageStructure, withoutNamelessToolCalls } from './message-structure';
+export {
+  validateMessageStructure,
+  withoutNamelessToolCalls,
+  withToolResultImagesAsUserParts,
+} from './message-structure';
 
 // Retry utility
 export { withRetry } from './retry';

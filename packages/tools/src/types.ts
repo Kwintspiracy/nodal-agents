@@ -39,6 +39,24 @@ export type ToolEgress = 'none' | 'channel' | 'model-provider' | 'internet' | 'p
 // imports its argument type from the same place as the field itself.
 export type { MutationTarget, ToolCard, ToolCardPayload };
 
+// ─── Images for the model (`model-images.ts`) ─────────────────────────────────
+
+/** An image for the model: its IANA type and its bytes, base64. */
+export interface ToolImage {
+  mediaType: string;
+  data: string;
+}
+
+/**
+ * What the model of a job takes, said by the runner for every tool call:
+ * `sees: true` when its model takes images as input, otherwise the reason it
+ * does not, in words a tool result can carry.
+ */
+export type ModelImageInput = { sees: true } | { sees: false; reason: string };
+
+/** What became of one image a tool asked to attach. */
+export type ImageAttachOutcome = { attached: true } | { attached: false; reason: string };
+
 // ─── ToolContext ───────────────────────────────────────────────────────────────
 
 /**
@@ -284,6 +302,21 @@ export interface ToolContext {
    * a été lu, et dans quel état. Appelée seulement quand la lecture a réussi.
    */
   reportReadContent?: (absPath: string, sha256: string) => void;
+  /**
+   * What the model this job's tool results go to takes: images or not, and
+   * why not. Set by the runner from the job's model; read by `executeTool`
+   * through `attachImage`, never by a tool. Absent: nothing says, and no image
+   * is passed (`admitModelImage`).
+   */
+  modelImageInput?: ModelImageInput;
+  /**
+   * Hands an image to the model with THIS call's result (`model-images.ts`).
+   * Installed per call by `executeTool` on a derived context; returns whether
+   * the image will reach the model and, when it will not, why, so the tool can
+   * say it in its result. Absent outside the seam (a `tool.execute` called
+   * directly): a tool treats that as "not attached".
+   */
+  attachImage?: (image: ToolImage) => ImageAttachOutcome;
   /**
    * Pose une question à une personne PENDANT l'appel en cours, et attend sa
    * réponse — le chemin de l'élicitation MCP (`elicitation/create`, mode
@@ -843,7 +876,11 @@ export interface ApprovalRule {
 // ─── ToolExecutionResult ──────────────────────────────────────────────────────
 
 export type ToolExecutionResult =
-  | { outcome: 'success'; output: unknown }
+  /**
+   * `images` — what the tool attached for the model (`ctx.attachImage`), in
+   * order, absent when it attached none. Never on the `tool_calls` row.
+   */
+  | { outcome: 'success'; output: unknown; images?: ToolImage[] }
   /**
    * `mayHaveDelivered` — set when a DELIVERY tool timed out after the request
    * was transmitted (DeliveryError.mayHaveDelivered): the message may well

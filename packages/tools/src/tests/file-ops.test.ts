@@ -147,7 +147,7 @@ describe('multi-workspace routing', () => {
     await writeFile(join(WORKSPACE, 'a.md'), 'notes content');
     const r = await fileReadTool.execute({ path: 'notes/a.md' }, ctxMulti());
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     expect(r.content).toBe('notes content');
   });
 
@@ -155,7 +155,7 @@ describe('multi-workspace routing', () => {
     await writeFile(join(WORKSPACE2, 'x.ts'), 'code content');
     const r = await fileReadTool.execute({ path: 'code/x.ts' }, ctxMulti());
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     expect(r.content).toBe('code content');
   });
 
@@ -177,7 +177,7 @@ describe('multi-workspace routing', () => {
     };
     const r = await fileReadTool.execute({ path: 'a.md' }, ctx);
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     expect(r.content).toBe('single ws content');
   });
 
@@ -247,7 +247,7 @@ describe('file_read', () => {
     await writeFile(join(WORKSPACE, 'a.txt'), 'line1\nline2\nline3');
     const r = await fileReadTool.execute({ path: 'ws/a.txt' }, ctxWith(WORKSPACE));
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     expect(r.content).toBe('line1\nline2\nline3');
     expect(r.total_lines).toBe(3);
     expect(r.start_line).toBe(1);
@@ -263,7 +263,7 @@ describe('file_read', () => {
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     expect(r.content.split('\n')).toEqual([
       'line50',
       'line51',
@@ -298,7 +298,7 @@ describe('file_write', () => {
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     expect(r.bytes).toBe(11);
     const onDisk = await readFile(join(WORKSPACE, 'new.txt'), 'utf8');
     expect(onDisk).toBe('hello world');
@@ -346,7 +346,7 @@ describe('file_edit', () => {
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     expect(r.replacements).toBe(1);
     const onDisk = await readFile(join(WORKSPACE, 'e.txt'), 'utf8');
     expect(onDisk).toBe('salut world\ngoodbye world');
@@ -373,7 +373,7 @@ describe('file_edit', () => {
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     expect(r.replacements).toBe(3);
     const onDisk = await readFile(join(WORKSPACE, 'e.txt'), 'utf8');
     expect(onDisk).toBe('XX bar XX baz XX');
@@ -400,7 +400,7 @@ describe('file_list', () => {
     await mkdir(join(WORKSPACE, 'sub'));
     const r = await fileListTool.execute({ recursive: false, path: 'ws' }, ctxWith(WORKSPACE));
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     const names = r.entries.map((e) => e.name).sort();
     expect(names).toEqual(['a.md', 'b.txt', 'sub']);
   });
@@ -408,7 +408,7 @@ describe('file_list', () => {
   it('returns workspace labels as top-level entries when no path given', async () => {
     const r = await fileListTool.execute({ recursive: false }, ctxMulti());
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     const names = r.entries.map((e) => e.name).sort();
     expect(names).toEqual(['code', 'notes']);
     expect(r.entries.every((e) => e.type === 'dir')).toBe(true);
@@ -423,7 +423,7 @@ describe('file_list', () => {
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     const names = r.entries.map((e) => e.name).sort();
     expect(names).toEqual(['note.md', 'todo.md']);
   });
@@ -437,7 +437,7 @@ describe('file_list', () => {
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     const names = r.entries.map((e) => e.name).sort();
     expect(names).toEqual(['sub/nested.md', 'top.md']);
   });
@@ -454,7 +454,7 @@ describe('file_search', () => {
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     expect(r.matches).toHaveLength(1);
     const m = r.matches[0]!;
     if (m.kind !== 'content') throw new Error('expected content match');
@@ -470,7 +470,7 @@ describe('file_search', () => {
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     expect(r.matches).toHaveLength(3);
   });
 
@@ -482,7 +482,7 @@ describe('file_search', () => {
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     expect(r.matches).toHaveLength(1);
     expect(r.matches[0]?.kind).toBe('file');
     if (r.matches[0]?.kind === 'file') expect(r.matches[0].path).toBe('note-windows.md');
@@ -499,7 +499,7 @@ describe('file_search', () => {
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     expect(r.matches).toHaveLength(1);
     if (r.matches[0]?.kind === 'content') expect(r.matches[0].path).toBe('real.md');
   });
@@ -522,7 +522,7 @@ describe('file_search', () => {
       ctxMulti(),
     );
     expect(r.ok).toBe(true);
-    if (!r.ok) throw new Error('expected ok');
+    if (!r.ok || 'image' in r) throw new Error('expected a text read');
     // Should find matches in both workspaces
     expect(r.matches.length).toBeGreaterThanOrEqual(2);
   });

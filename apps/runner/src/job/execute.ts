@@ -45,7 +45,7 @@ import {
   ShellGateReasonsSchema,
   serverTimezone,
   modelContextWindow,
-  modelCanSeeImages,
+  modelImageInputFor,
   estimateCallCostUsd,
   isUntrustedTool,
   TOOL_RESULT_MODEL_CHARS,
@@ -128,6 +128,7 @@ import type {
   ToolProvisioning,
   ApprovalGateRequest,
   ToolExecutionResult,
+  ModelImageInput,
 } from '@nodal-agents/tools';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import {
@@ -204,7 +205,9 @@ import {
   EXPIRED_MARK,
   REJECTED_MARK,
   toolResultShape,
+  toolResultOutputText,
 } from './tool-result-shape.ts';
+import { hydrateForLlm, saveToolImages, toolImagesDir } from './model-images.ts';
 import { unansweredToolCalls } from './close-transcript.ts';
 import {
   APPROVED_CALL_OUTCOME_UNKNOWN,
@@ -243,7 +246,6 @@ import { buildSharedWorkspaceInventory, inventoryForContext } from '../lib/works
 import { probeWorkspaceGit, gitProbeTarget } from '../lib/workspace-git.ts';
 import { isMcpOriginJob } from '../lib/mcp-provenance.ts';
 import { checkpointsRoot } from '@nodal-agents/checkpoints';
-import { readFile } from 'node:fs/promises';
 import type { RunnerDeps } from '../deps.ts';
 import { notifyApprovalCreated } from '../approvals/notify.ts';
 import { createRequestUserInput, elicitationTimeoutMs } from '../approvals/elicitation.ts';
@@ -594,83 +596,6 @@ export function compactOldToolResults(
     return m;
   });
   return { messages: out, evicted };
-}
-
-/**
- * Guidance handed to a NON-vision agent that received an image, so the LLM itself
- * decides what to do (routing is its call, never hardcoded): delegate to a vision
- * teammate, or tell the human. The image always travels with a delegation
- * (handleDelegation copies the attachment to the child job).
- */
-function visionRoutingNote(path: string): string {
-  return (
-    `[The user attached an IMAGE (saved at ${path}). Your current model can't see images. ` +
-    `Decide what to do: if a teammate runs a vision-capable model, DELEGATE this to them — the ` +
-    `image travels with the delegation, so just assign them the task (e.g. "describe this image"). ` +
-    `If no agent in this workspace can see images, tell the user plainly and suggest switching an ` +
-    `agent to a vision model (Claude, Gemini, GPT-4o, or a vision model on OpenRouter). Never ` +
-    `pretend to describe an image you cannot see.]`
-  );
-}
-
-/**
- * Resolve image attachments for the LLM call WITHOUT mutating the stored messages
- * — the persisted messages keep the lean file PATH, which also lets the path
- * travel to a delegated child. Returns a fresh array used only for this
- * generateText:
- *   - vision model     → load the file into bytes the AI SDK can send (cached);
- *   - non-vision model → swap the image for a routing note (see visionRoutingNote).
- * Fast-paths to the original array when there's no local-path image to resolve.
- */
-async function hydrateForLlm(
-  messages: ModelMessage[],
-  canSeeImages: boolean,
-  cache: Map<string, Uint8Array>,
-): Promise<ModelMessage[]> {
-  const isLocalImagePart = (p: unknown): p is { type: 'image'; image: string } =>
-    !!p &&
-    typeof p === 'object' &&
-    (p as { type?: unknown }).type === 'image' &&
-    typeof (p as { image?: unknown }).image === 'string' &&
-    !/^(https?:|data:)/i.test((p as { image: string }).image);
-
-  const needs = messages.some(
-    (m) => m.role === 'user' && Array.isArray(m.content) && m.content.some(isLocalImagePart),
-  );
-  if (!needs) return messages;
-
-  const out: ModelMessage[] = [];
-  for (const m of messages) {
-    if (m.role !== 'user' || !Array.isArray(m.content)) {
-      out.push(m);
-      continue;
-    }
-    const newParts: unknown[] = [];
-    for (const p of m.content as unknown[]) {
-      if (!isLocalImagePart(p)) {
-        newParts.push(p);
-        continue;
-      }
-      const ref = p.image;
-      if (!canSeeImages) {
-        newParts.push({ type: 'text', text: visionRoutingNote(ref) });
-        continue;
-      }
-      let bytes = cache.get(ref);
-      if (!bytes) {
-        try {
-          bytes = new Uint8Array(await readFile(ref));
-          cache.set(ref, bytes);
-        } catch {
-          newParts.push({ type: 'text', text: '[Attached image could not be loaded.]' });
-          continue;
-        }
-      }
-      newParts.push({ type: 'image', image: bytes });
-    }
-    out.push({ ...m, content: newParts } as ModelMessage);
-  }
-  return out;
 }
 
 /**
@@ -2231,9 +2156,20 @@ async function runJobTracked(
   // child). Whether THIS agent can see it depends on its model — computed once;
   // each LLM call resolves the path into bytes (vision) or a routing note
   // (non-vision) via hydrateForLlm WITHOUT touching the stored/persisted messages.
-  const canSeeImages =
-    llmClient.capabilities.vision === true || modelCanSeeImages(llmClient.config.model);
+  // One source, per model, for every reader: the attach rule, hydrateForLlm and
+  // the team block (review of #798: a per-provider flag said "sees" for every
+  // model of anthropic, openai and google, text-only ones included).
+  // What a tool that comes back with an image is told (`ctx.attachImage`,
+  // packages/tools/src/model-images.ts) and what hydrateForLlm applies to the
+  // person's images: the same fact, for every image of this job. A tool image
+  // is kept as a file in the shared folder (job/model-images.ts): a run without
+  // one keeps none, and says so.
   const imageCache = new Map<string, Uint8Array>();
+  const seenByModel = modelImageInputFor(llmClient.config.model);
+  const modelImageInput: ModelImageInput =
+    seenByModel.sees && sharedWorkspacePath === null
+      ? { sees: false, reason: 'this run has no shared folder to keep an image in' }
+      : seenByModel;
 
   // ── 4. Orchestrator? ──────────────────────────────────────────────────────────
   // A unified orchestrator receives BOTH delegation toolsets (assign_* + create_task)
@@ -3068,7 +3004,16 @@ async function runJobTracked(
   // ── 11.6 ToolResultOutput type + coerce helper (shared by resume step + loop) ──
   // AI SDK v6 ToolResultPart.output is a discriminated union; we coerce all raw
   // tool outputs here so every writer uses the same canonical shape.
-  type ToolResultOutput = { type: 'text'; value: string } | { type: 'json'; value: unknown };
+  // `content`: a success that came back with images (`ctx.attachImage`), the
+  // tool's text first, then each image — what `packages/llm` sends to every
+  // provider in the form it takes (`withToolResultImagesAsUserParts`).
+  type ToolResultOutput =
+    | { type: 'text'; value: string }
+    | { type: 'json'; value: unknown }
+    | {
+        type: 'content';
+        value: Array<{ type: 'text'; text: string } | { type: 'image-url'; url: string }>;
+      };
   //
   // INJECT-001. `toolName` is what decides whether the payload gets framed as
   // external data (see `wrapUntrusted`). It is OPTIONAL on purpose: the callers
@@ -3126,17 +3071,45 @@ async function runJobTracked(
   //     `mayHaveDelivered` kept in the block — the sibling-error guard reads
   //     it to let a same-turn return_result through instead of deferring it
   //     (deferral invites the duplicate re-send that flag exists to prevent).
-  const executedCallOutput = (
+  const executedCallOutput = async (
     tool: ToolDefinition<z.ZodTypeAny, unknown>,
     toolName: string,
+    toolCallId: string,
     result: Exclude<ToolExecutionResult, { outcome: 'awaiting_approval' }>,
-  ): ToolResultOutput =>
-    result.outcome === 'success'
-      ? toResultOutput(toolOutputForModel(tool, result.output), toolName)
-      : toErrorOutput(result.error, {
-          raisedBy: result.raisedByTool ? toolName : undefined,
-          mayHaveDelivered: result.mayHaveDelivered === true,
-        });
+  ): Promise<ToolResultOutput> => {
+    if (result.outcome !== 'success') {
+      return toErrorOutput(result.error, {
+        raisedBy: result.raisedByTool ? toolName : undefined,
+        mayHaveDelivered: result.mayHaveDelivered === true,
+      });
+    }
+    const read = toResultOutput(toolOutputForModel(tool, result.output), toolName);
+    // The images the tool attached (`ctx.attachImage`, admitted against this
+    // job's model) follow its text, in the order it attached them: saved as
+    // files beside the channel photos, the result keeping their paths, never
+    // their bytes (job/model-images.ts). `modelImageInput` admits none without
+    // a shared folder.
+    if (!result.images || result.images.length === 0 || sharedWorkspacePath === null) return read;
+    try {
+      const kept = await saveToolImages(
+        toolImagesDir(sharedWorkspacePath, jobId as string),
+        toolCallId,
+        result.images,
+      );
+      return {
+        type: 'content',
+        value: [{ type: 'text', text: toolResultOutputText(read) }, ...kept],
+      };
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      return {
+        type: 'text',
+        value:
+          `${toolResultOutputText(read)}\n[The ${result.images.length} image(s) this call returned ` +
+          `could not be saved (${why}), so none is passed to you.]`,
+      };
+    }
+  };
 
   // ── 11.6.5 Shared: execute already-resolved approval requests in-process ─────
   // Runs an approved tool (bypassing its gate — a human already reviewed this
@@ -3353,6 +3326,7 @@ async function runJobTracked(
                   resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
                     resolveAgentToolNames(db, targetAgentId, placement),
                   requestUserInput,
+                  modelImageInput,
                 },
                 {
                   approvalRules: resumeApprovalRules,
@@ -3366,7 +3340,12 @@ async function runJobTracked(
                 // first call (`executedCallOutput`). A boundary that is framed
                 // on first call and bare after a human approval would be framed
                 // exactly when nobody is looking at it.
-                replacementOutput = executedCallOutput(toolDef, req.toolName, execResult);
+                replacementOutput = await executedCallOutput(
+                  toolDef,
+                  req.toolName,
+                  req.toolCallId ?? req.id,
+                  execResult,
+                );
               } else {
                 // outcome === 'awaiting_approval' should never occur here — we
                 // passed a synthetic auto_approve rule that overrides any
@@ -3465,8 +3444,7 @@ async function runJobTracked(
           // call (#566): a later request of the same tool must keep its marker.
           if (tb.toolName !== req.toolName) return block;
           if (req.executedAt !== null && tb.toolCallId !== req.toolCallId) return block;
-          const outputText =
-            tb.output.type === 'text' ? tb.output.value : JSON.stringify(tb.output.value);
+          const outputText = toolResultOutputText(tb.output);
           if (!outputText.includes(AWAITING_APPROVAL_MARK)) return block;
           // Replace with the real (or rejection) output.
           return { ...tb, output: replacementOutput };
@@ -4670,7 +4648,7 @@ async function runJobTracked(
             // on top, in the request only.
             messages: await hydrateForLlm(
               messagesForResume(messages, partielCeTour),
-              canSeeImages,
+              seenByModel,
               imageCache,
             ),
             tools: aiSdkTools,
@@ -5745,6 +5723,7 @@ async function runJobTracked(
         resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
           resolveAgentToolNames(db, targetAgentId, placement),
         requestUserInput,
+        modelImageInput,
       };
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
@@ -6063,6 +6042,7 @@ async function runJobTracked(
                 ...(speechGenerator ? { speechGenerator } : {}),
                 resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
                   resolveAgentToolNames(db, targetAgentId, placement),
+                modelImageInput,
               },
               {
                 approvalRules: approvalRuleList,
@@ -6124,10 +6104,9 @@ async function runJobTracked(
                 type: 'tool_result' as const,
                 tool_use_id: b.toolCallId,
                 toolName: b.toolName,
-                content:
-                  b.output.type === 'text'
-                    ? b.output.value
-                    : JSON.stringify(b.output.value ?? null),
+                // An attached image is not carried by a side result: its text
+                // says so (`toolResultOutputText`).
+                content: toolResultOutputText(b.output),
               }));
 
               const delegation = await handleDelegation(
@@ -6325,7 +6304,7 @@ async function runJobTracked(
           toolCallId: call.id,
           toolName: call.name,
           // The same conversion as the resume path (`executedCallOutput`).
-          output: executedCallOutput(toolDef, call.name, toolResult),
+          output: await executedCallOutput(toolDef, call.name, call.id, toolResult),
         });
 
         // Guard 1f (S2) — error streak, across the whole job. Checked once this

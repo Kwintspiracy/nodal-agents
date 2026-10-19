@@ -22,7 +22,6 @@ function fakeClient(model: string, gen: () => Promise<{ text: string }>): NodalL
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },
@@ -49,7 +48,6 @@ function fakeStreamClient(model: string, stream: () => unknown): NodalLlmClient 
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: true,
     },

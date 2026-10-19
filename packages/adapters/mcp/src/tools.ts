@@ -292,7 +292,16 @@ async function callMcpTool(
       }
     },
   );
-  const record = recordMcpResult(result);
+  // An image reaches the model with a success only: a failure is read as its
+  // `{ error }` text, and its images are said there, not attached.
+  const record = recordMcpResult(result, (image) =>
+    result.isError === true
+      ? { attached: false, reason: 'the call failed, and a failed call passes no image' }
+      : (scope.ctx?.attachImage?.(image) ?? {
+          attached: false,
+          reason: 'this run does not pass images to a model',
+        }),
+  );
   // `isError` is the server telling the model its call failed (spec: errors a
   // model can correct are reported IN the result). It stays an error: the
   // model reads the same rendering, every block included, as the failure.

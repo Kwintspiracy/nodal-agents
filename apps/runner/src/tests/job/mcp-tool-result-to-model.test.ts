@@ -58,15 +58,31 @@ const FIXTURE = fileURLToPath(
 );
 const MODEL = 'openai/gpt-5.6-sol';
 
-/** What the `mixed` fixture server gives the model: its text blocks, the image said. */
+/**
+ * What the `mixed` fixture server gives the model: its text blocks, the image
+ * said — and, the model seeing images (gpt-5.6-sol is in VISION_MODEL_IDS),
+ * attached after the tool results (`MIXED_IMAGE_URL`).
+ */
 const MIXED_FOR_MODEL =
   'Request pr-7 for 2 pages. Confirmation not possible: nobody answered in time, nothing was printed.\n' +
-  '[Image returned by the tool (image/jpeg, 3 KB): not passed to you. ' +
-  "Nodal does not give a tool's image to the model.]\n" +
+  '[Image returned by the tool (image/jpeg, 3 KB): attached to this result.]\n' +
   'Ask the user before calling request_print again.\n' +
   // …and the machine form: its id is what the next call needs.
   '{"id":"pr-7","status":"pending","preview":{"pages":2}}';
 const MIXED_STRUCTURED = { id: 'pr-7', status: 'pending', preview: { pages: 2 } };
+/** The fixture's image, as the provider receives it (`BYTES_3KB` in the fixture). */
+const MIXED_IMAGE_URL = `data:image/jpeg;base64,${Buffer.alloc(3072, 7).toString('base64')}`;
+
+/** Every image part of a request, as the data URL the provider receives. */
+function imageUrls(b: { messages: Array<{ content?: unknown }> }): string[] {
+  return b.messages.flatMap((m) =>
+    Array.isArray(m.content)
+      ? (m.content as Array<{ type?: string; image_url?: { url?: string } }>)
+          .filter((p) => p.type === 'image_url')
+          .map((p) => p.image_url?.url ?? '')
+      : [],
+  );
+}
 const RECORDS = { records: [{ id: 'rec1', fields: { Name: 'Alpha' } }] };
 
 let db: TestDb;
@@ -159,6 +175,9 @@ describe('an MCP tool result reaches the model as the server wrote it @cap:conne
     expect(printer).toContain('<untrusted_tool_result>');
     // A server that wrote no text block: the model reads its structuredContent.
     expect(records).toContain(JSON.stringify(RECORDS));
+    // The image itself, to a model that sees, and never as text in a result.
+    expect(imageUrls(next!)).toEqual([MIXED_IMAGE_URL]);
+    expect(printer).not.toContain(Buffer.alloc(3072, 7).toString('base64'));
 
     // The rows keep the whole result: every block, and structuredContent.
     expect(await recordedOutput(jobId, 'printer_like__report')).toEqual({
@@ -168,7 +187,7 @@ describe('an MCP tool result reaches the model as the server wrote it @cap:conne
           type: 'text',
           text: 'Request pr-7 for 2 pages. Confirmation not possible: nobody answered in time, nothing was printed.',
         },
-        { type: 'image', mimeType: 'image/jpeg', bytes: 3072 },
+        { type: 'image', mimeType: 'image/jpeg', bytes: 3072, toModel: { attached: true } },
         { type: 'text', text: 'Ask the user before calling request_print again.' },
       ],
       structuredContent: MIXED_STRUCTURED,
@@ -211,10 +230,64 @@ describe('an MCP tool result reaches the model as the server wrote it @cap:conne
     const printer = results.find((r) => r.includes('Request pr-7'));
     expect(printer, `no result of the approved call in ${JSON.stringify(results)}`).toBeDefined();
     expect(printer).toContain(MIXED_FOR_MODEL);
+    // The approved call's image reaches the model too: the same conversion.
+    expect(imageUrls(resumed.bodies[0]!)).toEqual([MIXED_IMAGE_URL]);
+    // The approved call's recorded result (#566) names the saved file, never its bytes.
+    const [approved] = await db
+      .select({ output: approvalRequests.executionOutput })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, request.id));
+    expect(JSON.stringify(approved?.output)).toContain('"type":"image-url"');
+    expect(JSON.stringify(approved?.output)).not.toContain(
+      Buffer.alloc(3072, 7).toString('base64'),
+    );
     expect(await recordedOutput(jobId, 'printer_gated__report')).toMatchObject({
       structuredContent: MIXED_STRUCTURED,
     });
   }, 60_000);
+
+  it('more image bytes than a request carries: the call attaches what fits, says the rest, and the row keeps no byte', async () => {
+    const { jobId, entityId, agentId } = await seedJob(db, { model: MODEL, role: 'agent' });
+    await seedServer(entityId, agentId, 'pages', 'many-images');
+    await db
+      .insert(approvalRules)
+      .values({ entityId, agentId: null, toolName: 'pages__report', action: 'auto_approve' });
+
+    const { bodies } = await run(jobId, [
+      { calls: [{ name: 'pages__report', args: { purpose: 'Render the pages.' } }] },
+      { text: 'Done.' },
+    ]);
+
+    const next = bodies[1]!;
+    const page = (k: number) =>
+      `data:image/png;base64,${Buffer.alloc(1024 * 1024, k).toString('base64')}`;
+    // Ten 1 MiB images fill the 10 MiB a request carries: the first ten pages.
+    expect(imageUrls(next)).toEqual(Array.from({ length: 10 }, (_, k) => page(k)));
+    const [result] = toolResults(next);
+    expect(result).toContain(
+      '[Image returned by the tool (image/png, 1.0 MiB): attached to this result.]',
+    );
+    expect(result).toContain(
+      '[Image returned by the tool (image/png, 1.0 MiB): not passed to you: this call already ' +
+        'attached 10 image(s) (10.0 MiB), and a request to a model carries at most 20 images and ' +
+        '10.0 MiB of them.]',
+    );
+    // No row keeps a byte: not the audit row, not the transcript every
+    // checkpoint rewrites (`agent_jobs.messages`), which names the saved files.
+    const firstPage = Buffer.alloc(1024 * 1024, 0)
+      .toString('base64')
+      .slice(0, 64);
+    const row = JSON.stringify(await recordedOutput(jobId, 'pages__report'));
+    expect(row).not.toContain(firstPage);
+    const [job] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    const transcript = JSON.stringify(job?.messages);
+    expect(transcript).not.toContain(firstPage);
+    const saved = [...transcript.matchAll(/"url":"(file:[^"]+)"/g)].map((m) => m[1]);
+    expect(saved).toHaveLength(10);
+  }, 120_000);
 
   it('more text than the budget: the text is cut and says so, the machine form survives whole', async () => {
     const { jobId, entityId, agentId } = await seedJob(db, { model: MODEL, role: 'agent' });
