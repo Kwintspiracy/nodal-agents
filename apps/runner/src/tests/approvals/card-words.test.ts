@@ -101,10 +101,10 @@ describe('personWordsOnCard @cap:approuver-une-action/moteur', () => {
   it('un répondant qu’aucune ligne ne décrit est dit tel quel', () => {
     const text = personWordsOnCard({
       ...BASE,
-      responder: { role: 'unlisted', identity: 'telegram:(no allowed conversation)' },
+      responder: { role: 'unlisted', identity: 'telegram:777000222' },
       notes: 'stop',
     });
-    expect(text).toContain(' · by: unlisted telegram:(no allowed conversation) · ');
+    expect(text).toContain(' · by: unlisted telegram:777000222 · ');
   });
 
   it('cardCarriesWords lit les mêmes champs que le message cite', () => {

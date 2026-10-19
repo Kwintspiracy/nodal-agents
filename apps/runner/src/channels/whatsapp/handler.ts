@@ -166,7 +166,7 @@ export async function handleWhatsAppMessage(args: {
       if (!targetAuth.authorized) return targetAuth.result;
     }
   } else if (message.isGroup) {
-    groupPrefix = groupMessagePrefix(sanitizeSenderName(message.senderName ?? ''));
+    groupPrefix = groupMessagePrefix(message.senderName ?? '');
   }
 
   if (!taskText.trim() && message.mediaPlaceholder) {

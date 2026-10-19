@@ -16,8 +16,9 @@
 // supposé.
 //
 // L'identité part chez le fournisseur du modèle avec les mots : elle est
-// écrite par `personForModel` (#810) — l'id du compte, l'id de la ligne qui
-// autorise la conversation, jamais un e-mail ni l'identifiant du canal.
+// écrite par `personForModel` (#810) — l'id du compte, jamais son e-mail ;
+// l'id de la conversation du canal, celui que le modèle lit partout ailleurs
+// et que ses outils d'envoi acceptent.
 
 import { and, eq } from '@nodal-agents/db';
 import {
@@ -77,7 +78,7 @@ export async function readResponder(
   const [row] =
     channel === 'telegram'
       ? await db
-          .select({ id: telegramAllowedChats.id, role: telegramAllowedChats.role })
+          .select({ role: telegramAllowedChats.role })
           .from(telegramAllowedChats)
           .where(
             and(
@@ -87,7 +88,7 @@ export async function readResponder(
           )
           .limit(1)
       : await db
-          .select({ id: channelAllowedConversations.id, role: channelAllowedConversations.role })
+          .select({ role: channelAllowedConversations.role })
           .from(channelAllowedConversations)
           .where(
             and(
@@ -99,10 +100,6 @@ export async function readResponder(
           .limit(1);
   return {
     role: row?.role ?? UNLISTED_ROLE,
-    identity: personForModel({
-      kind: 'conversation',
-      channel,
-      allowedConversationId: row?.id ?? null,
-    }),
+    identity: personForModel({ kind: 'conversation', channel, conversationId }),
   };
 }

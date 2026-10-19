@@ -47,8 +47,8 @@
 //     du dashboard et de l'API, et « un compte qui n'existe plus », rougissent ;
 //   - (#810) le compte introuvable écrit `user:<id>` sans le dire → « un compte
 //     qui n'existe plus » rougit ;
-//   - (#810) l'identité d'une conversation remise à `<canal>:<id du canal>` →
-//     les deux tests Telegram, Discord et WhatsApp rougissent.
+//   - (#820) l'identité d'une conversation remplacée par `<canal>:<id de la
+//     ligne d'allowlist>` → les deux tests Telegram et Discord rougissent.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -68,7 +68,9 @@ import {
   telegramAllowedChats,
   users,
   eq,
+  isConversationAllowed,
 } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { cardWordsNotice, isInboxMessage } from '@nodal-agents/shared';
 import type { InboxEntry } from '@nodal-agents/shared';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
@@ -156,7 +158,7 @@ let ownerUserId = '';
 let ownerEmail = '';
 let memberUserId = '';
 let memberEmail = '';
-/** La ligne qui autorise la conversation Telegram : l'identité que le modèle lit (#810). */
+/** La ligne qui autorise la conversation Telegram : son id ne doit JAMAIS servir d'adresse (#820). */
 let telegramAllowedId = '';
 
 function makeDeps(llmClient?: RunnerDeps['llmClient']): RunnerDeps {
@@ -457,7 +459,7 @@ describe('les mots de la personne sur une carte vont à la tête du run @cap:app
       'tool: ask_user · card: question · decision: answered · via: telegram',
     );
     // Qui : la conversation autorisée d'où vient le tap, et son rôle en base.
-    expect(inbox[0]!.content).toContain(` · by: owner telegram:${telegramAllowedId} · `);
+    expect(inbox[0]!.content).toContain(` · by: owner telegram:${CHAT_ID} · `);
     expect(inbox[0]!.content.endsWith(`\nanswer:\n${OPTIONS[1]}`)).toBe(true);
   });
 
@@ -761,11 +763,6 @@ async function allowConversation(
   return row!.id;
 }
 
-/** Un numéro de téléphone de test, unique à chaque appel. */
-function testPhone(prefix: string): string {
-  return `${prefix}${randomUUID().replace(/\D/g, '').padEnd(7, '0').slice(0, 7)}`;
-}
-
 describe('#810 — le modèle lit un rôle et un id opaque, jamais une donnée de contact @cap:approuver-une-action/moteur', () => {
   it('le DASHBOARD : la file de la tête et sa requête au modèle portent user:<id>, jamais l’e-mail', async () => {
     const head = await insertHead();
@@ -852,7 +849,12 @@ describe('#810 — le modèle lit un rôle et un id opaque, jamais une donnée d
     );
   });
 
-  it('TELEGRAM : la ligne qui autorise la conversation, pas l’identifiant du chat', async () => {
+  // Le `by:` d'un canal est dans le MÊME espace d'adresses que ce que les
+  // outils d'envoi acceptent : l'id de conversation du canal, jamais l'id
+  // d'une ligne à nous (revue Reviewer A de #820, passe 1). La preuve est
+  // celle des outils eux-mêmes : `isConversationAllowed`, la garde de
+  // `resolveRecipientChatId`, accepte l'id lu dans le `by:`.
+  it('TELEGRAM : l’id du chat, celui que les outils d’envoi acceptent, jamais l’id de la ligne', async () => {
     const head = await insertHead();
     const child = await insertChild(head, reviewerAgentId);
     const card = await insertCard(child, reviewerAgentId, {
@@ -870,11 +872,20 @@ describe('#810 — le modèle lit un rôle et un id opaque, jamais une donnée d
     });
     expect(r.handled).toBe(true);
     const [entry] = await inboxOf(head);
-    expect(bySegment(entry!.content)).toBe(`by: owner telegram:${telegramAllowedId}`);
-    expect(entry!.content).not.toContain(CHAT_ID);
+    expect(bySegment(entry!.content)).toBe(`by: owner telegram:${CHAT_ID}`);
+    expect(entry!.content).not.toContain(telegramAllowedId);
+    const address = bySegment(entry!.content)!.slice('by: owner telegram:'.length);
+    expect(
+      await isConversationAllowed(db as unknown as AnyDrizzleDb, {
+        entityId: seed.entityId,
+        agentId: rootAgentId,
+        channel: 'telegram',
+        conversationId: address,
+      }),
+    ).toBe(true);
   });
 
-  it('DISCORD, et tout autre canal : la ligne qui autorise la conversation', async () => {
+  it('DISCORD, et tout autre canal : l’id de la conversation du canal, jamais l’id de la ligne', async () => {
     const channelId = `chan-${randomUUID().slice(0, 8)}`;
     const allowedId = await allowConversation('discord', channelId, 'member');
     const head = await insertHead();
@@ -891,50 +902,34 @@ describe('#810 — le modèle lit un rôle et un id opaque, jamais une donnée d
     });
     expect(r.ok).toBe(true);
     const [entry] = await inboxOf(head);
-    expect(bySegment(entry!.content)).toBe(`by: member discord:${allowedId}`);
-    expect(entry!.content).not.toContain(channelId);
+    expect(bySegment(entry!.content)).toBe(`by: member discord:${channelId}`);
+    expect(entry!.content).not.toContain(allowedId);
+    expect(
+      await isConversationAllowed(db as unknown as AnyDrizzleDb, {
+        entityId: seed.entityId,
+        agentId: rootAgentId,
+        channel: 'discord',
+        conversationId: bySegment(entry!.content)!.slice('by: member discord:'.length),
+      }),
+    ).toBe(true);
   });
 
-  it('un canal dont l’identifiant de conversation EST un numéro (WhatsApp) : le numéro ne part jamais', async () => {
-    const phone = testPhone('3361');
-    const listedJid = `${phone}@s.whatsapp.net`;
-    const allowedId = await allowConversation('whatsapp', listedJid, 'member');
-
+  it('une conversation qu’aucune ligne n’autorise : le rôle le dit, l’adresse reste celle du canal', async () => {
+    const channelId = `slack-${randomUUID().slice(0, 8)}`;
     const head = await insertHead();
     const child = await insertChild(head, reviewerAgentId);
     const card = await insertCard(child, reviewerAgentId);
+
     const r = await resolveApprovalDecision(makeDeps(), env, {
       approvalRequestId: card,
       decision: 'reject',
-      resolvedBy: 'whatsapp',
-      answeredBy: { channel: 'whatsapp', agentId: rootAgentId, conversationId: listedJid },
+      resolvedBy: 'slack',
+      answeredBy: { channel: 'slack', agentId: rootAgentId, conversationId: channelId },
       notes: NOTE,
     });
     expect(r.ok).toBe(true);
-    const [listed] = await inboxOf(head);
-    expect(bySegment(listed!.content)).toBe(`by: member whatsapp:${allowedId}`);
-    expect(listed!.content).not.toContain(phone);
-
-    // Aucune ligne ne l'autorise : la forme le dit, sans le numéro.
-    const unlistedPhone = testPhone('3362');
-    const head2 = await insertHead();
-    const child2 = await insertChild(head2, reviewerAgentId);
-    const card2 = await insertCard(child2, reviewerAgentId);
-    const r2 = await resolveApprovalDecision(makeDeps(), env, {
-      approvalRequestId: card2,
-      decision: 'reject',
-      resolvedBy: 'whatsapp',
-      answeredBy: {
-        channel: 'whatsapp',
-        agentId: rootAgentId,
-        conversationId: `${unlistedPhone}@s.whatsapp.net`,
-      },
-      notes: NOTE,
-    });
-    expect(r2.ok).toBe(true);
-    const [unlisted] = await inboxOf(head2);
-    expect(bySegment(unlisted!.content)).toBe('by: unlisted whatsapp:(no allowed conversation)');
-    expect(unlisted!.content).not.toContain(unlistedPhone);
+    const [entry] = await inboxOf(head);
+    expect(bySegment(entry!.content)).toBe(`by: unlisted slack:${channelId}`);
   });
 });
 
