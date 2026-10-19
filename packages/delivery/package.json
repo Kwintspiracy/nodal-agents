@@ -19,7 +19,7 @@
     "@slack/types": "^2.22.0",
     "@slack/web-api": "^7.19.0",
     "@whiskeysockets/baileys": "6.7.23",
-    "discord.js": "^14.26.5",
+    "discord.js": "^14.27.0",
     "pino": "^9.6.0"
   },
   "devDependencies": {

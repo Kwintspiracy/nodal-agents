@@ -88,8 +88,12 @@ function requireChannelId(conversationId: string): string {
  * network call happens here) — the rate-limit bucket bookkeeping it does is
  * per-call-site anyway, so nothing is lost by not caching this across calls.
  */
-function makeRestClient(botToken: string): REST {
-  return new REST({ version: '10' }).setToken(botToken);
+function makeRestClient(botToken: string, creds: ChannelCredentials): REST {
+  // Optional `apiBaseUrl` credential: the Discord API origin (default
+  // https://discord.com/api). Lets an entity route through a Discord-compatible
+  // proxy, and lets tests put a real HTTP server on the wire.
+  const api = creds['apiBaseUrl'];
+  return new REST({ version: '10', ...(api ? { api } : {}) }).setToken(botToken);
 }
 
 /**
@@ -238,7 +242,7 @@ async function sendText(
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
   assertFormatSupported(opts?.format);
-  const rest = makeRestClient(botToken);
+  const rest = makeRestClient(botToken, creds);
 
   let last: APIMessage | undefined;
   const parts = chunkForDiscord(text);
@@ -276,7 +280,7 @@ async function sendMedia(
 ): Promise<SendResult> {
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
-  const rest = makeRestClient(botToken);
+  const rest = makeRestClient(botToken, creds);
 
   const { bytes, filename, caption } = media;
   const body: RESTPostAPIChannelMessageJSONBody = { allowed_mentions: SAFE_ALLOWED_MENTIONS };
@@ -305,7 +309,7 @@ async function sendApprovalCard(
 ): Promise<SendResult> {
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
-  const rest = makeRestClient(botToken);
+  const rest = makeRestClient(botToken, creds);
 
   const approveButton: APIButtonComponentWithCustomId = {
     type: ComponentType.Button,
@@ -354,7 +358,7 @@ async function sendQuestionCard(
 ): Promise<SendResult> {
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
-  const rest = makeRestClient(botToken);
+  const rest = makeRestClient(botToken, creds);
 
   const buttons: APIButtonComponentWithCustomId[] = card.options.map((label, i) => ({
     type: ComponentType.Button,
@@ -434,7 +438,7 @@ async function sendCard(
   const channelId = requireChannelId(conversationId);
   const rows = toDiscordRows(card.buttons);
   if (typeof rows === 'string') throw new DeliveryError('card_too_large', rows);
-  const rest = makeRestClient(botToken);
+  const rest = makeRestClient(botToken, creds);
   const body: RESTPostAPIChannelMessageJSONBody = {
     content: card.text,
     components: rows,
@@ -471,7 +475,7 @@ async function editMessageText(
   if (typeof rows === 'string') return { ok: false, error: rows };
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
-  const rest = makeRestClient(botToken);
+  const rest = makeRestClient(botToken, creds);
   const body: RESTPatchAPIChannelMessageJSONBody = {
     content: text,
     // A card's text may carry a third party's words (an MCP server's
@@ -509,7 +513,7 @@ const TEXT_CAPABLE_CHANNEL_TYPES: ReadonlySet<ChannelType> = new Set([
  */
 async function listConversations(creds: ChannelCredentials): Promise<DiscoveredConversation[]> {
   const botToken = requireBotToken(creds);
-  const rest = makeRestClient(botToken);
+  const rest = makeRestClient(botToken, creds);
 
   let guilds: RESTGetAPICurrentUserGuildsResult;
   try {
@@ -549,7 +553,7 @@ async function listConversations(creds: ChannelCredentials): Promise<DiscoveredC
  *  a 401 — any other failure gets the generic `send_failed` mapping. */
 async function validateCredentials(creds: ChannelCredentials): Promise<BotIdentity> {
   const botToken = requireBotToken(creds);
-  const rest = makeRestClient(botToken);
+  const rest = makeRestClient(botToken, creds);
 
   let user: APIUser;
   try {
