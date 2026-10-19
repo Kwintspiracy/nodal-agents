@@ -53,7 +53,12 @@ import {
   type JobRowCut,
 } from '../job/state.ts';
 import { shellPostureForTurn, watchBrakeDuringTurn } from './shell-turn.ts';
-import { claudeShellTools, type BrakeStop, type CliShellSetting } from '@nodal-agents/shared';
+import {
+  claudeShellTools,
+  openingText,
+  type BrakeStop,
+  type CliShellSetting,
+} from '@nodal-agents/shared';
 import { loadConversationContext } from '../job/conversation-id.ts';
 // LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
 // Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
@@ -159,6 +164,8 @@ export interface CliRuntimeJobRow {
   channel: string | null;
   conversationId: string | null;
   task: string | null;
+  /** `agent_jobs.handoff_note` — la note de qui a remis la demande (handoff.ts), ou `null`. */
+  handoffNote?: string | null;
   /** `agent_jobs.trigger_context` — un déclencheur cron/webhook peut imposer le canal de notification. */
   triggerContext: unknown;
   /**
@@ -794,7 +801,9 @@ export async function runCliRuntimeJob(args: {
   let turn: CliTurnResult;
   try {
     turn = await binding.run({
-      message: job.task ?? '',
+      // Les mots de qui a demandé, puis la note d'une remise sous son cadre
+      // (handoff.ts) : la même ouverture que la boucle Nodal, en un texte.
+      message: openingText(job.task ?? '', job.handoffNote),
       personality: systemPrompt,
       cwd,
       // Les autres dossiers attachés — voir ClaudeTurnOptions.extraWriteDirs.

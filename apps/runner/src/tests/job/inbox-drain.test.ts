@@ -27,6 +27,20 @@
 //   - `followUps` vidé dans thread-history.ts → « the NEXT turn » rougit ;
 //   - `answersWhileJobId` non transmis à `loadConversationContext` → « a reply
 //     turn sees the running work » rougit (aucun bloc).
+//
+// Les mots de la personne ne sont pas retapés (handoff.ts) : ce que le tour de
+// réponse transmet porte SA tâche — le message de la personne — et le texte du
+// modèle à côté, comme sa note. Mutations vérifiées :
+//   - `message_conversation_run` qui remet le texte du modèle comme les mots
+//     (`text: input.message`) → « a reply turn sees the running work » rougit ;
+//   - `inboxMessages` qui ne rend que les mots → idem (la note manque) ;
+//   - la relance qui oublie la note (`premier ->> 'note'` retiré du
+//     déclencheur) ou une ouverture sans elle (`openingMessages(job.task)`) →
+//     « a relaunched head opens » rougit ;
+//   - l'ancien « frais » (`messages.length === 1`) → « a head opened with a
+//     note still gets its conversation's history » rougit (pas d'historique) ;
+//   - la note marquée comme un message remis → « the NEXT turn … never the
+//     note » rougit (rejouée comme une précision de la personne).
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -45,7 +59,13 @@ import {
   deliverToConversationJob,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { formatLocalTime, inboxMessage, isInboxMessage } from '@nodal-agents/shared';
+import {
+  HANDOFF_NOTE_FRAME,
+  formatLocalTime,
+  handoffNoteMessage,
+  inboxMessage,
+  isInboxMessage,
+} from '@nodal-agents/shared';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -224,12 +244,13 @@ async function headJob(
 }
 
 /** Ce qu'un tour de réponse transmet à la tête, par le même chemin que l'outil. */
-function forward(conversationId: string, jobId: string, text: string) {
+function forward(conversationId: string, jobId: string, text: string, note?: string) {
   return deliverToConversationJob(db as unknown as AnyDrizzleDb, {
     entityId: seed.entityId,
     conversationId,
     jobId,
     text,
+    ...(note !== undefined ? { note } : {}),
   });
 }
 
@@ -294,8 +315,18 @@ describe('a message while the work runs: the reply turn sees it and passes it on
     expect((blockEnd === -1 ? block : block.slice(0, blockEnd)).length).toBeLessThan(1_000);
 
     const heads = await headsOf(conversationId);
-    expect(heads.find((h) => h.id === head)!.inbox.map((e) => e.task)).toEqual([
-      'Range aussi le portrait dans le dossier partagé.',
+    // Dans la file : les MOTS de la personne (la tâche du tour de réponse), et
+    // le texte du modèle à côté, comme sa note — jamais à leur place.
+    expect(
+      heads
+        .find((h) => h.id === head)!
+        .inbox.map((e) => ({ task: e.task, content: e.content, note: e.note })),
+    ).toEqual([
+      {
+        task: FOLLOW_UP,
+        content: FOLLOW_UP,
+        note: 'Range aussi le portrait dans le dossier partagé.',
+      },
     ]);
     expect(heads.find((h) => h.id === reply!.id)).toMatchObject({
       status: 'completed',
@@ -303,6 +334,46 @@ describe('a message while the work runs: the reply turn sees it and passes it on
     });
     // Le tour de réponse n'en fait naître aucun autre : deux têtes, pas trois.
     expect(heads).toHaveLength(2);
+
+    // La tête lit, dans sa requête RÉELLE, les mots de la personne comme un
+    // message à eux, puis la note sous son cadre, dans un message à part.
+    await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, head));
+    const headNet = network([{ text: 'Portrait rangé dans le dossier partagé.' }]);
+    await executeJob(head as JobId, makeDeps(), runnerEnv);
+    expect(userTexts(headNet.turns[0]!)).toEqual([
+      'Fais-moi un portrait',
+      FOLLOW_UP,
+      `${HANDOFF_NOTE_FRAME}\nRange aussi le portrait dans le dossier partagé.`,
+    ]);
+  }, 30_000);
+
+  it("a relaunched head opens with the person's words alone in their message, then the relaying model's note under its frame", async () => {
+    const { conversationId, jobId } = await headJob('Fais-moi un portrait');
+    network(
+      [
+        {
+          text: 'Voilà ton portrait.',
+          toolCall: { name: 'return_result', args: { status: 'success' } },
+        },
+      ],
+      async (n) => {
+        if (n === 0) {
+          const sent = await forward(conversationId, jobId, FOLLOW_UP, 'Elle parle du portrait.');
+          expect(sent.delivered).toBe(true);
+        }
+      },
+    );
+    await executeJob(jobId as JobId, makeDeps(), runnerEnv);
+    const [, relaunched] = await headsOf(conversationId);
+    expect(relaunched).toMatchObject({ status: 'pending', task: FOLLOW_UP });
+
+    const net = network([{ text: 'Rangé.' }]);
+    await executeJob(relaunched!.id as JobId, makeDeps(), runnerEnv);
+
+    expect(userTexts(net.turns[0]!).slice(-2)).toEqual([
+      FOLLOW_UP,
+      `${HANDOFF_NOTE_FRAME}\nElle parle du portrait.`,
+    ]);
   }, 30_000);
 
   it('a message already waiting when the head starts is in its FIRST request', async () => {
@@ -371,6 +442,49 @@ describe('a message while the work runs: the reply turn sees it and passes it on
       { status: 'pending', task: FOLLOW_UP, inbox: [] },
     ]);
     expect(net.workerWakes).toEqual([heads[1]!.id]);
+  }, 30_000);
+
+  it('a head opened with a note still gets its conversation’s history: fresh means nothing but its opening', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId, channel: 'telegram', chatId: '777' })
+      .returning({ id: conversations.id });
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId,
+      channel: 'telegram',
+      chatId: '777',
+      conversationId: conv!.id,
+      task: 'Fais-moi un portrait',
+      status: 'completed',
+      result: 'Voilà ton portrait.',
+      messages: [
+        { role: 'user', content: 'Fais-moi un portrait' },
+        { role: 'assistant', content: 'Voilà ton portrait.' },
+      ],
+    });
+    const [relaunched] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId,
+        channel: 'telegram',
+        chatId: '777',
+        conversationId: conv!.id,
+        task: FOLLOW_UP,
+        handoffNote: 'Elle parle du portrait.',
+        status: 'pending',
+        messages: [],
+      })
+      .returning({ id: agentJobs.id });
+    const net = network([{ text: 'Rangé.' }]);
+
+    await executeJob(relaunched!.id as JobId, makeDeps(), runnerEnv);
+
+    const asked = userTexts(net.turns[0]!);
+    expect(asked).toHaveLength(3);
+    expect(asked[0]).toMatch(/\] Fais-moi un portrait$/);
+    expect(asked.slice(1)).toEqual([FOLLOW_UP, `${HANDOFF_NOTE_FRAME}\nElle parle du portrait.`]);
   }, 30_000);
 
   it('a DELEGATE whose head has already finished, sent a message during a last call ending with return_result: a new head carries it, woken at once (review of #642, pass 2)', async () => {
@@ -462,5 +576,54 @@ describe('a message while the work runs: the reply turn sees it and passes it on
       { role: 'user', content: `[${formatLocalTime('UTC', asked)}] Fais-moi un portrait` },
       { role: 'user', content: `[${formatLocalTime('UTC', received)}] ${FOLLOW_UP}` },
     ]);
+  });
+
+  it('the NEXT turn replays the person’s words a relay passed on, never the note the relaying model wrote beside them', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId, channel: 'telegram', chatId: '556' })
+      .returning({ id: conversations.id });
+    const asked = new Date('2026-10-18T03:14:59Z');
+    const received = new Date('2026-10-18T03:23:32Z');
+    const lu = inboxMessage({
+      id: randomUUID(),
+      task: FOLLOW_UP,
+      content: FOLLOW_UP,
+      receivedAt: received.toISOString(),
+    });
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId,
+      channel: 'telegram',
+      chatId: '556',
+      conversationId: conv!.id,
+      task: 'Fais-moi un portrait',
+      handoffNote: 'NOTE-OF-THE-FRONT',
+      createdAt: asked,
+      status: 'completed',
+      result: 'Portrait rangé dans le dossier partagé.',
+      messages: [
+        { role: 'user', content: 'Fais-moi un portrait' },
+        handoffNoteMessage('NOTE-OF-THE-FRONT'),
+        { role: 'assistant', content: 'Voilà ton portrait.' },
+        lu,
+        handoffNoteMessage('NOTE-OF-THE-REPLY-TURN'),
+        { role: 'assistant', content: 'Portrait rangé dans le dossier partagé.' },
+      ],
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as RunnerDeps['db'],
+      conversationId: conv!.id,
+      channel: 'telegram',
+      excludeJobId: randomUUID(),
+      timezone: 'UTC',
+    });
+
+    expect(history.slice(0, 2)).toEqual([
+      { role: 'user', content: `[${formatLocalTime('UTC', asked)}] Fais-moi un portrait` },
+      { role: 'user', content: `[${formatLocalTime('UTC', received)}] ${FOLLOW_UP}` },
+    ]);
+    expect(JSON.stringify(history)).not.toContain('NOTE-OF-THE');
   });
 });

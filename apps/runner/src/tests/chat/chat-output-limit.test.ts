@@ -105,7 +105,7 @@ async function newConversation(): Promise<string> {
 
 async function effects(conversationId: string) {
   const jobs = await db
-    .select({ task: agentJobs.task })
+    .select({ task: agentJobs.task, handoffNote: agentJobs.handoffNote })
     .from(agentJobs)
     .where(eq(agentJobs.conversationId, conversationId));
   const replies = await db
@@ -153,7 +153,8 @@ describe('a chat reply cut on the output-token cap does not act @cap:suivre-exec
 
       expect(result.ok).toBe(true);
       const after = await effects(conversationId);
-      expect(after.jobs.map((j) => j.task)).toEqual([INSTRUCTION]);
+      // La tâche : les mots de la personne ; l'instruction du modèle : sa note.
+      expect(after.jobs).toEqual([{ task: 'Draw the series', handoffNote: INSTRUCTION }]);
     });
   }
 });

@@ -590,8 +590,10 @@ function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]
     // skills. So: for plain conversation or recalling facts (your Persistent
     // memory below is already loaded), just reply in plain text. To PERFORM an
     // action (use a connector/skill, delegate, send, fetch, or any multi-step
-    // work), call `run_task` with a clear instruction — it runs as a tracked
-    // job. Do NOT attempt any other tool; they are not available on this surface.
+    // work), call `run_task` — it runs as a tracked job, which receives the
+    // person's own words from the platform and your note beside them
+    // (handoff.ts). Do NOT attempt any other tool; they are not available on
+    // this surface.
     lines.push(
       '- surface: in-app dashboard chat — you are talking directly with the user; reply in ' +
         'plain text. For conversation or recalling facts, just reply (your durable facts are ' +
@@ -601,7 +603,8 @@ function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]
         // exactement ce que le garde de `chat-surface-cost.test.ts` refuse, et le
         // fait porte le même effet — il n'existe aucun autre chemin vers l'action.
         'skills, MCP servers, connectors or automations — the `run_task` tool is the only way ' +
-        'it happens, and it takes a clear, self-contained instruction. CRITICAL: writing in ' +
+        'it happens. The user’s own messages reach the job as they wrote them; what you write ' +
+        'in it is your note beside them, read as yours. CRITICAL: writing in ' +
         'text that you will do ' +
         'something (e.g. "Je lance X…") does NOT start anything — ONLY an actual `run_task` ' +
         'tool call performs the action. If you intend to act, the `run_task` tool call is ' +

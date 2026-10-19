@@ -2283,14 +2283,16 @@ describe('executeJob', () => {
     const spawnedJobId = result.ok ? result.spawnedJobId : undefined;
     expect(spawnedJobId).toBeTruthy();
 
-    // A real job was created on the dashboard channel — the task is the instruction
-    // the model chose, not the raw chat message.
+    // A real job was created on the dashboard channel — the task is what the
+    // person wrote, taken by the platform; the model's instruction is its note
+    // beside it (handoff.ts), never in its place.
     const [job] = await db
       .select()
       .from(agentJobs)
       .where(and(eq(agentJobs.id, spawnedJobId!), eq(agentJobs.channel, 'dashboard')));
     expect(job).toBeDefined();
-    expect(job?.task).toBe('pull Q2 financials and update the sheet');
+    expect(job?.task).toBe('pull my Q2 numbers');
+    expect(job?.handoffNote).toBe('pull Q2 financials and update the sheet');
     // Jobs page grouping (migration 0059): the escalated job is stamped with
     // the dashboard conversation's own id, not re-derived from a heuristic.
     expect(job?.conversationId).toBe(conv.id);
@@ -2349,7 +2351,8 @@ describe('executeJob', () => {
       .from(agentJobs)
       .where(and(eq(agentJobs.id, spawnedJobId!), eq(agentJobs.channel, 'dashboard')));
     expect(job).toBeDefined();
-    expect(job?.task).toBe('Lancer Displacer dans le Cortex');
+    expect(job?.task).toBe('envois Displacer dans le Cortex');
+    expect(job?.handoffNote).toBe('Lancer Displacer dans le Cortex');
 
     // The agent's own narration is kept as the acknowledgment, linked to the job.
     const msgs = await db

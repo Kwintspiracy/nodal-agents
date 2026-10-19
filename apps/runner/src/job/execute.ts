@@ -59,6 +59,7 @@ import {
   PROVIDER_REJECTED_PREFIX,
   findMcpToolNameCollision,
   mcpToolNameCollisionMessage,
+  openingMessages,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
@@ -2040,6 +2041,7 @@ async function runJobTracked(
         channel: job.channel ?? null,
         conversationId: job.conversationId ?? null,
         task: job.task ?? null,
+        handoffNote: job.handoffNote ?? null,
         triggerContext: job.triggerContext ?? null,
         answersWhileJobId: job.answersWhileJobId ?? null,
       },
@@ -2958,8 +2960,11 @@ async function runJobTracked(
 
   // ── 11. Restore conversation ──────────────────────────────────────────────────
   // (`messages` is declared up-front near the top so every failure path persists it.)
+  // L'ouverture d'un job : sa tâche seule dans son message, puis la note de
+  // qui a remis la demande, sous son cadre (handoff.ts) — la même fonction
+  // pour toute tête, la relance d'une file comprise.
   if (messages.length === 0) {
-    messages = [{ role: 'user', content: job.task }];
+    messages = openingMessages(job.task, job.handoffNote) as ModelMessage[];
   }
 
   // ── 11.5 Prepend thread history (session memory for chat channels) ────────────
@@ -2979,8 +2984,14 @@ async function runJobTracked(
   //
   // Fail-soft: a DB hiccup logs and continues without history rather than
   // killing the job.
-  const isFreshExecution = messages.length === 1 && messages[0]?.role === 'user';
-  if (isFreshExecution && job.entityId && job.agentId && job.chatId) {
+  // Frais : rien que son ouverture — la tâche, et la note d'une remise s'il y
+  // en a une. Un job repris porte au moins un tour de l'assistant.
+  const isFreshExecution = messages.length > 0 && messages.every((m) => m.role === 'user');
+  // Tout tour d'une conversation, sur tout canal : un job du tableau de bord
+  // n'a pas de `chat_id`, et c'était la seule raison pour laquelle il ne
+  // recevait aucun historique (handoff.ts). `loadThreadHistory` dit lui-même
+  // quels canaux en ont un, et rend [] sans conversation.
+  if (isFreshExecution && job.entityId && job.agentId && job.conversationId) {
     try {
       const history = await loadThreadHistory({
         db,

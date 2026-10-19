@@ -245,9 +245,13 @@ function FeedItemView({
         />
       );
     case 'handoff':
-      // P7 — la consigne passée au travail. Repliée dans le style des notes :
+      // P7 — ce qui a été passé au travail. Replié dans le style des notes :
       // la demande de l'utilisateur est juste au-dessus, écrite de sa main.
       return <Handoff text={item.text} />;
+    case 'handoff-note':
+      // La note de l'agent qui a remis la demande (handoff.ts) : à part, et
+      // dite comme la sienne.
+      return <Handoff text={item.text} label="Agent's note" />;
     case 'elicitation':
       // 0145 — la question d'un serveur MCP, à sa place dans le fil et HORS du
       // groupe replié du run : c'est la seule surface du fil qui y répond.
