@@ -647,8 +647,8 @@ importers:
         specifier: workspace:*
         version: link:../../tools
       undici:
-        specifier: ^7.29.0
-        version: 7.29.0
+        specifier: ^7.30.1
+        version: 7.30.1
       zod:
         specifier: ^4.6.6
         version: 4.6.7
@@ -948,8 +948,8 @@ importers:
         specifier: ^3.5.0
         version: 3.5.0(ai@6.0.177(zod@4.6.7))(zod@4.6.7)
       undici:
-        specifier: ^7.29.0
-        version: 7.29.0
+        specifier: ^7.30.1
+        version: 7.30.1
       zod:
         specifier: ^4.6.6
         version: 4.6.7
@@ -8597,6 +8597,10 @@ packages:
 
   undici@7.29.0:
     resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
+    engines: {node: '>=20.18.1'}
+
+  undici@7.30.1:
+    resolution: {integrity: sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==}
     engines: {node: '>=20.18.1'}
 
   unicode-trie@2.0.0:
@@ -16786,6 +16790,8 @@ snapshots:
   undici@7.25.0: {}
 
   undici@7.29.0: {}
+
+  undici@7.30.1: {}
 
   unicode-trie@2.0.0:
     dependencies:
