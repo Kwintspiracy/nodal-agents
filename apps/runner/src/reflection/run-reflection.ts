@@ -36,6 +36,7 @@ import { systemSkillSlugs } from '@nodal-agents/catalog';
 // human in the loop, so it is the path that needed the check most.
 import { lintSkillContent } from '@nodal-agents/tools';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
+import { toolResultOutputText } from '../job/tool-result-shape.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { buildReflectionSystemPrompt } from './prompt.ts';
 
@@ -113,15 +114,10 @@ function renderTranscript(task: string, messages: readonly ModelMessage[]): stri
         lines.push(`[${role} → ${part.toolName}] ${compactToolResult(JSON.stringify(part.input))}`);
       } else if (part.type === 'tool-result') {
         // ToolResultOutput is a discriminated union (text | json | error-text |
-        // error-json | content | execution-denied). Render text-ish variants
-        // directly; serialise the rest.
+        // error-json | content | execution-denied): read by the one reader of
+        // its text, which says an image instead of serializing its base64.
         const o = part.output;
-        const out =
-          o.type === 'text' || o.type === 'error-text'
-            ? o.value
-            : o.type === 'json' || o.type === 'error-json'
-              ? JSON.stringify(o.value ?? null)
-              : JSON.stringify(o);
+        const out = o.type === 'execution-denied' ? JSON.stringify(o) : toolResultOutputText(o);
         lines.push(`[tool-result ${part.toolName}] ${compactToolResult(out)}`);
       } else if (part.type === 'reasoning') {
         if (part.text.trim().length > 0)

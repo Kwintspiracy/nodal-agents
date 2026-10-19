@@ -78,6 +78,7 @@ import {
 } from './verification/record-constat';
 import { recordToolCallReads } from './verification/tool-call-reads';
 import { recordToolCallWrites } from './verification/tool-call-writes';
+import { admitModelImage, type ToolImage } from './model-images';
 import { attachProductionToProject } from './projects/attach';
 import { loadDeclaredCodeRoots, projectRootPredicate } from './projects/declared';
 
@@ -821,12 +822,20 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // Les empreintes des octets que l'outil LIT (le pendant des écritures) :
   // rangées dans `tool_call_reads` une fois la ligne d'audit écrite.
   const contenusLus = new Map<string, string>();
+  // Les images que CET APPEL donne au modèle (`model-images.ts`) : admises par
+  // la règle unique, rendues avec le résultat, jamais posées sur la ligne.
+  const imagesForModel: ToolImage[] = [];
   const execCtx: ToolContext = {
     ...ctx,
     ...(mutationTargets === null ? {} : { declaredMutationTargets: mutationTargets }),
     ...(porteLaisseePasserSansPersonne ? { sharedOverwriteUnattended: true } : {}),
     reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
     reportReadContent: (absPath, sha256) => contenusLus.set(absPath, sha256),
+    attachImage: (image) => {
+      const outcome = admitModelImage(ctx.modelImageInput, image, imagesForModel);
+      if (outcome.attached) imagesForModel.push(image);
+      return outcome;
+    },
   };
   // ── 2.95 La MARQUE d'intention, AVANT tout outil qui ne fait pas que lire ──
   //
@@ -1121,7 +1130,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         mutationTargets,
       );
     }
-    return { outcome: 'success', output };
+    return imagesForModel.length > 0
+      ? { outcome: 'success', output, images: imagesForModel }
+      : { outcome: 'success', output };
   } catch (err) {
     // Re-throw fatal runner errors — never swallow these
     if (err instanceof MessageStructureError || err instanceof QuotaExhaustedError) {

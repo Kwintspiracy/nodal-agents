@@ -123,7 +123,6 @@ function makeScriptedClient(turns: ScriptedTurn[], captureSystem = false): Runne
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },

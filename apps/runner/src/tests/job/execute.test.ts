@@ -323,7 +323,6 @@ function makeMockLlmClient(
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },
@@ -8024,7 +8023,6 @@ describe('reliability guards', () => {
       capabilities: {
         toolUse: true,
         promptCaching: false,
-        vision: false,
         structuredOutputs: false,
         streaming: false,
       },

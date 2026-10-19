@@ -20,9 +20,16 @@
 // (the conversation screen, the audit, the bench) still finds the structured
 // data where the server put it. Binary payloads (image, audio, blob) are kept
 // as their type and size, never their bytes: the row is an audit, not a store.
+//
+// An IMAGE block reaches the model itself when the model takes images: its
+// bytes are handed to `ctx.attachImage` at record time (the one rule of
+// `@nodal-agents/tools`' model-images.ts), and its record says whether it was
+// attached and, when not, why — which is what the model reads in its place.
 
 import { isDeepStrictEqual } from 'node:util';
 import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
+import { base64DecodedBytes, formatBytes } from '@nodal-agents/tools';
+import type { ImageAttachOutcome, ToolImage } from '@nodal-agents/tools';
 
 // audit#2026-07-07 F6: nothing capped the size of a returned MCP tool result.
 // A third-party MCP server — buggy or actively malicious — can return several
@@ -77,7 +84,12 @@ function capPayload(value: unknown): unknown {
 /** One content block as Nodal records it. Binary data is replaced by its size. */
 export type McpRecordedBlock =
   | { type: 'text'; text: string }
-  | { type: 'image' | 'audio'; mimeType: string; bytes: number }
+  | { type: 'audio'; mimeType: string; bytes: number }
+  /**
+   * `toModel`: whether the image was attached for the model and, if not, why.
+   * Absent on rows written before images reached the model.
+   */
+  | { type: 'image'; mimeType: string; bytes: number; toModel?: ImageAttachOutcome }
   | {
       type: 'resource_link';
       uri: string;
@@ -111,18 +123,17 @@ export interface McpToolOutput {
   toolResult?: unknown;
 }
 
-/** Decoded size of a base64 payload, without decoding it. */
-function base64Bytes(data: string): number {
-  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
-  return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
-}
+const base64Bytes = base64DecodedBytes;
+
+/** Hands an image block to the model; what became of it is recorded. */
+export type AttachImage = (image: ToolImage) => ImageAttachOutcome;
 
 function str(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined;
 }
 
 /** One block, every string the server wrote in it cut to `limit`. */
-function recordBlock(block: unknown, limit: number): McpRecordedBlock {
+function recordBlock(block: unknown, limit: number, attach: AttachImage): McpRecordedBlock {
   const b = (typeof block === 'object' && block !== null ? block : {}) as Record<string, unknown>;
   const cap = (v: unknown): string | undefined => {
     const s = str(v);
@@ -132,7 +143,16 @@ function recordBlock(block: unknown, limit: number): McpRecordedBlock {
   switch (type) {
     case 'text':
       return { type: 'text', text: cap(b['text']) ?? '' };
-    case 'image':
+    case 'image': {
+      const mimeType = cap(b['mimeType']) ?? 'application/octet-stream';
+      const data = str(b['data']) ?? '';
+      return {
+        type,
+        mimeType,
+        bytes: base64Bytes(data),
+        toModel: attach({ mediaType: mimeType, data }),
+      };
+    }
     case 'audio':
       return {
         type,
@@ -166,9 +186,17 @@ function recordBlock(block: unknown, limit: number): McpRecordedBlock {
 /**
  * The record of one `tools/call` result: the content blocks in order within one
  * budget (the rest counted in an `omitted` block), and the structured payload
- * where the server put it. Shared by success and `isError`.
+ * where the server put it. Shared by success and `isError`. Each image block is
+ * offered to `attach`; without one, none reaches the model, and its record
+ * says so.
  */
-export function recordMcpResult(raw: object): McpToolOutput {
+export function recordMcpResult(
+  raw: object,
+  attach: AttachImage = () => ({
+    attached: false,
+    reason: 'this run does not pass images to a model',
+  }),
+): McpToolOutput {
   // `object`: the SDK's result union also holds the 2024-10-07 compatibility
   // shape. Its loose result schema keeps `toolResult` and defaults `content`.
   const result = raw as { content?: unknown; structuredContent?: unknown; toolResult?: unknown };
@@ -181,7 +209,7 @@ export function recordMcpResult(raw: object): McpToolOutput {
       omitted += 1;
       continue;
     }
-    const recorded = recordBlock(block, budget);
+    const recorded = recordBlock(block, budget, attach);
     content.push(recorded);
     budget -= JSON.stringify(recorded).length;
   }
@@ -193,20 +221,22 @@ export function recordMcpResult(raw: object): McpToolOutput {
   return out;
 }
 
-function size(bytes: number): string {
-  return bytes < 1024 ? `${bytes} B` : `${Math.round(bytes / 1024)} KB`;
-}
+const size = formatBytes;
 
 function describeBlock(block: McpRecordedBlock): string {
   switch (block.type) {
     case 'text':
       return block.text;
-    case 'image':
+    case 'image': {
+      const head = `[Image returned by the tool (${block.mimeType}, ${size(block.bytes)})`;
+      if (block.toModel?.attached === true) return `${head}: attached to this result.]`;
+      const why = block.toModel?.reason ?? 'this run does not pass images to a model';
+      return `${head}: not passed to you: ${why}.]`;
+    }
     case 'audio':
       return (
-        `[${block.type === 'image' ? 'Image' : 'Audio'} returned by the tool ` +
-        `(${block.mimeType}, ${size(block.bytes)}): not passed to you. ` +
-        `Nodal does not give a tool's ${block.type} to the model.]`
+        `[Audio returned by the tool (${block.mimeType}, ${size(block.bytes)}): not passed ` +
+        `to you. Nodal does not give a tool's audio to the model.]`
       );
     case 'resource_link': {
       const label = block.title ?? block.name;

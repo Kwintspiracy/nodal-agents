@@ -193,7 +193,6 @@ function makeMockLlmClient(
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },

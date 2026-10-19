@@ -199,7 +199,6 @@ function makeStreamingLlmClient(): RunnerDeps['llmClient'] {
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: true,
     },

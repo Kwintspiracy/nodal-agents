@@ -124,7 +124,6 @@ function modele(scenario: readonly Etape[], captured: ModelMessage[][]): RunnerD
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },

@@ -10,7 +10,7 @@ const createLlmClientMock = vi.fn(
   (config: ProviderConfig, opts?: { hasFallback?: boolean }): NodalLlmClient =>
     ({
       config,
-      capabilities: { promptCaching: false, vision: false, toolUse: true },
+      capabilities: { promptCaching: false, toolUse: true },
       generateText: () => Promise.reject(new Error(`unused ${opts?.hasFallback}`)),
       streamText: () => {
         throw new Error('unused');

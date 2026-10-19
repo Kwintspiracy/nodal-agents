@@ -28,6 +28,8 @@
 //     error       isError, with a text block and structuredContent
 //     error-long  isError, 30,000 characters of text and structuredContent
 //     empty       nothing at all
+//     many-images a sentence, then twelve 1 MiB PNG images: more image bytes
+//                 than one request to a model carries
 //
 // One tool, `report`.
 
@@ -112,6 +114,16 @@ const SHAPES = {
     structuredContent: { id: 'pr-12', status: 'refused' },
   },
   empty: { content: [] },
+  'many-images': {
+    content: [
+      { type: 'text', text: 'Twelve pages rendered.' },
+      ...Array.from({ length: 12 }, (_, k) => ({
+        type: 'image',
+        data: Buffer.alloc(1024 * 1024, k).toString('base64'),
+        mimeType: 'image/png',
+      })),
+    ],
+  },
 };
 
 const shape = SHAPES[process.env.FIXTURE_RESULT || 'mixed'];

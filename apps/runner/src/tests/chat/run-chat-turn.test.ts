@@ -81,7 +81,6 @@ function makeMockLlmClient(
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },
@@ -124,7 +123,6 @@ function makeMockLlmClientSeq(next: () => string): RunnerDeps['llmClient'] {
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },
@@ -463,7 +461,6 @@ function makeRunTaskLlmClient(
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },
@@ -594,7 +591,6 @@ function makeMockLlmClientByPrompt(input: {
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },
@@ -827,7 +823,6 @@ function makeRunTaskThenTitleLlmClient(
     capabilities: {
       toolUse: true,
       promptCaching: false,
-      vision: false,
       structuredOutputs: false,
       streaming: false,
     },
@@ -1081,7 +1076,6 @@ describe('runChatTurn — la relance d’escalade (coût d’un tour, 09/09)', (
       capabilities: {
         toolUse: true,
         promptCaching: false,
-        vision: false,
         structuredOutputs: false,
         streaming: false,
       },

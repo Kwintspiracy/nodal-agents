@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { createMcpTools, type McpToolset } from '../index.ts';
 import type { McpToolOutput } from '../result.ts';
 import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
+import type { ToolContext, ToolImage } from '@nodal-agents/tools';
 
 const FIXTURE = fileURLToPath(new URL('./fixtures/mcp-result-server.mjs', import.meta.url));
 const SHAPES = ['mixed', 'structured', 'resources', 'echoed', 'blank', 'error', 'empty'] as const;
@@ -52,9 +53,12 @@ function report(shape: Shape) {
   return tool;
 }
 
-async function call(shape: Shape): Promise<{ record: McpToolOutput; model: string }> {
+async function call(
+  shape: Shape,
+  ctx: Partial<ToolContext> = {},
+): Promise<{ record: McpToolOutput; model: string }> {
   const tool = report(shape);
-  const record = (await tool.execute({ purpose: 'test' }, {} as never)) as McpToolOutput;
+  const record = (await tool.execute({ purpose: 'test' }, ctx as never)) as McpToolOutput;
   if (!tool.toModelOutput) throw new Error('an MCP tool declares no toModelOutput');
   return { record, model: tool.toModelOutput(record) };
 }
@@ -65,8 +69,9 @@ describe('an MCP tool result, kept whole and read by the model @cap:connecter-un
 
     expect(model).toBe(
       'Request pr-7 for 2 pages. Confirmation not possible: nobody answered in time, nothing was printed.\n' +
-        '[Image returned by the tool (image/jpeg, 3 KB): not passed to you. ' +
-        "Nodal does not give a tool's image to the model.]\n" +
+        // Called outside the seam: nothing hands the image on, and that is said.
+        '[Image returned by the tool (image/jpeg, 3 KB): not passed to you: ' +
+        'this run does not pass images to a model.]\n' +
         'Ask the user before calling request_print again.\n' +
         // The machine form too: the id is what the next call needs.
         '{"id":"pr-7","status":"pending","preview":{"pages":2}}',
@@ -79,11 +84,52 @@ describe('an MCP tool result, kept whole and read by the model @cap:connecter-un
           type: 'text',
           text: 'Request pr-7 for 2 pages. Confirmation not possible: nobody answered in time, nothing was printed.',
         },
-        { type: 'image', mimeType: 'image/jpeg', bytes: 3072 },
+        {
+          type: 'image',
+          mimeType: 'image/jpeg',
+          bytes: 3072,
+          toModel: { attached: false, reason: 'this run does not pass images to a model' },
+        },
         { type: 'text', text: 'Ask the user before calling request_print again.' },
       ],
       structuredContent: { id: 'pr-7', status: 'pending', preview: { pages: 2 } },
     });
+  });
+
+  it('the image block is handed to the seam: attached when admitted, its reason said when not', async () => {
+    const offered: ToolImage[] = [];
+    const attached = await call('mixed', {
+      attachImage: (image) => {
+        offered.push(image);
+        return { attached: true };
+      },
+    });
+    // The server's bytes, as it sent them.
+    expect(offered).toEqual([
+      { mediaType: 'image/jpeg', data: Buffer.alloc(3072, 7).toString('base64') },
+    ]);
+    expect(attached.model).toContain(
+      '[Image returned by the tool (image/jpeg, 3 KB): attached to this result.]',
+    );
+    expect(attached.record.content[1]).toEqual({
+      type: 'image',
+      mimeType: 'image/jpeg',
+      bytes: 3072,
+      toModel: { attached: true },
+    });
+    // The row never keeps the bytes.
+    expect(JSON.stringify(attached.record)).not.toContain(offered[0]?.data);
+
+    const refused = await call('mixed', {
+      attachImage: () => ({
+        attached: false,
+        reason: 'the model this agent runs (z-ai/glm-5.3) does not take images as input',
+      }),
+    });
+    expect(refused.model).toContain(
+      '[Image returned by the tool (image/jpeg, 3 KB): not passed to you: the model this agent ' +
+        'runs (z-ai/glm-5.3) does not take images as input.]',
+    );
   });
 
   it('structuredContent alone: the model reads it, serialized', async () => {
