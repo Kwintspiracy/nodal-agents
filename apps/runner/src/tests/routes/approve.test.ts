@@ -568,6 +568,9 @@ describe('POST /api/approve — entity authorization (bearer-token mode)', () =>
     expect(res.status).toBe(200);
     const [headRow] = await dbZ.select().from(agentJobs).where(eq(agentJobs.id, head!.id));
     expect(headRow!.inbox).toHaveLength(1);
-    expect(headRow!.inbox[0]!.content).toContain(` · by: admin user:${me!.email} · `);
+    // L'id du compte de la session, jamais son e-mail (#810).
+    expect(headRow!.inbox[0]!.content).toContain(` · by: admin user:${me!.id} · `);
+    expect(headRow!.inbox[0]!.content).not.toContain(me!.email);
+    expect(headRow!.inbox[0]!.content).not.toContain(RESPONDER_ID);
   });
 });
