@@ -187,7 +187,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       status text DEFAULT 'pending' CHECK (status IN ('pending','processing','completed','failed','awaiting_approval','awaiting_delegation','cancelled')),
       channel text NOT NULL CHECK (channel IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord','dashboard','webhook','mcp')),
       task text NOT NULL,
-      original_task text,
+      -- mirrors migration 0151 : la note de qui a remis la demande (handoff.ts).
+      handoff_note text,
       chat_id text,
       chat_channel text,
       conversation_id uuid,
@@ -313,13 +314,15 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       premier := left_behind -> 0;
       INSERT INTO agent_jobs (
         entity_id, agent_id, channel, chat_id, chat_channel, conversation_id, project_id,
-        status, task, messages, inbox, relaunched_from_job_id
+        status, task, handoff_note, messages, inbox, relaunched_from_job_id
       ) VALUES (
         root.entity_id, root.agent_id, root.channel, root.chat_id, root.chat_channel, NEW.conversation_id,
         (SELECT c.current_project_id FROM conversations c WHERE c.id = NEW.conversation_id),
         'pending',
         premier ->> 'task',
-        jsonb_build_array(jsonb_build_object('role', 'user', 'content', premier -> 'content')),
+        -- mirrors migration 0151 : la note suit la tête ; la boucle ouvre ses messages.
+        premier ->> 'note',
+        '[]'::jsonb,
         left_behind - 0,
         root.id
       );

@@ -445,8 +445,9 @@ function jobThreadItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
   let answer: FeedItem | null = null;
   let failure: FeedItem | null = null;
   for (const item of own) {
-    if (item.kind === 'request' || item.kind === 'handoff') lead.push(item);
-    else if (item.kind === 'note') notes.push(item);
+    if (item.kind === 'request' || item.kind === 'handoff' || item.kind === 'handoff-note') {
+      lead.push(item);
+    } else if (item.kind === 'note') notes.push(item);
     else if (item.kind === 'answer') answer = item;
     else if (item.kind === 'failure') failure = item;
     else if (item.kind === 'elicitation') asked.push(item);

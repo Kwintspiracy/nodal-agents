@@ -19,8 +19,16 @@
 //
 // Le TEXTE que lit le modèle est celui qui a été transmis, tel quel : le
 // runner n'y ajoute rien (invariant #2).
+//
+// Un tour de réponse qui transmet ne retape pas la personne (handoff.ts) : la
+// plateforme met dans l'entrée les MOTS de la personne (`content`, la tâche
+// du tour de réponse), et le message du modèle va à côté, comme sa note
+// (`note`). Vidée, l'entrée donne deux messages : les mots, marqués comme un
+// message remis, puis la note sous son cadre, marquée comme une note — que
+// l'historique rejoué ne prend jamais pour une précision de la personne.
 
 import { RUNNER_RECORD_NAMESPACE } from './runner-record';
+import { handoffNote, handoffNoteMessage, type HandoffNoteMessage } from './handoff';
 
 /** Le contenu d'un message transmis : du texte. */
 export type InboxContent = string;
@@ -38,6 +46,12 @@ export interface InboxEntry {
   /** Le job qui l'a transmis (un tour de réponse), quand il y en a un. */
   fromJobId?: string;
   /**
+   * Ce que le modèle qui a transmis a écrit à côté des mots de la personne :
+   * sa note (handoff.ts). Absente quand il n'a rien ajouté. Une tête relancée
+   * de cette entrée la porte en `handoff_note`.
+   */
+  note?: string;
+  /**
    * La carte (`approval_requests.id`) d'où vient l'entrée, quand c'est la
    * réponse de la personne à la carte d'un délégué, remise à la tête du run.
    */
@@ -51,6 +65,7 @@ export interface InboxMessage {
   providerOptions: { nodal: { inbox: { id: string; receivedAt: string } } };
 }
 
+/** Le message remis : les mots de l'entrée, marqués. */
 export function inboxMessage(entry: InboxEntry): InboxMessage {
   return {
     role: 'user',
@@ -59,6 +74,15 @@ export function inboxMessage(entry: InboxEntry): InboxMessage {
       [RUNNER_RECORD_NAMESPACE]: { inbox: { id: entry.id, receivedAt: entry.receivedAt } },
     },
   };
+}
+
+/**
+ * Ce qu'une entrée vidée devient dans la transcription : le message remis,
+ * puis la note de qui l'a transmis, s'il en a écrit une.
+ */
+export function inboxMessages(entry: InboxEntry): Array<InboxMessage | HandoffNoteMessage> {
+  const note = handoffNote(entry.note, entry.content);
+  return note === null ? [inboxMessage(entry)] : [inboxMessage(entry), handoffNoteMessage(note)];
 }
 
 /** Ce message est-il un message transmis à un travail en cours ? */

@@ -124,7 +124,7 @@ type AgentJobKeysOk = HasKeys<
     'status',
     'channel',
     'task',
-    'originalTask',
+    'handoffNote',
     'chatId',
     'systemPrompt',
     'messages',

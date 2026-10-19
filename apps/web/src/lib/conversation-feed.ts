@@ -25,7 +25,7 @@
 // Les parties `reasoning` (persistées par le runner, execute.ts) sont lues ici,
 // en amont.
 
-import { SENT_TEXT_KINDS, runnerRecordEntries } from '@nodal-agents/shared';
+import { SENT_TEXT_KINDS, handoffNoteOf, runnerRecordEntries } from '@nodal-agents/shared';
 import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
 // UNIQUEMENT le type, et c'est load-bearing : ce module est lu par des
 // composants `'use client'`, et une importation de VALEUR depuis
@@ -355,11 +355,18 @@ export type FeedItem =
       summary: DeliverySummary;
     }
   /**
-   * P7 — la consigne que le chat a passée au travail. Ce n'est pas la demande
-   * de l'utilisateur (elle est déjà au-dessus, telle qu'il l'a écrite) : c'est
-   * sa reformulation par l'agent, repliée.
+   * P7 — ce que le chat a passé au travail, replié. Depuis handoff.ts, c'est
+   * le message de la personne tel qu'elle l'a écrit (la tâche du job) ; un job
+   * plus ancien y montre encore la reformulation du chat d'alors.
    */
-  | { kind: 'handoff'; text: string };
+  | { kind: 'handoff'; text: string }
+  /**
+   * La NOTE de l'agent qui a remis la demande (handoff.ts) : ce qu'il a écrit
+   * à côté des mots de la personne. Lue à sa marque structurelle, montrée
+   * sans le cadre destiné au modèle, sous un libellé qui dit qui l'a écrite —
+   * jamais comme un rappel de la plateforme, ni comme les mots de la personne.
+   */
+  | { kind: 'handoff-note'; text: string };
 
 /**
  * Ce que la LIGNE DE RÉSUMÉ d'un run dit de lui (#135, #132) : « 3 tools ·
@@ -931,6 +938,11 @@ export function buildConversationFeed(
     const role = msg.role;
 
     if (role === 'user') {
+      const handoffNote = handoffNoteOf(raw);
+      if (handoffNote !== null) {
+        items.push({ kind: 'handoff-note', text: handoffNote });
+        continue;
+      }
       const text =
         typeof msg.content === 'string'
           ? msg.content
