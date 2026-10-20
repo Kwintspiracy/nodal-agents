@@ -42,3 +42,31 @@ UPDATE channel_allowed_conversations
   WHERE channel = 'whatsapp'
     AND requester_address IS NULL
     AND requester_name ~ '@(s\.whatsapp\.net|lid|g\.us|c\.us)$';
+--> statement-breakpoint
+-- Le VECTEUR d'une mémoire qui cite une conversation connue de son espace a été
+-- calculé sur l'identifiant du canal ; désormais le texte part chez le
+-- fournisseur d'embeddings avec les handles, et la requête d'un rappel aussi
+-- (`embeddingsAddressedByHandle`, runner). Pour que les deux côtés soient
+-- calculés sur la même réécriture, ces vecteurs sont effacés : le backfill du
+-- démarrage (`backfillEmbeddings`) les recalcule à travers la frontière. Une
+-- sous-chaîne suffit à choisir les lignes : en recalculer une de trop ne change
+-- que son coût, jamais son texte (la réécriture, elle, ne remplace que des
+-- identifiants entiers).
+UPDATE agent_memory m
+  SET embedding = NULL
+  WHERE m.embedding IS NOT NULL
+    AND m.entity_id IS NOT NULL
+    AND (
+      EXISTS (
+        SELECT 1 FROM channel_allowed_conversations c
+        WHERE (c.entity_id = m.entity_id
+               OR c.agent_id IN (SELECT a.id FROM agents a WHERE a.entity_id = m.entity_id))
+          AND strpos(m.fact, c.conversation_id) > 0
+      )
+      OR EXISTS (
+        SELECT 1 FROM telegram_allowed_chats t
+        WHERE (t.entity_id = m.entity_id
+               OR t.agent_id IN (SELECT a.id FROM agents a WHERE a.entity_id = m.entity_id))
+          AND strpos(m.fact, t.chat_id) > 0
+      )
+    );

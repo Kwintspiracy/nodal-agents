@@ -71,7 +71,7 @@ export async function createMemory(
   // misconfiguration is never silently swallowed (invariant #4).
   let embedding: number[] | null = null;
   if (embeddingClient) {
-    embedding = await embeddingClient.embed(parsed.fact);
+    embedding = await embeddingClient.embed(parsed.fact, { entityId: parsed.entity_id ?? null });
   }
 
   const rows = await db

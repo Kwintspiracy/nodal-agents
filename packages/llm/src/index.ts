@@ -57,7 +57,7 @@ export {
   validateEmbeddingDimension,
   EXPECTED_EMBEDDING_DIM,
 } from './embeddings';
-export type { EmbeddingProviderConfig, EmbeddingClient } from './embeddings';
+export type { EmbeddingProviderConfig, EmbeddingClient, EmbeddingScope } from './embeddings';
 
 // Provider registry (capability matrix + presets)
 export { CAPABILITY_MATRIX, PROVIDER_PRESETS } from './providers/registry';

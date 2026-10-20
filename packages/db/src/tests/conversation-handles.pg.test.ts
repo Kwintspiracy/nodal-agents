@@ -25,6 +25,16 @@ afterAll(async () => {
   await pg?.stop();
 });
 
+/** The statement of a migration file that contains `marker` — exactly one. */
+function statementOf(migration: string, marker: string): string {
+  const found = migration.split('--> statement-breakpoint').filter((st) => st.includes(marker));
+  if (found.length !== 1) expect.fail(`${found.length} statements contain "${marker}"`);
+  return found[0]!;
+}
+
+const MIGRATION_0152 = () =>
+  readFileSync(join(__dirname, '..', '..', 'migrations', '0152_conversation_handles.sql'), 'utf8');
+
 function harness(): RealPostgres {
   if (!pg) expect.fail('REAL_POSTGRES_NOT_STARTED — the startup test failed before this one');
   return pg;
@@ -123,13 +133,13 @@ describe('migration 0152_conversation_handles @cap:parler-par-canal-externe/mote
       await insert('whatsapp', '33644444444@s.whatsapp.net', 'Marie');
       await insert('discord', '1188', 'Paul');
 
-      // La réparation est la DERNIÈRE instruction de la migration, rejouée sur ces lignes
+      // La réparation est l'instruction de la migration qui déplace le nom, rejouée sur ces lignes
       // (la colonne, elle, existe déjà : les vraies migrations l'ont ajoutée).
       const migration = readFileSync(
         join(__dirname, '..', '..', 'migrations', '0152_conversation_handles.sql'),
         'utf8',
       );
-      await sql.unsafe(migration.split('--> statement-breakpoint').at(-1)!);
+      await sql.unsafe(statementOf(migration, 'SET requester_address = requester_name'));
 
       const rows = await sql`
         SELECT channel, conversation_id, requester_name, requester_address
@@ -145,11 +155,48 @@ describe('migration 0152_conversation_handles @cap:parler-par-canal-externe/mote
         ['whatsapp', '33644444444@s.whatsapp.net', 'Marie', null],
       ]);
       // Replayed twice, nothing moves again.
-      await sql.unsafe(migration.split('--> statement-breakpoint').at(-1)!);
+      await sql.unsafe(statementOf(migration, 'SET requester_address = requester_name'));
       const again = await sql`
         SELECT requester_address FROM channel_allowed_conversations
         WHERE entity_id = ${entityId} AND conversation_id = '120363000000@g.us'`;
       expect(again[0]!.requester_address).toBe('33633333333@s.whatsapp.net');
+    } finally {
+      await sql.end();
+    }
+  });
+
+  it('clears the vector of a memory that quotes a known conversation, so the backfill re-embeds it through the boundary', async () => {
+    const sql = postgres(harness().url, { max: 1 });
+    try {
+      const entityId = await seedEntity(sql, 'handles-vectors');
+      const [agent] = await sql`
+        INSERT INTO agents (entity_id, name, slug, personality)
+        VALUES (${entityId}, 'a', 'a-vectors', 'p') RETURNING id`;
+      await sql`
+        INSERT INTO channel_allowed_conversations (entity_id, agent_id, channel, conversation_id)
+        VALUES (${entityId}, ${agent!.id}, 'whatsapp', '33655500824@s.whatsapp.net')`;
+      await sql`
+        INSERT INTO telegram_allowed_chats (entity_id, agent_id, chat_id)
+        VALUES (${entityId}, ${agent!.id}, '987654321')`;
+      const vector = `[${Array.from({ length: 1536 }, () => '0.1').join(',')}]`;
+      for (const fact of [
+        'Marie: 33655500824@s.whatsapp.net',
+        'le chat 987654321',
+        'rien à voir',
+      ]) {
+        await sql`
+          INSERT INTO agent_memory (entity_id, fact, embedding)
+          VALUES (${entityId}, ${fact}, ${vector})`;
+      }
+      await sql.unsafe(statementOf(MIGRATION_0152(), 'UPDATE agent_memory m'));
+      const rows = await sql`
+        SELECT fact, embedding IS NULL AS cleared FROM agent_memory
+        WHERE entity_id = ${entityId} ORDER BY fact`;
+      expect(Object.fromEntries(rows.map((r) => [r.fact, r.cleared]))).toEqual({
+        'le chat 987654321': true,
+        'Marie: 33655500824@s.whatsapp.net': true,
+        'rien à voir': false,
+      });
     } finally {
       await sql.end();
     }

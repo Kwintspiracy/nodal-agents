@@ -38,7 +38,7 @@ export async function backfillEmbeddings(
   embeddingClient: EmbeddingClient,
 ): Promise<BackfillResult> {
   const rows = await db
-    .select({ id: agentMemory.id, fact: agentMemory.fact })
+    .select({ id: agentMemory.id, fact: agentMemory.fact, entityId: agentMemory.entityId })
     .from(agentMemory)
     .where(isNull(agentMemory.embedding));
 
@@ -46,7 +46,7 @@ export async function backfillEmbeddings(
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]!;
     try {
-      const embedding = await embeddingClient.embed(row.fact);
+      const embedding = await embeddingClient.embed(row.fact, { entityId: row.entityId });
       if (embedding) {
         await db.update(agentMemory).set({ embedding }).where(eq(agentMemory.id, row.id));
         embedded += 1;

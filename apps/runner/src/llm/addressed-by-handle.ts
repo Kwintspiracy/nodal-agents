@@ -16,7 +16,7 @@
 
 import { conversationIdsAsHandles } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import type { NodalLlmClient } from '@nodal-agents/llm';
+import type { EmbeddingClient, NodalLlmClient } from '@nodal-agents/llm';
 
 type ModelText = { system?: unknown; prompt?: unknown; messages?: unknown };
 
@@ -64,5 +64,26 @@ export function addressedByHandle(
           'boundary (#824), which reads the database; use generateText.',
       );
     },
+  };
+}
+
+/**
+ * The runner's embedding client, whose every text is rewritten the same way
+ * (#824, pass 2 of the review). An embedding provider is a third party: a
+ * memory's fact, embedded at its write (`createMemory`) or by the startup
+ * backfill (`backfillEmbeddings`), and the query a recall embeds
+ * (`searchMemories`) reach it. BOTH sides go through this rewrite, in the
+ * workspace the text belongs to (`EmbeddingScope`, required on every call), so
+ * a memory embedded with a handle is compared with a query embedded with the
+ * same handle. Wrapped once, where the client is created (`createRunnerDeps`).
+ */
+export function embeddingsAddressedByHandle(
+  client: EmbeddingClient,
+  db: AnyDrizzleDb,
+): EmbeddingClient {
+  return {
+    dimensions: client.dimensions,
+    embed: async (text, scope) =>
+      client.embed(await conversationIdsAsHandles(db, scope.entityId, text), scope),
   };
 }
