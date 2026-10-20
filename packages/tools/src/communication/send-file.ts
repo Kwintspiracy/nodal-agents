@@ -17,8 +17,10 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
   resolveBotToken,
-  resolveRecipientChatId,
-  resolveChannelForJob,
+  resolveRecipient,
+  withoutConversationId,
+  CHAT_ID_ARGUMENT_HINT,
+  CHAT_ID_ARGUMENT_RE,
   assertLocalSourceAllowed,
   fetchBoundedUrl,
 } from './delivery-guard';
@@ -55,10 +57,13 @@ const SendFileInput = z.object({
     .describe('Optional caption (≤1024 chars, Telegram limit).'),
   chatId: z
     .string()
-    .regex(/^-?\d+$/, 'must be a numeric Telegram chat ID')
+    .regex(CHAT_ID_ARGUMENT_RE, CHAT_ID_ARGUMENT_HINT)
     .max(20)
     .optional()
-    .describe('Telegram chat ID. Omit to reply to the chat that triggered this job.'),
+    .describe(
+      'The conversation to send to, as you were given it (Job context, list_conversations). ' +
+        'Omit to reply to the chat that triggered this job.',
+    ),
   channel: z
     .enum(['telegram', 'discord', 'slack', 'whatsapp'])
     .optional()
@@ -140,13 +145,20 @@ Fail conditions:
       // 1. Resolve + authorize chatId — explicit arg wins (must be approved
       // unless it's the job's own origin chat), then job origin chat (F1).
       // `input.channel` targets another connected platform when given — see
-      // resolveRecipientChatId's doc comment for the cross-channel rules.
-      const chatId = await resolveRecipientChatId(input.chatId, ctx, 'no_recipient', input.channel);
+      // resolveRecipientChatId's doc comment for the cross-channel rules. A
+      // handle names its own channel (#824): the token and the adapter below
+      // follow the channel resolved HERE, never the raw argument.
+      const { chatId, channel } = await resolveRecipient(
+        input.chatId,
+        ctx,
+        'no_recipient',
+        input.channel,
+      );
 
       // 2. Bot token — the runner's resolved token wins (B3: a delegated worker
       // inheriting its entity's root agent's token); otherwise fall back to this
       // agent's own token from DB (credential isolation per agent, historical path).
-      const botToken = await resolveBotToken(ctx, input.channel);
+      const botToken = await resolveBotToken(ctx, channel);
       if (!botToken) {
         const err = new Error('no_bot_token');
         err.name = 'no_bot_token';
@@ -190,13 +202,17 @@ Fail conditions:
 
       // 5. Upload via the channel-neutral adapter (server-side, zero bytes in LLM context)
       const filename = input.filename ?? derivedName;
-      const adapter = getAdapter(await resolveChannelForJob(ctx, input.channel));
-      await adapter.sendMedia({ botToken }, chatId, {
-        kind: 'document',
-        bytes,
-        filename,
-        caption: input.caption,
-      });
+      const adapter = getAdapter(channel);
+      try {
+        await adapter.sendMedia({ botToken }, chatId, {
+          kind: 'document',
+          bytes,
+          filename,
+          caption: input.caption,
+        });
+      } catch (err) {
+        throw await withoutConversationId(err, ctx, { chatId, channel });
+      }
 
       // 6. Return a tiny result — no file data
       return { ok: true, bytes: bytes.byteLength, filename };

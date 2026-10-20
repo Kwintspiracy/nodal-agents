@@ -172,6 +172,7 @@ import {
   readAgentBudgetState,
   cancelJobTree,
   approvalsNewestFirst,
+  showConversationsTo,
 } from '@nodal-agents/db';
 import {
   deliverableStatuses,
@@ -2876,7 +2877,9 @@ export async function getSpaceConversationAction(
       totals: feed.totals,
     };
 
-    return ok({
+    // Le modèle nomme une conversation par son HANDLE (#824) ; la personne lit
+    // la conversation qu'il nomme, partout dans ce run, en une lecture.
+    const view = {
       job: {
         id: job.id,
         task: displayTask,
@@ -2903,6 +2906,11 @@ export async function getSpaceConversationAction(
       verdicts: reviewVerdicts.views,
       verification,
       cost,
+    };
+    return ok({
+      ...(await showConversationsTo(db, session.entityId, view)),
+      // Les envois, eux, sont le reçu de ce qui est PARTI, avec la vraie
+      // conversation que le runner a résolue : rendus tels quels (#824).
       // Le message est masqué ICI, à l'affichage : un envoi peut porter un
       // jeton que l'agent a recopié, et la file d'envoi est un troisième
       // chemin de lecture des mêmes textes (#150). La RAISON vient du reçu,
@@ -6249,7 +6257,7 @@ export async function listApprovalsAction(
     const where =
       status === 'all' ? baseConditions : and(baseConditions, eq(approvalRequests.status, status));
 
-    const rows = await db
+    const storedRows = await db
       .select({
         id: approvalRequests.id,
         jobId: approvalRequests.jobId,
@@ -6297,6 +6305,9 @@ export async function listApprovalsAction(
       .where(where)
       .orderBy(approvalsNewestFirst)
       .limit(APPROVALS_READ_LIMIT);
+    // Le modèle a écrit ses adresses de conversation en HANDLES (#824) : la carte
+    // montre la conversation qu'ils nomment, la ligne stockée reste telle quelle.
+    const rows = await showConversationsTo(db, session.entityId, storedRows);
 
     // La TÊTE de chaque chaîne (18/09). Une seule remontée pour toute la page,
     // par génération : un délégué d'un run venu de dehors ne dit rien de sa
@@ -15412,7 +15423,9 @@ export async function getCodingProcessDetailAction(
           outputTokens,
           cachedTokens,
         },
-        activity,
+        // Les entrées d'outils qu'un modèle a écrites nomment une conversation
+        // par son HANDLE (#824) : la personne lit la conversation qu'il nomme.
+        activity: await showConversationsTo(db, entityId, activity),
         verdicts,
         changes,
         constatedBy,

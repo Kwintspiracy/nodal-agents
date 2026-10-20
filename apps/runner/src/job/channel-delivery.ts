@@ -4,6 +4,8 @@
 
 import { defaultSendChannel, jobChatOn, textDeliveryOf } from '@nodal-agents/delivery';
 import type { ChannelKind, JobChat } from '@nodal-agents/delivery';
+import { conversationHandleFor } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobContext } from '@nodal-agents/orchestration';
 import { CHANNEL_SEND_TOOL } from './thread-history.ts';
 
@@ -116,10 +118,40 @@ interface ReplyInputs {
  * plateforme, n'y est jamais présenté comme un chat Telegram (#649, revue
  * passe 4 de #657). Lu par les deux constructeurs du prompt (execute.ts,
  * cli-runtime/run-job.ts).
+ *
+ * Sa VALEUR est le handle de ce chat, jamais son identifiant Telegram (#824) :
+ * le modèle ne lit une conversation que par son handle, et les outils d'envoi
+ * le reprennent tel quel. La CLÉ reste `telegram_chat_id` : la skill Obsidian
+ * du catalogue et les prompts d'agents stockés en base la lisent par son nom,
+ * pour sa présence, et ne lisent jamais sa forme.
  */
-export function telegramChatOf(chat: JobChat): { telegramChatId?: string } {
-  const id = jobChatOn(chat, 'telegram');
-  return id ? { telegramChatId: id } : {};
+export async function telegramChatOf(
+  db: AnyDrizzleDb,
+  entityId: string | null,
+  chat: JobChat,
+): Promise<{ telegramChatId?: string }> {
+  if (jobChatOn(chat, 'telegram') === null) return {};
+  const handle = await jobChatForModel(db, entityId, chat);
+  return handle ? { telegramChatId: handle } : {};
+}
+
+/**
+ * L'adresse du chat d'un job telle qu'un MODÈLE la lit (#824) : le handle de
+ * ce chat sur le canal où il a été résolu, ou `null` quand le job n'a pas de
+ * chat — ou un chat dont personne ne connaît la plateforme : sans canal, il
+ * n'y a pas d'adresse, et aucun outil d'envoi ne l'atteint (`jobChatOn`).
+ */
+export async function jobChatForModel(
+  db: AnyDrizzleDb,
+  entityId: string | null,
+  chat: JobChat,
+): Promise<string | null> {
+  if (!chat.id || !chat.channel) return null;
+  return conversationHandleFor(db, {
+    entityId,
+    channel: chat.channel,
+    conversationId: chat.id,
+  });
 }
 
 /** Le chat du job, avec le canal sur lequel il a été résolu — jamais l'un sans l'autre. */

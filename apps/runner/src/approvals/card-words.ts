@@ -45,7 +45,7 @@ const DECISION_WORD: Readonly<Record<CardKind, Readonly<Record<ApprovalDecision,
 export interface Responder {
   /** Le rôle stocké (`owner`, `admin`, `member`…), ou `unlisted` quand aucune ligne n'en donne. */
   role: string;
-  /** Son identité pour le modèle, écrite par `personForModel` : `user:<id>`, `telegram:<chat>`… */
+  /** Son identité pour le modèle, écrite par `personForModel` : `user:<id>`, `telegram:<handle>`… */
   identity: string;
 }
 

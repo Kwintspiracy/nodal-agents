@@ -12,7 +12,13 @@
 //     with a platform-limitation note, never fetching credentials
 //   - discord: no usable credentials → channel_not_connected
 //   - whatsapp: whatsapp_not_paired from the adapter propagates as-is (fail loud)
-//   - truncation: bounded at 150 rows, notes the truncation
+//   - truncation: bounded at 150 rows, notes the truncation, and only the
+//     rows returned get a handle
+//
+// `conversationHandlesFor` is a stand-in here (`h(<id>)`): what this file
+// proves is the merge. The real handles — random, stable, entity-scoped, and
+// what the model reads — are proven on a real database in
+// list-conversations-handles.test.ts.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createListConversationsTool } from './list-conversations';
@@ -26,11 +32,16 @@ const {
   listChannelBindingsMock,
   getBindingCredentialsMock,
   listAllowedConversationsMock,
+  conversationHandlesForMock,
 } = vi.hoisted(() => ({
   getChannelBindingMock: vi.fn(),
   listChannelBindingsMock: vi.fn(),
   getBindingCredentialsMock: vi.fn(),
   listAllowedConversationsMock: vi.fn(),
+  conversationHandlesForMock: vi.fn(
+    async (_db: unknown, p: { conversationIds: readonly string[] }) =>
+      new Map(p.conversationIds.map((id) => [id, `h(${id})`])),
+  ),
 }));
 
 vi.mock('@nodal-agents/db', () => ({
@@ -38,6 +49,7 @@ vi.mock('@nodal-agents/db', () => ({
   listChannelBindings: listChannelBindingsMock,
   getBindingCredentials: getBindingCredentialsMock,
   listAllowedConversations: listAllowedConversationsMock,
+  conversationHandlesFor: conversationHandlesForMock,
 }));
 
 // ─── Mock @nodal-agents/delivery (getAdapter only — DeliveryError stays real) ──
@@ -134,13 +146,13 @@ describe('createListConversationsTool', () => {
       expect(result.note).toMatch(/cannot list the chats/i);
       expect(result.conversations).toEqual([
         {
-          conversationId: 'owner-1',
+          conversationId: 'h(owner-1)',
           name: 'Alice',
           kind: 'private',
           approved: true,
           role: 'owner',
         },
-        { conversationId: 'pending-1', name: 'Bob', kind: 'private', approved: false },
+        { conversationId: 'h(pending-1)', name: 'Bob', kind: 'private', approved: false },
       ]);
       expect(getAdapterMock).not.toHaveBeenCalled();
       expect(getBindingCredentialsMock).not.toHaveBeenCalled();
@@ -173,7 +185,7 @@ describe('createListConversationsTool', () => {
       expect(listConversationsMock).toHaveBeenCalledWith({ botToken: 'discord-token' });
       expect(result.conversations).toEqual([
         {
-          conversationId: 'chan-1',
+          conversationId: 'h(chan-1)',
           name: 'general',
           kind: 'channel',
           groupName: 'My Server',
@@ -181,7 +193,7 @@ describe('createListConversationsTool', () => {
           role: 'member',
         },
         {
-          conversationId: 'chan-2',
+          conversationId: 'h(chan-2)',
           name: 'random',
           kind: 'channel',
           groupName: 'My Server',
@@ -208,7 +220,7 @@ describe('createListConversationsTool', () => {
 
       expect(result.note).toMatch(/does not support conversation discovery/i);
       expect(result.conversations).toEqual([
-        { conversationId: 'chan-1', kind: 'channel', approved: true, role: 'owner' },
+        { conversationId: 'h(chan-1)', kind: 'channel', approved: true, role: 'owner' },
       ]);
       expect(getBindingCredentialsMock).not.toHaveBeenCalled();
     });
@@ -262,6 +274,12 @@ describe('createListConversationsTool', () => {
       const result = await tool.execute({ channel: 'telegram' }, ctx);
 
       expect(result.conversations).toHaveLength(150);
+      // Only the rows shown to the model get a handle (#824).
+      expect(conversationHandlesForMock).toHaveBeenLastCalledWith(ctx.db, {
+        entityId: 'entity-1',
+        channel: 'telegram',
+        conversationIds: rows.slice(0, 150).map((r) => r.conversationId),
+      });
       expect(result.truncated).toBe(true);
       expect(result.note).toMatch(/truncated/i);
     });

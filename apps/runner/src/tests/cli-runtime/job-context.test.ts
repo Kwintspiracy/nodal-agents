@@ -46,37 +46,23 @@ describe('buildCliRuntimeJobContext', () => {
   });
 
   it('porte la tâche et le chat quand ils existent, et rien sinon', () => {
+    // Le chat arrive déjà calculé par `telegramChatOf` (son HANDLE s'il a été
+    // résolu sur Telegram, #649, #824) : ce qui en est prouvé vit dans
+    // job/conversation-handles-for-model.test.ts, sur une vraie base.
     const complet = buildCliRuntimeJobContext({
       deployment: DEPLOY,
       origin: 'telegram',
       task: 'analyse le repo',
-      chatId: '4242',
-      chatChannel: 'telegram',
+      telegramChat: { telegramChatId: 'conv_abcdefghij' },
     });
     expect(complet?.task).toBe('analyse le repo');
-    expect(complet?.telegramChatId).toBe('4242');
-
-    // #649 (revue passe 4 de #657) : un id n'est « telegram_chat_id » que s'il
-    // a été résolu sur Telegram. Un chat Discord, ou un chat dont personne ne
-    // connaît la plateforme, n'est jamais présenté comme un chat Telegram.
-    for (const chatChannel of ['discord', 'slack', null]) {
-      const autre = buildCliRuntimeJobContext({
-        deployment: DEPLOY,
-        origin: 'cron',
-        chatId: '555',
-        chatChannel,
-      });
-      expect({ chatChannel, has: autre !== undefined && 'telegramChatId' in autre }).toEqual({
-        chatChannel,
-        has: false,
-      });
-    }
+    expect(complet?.telegramChatId).toBe('conv_abcdefghij');
 
     const nu = buildCliRuntimeJobContext({
       origin: 'api',
       deployment: DEPLOY,
       task: null,
-      chatId: null,
+      telegramChat: {},
     });
     expect(nu && 'task' in nu).toBe(false);
     expect(nu && 'telegramChatId' in nu).toBe(false);

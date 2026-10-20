@@ -200,9 +200,11 @@ export function buildCliRuntimeJobContext(args: {
    */
   deployment: DeploymentContext;
   task?: string | null;
-  chatId?: string | null;
-  /** Le canal sur lequel `chatId` a été résolu (`agent_jobs.chat_channel`), ou null (#649). */
-  chatChannel?: string | null;
+  /**
+   * Le `telegram_chat_id` du job, tel que `telegramChatOf` le calcule : le
+   * HANDLE du chat s'il a été résolu sur Telegram (#649, #824), rien sinon.
+   */
+  telegramChat?: Awaited<ReturnType<typeof telegramChatOf>>;
   workspaceGit?: Awaited<ReturnType<typeof probeWorkspaceGit>>;
   /**
    * Les dossiers que la CLI a RÉELLEMENT — le partagé compris.
@@ -227,7 +229,7 @@ export function buildCliRuntimeJobContext(args: {
     surface: 'cli-runtime',
     deployment: args.deployment,
     ...(args.task ? { task: args.task } : {}),
-    ...telegramChatOf({ id: args.chatId ?? null, channel: args.chatChannel ?? null }),
+    ...(args.telegramChat ?? {}),
     ...(args.workspaceGit ? { workspaceGit: args.workspaceGit } : {}),
     ...(args.workspaces && args.workspaces.length > 0 ? { workspaces: args.workspaces } : {}),
     ...(args.conversation ? { conversation: args.conversation } : {}),
@@ -724,6 +726,11 @@ export async function runCliRuntimeJob(args: {
           answersWhileJobId: job.answersWhileJobId ?? null,
         })
       : null;
+    // Le chat du job tel que le modèle le lit : son handle, s'il est sur Telegram (#824).
+    const telegramChat = await telegramChatOf(db, job.entityId ?? null, {
+      id: job.chatId ?? null,
+      channel: job.chatChannel ?? null,
+    });
     systemPrompt = await buildSystemPrompt(
       agentRow,
       db,
@@ -731,8 +738,7 @@ export async function runCliRuntimeJob(args: {
         origin: job.channel ?? 'unknown',
         deployment: await getDeploymentContext(db, job.entityId ?? undefined),
         task: job.task,
-        chatId: job.chatId,
-        chatChannel: job.chatChannel ?? null,
+        telegramChat,
         workspaceGit,
         workspaces: args.workspaces,
         ...(conversation ? { conversation } : {}),

@@ -20,9 +20,13 @@ import {
   isConversationAllowed,
   getBindingCredentials,
   getChannelBinding,
+  conversationHandleFor,
+  resolveConversationHandle,
 } from '@nodal-agents/db';
+import { CONVERSATION_HANDLE_RE, isConversationHandle } from '@nodal-agents/shared';
 import {
   defaultSendChannel,
+  isTransportChannel,
   jobChatOn,
   type ChannelKind,
   type JobChat,
@@ -171,10 +175,105 @@ export function resetDeliveryCounterForTests(jobId?: string): void {
   }
 }
 
+// ─── A conversation named by its handle (#824) ─────────────────────────────
+
+/**
+ * A send tool's `chatId`: a conversation address the model was given (a
+ * handle), or a raw numeric chat id — the form every send tool took before
+ * handles, which an agent may have kept in its memory.
+ */
+export const CHAT_ID_ARGUMENT_RE = new RegExp(
+  `^(?:-?[0-9]+|${CONVERSATION_HANDLE_RE.source.slice(1, -1)})$`,
+);
+
+export const CHAT_ID_ARGUMENT_HINT =
+  'must be a conversation address you were given (conv_…), or a numeric chat ID';
+
+/** A send tool's conversation arguments, once a handle has named its conversation. */
+interface ConversationArgument {
+  chatId?: string;
+  channel?: ChannelKind;
+}
+
+/**
+ * What a send tool's `chatId` names. The model reads a conversation address
+ * as a HANDLE (queries/conversation-handles.ts in @nodal-agents/db), never as
+ * the channel's id, so a handle is resolved here, WITHIN THE JOB'S ENTITY, to
+ * the conversation and the channel it belongs to — exactly as if the model had
+ * given both. Every check below then runs on them, unchanged.
+ *
+ * Fail loud, no fallback:
+ *   - a handle this entity does not know → `conversation_handle_unknown`
+ *     (another entity's handle included: it names nothing here);
+ *   - a handle whose channel contradicts an explicit `channel` argument →
+ *     `conversation_handle_channel_mismatch` — the handle carries its channel,
+ *     and sending a Telegram chat id through Discord reaches nobody.
+ *
+ * A raw channel id is still accepted, and goes through today's checks
+ * unchanged: an agent may have stored one in its memory.
+ */
+async function conversationArgument(
+  ctx: ToolContext,
+  chatId: string | undefined,
+  channel: ChannelKind | undefined,
+): Promise<ConversationArgument> {
+  if (chatId === undefined || !isConversationHandle(chatId)) {
+    return { ...(chatId !== undefined ? { chatId } : {}), ...(channel ? { channel } : {}) };
+  }
+  const conversation = await resolveConversationHandle(ctx.db, {
+    entityId: ctx.entityId,
+    handle: chatId,
+  });
+  if (conversation === null || !isTransportChannel(conversation.channel)) {
+    const err = new Error(
+      `conversation_handle_unknown: ${chatId} names no conversation of this workspace. Use a ` +
+        'conversation address you were given in this job (Job context, list_conversations), ' +
+        'or omit chatId to reply to the current conversation.',
+    );
+    err.name = 'conversation_handle_unknown';
+    throw err;
+  }
+  if (channel !== undefined && channel !== conversation.channel) {
+    const err = new Error(
+      `conversation_handle_channel_mismatch: ${chatId} is a ${conversation.channel} ` +
+        `conversation, not a ${channel} one. Omit \`channel\`, or give an address on ${channel}.`,
+    );
+    err.name = 'conversation_handle_channel_mismatch';
+    throw err;
+  }
+  return { chatId: conversation.conversationId, channel: conversation.channel };
+}
+
+/**
+ * An error a send tool is about to hand the model, with the conversation's
+ * channel id replaced by its handle wherever the text carries it. A platform's
+ * own error text (a library message, an HTTP error) is not ours to word, and
+ * the model never reads a channel id (#824). The error object is kept — its
+ * name, its class, its partial-send progress — only its message changes.
+ */
+export async function withoutConversationId(
+  err: unknown,
+  ctx: ToolContext,
+  recipient: { chatId: string; channel: ChannelKind },
+): Promise<unknown> {
+  if (!(err instanceof Error) || !err.message.includes(recipient.chatId)) return err;
+  const handle = await conversationHandleFor(ctx.db, {
+    entityId: ctx.entityId,
+    channel: recipient.channel,
+    conversationId: recipient.chatId,
+  });
+  err.message = err.message.replaceAll(recipient.chatId, handle);
+  return err;
+}
+
 // ─── Recipient chatId + authorization (F1) ─────────────────────────────────
 
 /**
- * Resolve the target chatId and authorize it. "The job's chat" below is
+ * Resolve the target chatId and authorize it. An explicit chatId may be a
+ * conversation HANDLE (#824): it is first resolved within the job's entity to
+ * its conversation and channel (`conversationArgument`, above), and everything
+ * below runs on those — the job's own chat given as a handle is still the
+ * job's chat. "The job's chat" below is
  * `jobChatOn(ctx's chat, channel)`: ctx.jobChatId ONLY when it was recorded on
  * the channel this call sends through (#649, review of #657 pass 4) — a chat
  * id does not say its platform, and the first active channel is not its
@@ -215,6 +314,21 @@ export async function resolveRecipientChatId(
   noRecipientErrorName: string,
   explicitChannel?: ChannelKind,
 ): Promise<string> {
+  return (await resolveRecipient(explicitChatId, ctx, noRecipientErrorName, explicitChannel))
+    .chatId;
+}
+
+/**
+ * `resolveRecipientChatId`, with the channel the send goes through: a handle
+ * (`conversationArgument`) names its channel, so the send tools take their
+ * token and their adapter from HERE, never from their raw `channel` argument.
+ */
+export async function resolveRecipient(
+  givenChatId: string | undefined,
+  ctx: ToolContext,
+  noRecipientErrorName: string,
+  givenChannel?: ChannelKind,
+): Promise<{ chatId: string; channel: ChannelKind }> {
   if (ctx.jobId && (deliveryCountsByJob.get(ctx.jobId) ?? 0) >= MAX_DELIVERIES_PER_JOB) {
     const err = new Error(
       `telegram_send_rate_limited: this job has already sent ${MAX_DELIVERIES_PER_JOB} ` +
@@ -225,6 +339,11 @@ export async function resolveRecipientChatId(
     throw err;
   }
 
+  const { chatId: explicitChatId, channel: explicitChannel } = await conversationArgument(
+    ctx,
+    givenChatId,
+    givenChannel,
+  );
   const channel = await resolveChannelForJob(ctx, explicitChannel);
   const chatOfJob = jobChatOn(jobChat(ctx), channel);
   let chatId = explicitChatId ?? chatOfJob;
@@ -280,7 +399,7 @@ export async function resolveRecipientChatId(
     evictOldestIfOverCapacity();
   }
 
-  return chatId;
+  return { chatId, channel };
 }
 
 // ─── Local source-path confinement (F2) ────────────────────────────────────

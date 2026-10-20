@@ -28,6 +28,7 @@ export * from './app-settings.ts';
 export * from './telegram-allowed-chats.ts';
 export * from './channel-bindings.ts';
 export * from './channel-allowed-conversations.ts';
+export * from './conversation-handles.ts';
 export * from './cli-runs.ts';
 export * from './llm-calls.ts';
 export * from './job-deliveries.ts';

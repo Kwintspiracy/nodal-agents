@@ -18,7 +18,7 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, and, sql } from '@nodal-agents/db';
 import type { AnyDrizzleDb, JobTriggerContext } from '@nodal-agents/db';
-import { resolveScheduleNotifyChat } from '@nodal-agents/db';
+import { conversationHandleFor, resolveScheduleNotifyChat } from '@nodal-agents/db';
 import {
   agentJobs,
   jobDeliveries,
@@ -4597,7 +4597,15 @@ describe('executeJob', () => {
     const sp = rows[0]?.systemPrompt ?? '';
     expect(sp).toContain('## Job context');
     expect(sp).toContain('- origin: telegram');
-    expect(sp).toContain('- telegram_chat_id: 12345');
+    // The chat's HANDLE, never its Telegram id (#824): the model reads a
+    // conversation only by its handle, and the send tools take it back.
+    const handle = await conversationHandleFor(db as unknown as AnyDrizzleDb, {
+      entityId: seed.entityId,
+      channel: 'telegram',
+      conversationId: '12345',
+    });
+    expect(sp).toContain(`- telegram_chat_id: ${handle}`);
+    expect(sp).not.toContain('12345');
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
@@ -9391,4 +9399,141 @@ describe('executeJob — la reprise de réparation survit au checkpoint @cap:ver
     // écrirait 0 et la reprise de réparation ne coûterait rien.
     expect(ligne?.chainCount).toBe(1);
   });
+});
+
+// ─── #824 — the delivery notice names the chat by its handle ─────────────────
+//
+// A delegated child that delivers writes `[livraison effectuée : <tool> → chat
+// <x>]` into its result, which its parent READS. `<x>` was the channel's id: a
+// WhatsApp DM's id is a phone number, and it reached the parent's model.
+//
+// Mutation verified: `→ chat ${job.chatId}` put back in withDeliveryNotice →
+// the three channels go red.
+describe('delivery notice of a delegated child (#824) @cap:parler-par-canal-externe/moteur', () => {
+  const CASES = [
+    { channel: 'whatsapp', chatId: '33612345678@s.whatsapp.net' },
+    { channel: 'telegram', chatId: '424242' },
+    { channel: 'discord', chatId: '1188000000000000001' },
+  ] as const;
+
+  for (const c of CASES) {
+    it(`names a ${c.channel} chat by its handle, never by the channel id`, async () => {
+      await db
+        .update(agents)
+        .set({ telegramBotToken: 'fake-token' })
+        .where(eq(agents.id, seed.agentId));
+      if (c.channel !== 'telegram') {
+        await db.insert(channelBindings).values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: c.channel,
+          credentials: JSON.stringify({ botToken: `${c.channel}-token` }),
+          enabled: true,
+        });
+      }
+      try {
+        const [parent] = await db
+          .insert(agentJobs)
+          .values({
+            entityId: seed.entityId,
+            agentId: seed.agentId,
+            channel: c.channel,
+            chatId: c.chatId,
+            chatChannel: c.channel,
+            task: 'Ask the worker',
+            status: 'awaiting_delegation',
+            messages: [
+              { role: 'user', content: 'Ask the worker' },
+              {
+                role: 'assistant',
+                content: [
+                  {
+                    type: 'tool-call',
+                    toolCallId: `assign-824-${c.channel}`,
+                    toolName: 'assign_x',
+                    input: {},
+                  },
+                ],
+              },
+            ],
+            chainCount: 0,
+          })
+          .returning();
+        const [child] = await db
+          .insert(agentJobs)
+          .values({
+            entityId: seed.entityId,
+            agentId: seed.agentId,
+            channel: 'internal',
+            chatId: c.chatId,
+            chatChannel: c.channel,
+            task: 'Tell the user it is done',
+            status: 'pending',
+            parentJobId: parent!.id,
+            delegationDepth: 1,
+            messages: [{ role: 'user', content: 'Tell the user it is done' }],
+            chainCount: 0,
+          })
+          .returning();
+        await db
+          .update(agentJobs)
+          .set({
+            pendingDelegation: {
+              type: 'single',
+              toolUseId: `assign-824-${c.channel}`,
+              toolName: 'assign_x',
+              subJobId: child!.id,
+            },
+          })
+          .where(eq(agentJobs.id, parent!.id));
+
+        const llmClient = makeMockLlmClient([
+          {
+            toolCalls: [
+              {
+                toolCallId: `tc-send-${c.channel}`,
+                toolName: 'telegram_send_message',
+                args: { text: 'done' },
+              },
+              {
+                toolCallId: `tc-rr-${c.channel}`,
+                toolName: 'return_result',
+                args: { status: 'success', result: 'Told the user.' },
+              },
+            ],
+          },
+        ]);
+        const result = await executeJob(child!.id as JobId, makeDeps(llmClient), testEnv);
+        if (result.status !== 'completed') expect.fail(`child ended ${result.status}`);
+
+        const handle = await conversationHandleFor(db as unknown as AnyDrizzleDb, {
+          entityId: seed.entityId,
+          channel: c.channel,
+          conversationId: c.chatId,
+        });
+        // What the child's run hands to its parent…
+        expect(result.result).toBe(
+          `[livraison effectuée : telegram_send_message → chat ${handle}]`,
+        );
+        // And what the parent's model reads next: the child's outcome, handed
+        // back as the result of its delegation call.
+        const [head] = await db
+          .select({ messages: agentJobs.messages })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, parent!.id));
+        const handedBack = JSON.stringify(
+          (head!.messages as Array<{ role: string }>).filter((m) => m.role === 'tool'),
+        );
+        expect(handedBack).toContain(`→ chat ${handle}`);
+        expect(handedBack).not.toContain(c.chatId);
+      } finally {
+        await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+        await db
+          .delete(channelBindings)
+          .where(
+            and(eq(channelBindings.agentId, seed.agentId), eq(channelBindings.channel, c.channel)),
+          );
+      }
+    });
+  }
 });

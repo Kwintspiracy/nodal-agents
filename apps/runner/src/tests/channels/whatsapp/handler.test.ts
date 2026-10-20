@@ -231,6 +231,28 @@ describe('handleWhatsAppMessage — H-1 owner-claim / pending authorization', ()
     expect(jobs).toHaveLength(0);
   });
 
+  // #824 : le nom gardé est un NOM. `list_conversations` le rend au modèle, et
+  // un JID porte le numéro de téléphone. Mutation vérifiée : le repli remis à
+  // `message.senderJid` → ce test rougit.
+  it('a requester WITHOUT a display name is stored as the fixed fallback, never their JID @cap:parler-par-canal-externe/moteur', async () => {
+    const agentId = await freshBot();
+    await claimOwner(agentId, dm('owner here', 'dm-owner-nameless'));
+    const jid = '33698765432@s.whatsapp.net';
+    const result = await call(agentId, dm('let me in', jid, jid, null));
+
+    expect(result.pendingAuth).toMatchObject({ requesterName: 'Someone' });
+    const [pending] = await db
+      .select({ requesterName: channelAllowedConversations.requesterName })
+      .from(channelAllowedConversations)
+      .where(
+        and(
+          eq(channelAllowedConversations.agentId, agentId),
+          eq(channelAllowedConversations.conversationId, jid),
+        ),
+      );
+    expect(pending?.requesterName).toBe('Someone');
+  });
+
   it('a repeat DM from an already-pending conversation does NOT re-ask the owner (no spam)', async () => {
     const agentId = await freshBot();
     await claimOwner(agentId, dm('owner here', 'dm-owner-3'));

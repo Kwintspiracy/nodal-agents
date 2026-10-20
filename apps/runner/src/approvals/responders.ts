@@ -16,11 +16,11 @@
 // supposé.
 //
 // L'identité part chez le fournisseur du modèle avec les mots : elle est
-// écrite par `personForModel` (#810) — l'id du compte, jamais son e-mail ;
-// l'id de la conversation du canal, celui que le modèle lit partout ailleurs
-// et que ses outils d'envoi acceptent.
+// écrite par `personForModel` (#810) — l'id du compte, jamais son e-mail ; le
+// HANDLE de la conversation du canal (#824), celui que le modèle lit partout
+// ailleurs et que ses outils d'envoi acceptent, jamais l'identifiant du canal.
 
-import { and, eq } from '@nodal-agents/db';
+import { and, conversationHandleFor, eq } from '@nodal-agents/db';
 import {
   channelAllowedConversations,
   entityMembers,
@@ -98,8 +98,14 @@ export async function readResponder(
             ),
           )
           .limit(1);
+  // Le handle se nomme dans l'entité de la carte ; sans entité, la forme fixe
+  // le dit (`personForModel`). La décision ne dépend jamais de cette identité.
+  const address =
+    entityId === null
+      ? null
+      : await conversationHandleFor(db, { entityId, channel, conversationId });
   return {
     role: row?.role ?? UNLISTED_ROLE,
-    identity: personForModel({ kind: 'conversation', channel, conversationId }),
+    identity: personForModel({ kind: 'conversation', channel, address }),
   };
 }

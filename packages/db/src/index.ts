@@ -18,6 +18,13 @@ export { assertMasterKeyRestorable } from './queries/master-key-guard.ts';
 export type { AssertMasterKeyRestorableOptions } from './queries/master-key-guard.ts';
 export { designateChat, resolveScheduleNotifyChat } from './queries/designated-chat.ts';
 export type { DesignatedChat } from './queries/designated-chat.ts';
+export {
+  conversationHandlesFor,
+  conversationHandleFor,
+  conversationsOfHandles,
+  resolveConversationHandle,
+  showConversationsTo,
+} from './queries/conversation-handles.ts';
 export { isChatAllowed } from './queries/telegram-allowed.ts';
 export { dropApprovalRulesForDetachedSkill } from './queries/skill-approval-rules.ts';
 export { getMcpApprovalContext } from './queries/mcp-approval-context.ts';

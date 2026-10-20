@@ -47,6 +47,7 @@ import {
   verificationRuns,
   telegramAllowedChats,
   channelAllowedConversations,
+  showConversationsTo,
 } from '@nodal-agents/db';
 import { normalizePath, redactSecretsInText, stripGroupPrefix } from '@nodal-agents/shared';
 import { folderChatsQuery, folderConversationsQuery } from './folder-threads-sql.ts';
@@ -2053,7 +2054,9 @@ export async function getConversationThreadAction(
       endedAt: allTerminal ? lastCompletedAt : null,
     });
 
-    return ok({
+    // Le modèle nomme une conversation par son HANDLE (#824) ; la personne lit
+    // la conversation qu'il nomme, partout dans ce fil, en une lecture.
+    const view = {
       conversation: {
         id: conv.id,
         channel: conv.channel,
@@ -2101,7 +2104,6 @@ export async function getConversationThreadAction(
         deliverables: deliverableStatuses(unconfiguredRows),
       },
       cost,
-      deliveries: deliveryRows,
       live: !allTerminal,
       // Les mêmes lignes que `allTerminal`, filtrées plutôt que recomptées.
       liveJobs: headRows
@@ -2109,6 +2111,12 @@ export async function getConversationThreadAction(
         .map((r) => ({ id: r.job.id, status: r.job.status })),
       truncated,
       canReply: conv.channel === 'dashboard',
+    };
+    return ok({
+      ...(await showConversationsTo(db, session.entityId, view)),
+      // Le reçu de ce qui est PARTI, avec la conversation que le runner a
+      // résolue : rendu tel quel (#824).
+      deliveries: deliveryRows,
     });
   } catch (err) {
     console.error('[getConversationThreadAction]', err);
