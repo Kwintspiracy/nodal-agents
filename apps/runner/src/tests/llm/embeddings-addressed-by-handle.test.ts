@@ -12,7 +12,7 @@
 // Mutation vérifiée : `embeddingsAddressedByHandle` retiré de
 // `createRunnerEmbeddingClient` → les trois cas rougissent.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -144,5 +144,76 @@ describe('the embedding provider reads conversations by their handle (#824) @cap
       entityId: seed.entityId,
     });
     expect(received).toEqual([`comment joindre ${await handleOfWa()} ?`]);
+  });
+
+  // #824, passe 3 : un fait sans espace. Mutations vérifiées : la dérivation
+  // par l'agent retirée (`workspaceOf`) → les deux cas « derived » rougissent ;
+  // `workspaceOf` qui laisse passer le texte brut → les deux cas « no
+  // workspace at all » rougissent (le fournisseur reçoit le numéro).
+  it('a memory with no workspace of its own: its agent gives it one — write AND backfill', async () => {
+    const written = `Marie (sans espace, écrite) : ${WA}`;
+    await createMemory(
+      any(),
+      {
+        entity_id: null,
+        agent_id: seed.agentId,
+        fact: written,
+        category: 'context',
+        importance: 3,
+        source: 'agent',
+        skill_tags: [],
+      },
+      client,
+    );
+    const legacy = `Marie (sans espace, ancienne) : ${WA}`;
+    await db.insert(agentMemory).values({ entityId: null, agentId: seed.agentId, fact: legacy });
+    await backfillEmbeddings(any(), client);
+    const h = await handleOfWa();
+    expect(received).toEqual(
+      expect.arrayContaining([
+        `Marie (sans espace, écrite) : ${h}`,
+        `Marie (sans espace, ancienne) : ${h}`,
+      ]),
+    );
+    expect(received.join(' | ')).not.toContain(WA);
+  });
+
+  it('no workspace at all, not even through an agent: NOT embedded, said with the row id, vector NULL — write AND backfill', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const memory = await createMemory(
+        any(),
+        {
+          entity_id: null,
+          agent_id: null,
+          fact: `orpheline écrite : ${WA}`,
+          category: 'context',
+          importance: 3,
+          source: 'agent',
+          skill_tags: [],
+        },
+        client,
+      );
+      const [orphan] = await db
+        .insert(agentMemory)
+        .values({ entityId: null, agentId: null, fact: `orpheline ancienne : ${WA}` })
+        .returning({ id: agentMemory.id });
+      await backfillEmbeddings(any(), client);
+
+      // The provider never received either text.
+      expect(received.join(' | ')).not.toContain(WA);
+      expect(received.join(' | ')).not.toContain('orpheline');
+      for (const id of [memory.id, orphan!.id]) {
+        const [row] = await db
+          .select({ embedding: agentMemory.embedding })
+          .from(agentMemory)
+          .where(eq(agentMemory.id, id));
+        expect(row!.embedding).toBeNull();
+        const said = warn.mock.calls.map((c) => c.map(String).join(' ')).join(' | ');
+        expect(said).toContain(`${id} has no workspace`);
+      }
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

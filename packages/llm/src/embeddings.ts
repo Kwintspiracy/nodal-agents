@@ -23,6 +23,10 @@ export interface EmbeddingProviderConfig {
  */
 export interface EmbeddingScope {
   entityId: string | null;
+  /** The agent the text belongs to — its workspace when `entityId` is null (#824). */
+  agentId?: string | null;
+  /** Names the text in a refusal (« memory <id> »). */
+  subject?: string;
 }
 
 export interface EmbeddingClient {

@@ -241,6 +241,51 @@ async function knownConversationIds(
 }
 
 /**
+ * À qui appartient un texte destiné à un fournisseur (#824, passe 3) : son
+ * espace, ou celui de l'agent qui l'a. `subject` nomme le texte dans l'erreur
+ * (« memory <id> », « agent <id> »).
+ */
+export interface ConversationScope {
+  entityId: string | null;
+  agentId?: string | null;
+  subject?: string;
+}
+
+/**
+ * Un texte dont aucun espace n'est connu : la frontière ne sait pas quels
+ * identifiants il cite, donc il ne part pas (invariant #4). Jamais les
+ * identifiants d'un AUTRE espace en repli.
+ */
+export class ConversationScopeUnknownError extends Error {
+  constructor(subject: string) {
+    super(
+      `conversation_scope_unknown: ${subject} belongs to no workspace, so the conversation ids ` +
+        'it may quote cannot be replaced by their handles; it is not sent to the provider.',
+    );
+    this.name = 'conversation_scope_unknown';
+  }
+}
+
+/**
+ * L'espace d'un texte, construit en UN endroit pour les trois chemins (chat,
+ * CLI, embeddings) : le sien, sinon celui de son agent (`agents.entity_id` —
+ * un agent appartient toujours à un espace : `createAgentRepo`, seul
+ * écrivain, l'exige). Aucun des deux : `ConversationScopeUnknownError`.
+ */
+async function workspaceOf(db: AnyDrizzleDb, scope: ConversationScope): Promise<string> {
+  if (scope.entityId) return scope.entityId;
+  if (scope.agentId) {
+    const [agent] = await db
+      .select({ entityId: agents.entityId })
+      .from(agents)
+      .where(eq(agents.id, scope.agentId))
+      .limit(1);
+    if (agent?.entityId) return agent.entityId;
+  }
+  throw new ConversationScopeUnknownError(scope.subject ?? 'a text for a model');
+}
+
+/**
  * Ce qui part chez le fournisseur d'un modèle, chaque identifiant de
  * conversation connu de l'entité remplacé par son HANDLE (#824, passe 1 de la
  * revue). LA frontière, une par runtime : le client LLM d'un agent
@@ -261,10 +306,10 @@ async function knownConversationIds(
  */
 export async function conversationIdsAsHandles<T>(
   db: AnyDrizzleDb,
-  entityId: string | null,
+  scope: ConversationScope,
   value: T,
 ): Promise<T> {
-  if (!entityId) return value;
+  const entityId = await workspaceOf(db, scope);
   const known = await knownConversationIds(db, entityId);
   const single = [...known].filter(([, channels]) => channels.size === 1);
   if (single.length < known.size) {

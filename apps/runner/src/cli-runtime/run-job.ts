@@ -804,7 +804,7 @@ export async function runCliRuntimeJob(args: {
   try {
     turn = await binding.run(
       await cliTurnForModel(
-        { db, entityId: job.entityId ?? null },
+        { db, entityId: job.entityId ?? null, agentId: agentRow.id },
         {
           // Les mots de qui a demandé, puis la note d'une remise sous son cadre
           // (handoff.ts) : la même ouverture que la boucle Nodal, en un texte.

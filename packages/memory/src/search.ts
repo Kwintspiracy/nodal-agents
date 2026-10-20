@@ -80,7 +80,11 @@ export async function searchMemories(
   try {
     // The query goes through the SAME rewrite as the memories it is compared
     // with (#824): both sides are embedded with handles, never one raw.
-    embedding = await embeddingClient.embed(query, { entityId: entityId ?? null });
+    embedding = await embeddingClient.embed(query, {
+      entityId: entityId ?? null,
+      agentId: agentId ?? null,
+      subject: 'a memory search',
+    });
   } catch (err) {
     // Search keeps working via keyword fallback so in-flight jobs are not
     // killed, but the misconfiguration is logged loudly (invariant #4).

@@ -6,7 +6,7 @@
 // vector search until backfilled. This function is idempotent: it only touches
 // rows where embedding IS NULL, so it is safe to re-run.
 
-import { eq, isNull } from '@nodal-agents/db';
+import { ConversationScopeUnknownError, eq, isNull } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { agentMemory } from '@nodal-agents/db';
 import type { EmbeddingClient } from '@nodal-agents/llm';
@@ -38,7 +38,12 @@ export async function backfillEmbeddings(
   embeddingClient: EmbeddingClient,
 ): Promise<BackfillResult> {
   const rows = await db
-    .select({ id: agentMemory.id, fact: agentMemory.fact, entityId: agentMemory.entityId })
+    .select({
+      id: agentMemory.id,
+      fact: agentMemory.fact,
+      entityId: agentMemory.entityId,
+      agentId: agentMemory.agentId,
+    })
     .from(agentMemory)
     .where(isNull(agentMemory.embedding));
 
@@ -46,12 +51,26 @@ export async function backfillEmbeddings(
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]!;
     try {
-      const embedding = await embeddingClient.embed(row.fact, { entityId: row.entityId });
+      const embedding = await embeddingClient.embed(row.fact, {
+        entityId: row.entityId,
+        agentId: row.agentId,
+        subject: `memory ${row.id}`,
+      });
       if (embedding) {
         await db.update(agentMemory).set({ embedding }).where(eq(agentMemory.id, row.id));
         embedded += 1;
       }
     } catch (err) {
+      if (err instanceof ConversationScopeUnknownError) {
+        // No workspace, not even through its agent: its text cannot pass the
+        // conversation-handle boundary, so it is NOT embedded (#824). It keeps
+        // keyword recall; vector recall skips it.
+        console.warn(
+          `[memory] backfill: row ${row.id} has no workspace — not embedded, its vector stays ` +
+            'NULL (keyword search only).',
+        );
+        continue;
+      }
       console.warn(`[memory] backfill: row ${row.id} failed (will retry next run):`, err);
     }
 

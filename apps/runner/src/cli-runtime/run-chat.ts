@@ -257,7 +257,7 @@ export async function runCliRuntimeChatTurn(args: {
   try {
     turn = await binding.run(
       await cliTurnForModel(
-        { db, entityId },
+        { db, entityId, agentId: agentRow.id },
         {
           message,
           personality: systemPrompt,

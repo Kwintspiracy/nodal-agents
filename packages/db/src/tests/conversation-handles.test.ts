@@ -288,7 +288,7 @@ describe('stored text reaches the model with handles, never the ids @cap:parler-
         },
       ],
     };
-    const shown = await conversationIdsAsHandles(db, entityId, stored);
+    const shown = await conversationIdsAsHandles(db, { entityId }, stored);
     const text = JSON.stringify(shown);
     for (const id of [WA_DM, '199791464', '1188000000000000001', 'C0SLACK01']) {
       expect({ id, leaks: text.includes(id) }).toEqual({ id, leaks: false });
@@ -305,7 +305,7 @@ describe('stored text reaches the model with handles, never the ids @cap:parler-
   it('only a WHOLE id: a longer number, a negative one, an id inside a JID stay as they are', async () => {
     await allow('telegram', '555');
     const text = 'chat 555, not 5551, not -555, not 555@s.whatsapp.net, not a555, not 555_x; (555)';
-    const shown = await conversationIdsAsHandles(db, entityId, text);
+    const shown = await conversationIdsAsHandles(db, { entityId }, text);
     const h = await conversationHandleFor(db, {
       entityId,
       channel: 'telegram',
@@ -349,7 +349,7 @@ describe('stored text reaches the model with handles, never the ids @cap:parler-
         { role: 'user', content: [{ type: 'image', image: bytes }] },
       ],
     };
-    const shown = await conversationIdsAsHandles(db, entityId, value);
+    const shown = await conversationIdsAsHandles(db, { entityId }, value);
     expect(shown.prompt).toBe(value.prompt);
     expect(shown.messages[0]!.content[0]).toMatchObject({
       text: expect.stringMatching(CONVERSATION_HANDLE_RE),
@@ -361,11 +361,39 @@ describe('stored text reaches the model with handles, never the ids @cap:parler-
   it('an id known on two channels says nothing of which one: left as it is', async () => {
     await allow('telegram', '424242');
     await allow('discord', '424242');
-    expect(await conversationIdsAsHandles(db, entityId, 'to 424242')).toBe('to 424242');
+    expect(await conversationIdsAsHandles(db, { entityId }, 'to 424242')).toBe('to 424242');
   });
 
-  it('no entity, nothing known: the value comes back as it is', async () => {
-    expect(await conversationIdsAsHandles(db, null, `x ${WA_DM}`)).toBe(`x ${WA_DM}`);
-    expect(await conversationIdsAsHandles(db, entityId, `x ${WA_DM}`)).toBe(`x ${WA_DM}`);
+  it('nothing known in the workspace: the value comes back as it is', async () => {
+    expect(await conversationIdsAsHandles(db, { entityId }, `x ${WA_DM}`)).toBe(`x ${WA_DM}`);
+  });
+
+  // #824, passe 3 : jamais de texte brut en silence. Mutations vérifiées : la
+  // dérivation par l'agent retirée de `workspaceOf` → « through its agent »
+  // rougit ; `workspaceOf` qui rend '' au lieu de lever → « refused » rougit.
+  it('no workspace on the text: derived from its agent, at the one place the scope is built', async () => {
+    await allow('whatsapp', WA_DM);
+    const shown = await conversationIdsAsHandles(
+      db,
+      { entityId: null, agentId, subject: 'memory m-1' },
+      `x ${WA_DM}`,
+    );
+    expect(shown).toBe(
+      `x ${await conversationHandleFor(db, { entityId, channel: 'whatsapp', conversationId: WA_DM })}`,
+    );
+  });
+
+  it('no workspace even through its agent: refused, loud — never sent raw, never another workspace', async () => {
+    await allow('whatsapp', WA_DM);
+    for (const scope of [
+      { entityId: null, subject: 'memory m-2' },
+      { entityId: null, agentId: null, subject: 'memory m-2' },
+      { entityId: null, agentId: '00000000-0000-4000-8000-000000000000', subject: 'memory m-2' },
+    ]) {
+      await expect(conversationIdsAsHandles(db, scope, `x ${WA_DM}`)).rejects.toMatchObject({
+        name: 'conversation_scope_unknown',
+        message: expect.stringContaining('memory m-2'),
+      });
+    }
   });
 });

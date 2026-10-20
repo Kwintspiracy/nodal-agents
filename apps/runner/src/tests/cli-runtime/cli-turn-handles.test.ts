@@ -170,6 +170,38 @@ describe('a CLI turn reads conversations by their handle (#824) @cap:parler-par-
     30_000,
   );
 
+  it('a job with no workspace of its own (an internal /api/agent caller): its agent gives it one', async () => {
+    await db.update(agents).set({ runtime: 'claude-code' }).where(eq(agents.id, seed.agentId));
+    const task = `Préviens ${WA}`;
+    const [job] = await db
+      .insert(agentJobs)
+      .values({ entityId: null, agentId: seed.agentId, channel: 'api', task, status: 'processing' })
+      .returning({ id: agentJobs.id });
+    fakeRun.mockReset();
+    fakeRun.mockResolvedValueOnce(finished('done'));
+    await runCliRuntimeJob({
+      db: db as unknown as Parameters<typeof runCliRuntimeJob>[0]['db'],
+      jobId: job!.id,
+      job: {
+        entityId: null,
+        chatId: null,
+        channel: 'api',
+        conversationId: null,
+        task,
+        triggerContext: null,
+      },
+      agentRow: baseAgent,
+      workspaces: [{ label: 'ws0', path: workspace }],
+      claimGeneration: 0,
+    });
+    const handle = await conversationHandleFor(db as unknown as AnyDrizzleDb, {
+      entityId: seed.entityId,
+      channel: 'whatsapp',
+      conversationId: WA,
+    });
+    expect(fakeRun.mock.calls[0]![0].message).toBe(`Préviens ${handle}`);
+  }, 30_000);
+
   it('every launch of a CLI turn goes through the boundary — the job path AND the chat path', () => {
     for (const file of ['run-job.ts', 'run-chat.ts']) {
       const src = readFileSync(join(__dirname, '..', '..', 'cli-runtime', file), 'utf8');

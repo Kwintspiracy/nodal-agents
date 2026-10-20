@@ -15,7 +15,7 @@
 // l'audit lisent la vérité.
 
 import { conversationIdsAsHandles } from '@nodal-agents/db';
-import type { AnyDrizzleDb } from '@nodal-agents/db';
+import type { AnyDrizzleDb, ConversationScope } from '@nodal-agents/db';
 import type { EmbeddingClient, NodalLlmClient } from '@nodal-agents/llm';
 
 type ModelText = { system?: unknown; prompt?: unknown; messages?: unknown };
@@ -23,14 +23,14 @@ type ModelText = { system?: unknown; prompt?: unknown; messages?: unknown };
 /** Les champs lus par le modèle, relus ; le reste de l'appel tel quel. */
 async function forModel<A extends ModelText>(
   db: AnyDrizzleDb,
-  entityId: string | null,
+  scope: ConversationScope,
   args: A,
 ): Promise<A> {
   const picked: ModelText = {};
   for (const k of ['system', 'prompt', 'messages'] as const) {
     if (args[k] !== undefined) picked[k] = args[k];
   }
-  const shown = await conversationIdsAsHandles(db, entityId, picked);
+  const shown = await conversationIdsAsHandles(db, scope, picked);
   return { ...args, ...shown };
 }
 
@@ -44,20 +44,15 @@ async function forModel<A extends ModelText>(
 export function addressedByHandle(
   client: NodalLlmClient,
   db: AnyDrizzleDb,
-  entityId: string | null,
+  scope: ConversationScope,
 ): NodalLlmClient {
   return {
     config: client.config,
     capabilities: client.capabilities,
     generateText: (async (args, opts) =>
-      client.generateText(
-        await forModel(db, entityId, args),
-        opts,
-      )) as NodalLlmClient['generateText'],
+      client.generateText(await forModel(db, scope, args), opts)) as NodalLlmClient['generateText'],
     generateObject: (async (args) =>
-      client.generateObject(
-        await forModel(db, entityId, args),
-      )) as NodalLlmClient['generateObject'],
+      client.generateObject(await forModel(db, scope, args))) as NodalLlmClient['generateObject'],
     streamText: () => {
       throw new Error(
         'streamText_unavailable: a request to a model goes through the conversation-handle ' +
@@ -76,6 +71,10 @@ export function addressedByHandle(
  * workspace the text belongs to (`EmbeddingScope`, required on every call), so
  * a memory embedded with a handle is compared with a query embedded with the
  * same handle. Wrapped once, where the client is created (`createRunnerDeps`).
+ *
+ * A text whose workspace is unknown even through its agent is NOT embedded:
+ * the rewrite throws `ConversationScopeUnknownError`, and each caller keeps
+ * the vector null and says so (#824, pass 3).
  */
 export function embeddingsAddressedByHandle(
   client: EmbeddingClient,
@@ -84,6 +83,6 @@ export function embeddingsAddressedByHandle(
   return {
     dimensions: client.dimensions,
     embed: async (text, scope) =>
-      client.embed(await conversationIdsAsHandles(db, scope.entityId, text), scope),
+      client.embed(await conversationIdsAsHandles(db, scope, text), scope),
   };
 }

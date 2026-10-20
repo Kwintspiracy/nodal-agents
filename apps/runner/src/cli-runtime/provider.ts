@@ -70,13 +70,20 @@ export function resolveRuntime(runtime: string): RuntimeBinding | null {
  * run-chat.ts — architecture.test.ts).
  */
 export async function cliTurnForModel(
-  scope: { db: AnyDrizzleDb; entityId: string | null },
+  scope: { db: AnyDrizzleDb; entityId: string | null; agentId: string },
   opts: CliTurnOptions,
 ): Promise<CliTurnOptions> {
-  const shown = await conversationIdsAsHandles(scope.db, scope.entityId, {
-    message: opts.message,
-    personality: opts.personality,
-  });
+  // The job's workspace, else its agent's (the one place it is derived,
+  // `conversationIdsAsHandles`); none → the turn is refused, never sent raw.
+  const shown = await conversationIdsAsHandles(
+    scope.db,
+    {
+      entityId: scope.entityId,
+      agentId: scope.agentId,
+      subject: `a CLI turn of agent ${scope.agentId}`,
+    },
+    { message: opts.message, personality: opts.personality },
+  );
   return { ...opts, message: shown.message, personality: shown.personality };
 }
 

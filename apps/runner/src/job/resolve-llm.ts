@@ -183,7 +183,12 @@ export async function resolveAgentLlmClient(
       ok: true,
       // Every request names conversations by their handle, never by the
       // channel's id — stored text included (#824, addressed-by-handle.ts).
-      client: addressedByHandle(client, db, agent.entityId),
+      // The scope is the agent's workspace; none → every request is refused
+      // (`ConversationScopeUnknownError`), never sent raw.
+      client: addressedByHandle(client, db, {
+        entityId: agent.entityId,
+        subject: 'a model request of an agent with no workspace',
+      }),
       primaryProvider: effectivePrimary.provider,
       chainLength: configs.length,
     };
