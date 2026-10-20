@@ -81,3 +81,73 @@ export function showConversationHandles<T>(
   };
   return walk(value) as T;
 }
+
+// ─── Les identifiants DÉJÀ écrits, à la frontière du modèle (#824, passe 1) ──
+//
+// Les écrivains écrivent désormais des handles, mais le texte déjà stocké — le
+// résultat d'un job rejoué en historique, les messages d'un job repris, une
+// mémoire — porte encore l'identifiant du canal. Ce qui part chez le
+// fournisseur passe donc par `replaceConversationIds` : chaque identifiant de
+// conversation CONNU de l'entité (une liste exacte, jamais une forme devinée)
+// devient son handle. Un identifiant ne compte que s'il est entier : ni
+// précédé ni suivi d'un caractère qui le prolongerait (`5551` ne contient pas
+// le chat `555`, `-100123` n'est pas le chat `100123`, `555@s.whatsapp.net`
+// n'est pas le chat `555`).
+
+/** Les champs d'une requête qui ne sont pas du texte lu par le modèle : signatures du fournisseur. */
+const NOT_MODEL_TEXT = new Set(['providerOptions', 'providerMetadata']);
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Le motif qui trouve ces identifiants EXACTS dans un texte, le plus long
+ * d'abord ; `null` quand il n'y en a aucun.
+ */
+export function conversationIdsPattern(ids: Iterable<string>): RegExp | null {
+  const list = [...new Set(ids)].filter((id) => id.length > 0);
+  if (list.length === 0) return null;
+  list.sort((a, b) => b.length - a.length);
+  return new RegExp(
+    `(?<![A-Za-z0-9_@.+\\-])(?:${list.map(escapeRegExp).join('|')})(?![A-Za-z0-9_@])`,
+    'g',
+  );
+}
+
+function walkModelText(value: unknown, onString: (s: string) => string): unknown {
+  if (typeof value === 'string') return onString(value);
+  if (Array.isArray(value)) return value.map((v) => walkModelText(v, onString));
+  if (isPlainObject(value)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, inner] of Object.entries(value)) {
+      out[k] = NOT_MODEL_TEXT.has(k) ? inner : walkModelText(inner, onString);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** Les identifiants du motif présents dans une valeur destinée à un modèle. */
+export function conversationIdsIn(value: unknown, pattern: RegExp): Set<string> {
+  const found = new Set<string>();
+  walkModelText(value, (s) => {
+    for (const m of s.matchAll(pattern)) found.add(m[0]);
+    return s;
+  });
+  return found;
+}
+
+/**
+ * La même valeur, chaque identifiant trouvé remplacé par son handle. Un
+ * identifiant sans handle dans la table reste tel quel (l'appelant n'en donne
+ * pas : il mint d'abord ceux qu'il a trouvés).
+ */
+export function replaceConversationIds<T>(
+  value: T,
+  pattern: RegExp,
+  handles: ReadonlyMap<string, string>,
+): T {
+  if (handles.size === 0) return value;
+  return walkModelText(value, (s) => s.replace(pattern, (id) => handles.get(id) ?? id)) as T;
+}

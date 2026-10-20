@@ -20,6 +20,7 @@ import {
   conversationsOfHandles,
   resolveConversationHandle,
   showConversationsTo,
+  conversationIdsAsHandles,
 } from '../queries/conversation-handles.ts';
 
 const WA_DM = '33612345678@s.whatsapp.net';
@@ -226,5 +227,145 @@ describe('conversation handles @cap:parler-par-canal-externe/moteur', () => {
         .insert(schema.conversationHandles)
         .values({ id: WA_DM, entityId, channel: 'whatsapp', conversationId: WA_DM }),
     ).rejects.toThrow();
+  });
+});
+
+// ─── #824, passe 1 : le texte DÉJÀ écrit, à la frontière du modèle ──────────
+//
+// Mutations vérifiées :
+//   - `conversationIdsAsHandles` rendant `value` tel quel → « every id the
+//     entity knows » rougit ;
+//   - la garde de bord retirée de `conversationIdsPattern` (motif sans
+//     lookbehind/lookahead) → « only a WHOLE id » rougit.
+describe('stored text reaches the model with handles, never the ids @cap:parler-par-canal-externe/moteur', () => {
+  async function allow(channel: string, conversationId: string, status = 'active') {
+    if (channel === 'telegram') {
+      await db
+        .insert(schema.telegramAllowedChats)
+        .values({ entityId, agentId, chatId: conversationId, status });
+      return;
+    }
+    await db
+      .insert(schema.channelAllowedConversations)
+      .values({ entityId, agentId, channel, conversationId, status });
+  }
+
+  it('every id the entity knows — allowlists, pending requests, discovered conversations — becomes its handle', async () => {
+    await allow('whatsapp', WA_DM);
+    await allow('telegram', '199791464');
+    await allow('discord', '1188000000000000001', 'pending');
+    // Discovered by list_conversations, never approved: it has a handle row.
+    const discovered = await conversationHandleFor(db, {
+      entityId,
+      channel: 'slack',
+      conversationId: 'C0SLACK01',
+    });
+    const stored = {
+      system: `Memory: Marie's WhatsApp is ${WA_DM}.`,
+      messages: [
+        { role: 'user', content: 'reply to 199791464' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 't1',
+              toolName: 'telegram_send_message',
+              input: { chatId: '1188000000000000001', text: 'hi' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 't1',
+              toolName: 'list_conversations',
+              output: { type: 'json', value: { conversations: [{ conversationId: 'C0SLACK01' }] } },
+            },
+          ],
+        },
+      ],
+    };
+    const shown = await conversationIdsAsHandles(db, entityId, stored);
+    const text = JSON.stringify(shown);
+    for (const id of [WA_DM, '199791464', '1188000000000000001', 'C0SLACK01']) {
+      expect({ id, leaks: text.includes(id) }).toEqual({ id, leaks: false });
+    }
+    const handleOf = (channel: string, conversationId: string) =>
+      conversationHandleFor(db, { entityId, channel, conversationId });
+    expect(shown.system).toBe(`Memory: Marie's WhatsApp is ${await handleOf('whatsapp', WA_DM)}.`);
+    expect(text).toContain(await handleOf('telegram', '199791464'));
+    expect(text).toContain(discovered);
+    // The stored value is untouched: the dashboard reads the truth.
+    expect(stored.system).toContain(WA_DM);
+  });
+
+  it('only a WHOLE id: a longer number, a negative one, an id inside a JID stay as they are', async () => {
+    await allow('telegram', '555');
+    const text = 'chat 555, not 5551, not -555, not 555@s.whatsapp.net, not a555, not 555_x; (555)';
+    const shown = await conversationIdsAsHandles(db, entityId, text);
+    const h = await conversationHandleFor(db, {
+      entityId,
+      channel: 'telegram',
+      conversationId: '555',
+    });
+    expect(shown).toBe(
+      `chat ${h}, not 5551, not -555, not 555@s.whatsapp.net, not a555, not 555_x; (${h})`,
+    );
+  });
+
+  it("another entity's conversation, an unknown id, a provider signature: untouched", async () => {
+    const [other] = await db
+      .insert(schema.entities)
+      .values({ userId, name: 'Other', slug: `other-${Date.now()}` })
+      .returning();
+    const [theirAgent] = await db
+      .insert(schema.agents)
+      .values({
+        entityId: other!.id,
+        name: 'Their bot',
+        slug: `their-${Date.now()}`,
+        personality: 'p',
+      })
+      .returning();
+    await db.insert(schema.channelAllowedConversations).values({
+      entityId: other!.id,
+      agentId: theirAgent!.id,
+      channel: 'discord',
+      conversationId: '777000000000000001',
+      status: 'active',
+    });
+    await allow('whatsapp', WA_DM);
+    const bytes = new Uint8Array([1, 2, 3]);
+    const value = {
+      prompt: 'see 777000000000000001 and 33600000000@s.whatsapp.net',
+      messages: [
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: WA_DM, providerOptions: { google: { sig: WA_DM } } }],
+        },
+        { role: 'user', content: [{ type: 'image', image: bytes }] },
+      ],
+    };
+    const shown = await conversationIdsAsHandles(db, entityId, value);
+    expect(shown.prompt).toBe(value.prompt);
+    expect(shown.messages[0]!.content[0]).toMatchObject({
+      text: expect.stringMatching(CONVERSATION_HANDLE_RE),
+      providerOptions: { google: { sig: WA_DM } },
+    });
+    expect((shown.messages[1]!.content[0] as { image: unknown }).image).toBe(bytes);
+  });
+
+  it('an id known on two channels says nothing of which one: left as it is', async () => {
+    await allow('telegram', '424242');
+    await allow('discord', '424242');
+    expect(await conversationIdsAsHandles(db, entityId, 'to 424242')).toBe('to 424242');
+  });
+
+  it('no entity, nothing known: the value comes back as it is', async () => {
+    expect(await conversationIdsAsHandles(db, null, `x ${WA_DM}`)).toBe(`x ${WA_DM}`);
+    expect(await conversationIdsAsHandles(db, entityId, `x ${WA_DM}`)).toBe(`x ${WA_DM}`);
   });
 });

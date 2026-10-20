@@ -29,6 +29,7 @@ export const ChannelAllowedConversationSchema = z
     role: ChannelConversationRoleSchema,
     status: ChannelConversationStatusSchema,
     requester_name: z.string().nullable(),
+    requester_address: z.string().nullable(),
     created_at: z.string().datetime(),
     updated_at: z.string().datetime(),
   })
@@ -44,6 +45,7 @@ export const ChannelAllowedConversationInsertSchema = ChannelAllowedConversation
   role: ChannelConversationRoleSchema.default('member'),
   status: ChannelConversationStatusSchema.default('pending'),
   requester_name: z.string().nullable().optional(),
+  requester_address: z.string().nullable().optional(),
 });
 
 export type ChannelAllowedConversation = z.infer<typeof ChannelAllowedConversationSchema>;

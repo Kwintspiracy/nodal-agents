@@ -97,6 +97,8 @@ export type ChannelConversationAuthCheck =
           /** The new conversation asking for access -- where the "pending" note is sent. */
           requesterConversationId: string;
           requesterName: string;
+          /** Who asked, as the channel identifies them — for the owner only (#824). */
+          requesterAddress: string | null;
           /** Set only for an /ask relay to a SIBLING agent -- that agent's display name. */
           targetAgentName?: string;
         };
@@ -125,7 +127,14 @@ export async function checkConversationAuthorization(args: {
   channel: string;
   conversationId: string;
   kind: 'private' | 'group' | 'channel' | 'thread';
+  /** A NAME (the fixed fallback when none), never an address: the model reads it (#824). */
   senderName: string;
+  /**
+   * The sender's own id on the channel, for the OWNER (their confirmation card,
+   * the dashboard's allowlist): never read for a model (#824). Every channel
+   * passes its own; null when the channel gives none.
+   */
+  senderAddress: string | null;
   /** Direct first-contact = true (may bootstrap ownership); an /ask relay to a sibling = false. */
   allowOwnerClaim: boolean;
   /** Label for the owner's confirmation card when this is an /ask relay. */
@@ -139,6 +148,7 @@ export async function checkConversationAuthorization(args: {
     conversationId,
     kind,
     senderName,
+    senderAddress,
     allowOwnerClaim,
     targetAgentName,
   } = args;
@@ -208,6 +218,7 @@ export async function checkConversationAuthorization(args: {
         role: 'owner',
         status: 'pending',
         requesterName: senderName,
+        requesterAddress: senderAddress,
       })
       .onConflictDoNothing()
       .returning({ id: channelAllowedConversations.id });
@@ -246,6 +257,7 @@ export async function checkConversationAuthorization(args: {
             ownerConversationId: null,
             requesterConversationId: conversationId,
             requesterName: senderName,
+            requesterAddress: senderAddress,
             ...(targetAgentName === undefined ? {} : { targetAgentName }),
           },
         },
@@ -280,6 +292,7 @@ export async function checkConversationAuthorization(args: {
       role: 'member',
       status: 'pending',
       requesterName: senderName,
+      requesterAddress: senderAddress,
     })
     .onConflictDoNothing()
     .returning({ id: channelAllowedConversations.id });
@@ -298,6 +311,7 @@ export async function checkConversationAuthorization(args: {
               ownerConversationId: owner.conversationId,
               requesterConversationId: conversationId,
               requesterName: senderName,
+              requesterAddress: senderAddress,
               targetAgentName,
             }
           : undefined,

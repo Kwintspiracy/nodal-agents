@@ -100,6 +100,32 @@ interface ActiveSocket {
 
 const DEFAULT_REFRESH_MS = 30_000;
 
+/**
+ * Le message au PROPRIÉTAIRE pour une demande d'accès. Il cite QUI demande,
+ * par son adresse sur WhatsApp (`requesterAddress`, le JID de l'expéditeur) :
+ * c'est le contact du propriétaire, et dans un GROUPE la seule trace de la
+ * personne — la conversation est le groupe. Cette adresse ne va jamais à un
+ * modèle (#824) ; le nom, lui, est le repli fixe quand la personne n'en a pas.
+ */
+export function ownerAccessRequestText(
+  pending: Pick<
+    NonNullable<WhatsAppHandleResult['pendingAuth']>,
+    'requesterName' | 'requesterAddress' | 'requesterConversationId' | 'targetAgentName'
+  >,
+): string {
+  const target = pending.targetAgentName
+    ? `souhaite parler à l'agent « ${pending.targetAgentName} » via ce numéro WhatsApp`
+    : 'souhaite parler à ce numéro WhatsApp';
+  const who = pending.requesterAddress ?? pending.requesterConversationId;
+  const where =
+    who === pending.requesterConversationId ? '' : ` dans ${pending.requesterConversationId}`;
+  return (
+    `👤 ${pending.requesterName} (${who})${where} ${target}.\n` +
+    `WhatsApp n'a pas de boutons intégrés ici — approuvez ou refusez cette demande depuis ` +
+    'le tableau de bord (Canaux → WhatsApp).'
+  );
+}
+
 export function startWhatsAppManager(
   deps: RunnerDeps,
   opts: WhatsAppManagerOpts,
@@ -334,14 +360,8 @@ export function startWhatsAppManager(
       return;
     }
 
-    const target = pending.targetAgentName
-      ? `souhaite parler à l'agent « ${pending.targetAgentName} » via ce numéro WhatsApp`
-      : 'souhaite parler à ce numéro WhatsApp';
     await entry.handle.send(pending.ownerConversationId, {
-      text:
-        `👤 ${pending.requesterName} (${pending.requesterConversationId}) ${target}.\n` +
-        `WhatsApp n'a pas de boutons intégrés ici — approuvez ou refusez cette demande depuis ` +
-        'le tableau de bord (Canaux → WhatsApp).',
+      text: ownerAccessRequestText(pending),
     });
     await entry.handle
       .send(pending.requesterConversationId, {

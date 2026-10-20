@@ -34,7 +34,12 @@ import { EDIT_TOOLS, scannedEditPath } from '../job/code-projects.ts';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
-import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.ts';
+import {
+  resolveRuntime,
+  cliTurnForModel,
+  isCliSetupError,
+  type CliTurnResult,
+} from './provider.ts';
 import { buildCliRuntimeJobContext } from './run-job.ts';
 import { getDeploymentContext } from '../job/deployment.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
@@ -257,24 +262,29 @@ export async function runCliRuntimeChatTurn(args: {
   });
   let turn: CliTurnResult;
   try {
-    turn = await binding.run({
-      message,
-      personality: systemPrompt,
-      cwd,
-      // Comme le chemin job — voir ClaudeTurnOptions.extraWriteDirs.
-      extraWriteDirs: wsRows.slice(1).map((w) => w.path),
-      mode,
-      shellTools: claudeShellTools(shellPosture),
-      extraDisallowed: perms.extraDisallowed,
-      model: defaults.model,
-      effort: defaults.effort,
-      resumeSessionId: existing?.sessionId,
-      timeoutMs: RUNTIME_CHAT_TIMEOUT_MS,
-      ...(brake.signal ? { abortSignal: brake.signal } : {}),
-      // Same anti-loop cap as the job path (invariant #8).
-      maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
-      onEvent,
-    });
+    turn = await binding.run(
+      await cliTurnForModel(
+        { db, entityId },
+        {
+          message,
+          personality: systemPrompt,
+          cwd,
+          // Comme le chemin job — voir ClaudeTurnOptions.extraWriteDirs.
+          extraWriteDirs: wsRows.slice(1).map((w) => w.path),
+          mode,
+          shellTools: claudeShellTools(shellPosture),
+          extraDisallowed: perms.extraDisallowed,
+          model: defaults.model,
+          effort: defaults.effort,
+          resumeSessionId: existing?.sessionId,
+          timeoutMs: RUNTIME_CHAT_TIMEOUT_MS,
+          ...(brake.signal ? { abortSignal: brake.signal } : {}),
+          // Same anti-loop cap as the job path (invariant #8).
+          maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
+          onEvent,
+        },
+      ),
+    );
   } catch (err) {
     if (isCliSetupError(err)) {
       return { ok: false, error: err.message.slice(0, 300) };

@@ -4148,6 +4148,12 @@ export interface ChannelAllowedConversationView {
   role: 'owner' | 'member';
   status: 'active' | 'pending';
   requesterName: string | null;
+  /**
+   * Who asked, as the channel identifies them (a WhatsApp JID, a Discord or
+   * Slack user id): the owner's information, shown here and on their card,
+   * never read for a model (#824). Null on older rows.
+   */
+  requesterAddress: string | null;
   createdAt: string | null;
 }
 
@@ -4175,6 +4181,7 @@ export async function getChannelAllowedConversationsAction(
         role: channelAllowedConversations.role,
         status: channelAllowedConversations.status,
         requesterName: channelAllowedConversations.requesterName,
+        requesterAddress: channelAllowedConversations.requesterAddress,
         createdAt: channelAllowedConversations.createdAt,
       })
       .from(channelAllowedConversations)
@@ -4194,6 +4201,7 @@ export async function getChannelAllowedConversationsAction(
         role: r.role as 'owner' | 'member',
         status: r.status as 'active' | 'pending',
         requesterName: r.requesterName,
+        requesterAddress: r.requesterAddress,
         createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : null,
       })),
     );

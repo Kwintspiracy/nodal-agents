@@ -25,15 +25,21 @@
 // (WhatsApp) — et la base la garde (`conversation_handles_id_check`).
 
 import { randomBytes } from 'node:crypto';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, or } from 'drizzle-orm';
 import {
   conversationHandlesIn,
+  conversationIdsIn,
+  conversationIdsPattern,
   isConversationHandle,
+  replaceConversationIds,
   showConversationHandles,
   type ConversationHandle,
   type HandledConversation,
 } from '@nodal-agents/shared';
 import { conversationHandles } from '../schema/conversation-handles.ts';
+import { channelAllowedConversations } from '../schema/channel-allowed-conversations.ts';
+import { telegramAllowedChats } from '../schema/telegram-allowed-chats.ts';
+import { agents } from '../schema/agents.ts';
 import type { AnyDrizzleDb } from '../client.ts';
 
 const HANDLE_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
@@ -177,4 +183,110 @@ export async function showConversationsTo<T>(
   const handles = conversationHandlesIn(value);
   if (handles.size === 0) return value;
   return showConversationHandles(value, await conversationsOfHandles(db, { entityId, handles }));
+}
+
+/**
+ * Chaque identifiant de conversation que cette entité CONNAÎT, avec ses
+ * canaux : les conversations de ses listes d'autorisation (la ligne de
+ * l'entité, ou celle d'un de ses agents — la portée d'`isConversationAllowed`),
+ * propriétaire, membres et demandes en attente compris, et celles qui ont déjà
+ * un handle (une conversation découverte par `list_conversations`). Toute
+ * conversation qui a pu parler à un agent de l'entité a une ligne ici.
+ */
+async function knownConversationIds(
+  db: AnyDrizzleDb,
+  entityId: string,
+): Promise<Map<string, Set<string>>> {
+  const ofEntity = db.select({ id: agents.id }).from(agents).where(eq(agents.entityId, entityId));
+  const [allowed, telegram, handled] = await Promise.all([
+    db
+      .select({
+        channel: channelAllowedConversations.channel,
+        conversationId: channelAllowedConversations.conversationId,
+      })
+      .from(channelAllowedConversations)
+      .where(
+        or(
+          eq(channelAllowedConversations.entityId, entityId),
+          inArray(channelAllowedConversations.agentId, ofEntity),
+        ),
+      ),
+    db
+      .select({ conversationId: telegramAllowedChats.chatId })
+      .from(telegramAllowedChats)
+      .where(
+        or(
+          eq(telegramAllowedChats.entityId, entityId),
+          inArray(telegramAllowedChats.agentId, ofEntity),
+        ),
+      ),
+    db
+      .select({
+        channel: conversationHandles.channel,
+        conversationId: conversationHandles.conversationId,
+      })
+      .from(conversationHandles)
+      .where(eq(conversationHandles.entityId, entityId)),
+  ]);
+  const known = new Map<string, Set<string>>();
+  const add = (channel: string, id: string) => {
+    const channels = known.get(id) ?? new Set<string>();
+    channels.add(channel);
+    known.set(id, channels);
+  };
+  for (const r of allowed) add(r.channel, r.conversationId);
+  for (const r of telegram) add('telegram', r.conversationId);
+  for (const r of handled) add(r.channel, r.conversationId);
+  return known;
+}
+
+/**
+ * Ce qui part chez le fournisseur d'un modèle, chaque identifiant de
+ * conversation connu de l'entité remplacé par son HANDLE (#824, passe 1 de la
+ * revue). LA frontière, une par runtime : le client LLM d'un agent
+ * (`resolveAgentLlmClient`, runner) et le tour d'une CLI (`resolveRuntime`).
+ *
+ * Les écrivains écrivent des handles depuis #824 ; ce que cette fonction
+ * couvre, c'est le texte DÉJÀ écrit et relu par un modèle — l'historique d'un
+ * fil, les messages d'un job repris, une mémoire, la sortie d'un outil qui
+ * relit la base — et tout écrivain futur qui l'oublierait.
+ *
+ * Correspondance EXACTE d'une liste d'identifiants connus
+ * (`conversationIdsPattern`), jamais une forme devinée. Un identifiant connu
+ * sur DEUX canaux à la fois ne dit pas lequel il nomme : il reste tel quel,
+ * et c'est dit (un handle du mauvais canal enverrait ailleurs). Les handles
+ * des identifiants trouvés sont créés ici, la première fois qu'un modèle les
+ * lit. Coût : trois lectures indexées par requête au modèle, et un parcours
+ * du texte par une expression construite sur la liste.
+ */
+export async function conversationIdsAsHandles<T>(
+  db: AnyDrizzleDb,
+  entityId: string | null,
+  value: T,
+): Promise<T> {
+  if (!entityId) return value;
+  const known = await knownConversationIds(db, entityId);
+  const single = [...known].filter(([, channels]) => channels.size === 1);
+  if (single.length < known.size) {
+    console.warn(
+      `[conversation-handles] entity ${entityId}: ${known.size - single.length} conversation ` +
+        'id(s) known on several channels are left as they are — the text does not say which one.',
+    );
+  }
+  const pattern = conversationIdsPattern(single.map(([id]) => id));
+  if (pattern === null) return value;
+  const found = conversationIdsIn(value, pattern);
+  if (found.size === 0) return value;
+
+  const byChannel = new Map<string, string[]>();
+  for (const id of found) {
+    const [channel] = known.get(id)!;
+    byChannel.set(channel!, [...(byChannel.get(channel!) ?? []), id]);
+  }
+  const handles = new Map<string, string>();
+  for (const [channel, conversationIds] of byChannel) {
+    const minted = await conversationHandlesFor(db, { entityId, channel, conversationIds });
+    for (const [id, h] of minted) handles.set(id, h);
+  }
+  return replaceConversationIds(value, pattern, handles);
 }

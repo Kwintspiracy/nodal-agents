@@ -65,6 +65,7 @@ export interface DiscordHandleResult {
     ownerConversationId: string | null;
     requesterConversationId: string;
     requesterName: string;
+    requesterAddress: string | null;
     targetAgentName?: string;
   };
 }
@@ -131,6 +132,7 @@ export async function handleDiscordMessage(args: {
     conversationId,
     kind,
     senderName,
+    senderAddress: message.author.id,
     allowOwnerClaim: true,
   });
   if (!receiverAuth.authorized) return receiverAuth.result;
@@ -178,6 +180,7 @@ export async function handleDiscordMessage(args: {
         conversationId,
         kind,
         senderName,
+        senderAddress: message.author.id,
         allowOwnerClaim: false,
         targetAgentName: targetRow.name,
       });

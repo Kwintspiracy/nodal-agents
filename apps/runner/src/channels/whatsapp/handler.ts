@@ -62,6 +62,7 @@ export interface WhatsAppHandleResult {
     ownerConversationId: string | null;
     requesterConversationId: string;
     requesterName: string;
+    requesterAddress: string | null;
     targetAgentName?: string;
   };
 }
@@ -88,8 +89,9 @@ export async function handleWhatsAppMessage(args: {
   // de `sanitizeSenderName` (`Someone`), jamais le JID (#824). Ce nom est
   // gardé dans `requester_name`, que `list_conversations` rend au modèle ; un
   // JID y portait le numéro de téléphone. Le propriétaire voit encore QUI
-  // demande l'accès : sa carte cite la conversation (manager.ts), dont l'id
-  // est ce JID dans une conversation directe.
+  // demande l'accès : le JID va dans `requester_address` (`senderAddress`),
+  // que sa carte (manager.ts) et la liste du dashboard citent, et qu'aucun
+  // modèle ne lit.
   const senderName = sanitizeSenderName(message.senderName ?? '');
   const conversationId = message.conversationId;
   const kind: 'private' | 'group' = message.isGroup ? 'group' : 'private';
@@ -115,6 +117,7 @@ export async function handleWhatsAppMessage(args: {
     conversationId,
     kind,
     senderName,
+    senderAddress: message.senderJid,
     allowOwnerClaim: true,
   });
   if (!receiverAuth.authorized) return receiverAuth.result;
@@ -162,6 +165,7 @@ export async function handleWhatsAppMessage(args: {
         conversationId,
         kind,
         senderName,
+        senderAddress: message.senderJid,
         allowOwnerClaim: false,
         targetAgentName: targetRow.name,
       });

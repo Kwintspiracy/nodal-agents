@@ -23,6 +23,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
   agentJobs,
   approvalRequests,
+  channelAllowedConversations,
   conversationHandleFor,
   conversations,
   toolCalls,
@@ -193,6 +194,29 @@ describe('the dashboard shows the conversation a handle names @cap:parler-par-ca
     const shown = JSON.stringify(r);
     expect(shown).not.toContain(handle);
     expect(shown).toContain(`"chatId":"${WA_DM}"`);
+  });
+
+  it('the Channels allowlist shows the OWNER who asked: the address the model never reads', async () => {
+    const participant = '33677700824@s.whatsapp.net';
+    const group = '120363000000824@g.us';
+    await testDb.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'whatsapp',
+      conversationId: group,
+      kind: 'group',
+      status: 'pending',
+      requesterName: 'Someone',
+      requesterAddress: participant,
+    });
+    const { getChannelAllowedConversationsAction } = await import('../actions.ts');
+    const r = await getChannelAllowedConversationsAction(seed.agentId, 'whatsapp');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.find((c) => c.conversationId === group)).toMatchObject({
+      requesterName: 'Someone',
+      requesterAddress: participant,
+    });
   });
 
   it('the STORED rows keep what the model wrote — the runner re-reads them', async () => {

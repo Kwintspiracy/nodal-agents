@@ -416,6 +416,7 @@ type ChannelAllowedConversationKeysOk = HasKeys<
     'role',
     'status',
     'requesterName',
+    'requesterAddress',
     'createdAt',
     'updatedAt',
   ]

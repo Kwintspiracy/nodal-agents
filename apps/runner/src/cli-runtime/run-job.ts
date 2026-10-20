@@ -77,7 +77,12 @@ import {
 } from '@nodal-agents/checkpoints';
 import { withNodalPrograms, type NodalPrograms } from '@nodal-agents/sandbox';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
-import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.ts';
+import {
+  resolveRuntime,
+  cliTurnForModel,
+  isCliSetupError,
+  type CliTurnResult,
+} from './provider.ts';
 
 /** Per-turn wall clock budget — a runtime agent turn is a full CLI session run. */
 const RUNTIME_TURN_TIMEOUT_MS = 900_000;
@@ -806,30 +811,35 @@ export async function runCliRuntimeJob(args: {
   });
   let turn: CliTurnResult;
   try {
-    turn = await binding.run({
-      // Les mots de qui a demandé, puis la note d'une remise sous son cadre
-      // (handoff.ts) : la même ouverture que la boucle Nodal, en un texte.
-      message: openingText(job.task ?? '', job.handoffNote),
-      personality: systemPrompt,
-      cwd,
-      // Les autres dossiers attachés — voir ClaudeTurnOptions.extraWriteDirs.
-      extraWriteDirs: args.workspaces.slice(1).map((w) => w.path),
-      mode,
-      shellTools: claudeShellTools(shellPosture),
-      extraDisallowed: perms.extraDisallowed,
-      model: defaults.model,
-      effort: defaults.effort,
-      resumeSessionId,
-      timeoutMs: RUNTIME_TURN_TIMEOUT_MS,
-      // The CLI runs its own internal loop the Nodal counters never see —
-      // apply the SAME per-turn cap at this seam (invariant #8).
-      maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
-      onEvent,
-      // Un seul signal : le frein (qui écoute aussi la ligne du job) ou, sans
-      // shell, la ligne seule. Deux clés abortSignal : la seconde écraserait
-      // la première, et le frein ne tuerait plus la CLI.
-      abortSignal: brake.signal ?? rowWatch.signal,
-    });
+    turn = await binding.run(
+      await cliTurnForModel(
+        { db, entityId: job.entityId ?? null },
+        {
+          // Les mots de qui a demandé, puis la note d'une remise sous son cadre
+          // (handoff.ts) : la même ouverture que la boucle Nodal, en un texte.
+          message: openingText(job.task ?? '', job.handoffNote),
+          personality: systemPrompt,
+          cwd,
+          // Les autres dossiers attachés — voir ClaudeTurnOptions.extraWriteDirs.
+          extraWriteDirs: args.workspaces.slice(1).map((w) => w.path),
+          mode,
+          shellTools: claudeShellTools(shellPosture),
+          extraDisallowed: perms.extraDisallowed,
+          model: defaults.model,
+          effort: defaults.effort,
+          resumeSessionId,
+          timeoutMs: RUNTIME_TURN_TIMEOUT_MS,
+          // The CLI runs its own internal loop the Nodal counters never see —
+          // apply the SAME per-turn cap at this seam (invariant #8).
+          maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
+          onEvent,
+          // Un seul signal : le frein (qui écoute aussi la ligne du job) ou, sans
+          // shell, la ligne seule. Deux clés abortSignal : la seconde écraserait
+          // la première, et le frein ne tuerait plus la CLI.
+          abortSignal: brake.signal ?? rowWatch.signal,
+        },
+      ),
+    );
   } catch (err) {
     rowWatch.stop();
     brake.stop();

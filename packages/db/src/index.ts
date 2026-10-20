@@ -24,6 +24,7 @@ export {
   conversationsOfHandles,
   resolveConversationHandle,
   showConversationsTo,
+  conversationIdsAsHandles,
 } from './queries/conversation-handles.ts';
 export { isChatAllowed } from './queries/telegram-allowed.ts';
 export { dropApprovalRulesForDetachedSkill } from './queries/skill-approval-rules.ts';

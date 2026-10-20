@@ -938,6 +938,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       role text NOT NULL DEFAULT 'member',
       status text NOT NULL DEFAULT 'pending',
       requester_name text,
+      requester_address text,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),
       CONSTRAINT channel_allowed_conversations_agent_channel_conversation_unique UNIQUE (agent_id, channel, conversation_id),

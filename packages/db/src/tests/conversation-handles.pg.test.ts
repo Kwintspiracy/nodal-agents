@@ -107,7 +107,7 @@ describe('migration 0152_conversation_handles @cap:parler-par-canal-externe/mote
     }
   });
 
-  it('repairs the WhatsApp names that were a JID, and leaves real names alone', async () => {
+  it('moves the WhatsApp names that were a JID to requester_address — nothing destroyed — and leaves real names alone', async () => {
     const sql = postgres(harness().url, { max: 1 });
     try {
       const entityId = await seedEntity(sql, 'handles-names');
@@ -123,22 +123,33 @@ describe('migration 0152_conversation_handles @cap:parler-par-canal-externe/mote
       await insert('whatsapp', '33644444444@s.whatsapp.net', 'Marie');
       await insert('discord', '1188', 'Paul');
 
-      // La réparation est la seconde instruction de la migration, rejouée sur ces lignes.
+      // La réparation est la DERNIÈRE instruction de la migration, rejouée sur ces lignes
+      // (la colonne, elle, existe déjà : les vraies migrations l'ont ajoutée).
       const migration = readFileSync(
         join(__dirname, '..', '..', 'migrations', '0152_conversation_handles.sql'),
         'utf8',
       );
-      await sql.unsafe(migration.split('--> statement-breakpoint')[1]!);
+      await sql.unsafe(migration.split('--> statement-breakpoint').at(-1)!);
 
       const rows = await sql`
-        SELECT channel, conversation_id, requester_name FROM channel_allowed_conversations
+        SELECT channel, conversation_id, requester_name, requester_address
+        FROM channel_allowed_conversations
         WHERE entity_id = ${entityId} ORDER BY channel, conversation_id`;
-      expect(rows.map((r) => [r.channel, r.conversation_id, r.requester_name])).toEqual([
-        ['discord', '1188', 'Paul'],
-        ['whatsapp', '120363000000@g.us', 'Someone'],
-        ['whatsapp', '33622222222@s.whatsapp.net', 'Someone'],
-        ['whatsapp', '33644444444@s.whatsapp.net', 'Marie'],
+      expect(
+        rows.map((r) => [r.channel, r.conversation_id, r.requester_name, r.requester_address]),
+      ).toEqual([
+        ['discord', '1188', 'Paul', null],
+        // The group's participant: the owner's only trace of who asked, kept.
+        ['whatsapp', '120363000000@g.us', 'Someone', '33633333333@s.whatsapp.net'],
+        ['whatsapp', '33622222222@s.whatsapp.net', 'Someone', '33622222222@s.whatsapp.net'],
+        ['whatsapp', '33644444444@s.whatsapp.net', 'Marie', null],
       ]);
+      // Replayed twice, nothing moves again.
+      await sql.unsafe(migration.split('--> statement-breakpoint').at(-1)!);
+      const again = await sql`
+        SELECT requester_address FROM channel_allowed_conversations
+        WHERE entity_id = ${entityId} AND conversation_id = '120363000000@g.us'`;
+      expect(again[0]!.requester_address).toBe('33633333333@s.whatsapp.net');
     } finally {
       await sql.end();
     }

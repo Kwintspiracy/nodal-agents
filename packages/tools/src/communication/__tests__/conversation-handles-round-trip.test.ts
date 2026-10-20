@@ -54,6 +54,7 @@ const DISCORD_DM = '1188000000000000001';
 const DISCORD_UNAPPROVED = '1188000000000000002';
 const WA_DM = '33612345678@s.whatsapp.net';
 const WA_GROUP = '120363000000000001@g.us';
+const WA_PARTICIPANT = '33699999999@s.whatsapp.net';
 
 function fakeAdapter(channel: string) {
   return {
@@ -165,6 +166,8 @@ beforeAll(async () => {
       role: 'owner',
       status: 'active',
       requesterName: 'Someone',
+      // The owner's information (#824): never read for the model.
+      requesterAddress: WA_DM,
     },
     {
       entityId: seed.entityId,
@@ -175,6 +178,7 @@ beforeAll(async () => {
       role: 'member',
       status: 'active',
       requesterName: 'Family',
+      requesterAddress: WA_PARTICIPANT,
     },
   ]);
 });
@@ -205,7 +209,7 @@ describe('conversation handles, model ↔ send tools @cap:parler-par-canal-exter
     const tg = await listConversations.execute({ channel: 'telegram' }, ctx());
     const dc = await listConversations.execute({ channel: 'discord' }, ctx());
     const ids = {
-      whatsapp: [WA_DM, WA_GROUP, '33612345678'],
+      whatsapp: [WA_DM, WA_GROUP, '33612345678', WA_PARTICIPANT, '33699999999'],
       telegram: ['555'],
       discord: [DISCORD_DM, DISCORD_UNAPPROVED],
     };

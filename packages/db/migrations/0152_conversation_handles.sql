@@ -25,11 +25,20 @@ CREATE TABLE IF NOT EXISTS conversation_handles (
 -- Un NOM fait d'un identifiant de conversation est une donnée de contact. Le
 -- gestionnaire WhatsApp écrivait le JID de l'expéditeur (`<téléphone>@…`) dans
 -- `requester_name` quand la personne n'avait pas de nom affiché, et
--- `list_conversations` le rendait au modèle comme `name`. L'écrivain prend
--- maintenant le nom de repli fixe (`Someone`, celui de `sanitizeSenderName`) ;
--- les lignes déjà écrites reçoivent le même. Seul cet écrivain a jamais posé un
--- JID ici : les autres canaux écrivent un nom affiché.
+-- `list_conversations` le rendait au modèle comme `name`.
+--
+-- Le JID est une information du PROPRIÉTAIRE : sur une demande d'accès d'un
+-- GROUPE, c'est la seule trace de qui a demandé. Il n'est donc pas effacé, il
+-- change de colonne : `requester_address` (lue par la carte du propriétaire et
+-- la liste d'autorisation du dashboard, jamais pour un modèle), et
+-- `requester_name` prend le nom de repli fixe que l'écrivain pose désormais
+-- (`Someone`, celui de `sanitizeSenderName`). Rien n'est perdu. Seul cet
+-- écrivain a jamais posé un JID ici : les autres canaux écrivent un nom affiché.
+ALTER TABLE channel_allowed_conversations ADD COLUMN IF NOT EXISTS requester_address text;
+--> statement-breakpoint
 UPDATE channel_allowed_conversations
-  SET requester_name = 'Someone'
+  SET requester_address = requester_name,
+      requester_name = 'Someone'
   WHERE channel = 'whatsapp'
+    AND requester_address IS NULL
     AND requester_name ~ '@(s\.whatsapp\.net|lid|g\.us|c\.us)$';

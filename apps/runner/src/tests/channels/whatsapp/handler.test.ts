@@ -18,6 +18,7 @@ import { eq, and } from '@nodal-agents/db';
 import { agentJobs, agents, channelAllowedConversations, conversations } from '@nodal-agents/db';
 import type { WhatsAppInboundMessage } from '@nodal-agents/delivery';
 import { handleWhatsAppMessage } from '../../../channels/whatsapp/handler.ts';
+import { ownerAccessRequestText } from '../../../channels/whatsapp/manager.ts';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string };
@@ -232,17 +233,22 @@ describe('handleWhatsAppMessage — H-1 owner-claim / pending authorization', ()
   });
 
   // #824 : le nom gardé est un NOM. `list_conversations` le rend au modèle, et
-  // un JID porte le numéro de téléphone. Mutation vérifiée : le repli remis à
-  // `message.senderJid` → ce test rougit.
+  // un JID porte le numéro de téléphone. Le JID reste au PROPRIÉTAIRE, dans
+  // `requester_address` et sur sa carte. Mutations vérifiées : le repli remis à
+  // `message.senderJid` → ce test rougit ; `senderAddress` non transmis → les
+  // deux tests rougissent.
   it('a requester WITHOUT a display name is stored as the fixed fallback, never their JID @cap:parler-par-canal-externe/moteur', async () => {
     const agentId = await freshBot();
     await claimOwner(agentId, dm('owner here', 'dm-owner-nameless'));
     const jid = '33698765432@s.whatsapp.net';
     const result = await call(agentId, dm('let me in', jid, jid, null));
 
-    expect(result.pendingAuth).toMatchObject({ requesterName: 'Someone' });
+    expect(result.pendingAuth).toMatchObject({ requesterName: 'Someone', requesterAddress: jid });
     const [pending] = await db
-      .select({ requesterName: channelAllowedConversations.requesterName })
+      .select({
+        requesterName: channelAllowedConversations.requesterName,
+        requesterAddress: channelAllowedConversations.requesterAddress,
+      })
       .from(channelAllowedConversations)
       .where(
         and(
@@ -250,7 +256,37 @@ describe('handleWhatsAppMessage — H-1 owner-claim / pending authorization', ()
           eq(channelAllowedConversations.conversationId, jid),
         ),
       );
-    expect(pending?.requesterName).toBe('Someone');
+    expect(pending).toEqual({ requesterName: 'Someone', requesterAddress: jid });
+  });
+
+  it('a GROUP request from a nameless participant: the owner still sees WHO asked, the stored name stays a name @cap:parler-par-canal-externe/moteur', async () => {
+    const agentId = await freshBot();
+    await claimOwner(agentId, dm('owner here', 'dm-owner-group-824'));
+    const participant = '33677700824@s.whatsapp.net';
+    const group = '120363000000824@g.us';
+    const result = await call(agentId, {
+      ...groupMessage('/ask x hello', { conversationId: group, senderName: null }),
+      senderJid: participant,
+      mentionsSelf: true,
+      text: 'hello',
+    });
+    expect(result.pendingAuth).toMatchObject({
+      requesterName: 'Someone',
+      requesterAddress: participant,
+      requesterConversationId: group,
+    });
+    // The owner's card names the participant AND the group.
+    expect(ownerAccessRequestText(result.pendingAuth!)).toContain(
+      `👤 Someone (${participant}) dans ${group} souhaite parler à ce numéro WhatsApp.`,
+    );
+    // A direct conversation: the address IS the conversation, said once.
+    expect(
+      ownerAccessRequestText({
+        requesterName: 'Someone',
+        requesterAddress: participant,
+        requesterConversationId: participant,
+      }),
+    ).toContain(`👤 Someone (${participant}) souhaite`);
   });
 
   it('a repeat DM from an already-pending conversation does NOT re-ask the owner (no spam)', async () => {
