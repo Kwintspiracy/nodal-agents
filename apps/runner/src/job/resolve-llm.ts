@@ -20,6 +20,7 @@ import type {
 } from '@nodal-agents/llm';
 import { MODEL_CATALOG, REASONING_EFFORT_LEVELS, type ReasoningEffort } from '@nodal-agents/shared';
 import { decrypt } from '@nodal-agents/secrets';
+import { addressedByHandle } from '../llm/addressed-by-handle.ts';
 
 /**
  * Coerce a stored effort string to the scale, or undefined (= Auto). A value
@@ -180,7 +181,14 @@ export async function resolveAgentLlmClient(
           });
     return {
       ok: true,
-      client,
+      // Every request names conversations by their handle, never by the
+      // channel's id — stored text included (#824, addressed-by-handle.ts).
+      // The scope is the agent's workspace; none → every request is refused
+      // (`ConversationScopeUnknownError`), never sent raw.
+      client: addressedByHandle(client, db, {
+        entityId: agent.entityId,
+        subject: 'a model request of an agent with no workspace',
+      }),
       primaryProvider: effectivePrimary.provider,
       chainLength: configs.length,
     };

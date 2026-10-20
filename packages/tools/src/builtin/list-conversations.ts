@@ -25,6 +25,7 @@ import {
   listChannelBindings,
   getBindingCredentials,
   listAllowedConversations,
+  conversationHandlesFor,
 } from '@nodal-agents/db';
 import { getAdapter } from '@nodal-agents/delivery';
 import type { ToolDefinition, ToolContext } from '../types';
@@ -43,6 +44,11 @@ const ListConversationsInput = z.object({
 type ListConversationsInput = z.infer<typeof ListConversationsInput>;
 
 interface ConversationEntry {
+  /**
+   * The conversation's address as the model reads it: its HANDLE, never the
+   * channel's id (#824) — a WhatsApp DM's id is a phone number. The send
+   * tools take it back as `chatId`.
+   */
   conversationId: string;
   name?: string;
   kind: string;
@@ -174,9 +180,22 @@ Fail conditions:
           : `Showing the first ${MAX_ROWS} — result truncated.`;
       }
 
+      // The address the model reads is the conversation's handle, created here
+      // the first time this conversation is shown to a model (#824). Only the
+      // rows actually returned get one.
+      const handles = await conversationHandlesFor(ctx.db, {
+        entityId: ctx.entityId,
+        channel,
+        conversationIds: entries.map((e) => e.conversationId),
+      });
+      const conversations = entries.map((e) => ({
+        ...e,
+        conversationId: handles.get(e.conversationId) as string,
+      }));
+
       return {
         channel,
-        conversations: entries,
+        conversations,
         ...(note ? { note } : {}),
         ...(truncated ? { truncated: true } : {}),
       };

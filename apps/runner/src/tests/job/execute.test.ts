@@ -18,7 +18,7 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, and, sql } from '@nodal-agents/db';
 import type { AnyDrizzleDb, JobTriggerContext } from '@nodal-agents/db';
-import { resolveScheduleNotifyChat } from '@nodal-agents/db';
+import { conversationHandleFor, resolveScheduleNotifyChat } from '@nodal-agents/db';
 import {
   agentJobs,
   jobDeliveries,
@@ -36,6 +36,7 @@ import {
   channelBindings,
   agentSchedules,
   toolCalls,
+  channelAllowedConversations,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient, validateMessageStructure } from '@nodal-agents/llm';
@@ -4597,7 +4598,15 @@ describe('executeJob', () => {
     const sp = rows[0]?.systemPrompt ?? '';
     expect(sp).toContain('## Job context');
     expect(sp).toContain('- origin: telegram');
-    expect(sp).toContain('- telegram_chat_id: 12345');
+    // The chat's HANDLE, never its Telegram id (#824): the model reads a
+    // conversation only by its handle, and the send tools take it back.
+    const handle = await conversationHandleFor(db as unknown as AnyDrizzleDb, {
+      entityId: seed.entityId,
+      channel: 'telegram',
+      conversationId: '12345',
+    });
+    expect(sp).toContain(`- telegram_chat_id: ${handle}`);
+    expect(sp).not.toContain('12345');
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
@@ -9390,5 +9399,350 @@ describe('executeJob — la reprise de réparation survit au checkpoint @cap:ver
     // Le checkpoint a écrit la valeur DE LA MÉMOIRE : sans la recopie, il
     // écrirait 0 et la reprise de réparation ne coûterait rien.
     expect(ligne?.chainCount).toBe(1);
+  });
+});
+
+// ─── #824 — the delivery notice names the chat by its handle ─────────────────
+//
+// A delegated child that delivers writes `[livraison effectuée : <tool> → chat
+// <x>]` into its result, which its parent READS. `<x>` was the channel's id: a
+// WhatsApp DM's id is a phone number, and it reached the parent's model.
+//
+// Mutation verified: `→ chat ${job.chatId}` put back in withDeliveryNotice →
+// the three channels go red.
+describe('delivery notice of a delegated child (#824) @cap:parler-par-canal-externe/moteur', () => {
+  const CASES = [
+    { channel: 'whatsapp', chatId: '33612345678@s.whatsapp.net' },
+    { channel: 'telegram', chatId: '424242' },
+    { channel: 'discord', chatId: '1188000000000000001' },
+  ] as const;
+
+  for (const c of CASES) {
+    it(`names a ${c.channel} chat by its handle, never by the channel id`, async () => {
+      await db
+        .update(agents)
+        .set({ telegramBotToken: 'fake-token' })
+        .where(eq(agents.id, seed.agentId));
+      if (c.channel !== 'telegram') {
+        await db.insert(channelBindings).values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: c.channel,
+          credentials: JSON.stringify({ botToken: `${c.channel}-token` }),
+          enabled: true,
+        });
+      }
+      try {
+        const [parent] = await db
+          .insert(agentJobs)
+          .values({
+            entityId: seed.entityId,
+            agentId: seed.agentId,
+            channel: c.channel,
+            chatId: c.chatId,
+            chatChannel: c.channel,
+            task: 'Ask the worker',
+            status: 'awaiting_delegation',
+            messages: [
+              { role: 'user', content: 'Ask the worker' },
+              {
+                role: 'assistant',
+                content: [
+                  {
+                    type: 'tool-call',
+                    toolCallId: `assign-824-${c.channel}`,
+                    toolName: 'assign_x',
+                    input: {},
+                  },
+                ],
+              },
+            ],
+            chainCount: 0,
+          })
+          .returning();
+        const [child] = await db
+          .insert(agentJobs)
+          .values({
+            entityId: seed.entityId,
+            agentId: seed.agentId,
+            channel: 'internal',
+            chatId: c.chatId,
+            chatChannel: c.channel,
+            task: 'Tell the user it is done',
+            status: 'pending',
+            parentJobId: parent!.id,
+            delegationDepth: 1,
+            messages: [{ role: 'user', content: 'Tell the user it is done' }],
+            chainCount: 0,
+          })
+          .returning();
+        await db
+          .update(agentJobs)
+          .set({
+            pendingDelegation: {
+              type: 'single',
+              toolUseId: `assign-824-${c.channel}`,
+              toolName: 'assign_x',
+              subJobId: child!.id,
+            },
+          })
+          .where(eq(agentJobs.id, parent!.id));
+
+        const llmClient = makeMockLlmClient([
+          {
+            toolCalls: [
+              {
+                toolCallId: `tc-send-${c.channel}`,
+                toolName: 'telegram_send_message',
+                args: { text: 'done' },
+              },
+              {
+                toolCallId: `tc-rr-${c.channel}`,
+                toolName: 'return_result',
+                args: { status: 'success', result: 'Told the user.' },
+              },
+            ],
+          },
+        ]);
+        const result = await executeJob(child!.id as JobId, makeDeps(llmClient), testEnv);
+        if (result.status !== 'completed') expect.fail(`child ended ${result.status}`);
+
+        const handle = await conversationHandleFor(db as unknown as AnyDrizzleDb, {
+          entityId: seed.entityId,
+          channel: c.channel,
+          conversationId: c.chatId,
+        });
+        // What the child's run hands to its parent…
+        expect(result.result).toBe(
+          `[livraison effectuée : telegram_send_message → chat ${handle}]`,
+        );
+        // And what the parent's model reads next: the child's outcome, handed
+        // back as the result of its delegation call.
+        const [head] = await db
+          .select({ messages: agentJobs.messages })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, parent!.id));
+        const handedBack = JSON.stringify(
+          (head!.messages as Array<{ role: string }>).filter((m) => m.role === 'tool'),
+        );
+        expect(handedBack).toContain(`→ chat ${handle}`);
+        expect(handedBack).not.toContain(c.chatId);
+      } finally {
+        await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+        await db
+          .delete(channelBindings)
+          .where(
+            and(eq(channelBindings.agentId, seed.agentId), eq(channelBindings.channel, c.channel)),
+          );
+      }
+    });
+  }
+});
+
+// ─── #824, passe 1 de la revue — le texte DÉJÀ écrit, relu par le modèle ─────
+//
+// Les écrivains écrivent des handles ; ce qui était stocké AVANT porte encore
+// l'identifiant du canal. Chaque requête du client d'un agent passe par la
+// frontière (`addressedByHandle`, posée par `resolveAgentLlmClient`) : ce que
+// le FOURNISSEUR reçoit est asserté ici, dans le corps de la requête que le
+// modèle factice capture.
+//
+// Mutation vérifiée : `addressedByHandle` retiré de `resolveAgentLlmClient`
+// (le client rendu tel quel) → les trois tests rougissent.
+describe('stored text reaches the provider with handles (#824) @cap:parler-par-canal-externe/moteur', () => {
+  const WA = '33698700000@s.whatsapp.net';
+  const handleOfWa = () =>
+    conversationHandleFor(db as unknown as AnyDrizzleDb, {
+      entityId: seed.entityId,
+      channel: 'whatsapp',
+      conversationId: WA,
+    });
+
+  beforeAll(async () => {
+    // The WhatsApp DM is a conversation this entity knows: it is on the allowlist.
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'whatsapp',
+      conversationId: WA,
+      kind: 'private',
+      role: 'member',
+      status: 'active',
+      requesterName: 'Marie',
+    });
+  });
+
+  it('a pre-PR delivery notice in a prior turn of the thread', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+    try {
+      const [conv] = await db
+        .insert(conversations)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '824001',
+        })
+        .returning({ id: conversations.id });
+      await db.insert(agentJobs).values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '824001',
+        chatChannel: 'telegram',
+        conversationId: conv!.id,
+        task: 'Préviens Marie',
+        status: 'completed',
+        result: `C'est fait.\n\n[livraison effectuée : telegram_send_message → chat ${WA}]`,
+        messages: [],
+        completedAt: new Date(Date.now() - 60_000),
+      });
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '824001',
+          chatChannel: 'telegram',
+          conversationId: conv!.id,
+          task: 'Et maintenant ?',
+          status: 'pending',
+          messages: [],
+          chainCount: 0,
+        })
+        .returning();
+
+      const prompts: unknown[] = [];
+      const llmClient = makeMockLlmClient(
+        [
+          {
+            toolCalls: [
+              { toolCallId: 'tc-824-s', toolName: 'telegram_send_message', args: { text: 'ok' } },
+              { toolCallId: 'tc-824-r', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+        prompts,
+      );
+      const result = await executeJob(job!.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('completed');
+      const sent = JSON.stringify(prompts[0]);
+      expect(sent, 'the prior turn was replayed').toContain('Préviens Marie');
+      expect(sent).toContain(`→ chat ${await handleOfWa()}`);
+      expect(sent).not.toContain(WA);
+    } finally {
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    }
+  });
+
+  it("a resumed job's stored messages", async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'Qui peut-on joindre ?',
+        status: 'pending',
+        // As a pre-PR job stored them before its approval pause: a
+        // list_conversations result naming the DM by its JID.
+        messages: [
+          { role: 'user', content: 'Qui peut-on joindre ?' },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId: 'tc-824-lc',
+                toolName: 'list_conversations',
+                input: { channel: 'whatsapp' },
+              },
+            ],
+          },
+          {
+            role: 'tool',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: 'tc-824-lc',
+                toolName: 'list_conversations',
+                output: {
+                  type: 'text',
+                  value: JSON.stringify({
+                    channel: 'whatsapp',
+                    conversations: [{ conversationId: WA, name: 'Marie', approved: true }],
+                  }),
+                },
+              },
+            ],
+          },
+        ],
+        chainCount: 0,
+      })
+      .returning();
+
+    const prompts: unknown[] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          text: 'Marie.',
+          toolCalls: [
+            { toolCallId: 'tc-824-r2', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      prompts,
+    );
+    const result = await executeJob(job!.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+    const sent = JSON.stringify(prompts[0]);
+    expect(sent, 'the stored tool result was sent').toContain('Marie');
+    expect(sent).toContain(await handleOfWa());
+    expect(sent).not.toContain(WA);
+    // What is STORED keeps the truth (the dashboard and the audit read it).
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job!.id));
+    expect(JSON.stringify(row!.messages)).toContain(WA);
+  });
+
+  it('a memory holding a raw WhatsApp id', async () => {
+    const fact = `Marie se joint sur WhatsApp au ${WA} (824)`;
+    await db.insert(agentMemory).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      fact,
+      source: 'agent',
+      importance: 5,
+      archived: false,
+    });
+    try {
+      const job = await createTestJob(db, seed);
+      const prompts: unknown[] = [];
+      const llmClient = makeMockLlmClient(
+        [
+          {
+            text: 'Noted.',
+            toolCalls: [
+              { toolCallId: 'tc-824-r3', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+        prompts,
+      );
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('completed');
+      const sent = JSON.stringify(prompts[0]);
+      expect(sent, 'the memory was injected').toContain('Marie se joint sur WhatsApp au');
+      expect(sent).toContain(`au ${await handleOfWa()} (824)`);
+      expect(sent).not.toContain(WA);
+    } finally {
+      await db.delete(agentMemory).where(eq(agentMemory.fact, fact));
+    }
   });
 });

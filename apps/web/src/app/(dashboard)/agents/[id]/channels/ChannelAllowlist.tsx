@@ -19,6 +19,17 @@ import RowActionButton from '@/components/ui/RowActionButton';
  * channel_allowed_conversations actions so any non-telegram channel (Discord
  * first) can reuse it without its own bespoke component.
  */
+/**
+ * Where a request comes from: the conversation, and who asked in it when the
+ * channel names a person apart from the conversation (a participant of a
+ * WhatsApp group, the author of a Discord or Slack message) — #824.
+ */
+function whereFrom(c: ChannelAllowedConversationView): string {
+  return c.requesterAddress && c.requesterAddress !== c.conversationId
+    ? `${c.requesterAddress} · ${c.conversationId}`
+    : c.conversationId;
+}
+
 export default function ChannelAllowlist({
   chats,
 }: {
@@ -85,7 +96,7 @@ export default function ChannelAllowlist({
               <div className="min-w-0">
                 <p className="text-sm text-ink-2 truncate">
                   {c.requesterName ?? 'Unknown'}{' '}
-                  <span className="text-ink-3 font-mono text-xs">({c.conversationId})</span>
+                  <span className="text-ink-3 font-mono text-xs">({whereFrom(c)})</span>
                 </p>
                 <p className="text-xs text-warn">Waiting for your approval</p>
               </div>
@@ -121,7 +132,7 @@ export default function ChannelAllowlist({
               <div className="min-w-0">
                 <p className="text-sm text-ink-2 truncate">
                   {c.requesterName ?? (c.role === 'owner' ? 'Owner' : 'Member')}{' '}
-                  <span className="text-ink-3 font-mono text-xs">({c.conversationId})</span>
+                  <span className="text-ink-3 font-mono text-xs">({whereFrom(c)})</span>
                 </p>
                 <p className="text-xs text-ink-3">
                   {c.role === 'owner' ? 'Owner — controls this bot' : 'Authorized'}

@@ -62,6 +62,7 @@ export interface WhatsAppHandleResult {
     ownerConversationId: string | null;
     requesterConversationId: string;
     requesterName: string;
+    requesterAddress: string | null;
     targetAgentName?: string;
   };
 }
@@ -84,11 +85,14 @@ export async function handleWhatsAppMessage(args: {
   const text = message.text ?? '';
   if (!text.trim() && !message.mediaPlaceholder) return { skipped: 'no_content' };
 
-  // Le nom montré au PROPRIÉTAIRE sur une demande d'accès : à défaut de nom,
-  // le JID, qui porte le numéro de téléphone — il décide d'autoriser
-  // quelqu'un, il doit savoir qui. Ce JID ne va JAMAIS au modèle (#810) : le
-  // préfixe de groupe ne prend que le nom (`groupMessagePrefix`).
-  const senderName = sanitizeSenderName(message.senderName ?? message.senderJid);
+  // Le NOM de la personne, et rien d'autre : sans nom affiché, le repli fixe
+  // de `sanitizeSenderName` (`Someone`), jamais le JID (#824). Ce nom est
+  // gardé dans `requester_name`, que `list_conversations` rend au modèle ; un
+  // JID y portait le numéro de téléphone. Le propriétaire voit encore QUI
+  // demande l'accès : le JID va dans `requester_address` (`senderAddress`),
+  // que sa carte (manager.ts) et la liste du dashboard citent, et qu'aucun
+  // modèle ne lit.
+  const senderName = sanitizeSenderName(message.senderName ?? '');
   const conversationId = message.conversationId;
   const kind: 'private' | 'group' = message.isGroup ? 'group' : 'private';
   const isCommand = text.startsWith('/ask ');
@@ -113,6 +117,7 @@ export async function handleWhatsAppMessage(args: {
     conversationId,
     kind,
     senderName,
+    senderAddress: message.senderJid,
     allowOwnerClaim: true,
   });
   if (!receiverAuth.authorized) return receiverAuth.result;
@@ -160,6 +165,7 @@ export async function handleWhatsAppMessage(args: {
         conversationId,
         kind,
         senderName,
+        senderAddress: message.senderJid,
         allowOwnerClaim: false,
         targetAgentName: targetRow.name,
       });

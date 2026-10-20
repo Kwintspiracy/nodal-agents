@@ -10,7 +10,7 @@ import {
 describe('createEmbeddingClient — keyword fallback', () => {
   it('returns null for embed() with keyword provider', async () => {
     const client = createEmbeddingClient({ provider: 'keyword' });
-    const result = await client.embed('some text');
+    const result = await client.embed('some text', { entityId: null });
     expect(result).toBeNull();
   });
 
@@ -113,7 +113,7 @@ describe('validateEmbeddingDimension', () => {
     // called for it. This test confirms null does not reach the validator.
     const keywordClient = createEmbeddingClient({ provider: 'keyword' });
     // embed() resolves to null — no dimension check occurs
-    expect(keywordClient.embed('hello')).resolves.toBeNull();
+    expect(keywordClient.embed('hello', { entityId: null })).resolves.toBeNull();
   });
 });
 
@@ -125,7 +125,7 @@ describe('createEmbeddingClient — integration (real network, opt-in)', () => {
         provider: 'ollama',
         baseURL: process.env['OLLAMA_URL'],
       });
-      const embedding = await client.embed('hello world');
+      const embedding = await client.embed('hello world', { entityId: null });
       expect(embedding).not.toBeNull();
       expect(Array.isArray(embedding)).toBe(true);
       expect((embedding as number[]).length).toBeGreaterThan(0);
@@ -139,7 +139,7 @@ describe('createEmbeddingClient — integration (real network, opt-in)', () => {
         provider: 'openai',
         apiKey: process.env['OPENAI_API_KEY'],
       });
-      const embedding = await client.embed('hello world');
+      const embedding = await client.embed('hello world', { entityId: null });
       expect(embedding).not.toBeNull();
       expect(Array.isArray(embedding)).toBe(true);
       expect((embedding as number[]).length).toBe(1536);

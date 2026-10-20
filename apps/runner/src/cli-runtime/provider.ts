@@ -10,6 +10,8 @@
 // Un seul tableau, donc. Ajouter une CLI, c'est ajouter une ligne ici et son
 // module de tour — pas relire deux fichiers en espérant n'en oublier aucun.
 
+import { conversationIdsAsHandles } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { runClaudeTurn, ClaudeCliNotFoundError } from './claude-turn.ts';
 import type { ClaudeTurnOptions, ClaudeTurnResult } from './claude-turn.ts';
 import {
@@ -49,6 +51,40 @@ export const SERVED_CLI_RUNTIMES: readonly string[] = Object.keys(RUNTIMES);
  */
 export function resolveRuntime(runtime: string): RuntimeBinding | null {
   return RUNTIMES[runtime] ?? null;
+}
+
+/**
+ * Ce qu'une CLI reçoit à lire, tel qu'il part chez son fournisseur : la frontière du
+ * runtime CLI pour les adresses de conversation (#824, passe 1 de la revue),
+ * comme `addressedByHandle` l'est du runtime Nodal. Le message et le prompt
+ * système d'une CLI sont TOUT ce que le runner lui donne à lire (elle n'a
+ * aucun outil Nodal : `--strict-mcp-config` sans configuration) ; chaque
+ * identifiant de conversation connu de l'entité y devient son handle.
+ *
+ * Ce que cette frontière ne voit pas : la transcription d'une session REPRISE
+ * (`resumeSessionId`, run-job.ts / run-chat.ts) vit dans le stockage de la
+ * CLI elle-même, hors de portée du runner.
+ *
+ * Rend les options du tour ; le LANCEMENT reste aux deux points qui posent
+ * l'intention (le tour y est lancé sur `await cliTurnForModel(…)`, run-job.ts et
+ * run-chat.ts — architecture.test.ts).
+ */
+export async function cliTurnForModel(
+  scope: { db: AnyDrizzleDb; entityId: string | null; agentId: string },
+  opts: CliTurnOptions,
+): Promise<CliTurnOptions> {
+  // The job's workspace, else its agent's (the one place it is derived,
+  // `conversationIdsAsHandles`); none → the turn is refused, never sent raw.
+  const shown = await conversationIdsAsHandles(
+    scope.db,
+    {
+      entityId: scope.entityId,
+      agentId: scope.agentId,
+      subject: `a CLI turn of agent ${scope.agentId}`,
+    },
+    { message: opts.message, personality: opts.personality },
+  );
+  return { ...opts, message: shown.message, personality: shown.personality };
 }
 
 /**

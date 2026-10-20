@@ -122,26 +122,35 @@ describe('les quatre listes de runtimes disent la même chose', () => {
     // sur la même conversation lui tendait l'identifiant de session de l'AUTRE
     // CLI, que sa commande de reprise refuse. Chaque tour repartait en erreur.
     //
-    // Lu sur le texte : la requête vit dans une fonction qui a besoin d'une base
-    // et d'un job entier ; ce qu'on veut prouver ici tient en une clause.
+    // Lu sur le texte : la règle vit désormais en UN endroit, partagé par les
+    // deux chemins et par `code_task` (queries/cli-sessions.ts, #824) ; ce
+    // qu'on veut prouver ici tient en une clause de la lecture, une de
+    // l'écriture, et le fait que les deux chemins passent par elles avec le
+    // fournisseur qui tourne.
+    const rule = read('packages/db/src/queries/cli-sessions.ts');
+    const lookup =
+      /export async function findResumableCliSession[\s\S]{0,900}?\.limit\(1\)/.exec(rule)?.[0] ??
+      '';
+    expect(lookup, 'la lecture de session ignore le fournisseur').toContain(
+      'eq(cliSessions.provider, key.provider)',
+    );
+    // Et l'écriture repose le fournisseur, sans quoi la ligne garderait le nom
+    // de l'ancien CLI tout en portant la session du nouveau.
+    const upsert = /onConflictDoUpdate\(\{[\s\S]{0,700}?\}\)/.exec(rule)?.[0] ?? '';
+    expect(upsert, "l'upsert laisse l'ancien fournisseur en place").toContain(
+      'provider: session.provider',
+    );
     for (const rel of [
       'apps/runner/src/cli-runtime/run-job.ts',
       'apps/runner/src/cli-runtime/run-chat.ts',
     ]) {
       const src = read(rel);
-      const lookup =
-        /select\(\{ sessionId: cliSessions.sessionId \}\)[\s\S]{0,900}?\.limit\(1\)/.exec(
-          src,
-        )?.[0] ?? '';
-      expect(lookup, `${rel} : la lecture de session ignore le fournisseur`).toContain(
-        'eq(cliSessions.provider',
-      );
-      // Et l'écriture repose le fournisseur, sans quoi la ligne garderait le nom
-      // de l'ancien CLI tout en portant la session du nouveau.
-      const upsert = /onConflictDoUpdate\(\{[\s\S]{0,700}?\}\)/.exec(src)?.[0] ?? '';
-      expect(upsert, `${rel} : l'upsert laisse l'ancien fournisseur en place`).toContain(
-        'provider: binding.provider',
-      );
+      for (const fn of ['findResumableCliSession', 'rememberCliSession']) {
+        const call = new RegExp(fn + String.raw`\([\s\S]{0,300}?\}\)`).exec(src)?.[0] ?? '';
+        expect(call, `${rel} : ${fn} sans le fournisseur qui tourne`).toContain(
+          'provider: binding.provider',
+        );
+      }
     }
   });
 

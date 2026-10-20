@@ -99,7 +99,7 @@ describe('provider call deadline (#608) @cap:se-souvenir/moteur', () => {
     const started = Date.now();
 
     const err = await createEmbeddingClient({ provider: 'openai', baseURL, apiKey: 'k' })
-      .embed('remember this')
+      .embed('remember this', { entityId: null })
       .then(
         () => null,
         (e: unknown) => e as Error,

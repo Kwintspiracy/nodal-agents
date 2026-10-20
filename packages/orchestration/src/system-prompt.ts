@@ -103,7 +103,13 @@ export interface JobContext {
    * toujours-actifs que le job a, avec la même fonction.
    */
   toolIndex?: readonly ToolIndexEntry[];
-  /** Telegram chat ID, set when the job originated from or targets a Telegram chat. */
+  /**
+   * The job's Telegram chat, set when the job originated from or targets a
+   * Telegram chat — as the model reads it: its conversation HANDLE (#824,
+   * `telegramChatOf` in the runner), never the Telegram id. The send tools take
+   * it back as `chatId`. Rendered under its historical key `telegram_chat_id`,
+   * which skills and stored agent prompts read by name.
+   */
   telegramChatId?: string;
   /**
    * Le canal où l'outil d'envoi de ce job écrit, et ce que l'adaptateur de ce

@@ -1,6 +1,6 @@
 // @nodal-agents/memory — CRUD operations on agent_memory
 
-import { eq, and } from '@nodal-agents/db';
+import { ConversationScopeUnknownError, eq, and } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { agentMemory } from '@nodal-agents/db';
 import type { AgentMemory, AgentMemoryInsert } from '@nodal-agents/shared';
@@ -70,8 +70,21 @@ export async function createMemory(
   // Real provider errors (including dimension mismatches) propagate loudly so
   // misconfiguration is never silently swallowed (invariant #4).
   let embedding: number[] | null = null;
+  // A fact with no workspace, not even through its agent, cannot pass the
+  // conversation-handle boundary (#824): it is stored WITHOUT a vector, and
+  // said below once its row id exists. Any other embedding error stays loud.
+  let unscoped = false;
   if (embeddingClient) {
-    embedding = await embeddingClient.embed(parsed.fact);
+    try {
+      embedding = await embeddingClient.embed(parsed.fact, {
+        entityId: parsed.entity_id ?? null,
+        agentId: parsed.agent_id ?? null,
+        subject: 'a new memory',
+      });
+    } catch (err) {
+      if (!(err instanceof ConversationScopeUnknownError)) throw err;
+      unscoped = true;
+    }
   }
 
   const rows = await db
@@ -93,6 +106,12 @@ export async function createMemory(
   const row = rows[0];
   if (!row) {
     throw new Error('memory.create_failed');
+  }
+  if (unscoped) {
+    console.warn(
+      `[memory] memory ${row.id} has no workspace — not embedded, its vector stays NULL ` +
+        '(keyword search only).',
+    );
   }
   return rowToMemory(row as MemoryRow);
 }

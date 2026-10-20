@@ -47,8 +47,19 @@ export const channelAllowedConversations = pgTable(
     role: text('role').notNull().default('member'),
     /** 'active' = may create jobs; 'pending' = awaiting the owner's confirmation. */
     status: text('status').notNull().default('pending'),
-    /** Display name of the requester, for the owner's confirmation card. */
+    /**
+     * Display name of the requester — a NAME, never an address: with no
+     * display name, the fixed fallback (`Someone`). `list_conversations` hands
+     * it to the model (#824).
+     */
     requesterName: text('requester_name'),
+    /**
+     * Who asked, as the channel identifies them (a WhatsApp sender JID, a
+     * Discord or Slack user id) — for the OWNER: their confirmation card and
+     * the dashboard's allowlist. Contact data: never read for a model (#824).
+     * NULL on rows written before migration 0152 that had a name.
+     */
+    requesterAddress: text('requester_address'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },

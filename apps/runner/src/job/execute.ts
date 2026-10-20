@@ -237,6 +237,7 @@ import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import {
   channelDeliveryFacts,
+  jobChatForModel,
   telegramChatOf,
   replyDestination,
   triggerWantsConfirmation as triggerWantsConfirmationOf,
@@ -2257,7 +2258,10 @@ async function runJobTracked(
     // contient pas : il annonçait un dossier là où l'agent en avait deux.
     workspaces: agentWorkspacesList,
     ...(job.task ? { task: job.task } : {}),
-    ...telegramChatOf({ id: job.chatId, channel: job.chatChannel ?? null }),
+    ...(await telegramChatOf(db, job.entityId ?? null, {
+      id: job.chatId,
+      channel: job.chatChannel ?? null,
+    })),
     // `notifyOnSuccess` joins at the prompt build below, once `replyTo` says
     // whether a send tool can carry the confirmation (#649).
     ...(job.parentJobId ? { isDelegated: true } : {}),
@@ -3863,11 +3867,17 @@ async function runJobTracked(
     // l'écrire dans le résultat.
   };
 
-  const withDeliveryNotice = (resultText: string): string => {
+  // Le parent LIT cet avis : le chat y est nommé par son handle, jamais par
+  // l'identifiant du canal (#824 — un DM WhatsApp s'appelle par un numéro de
+  // téléphone). Un chat dont personne ne connaît la plateforme n'a pas
+  // d'adresse : l'avis n'en nomme aucune (`jobChatForModel`).
+  const withDeliveryNotice = async (resultText: string): Promise<string> => {
     if (!job.parentJobId || !deliveredViaToolName) return resultText;
-    const notice = `[livraison effectuée : ${deliveredViaToolName}${
-      job.chatId ? ` → chat ${job.chatId}` : ''
-    }]`;
+    const chat = await jobChatForModel(db, job.entityId ?? null, {
+      id: job.chatId ?? null,
+      channel: job.chatChannel ?? null,
+    });
+    const notice = `[livraison effectuée : ${deliveredViaToolName}${chat ? ` → chat ${chat}` : ''}]`;
     return resultText ? `${resultText}\n\n${notice}` : notice;
   };
 
@@ -5503,7 +5513,7 @@ async function runJobTracked(
           );
           return {
             status: 'completed',
-            result: withDeliveryNotice(withFailedDelegationNotice(textContent)),
+            result: await withDeliveryNotice(withFailedDelegationNotice(textContent)),
             toolsUsed,
             exitReason: 'final_text',
           };
@@ -7078,7 +7088,7 @@ async function runJobTracked(
         });
         return {
           status: 'completed',
-          result: withDeliveryNotice(propagatedResult),
+          result: await withDeliveryNotice(propagatedResult),
           toolsUsed,
           exitReason: 'return_result_success',
         };

@@ -66,7 +66,7 @@ describe('provider transport wiring (#608) @cap:choisir-modele/moteur', () => {
     { provider: 'ollama' as const, model: 'nomic-embed-text', baseURL: 'http://127.0.0.1:9' },
   ])('$provider embeddings go through providerFetch', async (cfg) => {
     await createEmbeddingClient({ ...cfg, apiKey: 'k' })
-      .embed('hi')
+      .embed('hi', { entityId: null })
       .catch(() => undefined);
 
     expect(seen.length).toBeGreaterThan(0);

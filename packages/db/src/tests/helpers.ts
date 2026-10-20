@@ -938,6 +938,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       role text NOT NULL DEFAULT 'member',
       status text NOT NULL DEFAULT 'pending',
       requester_name text,
+      requester_address text,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),
       CONSTRAINT channel_allowed_conversations_agent_channel_conversation_unique UNIQUE (agent_id, channel, conversation_id),
@@ -949,6 +950,18 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
 
     CREATE UNIQUE INDEX IF NOT EXISTS channel_allowed_conversations_single_owner
       ON channel_allowed_conversations (agent_id, channel) WHERE role = 'owner';
+
+    -- migration 0152 (#824) : l'adresse qu'un modèle lit pour une conversation
+    CREATE TABLE IF NOT EXISTS conversation_handles (
+      id text PRIMARY KEY,
+      entity_id uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+      channel text NOT NULL,
+      conversation_id text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT conversation_handles_entity_channel_conversation_unique
+        UNIQUE (entity_id, channel, conversation_id),
+      CONSTRAINT conversation_handles_id_check CHECK (id ~ '^conv_[a-z2-7]{10}$')
+    );
 
     -- ── auth tables (better-auth) ────────────────────────────────────────────
 
@@ -1027,6 +1040,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       conversation_key text NOT NULL,
       provider text NOT NULL,
       session_id text NOT NULL,
+      opened_with_handles boolean NOT NULL DEFAULT false,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),
       UNIQUE (agent_id, conversation_key)

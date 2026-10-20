@@ -12,7 +12,13 @@
 
 import { z } from 'zod';
 import { DeliveryError, getAdapter } from '@nodal-agents/delivery';
-import { resolveBotToken, resolveRecipientChatId, resolveChannelForJob } from './delivery-guard';
+import {
+  CHAT_ID_ARGUMENT_HINT,
+  CHAT_ID_ARGUMENT_RE,
+  resolveBotToken,
+  resolveRecipient,
+  withoutConversationId,
+} from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
 import { sentCard } from '../presenters';
 
@@ -21,10 +27,13 @@ import { sentCard } from '../presenters';
 const TelegramSendMessageInput = z.object({
   chatId: z
     .string()
-    .regex(/^-?\d+$/, 'must be a numeric Telegram chat ID')
+    .regex(CHAT_ID_ARGUMENT_RE, CHAT_ID_ARGUMENT_HINT)
     .max(20)
     .optional()
-    .describe('Telegram chat ID to send to. Omit to reply to the chat that triggered this job.'),
+    .describe(
+      'The conversation to send to, as you were given it (Job context, list_conversations). ' +
+        'Omit to reply to the chat that triggered this job.',
+    ),
   // Pas de plafond (#613) : l'adaptateur découpe tout texte trop long pour le
   // canal (`ChannelAdapter.text.maxMessageChars`). Le `.max(4096)` d'avant
   // forçait le modèle à découper lui-même — et la limite de Discord est 2 000.
@@ -169,8 +178,10 @@ Fail conditions:
       // 1. Resolve + authorize chatId — explicit arg wins (must be approved
       // unless it's the job's own origin chat), then job origin chat (F1).
       // `input.channel` targets another connected platform when given — see
-      // resolveRecipientChatId's doc comment for the cross-channel rules.
-      const chatId = await resolveRecipientChatId(
+      // resolveRecipientChatId's doc comment for the cross-channel rules. A
+      // handle names its own channel (#824): the token and the adapter below
+      // follow the channel resolved HERE, never the raw argument.
+      const { chatId, channel } = await resolveRecipient(
         input.chatId,
         ctx,
         'telegram_no_recipient',
@@ -180,7 +191,7 @@ Fail conditions:
       // 2. Bot token — the runner's resolved token wins (B3: a delegated worker
       // inheriting its entity's root agent's token); otherwise fall back to this
       // agent's own token from DB (credential isolation per agent, historical path).
-      const botToken = await resolveBotToken(ctx, input.channel);
+      const botToken = await resolveBotToken(ctx, channel);
       if (!botToken) {
         const err = new Error('telegram_no_bot_token');
         err.name = 'telegram_no_bot_token';
@@ -189,7 +200,6 @@ Fail conditions:
 
       // 3. Send via the channel-neutral adapter (battle-tested Telegram delivery
       // helper underneath — see channels/telegram-adapter.ts).
-      const channel = await resolveChannelForJob(ctx, input.channel);
       const adapter = getAdapter(channel);
       const key = `${ctx.jobId ?? ''}\u0000${channel}\u0000${chatId}`;
       const pending = partialSends.get(key);
@@ -202,7 +212,10 @@ Fail conditions:
             ? await adapter.sendText({ botToken }, chatId, input.text)
             : await adapter.sendText({ botToken }, chatId, input.text, { fromChunk });
       } catch (err) {
-        throw partialSendError(err, key, input.text);
+        throw await withoutConversationId(partialSendError(err, key, input.text), ctx, {
+          chatId,
+          channel,
+        });
       }
 
       // `res.messageId` reste disponible ici pour qui en aurait besoin côté

@@ -4,12 +4,13 @@
 import { createClient } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { createLlmClient, createEmbeddingClient } from '@nodal-agents/llm';
-import type { NodalLlmClient, EmbeddingClient } from '@nodal-agents/llm';
+import type { NodalLlmClient, EmbeddingClient, EmbeddingProviderConfig } from '@nodal-agents/llm';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import type { ToolRegistry } from '@nodal-agents/tools';
 import { LocalTrustProvider, BearerTokenProvider, seedLocalUser } from '@nodal-agents/auth';
 import type { AuthProvider } from '@nodal-agents/auth';
 import type { RunnerEnv } from './env.ts';
+import { embeddingsAddressedByHandle } from './llm/addressed-by-handle.ts';
 
 // ─── Runner instance identity ─────────────────────────────────────────────────
 //
@@ -35,6 +36,21 @@ export interface RunnerDeps {
   registry: ToolRegistry;
   authProvider: AuthProvider;
   close: () => Promise<void>;
+}
+
+// ─── Embeddings ───────────────────────────────────────────────────────────────
+
+/**
+ * THE runner's embedding client — its single source. Every text it sends to
+ * the embedding provider (a memory's fact at its write and at the startup
+ * backfill, a recall's query) names conversations by their handle, never by
+ * the channel's id (#824, `embeddingsAddressedByHandle`).
+ */
+export function createRunnerEmbeddingClient(
+  config: EmbeddingProviderConfig,
+  db: AnyDrizzleDb,
+): EmbeddingClient {
+  return embeddingsAddressedByHandle(createEmbeddingClient(config), db);
 }
 
 // ─── Factory ──────────────────────────────────────────────────────────────────
@@ -66,7 +82,7 @@ export async function createRunnerDeps(runnerEnv: RunnerEnv): Promise<RunnerDeps
 
   // ── Embeddings ───────────────────────────────────────────────────────────────
   // keyword fallback: use EmbeddingProviderConfig with provider='keyword'
-  const embeddingConfig =
+  const embeddingConfig: EmbeddingProviderConfig =
     runnerEnv.EMBEDDING_PROVIDER === 'keyword'
       ? { provider: 'keyword' as const }
       : {
@@ -76,7 +92,7 @@ export async function createRunnerDeps(runnerEnv: RunnerEnv): Promise<RunnerDeps
           model: runnerEnv.EMBEDDING_MODEL,
         };
 
-  const embeddingClient = createEmbeddingClient(embeddingConfig);
+  const embeddingClient = createRunnerEmbeddingClient(embeddingConfig, db as AnyDrizzleDb);
 
   // ── Tool registry ────────────────────────────────────────────────────────────
   const registry = createToolRegistry();

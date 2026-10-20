@@ -7,7 +7,8 @@
 import {
   agents,
   cliRuns,
-  cliSessions,
+  findResumableCliSession,
+  rememberCliSession,
   workspaceLocks,
   approvalRules,
   eq,
@@ -307,15 +308,10 @@ export async function findResumableSession(
   provider: string,
   key: string,
 ): Promise<string | null> {
-  const [row] = await db
-    .select({ sessionId: cliSessions.sessionId, provider: cliSessions.provider })
-    .from(cliSessions)
-    .where(and(eq(cliSessions.agentId, agentId), eq(cliSessions.conversationKey, key)))
-    .limit(1);
-  // A session belongs to the CLI that created it: resuming a claude session id
-  // through codex (or the reverse) fails at the CLI, loudly but pointlessly.
-  if (!row || row.provider !== provider) return null;
-  return row.sessionId;
+  // The SAME rule as the CLI runtime (queries/cli-sessions.ts): a session of
+  // another CLI, or one opened before the conversation-handle boundary (#824),
+  // is not resumed.
+  return findResumableCliSession(db, { agentId, conversationKey: key, provider });
 }
 
 /** Remember this run's session so the next call in the same job can resume it. */
@@ -329,17 +325,13 @@ export async function rememberSession(
     sessionId: string;
   },
 ): Promise<void> {
-  await db
-    .insert(cliSessions)
-    .values({
-      entityId: args.entityId,
-      agentId: args.agentId,
-      conversationKey: args.key,
-      provider: args.provider,
-      sessionId: args.sessionId,
-    })
-    .onConflictDoUpdate({
-      target: [cliSessions.agentId, cliSessions.conversationKey],
-      set: { sessionId: args.sessionId, provider: args.provider, updatedAt: new Date() },
-    });
+  // Marked: a code_task CLI reads what the model wrote, and the model reads
+  // conversations only by their handle (#824).
+  await rememberCliSession(db, {
+    entityId: args.entityId,
+    agentId: args.agentId,
+    conversationKey: args.key,
+    provider: args.provider,
+    sessionId: args.sessionId,
+  });
 }

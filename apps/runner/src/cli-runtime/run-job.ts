@@ -12,7 +12,8 @@
 import {
   agentJobs,
   cliRuns,
-  cliSessions,
+  findResumableCliSession,
+  rememberCliSession,
   jobCheckpoints,
   toolCalls,
   count,
@@ -20,7 +21,6 @@ import {
   and,
   gte,
   inArray,
-  sql,
   type AnyDrizzleDb,
   heldBy,
 } from '@nodal-agents/db';
@@ -77,7 +77,12 @@ import {
 } from '@nodal-agents/checkpoints';
 import { withNodalPrograms, type NodalPrograms } from '@nodal-agents/sandbox';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
-import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.ts';
+import {
+  resolveRuntime,
+  cliTurnForModel,
+  isCliSetupError,
+  type CliTurnResult,
+} from './provider.ts';
 
 /** Per-turn wall clock budget — a runtime agent turn is a full CLI session run. */
 const RUNTIME_TURN_TIMEOUT_MS = 900_000;
@@ -200,9 +205,11 @@ export function buildCliRuntimeJobContext(args: {
    */
   deployment: DeploymentContext;
   task?: string | null;
-  chatId?: string | null;
-  /** Le canal sur lequel `chatId` a été résolu (`agent_jobs.chat_channel`), ou null (#649). */
-  chatChannel?: string | null;
+  /**
+   * Le `telegram_chat_id` du job, tel que `telegramChatOf` le calcule : le
+   * HANDLE du chat s'il a été résolu sur Telegram (#649, #824), rien sinon.
+   */
+  telegramChat?: Awaited<ReturnType<typeof telegramChatOf>>;
   workspaceGit?: Awaited<ReturnType<typeof probeWorkspaceGit>>;
   /**
    * Les dossiers que la CLI a RÉELLEMENT — le partagé compris.
@@ -227,7 +234,7 @@ export function buildCliRuntimeJobContext(args: {
     surface: 'cli-runtime',
     deployment: args.deployment,
     ...(args.task ? { task: args.task } : {}),
-    ...telegramChatOf({ id: args.chatId ?? null, channel: args.chatChannel ?? null }),
+    ...(args.telegramChat ?? {}),
     ...(args.workspaceGit ? { workspaceGit: args.workspaceGit } : {}),
     ...(args.workspaces && args.workspaces.length > 0 ? { workspaces: args.workspaces } : {}),
     ...(args.conversation ? { conversation: args.conversation } : {}),
@@ -539,26 +546,17 @@ export async function runCliRuntimeJob(args: {
   const conversationKey = rawConversationKey
     ? assertRuntimeSessionKey(rawConversationKey)
     : rawConversationKey;
+  // Le FOURNISSEUR fait partie de l'identité d'une session (revue Codex,
+  // 27/08) : une session de l'autre CLI n'est pas reprise. Une session ouverte
+  // avant la frontière des handles non plus (#824) — voir queries/cli-sessions.ts.
   let resumeSessionId: string | undefined;
   if (conversationKey) {
-    const [existing] = await db
-      .select({ sessionId: cliSessions.sessionId })
-      .from(cliSessions)
-      .where(
-        and(
-          eq(cliSessions.agentId, agentRow.id),
-          eq(cliSessions.conversationKey, conversationKey),
-          // Le FOURNISSEUR fait partie de l'identité d'une session (revue
-          // Codex, 27/08). L'index unique ne porte que (agent, conversation) :
-          // basculer un agent de Claude Code à Codex sur la même conversation
-          // lui tendait l'identifiant de session de l'AUTRE CLI, que sa
-          // commande de reprise refuse. Sans ce filtre, chaque tour repartait
-          // en erreur de reprise après une bascule de runtime.
-          eq(cliSessions.provider, binding.provider),
-        ),
-      )
-      .limit(1);
-    resumeSessionId = existing?.sessionId;
+    resumeSessionId =
+      (await findResumableCliSession(db, {
+        agentId: agentRow.id,
+        conversationKey,
+        provider: binding.provider,
+      })) ?? undefined;
   }
 
   const perms = agentRow.cliPermissions ?? {};
@@ -724,6 +722,11 @@ export async function runCliRuntimeJob(args: {
           answersWhileJobId: job.answersWhileJobId ?? null,
         })
       : null;
+    // Le chat du job tel que le modèle le lit : son handle, s'il est sur Telegram (#824).
+    const telegramChat = await telegramChatOf(db, job.entityId ?? null, {
+      id: job.chatId ?? null,
+      channel: job.chatChannel ?? null,
+    });
     systemPrompt = await buildSystemPrompt(
       agentRow,
       db,
@@ -731,8 +734,7 @@ export async function runCliRuntimeJob(args: {
         origin: job.channel ?? 'unknown',
         deployment: await getDeploymentContext(db, job.entityId ?? undefined),
         task: job.task,
-        chatId: job.chatId,
-        chatChannel: job.chatChannel ?? null,
+        telegramChat,
         workspaceGit,
         workspaces: args.workspaces,
         ...(conversation ? { conversation } : {}),
@@ -800,30 +802,35 @@ export async function runCliRuntimeJob(args: {
   });
   let turn: CliTurnResult;
   try {
-    turn = await binding.run({
-      // Les mots de qui a demandé, puis la note d'une remise sous son cadre
-      // (handoff.ts) : la même ouverture que la boucle Nodal, en un texte.
-      message: openingText(job.task ?? '', job.handoffNote),
-      personality: systemPrompt,
-      cwd,
-      // Les autres dossiers attachés — voir ClaudeTurnOptions.extraWriteDirs.
-      extraWriteDirs: args.workspaces.slice(1).map((w) => w.path),
-      mode,
-      shellTools: claudeShellTools(shellPosture),
-      extraDisallowed: perms.extraDisallowed,
-      model: defaults.model,
-      effort: defaults.effort,
-      resumeSessionId,
-      timeoutMs: RUNTIME_TURN_TIMEOUT_MS,
-      // The CLI runs its own internal loop the Nodal counters never see —
-      // apply the SAME per-turn cap at this seam (invariant #8).
-      maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
-      onEvent,
-      // Un seul signal : le frein (qui écoute aussi la ligne du job) ou, sans
-      // shell, la ligne seule. Deux clés abortSignal : la seconde écraserait
-      // la première, et le frein ne tuerait plus la CLI.
-      abortSignal: brake.signal ?? rowWatch.signal,
-    });
+    turn = await binding.run(
+      await cliTurnForModel(
+        { db, entityId: job.entityId ?? null, agentId: agentRow.id },
+        {
+          // Les mots de qui a demandé, puis la note d'une remise sous son cadre
+          // (handoff.ts) : la même ouverture que la boucle Nodal, en un texte.
+          message: openingText(job.task ?? '', job.handoffNote),
+          personality: systemPrompt,
+          cwd,
+          // Les autres dossiers attachés — voir ClaudeTurnOptions.extraWriteDirs.
+          extraWriteDirs: args.workspaces.slice(1).map((w) => w.path),
+          mode,
+          shellTools: claudeShellTools(shellPosture),
+          extraDisallowed: perms.extraDisallowed,
+          model: defaults.model,
+          effort: defaults.effort,
+          resumeSessionId,
+          timeoutMs: RUNTIME_TURN_TIMEOUT_MS,
+          // The CLI runs its own internal loop the Nodal counters never see —
+          // apply the SAME per-turn cap at this seam (invariant #8).
+          maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
+          onEvent,
+          // Un seul signal : le frein (qui écoute aussi la ligne du job) ou, sans
+          // shell, la ligne seule. Deux clés abortSignal : la seconde écraserait
+          // la première, et le frein ne tuerait plus la CLI.
+          abortSignal: brake.signal ?? rowWatch.signal,
+        },
+      ),
+    );
   } catch (err) {
     rowWatch.stop();
     brake.stop();
@@ -912,23 +919,14 @@ export async function runCliRuntimeJob(args: {
           );
           return;
         }
-        await tx
-          .insert(cliSessions)
-          .values({
-            entityId: job.entityId,
-            agentId: agentRow.id,
-            conversationKey,
-            provider: binding.provider,
-            sessionId,
-          })
-          .onConflictDoUpdate({
-            target: [cliSessions.agentId, cliSessions.conversationKey],
-            // `provider` est REPOSÉ, pas seulement l'identifiant : l'index unique ne
-            // porte que (agent, conversation), donc après une bascule de runtime la
-            // ligne gardait le nom de l'ancien CLI tout en portant la session du
-            // nouveau. La ligne se serait contredite elle-même.
-            set: { sessionId, provider: binding.provider, updatedAt: sql`now()` },
-          });
+        // Marquée : ce tour est passé par la frontière (`cliTurnForModel`).
+        await rememberCliSession(tx as unknown as AnyDrizzleDb, {
+          entityId: job.entityId,
+          agentId: agentRow.id,
+          conversationKey,
+          provider: binding.provider,
+          sessionId,
+        });
       })
       .catch((err: unknown) => {
         console.warn(`[cli-runtime] cli_sessions upsert failed (job=${jobId}):`, err);

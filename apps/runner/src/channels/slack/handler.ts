@@ -60,6 +60,7 @@ export interface SlackHandleResult {
     ownerConversationId: string | null;
     requesterConversationId: string;
     requesterName: string;
+    requesterAddress: string | null;
     targetAgentName?: string;
   };
 }
@@ -111,6 +112,7 @@ export async function handleSlackMessage(args: {
     conversationId,
     kind,
     senderName,
+    senderAddress: message.user.id,
     allowOwnerClaim: true,
   });
   if (!receiverAuth.authorized) return receiverAuth.result;
@@ -170,6 +172,7 @@ export async function handleSlackMessage(args: {
         conversationId,
         kind,
         senderName,
+        senderAddress: message.user.id,
         allowOwnerClaim: false,
         targetAgentName: targetRow.name,
       });

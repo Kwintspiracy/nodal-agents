@@ -14,13 +14,28 @@ export interface EmbeddingProviderConfig {
   apiKey?: string;
 }
 
+/**
+ * Whose text this is: the workspace the memory or the query belongs to. A text
+ * sent to an embedding provider is a text sent to a third party; the runner
+ * wraps its client so every conversation id that workspace knows is replaced
+ * by its handle first (#824, `embeddingsAddressedByHandle`). Required, so no
+ * caller can send a text without saying whose it is.
+ */
+export interface EmbeddingScope {
+  entityId: string | null;
+  /** The agent the text belongs to — its workspace when `entityId` is null (#824). */
+  agentId?: string | null;
+  /** Names the text in a refusal (« memory <id> »). */
+  subject?: string;
+}
+
 export interface EmbeddingClient {
   /**
    * Embed a text string.
    * Returns a float array for real embedding providers.
    * Returns null for the keyword provider — caller falls back to substring search.
    */
-  embed(text: string): Promise<number[] | null>;
+  embed(text: string, scope: EmbeddingScope): Promise<number[] | null>;
   /**
    * Number of dimensions for this embedding model.
    * null for keyword (no real embedding).

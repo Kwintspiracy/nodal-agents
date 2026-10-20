@@ -75,3 +75,4 @@ export * from './card-words';
 export * from './mcp-server';
 export * from './mcp-tool-prefix';
 export * from './running-version';
+export * from './conversation-handle';

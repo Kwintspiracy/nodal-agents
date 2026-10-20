@@ -131,11 +131,6 @@ const ADDRESSES_NO_PLATFORM: ReadonlyArray<{ file: string; line: string; why: st
   },
   {
     file: 'apps/runner/src/job/execute.ts',
-    line: "job.chatId ? ` → chat ${job.chatId}` : ''",
-    why: "a delegate's delivery notice to its parent: text, not a target",
-  },
-  {
-    file: 'apps/runner/src/job/execute.ts',
     line: 'chatId: job.chatId,',
     why: "the parent shape handed to handleDelegation; delegate.ts reads the channel from the parent's row",
   },

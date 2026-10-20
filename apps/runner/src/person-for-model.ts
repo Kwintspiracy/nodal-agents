@@ -14,12 +14,12 @@
 // Toutes les identités de personne que le runner écrit pour un modèle passent
 // par ce module :
 //   - un COMPTE : `users.id`, jamais son e-mail ;
-//   - une CONVERSATION de canal : l'identifiant de conversation du canal — le
-//     MÊME espace d'adresses que le modèle lit partout ailleurs (contexte du
-//     job, `list_conversations`, entrée des outils d'envoi). Un second espace
-//     (l'id d'une ligne à nous) ressemblerait à une adresse sans en être une
-//     (revue Reviewer A de #820, passe 1). Un identifiant opaque unique pour
-//     toutes les adresses de conversation est une décision à part ;
+//   - une CONVERSATION de canal : son HANDLE (#824), le MÊME espace d'adresses
+//     que le modèle lit partout ailleurs (contexte du job, `list_conversations`,
+//     avis de livraison) et que les outils d'envoi reprennent. Jamais
+//     l'identifiant du canal : une conversation WhatsApp directe s'appelle par
+//     un numéro de téléphone. Le handle est écrit par `conversationHandleFor`
+//     (@nodal-agents/db), seul écrivain d'une adresse destinée à un modèle ;
 //   - un PARTICIPANT d'un groupe : le nom qu'il s'est donné sur le canal, et
 //     le pseudo du canal quand il en a un. Dans un groupe, l'agent lit une
 //     conversation entre plusieurs personnes et doit savoir qui dit quoi, sous
@@ -31,14 +31,22 @@
 // Quand la ligne du compte manque, la forme le dit, fixe — jamais une autre
 // forme choisie en silence (invariant #4).
 
+import type { ConversationHandle } from '@nodal-agents/shared';
 import { sanitizeSenderName } from './channels/shared.ts';
 
 /** Une personne, telle que les données la connaissent. */
 export type PersonForModel =
   /** Un compte du dashboard ou de l'API. `found: false` : aucune ligne `users` pour cet id. */
   | { readonly kind: 'account'; readonly userId: string; readonly found: boolean }
-  /** Une conversation de canal, par l'identifiant que le canal lui donne. */
-  | { readonly kind: 'conversation'; readonly channel: string; readonly conversationId: string }
+  /**
+   * Une conversation de canal, par son handle (`conversationHandleFor`). `null` :
+   * aucune entité où la nommer — la forme le dit, fixe.
+   */
+  | {
+      readonly kind: 'conversation';
+      readonly channel: string;
+      readonly address: ConversationHandle | null;
+    }
   /** Un participant d'un groupe : son nom affiché, et le pseudo du canal quand il en a un. Bruts. */
   | { readonly kind: 'participant'; readonly displayName: string; readonly handle: string | null };
 
@@ -50,7 +58,9 @@ export function personForModel(person: PersonForModel): string {
         ? `user:${person.userId}`
         : `user:${person.userId} (no account with this id)`;
     case 'conversation':
-      return `${person.channel}:${person.conversationId}`;
+      return person.address !== null
+        ? `${person.channel}:${person.address}`
+        : `${person.channel}:(no workspace to name this conversation in)`;
     case 'participant': {
       // `sanitizeSenderName` dit `Someone` pour un nom vide ; un pseudo vide
       // n'est pas un pseudo, il n'est pas écrit.
