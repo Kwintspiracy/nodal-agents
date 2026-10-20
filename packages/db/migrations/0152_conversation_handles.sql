@@ -70,3 +70,11 @@ UPDATE agent_memory m
           AND strpos(m.fact, t.chat_id) > 0
       )
     );
+--> statement-breakpoint
+-- Une CLI (Claude Code, Codex) garde elle-même la transcription d'une session
+-- et la rejoue à chaque reprise, hors de portée de la frontière des handles. Une
+-- session n'est donc reprise que si elle a été ouverte SOUS la frontière : la
+-- marque `opened_with_handles`. Les sessions déjà enregistrées ne l'ont pas
+-- (DEFAULT false) : chaque conversation concernée repart d'une session neuve,
+-- une fois, et celle-ci est marquée (queries/cli-sessions.ts).
+ALTER TABLE cli_sessions ADD COLUMN IF NOT EXISTS opened_with_handles boolean NOT NULL DEFAULT false;

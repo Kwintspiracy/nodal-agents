@@ -1040,6 +1040,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       conversation_key text NOT NULL,
       provider text NOT NULL,
       session_id text NOT NULL,
+      opened_with_handles boolean NOT NULL DEFAULT false,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),
       UNIQUE (agent_id, conversation_key)

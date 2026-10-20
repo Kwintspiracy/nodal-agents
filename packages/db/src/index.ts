@@ -26,6 +26,7 @@ export {
   showConversationsTo,
   conversationIdsAsHandles,
 } from './queries/conversation-handles.ts';
+export { findResumableCliSession, rememberCliSession } from './queries/cli-sessions.ts';
 export { isChatAllowed } from './queries/telegram-allowed.ts';
 export { dropApprovalRulesForDetachedSkill } from './queries/skill-approval-rules.ts';
 export { getMcpApprovalContext } from './queries/mcp-approval-context.ts';

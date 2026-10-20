@@ -17,6 +17,7 @@ import {
   pgTable,
   text,
   uuid,
+  boolean,
   integer,
   real,
   jsonb,
@@ -126,6 +127,16 @@ export const cliSessions = pgTable(
     conversationKey: text('conversation_key').notNull(),
     provider: text('provider').notNull(),
     sessionId: text('session_id').notNull(),
+    /**
+     * The session was opened under the conversation-handle boundary (#824):
+     * everything its CLI ever read named conversations by their handle. A
+     * session without the mark was opened before the boundary existed — its
+     * transcript, which the CLI keeps itself and replays on resume, may hold
+     * raw conversation ids (a phone number). It is never resumed: the next turn
+     * starts fresh ONCE, and the session it opens is marked
+     * (`findResumableCliSession` / `rememberCliSession`, queries/cli-sessions.ts).
+     */
+    openedWithHandles: boolean('opened_with_handles').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },

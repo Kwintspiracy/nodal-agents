@@ -8,11 +8,10 @@
 import {
   chatMessages,
   conversations,
-  cliSessions,
+  findResumableCliSession,
+  rememberCliSession,
   toolCalls,
   eq,
-  and,
-  sql,
   type AnyDrizzleDb,
 } from '@nodal-agents/db';
 import { randomUUID } from 'node:crypto';
@@ -100,19 +99,13 @@ export async function runCliRuntimeChatTurn(args: {
     };
   }
 
-  const [existing] = await db
-    .select({ sessionId: cliSessions.sessionId })
-    .from(cliSessions)
-    .where(
-      and(
-        eq(cliSessions.agentId, agentRow.id),
-        eq(cliSessions.conversationKey, conversationId),
-        // Même règle que le chemin job : le fournisseur fait partie de
-        // l'identité d'une session. Voir run-job.ts.
-        eq(cliSessions.provider, binding.provider),
-      ),
-    )
-    .limit(1);
+  // Même règle que le chemin job : une session d'une autre CLI, ou ouverte
+  // avant la frontière des handles (#824), n'est pas reprise.
+  const resumeSessionId = await findResumableCliSession(db, {
+    agentId: agentRow.id,
+    conversationKey: conversationId,
+    provider: binding.provider,
+  });
 
   const perms = agentRow.cliPermissions ?? {};
   const mode: 'read' | 'write' = perms.mode ?? 'read';
@@ -276,7 +269,7 @@ export async function runCliRuntimeChatTurn(args: {
           extraDisallowed: perms.extraDisallowed,
           model: defaults.model,
           effort: defaults.effort,
-          resumeSessionId: existing?.sessionId,
+          ...(resumeSessionId ? { resumeSessionId } : {}),
           timeoutMs: RUNTIME_CHAT_TIMEOUT_MS,
           ...(brake.signal ? { abortSignal: brake.signal } : {}),
           // Same anti-loop cap as the job path (invariant #8).
@@ -347,23 +340,16 @@ export async function runCliRuntimeChatTurn(args: {
   }
 
   if (turn.sessionId) {
-    await db
-      .insert(cliSessions)
-      .values({
-        entityId,
-        agentId: agentRow.id,
-        conversationKey: conversationId,
-        provider: binding.provider,
-        sessionId: turn.sessionId,
-      })
-      .onConflictDoUpdate({
-        target: [cliSessions.agentId, cliSessions.conversationKey],
-        // `provider` reposé — voir run-job.ts.
-        set: { sessionId: turn.sessionId, provider: binding.provider, updatedAt: sql`now()` },
-      })
-      .catch((err: unknown) => {
-        console.warn('[cli-runtime] chat cli_sessions upsert failed:', err);
-      });
+    // Marquée : ce tour est passé par la frontière (`cliTurnForModel`).
+    await rememberCliSession(db, {
+      entityId,
+      agentId: agentRow.id,
+      conversationKey: conversationId,
+      provider: binding.provider,
+      sessionId: turn.sessionId,
+    }).catch((err: unknown) => {
+      console.warn('[cli-runtime] chat cli_sessions upsert failed:', err);
+    });
   }
 
   // Le MÊME ordre de fin de tour que le chemin job (voir run-job.ts, « UN SEUL

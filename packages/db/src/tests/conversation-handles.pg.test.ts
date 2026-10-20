@@ -201,4 +201,16 @@ describe('migration 0152_conversation_handles @cap:parler-par-canal-externe/mote
       await sql.end();
     }
   });
+
+  it('marks CLI sessions: every session stored before the boundary is unmarked, so it is never resumed', async () => {
+    const sql = postgres(harness().url, { max: 1 });
+    try {
+      const [col] = await sql`
+        SELECT data_type, is_nullable, column_default FROM information_schema.columns
+        WHERE table_name = 'cli_sessions' AND column_name = 'opened_with_handles'`;
+      expect(col).toEqual({ data_type: 'boolean', is_nullable: 'NO', column_default: 'false' });
+    } finally {
+      await sql.end();
+    }
+  });
 });

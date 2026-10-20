@@ -12,7 +12,8 @@
 import {
   agentJobs,
   cliRuns,
-  cliSessions,
+  findResumableCliSession,
+  rememberCliSession,
   jobCheckpoints,
   toolCalls,
   count,
@@ -20,7 +21,6 @@ import {
   and,
   gte,
   inArray,
-  sql,
   type AnyDrizzleDb,
   heldBy,
 } from '@nodal-agents/db';
@@ -546,26 +546,17 @@ export async function runCliRuntimeJob(args: {
   const conversationKey = rawConversationKey
     ? assertRuntimeSessionKey(rawConversationKey)
     : rawConversationKey;
+  // Le FOURNISSEUR fait partie de l'identité d'une session (revue Codex,
+  // 27/08) : une session de l'autre CLI n'est pas reprise. Une session ouverte
+  // avant la frontière des handles non plus (#824) — voir queries/cli-sessions.ts.
   let resumeSessionId: string | undefined;
   if (conversationKey) {
-    const [existing] = await db
-      .select({ sessionId: cliSessions.sessionId })
-      .from(cliSessions)
-      .where(
-        and(
-          eq(cliSessions.agentId, agentRow.id),
-          eq(cliSessions.conversationKey, conversationKey),
-          // Le FOURNISSEUR fait partie de l'identité d'une session (revue
-          // Codex, 27/08). L'index unique ne porte que (agent, conversation) :
-          // basculer un agent de Claude Code à Codex sur la même conversation
-          // lui tendait l'identifiant de session de l'AUTRE CLI, que sa
-          // commande de reprise refuse. Sans ce filtre, chaque tour repartait
-          // en erreur de reprise après une bascule de runtime.
-          eq(cliSessions.provider, binding.provider),
-        ),
-      )
-      .limit(1);
-    resumeSessionId = existing?.sessionId;
+    resumeSessionId =
+      (await findResumableCliSession(db, {
+        agentId: agentRow.id,
+        conversationKey,
+        provider: binding.provider,
+      })) ?? undefined;
   }
 
   const perms = agentRow.cliPermissions ?? {};
@@ -928,23 +919,14 @@ export async function runCliRuntimeJob(args: {
           );
           return;
         }
-        await tx
-          .insert(cliSessions)
-          .values({
-            entityId: job.entityId,
-            agentId: agentRow.id,
-            conversationKey,
-            provider: binding.provider,
-            sessionId,
-          })
-          .onConflictDoUpdate({
-            target: [cliSessions.agentId, cliSessions.conversationKey],
-            // `provider` est REPOSÉ, pas seulement l'identifiant : l'index unique ne
-            // porte que (agent, conversation), donc après une bascule de runtime la
-            // ligne gardait le nom de l'ancien CLI tout en portant la session du
-            // nouveau. La ligne se serait contredite elle-même.
-            set: { sessionId, provider: binding.provider, updatedAt: sql`now()` },
-          });
+        // Marquée : ce tour est passé par la frontière (`cliTurnForModel`).
+        await rememberCliSession(tx as unknown as AnyDrizzleDb, {
+          entityId: job.entityId,
+          agentId: agentRow.id,
+          conversationKey,
+          provider: binding.provider,
+          sessionId,
+        });
       })
       .catch((err: unknown) => {
         console.warn(`[cli-runtime] cli_sessions upsert failed (job=${jobId}):`, err);
