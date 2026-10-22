@@ -28,9 +28,13 @@ const sandboxActive = (await getSandboxStatus()).state === 'available';
 let storeDir: string;
 const SLUG = 'test-skill';
 
+// Unique: under Unix, closing a job's scope kills every process carrying its
+// id (#750), and test files run side by side.
+const JOB = `run-skill-script-test-${randomUUID()}`;
+
 function ctx(over: Partial<ToolContext> = {}): ToolContext {
   return {
-    jobId: 'j',
+    jobId: JOB,
     agentId: 'a',
     entityId: 'e',
     // Builtin never touches the db — a stub is fine and keeps the test pure.
