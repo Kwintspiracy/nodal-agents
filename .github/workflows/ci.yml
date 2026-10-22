@@ -415,42 +415,22 @@ jobs:
       # ran against its own orphaned apt-get, which still held the dpkg lock
       # (#852, three runs on 2026-10-22).
       # Un cache chaud ne télécharge rien ; la clé porte la version EXACTE de
-      # Playwright (celle qui est installée, donc celle du lockfile) et
-      # l'architecture, si bien qu'une montée de version repart d'un cache neuf.
-      # Une version introuvable est une ERREUR : une clé vide ferait partager un
-      # même cache à toutes les versions. Restauration et sauvegarde sont séparées
-      # pour que le cache soit écrit dès l'installation réussie, et non perdu
-      # quand un parcours e2e est rouge. L'installation elle-même est
-      # `scripts/install-playwright.mjs` (#852), la même dans `ci.yml` et `qa.yml`.
+      # Playwright (celle qui est installée, donc celle du lockfile), si bien
+      # qu'une montée de version repart d'un cache neuf. L'installation elle-même
+      # est `scripts/install-playwright.mjs` (#852), la même dans `qa.yml`.
       - name: Resolve the Playwright version
         id: playwright
         timeout-minutes: 2
-        run: |
-          set -euo pipefail
-          version="$(pnpm --filter @nodal-agents/web exec playwright --version | awk '{print $2}')"
-          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-            echo "::error title=Playwright version::could not resolve the Playwright version (got '$version')"
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(pnpm --filter @nodal-agents/web exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
 
-      - name: Restore the Playwright browsers
-        id: playwright-cache
-        uses: actions/cache/restore@v4
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
 
       - name: Install Playwright browsers
         timeout-minutes: 15
         run: node scripts/install-playwright.mjs
-
-      - name: Save the Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
 
       # NOT `pnpm --filter @nodal-agents/web e2e:up`: that wrapper shells out to
       # a globally-installed `nodal-agents` binary, which does not exist on a

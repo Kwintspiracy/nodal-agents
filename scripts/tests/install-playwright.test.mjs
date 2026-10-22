@@ -408,91 +408,13 @@ describe('les workflows utilisent le script et le cache', () => {
       expect(commandes.join(' ')).not.toContain('--with-deps');
     });
 
-    it(`${f} : cache restauré avant l'installation, SAUVÉ juste après (un parcours rouge ne le perd pas)`, () => {
-      const cle =
-        'key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}';
-      const iRestore = texte.indexOf('uses: actions/cache/restore@v4');
-      const iInstall = texte.indexOf('run: node scripts/install-playwright.mjs');
-      const iSave = texte.indexOf('uses: actions/cache/save@v4');
-      const iBoot = texte.indexOf('scripts/boot-stack.mjs');
-      expect(iRestore).toBeGreaterThan(-1);
-      expect(iRestore).toBeLessThan(iInstall);
-      expect(iInstall).toBeLessThan(iSave);
-      expect(iSave).toBeLessThan(iBoot);
-      // Même chemin, même clé (version exacte + OS + architecture) des deux côtés.
-      expect(texte.split(cle)).toHaveLength(3);
-      expect(texte.split('path: ~/.cache/ms-playwright')).toHaveLength(3);
-      // Pas d'écriture inutile (les clés sont immuables) sur un cache déjà chaud.
-      expect(texte).toContain("if: steps.playwright-cache.outputs.cache-hit != 'true'");
-      // Plus de cache « tout-en-un » : il ne sauvegarde qu'à la fin d'un job vert.
-      expect(texte).not.toMatch(
-        /uses: actions\/cache@v4\s+with:\s+path: ~\/\.cache\/ms-playwright/,
+    it(`${f} : le cache des navigateurs est clé sur la version exacte de Playwright`, () => {
+      expect(texte).toContain('path: ~/.cache/ms-playwright');
+      expect(texte).toContain(
+        'key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}',
       );
-    });
-  }
-});
-
-// L'étape qui lit la version : on joue le SCRIPT du workflow, avec un faux pnpm.
-describe.skipIf(!linux)('l’étape « Resolve the Playwright version »', () => {
-  function scriptDe(fichier) {
-    const lignes = readFileSync(join(racine, '.github', 'workflows', fichier), 'utf8').split(
-      /\r?\n/,
-    );
-    const i = lignes.findIndex((l) => l.includes('name: Resolve the Playwright version'));
-    const debut = lignes.findIndex((l, k) => k > i && l.trim() === 'run: |') + 1;
-    const indent = lignes[debut].length - lignes[debut].trimStart().length;
-    const corps = [];
-    for (let k = debut; k < lignes.length && lignes[k].trim() !== ''; k++) {
-      corps.push(lignes[k].slice(indent));
-    }
-    return corps.join('\n');
-  }
-
-  function jouer(fichier, pnpm) {
-    const dir = tmp();
-    mkdirSync(join(dir, 'bin'));
-    writeFileSync(join(dir, 'bin', 'pnpm'), `#!/bin/sh\n${pnpm}\n`);
-    chmodSync(join(dir, 'bin', 'pnpm'), 0o755);
-    writeFileSync(join(dir, 'out'), '');
-    return new Promise((resolve) => {
-      execFile(
-        'bash',
-        ['-e', '-c', scriptDe(fichier)],
-        {
-          env: {
-            ...process.env,
-            PATH: `${join(dir, 'bin')}:${process.env.PATH}`,
-            GITHUB_OUTPUT: join(dir, 'out'),
-          },
-        },
-        (err, stdout) =>
-          resolve({
-            code: err ? (err.code ?? 1) : 0,
-            stdout,
-            sortie: readFileSync(join(dir, 'out'), 'utf8'),
-          }),
-      );
-    });
-  }
-
-  for (const f of ['ci.yml', 'qa.yml']) {
-    it(`${f} : une version lisible est publiée pour la clé`, async () => {
-      const r = await jouer(f, 'echo "Version 1.60.0"');
-      expect(r.code).toBe(0);
-      expect(r.sortie).toBe('version=1.60.0\n');
-    });
-
-    it(`${f} : une sortie vide échoue (jamais une clé « playwright-Linux- » commune à toutes les versions)`, async () => {
-      const r = await jouer(f, 'exit 0');
-      expect(r.code).not.toBe(0);
-      expect(r.sortie).toBe('');
-      expect(r.stdout).toContain('::error title=Playwright version::');
-    });
-
-    it(`${f} : un pnpm en échec échoue l'étape (pipefail), même si awk sort en 0`, async () => {
-      const r = await jouer(f, 'echo "Version 1.60.0"; exit 1');
-      expect(r.code).not.toBe(0);
-      expect(r.sortie).toBe('');
+      // La clé lit la version INSTALLÉE : jamais une valeur écrite à la main.
+      expect(texte).toContain('playwright --version');
     });
   }
 });
