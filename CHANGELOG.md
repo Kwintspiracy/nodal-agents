@@ -17,8 +17,8 @@ Windows, the commands an agent runs are now fenced by the operating system. A
 job owns every process it starts, so Stop and the end of a job really end them.
 A run budget covers the whole run, delegations included. Agents whose model
 sees can look at images, and the model no longer receives your e-mail address
-or a conversation's phone number. Node 24 is now the minimum. Forty pull requests,
-six database migrations.
+or a conversation's phone number. Node 24 is now the minimum. Forty-one pull
+requests, six database migrations.
 
 **Upgrading: what changes for you**
 
@@ -56,9 +56,15 @@ six database migrations.
 - **Six database migrations (0147 to 0152)**, applied on the next start. Five
   add a table or a column. One, 0151, removes `agent_jobs.original_task`, a
   column that no code ever wrote, and adds the hand-off note described below.
-- TODO before publishing (#835, #856): `nodal-agents up --detach` keeps the
-  database running after the launcher exits. Add the entry only if #856 is
-  merged.
+- **`nodal-agents up --detach` keeps the database running.** The embedded
+  database was a child of the launcher and stopped with it, so the runner and the
+  web app went on running against a dead database. It is now started detached
+  from the launcher and outlives it; `nodal-agents down` stops it. If the
+  database package ever stops starting the database the way Nodal expects, a
+  detached start fails with `EMBEDDED_POSTGRES_SPAWN_NOT_DETACHED` rather than
+  looking healthy, and that package is now pinned to one exact version so a new
+  release of it cannot slip in unnoticed. A foreground `up` is unchanged: Ctrl+C
+  still stops everything. (#835, #856)
 
 **The Windows sandbox**
 
