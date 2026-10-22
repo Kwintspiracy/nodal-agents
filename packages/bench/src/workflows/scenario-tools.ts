@@ -31,7 +31,7 @@
 // l'équipe). Une entrée qui ne désigne aucun outil connu du produit est
 // refusée, et `return_result` doit y être : il ne se bloque pas.
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { z } from 'zod';
@@ -224,41 +224,110 @@ function serverTreatment(list: readonly string[], prefix: string): 'open' | 'clo
 
 type RuleAction = 'auto_approve' | 'require_approval' | 'block';
 
-/** Une règle que la liste remplace : l'agent, l'outil (ou le palier d'un serveur), et ce qu'elle était. */
+const RuleSchema = z
+  .object({
+    action: z.enum(['auto_approve', 'require_approval', 'block']),
+    conditionJson: z.record(z.string(), z.string()),
+  })
+  .strict();
+type Rule = z.infer<typeof RuleSchema>;
+
+/**
+ * Une règle que la liste remplace : l'agent, l'outil (ou le palier d'un
+ * serveur), ce qu'elle était (`before`, null : aucune) et EXACTEMENT ce que le
+ * banc a écrit à sa place (`after`). La remise ne touche une ligne que si elle
+ * est encore celle du banc.
+ */
 const ClosedSchema = z
   .object({
     agentId: z.string(),
     toolName: z.string(),
-    before: z
-      .object({
-        action: z.enum(['auto_approve', 'require_approval', 'block']),
-        conditionJson: z.record(z.string(), z.string()),
-      })
-      .strict()
-      .nullable(),
+    before: RuleSchema.nullable(),
+    after: RuleSchema,
   })
   .strict();
 type Closed = z.infer<typeof ClosedSchema>;
 
+/** Le journal : l'espace, le scénario, la session qui l'a écrit et quand, les règles. */
 const JournalSchema = z
-  .object({ entityId: z.string(), scenario: z.string(), closed: z.array(ClosedSchema) })
+  .object({
+    entityId: z.string(),
+    scenario: z.string(),
+    session: z.string(),
+    writtenAt: z.string(),
+    closed: z.array(ClosedSchema),
+  })
   .strict();
+
+/** Ce que le banc écrit à la place d'une règle : un `block` sans condition. */
+const BENCH_BLOCK: Rule = { action: 'block', conditionJson: {} };
+
+/** Deux règles identiques, condition comprise (les clés dans n'importe quel ordre). */
+function sameRule(a: Rule | null, b: Rule | null): boolean {
+  if (a === null || b === null) return a === b;
+  const canon = (r: Record<string, string>): string =>
+    JSON.stringify(Object.entries(r).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)));
+  return a.action === b.action && canon(a.conditionJson) === canon(b.conditionJson);
+}
 
 export interface AppliedScenarioTools {
   /** Par agent (slug) : les outils, et les paliers `<serveur>__*`, que la liste a fermés. */
   readonly closed: Readonly<Record<string, readonly string[]>>;
-  /** Remet chaque règle touchée telle qu'elle était, puis efface le journal. Idempotent. */
-  restore(): Promise<void>;
+  /**
+   * Remet chaque règle encore telle que le banc l'a écrite, puis efface le
+   * journal. Rend les règles changées entre-temps, laissées telles quelles.
+   */
+  restore(): Promise<{ changed: string[] }>;
 }
 
-/** Remet des règles telles qu'elles étaient (ou les retire), à rebours. */
+/** La règle propre à l'agent sur cet outil, telle que la base la porte, ou null. */
+async function currentRule(
+  db: AnyDrizzleDb,
+  entityId: string,
+  agentId: string,
+  toolName: string,
+): Promise<Rule | null> {
+  const d = await import('@nodal-agents/db');
+  const [row] = await db
+    .select({ action: d.approvalRules.action, conditionJson: d.approvalRules.conditionJson })
+    .from(d.approvalRules)
+    .where(
+      d.and(
+        d.eq(d.approvalRules.entityId, entityId),
+        d.eq(d.approvalRules.agentId, agentId),
+        d.eq(d.approvalRules.toolName, toolName),
+      ),
+    );
+  return row
+    ? {
+        action: row.action as RuleAction,
+        conditionJson: (row.conditionJson ?? {}) as Record<string, string>,
+      }
+    : null;
+}
+
+/**
+ * Remet, à rebours, chaque règle que le banc a remplacée, mais SEULEMENT là où
+ * la ligne est encore exactement celle que le banc a écrite (`after`) : une
+ * règle changée depuis (par le propriétaire pendant l'essai, ou après un banc
+ * tué) n'est ni remise ni effacée. Elle est rendue, nommée, à l'appelant qui
+ * le dit.
+ */
 async function putBack(
   db: AnyDrizzleDb,
   entityId: string,
   closed: readonly Closed[],
-): Promise<void> {
+): Promise<string[]> {
   const d = await import('@nodal-agents/db');
+  const changed: string[] = [];
   for (const c of [...closed].reverse()) {
+    const now = await currentRule(db, entityId, c.agentId, c.toolName);
+    if (!sameRule(now, c.after)) {
+      changed.push(
+        `${c.toolName} of agent ${c.agentId} (now ${now === null ? 'no rule' : `${now.action} ${JSON.stringify(now.conditionJson)}`}, not the bench's ${c.after.action})`,
+      );
+      continue;
+    }
     const r = await d.setApprovalRuleRepo(db, entityId, {
       agentId: c.agentId,
       toolName: c.toolName,
@@ -270,6 +339,34 @@ async function putBack(
     if ('refused' in r)
       throw new Error(`scenario_tools_restore_refused: ${c.toolName}: ${r.refused}`);
   }
+  return changed;
+}
+
+/**
+ * Les noms d'outils d'un serveur que la base porte dans une règle (de l'agent
+ * ou de tout l'espace), lus dans la table des règles et non dans la liste des
+ * outils du serveur : une règle exacte sur un outil que le cache ne connaît
+ * pas encore l'emporterait sur le palier `<serveur>__*` (revue de #863, passe 2).
+ */
+async function ruledToolsOfServer(
+  db: AnyDrizzleDb,
+  entityId: string,
+  agentId: string,
+  prefix: string,
+): Promise<string[]> {
+  const d = await import('@nodal-agents/db');
+  const rows = await db
+    .select({ agentId: d.approvalRules.agentId, toolName: d.approvalRules.toolName })
+    .from(d.approvalRules)
+    .where(d.eq(d.approvalRules.entityId, entityId));
+  return [
+    ...new Set(
+      rows
+        .filter((r) => r.agentId === null || r.agentId === agentId)
+        .map((r) => r.toolName)
+        .filter((t) => t.startsWith(`${prefix}__`) && t !== `${prefix}__*`),
+    ),
+  ].sort();
 }
 
 /**
@@ -310,33 +407,22 @@ export async function applyScenarioTools(
         throw new Error(
           `scenario_tools_partial_mcp: ${scenario} names some tools of the MCP server ${prefix} one by one; its other tools, possibly unknown yet, cannot be closed without closing those: list ${prefix}__* or none`,
         );
-      if (how === 'close') targets.push(`${prefix}__*`);
+      if (how === 'close') {
+        targets.push(`${prefix}__*`);
+        for (const t of await ruledToolsOfServer(db, entityId, a.id, prefix)) targets.push(t);
+      }
     }
     for (const t of await agentToolNames(db, a.id)) {
       // Un outil connu d'un serveur fermé par son palier a aussi sa propre règle :
       // une règle d'outil exacte (« sans demande ») l'emporte sur le palier.
-      if (!listAllows(list, t)) targets.push(t);
+      if (!listAllows(list, t) && !targets.includes(t)) targets.push(t);
     }
     for (const toolName of targets) {
-      const [row] = await db
-        .select({ action: d.approvalRules.action, conditionJson: d.approvalRules.conditionJson })
-        .from(d.approvalRules)
-        .where(
-          d.and(
-            d.eq(d.approvalRules.entityId, entityId),
-            d.eq(d.approvalRules.agentId, a.id),
-            d.eq(d.approvalRules.toolName, toolName),
-          ),
-        );
       plan.push({
         agentId: a.id,
         toolName,
-        before: row
-          ? {
-              action: row.action as RuleAction,
-              conditionJson: (row.conditionJson ?? {}) as Record<string, string>,
-            }
-          : null,
+        before: await currentRule(db, entityId, a.id, toolName),
+        after: BENCH_BLOCK,
       });
     }
     closed[a.slug] = targets;
@@ -344,12 +430,21 @@ export async function applyScenarioTools(
 
   // 2. Le journal, avant la première règle écrite.
   mkdirSync(dirname(journal), { recursive: true });
-  writeFileSync(journal, `${JSON.stringify({ entityId, scenario, closed: plan }, null, 1)}\n`);
+  const entry = {
+    entityId,
+    scenario,
+    session: randomUUID(),
+    writtenAt: new Date().toISOString(),
+    closed: plan,
+  };
+  writeFileSync(journal, `${JSON.stringify(entry, null, 1)}\n`);
 
   const written: Closed[] = [];
-  const restore = async (): Promise<void> => {
-    await putBack(db, entityId, written.splice(0));
+  const restore = async (): Promise<{ changed: string[] }> => {
+    // Chaque règle est remise ou nommée : le journal peut partir ensuite.
+    const changed = await putBack(db, entityId, written.splice(0));
     rmSync(journal, { force: true });
+    return { changed };
   };
   try {
     for (const c of plan) {
@@ -357,9 +452,9 @@ export async function applyScenarioTools(
       const r = await d.setApprovalRuleRepo(db, entityId, {
         agentId: c.agentId,
         toolName: c.toolName,
-        action: 'block',
+        action: c.after.action,
         scope: 'agent',
-        conditionJson: {},
+        conditionJson: c.after.conditionJson,
       });
       if ('refused' in r) throw new Error(`scenario_tools_refused: ${c.toolName}: ${r.refused}`);
     }
@@ -377,14 +472,22 @@ export async function applyScenarioTools(
 
 /**
  * Au départ d'une session : un journal resté (un banc tué en plein essai) est
- * remis avant toute autre chose, puis effacé. Rend le scénario et le nombre de
- * règles remises, ou null sans journal. Un journal illisible arrête la session
- * en le nommant : jamais une règle du propriétaire perdue en silence.
+ * remis avant toute autre chose, puis effacé. Une règle n'est remise que si
+ * elle est encore celle que le banc a écrite ; une règle changée depuis est
+ * laissée telle quelle et rendue, nommée (`changed`). Rend aussi le scénario,
+ * la session et l'heure du journal ; null sans journal. Un journal illisible
+ * arrête la session en le nommant : jamais une règle perdue en silence.
  */
 export async function recoverScenarioTools(
   db: AnyDrizzleDb,
   journal: string = scenarioToolsJournal(),
-): Promise<{ scenario: string; rules: number } | null> {
+): Promise<{
+  scenario: string;
+  session: string;
+  writtenAt: string;
+  rules: number;
+  changed: string[];
+} | null> {
   if (!existsSync(journal)) return null;
   let parsed: z.infer<typeof JournalSchema>;
   try {
@@ -394,9 +497,15 @@ export async function recoverScenarioTools(
       `scenario_tools_journal_unreadable: ${journal}: ${String(e instanceof Error ? e.message : e)}; the rules it holds must be put back by hand before the bench runs again`,
     );
   }
-  await putBack(db, parsed.entityId, parsed.closed);
+  const changed = await putBack(db, parsed.entityId, parsed.closed);
   rmSync(journal, { force: true });
-  return { scenario: parsed.scenario, rules: parsed.closed.length };
+  return {
+    scenario: parsed.scenario,
+    session: parsed.session,
+    writtenAt: parsed.writtenAt,
+    rules: parsed.closed.length,
+    changed,
+  };
 }
 
 /**
@@ -437,7 +546,11 @@ export async function openOutsideList(
     }
     for (const prefix of await heldMcpPrefixes(db, a.id)) {
       const probe = `${prefix}__${ANY_TOOL_OF_SERVER}`;
-      if (!listAllows(list, probe) && !blocked(probe, a.id)) out.push(`${a.slug}:${prefix}__*`);
+      if (listAllows(list, probe)) continue;
+      if (!blocked(probe, a.id)) out.push(`${a.slug}:${prefix}__*`);
+      for (const t of await ruledToolsOfServer(db, entityId, a.id, prefix)) {
+        if (!listAllows(list, t) && !blocked(t, a.id)) out.push(`${a.slug}:${t}`);
+      }
     }
   }
   return out;

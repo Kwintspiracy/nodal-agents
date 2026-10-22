@@ -319,4 +319,114 @@ describe('the closed tool list of each scenario (decision 1B)', () => {
       applyScenarioTools(db, entityId, 'x', ['return_result', 'notes_srv__read'], journal),
     ).rejects.toThrow();
   });
+
+  // Revue de #863, passe 2 (P2-1) : une règle exacte sur un outil que le cache ne connaît pas.
+  it('a closed server: an exact rule on a tool its cache does not know is closed too, then given back', async () => {
+    const { matchApprovalRule: match } = await import('@nodal-agents/tools');
+    const chef = applied.agents['chef']!.id;
+    const [server] = await db
+      .insert(d.mcpServers)
+      .values({ entityId, name: 'Notes', slug: 'notes-srv', transport: 'stdio', command: 'node' })
+      .returning({ id: d.mcpServers.id });
+    await d.attachMcpServerToAgent(db, { entityId, agentId: chef, mcpServerId: server!.id });
+    // Allowed without asking, for Chef and for the whole workspace: both outrank the tier.
+    for (const scope of ['agent', 'entity'] as const)
+      await d.setApprovalRuleRepo(db, entityId, {
+        agentId: chef,
+        toolName: scope === 'agent' ? 'notes_srv__write_note' : 'notes_srv__send_note',
+        action: 'auto_approve',
+        scope,
+        conditionJson: {},
+      });
+    const before = await rules();
+    const t = await applyScenarioTools(
+      db,
+      entityId,
+      'print',
+      scenarioById('print')!.tools,
+      journal,
+    );
+    const all = await db
+      .select()
+      .from(d.approvalRules)
+      .where(d.eq(d.approvalRules.entityId, entityId));
+    expect(match(all as never, 'notes_srv__write_note', chef, entityId)?.action).toBe('block');
+    expect(match(all as never, 'notes_srv__send_note', chef, entityId)?.action).toBe('block');
+    expect(t.closed['chef']).toEqual(
+      expect.arrayContaining(['notes_srv__*', 'notes_srv__send_note', 'notes_srv__write_note']),
+    );
+    expect(await t.restore()).toEqual({ changed: [] });
+    expect(await rules()).toEqual(before);
+  });
+
+  // Revue de #863, passe 2 (P2-2) : la remise ne touche que ce que le banc a écrit.
+  it('an owner edit made DURING a trial survives the restore, and is named', async () => {
+    const chef = applied.agents['chef']!.id;
+    const t = await applyScenarioTools(
+      db,
+      entityId,
+      'print',
+      scenarioById('print')!.tools,
+      journal,
+    );
+    // The owner, during the trial, allows xlsx_read for Chef inside a folder.
+    await d.setApprovalRuleRepo(db, entityId, {
+      agentId: chef,
+      toolName: 'xlsx_read',
+      action: 'auto_approve',
+      scope: 'agent',
+      conditionJson: { workspacePath: 'D:/owner/work' },
+    });
+    const { changed } = await t.restore();
+    expect(changed).toEqual([
+      expect.stringContaining(
+        `xlsx_read of agent ${chef} (now auto_approve {"workspacePath":"D:/owner/work"}`,
+      ),
+    ]);
+    const [row] = await db
+      .select({ action: d.approvalRules.action, conditionJson: d.approvalRules.conditionJson })
+      .from(d.approvalRules)
+      .where(
+        d.and(d.eq(d.approvalRules.agentId, chef), d.eq(d.approvalRules.toolName, 'xlsx_read')),
+      );
+    expect(row).toEqual({
+      action: 'auto_approve',
+      conditionJson: { workspacePath: 'D:/owner/work' },
+    });
+    expect(existsSync(journal)).toBe(false);
+  });
+
+  it('a stale journal: owner edits made after the kill survive recovery, a rule created since is never deleted, and both are named', async () => {
+    const chef = applied.agents['chef']!.id;
+    await applyScenarioTools(db, entityId, 'print', scenarioById('print')!.tools, journal);
+    // After the kill, the owner changes Chef's run_command rule (the bench had blocked it)…
+    await d.setRunCommandRuleRepo(db, entityId, chef, 'require_approval');
+    // …and sets a rule on list_models, which had none before the bench blocked it.
+    await d.setApprovalRuleRepo(db, entityId, {
+      agentId: chef,
+      toolName: 'list_models',
+      action: 'require_approval',
+      scope: 'agent',
+      conditionJson: {},
+    });
+    const back = await recoverScenarioTools(db, journal);
+    expect(back!.changed.map((c) => c.split(' of agent ')[0]).sort()).toEqual([
+      'list_models',
+      'run_command',
+    ]);
+    expect(back!.session).toMatch(/^[0-9a-f-]{36}$/);
+    expect(Date.parse(back!.writtenAt)).not.toBeNaN();
+    const ruleOf = async (tool: string) =>
+      (
+        await db
+          .select({ action: d.approvalRules.action })
+          .from(d.approvalRules)
+          .where(d.and(d.eq(d.approvalRules.agentId, chef), d.eq(d.approvalRules.toolName, tool)))
+      )[0]?.action ?? null;
+    expect(await ruleOf('run_command')).toBe('require_approval');
+    expect(await ruleOf('list_models')).toBe('require_approval');
+    // Everything else the bench had written is put back: xlsx_read has no rule again.
+    expect(await ruleOf('xlsx_read')).toBeNull();
+    expect(existsSync(journal)).toBe(false);
+  });
 });

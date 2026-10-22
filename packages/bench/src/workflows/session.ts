@@ -186,10 +186,15 @@ export async function runBench(
     // ses règles sont remises AVANT tout, depuis le journal, puis le journal part.
     const journal = run.scenarioToolsJournal ?? scenarioToolsJournal();
     const recovered = await recoverScenarioTools(db, journal);
-    if (recovered)
+    if (recovered) {
       hooks.log(
-        `Put back ${recovered.rules} rule(s) the tool list of ${recovered.scenario} had replaced when an earlier bench stopped mid-trial.`,
+        `The tool list of ${recovered.scenario} (session ${recovered.session}, ${recovered.writtenAt}) was still posed when an earlier bench stopped mid-trial: ${recovered.rules - recovered.changed.length} rule(s) put back.`,
       );
+      if (recovered.changed.length > 0)
+        hooks.log(
+          `WARNING: rule(s) changed since that trial were left as they are, not put back: ${recovered.changed.join('; ')}`,
+        );
+    }
     hooks.log(
       `Workflow bench — ${run.scenarios.length} scenario(s) × ${run.trials} · Nodal-Agents ${nodalVersion} @ ${stackCommit?.slice(0, 8) ?? 'unknown commit'} · ${run.stackDir} · bench space ${target.entityId} (root ${target.rootAgentSlug})`,
     );
@@ -243,7 +248,11 @@ export async function runBench(
             configFingerprint: run.configFingerprint ?? null,
           });
         } finally {
-          await tools.restore();
+          const { changed } = await tools.restore();
+          if (changed.length > 0)
+            hooks.log(
+              `WARNING: rule(s) changed during the trial of ${s.id} were left as they are, not put back: ${changed.join('; ')}`,
+            );
         }
         // Un essai coupé par l'arrêt ne mesure rien : pas de ligne.
         if (stop.stopped) break;
