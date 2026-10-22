@@ -126,8 +126,23 @@ export interface BenchTarget {
 }
 
 export async function resolveBenchTarget(db: AnyDrizzleDb): Promise<BenchTarget> {
-  const { agents, entities, eq } = await import('@nodal-agents/db');
   const space = await requireBenchSpace(db);
+  return resolveWorkspaceTarget(db, space.id, 'Re-run `pnpm bench:space sync --apply`.');
+}
+
+/**
+ * La même résolution pour un espace désigné par son id : l'espace testé d'une
+ * campagne (campaign/), que l'applicateur vient de créer dans l'instance
+ * jetable. Un seul chemin de validation, quel que soit l'espace : une racine
+ * absente, inactive ou hors de l'espace est refusée, avec `remedy`.
+ */
+export async function resolveWorkspaceTarget(
+  db: AnyDrizzleDb,
+  entityId: string,
+  remedy: string,
+): Promise<BenchTarget> {
+  const { agents, entities, eq } = await import('@nodal-agents/db');
+  const space = { id: entityId };
   const [ent] = await db
     .select({ rootAgentId: entities.rootAgentId })
     .from(entities)
@@ -135,8 +150,7 @@ export async function resolveBenchTarget(db: AnyDrizzleDb): Promise<BenchTarget>
     .limit(1);
   if (!ent?.rootAgentId) {
     throw new Error(
-      `bench_space_no_root: the bench space ${space.id} has no root agent. ` +
-        'Re-run `pnpm bench:space sync --apply`.',
+      `bench_space_no_root: the bench space ${space.id} has no root agent. ${remedy}`,
     );
   }
   const [root] = await db
@@ -147,8 +161,7 @@ export async function resolveBenchTarget(db: AnyDrizzleDb): Promise<BenchTarget>
   if (!root || !root.active || root.entityId !== space.id) {
     throw new Error(
       `bench_space_root_invalid: the bench space's root agent ${ent.rootAgentId} is ` +
-        `${!root ? 'missing' : !root.active ? 'inactive' : 'outside the bench space'}. ` +
-        'Re-run `pnpm bench:space sync --apply`.',
+        `${!root ? 'missing' : !root.active ? 'inactive' : 'outside the bench space'}. ${remedy}`,
     );
   }
   return { entityId: space.id, rootAgentId: root.id, rootAgentSlug: root.slug };

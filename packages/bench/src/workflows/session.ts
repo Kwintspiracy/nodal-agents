@@ -20,11 +20,12 @@ import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { readTreeFacts } from './facts';
 import { BENCH_LOCK_FILE, claimStack, type BenchLock, type BenchStop } from './lock';
 import { startRunTask } from './mcp';
-import { assertSpaceCannotSend } from '../space/guard';
+import { assertSpaceCannotSend, type AllowedReach } from '../space/guard';
 import {
   jobOffTarget,
   readJobPlacement,
   resolveBenchTarget,
+  resolveWorkspaceTarget,
   type BenchTarget,
 } from '../space/space';
 import { RESULTS_FILE } from './paths';
@@ -71,6 +72,24 @@ export interface BenchRun {
   readonly allowOwnerSends: boolean;
   /** Le dossier de la stack mesurée (sa version, son commit, `nodal-agents mcp serve`). */
   readonly stackDir: string;
+  /**
+   * Ce qu'une campagne (campaign/run.ts) précise ; absent, la session joue
+   * dans l'espace banc de la stack, comme avant.
+   *  - `targetEntityId` : l'espace testé de l'instance jetable, au lieu de
+   *    l'espace banc retrouvé par son slug ; la même validation de la racine ;
+   *  - `allowedReach` : les outils sortants que la configuration déclare
+   *    (lecture seule), que le contrôle d'avant essai nomme sans refuser ;
+   *  - `childEnv` : l'environnement de départ du `mcp serve` de chaque essai ;
+   *  - `modelUnderTest`, `campaign`, `configFingerprint` : portés par chaque ligne ;
+   *  - `maxTreeCostUsd` : le plafond de l'arbre de l'essai qui va partir.
+   */
+  readonly targetEntityId?: string;
+  readonly allowedReach?: readonly AllowedReach[];
+  readonly childEnv?: Readonly<Record<string, string | undefined>>;
+  readonly modelUnderTest?: string | null;
+  readonly campaign?: string | null;
+  readonly configFingerprint?: string | null;
+  readonly maxTreeCostUsd?: () => number | undefined;
 }
 
 /** Ce qu'une session dit à qui l'écoute. Tout est facultatif sauf `log`. */
@@ -79,6 +98,18 @@ export interface SessionHooks {
   trialStart?(s: AnyScenario, index: number, total: number): void;
   progress?(s: AnyScenario, index: number, event: TrialProgress): void;
   trialEnd?(s: AnyScenario, index: number, line: TrialLine): void;
+  /**
+   * Avant chaque essai, avant même le contrôle d'avant essai : la campagne y
+   * remet l'instance à son état de départ et y pose le budget. Une erreur
+   * arrête la session : aucun essai ne part sur un état inconnu.
+   */
+  beforeTrial?(s: AnyScenario, index: number): Promise<void>;
+  /**
+   * Après chaque essai, sa ligne écrite : la campagne y exporte les preuves et
+   * compte la dépense. `'stop'` : plus aucun essai ne part (le plafond de la
+   * campagne est atteint) ; une erreur arrête la session aussi.
+   */
+  afterTrial?(s: AnyScenario, index: number, line: TrialLine): Promise<'continue' | 'stop'>;
 }
 
 export interface SessionSummary {
@@ -107,7 +138,14 @@ export async function runBench(
 
   // La cible d'abord, et une seule fois : sans espace banc, la session refuse
   // AVANT de toucher quoi que ce soit (ni verrou, ni ménage, ni essai).
-  const target = await resolveBenchTarget(db);
+  const target =
+    run.targetEntityId === undefined
+      ? await resolveBenchTarget(db)
+      : await resolveWorkspaceTarget(
+          db,
+          run.targetEntityId,
+          "The campaign's applier sets the root; apply the configuration again.",
+        );
 
   let lock: BenchLock | null = null;
   const lines: TrialLine[] = [];
@@ -129,18 +167,21 @@ export async function runBench(
     mkdirSync(dirname(RESULTS_FILE), { recursive: true });
     const total = run.scenarios.length * run.trials;
     let index = 0;
+    let halted = false;
     for (const s of run.scenarios) {
+      if (halted) break;
       for (let i = 1; i <= run.trials; i++) {
         if (stop.stopped) break;
         index++;
         const at = index;
         hooks.log(`\n▶ ${s.id} v${s.version} [${s.activity}] (${i}/${run.trials})`);
+        await hooks.beforeTrial?.(s, at);
         hooks.trialStart?.(s, at, total);
         const deps: TrialDeps = {
           now: () => Date.now(),
           sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
           start: (instruction, caller) =>
-            stop.start(() => startOnTarget(db, run.stackDir, instruction, caller, target)),
+            stop.start(() => startOnTarget(db, run, instruction, caller, target)),
           read: (rootId) => readTreeFacts(db, rootId),
           cancel: (ent, rootId) => cancelTree(db, ent, rootId),
           foreign: () => readForeignActivity(db, DEFAULT_TRIAL_OPTIONS.chatQuietMs),
@@ -150,13 +191,17 @@ export async function runBench(
           log: (l) => hooks.log(l),
           progress: (e) => hooks.progress?.(s, at, e),
         };
+        const maxTreeCostUsd = run.maxTreeCostUsd?.();
         const line = await runTrial(s, deps, {
           ...DEFAULT_TRIAL_OPTIONS,
           trigger: run.trigger,
           nodalVersion,
           stackCommit,
-          modelUnderTest: null,
+          modelUnderTest: run.modelUnderTest ?? null,
           allowOwnerSends: run.allowOwnerSends,
+          campaign: run.campaign ?? null,
+          configFingerprint: run.configFingerprint ?? null,
+          ...(maxTreeCostUsd !== undefined ? { maxTreeCostUsd } : {}),
         });
         // Un essai coupé par l'arrêt ne mesure rien : pas de ligne.
         if (stop.stopped) break;
@@ -165,6 +210,10 @@ export async function runBench(
         hooks.trialEnd?.(s, at, line);
         if (line.verdict === 'skipped') skipped++;
         else if (line.verdict !== 'green') failed++;
+        if ((await hooks.afterTrial?.(s, at, line)) === 'stop') {
+          halted = true;
+          break;
+        }
       }
     }
   } finally {
@@ -182,13 +231,21 @@ export async function runBench(
  */
 async function startOnTarget(
   db: AnyDrizzleDb,
-  stackDir: string,
+  run: BenchRun,
   instruction: string,
   caller: string,
   target: BenchTarget,
 ): Promise<{ jobId: string; close(): Promise<void> }> {
-  await assertSpaceCannotSend(db, target.entityId);
-  const session = await startRunTask(stackDir, instruction, caller, target);
+  await assertSpaceCannotSend(db, target.entityId, run.allowedReach ?? []);
+  const session = await startRunTask(
+    run.stackDir,
+    instruction,
+    caller,
+    target,
+    // La commande par défaut (`mcp serve` du dépôt de la stack).
+    undefined,
+    run.childEnv ?? process.env,
+  );
   const job = await readJobPlacement(db, session.jobId);
   const off = jobOffTarget(session.jobId, job, target);
   if (off !== null) {

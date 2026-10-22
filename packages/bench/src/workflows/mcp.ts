@@ -93,10 +93,16 @@ export async function startRunTask(
   caller: string,
   target: RunTaskTarget,
   serve: McpServeCommand = mcpServeCommand(stackDir),
+  /**
+   * L'environnement de départ du `mcp serve` : celui du processus, ou celui
+   * de l'instance d'une campagne (campaign/instance.ts, `campaignEnv`), qui
+   * désigne son dossier et rien de l'environnement du propriétaire.
+   */
+  baseEnv: Readonly<Record<string, string | undefined>> = process.env,
 ): Promise<RunTaskSession> {
   const transport = new StdioClientTransport({
     ...serve,
-    env: runTaskEnv(process.env, target.rootAgentId),
+    env: runTaskEnv(baseEnv, target.rootAgentId),
     stderr: 'pipe',
   });
   let stderr = '';

@@ -119,6 +119,16 @@ export interface TrialOptions {
   readonly modelUnderTest: string | null;
   /** `--allow-owner-sends` : seul ce drapeau laisse partir un scénario qui envoie au propriétaire. */
   readonly allowOwnerSends: boolean;
+  /**
+   * Le plafond de coût de l'ARBRE de l'essai, en dollars : délégations
+   * comprises, là où le budget de run de l'espace (`max_run_cost_usd`) ne
+   * borne qu'un job. Dépassé, l'arbre est annulé et la ligne le dit. Absent :
+   * aucun plafond posé par le banc.
+   */
+  readonly maxTreeCostUsd?: number;
+  /** Ce que la ligne porte d'une campagne (voir `TrialLine.campaign`). */
+  readonly campaign?: string | null;
+  readonly configFingerprint?: string | null;
 }
 
 export const DEFAULT_TRIAL_OPTIONS: Omit<
@@ -172,6 +182,8 @@ function emptyLine(
     needs: [...(s.needs ?? [])],
     sends: s.sends,
     modelUnderTest: o.modelUnderTest,
+    campaign: o.campaign ?? null,
+    configFingerprint: o.configFingerprint ?? null,
     rootModel,
     nodalVersion: o.nodalVersion,
     stackCommit: o.stackCommit,
@@ -698,6 +710,14 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
         break;
       }
       if (liveJobs(facts).length === 0) break;
+      const spent = o.maxTreeCostUsd === undefined ? null : measure(facts).costUsd;
+      if (spent !== null && o.maxTreeCostUsd !== undefined && spent > o.maxTreeCostUsd) {
+        benchReasons.push(
+          `its cost passed the cap of the trial ($${spent.toFixed(4)} spent, cap $${o.maxTreeCostUsd})`,
+        );
+        await cancel('cost cap');
+        break;
+      }
       if (deps.now() - startedMs > s.timeoutMs) {
         benchReasons.push(`timed out after ${Math.round(s.timeoutMs / 60_000)} min`);
         await cancel('timeout');

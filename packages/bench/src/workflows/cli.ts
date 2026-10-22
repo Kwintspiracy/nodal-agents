@@ -28,14 +28,7 @@ import { catalogText } from './catalog';
 import { readTreeFacts } from './facts';
 import { productToolJudgedBy, unverifiedOf } from './judge-kit';
 import { BenchStop } from './lock';
-import {
-  formatPlan,
-  parseModels,
-  planMatrix,
-  readPastLines,
-  UNDECIDED_APPLIER,
-  type MatrixModel,
-} from './matrix';
+import { formatPlan, parseModels, planMatrix, readPastLines, type MatrixModel } from './matrix';
 import { CATALOG_FILE, REPO, RESULTS_FILE } from './paths';
 import { redactHome } from './redact';
 import { SCENARIOS, scenarioById } from './scenarios';
@@ -126,8 +119,7 @@ async function main(): Promise<void> {
   if (!Number.isInteger(trials) || trials < 1 || trials > 20)
     throw new Error('--trials must be an integer from 1 to 20');
 
-  // La matrice : le plan d'abord ; jouer réellement attend une décision du
-  // propriétaire (matrix.ts), et le banc le refuse AVANT de toucher la stack.
+  // La matrice : le plan d'abord ; la jouer, c'est une campagne (matrix.ts).
   const modelsArg = arg('models');
   const models: MatrixModel[] | null = modelsArg === undefined ? null : parseModels(modelsArg);
   if (models) assertMatrixable(scenarios);
@@ -141,7 +133,14 @@ async function main(): Promise<void> {
     return;
   }
   if (flag('dry-run')) throw new Error('--dry-run plans a model matrix: give --models too');
-  if (models) await UNDECIDED_APPLIER.apply(models[0]!);
+  // Jouer la matrice : dans le Nodal jetable d'une campagne, jamais sur cette
+  // stack (décision du 17/10). Refusé AVANT de toucher la stack.
+  if (models) {
+    throw new Error(
+      'workflow_matrix_in_campaign: a model matrix runs in a campaign, on its own throwaway Nodal: ' +
+        `pnpm bench:campaign --models ${modelsArg}. Use --dry-run here to see the plan.`,
+    );
+  }
 
   const { db, close } = await openStackDb();
   // L'arrêt est partagé avec la session : plus aucun lancement une fois demandé,

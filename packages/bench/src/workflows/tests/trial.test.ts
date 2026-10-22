@@ -231,6 +231,36 @@ describe('workflow trial safety rules', () => {
     expect(line.cancelled).toBe(true);
   });
 
+  it('a tree whose cost passes the trial cap is cancelled and red, delegated jobs counted in the sum', async () => {
+    const after = load('file-red-approval');
+    const call = load('question-green').llmCalls[0]!;
+    const kid = after.jobs.find((j) => j.id !== after.rootId)!.id;
+    // 0,70 $ pour la tête, 0,60 $ pour le délégué : chaque job sous le budget
+    // de run d'un job (1 $), l'ARBRE au-dessus du plafond de l'essai.
+    const billed = [
+      { ...call, jobId: after.rootId, error: null, costUsd: 0.7 },
+      { ...call, jobId: kid, error: null, costUsd: 0.6 },
+    ];
+    const live: TreeFacts = { ...beforeCancel(after), approvals: [], llmCalls: billed };
+    const w = world({
+      rootId: after.rootId,
+      snapshots: [live],
+      afterCancel: { ...after, approvals: [], llmCalls: billed },
+    });
+    const line = await runTrial(scenarioById('question')!, w.deps, {
+      ...OPTS,
+      maxTreeCostUsd: 1,
+      campaign: '20261022-090000-abcd',
+      configFingerprint: '0123456789ab',
+    });
+    expect(w.cancelled).toEqual([{ entityId: after.entityId, rootId: after.rootId }]);
+    expect(line.verdict).toBe('red');
+    expect(line.reasons[0]).toBe('its cost passed the cap of the trial ($1.3000 spent, cap $1)');
+    expect(line.costUsd).toBe(1.3);
+    expect(line.campaign).toBe('20261022-090000-abcd');
+    expect(line.configFingerprint).toBe('0123456789ab');
+  });
+
   it('a missing need SKIPS the trial with its reason, never red, and no job is started', async () => {
     const green = load('question-green');
     const w = world({ rootId: green.rootId, snapshots: [green] });

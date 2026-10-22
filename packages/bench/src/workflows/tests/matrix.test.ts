@@ -13,7 +13,6 @@ import {
   parseModels,
   planMatrix,
   planOwnModels,
-  UNDECIDED_APPLIER,
   type PastLine,
 } from '../matrix';
 import { scenarioById } from '../scenarios';
@@ -169,15 +168,5 @@ describe('planOwnModels', () => {
       ['file', null, 'no past run of this scenario version'],
     ]);
     expect(plan.unknownCells).toBe(2);
-  });
-});
-
-describe('applying a model waits for the owner', () => {
-  it('the only applier refuses, names the decision, and points at --dry-run', async () => {
-    await expect(
-      UNDECIDED_APPLIER.apply({ provider: 'openrouter', model: 'z-ai/glm-5.3' }),
-    ).rejects.toThrow(
-      /workflow_matrix_undecided: running openrouter:z-ai\/glm-5\.3 needs a decision/,
-    );
   });
 });

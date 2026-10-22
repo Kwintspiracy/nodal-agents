@@ -61,6 +61,78 @@ refuses before it touches anything, with
 `bench_space_missing`, which names the fix: `pnpm bench:space sync --apply`.
 It never falls back to the owner's space.
 
+## Campaigns: the bench's own throwaway Nodal
+
+Decided on 17/10 (the "Nodal du banc" page): the bench tests NODAL, not the
+models. Each campaign runs in a brand-new Nodal next to the owner's, and
+erases it at the end.
+
+```bash
+pnpm bench:campaign                         # the nightly set, one trial each, the configuration's model
+pnpm bench:campaign --only question,code --trials 3
+pnpm bench:campaign --models openrouter:anthropic/claude-haiku-5.5,openrouter:deepseek/deepseek-v4-flash
+pnpm bench:campaign --models a,b --dry-run  # the plan and its cost, nothing started
+pnpm bench:campaign check                   # the configuration and the key file, validated; the fingerprint
+pnpm bench:campaign rehearsal               # the whole lifecycle with NO trial: start, apply, check, erase
+pnpm bench:campaign erase                   # erase the campaigns a dead bench left behind
+```
+
+**The configuration is data**, in `packages/bench/campaign/banc.json`,
+validated by `CampaignConfigSchema` (`campaign/config.ts`): the instance's
+ports, the models (tested, judge), the budgets, the two workspaces (Banc,
+Juge) and every agent (personality, added skills, community skills,
+connectors with their read operations, folders, run_command rule, read-only
+preset, delegation texts, the print connector slot). The schema refuses a
+connector operation the adapter registry does not class as a read, a judge of
+the tested model's family, a delegation across workspaces, a skill outside
+the catalogs, a Nodal default port. Its fingerprint (`configFingerprint`, 12
+hex characters of the canonical form) is on every result line, with the
+campaign id (`campaign`, `configFingerprint` in `workflows.ndjson`).
+
+**The keys** live in a bench file the owner fills once, outside the repo
+(D4 = a): `~/.nodal-bench/keys.json`, or `--keys <file>`:
+`{ "providers": { "openrouter": "…" }, "connectors": { "tavily": "…",
+"firecrawl": "…" }, "services": { "comfyui": "http://127.0.0.1:8188" } }`.
+The bench never reads the owner's database or `~/.nodalai`.
+
+**The lifecycle** (`campaign/run.ts`):
+
+1. Erase what a dead bench left behind (`sweepLeftoverCampaigns`); refuse if a
+   campaign still runs.
+2. Create the campaign folder `~/.nodal-bench/campaigns/<id>` (its
+   `NODALAI_HOME`) with its `config.json` (ports 3100/3101/25532, loopback,
+   local-trust), its `bench.json` (the services of the key file) and a marker.
+3. Start Nodal from the current checkout with the product's CLI: `up --dev`
+   (`next dev`, never a build), in the FOREGROUND, kept as a child of the
+   bench, like the owner's dev stack. Not `--detach`: its Postgres dies with
+   the launcher (#835). The bench waits for real health: the runner's
+   `/api/health` (it probes its database) answers 200, and the web and
+   Postgres ports answer. The instance's processes get the system part of the
+   shell's environment and `NODALAI_HOME`, nothing of the owner's Nodal
+   settings (`campaignEnv`), plus `NODALAI_WEB_HEALTH_MS` (15 min: the first
+   `next dev` compile of a checkout). A checkout whose web folder already
+   serves a `next dev` (Next refuses a second one) is refused before anything
+   starts: run the campaign from another worktree.
+4. Apply the configuration through the dashboard's base functions
+   (`campaign/apply.ts`, `@nodal-agents/db`), the community skill through the
+   runner's install route, then read the team back through Nodal's own
+   readers (`campaign/team.ts`) and refuse any difference.
+5. For each model: before every trial, reset (`campaign/reset.ts`: nothing
+   running; the team unchanged, a change stops the campaign instead of being
+   rewritten; memories AND run history, which `search_history` reads, deleted;
+   work folders emptied and laid out again) and set the budget; run the trial
+   through the session (`runBench`, `targetEntityId` = the tested
+   workspace); export its line, facts and folders to `bench/campaigns/<id>/`.
+6. Stop (`down`; a launcher still alive a minute later has its tree stopped
+   by the bench, which started it), copy the instance's logs to the evidence,
+   and erase (`reset --yes`), then check: no port of the campaign answers, no
+   folder, no registry entry. A leftover is an error that names it.
+
+**Budget**: the workspace run budget (`max_run_cost_usd`) and the tree cap of
+the trial (`maxTreeCostUsd`, delegated jobs counted) are both
+min(1 $, what the campaign has left); under one cent left, no trial starts. A
+trial that did not report its cost stops the campaign.
+
 ## Activities and needs
 
 Every scenario declares an **activity**, from a closed list
@@ -127,14 +199,16 @@ reading `openWorldHint` on MCP tools.
 `--trials`). A model is `provider:model`, or a bare model the catalog knows
 under exactly one provider; an unknown or ambiguous one is an error.
 
-A model is to be applied to the bench space's copies only (the owner's
-decision of 16/10; `applySpaceModel` in `space/model.ts`). That is not wired
-yet: the seam is `ModelApplier` (`matrix.ts`), and its only implementation
-refuses, before the database is even opened. `--dry-run` prints the plan: scenario × model × trials, grouped
-by activity, each cell priced from the model catalog and the medians of the
-scenario's past runs (input, cached and output tokens, current version only,
-skipped and error runs excluded). A cell without a past run or without a
-catalog price says so; it is never priced at zero.
+A model is applied in a CAMPAIGN (below), to the whole tested team of its
+throwaway Nodal at once, never to the owner's agents (decision of 17/10;
+`campaignModelApplier`, `campaign/model.ts`, through `setAgentModelRepo`, the
+path of the agent's model screen). `pnpm bench:workflows --models` without
+`--dry-run` refuses and names the campaign command. `--dry-run` prints the
+plan: scenario × model × trials, grouped by activity, each cell priced from
+the model catalog and the medians of the scenario's past runs (input, cached
+and output tokens, current version only, skipped and error runs excluded). A
+cell without a past run or without a catalog price says so; it is never
+priced at zero.
 
 ## Scenarios (the catalogue of 2026-10-17)
 

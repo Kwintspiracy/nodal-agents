@@ -148,6 +148,19 @@ import {
   createAgentRepo,
   createSkillRepo,
   assignSkillRepo,
+  resolveSkillIdsBySlug,
+  createWorkspaceRepo,
+  setRunBudgetRepo,
+  setMcpServerEnabledRepo,
+  createLlmKeyRepo,
+  refuseGlobalGrantOverFolderRule,
+  setRunCommandRuleRepo,
+  setReadOnlyPresetRepo,
+  createApiKeyConnectorRepo,
+  setAgentConnectorAssignmentRepo,
+  addAgentWorkspaceRepo,
+  orchestratorModelToolsError,
+  setAgentModelRepo,
   getInstallNotes,
   setInstallNotes,
   setSkillScriptsAuthorized,
@@ -251,7 +264,6 @@ import {
   type ExplainedApprovalRule,
   type ApprovalRuleCondition,
   normaliseWorkspacePath,
-  findModelCatalogEntry,
   LIVE_JOB_STATUSES,
   isShellProgram,
   redactSecretsInText,
@@ -396,15 +408,6 @@ export type WorkspaceRow = {
   active: boolean;
 };
 
-function workspaceSlug(name: string): string {
-  const base = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 32);
-  return `${base || 'workspace'}-${randomBytes(3).toString('hex')}`;
-}
-
 export async function listWorkspacesAction(): Promise<ActionResult<WorkspaceRow[]>> {
   try {
     const session = await getSession();
@@ -454,16 +457,11 @@ export async function createWorkspaceAction(raw: unknown): Promise<ActionResult<
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const db = getDb();
-    const id = crypto.randomUUID();
-    await db.insert(entities).values({
-      id,
+    const { id } = await createWorkspaceRepo(getDb(), {
       userId: session.userId,
       name: parsed.data.name,
-      slug: workspaceSlug(parsed.data.name),
-      icon: parsed.data.icon ?? '🗂️',
+      ...(parsed.data.icon ? { icon: parsed.data.icon } : {}),
     });
-    await db.insert(entityMembers).values({ entityId: id, userId: session.userId, role: 'owner' });
     revalidatePath('/', 'layout');
     return ok({ id });
   } catch (err) {
@@ -1004,38 +1002,6 @@ export async function moveWorkerAssignmentAction(raw: unknown): Promise<ActionRe
 }
 
 /**
- * Gate for orchestrator model selection (router/planner): a router/planner
- * delegates to sub-agents via tool calls, so a model that can't call tools
- * can't function in that role. Mirrors the UI gate (the model `<select>`s
- * disable tools:false options for router/planner) but re-validated here
- * because the UI alone isn't a trust boundary — a raw action call must be
- * rejected the same way.
- *
- * Returns an error message when the (provider, model) pair is CATALOGUED and
- * explicitly `tools: false`. Anything not catalogued (custom ids, local
- * ollama/openai-compatible models, or no llmKeyId to resolve a provider from)
- * is "unknown", not "no" — those stay allowed, same as the UI.
- */
-async function orchestratorModelToolsError(
-  db: ReturnType<typeof getDb>,
-  entityId: string,
-  llmKeyId: string | null | undefined,
-  model: string,
-): Promise<string | null> {
-  if (!llmKeyId) return null;
-  const [key] = await db
-    .select({ provider: entityLlmKeys.provider })
-    .from(entityLlmKeys)
-    .where(and(eq(entityLlmKeys.id, llmKeyId), eq(entityLlmKeys.entityId, entityId)));
-  if (!key) return null;
-  const entry = findModelCatalogEntry(key.provider, model);
-  if (entry && !entry.capabilities.tools) {
-    return `"${entry.label}" can't use tools — pick a tool-capable model for a router/planner.`;
-  }
-  return null;
-}
-
-/**
  * Thrown inside the creation transaction to roll it back cleanly — see
  * createAgentAction. A failed INSERT leaves a PostgreSQL transaction aborted;
  * returning normally after it would hand COMMIT an aborted transaction, and
@@ -1448,49 +1414,15 @@ export async function addAgentWorkspaceAction(
       );
     }
 
-    const db = getDb();
-    // Verify ownership
-    const [agentRow] = await db
-      .select({ id: agents.id, entityId: agents.entityId })
-      .from(agents)
-      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
-    if (!agentRow) return fail('not_found', 'Agent not found');
-
-    // Un chemin DÉJÀ masqué ailleurs dans l'espace arrive masqué ici (0087).
-    // Sans cet héritage, attacher le coffre à un second agent le ferait
-    // réapparaître dans l'onglet Code, avec une case vide sur cette fiche
-    // pendant qu'une autre ligne dit l'inverse. Un dossier est un coffre de
-    // notes ou non ; cela ne dépend pas de l'agent qui le regarde.
-    //
-    // Comparaison NORMALISÉE, pas textuelle : `C:\Vault` et `c:/vault` sont le
-    // même dossier.
-    const dejaMasque = (
-      await db
-        .select({ path: agentWorkspaces.path })
-        .from(agentWorkspaces)
-        .where(
-          and(
-            eq(agentWorkspaces.entityId, session.entityId),
-            eq(agentWorkspaces.hiddenFromCode, true),
-          ),
-        )
-    ).some((r) => projectKey(r.path) === projectKey(trimmedPath));
-
-    const [row] = await db
-      .insert(agentWorkspaces)
-      .values({
-        agentId,
-        entityId: agentRow.entityId,
-        label: trimmedLabel,
-        path: trimmedPath,
-        position: 0,
-        hiddenFromCode: dejaMasque,
-      })
-      .returning({ id: agentWorkspaces.id });
-    if (!row) return fail('db_error', 'Insert returned no row');
+    const added = await addAgentWorkspaceRepo(getDb(), session.entityId, {
+      agentId,
+      label: trimmedLabel,
+      path: trimmedPath,
+    });
+    if ('error' in added) return fail('not_found', 'Agent not found');
 
     revalidatePath(`/agents/${agentId}/edit`);
-    return ok({ id: row.id });
+    return ok({ id: added.id });
   } catch (err: unknown) {
     console.error('[addAgentWorkspaceAction]', err);
     // Drizzle wraps the Postgres error: the outer message is only
@@ -4767,26 +4699,14 @@ export async function saveApiKeyConnectorAction(
       );
     }
 
-    const db = getDb();
-    // Encrypt idempotently: if value is already encrypted (enc:v1: prefix), keep it.
-    const encApiKey = isEncrypted(parsed.data.apiKey)
-      ? parsed.data.apiKey
-      : encrypt(parsed.data.apiKey);
-
-    const [row] = await db
-      .insert(connectors)
-      .values({
-        entityId: session.entityId,
-        slug: parsed.data.slug,
-        name: parsed.data.name,
-        apiKey: encApiKey,
-        authType: 'api_key',
-        active: true,
-      })
-      .returning({ id: connectors.id });
-    if (!row) return fail('db_error', 'Insert returned no row');
+    // The key is encrypted once (an `enc:v1:` value is kept as is) by the repo.
+    const { id } = await createApiKeyConnectorRepo(getDb(), session.entityId, {
+      slug: parsed.data.slug,
+      name: parsed.data.name,
+      apiKey: parsed.data.apiKey,
+    });
     revalidatePath('/connectors');
-    return ok({ id: row.id });
+    return ok({ id });
   } catch (err) {
     console.error('[saveApiKeyConnectorAction]', err);
     return fail('db_error', 'Failed to save connector');
@@ -6874,63 +6794,8 @@ export async function listInternalToolsAction(): Promise<
   }
 }
 
-/**
- * Refuse une autorisation GLOBALE qui remplacerait, sans le dire, une regle
- * confinee a un dossier.
- *
- * Depuis « Approve for this project » (#346), une regle agent+outil peut
- * porter `condition_json.workspacePath` : « approuve, mais seulement quand
- * l'agent travaille la ». Les surfaces qui ecrivent une regle auto_approve
- * ailleurs (les bascules Yolo, l'ecran d'autonomie) ne connaissent pas cette
- * condition et l'ecrasaient : une permission posee comme « seulement ici »
- * devenait valable partout, en silence (revue Reviewer C, passe 1).
- *
- * Seul le sens PERMISSIF est refuse. Passer la meme regle a `require_approval`
- * ou `block`, ou la supprimer, retire la condition mais RESTREINT : rien a
- * proteger la.
- *
- * Rend le message d'erreur, ou null quand l'ecriture peut passer.
- */
-async function refuseGlobalGrantOverFolderRule(
-  tx: {
-    select: ReturnType<typeof getDb>['select'];
-  },
-  entityId: string,
-  agentId: string,
-  toolName: string,
-): Promise<string | null> {
-  const [existing] = await tx
-    .select({ action: approvalRules.action, conditionJson: approvalRules.conditionJson })
-    .from(approvalRules)
-    .where(
-      and(
-        eq(approvalRules.entityId, entityId),
-        eq(approvalRules.agentId, agentId),
-        eq(approvalRules.toolName, toolName),
-      ),
-    )
-    // VERROU. Lire puis ecrire hors transaction laissait une fenetre : un
-    // second geste concurrent passait le garde et ecrasait la regle de dossier
-    // par une permission globale (revue Reviewer C, passe 2). `FOR UPDATE`
-    // tient la ligne jusqu'au commit de l'appelant, qui ouvre donc TOUJOURS une
-    // transaction autour de ce garde et de son ecriture.
-    .for('update');
-  const folder = (existing?.conditionJson as ApprovalRuleCondition | null)?.workspacePath;
-  if (!existing || typeof folder !== 'string') return null;
-  if (existing.action === 'auto_approve') {
-    return (
-      `${toolName} is already approved for this agent only inside ${folder}. ` +
-      'Change that rule on the approval card before allowing it everywhere.'
-    );
-  }
-  // A Block or Ask rule confined to a folder is not a grant, but replacing it
-  // with a grant everywhere removes it AND widens the tool (review of PR #481,
-  // Reviewer A, P2). Refused the same way: the owner removes it first.
-  return (
-    `${toolName} has a rule for this agent inside ${folder} (${existing.action === 'block' ? 'Block' : 'Ask for approval'}). ` +
-    'Remove that rule before allowing it everywhere.'
-  );
-}
+// The folder guard (`refuseGlobalGrantOverFolderRule`) lives in @nodal-agents/db
+// (repos/approval-rules.ts), with the run_command rule that also calls it.
 
 export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionResult<void>> {
   try {
@@ -7111,56 +6976,12 @@ export async function setRunCommandRuleAction(raw: unknown): Promise<ActionResul
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    // Delete-then-insert wrapped in a transaction (R2, audit #2 follow-up):
-    // approval_rules carries a UNIQUE(entity_id, agent_id, tool_name)
-    // constraint (DB-1) — two overlapping calls (double-click, two tabs) could
-    // both pass the delete and then race on the insert, throwing on the
-    // constraint instead of leaving one clean row. db.transaction plus
-    // onConflictDoUpdate makes the whole change atomic and idempotent.
-    // "Run without asking" from this row grants the tool EVERYWHERE. If a rule
-    // already confines it to a folder, overwriting it would widen the
-    // permission in silence (Reviewer C, pass 1): refused, naming the folder.
-    // The guard lives INSIDE the transaction and locks the row, or a
-    // concurrent gesture would slip between the read and the write (pass 2).
-    // Block and Ask only narrow: they replace a folder rule, which the screen
-    // confirms first.
-    const refus = await db.transaction(async (tx) => {
-      if (action === 'auto_approve') {
-        const message = await refuseGlobalGrantOverFolderRule(
-          tx,
-          session.entityId,
-          agentId,
-          'run_command',
-        );
-        if (message) return message;
-      }
-
-      await tx
-        .delete(approvalRules)
-        .where(
-          and(
-            eq(approvalRules.entityId, session.entityId),
-            eq(approvalRules.agentId, agentId),
-            eq(approvalRules.toolName, 'run_command'),
-          ),
-        );
-
-      if (action !== null) {
-        await tx
-          .insert(approvalRules)
-          .values({
-            entityId: session.entityId,
-            agentId,
-            toolName: 'run_command',
-            action,
-          })
-          .onConflictDoUpdate({
-            target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
-            set: { action, conditionJson: {}, updatedAt: new Date() },
-          });
-      }
-      return null;
-    });
+    // The transactional delete-then-insert and its folder guard (a grant
+    // everywhere never silently widens a rule confined to a folder) live in
+    // setRunCommandRuleRepo (@nodal-agents/db), the bench's applier writes
+    // the same rule through it.
+    const written = await setRunCommandRuleRepo(db, session.entityId, agentId, action);
+    const refus = 'refused' in written ? written.refused : null;
     if (refus) return fail('validation_failed', refus);
 
     revalidatePath(`/agents/${agentId}/edit`);
@@ -7631,13 +7452,7 @@ export async function setCliProviderEnabledAction(raw: unknown): Promise<ActionR
 //                 or auto_approve rule the user set by hand on, say,
 //                 run_command is a separate, deliberate choice and survives.
 
-const READONLY_PRESET_TOOLS = [
-  'file_write',
-  'file_edit',
-  'skill_file_write',
-  'run_command',
-  'run_skill_script',
-] as const;
+// The tools it blocks: READONLY_PRESET_TOOLS (@nodal-agents/db, repos/approval-rules.ts).
 
 const SetReviewerReadOnlyPresetSchema = z.object({
   agentId: z.string().guid(),
@@ -7673,33 +7488,7 @@ export async function setReviewerReadOnlyPresetAction(raw: unknown): Promise<Act
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    if (enabled) {
-      await db
-        .insert(approvalRules)
-        .values(
-          READONLY_PRESET_TOOLS.map((toolName) => ({
-            entityId: session.entityId,
-            agentId,
-            toolName,
-            action: 'block' as const,
-          })),
-        )
-        .onConflictDoUpdate({
-          target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
-          set: { action: 'block', updatedAt: new Date() },
-        });
-    } else {
-      await db
-        .delete(approvalRules)
-        .where(
-          and(
-            eq(approvalRules.entityId, session.entityId),
-            eq(approvalRules.agentId, agentId),
-            inArray(approvalRules.toolName, READONLY_PRESET_TOOLS as unknown as string[]),
-            eq(approvalRules.action, 'block'),
-          ),
-        );
-    }
+    await setReadOnlyPresetRepo(db, session.entityId, agentId, enabled);
 
     revalidatePath(`/agents/${agentId}/edit`);
     return ok(undefined);
@@ -7766,31 +7555,15 @@ async function applyRecipeToAgent(
   const wantsReadOnly = recipe.presets?.includes('read-only') ?? false;
   const agent = { id: agentId };
   {
-    // Skills: resolve slug → id. System skills are seeded ONCE, on the first
-    // workspace of the install (createdBy='system'); an agent in any other
-    // workspace — every LAN sign-up, every second workspace — must still find
-    // them. Same two-branch lookup as assignSkillRepo: this workspace's own
-    // rows, OR a catalog slug whose row is genuinely system-authored (the
-    // createdBy check is what stops another workspace's same-slug skill from
-    // passing as the real one).
-    const skillRows = await db
-      .select({ id: agentSkills.id, slug: agentSkills.slug, entityId: agentSkills.entityId })
-      .from(agentSkills)
-      .where(
-        and(
-          inArray(agentSkills.slug, recipe.skills),
-          or(
-            eq(agentSkills.entityId, session.entityId),
-            and(inArray(agentSkills.slug, systemSkillSlugs), eq(agentSkills.createdBy, 'system')),
-          ),
-        ),
-      );
-    // A workspace's own row wins over the install-wide one (a per-install
-    // override is exactly what listSkillsAction surfaces).
-    const idBySlug = new Map<string, string>();
-    for (const r of skillRows) {
-      if (!idBySlug.has(r.slug) || r.entityId === session.entityId) idBySlug.set(r.slug, r.id);
-    }
+    // Skills: resolve slug → id, this workspace's own rows or the install-wide
+    // system ones (resolveSkillIdsBySlug, @nodal-agents/db: the same
+    // two-branch rule as assignSkillRepo).
+    const idBySlug = await resolveSkillIdsBySlug(
+      db,
+      session.entityId,
+      recipe.skills,
+      systemSkillSlugs,
+    );
     const skillsAttached: string[] = [];
     const skillsMissing: string[] = [];
     for (const slug of recipe.skills) {
@@ -7813,20 +7586,7 @@ async function applyRecipeToAgent(
     // Read-only posture: the SAME rows the editor's reviewer preset writes.
     let readOnlyApplied = false;
     if (wantsReadOnly) {
-      await db
-        .insert(approvalRules)
-        .values(
-          READONLY_PRESET_TOOLS.map((toolName) => ({
-            entityId: session.entityId,
-            agentId: agent.id,
-            toolName,
-            action: 'block' as const,
-          })),
-        )
-        .onConflictDoUpdate({
-          target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
-          set: { action: 'block', updatedAt: new Date() },
-        });
+      await setReadOnlyPresetRepo(db, session.entityId, agent.id, true);
       readOnlyApplied = true;
     }
 
@@ -8257,20 +8017,16 @@ export async function setAgentModelAndEffortAction(raw: unknown): Promise<Action
       if (toolsError) return fail('validation_failed', toolsError);
     }
 
-    const patch: Record<string, unknown> = { model, reasoningEffort, updatedAt: new Date() };
-    if (llmKeyId !== undefined) {
-      patch['llmKeyId'] = llmKeyId;
-      // La clé primaire ne peut pas être aussi un repli : même nettoyage que
-      // `updateAgentAction`, sinon l'agent se relancerait sur lui-même.
-      patch['fallbackChain'] = (agent.fallbackChain ?? []).filter(
-        (link) => link.keyId !== llmKeyId,
-      );
-    }
-
-    await db
-      .update(agents)
-      .set(patch)
-      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    // L'écriture, et le retrait de la clé primaire de la chaîne de repli (même
+    // nettoyage que `updateAgentAction`, sinon l'agent se relancerait sur
+    // lui-même) : setAgentModelRepo (@nodal-agents/db), le chemin du banc aussi.
+    const written = await setAgentModelRepo(db, session.entityId, {
+      agentId,
+      model,
+      reasoningEffort,
+      ...(llmKeyId !== undefined ? { llmKeyId } : {}),
+    });
+    if ('error' in written) return fail('not_found', 'Agent not found');
 
     // Les listes vivent dans le chat ; les mêmes réglages se lisent sur l'écran
     // de l'agent et sur la page d'un projet.
@@ -8703,10 +8459,7 @@ export async function setRunBudgetAction(raw: unknown): Promise<ActionResult<voi
     if (entityRow.userId !== session.userId) {
       return fail('forbidden', 'Only the workspace owner can change the run budget.');
     }
-    await db
-      .update(entities)
-      .set({ maxRunCostUsd: parsed.data.maxRunCostUsd, maxRunHours: parsed.data.maxRunHours })
-      .where(eq(entities.id, session.entityId));
+    await setRunBudgetRepo(db, session.entityId, parsed.data);
     revalidatePath('/settings');
     return ok(undefined);
   } catch (err) {
@@ -9047,10 +8800,7 @@ export async function setMcpServerSwitchAction(raw: unknown): Promise<ActionResu
     if (entityRow.userId !== session.userId) {
       return fail('forbidden', 'Only the workspace owner can change this setting.');
     }
-    await db
-      .update(entities)
-      .set({ mcpServerEnabled: parsed.data.enabled })
-      .where(eq(entities.id, session.entityId));
+    await setMcpServerEnabledRepo(db, session.entityId, parsed.data.enabled);
     revalidatePath('/settings');
     return ok(undefined);
   } catch (err) {
@@ -12582,48 +12332,28 @@ export async function createLlmKeyAction(raw: unknown): Promise<ActionResult<{ i
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const db = getDb();
-
-    // One key per provider per entity — a single key serves any number of
-    // models across agents, so duplicates add nothing but confusion.
-    const [dup] = await db
-      .select({ id: entityLlmKeys.id })
-      .from(entityLlmKeys)
-      .where(
-        and(
-          eq(entityLlmKeys.entityId, session.entityId),
-          eq(entityLlmKeys.provider, parsed.data.provider),
-        ),
-      )
-      .limit(1);
-    if (dup) {
+    const contextWindow = await resolveKeyContextWindow({
+      provided: parsed.data.contextWindow,
+      baseUrl: parsed.data.baseUrl,
+    });
+    // One key per provider per entity, encrypted before it is written:
+    // createLlmKeyRepo (@nodal-agents/db), the bench's applier goes through it.
+    const created = await createLlmKeyRepo(getDb(), session.entityId, {
+      provider: parsed.data.provider,
+      apiKey: parsed.data.apiKey ?? '',
+      baseUrl: parsed.data.baseUrl ?? null,
+      nickname: parsed.data.nickname ?? null,
+      contextWindow,
+      isActive: parsed.data.isActive,
+    });
+    if ('error' in created) {
       return fail(
         'provider_exists',
         'This provider is already configured — edit the existing one.',
       );
     }
-
-    const plaintextKey = parsed.data.apiKey ?? '';
-    const contextWindow = await resolveKeyContextWindow({
-      provided: parsed.data.contextWindow,
-      baseUrl: parsed.data.baseUrl,
-    });
-    const [row] = await db
-      .insert(entityLlmKeys)
-      .values({
-        entityId: session.entityId,
-        provider: parsed.data.provider,
-        apiKey: encrypt(plaintextKey),
-        apiKeyLast4: last4(plaintextKey),
-        baseUrl: parsed.data.baseUrl,
-        nickname: parsed.data.nickname ?? null,
-        contextWindow,
-        isActive: parsed.data.isActive,
-      })
-      .returning({ id: entityLlmKeys.id });
-    if (!row) return fail('db_error', 'Insert returned no row');
     revalidatePath('/settings');
-    return ok({ id: row.id });
+    return ok({ id: created.id });
   } catch (err) {
     console.error('[createLlmKeyAction]', err);
     return fail('db_error', 'Failed to create LLM provider');
@@ -13449,49 +13179,17 @@ export async function setAgentConnectorAssignmentAction(
     if (!z.string().guid().safeParse(connectorId).success) {
       return fail('validation_failed', 'Invalid connector id');
     }
-    const db = getDb();
-
-    // Verify agent ownership
-    const [agent] = await db
-      .select({ id: agents.id })
-      .from(agents)
-      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
-    if (!agent) return fail('not_found', 'Agent not found');
-
-    // Verify connector ownership (same entity)
-    const [connector] = await db
-      .select({ id: connectors.id })
-      .from(connectors)
-      .where(and(eq(connectors.id, connectorId), eq(connectors.entityId, session.entityId)));
-    if (!connector) return fail('not_found', 'Connector not found');
-
-    if (!assigned) {
-      // DELETE — idempotent (no error if row is absent)
-      await db
-        .delete(agentConnectorAssignments)
-        .where(
-          and(
-            eq(agentConnectorAssignments.agentId, agentId),
-            eq(agentConnectorAssignments.connectorId, connectorId),
-          ),
-        );
-    } else {
-      // UPSERT on the unique constraint (agent_id, connector_id)
-      await db
-        .insert(agentConnectorAssignments)
-        .values({
-          agentId,
-          connectorId,
-          entityId: session.entityId,
-          enabledOperations: enabledOperations ?? null,
-        })
-        .onConflictDoUpdate({
-          target: [agentConnectorAssignments.agentId, agentConnectorAssignments.connectorId],
-          set: {
-            enabledOperations: enabledOperations ?? null,
-            updatedAt: new Date(),
-          },
-        });
+    const res = await setAgentConnectorAssignmentRepo(getDb(), session.entityId, {
+      agentId,
+      connectorId,
+      assigned,
+      enabledOperations: enabledOperations ?? null,
+    });
+    if ('error' in res) {
+      return fail(
+        'not_found',
+        res.error === 'agent_not_found' ? 'Agent not found' : 'Connector not found',
+      );
     }
 
     revalidatePath('/agents');

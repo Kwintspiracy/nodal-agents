@@ -78,8 +78,28 @@ export interface SendCheck {
   scope: string;
 }
 
+/**
+ * Un outil sortant que la configuration du banc DÉCLARE pour un agent : le
+ * Nodal d'une campagne (campaign/) donne au Chercheur Tavily et Firecrawl, en
+ * lecture seule (le schéma de la configuration refuse toute opération que le
+ * registre ne range pas en lecture). Un outil déclaré n'est pas un trou : il
+ * est NOMMÉ dans `notCovered`. Tout outil sortant non déclaré, lui, refuse
+ * l'essai, exactement comme avant. L'espace banc du propriétaire n'en déclare
+ * aucun.
+ */
+export interface AllowedReach {
+  readonly agent: string;
+  /** Le slug du connecteur ou du serveur MCP qui prête l'outil. */
+  readonly via: string;
+  readonly tools: readonly string[];
+}
+
 /** Ce qui, dans l'espace du banc, peut parler au monde. Ne modifie rien. */
-export async function checkSpaceCannotSend(db: AnyDrizzleDb, spaceId?: string): Promise<SendCheck> {
+export async function checkSpaceCannotSend(
+  db: AnyDrizzleDb,
+  spaceId?: string,
+  allowed: readonly AllowedReach[] = [],
+): Promise<SendCheck> {
   const d = await import('@nodal-agents/db');
   const { computeAgentToolOrigins } = await import('@nodal-agents/orchestration');
   const id = spaceId ?? (await requireBenchSpace(db)).id;
@@ -125,6 +145,15 @@ export async function checkSpaceCannotSend(db: AnyDrizzleDb, spaceId?: string): 
     }
     const byVia = new Map<string, Set<string>>();
     for (const o of outbound) {
+      const declared = allowed.some(
+        (r) => r.agent === a.slug && r.via === o.via && r.tools.includes(o.tool),
+      );
+      if (declared) {
+        notCovered.push(
+          `${o.tool} (${o.origin} ${o.via}): held by ${a.slug}, declared by the bench configuration`,
+        );
+        continue;
+      }
       const key = `${o.via} (${o.origin})`;
       byVia.set(key, (byVia.get(key) ?? new Set()).add(o.tool));
     }
@@ -157,8 +186,12 @@ export function renderCheck(c: SendCheck): string {
 }
 
 /** Le contrôle d'avant essai : il refuse, en nommant chaque trou. */
-export async function assertSpaceCannotSend(db: AnyDrizzleDb, spaceId?: string): Promise<void> {
-  const r = await checkSpaceCannotSend(db, spaceId);
+export async function assertSpaceCannotSend(
+  db: AnyDrizzleDb,
+  spaceId?: string,
+  allowed: readonly AllowedReach[] = [],
+): Promise<void> {
+  const r = await checkSpaceCannotSend(db, spaceId, allowed);
   if (!r.ok) {
     throw new Error(
       `bench_space_can_send: the trial does not start, the bench team can reach outside Nodal:\n` +
