@@ -47,6 +47,7 @@ import {
 } from './stack';
 import { readResearchSubjects } from './subjects';
 import { DEFAULT_TRIAL_OPTIONS, runTrial, type TrialDeps, type TrialProgress } from './trial';
+import { applyScenarioTools } from './scenario-tools';
 import type { AnyScenario, ScenarioEnv, ServiceProbe, TrialLine } from './types';
 
 /** L'environnement d'un essai : dossiers de travail, outils de l'équipe, services déclarés et sondés. */
@@ -210,16 +211,26 @@ export async function runBench(
           log: (l) => hooks.log(l),
           progress: (e) => hooks.progress?.(s, at, e),
         };
-        const line = await runTrial(s, deps, {
-          ...DEFAULT_TRIAL_OPTIONS,
-          trigger: run.trigger,
-          nodalVersion,
-          stackCommit,
-          modelUnderTest: run.modelUnderTest ?? null,
-          allowOwnerSends: run.allowOwnerSends,
-          campaign: run.campaign ?? null,
-          configFingerprint: run.configFingerprint ?? null,
-        });
+        // La liste fermée des outils du scénario (décision 1B) : posée avant
+        // l'essai, besoins compris (`no-real-printer` lit l'équipe ainsi
+        // fermée), et retirée après, quoi qu'il arrive. Une liste qui ne tient
+        // pas arrête la session : aucun essai ne part sur une surface inconnue.
+        const tools = await applyScenarioTools(db, target.entityId, s.id, s.tools);
+        let line: TrialLine;
+        try {
+          line = await runTrial(s, deps, {
+            ...DEFAULT_TRIAL_OPTIONS,
+            trigger: run.trigger,
+            nodalVersion,
+            stackCommit,
+            modelUnderTest: run.modelUnderTest ?? null,
+            allowOwnerSends: run.allowOwnerSends,
+            campaign: run.campaign ?? null,
+            configFingerprint: run.configFingerprint ?? null,
+          });
+        } finally {
+          await tools.restore();
+        }
         // Un essai coupé par l'arrêt ne mesure rien : pas de ligne.
         if (stop.stopped) break;
         appendFileSync(RESULTS_FILE, `${JSON.stringify(line)}\n`, 'utf8');

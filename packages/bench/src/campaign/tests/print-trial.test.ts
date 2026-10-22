@@ -30,6 +30,8 @@ import { TEST_KEYS, fakeCommunityInstaller, freshInstanceDb, isolateUserHome } f
 
 /** Le faux modèle : ce que Chef fait d'une demande d'impression, sur l'instance. */
 let played: Array<{ entityId: string; agentId: string }> = [];
+/** Qui pouvait lancer un processus PENDANT l'essai, lu par le faux modèle à son départ. */
+let startersDuringTrial: unknown[] | null = null;
 let db: AnyDrizzleDb;
 
 vi.mock('../../workflows/mcp', () => ({
@@ -40,6 +42,8 @@ vi.mock('../../workflows/mcp', () => ({
     target: { entityId: string; rootAgentId: string },
   ) => {
     played.push({ entityId: target.entityId, agentId: target.rootAgentId });
+    const { readProcessStarters } = await import('../../workflows/stack');
+    startersDuringTrial = await readProcessStarters(db, target.entityId);
     // La déclaration que Chef tient, lue et déchiffrée comme le runner la lit.
     const [server] = await db
       .select({
@@ -136,8 +140,6 @@ const noCommands: CampaignConfig = {
     blockedTools: a.workspace === 'tested' ? ['declare_verification'] : a.blockedTools,
   })),
 };
-const EXPECTED_SKIP =
-  "print scenarios need a team that cannot run commands: chef (declare_verification, run_command), chercheur (declare_verification), imageur (declare_verification, run_command); the closed tool list per scenario (owner's decision 1B) is not built yet; see #842";
 let recordsDir: string;
 let testedEntityId: string;
 let applied: Awaited<ReturnType<typeof applyCampaignConfig>>;
@@ -146,6 +148,7 @@ afterAll(() => home.restore());
 
 async function instance(c: CampaignConfig): Promise<void> {
   played = [];
+  startersDuringTrial = null;
   ({ db } = await freshInstanceDb());
   const scratch = mkdtempSync(join(tmpdir(), 'print-trial-campaign-'));
   recordsDir = join(scratch, 'bench-printer-records');
@@ -250,10 +253,43 @@ describe("the rule that closes a process tool is the execution's own: Block, at 
 });
 
 describe('a print trial on the campaign instance', () => {
-  it('the bench team as configured runs commands: the print trial is skipped, naming who can, nothing starts, nothing is recorded', async () => {
+  // 1B : la liste du scénario ferme run_command et declare_verification le
+  // temps de l'essai ; `no-real-printer` est alors là, et l'essai se joue.
+  it('the bench team as configured: the print scenario closes its process tools, the trial runs green from the record, and every rule comes back after', async () => {
+    const { readProcessStarters } = await import('../../workflows/stack');
     await instance(config);
+    const before = await readProcessStarters(db, testedEntityId);
+    expect(before.map((p) => p.agent)).toEqual(['chef', 'chercheur', 'imageur']);
     const sum = await trial('print', config);
-    expect(sum.lines.map((l) => [l.verdict, l.reasons])).toEqual([['skipped', [EXPECTED_SKIP]]]);
+    const line = sum.lines[0]!;
+    expect(line.reasons).toEqual([]);
+    expect(line.verdict).toBe('green');
+    // During the trial, nobody could start a process.
+    expect(startersDuringTrial).toEqual([]);
+    const live = readRecords(recordsDir).requests;
+    expect(live).toHaveLength(1);
+    expect(live[0]!.record.status).toBe('pending');
+    // After it, the team is the configuration's again: run_command back to
+    // "run without asking", nothing blocked that the configuration does not block.
+    expect(await teamDrift(db, config, applied)).toEqual([]);
+    expect(await readProcessStarters(db, testedEntityId)).toEqual(before);
+  });
+
+  it('an agent on a CLI runtime cannot be closed by a list: the print trial is still skipped, naming it', async () => {
+    await instance(config);
+    await db
+      .update(d.agents)
+      .set({ runtime: 'claude-code' })
+      .where(d.and(d.eq(d.agents.entityId, testedEntityId), d.eq(d.agents.slug, 'imageur')));
+    const sum = await trial('print', config);
+    expect(sum.lines.map((l) => [l.verdict, l.reasons])).toEqual([
+      [
+        'skipped',
+        [
+          "print scenarios need a team that cannot run commands: imageur (claude-code runtime); the scenario's tool list closes neither a CLI runtime nor a process tool it lists; see #842",
+        ],
+      ],
+    ]);
     expect(played).toEqual([]);
     expect(readRecords(recordsDir).requests).toEqual([]);
   });

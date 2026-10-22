@@ -12,6 +12,7 @@ import { fileHash } from '../fixtures';
 import { JUDGED_COMMON, JUDGED_NO_CHANNEL_SEND, channelSends, commonReasons } from '../judge-kit';
 import { readImage } from '../office';
 import { defineScenario, type AnyScenario } from '../types';
+import { BASE, COMMANDS, FILES, TEAM, toolList } from '../scenario-tools';
 
 const MIN = 60_000;
 
@@ -97,6 +98,8 @@ function judgeImages(
 
 function comfy(o: {
   id: string;
+  /** La liste fermée des outils de l'essai (décision 1B). */
+  tools: readonly string[];
   title: string;
   subject: string;
   dir: string;
@@ -112,7 +115,9 @@ function comfy(o: {
       : `${o.count} variantes différentes ${o.subject}, de ${o.width} × ${o.height} pixels, enregistrées dans ton espace de travail dans le dossier ${where} (un fichier PNG par image)`;
   return defineScenario<ImagesObservation>({
     id: o.id,
-    version: 1,
+    // v2 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+    version: 2,
+    tools: o.tools,
     title: o.title,
     path:
       o.count === 1
@@ -153,6 +158,7 @@ export const COMFYUI_SCENARIOS: AnyScenario[] = [
   // close (`RENAMED_IDS`, catalog.ts).
   comfy({
     id: 'comfy-exact-size',
+    tools: toolList(BASE, FILES, TEAM, COMMANDS),
     title: 'Respect exact dimensions',
     subject: "d'un astronaute dans une forêt",
     dir: 'nodal-bench/comfy-portrait',
@@ -163,6 +169,7 @@ export const COMFYUI_SCENARIOS: AnyScenario[] = [
   }),
   comfy({
     id: 'comfy-variants',
+    tools: toolList(BASE, FILES, TEAM, COMMANDS),
     title: 'Produce several distinct variants',
     subject: "d'un chat roux qui dort sur un rebord de fenêtre",
     dir: 'nodal-bench/comfy-variantes',

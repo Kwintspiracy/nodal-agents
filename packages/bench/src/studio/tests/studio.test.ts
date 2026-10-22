@@ -109,7 +109,7 @@ describe('studio reads', () => {
     const f = join(d, 'w.ndjson');
     const base = {
       scenario: 'question',
-      scenarioVersion: 1,
+      scenarioVersion: SCENARIOS.find((x) => x.id === 'question')!.version,
       rootModel: 'm1',
       startedAt: '2026-10-16T01:00:00Z',
       durationMs: 10_000,
