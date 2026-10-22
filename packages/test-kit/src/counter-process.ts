@@ -20,6 +20,7 @@
 // Le jour où l'échec revient, le message dit lequel.
 
 import { readFileSync } from 'node:fs';
+import type { ProcessWatch } from './process-watch';
 
 /** Ce que le démon de comptage écrit avant de sortir sur une exception. */
 export const crashRecordOf = (counter: string): string => `${counter}.crash`;
@@ -59,15 +60,6 @@ export function readCounter(file: string): number {
   throw new Error(`no number in ${file}`);
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
 function crashOf(counter: string): string | null {
   try {
     return readFileSync(crashRecordOf(counter), 'utf8').trim();
@@ -88,30 +80,32 @@ export const COUNTER_RISE_TIMEOUT_MS = 10_000;
 
 /**
  * Attend que le compteur `file` dépasse `floor`, au plus `timeoutMs`. Avec
- * `pid`, l'attente s'arrête dès que le démon est mort : il ne comptera plus.
+ * `watch` (process-watch.ts : jamais trompé par un pid redonné), l'attente
+ * s'arrête dès que le démon est mort : il ne comptera plus.
  * À passer à `expect(rise.value, rise.why).toBeGreaterThan(floor)`.
  */
 export async function counterRise(
   file: string,
   floor: number,
-  opts: { pid?: number; timeoutMs?: number } = {},
+  opts: { watch?: ProcessWatch; timeoutMs?: number } = {},
 ): Promise<CounterRise> {
   const timeoutMs = opts.timeoutMs ?? COUNTER_RISE_TIMEOUT_MS;
   const started = Date.now();
   for (;;) {
-    const dead = opts.pid !== undefined && !alive(opts.pid);
+    const dead = opts.watch !== undefined && !opts.watch.alive();
     // Lu APRÈS l'état du démon : une dernière écriture avant sa mort compte.
     const value = readCounter(file);
     if (value > floor) return { value, why: '' };
     const waited = Date.now() - started;
     if (dead || waited >= timeoutMs) {
       const crash = crashOf(file);
-      const daemon = opts.pid === undefined ? 'the daemon' : `the daemon (pid ${String(opts.pid)})`;
+      const daemon =
+        opts.watch === undefined ? 'the daemon' : `the daemon (pid ${String(opts.watch.pid)})`;
       const state =
         crash !== null
           ? `${daemon} crashed by itself: ${crash}`
-          : opts.pid === undefined
-            ? 'its pid is unknown'
+          : opts.watch === undefined
+            ? 'it is not watched'
             : dead
               ? `${daemon} is dead and left no crash record: it was killed from outside`
               : `${daemon} is alive but did not count`;
