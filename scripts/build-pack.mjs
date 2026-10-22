@@ -404,9 +404,24 @@ console.log(`✔ VC++ runtime staged: vc-runtime/x64 (${vcRuntimeDlls.join(', ')
 // EXTERNALS array.
 // Single source of truth for the published version: apps/cli/package.json.
 // (Previously hardcoded here → drifted from the bumped version at publish time.)
-const cliPkgVersion = JSON.parse(
-  readFileSync(resolve(repoRoot, 'apps/cli/package.json'), 'utf-8'),
-).version;
+const cliPkg = JSON.parse(readFileSync(resolve(repoRoot, 'apps/cli/package.json'), 'utf-8'));
+const cliPkgVersion = cliPkg.version;
+// embedded-postgres is pinned to an EXACT version, here as in apps/cli/package.json
+// (one source). `up --detach` depends on two details of how that beta spawns
+// postgres and hooks the process exit (#835); a range in the workspace would let
+// a bump slip in without a PR whose tests run. (The pack's runtime deps are
+// resolved to the exact installed versions at build anyway, see
+// scripts/lib/pin-runtime-deps.mjs; this makes the manifest say the same.)
+const embeddedPostgresVersion = cliPkg.dependencies?.['embedded-postgres'];
+if (
+  typeof embeddedPostgresVersion !== 'string' ||
+  !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(embeddedPostgresVersion)
+) {
+  throw new Error(
+    `apps/cli/package.json must pin embedded-postgres to an exact version, found ` +
+      `${JSON.stringify(embeddedPostgresVersion)}`,
+  );
+}
 const packPkg = {
   name: 'nodal-agents',
   version: cliPkgVersion,
@@ -435,7 +450,7 @@ const packPkg = {
     // ── CLI deps
     chalk: '^5.4.1',
     commander: '^14.0.3',
-    'embedded-postgres': '^18.3.0-beta.17',
+    'embedded-postgres': embeddedPostgresVersion,
     execa: '^9.5.2',
     open: '^11.0.0',
     ora: '^9.4.0',
