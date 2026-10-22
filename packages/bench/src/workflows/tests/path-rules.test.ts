@@ -24,7 +24,6 @@ import { buildCatalog } from '../catalog';
 import { TreeFactsSchema } from '../facts';
 import { fileHash, fixturePath } from '../fixtures';
 import {
-  PRINTED_FILE_READ,
   PRODUCT_TOOL_NOT_USED,
   productToolGate,
   productToolReasons,
@@ -361,7 +360,7 @@ describe('decision 1: a product tool available must be used', () => {
     ]);
   });
 
-  it('print-file: request_print is judged on its call; the file it printed is said "not verified" (#784), never green', async () => {
+  it('print-file: request_print is judged on its call by the path rule; the file it printed is judged from the bench printer record (#794), so nothing is left unverified', async () => {
     const r = await play(
       'print-file',
       { tools: [{ name: 'printer__request_print', input: { filePath: PRINT_FILE_REL } }] },
@@ -369,8 +368,7 @@ describe('decision 1: a product tool available must be used', () => {
       { teamTools: ['printer__request_print'] },
     );
     expect(pathRule(r.reasons)).toEqual([]);
-    expect(unverifiedOf(scenarioById('print-file')!)).toEqual([PRINTED_FILE_READ]);
-    expect(PRINTED_FILE_READ).toMatchObject({ state: 'not verified', ticket: '#784' });
+    expect(unverifiedOf(scenarioById('print-file')!)).toEqual([]);
     const none = await play('print-file', {}, undefined, {
       teamTools: ['printer__request_print'],
     });

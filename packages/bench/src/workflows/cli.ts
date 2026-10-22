@@ -98,7 +98,15 @@ async function capture(): Promise<void> {
     const startedMs = Math.min(...facts.jobs.map((j) => j.createdMs)) - 5_000;
     const env: ScenarioEnv = facts.entityId
       ? await readScenarioEnv(db, facts.entityId, startedMs)
-      : { workspaceRoots: [], teamTools: [], unlistedMcpServers: [], services: {}, startedMs };
+      : {
+          workspaceRoots: [],
+          teamTools: [],
+          unlistedMcpServers: [],
+          benchPrinter: { kind: 'absent' },
+          teamMcpServers: [],
+          services: {},
+          startedMs,
+        };
     const observed = await s.observe(facts, env);
     const json = JSON.stringify({ scenario: s.id, version: s.version, facts, observed }, null, 1);
     writeFileSync(out, `${redactHome(json)}\n`);
