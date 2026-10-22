@@ -33,6 +33,7 @@ import { fileURLToPath } from 'node:url';
 import {
   registerTestCluster,
   unregisterTestCluster,
+  watchProcess,
   withPostgresClusterStart,
 } from '@nodal-agents/test-kit';
 import { runDown } from '../commands/down.ts';
@@ -136,12 +137,15 @@ async function selectTwo(): Promise<number> {
 async function stopLeftover(): Promise<void> {
   const pid = readPostmasterPid(PG_DATA_DIR);
   if (pid === null || livePostmasterPid(PG_DATA_DIR) === null) return;
-  await stopOrphanPostgres(pid, PG_DATA_DIR);
-  if (await waitUntil(async () => livePostmasterPid(PG_DATA_DIR) === null, 15_000)) return;
+  // Held while it lives, so the last-resort kill below can reach only this
+  // postmaster, never a process that got its pid after it stopped (#841).
+  const postmaster = await watchProcess(pid);
   try {
-    process.kill(pid);
-  } catch {
-    /* already gone */
+    await stopOrphanPostgres(pid, PG_DATA_DIR);
+    if (await waitUntil(async () => livePostmasterPid(PG_DATA_DIR) === null, 15_000)) return;
+    postmaster.kill();
+  } finally {
+    postmaster.release();
   }
 }
 
