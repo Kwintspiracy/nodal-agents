@@ -30,7 +30,7 @@ import {
 } from '../lib/pid-confirm.ts';
 
 /** Everything a kill decision needs, read ONCE and shared by the whole run. */
-interface KillContext {
+export interface KillContext {
   pids: PidFile | null;
   snapshot: Map<number, ProcessRecord>;
   ownedPostgresPids: ReadonlySet<number>;
@@ -182,7 +182,7 @@ export async function stopWithinBudget(
  * Returns true if a stop was attempted (postmaster.pid existed), false if
  * Postgres wasn't running per its lockfile.
  */
-async function stopPostgresGracefully(ctx: KillContext): Promise<boolean> {
+export async function stopPostgresGracefully(ctx: KillContext): Promise<boolean> {
   const pidFile = join(PG_DATA_DIR, 'postmaster.pid');
   if (!existsSync(pidFile)) return false;
 
@@ -190,30 +190,60 @@ async function stopPostgresGracefully(ctx: KillContext): Promise<boolean> {
   // there is nothing left to read the pid from.
   const pgPid = readPostmasterPid(PG_DATA_DIR);
 
-  // Is that pid CONFIRMED ours, refused, or simply unknowable? Three states,
-  // and #100 turns on telling them apart.
+  // Is that pid CONFIRMED ours? `pg_ctl stop` re-reads the lockfile and signals
+  // WHATEVER pid it names, so the question is settled BEFORE it is asked: the
+  // same rule as runner and web, a pid nothing identifies is never signalled.
   //
-  //   - confirmed: the data dir claims it and a fresh reading agrees;
-  //   - refused: a reading was taken and it did NOT agree, which means the
-  //     lockfile names somebody else's process. Nothing is signalled;
-  //   - unknowable: no reading could be taken at all. That is the ordinary case
-  //     off Windows, where `postgresProcessesForDataDir` has neither a process
-  //     table nor `/proc` to lean on. The graceful stop still runs, because
-  //     `pg.stop()` is how this product has always stopped its own cluster and
-  //     refusing here would leave macOS unable to stop anything — but the HARD
-  //     KILL suggestion below is withheld, which is the line #100 actually asks
-  //     for: never recommend a force-kill against a pid nobody identified.
-  const confirmed = pgPid !== null && ctx.ownedPostgresPids.has(pgPid);
-  const refused = pgPid !== null && !confirmed && ctx.postgresReadingWorked;
-  if (refused) {
+  // The probe answers three ways, and two of them are refusals:
+  //   - owned: the data dir claims the pid and a fresh reading agrees;
+  //   - read and disowned: a reading was taken and it did NOT agree, so the
+  //     lockfile names somebody else's process (a crashed postmaster whose pid
+  //     the OS handed to a stranger);
+  //   - not read: no table to ask (macOS, Linux without /proc proof, WMI down).
+  //     `unconfirmedReading` still refuses a recycled pid there and returns an
+  //     empty `owned`; an empty set is an answer, not a licence.
+  // A lockfile whose pid is not even alive has nothing left to signal.
+  if (pgPid === null) {
+    // A lockfile with no readable pid names nothing to stop; claiming "Stopped"
+    // over it would be the lie the re-probe below exists to prevent.
     console.log(
       chalk.yellow(
-        `  postgres (pid ${pgPid}) was NOT stopped — postmaster.pid names it, but a fresh\n` +
-          `    reading could not confirm it belongs to ${PG_DATA_DIR}.\n` +
-          `    Nothing was signalled. Check that pid yourself before touching it.`,
+        `  postgres was NOT stopped — ${pidFile} exists but names no pid.
+` + '    Nothing was signalled.',
       ),
     );
-    process.stderr.write(`KILL_REFUSED code=FOREIGN_POSTGRES pid=${pgPid} lockfile=${pidFile}\n`);
+    process.stderr.write(`KILL_REFUSED code=POSTGRES_UNCONFIRMED lockfile=${pidFile}
+`);
+    return false;
+  }
+  const confirmed = ctx.ownedPostgresPids.has(pgPid);
+  if (!confirmed) {
+    if (!isPidAlive(pgPid)) {
+      console.log(
+        chalk.gray(`  postgres (pid ${pgPid}) was already stopped (stale postmaster.pid left)`),
+      );
+      return false;
+    }
+    console.log(
+      chalk.yellow(
+        `  postgres (pid ${pgPid}) was NOT stopped — postmaster.pid names it, but ` +
+          (ctx.postgresReadingWorked
+            ? `a fresh
+    reading could not confirm it belongs to ${PG_DATA_DIR}.
+`
+            : `nothing on this
+    machine could confirm it belongs to ${PG_DATA_DIR}.
+`) +
+          `    Nothing was signalled. Check that pid yourself before touching it:
+` +
+          (process.platform === 'win32'
+            ? `    powershell "Get-Process -Id ${pgPid} | Format-List Name,Path,StartTime"`
+            : `    ps -p ${pgPid} -o pid,lstart,command`),
+      ),
+    );
+    const code = ctx.postgresReadingWorked ? 'FOREIGN_POSTGRES' : 'POSTGRES_UNCONFIRMED';
+    process.stderr.write(`KILL_REFUSED code=${code} pid=${pgPid} lockfile=${pidFile}
+`);
     return false;
   }
 
@@ -227,8 +257,8 @@ async function stopPostgresGracefully(ctx: KillContext): Promise<boolean> {
     // "STILL RUNNING" fifteen seconds later (#767; the same defect as R3 in
     // `stopOrphanPostgres`, left unfixed in this one caller).
     //
-    // `stopOrphanPostgres` re-checks that the lockfile still names `pgPid`, so a
-    // postmaster we did not decide on is never stopped by the lockfile's word.
+    // `pgPid` is OWNED here (checked above); `stopOrphanPostgres` re-checks that
+    // the lockfile still names it, so a lockfile that changed meanwhile is not obeyed.
     const pg = {
       stop: async (): Promise<void> => {
         if (pgPid !== null) await stopOrphanPostgres(pgPid, PG_DATA_DIR);

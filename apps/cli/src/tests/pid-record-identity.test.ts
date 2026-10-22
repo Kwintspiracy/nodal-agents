@@ -226,6 +226,70 @@ describe('recording a start @cap:installer-et-demarrer/moteur', () => {
     expect(recordedRoot(readPids(), WEB)).toEqual({ pid: WEB });
   });
 
+  it('a PARTIAL refresh keeps the identity of the root the new reading does not list', async () => {
+    setPlatform('win32');
+    tableAnswers(spawnTimeRows);
+    await recordServiceTree({ runner: RUNNER, web: WEB });
+
+    // Non-empty, but the runner is missing from it.
+    tableAnswers([`${WEB}|1|${WEB_TICK}|cmd.exe`]);
+    const outcome = await recordServiceTree({ runner: RUNNER, web: WEB });
+
+    expect(outcome.unidentified).toEqual([]);
+    expect(recordedRoot(readPids(), RUNNER)).toEqual({
+      pid: RUNNER,
+      startedAt: RUNNER_TICK,
+      name: 'node.exe',
+    });
+    expect(recordedRoot(readPids(), WEB).startedAt).toBe(WEB_TICK);
+  });
+
+  it('an EMPTY refresh keeps the root that was identified and reports only the one that never was', async () => {
+    setPlatform('win32');
+    // Spawn time: only the runner is in the table.
+    tableAnswers([`${RUNNER}|1|${RUNNER_TICK}|node.exe`]);
+    await recordServiceTree({ runner: RUNNER, web: WEB });
+
+    tableDown();
+    const outcome = await recordServiceTree({ runner: RUNNER, web: WEB });
+
+    expect(outcome).toEqual({
+      identified: [RUNNER],
+      unidentified: [WEB],
+      tableAvailable: true,
+    });
+    expect(recordedRoot(readPids(), RUNNER).startedAt).toBe(RUNNER_TICK);
+    expect(recordedRoot(readPids(), WEB)).toEqual({ pid: WEB });
+  });
+
+  it('a new reading replaces an identity only with one for the SAME pid', async () => {
+    setPlatform('win32');
+    tableAnswers(spawnTimeRows);
+    await recordServiceTree({ runner: RUNNER, web: WEB });
+
+    const NEWER = '638100000000009999';
+    tableAnswers([`${RUNNER}|1|${NEWER}|node.exe`, `${WEB}|1|${WEB_TICK}|cmd.exe`]);
+    await recordServiceTree({ runner: RUNNER, web: WEB });
+
+    expect(recordedRoot(readPids(), RUNNER).startedAt).toBe(NEWER);
+    expect(recordedRoot(readPids(), WEB).startedAt).toBe(WEB_TICK);
+  });
+
+  it('a pid file left by ANOTHER start lends no identity and no children', async () => {
+    setPlatform('win32');
+    tableAnswers(spawnTimeRows);
+    await recordServiceTree({ runner: RUNNER, web: WEB });
+
+    // A new start: different pids, and the OS does not answer.
+    tableDown();
+    const outcome = await recordServiceTree({ runner: RUNNER + 100, web: WEB + 100 });
+
+    expect(outcome.identified).toEqual([]);
+    expect(outcome.unidentified).toEqual([RUNNER + 100, WEB + 100]);
+    expect(readPids()?.roots ?? []).toEqual([]);
+    expect(readPids()?.children ?? []).toEqual([]);
+  });
+
   it('off Windows the pids are written as they are, and nothing is reported as missing', async () => {
     setPlatform('linux');
 

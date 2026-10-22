@@ -963,21 +963,19 @@ export async function recordServiceTree(pids: PidFile): Promise<RecordOutcome> {
   }
 
   const snapshot = await processSnapshotWin();
-  if (snapshot.size === 0) {
-    // The OS did not answer (the reason was printed by `readProcessTableWin`).
-    // A reading that FAILS must never erase one that SUCCEEDED: the refresh
-    // after the health check runs on the same record the spawn-time call wrote,
-    // and replacing its identities with bare numbers would be the very defect
-    // this function exists to prevent. Same pids, identities already there:
-    // leave the file alone.
-    const prior = readPids();
-    const kept = services.every(({ pid }) => prior?.roots?.some((r) => r.pid === pid));
-    if (kept && prior?.runner === pids.runner && prior?.web === pids.web) {
-      return { identified: services.map((s) => s.pid), unidentified: [], tableAvailable: true };
-    }
-    writePids(pids);
-    return { identified: [], unidentified: services.map((s) => s.pid), tableAvailable: true };
-  }
+
+  // MERGE with what the same start already recorded, never replace it. The
+  // refresh after the health check runs on the record the spawn-time call wrote,
+  // and a reading that is empty (the OS did not answer — the reason was printed
+  // by `readProcessTableWin`) or PARTIAL (one root missing from the table) must
+  // not turn an identity already on disk back into a bare number: that is the
+  // very defect this function exists to prevent. A new reading replaces an
+  // identity only with one for the SAME pid; a pid it does not list keeps the
+  // identity it had. The record is "the same start" when both service pids are
+  // unchanged — a pid file left by another run lends nothing.
+  const prior = readPids();
+  const sameStart = prior?.runner === pids.runner && prior?.web === pids.web;
+  const priorRoots = sameStart ? (prior?.roots ?? []) : [];
 
   const children: ProcessRecord[] = [];
   const roots: ProcessRecord[] = [];
@@ -989,13 +987,22 @@ export async function recordServiceTree(pids: PidFile): Promise<RecordOutcome> {
     // `down` or `up` had nothing whatsoever to check them against: no creation
     // tick, no executable name. A number alone is not an identity, and the next
     // boot was killing on it.
-    const rec = snapshot.get(root);
+    const rec = snapshot.get(root) ?? priorRoots.find((r) => r.pid === root);
     if (rec) roots.push(rec);
     else unidentified.push(root);
-    for (const rec of walkDescendants(snapshot, root)) {
-      if (seen.has(rec.pid)) continue;
-      seen.add(rec.pid);
-      children.push(rec);
+    for (const child of walkDescendants(snapshot, root)) {
+      if (seen.has(child.pid)) continue;
+      seen.add(child.pid);
+      children.push(child);
+    }
+  }
+  // Children recorded earlier stay (the sweep checks their tick before it kills
+  // anything), so a partial reading does not shorten the list.
+  if (sameStart) {
+    for (const child of prior?.children ?? []) {
+      if (seen.has(child.pid)) continue;
+      seen.add(child.pid);
+      children.push(child);
     }
   }
   writePids({ ...pids, children, roots });
