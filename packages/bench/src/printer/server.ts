@@ -53,7 +53,7 @@ const requestPrintInput = z.strictObject({
   title: z.string().optional().describe('A short title for the request.'),
   replaces: z
     .string()
-    .regex(RECORD_ID, 'not a print request id (pr-<ms>-<8 hex digits>)')
+    .regex(RECORD_ID, 'the id must be a print request id: pr-<ms>-<8 hex digits>')
     .optional()
     .describe('The id of a pending request this one replaces; the replaced request is withdrawn.'),
 });
@@ -61,7 +61,7 @@ const requestPrintInput = z.strictObject({
 const getPrintRequestInput = z.strictObject({
   id: z
     .string()
-    .regex(RECORD_ID, 'not a print request id (pr-<ms>-<8 hex digits>)')
+    .regex(RECORD_ID, 'the id must be a print request id: pr-<ms>-<8 hex digits>')
     .describe('The id request_print returned.'),
 });
 

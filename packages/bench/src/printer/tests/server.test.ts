@@ -315,6 +315,8 @@ describe('ids reach a path only after validation (review of #832, pass 1)', () =
       }
       expect([id, refused]).toEqual([id, true]);
       expect(text).not.toContain('SECRET OUTSIDE');
+      // Refused at the tool input, before any path is built.
+      expect(text).toContain('the id must be a print request id');
       expect(text).not.toContain(decoy.id + ' is pending');
     }
   });
