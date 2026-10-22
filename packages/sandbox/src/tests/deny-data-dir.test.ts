@@ -22,6 +22,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JobProcessScope, createSandbox, mxcBackend, openNodalPrograms } from '../index';
+import { tier } from './mxc-tier';
 
 const isWindows = process.platform === 'win32';
 
@@ -59,13 +60,10 @@ const sandbox = isWindows
   ? createSandbox(mxcBackend(undefined, 'deny-all'), { log: () => {} })
   : undefined;
 const status = sandbox ? await sandbox.status() : undefined;
-// Le palier MXC de CETTE machine. Là où il permet le bac à sable, un statut
+// Le palier MXC de CETTE machine (mxc-tier.ts). Là où il permet le bac à sable, un statut
 // indisponible est un ÉCHEC, jamais une suite sautée : refuser le dossier de
 // données entier rend la sonde indisponible (son script vit dessous), et une
 // suite qui se saute alors ne prouverait rien.
-const tier = isWindows
-  ? (await import('@microsoft/mxc-sdk/v1')).getPlatformSupport().isolationTier
-  : undefined;
 
 describe.runIf(isWindows && tier === 'base-container')(
   'production layout: the sandbox is available with Nodal’s data dir in place @cap:executer-une-commande/moteur (Windows, MXC base-container)',
