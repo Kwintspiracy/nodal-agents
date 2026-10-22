@@ -189,12 +189,17 @@ async function installer() {
       phase: nom,
       tentatives,
       journal,
-      essai: () =>
+      essai: (n) =>
         lancerBornee({
           prefixe: PREFIXE_APT,
-          secondes: bornee(secondes),
+          // THROWAWAY INJECTION (#852 proof): attempt 1 of the local install hangs in a dpkg hook, lock held.
+          secondes: nom === 'apt-get install' && n === 1 ? 10 : bornee(secondes),
           commande: 'apt-get',
-          args: [...OPTIONS_APT, ...args],
+          args: [
+            ...OPTIONS_APT,
+            ...(nom === 'apt-get install' && n === 1 ? ['-o', 'DPkg::Pre-Invoke::=sleep 120'] : []),
+            ...args,
+          ],
         }),
       entre,
     });
