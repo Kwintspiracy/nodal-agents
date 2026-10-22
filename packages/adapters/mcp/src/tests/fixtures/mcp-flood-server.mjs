@@ -5,7 +5,9 @@
 //            ended by its newline: a large tool result (pages rendered as
 //            images are tens of MB), which the platform must receive whole;
 //   `flood`  writes FLOOD_BYTES without ever ending the line: the shape of a
-//            runaway or hostile server, which the transport must cut off.
+//            runaway or hostile server, which the transport must cut off;
+//   `die`    exits at once: a crashed server, whose failure must stay a plain
+//            `Connection closed`.
 //
 // Speaks raw JSON-RPC lines so the test depends on nothing but the wire:
 //   argv[2]  the file that receives this server's pid
@@ -30,10 +32,12 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     });
   } else if (msg.method === 'tools/list') {
     reply(msg.id, {
-      tools: ['big', 'flood'].map((name) => ({ name, inputSchema: { type: 'object' } })),
+      tools: ['big', 'flood', 'die'].map((name) => ({ name, inputSchema: { type: 'object' } })),
     });
   } else if (msg.method === 'tools/call' && msg.params.name === 'big') {
     reply(msg.id, { content: [{ type: 'text', text: 'x'.repeat(BIG_BYTES) }] });
+  } else if (msg.method === 'tools/call' && msg.params.name === 'die') {
+    process.exit(1);
   } else if (msg.method === 'tools/call') {
     process.stdout.write('x'.repeat(FLOOD_BYTES));
   }

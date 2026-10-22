@@ -57,7 +57,7 @@ const GRACEFUL_EXIT_MS = 2_000;
 
 /**
  * Le plafond d'UN message JSON-RPC lu sur la sortie du serveur (le `ReadBuffer`
- * du SDK, borné depuis la 1.32).
+ * du SDK, borné depuis la 1.30).
  *
  * Le SDK le fixe à 10 Mo, pour tous. Ce n'est pas le bon plafond ici : le
  * résultat d'un outil MCP arrive en UN message, et la plateforme sait en
@@ -92,6 +92,13 @@ export class ScopedStdioTransport implements Transport {
 
   private proc: Started | null = null;
   private readonly readBuffer: ReadBuffer;
+  private readonly maxBufferSize: number;
+  /**
+   * Pourquoi CE transport a fermé la connexion de lui-même (et non le serveur
+   * ou l'appelant), s'il l'a fait. Le SDK ne transmet à l'appel en cours que
+   * « Connection closed » : `explainClosed` (client.ts) ajoute cette raison.
+   */
+  closeReason?: Error;
   private closed = false;
   /** Le périmètre que CE transport a ouvert, faute d'un job : il le ferme. */
   private readonly ownScope: JobProcessScope | null;
@@ -103,9 +110,8 @@ export class ScopedStdioTransport implements Transport {
   ) {
     this.ownScope = scope ? null : openProcessScope(`mcp-stdio:${randomUUID()}`);
     this.scope = scope ?? (this.ownScope as JobProcessScope);
-    this.readBuffer = new ReadBuffer({
-      maxBufferSize: params.maxBufferSize ?? MCP_STDIO_MAX_MESSAGE_BYTES,
-    });
+    this.maxBufferSize = params.maxBufferSize ?? MCP_STDIO_MAX_MESSAGE_BYTES;
+    this.readBuffer = new ReadBuffer({ maxBufferSize: this.maxBufferSize });
   }
 
   async start(): Promise<void> {
@@ -133,18 +139,29 @@ export class ScopedStdioTransport implements Transport {
       throw new Error(failure);
     }
     this.proc = proc;
-    // Comme le SDK (>= 1.32, GHSA du tampon de lecture) : un message qui
-    // dépasse le plafond du `ReadBuffer` (`MCP_STDIO_MAX_MESSAGE_BYTES`) fait LEVER
-    // `append` ; l'erreur est remontée et la connexion fermée, jamais laissée
-    // remonter hors du gestionnaire (exception non rattrapée du runner).
+    // Comme le SDK (>= 1.30) : un message qui dépasse le plafond du
+    // `ReadBuffer` fait LEVER `append` ; la connexion est fermée et l'erreur
+    // remontée, jamais laissée sortir du gestionnaire (exception non rattrapée
+    // du runner). Contrairement au SDK, la CAUSE est gardée (`closeReason`) :
+    // l'appel en cours échoue avec « Connection closed » côté SDK, et la raison
+    // doit atteindre celui qui l'a lancé. Une fois la connexion condamnée, les
+    // morceaux suivants (le serveur écrit pendant le délai de grâce) sont
+    // ignorés : l'erreur est dite UNE fois.
     proc.stdout?.on('data', (chunk: Buffer) => {
+      if (this.closeReason) return;
       try {
         this.readBuffer.append(chunk);
-        this.processReadBuffer();
       } catch (e) {
-        this.onerror?.(e as Error);
+        this.closeReason = new Error(
+          `the MCP server "${this.params.command}" sent a message larger than ${this.maxBufferSize / (1024 * 1024)} MiB, ` +
+            `so Nodal closed the connection (${(e as Error).message})`,
+        );
+        this.readBuffer.clear();
+        this.onerror?.(this.closeReason);
         this.close().catch(() => {});
+        return;
       }
+      this.processReadBuffer();
     });
     proc.stdout?.on('error', (e: Error) => this.onerror?.(e));
     // Comme le SDK (`stderr: 'inherit'`) : le journal du serveur va à celui du runner.

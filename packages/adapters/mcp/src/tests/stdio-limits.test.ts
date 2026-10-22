@@ -19,6 +19,11 @@
 //   - the try/catch around `readBuffer.append` removed from scoped-stdio.ts →
 //     the exception escapes the stream handler, the run reports an uncaught
 //     exception and the call never settles: the flood test red.
+//   - `explainClosed` returning the error untouched (or the transport not
+//     keeping `closeReason`) → the flood call fails as a bare `Connection
+//     closed`, same as a crash: the flood test red.
+//   - the `if (this.closeReason) return` guard removed from the data handler →
+//     `onerror` fires once per chunk of the flood: the once-only test red.
 //   - `{ maxBufferSize }` removed from the `ReadBuffer` (SDK default 10 MiB) →
 //     the 12 MiB result closes the connection: the big-result test red, and
 //     runner `mcp-tool-result-to-model` (14 MiB of page images) red.
@@ -31,6 +36,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connectMcp } from '../index.ts';
+import { runMcpCall } from '../client.ts';
 import { ScopedStdioTransport } from '../scoped-stdio.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
@@ -95,7 +101,7 @@ describe('an HTTP MCP server cannot send the connector elsewhere (SDK 1.32, GHSA
   );
 });
 
-describe('the stdio read buffer has the ceiling Nodal accepts, not the SDK default (SDK 1.32) @cap:connecter-un-service/moteur', () => {
+describe('the stdio read buffer has the ceiling Nodal accepts, not the SDK default (SDK 1.30+) @cap:connecter-un-service/moteur', () => {
   const server = fileURLToPath(new URL('./fixtures/mcp-flood-server.mjs', import.meta.url));
   // Over the SDK's own 10 MiB default, under Nodal's ceiling: a rendered-pages result.
   const BIG_BYTES = 12 * 1024 * 1024;
@@ -123,38 +129,69 @@ describe('the stdio read buffer has the ceiling Nodal accepts, not the SDK defau
     }
   }, 60_000);
 
-  it('a server that floods past the ceiling: the call fails, the server process is gone, no exception escapes the stream handler', async () => {
+  it('a server that floods past the ceiling: the call fails NAMING the cause, the server process is gone, no exception escapes the stream handler', async () => {
     const pidFile = join(dir, 'flood.pid');
     const uncaught: unknown[] = [];
     const onUncaught = (e: unknown) => uncaught.push(e);
     process.on('uncaughtException', onUncaught);
-    // The transport itself, with a small ceiling: the production ceiling is
-    // 100 MiB, and filling it (the SDK concatenates every chunk) is slow on CI.
-    const transport = new ScopedStdioTransport({
-      command: process.execPath,
-      args: [server, pidFile, String(BIG_BYTES), String(FLOOD_BYTES)],
-      env: {},
-      maxBufferSize: 2 * 1024 * 1024,
-    });
-    const client = new Client(
-      { name: 'nodal-agents-test', version: '0.0.0' },
-      { capabilities: {} },
-    );
+    // The ceiling is an operator setting; the production 100 MiB takes too long
+    // to fill on CI (the SDK concatenates every chunk), so lower it.
+    process.env['MCP_STDIO_MAX_MESSAGE_BYTES'] = String(2 * 1024 * 1024);
     try {
-      await client.connect(transport);
+      const conn = await open(pidFile);
       const pid = Number(readFileSync(pidFile, 'utf8'));
       expect(isProcessAlive(pid)).toBe(true);
+      // What the agent, the tool_calls row and the user read: not a bare
+      // `Connection closed`, which a crashed server would also give.
       await expect(
-        client.callTool({ name: 'flood', arguments: {} }, undefined, { timeout: 30_000 }),
-      ).rejects.toThrow(/Connection closed|exceeded maximum size/);
+        runMcpCall(conn.client, null, () =>
+          conn.client.callTool({ name: 'flood', arguments: {} }, undefined, { timeout: 30_000 }),
+        ),
+      ).rejects.toThrow(
+        `MCP error -32000: Connection closed: the MCP server "${process.execPath}" sent a message larger than 2 MiB, ` +
+          `so Nodal closed the connection (ReadBuffer exceeded maximum size of ${2 * 1024 * 1024} bytes)`,
+      );
       for (let i = 0; i < 160 && isProcessAlive(pid); i++) {
         await new Promise((r) => setTimeout(r, 50));
       }
       expect(isProcessAlive(pid)).toBe(false);
       expect(uncaught).toEqual([]);
     } finally {
+      delete process.env['MCP_STDIO_MAX_MESSAGE_BYTES'];
       process.off('uncaughtException', onUncaught);
-      await client.close();
     }
   }, 90_000);
+
+  it('a server that crashes keeps the plain `Connection closed`: no cause is invented', async () => {
+    const conn = await open(join(dir, 'die.pid'));
+    await expect(
+      runMcpCall(conn.client, null, () =>
+        conn.client.callTool({ name: 'die', arguments: {} }, undefined, { timeout: 30_000 }),
+      ),
+    ).rejects.toThrow(/^MCP error -32000: Connection closed$/);
+    await conn.close();
+  }, 60_000);
+
+  it('the size error is raised ONCE, not once per chunk written during the grace period', async () => {
+    const errors: Error[] = [];
+    const transport = new ScopedStdioTransport({
+      command: process.execPath,
+      args: [server, join(dir, 'once.pid'), String(BIG_BYTES), String(FLOOD_BYTES)],
+      env: {},
+      maxBufferSize: 1024 * 1024,
+    });
+    transport.onerror = (e) => errors.push(e);
+    const client = new Client(
+      { name: 'nodal-agents-test', version: '0.0.0' },
+      { capabilities: {} },
+    );
+    await client.connect(transport);
+    await expect(
+      client.callTool({ name: 'flood', arguments: {} }, undefined, { timeout: 30_000 }),
+    ).rejects.toThrow(/Connection closed/);
+    // Let the rest of the flood arrive while the transport waits out its grace.
+    await new Promise((r) => setTimeout(r, 500));
+    expect(errors.map((e) => e.message)).toHaveLength(1);
+    await client.close();
+  }, 60_000);
 });
