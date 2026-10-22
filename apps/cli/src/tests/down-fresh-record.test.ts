@@ -45,6 +45,16 @@ const canRun = !onWindows || processTable.available;
 
 const spawned: ChildProcess[] = [];
 
+/**
+ * Is this stand-in still the process WE spawned? The handle knows: once the
+ * child has exited (killed by `down`, say) its pid is free and Windows hands it
+ * to the next process that asks, so `isPidAlive(pid)` alone could tree-kill a
+ * stranger that merely inherited the number.
+ */
+function ours(child: ChildProcess): boolean {
+  return child.pid !== undefined && child.exitCode === null && child.signalCode === null;
+}
+
 function spawnIdle(): ChildProcess {
   const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
     stdio: 'ignore',
@@ -73,7 +83,7 @@ async function runDownCaptured(): Promise<{ stderr: string }> {
 
 afterEach(async () => {
   for (const child of spawned.splice(0)) {
-    if (child.pid && isPidAlive(child.pid)) await killPidTree(child.pid);
+    if (ours(child)) await killPidTree(child.pid!);
   }
 }, 60_000);
 
