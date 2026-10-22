@@ -55,7 +55,7 @@ import { restartResumeOf } from '../lib/runtime-restart.ts';
 import type { RestartResume } from '../lib/runtime-restart.ts';
 import { RUNNER_HEARTBEAT_MS } from '../job/heartbeat.ts';
 import { closeElicitationsOfLostJobs } from '../approvals/elicitation.ts';
-import { takeLostRun } from '../job/process-scopes.ts';
+import { takeLostRun } from './take-lost-run.ts';
 
 /**
  * Au-delà de cette fenêtre sans battement, aucun runner vivant ne tient ce job.
