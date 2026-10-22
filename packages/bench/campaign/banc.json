@@ -71,7 +71,7 @@
       "printConnector": {
         "mcpServer": "bench-printer",
         "tools": ["request_print", "get_print_request"],
-        "autoApprove": ["request_print"]
+        "autoApprove": ["request_print", "get_print_request"]
       }
     },
     {

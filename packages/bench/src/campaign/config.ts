@@ -79,7 +79,9 @@ const ConnectorSchema = z
  * dans le dossier de la campagne et n'imprime jamais ; aucun autre serveur ne
  * se déclare ici, le schéma refuse son slug. `tools` : les outils de
  * l'imprimante que l'agent reçoit ; `autoApprove` : ceux qui passent sans
- * demande (décision D3 = a du propriétaire : `request_print`).
+ * demande (décision D3 = a du propriétaire : `request_print` ; étendue le 22/10
+ * par l'orchestrateur à `get_print_request`, une lecture de l'imprimante du
+ * banc sans effet au-dehors).
  */
 const BenchPrinterTool = z.enum(BENCH_PRINTER_TOOLS);
 const PrintConnectorSlot = z

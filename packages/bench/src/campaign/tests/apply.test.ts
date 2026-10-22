@@ -258,7 +258,7 @@ describe('the applied instance is the team of the page', () => {
 
   // #794 : l'imprimante du banc, par le chemin de l'écran des connecteurs. Chaque
   // fait est relu par un lecteur du produit ou par celui du juge.
-  it('Chef holds the bench printer: its declaration, the folder the bench gave, its tools, and request_print without asking', async () => {
+  it('Chef holds the bench printer: its declaration, the folder the bench gave, its tools, and both of them without asking', async () => {
     // The judge reads it from the team, as the runner would start it.
     expect(await readBenchPrinter(db, banc.entityId, printerRecordsDir)).toEqual({
       kind: 'attached',
@@ -283,8 +283,10 @@ describe('the applied instance is the team of the page', () => {
       'get_print_request',
       'request_print',
     ]);
-    // Chef receives both tools, nobody else any; only request_print passes
-    // without asking (D3 = a).
+    // Chef receives both tools, nobody else any; both pass without asking:
+    // request_print (the owner's D3 = a), and get_print_request, a read of the
+    // bench's own printer with no outward effect (D3 extended by the
+    // orchestrator, 22/10: checking a request's status must not end a trial).
     expect(agent(banc, 'chef').tools.filter((t) => t.startsWith('bench_printer__'))).toEqual([
       'bench_printer__get_print_request',
       'bench_printer__request_print',
@@ -298,9 +300,19 @@ describe('the applied instance is the team of the page', () => {
     expect(await winningApproval(db, banc.entityId, chef, 'bench_printer__request_print')).toBe(
       'auto_approve',
     );
-    expect(
-      await winningApproval(db, banc.entityId, chef, 'bench_printer__get_print_request'),
-    ).toBeNull();
+    expect(await winningApproval(db, banc.entityId, chef, 'bench_printer__get_print_request')).toBe(
+      'auto_approve',
+    );
+    // Nobody else holds a rule on them.
+    for (const other of ['chercheur', 'imageur'])
+      expect(
+        await winningApproval(
+          db,
+          banc.entityId,
+          applied.agents[other]!.id,
+          'bench_printer__request_print',
+        ),
+      ).toBeNull();
   });
 
   it('the drift check reads the applied team as exactly the configuration', async () => {
