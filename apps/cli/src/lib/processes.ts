@@ -934,31 +934,91 @@ export interface PidFile {
  *
  * Cost sits at startup, off the shutdown path — which also removes the seconds
  * a cold WMI call was adding to every stop.
+ *
+ * ## The ONE writer of the pid record (#767)
+ *
+ * Every service we start is recorded HERE, with its identity, and this is the
+ * only function that writes `processes.json` for a start (`writePids` is not
+ * exported). `up` calls it twice: right after the services are spawned — so a
+ * `down` issued at ANY point after the spawn finds identities, instead of
+ * racing the health wait — and again once they are healthy, when the tree is
+ * complete. Until 0.9.7 the first write was a bare `writePids`, and the
+ * identities only arrived after the health check, a PowerShell enumeration
+ * later: a `down` run the moment the web answered (the pack smoke does exactly
+ * that) read bare numbers and refused to stop its own stack.
  */
-export async function recordServiceTree(pids: PidFile): Promise<void> {
-  if (process.platform !== 'win32') return;
+export async function recordServiceTree(pids: PidFile): Promise<RecordOutcome> {
+  const services = [
+    { label: 'runner', pid: pids.runner },
+    { label: 'web', pid: pids.web },
+  ].filter((s): s is { label: string; pid: number } => typeof s.pid === 'number' && s.pid > 0);
+
+  // No process table exists off Windows: the pids are written as they are, and
+  // `down` / `up` say so out loud when they act on them (see
+  // `unconfirmedIdentityNotice`). This is a fact about the platform, not a
+  // failure to record — hence `tableAvailable`, so the caller does not warn.
+  if (process.platform !== 'win32') {
+    writePids(pids);
+    return { identified: [], unidentified: [], tableAvailable: false };
+  }
+
   const snapshot = await processSnapshotWin();
-  if (snapshot.size === 0) return;
+
+  // MERGE with what the same start already recorded, never replace it. The
+  // refresh after the health check runs on the record the spawn-time call wrote,
+  // and a reading that is empty (the OS did not answer — the reason was printed
+  // by `readProcessTableWin`) or PARTIAL (one root missing from the table) must
+  // not turn an identity already on disk back into a bare number: that is the
+  // very defect this function exists to prevent. A new reading replaces an
+  // identity only with one for the SAME pid; a pid it does not list keeps the
+  // identity it had. The record is "the same start" when both service pids are
+  // unchanged — a pid file left by another run lends nothing.
+  const prior = readPids();
+  const sameStart = prior?.runner === pids.runner && prior?.web === pids.web;
+  const priorRoots = sameStart ? (prior?.roots ?? []) : [];
 
   const children: ProcessRecord[] = [];
   const roots: ProcessRecord[] = [];
+  const unidentified: number[] = [];
   const seen = new Set<number>();
-  for (const root of [pids.runner, pids.web]) {
-    if (!root) continue;
+  for (const { pid: root } of services) {
     // The ROOTS are recorded too, and that is the whole of #100 for the two
     // services. `runner` and `web` were stored as bare NUMBERS, so a later
     // `down` or `up` had nothing whatsoever to check them against: no creation
     // tick, no executable name. A number alone is not an identity, and the next
     // boot was killing on it.
-    const rec = snapshot.get(root);
+    const rec = snapshot.get(root) ?? priorRoots.find((r) => r.pid === root);
     if (rec) roots.push(rec);
-    for (const rec of walkDescendants(snapshot, root)) {
-      if (seen.has(rec.pid)) continue;
-      seen.add(rec.pid);
-      children.push(rec);
+    else unidentified.push(root);
+    for (const child of walkDescendants(snapshot, root)) {
+      if (seen.has(child.pid)) continue;
+      seen.add(child.pid);
+      children.push(child);
+    }
+  }
+  // Children recorded earlier stay (the sweep checks their tick before it kills
+  // anything), so a partial reading does not shorten the list.
+  if (sameStart) {
+    for (const child of prior?.children ?? []) {
+      if (seen.has(child.pid)) continue;
+      seen.add(child.pid);
+      children.push(child);
     }
   }
   writePids({ ...pids, children, roots });
+  return { identified: roots.map((r) => r.pid), unidentified, tableAvailable: true };
+}
+
+/**
+ * What `recordServiceTree` managed to identify. `unidentified` is a list the
+ * caller must SAY, not drop: a pid written without its identity is one `down`
+ * will refuse to stop (invariant #4: the refusal is deferred, the cause is not).
+ */
+export interface RecordOutcome {
+  identified: number[];
+  unidentified: number[];
+  /** False off Windows, where there is no process table to identify anything with. */
+  tableAvailable: boolean;
 }
 
 /**
@@ -1027,7 +1087,7 @@ export async function sweepRecordedChildren(
   return killed;
 }
 
-export function writePids(pids: PidFile): void {
+function writePids(pids: PidFile): void {
   writeFileSync(join(PID_DIR, 'processes.json'), JSON.stringify(pids, null, 2), 'utf-8');
 }
 
@@ -1039,6 +1099,26 @@ export function readPids(): PidFile | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Forget every pid except those in `keep`, which `down` could not stop.
+ *
+ * `clearPids` after a REFUSED stop erased the only handle on a stack that was
+ * still running: the next `down` answered "No running Nodal-Agents processes
+ * found" over a runner still holding :3001 (#767). A pid that is still alive
+ * and was not stopped stays on record, with its identity if it had one, so the
+ * next `down` says the same true thing again until the pid is gone.
+ */
+export function retainPids(pids: PidFile, keep: ReadonlySet<number>): void {
+  const runner = pids.runner !== undefined && keep.has(pids.runner) ? pids.runner : undefined;
+  const web = pids.web !== undefined && keep.has(pids.web) ? pids.web : undefined;
+  writePids({
+    ...(runner !== undefined ? { runner } : {}),
+    ...(web !== undefined ? { web } : {}),
+    roots: (pids.roots ?? []).filter((r) => keep.has(r.pid)),
+    children: pids.children ?? [],
+  });
 }
 
 export function clearPids(): void {

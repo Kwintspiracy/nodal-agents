@@ -45,6 +45,7 @@ vi.mock('undici', () => ({
   Dispatcher: class {},
 }));
 vi.mock('../scoped-stdio.ts', () => ({
+  MCP_STDIO_MAX_MESSAGE_BYTES: 100 * 1024 * 1024,
   // Capturing the constructor args lets the stdio test inspect what the
   // adapter passed to its stdio transport (scoped-stdio.ts, the SDK's framing
   // over the job's process scope) without actually spawning a subprocess.
@@ -57,7 +58,12 @@ vi.mock('../scoped-stdio.ts', () => ({
   }),
 }));
 
-import { buildMcpRequest, connectMcp, assertMcpHttpUrlSafe } from '../client.ts';
+import {
+  buildMcpRequest,
+  connectMcp,
+  assertMcpHttpUrlSafe,
+  type McpConnectOptions,
+} from '../client.ts';
 
 describe('buildMcpRequest', () => {
   it('injects the key as a query param', () => {
@@ -214,6 +220,31 @@ describe('connectMcp', () => {
     expect(arg.env.PATH ?? arg.env.Path).toBeTruthy();
 
     delete process.env['TEST_PATH_SENTINEL'];
+  });
+
+  it('gives the stdio transport the message ceiling: Nodal default, or MCP_STDIO_MAX_MESSAGE_BYTES when set', async () => {
+    h.listTools.mockResolvedValue({ tools: [] });
+    const { ScopedStdioTransport } = await import('../scoped-stdio.ts');
+    const ctorMock = ScopedStdioTransport as unknown as ReturnType<typeof vi.fn>;
+    ctorMock.mockClear();
+    const ceiling = () =>
+      (ctorMock.mock.calls.at(-1)?.[0] as { maxBufferSize: number }).maxBufferSize;
+    const stdio: McpConnectOptions = { transport: 'stdio', command: 'npx', args: [], env: {} };
+
+    await connectMcp(stdio);
+    expect(ceiling()).toBe(100 * 1024 * 1024);
+
+    process.env['MCP_STDIO_MAX_MESSAGE_BYTES'] = String(3 * 1024 * 1024);
+    try {
+      await connectMcp(stdio);
+      expect(ceiling()).toBe(3 * 1024 * 1024);
+      // Not a positive integer: the default, never a silent zero ceiling.
+      process.env['MCP_STDIO_MAX_MESSAGE_BYTES'] = 'lots';
+      await connectMcp(stdio);
+      expect(ceiling()).toBe(100 * 1024 * 1024);
+    } finally {
+      delete process.env['MCP_STDIO_MAX_MESSAGE_BYTES'];
+    }
   });
 
   it('user env overrides the scrubbed env on collision', async () => {

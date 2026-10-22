@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   readPids,
+  retainPids,
   clearPids,
   isPidAlive,
   killPidTree,
@@ -16,8 +17,13 @@ import {
   type ProcessRecord,
 } from '../lib/processes.ts';
 import { PG_DATA_DIR } from '../lib/config.ts';
-import { importEmbeddedPostgres } from '../lib/embedded-postgres-module.ts';
-import { readPostmasterPid, postgresProcessesForDataDir } from '../lib/postgres.ts';
+import type { ClaimVerdict } from '../lib/orphans.ts';
+import {
+  readPostmasterPid,
+  postgresProcessesForDataDir,
+  resolvePgCtl,
+  stopOrphanPostgres,
+} from '../lib/postgres.ts';
 import {
   confirmRecordedPid,
   formatRefusal,
@@ -26,7 +32,7 @@ import {
 } from '../lib/pid-confirm.ts';
 
 /** Everything a kill decision needs, read ONCE and shared by the whole run. */
-interface KillContext {
+export interface KillContext {
   pids: PidFile | null;
   snapshot: Map<number, ProcessRecord>;
   ownedPostgresPids: ReadonlySet<number>;
@@ -42,11 +48,13 @@ interface KillContext {
    */
   tableAvailable: boolean;
   /**
-   * Whether a postgres ownership READING could be taken at all. False means the
-   * question went unanswered — a different fact from "the answer was no", and
-   * the two license different actions (invariant #4).
+   * What the evidence says about the pid the lockfile claims, three-valued:
+   * `ours`, `not-ours` (a disproof was actually obtained) or `unknown`
+   * (anything missing or unreadable). "Not proven ours" and "proven not ours"
+   * license opposite actions (invariant #4): only the second may be treated as
+   * a stranger.
    */
-  postgresReadingWorked: boolean;
+  postgresClaim: ClaimVerdict;
 }
 
 /** A snapshot row in the shape `pid-confirm` reads, or undefined. */
@@ -58,6 +66,12 @@ function liveOf(snapshot: Map<number, ProcessRecord>, pid: number): LiveProcess 
 }
 
 /**
+ * What became of one recorded service pid. `refused` and `alive` are the two
+ * outcomes where the process is still running and the record must outlive `down`.
+ */
+type KillOutcome = 'stopped' | 'gone' | 'refused' | 'alive';
+
+/**
  * Stop one service by pid, tree and all, and report what actually happened.
  *
  * `process.kill(pid,'SIGTERM')` used to stand here, and it lied twice over on
@@ -66,20 +80,20 @@ function liveOf(snapshot: Map<number, ProcessRecord>, pid: number): LiveProcess 
  * so `down` printed "Stopped web" over a web that was still serving. Now the
  * whole tree is killed and the pid is re-probed before anything is claimed.
  */
-async function killPid(pid: number, label: string, ctx: KillContext): Promise<boolean> {
+async function killPid(pid: number, label: string, ctx: KillContext): Promise<KillOutcome> {
   if (!isPidAlive(pid)) {
     console.log(chalk.gray(`  ${label} (pid ${pid}) was already stopped`));
-    return false;
+    return 'gone';
   }
   if (!ctx.tableAvailable) {
     console.log(chalk.gray(`  ${unconfirmedIdentityNotice(label, pid)}`));
     await killPidTree(pid, ctx.ownedPostgresPids);
     if (isPidAlive(pid)) {
       console.log(chalk.red(`  ${label} (pid ${pid}) is STILL RUNNING after SIGTERM then SIGKILL`));
-      return false;
+      return 'alive';
     }
     console.log(chalk.green(`  Stopped ${label} (pid ${pid})`));
-    return true;
+    return 'stopped';
   }
 
   // CONFIRM, then signal — never the other way round (issue #100).
@@ -103,17 +117,31 @@ async function killPid(pid: number, label: string, ctx: KillContext): Promise<bo
       ),
     );
     process.stderr.write(`${formatRefusal(verdict)}\n`);
-    return false;
+    if (verdict.code === 'IDENTITY_NOT_RECORDED') {
+      // The one refusal that is a fact about the RECORD, not about the process:
+      // a stack started by a version that wrote the pid before its identity, or
+      // a start interrupted before the identity was written (#767). The pid is
+      // kept on record and this is said again each run until it is gone. What
+      // is never done is to name a kill command for a number nobody identified.
+      console.log(
+        chalk.yellow(
+          `    Check what it is: powershell "Get-Process -Id ${pid} | Format-List Name,Path,StartTime"\n` +
+            `    If it is the ${label} of this install, stop it yourself; \`nodal-agents up\` then records\n` +
+            `    the new one with its identity.`,
+        ),
+      );
+    }
+    return 'refused';
   }
   // The record travels WITH the kill: `killPidTree` takes its own fresh reading
   // of the table, later than this one, and a pid can be recycled in between.
   await killPidTree(pid, ctx.ownedPostgresPids, recordedRoot(ctx.pids, pid));
   if (isPidAlive(pid)) {
     console.log(chalk.red(`  ${label} (pid ${pid}) is STILL RUNNING after SIGTERM then SIGKILL`));
-    return false;
+    return 'alive';
   }
   console.log(chalk.green(`  Stopped ${label} (pid ${pid})`));
-  return true;
+  return 'stopped';
 }
 
 /**
@@ -149,6 +177,116 @@ export async function stopWithinBudget(
 }
 
 /**
+ * What became of Postgres. `alive`, `foreign`, `unconfirmed` and `no-pid` are
+ * the outcomes where `down` did not stop it: the summary names the REASON and
+ * `down` exits non-zero. `none` is a lockfile that was never there or names a
+ * dead pid.
+ *
+ *   - `alive`: ours (the probe owns the pid) and still up after the stop;
+ *   - `foreign`: a reading was taken and the pid is NOT this install's
+ *     postmaster (a process that inherited the number of a dead one);
+ *   - `unconfirmed`: nothing could confirm it either way (macOS, no proof);
+ *   - `no-pid`: the lockfile names no readable pid (or another data dir).
+ */
+export type PostgresOutcome = 'stopped' | 'none' | 'alive' | 'foreign' | 'unconfirmed' | 'no-pid';
+
+/** Why a service is still there after `down`: one vocabulary for the summary and for `reset`. */
+export type UnstoppedReason = 'running' | 'unidentified' | 'foreign' | 'unconfirmed' | 'no-pid';
+
+export interface UnstoppedService {
+  service: 'runner' | 'web' | 'postgres';
+  pid: number | null;
+  reason: UnstoppedReason;
+}
+
+/** One line per unstopped service, saying what is KNOWN, not more. */
+export function describeUnstopped(u: UnstoppedService): string {
+  const who = u.pid === null ? u.service : `${u.service} (pid ${u.pid})`;
+  switch (u.reason) {
+    case 'running':
+      return `${who}: still running after the stop`;
+    case 'unidentified':
+      return `${who}: nothing identifies it, so it was not signalled`;
+    case 'foreign':
+      return `${who}: postmaster.pid names a process that is not this install's postmaster; not signalled`;
+    case 'unconfirmed':
+      return `${who}: could not be confirmed as this install's postmaster; not signalled`;
+    case 'no-pid':
+      return `${who}: postmaster.pid names no readable pid (or another data dir); nothing to signal`;
+  }
+}
+
+/** A quoted PowerShell literal: single quotes, an inner apostrophe doubled. */
+function psLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/** The read-only look at a pid, in the user's default shell. */
+export function inspectPidCommand(pid: number): string {
+  return process.platform === 'win32'
+    ? `powershell "Get-Process -Id ${pid} | Format-List Name,Path,StartTime"`
+    : `ps -p ${pid} -o pid,lstart,command`;
+}
+
+/**
+ * How to stop THIS install's Postgres by hand, as lines that run as printed in
+ * the user's default shell: PowerShell on Windows (a quoted string in command
+ * position is an expression there, hence the `&` call operator), sh elsewhere.
+ * `down` never does it: it is for a user who recognises the cluster.
+ */
+export async function postgresStopByHandLines(pgPid: number | null): Promise<string[]> {
+  const win = process.platform === 'win32';
+  const pgCtl = await resolvePgCtl();
+  const lines: string[] = [];
+  let n = 1;
+  if (pgCtl === null) {
+    lines.push('    (the bundled pg_ctl was not found on this machine)');
+  } else if (win) {
+    lines.push(
+      `    ${n++}. (PowerShell) & ${psLiteral(pgCtl)} stop -D ${psLiteral(PG_DATA_DIR)} -m fast`,
+    );
+  } else {
+    lines.push(`    ${n++}. "${pgCtl}" stop -D "${PG_DATA_DIR}" -m fast`);
+    lines.push('       (pg_ctl refuses to run as root: use the account that started Nodal-Agents)');
+  }
+  if (pgPid !== null) {
+    lines.push(
+      `    ${n++}. as a last resort: ${win ? `powershell Stop-Process -Id ${pgPid} -Force` : `kill ${pgPid}`}`,
+    );
+  }
+  return lines;
+}
+
+/**
+ * The refusal text for a postmaster `down` will not signal: what was found, how
+ * to look at it, and — IF the user recognises it as this install's cluster —
+ * exactly how to stop it themselves.
+ */
+async function postgresRefusalText(pgPid: number, claim: ClaimVerdict): Promise<string> {
+  if (claim.verdict === 'not-ours') {
+    // A disproof was obtained: this is a stranger. Nothing of this install runs
+    // on the data dir, so there is nothing to stop by hand, and no kill command
+    // is printed for a process that is not ours to stop.
+    return (
+      `  postgres (pid ${pgPid}) was NOT stopped — postmaster.pid names it, but it is NOT this\n` +
+      `    install's postmaster (${claim.reason}).\n` +
+      `    Nothing was signalled, and nothing of this install runs on ${PG_DATA_DIR}.\n` +
+      `    The lockfile is stale: ${join(PG_DATA_DIR, 'postmaster.pid')} can be deleted; the process is not touched.`
+    );
+  }
+  return (
+    `  postgres (pid ${pgPid}) was NOT stopped — postmaster.pid names it, but nothing could confirm\n` +
+    `    it belongs to ${PG_DATA_DIR} (${claim.reason}).\n` +
+    `    Nothing was signalled. Look at it first:\n` +
+    `      ${inspectPidCommand(pgPid)}\n` +
+    `    If you recognise it as THIS install's cluster, stop it yourself:\n` +
+    `${(await postgresStopByHandLines(pgPid)).join('\n')}\n` +
+    `    \`nodal-agents down\` will keep refusing this pid until its ownership can be proven\n` +
+    `    (on macOS there is no such proof yet: #840).`
+  );
+}
+
+/**
  * Stop the embedded Postgres gracefully via `pg.stop()` (which invokes
  * `pg_ctl stop -m fast`). A clean shutdown releases the Win32 shared-memory
  * section properly; a hard SIGTERM/SIGKILL on the postmaster pid leaves
@@ -158,57 +296,72 @@ export async function stopWithinBudget(
  * Returns true if a stop was attempted (postmaster.pid existed), false if
  * Postgres wasn't running per its lockfile.
  */
-async function stopPostgresGracefully(ctx: KillContext): Promise<boolean> {
+export async function stopPostgresGracefully(ctx: KillContext): Promise<PostgresOutcome> {
   const pidFile = join(PG_DATA_DIR, 'postmaster.pid');
-  if (!existsSync(pidFile)) return false;
+  if (!existsSync(pidFile)) return 'none';
 
   // Captured BEFORE the stop: pg.stop() removes the lockfile, so afterwards
   // there is nothing left to read the pid from.
   const pgPid = readPostmasterPid(PG_DATA_DIR);
 
-  // Is that pid CONFIRMED ours, refused, or simply unknowable? Three states,
-  // and #100 turns on telling them apart.
+  // Is that pid CONFIRMED ours? `pg_ctl stop` re-reads the lockfile and signals
+  // WHATEVER pid it names, so the question is settled BEFORE it is asked: the
+  // same rule as runner and web, a pid nothing identifies is never signalled.
   //
-  //   - confirmed: the data dir claims it and a fresh reading agrees;
-  //   - refused: a reading was taken and it did NOT agree, which means the
-  //     lockfile names somebody else's process. Nothing is signalled;
-  //   - unknowable: no reading could be taken at all. That is the ordinary case
-  //     off Windows, where `postgresProcessesForDataDir` has neither a process
-  //     table nor `/proc` to lean on. The graceful stop still runs, because
-  //     `pg.stop()` is how this product has always stopped its own cluster and
-  //     refusing here would leave macOS unable to stop anything — but the HARD
-  //     KILL suggestion below is withheld, which is the line #100 actually asks
-  //     for: never recommend a force-kill against a pid nobody identified.
-  const confirmed = pgPid !== null && ctx.ownedPostgresPids.has(pgPid);
-  const refused = pgPid !== null && !confirmed && ctx.postgresReadingWorked;
-  if (refused) {
+  // The probe answers three ways, and two of them are refusals:
+  //   - owned: the data dir claims the pid and a fresh reading agrees;
+  //   - not-ours: a DISPROOF was obtained (the pid is not a postgres, both dates
+  //     are known and disagree, or the kernel says it runs out of another
+  //     directory): the lockfile names somebody else's process;
+  //   - unknown: anything missing or unreadable (no table, no creation date, no
+  //     lockfile start time, a question the platform cannot answer). A missing
+  //     date is never a mismatch. `owned` stays empty; an empty set is an
+  //     answer, not a licence.
+  // A lockfile whose pid is not even alive has nothing left to signal.
+  if (pgPid === null) {
+    // A lockfile with no readable pid names nothing to stop; claiming "Stopped"
+    // over it would be the lie the re-probe below exists to prevent.
     console.log(
       chalk.yellow(
-        `  postgres (pid ${pgPid}) was NOT stopped — postmaster.pid names it, but a fresh\n` +
-          `    reading could not confirm it belongs to ${PG_DATA_DIR}.\n` +
-          `    Nothing was signalled. Check that pid yourself before touching it.`,
+        `  postgres was NOT stopped — ${pidFile} exists but names no pid.\n` +
+          '    Nothing was signalled.',
       ),
     );
-    process.stderr.write(`KILL_REFUSED code=FOREIGN_POSTGRES pid=${pgPid} lockfile=${pidFile}\n`);
-    return false;
+    process.stderr.write(`KILL_REFUSED code=POSTGRES_UNCONFIRMED lockfile=${pidFile}\n`);
+    return 'no-pid';
+  }
+  const confirmed = ctx.ownedPostgresPids.has(pgPid);
+  if (!confirmed) {
+    if (!isPidAlive(pgPid)) {
+      console.log(
+        chalk.gray(`  postgres (pid ${pgPid}) was already stopped (stale postmaster.pid left)`),
+      );
+      return 'none';
+    }
+    console.log(chalk.yellow(await postgresRefusalText(pgPid, ctx.postgresClaim)));
+    const foreign = ctx.postgresClaim.verdict === 'not-ours';
+    const code = foreign ? 'FOREIGN_POSTGRES' : 'POSTGRES_UNCONFIRMED';
+    process.stderr.write(`KILL_REFUSED code=${code} pid=${pgPid} lockfile=${pidFile}\n`);
+    return foreign ? 'foreign' : 'unconfirmed';
   }
 
   try {
-    const EmbeddedPostgres = await importEmbeddedPostgres();
-    // Re-create the handle pointing at the existing data dir. The constructor
-    // doesn't connect or start; .stop() reads postmaster.pid and signals the
-    // postmaster the same way pg_ctl does.
-    const pg = new EmbeddedPostgres({
-      databaseDir: PG_DATA_DIR,
-      user: 'nodalai',
-      password: 'nodalai',
-      // port is required by the type but only used for connection-time
-      // operations, not for stop().
-      port: 25432,
-      persistent: true,
-      onError: () => {},
-      onLog: () => {},
-    });
+    // `pg_ctl stop -m fast` against the pid the lockfile names — the same stop
+    // `up` uses for an orphan and the cluster handle uses for its own. A fresh
+    // `EmbeddedPostgres` handle used to stand here, and its `.stop()` opens with
+    // `if (!this.process) return;`: a handle that never started the cluster has
+    // no process, so `down` — which is always a different process from the
+    // `up` that started Postgres — signalled NOTHING and then reported
+    // "STILL RUNNING" fifteen seconds later (#767; the same defect as R3 in
+    // `stopOrphanPostgres`, left unfixed in this one caller).
+    //
+    // `pgPid` is OWNED here (checked above); `stopOrphanPostgres` re-checks that
+    // the lockfile still names it, so a lockfile that changed meanwhile is not obeyed.
+    const pg = {
+      stop: async (): Promise<void> => {
+        if (pgPid !== null) await stopOrphanPostgres(pgPid, PG_DATA_DIR);
+      },
+    };
     // BOUNDED. `pg_ctl stop -m fast` returns once the postmaster has rolled
     // back and detached its shared memory, and a postmaster in CRASH RECOVERY
     // does not get there quickly — measured not returning at all within 60s on
@@ -253,9 +406,10 @@ async function stopPostgresGracefully(ctx: KillContext): Promise<boolean> {
     // never fires on a Postgres that was merely still on its way out.
     const pgGone = pgPid === null || (await waitForPidDead(pgPid, 15_000));
     if (!pgGone) {
-      // The command is printed only for a pid we CONFIRMED. Handing the user a
-      // force-kill for a number nobody identified is the same defect as making
-      // the kill ourselves, one indirection removed (#100, path 3).
+      // The command is printed only for a pid we CONFIRMED (the refusal above
+      // returned for any other): handing the user a force-kill for a number
+      // nobody identified is the same defect as making the kill ourselves, one
+      // indirection removed (#100, path 3).
       const killCmd =
         process.platform === 'win32'
           ? `powershell Stop-Process -Id ${pgPid} -Force`
@@ -265,30 +419,39 @@ async function stopPostgresGracefully(ctx: KillContext): Promise<boolean> {
           `  postgres (pid ${pgPid}) is STILL RUNNING after a graceful stop\n` +
             `    It holds the shared-memory block for the data dir, so the next ` +
             `\`up\` will fail.\n` +
-            (confirmed
-              ? `    Fix: ${killCmd}`
-              : `    Its identity could NOT be confirmed, so no kill command is suggested:\n` +
-                `    check that pid yourself (its executable, its start time, which cluster\n` +
-                `    it serves) and stop it through its owner.`),
+            `    Fix: ${killCmd}`,
         ),
       );
-      return false;
+      return 'alive';
     }
 
     console.log(chalk.green('  Stopped postgres (graceful)'));
-    return true;
+    return 'stopped';
   } catch (err) {
     console.log(chalk.red(`  Failed to stop postgres gracefully: ${String(err)}`));
-    return false;
+    return isPidAlive(pgPid) ? 'alive' : 'stopped';
   }
+}
+
+/**
+ * What `runDown` leaves behind: the services that are still there because they
+ * were refused or would not die, each with its REASON. Empty means everything
+ * is stopped.
+ */
+export interface DownResult {
+  unstopped: UnstoppedService[];
 }
 
 /**
  * Stop runner, web, and embedded Postgres. Runner+web PIDs are read from
  * ~/.nodalai/pids/processes.json; Postgres is stopped via `pg_ctl stop`
  * (NEVER via raw kill — see stopPostgresGracefully for the rationale).
+ *
+ * The summary and the result come from ONE rule applied to every service: a
+ * service that was refused or is still alive is named, never counted as
+ * stopped, and the caller gets it back so the process can exit non-zero.
  */
-export async function runDown(): Promise<void> {
+export async function runDown(): Promise<DownResult> {
   const pids = readPids();
 
   // ONE reading of the process table and ONE of postgres ownership, shared by
@@ -300,13 +463,32 @@ export async function runDown(): Promise<void> {
     tableAvailable: process.platform === 'win32',
     snapshot: await processSnapshotWin(),
     ownedPostgresPids: new Set(pgReading.owned),
-    postgresReadingWorked: pgReading.read,
+    postgresClaim: pgReading.claim,
   };
 
   let stopped = 0;
 
-  if (pids?.runner) stopped += (await killPid(pids.runner, 'runner', ctx)) ? 1 : 0;
-  if (pids?.web) stopped += (await killPid(pids.web, 'web', ctx)) ? 1 : 0;
+  // Pids still running when `down` is done. They stay on record: erasing the
+  // handle on a stack that is still up is what turned a refusal into "No
+  // running Nodal-Agents processes found" (#767).
+  const survivors = new Set<number>();
+  const unstopped: UnstoppedService[] = [];
+  for (const [label, pid] of [
+    ['runner', pids?.runner],
+    ['web', pids?.web],
+  ] as const) {
+    if (!pid) continue;
+    const outcome = await killPid(pid, label, ctx);
+    if (outcome === 'stopped') stopped++;
+    if (outcome === 'refused' || outcome === 'alive') {
+      survivors.add(pid);
+      unstopped.push({
+        service: label,
+        pid,
+        reason: outcome === 'alive' ? 'running' : 'unidentified',
+      });
+    }
+  }
 
   // The tree recorded at startup, when every parent/child link still existed.
   // `down` usually reaches everything through killPidTree, but not always: a
@@ -318,14 +500,36 @@ export async function runDown(): Promise<void> {
     stopped += swept.length;
   }
 
-  if (await stopPostgresGracefully(ctx)) stopped++;
+  // Read before the stop: a clean stop removes the lockfile.
+  const postgresPid = readPostmasterPid(PG_DATA_DIR);
+  const postgres = await stopPostgresGracefully(ctx);
+  if (postgres === 'stopped') stopped++;
+  if (postgres === 'alive') {
+    unstopped.push({ service: 'postgres', pid: postgresPid, reason: 'running' });
+  } else if (postgres === 'foreign' || postgres === 'unconfirmed' || postgres === 'no-pid') {
+    unstopped.push({ service: 'postgres', pid: postgresPid, reason: postgres });
+  }
 
-  clearPids();
+  if (pids !== null && survivors.size > 0) retainPids(pids, survivors);
+  else clearPids();
+
+  if (unstopped.length > 0) {
+    // Said instead of "stopped" / "No running … found": either would be false.
+    console.log(
+      chalk.red(
+        `\n  NOT everything was stopped:\n` +
+          unstopped.map((u) => `    - ${describeUnstopped(u)}`).join('\n') +
+          '\n  See above for what to do. The pids of runner and web stay on record.',
+      ),
+    );
+    return { unstopped };
+  }
 
   if (stopped === 0) {
     console.log(chalk.yellow('No running Nodal-Agents processes found.'));
-    return;
+    return { unstopped };
   }
 
   console.log(chalk.green('\n  Nodal-Agents stopped.'));
+  return { unstopped };
 }
