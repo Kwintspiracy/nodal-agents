@@ -67,6 +67,8 @@ describe('architecture invariants', () => {
           'apps/cli/src/lib/embedded-postgres-module.ts',
           // This test, which has to name what it looks for.
           'apps/cli/src/tests/architecture.test.ts',
+          // Pins the package's version: it reads the manifests, it loads nothing.
+          'apps/cli/src/tests/embedded-postgres-pin.test.ts',
           // The deliberate bypass the exit-code guard needs: it loads the
           // package BEFORE the door, to prove the door still unhooks it.
           'packages/test-kit/src/tests/fixtures/pg-run-exit-code/global-setup-bypass.ts',
