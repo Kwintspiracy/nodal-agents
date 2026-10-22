@@ -31,7 +31,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connectMcp } from '../index.ts';
-import { MCP_STDIO_MAX_MESSAGE_BYTES } from '../scoped-stdio.ts';
+import { ScopedStdioTransport } from '../scoped-stdio.ts';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'nodal-mcp-limits-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
@@ -98,7 +99,7 @@ describe('the stdio read buffer has the ceiling Nodal accepts, not the SDK defau
   const server = fileURLToPath(new URL('./fixtures/mcp-flood-server.mjs', import.meta.url));
   // Over the SDK's own 10 MiB default, under Nodal's ceiling: a rendered-pages result.
   const BIG_BYTES = 12 * 1024 * 1024;
-  const FLOOD_BYTES = MCP_STDIO_MAX_MESSAGE_BYTES + 1024 * 1024;
+  const FLOOD_BYTES = 8 * 1024 * 1024;
 
   const open = (pidFile: string) =>
     connectMcp({
@@ -127,13 +128,24 @@ describe('the stdio read buffer has the ceiling Nodal accepts, not the SDK defau
     const uncaught: unknown[] = [];
     const onUncaught = (e: unknown) => uncaught.push(e);
     process.on('uncaughtException', onUncaught);
+    // The transport itself, with a small ceiling: the production ceiling is
+    // 100 MiB, and filling it (the SDK concatenates every chunk) is slow on CI.
+    const transport = new ScopedStdioTransport({
+      command: process.execPath,
+      args: [server, pidFile, String(BIG_BYTES), String(FLOOD_BYTES)],
+      env: {},
+      maxBufferSize: 2 * 1024 * 1024,
+    });
+    const client = new Client(
+      { name: 'nodal-agents-test', version: '0.0.0' },
+      { capabilities: {} },
+    );
     try {
-      const conn = await open(pidFile);
-      expect(conn.tools.map((t) => t.name)).toEqual(['big', 'flood']);
+      await client.connect(transport);
       const pid = Number(readFileSync(pidFile, 'utf8'));
       expect(isProcessAlive(pid)).toBe(true);
       await expect(
-        conn.client.callTool({ name: 'flood', arguments: {} }, undefined, { timeout: 30_000 }),
+        client.callTool({ name: 'flood', arguments: {} }, undefined, { timeout: 30_000 }),
       ).rejects.toThrow(/Connection closed|exceeded maximum size/);
       for (let i = 0; i < 160 && isProcessAlive(pid); i++) {
         await new Promise((r) => setTimeout(r, 50));
@@ -142,6 +154,7 @@ describe('the stdio read buffer has the ceiling Nodal accepts, not the SDK defau
       expect(uncaught).toEqual([]);
     } finally {
       process.off('uncaughtException', onUncaught);
+      await client.close();
     }
   }, 90_000);
 });

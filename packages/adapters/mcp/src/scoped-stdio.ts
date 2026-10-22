@@ -78,6 +78,11 @@ export interface ScopedStdioParams {
   args: readonly string[];
   /** L'environnement du connecteur, posé sur celui que le SDK hérite par défaut. */
   env: Record<string, string>;
+  /**
+   * Le plafond d'un message lu (comme `StdioServerParameters.maxBufferSize` du
+   * SDK). Par défaut `MCP_STDIO_MAX_MESSAGE_BYTES`.
+   */
+  maxBufferSize?: number;
 }
 
 export class ScopedStdioTransport implements Transport {
@@ -86,7 +91,7 @@ export class ScopedStdioTransport implements Transport {
   onmessage?: (message: JSONRPCMessage) => void;
 
   private proc: Started | null = null;
-  private readonly readBuffer = new ReadBuffer({ maxBufferSize: MCP_STDIO_MAX_MESSAGE_BYTES });
+  private readonly readBuffer: ReadBuffer;
   private closed = false;
   /** Le périmètre que CE transport a ouvert, faute d'un job : il le ferme. */
   private readonly ownScope: JobProcessScope | null;
@@ -98,6 +103,9 @@ export class ScopedStdioTransport implements Transport {
   ) {
     this.ownScope = scope ? null : openProcessScope(`mcp-stdio:${randomUUID()}`);
     this.scope = scope ?? (this.ownScope as JobProcessScope);
+    this.readBuffer = new ReadBuffer({
+      maxBufferSize: params.maxBufferSize ?? MCP_STDIO_MAX_MESSAGE_BYTES,
+    });
   }
 
   async start(): Promise<void> {
