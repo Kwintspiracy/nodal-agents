@@ -33,7 +33,7 @@ import { runCampaign, type CampaignDeps } from '../run';
 import { readWorkspaceView } from '../team';
 import {
   TEST_KEYS,
-  dead,
+  launcherExited,
   fakeCli,
   fakeCommunityInstaller,
   freePorts,
@@ -365,7 +365,7 @@ describe('a campaign, end to end, without a model', () => {
     expect(cli.commands).toEqual(['up --dev', 'down', 'reset --yes']);
     expect(existsSync(instanceHome)).toBe(false);
     expect(readNodalInstances(userHome).some((r) => isInside(r.home, instanceHome))).toBe(false);
-    expect(spawned.every(dead)).toBe(true);
+    expect(spawned.every(launcherExited)).toBe(true);
     const camp = JSON.parse(
       readFileSync(join(evidenceRoot, '20261022-110300-x1x1', 'campaign.json'), 'utf8'),
     ) as Record<string, unknown>;

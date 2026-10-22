@@ -19,7 +19,6 @@ import { defaultNodalHome } from '@nodal-agents/shared/nodal-home';
 import { readNodalInstances } from '@nodal-agents/shared/nodal-instances';
 import { campaignHome, campaignsRoot } from '../home';
 import {
-  benchAlive,
   campaignEnv,
   createInstanceFiles,
   devServerHolding,
@@ -36,7 +35,7 @@ import {
   type NodalCli,
 } from '../instance';
 import { isInside } from '../keys';
-import { TEST_KEYS, dead, fakeCli, freePorts, isolateUserHome, until } from './harness';
+import { TEST_KEYS, fakeCli, freePorts, isolateUserHome, launcherExited, until } from './harness';
 
 const home = isolateUserHome();
 const userHome = home.userHome;
@@ -141,7 +140,7 @@ describe('start, then erase: no process, no folder, no registry entry', () => {
     expect(cli.commands).toEqual(['up --dev']);
     expect(cli.envs[0]!['NODALAI_HOME']).toBe(instance.home);
     expect(cli.envs[0]!['LLM_API_KEY']).toBeUndefined();
-    expect(benchAlive(launched.pid)).toBe(true);
+    expect(launcherExited(launched.pid)).toBe(false);
     // Sain veut dire : le runner répond 200 à /api/health, web et Postgres écoutent.
     const health = await fetch(`http://127.0.0.1:${instance.ports.runner}/api/health`);
     expect(health.status).toBe(200);
@@ -150,7 +149,7 @@ describe('start, then erase: no process, no folder, no registry entry', () => {
 
     await stopInstance(instance, deps(cli), launched);
     expect((await launched.exited).code).not.toBeUndefined();
-    expect(benchAlive(launched.pid)).toBe(false);
+    expect(launcherExited(launched.pid)).toBe(true);
     await eraseInstance(instance, deps(cli));
     expect(cli.commands).toEqual(['up --dev', 'down', 'reset --yes']);
     for (const port of Object.values(instance.ports)) expect(await portAnswers(port)).toBe(false);
@@ -169,7 +168,7 @@ describe('start, then erase: no process, no folder, no registry entry', () => {
       launched,
     );
     await launched.exited;
-    expect(benchAlive(launched.pid)).toBe(false);
+    expect(launcherExited(launched.pid)).toBe(true);
     expect(logs).toContain(
       `The launcher (pid ${launched.pid}) outlived \`down\`: its tree is stopped.`,
     );
@@ -199,7 +198,7 @@ describe('start, then erase: no process, no folder, no registry entry', () => {
       ),
     );
     process.kill(pid);
-    await until(() => dead(pid));
+    await until(() => launcherExited(pid));
   });
 
   it('an `up` that exits before serving is an error carrying its output, never a started instance', async () => {
@@ -220,7 +219,7 @@ describe('start, then erase: no process, no folder, no registry entry', () => {
       /campaign_up_timeout: the instance did not serve within 2 s \(runner :\d+ \/api\/health, web :\d+, postgres :\d+ missing\); its launcher was stopped/,
     );
     const launcher = spawned[before]!;
-    await until(() => dead(launcher));
+    await until(() => launcherExited(launcher));
     await eraseInstance(instance, deps(cli));
     expect(registered(instance)).toBe(false);
   });
@@ -295,7 +294,7 @@ describe('a stopped or crashed campaign leaves nothing behind for the next', () 
       isAlive: () => false,
     });
     expect(erased).toEqual(['20261022-090000-dead']);
-    expect(benchAlive(pid)).toBe(false);
+    expect(launcherExited(pid)).toBe(true);
     expect(existsSync(left.home)).toBe(false);
     expect(registered(left)).toBe(false);
   });

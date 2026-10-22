@@ -124,6 +124,18 @@ export async function freePorts(): Promise<InstancePorts> {
   return { web: await one(), runner: await one(), postgres: await one() };
 }
 
+/**
+ * Les faux lanceurs dont le processus est réellement SORTI (son événement
+ * `exit`). Jamais un PID sondé : sous Windows, un PID libéré est réattribué
+ * vite, et `process.kill(pid, 0)` dit alors « vivant » d'un autre processus
+ * (mesuré sur la CI Windows du 22/10).
+ */
+const exitedLaunchers = new Set<number>();
+
+/** Ce faux lanceur est-il sorti ? (vrai seulement pour un processus lancé par `fakeCli`) */
+export const launcherExited = (pid: number): boolean => exitedLaunchers.has(pid);
+
+/** Pour un PID qui n'est pas un faux lanceur : la sonde par PID, à n'utiliser qu'à défaut. */
 export const dead = (pid: number): boolean => !benchAlive(pid);
 export async function until(cond: () => Promise<boolean> | boolean, ms = 10_000): Promise<void> {
   const t0 = Date.now();
@@ -184,7 +196,7 @@ export function fakeCli(
     } catch {
       /* déjà mort */
     }
-    await until(() => dead(pid));
+    await until(() => launcherExited(pid));
   };
   return {
     envs,
@@ -205,6 +217,8 @@ export function fakeCli(
         windowsHide: true,
       });
       spawned.push(child.pid!);
+      const pid = child.pid!;
+      child.on('exit', () => exitedLaunchers.add(pid));
       mkdirSync(join(env['NODALAI_HOME']!, 'pids'), { recursive: true });
       writeFileSync(pidFile(env), JSON.stringify({ pid: child.pid }));
       let output = '';
