@@ -10,10 +10,13 @@
 //     « a counter that pauses … » rouge ;
 //   - le gestionnaire `uncaughtException` retiré de `COUNTER_DAEMON_SOURCE` →
 //     « a daemon that crashes … » rouge (aucune trace, « killed from outside »).
+//   - le démon qui réécrit le compteur en place (`writeFileSync(counter, …)`,
+//     sans fichier intermédiaire ni renommage) → « never left empty » rouge, les
+//     deux cas : lecteur pendant l'écriture, et démons tués en pleine écriture.
 
 import { describe, it, expect, afterAll } from 'vitest';
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { COUNTER_DAEMON_SOURCE, counterRise, crashRecordOf, readCounter } from '../counter-process';
@@ -102,19 +105,106 @@ describe('counterRise: a bounded wait for a counting process, which says why it 
 
   it('a daemon that crashes says so: its own error is quoted', async () => {
     const d = await startCounting('crashing');
-    // Son écriture suivante est refusée (lecture seule) : l'exception le tue.
-    chmodSync(d.counter, 0o444);
+    // Son écriture suivante échoue pour de bon (EISDIR : un dossier occupe la
+    // place de son fichier intermédiaire) : l'exception le tue. Le dossier prend
+    // la place à l'instant où le fichier n'y est pas (entre deux renommages).
+    const staging = `${d.counter}.next`;
+    for (let i = 0; i < 200; i++) {
+      try {
+        rmSync(staging, { force: true });
+        mkdirSync(staging);
+        break;
+      } catch {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    }
     try {
       await untilDead(d.watch);
       const floor = readCounter(d.counter);
       const rise = await counterRise(d.counter, floor, { watch: d.watch });
       expect(rise.value).toBe(floor);
       expect(rise.why).toContain(`the daemon (pid ${String(d.pid)}) crashed by itself: Error: E`);
-      expect(readFileSync(crashRecordOf(d.counter), 'utf8')).toMatch(/^Error: E(PERM|ACCES)/);
+      expect(readFileSync(crashRecordOf(d.counter), 'utf8')).toMatch(/^Error: EISDIR/);
     } finally {
-      chmodSync(d.counter, 0o644);
       if (d.watch.alive()) process.kill(d.pid);
       d.watch.release();
     }
   });
+});
+
+/** Le contenu BRUT du compteur, sans la relecture de `readCounter` : ce qu'un lecteur pressé voit. */
+const rawContent = (counter: string): string => readFileSync(counter, 'utf8');
+
+describe('the counter file is never left empty, whatever the instant (#843, run 39781190881)', () => {
+  it('a reader sampling the file as fast as it can, while the daemon rewrites it every millisecond, only ever sees a whole integer', async () => {
+    const counter = join(dir, 'sampled.count');
+    const pidFile = join(dir, 'sampled.pid');
+    spawn(process.execPath, [daemon, counter, pidFile, '1'], { stdio: 'ignore' }).unref();
+    for (let i = 0; i < 200 && !(existsSync(pidFile) && existsSync(counter)); i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const watch = await watchProcess(Number(readFileSync(pidFile, 'utf8')));
+    try {
+      const seen: string[] = [];
+      let reads = 0;
+      const until = Date.now() + 1_500;
+      while (Date.now() < until) {
+        reads++;
+        try {
+          const text = rawContent(counter);
+          if (!/^\d+$/.test(text)) seen.push(JSON.stringify(text));
+        } catch (e) {
+          // Sous Windows, un fichier en cours de remplacement peut être refusé
+          // un instant à la lecture : c'est un refus, pas un fichier vide.
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') throw e;
+        }
+      }
+      expect(reads).toBeGreaterThan(100);
+      expect(seen).toEqual([]);
+      // Et le démon a bien compté pendant ce temps.
+      expect(readCounter(counter)).toBeGreaterThan(50);
+    } finally {
+      process.kill(watch.pid);
+      watch.release();
+    }
+  });
+
+  it('daemons killed at an arbitrary instant leave a whole integer behind, each one', async () => {
+    const COUNT = 12;
+    // Tous lancés ensemble, puis attendus : douze phases d'écriture différentes.
+    const files = Array.from({ length: COUNT }, (_, i) => ({
+      counter: join(dir, `killed-${String(i)}.count`),
+      pidFile: join(dir, `killed-${String(i)}.pid`),
+    }));
+    for (const f of files) {
+      spawn(process.execPath, [daemon, f.counter, f.pidFile, '1'], { stdio: 'ignore' }).unref();
+    }
+    const daemons: { pid: number; counter: string; watch: ProcessWatch }[] = [];
+    try {
+      for (const f of files) {
+        for (let n = 0; n < 200 && !(existsSync(f.pidFile) && existsSync(f.counter)); n++) {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        const pid = readCounter(f.pidFile);
+        daemons.push({ pid, counter: f.counter, watch: await watchProcess(pid) });
+      }
+      // Ils réécrivent tous leur compteur chaque milliseconde : la mort tombe où elle tombe.
+      await new Promise((r) => setTimeout(r, 300));
+      for (const d of daemons) process.kill(d.pid, 'SIGKILL');
+      for (const d of daemons) await untilDead(d.watch);
+      const left = daemons.map((d) => ({
+        counter: d.counter.slice(dir.length + 1),
+        text: rawContent(d.counter),
+      }));
+      expect(left.filter((l) => !/^\d+$/.test(l.text))).toEqual([]);
+      // Et chacun avait compté avant de mourir.
+      for (const d of daemons) expect(readCounter(d.counter)).toBeGreaterThan(0);
+    } finally {
+      for (const d of daemons) {
+        if (d.watch.alive()) process.kill(d.pid);
+        d.watch.release();
+      }
+    }
+  }, 60_000);
 });
