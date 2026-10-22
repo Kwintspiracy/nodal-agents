@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtemp, rm, realpath, readFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { runCommandTool } from '../builtin/run-command';
 import { WorkspaceError } from '../builtin/file-ops/workspace';
 import { registerBuiltins, ALWAYS_ON_TOOLS } from '../builtin/index';
@@ -391,14 +391,85 @@ describe('run_command with a list runs NO shell @cap:executer-une-commande/moteu
     }
   });
 
-  it('runs a multi-word entry (npx vitest) through its real launcher', async () => {
-    const out = await runCommandTool.execute(
-      { purpose: 'vitest', command: 'npx vitest --version' },
-      ctx({ commandAllowlist: ['npx vitest'] }),
-    );
-    // A .cmd on PATH: proven to START, whatever it then prints.
-    expect(out.stdout.length + out.stderr.length).toBeGreaterThan(0);
-  }, 120_000);
+  // ── multi-word entry, through a launcher that cannot block ──────────────
+  // This used to run the machine's REAL `npx vitest --version`. That proved the
+  // wiring (PATH lookup, `.cmd` through cmd.exe, arguments handed over) but also
+  // depended on the machine's npm: under the full `release:check` run it waited
+  // the whole 120 s (npm cache lock, a concurrent npx, a registry check — #749)
+  // with nothing wrong in Nodal. What the test is about is not npm: it is that
+  // an entry of TWO words is matched, resolved on the PATH as `npx`, launched
+  // the way the platform launches it (a `.cmd` shim on Windows, an executable
+  // script elsewhere) with every argument of the command, in order. A fixture
+  // launcher of the same SHAPE and name, first on the PATH, proves exactly that
+  // — and prints what it received, so the assertion is on content, where the old
+  // one only asked for "some output".
+  async function withFixtureNpx(
+    run: (ctl: { dir: string; witness: string }) => Promise<void>,
+  ): Promise<void> {
+    const dir = await realpath(await mkdtemp(join(tmpdir(), 'nodal-fixture-npx-')));
+    // Inside the workspace: the command is confined to write under it, and nowhere else.
+    const witness = join(workspaceDir, `fixture-npx-ran-${Date.now()}.log`);
+    const { writeFile } = await import('node:fs/promises');
+    if (process.platform === 'win32') {
+      await writeFile(
+        join(dir, 'npx.cmd'),
+        `@echo off
+echo ran>>"${witness}"
+echo fixture-npx [%~1] [%~2] [%~3] [%~4]
+`,
+        'utf8',
+      );
+    } else {
+      const { chmod } = await import('node:fs/promises');
+      await writeFile(
+        join(dir, 'npx'),
+        `#!/bin/sh
+echo ran >> "${witness}"
+echo "fixture-npx [$1] [$2] [$3] [$4]"
+`,
+        'utf8',
+      );
+      await chmod(join(dir, 'npx'), 0o755);
+    }
+    const savedPath = process.env['PATH'];
+    process.env['PATH'] = `${dir}${delimiter}${savedPath ?? ''}`;
+    try {
+      await run({ dir, witness });
+    } finally {
+      if (savedPath === undefined) delete process.env['PATH'];
+      else process.env['PATH'] = savedPath;
+      await rm(dir, { recursive: true, force: true });
+      await rm(witness, { force: true });
+    }
+  }
+
+  it('runs a multi-word entry (npx vitest) through the launcher the PATH resolves, with every argument', async () => {
+    await withFixtureNpx(async ({ witness }) => {
+      const out = await runCommandTool.execute(
+        { purpose: 'vitest', command: 'npx vitest run --reporter=dot' },
+        ctx({ commandAllowlist: ['npx vitest'] }),
+      );
+      expect(out.exitCode).toBe(0);
+      // The launcher received, in order, the tokens of the command: the entry's
+      // second word AND what follows it.
+      expect(out.stdout.trim()).toBe('fixture-npx [vitest] [run] [--reporter=dot] []');
+      const { readFile } = await import('node:fs/promises');
+      expect((await readFile(witness, 'utf8')).trim()).toBe('ran');
+    });
+  });
+
+  it('does not start the launcher for a command that only shares the first word of a multi-word entry', async () => {
+    await withFixtureNpx(async ({ witness }) => {
+      await expect(
+        runCommandTool.execute(
+          { purpose: 'other package', command: 'npx rimraf --version' },
+          ctx({ commandAllowlist: ['npx vitest'] }),
+        ),
+      ).rejects.toThrow(/not on this agent's command allowlist/);
+      const { existsSync } = await import('node:fs');
+      expect(existsSync(witness)).toBe(false);
+    });
+  });
 
   it('resolves the program from the PATH, never from the working directory', async () => {
     const dir = await realpath(await mkdtemp(join(tmpdir(), 'nodal-noshell-')));
