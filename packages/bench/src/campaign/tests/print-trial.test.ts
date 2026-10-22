@@ -204,6 +204,51 @@ describe('who can start a process: the product classification, minus what a rule
   });
 });
 
+describe("the rule that closes a process tool is the execution's own: Block, at any scope", () => {
+  it('a workspace-wide Block is honoured for every agent; Ask and Allow still count the tool', async () => {
+    const { readProcessStarters } = await import('../../workflows/stack');
+    await instance(config);
+    const ids = Object.fromEntries(
+      (
+        await db
+          .select({ id: d.agents.id, slug: d.agents.slug })
+          .from(d.agents)
+          .where(d.eq(d.agents.entityId, testedEntityId))
+      ).map((a) => [a.slug, a.id]),
+    );
+    const rule = (
+      agent: string,
+      toolName: string,
+      action: 'block' | 'require_approval' | 'auto_approve',
+      scope: 'agent' | 'entity' = 'agent',
+    ) =>
+      d.setApprovalRuleRepo(db, testedEntityId, {
+        agentId: ids[agent]!,
+        toolName,
+        action,
+        scope,
+        conditionJson: {},
+      });
+    // Workspace-wide (agent_id NULL): declare_verification closed for all.
+    expect(await rule('chef', 'declare_verification', 'block', 'entity')).toEqual({ ok: true });
+    // Ask and Allow are not Block: the tool still runs, with or without a human.
+    expect(await rule('imageur', 'run_command', 'require_approval')).toEqual({ ok: true });
+    expect(await rule('chef', 'run_command', 'auto_approve')).toEqual({ ok: true });
+    expect(await readProcessStarters(db, testedEntityId)).toEqual([
+      { agent: 'chef', tools: ['run_command'], runtime: null },
+      { agent: 'imageur', tools: ['run_command'], runtime: null },
+    ]);
+    // An agent's own Allow over the workspace Block reopens it for that agent:
+    // the execution ranks the agent's rule first.
+    expect(await rule('chercheur', 'declare_verification', 'auto_approve')).toEqual({ ok: true });
+    expect(await readProcessStarters(db, testedEntityId)).toEqual([
+      { agent: 'chef', tools: ['run_command'], runtime: null },
+      { agent: 'chercheur', tools: ['declare_verification'], runtime: null },
+      { agent: 'imageur', tools: ['run_command'], runtime: null },
+    ]);
+  });
+});
+
 describe('a print trial on the campaign instance', () => {
   it('the bench team as configured runs commands: the print trial is skipped, naming who can, nothing starts, nothing is recorded', async () => {
     await instance(config);
