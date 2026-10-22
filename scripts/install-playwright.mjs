@@ -107,6 +107,9 @@ async function verrouLibreAvantReessai(n) {
 }
 
 async function paquetsAbsents() {
+  // La sonde sort en 1 quand des paquets manquent : pnpm imprime alors une
+  // erreur « ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL » qui est ATTENDUE, pas une panne.
+  journal('probing system dependencies (a non-zero exit below means "some are missing")');
   const sonde = await capturer('timeout', [
     '--kill-after=10',
     String(bornee(60)),
