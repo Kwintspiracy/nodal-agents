@@ -33,6 +33,7 @@ import { runCampaign, type CampaignDeps } from '../run';
 import { readWorkspaceView } from '../team';
 import {
   TEST_KEYS,
+  killLauncher,
   launcherExited,
   fakeCli,
   fakeCommunityInstaller,
@@ -49,13 +50,9 @@ const workspacesRoot = mkdtempSync(join(tmpdir(), 'bench-campaign-ws-'));
 const spawned: number[] = [];
 
 afterAll(() => {
-  for (const pid of spawned) {
-    try {
-      process.kill(pid);
-    } catch {
-      /* déjà mort */
-    }
-  }
+  // Par le handle de chaque lanceur, jamais par son PID : la plupart sont
+  // sortis depuis longtemps, et leur PID sert déjà à d'autres (#841).
+  for (const pid of spawned) killLauncher(pid);
   for (const dir of [stackDir, evidenceRoot, workspacesRoot])
     rmSync(dir, { recursive: true, force: true });
   home.restore();

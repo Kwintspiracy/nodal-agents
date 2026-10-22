@@ -6,5 +6,6 @@
     "noEmit": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "exclude": ["src/tests/fixtures/worker-exit/vitest.config.ts"]
 }

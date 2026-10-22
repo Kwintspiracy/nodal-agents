@@ -25,6 +25,7 @@ import {
 } from '@nodal-agents/sandbox';
 import { runShellCommand, runCommandSequence } from '../builtin/shell-engine';
 import { buildChildEnv } from '../builtin/child-env';
+import { watchProcess } from '@nodal-agents/test-kit';
 
 let dir: string;
 let outside: string;
@@ -424,13 +425,16 @@ describe('runShellCommand — contrat et environnement communs aux deux régimes
     expect(Date.now() - started).toBeLessThan(10_000);
     await waitForFile(info);
     const { pid } = JSON.parse(await readFile(info, 'utf8')) as { pid: number };
-    await scope.close();
-    // Sous Windows sans bac à sable, la fermeture du périmètre n'atteint pas
-    // ce petit-enfant détaché (limite dite) : le test le tue lui-même.
+    // Tenu dès que son pid est lu, quand il vit (il garde le tuyau) : après la
+    // fermeture du périmètre il peut être mort, et son pid redonné (#841).
+    const watch = await watchProcess(pid);
     try {
-      process.kill(pid);
-    } catch {
-      /* déjà mort */
+      await scope.close();
+      // Sous Windows sans bac à sable, la fermeture du périmètre n'atteint pas
+      // ce petit-enfant détaché (limite dite) : le test le tue lui-même.
+      watch.kill();
+    } finally {
+      watch.release();
     }
   });
 });

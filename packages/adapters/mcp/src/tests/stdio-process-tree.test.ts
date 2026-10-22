@@ -15,43 +15,43 @@
 // the SDK's `StdioClientTransport` in client.ts → the helper survives the
 // close, both tests red.
 
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { watchProcess, type ProcessWatch } from '@nodal-agents/test-kit';
 import { openProcessScope } from '@nodal-agents/tools';
 import { connectMcp } from '../index.ts';
-
-const isProcessAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
 
 const LAUNCHER = fileURLToPath(new URL('./fixtures/mcp-launcher.mjs', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'nodal-mcp-tree-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
 
-async function pidIn(file: string): Promise<number> {
+// Each pid is HELD as soon as it is read, while its process has just written
+// it: from then on it can only name that process, alive or dead, and killing it
+// can reach nobody else (#841, packages/test-kit/src/process-watch.ts).
+const watches: ProcessWatch[] = [];
+afterEach(() => {
+  for (const w of watches.splice(0)) w.release();
+});
+
+async function pidIn(file: string): Promise<ProcessWatch> {
   for (let i = 0; i < 200 && !existsSync(file); i++) {
     await new Promise((r) => setTimeout(r, 50));
   }
-  return Number(readFileSync(file, 'utf8'));
+  const watch = await watchProcess(Number(readFileSync(file, 'utf8')));
+  watches.push(watch);
+  return watch;
 }
 
-async function deadWithin(pid: number, ms: number): Promise<boolean> {
+async function deadWithin(watch: ProcessWatch, ms: number): Promise<boolean> {
   for (let waited = 0; waited < ms; waited += 50) {
-    if (!isProcessAlive(pid)) return true;
+    if (!watch.alive()) return true;
     await new Promise((r) => setTimeout(r, 50));
   }
-  const alive = isProcessAlive(pid);
-  if (alive) process.kill(pid);
-  return !alive;
+  return !watch.kill();
 }
 
 describe('a stdio MCP server belongs to whoever opened it (#750) @cap:connecter-un-service/moteur', () => {
@@ -70,11 +70,11 @@ describe('a stdio MCP server belongs to whoever opened it (#750) @cap:connecter-
       expect(conn.tools.map((t) => t.name)).toEqual(['ping']);
       const server = await pidIn(serverPid);
       const helper = await pidIn(helperPid);
-      expect(isProcessAlive(server)).toBe(true);
+      expect(server.alive()).toBe(true);
       await conn.close();
       expect(await deadWithin(server, 8_000)).toBe(true);
       // Le job continue : son aide détachée vit encore.
-      expect(isProcessAlive(helper)).toBe(true);
+      expect(helper.alive()).toBe(true);
       await scope.close();
       expect(await deadWithin(helper, 5_000)).toBe(true);
     } finally {

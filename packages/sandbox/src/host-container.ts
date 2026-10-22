@@ -263,7 +263,11 @@ export class HostJobContainer implements JobContainer {
       done,
       spawned,
       kill: () => {
-        if (cmd.killRequested) return;
+        // Une commande finie (sa sortie reçue, ou l'hôte mort) n'a plus rien à
+        // tuer : sa racine est morte, et `taskkill /T` ne trouverait aucun
+        // arbre sous elle. Son pid, lui, peut déjà servir à un autre processus
+        // de la machine, que ce kill tuerait avec son arbre (#841).
+        if (cmd.killRequested || !this.pending.has(id)) return;
         cmd.killRequested = true;
         if (cmd.pid !== null) void killProcessTree(cmd.pid);
       },

@@ -31,7 +31,13 @@ const home = await vi.hoisted(async () => {
 // A signal-sent record, not a call count: the fake stop does what the real one
 // does to its target (ends it), so a case that wrongly reaches it also ends the
 // stranger and the "still alive" assertions go red.
-const stops = vi.hoisted(() => ({ pids: [] as number[] }));
+//
+// The fake ends its target through the stranger's own handle, never by the bare
+// number (#841): a wrong `decidedPid` is recorded, and signals nobody else.
+const stops = vi.hoisted(() => ({
+  pids: [] as number[],
+  held: null as null | { pid?: number; kill: () => boolean },
+}));
 const FAKE_PG_CTL = vi.hoisted(() => "/opt/O'Brien pg/bin/pg_ctl");
 
 vi.mock('../lib/postgres.ts', async (importOriginal) => {
@@ -42,7 +48,7 @@ vi.mock('../lib/postgres.ts', async (importOriginal) => {
     resolvePgCtl: async (): Promise<string | null> => FAKE_PG_CTL,
     stopOrphanPostgres: async (decidedPid: number): Promise<boolean> => {
       stops.pids.push(decidedPid);
-      process.kill(decidedPid);
+      if (stops.held?.pid === decidedPid) stops.held.kill();
       return true;
     },
   };
@@ -105,6 +111,7 @@ beforeEach(() => {
     stdio: 'ignore',
     windowsHide: true,
   });
+  stops.held = stranger;
   vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: string) => {
     said.push(String(chunk));
     return true;

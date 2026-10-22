@@ -35,7 +35,15 @@ import {
   type NodalCli,
 } from '../instance';
 import { isInside } from '../keys';
-import { TEST_KEYS, fakeCli, freePorts, isolateUserHome, launcherExited, until } from './harness';
+import {
+  TEST_KEYS,
+  fakeCli,
+  freePorts,
+  isolateUserHome,
+  killLauncher,
+  launcherExited,
+  until,
+} from './harness';
 
 const home = isolateUserHome();
 const userHome = home.userHome;
@@ -43,13 +51,9 @@ const stackDir = mkdtempSync(join(tmpdir(), 'bench-campaign-checkout-'));
 const spawned: number[] = [];
 
 afterAll(() => {
-  for (const pid of spawned) {
-    try {
-      process.kill(pid);
-    } catch {
-      /* déjà mort */
-    }
-  }
+  // Par le handle de chaque lanceur, jamais par son PID : la plupart sont
+  // sortis depuis longtemps, et leur PID sert déjà à d'autres (#841).
+  for (const pid of spawned) killLauncher(pid);
   rmSync(stackDir, { recursive: true, force: true });
   home.restore();
 });
@@ -197,7 +201,7 @@ describe('start, then erase: no process, no folder, no registry entry', () => {
         `campaign_erase_incomplete: campaign ${instance.id}:\\n  - ports still answering: web :${instance.ports.web}, runner :${instance.ports.runner}, postgres :${instance.ports.postgres}`,
       ),
     );
-    process.kill(pid);
+    killLauncher(pid);
     await until(() => launcherExited(pid));
   });
 
