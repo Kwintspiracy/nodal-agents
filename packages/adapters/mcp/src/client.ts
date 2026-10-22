@@ -13,11 +13,13 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {
   ElicitRequestSchema,
+  ErrorCode,
+  McpError,
   type ElicitRequest,
   type ElicitResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import { buildChildEnv, type JobProcessScope } from '@nodal-agents/tools';
-import { ScopedStdioTransport } from './scoped-stdio.ts';
+import { MCP_STDIO_MAX_MESSAGE_BYTES, ScopedStdioTransport } from './scoped-stdio.ts';
 import { Agent as UndiciAgent, fetch as undiciFetch } from 'undici';
 
 const dnsLookup = promisify(dnsLookupCb);
@@ -89,6 +91,17 @@ function resolveConnectTimeoutMs(): number {
   const raw = process.env['MCP_CONNECT_TIMEOUT_MS'];
   const parsed = raw !== undefined ? Number(raw) : NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CONNECT_TIMEOUT_MS;
+}
+
+/**
+ * The largest single message read from a stdio server (a tool result is one
+ * message). `MCP_STDIO_MAX_MESSAGE_BYTES` overrides the default, like
+ * `MCP_CONNECT_TIMEOUT_MS` does for the connect bound.
+ */
+function resolveMaxMessageBytes(): number {
+  const raw = process.env['MCP_STDIO_MAX_MESSAGE_BYTES'];
+  const parsed = raw !== undefined ? Number(raw) : NaN;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : MCP_STDIO_MAX_MESSAGE_BYTES;
 }
 
 // Explicit, defense-in-depth bound for listTools, matching (not tightening)
@@ -311,13 +324,34 @@ const lanes = new WeakMap<Client, McpCallLane>();
  * asks meanwhile. A client connected without `answersElicitation` has no lane:
  * the call simply runs.
  */
-export function runMcpCall<T>(
+export async function runMcpCall<T>(
   client: Client,
   responder: McpElicitationResponder | null,
   fn: () => Promise<T>,
 ): Promise<T> {
   const lane = lanes.get(client);
-  return lane ? lane.run(responder, fn) : fn();
+  try {
+    return await (lane ? lane.run(responder, fn) : fn());
+  } catch (error) {
+    throw explainClosed(client, error);
+  }
+}
+
+/** A transport that can say why IT closed the connection (`ScopedStdioTransport`). */
+const closeReasons = new WeakMap<Client, () => Error | undefined>();
+
+/**
+ * The SDK rejects every request pending on a closed connection with a bare
+ * `Connection closed`, whoever closed it. When Nodal's own transport closed the
+ * connection (a message over the size ceiling), the reason is what the caller
+ * must read: the agent, the `tool_calls` row and the user otherwise cannot
+ * tell it from a crashed server. Any other error passes through unchanged.
+ */
+export function explainClosed(client: Client, error: unknown): unknown {
+  if (!(error instanceof McpError) || error.code !== ErrorCode.ConnectionClosed) return error;
+  const reason = closeReasons.get(client)?.();
+  if (!reason) return error;
+  return new McpError(ErrorCode.ConnectionClosed, `Connection closed: ${reason.message}`);
 }
 
 /**
@@ -412,18 +446,30 @@ export async function connectMcp(
       if (typeof v === 'string') scrubbedEnv[k] = v;
     }
     const transport = new ScopedStdioTransport(
-      { command: opts.command, args: opts.args, env: { ...scrubbedEnv, ...opts.env } },
+      {
+        command: opts.command,
+        args: opts.args,
+        env: { ...scrubbedEnv, ...opts.env },
+        maxBufferSize: resolveMaxMessageBytes(),
+      },
       opts.processScope,
     );
+    closeReasons.set(client, () => transport.closeReason);
     await withTimeout(
       client.connect(transport),
       connectTimeoutMs,
       `MCP connect (${opts.command})`,
       () => safeCloseTransport(transport),
-    );
+    ).catch((error: unknown) => {
+      throw explainClosed(client, error);
+    });
   }
 
-  const listed = await client.listTools(undefined, { timeout: LIST_TOOLS_TIMEOUT_MS });
+  const listed = await client
+    .listTools(undefined, { timeout: LIST_TOOLS_TIMEOUT_MS })
+    .catch((error: unknown) => {
+      throw explainClosed(client, error);
+    });
   const tools: McpToolDescriptor[] = (listed.tools ?? []).map((t) => ({
     name: t.name,
     description: typeof t.description === 'string' ? t.description : undefined,

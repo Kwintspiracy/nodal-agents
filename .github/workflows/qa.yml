@@ -41,15 +41,15 @@ jobs:
     runs-on: ubuntu-latest
     # Chaque étape longue a sa borne, et le job vaut au moins leur SOMME :
     # ~2 min de mise en place, installation 10, couverture 35, banc 5,
-    # Playwright 12, démarrage 10, parcours 20, collecte 5, enregistrement 5,
-    # ~3 pour le reste = 107. Mesuré sur les nuits du 24 au
+    # version de Playwright 2, Playwright 15, démarrage 10, parcours 20,
+    # collecte 5, enregistrement 5, ~3 pour le reste = 112. Mesuré sur les nuits du 24 au
     # 26/09 : couverture 21-22 min, parcours 11,3, job 30-35. Sans ces bornes,
     # une étape figée consommait le job entier, et ce qui la suit (le journal
     # de la stack, la collecte, l'enregistrement) ne tournait jamais (revue
     # Codex de la PR #516). Un dépassement de JOB tue tout ; un dépassement
     # d'ÉTAPE avec `continue-on-error` la marque en échec et laisse la nuit
     # enregistrer ce qu'elle a mesuré.
-    timeout-minutes: 115
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
         with:
@@ -153,14 +153,23 @@ jobs:
           rm -f apps/qa/data/bench-run.json
           pnpm bench --json "$GITHUB_WORKSPACE/apps/qa/data/bench-run.json" || true
 
+      # Un cache chaud ne télécharge rien ; la clé porte la version EXACTE de
+      # Playwright (celle qui est installée, donc celle du lockfile), si bien
+      # qu'une montée de version repart d'un cache neuf. L'installation elle-même
+      # est `scripts/install-playwright.mjs` (#852), la même dans `qa.yml`.
+      - name: Resolve the Playwright version
+        id: playwright
+        timeout-minutes: 2
+        run: echo "version=$(pnpm --filter @nodal-agents/web exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
       - name: Install Playwright browsers
-        timeout-minutes: 12
-        run: |
-          for i in 1 2; do
-            timeout 300 pnpm --filter @nodal-agents/web exec playwright install --with-deps chromium && exit 0
-            echo "playwright install attempt $i failed or hung — retrying"
-          done
-          exit 1
+        timeout-minutes: 15
+        run: node scripts/install-playwright.mjs
 
       # `NODALAI_ALLOW_OAUTH_MOCK` — contrairement au job `e2e-smoke`, ce
       # workflow joue les parcours OAuth, qui présentent un code d'autorisation
