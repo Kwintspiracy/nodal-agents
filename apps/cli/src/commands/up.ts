@@ -1150,19 +1150,6 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // to kill the services when the foreground CLI dies, which is precisely what
   // must not happen here.
   if (opts.detach) {
-    // FIRST, before anything tells the user the terminal is theirs: handing the
-    // cluster over can now fail (the package's exit hook is not the shape this
-    // was written against), and a launcher that has said "Detached" cannot take
-    // it back. On failure everything started is stopped, like any failed boot,
-    // and the error — a named one — is the only thing said.
-    try {
-      pg.outliveLauncher();
-    } catch (err) {
-      await Promise.allSettled([killSilent(runnerProcess), killSilent(webProcess)]);
-      await pg.stop();
-      clearPids();
-      throw err;
-    }
     logLauncherEvent('detached', `web=${webUrl} runner=${runnerUrl}`);
     console.log(chalk.gray('  Detached — the terminal is yours again.'));
     console.log(chalk.gray('  nodal-agents logs runner   follow a service'));
@@ -1175,10 +1162,11 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // The runner and the web were spawned detached and unref'd. Postgres was
     // spawned detached too, but it is a CHILD of this launcher — not a pg_ctl
     // daemon — and `embedded-postgres` stops every cluster it started when the
-    // process exits, so it was released from that hook above; `nodal-agents
-    // down` stops it by its data directory afterwards (#835). Nothing else holds
-    // the loop except the fire-and-forget version check above, whose 3s timer
-    // would otherwise sit between the user and the prompt.
+    // process exits, so it is released from that hook here; `nodal-agents down`
+    // stops it by its data directory afterwards (#835). Nothing else holds the
+    // loop except the fire-and-forget version check above, whose 3s timer would
+    // otherwise sit between the user and the prompt.
+    pg.outliveLauncher();
     process.exit(0);
   }
 

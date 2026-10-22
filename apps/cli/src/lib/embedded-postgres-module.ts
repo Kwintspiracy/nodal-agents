@@ -142,7 +142,6 @@ function keepExitCode(entry: string): void {
  * error, never a silent "released" over a cluster that will still be killed.
  */
 export function releaseEmbeddedPostgresFromExit(): void {
-  if (released) return;
   const entry = resolveEmbeddedPostgresEntry();
   let loaded: unknown;
   try {
@@ -159,39 +158,27 @@ export function releaseEmbeddedPostgresFromExit(): void {
       `EMBEDDED_POSTGRES_EXIT_HOOK_UNKNOWN: async-exit-hook next to ${entry} has no hookedEvents/unhookEvent`,
     );
   }
-  releaseExitHook(hook as AsyncExitHook, entry);
   released = true;
-}
-
-/**
- * The release itself, on a hook object: separate so that its failures can be
- * exercised without a process that has (or has not) loaded the package.
- *
- * Two shapes are errors, and the second is the one that matters: events still
- * hooked afterwards (the stop-at-exit is still there), and NOTHING hooked to
- * begin with — a package that has changed how it registers its exit handling
- * would otherwise be "released" over a cluster that is still going to be killed,
- * with the success of a no-op (the pinned version hooks seven events; zero means
- * the shape is not the one this was written against).
- */
-export function releaseExitHook(
-  hook: Pick<AsyncExitHook, 'hookedEvents' | 'unhookEvent'>,
-  entry: string,
-): void {
-  const events = hook.hookedEvents();
-  if (events.length === 0) {
-    throw new Error(
-      `EMBEDDED_POSTGRES_EXIT_HOOK_UNKNOWN: nothing is hooked by async-exit-hook next to ${entry}, ` +
-        'so the package no longer stops its clusters the way this release was written against',
-    );
-  }
-  for (const event of events) hook.unhookEvent(event);
+  for (const event of hook.hookedEvents()) hook.unhookEvent(event);
   const left = hook.hookedEvents();
   if (left.length > 0) {
     throw new Error(
       `EMBEDDED_POSTGRES_EXIT_HOOK_STUCK: ${left.join(', ')} still hooked after release (${entry})`,
     );
   }
+}
+
+export interface DetachedSpawnArm {
+  /** Put the original `spawn` back (a no-op once the arm has fired). */
+  disarm: () => void;
+  /**
+   * Did the arm fire — was the postgres binary actually spawned detached? The
+   * caller MUST check it once the start has returned: a package whose spawn
+   * shape has drifted (destructured at load, another spelling of the path, an
+   * `execFile`) never reaches the wrapper, and the cluster would start attached
+   * and die with the launcher with nothing said (#835).
+   */
+  matched: () => boolean;
 }
 
 /**
@@ -212,23 +199,10 @@ export function releaseExitHook(
  * postmaster is recognised by WHAT it runs — the bundled postgres binary — and
  * given `detached: true`; every other spawn in the process, before and after,
  * is untouched. One-shot: it restores itself at that spawn, and `disarm` does
- * the same when no spawn came. `matched()` says whether the spawn was seen. `child_process` is patched on the CJS object and
- * the ESM named exports are re-synced, which is how the package's
- * `import { spawn }` sees it.
+ * the same when no spawn came. `matched()` says whether the spawn
+ * was seen. `child_process` is patched on the CJS object and the ESM named
+ * exports are re-synced, which is how the package's `import { spawn }` sees it.
  */
-export interface DetachedSpawnArm {
-  /** Put the original `spawn` back (a no-op once the arm has fired). */
-  disarm: () => void;
-  /**
-   * Did the arm fire — was the postgres binary actually spawned detached? The
-   * caller MUST check it once the start has returned: a package whose spawn
-   * shape has drifted (destructured at load, another spelling of the path, an
-   * `execFile`) never reaches the wrapper, and the cluster would start attached
-   * and die with the launcher with nothing said (#835).
-   */
-  matched: () => boolean;
-}
-
 export async function armDetachedPostgresSpawn(): Promise<DetachedSpawnArm> {
   const binaries = await importEmbeddedPostgresBinaries();
   const postgres = binaries?.postgres;

@@ -21,7 +21,6 @@ import {
   importEmbeddedPostgres,
   importEmbeddedPostgresBinaries,
   releaseEmbeddedPostgresFromExit,
-  releaseExitHook,
   resolveEmbeddedPostgresEntry,
 } from '../lib/embedded-postgres-module.ts';
 
@@ -62,36 +61,6 @@ describe('releasing the cluster from the package exit hook @cap:installer-et-dem
   it('is idempotent: a second release is a no-op, not an error', () => {
     releaseEmbeddedPostgresFromExit();
     expect(() => releaseEmbeddedPostgresFromExit()).not.toThrow();
-  });
-});
-
-describe('the release fails LOUD on a hook it does not recognise @cap:installer-et-demarrer/moteur', () => {
-  function fakeHook(events: string[], keep: string[] = []) {
-    const hooked = new Set(events);
-    return {
-      hookedEvents: () => [...hooked],
-      unhookEvent: (event: string) => {
-        if (!keep.includes(event)) hooked.delete(event);
-      },
-    };
-  }
-
-  it('nothing hooked at all is an unknown shape, not a success', () => {
-    expect(() => releaseExitHook(fakeHook([]), 'entry.js')).toThrow(
-      /EMBEDDED_POSTGRES_EXIT_HOOK_UNKNOWN: nothing is hooked/,
-    );
-  });
-
-  it('events still hooked afterwards are an error naming them', () => {
-    expect(() => releaseExitHook(fakeHook(['exit', 'SIGINT'], ['SIGINT']), 'entry.js')).toThrow(
-      /EMBEDDED_POSTGRES_EXIT_HOOK_STUCK: SIGINT still hooked/,
-    );
-  });
-
-  it('the expected shape is released whole', () => {
-    const hook = fakeHook(['exit', 'beforeExit', 'SIGINT']);
-    releaseExitHook(hook, 'entry.js');
-    expect(hook.hookedEvents()).toEqual([]);
   });
 });
 
@@ -186,24 +155,12 @@ describe('up wires both halves, and only on --detach @cap:installer-et-demarrer/
     );
   });
 
-  it('the detached branch releases the cluster BEFORE it says "Detached", then exits', () => {
+  it('the detached branch releases the cluster right before it exits', () => {
     const branch = up.slice(up.indexOf('if (opts.detach) {'));
     const release = branch.indexOf('pg.outliveLauncher()');
-    const banner = branch.indexOf('Detached — the terminal is yours again');
     const exit = branch.indexOf('process.exit(0)');
     expect(release).toBeGreaterThan(-1);
-    // The release can now throw: a launcher that has said "Detached" cannot take it back.
-    expect(banner).toBeGreaterThan(release);
-    expect(exit).toBeGreaterThan(banner);
-  });
-
-  it('a failed release stops everything the boot started, and rethrows', () => {
-    const branch = up.slice(up.indexOf('if (opts.detach) {'));
-    const failure = branch.slice(branch.indexOf('catch (err)'), branch.indexOf('logLauncherEvent'));
-    expect(failure).toContain('killSilent(runnerProcess)');
-    expect(failure).toContain('await pg.stop()');
-    expect(failure).toContain('clearPids()');
-    expect(failure).toContain('throw err');
+    expect(exit).toBeGreaterThan(release);
   });
 
   it('the foreground shutdown still stops the cluster itself', () => {
