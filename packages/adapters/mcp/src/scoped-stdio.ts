@@ -55,6 +55,22 @@ const parseCommand = (
 /** Le délai laissé au serveur pour sortir de lui-même, son entrée fermée (celui du SDK). */
 const GRACEFUL_EXIT_MS = 2_000;
 
+/**
+ * Le plafond d'UN message JSON-RPC lu sur la sortie du serveur (le `ReadBuffer`
+ * du SDK, borné depuis la 1.32).
+ *
+ * Le SDK le fixe à 10 Mo, pour tous. Ce n'est pas le bon plafond ici : le
+ * résultat d'un outil MCP arrive en UN message, et la plateforme sait en
+ * recevoir de gros (des pages rendues en images : dix images de 1 Mo font
+ * 14 Mo en base64) avant de décider elle-même ce qu'elle passe au modèle
+ * (`result.ts` : ce qui tient dans une requête, le reste dit et gardé hors
+ * ligne). 10 Mo aurait fermé la connexion sur un résultat que Nodal traite. Le
+ * plafond reste ce qu'il doit être, une borne contre un serveur emballé qui
+ * n'envoie jamais de fin de ligne, mais à la taille de ce que le produit
+ * accepte.
+ */
+export const MCP_STDIO_MAX_MESSAGE_BYTES = 100 * 1024 * 1024;
+
 type Started = Awaited<ReturnType<JobProcessScope['startOwned']>>;
 
 export interface ScopedStdioParams {
@@ -70,7 +86,7 @@ export class ScopedStdioTransport implements Transport {
   onmessage?: (message: JSONRPCMessage) => void;
 
   private proc: Started | null = null;
-  private readonly readBuffer = new ReadBuffer();
+  private readonly readBuffer = new ReadBuffer({ maxBufferSize: MCP_STDIO_MAX_MESSAGE_BYTES });
   private closed = false;
   /** Le périmètre que CE transport a ouvert, faute d'un job : il le ferme. */
   private readonly ownScope: JobProcessScope | null;
@@ -110,7 +126,7 @@ export class ScopedStdioTransport implements Transport {
     }
     this.proc = proc;
     // Comme le SDK (>= 1.32, GHSA du tampon de lecture) : un message qui
-    // dépasse le plafond du `ReadBuffer` (10 Mo par défaut) fait LEVER
+    // dépasse le plafond du `ReadBuffer` (`MCP_STDIO_MAX_MESSAGE_BYTES`) fait LEVER
     // `append` ; l'erreur est remontée et la connexion fermée, jamais laissée
     // remonter hors du gestionnaire (exception non rattrapée du runner).
     proc.stdout?.on('data', (chunk: Buffer) => {

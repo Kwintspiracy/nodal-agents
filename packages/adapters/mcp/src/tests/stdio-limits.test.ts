@@ -5,9 +5,12 @@
 //     request with a redirect to ANOTHER origin must not be followed: the
 //     connector's credentials never reach the target. The connection fails
 //     loud, naming the redirect.
-//   - The stdio read buffer is bounded (10 MB). `ScopedStdioTransport` mirrors
-//     the SDK's own transport: an oversized message closes the connection with
-//     an error instead of throwing out of the stream handler.
+//   - The stdio read buffer is bounded. The SDK's default (10 MiB) is below
+//     what a tool result legitimately weighs for Nodal (pages rendered as
+//     images), so `ScopedStdioTransport` sets its own ceiling
+//     (`MCP_STDIO_MAX_MESSAGE_BYTES`), and, like the SDK's own transport, an
+//     oversized message closes the connection with an error instead of
+//     throwing out of the stream handler.
 //
 // Mutations verified (reverted afterwards):
 //   - `redirectPolicy: 'follow'` on the transport in client.ts → the redirect
@@ -16,15 +19,19 @@
 //   - the try/catch around `readBuffer.append` removed from scoped-stdio.ts →
 //     the exception escapes the stream handler, the run reports an uncaught
 //     exception and the call never settles: the flood test red.
+//   - `{ maxBufferSize }` removed from the `ReadBuffer` (SDK default 10 MiB) →
+//     the 12 MiB result closes the connection: the big-result test red, and
+//     runner `mcp-tool-result-to-model` (14 MiB of page images) red.
 
 import { describe, it, expect, afterAll } from 'vitest';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connectMcp } from '../index.ts';
+import { MCP_STDIO_MAX_MESSAGE_BYTES } from '../scoped-stdio.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'nodal-mcp-limits-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
@@ -87,33 +94,54 @@ describe('an HTTP MCP server cannot send the connector elsewhere (SDK 1.32, GHSA
   );
 });
 
-describe('a stdio MCP server that floods past the read-buffer ceiling closes its connection, it does not crash the runner (SDK 1.32) @cap:connecter-un-service/moteur', () => {
-  it('the call fails, the server process is gone, and no exception escapes the stream handler', async () => {
+describe('the stdio read buffer has the ceiling Nodal accepts, not the SDK default (SDK 1.32) @cap:connecter-un-service/moteur', () => {
+  const server = fileURLToPath(new URL('./fixtures/mcp-flood-server.mjs', import.meta.url));
+  // Over the SDK's own 10 MiB default, under Nodal's ceiling: a rendered-pages result.
+  const BIG_BYTES = 12 * 1024 * 1024;
+  const FLOOD_BYTES = MCP_STDIO_MAX_MESSAGE_BYTES + 1024 * 1024;
+
+  const open = (pidFile: string) =>
+    connectMcp({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [server, pidFile, String(BIG_BYTES), String(FLOOD_BYTES)],
+      env: {},
+    });
+
+  it('a single result above the SDK default (12 MiB) reaches the caller whole', async () => {
+    const conn = await open(join(dir, 'big.pid'));
+    try {
+      const result = await conn.client.callTool({ name: 'big', arguments: {} }, undefined, {
+        timeout: 30_000,
+      });
+      const [block] = result.content as Array<{ type: string; text: string }>;
+      expect(block?.type).toBe('text');
+      expect(block?.text.length).toBe(BIG_BYTES);
+    } finally {
+      await conn.close();
+    }
+  }, 60_000);
+
+  it('a server that floods past the ceiling: the call fails, the server process is gone, no exception escapes the stream handler', async () => {
     const pidFile = join(dir, 'flood.pid');
-    const server = fileURLToPath(new URL('./fixtures/mcp-flood-server.mjs', import.meta.url));
     const uncaught: unknown[] = [];
     const onUncaught = (e: unknown) => uncaught.push(e);
     process.on('uncaughtException', onUncaught);
     try {
-      const conn = await connectMcp({
-        transport: 'stdio',
-        command: process.execPath,
-        args: [server, pidFile],
-        env: {},
-      });
-      expect(conn.tools.map((t) => t.name)).toEqual(['flood']);
+      const conn = await open(pidFile);
+      expect(conn.tools.map((t) => t.name)).toEqual(['big', 'flood']);
       const pid = Number(readFileSync(pidFile, 'utf8'));
       expect(isProcessAlive(pid)).toBe(true);
       await expect(
-        conn.client.callTool({ name: 'flood', arguments: {} }, undefined, { timeout: 20_000 }),
+        conn.client.callTool({ name: 'flood', arguments: {} }, undefined, { timeout: 30_000 }),
       ).rejects.toThrow(/Connection closed|exceeded maximum size/);
-      for (let i = 0; i < 160 && isProcessAlive(pid); i++)
+      for (let i = 0; i < 160 && isProcessAlive(pid); i++) {
         await new Promise((r) => setTimeout(r, 50));
+      }
       expect(isProcessAlive(pid)).toBe(false);
       expect(uncaught).toEqual([]);
-      expect(existsSync(pidFile)).toBe(true);
     } finally {
       process.off('uncaughtException', onUncaught);
     }
-  }, 60_000);
+  }, 90_000);
 });
