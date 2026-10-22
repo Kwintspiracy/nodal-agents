@@ -183,8 +183,9 @@ const file = defineScenario<FileObservation>({
 // qu'il a reçu.
 
 /** Ce que les scénarios d'impression lisent de l'imprimante du banc : les demandes de l'essai. */
-function observePrints(env: ScenarioEnv): TrialRecords {
-  return readTrialRecords(env.benchPrinter, env.startedMs);
+async function observePrints(env: ScenarioEnv): Promise<TrialRecords> {
+  // Entre le début et la fin de l'essai ; sans fin connue, l'instant du jugement.
+  return readTrialRecords(env.benchPrinter, env.startedMs, env.endedMs ?? Date.now());
 }
 
 /** Les raisons qui tiennent à l'enregistrement lui-même : pas d'imprimante attachée, ou une demande qu'on ne peut pas croire. */
@@ -224,6 +225,10 @@ function pendingPrint(
   }
   return [...r, ...neverConfirmed(facts)];
 }
+
+/** Une demande en quelques mots, pour une raison de rouge. */
+const requestLabel = (q: PrintedRequest): string =>
+  q.source.kind === 'file' ? `the file ${fileName(q.source.path)}` : 'the composed content';
 
 export const PRINT_FILE_REL = 'nodal-bench/facture-impression.pdf';
 /** La fixture du dépôt que le banc pose en `PRINT_FILE_REL` : son empreinte est celle que l'imprimante doit avoir reçue. */
@@ -270,7 +275,7 @@ const printFile = defineScenario<PrintFileObservation>({
   timeoutMs: 10 * MIN,
   fixtures: [{ from: PRINT_FILE_FIXTURE, to: PRINT_FILE_REL }],
   observe: async (_facts, env) => ({
-    records: observePrints(env),
+    records: await observePrints(env),
     posedSha256: fileHash(fixturePath(PRINT_FILE_FIXTURE)),
   }),
   judge(facts, o) {
@@ -298,7 +303,7 @@ const print = defineScenario<TrialRecords>({
   id: 'print',
   judgedBy: [
     ...JUDGED_COMMON,
-    `the bench printer's record (#794): a request created during the trial whose received content holds every item: ${SHOPPING.join(', ')}; it is still pending, one page when the printer can count`,
+    `the bench printer's record (#794): a request created during the trial (between its start and its end) whose RECEIVED BYTES hold every item: ${SHOPPING.join(', ')}, read as text (composed content or a .txt/.md/.csv/.json file), as the visible text of an HTML page, or as the text of a PDF; a file the bench cannot read is said, never guessed; it is still pending, one page when the printer can count`,
     'never confirm_print: the bench printer has no confirm tool, and nothing reached a printer',
   ],
   // v2 (catalogue du 17/10) : la liste de courses de print-list remplace la
@@ -321,14 +326,21 @@ const print = defineScenario<TrialRecords>({
   timeoutMs: 10 * MIN,
   observe: async (_facts, env) => observePrints(env),
   judge(facts, records) {
+    const holdsList = (q: PrintedRequest): boolean =>
+      SHOPPING.every((x) => (q.text ?? '').toLowerCase().includes(x));
     return [
       ...commonReasons(facts),
-      ...pendingPrint(
-        records,
-        facts,
-        (q) => SHOPPING.every((x) => (q.text ?? '').toLowerCase().includes(x)),
-        `holds the whole list (${SHOPPING.join(', ')})`,
-      ),
+      ...pendingPrint(records, facts, holdsList, `holds the whole list (${SHOPPING.join(', ')})`),
+      // Ce qu'on n'a pas pu lire est dit : « aucune demande ne contient la liste » ne
+      // doit pas accuser un contenu que le banc n'a pas su ouvrir.
+      ...(records.attached && !records.live.some(holdsList)
+        ? records.live
+            .filter((q) => q.text === null)
+            .map(
+              (q) =>
+                `${requestLabel(q)} cannot be checked for the list: ${q.textProblem ?? 'unreadable'}`,
+            )
+        : []),
     ];
   },
 });
@@ -369,7 +381,7 @@ const recipe = defineScenario<RecipeObservation>({
   timeoutMs: 20 * MIN,
   unverified: [SOURCES_READ],
   async observe(_facts, env) {
-    const records = observePrints(env);
+    const records = await observePrints(env);
     const printedFiles = records.attached
       ? records.live.flatMap((q) =>
           q.source.kind === 'file'

@@ -16,8 +16,10 @@ import { z } from 'zod';
 import { nodalHomeEntry, nodalHomePath } from '@nodal-agents/shared/nodal-home';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { AgentId, EntityId } from '@nodal-agents/orchestration';
-import { BENCH_PRINTER_SLUG, benchPrinterState, type BenchPrinterState } from '../printer/identity';
+import { benchPrinterServer } from '../printer/declaration';
+import { benchPrinterState, type BenchPrinterState } from '../printer/identity';
 import { executeRows } from './facts';
+import type { TeamMcpServer } from './types';
 
 /** Le préfixe de l'étiquette `caller` que le banc pose sur chacun de ses jobs. */
 export const BENCH_CALLER_PREFIX = 'nodal-bench/';
@@ -351,36 +353,95 @@ export async function readUnlistedMcpServers(
   return [...new Set(rows.filter((r) => !isUsableMcpToolCache(r.tools)).map((r) => r.slug))].sort();
 }
 
-/**
- * L'imprimante du banc (#794) telle que l'espace la déclare : les serveurs MCP
- * ACTIFS attribués à un agent actif de l'espace, jugés par `benchPrinterState`.
- * La déclaration que le runner lance est aussi ce que le juge relit : le
- * dossier d'enregistrements vient de son environnement.
- */
-export async function readBenchPrinter(
-  db: AnyDrizzleDb,
-  entityId: string,
-): Promise<BenchPrinterState> {
+/** Un serveur MCP actif attribué à un agent actif de l'espace, tel que la base le déclare. */
+interface AttachedRow {
+  readonly slug: string;
+  readonly transport: string;
+  readonly command: string | null;
+  readonly args: string[] | null;
+  readonly envVars: unknown;
+  readonly tools: unknown;
+}
+
+async function readAttachedMcpServers(db: AnyDrizzleDb, entityId: string): Promise<AttachedRow[]> {
   const { sql } = await import('@nodal-agents/db');
   const rows = z
-    .array(z.object({ slug: z.string(), transport: z.string(), env_vars: z.unknown() }))
+    .array(
+      z.object({
+        slug: z.string(),
+        transport: z.string(),
+        command: z.string().nullable(),
+        args: z.array(z.string()).nullable(),
+        env_vars: z.unknown(),
+        tools: z.unknown(),
+      }),
+    )
     .parse(
       await executeRows(
         db,
         sql`
-          select distinct s.slug, s.transport, s.env_vars
+          select distinct s.slug, s.transport, s.command, s.args, s.env_vars, s.available_tools as tools
             from agent_mcp_servers ams
             join mcp_servers s on s.id = ams.mcp_server_id
             join agents a on a.id = ams.agent_id
            where ams.entity_id = ${entityId}::uuid
              and coalesce(a.active, true) = true
-             and coalesce(s.active, true) = true
-             and s.slug = ${BENCH_PRINTER_SLUG}`,
+             and coalesce(s.active, true) = true`,
       ),
     );
+  return rows.map((r) => ({
+    slug: r.slug,
+    transport: r.transport,
+    command: r.command,
+    args: r.args,
+    envVars: r.env_vars,
+    tools: r.tools,
+  }));
+}
+
+/**
+ * L'imprimante du banc (#794) telle que l'espace la déclare : les serveurs MCP
+ * ACTIFS attribués à un agent actif de l'espace, jugés par `benchPrinterState`.
+ * Son identité est sa déclaration entière, comparée à ce que
+ * `benchPrinterServer` rend pour le dossier qu'elle porte ; `expectedDir`, le
+ * dossier que le banc a donné à l'instance, quand il le sait.
+ */
+export async function readBenchPrinter(
+  db: AnyDrizzleDb,
+  entityId: string,
+  expectedDir: string | null = null,
+): Promise<BenchPrinterState> {
   return benchPrinterState(
-    rows.map((r) => ({ slug: r.slug, transport: r.transport, envVars: r.env_vars })),
+    await readAttachedMcpServers(db, entityId),
+    benchPrinterServer,
+    expectedDir,
   );
+}
+
+/**
+ * Les serveurs MCP de l'équipe autres que l'imprimante du banc, avec les noms
+ * de leurs outils (`tools: null` : jamais listés, ils peuvent offrir n'importe
+ * quoi). Lus pour le besoin `bench-printer` : fermé par défaut.
+ */
+export async function readTeamMcpServers(
+  db: AnyDrizzleDb,
+  entityId: string,
+): Promise<TeamMcpServer[]> {
+  const { isUsableMcpToolCache } = await import('@nodal-agents/adapter-mcp');
+  const out = new Map<string, TeamMcpServer>();
+  for (const r of await readAttachedMcpServers(db, entityId)) {
+    const tools = isUsableMcpToolCache(r.tools) ? r.tools.map((x) => x.name) : null;
+    const known = out.get(r.slug);
+    // Le même serveur attribué à deux agents : si l'une des lignes est inconnue, il l'est.
+    out.set(r.slug, {
+      slug: r.slug,
+      tools:
+        tools === null || known?.tools === null
+          ? null
+          : [...new Set([...(known?.tools ?? []), ...tools])],
+    });
+  }
+  return [...out.values()].sort((x, y) => x.slug.localeCompare(y.slug));
 }
 
 /** Le modèle configuré de l'agent racine de l'espace (`agents.model`), ou null s'il n'en a pas. */

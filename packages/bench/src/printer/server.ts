@@ -28,7 +28,7 @@ import {
   htmlImages,
   type PageCount,
 } from './pages';
-import { markReplaced, readRecord, writeRecord, type PrintRecord } from './record';
+import { RECORD_ID, markReplaced, readRecord, writeRecord, type PrintRecord } from './record';
 
 /** Au-delà, un fichier n'est pas une demande d'impression raisonnable : refusé, dit. */
 const MAX_BYTES = 50 * 1024 * 1024;
@@ -53,12 +53,16 @@ const requestPrintInput = z.strictObject({
   title: z.string().optional().describe('A short title for the request.'),
   replaces: z
     .string()
+    .regex(RECORD_ID, 'not a print request id (pr-<ms>-<8 hex digits>)')
     .optional()
     .describe('The id of a pending request this one replaces; the replaced request is withdrawn.'),
 });
 
 const getPrintRequestInput = z.strictObject({
-  id: z.string().describe('The id request_print returned.'),
+  id: z
+    .string()
+    .regex(RECORD_ID, 'not a print request id (pr-<ms>-<8 hex digits>)')
+    .describe('The id request_print returned.'),
 });
 
 type ToolResult = {

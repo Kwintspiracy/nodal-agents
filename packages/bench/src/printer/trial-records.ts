@@ -4,15 +4,20 @@
 // sortie d'un outil : il lit l'enregistrement du serveur du banc, qui a reçu
 // les octets. Cette lecture est la même pour tous les scénarios d'impression.
 //
-// Une demande compte si elle est née pendant l'essai (`receivedAtMs >= début`)
-// et si elle tient encore : une demande REMPLACÉE par une plus récente a été
-// retirée (le skill d'impression le demande), rien n'en sortirait.
+// Un essai ne se juge que sur ce qu'il a créé, et deux gardes s'ajoutent :
+//   - le banc met de côté les demandes des essais d'avant AVANT de lancer celui-ci
+//     (`rotateRecords`, appelé par runTrial) : le dossier ne contient que lui ;
+//   - une demande compte seulement si elle est née entre le début ET la fin de
+//     l'essai (`startedMs <= receivedAtMs <= endedMs`), et si elle tient encore :
+//     une demande REMPLACÉE par une plus récente a été retirée (le skill
+//     d'impression le demande), rien n'en sortirait.
 //
 // L'observation est SÉRIALISABLE (`--capture` l'écrit telle quelle) : les octets
-// n'y sont pas, leur empreinte si, et le texte d'un contenu composé.
+// n'y sont pas, leur empreinte si, et le texte reçu.
 
 import type { BenchPrinterState } from './identity';
 import { readRecords, type PrintRecord, type ReadRecord } from './record';
+import { receivedText } from './received-text';
 
 /** Une demande en attente, telle que le juge la lit. */
 export interface PrintedRequest {
@@ -23,8 +28,10 @@ export interface PrintedRequest {
   readonly pagesBasis: PrintRecord['pagesBasis'];
   readonly images: PrintRecord['images'];
   readonly source: PrintRecord['source'];
-  /** Le texte reçu quand c'est un contenu composé ; null pour un fichier imprimé tel quel. */
+  /** Le texte des octets reçus (fichier ou contenu composé) ; null quand il n'a pas pu être lu. */
   readonly text: string | null;
+  /** Pourquoi `text` est null. */
+  readonly textProblem: string | null;
 }
 
 export type TrialRecords =
@@ -37,7 +44,8 @@ export type TrialRecords =
       readonly problems: readonly string[];
     };
 
-function printed({ record, bytes }: ReadRecord): PrintedRequest {
+async function printed({ record, bytes }: ReadRecord): Promise<PrintedRequest> {
+  const { text, problem } = await receivedText(record.source, bytes);
   return {
     id: record.id,
     sha256: record.bytes.sha256,
@@ -46,11 +54,16 @@ function printed({ record, bytes }: ReadRecord): PrintedRequest {
     pagesBasis: record.pagesBasis,
     images: record.images,
     source: record.source,
-    text: record.source.kind === 'content' ? bytes.toString('utf8') : null,
+    text,
+    textProblem: problem,
   };
 }
 
-export function readTrialRecords(printer: BenchPrinterState, startedMs: number): TrialRecords {
+export async function readTrialRecords(
+  printer: BenchPrinterState,
+  startedMs: number,
+  endedMs: number,
+): Promise<TrialRecords> {
   if (printer.kind === 'absent')
     return {
       attached: false,
@@ -58,11 +71,11 @@ export function readTrialRecords(printer: BenchPrinterState, startedMs: number):
     };
   if (printer.kind === 'broken') return { attached: false, why: printer.reason };
   const read = readRecords(printer.recordsDir);
-  return {
-    attached: true,
-    live: read.requests
-      .filter((r) => r.record.receivedAtMs >= startedMs && r.record.status === 'pending')
-      .map(printed),
-    problems: read.problems,
-  };
+  const mine = read.requests.filter(
+    (r) =>
+      r.record.receivedAtMs >= startedMs &&
+      r.record.receivedAtMs <= endedMs &&
+      r.record.status === 'pending',
+  );
+  return { attached: true, live: await Promise.all(mine.map(printed)), problems: read.problems };
 }

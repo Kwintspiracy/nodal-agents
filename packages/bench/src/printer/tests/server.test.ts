@@ -9,17 +9,17 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { fixturePath } from '../../workflows/fixtures';
 import { readPdf } from '../../workflows/office';
 import { PRINT_FILE_REL } from '../../workflows/scenarios';
 import { play } from '../../workflows/tests/harness';
 import { benchPrinterServer } from '../declaration';
 import { BENCH_PRINTER_RECORDS_ENV } from '../identity';
-import { readRecords } from '../record';
+import { markReplaced, readRecord, readRecords, writeRecord, type PrintRecord } from '../record';
 
 const sha = (b: Buffer | string): string => createHash('sha256').update(b).digest('hex');
 
@@ -175,9 +175,9 @@ describe('the bench printer, through a real MCP client over stdio', () => {
     const back = await call('get_print_request', { id });
     expect(back.isError).toBe(false);
     expect(back.structured).toMatchObject({ id, status: 'pending' });
-    const unknown = await call('get_print_request', { id: 'pr-0-nothing' });
+    const unknown = await call('get_print_request', { id: 'pr-1-00000000' });
     expect(unknown.isError).toBe(true);
-    expect(unknown.text).toContain('No print request "pr-0-nothing"');
+    expect(unknown.text).toContain('No print request "pr-1-00000000"');
   });
 
   it('a request stays pending: there is no way to confirm it, and asking for one changes nothing', async () => {
@@ -215,7 +215,7 @@ describe('the bench printer, through a real MCP client over stdio', () => {
 
     // Remplacer une demande déjà retirée, ou inconnue : refusé, aucune demande de plus.
     const again = await request({ content: '<p>third</p>', replaces: firstId });
-    const ghost = await request({ content: '<p>fourth</p>', replaces: 'pr-0-nothing' });
+    const ghost = await request({ content: '<p>fourth</p>', replaces: 'pr-1-00000000' });
     expect([again.isError, ghost.isError]).toEqual([true, true]);
     expect(readRecords(recordsDir).requests).toHaveLength(2);
   });
@@ -247,6 +247,86 @@ describe('the bench printer, through a real MCP client over stdio', () => {
     expect(names).toHaveLength(4);
     expect(names.filter((n) => n.endsWith('.json'))).toHaveLength(2);
     expect(names.filter((n) => n.endsWith('.bytes'))).toHaveLength(2);
+  });
+});
+
+describe('ids reach a path only after validation (review of #832, pass 1)', () => {
+  let outside: string;
+  let decoy: PrintRecord;
+  beforeEach(() => {
+    // Une demande VALIDE, en attente, hors du dossier du serveur : ce qu'une
+    // traversée de chemin atteindrait.
+    outside = mkdtempSync(join(tmpdir(), 'bench-printer-outside-'));
+    decoy = writeRecord(outside, {
+      source: { kind: 'content', contentFormat: 'text' },
+      bytes: Buffer.from('SECRET OUTSIDE', 'utf8'),
+      pages: 1,
+      pagesBasis: 'text-estimate',
+      images: null,
+      arguments: { content: 'SECRET OUTSIDE' },
+    });
+  });
+  afterEach(() => {
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  const traversals = (): string[] => {
+    const rel = relative(recordsDir, outside);
+    return [
+      join(rel, decoy.id),
+      join(rel, decoy.id).replaceAll('\\', '/'),
+      '../' + decoy.id,
+      '..\\..\\x',
+      decoy.id + '/../' + decoy.id,
+      decoy.id + '.json',
+      'pr-1-00000000/../../x',
+    ];
+  };
+
+  it('replaces: with a path is refused, and writes nothing outside the folder', async () => {
+    for (const id of traversals()) {
+      let refused = false;
+      try {
+        refused = (await request({ content: '<p>x</p>', replaces: id })).isError;
+      } catch {
+        refused = true;
+      }
+      expect([id, refused]).toEqual([id, true]);
+    }
+    const after = JSON.parse(
+      readFileSync(join(outside, decoy.id + '.json'), 'utf8'),
+    ) as PrintRecord;
+    expect(after.status).toBe('pending');
+    expect(after.replacedBy).toBeNull();
+    expect(readdirSync(recordsDir)).toEqual([]);
+  });
+
+  it('get_print_request with a path is refused, and reads nothing outside the folder', async () => {
+    for (const id of traversals()) {
+      let text = '';
+      let refused = false;
+      try {
+        const r = await call('get_print_request', { id });
+        refused = r.isError;
+        text = r.text;
+      } catch (e) {
+        refused = true;
+        text = String(e);
+      }
+      expect([id, refused]).toEqual([id, true]);
+      expect(text).not.toContain('SECRET OUTSIDE');
+      expect(text).not.toContain(decoy.id + ' is pending');
+    }
+  });
+
+  it('the record functions refuse the same ids themselves, whoever calls them', () => {
+    for (const id of traversals()) {
+      expect(() => markReplaced(recordsDir, id, decoy.id)).toThrow('bench_printer_bad_record_id');
+      expect(() => markReplaced(recordsDir, decoy.id, id)).toThrow('bench_printer_bad_record_id');
+      expect(readRecord(recordsDir, id)).toMatchObject({ kind: 'invalid' });
+    }
+    // Et un identifiant bien formé reste lu : la règle ne ferme pas la porte aux vrais.
+    expect(readRecord(outside, decoy.id).kind).toBe('found');
   });
 });
 

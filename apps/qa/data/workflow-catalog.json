@@ -1129,7 +1129,7 @@
       "judgedBy": [
         "agent_jobs: the root job of the trial ended completed",
         "approval_requests: the tree raised no approval and no question (the bench never answers one)",
-        "the bench printer's record (#794): a request created during the trial whose received content holds every item: pain, lait, œufs, tomates, café; it is still pending, one page when the printer can count",
+        "the bench printer's record (#794): a request created during the trial (between its start and its end) whose RECEIVED BYTES hold every item: pain, lait, œufs, tomates, café, read as text (composed content or a .txt/.md/.csv/.json file), as the visible text of an HTML page, or as the text of a PDF; a file the bench cannot read is said, never guessed; it is still pending, one page when the printer can count",
         "never confirm_print: the bench printer has no confirm tool, and nothing reached a printer",
         "tool_calls: the product tools are request_print; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
         "tool_calls: the tree calls at least one of them"

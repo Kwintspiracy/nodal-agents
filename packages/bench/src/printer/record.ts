@@ -12,7 +12,14 @@
 // un PROBLÈME dit, jamais une demande comptée (invariant #4).
 
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 
@@ -54,8 +61,28 @@ export interface ReadRecord {
 export const sha256Hex = (bytes: Uint8Array): string =>
   createHash('sha256').update(bytes).digest('hex');
 
-const jsonPath = (dir: string, id: string): string => join(dir, `${id}.json`);
-const bytesPath = (dir: string, id: string): string => join(dir, `${id}.bytes`);
+/**
+ * L'identifiant d'une demande : `pr-<ms>-<8 hexadécimaux>`, ce que `writeRecord`
+ * produit. Il est joint à un chemin : rien d'autre n'y entre (`..`, séparateurs).
+ */
+export const RECORD_ID = /^pr-\d{1,16}-[0-9a-f]{8}$/;
+export const isRecordId = (id: string): boolean => RECORD_ID.test(id);
+
+function assertRecordId(id: string): void {
+  if (!isRecordId(id))
+    throw new Error(
+      `bench_printer_bad_record_id: "${id}" is not a print request id (pr-<ms>-<8 hex digits>)`,
+    );
+}
+
+const jsonPath = (dir: string, id: string): string => {
+  assertRecordId(id);
+  return join(dir, `${id}.json`);
+};
+const bytesPath = (dir: string, id: string): string => {
+  assertRecordId(id);
+  return join(dir, `${id}.bytes`);
+};
 
 export interface NewRecord {
   readonly source: PrintRecord['source'];
@@ -101,6 +128,11 @@ export type RecordLookup =
   | { readonly kind: 'invalid'; readonly reason: string };
 
 export function readRecord(dir: string, id: string): RecordLookup {
+  if (!isRecordId(id))
+    return {
+      kind: 'invalid',
+      reason: `"${id}" is not a print request id (pr-<ms>-<8 hex digits>)`,
+    };
   const jp = jsonPath(dir, id);
   if (!existsSync(jp)) return { kind: 'missing' };
   let parsed: PrintRecord;
@@ -130,6 +162,8 @@ export function readRecord(dir: string, id: string): RecordLookup {
 
 /** Marque la demande `id` remplacée par `by`. Rend false quand elle n'existe pas ou n'attend plus. */
 export function markReplaced(dir: string, id: string, by: string): boolean {
+  assertRecordId(id);
+  assertRecordId(by);
   const found = readRecord(dir, id);
   if (found.kind !== 'found' || found.read.record.status !== 'pending') return false;
   writeJsonAtomically(jsonPath(dir, id), {
@@ -170,4 +204,25 @@ export function readRecords(dir: string): RecordsRead {
       a.record.receivedAtMs - b.record.receivedAtMs || a.record.id.localeCompare(b.record.id),
   );
   return { requests, problems };
+}
+
+/**
+ * Met de côté, dans `<dossier>/previous/<étiquette>/`, les demandes que le
+ * dossier contient : l'essai qui commence ne doit juger que ce qu'il crée. Seuls
+ * les fichiers d'enregistrement (`pr-….json`, `.bytes`, `.tmp`) bougent ; rien
+ * n'est effacé, l'historique d'une campagne reste lisible. Rend combien de
+ * fichiers ont bougé. Une erreur monte : un dossier qu'on ne sait pas vider ne
+ * doit pas servir à juger.
+ */
+export function rotateRecords(dir: string, label: string): number {
+  if (!existsSync(dir)) return 0;
+  const mine = readdirSync(dir).filter((f) =>
+    /^pr-\d{1,16}-[0-9a-f]{8}\.(json|bytes)(\.[0-9a-f]+\.tmp)?$/.test(f),
+  );
+  if (mine.length === 0) return 0;
+  const safe = label.replace(/[^A-Za-z0-9._-]/g, '_');
+  const target = join(dir, 'previous', safe);
+  mkdirSync(target, { recursive: true });
+  for (const f of mine) renameSync(join(dir, f), join(target, f));
+  return mine.length;
 }

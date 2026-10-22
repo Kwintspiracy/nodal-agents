@@ -8,6 +8,7 @@ import { htmlImages } from '../../printer/pages';
 import { markReplaced, sha256Hex, writeRecord } from '../../printer/record';
 import { HOME_HTML, WEATHER_CSV } from '../fixture-data';
 import { fixturePath } from '../fixtures';
+import { makePdf } from '../pdf-write';
 import { BENCH_PRINTER_MISSING, missingNeeds } from '../needs';
 import { PRINT_FILE_REL, SHOPPING, scenarioById } from '../scenarios';
 import { barsMatch } from '../suites/html';
@@ -160,6 +161,7 @@ describe('comfyui judges', () => {
       teamTools: [],
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' as const },
+      teamMcpServers: [],
       startedMs: 0,
     };
     expect(missingNeeds(s.needs ?? [], { ...env, services: {} })).toEqual([
@@ -409,6 +411,7 @@ describe('print judges, from the bench printer record (#794)', () => {
     const r = await play('print-file', { tools: [call({})] }, undefined, { teamTools: TEAM });
     expect(r.reasons).toEqual([
       'the bench printer is not attached to this workspace: there is no record to judge',
+      OUT(REQ),
     ]);
   });
 
@@ -517,6 +520,143 @@ describe('print judges, from the bench printer record (#794)', () => {
     expect(r.reasons).toEqual(['2 pages, not one']);
   });
 
+  // ── revue de #832, passe 1 ──
+
+  // P1 : l'exemption suit l'identité ATTACHÉE (déclaration entière), pas un préfixe de nom.
+  it.each([
+    ['absent', { kind: 'absent' as const }],
+    ['broken', { kind: 'broken' as const, reason: 'declared otherwise' }],
+  ])(
+    'a bench_printer__request_print is an outbound tool when the bench printer is %s: the prefix alone exempts nothing',
+    async (_label, benchPrinter) => {
+      const r = await play('print-file', { tools: [call({})] }, undefined, {
+        teamTools: TEAM,
+        benchPrinter,
+      });
+      expect(r.reasons).toContain(OUT(REQ));
+    },
+  );
+
+  // P2 : un essai ne se juge que sur ce qu'il a créé.
+  it('print-file: a request received after the trial ended is not this trial', async () => {
+    const r = await play(
+      'print-file',
+      { tools: [call({})] },
+      () => {
+        receiveFile(readFileSync(POSED_PDF), { nowMs: Date.now() + 3_600_000 });
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual(['no print request was created']);
+  });
+
+  it('print-file: the end of the trial is the one the bench measured, not the time of the judging', async () => {
+    const r = await play(
+      'print-file',
+      { tools: [call({})] },
+      () => {
+        receiveFile(readFileSync(POSED_PDF));
+      },
+      { ...attached(), endedMs: Date.now() - 500_000 },
+    );
+    expect(r.reasons).toEqual(['no print request was created']);
+  });
+
+  // P2 : le juge de print lit les OCTETS reçus, pas seulement un contenu composé.
+  function receiveListFile(name: string, bytes: Buffer) {
+    return writeRecord(dir, {
+      source: { kind: 'file', path: join(dir, name) },
+      bytes,
+      pages: 1,
+      pagesBasis: 'unknown',
+      images: null,
+      arguments: { filePath: join(dir, name) },
+    });
+  }
+
+  it('print: green when a FILE holding the list was printed, though its text is in no argument', async () => {
+    const r = await play(
+      'print',
+      { tools: [call({ filePath: join(dir, 'liste.txt') })] },
+      () => {
+        receiveListFile('liste.txt', Buffer.from(`Courses\n${SHOPPING.join('\n')}\n`, 'utf8'));
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([]);
+  });
+
+  it('print: green when a PDF holding the list was printed (text read with pdf-parse)', async () => {
+    const r = await play(
+      'print',
+      { tools: [call({ filePath: join(dir, 'liste.pdf') })] },
+      () => {
+        receiveListFile('liste.pdf', makePdf([[`Liste : ${SHOPPING.join(', ')}`]]));
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([]);
+  });
+
+  it('print: red when a FILE printed lacks an item, by what it lacks', async () => {
+    const r = await play(
+      'print',
+      { tools: [call({})] },
+      () => {
+        receiveListFile('liste.txt', Buffer.from('pain\nlait\n', 'utf8'));
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([
+      'no print request holds the whole list (pain, lait, œufs, tomates, café)',
+    ]);
+  });
+
+  it('print: a file the bench cannot read as text is said unreadable, not accused of lacking the list', async () => {
+    const r = await play(
+      'print',
+      { tools: [call({})] },
+      () => {
+        receiveListFile('liste.docx', Buffer.from('PK\u0003\u0004 not text', 'latin1'));
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([
+      'no print request holds the whole list (pain, lait, œufs, tomates, café)',
+      'the file liste.docx cannot be checked for the list: the bench does not extract the text of a .docx file: what it contains cannot be checked',
+    ]);
+  });
+
+  it('print: HTML entities are read as the browser reads them: caf&eacute; and &oelig;ufs are café and œufs', async () => {
+    const r = await play(
+      'print',
+      { tools: [call({})] },
+      () => {
+        receiveContent(
+          '<ul><li>pain</li><li>lait</li><li>&oelig;ufs</li><li>tomates</li><li>caf&eacute;</li></ul>',
+        );
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([]);
+  });
+
+  it('print: the list inside an HTML tag or a comment is not on the page', async () => {
+    const r = await play(
+      'print',
+      { tools: [call({})] },
+      () => {
+        receiveContent(
+          `<p>courses</p><!-- ${SHOPPING.join(' ')} --><div data-list="${SHOPPING.join(' ')}"></div>`,
+        );
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([
+      'no print request holds the whole list (pain, lait, œufs, tomates, café)',
+    ]);
+  });
+
   // ── recipe ──
 
   const RECIPE = '<h1>Caviar d\'aubergines</h1><img src="https://example.org/caviar.jpg"><p>…</p>';
@@ -590,6 +730,7 @@ describe('the bench-printer need (#794)', () => {
     teamTools: [],
     unlistedMcpServers: [],
     benchPrinter: { kind: 'absent' },
+    teamMcpServers: [],
     services: {},
     startedMs: 0,
     ...over,
@@ -636,14 +777,20 @@ describe('the bench-printer need (#794)', () => {
     ).toEqual(['the "bench-printer" server declares nothing']);
   });
 
-  it('is missing while another tool of the team can print: no request on a real printer', () => {
+  const BENCH_TOOLS = ['bench_printer__request_print', 'bench_printer__get_print_request'];
+  const benchServer = { slug: 'bench-printer', tools: ['request_print', 'get_print_request'] };
+  const WHY_END =
+    'print trials never create a request on a real printer, so this scenario does not run here';
+
+  it('is missing while another tool of the team has a printing name (an extra alarm, any connector)', () => {
     expect(
       missingNeeds(
         ['bench-printer'],
         env({
           benchPrinter: attached,
+          teamMcpServers: [benchServer],
           teamTools: [
-            'bench_printer__request_print',
+            ...BENCH_TOOLS,
             'office_printer__request_print',
             'office_printer__confirm_print',
             'office_printer__list_printers',
@@ -652,7 +799,88 @@ describe('the bench-printer need (#794)', () => {
         }),
       ),
     ).toEqual([
-      'an agent of this workspace can print outside the bench printer (office_printer__request_print, office_printer__confirm_print): print trials never create a request on a real printer, so this scenario does not run here',
+      'an agent of this workspace has tools that print outside the bench printer (office_printer__request_print, office_printer__confirm_print): ' +
+        WHY_END,
     ]);
+  });
+
+  // Revue de #832, passe 1 (P2) : le besoin est FERMÉ PAR DÉFAUT, comme
+  // no-mail-sender. Un serveur MCP de l'équipe autre que l'imprimante du banc
+  // doit avoir listé ses outils et n'en offrir que de reconnus comme des lectures.
+  it.each([
+    ['lp', ['job_send', 'queue_status'], 'lp (job_send, queue_status)'],
+    ['cups', ['submit_job'], 'cups (submit_job)'],
+    ['hplip', ['send_job'], 'hplip (send_job)'],
+    ['printer-info', ['printer_status'], 'printer-info (printer_status)'],
+    ['mixed', ['get_page', 'submit'], 'mixed (submit)'],
+    ['sneaky', ['get_and_send'], 'sneaky (get_and_send)'],
+  ])(
+    'is missing, naming %s, when its tools are not all recognised reads (no print word needed)',
+    (slug, tools, named) => {
+      expect(
+        missingNeeds(
+          ['bench-printer'],
+          env({
+            benchPrinter: attached,
+            teamMcpServers: [benchServer, { slug, tools }],
+            teamTools: [...BENCH_TOOLS, ...tools.map((x) => slug.replace('-', '_') + '__' + x)],
+          }),
+        ),
+      ).toEqual([
+        'the bench cannot prove that these MCP servers of the workspace do not print: ' +
+          named +
+          ' (a server is accepted only when it has listed its tools and every tool is a recognised read such as get_, list_ or fetch_; this can refuse a harmless server): ' +
+          WHY_END,
+      ]);
+    },
+  );
+
+  it('is missing, naming it, while an MCP server of the team has never listed its tools', () => {
+    expect(
+      missingNeeds(
+        ['bench-printer'],
+        env({
+          benchPrinter: attached,
+          teamMcpServers: [benchServer, { slug: 'mystery', tools: null }],
+          teamTools: BENCH_TOOLS,
+        }),
+      ),
+    ).toEqual([
+      'the bench cannot prove that these MCP servers of the workspace do not print: mystery (it has never listed its tools) (a server is accepted only when it has listed its tools and every tool is a recognised read such as get_, list_ or fetch_; this can refuse a harmless server): ' +
+        WHY_END,
+    ]);
+  });
+
+  it('is met when the only other MCP servers offer recognised reads: a fetch server does not stop recipe', () => {
+    expect(
+      missingNeeds(
+        ['bench-printer'],
+        env({
+          benchPrinter: attached,
+          teamMcpServers: [
+            // Son propre serveur n'a pas encore listé ses outils : son identité suffit.
+            { slug: 'bench-printer', tools: null },
+            { slug: 'fetch', tools: ['fetch_html', 'fetch_txt'] },
+            { slug: 'notes', tools: ['list_notes', 'get_note', 'search_notes'] },
+          ],
+          teamTools: [...BENCH_TOOLS, 'fetch__fetch_html', 'fetch__fetch_txt'],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('a read-only annotation proves nothing: the gate reads names, as the product does not trust hints', () => {
+    // Le produit ne croit pas readOnlyHint (adapter-mcp, MCP-001) : un outil de
+    // soumission reste inconnu, annoté lecture ou non. Les noms sont la seule entrée.
+    expect(
+      missingNeeds(
+        ['bench-printer'],
+        env({
+          benchPrinter: attached,
+          teamMcpServers: [{ slug: 'cups', tools: ['submit_job'] }],
+          teamTools: ['cups__submit_job'],
+        }),
+      ),
+    ).toHaveLength(1);
   });
 });

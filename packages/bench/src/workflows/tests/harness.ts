@@ -193,6 +193,10 @@ export interface PlayEnv {
    * enregistre. Absent : aucune imprimante du banc n'est attachée.
    */
   readonly benchPrinter?: BenchPrinterState;
+  /** La fin de l'essai mesurée par le banc ; absente : l'instant du jugement. */
+  readonly endedMs?: number;
+  /** Les serveurs MCP de l'équipe (le besoin `bench-printer` les lit). */
+  readonly teamMcpServers?: ScenarioEnv['teamMcpServers'];
 }
 
 /**
@@ -219,6 +223,7 @@ export async function play(
     teamTools: playEnv.teamTools ?? [],
     services: {},
     unlistedMcpServers: [],
+    teamMcpServers: playEnv.teamMcpServers ?? [],
     benchPrinter: playEnv.benchPrinter ?? { kind: 'absent' },
     startedMs: 0,
     ...(playEnv.subject ? { subject: playEnv.subject } : {}),
@@ -231,7 +236,11 @@ export async function play(
   const startedMs = Date.now() - 1_000;
   await work(root, attached);
   const run = typeof runOrBuild === 'function' ? runOrBuild(root, attached) : runOrBuild;
-  const env: ScenarioEnv = { ...env0, startedMs };
+  const env: ScenarioEnv = {
+    ...env0,
+    startedMs,
+    ...(playEnv.endedMs === undefined ? {} : { endedMs: playEnv.endedMs }),
+  };
   const tree: TreeFacts = {
     ...facts(run),
     writes: await writesOf(run, root),

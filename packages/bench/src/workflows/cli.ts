@@ -103,6 +103,7 @@ async function capture(): Promise<void> {
           teamTools: [],
           unlistedMcpServers: [],
           benchPrinter: { kind: 'absent' },
+          teamMcpServers: [],
           services: {},
           startedMs,
         };

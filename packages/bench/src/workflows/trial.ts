@@ -43,7 +43,8 @@ import {
   unverifiedOf,
 } from './judge-kit';
 import { isOutboundTool, missingNeeds } from './needs';
-import { isBenchPrinterTool } from '../printer/identity';
+import { isBenchPrinterTool, type BenchPrinterState } from '../printer/identity';
+import { rotateRecords } from '../printer/record';
 import { redactHome } from './redact';
 import type { ForeignActivity } from './stack';
 import { noSubjectReason, pickSubject, requestWithSubject, type ResearchSubject } from './subjects';
@@ -455,8 +456,11 @@ export function destinationGate(
  *     laissait passer `chatId: '1234567'`). Un champ que le banc ne connaît
  *     pas est rouge aussi : il pourrait nommer une cible.
  * L'imprimante du banc (#794) est exemptée comme un outil du produit : sur
- * l'identité de son SERVEUR (`isBenchPrinterTool`), pas sur un nom d'outil. Elle
- * n'imprime rien ; un `request_print` d'un autre serveur reste sortant.
+ * l'identité de son SERVEUR, jamais sur un nom d'outil seul. L'exemption n'existe
+ * que si l'espace l'a ATTACHÉE (`benchPrinter.kind === 'attached'` : sa
+ * déclaration entière est celle du banc, `benchPrinterState`) ET que l'outil est
+ * un des siens. Elle n'imprime rien ; un `request_print` d'un autre serveur, ou
+ * d'un serveur qui prétend l'être, reste sortant.
  * L'exemption se décide sur l'IDENTITÉ de l'outil, jamais sur un nom qui lui
  * ressemble (passe 10) : un outil de livraison du produit, à son nom EXACT,
  * tel que le runner le range dans `tool_calls` (sans préfixe :
@@ -467,7 +471,11 @@ export function destinationGate(
  * Un scénario `test-account:` n'est jamais lancé (aucun compte de test n'est
  * branché, `destinationGate`) : rien n'est jugé ici pour lui.
  */
-export function destinationReasons(s: AnyScenario, facts: TreeFacts): string[] {
+export function destinationReasons(
+  s: AnyScenario,
+  facts: TreeFacts,
+  benchPrinter: BenchPrinterState = { kind: 'absent' },
+): string[] {
   if (s.sends !== 'nothing' && s.sends !== 'owner') return [];
   const delivery = new Set<string>(DELIVERY_TOOL_NAMES);
   /** Un outil de livraison du produit, à son nom exact : jamais un préfixe retiré. */
@@ -477,7 +485,7 @@ export function destinationReasons(s: AnyScenario, facts: TreeFacts): string[] {
       (c) =>
         isOutboundTool(c.toolName) &&
         !isProductDelivery(c.toolName) &&
-        !isBenchPrinterTool(c.toolName),
+        !(benchPrinter.kind === 'attached' && isBenchPrinterTool(c.toolName)),
     )
     .map((c) => c.toolName);
   const outboundReasons =
@@ -548,13 +556,13 @@ export function trialReasons(
   s: AnyScenario,
   facts: TreeFacts,
   observed: unknown,
-  env: Pick<ScenarioEnv, 'teamTools'>,
+  env: Pick<ScenarioEnv, 'teamTools' | 'benchPrinter'>,
   files: readonly ProductFileState[],
 ): string[] {
   return [
     ...new Set([
       ...s.judge(facts, observed),
-      ...destinationReasons(s, facts),
+      ...destinationReasons(s, facts, env.benchPrinter),
       ...productToolReasons(s, facts, env, files),
     ]),
   ];
@@ -651,6 +659,11 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
     }
     deps.progress?.({ step: 'preparing' });
     prepareTrial(s, envBefore.workspaceRoots);
+    // Un essai ne se juge que sur ce qu'il a créé : les demandes que les essais
+    // d'avant ont laissées dans le dossier de l'imprimante du banc sont mises de
+    // côté AVANT que la demande ne parte (printer/record.ts, `rotateRecords`).
+    if ((s.needs ?? []).includes('bench-printer') && envBefore.benchPrinter.kind === 'attached')
+      rotateRecords(envBefore.benchPrinter.recordsDir, `${s.id}-${deps.now()}`);
   } catch (e) {
     return {
       ...emptyLine(s, o, deps.now(), rootModel),
@@ -732,6 +745,8 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
     await session.close();
   }
 
+  // La fin de l'essai : une demande reçue après n'est plus de lui.
+  const endedMs = deps.now();
   let facts: TreeFacts;
   try {
     facts = await deps.read(rootId);
@@ -754,6 +769,7 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
   try {
     const envAfter: ScenarioEnv = {
       ...(await deps.env(startedMs)),
+      endedMs,
       ...(subject ? { subject } : {}),
     };
     deliverables = benchDeliverables(envAfter.workspaceRoots, startedMs);

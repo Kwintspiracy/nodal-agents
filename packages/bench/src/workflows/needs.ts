@@ -15,7 +15,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
-import { isBenchPrinterTool } from '../printer/identity';
+import { mcpToolPrefix } from '@nodal-agents/shared';
+import { BENCH_PRINTER_SLUG, isBenchPrinterTool } from '../printer/identity';
 import { NEED_IDS, type Need, type ScenarioEnv } from './types';
 
 export { NEED_IDS, type Need };
@@ -259,17 +260,66 @@ export const BENCH_PRINTER_MISSING =
   'the bench printer is not attached to this workspace (an active agent must hold the "bench-printer" MCP server, declared by benchPrinterServer): print trials never use a real printer, and only a printer that records what it received can tell which file was printed';
 
 /**
- * Un outil de l'équipe qui peut faire sortir du papier ailleurs que sur
- * l'imprimante du banc : son nom (préfixe du serveur compris) parle
- * d'impression, et ce n'est pas une lecture (`list_printers`, `get_print_request`).
- * Fermé par défaut, comme le garde « aucun courrier ne peut partir » : un faux
- * refus vaut mieux qu'une demande chez le propriétaire.
+ * Une ALARME de plus, jamais la porte : un outil de l'équipe dont le nom parle
+ * d'impression sans être une lecture (`list_printers`, `get_print_request`).
+ * Elle couvre aussi les connecteurs qui ne sont pas des serveurs MCP.
  */
 function canPrintOutsideTheBench(toolName: string): boolean {
   if (isBenchPrinterTool(toolName)) return false;
   const own = words(toolName.replace(/^cli:/, '').split('__').pop() ?? toolName);
   if (own.length > 0 && READ_VERBS.has(own[0]!)) return false;
   return words(toolName).some((w) => w.startsWith('print'));
+}
+
+/**
+ * Un outil que le banc RECONNAÎT comme une lecture : son premier mot est un
+ * verbe de lecture (`get_`, `list_`, `fetch_`…), aucun verbe sortant ne le suit,
+ * et il ne parle pas d'impression. Tout le reste est inconnu, donc refusé
+ * (`submit_job`, `job_send`, `printer_status`). Les annotations du serveur
+ * (`readOnlyHint`) ne prouvent rien : le produit lui-même ne les croit pas
+ * (adapter-mcp, MCP-001).
+ */
+function isRecognisedRead(toolName: string): boolean {
+  const own = words(toolName.replace(/^cli:/, '').split('__').pop() ?? toolName);
+  if (own.length === 0 || !READ_VERBS.has(own[0]!)) return false;
+  if (own.slice(1).some((x) => OUTBOUND_AFTER_READ.has(x))) return false;
+  return !own.some((w) => w.startsWith('print'));
+}
+
+/**
+ * Pourquoi l'équipe pourrait imprimer ailleurs que sur l'imprimante du banc.
+ * FERMÉ PAR DÉFAUT, comme le garde « aucun courrier ne peut partir » : tout
+ * serveur MCP de l'équipe autre que l'imprimante du banc doit avoir listé ses
+ * outils ET n'en offrir que de reconnus comme des lectures ; sinon le besoin
+ * manque, avec son nom. Un faux refus (un serveur de statut d'imprimante, un
+ * outil de lecture au nom inhabituel) est accepté et dit : mieux vaut sauter un
+ * essai qu'ouvrir une demande chez le propriétaire.
+ */
+function printGateReasons(env: ScenarioEnv): string[] {
+  const benchPrefix = mcpToolPrefix(BENCH_PRINTER_SLUG);
+  const others = env.teamMcpServers.filter((s) => mcpToolPrefix(s.slug) !== benchPrefix);
+  const unproven = others.flatMap((s) => {
+    if (s.tools === null) return [`${s.slug} (it has never listed its tools)`];
+    const unknown = s.tools.filter((t) => !isRecognisedRead(t));
+    return unknown.length === 0 ? [] : [`${s.slug} (${unknown.join(', ')})`];
+  });
+  // L'alarme ne répète pas ce que la porte a déjà dit d'un serveur MCP refusé.
+  const refused = others.map((s) => `${mcpToolPrefix(s.slug)}__`);
+  const named = env.teamTools
+    .filter(canPrintOutsideTheBench)
+    .filter((t) => !refused.some((p) => t.startsWith(p)));
+  return [
+    ...(unproven.length > 0
+      ? [
+          `the bench cannot prove that these MCP servers of the workspace do not print: ${unproven.join('; ')} (a server is accepted only when it has listed its tools and every tool is a recognised read such as get_, list_ or fetch_; this can refuse a harmless server)`,
+        ]
+      : []),
+    ...(named.length > 0
+      ? [
+          `an agent of this workspace has tools that print outside the bench printer (${named.join(', ')})`,
+        ]
+      : []),
+  ];
 }
 
 /** Pourquoi le besoin manque, ou null quand il est là. */
@@ -287,10 +337,10 @@ const CHECKS: Record<Need, (env: ScenarioEnv) => string | null> = {
   'bench-printer'(env) {
     if (env.benchPrinter.kind === 'absent') return BENCH_PRINTER_MISSING;
     if (env.benchPrinter.kind === 'broken') return env.benchPrinter.reason;
-    const real = env.teamTools.filter(canPrintOutsideTheBench);
-    return real.length === 0
+    const why = printGateReasons(env);
+    return why.length === 0
       ? null
-      : `an agent of this workspace can print outside the bench printer (${real.join(', ')}): print trials never create a request on a real printer, so this scenario does not run here`;
+      : `${why.join('; ')}: print trials never create a request on a real printer, so this scenario does not run here`;
   },
   'no-mail-sender'(env) {
     // Fermé par défaut : un serveur MCP dont les outils ne sont pas connus peut

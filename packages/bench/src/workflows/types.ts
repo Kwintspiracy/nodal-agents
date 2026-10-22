@@ -97,6 +97,12 @@ export interface ServiceProbe {
   readonly problem: string | null;
 }
 
+/** Un serveur MCP attribué à l'équipe ; `tools` null : ses outils ne sont pas connus. */
+export interface TeamMcpServer {
+  readonly slug: string;
+  readonly tools: readonly string[] | null;
+}
+
 export interface ScenarioEnv {
   /** Les dossiers de travail de l'espace (le partagé d'abord). */
   readonly workspaceRoots: readonly string[];
@@ -117,6 +123,17 @@ export interface ScenarioEnv {
    * dossier où elle enregistre ce qu'elle reçoit, ou absente.
    */
   readonly benchPrinter: BenchPrinterState;
+  /**
+   * Les serveurs MCP de l'équipe, avec les noms de leurs outils (null : jamais
+   * listés). Le besoin `bench-printer` n'accepte, hors l'imprimante du banc, que
+   * des serveurs dont chaque outil est une lecture reconnue.
+   */
+  readonly teamMcpServers: readonly TeamMcpServer[];
+  /**
+   * Fin de l'essai (ms), quand le banc la connaît. Une demande reçue après n'est
+   * pas de cet essai. Absent : l'instant du jugement.
+   */
+  readonly endedMs?: number;
   /** Les services locaux déclarés pour le banc, sondés au début de l'essai. */
   readonly services: Readonly<Record<string, ServiceProbe>>;
   /** Début de l'essai (ms). Un fichier plus ancien n'a pas été écrit par lui. */

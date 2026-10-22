@@ -300,6 +300,7 @@ describe('undoable-action judge', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' as const },
+      teamMcpServers: [],
       startedMs: T0,
     };
     expect(missingNeeds(s.needs ?? [], { ...env, teamTools: ['gmail_send_email'] })).toEqual([
@@ -371,6 +372,7 @@ describe('undoable-action judge', () => {
         teamTools: [],
         unlistedMcpServers: ['mystery-mail'],
         benchPrinter: { kind: 'absent' },
+        teamMcpServers: [],
         startedMs: T0,
       }),
     ).toEqual([

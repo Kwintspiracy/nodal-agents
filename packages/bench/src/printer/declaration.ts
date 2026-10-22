@@ -9,17 +9,13 @@
 import { createRequire } from 'node:module';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BENCH_PRINTER_RECORDS_ENV, BENCH_PRINTER_SLUG } from './identity';
+import {
+  BENCH_PRINTER_RECORDS_ENV,
+  BENCH_PRINTER_SLUG,
+  type BenchPrinterServerDeclaration,
+} from './identity';
 
-/** Une ligne de `mcp_servers` : de quoi lancer le serveur en stdio. */
-export interface BenchPrinterServerDeclaration {
-  readonly name: string;
-  readonly slug: string;
-  readonly transport: 'stdio';
-  readonly command: string;
-  readonly args: string[];
-  readonly envVars: Record<string, string>;
-}
+export type { BenchPrinterServerDeclaration };
 
 /**
  * La déclaration du serveur d'impression du banc, qui enregistre dans

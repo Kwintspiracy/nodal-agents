@@ -17,7 +17,11 @@ import { describe, expect, it } from 'vitest';
 const BENCH = resolve(__dirname, '..', '..', '..');
 const REPO = resolve(BENCH, '..', '..');
 
-const SERVER_ONLY = ['server.ts', 'main.ts', 'declaration.ts', 'pages.ts'].map((f) =>
+// declaration.ts n'y est plus : le juge compare la ligne de la base à ce qu'elle
+// rend (`readBenchPrinter`), et la lit donc. Elle ne lance rien (la résolution de
+// tsx se fait à l'appel) ; le serveur, son point de lancement et son compteur de
+// pages restent hors de tout export.
+const SERVER_ONLY = ['server.ts', 'main.ts', 'pages.ts'].map((f) =>
   join(BENCH, 'src', 'printer', f),
 );
 
@@ -56,7 +60,7 @@ describe('the bench printer never reaches the product', () => {
   });
 
   it.each(Object.entries(pkg.exports))(
-    'the export %s does not reach the server, its launcher or its declaration',
+    'the export %s does not reach the server, its launcher or its page counter',
     (_name, target) => {
       const reached = reachable(resolve(BENCH, target));
       expect(reached.size).toBeGreaterThanOrEqual(1);
