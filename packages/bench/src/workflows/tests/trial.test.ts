@@ -318,6 +318,51 @@ describe('workflow trial safety rules', () => {
     ).toEqual([stale.id]);
   });
 
+  // Le banc mesure la fin de l'essai (ce que le juge reçoit dans `endedMs`) : une
+  // demande reçue après n'est pas de lui, même si le dossier la contient encore.
+  it('print-file: a request received after the end of the trial that the bench measured is not judged', async () => {
+    const done = load('print-green');
+    const live = { ...done, jobs: done.jobs.map((j) => ({ ...j, status: 'running' })) };
+    const w = world({ rootId: done.rootId, snapshots: [live, done] });
+    const root = mkdtempSync(join(tmpdir(), 'bench-trial-root-'));
+    const recordsDir = mkdtempSync(join(tmpdir(), 'bench-trial-records-'));
+    const posed = readFileSync(fixturePath('office/facture-bench.pdf'));
+    const received = (bytes: Buffer, atMs: number) =>
+      writeRecord(
+        recordsDir,
+        {
+          source: { kind: 'file', path: join(root, 'x.pdf') },
+          bytes,
+          pages: 1,
+          pagesBasis: 'pdf',
+          images: null,
+          arguments: {},
+        },
+        atMs,
+      );
+    const t0 = w.clock.now;
+    const start = w.deps.start;
+    w.deps.start = async (...a) => {
+      // Pendant l'essai (il dure un tour de sondage, 2 s) : le bon fichier. Bien après sa fin : un autre.
+      received(posed, t0 + 1_000);
+      received(Buffer.from('%PDF-1.4 another trial'), t0 + 600_000);
+      return start(...a);
+    };
+    w.deps.env = async (startedMs) => ({
+      workspaceRoots: [root],
+      teamTools: ['bench_printer__request_print', 'bench_printer__get_print_request'],
+      services: {},
+      unlistedMcpServers: [],
+      benchPrinter: { kind: 'attached', recordsDir },
+      teamMcpServers: [],
+      startedMs,
+    });
+    const line = await runTrial(scenarioById('print-file')!, w.deps, OPTS);
+    expect(w.clock.now - t0).toBe(2_000);
+    expect(line.reasons.filter((r) => /another file|not the posed file/.test(r))).toEqual([]);
+    expect(line.reasons).not.toContain('no print request was created');
+  });
+
   it('a scenario that does not need the bench printer leaves its folder alone', async () => {
     const green = load('question-green');
     const w = world({ rootId: green.rootId, snapshots: [green] });
