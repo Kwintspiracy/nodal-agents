@@ -217,7 +217,7 @@ async function installer() {
   await apt(
     'apt-get install',
     60,
-    1,
+    3,
     ['install', '-y', '--no-install-recommends', ...absents],
     async (n) => {
       await verrouLibreAvantReessai(n);
