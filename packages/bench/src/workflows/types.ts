@@ -364,6 +364,15 @@ export interface TrialLine {
    * agents tournaient sur leurs propres modèles.
    */
   readonly modelUnderTest: string | null;
+  /**
+   * La campagne qui a joué l'essai (le Nodal jetable du banc, campaign/), et
+   * l'empreinte de la configuration appliquée à son instance
+   * (`configFingerprint`) : deux lignes ne se comparent qu'à configuration
+   * connue. null : un essai joué hors campagne. Absents des lignes d'avant les
+   * campagnes.
+   */
+  readonly campaign?: string | null;
+  readonly configFingerprint?: string | null;
   /** Le modèle configuré de l'agent racine au début de l'essai (`agents.model`). */
   readonly rootModel: string | null;
   readonly nodalVersion: string;

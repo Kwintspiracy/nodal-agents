@@ -49,7 +49,39 @@ export {
 export type { AllowedConversationSummary } from './queries/channel-identity.ts';
 
 // ─── Repos ─────────────────────────────────────────────────────────────────────
-export { createAgentRepo, attachAgentToOrchestrator } from './repos/agents.ts';
+export {
+  createAgentRepo,
+  attachAgentToOrchestrator,
+  orchestratorModelToolsError,
+  setAgentModelRepo,
+} from './repos/agents.ts';
+export type { SetAgentModelInput } from './repos/agents.ts';
+export {
+  createWorkspaceRepo,
+  workspaceSlug,
+  setRunBudgetRepo,
+  setMcpServerEnabledRepo,
+  setReflectionEnabledRepo,
+} from './repos/workspaces.ts';
+export type { CreateWorkspaceInput } from './repos/workspaces.ts';
+export { createLlmKeyRepo } from './repos/llm-keys.ts';
+export type { CreateLlmKeyInput } from './repos/llm-keys.ts';
+export {
+  refuseGlobalGrantOverFolderRule,
+  setRunCommandRuleRepo,
+  setReadOnlyPresetRepo,
+  READONLY_PRESET_TOOLS,
+} from './repos/approval-rules.ts';
+export type { RunCommandRuleAction } from './repos/approval-rules.ts';
+export { createApiKeyConnectorRepo, setAgentConnectorAssignmentRepo } from './repos/connectors.ts';
+export type {
+  CreateApiKeyConnectorInput,
+  SetAgentConnectorAssignmentInput,
+} from './repos/connectors.ts';
+export { addAgentWorkspaceRepo } from './repos/agent-workspaces.ts';
+export { readRunCost, runSpentUsd } from './repos/run-cost.ts';
+export type { RunCost } from './repos/run-cost.ts';
+export type { AddAgentWorkspaceInput } from './repos/agent-workspaces.ts';
 export { attachMcpServerToAgent } from './repos/agent-mcp-servers.ts';
 export type { AttachMcpServerInput, AttachMcpServerResult } from './repos/agent-mcp-servers.ts';
 export type { CreateAgentInput, CreateAgentResult, AttachAgentResult } from './repos/agents.ts';
@@ -62,6 +94,7 @@ export {
   touchSkillsLastUsed,
   transitionSkillLifecycle,
   archiveAgentSkill,
+  resolveSkillIdsBySlug,
 } from './repos/skills.ts';
 export { pruneOldJobs } from './repos/retention.ts';
 export { readAgentSpend, readAgentBudgetState, budgetReached } from './repos/agent-spend.ts';

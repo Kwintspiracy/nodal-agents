@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "instance": {
+    "ports": { "web": 3100, "runner": 3101, "postgres": 25532 }
+  },
+  "models": {
+    "tested": { "provider": "openrouter", "model": "anthropic/claude-haiku-5.5" },
+    "judge": { "provider": "openrouter", "model": "z-ai/glm-5.3" }
+  },
+  "budget": { "perTrialUsd": 1, "perCampaignUsd": 10 },
+  "workspaces": {
+    "tested": {
+      "name": "Banc",
+      "icon": "🧪",
+      "rootAgent": "chef",
+      "mcpServer": true,
+      "reflection": false
+    },
+    "judge": {
+      "name": "Juge",
+      "icon": "⚖️",
+      "mcpServer": true,
+      "reflection": false
+    }
+  },
+  "agents": [
+    {
+      "slug": "chercheur",
+      "name": "Chercheur",
+      "workspace": "tested",
+      "role": "worker",
+      "personality": "Tu fais les recherches approfondies : plusieurs sources, chaque fait rattaché au lien qui le donne. Tu rends un rapport structuré.",
+      "skills": ["research-scope-discipline", "citation-discipline", "obsidian"],
+      "connectors": [
+        { "slug": "tavily", "operations": ["tavily_search", "tavily_extract", "tavily_crawl"] },
+        {
+          "slug": "firecrawl",
+          "operations": [
+            "firecrawl_scrape",
+            "firecrawl_crawl_start",
+            "firecrawl_crawl_status",
+            "firecrawl_map",
+            "firecrawl_search"
+          ]
+        }
+      ],
+      "folders": [{ "label": "Coffre Obsidian du banc", "seed": "obsidian-vault" }]
+    },
+    {
+      "slug": "imageur",
+      "name": "Imageur",
+      "workspace": "tested",
+      "role": "worker",
+      "personality": "Tu génères les images demandées avec ComfyUI, aux dimensions exactes, et tu dis où le fichier est rangé.",
+      "skills": ["command-execution"],
+      "communitySkills": ["comfy"],
+      "runCommand": "auto_approve"
+    },
+    {
+      "slug": "chef",
+      "name": "Chef",
+      "workspace": "tested",
+      "role": "orchestrator",
+      "personality": "Tu es l'assistant de l'utilisateur. Tu fais toi-même ce que tes outils permettent. Tu confies à un coéquipier ce qui relève de son rôle. Tu termines toujours par ce qui a été fait, et ce qui ne l'a pas été.",
+      "skills": ["office-editing", "command-execution", "claude-html-design", "print-request"],
+      "runCommand": "auto_approve",
+      "delegatesTo": [
+        { "agent": "chercheur", "instructions": "Recherche approfondie, rapport avec sources" },
+        { "agent": "imageur", "instructions": "Génération d'images" }
+      ],
+      "printConnector": null
+    },
+    {
+      "slug": "juge",
+      "name": "Juge",
+      "workspace": "judge",
+      "role": "worker",
+      "personality": "Tu lis les preuves d'un essai et tu notes chaque critère du barème : tenu ou pas tenu, avec la ligne de preuve. Tu ne modifies rien.",
+      "readOnly": true,
+      "folders": [{ "label": "Preuves de l'essai", "seed": "empty" }]
+    }
+  ]
+}

@@ -25,6 +25,7 @@ import { agentJobs } from '../schema/jobs.ts';
 import { agentTasks } from '../schema/tasks.ts';
 import { approvalRequests, approvalsOldestFirst } from '../schema/approvals.ts';
 import { agents } from '../schema/agents.ts';
+import { descendRunTree } from './run-tree.ts';
 
 /** Statuts d'une tâche du tableau qui n'a pas fini — ceux que l'arrêt coupe. */
 const OPEN_TASK_STATUSES = ['todo', 'in_progress'];
@@ -102,34 +103,18 @@ export async function cancelJobTree(
       .for('update');
     if (!target) return { jobIds: [], taskIds: [], requestIds: [], discardedMessages: [] };
 
-    const ids = new Set([jobId]);
-    let frontier = [jobId];
-    // Borné par la profondeur de délégation (invariant #8) ; `ids` garde la
-    // boucle finie même sur un graphe corrompu.
+    // L'arbre du run : LA définition, partagée avec le budget de run
+    // (`descendRunTree`, run-tree.ts). Borné par la profondeur de délégation
+    // (invariant #8) ; l'ensemble des ids vus garde la boucle finie même sur un
+    // graphe corrompu.
     //
     // La descente suit AUSSI `relaunched_from_job_id` (#531, revue de #642
     // passe 1) : la tête que la file d'un job a fait naître à sa fin est la
     // suite du même travail. Un Stop qui croise cette fin attend le verrou de
     // la cible, puis — chaque niveau est une instruction nouvelle — voit la
     // tête relancée et l'arrête : le travail ne repart pas derrière l'accusé.
-    while (frontier.length > 0) {
-      const rows = await t
-        .select({ id: agentJobs.id })
-        .from(agentJobs)
-        .where(
-          and(
-            eq(agentJobs.entityId, entityId),
-            or(
-              inArray(agentJobs.parentJobId, frontier),
-              inArray(agentJobs.relaunchedFromJobId, frontier),
-            ),
-          ),
-        )
-        .for('update');
-      frontier = rows.map((r) => r.id).filter((id) => !ids.has(id));
-      for (const id of frontier) ids.add(id);
-    }
-    const tree = [...ids];
+    // Chaque niveau est verrouillé avant la lecture du suivant (`forUpdate`).
+    const tree = await descendRunTree(t, entityId, [jobId], { forUpdate: true });
 
     // Les files de l'arbre — celles des jobs qu'on arrête ET celles que des
     // délégués déjà finis ont laissées à un ancêtre — sont lues sous le verrou

@@ -1,16 +1,15 @@
 // workflows/matrix.ts — chaque scénario, une fois par modèle.
 //
 // `--models a,b,c` joue chaque scénario retenu une fois par modèle (fois
-// `--trials`). COMMENT un modèle est appliqué à un essai est une décision du
-// propriétaire, encore ouverte (15/10) : une entité « banc » avec sa propre
-// copie de l'équipe, ou les agents du propriétaire eux-mêmes. Il n'existe
+// `--trials`). COMMENT un modèle est appliqué à un essai : décidé par le
+// propriétaire le 17/10 (page « Nodal du banc »). Dans l'instance JETABLE
+// d'une campagne (`pnpm bench:campaign`), à toute l'équipe testée à la fois,
+// jamais à ses agents : `campaignModelApplier` (campaign/model.ts). Il n'existe
 // aujourd'hui aucun choix de modèle par job (`agents.model` seulement).
 //
-// Tant que la décision n'est pas prise, le banc ne change AUCUN agent et ne
-// crée AUCUNE entité : la couture est `ModelApplier`, une seule fonction, et
-// la seule implémentation est celle qui refuse en le disant. Le mode
-// `--dry-run` imprime le plan (scénario × modèle × essais) et son coût estimé,
-// sans toucher à la stack.
+// La couture reste `ModelApplier`, une seule fonction. Le mode `--dry-run`
+// imprime le plan (scénario × modèle × essais) et son coût estimé, sans
+// toucher à rien.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { RESULTS_FILE } from './paths';
@@ -73,27 +72,12 @@ export function modelKey(m: MatrixModel): string {
 
 /**
  * Comment un modèle est appliqué à un essai, et défait après. LA couture de la
- * matrice : le jour où le propriétaire décide (entité « banc » ou ses agents),
- * c'est la seule pièce qui change.
+ * matrice ; son implémentation est celle d'une campagne (campaign/model.ts).
  */
 export interface ModelApplier {
   readonly name: string;
   apply(model: MatrixModel): Promise<{ restore(): Promise<void> }>;
 }
-
-/** La seule implémentation d'aujourd'hui : elle refuse, et dit pourquoi. */
-export const UNDECIDED_APPLIER: ModelApplier = {
-  name: 'undecided',
-  apply(model) {
-    return Promise.reject(
-      new Error(
-        `workflow_matrix_undecided: running ${modelKey(model)} needs a decision of the owner ` +
-          "(a separate bench workspace with its own copy of the team, or the owner's agents); " +
-          'until then the bench changes no agent and creates no workspace. Use --dry-run to see the plan.',
-      ),
-    );
-  },
-};
 
 // ─── Le plan ─────────────────────────────────────────────────────────────────
 

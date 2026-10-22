@@ -104,7 +104,10 @@ program
   .action(async () => {
     const { runDown } = await import('./commands/down.ts');
     try {
-      await runDown();
+      const { unstopped } = await runDown();
+      // Something is still running: the summary said what, the exit code says it
+      // to scripts. A `down` that returned 0 here was the lie of #767.
+      if (unstopped.length > 0) process.exit(1);
     } catch (err) {
       console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
       process.exit(1);
