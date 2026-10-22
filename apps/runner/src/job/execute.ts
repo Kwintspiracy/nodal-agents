@@ -232,6 +232,7 @@ import {
 } from './finalize.ts';
 import type { DeclaredDeliverableFailure } from './finalize.ts';
 import { releaseJobProcessesIfEnded } from './process-scopes.ts';
+import { jobProcessScope } from '@nodal-agents/sandbox';
 import { runnerNotesValue } from './transcript-text.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
@@ -2605,6 +2606,10 @@ async function runJobTracked(
             command: ms.command,
             args: (ms.args ?? []) as string[],
             env: decryptedEnv,
+            // #750 : le serveur et ce qu'il lance appartiennent au job — son
+            // arbre tué quand le run ferme la connexion, ses détachés à la fin
+            // du job.
+            processScope: jobProcessScope(jobId as string),
           };
           if (isUsableMcpToolCache(availableTools)) {
             toolset = createLazyMcpTools(connectOpts, availableTools, {

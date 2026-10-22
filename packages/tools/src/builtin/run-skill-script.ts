@@ -21,6 +21,7 @@
 //   4. NO SHELL: the interpreter is spawned with an ARG ARRAY (shell:false), so
 //      arguments can never be shell-injected — stricter than run_command.
 
+import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,7 +29,7 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from '../types';
 import { terminalCard } from '../presenters';
 import { resolveSkillRoot, resolveWithinSkill } from './skill-ops/skill-files';
-import { JobProcessScope, jobProcessScope } from '@nodal-agents/sandbox';
+import { jobProcessScope, openProcessScope } from '@nodal-agents/sandbox';
 import { buildChildEnv } from './child-env';
 import {
   SHARED_WORKSPACE_LABEL,
@@ -69,8 +70,10 @@ export function resolvePythonInterpreter(): Promise<string | null> {
     const candidates =
       process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
     // Its own short-lived scope: a `--version` belongs to no job, and nothing
-    // it might start is left running once the probe is done.
-    const scope = new JobProcessScope('python-interpreter-probe');
+    // it might start is left running once the probe is done. A unique label:
+    // under Unix the scope's close kills every process carrying it (#750),
+    // and another Nodal on this machine probes too.
+    const scope = openProcessScope(`python-interpreter-probe:${randomUUID()}`);
     try {
       for (const candidate of candidates) {
         const probe = await runShellCommand({

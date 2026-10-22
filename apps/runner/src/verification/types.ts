@@ -145,6 +145,11 @@ export interface ProofScope {
    * qu'elles laissent tourner meurt avec lui.
    */
   readonly jobId: string;
+  /**
+   * Le Stop du job (#750) : quand il tombe, la commande de preuve en cours est
+   * tuée et les suivantes ne partent pas.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**

@@ -4,7 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runSkillScriptTool, resolvePythonInterpreter } from '../builtin/run-skill-script.ts';
 import type { ToolContext } from '../types.ts';
-import { getSandboxStatus, type RefusedWrite } from '@nodal-agents/sandbox';
+import {
+  closeJobProcessScope,
+  getSandboxStatus,
+  isProcessAlive,
+  type RefusedWrite,
+} from '@nodal-agents/sandbox';
+import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import type { SandboxReport } from '../builtin/shell-engine';
 
 /** Les écritures refusées d'un résultat CONFINÉ ; un résultat non confiné fait échouer. */
@@ -21,9 +28,13 @@ const sandboxActive = (await getSandboxStatus()).state === 'available';
 let storeDir: string;
 const SLUG = 'test-skill';
 
+// Unique: under Unix, closing a job's scope kills every process carrying its
+// id (#750), and test files run side by side.
+const JOB = `run-skill-script-test-${randomUUID()}`;
+
 function ctx(over: Partial<ToolContext> = {}): ToolContext {
   return {
-    jobId: 'j',
+    jobId: JOB,
     agentId: 'a',
     entityId: 'e',
     // Builtin never touches the db — a stub is fine and keeps the test pure.
@@ -217,4 +228,52 @@ describe('run_skill_script', () => {
       ),
     ).rejects.toThrow(/not assigned/i);
   });
+
+  // #750 : le Stop du job atteint le script EN COURS (il tournerait jusqu'à son
+  // délai), par `ctx.signal` : le processus meurt, son compteur cesse de monter.
+  it('Stop during a run_skill_script: the script is killed at once and its marker stops growing @cap:executer-une-commande/moteur', async () => {
+    const jobId = `skill-stop-${randomUUID()}`;
+    // Dans le workspace du job : le seul endroit où un script confiné écrit.
+    const sharedDir = await mkdtemp(join(tmpdir(), 'shared-ws-'));
+    const marker = join(sharedDir, 'ticker.count');
+    const pidFile = join(sharedDir, 'ticker.pid');
+    await writeFile(
+      join(storeDir, SLUG, 'scripts', 'ticker.js'),
+      "const fs = require('fs'); fs.writeFileSync(process.argv[2], String(process.pid)); let n = 0; setInterval(() => fs.writeFileSync(process.argv[3], String(++n)), 100);\n",
+    );
+    const stop = new AbortController();
+    const started = Date.now();
+    try {
+      const running = runSkillScriptTool.execute(
+        {
+          purpose: 'a long script',
+          skill: SLUG,
+          script: 'scripts/ticker.js',
+          args: [pidFile, marker],
+        },
+        ctx({ jobId, signal: stop.signal, workspaces: [{ label: 'shared', path: sharedDir }] }),
+      );
+      for (let i = 0; i < 200 && !existsSync(marker); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const pid = Number(await readFile(pidFile, 'utf8'));
+      stop.abort();
+      const out = await running;
+      expect(Date.now() - started).toBeLessThan(30_000);
+      expect(out.exitCode).toBeNull();
+      expect(out.stderr).toContain('spawn_error: ABORTED');
+      let dead = false;
+      for (let i = 0; i < 100 && !dead; i++) {
+        dead = !isProcessAlive(pid);
+        if (!dead) await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(dead).toBe(true);
+      const frozen = await readFile(marker, 'utf8');
+      await new Promise((r) => setTimeout(r, 400));
+      expect(await readFile(marker, 'utf8')).toBe(frozen);
+    } finally {
+      await closeJobProcessScope(jobId);
+      await rm(sharedDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    }
+  }, 60_000);
 });

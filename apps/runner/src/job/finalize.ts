@@ -114,6 +114,7 @@ import type {
   ReadyConfig,
 } from '../verification/registry.ts';
 import { TERMINAL_STATUSES, completeJob, failJob, lastTextOfRun } from './state.ts';
+import { watchJobEnd } from './process-scopes.ts';
 import { runnerNotesValue, toDbSafeString } from './transcript-text.ts';
 
 // ─── Codes journalisés ──────────────────────────────────────────────────────
@@ -336,6 +337,8 @@ export interface FinalizeDeps {
   readonly newSequenceId?: () => string;
   /** Fourni par T08. Requis dès qu'une livraison est demandée. */
   readonly prepareDelivery?: PrepareDelivery;
+  /** La veille du Stop pendant la preuve (process-scopes.ts) — injectable pour les tests. */
+  readonly watchJobEnd?: typeof watchJobEnd;
 }
 
 /**
@@ -963,46 +966,57 @@ export async function finalizeJobSuccess(
   // doit pas casser la preuve, ni l'issue du job (décision n°4).
   let persistenceFailed = false;
   const proofs = new Map<string, ProofResult>();
-  for (const plan of opened.plans) {
-    if (plan.config.kind !== 'ready') continue;
-    const ready: ReadyConfig = plan.config;
-    const sequenceId = newSequenceId();
-    const proof = await plan.verifier.runProof(
-      ready,
-      async (record: ProofCommandRecord) => {
-        try {
-          await db.insert(verificationRuns).values({
-            jobId,
-            entityId: opened.entityId,
-            deliverableType: plan.deliverableType,
-            canonicalKey: plan.canonicalKey,
-            manifestHash: ready.manifestHash,
-            sequenceId,
-            commandRank: record.rank,
-            command: record.command,
-            exitCode: record.exitCode,
-            outcomeKind: record.outcomeKind,
-            stdoutTail: record.stdoutTail,
-            stderrTail: record.stderrTail,
-            durationMs: record.durationMs,
-            verdict: record.verdict,
-            testedGeneration: plan.generation,
-            testedEpoch: ready.epoch,
-            sandbox: record.sandbox ?? null,
-          });
-        } catch (error) {
-          persistenceFailed = true;
-          log(VERIFY_PERSISTENCE_FAILED, {
-            jobId,
-            key: plan.canonicalKey,
-            rank: record.rank,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      },
-      opened.proofScope,
-    );
-    proofs.set(plan.stateId, proof);
+  // Le Stop pendant la preuve (#750) : la ligne relue, la commande tuée.
+  const fin = opened.plans.some((p) => p.config.kind === 'ready')
+    ? (deps.watchJobEnd ?? watchJobEnd)(db, jobId)
+    : null;
+  const proofScope: ProofScope = fin
+    ? { ...opened.proofScope, signal: fin.signal }
+    : opened.proofScope;
+  try {
+    for (const plan of opened.plans) {
+      if (plan.config.kind !== 'ready') continue;
+      const ready: ReadyConfig = plan.config;
+      const sequenceId = newSequenceId();
+      const proof = await plan.verifier.runProof(
+        ready,
+        async (record: ProofCommandRecord) => {
+          try {
+            await db.insert(verificationRuns).values({
+              jobId,
+              entityId: opened.entityId,
+              deliverableType: plan.deliverableType,
+              canonicalKey: plan.canonicalKey,
+              manifestHash: ready.manifestHash,
+              sequenceId,
+              commandRank: record.rank,
+              command: record.command,
+              exitCode: record.exitCode,
+              outcomeKind: record.outcomeKind,
+              stdoutTail: record.stdoutTail,
+              stderrTail: record.stderrTail,
+              durationMs: record.durationMs,
+              verdict: record.verdict,
+              testedGeneration: plan.generation,
+              testedEpoch: ready.epoch,
+              sandbox: record.sandbox ?? null,
+            });
+          } catch (error) {
+            persistenceFailed = true;
+            log(VERIFY_PERSISTENCE_FAILED, {
+              jobId,
+              key: plan.canonicalKey,
+              rank: record.rank,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
+        proofScope,
+      );
+      proofs.set(plan.stateId, proof);
+    }
+  } finally {
+    fin?.stop();
   }
 
   // ─── Transaction 2 : décision, statut terminal ────────────────────────────

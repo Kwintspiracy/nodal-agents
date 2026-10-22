@@ -14,6 +14,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { openProcessScope } from '@nodal-agents/sandbox';
 import { composeClaudePersona, runClaudeTurn } from '../../cli-runtime/claude-turn.ts';
 
 const isWindows = process.platform === 'win32';
@@ -49,7 +51,11 @@ process.stdout.write(JSON.stringify({ type: 'result', result: 'OK', session_id: 
   process.env['PATH'] = `${binDir}${isWindows ? ';' : ':'}${previousPath ?? ''}`;
 });
 
+// La CLI tourne dans un périmètre de processus, comme dans un job (#750).
+const processScope = openProcessScope(`claude-workspace-memory:${randomUUID()}`);
+
 afterAll(async () => {
+  await processScope.close();
   if (previousPath !== undefined) process.env['PATH'] = previousPath;
   await rm(root, { recursive: true, force: true });
 });
@@ -73,6 +79,7 @@ const turn = (cwd: string, extraWriteDirs?: string[]) =>
     mode: 'read',
     shellTools: [],
     timeoutMs: 30_000,
+    processScope,
   });
 
 describe('the persona file a runtime turn hands to claude @cap:travailler-sur-des-fichiers/moteur', () => {

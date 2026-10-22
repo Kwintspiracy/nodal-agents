@@ -4,6 +4,7 @@
 
 import { describe, it, expect, afterAll } from 'vitest';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -43,7 +44,13 @@ function fakeBackend(): {
 describe('JobProcessScope', () => {
   it('un conteneur par jeu de dossiers, réutilisé par les commandes suivantes du job', async () => {
     const { backend, opened } = fakeBackend();
-    const scope = new JobProcessScope('j', createSandbox(backend, { log: () => {} }));
+    // Des identifiants uniques : sous Unix, fermer un périmètre tue tout
+    // processus qui porte son identifiant (#750), et les fichiers de test
+    // tournent côte à côte.
+    const scope = new JobProcessScope(
+      `j-${randomUUID()}`,
+      createSandbox(backend, { log: () => {} }),
+    );
     const a = await scope.container(['C:\\ws'], {});
     const b = await scope.container(['C:\\ws'], {});
     const c = await scope.container(['C:\\other'], {});
@@ -56,7 +63,10 @@ describe('JobProcessScope', () => {
 
   it('un conteneur mort de lui-même est remplacé à la commande suivante', async () => {
     const { backend, opened } = fakeBackend();
-    const scope = new JobProcessScope('j2', createSandbox(backend, { log: () => {} }));
+    const scope = new JobProcessScope(
+      `j2-${randomUUID()}`,
+      createSandbox(backend, { log: () => {} }),
+    );
     await scope.container(['C:\\ws'], {});
     opened[0]!.alive = false;
     await scope.container(['C:\\ws'], {});
@@ -66,10 +76,13 @@ describe('JobProcessScope', () => {
 
   it('un périmètre fermé refuse de servir : JOB_SCOPE_CLOSED', async () => {
     const { backend } = fakeBackend();
-    const scope = new JobProcessScope('j3', createSandbox(backend, { log: () => {} }));
+    const id = `j3-${randomUUID()}`;
+    const scope = new JobProcessScope(id, createSandbox(backend, { log: () => {} }));
     await scope.close();
-    await expect(scope.container(['C:\\ws'], {})).rejects.toThrow('JOB_SCOPE_CLOSED: j3');
-    expect(() => scope.trackUnconfined(123)).toThrow('JOB_SCOPE_CLOSED: j3');
+    await expect(scope.container(['C:\\ws'], {})).rejects.toThrow(`JOB_SCOPE_CLOSED: ${id}`);
+    await expect(
+      scope.startOwned({ target: { command: 'exit 0' }, cwd: '.', env: {} }),
+    ).rejects.toThrow(`JOB_SCOPE_CLOSED: ${id}`);
   });
 
   it('le registre : un job relancé après sa fermeture rouvre un périmètre neuf', async () => {

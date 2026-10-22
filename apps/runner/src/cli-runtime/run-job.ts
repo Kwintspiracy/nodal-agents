@@ -75,7 +75,7 @@ import {
   checkpointRefusalMessage,
   checkpointFailureLogLine,
 } from '@nodal-agents/checkpoints';
-import { withNodalPrograms, type NodalPrograms } from '@nodal-agents/sandbox';
+import { jobProcessScope, withNodalPrograms, type NodalPrograms } from '@nodal-agents/sandbox';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
 import {
   resolveRuntime,
@@ -820,6 +820,9 @@ export async function runCliRuntimeJob(args: {
           effort: defaults.effort,
           resumeSessionId,
           timeoutMs: RUNTIME_TURN_TIMEOUT_MS,
+          // La CLI appartient au job (#750) : ce qu'elle laisse tourner vit
+          // pour ses tours suivants et meurt à la fin du job.
+          processScope: jobProcessScope(jobId),
           // The CLI runs its own internal loop the Nodal counters never see —
           // apply the SAME per-turn cap at this seam (invariant #8).
           maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
