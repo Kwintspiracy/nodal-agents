@@ -49,7 +49,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stopPostgresGracefully, type KillContext } from '../commands/down.ts';
-import { isPidAlive, killPidTree, waitForPidDead } from '../lib/processes.ts';
+import { isPidAlive, waitForPidDead } from '../lib/processes.ts';
 
 const lockfile = join(home, 'pg-data', 'postmaster.pid');
 
@@ -88,7 +88,9 @@ beforeEach(() => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  if (stranger.pid && isPidAlive(stranger.pid)) await killPidTree(stranger.pid);
+  // A lone process with no children: a direct kill is enough, and it skips the
+  // process-table enumeration `killPidTree` pays for (tens of seconds on CI).
+  if (stranger.pid && isPidAlive(stranger.pid)) stranger.kill();
   rmSync(lockfile, { force: true });
 });
 
