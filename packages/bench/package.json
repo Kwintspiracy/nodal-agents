@@ -18,13 +18,16 @@
     "space": "tsx src/space/cli.ts",
     "workflows": "tsx src/workflows/cli.ts",
     "workflows:schedule": "tsx src/workflows/schedule.ts install",
-    "workflows:unschedule": "tsx src/workflows/schedule.ts remove"
+    "workflows:unschedule": "tsx src/workflows/schedule.ts remove",
+    "campaign": "tsx src/campaign/cli.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@nodal-agents/adapter-mcp": "workspace:*",
+    "@nodal-agents/catalog": "workspace:*",
     "@nodal-agents/db": "workspace:*",
     "@nodal-agents/orchestration": "workspace:*",
+    "@nodal-agents/runner-adapters": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
     "@nodal-agents/test-kit": "workspace:*",
     "@nodal-agents/tools": "workspace:*",
@@ -37,7 +40,6 @@
     "zod": "^4.6.6"
   },
   "devDependencies": {
-    "@nodal-agents/runner-adapters": "workspace:*",
     "@types/node": "^25.7.0",
     "docx": "^9.7.1",
     "pptxgenjs": "^4.0.1",

@@ -37,6 +37,7 @@ import {
   readAgentBudgetState,
   gatesACall,
 } from '@nodal-agents/db';
+import { readRunSpentUsd, runCostCeilingUsd } from './run-budget.ts';
 import type { ApprovalRequestRow } from '@nodal-agents/db';
 import {
   metaToolsForAgent,
@@ -1095,18 +1096,7 @@ export function budgetDeliverable(prior: string, current: string, line: string):
   return parts.filter((t) => t !== '').join('\n\n');
 }
 
-/**
- * Le plafond de coût d'un run, depuis le réglage de l'espace (#442).
- * `0` = aucun plafond ; une ligne d'espace absente garde le défaut de la
- * plateforme, qui est aussi le défaut de la colonne.
- */
-export function runCostCeilingUsd(
-  settingUsd: number | null | undefined,
-  defaultUsd: number,
-): number {
-  if (settingUsd === null || settingUsd === undefined) return defaultUsd;
-  return settingUsd > 0 ? settingUsd : Infinity;
-}
+// `runCostCeilingUsd` vit dans job/run-budget.ts : le chemin des CLI de code le lit aussi.
 
 /** La durée maximale d'un run en ms, depuis `entities.max_run_hours` (`0` = aucune). */
 export function runTimeCeilingMs(settingHours: number | null | undefined): number {
@@ -4046,14 +4036,24 @@ async function runJobTracked(
   // Settings → Run budget), plus la variable d'environnement
   // `MAX_COST_PER_JOB_USD`. Un runner qui la trouve encore le dit, au lieu de
   // laisser croire qu'elle compte.
-  const maxCostPerJobUsd = runCostCeilingUsd(
+  //
+  // Il borne le RUN, pas le job (revue de #836, P1) : l'écran promet « A run
+  // stops once it has cost $X », et chaque délégué repartait avec le plafond
+  // entier, un arbre de trois jobs pouvant coûter trois fois X. La dépense
+  // comparée est celle de tout l'arbre de délégation (`readRunCost` : la tête
+  // et ses descendants par `parent_job_id`), lue AVANT chaque appel au modèle
+  // et après chacun. Le dépassement est donc borné : au plus UN appel en vol
+  // par job vivant de l'arbre, puisque chacun relit l'arbre avant d'appeler.
+  const maxCostPerRunUsd = runCostCeilingUsd(
     autonomyRow?.maxRunCostUsd,
     DEFAULT_LIMITS.maxCostPerJobUsd,
   );
+  /** Ce que le run a dépensé : les autres jobs de l'arbre, plus celui-ci, en mémoire. */
+  const depenseDuRun = (): Promise<number> => readRunSpentUsd(db, jobId as string, totalCostUsd);
   if (process.env['MAX_COST_PER_JOB_USD']) {
     trace('max_cost_env_ignored', {
       env: process.env['MAX_COST_PER_JOB_USD'],
-      used: maxCostPerJobUsd,
+      used: maxCostPerRunUsd,
       setIn: 'Settings → Run budget',
     });
   }
@@ -4573,6 +4573,18 @@ async function runJobTracked(
         );
       }
 
+      // Guard 1e AVANT l'appel (revue de #836, P1) : un autre job du même run
+      // (la tête, un délégué) a peut-être déjà dépensé le plafond. Sans cette
+      // lecture, chaque job vérifiait seulement après son propre appel, et un
+      // délégué lancé sur un run épuisé payait encore un appel complet.
+      const depenseAvant = await depenseDuRun();
+      if (depenseAvant > maxCostPerRunUsd) {
+        return await arreterSurBudget(
+          { kind: 'cost', spent: depenseAvant, limit: maxCostPerRunUsd, turn },
+          partielCeTour,
+        );
+      }
+
       // Issue #370: fresh rules at every turn boundary. One read of
       // approval_rules + one of the entity brake, both filtered by entity, per
       // turn. Without it a rule written mid-run only applied to the next job,
@@ -4786,6 +4798,7 @@ async function runJobTracked(
             // en relancerait jusqu'à trois autres, payés (revue Codex de #449,
             // passe 2). Mêmes plafonds, mêmes codes ; le texte déjà écrit est
             // gardé dans le transcript.
+            const depenseCoupee = await depenseDuRun();
             const plafond: BudgetStopFacts | null =
               effectiveInputTokens + outputTokens > maxTotalTokensPerJob
                 ? {
@@ -4794,8 +4807,8 @@ async function runJobTracked(
                     limit: maxTotalTokensPerJob,
                     turn,
                   }
-                : totalCostUsd > maxCostPerJobUsd
-                  ? { kind: 'cost', spent: totalCostUsd, limit: maxCostPerJobUsd, turn }
+                : depenseCoupee > maxCostPerRunUsd
+                  ? { kind: 'cost', spent: depenseCoupee, limit: maxCostPerRunUsd, turn }
                   : null;
             if (plafond !== null) {
               const ecrit = partielCeTour + expiration.partialText;
@@ -5076,17 +5089,19 @@ async function runJobTracked(
           );
         }
 
-        // Guard 1e — real dollar cost cap. Checked right after Guard 1a so both
+        // Guard 1e — real dollar cost cap, of the whole RUN (its delegation tree,
+        // `depenseDuRun`). Checked right after Guard 1a so both
         // guards are evaluated before any of the turn's output is acted on.
         // Fires only when the provider actually reported a non-zero cost (i.e.
         // OpenRouter with usage:{include:true}); providers that don't report cost
         // leave totalCostUsd at 0 and this guard never trips — Guard 1a is the
         // fallback for those. Fail loud with cost details for observability.
-        if (totalCostUsd > maxCostPerJobUsd) {
+        const depense = await depenseDuRun();
+        if (depense > maxCostPerRunUsd) {
           messages = avecTourRepris();
           // #442 : ce que le run a écrit, ce tour compris, est livré.
           return await arreterSurBudget(
-            { kind: 'cost', spent: totalCostUsd, limit: maxCostPerJobUsd, turn },
+            { kind: 'cost', spent: depense, limit: maxCostPerRunUsd, turn },
             texteDuTour,
           );
         }
@@ -7219,8 +7234,8 @@ async function runJobTracked(
               turnsSinceDelivery,
               turn,
               maxTurns: DEFAULT_LIMITS.maxTurns,
-              costSpentUsd: totalCostUsd,
-              costCeilingUsd: maxCostPerJobUsd,
+              costSpentUsd: await depenseDuRun(),
+              costCeilingUsd: maxCostPerRunUsd,
               workedMs: dureeCumuleeMs(),
               timeCeilingMs: maxRunMs,
               tokensSpent: effectiveInputTokens + outputTokens,
