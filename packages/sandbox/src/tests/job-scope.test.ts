@@ -69,7 +69,9 @@ describe('JobProcessScope', () => {
     const scope = new JobProcessScope('j3', createSandbox(backend, { log: () => {} }));
     await scope.close();
     await expect(scope.container(['C:\\ws'], {})).rejects.toThrow('JOB_SCOPE_CLOSED: j3');
-    expect(() => scope.trackUnconfined(123)).toThrow('JOB_SCOPE_CLOSED: j3');
+    await expect(
+      scope.startOwned({ target: { command: 'exit 0' }, cwd: '.', env: {} }),
+    ).rejects.toThrow('JOB_SCOPE_CLOSED: j3');
   });
 
   it('le registre : un job relancé après sa fermeture rouvre un périmètre neuf', async () => {

@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { closeJobProcessScope, createSandbox, jobProcessScope } from '@nodal-agents/sandbox';
-import { mkdtemp, rm, writeFile, access } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, access, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -324,4 +324,54 @@ describe('code-project — runProof @cap:verifier-un-livrable/moteur', () => {
     expect(proof.records[0]?.exitCode).toBeNull();
     expect(proof.records[0]?.verdict).toBe('infra_error');
   });
+
+  // #750 : le Stop du job tue la commande de preuve EN COURS (elle durerait
+  // jusqu'à son délai, ici 10 min), et les suivantes ne partent pas. Le
+  // compteur que la commande écrit toutes les 100 ms cesse de monter.
+  it('Stop during a proof: the running proof command is killed at once, its marker stops growing, the next one never runs', async () => {
+    const pidFile = join(dir, 'proof-stop.pid');
+    const counter = join(dir, 'proof-stop.count');
+    const witness = join(dir, 'proof-stop-next.txt');
+    const ticker = await script(
+      'proof-ticker.js',
+      `const fs = require('fs'); fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); let n = 0; setInterval(() => fs.writeFileSync(${JSON.stringify(counter)}, String(++n)), 100);`,
+    );
+    const next = await script(
+      'proof-next.js',
+      `require('fs').writeFileSync(${JSON.stringify(witness)}, 'ran')`,
+    );
+    const stop = new AbortController();
+    const started = Date.now();
+    const running = codeProjectVerifier.runProof(
+      readyOf([
+        { command: ticker, timeoutSeconds: 600 },
+        { command: next, timeoutSeconds: 20 },
+      ]),
+      async () => {},
+      { ...scope(), signal: stop.signal },
+    );
+    for (let i = 0; i < 200 && !(await exists(counter)); i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    stop.abort();
+    const proof = await running;
+    expect(Date.now() - started).toBeLessThan(30_000);
+    expect(proof.verdict).toBe('infra_error');
+    expect(proof.records).toHaveLength(1);
+    let dead = false;
+    for (let i = 0; i < 100 && !dead; i++) {
+      try {
+        process.kill(pid, 0);
+        await new Promise((r) => setTimeout(r, 50));
+      } catch {
+        dead = true;
+      }
+    }
+    expect(dead).toBe(true);
+    const frozen = await readFile(counter, 'utf8');
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await readFile(counter, 'utf8')).toBe(frozen);
+    expect(await exists(witness)).toBe(false);
+  }, 60_000);
 });

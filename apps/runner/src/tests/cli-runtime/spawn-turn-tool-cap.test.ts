@@ -18,15 +18,21 @@
 // Les deux lecteurs de flux réels (Claude, Codex) sont branchés, pas un
 // compteur de test : c'est leur câblage vers le garde qui est prouvé.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { openProcessScope } from '@nodal-agents/sandbox';
 import { spawnCliTurn, type ToolCallGate } from '../../cli-runtime/spawn-turn.ts';
 import { countToolUses, newStreamParseState } from '../../cli-runtime/claude-turn.ts';
 import { handleCodexLine, newCodexParseState } from '../../cli-runtime/codex-turn.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
+
+// La CLI tourne dans un périmètre de processus, comme dans un job (#750).
+const scope = openProcessScope(`spawn-turn-test:${randomUUID()}`);
+afterAll(() => scope.close());
 
 const BUDGET = DEFAULT_LIMITS.maxToolCallsPerTurn;
 
@@ -106,6 +112,7 @@ async function runFakeCli(
     env: process.env,
     cwd: dir,
     stdin: '',
+    processScope: scope,
     timeoutMs: 60_000,
     maxToolCalls: BUDGET,
     onLine: (line, gate) => {
@@ -195,6 +202,7 @@ describe('spawnCliTurn — budget d appels par tour d un runtime CLI @cap:suivre
       env: process.env,
       cwd: dir,
       stdin: '',
+      processScope: scope,
       timeoutMs: 60_000,
       maxToolCalls: BUDGET,
       onLine,

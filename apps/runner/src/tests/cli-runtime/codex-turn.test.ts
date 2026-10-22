@@ -31,7 +31,7 @@ const FIXTURE = readFileSync(
   'utf8',
 );
 
-const BASE: CodexTurnOptions = {
+const BASE: Omit<CodexTurnOptions, 'processScope'> = {
   message: 'lis note.txt',
   personality: 'You are Reviewer C.',
   cwd: 'C:/work',

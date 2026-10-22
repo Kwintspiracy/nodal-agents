@@ -22,7 +22,7 @@
 // `repair-turn.test.ts` — un rouge y rouvre le run au lieu de le finir.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, access } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, access, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -61,6 +61,7 @@ import {
   finalizeJobSuccess,
 } from '../../job/finalize.ts';
 import type { FinalizeDeps } from '../../job/finalize.ts';
+import { watchJobEnd } from '../../job/process-scopes.ts';
 import type { DeliverableVerifier, ProofScope } from '../../verification/registry.ts';
 import { MAX_TAIL_CHARS, codeProjectVerifier } from '../../verification/code-project.ts';
 import { documentVerifier } from '../../verification/document.ts';
@@ -1482,7 +1483,11 @@ describe('finalizeJobSuccess — où la preuve peut écrire (#628)', () => {
         deps({ getVerifier: () => verifier }),
       );
 
-      expect(scopes).toEqual([{ writableRoots: [jobFolder, dir, sharedOf(seed.entityId)], jobId }]);
+      expect(scopes.map(({ writableRoots, jobId: id }) => ({ writableRoots, jobId: id }))).toEqual([
+        { writableRoots: [jobFolder, dir, sharedOf(seed.entityId)], jobId },
+      ]);
+      // Et le Stop du job (#750), qui coupe la preuve en cours.
+      expect(scopes[0]?.signal).toBeInstanceOf(AbortSignal);
       const runs = await runsOf(jobId);
       expect(runs.map((r) => r.verdict)).toEqual(['green']);
       // La ligne de preuve garde le régime de la commande : `confined`, ou le
@@ -1514,9 +1519,57 @@ describe('finalizeJobSuccess — où la preuve peut écrire (#628)', () => {
         deps({ getVerifier: () => verifier }),
       );
 
-      expect(scopes).toEqual([{ writableRoots: [jobFolder], jobId }]);
+      expect(scopes.map(({ writableRoots, jobId: id }) => ({ writableRoots, jobId: id }))).toEqual([
+        { writableRoots: [jobFolder], jobId },
+      ]);
     } finally {
       await rm(jobFolder, { recursive: true, force: true });
     }
   });
+
+  // #750 : le Stop pendant la preuve. La preuve tourne dans la finalisation,
+  // hors de tout tour d'outils : c'est la ligne du job, relue, qui la coupe —
+  // quelle que soit la porte terminale qui finalise.
+  it('Stop during the proof: the job row turns cancelled, the proof command dies at once and its marker stops growing', async () => {
+    const pidFile = join(dir, 'finalize-stop.pid');
+    const counter = join(dir, 'finalize-stop.count');
+    const ticker = await script(
+      'finalize-ticker.js',
+      `const fs = require('fs'); fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); let n = 0; setInterval(() => fs.writeFileSync(${JSON.stringify(counter)}, String(++n)), 100);`,
+    );
+    await setProject([{ command: ticker, timeoutSeconds: 600 }], 'current');
+    const jobId = await insertJob('processing');
+    await insertState(jobId, 'code_project', key, 1);
+    const started = Date.now();
+    const finalizing = finalizeJobSuccess(
+      asDb(),
+      { jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
+      deps({ watchJobEnd: (d, id) => watchJobEnd(d, id, 50) }),
+    );
+    for (let i = 0; i < 400 && !(await exists(counter)); i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    // Le geste du bouton Stop sur la ligne du job.
+    await db.update(agentJobs).set({ status: 'cancelled' }).where(eq(agentJobs.id, jobId));
+    const outcome = await finalizing;
+    expect(Date.now() - started).toBeLessThan(30_000);
+    // Le job était déjà fini (annulé) : la finalisation n'écrit rien par-dessus.
+    expect(outcome.kind).toBe('already_terminal');
+    let dead = false;
+    for (let i = 0; i < 100 && !dead; i++) {
+      try {
+        process.kill(pid, 0);
+        await new Promise((r) => setTimeout(r, 50));
+      } catch {
+        dead = true;
+      }
+    }
+    expect(dead).toBe(true);
+    const frozen = await readFile(counter, 'utf8');
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await readFile(counter, 'utf8')).toBe(frozen);
+    const runs = await runsOf(jobId);
+    expect(runs.map((r) => r.outcomeKind)).toEqual(['spawn_error']);
+  }, 60_000);
 });

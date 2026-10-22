@@ -44,10 +44,11 @@ vi.mock('undici', () => ({
   EnvHttpProxyAgent: vi.fn(),
   Dispatcher: class {},
 }));
-vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
+vi.mock('../scoped-stdio.ts', () => ({
   // Capturing the constructor args lets the stdio test inspect what the
-  // adapter passed to the SDK without actually spawning a subprocess.
-  StdioClientTransport: vi.fn().mockImplementation(function (
+  // adapter passed to its stdio transport (scoped-stdio.ts, the SDK's framing
+  // over the job's process scope) without actually spawning a subprocess.
+  ScopedStdioTransport: vi.fn().mockImplementation(function (
     this: { args: unknown; close: unknown },
     a: unknown,
   ) {
@@ -174,7 +175,7 @@ describe('connectMcp', () => {
   });
 
   // ── stdio transport ────────────────────────────────────────────────────────
-  // The SDK's StdioClientTransport is mocked above so the test never actually
+  // The stdio transport is mocked above so the test never actually
   // spawns a subprocess. audit#2 C-1: un serveur MCP tiers (npx/uvx) est un
   // binaire arbitraire — il ne doit recevoir QUE l'env scrubbé (allowlist
   // buildChildEnv, cf. packages/tools/src/builtin/child-env.ts) plus les
@@ -183,8 +184,8 @@ describe('connectMcp', () => {
 
   it('builds a stdio transport with command, args, and a scrubbed env (opts.env still merges)', async () => {
     h.listTools.mockResolvedValue({ tools: [] });
-    const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
-    const ctorMock = StdioClientTransport as unknown as ReturnType<typeof vi.fn>;
+    const { ScopedStdioTransport } = await import('../scoped-stdio.ts');
+    const ctorMock = ScopedStdioTransport as unknown as ReturnType<typeof vi.fn>;
     ctorMock.mockClear();
 
     // Non-allowlisted var (a made-up plumbing name) must NOT reach the child.
@@ -217,8 +218,8 @@ describe('connectMcp', () => {
 
   it('user env overrides the scrubbed env on collision', async () => {
     h.listTools.mockResolvedValue({ tools: [] });
-    const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
-    const ctorMock = StdioClientTransport as unknown as ReturnType<typeof vi.fn>;
+    const { ScopedStdioTransport } = await import('../scoped-stdio.ts');
+    const ctorMock = ScopedStdioTransport as unknown as ReturnType<typeof vi.fn>;
     ctorMock.mockClear();
 
     const savedPath = process.env['PATH'];
@@ -244,8 +245,8 @@ describe('connectMcp', () => {
   // even though they're set on process.env for this test.
   it('does NOT leak WORKER_SECRET or DATABASE_URL from process.env to the spawned MCP server', async () => {
     h.listTools.mockResolvedValue({ tools: [] });
-    const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
-    const ctorMock = StdioClientTransport as unknown as ReturnType<typeof vi.fn>;
+    const { ScopedStdioTransport } = await import('../scoped-stdio.ts');
+    const ctorMock = ScopedStdioTransport as unknown as ReturnType<typeof vi.fn>;
     ctorMock.mockClear();
 
     process.env['WORKER_SECRET'] = 'wsec_super_secret';

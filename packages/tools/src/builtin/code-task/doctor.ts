@@ -12,9 +12,11 @@
 //                               Nodal never touches credentials, not even to
 //                               peek). Honest 'unknown' beats a fake green.
 
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { openProcessScope, type JobProcessScope } from '@nodal-agents/sandbox';
 import { buildChildEnv } from '../child-env';
 import { resolveCliPath, runCli } from './process';
 import type { CodeTaskProvider } from './providers';
@@ -84,6 +86,20 @@ const LOGIN_HINTS: Record<CodeTaskProvider, string> = {
  * and for codex `login status`), each with a 15 s timeout.
  */
 export async function runCliDoctor(provider: CodeTaskProvider): Promise<CliDoctorReport> {
+  // Une sonde n'est pas un job : son propre périmètre, fermé quand elle a fini
+  // — ce qu'un `--version` aurait laissé tourner ne lui survit pas (#750).
+  const scope = openProcessScope(`code-task-doctor:${randomUUID()}`);
+  try {
+    return await probeCli(provider, scope);
+  } finally {
+    await scope.close();
+  }
+}
+
+async function probeCli(
+  provider: CodeTaskProvider,
+  scope: JobProcessScope,
+): Promise<CliDoctorReport> {
   const bin = provider === 'claude' ? 'claude' : 'codex';
   const resolved = resolveCliPath(bin);
   if (!resolved) {
@@ -103,6 +119,7 @@ export async function runCliDoctor(provider: CodeTaskProvider): Promise<CliDocto
     cwd: process.cwd(),
     timeoutMs: 15_000,
     env,
+    scope,
   });
   const version =
     versionRun.exitCode === 0 && versionRun.stdout.trim() !== ''
@@ -128,6 +145,7 @@ export async function runCliDoctor(provider: CodeTaskProvider): Promise<CliDocto
       cwd: process.cwd(),
       timeoutMs: 15_000,
       env,
+      scope,
     });
     const loggedIn =
       loginRun.exitCode === 0 && /logged in/i.test(loginRun.stdout + loginRun.stderr);
