@@ -6,6 +6,8 @@ import { PG_DATA_DIR } from './config.ts';
 import {
   importEmbeddedPostgres,
   importEmbeddedPostgresBinaries,
+  armDetachedPostgresSpawn,
+  releaseEmbeddedPostgresFromExit,
 } from './embedded-postgres-module.ts';
 import { applyPostgresLoggingConfig, postgresLogDirFor } from './pg-logging.ts';
 import {
@@ -514,6 +516,13 @@ export interface PostgresHandle {
    */
   rotatePassword: (newPassword: string) => Promise<boolean>;
   stop: () => Promise<void>;
+  /**
+   * Let the cluster outlive THIS process (`up --detach`, #835). The cluster is
+   * a child of the launcher, and the package stops it when the launcher exits;
+   * this takes that stop away. The caller exits right after, and
+   * `nodal-agents down` stops the cluster by its data directory.
+   */
+  outliveLauncher: () => void;
 }
 
 /**
@@ -890,6 +899,11 @@ export async function startEmbeddedPostgres(
   // (review pass 2 of #114). Still overridable, so a test can start a cluster
   // without writing into the user's own `~/.nodalai/logs/`.
   logDirectory: string = postgresLogDirFor(dataDir),
+  // `detached`: the cluster must outlive THIS process (`up --detach`, #835). It
+  // is spawned detached at OS level; `handle.outliveLauncher()` then removes the
+  // package's stop-at-exit. A foreground start leaves both alone, so that
+  // Ctrl+C and a crash of the launcher still take the cluster with them.
+  options: { detached?: boolean } = {},
 ): Promise<PostgresHandle> {
   // Dynamic import — embedded-postgres is a runtime-only dep, loaded through
   // the one helper that keeps it from rewriting the process exit code
@@ -958,10 +972,15 @@ export async function startEmbeddedPostgres(
     // 2026-09-15 that log did not exist. The only trace of two crashes that day
     // was the runner's side of the disconnect.
     applyPostgresLoggingConfig(dataDir, logDirectory);
-    await startAndWaitUntilReady(pg, {
-      logs: () => capturedLogs,
-      gracefulStop: () => stopThisCluster(dataDir),
-    });
+    const disarm = options.detached ? await armDetachedPostgresSpawn() : (): void => {};
+    try {
+      await startAndWaitUntilReady(pg, {
+        logs: () => capturedLogs,
+        gracefulStop: () => stopThisCluster(dataDir),
+      });
+    } finally {
+      disarm();
+    }
   } catch (err) {
     const errMsg = err instanceof Error && err.message ? err.message : String(err);
     // The actionable failure is usually in the FATAL log lines, not the
@@ -1068,6 +1087,7 @@ export async function startEmbeddedPostgres(
       if (await stopThisCluster(dataDir)) return;
       await pg.stop();
     },
+    outliveLauncher: () => releaseEmbeddedPostgresFromExit(),
   };
 }
 

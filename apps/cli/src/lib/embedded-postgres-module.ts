@@ -29,7 +29,7 @@
 // packages/test-kit — goes through the functions below, and
 // `architecture.test.ts` refuses the name anywhere else.
 
-import { createRequire } from 'node:module';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type EmbeddedPostgres from 'embedded-postgres';
@@ -60,6 +60,13 @@ const NATURAL_EXIT = 'nodal-agents:embedded-postgres-natural-exit';
  * in one process (the CLI bundle, or vitest's module graph next to Node's).
  */
 const REPLACED = Symbol.for('nodal-agents.embedded-postgres.before-exit-replaced');
+
+/**
+ * Set once the clusters have been released from the exit hook (see
+ * `releaseEmbeddedPostgresFromExit`). The natural-exit replacement checks it so
+ * that a `beforeExit` after the release cannot put the shutdown back.
+ */
+let released = false;
 
 /** The package's entry point, as this CLI resolves it. Throws when it is not installed. */
 export function resolveEmbeddedPostgresEntry(): string {
@@ -105,10 +112,117 @@ function keepExitCode(entry: string): void {
   hook[REPLACED] = true;
   // Node hands `beforeExit` listeners the exit code the process is heading for.
   process.on('beforeExit', (code: number) => {
+    if (released) return;
     if (hook.hookedEvents().includes(NATURAL_EXIT)) return;
     hook.hookEvent(NATURAL_EXIT, code);
     (process as NodeJS.EventEmitter).emit(NATURAL_EXIT, code);
   });
+}
+
+/**
+ * Let every cluster this process started OUTLIVE it.
+ *
+ * `embedded-postgres` stops all its clusters when the process exits: its
+ * `gracefulShutdown` hangs on `exit`, `beforeExit`, the signals and the PM2
+ * `message`, and on Windows answers with `taskkill /pid <postgres> /f /t`. That
+ * is right for a foreground `up`, whose Ctrl+C must stop everything, and wrong
+ * for `up --detach`: the cluster is a CHILD of the launcher (the package
+ * `spawn`s `postgres -D …` itself — it is not a pg_ctl daemon), so the launcher's
+ * own `process.exit(0)` killed the database it had just reported healthy while
+ * the runner and the web, detached, went on running against nothing (#835).
+ *
+ * Releasing is unhooking every event the package hooked, through
+ * async-exit-hook's own API, resolved from the package's directory so it is the
+ * very instance the package registered with. The cluster keeps running after
+ * the launcher is gone, and `nodal-agents down` stops it by its data directory.
+ *
+ * A one-way gesture for the rest of THIS process's life, which is a few
+ * milliseconds long: the caller exits right after. Not loading the package, or
+ * a hook with nothing hooked, is a no-op; a hook that cannot be reached is an
+ * error, never a silent "released" over a cluster that will still be killed.
+ */
+export function releaseEmbeddedPostgresFromExit(): void {
+  const entry = resolveEmbeddedPostgresEntry();
+  let loaded: unknown;
+  try {
+    loaded = createRequire(entry)('async-exit-hook');
+  } catch (err) {
+    throw new Error(
+      `EMBEDDED_POSTGRES_EXIT_HOOK_UNKNOWN: async-exit-hook not found next to ${entry} ` +
+        `(${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
+  const hook = loaded as Partial<AsyncExitHook>;
+  if (typeof hook.hookedEvents !== 'function' || typeof hook.unhookEvent !== 'function') {
+    throw new Error(
+      `EMBEDDED_POSTGRES_EXIT_HOOK_UNKNOWN: async-exit-hook next to ${entry} has no hookedEvents/unhookEvent`,
+    );
+  }
+  released = true;
+  for (const event of hook.hookedEvents()) hook.unhookEvent(event);
+  const left = hook.hookedEvents();
+  if (left.length > 0) {
+    throw new Error(
+      `EMBEDDED_POSTGRES_EXIT_HOOK_STUCK: ${left.join(', ')} still hooked after release (${entry})`,
+    );
+  }
+}
+
+/**
+ * Make the NEXT spawn of the postgres binary a DETACHED one, so the cluster does
+ * not die with the process that starts it. Returns the function that disarms it.
+ *
+ * Releasing the exit hook (above) is half of it. The other half is the OS: on
+ * Windows libuv puts every child it spawns into a job object that is killed
+ * when the parent goes (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`), unless the spawn
+ * is `detached`. A cluster spawned the package's way is therefore killed by the
+ * operating system the moment the launcher exits, hook or no hook (measured
+ * here: released hook, postmaster dead at the launcher's `process.exit`). A
+ * detached child also has no console (closing the terminal sends CTRL_CLOSE to
+ * every attached process, postgres included) and, on Unix, leads its own
+ * session (no SIGHUP, no Ctrl+C from the terminal).
+ *
+ * The package does not expose `spawn`'s options, so the one call that starts the
+ * postmaster is recognised by WHAT it runs — the bundled postgres binary — and
+ * given `detached: true`; every other spawn in the process, before and after,
+ * is untouched. One-shot: it restores itself at that spawn, and `disarm` does
+ * the same when no spawn came. `child_process` is patched on the CJS object and
+ * the ESM named exports are re-synced, which is how the package's
+ * `import { spawn }` sees it.
+ */
+export async function armDetachedPostgresSpawn(): Promise<() => void> {
+  const binaries = await importEmbeddedPostgresBinaries();
+  const postgres = binaries?.postgres;
+  if (typeof postgres !== 'string') {
+    throw new Error(
+      'EMBEDDED_POSTGRES_BINARY_UNKNOWN: the package gave no postgres binary path, so the ' +
+        'cluster cannot be started detached',
+    );
+  }
+  const cp = createRequire(import.meta.url)('node:child_process') as {
+    spawn: (...args: unknown[]) => unknown;
+  };
+  const original = cp.spawn;
+  const restore = (): void => {
+    if (cp.spawn === wrapper) {
+      cp.spawn = original;
+      syncBuiltinESMExports();
+    }
+  };
+  const wrapper = function (this: unknown, ...args: unknown[]): unknown {
+    if (args[0] !== postgres) return original.apply(this, args);
+    restore();
+    // spawn(file, args?, options?): the options are the first non-array object
+    // after the file, or are absent.
+    const at = Array.isArray(args[1]) ? 2 : 1;
+    const given = (args[at] ?? {}) as Record<string, unknown>;
+    const next = [...args];
+    next[at] = { ...given, detached: true };
+    return original.apply(this, next);
+  };
+  cp.spawn = wrapper;
+  syncBuiltinESMExports();
+  return restore;
 }
 
 export async function importEmbeddedPostgres(): Promise<EmbeddedPostgresCtor> {

@@ -761,7 +761,12 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   const pgSpinner = ora('Starting embedded Postgres…').start();
   let pg: Awaited<ReturnType<typeof startEmbeddedPostgres>>;
   try {
-    pg = await startEmbeddedPostgres(undefined, config.ports.postgres, pgPassword);
+    // `--detach`: the cluster must outlive this launcher, so it is spawned
+    // detached and released from the package's stop-at-exit just before the
+    // exit below (#835). A foreground `up` keeps both: Ctrl+C stops everything.
+    pg = await startEmbeddedPostgres(undefined, config.ports.postgres, pgPassword, undefined, {
+      detached: opts.detach === true,
+    });
     pgSpinner.succeed(chalk.green(`Postgres ready on port ${config.ports.postgres}`));
   } catch (err) {
     pgSpinner.fail('Failed to start Postgres');
@@ -1154,9 +1159,14 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // the launcher can still tell them anything (issue #111, point 3).
     console.log(chalk.gray(`  ${LAUNCHER_LOG}   what the launcher saw`));
     console.log('');
-    // The children were unref'd at spawn and Postgres is its own pg_ctl daemon,
-    // so nothing here holds the loop — except the fire-and-forget version check
-    // above, whose 3s timer would otherwise sit between the user and the prompt.
+    // The runner and the web were spawned detached and unref'd. Postgres was
+    // spawned detached too, but it is a CHILD of this launcher — not a pg_ctl
+    // daemon — and `embedded-postgres` stops every cluster it started when the
+    // process exits, so it is released from that hook here; `nodal-agents down`
+    // stops it by its data directory afterwards (#835). Nothing else holds the
+    // loop except the fire-and-forget version check above, whose 3s timer would
+    // otherwise sit between the user and the prompt.
+    pg.outliveLauncher();
     process.exit(0);
   }
 
