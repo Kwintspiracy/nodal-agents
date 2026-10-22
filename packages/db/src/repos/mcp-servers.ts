@@ -50,6 +50,13 @@ export async function createStdioMcpServerRepo(
       name: input.name,
       slug: input.slug,
       transport: 'stdio',
+      // Un serveur stdio ne porte rien du transport http : le runner branche
+      // sur `transport`, et ces champs ne sont jamais lus sur ce chemin.
+      url: null,
+      apiKey: null,
+      apiKeyLast4: null,
+      authScheme: null,
+      authParamName: null,
       command: input.command,
       args: [...input.args],
       envVars,
