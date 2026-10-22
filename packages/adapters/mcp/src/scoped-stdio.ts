@@ -109,9 +109,18 @@ export class ScopedStdioTransport implements Transport {
       throw new Error(failure);
     }
     this.proc = proc;
+    // Comme le SDK (>= 1.32, GHSA du tampon de lecture) : un message qui
+    // dépasse le plafond du `ReadBuffer` (10 Mo par défaut) fait LEVER
+    // `append` ; l'erreur est remontée et la connexion fermée, jamais laissée
+    // remonter hors du gestionnaire (exception non rattrapée du runner).
     proc.stdout?.on('data', (chunk: Buffer) => {
-      this.readBuffer.append(chunk);
-      this.processReadBuffer();
+      try {
+        this.readBuffer.append(chunk);
+        this.processReadBuffer();
+      } catch (e) {
+        this.onerror?.(e as Error);
+        this.close().catch(() => {});
+      }
     });
     proc.stdout?.on('error', (e: Error) => this.onerror?.(e));
     // Comme le SDK (`stderr: 'inherit'`) : le journal du serveur va à celui du runner.

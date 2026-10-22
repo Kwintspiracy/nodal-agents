@@ -21,7 +21,7 @@
     "workflows:unschedule": "tsx src/workflows/schedule.ts remove"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@nodal-agents/adapter-mcp": "workspace:*",
     "@nodal-agents/db": "workspace:*",
     "@nodal-agents/orchestration": "workspace:*",
