@@ -114,7 +114,7 @@ interface NetworkSetup {
 }
 
 /** Construit la config réseau d'un régime ; en `proxy`, pointe sur `proxyUrl`. */
-function networkSetup(policy: NetworkPolicy, proxyUrl: string | null): NetworkSetup {
+export function networkSetup(policy: NetworkPolicy, proxyUrl: string | null): NetworkSetup {
   if (policy === 'deny-all' || proxyUrl === null) {
     return { network: { egress: { default: 'deny' } }, extraEnv: {} };
   }
@@ -435,6 +435,12 @@ export function mxcBackend(
    * trop ancien pour les flux natifs du SDK. Un chemin fixe sert aux tests.
    */
   brokerNode: string | BrokerNodeDeps = {},
+  /**
+   * Le proxy côté hôte du régime `proxy`. Par défaut celui de Nodal ; un test
+   * y met un simple écouteur TCP pour mesurer ce que la MACHINE laisse passer,
+   * sans le proxy de Nodal dans la mesure.
+   */
+  startProxy: () => Promise<NodalProxy> = () => startNodalProxy(nodalDeniedEndpoints()),
 ): SandboxBackend {
   let mod: Promise<MxcModule> | undefined;
   const sdk = (): Promise<MxcModule> => (mod ??= load());
@@ -446,7 +452,7 @@ export function mxcBackend(
   // Le proxy côté hôte, démarré une fois en régime `proxy`. Il refuse les
   // ports de Nodal, lus de la vraie config du runner (nodalDeniedEndpoints).
   let proxyOnce: Promise<NodalProxy> | undefined;
-  const proxy = (): Promise<NodalProxy> => (proxyOnce ??= startNodalProxy(nodalDeniedEndpoints()));
+  const proxy = (): Promise<NodalProxy> => (proxyOnce ??= startProxy());
   const setup = async (): Promise<NetworkSetup> =>
     networkPolicy === 'proxy'
       ? networkSetup('proxy', (await proxy()).url)
