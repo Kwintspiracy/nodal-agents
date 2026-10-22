@@ -180,4 +180,64 @@ describe('readRunCost @cap:voir-le-cout/moteur', () => {
     expect(run.jobs.map((j) => j.id).sort()).toEqual([head, r1, r2].sort());
     expect(runSpentUsd(run, r2, 0.25)).toBeCloseTo(1.25, 10);
   });
+
+  // ─── The climb and the descent have the SAME bounds (review of #836, pass 4) ─
+  //
+  // A leftover inbox relaunches a head at each end: a legitimate chain grows
+  // one link per relaunch. The climb used to stop after 32 links, the descent
+  // never: the last job of a longer chain then read a shorter run than the
+  // first, and the cap came back once per 32 links.
+
+  it('a 40-link relaunch chain reads ONE run, the same head, set and spend, from its first, middle and last job', async () => {
+    const chain: string[] = [await job({ totalCostUsd: 0.5, status: 'completed' })];
+    for (let i = 1; i < 40; i++) {
+      chain.push(
+        await job({
+          relaunchedFromJobId: chain[i - 1]!,
+          totalCostUsd: 0.5,
+          status: i < 39 ? 'completed' : 'processing',
+        }),
+      );
+    }
+    const all = [...chain].sort();
+    for (const from of [chain[0]!, chain[20]!, chain[39]!]) {
+      const run = await readRunCost(db, from);
+      expect(run.headJobId).toBe(chain[0]);
+      expect(run.jobs.map((j) => j.id).sort()).toEqual(all);
+      expect(runSpentUsd(run, from, 0.5)).toBeCloseTo(20, 10);
+    }
+  });
+
+  it('a corrupt graph with a cycle (both links) terminates, and every job of the cycle reads the same set and spend', async () => {
+    const a = await job({ totalCostUsd: 0.25 });
+    const b = await job({ parentJobId: a, totalCostUsd: 0.5 });
+    const c = await job({ relaunchedFromJobId: b, totalCostUsd: 1 });
+    // A climbs to C, which climbs to B, which climbs to A: a loop no real
+    // relaunch or delegation can write.
+    await db
+      .update(schema.agentJobs)
+      .set({ relaunchedFromJobId: c })
+      .where(eq(schema.agentJobs.id, a));
+    // A climb that loops never yields to a timer (PGlite answers in microtasks):
+    // the test bounds the reads itself, and fails, instead of hanging.
+    let reads = 0;
+    const bounded = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop !== 'select') return Reflect.get(target, prop, receiver);
+        return (...args: Parameters<TestDb['select']>) => {
+          if (++reads > 500) throw new Error('the climb did not terminate on a cycle');
+          return target.select(...args);
+        };
+      },
+    });
+    const all = [a, b, c].sort();
+    for (const from of [a, b, c]) {
+      const run = await readRunCost(bounded, from);
+      expect(run.jobs.map((j) => j.id).sort()).toEqual(all);
+      expect(runSpentUsd(run, from, run.jobs.find((j) => j.id === from)!.costUsd)).toBeCloseTo(
+        1.75,
+        10,
+      );
+    }
+  });
 });

@@ -15,9 +15,6 @@ import { and, eq, inArray, or } from 'drizzle-orm';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agentJobs } from '../schema/jobs.ts';
 
-/** Au-delà, un graphe corrompu (un cycle de `parent_job_id`) ne fait pas boucler une remontée. */
-const MAX_HEAD_HOPS = 32;
-
 /**
  * Les jobs de l'espace qui descendent de `fromIds`, ceux-ci compris : délégués
  * et têtes relancées, niveau par niveau. Avec `forUpdate`, chaque niveau est
@@ -63,30 +60,40 @@ export async function descendRunTree(
  * Le run est ainsi UN ensemble, symétrique (revue de #836, passe 3) : depuis
  * n'importe quel job d'une chaîne de relances et de délégations, la même tête
  * et le même arbre. Une continuation partage le budget du run qu'elle continue.
+ *
+ * La remontée a les MÊMES bornes que la descente (revue de #836, passe 4) :
+ * l'espace, et l'ensemble des ids vus, qui arrête un cycle d'un graphe
+ * corrompu. Aucun nombre de sauts : une file restée pleine relance une tête à
+ * chaque fin, et une chaîne légitime s'allonge d'un maillon par relance. Elle
+ * plafonnait à 32 ; le dernier job d'une chaîne plus longue lisait alors un run
+ * plus court que le premier, et le plafond revenait tous les 32 maillons.
  */
 export async function runHeadOf(
   db: AnyDrizzleDb,
   entityId: string,
   jobId: string,
 ): Promise<string> {
-  let head = jobId;
-  const seen = new Set<string>([jobId]);
-  for (let hop = 0; hop < MAX_HEAD_HOPS; hop++) {
+  // Les liens d'un job de l'espace, ou null quand il n'y est pas (absent, ou
+  // dans un autre espace) : une lecture par maillon.
+  const linksOf = async (id: string) => {
     const [row] = await db
       .select({ parentJobId: agentJobs.parentJobId, relaunchedFrom: agentJobs.relaunchedFromJobId })
       .from(agentJobs)
-      .where(and(eq(agentJobs.id, head), eq(agentJobs.entityId, entityId)))
+      .where(and(eq(agentJobs.id, id), eq(agentJobs.entityId, entityId)))
       .limit(1);
-    const parent = row?.parentJobId ?? row?.relaunchedFrom ?? null;
+    return row ?? null;
+  };
+  let head = jobId;
+  let links = await linksOf(jobId);
+  const seen = new Set<string>([jobId]);
+  for (;;) {
+    const parent = links?.parentJobId ?? links?.relaunchedFrom ?? null;
     if (parent === null || seen.has(parent)) break;
-    const [inSpace] = await db
-      .select({ id: agentJobs.id })
-      .from(agentJobs)
-      .where(and(eq(agentJobs.id, parent), eq(agentJobs.entityId, entityId)))
-      .limit(1);
-    if (!inSpace) break;
+    const parentLinks = await linksOf(parent);
+    if (parentLinks === null) break;
     seen.add(parent);
     head = parent;
+    links = parentLinks;
   }
   return head;
 }
