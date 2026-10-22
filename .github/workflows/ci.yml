@@ -189,6 +189,9 @@ jobs:
       # reads as coverage. `high` and above only, so the signal stays readable.
       - name: Dependency audit (advisory)
         timeout-minutes: 3
+        # Advisory by design (`|| true` below): a registry stall that ends at
+        # the 3-minute bound must not fail the PR (22/10/2026: 191 s, twice).
+        continue-on-error: true
         run: pnpm audit --audit-level=high || true
 
   # ── La suite unitaire, en cinq tranches ─────────────────────────────────────

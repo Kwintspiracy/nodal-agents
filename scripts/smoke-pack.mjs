@@ -43,6 +43,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { isolatedNodalEnv } from './lib/nodal-home.mjs';
+import { npmUnderTest } from './lib/npm-floor.mjs';
 import { fileURLToPath } from 'node:url';
 import { findGitDependencySpecs, formatGitDependencySpecs } from './lib/git-dependency-specs.mjs';
 
@@ -113,7 +114,7 @@ try {
   // both the npm of the current Node LTS and npm latest: a registry change that
   // breaks an npm users have (16/10/2026: vitest 4.1.12 crashed every npm below
   // 11.6.0 inside better-auth's optional peers) turns CI red, not their install.
-  const npm = process.env.NODAL_SMOKE_NPM ? `npx -y npm@${process.env.NODAL_SMOKE_NPM}` : 'npm';
+  const npm = npmUnderTest(process.env.NODAL_SMOKE_NPM);
   const npmVersion = execSync(`${npm} --version`, { encoding: 'utf-8' }).trim();
   const NO_GIT = 'nodal-smoke-no-git';
   step(`Installing into ${installDir} with npm ${npmVersion}, git unavailable to npm`);
