@@ -19,7 +19,7 @@ import type { AgentId, EntityId } from '@nodal-agents/orchestration';
 import { benchPrinterServer } from '../printer/declaration';
 import { benchPrinterState, type BenchPrinterState } from '../printer/identity';
 import { executeRows } from './facts';
-import type { TeamMcpServer } from './types';
+import type { ProcessStarter, TeamMcpServer } from './types';
 
 /** Le préfixe de l'étiquette `caller` que le banc pose sur chacun de ses jobs. */
 export const BENCH_CALLER_PREFIX = 'nodal-bench/';
@@ -328,6 +328,70 @@ export async function readTeamTools(db: AnyDrizzleDb, entityId: string): Promise
 }
 
 /**
+ * Les agents actifs de l'espace qui peuvent lancer un processus pendant un
+ * essai (besoin `no-real-printer`). La classification est celle du PRODUIT :
+ * la déclaration `egress: 'process'` de chaque outil que Nodal sert
+ * (`servedToolDefinitions`, où un test la rend obligatoire : la même liste que
+ * le contrôle d'avant essai, space/guard.ts), croisée avec les outils qu'un job
+ * de l'agent recevrait (`computeAgentToolNames`). Un tel outil ne compte pas
+ * quand la règle d'accord qui gagne pour lui est `block` (`matchApprovalRule`,
+ * la règle de l'exécution) : l'agent le tient mais ne le lancera jamais. Ce
+ * n'est pas une exception par outil : `declare_verification`, toujours donné à
+ * tout agent, se ferme ainsi comme `run_command`. Un agent en runtime de CLI
+ * en lance de lui-même : ses outils ne passent pas par la liste de Nodal.
+ */
+export async function readProcessStarters(
+  db: AnyDrizzleDb,
+  entityId: string,
+): Promise<ProcessStarter[]> {
+  const { sql } = await import('@nodal-agents/db');
+  const { computeAgentToolNames, servedToolDefinitions } =
+    await import('@nodal-agents/orchestration');
+  const { matchApprovalRule } = await import('@nodal-agents/tools');
+  const d = await import('@nodal-agents/db');
+  const rules = await db
+    .select({
+      id: d.approvalRules.id,
+      entityId: d.approvalRules.entityId,
+      agentId: d.approvalRules.agentId,
+      toolName: d.approvalRules.toolName,
+      action: d.approvalRules.action,
+      conditionJson: d.approvalRules.conditionJson,
+    })
+    .from(d.approvalRules)
+    .where(d.eq(d.approvalRules.entityId, entityId));
+  const processTools = new Set(
+    servedToolDefinitions()
+      .filter((t) => t.egress === 'process')
+      .map((t) => t.name),
+  );
+  const agents = z
+    .array(z.object({ id: z.string(), slug: z.string(), runtime: z.string().nullable() }))
+    .parse(
+      await executeRows(
+        db,
+        sql`
+        select id::text, slug, runtime from agents
+         where entity_id = ${entityId}::uuid and coalesce(active, true) = true
+         order by slug`,
+      ),
+    );
+  const out: ProcessStarter[] = [];
+  for (const a of agents) {
+    const names = await computeAgentToolNames(a.id as AgentId, entityId as EntityId, db, {
+      hasDeliveryRecipient: true,
+    });
+    const tools = [...names]
+      .filter((n) => processTools.has(n))
+      .filter((n) => matchApprovalRule(rules as never, n, a.id, entityId)?.action !== 'block')
+      .sort();
+    const runtime = a.runtime !== null && a.runtime !== 'nodal' ? a.runtime : null;
+    if (tools.length > 0 || runtime !== null) out.push({ agent: a.slug, tools, runtime });
+  }
+  return out;
+}
+
+/**
  * Les serveurs MCP attribués à un agent actif de l'espace dont les outils ne
  * sont pas connus : la règle du runner (`isUsableMcpToolCache`,
  * @nodal-agents/adapter-mcp), qui s'y connecte alors au lancement du job et
@@ -411,11 +475,18 @@ export async function readBenchPrinter(
   entityId: string,
   expectedDir: string | null = null,
 ): Promise<BenchPrinterState> {
-  return benchPrinterState(
-    await readAttachedMcpServers(db, entityId),
-    benchPrinterServer,
-    expectedDir,
-  );
+  // L'environnement est relu comme le runner le lit avant de lancer le
+  // serveur : chaque valeur déchiffrée (`decryptMcpServerEnv`). Une valeur qui
+  // ne se déchiffre pas est un serveur que le runner écarterait : il est dit.
+  const { decryptMcpServerEnv } = await import('@nodal-agents/db');
+  const rows = (await readAttachedMcpServers(db, entityId)).map((r) => {
+    try {
+      return { ...r, envVars: decryptMcpServerEnv(r.envVars) };
+    } catch (e) {
+      return { ...r, envError: String(e instanceof Error ? e.message : e) };
+    }
+  });
+  return benchPrinterState(rows, benchPrinterServer, expectedDir);
 }
 
 /**

@@ -118,6 +118,8 @@ function world(opts: {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
+      // A team that starts no process: the no-real-printer need is met.
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     }),
@@ -244,7 +246,7 @@ describe('workflow trial safety rules', () => {
     expect(line.reasons).toEqual([BENCH_PRINTER_MISSING]);
     expect(line).toMatchObject({
       activity: 'print',
-      needs: ['bench-printer'],
+      needs: ['bench-printer', 'no-real-printer'],
       rootModel: 'z-ai/glm-5.3',
     });
   });
@@ -265,6 +267,7 @@ describe('workflow trial safety rules', () => {
         services: {},
         unlistedMcpServers: [],
         benchPrinter: { kind: 'absent' },
+        processStarters: [],
         teamMcpServers: [],
         startedMs,
       });
@@ -303,6 +306,7 @@ describe('workflow trial safety rules', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'attached', recordsDir },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -354,6 +358,7 @@ describe('workflow trial safety rules', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'attached', recordsDir },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -381,6 +386,7 @@ describe('workflow trial safety rules', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'attached', recordsDir },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -460,6 +466,7 @@ describe('where a trial may send', () => {
       services: { comfyui: { url: 'http://127.0.0.1:8188', problem: null } },
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -481,6 +488,7 @@ describe('where a trial may send', () => {
       services: { comfyui: { url: 'http://127.0.0.1:8188', problem: null } },
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -927,6 +935,7 @@ describe('what happens before a trial starts', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -955,6 +964,7 @@ describe('what happens before a trial starts', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -1160,6 +1170,7 @@ describe('workflow trial: subjects, product tools and the path', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });

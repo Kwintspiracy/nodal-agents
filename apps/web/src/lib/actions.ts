@@ -155,6 +155,8 @@ import {
   createLlmKeyRepo,
   refuseGlobalGrantOverFolderRule,
   setRunCommandRuleRepo,
+  setApprovalRuleRepo,
+  createStdioMcpServerRepo,
   setReadOnlyPresetRepo,
   createApiKeyConnectorRepo,
   setAgentConnectorAssignmentRepo,
@@ -5104,39 +5106,19 @@ export async function createMcpServerFromCatalogAction(
       if (stdioConn) await stdioConn.close().catch(() => {});
     }
 
-    // Encrypt each env value individually so the runner can decrypt one at a
-    // time without holding the whole map in plaintext memory longer than
-    // necessary.
-    const encEnv: Record<string, string> = {};
-    for (const [k, v] of Object.entries(userEnv)) {
-      encEnv[k] = encrypt(v);
-    }
-
+    // Chaque valeur d'environnement chiffrée une à une, que le runner déchiffre
+    // au lancement : `createStdioMcpServerRepo` (@nodal-agents/db), le chemin
+    // de create_mcp et du banc aussi.
     const db = getDb();
-    const [row] = await db
-      .insert(mcpServers)
-      .values({
-        entityId: session.entityId,
-        name: parsed.data.name,
-        slug: effectiveSlug,
-        transport: 'stdio',
-        // url / apiKey / auth* not meaningful for stdio — leave null. The
-        // runner branches on `transport` so these are never read in the
-        // stdio path.
-        url: null,
-        apiKey: null,
-        apiKeyLast4: null,
-        authScheme: null,
-        authParamName: null,
-        command,
-        args,
-        envVars: encEnv,
-        availableTools: stdioToolDescriptors,
-        instructions: stdioInstructions,
-        active: true,
-      })
-      .returning({ id: mcpServers.id });
-    if (!row) return fail('db_error', 'Insert returned no row');
+    const row = await createStdioMcpServerRepo(db, session.entityId, {
+      name: parsed.data.name,
+      slug: effectiveSlug,
+      command,
+      args,
+      env: userEnv,
+      availableTools: stdioToolDescriptors,
+      instructions: stdioInstructions,
+    });
     revalidatePath('/mcp');
     return ok({ id: row.id });
   } catch (err) {
@@ -6846,70 +6828,18 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
       conditionJson = { workspacePath };
     }
 
-    // agent_id IS NULL is the workspace-wide scope (see the schema note on the
-    // NULLS NOT DISTINCT unique index — a plain UNIQUE would let duplicates in).
-    const ruleAgentId = scope === 'entity' ? null : agentId;
-    const scopeMatch =
-      ruleAgentId === null ? isNull(approvalRules.agentId) : eq(approvalRules.agentId, agentId);
-
-    // LE GARDE ET SON ECRITURE DANS LA MEME TRANSACTION. Separes, un second
-    // geste concurrent passait le garde et ecrasait la regle de dossier par une
-    // permission globale (revue Reviewer C, passe 2). Le garde pose `FOR UPDATE`
-    // sur la ligne ; le commit la libere une fois l'ecriture faite.
-    const refus = await db.transaction(async (tx) => {
-      // `confirmWidening` ne DESACTIVE pas le garde : il dit que la perte a
-      // ete montree et acceptee (issue #401). Le garde n'a jamais protege
-      // l'elargissement lui-meme, seulement son silence.
-      if (
-        action === 'auto_approve' &&
-        workspacePath === undefined &&
-        scope === 'agent' &&
-        confirmWidening !== true
-      ) {
-        const message = await refuseGlobalGrantOverFolderRule(
-          tx,
-          session.entityId,
-          agentId,
-          toolName,
-        );
-        if (message) return message;
-      }
-
-      if (action === null) {
-        // DELETE: revert to the tool's own default.
-        await tx
-          .delete(approvalRules)
-          .where(
-            and(
-              eq(approvalRules.entityId, session.entityId),
-              scopeMatch,
-              eq(approvalRules.toolName, toolName),
-            ),
-          );
-        return null;
-      }
-
-      // UPSERT on the (entity_id, agent_id, tool_name) unique constraint
-      // (DB-1, audit #2). The old select-then-branch left a race window where
-      // two concurrent calls could both miss the SELECT and insert divergent
-      // rows for the same scope — matchApprovalRule's `.find()` would then pick
-      // whichever the SELECT happened to return first, a non-deterministic
-      // gate. onConflictDoUpdate makes this atomic: one canonical row survives.
-      await tx
-        .insert(approvalRules)
-        .values({
-          entityId: session.entityId,
-          agentId: ruleAgentId,
-          toolName,
-          action,
-          conditionJson,
-        })
-        .onConflictDoUpdate({
-          target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
-          set: { action, conditionJson, updatedAt: new Date() },
-        });
-      return null;
+    // Le garde de dossier, la suppression ou l'upsert, dans UNE transaction :
+    // `setApprovalRuleRepo` (@nodal-agents/db), le chemin que le banc prend
+    // aussi pour poser la même règle (#794).
+    const written = await setApprovalRuleRepo(db, session.entityId, {
+      agentId,
+      toolName,
+      action,
+      scope,
+      conditionJson,
+      ...(confirmWidening === undefined ? {} : { confirmWidening }),
     });
+    const refus = 'refused' in written ? written.refused : null;
     if (refus) return fail('validation_failed', refus);
 
     revalidatePath(`/agents/${agentId}/edit`);

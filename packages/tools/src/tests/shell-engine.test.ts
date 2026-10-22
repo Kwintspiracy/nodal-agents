@@ -13,7 +13,6 @@ import { buildChildEnv } from '../builtin/child-env';
 import { JobProcessScope } from '@nodal-agents/sandbox';
 
 let dir: string;
-const orphans: number[] = [];
 const node = process.execPath;
 const env = buildChildEnv(process.env);
 /** Le périmètre de ces commandes, fermé en fin de suite : rien ne leur survit. */
@@ -31,13 +30,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await scope.close();
-  for (const pid of orphans) {
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      /* déjà mort */
-    }
-  }
   for (let i = 0; i < 5; i++) {
     try {
       await rm(dir, { recursive: true, force: true });
@@ -156,9 +148,10 @@ describe('runShellCommand — tree-kill : le petit-enfant est mort', () => {
     const pid = Number(r.stdout.trim());
     expect(Number.isInteger(pid) && pid > 0).toBe(true);
     await new Promise((res) => setTimeout(res, 1_500));
-    const still = alive(pid);
-    if (still) orphans.push(pid);
-    expect(still).toBe(false);
+    // Jamais tué ici, même survivant (#841) : son pid n'a été lu qu'après la
+    // coupure, quand il pouvait déjà servir à un autre processus. Un survivant
+    // fait échouer le test, et sort seul au bout de 60 s.
+    expect(alive(pid), `pid ${String(pid)} survived the tree kill`).toBe(false);
   });
 });
 

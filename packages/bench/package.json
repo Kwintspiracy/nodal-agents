@@ -28,6 +28,7 @@
     "@nodal-agents/db": "workspace:*",
     "@nodal-agents/orchestration": "workspace:*",
     "@nodal-agents/runner-adapters": "workspace:*",
+    "@nodal-agents/secrets": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
     "@nodal-agents/test-kit": "workspace:*",
     "@nodal-agents/tools": "workspace:*",

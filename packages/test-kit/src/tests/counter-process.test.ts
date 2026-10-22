@@ -77,7 +77,7 @@ describe('counterRise: a bounded wait for a counting process, which says why it 
       expect(rise.why).toBe('');
       expect(rise.value).toBeGreaterThan(floor);
     } finally {
-      process.kill(d.pid);
+      d.watch.kill();
       d.watch.release();
     }
   });
@@ -85,7 +85,7 @@ describe('counterRise: a bounded wait for a counting process, which says why it 
   it('a daemon killed from outside ends the wait at once: dead, no crash record', async () => {
     const d = await startCounting('killed');
     try {
-      process.kill(d.pid, 'SIGKILL');
+      expect(d.watch.kill('SIGKILL')).toBe(true);
       await untilDead(d.watch);
       const floor = readCounter(d.counter);
       const started = Date.now();
@@ -126,7 +126,7 @@ describe('counterRise: a bounded wait for a counting process, which says why it 
       expect(rise.why).toContain(`the daemon (pid ${String(d.pid)}) crashed by itself: Error: E`);
       expect(readFileSync(crashRecordOf(d.counter), 'utf8')).toMatch(/^Error: EISDIR/);
     } finally {
-      if (d.watch.alive()) process.kill(d.pid);
+      d.watch.kill();
       d.watch.release();
     }
   });
@@ -165,7 +165,7 @@ describe('the counter file is never left empty, whatever the instant (#843, run 
       // Et le démon a bien compté pendant ce temps.
       expect(readCounter(counter)).toBeGreaterThan(50);
     } finally {
-      process.kill(watch.pid);
+      watch.kill();
       watch.release();
     }
   });
@@ -191,7 +191,7 @@ describe('the counter file is never left empty, whatever the instant (#843, run 
       }
       // Ils réécrivent tous leur compteur chaque milliseconde : la mort tombe où elle tombe.
       await new Promise((r) => setTimeout(r, 300));
-      for (const d of daemons) process.kill(d.pid, 'SIGKILL');
+      for (const d of daemons) expect(d.watch.kill('SIGKILL')).toBe(true);
       for (const d of daemons) await untilDead(d.watch);
       const left = daemons.map((d) => ({
         counter: d.counter.slice(dir.length + 1),
@@ -202,7 +202,7 @@ describe('the counter file is never left empty, whatever the instant (#843, run 
       for (const d of daemons) expect(readCounter(d.counter)).toBeGreaterThan(0);
     } finally {
       for (const d of daemons) {
-        if (d.watch.alive()) process.kill(d.pid);
+        d.watch.kill();
         d.watch.release();
       }
     }

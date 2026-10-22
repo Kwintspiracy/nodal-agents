@@ -20,6 +20,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createClient, sql } from '@nodal-agents/db';
+import { watchProcess } from '@nodal-agents/test-kit';
 import { embeddedPostgres } from './embedded-postgres-available.ts';
 
 const canStartCluster = embeddedPostgres.available;
@@ -139,10 +140,13 @@ describe('the embedded cluster keeps its own log @cap:installer-et-demarrer/mote
 
       // SIGKILL is TerminateProcess on Windows — the same thing a stray
       // `taskkill /F` does, which is what issue #100 suspects happened here.
+      // Through a watch, never the bare number (#841); if the backend is
+      // already gone nothing is sent, and the assertion below is the judge.
+      const backend = await watchProcess(backendPid);
       try {
-        process.kill(backendPid, 'SIGKILL');
-      } catch {
-        /* it may already be gone; the assertion below is the judge */
+        backend.kill('SIGKILL');
+      } finally {
+        backend.release();
       }
       await close().catch(() => {});
 

@@ -32,6 +32,7 @@ beforeAll(async () => {
   ({ db } = await freshInstanceDb());
   applied = await applyCampaignConfig(db, config, TEST_KEYS, {
     foldersRoot: join(scratch, 'folders'),
+    printerRecordsDir: join(scratch, 'bench-printer-records'),
     installCommunitySkill: fakeCommunityInstaller(db).install,
   });
 });

@@ -75,7 +75,13 @@ export type Activity = (typeof ACTIVITIES)[number];
  * Les besoins qu'un scénario peut déclarer (vérifiés par needs.ts). Un nom hors
  * de cette liste ne compile pas.
  */
-export const NEED_IDS = ['comfyui', 'obsidian-vault', 'bench-printer', 'no-mail-sender'] as const;
+export const NEED_IDS = [
+  'comfyui',
+  'obsidian-vault',
+  'bench-printer',
+  'no-mail-sender',
+  'no-real-printer',
+] as const;
 export type Need = (typeof NEED_IDS)[number];
 
 /**
@@ -95,6 +101,21 @@ export interface ServiceProbe {
   readonly url: string;
   /** null : il répond. Sinon, ce qui a échoué. */
   readonly problem: string | null;
+}
+
+/**
+ * Un agent actif de l'équipe qui peut LANCER un processus pendant l'essai : les
+ * outils que le produit range `egress: 'process'` (`servedToolDefinitions`,
+ * @nodal-agents/orchestration : run_command, run_skill_script, code_task,
+ * declare_verification…) qu'un de ses jobs recevrait, ou son runtime de CLI
+ * (Claude Code, Codex), dont les outils ne sont pas ceux de Nodal.
+ */
+export interface ProcessStarter {
+  readonly agent: string;
+  /** Les outils `process` qu'il tient ; vide quand c'est son runtime qui en lance. */
+  readonly tools: readonly string[];
+  /** Son runtime quand ce n'est pas celui de Nodal (`claude-code`, `codex`…), sinon null. */
+  readonly runtime: string | null;
 }
 
 /** Un serveur MCP attribué à l'équipe ; `tools` null : ses outils ne sont pas connus. */
@@ -129,6 +150,11 @@ export interface ScenarioEnv {
    * des serveurs dont chaque outil est une lecture reconnue.
    */
   readonly teamMcpServers: readonly TeamMcpServer[];
+  /**
+   * Les agents actifs de l'équipe qui peuvent lancer un processus (besoin
+   * `no-real-printer`) : vide, aucune commande ne peut partir pendant l'essai.
+   */
+  readonly processStarters: readonly ProcessStarter[];
   /**
    * Fin de l'essai (ms), quand le banc la connaît. Une demande reçue après n'est
    * pas de cet essai. Absent : l'instant du jugement.

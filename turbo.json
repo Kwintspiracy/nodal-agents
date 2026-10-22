@@ -20,7 +20,8 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["NODAL_VITEST_REPORT_DIR"]
     },
     "typecheck": {
       "dependsOn": ["^build"]

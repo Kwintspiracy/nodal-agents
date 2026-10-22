@@ -39,6 +39,7 @@ import {
   readStackCommit,
   readStackVersion,
   readBenchPrinter,
+  readProcessStarters,
   readTeamMcpServers,
   readTeamTools,
   readUnlistedMcpServers,
@@ -65,6 +66,7 @@ export async function readScenarioEnv(
     unlistedMcpServers: await readUnlistedMcpServers(db, entityId),
     benchPrinter: await readBenchPrinter(db, entityId, opts.benchPrinterRecordsDir ?? null),
     teamMcpServers: await readTeamMcpServers(db, entityId),
+    processStarters: await readProcessStarters(db, entityId),
     services,
     startedMs,
   };
