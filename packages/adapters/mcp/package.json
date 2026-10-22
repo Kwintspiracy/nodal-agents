@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@nodal-agents/shared": "workspace:*",
     "@nodal-agents/tools": "workspace:*",
     "cross-spawn": "^7.0.6",

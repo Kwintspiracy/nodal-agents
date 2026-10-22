@@ -22,7 +22,7 @@
     "campaign": "tsx src/campaign/cli.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@nodal-agents/adapter-mcp": "workspace:*",
     "@nodal-agents/catalog": "workspace:*",
     "@nodal-agents/db": "workspace:*",
