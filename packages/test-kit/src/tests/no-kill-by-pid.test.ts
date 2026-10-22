@@ -18,10 +18,14 @@
 // else). This guard reads every test source as TypeScript and refuses, in it:
 //   - `process.kill(x, signal)`, except the probe `process.kill(x, 0)` and a
 //     process signalling itself (`process.kill(process.pid, …)`);
-//   - any call given the literal `'taskkill'` (a tree kill by number).
-// `killPidTree` is not on the list: its own suites drive it against a mocked
-// process table, and its callers here pass a pid they hold (a child guarded by
-// `exitCode === null`, or a watch).
+//   - any call given the literal `'taskkill'` (a tree kill by number);
+//   - `killPidTree(…)` and `killProcessTree(…)`, the tree kills of the CLI and
+//     of the sandbox. Holding the ROOT is not enough for them (review of #857):
+//     they read the tree, then kill each DESCENDANT by its number, seconds later
+//     on a cold runner, and a descendant that died in between may have handed
+//     its pid to another package's worker. Allowed only with a holder backstop
+//     (`killProcessTree(child.pid, { backstop: () => child.kill('SIGKILL') })`,
+//     the job-scope.ts pattern) or a reason.
 // A call that is safe for a reason the guard cannot see (the group of a child
 // held alive, a child guarded by `exitCode === null`) says why on the line, or
 // on one of the three lines above: `// kill-by-pid: <the reason>`.
@@ -89,9 +93,27 @@ function refused(call: ts.CallExpression): boolean {
     if (target !== undefined && target.getText() === 'process.pid') return false;
     return true;
   }
+  if (ts.isIdentifier(callee) && TREE_KILLS.has(callee.text)) {
+    return !call.arguments.some(hasBackstop);
+  }
   const first = call.arguments[0];
   return (
     first !== undefined && ts.isStringLiteralLike(first) && first.text.toLowerCase() === 'taskkill'
+  );
+}
+
+const TREE_KILLS: ReadonlySet<string> = new Set(['killPidTree', 'killProcessTree']);
+
+/** An options object that names a `backstop`: the holder's own kill. */
+function hasBackstop(arg: ts.Expression): boolean {
+  return (
+    ts.isObjectLiteralExpression(arg) &&
+    arg.properties.some(
+      (p) =>
+        (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) &&
+        ts.isIdentifier(p.name) &&
+        p.name.text === 'backstop',
+    )
   );
 }
 
@@ -106,6 +128,28 @@ describe('killsByPid', () => {
       ].join('\n'),
     );
     expect(found.map((f) => f.line)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('refuses a tree kill by number, even of a held root: its descendants die by number', () => {
+    const found = killsByPid(
+      [
+        'await killPidTree(watch.pid);',
+        'await killPidTree(ROOT, new Set(), RECORD);',
+        "void killProcessTree(pid, { context: { jobId: 'x' } });",
+      ].join('\n'),
+    );
+    expect(found.map((f) => f.line)).toEqual([1, 2, 3]);
+  });
+
+  it('allows a tree kill whose options carry the holder as backstop', () => {
+    expect(
+      killsByPid(
+        [
+          "void killProcessTree(child.pid, { backstop: () => child.kill('SIGKILL') });",
+          'void killProcessTree(child.pid, { platform, backstop });',
+        ].join('\n'),
+      ),
+    ).toEqual([]);
   });
 
   it('allows the probe, a process signalling itself, and the kills that go through a holder', () => {

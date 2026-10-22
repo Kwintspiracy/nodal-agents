@@ -129,6 +129,7 @@ describe('killPidTree — the root is not signalled unproven @cap:installer-et-d
     // empty map, `tableRead` is false, and nothing below has been confirmed.
     tableReturns([]);
 
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
     await killPidTree(ROOT, new Set(), {
       pid: ROOT,
       name: 'node.exe',
@@ -148,6 +149,7 @@ describe('killPidTree — the root is not signalled unproven @cap:installer-et-d
     // must still be able to stop its own children.
     tableReturns([]);
 
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
     await killPidTree(ROOT, new Set());
 
     expect(taskkills()).toEqual([['/F', '/PID', String(ROOT)]]);
@@ -164,6 +166,7 @@ describe('killPidTree — the root is not signalled unproven @cap:installer-et-d
       { pid: LIVE_MEMBER, ppid: ROOT, ticks: TICK_RECORDED, name: 'node.exe' },
     ]);
 
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
     await killPidTree(ROOT, new Set(), {
       pid: ROOT,
       name: 'node.exe',
@@ -180,6 +183,7 @@ describe('killPidTree — the root is not signalled unproven @cap:installer-et-d
   it('spares a root whose generation changed, by the creation tick alone', async () => {
     tableReturns([{ pid: ROOT, ppid: 4, ticks: TICK_OTHER, name: 'node.exe' }]);
 
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
     await killPidTree(ROOT, new Set(), {
       pid: ROOT,
       name: 'node.exe',
@@ -196,6 +200,7 @@ describe('killPidTree — the root is not signalled unproven @cap:installer-et-d
       { pid: LIVE_MEMBER, ppid: ROOT, ticks: TICK_RECORDED, name: 'node.exe' },
     ]);
 
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
     await killPidTree(ROOT, new Set(), {
       pid: ROOT,
       name: 'node.exe',
@@ -216,6 +221,7 @@ describe('killPidTree — the root is not signalled unproven @cap:installer-et-d
       { pid: LIVE_MEMBER, ppid: ROOT, ticks: TICK_RECORDED, name: 'node.exe' },
     ]);
 
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
     await killPidTree(ROOT, new Set(), { pid: ROOT });
 
     expect(taskkills().some((args) => args.includes(String(ROOT)))).toBe(false);
@@ -230,6 +236,7 @@ describe('killPidTree — the root is not signalled unproven @cap:installer-et-d
     // the case above, read the other way because the caller is not the same.
     tableReturns([{ pid: ROOT, ppid: 4, ticks: TICK_RECORDED, name: 'node.exe' }]);
 
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
     await killPidTree(ROOT, new Set());
 
     expect(taskkills()).toEqual([['/F', '/PID', String(ROOT)]]);
@@ -251,6 +258,7 @@ describe('killPidTree — the members are re-read before they are signalled @cap
     // Same number, another process: recycled while the root was being killed.
     tableSequence([[ROOT_ROW, MEMBER_ROW], [{ ...MEMBER_ROW, name: 'chrome.exe' }]]);
 
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
     await killPidTree(ROOT, new Set(), RECORD);
 
     expect(taskkills()).toEqual([['/T', '/F', '/PID', String(ROOT)]]);
@@ -260,6 +268,7 @@ describe('killPidTree — the members are re-read before they are signalled @cap
   it('spares a member whose generation changed under the same name', async () => {
     tableSequence([[ROOT_ROW, MEMBER_ROW], [{ ...MEMBER_ROW, ticks: TICK_OTHER }]]);
 
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
     await killPidTree(ROOT, new Set(), RECORD);
 
     expect(taskkills().some((args) => args.includes(String(LIVE_MEMBER)))).toBe(false);
@@ -271,6 +280,7 @@ describe('killPidTree — the members are re-read before they are signalled @cap
     // not a refusal, and it must not print one.
     tableSequence([[ROOT_ROW, MEMBER_ROW], [ROOT_ROW]]);
 
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
     await killPidTree(ROOT, new Set(), RECORD);
 
     expect(taskkills().some((args) => args.includes(String(LIVE_MEMBER)))).toBe(false);
@@ -284,6 +294,7 @@ describe('killPidTree — the members are re-read before they are signalled @cap
     // for good — the ones `/T` missed.
     tableSequence([[ROOT_ROW, MEMBER_ROW], [], []]);
 
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
     await killPidTree(ROOT, new Set(), RECORD);
 
     expect(taskkills()).toContainEqual(['/F', '/PID', String(LIVE_MEMBER)]);
@@ -296,6 +307,7 @@ describe('killPidTree — the members are re-read before they are signalled @cap
       [ROOT_ROW, MEMBER_ROW],
     ]);
 
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
     await killPidTree(ROOT, new Set(), RECORD);
 
     expect(taskkills()).toContainEqual(['/F', '/PID', String(LIVE_MEMBER)]);

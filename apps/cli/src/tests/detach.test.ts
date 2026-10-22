@@ -44,6 +44,12 @@ const execaEntry = pathToFileURL(createRequire(import.meta.url).resolve('execa')
 // to the bare number: a process that had died since and whose pid Windows had
 // handed to someone else — on CI Windows, another package's vitest worker —
 // went down with it. While the watch is open the pid can name nobody else.
+//
+// And each one is killed through its OWN watch, not through a tree kill from
+// the root (review of #857): `killPidTree` holds nothing it kills below the
+// root, it kills each descendant by its number seconds after reading the tree.
+// Every process these tests start is learned, hence held, so killing them one
+// by one leaves nothing behind.
 const spawned: ProcessWatch[] = [];
 
 async function hold(pid: number): Promise<ProcessWatch> {
@@ -52,19 +58,15 @@ async function hold(pid: number): Promise<ProcessWatch> {
   return watch;
 }
 
-afterEach(async () => {
+afterEach(() => {
   for (const watch of spawned.splice(0)) {
     try {
-      if (watch.alive()) await killPidTree(watch.pid);
+      watch.kill('SIGKILL');
     } finally {
       watch.release();
     }
   }
-  // 10s (the default) was enough until `killPidTree` began snapshotting
-  // descendants through WMI: that call alone runs past 5s on a cold CI runner,
-  // and this hook makes one per spawned process. The hook did not become
-  // flaky — the shutdown path genuinely got slower, and it said so.
-}, 60_000);
+});
 
 describe('up --detach — the flag reaches the action', () => {
   // Mirrors index.ts's registration exactly (see dev-flag.test.ts for why the
@@ -284,6 +286,7 @@ describe('killPidTree — down must reach the grandchild', () => {
     expect(isPidAlive(parent.pid!)).toBe(true);
     expect(isPidAlive(childPid)).toBe(true);
 
+    // kill-by-pid: the code under test, and the one descendant the root starts is held (childPid).
     await killPidTree(parent.pid!);
 
     // Both, not just the one we named. This is the assertion the old
@@ -300,6 +303,7 @@ describe('killPidTree — down must reach the grandchild', () => {
     const watch = await hold(p.pid!);
     await p;
     expect(watch.alive()).toBe(false);
+    // kill-by-pid: the root is held and dead, and it never started a child: nothing to reach.
     await expect(killPidTree(watch.pid)).resolves.toBeUndefined();
   }, 20_000);
 });

@@ -40,7 +40,7 @@ import {
   startEmbeddedPostgres,
 } from '../lib/postgres.ts';
 import { findFreePort } from '../lib/ports.ts';
-import { killPidTree, readPids, recordServiceTree, waitForPidDead } from '../lib/processes.ts';
+import { readPids, recordServiceTree, waitForPidDead } from '../lib/processes.ts';
 import { processTable } from './process-table-available.ts';
 
 const PASSWORD = 'nodalai-down-fresh-pw';
@@ -83,19 +83,12 @@ if (!setup.ok) {
 
 const spawned: ChildProcess[] = [];
 
-/**
- * Is this stand-in still the process WE spawned? The handle knows: once the
- * child has exited (killed by `down`, say) its pid is free and Windows hands it
- * to the next process that asks, so `isPidAlive(pid)` alone could tree-kill a
- * stranger that merely inherited the number.
- */
-function ours(child: ChildProcess): boolean {
-  return child.pid !== undefined && child.exitCode === null && child.signalCode === null;
-}
-
 afterAll(async () => {
   for (const child of spawned.splice(0)) {
-    if (ours(child)) await killPidTree(child.pid!);
+    // Through its handle, never by number (#841): a stand-in is a lone process,
+    // and `child.kill` does nothing once it has exited (killed by `down`, say),
+    // when its pid may already belong to a stranger.
+    child.kill('SIGKILL');
   }
   if (clusterStarted && livePostmasterPid(PG_DATA_DIR) !== null) {
     await runDown().catch(() => undefined);
