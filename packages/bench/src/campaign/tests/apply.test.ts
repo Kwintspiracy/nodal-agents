@@ -13,14 +13,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as d from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { commandExecutionSkill, officeEditingSkill } from '@nodal-agents/catalog';
+import { decrypt } from '@nodal-agents/secrets';
+import { BENCH_PRINTER_RECORDS_ENV } from '../../printer/identity';
 import { checkSpaceCannotSend } from '../../space/guard';
+import { readBenchPrinter } from '../../workflows/stack';
 import { applyCampaignConfig, type AppliedCampaign } from '../apply';
 import {
   CAMPAIGN_CONFIG_FILE,
   CampaignConfigSchema,
   configFingerprint,
   loadCampaignConfig,
-  type CampaignConfig,
 } from '../config';
 import { campaignModelApplier } from '../model';
 import { allowedReachOf } from '../run';
@@ -35,13 +37,19 @@ let banc: WorkspaceView;
 let juge: WorkspaceView;
 let installs: Array<{ source: string; entityId: string }>;
 const foldersRoot = mkdtempSync(join(tmpdir(), 'bench-campaign-folders-'));
+// Le dossier que le BANC donne à son imprimante ; la campagne le prend dans le
+// dossier de la campagne (instancePaths, prouvé par campaign.test.ts).
+const printerRecordsDir = join(foldersRoot, 'bench-printer-records');
 
 beforeAll(async () => {
   ({ db } = await freshInstanceDb());
   const installer = fakeCommunityInstaller(db);
   installs = installer.calls;
+  // La vraie liste d'outils : le serveur du banc est lancé une fois, comme
+  // l'écran des connecteurs le lance avant d'enregistrer un serveur stdio.
   applied = await applyCampaignConfig(db, config, TEST_KEYS, {
     foldersRoot,
+    printerRecordsDir,
     installCommunitySkill: installer.install,
   });
   banc = await readWorkspaceView(db, applied.tested.entityId);
@@ -226,10 +234,12 @@ describe('the applied instance is the team of the page', () => {
       expect(a.channelBindings).toBe(0);
       expect(a.hasTelegramToken).toBe(false);
     }
-    // Outside the Chercheur's eight read operations, nobody reaches outside.
-    expect(banc.agents.filter((a) => a.slug !== 'chercheur').flatMap((a) => a.outbound)).toEqual(
-      [],
-    );
+    // Outside the Chercheur's eight read operations and Chef's bench printer,
+    // nobody reaches outside.
+    expect(banc.agents.filter((a) => a.slug !== 'chercheur').flatMap((a) => a.outbound)).toEqual([
+      { tool: 'bench_printer__get_print_request', origin: 'mcp', via: 'bench-printer' },
+      { tool: 'bench_printer__request_print', origin: 'mcp', via: 'bench-printer' },
+    ]);
     expect(juge.agents.flatMap((a) => a.outbound)).toEqual([]);
     // The pre-trial check passes with the configuration's declared reach…
     const declared = await checkSpaceCannotSend(db, banc.entityId, allowedReachOf(config));
@@ -240,9 +250,57 @@ describe('the applied instance is the team of the page', () => {
     const bare = await checkSpaceCannotSend(db, banc.entityId);
     expect(bare.ok).toBe(false);
     expect([...bare.findings].sort()).toEqual([
+      'agent chef reaches outside Nodal through bench-printer (mcp): bench_printer__get_print_request, bench_printer__request_print',
       'agent chercheur reaches outside Nodal through firecrawl (connector): firecrawl_crawl_start, firecrawl_crawl_status, firecrawl_map, firecrawl_scrape, firecrawl_search',
       'agent chercheur reaches outside Nodal through tavily (connector): tavily_crawl, tavily_extract, tavily_search',
     ]);
+  });
+
+  // #794 : l'imprimante du banc, par le chemin de l'écran des connecteurs. Chaque
+  // fait est relu par un lecteur du produit ou par celui du juge.
+  it('Chef holds the bench printer: its declaration, the folder the bench gave, its tools, and request_print without asking', async () => {
+    // The judge reads it from the team, as the runner would start it.
+    expect(await readBenchPrinter(db, banc.entityId, printerRecordsDir)).toEqual({
+      kind: 'attached',
+      recordsDir: printerRecordsDir,
+    });
+    expect(applied.printerRecordsDir).toBe(printerRecordsDir);
+    // The row as the product writes it: the environment encrypted value by
+    // value, the tools the server really listed.
+    const [row] = await db
+      .select({
+        envVars: d.mcpServers.envVars,
+        availableTools: d.mcpServers.availableTools,
+        entityId: d.mcpServers.entityId,
+      })
+      .from(d.mcpServers)
+      .where(d.eq(d.mcpServers.slug, 'bench-printer'));
+    expect(row!.entityId).toBe(banc.entityId);
+    const stored = (row!.envVars as Record<string, string>)[BENCH_PRINTER_RECORDS_ENV]!;
+    expect(stored.startsWith('enc:v1:')).toBe(true);
+    expect(decrypt(stored)).toBe(printerRecordsDir);
+    expect((row!.availableTools as Array<{ name: string }>).map((t) => t.name).sort()).toEqual([
+      'get_print_request',
+      'request_print',
+    ]);
+    // Chef receives both tools, nobody else any; only request_print passes
+    // without asking (D3 = a).
+    expect(agent(banc, 'chef').tools.filter((t) => t.startsWith('bench_printer__'))).toEqual([
+      'bench_printer__get_print_request',
+      'bench_printer__request_print',
+    ]);
+    for (const other of ['chercheur', 'imageur'])
+      expect(agent(banc, other).tools.some((t) => t.startsWith('bench_printer__'))).toBe(false);
+    expect(juge.agents.flatMap((a) => a.tools).some((t) => t.startsWith('bench_printer__'))).toBe(
+      false,
+    );
+    const chef = applied.agents['chef']!.id;
+    expect(await winningApproval(db, banc.entityId, chef, 'bench_printer__request_print')).toBe(
+      'auto_approve',
+    );
+    expect(
+      await winningApproval(db, banc.entityId, chef, 'bench_printer__get_print_request'),
+    ).toBeNull();
   });
 
   it('the drift check reads the applied team as exactly the configuration', async () => {
@@ -254,6 +312,7 @@ describe('the applied instance is the team of the page', () => {
     await expect(
       applyCampaignConfig(db, config, TEST_KEYS, {
         foldersRoot,
+        printerRecordsDir,
         installCommunitySkill: installer.install,
       }),
     ).rejects.toThrow(/campaign_instance_not_fresh: the instance already has 4 agent\(s\)/);
@@ -390,30 +449,42 @@ describe('the configuration as data', () => {
     expect(base).toMatch(/^[0-9a-f]{12}$/);
   });
 
-  it('a print connector slot that is filled is refused by the applier until #794 wires it', async () => {
-    const c: CampaignConfig = CampaignConfigSchema.parse({
-      ...raw(),
-      agents: (raw()['agents'] as Array<Record<string, unknown>>).map((a) =>
-        a['slug'] === 'chef'
-          ? {
-              ...a,
-              printConnector: {
-                mcpServer: 'bench-printer',
-                tools: ['request_print'],
-                autoApprove: ['request_print'],
-              },
-            }
-          : a,
-      ),
-    });
+  it('the print slot takes the bench printer only, and its own tools', () => {
+    type Slot = { mcpServer: string; tools: string[]; autoApprove: string[] } | null;
+    const withSlot = (slot: Slot, agentSlug = 'chef') =>
+      refusal((c) => {
+        const a = c.agents.find((x) => x.slug === agentSlug) as unknown as {
+          printConnector: Slot;
+        };
+        a.printConnector = slot;
+      });
+    expect(
+      withSlot({ mcpServer: 'office-printer', tools: ['request_print'], autoApprove: [] }),
+    ).toContain('bench-printer');
+    expect(
+      withSlot({ mcpServer: 'bench-printer', tools: ['confirm_print'], autoApprove: [] }),
+    ).not.toBe('(accepted)');
+    expect(
+      withSlot({
+        mcpServer: 'bench-printer',
+        tools: ['get_print_request'],
+        autoApprove: ['request_print'],
+      }),
+    ).toContain('a tool approved without asking must be one the agent receives');
+    expect(
+      withSlot({ mcpServer: 'bench-printer', tools: ['request_print'], autoApprove: [] }, 'juge'),
+    ).toContain('juge is not in the tested workspace: it prints nothing');
+    expect(withSlot(null)).toBe('(accepted)');
+  });
+
+  it('an agent receives the printer and the bench gave no records folder: refused before anything is written', async () => {
     const fresh = await freshInstanceDb();
     await expect(
-      applyCampaignConfig(fresh.db, c, TEST_KEYS, {
+      applyCampaignConfig(fresh.db, config, TEST_KEYS, {
         foldersRoot,
         installCommunitySkill: fakeCommunityInstaller(fresh.db).install,
       }),
-    ).rejects.toThrow(/campaign_print_connector_not_wired/);
-    const agents = await fresh.db.select({ id: d.agents.id }).from(d.agents);
-    expect(agents).toEqual([]);
+    ).rejects.toThrow(/campaign_printer_records_dir/);
+    expect(await fresh.db.select({ id: d.agents.id }).from(d.agents)).toEqual([]);
   });
 });

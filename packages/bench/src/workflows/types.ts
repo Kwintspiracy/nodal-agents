@@ -75,7 +75,13 @@ export type Activity = (typeof ACTIVITIES)[number];
  * Les besoins qu'un scénario peut déclarer (vérifiés par needs.ts). Un nom hors
  * de cette liste ne compile pas.
  */
-export const NEED_IDS = ['comfyui', 'obsidian-vault', 'bench-printer', 'no-mail-sender'] as const;
+export const NEED_IDS = [
+  'comfyui',
+  'obsidian-vault',
+  'bench-printer',
+  'no-mail-sender',
+  'no-real-printer',
+] as const;
 export type Need = (typeof NEED_IDS)[number];
 
 /**
@@ -96,6 +102,21 @@ export interface ServiceProbe {
   /** null : il répond. Sinon, ce qui a échoué. */
   readonly problem: string | null;
 }
+
+/**
+ * Les imprimantes qu'une commande de l'instance peut atteindre, comptées par la
+ * sonde du banc (printers.ts) à travers le vrai `run_command`, sous le bac à
+ * sable de la plateforme :
+ *   - `counted` : la sonde a tourné et rendu un nombre ; `confined` dit si elle
+ *     a tourné confinée (sous Windows, le bac à sable laisse winspool ouvert, #842) ;
+ *   - `failed` : elle n'a pas pu compter, avec la raison ;
+ *   - `not-probed` : l'essai ne l'a pas demandée (aucun scénario sans le besoin
+ *     `no-real-printer` ne la lance).
+ */
+export type PrinterReach =
+  | { readonly kind: 'counted'; readonly count: number; readonly confined: boolean }
+  | { readonly kind: 'failed'; readonly reason: string }
+  | { readonly kind: 'not-probed' };
 
 /** Un serveur MCP attribué à l'équipe ; `tools` null : ses outils ne sont pas connus. */
 export interface TeamMcpServer {
@@ -129,6 +150,8 @@ export interface ScenarioEnv {
    * des serveurs dont chaque outil est une lecture reconnue.
    */
   readonly teamMcpServers: readonly TeamMcpServer[];
+  /** Les imprimantes que les commandes de l'instance peuvent atteindre (besoin `no-real-printer`). */
+  readonly reachablePrinters: PrinterReach;
   /**
    * Fin de l'essai (ms), quand le banc la connaît. Une demande reçue après n'est
    * pas de cet essai. Absent : l'instant du jugement.

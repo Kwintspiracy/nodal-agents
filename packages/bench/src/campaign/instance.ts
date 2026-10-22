@@ -65,6 +65,20 @@ export interface InstancePorts {
   readonly postgres: number;
 }
 
+/**
+ * Ce que le bac à sable du runner de l'instance lit pour savoir quels ports de
+ * Nodal une commande confinée ne doit pas joindre (`nodalDeniedEndpoints` :
+ * PORT, WEB_PORT, et le port de DATABASE_URL), tels que le CLI les donne au
+ * runner de cette instance (apps/cli/src/lib/env.ts). Seuls les ports comptent.
+ */
+export function instanceSandboxEnv(ports: InstancePorts): Record<string, string> {
+  return {
+    PORT: String(ports.runner),
+    WEB_PORT: String(ports.web),
+    DATABASE_URL: `postgres://127.0.0.1:${ports.postgres}/nodal`,
+  };
+}
+
 export interface CampaignInstance {
   readonly id: string;
   /** Le dossier de Nodal de la campagne (`NODALAI_HOME`). */
@@ -195,6 +209,7 @@ export function instancePaths(instance: CampaignInstance): {
   benchConfig: string;
   marker: string;
   folders: string;
+  printerRecords: string;
 } {
   const env = { [NODALAI_HOME_ENV]: instance.home };
   return {
@@ -203,6 +218,9 @@ export function instancePaths(instance: CampaignInstance): {
     benchConfig: join(instance.home, 'bench.json'),
     marker: join(instance.home, 'campaign.json'),
     folders: join(instance.home, 'bench-folders'),
+    // Ce que l'imprimante du banc a reçu : dans le dossier de la campagne,
+    // effacé avec lui ; exporté dans les preuves avant (run.ts).
+    printerRecords: join(instance.home, 'bench-printer-records'),
   };
 }
 

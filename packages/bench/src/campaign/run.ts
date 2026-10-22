@@ -16,13 +16,21 @@
 // (instance.ts, `sweepLeftoverCampaigns`).
 
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import type { Sandbox } from '@nodal-agents/sandbox';
+import { mcpToolPrefix } from '@nodal-agents/shared';
 import { BenchStop } from '../workflows/lock';
 import { modelKey, type MatrixModel } from '../workflows/matrix';
 import type { BenchRun, SessionHooks, SessionSummary } from '../workflows/session';
 import type { TreeFacts } from '../workflows/facts';
-import type { AnyScenario, TrialLine } from '../workflows/types';
+import { probeReachablePrinters } from '../workflows/printers';
+import type { AnyScenario, PrinterReach, TrialLine } from '../workflows/types';
 import type { AllowedReach } from '../space/guard';
-import { applyCampaignConfig, runnerSkillInstaller, type AppliedCampaign } from './apply';
+import {
+  applyCampaignConfig,
+  runnerSkillInstaller,
+  type AppliedCampaign,
+  type ApplyDeps,
+} from './apply';
 import { CampaignBudget } from './budget';
 import { configFingerprint, type CampaignConfig } from './config';
 import { campaignEvidenceDir, exportInstanceLogs, exportSummary, exportTrial } from './export';
@@ -32,6 +40,7 @@ import {
   createInstanceFiles,
   eraseInstance,
   instancePaths,
+  instanceSandboxEnv,
   instanceWorkerSecret,
   planInstance,
   startInstance,
@@ -78,6 +87,10 @@ export interface CampaignDeps extends LifecycleDeps {
   readonly evidenceRoot?: string;
   /** L'arrêt partagé, pour Ctrl+C. */
   readonly stop?: BenchStop;
+  /** Remplace la sonde des imprimantes (défaut : `run_command` sous le bac à sable de l'instance). */
+  readonly probePrinters?: () => Promise<PrinterReach>;
+  /** Remplace la connexion qui liste les outils de l'imprimante du banc (`listStdioMcpServer`). */
+  readonly listMcpServer?: ApplyDeps['listMcpServer'];
   /** Remplace l'installateur de skills communautaires (les tests n'ont pas de runner). */
   readonly installCommunitySkill?: (
     instance: CampaignInstance,
@@ -96,11 +109,26 @@ export interface CampaignSummary {
   readonly evidenceDir: string;
 }
 
-/** Les outils sortants que la configuration déclare, par agent (lecture seule, schéma validé). */
+/**
+ * Les outils sortants que la configuration déclare, par agent : les
+ * connecteurs en lecture seule (schéma validé), et l'imprimante du banc, sous
+ * le nom que le runner donne à ses outils (`bench_printer__request_print`).
+ */
 export function allowedReachOf(config: CampaignConfig): AllowedReach[] {
-  return config.agents.flatMap((a) =>
-    a.connectors.map((c) => ({ agent: a.slug, via: c.slug, tools: [...c.operations] })),
-  );
+  return config.agents.flatMap((a) => [
+    ...a.connectors.map((c) => ({ agent: a.slug, via: c.slug, tools: [...c.operations] })),
+    ...(a.printConnector === null
+      ? []
+      : [
+          {
+            agent: a.slug,
+            via: a.printConnector.mcpServer,
+            tools: a.printConnector.tools.map(
+              (t) => `${mcpToolPrefix(a.printConnector!.mcpServer)}__${t}`,
+            ),
+          },
+        ]),
+  ]);
 }
 
 export async function runCampaign(
@@ -133,7 +161,9 @@ export async function runCampaign(
         runnerSkillInstaller(instance.ports.runner, instanceWorkerSecret(instance));
       applied = await applyCampaignConfig(db, config, req.keys, {
         foldersRoot: instancePaths(instance).folders,
+        printerRecordsDir: instancePaths(instance).printerRecords,
         installCommunitySkill: install,
+        ...(deps.listMcpServer ? { listMcpServer: deps.listMcpServer } : {}),
         log: deps.log,
       });
       const drift = await teamDrift(db, config, applied);
@@ -147,6 +177,17 @@ export async function runCampaign(
       );
 
       const team = applied;
+      // Les imprimantes que les commandes de l'instance peuvent joindre,
+      // comptées sous le bac à sable que SON runner ouvre (ses ports).
+      let sandbox: Promise<Sandbox> | undefined;
+      const probePrinters =
+        deps.probePrinters ??
+        (async () =>
+          probeReachablePrinters({
+            sandbox: await (sandbox ??= import('@nodal-agents/sandbox').then((m) =>
+              m.instanceSandbox(instanceSandboxEnv(config.instance.ports)),
+            )),
+          }));
       const models = req.models ?? [config.models.tested];
       const applier = campaignModelApplier(db, config, team);
       let index = 0;
@@ -177,6 +218,11 @@ export async function runCampaign(
               modelUnderTest: modelKey(model),
               campaign: req.id,
               configFingerprint: fingerprint,
+              probePrinters,
+              // Le juge ne lit que le dossier que le banc a donné à l'imprimante.
+              ...(team.printerRecordsDir === null
+                ? {}
+                : { benchPrinterRecordsDir: team.printerRecordsDir }),
             },
             db,
             stop,
@@ -202,7 +248,10 @@ export async function runCampaign(
                 exportTrial(evidenceDir, index, {
                   line,
                   facts,
-                  folders: campaignFolders(team, deps.folders).map((f) => f.path),
+                  folders: [
+                    ...campaignFolders(team, deps.folders).map((f) => f.path),
+                    ...(team.printerRecordsDir === null ? [] : [team.printerRecordsDir]),
+                  ],
                 });
                 const next = budget.record(line);
                 if (next === 'stop') deps.log(`Campaign stops: ${budget.stopped}.`);

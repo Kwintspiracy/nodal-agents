@@ -46,14 +46,19 @@ import {
 } from './stack';
 import { readResearchSubjects } from './subjects';
 import { DEFAULT_TRIAL_OPTIONS, runTrial, type TrialDeps, type TrialProgress } from './trial';
-import type { AnyScenario, ScenarioEnv, ServiceProbe, TrialLine } from './types';
+import { probeReachablePrinters } from './printers';
+import type { AnyScenario, PrinterReach, ScenarioEnv, ServiceProbe, TrialLine } from './types';
 
 /** L'environnement d'un essai : dossiers de travail, outils de l'équipe, services déclarés et sondés. */
 export async function readScenarioEnv(
   db: AnyDrizzleDb,
   entityId: string,
   startedMs: number,
-  opts: { readonly benchPrinterRecordsDir?: string } = {},
+  opts: {
+    readonly benchPrinterRecordsDir?: string;
+    /** Ce que la sonde des imprimantes a compté pour cet essai ; absent : pas sondé. */
+    readonly reachablePrinters?: PrinterReach;
+  } = {},
 ): Promise<ScenarioEnv> {
   const services: Record<string, ServiceProbe> = {};
   for (const [name, url] of Object.entries(readBenchConfig().services)) {
@@ -65,6 +70,7 @@ export async function readScenarioEnv(
     unlistedMcpServers: await readUnlistedMcpServers(db, entityId),
     benchPrinter: await readBenchPrinter(db, entityId, opts.benchPrinterRecordsDir ?? null),
     teamMcpServers: await readTeamMcpServers(db, entityId),
+    reachablePrinters: opts.reachablePrinters ?? { kind: 'not-probed' },
     services,
     startedMs,
   };
@@ -102,6 +108,13 @@ export interface BenchRun {
    * quand il le sait : la déclaration de l'imprimante doit le porter.
    */
   readonly benchPrinterRecordsDir?: string;
+  /**
+   * Compte les imprimantes qu'une commande de l'instance peut joindre (besoin
+   * `no-real-printer`) ; défaut : la sonde par le vrai `run_command`
+   * (`probeReachablePrinters`). Lancée une fois par essai qui déclare le
+   * besoin, avant lui, et par aucun autre.
+   */
+  readonly probePrinters?: () => Promise<PrinterReach>;
 }
 
 /** Ce qu'une session dit à qui l'écoute. Tout est facultatif sauf `log`. */
@@ -189,6 +202,12 @@ export async function runBench(
         hooks.log(`\n▶ ${s.id} v${s.version} [${s.activity}] (${i}/${run.trials})`);
         await hooks.beforeTrial?.(s, at);
         hooks.trialStart?.(s, at, total);
+        // La sonde des imprimantes, pour un essai qui la demande seulement : une
+        // fois, avant lui ; le jugement d'après relit le même compte.
+        let printers: Promise<PrinterReach> | undefined;
+        const reachablePrinters = (s.needs ?? []).includes('no-real-printer')
+          ? () => (printers ??= (run.probePrinters ?? probeReachablePrinters)())
+          : null;
         const deps: TrialDeps = {
           now: () => Date.now(),
           sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -197,11 +216,12 @@ export async function runBench(
           read: (rootId) => readTreeFacts(db, rootId),
           cancel: (ent, rootId) => cancelTree(db, ent, rootId),
           foreign: () => readForeignActivity(db, DEFAULT_TRIAL_OPTIONS.chatQuietMs),
-          env: (startedMs) =>
+          env: async (startedMs) =>
             readScenarioEnv(db, target.entityId, startedMs, {
               ...(run.benchPrinterRecordsDir
                 ? { benchPrinterRecordsDir: run.benchPrinterRecordsDir }
                 : {}),
+              ...(reachablePrinters ? { reachablePrinters: await reachablePrinters() } : {}),
             }),
           rootModel: () => readRootModel(db, target.entityId),
           subjects: () => readResearchSubjects(),

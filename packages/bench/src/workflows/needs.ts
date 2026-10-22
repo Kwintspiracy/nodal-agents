@@ -1,8 +1,9 @@
 // workflows/needs.ts — ce qu'un scénario demande à la machine, et ce qui manque.
 //
 // Un scénario déclare ses besoins par leur NOM (`needs`) : un service local
-// (ComfyUI), un coffre Obsidian, l'imprimante du banc, ou l'assurance qu'aucun
-// courrier ne peut partir. Un besoin absent fait SAUTER l'essai, avec sa
+// (ComfyUI), un coffre Obsidian, l'imprimante du banc, l'assurance qu'aucun
+// courrier ne peut partir, ou qu'aucune vraie imprimante n'est à la portée des
+// commandes de l'instance. Un besoin absent fait SAUTER l'essai, avec sa
 // raison, sans lancer de job : ni rouge (rien n'a été essayé), ni silence (la
 // ligne `skipped` le dit, le portail l'affiche en gris).
 //
@@ -322,6 +323,23 @@ function printGateReasons(env: ScenarioEnv): string[] {
   ];
 }
 
+/**
+ * Le besoin `no-real-printer` : la sonde (printers.ts) n'a compté AUCUNE
+ * imprimante qu'une commande d'agent puisse joindre. Fermé par défaut : une
+ * sonde qui n'a pas tourné, ou qui n'a pas rendu de nombre, fait sauter
+ * l'essai, en le disant.
+ */
+export function noRealPrinterReason(env: ScenarioEnv): string | null {
+  const p = env.reachablePrinters;
+  if (p.kind === 'not-probed')
+    return "the bench did not count the printers the instance's commands can reach: print trials never run where a real printer might be reachable; see #842";
+  if (p.kind === 'failed')
+    return `the bench could not count the printers the instance's commands can reach (${p.reason}): print trials never run where a real printer might be reachable; see #842`;
+  return p.count === 0
+    ? null
+    : `a real printer is reachable from the instance's commands: ${p.count} printer(s); see #842`;
+}
+
 /** Pourquoi le besoin manque, ou null quand il est là. */
 const CHECKS: Record<Need, (env: ScenarioEnv) => string | null> = {
   comfyui(env) {
@@ -353,6 +371,7 @@ const CHECKS: Record<Need, (env: ScenarioEnv) => string | null> = {
       ? null
       : `an agent of this workspace can send e-mail (${senders.join(', ')}): the bench sends nothing from the owner's account, so this scenario does not run here`;
   },
+  'no-real-printer': noRealPrinterReason,
 };
 
 /** Les raisons de sauter l'essai : une par besoin absent, vide quand tout est là. */

@@ -8,6 +8,14 @@
 // appelle. Jamais une ligne écrite à côté d'elles : un changement de l'écran
 // atteint le banc, et ce que le banc mesure est ce qu'un utilisateur obtient.
 //
+// L'imprimante du banc (#794) passe par le même chemin que l'écran des
+// connecteurs : le serveur est lancé une fois pour lister ses outils, déclaré
+// par `createStdioMcpServerRepo` (son environnement chiffré, comme le runner le
+// lit), attribué par `attachMcpServerToAgent` avec les outils permis, et la
+// règle « sans demande » posée par `setApprovalRuleRepo`, celle de l'onglet
+// Autonomie. Son dossier d'enregistrements est celui que le BANC donne, dans
+// le dossier de la campagne : il part avec l'instance.
+//
 // Il ne s'applique qu'à une instance NEUVE (aucun agent) : il crée, il ne
 // fusionne pas. Ce qu'il ne peut pas faire, il le refuse en le nommant, avant
 // ou pendant, jamais un espace à moitié réglé qui passerait pour le bon.
@@ -22,7 +30,8 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
-import { COMMUNITY_SKILL_CATALOG } from '@nodal-agents/shared';
+import { COMMUNITY_SKILL_CATALOG, mcpToolPrefix } from '@nodal-agents/shared';
+import { benchPrinterServer, type BenchPrinterServerDeclaration } from '../printer/declaration';
 import type { CampaignAgent, CampaignConfig, CampaignFolder } from './config';
 import type { CampaignKeys } from './keys';
 
@@ -44,6 +53,38 @@ export interface AppliedCampaign {
     readonly path: string;
     readonly seed: CampaignFolder['seed'];
   }>;
+  /**
+   * Le dossier où l'imprimante du banc enregistre ce qu'elle reçoit, celui que
+   * le banc lui a donné ; null quand aucun agent ne la reçoit.
+   */
+  readonly printerRecordsDir: string | null;
+}
+
+/** Ce qu'un serveur stdio a publié à sa connexion : ses outils (descripteurs complets) et ses instructions. */
+export interface ListedMcpServer {
+  readonly tools: unknown;
+  readonly instructions: string | null;
+}
+
+/**
+ * Lance le serveur une fois et lit ce qu'il publie, comme l'écran des
+ * connecteurs avant d'enregistrer un serveur stdio (`connectMcp`).
+ */
+export async function listStdioMcpServer(
+  d: BenchPrinterServerDeclaration,
+): Promise<ListedMcpServer> {
+  const { connectMcp } = await import('@nodal-agents/adapter-mcp');
+  const conn = await connectMcp({
+    transport: 'stdio',
+    command: d.command,
+    args: d.args,
+    env: d.envVars,
+  });
+  try {
+    return { tools: conn.tools, instructions: conn.instructions };
+  } finally {
+    await conn.close().catch(() => undefined);
+  }
 }
 
 /** Installe un skill communautaire dans un espace (la route `/api/skills/install` du runner). */
@@ -52,7 +93,14 @@ export type CommunitySkillInstaller = (source: string, entityId: string) => Prom
 export interface ApplyDeps {
   /** Le dossier sous lequel les dossiers de travail des agents sont posés. */
   readonly foldersRoot: string;
+  /**
+   * Le dossier que le banc donne à son imprimante (dans le dossier de la
+   * campagne) ; obligatoire dès qu'un agent reçoit l'imprimante.
+   */
+  readonly printerRecordsDir?: string;
   readonly installCommunitySkill: CommunitySkillInstaller;
+  /** Remplace la connexion qui liste les outils de l'imprimante (défaut : `listStdioMcpServer`). */
+  readonly listMcpServer?: (d: BenchPrinterServerDeclaration) => Promise<ListedMcpServer>;
   readonly log?: (line: string) => void;
 }
 
@@ -128,12 +176,11 @@ export async function applyCampaignConfig(
 ): Promise<AppliedCampaign> {
   const d = await import('@nodal-agents/db');
   const log = deps.log ?? (() => undefined);
-  if (config.agents.some((a) => a.printConnector !== null)) {
-    // L'imprimante factice (#794) se construit en parallèle : celui qui fusionne
-    // en second branche cet emplacement. D'ici là, il n'est jamais ignoré.
+  const printing = config.agents.some((a) => a.printConnector !== null);
+  if (printing && deps.printerRecordsDir === undefined) {
     fail(
-      'campaign_print_connector_not_wired',
-      'the configuration gives an agent a print connector, and the applier does not wire it yet (#794)',
+      'campaign_printer_records_dir',
+      'an agent receives the bench printer, and the bench gave it no records folder',
     );
   }
   await assertFresh(db);
@@ -277,6 +324,46 @@ export async function applyCampaignConfig(
       folders.push({ agent: a.slug, label: f.label, path, seed: f.seed });
     }
 
+    if (a.printConnector !== null) {
+      const p = a.printConnector;
+      const key = `${entityId}:printer`;
+      let serverId = connectorIds.get(key);
+      if (!serverId) {
+        const declaration = benchPrinterServer(deps.printerRecordsDir!);
+        mkdirSync(deps.printerRecordsDir!, { recursive: true });
+        const listed = await (deps.listMcpServer ?? listStdioMcpServer)(declaration);
+        serverId = (
+          await d.createStdioMcpServerRepo(db, entityId, {
+            name: declaration.name,
+            slug: declaration.slug,
+            command: declaration.command,
+            args: declaration.args,
+            env: declaration.envVars,
+            availableTools: listed.tools,
+            instructions: listed.instructions,
+          })
+        ).id;
+        connectorIds.set(key, serverId);
+      }
+      const attached = await d.attachMcpServerToAgent(db, {
+        entityId,
+        agentId,
+        mcpServerId: serverId,
+        enabledTools: [...p.tools],
+      });
+      if (!attached.ok) fail('campaign_printer_attach', `${a.slug}: ${attached.message}`);
+      for (const tool of p.autoApprove) {
+        const r = await d.setApprovalRuleRepo(db, entityId, {
+          agentId,
+          toolName: `${mcpToolPrefix(p.mcpServer)}__${tool}`,
+          action: 'auto_approve',
+          scope: 'agent',
+          conditionJson: {},
+        });
+        if ('refused' in r) fail('campaign_printer_rule', `${a.slug} ← ${tool}: ${r.refused}`);
+      }
+    }
+
     if (a.runCommand !== null) {
       const r = await d.setRunCommandRuleRepo(db, entityId, agentId, a.runCommand);
       if ('refused' in r) fail('campaign_run_command_rule', `${a.slug}: ${r.refused}`);
@@ -291,5 +378,6 @@ export async function applyCampaignConfig(
     judge: { entityId: entityOf.judge },
     agents: ids,
     folders,
+    printerRecordsDir: printing ? deps.printerRecordsDir! : null,
   };
 }

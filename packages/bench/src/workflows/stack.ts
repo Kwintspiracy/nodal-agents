@@ -411,11 +411,18 @@ export async function readBenchPrinter(
   entityId: string,
   expectedDir: string | null = null,
 ): Promise<BenchPrinterState> {
-  return benchPrinterState(
-    await readAttachedMcpServers(db, entityId),
-    benchPrinterServer,
-    expectedDir,
-  );
+  // L'environnement est relu comme le runner le lit avant de lancer le
+  // serveur : chaque valeur déchiffrée (`decryptMcpServerEnv`). Une valeur qui
+  // ne se déchiffre pas est un serveur que le runner écarterait : il est dit.
+  const { decryptMcpServerEnv } = await import('@nodal-agents/db');
+  const rows = (await readAttachedMcpServers(db, entityId)).map((r) => {
+    try {
+      return { ...r, envVars: decryptMcpServerEnv(r.envVars) };
+    } catch (e) {
+      return { ...r, envError: String(e instanceof Error ? e.message : e) };
+    }
+  });
+  return benchPrinterState(rows, benchPrinterServer, expectedDir);
 }
 
 /**

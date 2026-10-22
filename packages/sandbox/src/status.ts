@@ -12,12 +12,25 @@
 // transition D2 : bandeau + double confirmation du Yolo viennent avec
 // l'écran).
 
+import { nodalDeniedEndpoints } from './policy';
+import { startNodalProxy } from './proxy';
 import { mxcBackend } from './windows-mxc';
 import type { SandboxBackend, SandboxStatus } from './types';
 
-/** Le backend de ce système, ou `null` quand aucun n'existe encore. */
-function platformBackend(platform: NodeJS.Platform): SandboxBackend | null {
-  if (platform === 'win32') return mxcBackend();
+/**
+ * Le backend de ce système, ou `null` quand aucun n'existe encore. `env` :
+ * l'environnement d'où se lisent les ports de l'instance de Nodal que le
+ * réseau confiné ne doit pas joindre (`nodalDeniedEndpoints`), lu à
+ * l'ouverture du premier conteneur.
+ */
+function platformBackend(
+  platform: NodeJS.Platform,
+  env: Readonly<Record<string, string | undefined>>,
+): SandboxBackend | null {
+  if (platform === 'win32')
+    return mxcBackend(undefined, undefined, undefined, () =>
+      startNodalProxy(nodalDeniedEndpoints(env)),
+    );
   // macOS (Seatbelt direct) et Linux (Landlock) : PR suivantes de #628.
   return null;
 }
@@ -68,7 +81,22 @@ let processSandbox: Sandbox | undefined;
 
 /** Le bac à sable de CE processus — un seul, sondé une fois. */
 export function defaultSandbox(): Sandbox {
-  return (processSandbox ??= createSandbox(platformBackend(process.platform)));
+  return (processSandbox ??= createSandbox(platformBackend(process.platform, process.env)));
+}
+
+/**
+ * Le bac à sable que le runner d'une AUTRE instance ouvrirait : le même
+ * backend que `defaultSandbox`, les ports de Nodal lus dans `env` (PORT,
+ * WEB_PORT, DATABASE_URL de cette instance) au lieu de l'environnement de ce
+ * processus. Le banc y compte les imprimantes qu'une commande de l'instance de
+ * sa campagne peut joindre (#794). Un appel, un bac à sable : l'appelant le
+ * garde le temps qu'il lui faut.
+ */
+export function instanceSandbox(
+  env: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform = process.platform,
+): Sandbox {
+  return createSandbox(platformBackend(platform, env), { platform });
 }
 
 /**

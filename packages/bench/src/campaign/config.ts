@@ -33,6 +33,7 @@ import { z } from 'zod';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { COMMUNITY_SKILL_CATALOG, findModelCatalogEntry } from '@nodal-agents/shared';
+import { BENCH_PRINTER_SLUG, BENCH_PRINTER_TOOLS } from '../printer/identity';
 import { REPO } from '../workflows/paths';
 
 /** Le fichier de la configuration du banc, dans le dépôt. */
@@ -73,21 +74,25 @@ const ConnectorSchema = z
   .strict();
 
 /**
- * L'emplacement du connecteur d'impression du Chef : l'imprimante factice du
- * banc (#794, un serveur MCP qui enregistre les demandes et n'imprime jamais).
- * Construite en parallèle ; tant qu'elle ne l'est pas, l'emplacement est
- * `null` et l'applicateur refuse toute autre valeur en le disant : celui qui
- * fusionne en second la branche.
+ * L'emplacement du connecteur d'impression d'un agent : l'imprimante factice du
+ * banc (#794), et RIEN D'AUTRE. Un serveur MCP qui enregistre ce qu'il reçoit
+ * dans le dossier de la campagne et n'imprime jamais ; aucun autre serveur ne
+ * se déclare ici, le schéma refuse son slug. `tools` : les outils de
+ * l'imprimante que l'agent reçoit ; `autoApprove` : ceux qui passent sans
+ * demande (décision D3 = a du propriétaire : `request_print`).
  */
+const BenchPrinterTool = z.enum(BENCH_PRINTER_TOOLS);
 const PrintConnectorSlot = z
   .object({
-    /** Le slug du serveur MCP de l'imprimante factice. */
-    mcpServer: Slug,
-    /** Les outils que l'agent en reçoit, et ceux qui passent sans demande (D3 = a). */
-    tools: z.array(z.string().min(1)).min(1),
-    autoApprove: z.array(z.string().min(1)),
+    mcpServer: z.literal(BENCH_PRINTER_SLUG),
+    tools: z.array(BenchPrinterTool).min(1),
+    autoApprove: z.array(BenchPrinterTool),
   })
   .strict()
+  .refine((p) => p.autoApprove.every((t) => p.tools.includes(t)), {
+    message: 'a tool approved without asking must be one the agent receives',
+    path: ['autoApprove'],
+  })
   .nullable();
 export type PrintConnector = z.infer<typeof PrintConnectorSlot>;
 
@@ -262,6 +267,9 @@ export const CampaignConfigSchema = z
       }
       if (new Set(a.folders.map((f) => f.label)).size !== a.folders.length) {
         issue(`${a.slug} has two folders with the same label`, at('folders'));
+      }
+      if (a.printConnector !== null && a.workspace !== 'tested') {
+        issue(`${a.slug} is not in the tested workspace: it prints nothing`, at('printConnector'));
       }
     });
   });

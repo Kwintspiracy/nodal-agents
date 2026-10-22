@@ -257,6 +257,9 @@ export {
   listConversationRunsTool,
   messageConversationRunTool,
   stopConversationRunTool,
+  // Le vrai `run_command` : le banc y fait passer sa sonde des imprimantes
+  // qu'une commande d'agent peut joindre (#794, besoin `no-real-printer`).
+  runCommandTool,
 } from './builtin/index';
 export type {
   AlwaysOnTool,

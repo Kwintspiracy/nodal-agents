@@ -161,6 +161,7 @@ describe('comfyui judges', () => {
       teamTools: [],
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' as const },
+      reachablePrinters: { kind: 'not-probed' as const },
       teamMcpServers: [],
       startedMs: 0,
     };
@@ -730,6 +731,7 @@ describe('the bench-printer need (#794)', () => {
     teamTools: [],
     unlistedMcpServers: [],
     benchPrinter: { kind: 'absent' },
+    reachablePrinters: { kind: 'not-probed' },
     teamMcpServers: [],
     services: {},
     startedMs: 0,
@@ -738,9 +740,9 @@ describe('the bench-printer need (#794)', () => {
   const attached: ScenarioEnv['benchPrinter'] = { kind: 'attached', recordsDir: '/records' };
 
   it.each(['print-file', 'print', 'recipe'])(
-    '%s needs the bench printer, and no longer the real printer connector',
+    '%s needs the bench printer, and no real printer within reach of the commands (#842)',
     (id) => {
-      expect(scenarioById(id)!.needs).toEqual(['bench-printer']);
+      expect(scenarioById(id)!.needs).toEqual(['bench-printer', 'no-real-printer']);
     },
   );
 
@@ -760,6 +762,7 @@ describe('the bench-printer need (#794)', () => {
         ['bench-printer'],
         env({
           benchPrinter: attached,
+          reachablePrinters: { kind: 'counted', count: 0, confined: true },
           teamTools: ['bench_printer__request_print', 'bench_printer__get_print_request'],
         }),
       ),
@@ -772,6 +775,7 @@ describe('the bench-printer need (#794)', () => {
         ['bench-printer'],
         env({
           benchPrinter: { kind: 'broken', reason: 'the "bench-printer" server declares nothing' },
+          reachablePrinters: { kind: 'not-probed' },
         }),
       ),
     ).toEqual(['the "bench-printer" server declares nothing']);
@@ -788,6 +792,7 @@ describe('the bench-printer need (#794)', () => {
         ['bench-printer'],
         env({
           benchPrinter: attached,
+          reachablePrinters: { kind: 'counted', count: 0, confined: true },
           teamMcpServers: [benchServer],
           teamTools: [
             ...BENCH_TOOLS,
@@ -822,6 +827,7 @@ describe('the bench-printer need (#794)', () => {
           ['bench-printer'],
           env({
             benchPrinter: attached,
+            reachablePrinters: { kind: 'counted', count: 0, confined: true },
             teamMcpServers: [benchServer, { slug, tools }],
             teamTools: [...BENCH_TOOLS, ...tools.map((x) => slug.replace('-', '_') + '__' + x)],
           }),
@@ -841,6 +847,7 @@ describe('the bench-printer need (#794)', () => {
         ['bench-printer'],
         env({
           benchPrinter: attached,
+          reachablePrinters: { kind: 'counted', count: 0, confined: true },
           teamMcpServers: [benchServer, { slug: 'mystery', tools: null }],
           teamTools: BENCH_TOOLS,
         }),
@@ -857,6 +864,7 @@ describe('the bench-printer need (#794)', () => {
         ['bench-printer'],
         env({
           benchPrinter: attached,
+          reachablePrinters: { kind: 'counted', count: 0, confined: true },
           teamMcpServers: [
             // Son propre serveur n'a pas encore listé ses outils : son identité suffit.
             { slug: 'bench-printer', tools: null },
@@ -877,6 +885,7 @@ describe('the bench-printer need (#794)', () => {
         ['bench-printer'],
         env({
           benchPrinter: attached,
+          reachablePrinters: { kind: 'counted', count: 0, confined: true },
           teamMcpServers: [{ slug: 'cups', tools: ['submit_job'] }],
           teamTools: ['cups__submit_job'],
         }),
