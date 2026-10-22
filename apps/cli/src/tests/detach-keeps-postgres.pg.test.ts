@@ -12,8 +12,9 @@
 // the way `up` exits; this file then looks at the cluster from the outside —
 // the port, a query, the lockfile — and finally stops it with the real `down`.
 // A temp NODALAI_HOME (never the owner's `~/.nodalai`), a free port well away
-// from the owner's 25444, and whatever is left running is stopped by PID in
-// `afterAll`.
+// from the owner's 25444, and whatever is left running is stopped in
+// `afterAll` — through the watch opened on each postmaster while its launcher
+// still lived, never by a pid read from the lockfile (#841).
 
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
@@ -27,25 +28,22 @@ const home = await vi.hoisted(async () => {
 });
 
 import { spawn } from 'node:child_process';
-import { rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createConnection } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
   registerTestCluster,
   unregisterTestCluster,
   watchProcess,
+  type ProcessWatch,
   withPostgresClusterStart,
 } from '@nodal-agents/test-kit';
 import { runDown } from '../commands/down.ts';
 import { PG_DATA_DIR } from '../lib/config.ts';
 import { importEmbeddedPostgres } from '../lib/embedded-postgres-module.ts';
 import { findFreePort } from '../lib/ports.ts';
-import {
-  readPostmasterPid,
-  resolvePgCtl,
-  stopOrphanPostgres,
-  livePostmasterPid,
-} from '../lib/postgres.ts';
+import { resolvePgCtl, stopOrphanPostgres, livePostmasterPid } from '../lib/postgres.ts';
 import { processTable } from './process-table-available.ts';
 
 const PASSWORD = 'detached-launcher-password-0123456789';
@@ -57,6 +55,8 @@ const pgCtl = await resolvePgCtl();
 interface Launched {
   /** The postmaster pid the launcher printed, or null when it never got ready. */
   pid: number | null;
+  /** That postmaster, held from the moment its pid was printed. */
+  postmaster: ProcessWatch | null;
   exitCode: number | null;
   output: string;
 }
@@ -73,16 +73,31 @@ async function launch(mode: 'detached' | 'foreground'): Promise<Launched> {
       const child = spawn(
         process.execPath,
         ['--import', 'tsx', fixture, PG_DATA_DIR, String(port), mode],
-        { cwd: cliDir, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
+        { cwd: cliDir, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true },
       );
       let output = '';
-      child.stdout.on('data', (b: Buffer) => (output += b.toString()));
-      child.stderr.on('data', (b: Buffer) => (output += b.toString()));
-      const exitCode = await new Promise<number | null>((resolve) => {
+      // A launcher that died before READY has no stdin left to write GO to.
+      child.stdin.on('error', () => undefined);
+      const exited = new Promise<number | null>((resolve) => {
         child.once('exit', (code) => resolve(code));
       });
-      const ready = /READY pid=(\d+)/.exec(output);
-      return { pid: ready ? Number(ready[1]) : null, exitCode, output };
+      // The postmaster pid, read while the launcher waits for GO: the cluster
+      // is alive then, in both modes, so the watch holds that postmaster.
+      const printed = new Promise<number | null>((resolve) => {
+        child.stdout.on('data', (b: Buffer) => {
+          output += b.toString();
+          const ready = /READY pid=(\d+)/.exec(output);
+          if (ready) resolve(Number(ready[1]));
+        });
+        void exited.then(() => resolve(null));
+      });
+      child.stderr.on('data', (b: Buffer) => (output += b.toString()));
+      const pid = await printed;
+      const postmaster = pid === null ? null : await watchProcess(pid);
+      if (postmaster !== null) held.push(postmaster);
+      child.stdin.end('GO\n');
+      const exitCode = await exited;
+      return { pid, postmaster, exitCode, output };
     });
   } finally {
     unregisterTestCluster(entry);
@@ -133,24 +148,28 @@ async function selectTwo(): Promise<number> {
   }
 }
 
-/** Whatever a case left running: stopped by the PID its lockfile names. */
-async function stopLeftover(): Promise<void> {
-  const pid = readPostmasterPid(PG_DATA_DIR);
-  if (pid === null || livePostmasterPid(PG_DATA_DIR) === null) return;
-  // Held while it lives, so the last-resort kill below can reach only this
-  // postmaster, never a process that got its pid after it stopped (#841).
-  const postmaster = await watchProcess(pid);
-  try {
-    await stopOrphanPostgres(pid, PG_DATA_DIR);
-    if (await waitUntil(async () => livePostmasterPid(PG_DATA_DIR) === null, 15_000)) return;
-    postmaster.kill();
-  } finally {
-    postmaster.release();
-  }
+/** Every postmaster a launcher of this file started, held since its READY. */
+const held: ProcessWatch[] = [];
+
+/**
+ * A postmaster a case left running: stopped the way `down` stops an orphan,
+ * then, as a last resort, killed through its watch. Never through a pid read
+ * from the lockfile: once the cluster is down that number may name anyone.
+ */
+async function stopLeftover(postmaster: ProcessWatch | null): Promise<void> {
+  if (postmaster === null || !postmaster.alive()) return;
+  await stopOrphanPostgres(postmaster.pid, PG_DATA_DIR);
+  if (await waitUntil(async () => !postmaster.alive(), 15_000)) return;
+  postmaster.kill();
+}
+
+async function cleanUpLeftovers(): Promise<void> {
+  for (const postmaster of held) await stopLeftover(postmaster);
 }
 
 afterAll(async () => {
-  await stopLeftover();
+  await cleanUpLeftovers();
+  for (const postmaster of held.splice(0)) postmaster.release();
   rmSync(home, { recursive: true, force: true });
 }, 60_000);
 
@@ -177,7 +196,7 @@ describe('up --detach keeps the database running @cap:installer-et-demarrer/mote
     // And it is the very postmaster the launcher started.
     expect(livePostmasterPid(PG_DATA_DIR)).toBe(launched.pid);
 
-    await stopLeftover();
+    await stopLeftover(launched.postmaster);
   }, 180_000);
 
   it.skipIf(!canDown)(
@@ -211,6 +230,32 @@ describe('a foreground launcher still takes the cluster with it @cap:installer-e
     expect(launched.exitCode).toBe(0);
     expect(await waitUntil(async () => !(await portAnswers()), 30_000)).toBe(true);
 
-    await stopLeftover();
+    await stopLeftover(launched.postmaster);
   }, 180_000);
+});
+
+// The cleanup of this file must reach only the postmasters it started (review
+// pass 2 of #857). A pid read from the lockfile is a number: a foreground
+// launcher takes the cluster down, the lockfile stays, and Windows hands the
+// pid to the next process that asks, on CI another package's vitest worker.
+describe('the cleanup of this file reaches only the postmasters it started (#841)', () => {
+  it('a live stranger named by the lockfile survives the cleanup', async () => {
+    const stranger = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    await new Promise<void>((resolve) => stranger.once('spawn', () => resolve()));
+    mkdirSync(PG_DATA_DIR, { recursive: true });
+    const lockfile = join(PG_DATA_DIR, 'postmaster.pid');
+    const seconds = Math.floor(Date.now() / 1000);
+    writeFileSync(lockfile, `${String(stranger.pid)}\n${PG_DATA_DIR}\n${String(seconds)}\n`);
+    try {
+      await cleanUpLeftovers();
+      await new Promise((r) => setTimeout(r, 500));
+      expect([stranger.exitCode, stranger.signalCode]).toEqual([null, null]);
+    } finally {
+      stranger.kill('SIGKILL');
+      rmSync(lockfile, { force: true });
+    }
+  }, 120_000);
 });

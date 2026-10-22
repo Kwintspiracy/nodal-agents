@@ -1,7 +1,7 @@
 // detached-launcher.fixture.ts — a stand-in for the tail of `nodal-agents up`.
 //
 // It starts the embedded cluster the way `up` does (`startEmbeddedPostgres`),
-// says READY, then ends the way `up` ends: `--detach` releases the cluster from
+// says READY, waits for the test's GO on stdin, then ends the way `up` ends: `--detach` releases the cluster from
 // the package's stop-at-exit and calls `process.exit(0)`; a foreground launcher
 // just exits. The test runs it as a child process and looks at what is left of
 // the cluster once this process is gone.
@@ -25,5 +25,12 @@ const pg = await startEmbeddedPostgres(
   { detached },
 );
 console.log(`READY pid=${readPostmasterPid(dataDir)}`);
+// The test holds the postmaster while this launcher, hence the cluster, is
+// surely alive, then says GO (or closes stdin): from then on its cleanup can
+// only reach this postmaster, never a process that later got its pid (#841).
+await new Promise<void>((resolve) => {
+  process.stdin.once('data', () => resolve());
+  process.stdin.once('end', () => resolve());
+});
 if (detached) pg.outliveLauncher();
 process.exit(0);
