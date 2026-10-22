@@ -118,8 +118,8 @@ function world(opts: {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
-      // A machine with no printer: the no-real-printer need is met.
-      reachablePrinters: { kind: 'counted', count: 0, confined: true },
+      // A team that starts no process: the no-real-printer need is met.
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     }),
@@ -267,7 +267,7 @@ describe('workflow trial safety rules', () => {
         services: {},
         unlistedMcpServers: [],
         benchPrinter: { kind: 'absent' },
-        reachablePrinters: { kind: 'counted', count: 0, confined: true },
+        processStarters: [],
         teamMcpServers: [],
         startedMs,
       });
@@ -306,7 +306,7 @@ describe('workflow trial safety rules', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'attached', recordsDir },
-      reachablePrinters: { kind: 'counted', count: 0, confined: true },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -358,7 +358,7 @@ describe('workflow trial safety rules', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'attached', recordsDir },
-      reachablePrinters: { kind: 'counted', count: 0, confined: true },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -386,7 +386,7 @@ describe('workflow trial safety rules', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'attached', recordsDir },
-      reachablePrinters: { kind: 'counted', count: 0, confined: true },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -466,7 +466,7 @@ describe('where a trial may send', () => {
       services: { comfyui: { url: 'http://127.0.0.1:8188', problem: null } },
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
-      reachablePrinters: { kind: 'not-probed' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -488,7 +488,7 @@ describe('where a trial may send', () => {
       services: { comfyui: { url: 'http://127.0.0.1:8188', problem: null } },
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
-      reachablePrinters: { kind: 'not-probed' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -935,7 +935,7 @@ describe('what happens before a trial starts', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
-      reachablePrinters: { kind: 'not-probed' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -964,7 +964,7 @@ describe('what happens before a trial starts', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
-      reachablePrinters: { kind: 'not-probed' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -1170,7 +1170,7 @@ describe('workflow trial: subjects, product tools and the path', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
-      reachablePrinters: { kind: 'not-probed' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });

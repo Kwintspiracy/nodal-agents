@@ -2,8 +2,8 @@
 //
 // Un scénario déclare ses besoins par leur NOM (`needs`) : un service local
 // (ComfyUI), un coffre Obsidian, l'imprimante du banc, l'assurance qu'aucun
-// courrier ne peut partir, ou qu'aucune vraie imprimante n'est à la portée des
-// commandes de l'instance. Un besoin absent fait SAUTER l'essai, avec sa
+// courrier ne peut partir, ou qu'aucun agent ne peut lancer de commande (et
+// donc imprimer ailleurs que sur l'imprimante du banc). Un besoin absent fait SAUTER l'essai, avec sa
 // raison, sans lancer de job : ni rouge (rien n'a été essayé), ni silence (la
 // ligne `skipped` le dit, le portail l'affiche en gris).
 //
@@ -324,20 +324,28 @@ function printGateReasons(env: ScenarioEnv): string[] {
 }
 
 /**
- * Le besoin `no-real-printer` : la sonde (printers.ts) n'a compté AUCUNE
- * imprimante qu'une commande d'agent puisse joindre. Fermé par défaut : une
- * sonde qui n'a pas tourné, ou qui n'a pas rendu de nombre, fait sauter
- * l'essai, en le disant.
+ * Le besoin `no-real-printer` : AUCUN agent de l'équipe ne peut lancer un
+ * processus pendant l'essai. Une commande imprime sans passer par l'imprimante
+ * du banc par bien des chemins : le spooler (winspool reste ouvert au bac à
+ * sable de Windows, #842), mais aussi une imprimante qui n'est installée nulle
+ * part (TCP 9100, IPP 631, LPR 515, `copy /b fichier \\hôte\imprimante`), ou
+ * une connexion ajoutée en cours d'essai. Compter les imprimantes installées
+ * n'en ferme qu'un ; une équipe qui ne peut lancer aucun processus les ferme
+ * tous, par construction (règle 11 : fermé par défaut, revue de #855).
+ * Aujourd'hui le Chef et l'Imageur tiennent `run_command` : les scénarios
+ * d'impression sont sautés tant que la liste d'outils fermée par scénario
+ * (décision 1B du propriétaire) n'existe pas.
  */
 export function noRealPrinterReason(env: ScenarioEnv): string | null {
-  const p = env.reachablePrinters;
-  if (p.kind === 'not-probed')
-    return "the bench did not count the printers the instance's commands can reach: print trials never run where a real printer might be reachable; see #842";
-  if (p.kind === 'failed')
-    return `the bench could not count the printers the instance's commands can reach (${p.reason}): print trials never run where a real printer might be reachable; see #842`;
-  return p.count === 0
-    ? null
-    : `a real printer is reachable from the instance's commands: ${p.count} printer(s); see #842`;
+  if (env.processStarters.length === 0) return null;
+  const who = env.processStarters
+    .map((p) =>
+      p.runtime !== null
+        ? `${p.agent} (${p.runtime} runtime${p.tools.length > 0 ? `, ${p.tools.join(', ')}` : ''})`
+        : `${p.agent} (${p.tools.join(', ')})`,
+    )
+    .join(', ');
+  return `print scenarios need a team that cannot run commands: ${who}; the closed tool list per scenario (owner's decision 1B) is not built yet; see #842`;
 }
 
 /** Pourquoi le besoin manque, ou null quand il est là. */

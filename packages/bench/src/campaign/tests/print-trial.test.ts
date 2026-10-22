@@ -11,20 +11,21 @@
 // les écrit. Le juge lit ce que l'imprimante a ENREGISTRÉ, dans le dossier que
 // le banc lui a donné.
 //
-// La sonde des imprimantes (besoin `no-real-printer`) est injectée : sa vraie
-// exécution est prouvée à part (printers.test.ts). Ce qu'on prouve ici, c'est
-// qu'elle décide : à 0 l'essai tourne et se juge, au-dessus il est sauté en le
-// disant, et sans compte non plus.
+// Le garde `no-real-printer` (revue de #855) : un essai d'impression ne tourne
+// que si AUCUN agent de l'équipe ne peut lancer un processus. Avec la
+// configuration du banc telle quelle (le Chef et l'Imageur ont `run_command`),
+// il est sauté en le disant ; avec une équipe qui n'a que l'imprimante et des
+// outils de lecture, il tourne et se juge sur l'enregistrement.
 
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import * as d from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import type { PrinterReach } from '../../workflows/types';
+import type { CampaignConfig } from '../config';
 import { TEST_KEYS, fakeCommunityInstaller, freshInstanceDb, isolateUserHome } from './harness';
 
 /** Le faux modèle : ce que Chef fait d'une demande d'impression, sur l'instance. */
@@ -116,30 +117,48 @@ const { readRecords } = await import('../../printer/record');
 const { applyCampaignConfig } = await import('../apply');
 const { loadCampaignConfig } = await import('../config');
 const { allowedReachOf } = await import('../run');
+const { teamDrift } = await import('../team');
 
 const home = isolateUserHome();
 const config = loadCampaignConfig();
+/**
+ * La même équipe, qui ne peut lancer aucun processus : ni le skill
+ * `command-execution` ni la règle « Run commands », et `declare_verification`
+ * (donné à tout agent) bloqué. Ce que la liste d'outils fermée par scénario
+ * (décision 1B) donnera.
+ */
+const noCommands: CampaignConfig = {
+  ...config,
+  agents: config.agents.map((a) => ({
+    ...a,
+    skills: a.skills.filter((x) => x !== 'command-execution'),
+    runCommand: null,
+    blockedTools: a.workspace === 'tested' ? ['declare_verification'] : a.blockedTools,
+  })),
+};
+const EXPECTED_SKIP =
+  "print scenarios need a team that cannot run commands: chef (declare_verification, run_command), chercheur (declare_verification), imageur (declare_verification, run_command); the closed tool list per scenario (owner's decision 1B) is not built yet; see #842";
 let recordsDir: string;
 let testedEntityId: string;
+let applied: Awaited<ReturnType<typeof applyCampaignConfig>>;
 
-beforeAll(() => undefined);
 afterAll(() => home.restore());
 
-beforeEach(async () => {
+async function instance(c: CampaignConfig): Promise<void> {
   played = [];
   ({ db } = await freshInstanceDb());
   const scratch = mkdtempSync(join(tmpdir(), 'print-trial-campaign-'));
   recordsDir = join(scratch, 'bench-printer-records');
-  const applied = await applyCampaignConfig(db, config, TEST_KEYS, {
+  applied = await applyCampaignConfig(db, c, TEST_KEYS, {
     foldersRoot: join(scratch, 'folders'),
     printerRecordsDir: recordsDir,
     installCommunitySkill: fakeCommunityInstaller(db).install,
   });
   testedEntityId = applied.tested.entityId;
-});
+}
 
-/** Une session d'un essai du scénario, la sonde rendant `printers`. */
-async function trial(id: string, printers: PrinterReach, probed: string[] = []) {
+/** Une session d'un essai du scénario sur l'instance appliquée. */
+async function trial(id: string, c: CampaignConfig) {
   return runBench(
     {
       scenarios: [scenarioById(id)!],
@@ -148,12 +167,8 @@ async function trial(id: string, printers: PrinterReach, probed: string[] = []) 
       allowOwnerSends: false,
       stackDir: '/stack',
       targetEntityId: testedEntityId,
-      allowedReach: allowedReachOf(config),
+      allowedReach: allowedReachOf(c),
       benchPrinterRecordsDir: recordsDir,
-      probePrinters: async () => {
-        probed.push(id);
-        return printers;
-      },
     },
     db,
     new BenchStop(),
@@ -161,9 +176,49 @@ async function trial(id: string, printers: PrinterReach, probed: string[] = []) 
   );
 }
 
+describe('who can start a process: the product classification, minus what a rule blocks', () => {
+  it('the process tools a job of each agent would receive, a tool blocked by its rule left out, a CLI runtime counted', async () => {
+    const { readProcessStarters } = await import('../../workflows/stack');
+    await instance(config);
+    expect(await readProcessStarters(db, testedEntityId)).toEqual([
+      { agent: 'chef', tools: ['declare_verification', 'run_command'], runtime: null },
+      { agent: 'chercheur', tools: ['declare_verification'], runtime: null },
+      { agent: 'imageur', tools: ['declare_verification', 'run_command'], runtime: null },
+    ]);
+    const [chef] = await db
+      .select({ id: d.agents.id })
+      .from(d.agents)
+      .where(d.and(d.eq(d.agents.entityId, testedEntityId), d.eq(d.agents.slug, 'chef')));
+    // The Autonomy tab's Block on run_command: Chef holds it, never runs it.
+    await d.setRunCommandRuleRepo(db, testedEntityId, chef!.id, 'block');
+    // An agent on a CLI runtime starts processes whatever Nodal's list says.
+    await db
+      .update(d.agents)
+      .set({ runtime: 'claude-code' })
+      .where(d.and(d.eq(d.agents.entityId, testedEntityId), d.eq(d.agents.slug, 'chercheur')));
+    expect(await readProcessStarters(db, testedEntityId)).toEqual([
+      { agent: 'chef', tools: ['declare_verification'], runtime: null },
+      { agent: 'chercheur', tools: ['declare_verification'], runtime: 'claude-code' },
+      { agent: 'imageur', tools: ['declare_verification', 'run_command'], runtime: null },
+    ]);
+  });
+});
+
 describe('a print trial on the campaign instance', () => {
-  it('no printer within the reach of the instance: the trial runs, and is judged green from what the bench printer recorded', async () => {
-    const sum = await trial('print', { kind: 'counted', count: 0, confined: true });
+  it('the bench team as configured runs commands: the print trial is skipped, naming who can, nothing starts, nothing is recorded', async () => {
+    await instance(config);
+    const sum = await trial('print', config);
+    expect(sum.lines.map((l) => [l.verdict, l.reasons])).toEqual([['skipped', [EXPECTED_SKIP]]]);
+    expect(played).toEqual([]);
+    expect(readRecords(recordsDir).requests).toEqual([]);
+  });
+
+  it('a team with only the printer and read tools: the trial runs, and is judged green from what the bench printer recorded', async () => {
+    await instance(noCommands);
+    // The applier wrote the configuration's Block rules, read back as the
+    // configuration by the drift check (one line per blocked tool).
+    expect(await teamDrift(db, noCommands, applied)).toEqual([]);
+    const sum = await trial('print', noCommands);
     const line = sum.lines[0]!;
     expect(line.reasons).toEqual([]);
     expect(line.verdict).toBe('green');
@@ -174,36 +229,5 @@ describe('a print trial on the campaign instance', () => {
     const live = readRecords(recordsDir).requests;
     expect(live).toHaveLength(1);
     expect(live[0]!.record.status).toBe('pending');
-  });
-
-  it('a printer within reach: the trial is skipped with the reason, nothing starts, nothing is recorded', async () => {
-    const sum = await trial('print', { kind: 'counted', count: 2, confined: true });
-    expect(sum.lines.map((l) => [l.verdict, l.reasons])).toEqual([
-      [
-        'skipped',
-        ["a real printer is reachable from the instance's commands: 2 printer(s); see #842"],
-      ],
-    ]);
-    expect(played).toEqual([]);
-    expect(readRecords(recordsDir).requests).toEqual([]);
-  });
-
-  it('a probe that could not count: skipped as well, and said', async () => {
-    const sum = await trial('print', {
-      kind: 'failed',
-      reason: 'the probe did not return a number (exit 1, output "")',
-    });
-    expect(sum.lines[0]!.verdict).toBe('skipped');
-    expect(sum.lines[0]!.reasons).toEqual([
-      'the bench could not count the printers the instance\'s commands can reach (the probe did not return a number (exit 1, output "")): print trials never run where a real printer might be reachable; see #842',
-    ]);
-    expect(played).toEqual([]);
-  });
-
-  it('the probe runs for the trials that declare the need, and for no other', async () => {
-    const probed: string[] = [];
-    await trial('print', { kind: 'counted', count: 1, confined: false }, probed);
-    await trial('question', { kind: 'counted', count: 1, confined: false }, probed);
-    expect(probed).toEqual(['print']);
   });
 });

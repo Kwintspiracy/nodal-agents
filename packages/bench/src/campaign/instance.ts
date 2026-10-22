@@ -65,20 +65,6 @@ export interface InstancePorts {
   readonly postgres: number;
 }
 
-/**
- * Ce que le bac à sable du runner de l'instance lit pour savoir quels ports de
- * Nodal une commande confinée ne doit pas joindre (`nodalDeniedEndpoints` :
- * PORT, WEB_PORT, et le port de DATABASE_URL), tels que le CLI les donne au
- * runner de cette instance (apps/cli/src/lib/env.ts). Seuls les ports comptent.
- */
-export function instanceSandboxEnv(ports: InstancePorts): Record<string, string> {
-  return {
-    PORT: String(ports.runner),
-    WEB_PORT: String(ports.web),
-    DATABASE_URL: `postgres://127.0.0.1:${ports.postgres}/nodal`,
-  };
-}
-
 export interface CampaignInstance {
   readonly id: string;
   /** Le dossier de Nodal de la campagne (`NODALAI_HOME`). */

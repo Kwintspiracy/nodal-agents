@@ -364,6 +364,17 @@ export async function applyCampaignConfig(
       }
     }
 
+    for (const tool of a.blockedTools) {
+      const r = await d.setApprovalRuleRepo(db, entityId, {
+        agentId,
+        toolName: tool,
+        action: 'block',
+        scope: 'agent',
+        conditionJson: {},
+      });
+      if ('refused' in r) fail('campaign_blocked_tool', `${a.slug} ← ${tool}: ${r.refused}`);
+    }
+
     if (a.runCommand !== null) {
       const r = await d.setRunCommandRuleRepo(db, entityId, agentId, a.runCommand);
       if ('refused' in r) fail('campaign_run_command_rule', `${a.slug}: ${r.refused}`);

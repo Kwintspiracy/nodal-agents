@@ -306,6 +306,8 @@ export async function teamDrift(
           a.printConnector!.autoApprove.includes(t) ? 'auto_approve' : null,
         );
       }
+      for (const t of a.blockedTools)
+        eq(`${t} rule`, await winningApproval(db, entityId, agentId, t), 'block');
       const runCommand = await winningApproval(db, entityId, agentId, 'run_command');
       eq('run_command rule', runCommand, a.readOnly ? 'block' : a.runCommand);
       if (a.readOnly) {

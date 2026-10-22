@@ -489,6 +489,21 @@ describe('the configuration as data', () => {
     expect(withSlot(null)).toBe('(accepted)');
   });
 
+  it('blocked tools: never return_result (the product refuses to block it), never run_command (runCommand rules it)', () => {
+    const blocking = (tools: string[]) =>
+      refusal((c) => {
+        (
+          c.agents.find((x) => x.slug === 'chef') as unknown as { blockedTools: string[] }
+        ).blockedTools = tools;
+      });
+    expect(blocking(['declare_verification'])).toBe('(accepted)');
+    expect(blocking(['return_result'])).toContain('return_result cannot be blocked');
+    expect(blocking(['run_command'])).toContain('run_command is ruled by runCommand');
+    expect(blocking(['declare_verification', 'declare_verification'])).toContain(
+      'chef blocks a tool twice',
+    );
+  });
+
   it('an agent receives the printer and the bench gave no records folder: refused before anything is written', async () => {
     const fresh = await freshInstanceDb();
     await expect(

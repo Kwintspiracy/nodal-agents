@@ -33,6 +33,7 @@ import { z } from 'zod';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { COMMUNITY_SKILL_CATALOG, findModelCatalogEntry } from '@nodal-agents/shared';
+import { UNBLOCKABLE_TOOLS } from '@nodal-agents/tools';
 import { BENCH_PRINTER_SLUG, BENCH_PRINTER_TOOLS } from '../printer/identity';
 import { REPO } from '../workflows/paths';
 
@@ -116,6 +117,14 @@ const AgentSchema = z
     runCommand: z.enum(['auto_approve', 'require_approval', 'block']).nullable().default(null),
     /** Le préréglage « relecteur en lecture seule ». */
     readOnly: z.boolean().default(false),
+    /**
+     * Les outils que l'agent tient mais ne doit jamais lancer : une règle
+     * `block` chacun, celle de la ligne de l'outil dans l'onglet Autonomie.
+     * Une équipe dont aucun outil `process` n'est ouvert peut jouer les
+     * scénarios d'impression (besoin `no-real-printer`) ; c'est un premier pas
+     * vers la liste d'outils fermée par scénario (décision 1B).
+     */
+    blockedTools: z.array(z.string().min(1)).default([]),
     /** Les coéquipiers, et la consigne de délégation que Nodal affiche pour chacun. */
     delegatesTo: z
       .array(z.object({ agent: Slug, instructions: z.string().min(1).max(500) }).strict())
@@ -270,6 +279,14 @@ export const CampaignConfigSchema = z
       if (new Set(a.folders.map((f) => f.label)).size !== a.folders.length) {
         issue(`${a.slug} has two folders with the same label`, at('folders'));
       }
+      for (const t of a.blockedTools) {
+        if (UNBLOCKABLE_TOOLS[t])
+          issue(`${t} cannot be blocked: ${UNBLOCKABLE_TOOLS[t]}`, at('blockedTools'));
+        if (t === 'run_command')
+          issue('run_command is ruled by runCommand, not by blockedTools', at('blockedTools'));
+      }
+      if (new Set(a.blockedTools).size !== a.blockedTools.length)
+        issue(`${a.slug} blocks a tool twice`, at('blockedTools'));
       if (a.printConnector !== null && a.workspace !== 'tested') {
         issue(`${a.slug} is not in the tested workspace: it prints nothing`, at('printConnector'));
       }

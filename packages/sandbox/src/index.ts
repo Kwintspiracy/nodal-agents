@@ -43,13 +43,7 @@ export {
   type StartedProcess,
   SandboxStartError,
 } from './types';
-export {
-  type Sandbox,
-  createSandbox,
-  defaultSandbox,
-  getSandboxStatus,
-  instanceSandbox,
-} from './status';
+export { type Sandbox, createSandbox, defaultSandbox, getSandboxStatus } from './status';
 export {
   JobProcessScope,
   type OwnedProcessOptions,
