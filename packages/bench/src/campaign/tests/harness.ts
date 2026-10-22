@@ -112,16 +112,24 @@ export function fakeCommunityInstaller(db: AnyDrizzleDb): {
 
 // ─── Un faux CLI de Nodal, qui démarre un vrai processus ─────────────────────
 
+/**
+ * Trois ports libres, et DISTINCTS : les trois écouteurs restent ouverts
+ * jusqu'à ce que le dernier ait le sien. Fermé tout de suite, un port libéré
+ * pouvait être rendu deux fois (le runner et le Postgres sur le même port, CI
+ * Linux du 22/10 : EADDRINUSE).
+ */
 export async function freePorts(): Promise<InstancePorts> {
-  const one = (): Promise<number> =>
-    new Promise((resolve) => {
-      const s = createServer();
-      s.listen(0, '127.0.0.1', () => {
-        const port = (s.address() as { port: number }).port;
-        s.close(() => resolve(port));
-      });
-    });
-  return { web: await one(), runner: await one(), postgres: await one() };
+  const servers = [createServer(), createServer(), createServer()];
+  const [web, runner, postgres] = await Promise.all(
+    servers.map(
+      (s) =>
+        new Promise<number>((resolve) =>
+          s.listen(0, '127.0.0.1', () => resolve((s.address() as { port: number }).port)),
+        ),
+    ),
+  );
+  await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
+  return { web: web!, runner: runner!, postgres: postgres! };
 }
 
 /**
