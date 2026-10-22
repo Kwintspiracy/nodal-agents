@@ -400,10 +400,11 @@ jobs:
     runs-on: ubuntu-latest
     # The job bound is the SUM of its steps' bounds, so no step can be cut by
     # the job before its own bound (review of PR #516): ~2 setup, 10 install,
-    # 12 Playwright install, 10 boot, 10 journeys, ~2 uploads = 46. Measured on
-    # this PR: install 0.1 min, Playwright 0.4, boot 0.5, journeys 2.0. A JOB
+    # 2 Playwright version, 15 Playwright install, 10 boot, 10 journeys, ~2
+    # uploads = 51. Measured before
+    # #852: install 0.1 min, Playwright 0.4, boot 0.5, journeys 2.0. A JOB
     # timeout kills everything; a step timeout still runs `if: failure()`.
-    timeout-minutes: 50
+    timeout-minutes: 56
     steps:
       - uses: actions/checkout@v5
 
@@ -420,18 +421,27 @@ jobs:
         timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
-      # `--with-deps` shells out to apt-get, which can hang forever on a stuck
-      # mirror (2026-08-19: two consecutive 25-min hangs ate the whole job
-      # budget). Bound each attempt to 5 min and retry once — fail LOUD and
-      # fast instead of timing out the job.
+      # The old `timeout 300 playwright install --with-deps` loop could hang on
+      # a stuck apt mirror (2026-08-19: two 25-min hangs), and its retries then
+      # ran against its own orphaned apt-get, which still held the dpkg lock
+      # (#852, three runs on 2026-10-22).
+      # Un cache chaud ne télécharge rien ; la clé porte la version EXACTE de
+      # Playwright (celle qui est installée, donc celle du lockfile), si bien
+      # qu'une montée de version repart d'un cache neuf. L'installation elle-même
+      # est `scripts/install-playwright.mjs` (#852), la même dans `qa.yml`.
+      - name: Resolve the Playwright version
+        id: playwright
+        timeout-minutes: 2
+        run: echo "version=$(pnpm --filter @nodal-agents/web exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
       - name: Install Playwright browsers
-        timeout-minutes: 12
-        run: |
-          for i in 1 2; do
-            timeout 300 pnpm --filter @nodal-agents/web exec playwright install --with-deps chromium && exit 0
-            echo "playwright install attempt $i failed or hung — retrying"
-          done
-          exit 1
+        timeout-minutes: 15
+        run: node scripts/install-playwright.mjs
 
       # NOT `pnpm --filter @nodal-agents/web e2e:up`: that wrapper shells out to
       # a globally-installed `nodal-agents` binary, which does not exist on a
