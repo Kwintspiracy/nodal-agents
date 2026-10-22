@@ -25,6 +25,7 @@ import { spawn } from 'node:child_process';
 import {
   OPTIONS_APT,
   avecReessais,
+  decrire,
   lancerBornee,
   paquetsDeLaSonde,
   vraimentManquants,
@@ -106,6 +107,26 @@ async function verrouLibreAvantReessai(n) {
   }
 }
 
+/**
+ * La réparation entre deux tentatives d'installation. Un échec ici est journalisé,
+ * pas jeté : c'est la tentative suivante (puis la preuve finale) qui décide, et
+ * elle échoue haut et fort si dpkg est resté en vrac.
+ */
+async function reparerDpkg() {
+  for (const [nom, commande, args] of [
+    ['dpkg --configure -a', 'dpkg', ['--configure', '-a']],
+    ['apt-get install -f', 'apt-get', [...OPTIONS_APT, 'install', '-f', '-y']],
+  ]) {
+    const code = await lancerBornee({
+      prefixe: PREFIXE_APT,
+      secondes: bornee(60),
+      commande,
+      args,
+    });
+    journal(`repair between attempts: ${nom} ${code === 0 ? 'ok' : `failed (${decrire(code)})`}`);
+  }
+}
+
 async function paquetsAbsents() {
   // La sonde sort en 1 quand des paquets manquent : pnpm imprime alors une
   // erreur « ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL » qui est ATTENDUE, pas une panne.
@@ -163,7 +184,7 @@ async function installer() {
   }
   journal(`${absents.length} system package(s) missing: ${absents.join(' ')}`);
 
-  const apt = (nom, secondes, tentatives, args) =>
+  const apt = (nom, secondes, tentatives, args, entre = verrouLibreAvantReessai) =>
     avecReessais({
       phase: nom,
       tentatives,
@@ -175,7 +196,7 @@ async function installer() {
           commande: 'apt-get',
           args: [...OPTIONS_APT, ...args],
         }),
-      entre: verrouLibreAvantReessai,
+      entre,
     });
   await apt('apt-get update', 45, 3, ['update']);
   // Le réseau d'abord, seul : une coupure ici ne laisse AUCUN paquet à moitié
@@ -187,7 +208,22 @@ async function installer() {
     '--download-only',
     ...absents,
   ]);
-  await apt('apt-get install', 120, 1, ['install', '-y', '--no-install-recommends', ...absents]);
+  // Hors réseau (les .deb sont dans le cache local : ~3 s mesurées pour 9 polices),
+  // mais c'est la seule phase qui MODIFIE dpkg. Une coupure (borne, verrou tenu par
+  // un tiers plus longtemps que DPkg::Lock::Timeout) peut la laisser à moitié faite :
+  // même échelle de tentatives que les autres, et entre deux, la réparation
+  // idempotente standard (`dpkg --configure -a`, `apt-get install -f`) avant de
+  // relancer.
+  await apt(
+    'apt-get install',
+    60,
+    3,
+    ['install', '-y', '--no-install-recommends', ...absents],
+    async (n) => {
+      await verrouLibreAvantReessai(n);
+      await reparerDpkg();
+    },
+  );
   finGroupe();
 
   // 4. La preuve : ces paquets sont là.
