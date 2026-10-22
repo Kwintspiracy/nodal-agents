@@ -285,6 +285,13 @@ describe('ids reach a path only after validation (review of #832, pass 1)', () =
 
   it('replaces: with a path is refused, and writes nothing outside the folder', async () => {
     for (const id of traversals()) {
+      // The reviewer's scenario: a record-shaped file outside the folder that CLAIMS
+      // the path as its own id, so a reader that joins the id to a path believes it.
+      writeFileSync(
+        join(outside, decoy.id + '.json'),
+        JSON.stringify({ ...decoy, id }, null, 2),
+        'utf8',
+      );
       let refused = false;
       try {
         refused = (await request({ content: '<p>x</p>', replaces: id })).isError;
