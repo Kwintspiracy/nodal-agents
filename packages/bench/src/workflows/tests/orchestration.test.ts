@@ -295,7 +295,13 @@ describe('undoable-action judge', () => {
 
   it("does not run when an agent can send e-mail: nothing leaves the owner's account", () => {
     const s = scenarioById('undoable-action')!;
-    const env = { workspaceRoots: [], services: {}, unlistedMcpServers: [], startedMs: T0 };
+    const env = {
+      workspaceRoots: [],
+      services: {},
+      unlistedMcpServers: [],
+      benchPrinter: { kind: 'absent' as const },
+      startedMs: T0,
+    };
     expect(missingNeeds(s.needs ?? [], { ...env, teamTools: ['gmail_send_email'] })).toEqual([
       "an agent of this workspace can send e-mail (gmail_send_email): the bench sends nothing from the owner's account, so this scenario does not run here",
     ]);
@@ -364,6 +370,7 @@ describe('undoable-action judge', () => {
         services: {},
         teamTools: [],
         unlistedMcpServers: ['mystery-mail'],
+        benchPrinter: { kind: 'absent' },
         startedMs: T0,
       }),
     ).toEqual([

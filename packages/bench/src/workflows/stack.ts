@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { nodalHomeEntry, nodalHomePath } from '@nodal-agents/shared/nodal-home';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { AgentId, EntityId } from '@nodal-agents/orchestration';
+import { BENCH_PRINTER_SLUG, benchPrinterState, type BenchPrinterState } from '../printer/identity';
 import { executeRows } from './facts';
 
 /** Le préfixe de l'étiquette `caller` que le banc pose sur chacun de ses jobs. */
@@ -348,6 +349,38 @@ export async function readUnlistedMcpServers(
     ),
   );
   return [...new Set(rows.filter((r) => !isUsableMcpToolCache(r.tools)).map((r) => r.slug))].sort();
+}
+
+/**
+ * L'imprimante du banc (#794) telle que l'espace la déclare : les serveurs MCP
+ * ACTIFS attribués à un agent actif de l'espace, jugés par `benchPrinterState`.
+ * La déclaration que le runner lance est aussi ce que le juge relit : le
+ * dossier d'enregistrements vient de son environnement.
+ */
+export async function readBenchPrinter(
+  db: AnyDrizzleDb,
+  entityId: string,
+): Promise<BenchPrinterState> {
+  const { sql } = await import('@nodal-agents/db');
+  const rows = z
+    .array(z.object({ slug: z.string(), transport: z.string(), env_vars: z.unknown() }))
+    .parse(
+      await executeRows(
+        db,
+        sql`
+          select distinct s.slug, s.transport, s.env_vars
+            from agent_mcp_servers ams
+            join mcp_servers s on s.id = ams.mcp_server_id
+            join agents a on a.id = ams.agent_id
+           where ams.entity_id = ${entityId}::uuid
+             and coalesce(a.active, true) = true
+             and coalesce(s.active, true) = true
+             and s.slug = ${BENCH_PRINTER_SLUG}`,
+      ),
+    );
+  return benchPrinterState(
+    rows.map((r) => ({ slug: r.slug, transport: r.transport, envVars: r.env_vars })),
+  );
 }
 
 /** Le modèle configuré de l'agent racine de l'espace (`agents.model`), ou null s'il n'en a pas. */

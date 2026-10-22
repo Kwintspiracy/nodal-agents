@@ -37,6 +37,7 @@ import {
   readRootModel,
   readStackCommit,
   readStackVersion,
+  readBenchPrinter,
   readTeamTools,
   readUnlistedMcpServers,
   readWorkspaceRoots,
@@ -59,6 +60,7 @@ export async function readScenarioEnv(
     workspaceRoots: await readWorkspaceRoots(db, entityId),
     teamTools: await readTeamTools(db, entityId),
     unlistedMcpServers: await readUnlistedMcpServers(db, entityId),
+    benchPrinter: await readBenchPrinter(db, entityId),
     services,
     startedMs,
   };

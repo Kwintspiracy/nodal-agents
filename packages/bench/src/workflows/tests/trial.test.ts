@@ -115,6 +115,7 @@ function world(opts: {
       teamTools: [],
       services: {},
       unlistedMcpServers: [],
+      benchPrinter: { kind: 'absent' },
       startedMs,
     }),
     rootModel: async () => 'z-ai/glm-5.3',
@@ -260,6 +261,7 @@ describe('workflow trial safety rules', () => {
         teamTools: ['office_printer__request_print', 'office_printer__get_print_request'],
         services: {},
         unlistedMcpServers: [],
+        benchPrinter: { kind: 'absent' },
         startedMs,
       });
       const line = await runTrial(scenarioById(id)!, w.deps, OPTS);
@@ -339,6 +341,7 @@ describe('where a trial may send', () => {
       teamTools: [],
       services: { comfyui: { url: 'http://127.0.0.1:8188', problem: null } },
       unlistedMcpServers: [],
+      benchPrinter: { kind: 'absent' },
       startedMs,
     });
     const line = await runTrial(scenarioById('comfyui-telegram')!, w.deps, OPTS);
@@ -358,6 +361,7 @@ describe('where a trial may send', () => {
       teamTools: [],
       services: { comfyui: { url: 'http://127.0.0.1:8188', problem: null } },
       unlistedMcpServers: [],
+      benchPrinter: { kind: 'absent' },
       startedMs,
     });
     await runTrial(scenarioById('comfyui-telegram')!, w.deps, { ...OPTS, allowOwnerSends: true });
@@ -802,6 +806,7 @@ describe('what happens before a trial starts', () => {
       teamTools: ['xlsx_create'],
       services: {},
       unlistedMcpServers: [],
+      benchPrinter: { kind: 'absent' },
       startedMs,
     });
     const broken: AnyScenario = {
@@ -828,6 +833,7 @@ describe('what happens before a trial starts', () => {
       teamTools: [],
       services: {},
       unlistedMcpServers: [],
+      benchPrinter: { kind: 'absent' },
       startedMs,
     });
     const line = await runTrial(scenarioById('deep-research-obsidian')!, w.deps, OPTS);
@@ -1031,6 +1037,7 @@ describe('workflow trial: subjects, product tools and the path', () => {
       teamTools: ['xlsx_create', 'xlsx_read', 'xlsx_set_cell', 'xlsx_set_range'],
       services: {},
       unlistedMcpServers: [],
+      benchPrinter: { kind: 'absent' },
       startedMs,
     });
     const line = await runTrial(scenarioById('file')!, w.deps, OPTS);

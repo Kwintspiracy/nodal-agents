@@ -1105,10 +1105,10 @@
     },
     {
       "id": "print",
-      "version": 3,
+      "version": 4,
       "activity": "print",
       "title": "Print a dictated text",
-      "green": "A print request holding every item of the dictated list was created through request_print and is pending: through Nodal the printer connector never prints without a human click, and nothing reached the printer. One page, nobody asked anything.",
+      "green": "A print request holding every item of the dictated list was created through request_print and is pending: the bench printer received it, recorded it, and never prints. One page, nobody asked anything.",
       "path": "request_print. The bench never confirms: the trial stops at the preview, nothing is printed.",
       "deliverable": "A print request waiting for the owner",
       "productTools": {
@@ -1129,8 +1129,8 @@
       "judgedBy": [
         "agent_jobs: the root job of the trial ended completed",
         "approval_requests: the tree raised no approval and no question (the bench never answers one)",
-        "tool_calls: a request_print whose input holds every item: pain, lait, œufs, tomates, café; its result (connector structuredContent) is pending, one page when the connector says so",
-        "never confirm_print, and no request or get_print_request result in submitted, printing, completed or stuck",
+        "the bench printer's record (#794): a request created during the trial whose received content holds every item: pain, lait, œufs, tomates, café; it is still pending, one page when the printer can count",
+        "never confirm_print: the bench printer has no confirm tool, and nothing reached a printer",
         "tool_calls: the product tools are request_print; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
         "tool_calls: the tree calls at least one of them"
       ],
@@ -1140,10 +1140,10 @@
     },
     {
       "id": "print-file",
-      "version": 4,
+      "version": 5,
       "activity": "print",
       "title": "Print an existing file",
-      "green": "The bench printer's record (#794) shows it received the content of the posed nodal-bench/facture-impression.pdf (its sha-256) and no other file, through a request_print (no command in its place) that is pending, of one page when the connector says so; nobody was asked anything.",
+      "green": "The bench printer's record (#794) shows it received the content of the posed nodal-bench/facture-impression.pdf (its sha-256) and no other file, through a pending request_print (no command in its place), of one page when the printer can count; nobody was asked anything.",
       "path": "request_print on the file. The bench never confirms: the trial stops at the preview, nothing is printed.",
       "deliverable": "A print request waiting for the owner",
       "productTools": {
@@ -1164,9 +1164,9 @@
       "judgedBy": [
         "agent_jobs: the root job of the trial ended completed",
         "approval_requests: the tree raised no approval and no question (the bench never answers one)",
-        "the bench printer's record (#794): the content it received has the sha-256 of the posed file, and no other file was printed; until that record exists, never green",
-        "tool_calls: a request_print, pending, one page when the connector says so",
-        "never confirm_print, nothing reached the printer",
+        "the bench printer's record (#794): a request created during the trial, still pending, of one page when the printer can count",
+        "the content the bench printer received has the sha-256 of the posed nodal-bench/facture-impression.pdf (the fixture of the repository), and no other file was printed",
+        "never confirm_print: the bench printer has no confirm tool, and nothing reached a printer",
         "tool_calls: the product tools are request_print; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
         "tool_calls: the tree calls at least one of them"
       ],
@@ -1177,20 +1177,14 @@
         }
       ],
       "outputs": [],
-      "unverified": [
-        {
-          "check": "the printed file is the one the bench posed",
-          "reason": "request_print is an MCP tool: it opens the file in its own process, so the platform records no read of it; its input naming the file does not prove which bytes were printed.",
-          "ticket": "#784"
-        }
-      ]
+      "unverified": []
     },
     {
       "id": "recipe",
-      "version": 5,
+      "version": 6,
       "activity": "print",
       "title": "Compose a rich page with an image",
-      "green": "A pending print request of one page was created through request_print, with a photo; nothing reached the printer and nobody was asked anything. Whether the photo comes from the recipe page the agent read is not verified yet (#648).",
+      "green": "A pending print request of one page was created through request_print, with a photo the document references; the bench printer recorded it and never prints, and nobody was asked anything. Whether the photo comes from the recipe page the agent read is not verified yet (#648).",
       "path": "Compose the page, then request_print. The bench never confirms: the trial stops at the preview, nothing is printed.",
       "deliverable": "A print request waiting for the owner",
       "productTools": {
@@ -1211,9 +1205,9 @@
       "judgedBy": [
         "agent_jobs: the root job of the trial ended completed",
         "approval_requests: the tree raised no approval and no question (the bench never answers one)",
-        "tool_calls: the last request_print result is pending, one page",
-        "the connector reports at least one embedded image; a file printed as is cannot show its pictures, and is said so",
-        "never confirm_print, nothing reached the printer",
+        "the bench printer's record (#794): the last request created during the trial is pending, one page when the printer can count",
+        "the record holds at least one picture the document references; a file printed as is cannot show its pictures, and is said so",
+        "never confirm_print: the bench printer has no confirm tool, and nothing reached a printer",
         "tool_calls: the product tools are request_print; with none of them in the team's tools, the trial is skipped; otherwise a breach is red: \"product tool available, not used\"",
         "tool_calls: the tree calls at least one of them"
       ],

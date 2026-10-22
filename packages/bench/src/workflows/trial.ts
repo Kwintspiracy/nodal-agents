@@ -43,6 +43,7 @@ import {
   unverifiedOf,
 } from './judge-kit';
 import { isOutboundTool, missingNeeds } from './needs';
+import { isBenchPrinterTool } from '../printer/identity';
 import { redactHome } from './redact';
 import type { ForeignActivity } from './stack';
 import { noSubjectReason, pickSubject, requestWithSubject, type ResearchSubject } from './subjects';
@@ -453,6 +454,9 @@ export function destinationGate(
  *     celle d'un membre comprise (passe 11 : un texte cherché par motif
  *     laissait passer `chatId: '1234567'`). Un champ que le banc ne connaît
  *     pas est rouge aussi : il pourrait nommer une cible.
+ * L'imprimante du banc (#794) est exemptée comme un outil du produit : sur
+ * l'identité de son SERVEUR (`isBenchPrinterTool`), pas sur un nom d'outil. Elle
+ * n'imprime rien ; un `request_print` d'un autre serveur reste sortant.
  * L'exemption se décide sur l'IDENTITÉ de l'outil, jamais sur un nom qui lui
  * ressemble (passe 10) : un outil de livraison du produit, à son nom EXACT,
  * tel que le runner le range dans `tool_calls` (sans préfixe :
@@ -469,7 +473,12 @@ export function destinationReasons(s: AnyScenario, facts: TreeFacts): string[] {
   /** Un outil de livraison du produit, à son nom exact : jamais un préfixe retiré. */
   const isProductDelivery = (toolName: string): boolean => delivery.has(toolName);
   const outbound = facts.toolCalls
-    .filter((c) => isOutboundTool(c.toolName) && !isProductDelivery(c.toolName))
+    .filter(
+      (c) =>
+        isOutboundTool(c.toolName) &&
+        !isProductDelivery(c.toolName) &&
+        !isBenchPrinterTool(c.toolName),
+    )
     .map((c) => c.toolName);
   const outboundReasons =
     outbound.length > 0

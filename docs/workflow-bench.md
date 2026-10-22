@@ -221,11 +221,20 @@ declares them, never inside one judge:
     tool (`request_print`) opens the file in its own process and leaves no
     read (#784). Reading the arguments of a print server cannot tell which
     field it prints (review of #777, passes 5 to 7), so the bench does not try:
-    `print-file` needs the bench's own recording printer (`bench-printer`,
-    #794), which will say which file it received. Its judge is closed: it
-    is green only when that printer's record shows the content of the posed
-    file (its sha-256) and no other file. Until the record exists the judge
-    is never green, and the trial is skipped like every print scenario.
+    all three print scenarios (`print-file`, `print`, `recipe`) need the
+    bench's own recording printer (`bench-printer`, #794): an MCP server that
+    ships with the bench (`packages/bench/src/printer`, never in the product
+    pack), prints nothing and writes one record per request in the folder its
+    declaration names: the received bytes, their sha-256, the pages it would
+    print, the arguments as received. `print-file` is green only when a
+    record shows the content of the posed file (its sha-256) and no other
+    file; `print` and `recipe` are judged on the same record (a request was
+    created, it is still pending, the agent never confirmed). The need is met
+    when the server is attached to an active agent of the workspace, declared
+    by `benchPrinterServer(recordsDir)`, and no other tool of the team can
+    print; otherwise the trial is skipped with that reason. A server of another
+    name that also exposes `request_print` is an outbound tool, like any
+    other: the exemption is the server's identity, never a tool name.
 
   Otherwise the trial is red, "product tool available, not used". When none
   is in the team's tools, the trial is skipped with that reason, like a missing

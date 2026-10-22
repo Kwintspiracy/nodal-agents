@@ -15,6 +15,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import { isBenchPrinterTool } from '../printer/identity';
 import { NEED_IDS, type Need, type ScenarioEnv } from './types';
 
 export { NEED_IDS, type Need };
@@ -217,8 +218,11 @@ function isInternalTool(toolName: string): boolean {
  * ou imprimer chez lui, et le banc ne fait que le dire. Une alarme qui sonne
  * dans l'espace banc signale un trou de cette porte.
  *
- * L'imprimante du banc (#794) exposera elle aussi un outil d'impression : son
- * exemption viendra de l'IDENTITÉ de son serveur, jamais du nom de son outil.
+ * L'imprimante du banc (#794) expose elle aussi un outil d'impression : son
+ * exemption vient de l'IDENTITÉ de son serveur, jamais du nom de son outil
+ * (`isBenchPrinterTool`, printer/identity.ts, appliquée par `destinationReasons`).
+ * Cette fonction-ci ne l'exempte pas : elle dit ce que le NOM d'un outil laisse
+ * craindre.
  */
 export function isOutboundTool(toolName: string): boolean {
   if (isInternalTool(toolName)) return false;
@@ -241,16 +245,32 @@ export function isOutboundTool(toolName: string): boolean {
 
 /**
  * L'imprimante du banc (#794) : un serveur MCP d'impression que le banc
- * fournit, et qui ENREGISTRE ce qu'il a reçu. Tout essai d'impression du banc
- * tourne sur elle, jamais sur une vraie imprimante (décision du propriétaire,
- * 18/10 : « je ne vais pas imprimer 50 000 tests ») ; avoir `request_print`
- * dans l'équipe, c'est avoir le connecteur réel du propriétaire, et ne compte
- * pas. Lire les arguments d'un serveur d'impression ne dit pas non plus quel
- * fichier il imprime (revue de #777, passes 5 à 7) : seul le serveur qui le
- * reçoit le sait. Tant qu'elle n'existe pas, le besoin manque, toujours.
+ * fournit (`printer/`), et qui ENREGISTRE ce qu'il a reçu. Tout essai
+ * d'impression du banc tourne sur elle, jamais sur une vraie imprimante
+ * (décision du propriétaire, 18/10 : « je ne vais pas imprimer 50 000 tests ») ;
+ * avoir `request_print` dans l'équipe, c'est avoir peut-être un connecteur réel,
+ * et ne compte pas. Lire les arguments d'un serveur d'impression ne dit pas non
+ * plus quel fichier il imprime (revue de #777, passes 5 à 7) : seul le serveur
+ * qui le reçoit le sait. Le besoin est là quand le serveur du banc est attaché à
+ * un agent actif de l'espace, déclaré comme le banc le déclare, ET qu'aucun
+ * autre outil de l'équipe ne sait imprimer.
  */
 export const BENCH_PRINTER_MISSING =
-  "the bench's recording printer does not exist yet (#794): print trials never use a real printer, and only a printer that records what it received can tell which file was printed";
+  'the bench printer is not attached to this workspace (an active agent must hold the "bench-printer" MCP server, declared by benchPrinterServer): print trials never use a real printer, and only a printer that records what it received can tell which file was printed';
+
+/**
+ * Un outil de l'équipe qui peut faire sortir du papier ailleurs que sur
+ * l'imprimante du banc : son nom (préfixe du serveur compris) parle
+ * d'impression, et ce n'est pas une lecture (`list_printers`, `get_print_request`).
+ * Fermé par défaut, comme le garde « aucun courrier ne peut partir » : un faux
+ * refus vaut mieux qu'une demande chez le propriétaire.
+ */
+function canPrintOutsideTheBench(toolName: string): boolean {
+  if (isBenchPrinterTool(toolName)) return false;
+  const own = words(toolName.replace(/^cli:/, '').split('__').pop() ?? toolName);
+  if (own.length > 0 && READ_VERBS.has(own[0]!)) return false;
+  return words(toolName).some((w) => w.startsWith('print'));
+}
 
 /** Pourquoi le besoin manque, ou null quand il est là. */
 const CHECKS: Record<Need, (env: ScenarioEnv) => string | null> = {
@@ -264,8 +284,13 @@ const CHECKS: Record<Need, (env: ScenarioEnv) => string | null> = {
   'obsidian-vault'(env) {
     return obsidianVaults(env.workspaceRoots).length > 0 ? null : NO_VAULT;
   },
-  'bench-printer'() {
-    return BENCH_PRINTER_MISSING;
+  'bench-printer'(env) {
+    if (env.benchPrinter.kind === 'absent') return BENCH_PRINTER_MISSING;
+    if (env.benchPrinter.kind === 'broken') return env.benchPrinter.reason;
+    const real = env.teamTools.filter(canPrintOutsideTheBench);
+    return real.length === 0
+      ? null
+      : `an agent of this workspace can print outside the bench printer (${real.join(', ')}): print trials never create a request on a real printer, so this scenario does not run here`;
   },
   'no-mail-sender'(env) {
     // Fermé par défaut : un serveur MCP dont les outils ne sont pas connus peut

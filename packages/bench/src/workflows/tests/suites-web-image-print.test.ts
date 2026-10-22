@@ -1,13 +1,18 @@
 // suites-web-image-print.test.ts — les juges des pages HTML, des images ComfyUI et des impressions.
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { htmlImages } from '../../printer/pages';
+import { markReplaced, sha256Hex, writeRecord } from '../../printer/record';
 import { HOME_HTML, WEATHER_CSV } from '../fixture-data';
-import { missingNeeds } from '../needs';
-import { PRINT_FILE_REL, PRINT_RECORD_MISSING, scenarioById } from '../scenarios';
+import { fixturePath } from '../fixtures';
+import { BENCH_PRINTER_MISSING, missingNeeds } from '../needs';
+import { PRINT_FILE_REL, SHOPPING, scenarioById } from '../scenarios';
 import { barsMatch } from '../suites/html';
-import { play, png } from './harness';
+import type { ScenarioEnv } from '../types';
+import { play, png, type PlayEnv } from './harness';
 
 const bench = (root: string, name: string): string => {
   mkdirSync(join(root, 'nodal-bench', name.includes('/') ? name.split('/')[0]! : ''), {
@@ -150,7 +155,13 @@ describe('html judges', () => {
 describe('comfyui judges', () => {
   it('needs a ComfyUI that answers: skipped otherwise, with the reason', () => {
     const s = scenarioById('comfy-exact-size')!;
-    const env = { workspaceRoots: [], teamTools: [], unlistedMcpServers: [], startedMs: 0 };
+    const env = {
+      workspaceRoots: [],
+      teamTools: [],
+      unlistedMcpServers: [],
+      benchPrinter: { kind: 'absent' as const },
+      startedMs: 0,
+    };
     expect(missingNeeds(s.needs ?? [], { ...env, services: {} })).toEqual([
       'no ComfyUI address is declared for the bench (services.comfyui in ~/.nodalai/bench.json)',
     ]);
@@ -215,71 +226,433 @@ describe('comfyui judges', () => {
 });
 
 // ─── print ───────────────────────────────────────────────────────────────────
+//
+// Les trois scénarios d'impression sont jugés sur l'enregistrement de
+// l'imprimante du banc (#794). Les enregistrements ci-dessous sont écrits par le
+// vrai écrivain du serveur (`writeRecord`) ; le serveur lui-même, de bout en bout
+// par un vrai client MCP, est éprouvé dans printer/tests/server.test.ts.
 
-describe('print judges', () => {
-  const req = (input: object, status: string) => ({
-    name: 'office_printer__request_print',
-    input,
-    output: JSON.stringify({ id: 'p1', status, preview: { pages: 1 } }),
+describe('print judges, from the bench printer record (#794)', () => {
+  const REQ = 'bench_printer__request_print';
+  const GET = 'bench_printer__get_print_request';
+  const TEAM = [REQ, GET];
+  const OUT = (...tools: string[]) => `an outbound tool was called (${tools.join(', ')})`;
+  const POSED_PDF = fixturePath('office/facture-bench.pdf');
+  const short = (b: Buffer): string => sha256Hex(b).slice(0, 12);
+
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'bench-printer-judge-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
   });
 
-  // Revue de #777, passe 8 (P2 1) : imprimer est une action sur le monde, comme
-  // envoyer (`isOutboundTool`). Jusqu'à l'imprimante du banc (#794), dont
-  // l'exemption viendra de l'identité de son serveur, TOUT appel d'impression
-  // rend l'essai rouge, scénarios d'impression compris : le juge du scénario
-  // dit le reste.
-  const OUT = (...tools: string[]) => `an outbound tool was called (${tools.join(', ')})`;
-  const REQ = 'office_printer__request_print';
+  const attached = (): PlayEnv => ({
+    teamTools: TEAM,
+    benchPrinter: { kind: 'attached', recordsDir: dir },
+  });
 
-  // Passe 8 (P2 2) : le juge de print-file est FERMÉ. Sans l'enregistrement de
-  // l'imprimante du banc, une demande en attente, du fichier posé ou d'un
-  // autre, n'est jamais verte.
-  it.each([
-    ['the posed file', (root: string) => ({ filePath: join(root, PRINT_FILE_REL) })],
-    ['another file', (root: string) => ({ filePath: join(root, 'nodal-bench', 'autre.pdf') })],
-  ])(
-    "print-file: a pending request for %s is never green without the bench printer's record",
-    async (_, input) => {
-      const r = await play('print-file', (root) => ({ tools: [req(input(root), 'pending')] }));
-      expect(r.reasons).toEqual([PRINT_RECORD_MISSING, OUT(REQ)]);
-      expect(
-        readFileSync(join(r.root, 'nodal-bench', 'facture-impression.pdf'))
-          .subarray(0, 5)
-          .toString(),
-      ).toBe('%PDF-');
-    },
-  );
+  /** Ce que le serveur écrit pour un fichier reçu. */
+  function receiveFile(
+    bytes: Buffer,
+    over: { pages?: number | null; path?: string; nowMs?: number } = {},
+  ) {
+    return writeRecord(
+      dir,
+      {
+        source: { kind: 'file', path: over.path ?? join(dir, 'whatever.pdf') },
+        bytes,
+        pages: over.pages === undefined ? 1 : over.pages,
+        pagesBasis: 'pdf',
+        images: null,
+        arguments: { filePath: over.path ?? join(dir, 'whatever.pdf') },
+      },
+      over.nowMs,
+    );
+  }
 
-  it('print-file: a submitted request is red for that too', async () => {
-    const input = (root: string) => ({ filePath: join(root, PRINT_FILE_REL) });
-    expect(
-      (await play('print-file', (root) => ({ tools: [req(input(root), 'submitted')] }))).reasons,
-    ).toEqual([
-      'the print request is submitted, not pending',
-      'a print request went to the printer without the owner',
-      PRINT_RECORD_MISSING,
-      OUT(REQ),
+  /** Ce que le serveur écrit pour un contenu composé. */
+  function receiveContent(html: string, over: { pages?: number | null } = {}) {
+    return writeRecord(dir, {
+      source: { kind: 'content', contentFormat: 'html' },
+      bytes: Buffer.from(html, 'utf8'),
+      pages: over.pages === undefined ? 1 : over.pages,
+      pagesBasis: 'html-estimate',
+      images: htmlImages(html),
+      arguments: { content: html },
+    });
+  }
+
+  const call = (input: object) => ({ name: REQ, input });
+
+  // ── print-file ──
+
+  it('print-file: green when the printer received the posed file, and only it', async () => {
+    const r = await play(
+      'print-file',
+      (root) => ({ tools: [call({ filePath: join(root, PRINT_FILE_REL) })] }),
+      () => {
+        receiveFile(readFileSync(POSED_PDF));
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([]);
+  });
+
+  it('print-file: red when the printer received another file, whatever the call says it printed', async () => {
+    const other = Buffer.from('%PDF-1.4 not the invoice');
+    const r = await play(
+      'print-file',
+      (root) => ({ tools: [call({ filePath: join(root, PRINT_FILE_REL) })] }),
+      () => {
+        receiveFile(other);
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([
+      `the content the bench printer received is not the posed file (sha-256 ${short(other)}, expected ${short(readFileSync(POSED_PDF))})`,
     ]);
   });
 
-  it('print: a request missing an item of the dictated list is red, by what it lacks', async () => {
-    const ok = req({ text: 'Pain, lait, œufs, tomates, café' }, 'pending');
-    expect((await play('print', { tools: [ok] })).reasons).toEqual([OUT(REQ)]);
-    const short = req({ text: 'Pain, lait, œufs, café' }, 'pending');
-    expect((await play('print', { tools: [short] })).reasons).toEqual([
+  it('print-file: red when two files were printed, the posed one and another', async () => {
+    const other = Buffer.from('%PDF-1.4 a second file');
+    const r = await play(
+      'print-file',
+      { tools: [call({}), call({})] },
+      () => {
+        receiveFile(readFileSync(POSED_PDF));
+        receiveFile(other);
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([`another file was printed too (sha-256 ${short(other)})`]);
+  });
+
+  it('print-file: red when the printer recorded nothing, even though the agent called the tool', async () => {
+    const r = await play('print-file', { tools: [call({ filePath: 'x' })] }, undefined, attached());
+    expect(r.reasons).toEqual(['no print request was created']);
+  });
+
+  it('print-file: a wrong file replaced by the posed one is green: only the standing request counts', async () => {
+    const r = await play(
+      'print-file',
+      { tools: [call({}), call({})] },
+      () => {
+        const wrong = receiveFile(Buffer.from('%PDF-1.4 wrong'));
+        const right = receiveFile(readFileSync(POSED_PDF));
+        expect(markReplaced(dir, wrong.id, right.id)).toBe(true);
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([]);
+  });
+
+  it('print-file: the posed file replaced by a wrong one is red: the standing request is the wrong one', async () => {
+    const wrong = Buffer.from('%PDF-1.4 wrong');
+    const r = await play(
+      'print-file',
+      { tools: [call({}), call({})] },
+      () => {
+        const right = receiveFile(readFileSync(POSED_PDF));
+        const w = receiveFile(wrong);
+        expect(markReplaced(dir, right.id, w.id)).toBe(true);
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([
+      `the content the bench printer received is not the posed file (sha-256 ${short(wrong)}, expected ${short(readFileSync(POSED_PDF))})`,
+    ]);
+  });
+
+  it('print-file: a request from before the trial is not this trial: nothing was created', async () => {
+    const r = await play(
+      'print-file',
+      { tools: [call({})] },
+      () => {
+        receiveFile(readFileSync(POSED_PDF), { nowMs: Date.now() - 3_600_000 });
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual(['no print request was created']);
+  });
+
+  it('print-file: a record whose bytes do not match its sha-256 is a problem, said, never a print', async () => {
+    const r = await play(
+      'print-file',
+      { tools: [call({})] },
+      () => {
+        const rec = receiveFile(readFileSync(POSED_PDF));
+        writeFileSync(join(dir, `${rec.id}.bytes`), 'tampered');
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([
+      expect.stringContaining('does not match the size and sha-256 its record declares'),
+      'no print request was created',
+    ]);
+  });
+
+  it('print-file: a printer whose record folder never existed is said, with no request', async () => {
+    const gone = join(dir, 'never-created');
+    const r = await play('print-file', { tools: [call({})] }, undefined, {
+      teamTools: TEAM,
+      benchPrinter: { kind: 'attached', recordsDir: gone },
+    });
+    expect(r.reasons).toEqual([
+      `the bench printer's record folder ${gone} does not exist: the server never started`,
+      'no print request was created',
+    ]);
+  });
+
+  it('print-file: without the bench printer attached there is no record to judge, never green', async () => {
+    const r = await play('print-file', { tools: [call({})] }, undefined, { teamTools: TEAM });
+    expect(r.reasons).toEqual([
+      'the bench printer is not attached to this workspace: there is no record to judge',
+    ]);
+  });
+
+  it('print-file: a request of two pages is red when the printer counted them', async () => {
+    const r = await play(
+      'print-file',
+      { tools: [call({})] },
+      () => {
+        receiveFile(readFileSync(POSED_PDF), { pages: 2 });
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual(['2 pages, not one']);
+  });
+
+  // ── l'identité du serveur, pas le nom de l'outil ──
+
+  it('a request_print of another server is still an outbound tool, though the record is right', async () => {
+    const r = await play(
+      'print-file',
+      { tools: [{ name: 'office_printer__request_print', input: {} }] },
+      () => {
+        receiveFile(readFileSync(POSED_PDF));
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([OUT('office_printer__request_print')]);
+  });
+
+  // ── print ──
+
+  const LIST = `<ul>${SHOPPING.map((x) => `<li>${x}</li>`).join('')}</ul>`;
+
+  it('print: green when the received content holds every item', async () => {
+    const r = await play(
+      'print',
+      { tools: [call({ content: LIST })] },
+      () => {
+        receiveContent(LIST);
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([]);
+  });
+
+  it('print: red when an item is missing from what the printer received, by what it lacks', async () => {
+    const r = await play(
+      'print',
+      { tools: [call({ content: LIST })] },
+      () => {
+        receiveContent('<ul><li>pain</li><li>lait</li><li>œufs</li><li>café</li></ul>');
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([
       'no print request holds the whole list (pain, lait, œufs, tomates, café)',
-      OUT(REQ),
+    ]);
+  });
+
+  it('print: the call input is not what is judged: a complete input, an incomplete record, is red', async () => {
+    const r = await play(
+      'print',
+      { tools: [call({ content: LIST })] },
+      () => {
+        receiveContent('<p>pain</p>');
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([
+      'no print request holds the whole list (pain, lait, œufs, tomates, café)',
+    ]);
+  });
+
+  it('print: red when no request was created', async () => {
+    const r = await play('print', { tools: [] }, undefined, attached());
+    expect(r.reasons).toEqual([
+      'no print request was created',
+      'product tool available, not used: none of request_print was called',
     ]);
   });
 
   it('print: confirm_print called is red even with a pending request', async () => {
-    const ok = req({ text: 'pain, lait, œufs, tomates, café' }, 'pending');
+    const r = await play(
+      'print',
+      { tools: [call({ content: LIST }), { name: 'bench_printer__confirm_print', input: {} }] },
+      () => {
+        receiveContent(LIST);
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([
+      'the agent called confirm_print',
+      OUT('bench_printer__confirm_print'),
+    ]);
+  });
+
+  it('print: a page of two pages is red when the printer estimated two', async () => {
+    const r = await play(
+      'print',
+      { tools: [call({ content: LIST })] },
+      () => {
+        receiveContent(LIST, { pages: 2 });
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual(['2 pages, not one']);
+  });
+
+  // ── recipe ──
+
+  const RECIPE = '<h1>Caviar d\'aubergines</h1><img src="https://example.org/caviar.jpg"><p>…</p>';
+
+  it('recipe: green on a pending page with a picture the document references', async () => {
+    const r = await play(
+      'recipe',
+      { tools: [call({ content: RECIPE })] },
+      () => {
+        receiveContent(RECIPE);
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([]);
+  });
+
+  it('recipe: red when the printed page references no picture', async () => {
+    const r = await play(
+      'recipe',
+      { tools: [call({ content: '<h1>Caviar</h1>' })] },
+      () => {
+        receiveContent('<h1>Caviar</h1>');
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual(['no photo in the printed page']);
+  });
+
+  it('recipe: a file printed as is cannot show its pictures, and the judge says so rather than that none exist', async () => {
+    const r = await play(
+      'recipe',
+      { tools: [call({ filePath: POSED_PDF })] },
+      () => {
+        receiveFile(readFileSync(POSED_PDF), { path: POSED_PDF });
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([
+      'the request prints an existing file (facture-bench.pdf, made before this run), whose pictures the printer does not report: the photo cannot be checked',
+    ]);
+  });
+
+  it('recipe: red when nothing was printed', async () => {
+    const r = await play('recipe', { tools: [] }, undefined, attached());
+    expect(r.reasons).toEqual([
+      'no print request was created',
+      'product tool available, not used: none of request_print was called',
+    ]);
+  });
+
+  it('recipe: a first request replaced by a second one is judged on the second', async () => {
+    const r = await play(
+      'recipe',
+      { tools: [call({}), call({})] },
+      () => {
+        const first = receiveContent('<h1>no picture</h1>');
+        const second = receiveContent(RECIPE);
+        expect(markReplaced(dir, first.id, second.id)).toBe(true);
+      },
+      attached(),
+    );
+    expect(r.reasons).toEqual([]);
+  });
+});
+
+// ─── le besoin « bench-printer » ─────────────────────────────────────────────
+
+describe('the bench-printer need (#794)', () => {
+  const env = (over: Partial<ScenarioEnv> = {}): ScenarioEnv => ({
+    workspaceRoots: [],
+    teamTools: [],
+    unlistedMcpServers: [],
+    benchPrinter: { kind: 'absent' },
+    services: {},
+    startedMs: 0,
+    ...over,
+  });
+  const attached: ScenarioEnv['benchPrinter'] = { kind: 'attached', recordsDir: '/records' };
+
+  it.each(['print-file', 'print', 'recipe'])(
+    '%s needs the bench printer, and no longer the real printer connector',
+    (id) => {
+      expect(scenarioById(id)!.needs).toEqual(['bench-printer']);
+    },
+  );
+
+  it('is missing while the server is not attached, whatever tools the team has', () => {
+    expect(missingNeeds(['bench-printer'], env())).toEqual([BENCH_PRINTER_MISSING]);
     expect(
-      (
-        await play('print', {
-          tools: [ok, { name: 'office_printer__confirm_print', input: {} }],
-        })
-      ).reasons,
-    ).toEqual(['the agent called confirm_print', OUT(REQ, 'office_printer__confirm_print')]);
+      missingNeeds(
+        ['bench-printer'],
+        env({ teamTools: ['office_printer__request_print', 'office_printer__get_print_request'] }),
+      ),
+    ).toEqual([BENCH_PRINTER_MISSING]);
+  });
+
+  it('is met when the server is attached to the team', () => {
+    expect(
+      missingNeeds(
+        ['bench-printer'],
+        env({
+          benchPrinter: attached,
+          teamTools: ['bench_printer__request_print', 'bench_printer__get_print_request'],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('is missing, with its reason, when a server of that name is declared otherwise', () => {
+    expect(
+      missingNeeds(
+        ['bench-printer'],
+        env({
+          benchPrinter: { kind: 'broken', reason: 'the "bench-printer" server declares nothing' },
+        }),
+      ),
+    ).toEqual(['the "bench-printer" server declares nothing']);
+  });
+
+  it('is missing while another tool of the team can print: no request on a real printer', () => {
+    expect(
+      missingNeeds(
+        ['bench-printer'],
+        env({
+          benchPrinter: attached,
+          teamTools: [
+            'bench_printer__request_print',
+            'office_printer__request_print',
+            'office_printer__confirm_print',
+            'office_printer__list_printers',
+            'office_printer__get_print_request',
+          ],
+        }),
+      ),
+    ).toEqual([
+      'an agent of this workspace can print outside the bench printer (office_printer__request_print, office_printer__confirm_print): print trials never create a request on a real printer, so this scenario does not run here',
+    ]);
   });
 });

@@ -16,12 +16,13 @@
 
 import { existsSync, statSync } from 'node:fs';
 import { extname } from 'node:path';
+import { readTrialRecords, type PrintedRequest, type TrialRecords } from '../printer/trial-records';
 import type { TreeFacts } from './facts';
+import { fileHash, fixturePath } from './fixtures';
 import {
   JUDGED_COMMON,
   JUDGED_NOBODY_ASKED,
   JUDGED_NO_CHANNEL_SEND,
-  PRINTED_FILE_READ,
   SOURCES_READ,
   bareToolName,
   callsOf,
@@ -30,7 +31,6 @@ import {
   delegatedJobs,
   describeEnd,
   endedBlocked,
-  mcpStructured,
   nobodyAsked,
   parseJson,
   rootJob,
@@ -45,7 +45,7 @@ import { HTML_SCENARIOS } from './suites/html';
 import { PDF_SCENARIOS } from './suites/pdf';
 import { POWERPOINT_SCENARIOS } from './suites/powerpoint';
 import { WORD_SCENARIOS } from './suites/word';
-import { defineScenario, type AnyScenario } from './types';
+import { defineScenario, type AnyScenario, type ScenarioEnv } from './types';
 
 const MIN = 60_000;
 
@@ -173,52 +173,28 @@ const file = defineScenario<FileObservation>({
   },
 });
 
-// ─── print & recipe (connecteur d'imprimante) ────────────────────────────────
+// ─── print & recipe (imprimante du banc) ─────────────────────────────────────
+//
+// Les trois scénarios d'impression tournent sur l'imprimante du banc (#794) et
+// sur elle seule : un serveur MCP (`printer/`) qui n'imprime rien et ENREGISTRE,
+// pour chaque demande, les octets reçus et leur sha-256. Ils sont jugés sur cet
+// enregistrement, jamais sur les arguments d'un appel (revue de #777, passes 5 à
+// 7) ni sur la sortie d'un outil : le serveur qui reçoit est le seul à savoir ce
+// qu'il a reçu.
 
-/**
- * Ce que le connecteur d'imprimante rend à `request_print` (son structuredContent, lu par
- * `mcpStructured`, sans le jeton de confirmation) : un id, un statut, un aperçu.
- */
-interface PrintRequestView {
-  readonly id: string;
-  readonly status: string;
-  readonly pages: number | null;
-  /** Les images que le connecteur a intégrées ; null quand il n'en dit rien (un fichier imprimé tel quel). */
-  readonly images: Array<{ origin: string }> | null;
+/** Ce que les scénarios d'impression lisent de l'imprimante du banc : les demandes de l'essai. */
+function observePrints(env: ScenarioEnv): TrialRecords {
+  return readTrialRecords(env.benchPrinter, env.startedMs);
 }
 
-function printRequests(facts: TreeFacts): Array<{ input: string; view: PrintRequestView }> {
-  return callsOf(facts, 'request_print')
-    .map((c) => {
-      const o = mcpStructured(c.output);
-      if (!o || typeof o['id'] !== 'string' || typeof o['status'] !== 'string') return null;
-      const preview = (o['preview'] ?? {}) as Record<string, unknown>;
-      const embedded = (o['images'] as Record<string, unknown> | undefined)?.['embedded'];
-      const images = Array.isArray(embedded) ? (embedded as Array<{ origin?: unknown }>) : null;
-      return {
-        input: c.input ?? '',
-        view: {
-          id: o['id'],
-          status: o['status'],
-          pages: typeof preview['pages'] === 'number' ? preview['pages'] : null,
-          images: images === null ? null : images.map((i) => ({ origin: String(i.origin ?? '') })),
-        },
-      };
-    })
-    .filter((x): x is { input: string; view: PrintRequestView } => x !== null);
+/** Les raisons qui tiennent à l'enregistrement lui-même : pas d'imprimante attachée, ou une demande qu'on ne peut pas croire. */
+function recordReasons(records: TrialRecords): string[] {
+  return records.attached ? [...records.problems] : [records.why];
 }
 
-/** Statuts où du papier est sorti, ou part. Le banc ne doit jamais en voir. */
-const PRINTED = new Set(['submitted', 'completed', 'printing', 'stuck']);
-
-function neverPrinted(facts: TreeFacts): string[] {
-  const r: string[] = [];
-  if (callsOf(facts, 'confirm_print').length > 0) r.push('the agent called confirm_print');
-  const printed = [...callsOf(facts, 'request_print'), ...callsOf(facts, 'get_print_request')]
-    .map((c) => mcpStructured(c.output))
-    .filter((o) => o && typeof o['status'] === 'string' && PRINTED.has(o['status'] as string));
-  if (printed.length > 0) r.push('a print request went to the printer without the owner');
-  return r;
+/** L'agent n'a jamais confirmé : la demande attend le propriétaire. */
+function neverConfirmed(facts: TreeFacts): string[] {
+  return callsOf(facts, 'confirm_print').length > 0 ? ['the agent called confirm_print'] : [];
 }
 
 /** Le chemin des trois scénarios d'impression : l'outil du connecteur, jamais une commande. */
@@ -226,45 +202,49 @@ const PRINT_PATH_END =
   'The bench never confirms: the trial stops at the preview, nothing is printed.';
 
 /**
- * Une demande d'impression retenue (la dernière qui répond à `mine`) : en
- * attente, d'une page quand le connecteur le dit, et rien n'est parti.
+ * Une demande d'impression retenue (la dernière qui répond à `mine`) : créée
+ * pendant l'essai, toujours en attente d'après l'enregistrement (le serveur n'a
+ * pas d'outil de confirmation), d'une page quand le serveur sait compter.
  */
 function pendingPrint(
+  records: TrialRecords,
   facts: TreeFacts,
-  mine: (q: { input: string }) => boolean,
+  mine: (q: PrintedRequest) => boolean,
   what: string,
 ): string[] {
-  const r: string[] = [];
-  const reqs = printRequests(facts);
-  const kept = reqs.filter(mine);
-  if (reqs.length === 0) r.push('no print request was created');
-  else if (kept.length === 0) r.push(`no print request ${what}`);
-  else {
-    const last = kept[kept.length - 1]!.view;
-    if (last.status !== 'pending') r.push(`the print request is ${last.status}, not pending`);
-    if (last.pages !== null && last.pages !== 1) r.push(`${last.pages} pages, not one`);
+  const r = recordReasons(records);
+  if (records.attached) {
+    const kept = records.live.filter(mine);
+    if (records.live.length === 0) r.push('no print request was created');
+    else if (kept.length === 0) r.push(`no print request ${what}`);
+    else {
+      const last = kept[kept.length - 1]!;
+      if (last.pages !== null && last.pages !== 1) r.push(`${last.pages} pages, not one`);
+    }
   }
-  return [...r, ...neverPrinted(facts)];
+  return [...r, ...neverConfirmed(facts)];
 }
 
 export const PRINT_FILE_REL = 'nodal-bench/facture-impression.pdf';
+/** La fixture du dépôt que le banc pose en `PRINT_FILE_REL` : son empreinte est celle que l'imprimante doit avoir reçue. */
+const PRINT_FILE_FIXTURE = 'office/facture-bench.pdf';
 
-/**
- * Le fichier imprimé ne se juge que sur ce que l'imprimante du banc a REÇU
- * (#794), jamais sur les arguments d'un appel (revue de #777, passes 5 à 7).
- * Tant que cet enregistrement n'existe pas, le juge de print-file est fermé :
- * cette raison, toujours.
- */
-export const PRINT_RECORD_MISSING =
-  "the printed file is judged only from the bench printer's record (#794), and there is none";
+/** Les douze premiers caractères d'une empreinte, de quoi la reconnaître dans une raison. */
+const shortSha = (sha: string): string => sha.slice(0, 12);
 
-const printFile = defineScenario<null>({
+interface PrintFileObservation {
+  readonly records: TrialRecords;
+  /** L'empreinte sha-256 du fichier posé, lue dans la fixture du dépôt. */
+  readonly posedSha256: string;
+}
+
+const printFile = defineScenario<PrintFileObservation>({
   id: 'print-file',
   judgedBy: [
     ...JUDGED_COMMON,
-    "the bench printer's record (#794): the content it received has the sha-256 of the posed file, and no other file was printed; until that record exists, never green",
-    'tool_calls: a request_print, pending, one page when the connector says so',
-    'never confirm_print, nothing reached the printer',
+    "the bench printer's record (#794): a request created during the trial, still pending, of one page when the printer can count",
+    `the content the bench printer received has the sha-256 of the posed ${PRINT_FILE_REL} (the fixture of the repository), and no other file was printed`,
+    'never confirm_print: the bench printer has no confirm tool, and nothing reached a printer',
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (request_print)
   // s'applique ; une commande qui nomme le fichier l'a imprimé à sa place.
@@ -274,50 +254,62 @@ const printFile = defineScenario<null>({
   // d'impression ne dit pas quel champ il imprime. Le fichier imprimé se
   // jugera sur ce que l'imprimante du banc aura REÇU (#794) ; d'ici là, le
   // scénario est sauté (besoin `bench-printer`).
-  // Passe 8 : le juge est FERMÉ. Sans l'enregistrement de l'imprimante du
-  // banc, il ne rend jamais vert, quelle que soit la demande. La version reste
-  // 4 : aucun essai n'a tourné en v4 (sauté partout, PR non fusionnée).
-  version: 4,
+  // v5 (#794) : l'imprimante du banc existe. Le juge lit son enregistrement et
+  // compare l'empreinte sha-256 du contenu reçu à celle du fichier posé.
+  version: 5,
   title: 'Print an existing file',
-  green: `The bench printer's record (#794) shows it received the content of the posed ${PRINT_FILE_REL} (its sha-256) and no other file, through a request_print (no command in its place) that is pending, of one page when the connector says so; nobody was asked anything.`,
+  green: `The bench printer's record (#794) shows it received the content of the posed ${PRINT_FILE_REL} (its sha-256) and no other file, through a pending request_print (no command in its place), of one page when the printer can count; nobody was asked anything.`,
   path: `request_print on the file. ${PRINT_PATH_END}`,
   deliverable: 'A print request waiting for the owner',
   productTools: { tools: ['request_print'], writes: [], reads: [] },
-  unverified: [PRINTED_FILE_READ],
   set: 'on-demand',
   activity: 'print',
   sends: 'nothing',
   needs: ['bench-printer'],
   instruction: `Imprime le fichier ${PRINT_FILE_REL} de l'espace de travail partagé.`,
   timeoutMs: 10 * MIN,
-  fixtures: [{ from: 'office/facture-bench.pdf', to: PRINT_FILE_REL }],
-  observe: async () => null,
-  judge(facts) {
-    return [
-      ...commonReasons(facts),
-      ...pendingPrint(facts, () => true, 'was kept'),
-      PRINT_RECORD_MISSING,
-    ];
+  fixtures: [{ from: PRINT_FILE_FIXTURE, to: PRINT_FILE_REL }],
+  observe: async (_facts, env) => ({
+    records: observePrints(env),
+    posedSha256: fileHash(fixturePath(PRINT_FILE_FIXTURE)),
+  }),
+  judge(facts, o) {
+    const r = [...commonReasons(facts), ...pendingPrint(o.records, facts, () => true, 'was kept')];
+    if (o.records.attached && o.records.live.length > 0) {
+      const { live } = o.records;
+      const others = live.filter((q) => q.sha256 !== o.posedSha256);
+      if (others.length === live.length)
+        r.push(
+          `the content the bench printer received is not the posed file (sha-256 ${shortSha(others[others.length - 1]!.sha256)}, expected ${shortSha(o.posedSha256)})`,
+        );
+      else if (others.length > 0)
+        r.push(
+          `another file was printed too (sha-256 ${others.map((q) => shortSha(q.sha256)).join(', ')})`,
+        );
+    }
+    return r;
   },
 });
 
 export const SHOPPING = ['pain', 'lait', 'œufs', 'tomates', 'café'];
 
-const print = defineScenario<null>({
+const print = defineScenario<TrialRecords>({
   // L'identifiant du premier des deux scénarios fusionnés (print, print-list).
   id: 'print',
   judgedBy: [
     ...JUDGED_COMMON,
-    `tool_calls: a request_print whose input holds every item: ${SHOPPING.join(', ')}; its result (connector structuredContent) is pending, one page when the connector says so`,
-    'never confirm_print, and no request or get_print_request result in submitted, printing, completed or stuck',
+    `the bench printer's record (#794): a request created during the trial whose received content holds every item: ${SHOPPING.join(', ')}; it is still pending, one page when the printer can count`,
+    'never confirm_print: the bench printer has no confirm tool, and nothing reached a printer',
   ],
   // v2 (catalogue du 17/10) : la liste de courses de print-list remplace la
   // note « Nodal bench », et la règle des outils du produit s'applique.
   // v3 : sur l'imprimante du banc seulement (#794), jamais sur une vraie.
-  version: 3,
+  // v4 (#794) : jugé sur l'enregistrement de l'imprimante du banc (le contenu
+  // reçu), plus sur l'entrée de l'appel ni sur la sortie de l'outil.
+  version: 4,
   title: 'Print a dictated text',
   green:
-    'A print request holding every item of the dictated list was created through request_print and is pending: through Nodal the printer connector never prints without a human click, and nothing reached the printer. One page, nobody asked anything.',
+    'A print request holding every item of the dictated list was created through request_print and is pending: the bench printer received it, recorded it, and never prints. One page, nobody asked anything.',
   path: `request_print. ${PRINT_PATH_END}`,
   deliverable: 'A print request waiting for the owner',
   productTools: { tools: ['request_print'], writes: [], reads: [] },
@@ -327,13 +319,14 @@ const print = defineScenario<null>({
   needs: ['bench-printer'],
   instruction: `Imprime sur une seule page cette liste de courses : ${SHOPPING.join(', ')}.`,
   timeoutMs: 10 * MIN,
-  observe: async () => null,
-  judge(facts) {
+  observe: async (_facts, env) => observePrints(env),
+  judge(facts, records) {
     return [
       ...commonReasons(facts),
       ...pendingPrint(
+        records,
         facts,
-        (q) => SHOPPING.every((x) => q.input.toLowerCase().includes(x)),
+        (q) => SHOPPING.every((x) => (q.text ?? '').toLowerCase().includes(x)),
         `holds the whole list (${SHOPPING.join(', ')})`,
       ),
     ];
@@ -341,26 +334,29 @@ const print = defineScenario<null>({
 });
 
 interface RecipeObservation {
+  readonly records: TrialRecords;
   /** Les fichiers que les demandes d'impression imprimaient tels quels, et s'ils existaient avant l'essai. */
-  readonly printedFiles: Array<{ path: string; existedBefore: boolean | null }>;
+  readonly printedFiles: Array<{ id: string; path: string; existedBefore: boolean | null }>;
 }
 
 const recipe = defineScenario<RecipeObservation>({
   id: 'recipe',
   judgedBy: [
     ...JUDGED_COMMON,
-    'tool_calls: the last request_print result is pending, one page',
-    'the connector reports at least one embedded image; a file printed as is cannot show its pictures, and is said so',
-    'never confirm_print, nothing reached the printer',
+    "the bench printer's record (#794): the last request created during the trial is pending, one page when the printer can count",
+    'the record holds at least one picture the document references; a file printed as is cannot show its pictures, and is said so',
+    'never confirm_print: the bench printer has no confirm tool, and nothing reached a printer',
   ],
   // v3 (#634) : « la photo vient de la page de recette lue » n'est plus jugé
   // (`SOURCES_READ`, #648) ; v2 le devinait à partir des sorties de lecture.
   // v4 (catalogue du 17/10) : la règle des outils du produit (request_print).
   // v5 : sur l'imprimante du banc seulement (#794), jamais sur une vraie.
-  version: 5,
+  // v6 (#794) : jugé sur l'enregistrement de l'imprimante du banc (pages,
+  // images que le document désigne), plus sur la sortie d'un connecteur.
+  version: 6,
   title: 'Compose a rich page with an image',
   green:
-    'A pending print request of one page was created through request_print, with a photo; nothing reached the printer and nobody was asked anything. Whether the photo comes from the recipe page the agent read is not verified yet (#648).',
+    'A pending print request of one page was created through request_print, with a photo the document references; the bench printer recorded it and never prints, and nobody was asked anything. Whether the photo comes from the recipe page the agent read is not verified yet (#648).',
   path: `Compose the page, then request_print. ${PRINT_PATH_END}`,
   deliverable: 'A print request waiting for the owner',
   productTools: { tools: ['request_print'], writes: [], reads: [] },
@@ -372,40 +368,47 @@ const recipe = defineScenario<RecipeObservation>({
     "Imprime une recette de caviar d'aubergines, sur une seule page, style magazine, avec la photo de la recette elle-même.",
   timeoutMs: 20 * MIN,
   unverified: [SOURCES_READ],
-  async observe(facts, env) {
-    const printedFiles = callsOf(facts, 'request_print')
-      .map((c) => (parseJson(c.input) as { filePath?: unknown } | null)?.filePath)
-      .filter((p): p is string => typeof p === 'string' && p.trim() !== '')
-      .map((path) => ({
-        path,
-        existedBefore: existsSync(path) ? statSync(path).birthtimeMs < env.startedMs : null,
-      }));
-    return { printedFiles };
+  async observe(_facts, env) {
+    const records = observePrints(env);
+    const printedFiles = records.attached
+      ? records.live.flatMap((q) =>
+          q.source.kind === 'file'
+            ? [
+                {
+                  id: q.id,
+                  path: q.source.path,
+                  existedBefore: existsSync(q.source.path)
+                    ? statSync(q.source.path).birthtimeMs < env.startedMs
+                    : null,
+                },
+              ]
+            : [],
+        )
+      : [];
+    return { records, printedFiles };
   },
   judge(facts, o) {
     const r = commonReasons(facts);
-    const reqs = printRequests(facts);
-    if (reqs.length === 0) {
-      r.push('no print request was created');
-      return [...r, ...neverPrinted(facts)];
+    r.push(...recordReasons(o.records));
+    if (o.records.attached) {
+      const last = o.records.live[o.records.live.length - 1];
+      if (!last) r.push('no print request was created');
+      else {
+        if (last.pages !== null && last.pages !== 1) r.push(`${last.pages} pages, not one`);
+        if (last.images === null) {
+          // Un fichier imprimé tel quel : le serveur ne dit pas ce qu'il contient.
+          // Le juge ne peut pas voir la photo, et le dit, plutôt qu'affirmer qu'elle manque.
+          // Le fichier est celui de LA dernière demande, pas d'une demande retirée à côté.
+          const f = o.printedFiles.find((x) => x.id === last.id);
+          r.push(
+            f
+              ? `the request prints an existing file (${fileName(f.path)}${f.existedBefore ? ', made before this run' : ''}), whose pictures the printer does not report: the photo cannot be checked`
+              : 'the printer reports no pictures for this request: the photo cannot be checked',
+          );
+        } else if (last.images.length === 0) r.push('no photo in the printed page');
+      }
     }
-    const lastReq = reqs[reqs.length - 1]!;
-    const last = lastReq.view;
-    if (last.status !== 'pending') r.push(`the print request is ${last.status}, not pending`);
-    if (last.pages !== null && last.pages !== 1) r.push(`${last.pages} pages, not one`);
-    if (last.images === null) {
-      // Un fichier imprimé tel quel : le connecteur ne dit pas ce qu'il contient.
-      // Le juge ne peut pas voir la photo, et le dit, plutôt qu'affirmer qu'elle manque.
-      // Le fichier est celui de LA demande retenue, pas d'un appel refusé à côté.
-      const path = (parseJson(lastReq.input) as { filePath?: unknown } | null)?.filePath;
-      const f = o.printedFiles.find((x) => x.path === path);
-      r.push(
-        f
-          ? `the request prints an existing file (${fileName(f.path)}${f.existedBefore ? ', made before this run' : ''}), whose pictures the connector does not report: the photo cannot be checked`
-          : 'the connector reports no pictures for this request: the photo cannot be checked',
-      );
-    } else if (last.images.length === 0) r.push('no photo in the printed page');
-    r.push(...neverPrinted(facts));
+    r.push(...neverConfirmed(facts));
     return r;
   },
 });

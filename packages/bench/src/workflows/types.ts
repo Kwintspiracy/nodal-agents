@@ -6,6 +6,7 @@
 // et le portail ouvre une nouvelle série au lieu de comparer deux choses
 // différentes.
 
+import type { BenchPrinterState } from '../printer/identity';
 import type { TreeFacts } from './facts';
 
 /**
@@ -111,6 +112,11 @@ export interface ScenarioEnv {
    * pourra offrir n'importe quel outil. Le garde `no-mail-sender` refuse alors.
    */
   readonly unlistedMcpServers: readonly string[];
+  /**
+   * L'imprimante du banc (#794) : attachée à un agent actif de l'espace, et le
+   * dossier où elle enregistre ce qu'elle reçoit, ou absente.
+   */
+  readonly benchPrinter: BenchPrinterState;
   /** Les services locaux déclarés pour le banc, sondés au début de l'essai. */
   readonly services: Readonly<Record<string, ServiceProbe>>;
   /** Début de l'essai (ms). Un fichier plus ancien n'a pas été écrit par lui. */

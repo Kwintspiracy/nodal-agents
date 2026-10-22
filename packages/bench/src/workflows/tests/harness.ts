@@ -21,6 +21,7 @@ import { scenarioById } from '../scenarios';
 import type { ResearchSubject } from '../subjects';
 import { cheminConstate } from '@nodal-agents/tools';
 import { productFileStates, trialReasons } from '../trial';
+import type { BenchPrinterState } from '../../printer/identity';
 import type { ScenarioEnv } from '../types';
 
 export const ROOT_ID = '00000000-0000-4000-8000-0000000000a1';
@@ -187,6 +188,11 @@ export interface PlayEnv {
    * le banc n'y pose rien, un fichier qui s'y trouve n'est pas la fixture.
    */
   readonly attachedRoot?: boolean;
+  /**
+   * L'imprimante du banc (#794) attachée à l'équipe, et le dossier où elle
+   * enregistre. Absent : aucune imprimante du banc n'est attachée.
+   */
+  readonly benchPrinter?: BenchPrinterState;
 }
 
 /**
@@ -213,6 +219,7 @@ export async function play(
     teamTools: playEnv.teamTools ?? [],
     services: {},
     unlistedMcpServers: [],
+    benchPrinter: playEnv.benchPrinter ?? { kind: 'absent' },
     startedMs: 0,
     ...(playEnv.subject ? { subject: playEnv.subject } : {}),
   };

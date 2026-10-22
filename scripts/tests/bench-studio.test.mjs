@@ -28,7 +28,7 @@ import {
   studioEnv,
   studioRefusal,
 } from '../lib/bench-studio.mjs';
-import { findStudioTraces } from '../lib/bench-studio-absent.mjs';
+import { STUDIO_CONTENT_MARKERS, findStudioTraces } from '../lib/bench-studio-absent.mjs';
 import { portsDeLaStack } from '../lib/live-stack.mjs';
 
 const GATE = 'g'.repeat(48);
@@ -430,6 +430,28 @@ describe('No Bench Studio in a build output', () => {
       'server/chunks/123.js (contains studio_not_behind_filter)',
       'web/node_modules/x/index.js (contains studio_no_fixture)',
     ]);
+  });
+
+  it('the bench printer server (#794) is a trace, by its folder or by the record format only it writes', () => {
+    const d = tree({
+      'web/bench-printer/server.js': 'x',
+      'server/chunks/9.js': 'const f="bench_printer_record_v1";',
+      'server/chunks/10.js': 'const ok = 1;',
+    });
+    expect(findStudioTraces(d).sort()).toEqual([
+      'server/chunks/9.js (contains bench_printer_record_v1)',
+      'web/bench-printer (path)',
+    ]);
+  });
+
+  it('the literal the check looks for is the one the printer really writes: renaming one without the other cannot pass', () => {
+    const record = readFileSync(
+      new URL('../../packages/bench/src/printer/record.ts', import.meta.url),
+      'utf8',
+    );
+    const marker = STUDIO_CONTENT_MARKERS.find((m) => m.startsWith('bench_printer'));
+    expect(marker).toBeDefined();
+    expect(record).toContain(`PRINT_RECORD_FORMAT = '${marker}'`);
   });
 
   it('a studio build folder copied in is a trace', () => {
