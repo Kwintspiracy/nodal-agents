@@ -43,6 +43,22 @@ import {
 } from '../../job/process-scopes.ts';
 
 let db: TestDb;
+
+/**
+ * Lit le nombre qu'un processus écrit dans `file`. `writeFileSync` vide le
+ * fichier avant de l'écrire : une lecture qui tombe entre les deux lit `''`
+ * (vu en CI Linux : « expected 0 to be greater than 1 »). On relit, borné,
+ * jusqu'à un entier.
+ */
+function readNumber(file: string): number {
+  for (let i = 0; i < 200; i++) {
+    const text = readFileSync(file, 'utf8').trim();
+    if (/^\d+$/.test(text)) return Number(text);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+  throw new Error(`no number in ${file}`);
+}
+
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
 const asDb = () => db as unknown as Parameters<typeof releaseIfEnded>[0];
 
@@ -206,7 +222,7 @@ describe.each(cases)(
       }
       const second = await command(jobId, `"${node}" probe.cjs "${pidFile}"`);
       expect(second.stdout.trim()).toBe('alive');
-      return { pid: Number(readFileSync(pidFile, 'utf8')), counter };
+      return { pid: readNumber(pidFile), counter };
     }
 
     async function expectDead(d: { pid: number; counter: string }): Promise<void> {
@@ -371,9 +387,9 @@ describe('a lost job releases its processes before the row can be claimed again 
       expect(reprise.resumedJobIds).toContain(id);
       expect(started).not.toBeNull();
       // Elle tourne encore : son compteur monte après la reprise.
-      const before = Number(readFileSync(counter, 'utf8'));
+      const before = readNumber(counter);
       await new Promise((r) => setTimeout(r, 500));
-      expect(Number(readFileSync(counter, 'utf8'))).toBeGreaterThan(before);
+      expect(readNumber(counter)).toBeGreaterThan(before);
       expect(openJobProcessScopeIds()).toContain(id);
     } finally {
       await closeJobProcessScope(id);
@@ -509,9 +525,9 @@ describe('a reaper whose candidate came back to life releases nothing and writes
               .where(eq(agentJobs.id, id));
           }),
         );
-        const before = Number(readFileSync(counter, 'utf8'));
+        const before = readNumber(counter);
         await new Promise((r) => setTimeout(r, 500));
-        expect(Number(readFileSync(counter, 'utf8'))).toBeGreaterThan(before);
+        expect(readNumber(counter)).toBeGreaterThan(before);
         const [after] = await db
           .select({ status: agentJobs.status })
           .from(agentJobs)

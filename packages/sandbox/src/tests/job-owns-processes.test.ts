@@ -41,6 +41,22 @@ import { createSandbox } from '../status';
 import type { StartedProcess } from '../types';
 
 const dir = mkdtempSync(join(tmpdir(), 'nodal-job-owns-'));
+
+/**
+ * Lit le nombre qu'un processus écrit dans `file`. `writeFileSync` vide le
+ * fichier avant de l'écrire : une lecture qui tombe entre les deux lit `''`
+ * (vu en CI Linux : « expected 0 to be greater than 1 »). On relit, borné,
+ * jusqu'à un entier.
+ */
+function readNumber(file: string): number {
+  for (let i = 0; i < 200; i++) {
+    const text = readFileSync(file, 'utf8').trim();
+    if (/^\d+$/.test(text)) return Number(text);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+  throw new Error(`no number in ${file}`);
+}
+
 // Un processus tué peut tenir le dossier un instant encore (EPERM sous
 // Windows) : l'effacement réessaie, il ne masque pas un échec du test.
 afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
@@ -128,7 +144,7 @@ async function startDaemon(
   for (let i = 0; i < 200 && !(existsSync(pidFile) && existsSync(counter)); i++) {
     await new Promise((r) => setTimeout(r, 50));
   }
-  return { pid: Number(readFileSync(pidFile, 'utf8')), counter };
+  return { pid: readNumber(pidFile), counter };
 }
 
 async function deadWithin(pid: number, ms: number): Promise<boolean> {
@@ -139,7 +155,7 @@ async function deadWithin(pid: number, ms: number): Promise<boolean> {
   return !isProcessAlive(pid);
 }
 
-const count = (file: string): number => Number(readFileSync(file, 'utf8'));
+const count = (file: string): number => readNumber(file);
 
 describe.each(SHAPES)(
   'a job owns what a command leaves running, %s (#750, #755) @cap:executer-une-commande/moteur',
@@ -223,7 +239,7 @@ describe('a job owns every process it starts outside the sandbox (#750, #755) @c
       for (let i = 0; i < 200 && !existsSync(pidFile); i++) {
         await new Promise((r) => setTimeout(r, 50));
       }
-      const pid = Number(readFileSync(pidFile, 'utf8'));
+      const pid = readNumber(pidFile);
       const killedAt = Date.now();
       proc.kill();
       // Sa fin arrive (taskkill /F rend un code de sortie 1 sous Windows, un
@@ -274,7 +290,7 @@ describe('a job owns every process it starts outside the sandbox (#750, #755) @c
         await new Promise((r) => setTimeout(r, 50));
       }
       expect(existsSync(pidFile), `the fake runner never started its daemon: ${said}`).toBe(true);
-      const pid = Number(readFileSync(pidFile, 'utf8'));
+      const pid = readNumber(pidFile);
       expect(isProcessAlive(pid)).toBe(true);
       try {
         // Tué, pas arrêté : aucun code de fermeture ne tourne. Le faux runner
@@ -323,7 +339,7 @@ describe.runIf(process.platform === 'win32')(
         for (let i = 0; i < 200 && !(existsSync(pidFile) && existsSync(counter)); i++) {
           await new Promise((r) => setTimeout(r, 50));
         }
-        const pid = Number(readFileSync(pidFile, 'utf8'));
+        const pid = readNumber(pidFile);
         expect(isProcessAlive(pid)).toBe(true);
         await scope.close();
         expect(await deadWithin(pid, 5_000)).toBe(true);
@@ -378,7 +394,7 @@ describe.runIf(process.platform === 'linux')(
         for (let i = 0; i < 200 && !existsSync(pidFile); i++) {
           await new Promise((r) => setTimeout(r, 50));
         }
-        pid = Number(readFileSync(pidFile, 'utf8'));
+        pid = readNumber(pidFile);
         await scope.close();
         await new Promise((r) => setTimeout(r, 500));
         // La limite dite dans unix-job-processes.ts : ni groupe, ni étiquette.
