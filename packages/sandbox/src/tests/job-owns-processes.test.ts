@@ -11,7 +11,11 @@
 //     l'étiquette ; pas macOS, limite dite dans unix-job-processes.ts). Ailleurs
 //     le cas est SAUTÉ, raison au titre, jamais rouge.
 // Ce qui se prouve :
-//   - il VIT pour la commande suivante du même job (décision du 14/10) ;
+//   - il VIT pour la commande suivante du même job (décision du 14/10), et il
+//     travaille : son compteur monte. Attendu par `counterRise` (test-kit),
+//     borné, et non sur une fenêtre fixe : celle de 400 ms a rougi une fois en
+//     CI Windows sans dire si le démon était mort ou seulement pas servi ;
+//     l'attente le dit ;
 //   - il MEURT à la fermeture du périmètre (la fin du job), et le compteur
 //     cesse de monter ;
 //   - fermer le périmètre d'un job ne touche pas aux processus d'un autre ;
@@ -37,40 +41,19 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JobProcessScope, killLeftoversOfJob } from '../job-scope';
 import { isProcessAlive } from '../process-tree';
 import { detachedDescendantsReachable } from '../unix-job-processes';
+import { COUNTER_DAEMON_SOURCE, counterRise, readCounter } from '@nodal-agents/test-kit';
 import { createSandbox } from '../status';
 import type { StartedProcess } from '../types';
 
 const dir = mkdtempSync(join(tmpdir(), 'nodal-job-owns-'));
 
-/**
- * Lit le nombre qu'un processus écrit dans `file`. `writeFileSync` vide le
- * fichier avant de l'écrire : une lecture qui tombe entre les deux lit `''`
- * (vu en CI Linux : « expected 0 to be greater than 1 »). On relit, borné,
- * jusqu'à un entier.
- */
-function readNumber(file: string): number {
-  for (let i = 0; i < 200; i++) {
-    const text = readFileSync(file, 'utf8').trim();
-    if (/^\d+$/.test(text)) return Number(text);
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-  }
-  throw new Error(`no number in ${file}`);
-}
-
 // Un processus tué peut tenir le dossier un instant encore (EPERM sous
 // Windows) : l'effacement réessaie, il ne masque pas un échec du test.
 afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
 
-// Le démon : son pid, puis un compteur qui monte toutes les 100 ms.
-writeFileSync(
-  join(dir, 'daemon.cjs'),
-  [
-    "const fs = require('fs');",
-    'fs.writeFileSync(process.argv[2], String(process.pid));',
-    'let n = 0;',
-    'setInterval(() => fs.writeFileSync(process.argv[3], String(++n)), 100);',
-  ].join('\n'),
-);
+// Le démon : son pid, puis un compteur qui monte toutes les 100 ms
+// (`daemon.cjs <compteur> <pid>`, test-kit counter-process.ts).
+writeFileSync(join(dir, 'daemon.cjs'), COUNTER_DAEMON_SOURCE);
 // La commande : lance le démon, sans tuyau commun, et SORT. argv[4] dit la
 // forme : `detached` (sa propre session sous Unix) ou `group` (le groupe de la
 // commande ; sous Windows, détaché de l'arbre, sinon il mourrait avec elle).
@@ -79,7 +62,7 @@ writeFileSync(
   [
     "const { spawn } = require('child_process');",
     "const detached = process.argv[4] === 'detached' || process.platform === 'win32';",
-    "const c = spawn(process.execPath, [require('path').join(__dirname, 'daemon.cjs'), process.argv[2], process.argv[3]], { detached, stdio: 'ignore' });",
+    "const c = spawn(process.execPath, [require('path').join(__dirname, 'daemon.cjs'), process.argv[3], process.argv[2]], { detached, stdio: 'ignore' });",
     'c.unref();',
   ].join('\n'),
 );
@@ -144,7 +127,7 @@ async function startDaemon(
   for (let i = 0; i < 200 && !(existsSync(pidFile) && existsSync(counter)); i++) {
     await new Promise((r) => setTimeout(r, 50));
   }
-  return { pid: readNumber(pidFile), counter };
+  return { pid: readCounter(pidFile), counter };
 }
 
 async function deadWithin(pid: number, ms: number): Promise<boolean> {
@@ -154,8 +137,6 @@ async function deadWithin(pid: number, ms: number): Promise<boolean> {
   }
   return !isProcessAlive(pid);
 }
-
-const count = (file: string): number => readNumber(file);
 
 describe.each(SHAPES)(
   'a job owns what a command leaves running, %s (#750, #755) @cap:executer-une-commande/moteur',
@@ -168,9 +149,9 @@ describe.each(SHAPES)(
         try {
           // Sa commande est sortie ; lui vit, et travaille.
           expect(isProcessAlive(pid)).toBe(true);
-          const before = count(counter);
-          await new Promise((r) => setTimeout(r, 400));
-          expect(count(counter)).toBeGreaterThan(before);
+          const before = readCounter(counter);
+          const rise = await counterRise(counter, before, { pid });
+          expect(rise.value, rise.why).toBeGreaterThan(before);
           // La commande SUIVANTE du même job le joint.
           const said = await run(
             await scope.startOwned({
@@ -188,9 +169,9 @@ describe.each(SHAPES)(
           await scope.close();
         }
         expect(await deadWithin(pid, 5_000)).toBe(true);
-        const frozen = count(counter);
+        const frozen = readCounter(counter);
         await new Promise((r) => setTimeout(r, 400));
-        expect(count(counter)).toBe(frozen);
+        expect(readCounter(counter)).toBe(frozen);
       },
       60_000,
     );
@@ -207,9 +188,9 @@ describe.each(SHAPES)(
           expect(await deadWithin(da.pid, 5_000)).toBe(true);
           // L'autre job vit, et son démon travaille encore.
           expect(isProcessAlive(db.pid)).toBe(true);
-          const before = count(db.counter);
-          await new Promise((r) => setTimeout(r, 400));
-          expect(count(db.counter)).toBeGreaterThan(before);
+          const before = readCounter(db.counter);
+          const rise = await counterRise(db.counter, before, { pid: db.pid });
+          expect(rise.value, rise.why).toBeGreaterThan(before);
         } finally {
           await b.close();
         }
@@ -239,7 +220,7 @@ describe('a job owns every process it starts outside the sandbox (#750, #755) @c
       for (let i = 0; i < 200 && !existsSync(pidFile); i++) {
         await new Promise((r) => setTimeout(r, 50));
       }
-      const pid = readNumber(pidFile);
+      const pid = readCounter(pidFile);
       const killedAt = Date.now();
       proc.kill();
       // Sa fin arrive (taskkill /F rend un code de sortie 1 sous Windows, un
@@ -290,7 +271,7 @@ describe('a job owns every process it starts outside the sandbox (#750, #755) @c
         await new Promise((r) => setTimeout(r, 50));
       }
       expect(existsSync(pidFile), `the fake runner never started its daemon: ${said}`).toBe(true);
-      const pid = readNumber(pidFile);
+      const pid = readCounter(pidFile);
       expect(isProcessAlive(pid)).toBe(true);
       try {
         // Tué, pas arrêté : aucun code de fermeture ne tourne. Le faux runner
@@ -329,7 +310,7 @@ describe.runIf(process.platform === 'win32')(
         const said = await run(
           await scope.startOwned({
             target: {
-              command: `start "" /b "${process.execPath}" "${join(dir, 'daemon.cjs')}" "${pidFile}" "${counter}"`,
+              command: `start "" /b "${process.execPath}" "${join(dir, 'daemon.cjs')}" "${counter}" "${pidFile}"`,
             },
             cwd: dir,
             env: env(),
@@ -339,7 +320,7 @@ describe.runIf(process.platform === 'win32')(
         for (let i = 0; i < 200 && !(existsSync(pidFile) && existsSync(counter)); i++) {
           await new Promise((r) => setTimeout(r, 50));
         }
-        const pid = readNumber(pidFile);
+        const pid = readCounter(pidFile);
         expect(isProcessAlive(pid)).toBe(true);
         await scope.close();
         expect(await deadWithin(pid, 5_000)).toBe(true);
@@ -383,7 +364,7 @@ describe.runIf(process.platform === 'linux')(
       try {
         const proc = await scope.startOwned({
           target: {
-            command: `env -i setsid "${process.execPath}" "${join(dir, 'daemon.cjs')}" "${pidFile}" "${counter}" > /dev/null 2>&1 &`,
+            command: `env -i setsid "${process.execPath}" "${join(dir, 'daemon.cjs')}" "${counter}" "${pidFile}" > /dev/null 2>&1 &`,
           },
           cwd: dir,
           env: env(),
@@ -394,7 +375,7 @@ describe.runIf(process.platform === 'linux')(
         for (let i = 0; i < 200 && !existsSync(pidFile); i++) {
           await new Promise((r) => setTimeout(r, 50));
         }
-        pid = readNumber(pidFile);
+        pid = readCounter(pidFile);
         await scope.close();
         await new Promise((r) => setTimeout(r, 500));
         // La limite dite dans unix-job-processes.ts : ni groupe, ni étiquette.
