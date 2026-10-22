@@ -12,7 +12,7 @@
 
 import { z } from 'zod';
 import { eq, and } from '@nodal-agents/db';
-import { mcpServers } from '@nodal-agents/db';
+import { createStdioMcpServerRepo, mcpServers } from '@nodal-agents/db';
 import { MCP_SERVER_SLUG_PATTERN, MCP_SERVER_SLUG_RULE } from '@nodal-agents/shared';
 import type { ToolDefinition, ProvisionedMcpTool } from '../../types';
 import { resolveAgentId, linkMcpToAgent } from './link-helpers';
@@ -195,26 +195,23 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
       if (conn) await conn.close().catch(() => {});
     }
 
-    // Encrypt each env value individually for at-rest storage.
-    const encEnv: Record<string, string> = {};
-    for (const [k, v] of Object.entries(env)) encEnv[k] = provisioning.encrypt(v);
-
-    const [insertedStdio] = await ctx.db
-      .insert(mcpServers)
-      .values({
-        entityId: ctx.entityId,
+    // Chaque valeur d'environnement chiffrée une à une (par le chiffrement que
+    // le runner prête) : `createStdioMcpServerRepo`, le chemin de l'écran aussi.
+    const insertedStdio = await createStdioMcpServerRepo(
+      ctx.db,
+      ctx.entityId,
+      {
         name: input.name,
         slug: input.slug,
-        transport: 'stdio',
         command,
         args,
-        envVars: encEnv,
+        env,
         availableTools: tools,
         instructions,
-        active: true,
-      })
-      .returning({ id: mcpServers.id });
-    const suffixStdio = insertedStdio ? await attachSuffix(insertedStdio.id) : '';
+      },
+      provisioning.encrypt,
+    );
+    const suffixStdio = await attachSuffix(insertedStdio.id);
     return {
       ok: true,
       message: `Started and registered stdio MCP server "${input.name}" (${input.slug}) with ${tools.length} tool(s).${suffixStdio}`,

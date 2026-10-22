@@ -6,11 +6,17 @@
 // base est jouée sur PGlite avec le schéma des tests de @nodal-agents/db, comme
 // l'équipe réelle d'un espace.
 
+import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { seedMinimal, spinUpTestDb } from '@nodal-agents/db/test-utils';
+import {
+  _resetMasterKeyCacheForTests,
+  _setMasterKeyForTests,
+  encrypt,
+} from '@nodal-agents/secrets';
 import { readBenchPrinter, readTeamMcpServers, readTeamTools } from '../../workflows/stack';
 import { benchPrinterServer } from '../declaration';
 import {
@@ -160,6 +166,8 @@ describe('readBenchPrinter: from the team of a workspace', () => {
   let agentId: string;
 
   beforeAll(async () => {
+    // Une clé maîtresse de test : jamais celle de la machine.
+    _setMasterKeyForTests(randomBytes(32));
     const t = await spinUpTestDb();
     pg = t.pg;
     db = t.db as unknown as AnyDrizzleDb;
@@ -169,6 +177,7 @@ describe('readBenchPrinter: from the team of a workspace', () => {
   });
   afterAll(async () => {
     await pg.close();
+    _resetMasterKeyCacheForTests();
   });
   beforeEach(async () => {
     await pg.exec('delete from agent_mcp_servers; delete from mcp_servers;');
@@ -183,6 +192,8 @@ describe('readBenchPrinter: from the team of a workspace', () => {
       command?: string;
       args?: string[];
       env?: Record<string, string>;
+      /** L'environnement tel que la ligne le porte : chiffré valeur par valeur (le produit), ou en clair. */
+      envAtRest?: 'encrypted' | 'plain';
       active?: boolean;
       assigned?: boolean;
       tools?: unknown;
@@ -199,7 +210,14 @@ describe('readBenchPrinter: from the team of a workspace', () => {
         over.transport ?? d.transport,
         over.command ?? d.command,
         over.args ?? d.args,
-        JSON.stringify(over.env ?? d.envVars),
+        JSON.stringify(
+          Object.fromEntries(
+            Object.entries(over.env ?? d.envVars).map(([k, v]) => [
+              k,
+              over.envAtRest === 'plain' ? v : encrypt(v),
+            ]),
+          ),
+        ),
         over.active ?? true,
         JSON.stringify(
           over.tools === undefined
@@ -233,6 +251,20 @@ describe('readBenchPrinter: from the team of a workspace', () => {
       'bench_printer__get_print_request',
       'bench_printer__request_print',
     ]);
+  });
+
+  // Le runner déchiffre chaque valeur avant de lancer le serveur (execute.ts,
+  // `decryptMcpServerEnv`) : le juge lit la même chose. Une ligne écrite en
+  // clair, comme le produit ne l'écrit jamais, est un serveur que le runner
+  // écarterait ; le juge le dit au lieu de la croire.
+  it('reads the environment as the runner does: decrypted, and a value that does not decrypt is broken', async () => {
+    await declare({ envAtRest: 'plain' });
+    const st = await readBenchPrinter(db, entityId);
+    expect(st.kind).toBe('broken');
+    expect(st.kind === 'broken' ? st.reason : '').toContain(
+      'environment cannot be read as the runner reads it',
+    );
+    expect(st.kind === 'broken' ? st.reason : '').toContain('the runner would not start it');
   });
 
   it('is absent when the server exists but no agent holds it', async () => {

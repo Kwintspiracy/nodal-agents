@@ -23,7 +23,8 @@
     "comfyui",
     "obsidian-vault",
     "bench-printer",
-    "no-mail-sender"
+    "no-mail-sender",
+    "no-real-printer"
   ],
   "measured": [
     "The path: the tools each job called, by name and in order, and the teammates delegated to",
@@ -1121,7 +1122,8 @@
       "subject": null,
       "set": "nightly",
       "needs": [
-        "bench-printer"
+        "bench-printer",
+        "no-real-printer"
       ],
       "sends": "nothing",
       "instruction": "Imprime sur une seule page cette liste de courses : pain, lait, œufs, tomates, café.",
@@ -1156,7 +1158,8 @@
       "subject": null,
       "set": "on-demand",
       "needs": [
-        "bench-printer"
+        "bench-printer",
+        "no-real-printer"
       ],
       "sends": "nothing",
       "instruction": "Imprime le fichier nodal-bench/facture-impression.pdf de l'espace de travail partagé.",
@@ -1197,7 +1200,8 @@
       "subject": null,
       "set": "nightly",
       "needs": [
-        "bench-printer"
+        "bench-printer",
+        "no-real-printer"
       ],
       "sends": "nothing",
       "instruction": "Imprime une recette de caviar d'aubergines, sur une seule page, style magazine, avec la photo de la recette elle-même.",
