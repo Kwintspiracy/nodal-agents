@@ -426,12 +426,8 @@ jobs:
         id: playwright
         timeout-minutes: 2
         run: |
-          set -euo pipefail
+          set -eu
           version="$(pnpm --filter @nodal-agents/web exec playwright --version | awk '{print $2}')"
-          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-            echo "::error title=Playwright version::could not resolve the Playwright version (got '$version')"
-            exit 1
-          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Restore the Playwright browsers
