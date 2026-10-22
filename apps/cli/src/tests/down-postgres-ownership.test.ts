@@ -60,7 +60,7 @@ import {
   type DownResult,
   type KillContext,
 } from '../commands/down.ts';
-import { runReset, type ResetDisk } from '../commands/reset.ts';
+import { findWorkingDirectoryHolders, runReset, type ResetDisk } from '../commands/reset.ts';
 import { CONFIG_DIR, PG_DATA_DIR } from '../lib/config.ts';
 import type { ClaimVerdict } from '../lib/orphans.ts';
 import { isPidAlive, waitForPidDead } from '../lib/processes.ts';
@@ -606,9 +606,9 @@ describe('reset sets the whole home aside in one step @cap:installer-et-demarrer
       try {
         await new Promise((resolve) => setTimeout(resolve, 500));
 
-        await expect(runReset({ yes: true }, nothingLeft, disk())).rejects.toThrow(
-          /Nothing was deleted/,
-        );
+        await expect(
+          runReset({ yes: true }, nothingLeft, disk({ findHolders: findWorkingDirectoryHolders })),
+        ).rejects.toThrow(/Nothing was deleted/);
 
         expect(existsSync(lockfile)).toBe(true);
       } finally {
