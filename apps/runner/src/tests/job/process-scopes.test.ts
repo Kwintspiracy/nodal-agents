@@ -14,7 +14,7 @@
 //   - la remise en file AVANT la prise et la libération → « the resumed run's
 //     command … survives » rouge.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,11 +28,17 @@ import {
   createSandbox,
   defaultSandbox,
   detachedDescendantsReachable,
-  isProcessAlive,
   type Sandbox,
   jobProcessScope,
   openJobProcessScopeIds,
 } from '@nodal-agents/sandbox';
+import {
+  COUNTER_DAEMON_SOURCE,
+  counterRise,
+  readCounter,
+  watchProcess,
+  type ProcessWatch,
+} from '@nodal-agents/test-kit';
 import { reclaimJobsOfDeadRunners } from '../../cron/reclaim-jobs.ts';
 import { failStalePendingJobs, resetOrphanedJobs } from '../../cron/reset-orphans.ts';
 import {
@@ -43,21 +49,6 @@ import {
 } from '../../job/process-scopes.ts';
 
 let db: TestDb;
-
-/**
- * Lit le nombre qu'un processus écrit dans `file`. `writeFileSync` vide le
- * fichier avant de l'écrire : une lecture qui tombe entre les deux lit `''`
- * (vu en CI Linux : « expected 0 to be greater than 1 »). On relit, borné,
- * jusqu'à un entier.
- */
-function readNumber(file: string): number {
-  for (let i = 0; i < 200; i++) {
-    const text = readFileSync(file, 'utf8').trim();
-    if (/^\d+$/.test(text)) return Number(text);
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-  }
-  throw new Error(`no number in ${file}`);
-}
 
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
 const asDb = () => db as unknown as Parameters<typeof releaseIfEnded>[0];
@@ -70,6 +61,20 @@ beforeAll(async () => {
 afterAll(async () => {
   await closeAllJobProcessScopes();
 });
+
+// Chaque pid lu est SURVEILLÉ aussitôt (test-kit process-watch.ts) : sous
+// Windows, le pid d'un démon mort peut déjà servir à un inconnu, et
+// `process.kill(pid, 0)` le dirait vivant. La veille tient le processus, et
+// avec lui son pid, jusqu'à la fin du test.
+const watches: ProcessWatch[] = [];
+afterEach(() => {
+  for (const w of watches.splice(0)) w.release();
+});
+async function watched(pid: number): Promise<ProcessWatch> {
+  const w = await watchProcess(pid);
+  watches.push(w);
+  return w;
+}
 
 async function job(status: string): Promise<string> {
   const [row] = await db
@@ -180,17 +185,15 @@ describe.each(cases)(
     const dir = mkdtempSync(join(tmpdir(), 'nodal-job-ends-'));
     afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
     const node = process.execPath;
-    writeFileSync(
-      join(dir, 'daemon.cjs'),
-      "const fs = require('fs'); fs.writeFileSync(process.argv[2], String(process.pid)); let n = 0; setInterval(() => fs.writeFileSync(process.argv[3], String(++n)), 100);\n",
-    );
+    // `daemon.cjs <compteur> <pid>` (test-kit counter-process.ts).
+    writeFileSync(join(dir, 'daemon.cjs'), COUNTER_DAEMON_SOURCE);
     // La commande lance le démon et sort. `detached` : sa propre session sous
     // Unix. `group` : le groupe de la commande (sous Windows détaché de
     // l'arbre quand même : un enfant non détaché meurt avec le job Node de
     // son parent).
     writeFileSync(
       join(dir, 'spawner.cjs'),
-      "const detached = process.argv[4] === 'detached' || process.platform === 'win32'; require('child_process').spawn(process.execPath, [require('path').join(__dirname, 'daemon.cjs'), process.argv[2], process.argv[3]], { detached, stdio: 'ignore' }).unref();\n",
+      "const detached = process.argv[4] === 'detached' || process.platform === 'win32'; require('child_process').spawn(process.execPath, [require('path').join(__dirname, 'daemon.cjs'), process.argv[3], process.argv[2]], { detached, stdio: 'ignore' }).unref();\n",
     );
     writeFileSync(
       join(dir, 'probe.cjs'),
@@ -209,7 +212,9 @@ describe.each(cases)(
       });
 
     /** Commande 1 lance le démon ; commande 2 du même job le trouve vivant. */
-    async function daemonOf(jobId: string): Promise<{ pid: number; counter: string }> {
+    async function daemonOf(
+      jobId: string,
+    ): Promise<{ pid: number; counter: string; watch: ProcessWatch }> {
       const pidFile = join(dir, `${jobId}.pid`);
       const counter = join(dir, `${jobId}.count`);
       const first = await command(
@@ -220,16 +225,23 @@ describe.each(cases)(
       for (let i = 0; i < 200 && !(existsSync(pidFile) && existsSync(counter)); i++) {
         await new Promise((r) => setTimeout(r, 50));
       }
+      // Surveillé AVANT la sonde : sa réponse ne peut plus venir d'un pid redonné.
+      const pid = readCounter(pidFile);
+      const watch = await watched(pid);
       const second = await command(jobId, `"${node}" probe.cjs "${pidFile}"`);
       expect(second.stdout.trim()).toBe('alive');
-      return { pid: readNumber(pidFile), counter };
+      return { pid, counter, watch };
     }
 
-    async function expectDead(d: { pid: number; counter: string }): Promise<void> {
-      for (let i = 0; i < 100 && isProcessAlive(d.pid); i++) {
+    async function expectDead(d: {
+      pid: number;
+      counter: string;
+      watch: ProcessWatch;
+    }): Promise<void> {
+      for (let i = 0; i < 100 && d.watch.alive(); i++) {
         await new Promise((r) => setTimeout(r, 50));
       }
-      const alive = isProcessAlive(d.pid);
+      const alive = d.watch.alive();
       if (alive) process.kill(d.pid);
       expect(alive).toBe(false);
       const frozen = readFileSync(d.counter, 'utf8');
@@ -294,10 +306,8 @@ describe.each(cases)(
 describe('a lost job releases its processes before the row can be claimed again (#750) @cap:executer-une-commande/moteur', () => {
   const dir = mkdtempSync(join(tmpdir(), 'nodal-job-resume-'));
   afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
-  writeFileSync(
-    join(dir, 'ticker.cjs'),
-    "const fs = require('fs'); let n = 0; setInterval(() => fs.writeFileSync(process.argv[2], String(++n)), 100);\n",
-  );
+  // `ticker.cjs <compteur> <pid>` (test-kit counter-process.ts).
+  writeFileSync(join(dir, 'ticker.cjs'), COUNTER_DAEMON_SOURCE);
 
   /**
    * La base telle que la reprise la voit, avec un geste glissé juste APRÈS
@@ -365,31 +375,34 @@ describe('a lost job releases its processes before the row can be claimed again 
       .returning({ id: agentJobs.id });
     const id = row!.id;
     const counter = join(dir, `${id}.count`);
+    const pidFile = join(dir, `${id}.pid`);
     let started: Awaited<ReturnType<ReturnType<typeof jobProcessScope>['startOwned']>> | null =
       null;
+    let watch: ProcessWatch | null = null;
     try {
       const reprise = await reclaimJobsOfDeadRunners(
         withHookAfterResumeFlip(db, async () => {
           if (started) return;
           // Le nouveau run du job lance sa première commande.
           started = await jobProcessScope(id, unconfinedSandbox).startOwned({
-            target: { file: process.execPath, args: [join(dir, 'ticker.cjs'), counter] },
+            target: { file: process.execPath, args: [join(dir, 'ticker.cjs'), counter, pidFile] },
             cwd: dir,
             env: buildChildEnv(process.env),
           });
           started.stdout?.resume();
           started.stderr?.resume();
-          for (let i = 0; i < 100 && !existsSync(counter); i++) {
+          for (let i = 0; i < 100 && !(existsSync(counter) && existsSync(pidFile)); i++) {
             await new Promise((r) => setTimeout(r, 50));
           }
+          watch = await watched(readCounter(pidFile));
         }) as unknown as Parameters<typeof reclaimJobsOfDeadRunners>[0],
       );
       expect(reprise.resumedJobIds).toContain(id);
       expect(started).not.toBeNull();
       // Elle tourne encore : son compteur monte après la reprise.
-      const before = readNumber(counter);
-      await new Promise((r) => setTimeout(r, 500));
-      expect(readNumber(counter)).toBeGreaterThan(before);
+      const before = readCounter(counter);
+      const rise = await counterRise(counter, before, { watch: watch ?? undefined });
+      expect(rise.value, rise.why).toBeGreaterThan(before);
       expect(openJobProcessScopeIds()).toContain(id);
     } finally {
       await closeJobProcessScope(id);
@@ -405,10 +418,8 @@ describe('a lost job releases its processes before the row can be claimed again 
 describe('a reaper whose candidate came back to life releases nothing and writes nothing (#750) @cap:executer-une-commande/moteur', () => {
   const dir = mkdtempSync(join(tmpdir(), 'nodal-job-alive-'));
   afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
-  writeFileSync(
-    join(dir, 'ticker.cjs'),
-    "const fs = require('fs'); let n = 0; setInterval(() => fs.writeFileSync(process.argv[2], String(++n)), 100);\n",
-  );
+  // `ticker.cjs <compteur> <pid>` (test-kit counter-process.ts).
+  writeFileSync(join(dir, 'ticker.cjs'), COUNTER_DAEMON_SOURCE);
 
   /** La base, avec un geste glissé juste après la PREMIÈRE lecture du faucheur (ses candidats). */
   function withHookAfterFirstRead(real: TestDb, hook: () => Promise<void>): TestDb {
@@ -504,17 +515,19 @@ describe('a reaper whose candidate came back to life releases nothing and writes
         .returning({ id: agentJobs.id });
       const id = row!.id;
       const counter = join(dir, `${id}.count`);
+      const pidFile = join(dir, `${id}.pid`);
       // La commande que le run, vivant, fait tourner.
       const running = await jobProcessScope(id, unconfinedSandbox).startOwned({
-        target: { file: process.execPath, args: [join(dir, 'ticker.cjs'), counter] },
+        target: { file: process.execPath, args: [join(dir, 'ticker.cjs'), counter, pidFile] },
         cwd: dir,
         env: buildChildEnv(process.env),
       });
       running.stdout?.resume();
       running.stderr?.resume();
-      for (let i = 0; i < 100 && !existsSync(counter); i++) {
+      for (let i = 0; i < 100 && !(existsSync(counter) && existsSync(pidFile)); i++) {
         await new Promise((r) => setTimeout(r, 50));
       }
+      const watch = await watched(readCounter(pidFile));
       try {
         await c.reap(
           withHookAfterFirstRead(db, async () => {
@@ -525,9 +538,9 @@ describe('a reaper whose candidate came back to life releases nothing and writes
               .where(eq(agentJobs.id, id));
           }),
         );
-        const before = readNumber(counter);
-        await new Promise((r) => setTimeout(r, 500));
-        expect(readNumber(counter)).toBeGreaterThan(before);
+        const before = readCounter(counter);
+        const rise = await counterRise(counter, before, { watch });
+        expect(rise.value, rise.why).toBeGreaterThan(before);
         const [after] = await db
           .select({ status: agentJobs.status })
           .from(agentJobs)

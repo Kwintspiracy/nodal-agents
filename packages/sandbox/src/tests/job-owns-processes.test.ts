@@ -11,7 +11,11 @@
 //     l'étiquette ; pas macOS, limite dite dans unix-job-processes.ts). Ailleurs
 //     le cas est SAUTÉ, raison au titre, jamais rouge.
 // Ce qui se prouve :
-//   - il VIT pour la commande suivante du même job (décision du 14/10) ;
+//   - il VIT pour la commande suivante du même job (décision du 14/10), et il
+//     travaille : son compteur monte. Attendu par `counterRise` (test-kit),
+//     borné, et non sur une fenêtre fixe : celle de 400 ms a rougi une fois en
+//     CI Windows sans dire si le démon était mort ou seulement pas servi ;
+//     l'attente le dit ;
 //   - il MEURT à la fermeture du périmètre (la fin du job), et le compteur
 //     cesse de monter ;
 //   - fermer le périmètre d'un job ne touche pas aux processus d'un autre ;
@@ -27,7 +31,7 @@
 //   - `close()` qui ne ferme plus le conteneur hors bac à sable → rouge sous
 //     Windows.
 
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -35,42 +39,40 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JobProcessScope, killLeftoversOfJob } from '../job-scope';
-import { isProcessAlive } from '../process-tree';
 import { detachedDescendantsReachable } from '../unix-job-processes';
+import {
+  COUNTER_DAEMON_SOURCE,
+  counterRise,
+  readCounter,
+  watchProcess,
+  type ProcessWatch,
+} from '@nodal-agents/test-kit';
 import { createSandbox } from '../status';
 import type { StartedProcess } from '../types';
 
 const dir = mkdtempSync(join(tmpdir(), 'nodal-job-owns-'));
 
-/**
- * Lit le nombre qu'un processus écrit dans `file`. `writeFileSync` vide le
- * fichier avant de l'écrire : une lecture qui tombe entre les deux lit `''`
- * (vu en CI Linux : « expected 0 to be greater than 1 »). On relit, borné,
- * jusqu'à un entier.
- */
-function readNumber(file: string): number {
-  for (let i = 0; i < 200; i++) {
-    const text = readFileSync(file, 'utf8').trim();
-    if (/^\d+$/.test(text)) return Number(text);
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-  }
-  throw new Error(`no number in ${file}`);
-}
-
 // Un processus tué peut tenir le dossier un instant encore (EPERM sous
 // Windows) : l'effacement réessaie, il ne masque pas un échec du test.
 afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
 
-// Le démon : son pid, puis un compteur qui monte toutes les 100 ms.
-writeFileSync(
-  join(dir, 'daemon.cjs'),
-  [
-    "const fs = require('fs');",
-    'fs.writeFileSync(process.argv[2], String(process.pid));',
-    'let n = 0;',
-    'setInterval(() => fs.writeFileSync(process.argv[3], String(++n)), 100);',
-  ].join('\n'),
-);
+// Chaque pid lu est SURVEILLÉ aussitôt (test-kit process-watch.ts) : sous
+// Windows, le pid d'un démon mort peut déjà servir à un inconnu, et
+// `process.kill(pid, 0)` le dirait vivant. La veille tient le processus, et
+// avec lui son pid, jusqu'à la fin du test.
+const watches: ProcessWatch[] = [];
+afterEach(() => {
+  for (const w of watches.splice(0)) w.release();
+});
+async function watched(pid: number): Promise<ProcessWatch> {
+  const w = await watchProcess(pid);
+  watches.push(w);
+  return w;
+}
+
+// Le démon : son pid, puis un compteur qui monte toutes les 100 ms
+// (`daemon.cjs <compteur> <pid>`, test-kit counter-process.ts).
+writeFileSync(join(dir, 'daemon.cjs'), COUNTER_DAEMON_SOURCE);
 // La commande : lance le démon, sans tuyau commun, et SORT. argv[4] dit la
 // forme : `detached` (sa propre session sous Unix) ou `group` (le groupe de la
 // commande ; sous Windows, détaché de l'arbre, sinon il mourrait avec elle).
@@ -79,7 +81,7 @@ writeFileSync(
   [
     "const { spawn } = require('child_process');",
     "const detached = process.argv[4] === 'detached' || process.platform === 'win32';",
-    "const c = spawn(process.execPath, [require('path').join(__dirname, 'daemon.cjs'), process.argv[2], process.argv[3]], { detached, stdio: 'ignore' });",
+    "const c = spawn(process.execPath, [require('path').join(__dirname, 'daemon.cjs'), process.argv[3], process.argv[2]], { detached, stdio: 'ignore' });",
     'c.unref();',
   ].join('\n'),
 );
@@ -123,7 +125,7 @@ async function startDaemon(
   scope: JobProcessScope,
   tag: string,
   shape: Shape = 'detached',
-): Promise<{ pid: number; counter: string }> {
+): Promise<{ pid: number; counter: string; watch: ProcessWatch }> {
   const pidFile = join(dir, `${tag}.pid`);
   const counter = join(dir, `${tag}.count`);
   const end = await scope
@@ -144,18 +146,17 @@ async function startDaemon(
   for (let i = 0; i < 200 && !(existsSync(pidFile) && existsSync(counter)); i++) {
     await new Promise((r) => setTimeout(r, 50));
   }
-  return { pid: readNumber(pidFile), counter };
+  const pid = readCounter(pidFile);
+  return { pid, counter, watch: await watched(pid) };
 }
 
-async function deadWithin(pid: number, ms: number): Promise<boolean> {
+async function deadWithin(watch: ProcessWatch, ms: number): Promise<boolean> {
   for (let waited = 0; waited < ms; waited += 50) {
-    if (!isProcessAlive(pid)) return true;
+    if (!watch.alive()) return true;
     await new Promise((r) => setTimeout(r, 50));
   }
-  return !isProcessAlive(pid);
+  return !watch.alive();
 }
-
-const count = (file: string): number => readNumber(file);
 
 describe.each(SHAPES)(
   'a job owns what a command leaves running, %s (#750, #755) @cap:executer-une-commande/moteur',
@@ -164,13 +165,13 @@ describe.each(SHAPES)(
       'a grandchild whose parent exited lives for the next command, then dies when the scope closes',
       async () => {
         const scope = new JobProcessScope(`owns-${randomUUID()}`, unconfined());
-        const { pid, counter } = await startDaemon(scope, `one-${shape}`, shape);
+        const { pid, counter, watch } = await startDaemon(scope, `one-${shape}`, shape);
         try {
           // Sa commande est sortie ; lui vit, et travaille.
-          expect(isProcessAlive(pid)).toBe(true);
-          const before = count(counter);
-          await new Promise((r) => setTimeout(r, 400));
-          expect(count(counter)).toBeGreaterThan(before);
+          expect(watch.alive()).toBe(true);
+          const before = readCounter(counter);
+          const rise = await counterRise(counter, before, { watch });
+          expect(rise.value, rise.why).toBeGreaterThan(before);
           // La commande SUIVANTE du même job le joint.
           const said = await run(
             await scope.startOwned({
@@ -187,10 +188,10 @@ describe.each(SHAPES)(
           // La fin du job.
           await scope.close();
         }
-        expect(await deadWithin(pid, 5_000)).toBe(true);
-        const frozen = count(counter);
+        expect(await deadWithin(watch, 5_000)).toBe(true);
+        const frozen = readCounter(counter);
         await new Promise((r) => setTimeout(r, 400));
-        expect(count(counter)).toBe(frozen);
+        expect(readCounter(counter)).toBe(frozen);
       },
       60_000,
     );
@@ -204,16 +205,16 @@ describe.each(SHAPES)(
         const db = await startDaemon(b, `b-${shape}`, shape);
         try {
           await a.close();
-          expect(await deadWithin(da.pid, 5_000)).toBe(true);
+          expect(await deadWithin(da.watch, 5_000)).toBe(true);
           // L'autre job vit, et son démon travaille encore.
-          expect(isProcessAlive(db.pid)).toBe(true);
-          const before = count(db.counter);
-          await new Promise((r) => setTimeout(r, 400));
-          expect(count(db.counter)).toBeGreaterThan(before);
+          expect(db.watch.alive()).toBe(true);
+          const before = readCounter(db.counter);
+          const rise = await counterRise(db.counter, before, { watch: db.watch });
+          expect(rise.value, rise.why).toBeGreaterThan(before);
         } finally {
           await b.close();
         }
-        expect(await deadWithin(db.pid, 5_000)).toBe(true);
+        expect(await deadWithin(db.watch, 5_000)).toBe(true);
       },
       60_000,
     );
@@ -239,14 +240,14 @@ describe('a job owns every process it starts outside the sandbox (#750, #755) @c
       for (let i = 0; i < 200 && !existsSync(pidFile); i++) {
         await new Promise((r) => setTimeout(r, 50));
       }
-      const pid = readNumber(pidFile);
+      const watch = await watched(readCounter(pidFile));
       const killedAt = Date.now();
       proc.kill();
       // Sa fin arrive (taskkill /F rend un code de sortie 1 sous Windows, un
       // signal sous Unix : c'est l'appelant qui sait qu'il a coupé).
       await proc.done;
       expect(Date.now() - killedAt).toBeLessThan(5_000);
-      expect(await deadWithin(pid, 5_000)).toBe(true);
+      expect(await deadWithin(watch, 5_000)).toBe(true);
     } finally {
       await scope.close();
     }
@@ -290,8 +291,9 @@ describe('a job owns every process it starts outside the sandbox (#750, #755) @c
         await new Promise((r) => setTimeout(r, 50));
       }
       expect(existsSync(pidFile), `the fake runner never started its daemon: ${said}`).toBe(true);
-      const pid = readNumber(pidFile);
-      expect(isProcessAlive(pid)).toBe(true);
+      const pid = readCounter(pidFile);
+      const watch = await watched(pid);
+      expect(watch.alive()).toBe(true);
       try {
         // Tué, pas arrêté : aucun code de fermeture ne tourne. Le faux runner
         // ENTIER (tsx relance le script dans un processus enfant) : son arbre
@@ -306,9 +308,9 @@ describe('a job owns every process it starts outside the sandbox (#750, #755) @c
         await exited;
         // Le runner qui reprend le job.
         await killLeftoversOfJob(jobId, () => undefined);
-        expect(await deadWithin(pid, 5_000)).toBe(true);
+        expect(await deadWithin(watch, 5_000)).toBe(true);
       } finally {
-        if (isProcessAlive(pid)) process.kill(pid);
+        if (watch.alive()) process.kill(pid);
       }
     },
     90_000,
@@ -329,7 +331,7 @@ describe.runIf(process.platform === 'win32')(
         const said = await run(
           await scope.startOwned({
             target: {
-              command: `start "" /b "${process.execPath}" "${join(dir, 'daemon.cjs')}" "${pidFile}" "${counter}"`,
+              command: `start "" /b "${process.execPath}" "${join(dir, 'daemon.cjs')}" "${counter}" "${pidFile}"`,
             },
             cwd: dir,
             env: env(),
@@ -339,10 +341,10 @@ describe.runIf(process.platform === 'win32')(
         for (let i = 0; i < 200 && !(existsSync(pidFile) && existsSync(counter)); i++) {
           await new Promise((r) => setTimeout(r, 50));
         }
-        const pid = readNumber(pidFile);
-        expect(isProcessAlive(pid)).toBe(true);
+        const watch = await watched(readCounter(pidFile));
+        expect(watch.alive()).toBe(true);
         await scope.close();
-        expect(await deadWithin(pid, 5_000)).toBe(true);
+        expect(await deadWithin(watch, 5_000)).toBe(true);
       } finally {
         await scope.close();
       }
@@ -364,12 +366,12 @@ describe.runIf(process.platform === 'linux')(
     it('measured: a detached (setsid) daemon has LEFT its command’s process group — only the job tag finds it', async () => {
       const scope = new JobProcessScope(`owns-setsid-${randomUUID()}`, unconfined());
       try {
-        const { pid } = await startDaemon(scope, 'setsid');
+        const { pid, watch } = await startDaemon(scope, 'setsid');
         // Sa propre session, son propre groupe : tuer le groupe de la commande
         // ne l'atteindrait pas (c'est ce que faisait la fin du job avant #750).
         expect(pgidOf(pid)).toBe(pid);
         await scope.close();
-        expect(await deadWithin(pid, 5_000)).toBe(true);
+        expect(await deadWithin(watch, 5_000)).toBe(true);
       } finally {
         await scope.close();
       }
@@ -380,10 +382,11 @@ describe.runIf(process.platform === 'linux')(
       const pidFile = join(dir, 'envi.pid');
       const counter = join(dir, 'envi.count');
       let pid = 0;
+      let watch: ProcessWatch | null = null;
       try {
         const proc = await scope.startOwned({
           target: {
-            command: `env -i setsid "${process.execPath}" "${join(dir, 'daemon.cjs')}" "${pidFile}" "${counter}" > /dev/null 2>&1 &`,
+            command: `env -i setsid "${process.execPath}" "${join(dir, 'daemon.cjs')}" "${counter}" "${pidFile}" > /dev/null 2>&1 &`,
           },
           cwd: dir,
           env: env(),
@@ -394,14 +397,15 @@ describe.runIf(process.platform === 'linux')(
         for (let i = 0; i < 200 && !existsSync(pidFile); i++) {
           await new Promise((r) => setTimeout(r, 50));
         }
-        pid = readNumber(pidFile);
+        pid = readCounter(pidFile);
+        watch = await watched(pid);
         await scope.close();
         await new Promise((r) => setTimeout(r, 500));
         // La limite dite dans unix-job-processes.ts : ni groupe, ni étiquette.
-        expect(isProcessAlive(pid)).toBe(true);
+        expect(watch.alive()).toBe(true);
       } finally {
         await scope.close();
-        if (pid > 0 && isProcessAlive(pid)) process.kill(pid, 'SIGKILL');
+        if (watch?.alive()) process.kill(pid, 'SIGKILL');
       }
     }, 60_000);
   },

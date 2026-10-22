@@ -17,6 +17,7 @@ import {
   archiveAgentSkill,
   assignSkillRepo,
   dropApprovalRulesForDetachedSkill,
+  setReflectionEnabledRepo,
 } from '@nodal-agents/db';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodal-agents/auth';
@@ -76,11 +77,7 @@ export async function setReflectionEnabledAction(enabled: boolean): Promise<Acti
     const parsed = z.boolean().safeParse(enabled);
     if (!parsed.success) return fail('validation_failed', 'enabled must be a boolean');
 
-    const db = getDb();
-    await db
-      .update(entities)
-      .set({ reflectionEnabled: parsed.data, updatedAt: new Date() })
-      .where(eq(entities.id, session.entityId));
+    await setReflectionEnabledRepo(getDb(), session.entityId, parsed.data);
 
     revalidatePath('/learned-skills');
     return ok(undefined);

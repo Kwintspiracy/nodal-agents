@@ -1,13 +1,14 @@
 // packages/db/src/repos/agents.ts
-// Pure DB repository functions for agent creation.
+// Pure DB repository functions for agent creation, and the agent's model.
 // Takes a db instance + entityId + already-validated input; returns a
 // discriminated result or throws on unexpected errors.
 
 import { eq, and, or, ilike, inArray, isNull } from 'drizzle-orm';
-import { INITIAL_AUTO_ROOT_GRANTS } from '@nodal-agents/shared';
+import { INITIAL_AUTO_ROOT_GRANTS, findModelCatalogEntry } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agents, agentAssignments } from '../schema/agents.ts';
 import { entities } from '../schema/entities.ts';
+import { entityLlmKeys } from '../schema/llm_keys.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -23,6 +24,14 @@ export interface CreateAgentInput {
   orchestratorMode: 'router' | 'planner' | null;
   avatarUrl: string | null | undefined;
   subAgentIds: string[];
+  /**
+   * The delegation text the orchestrator is shown for each sub-agent
+   * (`agent_assignments.instructions`, rendered in its team block), keyed by
+   * sub-agent id. Optional: the create form sets none, the edit form writes
+   * them later; a caller that knows them up front (the bench applying its
+   * configuration) writes them in the same insert.
+   */
+  subAgentInstructions?: Readonly<Record<string, string>>;
   /**
    * If set, assign the newly-created agent as a sub-agent of this orchestrator
    * — i.e. the ROOT that created it. Idempotent: skipped if the row already
@@ -53,6 +62,14 @@ export async function createAgentRepo(
   entityId: string,
   input: CreateAgentInput,
 ): Promise<CreateAgentResult> {
+  // An instruction for an agent that is not a sub-agent would be dropped in
+  // silence: refused instead (invariant #4).
+  const stray = Object.keys(input.subAgentInstructions ?? {}).filter(
+    (id) => !input.subAgentIds.includes(id),
+  );
+  if (stray.length > 0)
+    throw new Error(`sub_agent_instructions_without_sub_agent: ${stray.join(', ')}`);
+
   // Verify all sub-agents exist in the same entity before the insert.
   if (input.subAgentIds.length > 0) {
     const found = await db
@@ -106,6 +123,7 @@ export async function createAgentRepo(
         orchestratorId: row!.id,
         subAgentId: subId,
         entityId,
+        instructions: input.subAgentInstructions?.[subId] ?? null,
       })),
     );
   }
@@ -246,4 +264,76 @@ export async function attachAgentToOrchestrator(
   }
 
   return { ok: true, subAgentId: targetRow.id, subAgentName: targetRow.name };
+}
+
+// ─── The agent's model ───────────────────────────────────────────────────────
+
+/**
+ * Why `model` cannot run a router or a planner, or null. An orchestrator
+ * delegates by tool call: a model the catalog says has no tools can never hand
+ * work to its team. Only a catalogued model is judged — an unknown one (a local
+ * server, a model newer than the catalog) is the user's call. Shared by the
+ * dashboard's create, edit and model screens and by the bench's applier.
+ */
+export async function orchestratorModelToolsError(
+  db: AnyDrizzleDb,
+  entityId: string,
+  llmKeyId: string | null | undefined,
+  model: string,
+): Promise<string | null> {
+  if (!llmKeyId) return null;
+  const [key] = await db
+    .select({ provider: entityLlmKeys.provider })
+    .from(entityLlmKeys)
+    .where(and(eq(entityLlmKeys.id, llmKeyId), eq(entityLlmKeys.entityId, entityId)));
+  if (!key) return null;
+  const entry = findModelCatalogEntry(key.provider, model);
+  if (entry && !entry.capabilities.tools) {
+    return `"${entry.label}" can't use tools — pick a tool-capable model for a router/planner.`;
+  }
+  return null;
+}
+
+export interface SetAgentModelInput {
+  readonly agentId: string;
+  readonly model: string;
+  /** null = Auto (the provider's default). */
+  readonly reasoningEffort: (typeof agents.$inferSelect)['reasoningEffort'];
+  /** The primary key to set; undefined keeps the one the agent holds. */
+  readonly llmKeyId?: string | null;
+}
+
+/**
+ * Write an agent's primary model (and key, when given). The primary key can
+ * never also be a fallback link — the agent would fail over onto itself — so
+ * setting a key removes it from the chain. The agent must belong to the
+ * workspace: anything else is refused, never written elsewhere.
+ */
+export async function setAgentModelRepo(
+  db: AnyDrizzleDb,
+  entityId: string,
+  input: SetAgentModelInput,
+): Promise<{ ok: true } | { error: 'agent_not_found' }> {
+  const [agent] = await db
+    .select({ id: agents.id, fallbackChain: agents.fallbackChain })
+    .from(agents)
+    .where(and(eq(agents.id, input.agentId), eq(agents.entityId, entityId)));
+  if (!agent) return { error: 'agent_not_found' };
+
+  const patch: Partial<typeof agents.$inferInsert> = {
+    model: input.model,
+    reasoningEffort: input.reasoningEffort,
+    updatedAt: new Date(),
+  };
+  if (input.llmKeyId !== undefined) {
+    patch.llmKeyId = input.llmKeyId;
+    patch.fallbackChain = (agent.fallbackChain ?? []).filter(
+      (link) => link.keyId !== input.llmKeyId,
+    );
+  }
+  await db
+    .update(agents)
+    .set(patch)
+    .where(and(eq(agents.id, input.agentId), eq(agents.entityId, entityId)));
+  return { ok: true };
 }

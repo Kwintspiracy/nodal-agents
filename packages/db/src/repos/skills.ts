@@ -454,3 +454,48 @@ export async function archiveAgentSkill(
 
   return { ok: true };
 }
+
+// ─── resolveSkillIdsBySlug ──────────────────────────────────────────────────
+
+/**
+ * The skill each slug designates FOR THIS WORKSPACE: its own row, or a catalog
+ * slug whose row is genuinely system-authored. System skills are seeded ONCE,
+ * on the first workspace of the install (createdBy='system'); an agent in any
+ * other workspace — every LAN sign-up, every second workspace — must still
+ * find them. The createdBy check is what stops another workspace's same-slug
+ * skill from passing as the real one (the same two-branch rule as
+ * assignSkillRepo). A workspace's own row wins over the install-wide one: a
+ * per-install override is exactly what the skills screen shows.
+ *
+ * A slug that designates nothing is absent from the map; the caller says so.
+ */
+export async function resolveSkillIdsBySlug(
+  db: AnyDrizzleDb,
+  entityId: string,
+  slugs: readonly string[],
+  systemSkillSlugs: readonly string[],
+): Promise<Map<string, string>> {
+  if (slugs.length === 0) return new Map();
+  const rows = await db
+    .select({ id: agentSkills.id, slug: agentSkills.slug, entityId: agentSkills.entityId })
+    .from(agentSkills)
+    .where(
+      and(
+        inArray(agentSkills.slug, [...slugs]),
+        or(
+          eq(agentSkills.entityId, entityId),
+          systemSkillSlugs.length > 0
+            ? and(
+                inArray(agentSkills.slug, [...systemSkillSlugs]),
+                eq(agentSkills.createdBy, 'system'),
+              )
+            : undefined,
+        ),
+      ),
+    );
+  const idBySlug = new Map<string, string>();
+  for (const r of rows) {
+    if (!idBySlug.has(r.slug) || r.entityId === entityId) idBySlug.set(r.slug, r.id);
+  }
+  return idBySlug;
+}

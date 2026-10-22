@@ -121,6 +121,9 @@ export interface TrialOptions {
   readonly modelUnderTest: string | null;
   /** `--allow-owner-sends` : seul ce drapeau laisse partir un scénario qui envoie au propriétaire. */
   readonly allowOwnerSends: boolean;
+  /** Ce que la ligne porte d'une campagne (voir `TrialLine.campaign`). */
+  readonly campaign?: string | null;
+  readonly configFingerprint?: string | null;
 }
 
 export const DEFAULT_TRIAL_OPTIONS: Omit<
@@ -174,6 +177,8 @@ function emptyLine(
     needs: [...(s.needs ?? [])],
     sends: s.sends,
     modelUnderTest: o.modelUnderTest,
+    campaign: o.campaign ?? null,
+    configFingerprint: o.configFingerprint ?? null,
     rootModel,
     nodalVersion: o.nodalVersion,
     stackCommit: o.stackCommit,
