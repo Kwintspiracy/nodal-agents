@@ -195,7 +195,7 @@ describe.runIf(isWindows && tier === 'base-container')(
         });
         const missing =
           'precondition missing: this machine drops the packets of a container to the host loopback ' +
-          `(control listener: ${control.reason}); the available contract of the proxy regime cannot be proven here`;
+          `(control listener: ${control.reason}) (Nodal's proxy: ${status.reason}); the available contract of the proxy regime cannot be proven here`;
         // The default reporter does not print a skip note: the log must say it.
         console.warn(`SKIPPED régime proxy: ${missing}`);
         ctx.skip(missing);
