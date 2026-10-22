@@ -737,7 +737,7 @@ describe('the no-real-printer need: a team that cannot start a process', () => {
     startedMs: 0,
   });
   const why = (who: string) =>
-    `print scenarios need a team that cannot run commands: ${who}; the closed tool list per scenario (owner's decision 1B) is not built yet; see #842`;
+    `print scenarios need a team that cannot run commands: ${who}; the scenario's tool list closes neither a CLI runtime nor a process tool it lists; see #842`;
 
   it('is met when no agent can start a process', () => {
     expect(missingNeeds(['no-real-printer'], env([]))).toEqual([]);

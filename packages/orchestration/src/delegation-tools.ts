@@ -4,7 +4,7 @@
 // hand-off, `create_task` / `list_tasks` for the task board. Both routes reach
 // the same agents, the active members of the team (reach.ts, #473). The runner's
 // whitelist (apps/runner/src/job/execute.ts §6) and the list the Tools tab and
-// the routine checks read (apps/runner/src/job/resolve-agent-tools.ts) both
+// the routine checks read (packages/orchestration/src/router/resolve-agent-tools.ts) both
 // call this function, and the team block's delegation manual — where the
 // delegation scope rule is said, once — is written on the same conditions
 // (team-block.ts): a role that delegates, hops left, and a team.

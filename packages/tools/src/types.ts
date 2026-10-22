@@ -247,7 +247,7 @@ export interface ToolContext {
   /**
    * Resolve the REAL tool-name whitelist of an arbitrary agent in this
    * workspace (not necessarily the caller). Injected by the runner
-   * (apps/runner/src/job/resolve-agent-tools.ts's resolveAgentToolNames) so
+   * (packages/orchestration/src/router/resolve-agent-tools.ts's resolveAgentToolNames) so
    * packages/tools can run the routine/schedule lint (H1b) without importing
    * the runner's job-assembly internals. Read-only, no MCP connections.
    * Absent in lightweight test contexts ⇒ a meta-tool that wants it (e.g.

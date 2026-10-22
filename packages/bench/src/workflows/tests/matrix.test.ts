@@ -22,7 +22,8 @@ const FILE = scenarioById('file')!;
 
 function past(over: Partial<PastLine> & { scenario: string }): PastLine {
   return {
-    scenarioVersion: 1,
+    // The scenario's current version: a line of an older version is not a median.
+    scenarioVersion: scenarioById(over.scenario)!.version,
     durationMs: 20_000,
     inputTokens: 30_000,
     outputTokens: 100,
@@ -112,7 +113,7 @@ describe('planMatrix', () => {
     const lines = [
       past({ scenario: 'question', inputTokens: 1_000_000, verdict: 'skipped' }),
       past({ scenario: 'question', inputTokens: 1_000_000, verdict: 'error' }),
-      past({ scenario: 'question', inputTokens: 1_000_000, scenarioVersion: 0 }),
+      past({ scenario: 'question', inputTokens: 1_000_000, scenarioVersion: QUESTION.version - 1 }),
       past({ scenario: 'question', inputTokens: 30_000 }),
     ];
     const plan = planMatrix([QUESTION], [glm], 1, lines);

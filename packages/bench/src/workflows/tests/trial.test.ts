@@ -37,6 +37,7 @@ import {
 import type { ForeignActivity } from '../stack';
 import type { ResearchSubject } from '../subjects';
 import type { AnyScenario } from '../types';
+import { scenarioToolsFingerprint } from '../scenario-tools';
 
 const FIX = join(__dirname, 'fixtures');
 const load = (name: string): TreeFacts =>
@@ -423,7 +424,9 @@ describe('workflow trial safety rules', () => {
     const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
     expect(line).toMatchObject({
       scenario: 'question',
-      scenarioVersion: 1,
+      scenarioVersion: scenarioById('question')!.version,
+      // The surface the trial played on (decision 1B).
+      scenarioToolsFingerprint: scenarioToolsFingerprint(scenarioById('question')!.tools),
       verdict: 'green',
       reasons: [],
       jobs: 1,

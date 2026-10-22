@@ -21,6 +21,7 @@ import {
 } from '../judge-kit';
 import { normalizeSpace, readPdf, type PdfView } from '../office';
 import { defineScenario, type AnyScenario } from '../types';
+import { BASE, COMMANDS, FILES, TEAM, toolList } from '../scenario-tools';
 
 const MIN = 60_000;
 const SHARED = "de l'espace de travail partagé";
@@ -41,7 +42,9 @@ const readTotal = defineScenario<{ hash: string | null }>({
     `the final answer gives ${INVOICE_TOTAL} (any writing) and ${INVOICE_NUMBER}`,
     `${INVOICE_REL} is byte for byte the fixture (sha-256)`,
   ],
-  version: 1,
+  // v2 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 2,
+  tools: toolList(BASE, FILES, TEAM, COMMANDS),
   title: 'Read a PDF and answer',
   path: 'Measured: a command, a skill or anything else (the product has no PDF tool).',
   deliverable: 'The answer, in the conversation',
@@ -126,7 +129,9 @@ const fromMarkdown = defineScenario<PdfObservation>({
     `opens ${MEETING_PDF_REL} with pdf-parse, written during the trial`,
     `its text holds every heading and list item of ${MEETING_MD_REL}, which is left untouched`,
   ],
-  version: 1,
+  // v2 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 2,
+  tools: toolList(BASE, FILES, TEAM, COMMANDS),
   title: 'Produce a PDF faithful to a source document',
   path: 'Measured: a command, a skill or anything else (the product has no PDF tool).',
   deliverable: MEETING_PDF_REL,

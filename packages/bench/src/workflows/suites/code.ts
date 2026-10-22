@@ -34,6 +34,7 @@ import {
   textHasNumber,
 } from '../judge-kit';
 import { defineScenario, type AnyScenario, type UnverifiedCheck } from '../types';
+import { BASE, COMMANDS, FILES, TEAM, toolList } from '../scenario-tools';
 
 const MIN = 60_000;
 
@@ -155,6 +156,8 @@ const PROJECT_PATH =
 
 function codeProject(o: {
   id: string;
+  /** La liste fermée des outils de l'essai (décision 1B). */
+  tools: readonly string[];
   title: string;
   green: string;
   path?: string;
@@ -169,7 +172,9 @@ function codeProject(o: {
 }): AnyScenario {
   return defineScenario<ProjectObservation>({
     id: o.id,
-    version: 1,
+    // v2 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+    version: 2,
+    tools: o.tools,
     title: o.title,
     green: o.green,
     path: o.path ?? PROJECT_PATH,
@@ -261,7 +266,9 @@ const fetchAndProcess = defineScenario<FetchObservation>({
   id: 'code',
   // v2 (catalogue du 17/10) : un total par catégorie écrit en JSON et donné
   // dans la réponse, au lieu d'une seule somme imprimée par le script.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM, COMMANDS),
   title: 'Fetch a file and process it with a script',
   green: `The CSV was downloaded into ${CODE_REL} during the run and is the pinned file (${CODE_ROWS} rows, its totals); a Python or Node script ran; ${CODE_JSON_REL} was written during the run with exactly one total per species, equal to what the bench recomputes from the downloaded file (to the hundredth); the answer gives each total; nobody was asked anything.`,
   path: 'A download, then a Python or Node script. Measured: the command tool or code CLI that ran it.',
@@ -334,6 +341,7 @@ const fetchAndProcess = defineScenario<FetchObservation>({
 export const CODE_SCENARIOS: AnyScenario[] = [
   codeProject({
     id: 'code-bugfix',
+    tools: toolList(BASE, FILES, TEAM, COMMANDS),
     title: 'Fix a bug reported by tests',
     deliverable: 'src/facture.js, fixed',
     green:
@@ -352,6 +360,7 @@ export const CODE_SCENARIOS: AnyScenario[] = [
   }),
   codeProject({
     id: 'code-http-server',
+    tools: toolList(BASE, FILES, TEAM, COMMANDS),
     title: 'Write code from a tested specification',
     deliverable: 'src/server.js, written',
     green:
@@ -364,6 +373,7 @@ export const CODE_SCENARIOS: AnyScenario[] = [
   }),
   codeProject({
     id: 'code-install-dep',
+    tools: toolList(BASE, FILES, TEAM, COMMANDS),
     title: 'Install a dependency and use it',
     deliverable: 'package.json, node_modules and src/slug.js',
     green:

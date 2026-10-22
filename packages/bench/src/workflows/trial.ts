@@ -43,6 +43,7 @@ import {
   unverifiedOf,
 } from './judge-kit';
 import { isOutboundTool, missingNeeds } from './needs';
+import { scenarioToolsFingerprint } from './scenario-tools';
 import { isBenchPrinterTool, type BenchPrinterState } from '../printer/identity';
 import { rotateRecords } from '../printer/record';
 import { redactHome } from './redact';
@@ -179,6 +180,7 @@ function emptyLine(
     modelUnderTest: o.modelUnderTest,
     campaign: o.campaign ?? null,
     configFingerprint: o.configFingerprint ?? null,
+    scenarioToolsFingerprint: scenarioToolsFingerprint(s.tools),
     rootModel,
     nodalVersion: o.nodalVersion,
     stackCommit: o.stackCommit,

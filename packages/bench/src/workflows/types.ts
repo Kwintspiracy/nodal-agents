@@ -252,6 +252,13 @@ export interface Scenario<O> {
   /** Les outils du produit que l'essai doit employer (voir `ProductTools`). Absent : aucun. */
   readonly productTools?: ProductTools;
   /**
+   * La liste FERMÉE des outils que l'équipe peut employer pendant l'essai
+   * (décision 1B, scenario-tools.ts) : un nom exact ou un préfixe suivi de
+   * `*`. Tout autre outil d'un agent actif de l'espace est bloqué le temps de
+   * l'essai, puis rendu tel qu'il était.
+   */
+  readonly tools: readonly string[];
+  /**
    * Le sujet vient du fichier des sujets calibrés (subjects.ts), jamais du
    * scénario : `instruction` y porte `{subject}`. Sans sujet calibré de ce
    * genre, l'essai est SAUTÉ (#776).
@@ -399,6 +406,11 @@ export interface TrialLine {
    */
   readonly campaign?: string | null;
   readonly configFingerprint?: string | null;
+  /**
+   * L'empreinte de la liste d'outils du scénario (`scenarioToolsFingerprint`) :
+   * la surface sur laquelle l'essai a joué. Absente des lignes d'avant 1B.
+   */
+  readonly scenarioToolsFingerprint?: string | null;
   /** Le modèle configuré de l'agent racine au début de l'essai (`agents.model`). */
   readonly rootModel: string | null;
   readonly nodalVersion: string;

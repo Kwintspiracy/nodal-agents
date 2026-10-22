@@ -14,6 +14,7 @@ import { fixturePath, installed } from '../fixtures';
 import { JUDGED_COMMON, commonReasons } from '../judge-kit';
 import { normalizeSpace, readHtml, type HtmlElement } from '../office';
 import { defineScenario, type AnyScenario } from '../types';
+import { BASE, FILES, TEAM, toolList } from '../scenario-tools';
 
 const MIN = 60_000;
 const SHARED = "de l'espace de travail partagé";
@@ -65,7 +66,9 @@ const landing = defineScenario<PageObservation>({
     `the title element names "${SHOP}"; exactly one non-empty h1; a list with three items priced in euros; a footer element holding "${ADDRESS}"`,
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (file_write) s'applique.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM),
   title: 'Create a structured standalone page',
   path: 'file_write. A script in its place is red.',
   deliverable: LANDING_REL,
@@ -138,7 +141,9 @@ const tableCsv = defineScenario<TableObservation>({
   ],
   // v2 (catalogue du 17/10) : fusion de html-svg-chart (le graphique SVG des
   // mêmes données, sans ressource externe), et la règle des outils du produit.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM),
   title: 'Lay out data: a table and a chart',
   green: `${WEATHER_HTML_REL} was written during the run through file_write (no command in its place) with a table whose rows are exactly the CSV's (header first, then one row per day, same order, same values) and an inline SVG bar chart of the ${CHART_COLUMN} temperatures in the right proportions (± 5 %); it loads nothing from another site, the CSV is untouched, and nobody was asked anything.`,
   path: 'Read the CSV, then file_write. A script in its place is red.',
@@ -240,7 +245,9 @@ const edit = defineScenario<PageObservation>({
     `the title element reads exactly "${NEW_TITLE}"; a footer element holds "${FOOTER}"; headings and paragraphs outside the footer are the fixture's`,
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (file_edit, file_write) s'applique.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM),
   title: 'Edit a page without breaking the rest',
   path: 'file_read, then file_edit. A script in their place is red.',
   deliverable: `${HOME_REL}, changed`,

@@ -1022,6 +1022,9 @@ importers:
 
   packages/orchestration:
     dependencies:
+      '@nodal-agents/adapter-mcp':
+        specifier: workspace:*
+        version: link:../adapters/mcp
       '@nodal-agents/catalog':
         specifier: workspace:*
         version: link:../catalog
