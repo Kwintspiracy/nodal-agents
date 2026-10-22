@@ -94,6 +94,22 @@ jobs:
       # Le plafond de concurrence turbo (3) vit dans `turbo.json` depuis #292 :
       # `--concurrency` est un drapeau TURBO, et le passer par `pnpm test -- …`
       # le transmettait à vitest, qui le refusait. Plus de drapeau à copier.
+      #
+      # `NODAL_VITEST_REPORT_DIR` (#841) : chaque paquet y écrit ses résultats
+      # (`<paquet>.vitest-report.json`, avec les fichiers qui n'ont jamais rendu
+      # de résultat) et, si un worker meurt sans que vitest l'ait demandé, son
+      # code de sortie, son signal et ses fichiers (`<paquet>.worker-exits.log`).
+      # Le dossier part en artefact même quand l'étape est rouge.
       - name: Unit tests
         timeout-minutes: 45
+        env:
+          NODAL_VITEST_REPORT_DIR: ${{ runner.temp }}/vitest-reports
         run: pnpm test
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-reports-windows
+          path: ${{ runner.temp }}/vitest-reports
+          if-no-files-found: warn

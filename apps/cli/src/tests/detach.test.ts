@@ -33,16 +33,32 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
+import { watchProcess, type ProcessWatch } from '@nodal-agents/test-kit';
 import { isPidAlive, killPidTree, spawnWiring, waitForPidDead } from '../lib/processes.ts';
 
 /** execa's real entry point, so the launcher below resolves it from a temp dir. */
 const execaEntry = pathToFileURL(createRequire(import.meta.url).resolve('execa')).href;
 
-const spawned: number[] = [];
+// Every pid this suite learns is HELD at once (test-kit process-watch.ts), and
+// cleaned up only while held (#841). The cleanup used to kill whatever answered
+// to the bare number: a process that had died since and whose pid Windows had
+// handed to someone else — on CI Windows, another package's vitest worker —
+// went down with it. While the watch is open the pid can name nobody else.
+const spawned: ProcessWatch[] = [];
+
+async function hold(pid: number): Promise<ProcessWatch> {
+  const watch = await watchProcess(pid);
+  spawned.push(watch);
+  return watch;
+}
 
 afterEach(async () => {
-  for (const pid of spawned.splice(0)) {
-    if (isPidAlive(pid)) await killPidTree(pid);
+  for (const watch of spawned.splice(0)) {
+    try {
+      if (watch.alive()) await killPidTree(watch.pid);
+    } finally {
+      watch.release();
+    }
   }
   // 10s (the default) was enough until `killPidTree` began snapshotting
   // descendants through WMI: that call alone runs past 5s on a cold CI runner,
@@ -173,7 +189,7 @@ describe('detached stdio — the child owns the log file, not a pipe', () => {
     const launched = await execa(process.execPath, [launcher, service], { reject: false });
     const servicePid = Number.parseInt(launched.stdout.trim(), 10);
     expect(Number.isInteger(servicePid) && servicePid > 0).toBe(true);
-    spawned.push(servicePid);
+    await hold(servicePid);
 
     // The launcher is gone. Wait for the file to reach a line count that cannot
     // have been produced before it exited.
@@ -251,7 +267,7 @@ describe('killPidTree — down must reach the grandchild', () => {
       detached: process.platform !== 'win32',
       reject: false,
     });
-    spawned.push(parent.pid!);
+    await hold(parent.pid!);
 
     const childPid = await new Promise<number>((resolve, reject) => {
       const t = setTimeout(() => reject(new Error('grandchild pid never printed')), 10_000);
@@ -263,7 +279,7 @@ describe('killPidTree — down must reach the grandchild', () => {
         }
       });
     });
-    spawned.push(childPid);
+    await hold(childPid);
 
     expect(isPidAlive(parent.pid!)).toBe(true);
     expect(isPidAlive(childPid)).toBe(true);
@@ -277,9 +293,13 @@ describe('killPidTree — down must reach the grandchild', () => {
   }, 40_000);
 
   it('is a no-op on a pid that is already gone', async () => {
-    const p = await execa(process.execPath, ['-e', '0'], { reject: false });
-    const pid = p.pid!;
-    expect(await waitForPidDead(pid, 5_000)).toBe(true);
-    await expect(killPidTree(pid)).resolves.toBeUndefined();
+    // Held from its start, so that once it is gone its pid stays gone: a bare
+    // dead pid may already name a stranger, and `killPidTree` would then kill
+    // the stranger, which is no part of this contract (#841).
+    const p = execa(process.execPath, ['-e', 'setTimeout(() => {}, 300)'], { reject: false });
+    const watch = await hold(p.pid!);
+    await p;
+    expect(watch.alive()).toBe(false);
+    await expect(killPidTree(watch.pid)).resolves.toBeUndefined();
   }, 20_000);
 });

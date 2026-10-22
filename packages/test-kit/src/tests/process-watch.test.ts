@@ -34,7 +34,7 @@ describe('watchProcess: a test reads the death of the process it holds, never of
     const watch = await watchProcess(pid);
     try {
       expect(watch.alive()).toBe(true);
-      process.kill(pid, 'SIGKILL');
+      expect(watch.kill('SIGKILL')).toBe(true);
       expect(await untilDead(() => watch.alive())).toBe(true);
     } finally {
       watch.release();
@@ -47,7 +47,7 @@ describe('watchProcess: a test reads the death of the process it holds, never of
       const pid = await sleeper();
       const watch = await watchProcess(pid);
       try {
-        process.kill(pid, 'SIGKILL');
+        expect(watch.kill('SIGKILL')).toBe(true);
         expect(await untilDead(() => watch.alive())).toBe(true);
         // De quoi faire revenir le pid sans veille : 2,5 fois l'écart mesuré.
         const given: number[] = [];
@@ -59,10 +59,49 @@ describe('watchProcess: a test reads the death of the process it holds, never of
         expect(given).not.toContain(pid);
         expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }));
         expect(watch.alive()).toBe(false);
+        // Et le tuer ne part vers personne (#841).
+        expect(watch.kill('SIGKILL')).toBe(false);
       } finally {
         watch.release();
       }
     },
     60_000,
+  );
+});
+
+// #841 : le nettoyage d'un test du banc tuait par leur seul numéro des pid de
+// lanceurs morts depuis vingt secondes ; sur la CI Windows, ces pid servaient
+// déjà à d'autres paquets, workers vitest compris. `kill()` ne vise que le
+// processus tenu, et seulement vivant.
+describe('ProcessWatch.kill: a test kills the process it holds, never a pid (#841)', () => {
+  it('a dead process is sent nothing, however many times it is asked', async () => {
+    const c = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 500)'], { stdio: 'ignore' });
+    const exited = new Promise<void>((r) => c.once('exit', () => r()));
+    await new Promise<void>((r) => c.once('spawn', () => r()));
+    const watch = await watchProcess(c.pid as number);
+    try {
+      await exited;
+      expect(watch.alive()).toBe(false);
+      expect(watch.kill()).toBe(false);
+      expect(watch.kill('SIGKILL')).toBe(false);
+    } finally {
+      watch.release();
+    }
+  });
+
+  it.runIf(process.platform === 'win32')(
+    'a released watch refuses to kill: the pid it held is free again',
+    async () => {
+      const pid = await sleeper();
+      const watch = await watchProcess(pid);
+      watch.release();
+      try {
+        expect(() => watch.kill()).toThrow(/read after release/);
+      } finally {
+        const again = await watchProcess(pid);
+        again.kill('SIGKILL');
+        again.release();
+      }
+    },
   );
 });

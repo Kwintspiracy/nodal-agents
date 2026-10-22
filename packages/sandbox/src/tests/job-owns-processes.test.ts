@@ -301,8 +301,10 @@ describe('a job owns every process it starts outside the sandbox (#750, #755) @c
         // l'un ni dans l'autre.
         const exited = new Promise<void>((r) => runner.once('exit', () => r()));
         if (process.platform === 'win32') {
+          // kill-by-pid: `runner` is a child we hold and that lives (no exit yet).
           spawn('taskkill', ['/PID', String(runner.pid), '/T', '/F'], { windowsHide: true });
         } else {
+          // kill-by-pid: the group of `runner`, a child we hold and that lives.
           process.kill(-(runner.pid as number), 'SIGKILL');
         }
         await exited;
@@ -310,7 +312,7 @@ describe('a job owns every process it starts outside the sandbox (#750, #755) @c
         await killLeftoversOfJob(jobId, () => undefined);
         expect(await deadWithin(watch, 5_000)).toBe(true);
       } finally {
-        if (watch.alive()) process.kill(pid);
+        watch.kill();
       }
     },
     90_000,
@@ -405,7 +407,7 @@ describe.runIf(process.platform === 'linux')(
         expect(watch.alive()).toBe(true);
       } finally {
         await scope.close();
-        if (watch?.alive()) process.kill(pid, 'SIGKILL');
+        watch?.kill('SIGKILL');
       }
     }, 60_000);
   },

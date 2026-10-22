@@ -242,7 +242,7 @@ describe.each(cases)(
         await new Promise((r) => setTimeout(r, 50));
       }
       const alive = d.watch.alive();
-      if (alive) process.kill(d.pid);
+      if (alive) d.watch.kill();
       expect(alive).toBe(false);
       const frozen = readFileSync(d.counter, 'utf8');
       await new Promise((r) => setTimeout(r, 400));
