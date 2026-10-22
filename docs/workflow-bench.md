@@ -128,10 +128,16 @@ The bench never reads the owner's database or `~/.nodalai`.
    and erase (`reset --yes`), then check: no port of the campaign answers, no
    folder, no registry entry. A leftover is an error that names it.
 
-**Budget**: the workspace run budget (`max_run_cost_usd`) and the tree cap of
-the trial (`maxTreeCostUsd`, delegated jobs counted) are both
-min(1 $, what the campaign has left); under one cent left, no trial starts. A
-trial that did not report its cost stops the campaign.
+**Budget**: before each trial the campaign RESERVES its cap,
+min(1 $, what the campaign has left), and sets it as the tested workspace's
+run budget (`max_run_cost_usd`). The runner holds that budget on the whole
+delegation tree of the run (since #836: the head and every job it delegated,
+`apps/runner/src/job/run-budget.ts`), and every job of the tree reads it again
+before each model call and before a CLI turn. The stated bound: a trial costs
+at most its cap plus one call in flight per live job of its tree, and the
+campaign at most 10 $ plus that overshoot of its last trial. Under one cent
+left, no trial starts. A trial that did not report its cost stops the
+campaign.
 
 ## Activities and needs
 

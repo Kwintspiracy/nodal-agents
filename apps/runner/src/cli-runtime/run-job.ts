@@ -40,6 +40,7 @@ import {
 } from '@nodal-agents/tools';
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
+import { readRunCostCeilingUsd, readRunSpentUsd } from '../job/run-budget.ts';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
 import { getDeploymentContext } from '../job/deployment.ts';
 import { telegramChatOf } from '../job/channel-delivery.ts';
@@ -535,6 +536,14 @@ export async function runCliRuntimeJob(args: {
     await assertAgentBudget(db, agentRow.id);
   } catch (err) {
     return fail(err instanceof Error ? err.message.slice(0, 300) : 'agent_budget_exceeded');
+  }
+
+  // Le budget du RUN (revue de #836, P1), le même que la boucle de Nodal lit
+  // avant chaque appel : un tour de CLI ne part pas sur un run dont l'arbre de
+  // délégation a déjà dépensé le plafond de l'espace. Ce job n'a encore rien
+  // dépensé en API (un tour sous abonnement n'est pas facturé à l'appel).
+  if ((await readRunSpentUsd(db, jobId, 0)) > (await readRunCostCeilingUsd(db, job.entityId))) {
+    return fail('cost_budget_exceeded');
   }
 
   // Session continuity: one CLI session per (agent, conversation).

@@ -30,6 +30,7 @@ import { loadCampaignConfig, type CampaignConfig } from '../config';
 import { campaignHome } from '../home';
 import { isInside } from '../keys';
 import { runCampaign, type CampaignDeps } from '../run';
+import { readWorkspaceView } from '../team';
 import {
   TEST_KEYS,
   dead,
@@ -70,7 +71,8 @@ interface Seen {
   jobs: number;
   sharedFiles: string[];
   runBudgetUsd: number;
-  treeCapUsd: number | undefined;
+  /** Le modèle de chaque agent testé, lu par le lecteur de l'équipe (`readWorkspaceView`). */
+  models: string[];
 }
 
 /**
@@ -104,7 +106,9 @@ function fakeSession(costs: number[], seen: Seen[], runs: BenchRun[]) {
         jobs: Number(j!.n),
         sharedFiles: existsSync(sharedDir) ? readdirSync(sharedDir) : [],
         runBudgetUsd: ent!.cap,
-        treeCapUsd: run.maxTreeCostUsd?.(),
+        models: (await readWorkspaceView(db, run.targetEntityId!)).agents.map(
+          (a) => `${a.slug}=${a.provider}:${a.model}`,
+        ),
       });
       // Le run : un souvenir, un job facturé, un livrable.
       const [root] = await db
@@ -275,13 +279,65 @@ describe('a campaign, end to end, without a model', () => {
       },
       await deps({ runBench: fakeSession([0.9, 0.6, 0.5], seen, []) }),
     );
-    expect(seen.map((s) => [s.scenario, s.runBudgetUsd, s.treeCapUsd])).toEqual([
-      ['one', 1, 1],
-      ['two', 0.6, 0.6],
+    // Le plafond posé avant chaque essai, comme budget de run de l'espace (que
+    // le runner tient sur tout l'arbre) : min(1 $, ce qui reste).
+    expect(seen.map((s) => [s.scenario, s.runBudgetUsd])).toEqual([
+      ['one', 1],
+      ['two', 0.6],
     ]);
     expect(summary.lines.map((l) => l.scenario)).toEqual(['one', 'two']);
     expect(summary.spentUsd).toBe(1.5);
     expect(summary.stopReason).toBe('the campaign spent $1.5 of its $1.5 cap');
+  });
+
+  it('a model matrix runs each row ON its model: the tested agents carry it in the database during its trials, then get theirs back', async () => {
+    const seen: Seen[] = [];
+    const runs: BenchRun[] = [];
+    const config = await configWith({ perTrialUsd: 1, perCampaignUsd: 10 });
+    const summary = await runCampaign(
+      {
+        id: '20261022-110250-m1m1',
+        config,
+        keys: TEST_KEYS,
+        scenarios: [scenario('one')],
+        trials: 1,
+        models: [
+          { provider: 'openrouter', model: 'anthropic/claude-haiku-5.5' },
+          { provider: 'openrouter', model: 'deepseek/deepseek-v4-flash' },
+        ],
+        trigger: 'manual',
+        stackDir,
+      },
+      await deps({ runBench: fakeSession([0.1], seen, runs) }),
+    );
+    // Each row is labelled with its model AND ran on it: read from the DB, at
+    // the start of the row's trial, through Nodal's reader of the team.
+    expect(runs.map((r) => r.modelUnderTest)).toEqual([
+      'openrouter:anthropic/claude-haiku-5.5',
+      'openrouter:deepseek/deepseek-v4-flash',
+    ]);
+    expect(seen.map((s) => s.models)).toEqual([
+      [
+        'chef=openrouter:anthropic/claude-haiku-5.5',
+        'chercheur=openrouter:anthropic/claude-haiku-5.5',
+        'imageur=openrouter:anthropic/claude-haiku-5.5',
+      ],
+      [
+        'chef=openrouter:deepseek/deepseek-v4-flash',
+        'chercheur=openrouter:deepseek/deepseek-v4-flash',
+        'imageur=openrouter:deepseek/deepseek-v4-flash',
+      ],
+    ]);
+    // After the matrix, the team has the configuration's model again, and the
+    // judge never moved.
+    const tested = await readWorkspaceView(db, summary.applied!.tested.entityId);
+    expect(tested.agents.map((a) => `${a.slug}=${a.model}`)).toEqual([
+      'chef=anthropic/claude-haiku-5.5',
+      'chercheur=anthropic/claude-haiku-5.5',
+      'imageur=anthropic/claude-haiku-5.5',
+    ]);
+    const judge = await readWorkspaceView(db, summary.applied!.judge.entityId);
+    expect(judge.agents.map((a) => `${a.slug}=${a.model}`)).toEqual(['juge=z-ai/glm-5.3']);
   });
 
   it('whatever happens, the instance is stopped and erased: no process, no folder, no registry entry', async () => {

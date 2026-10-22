@@ -21,6 +21,7 @@ import type { AnyDrizzleDb, JobTriggerContext } from '@nodal-agents/db';
 import { conversationHandleFor, resolveScheduleNotifyChat } from '@nodal-agents/db';
 import {
   agentJobs,
+  llmCalls,
   jobDeliveries,
   agents,
   agentAssignments,
@@ -7437,6 +7438,111 @@ describe('reliability guards', () => {
     // The cumulative cost at failure is $2.40 (three $0.80 calls — the third
     // turn's cost is accumulated before the guard fires and failJob persists it).
     expect(row?.totalCostUsd).toBeCloseTo(2.4, 5);
+  });
+
+  // ─── Guard 1e covers the RUN: the whole delegation tree (review of #836, P1) ─
+  //
+  // "A run stops once it has cost $X" (Settings → Run budget). The cap was
+  // checked per JOB: every delegated child started over with the whole cap,
+  // and a tree of three jobs could cost three times X. These cases put the
+  // spend on OTHER jobs of the tree (the head, a sibling) and assert the
+  // child's own row: its error, the line it delivers, what it spent.
+
+  /** A job of the tree: inserted like `createTestJob`, then given a parent, a cost and a status. */
+  async function treeJob(fields: {
+    parentJobId?: string | null;
+    totalCostUsd?: number;
+    status?: string;
+  }): Promise<string> {
+    const job = await createTestJob(db, seed);
+    await db
+      .update(agentJobs)
+      .set({
+        parentJobId: fields.parentJobId ?? null,
+        totalCostUsd: fields.totalCostUsd ?? 0,
+        ...(fields.status ? { status: fields.status } : {}),
+      })
+      .where(eq(agentJobs.id, job.id));
+    return job.id;
+  }
+
+  const saveMemoryTurn = (costUsd: number, id: string, text?: string) => ({
+    costUsd,
+    ...(text ? { text } : {}),
+    toolCalls: [
+      { toolCallId: id, toolName: 'save_memory', args: { fact: id, category: 'context' } },
+    ],
+  });
+
+  it('Guard 1e @cap:voir-le-cout/moteur: a delegated job stops when the TREE passes the cap, the head’s spend counted', async () => {
+    const head = await treeJob({ totalCostUsd: 1.5, status: 'processing' });
+    const child = await treeJob({ parentJobId: head });
+    await withRunBudget({ costUsd: 2.0 }, async () => {
+      // Alone, the child's $0.80 + $0.80 stays under $2.00; with the head's
+      // $1.50, the run passes the cap after the child's FIRST call.
+      const llmClient = makeMockLlmClient([
+        saveMemoryTurn(0.8, 'tree-1', 'Read the first source.'),
+        saveMemoryTurn(0.8, 'tree-2', 'Read the second source.'),
+      ]);
+      const result = await executeJob(child as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('failed');
+    });
+    const [row] = await db
+      .select({ error: agentJobs.error, result: agentJobs.result, cost: agentJobs.totalCostUsd })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, child));
+    expect(row?.error).toBe('cost_budget_exceeded');
+    expect(row?.result).toBe(
+      'Read the first source.\n\n[stopped: run budget — $2.30 spent, ceiling $2.00, turn 1]',
+    );
+    expect(row?.cost).toBeCloseTo(0.8, 5);
+  });
+
+  it('Guard 1e: a job of a run that already spent its cap stops BEFORE its first model call', async () => {
+    const head = await treeJob({ totalCostUsd: 2.5, status: 'processing' });
+    const child = await treeJob({ parentJobId: head });
+    await withRunBudget({ costUsd: 2.0 }, async () => {
+      const llmClient = makeMockLlmClient([
+        saveMemoryTurn(0.8, 'late-1', 'Should never be written.'),
+      ]);
+      const result = await executeJob(child as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('failed');
+    });
+    const [row] = await db
+      .select({ error: agentJobs.error, result: agentJobs.result, cost: agentJobs.totalCostUsd })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, child));
+    expect(row?.error).toBe('cost_budget_exceeded');
+    expect(row?.result).toBe('[stopped: run budget — $2.50 spent, ceiling $2.00, turn 1]');
+    // No call was made: the child spent nothing, and wrote nothing of the model's.
+    expect(row?.cost).toBe(0);
+    const calls = await db
+      .select({ id: llmCalls.id })
+      .from(llmCalls)
+      .where(eq(llmCalls.jobId, child));
+    expect(calls).toEqual([]);
+  });
+
+  it('Guard 1e: a sibling’s spend counts too — the run is the head and EVERY descendant', async () => {
+    const head = await treeJob({ totalCostUsd: 0.1, status: 'processing' });
+    await treeJob({ parentJobId: head, totalCostUsd: 1.6, status: 'completed' });
+    const child = await treeJob({ parentJobId: head });
+    await withRunBudget({ costUsd: 2.0 }, async () => {
+      const llmClient = makeMockLlmClient([
+        saveMemoryTurn(0.5, 'sib-1', 'Started the images.'),
+        saveMemoryTurn(0.5, 'sib-2', 'Second image.'),
+      ]);
+      const result = await executeJob(child as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('failed');
+    });
+    const [row] = await db
+      .select({ error: agentJobs.error, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, child));
+    expect(row?.error).toBe('cost_budget_exceeded');
+    expect(row?.result).toBe(
+      'Started the images.\n\n[stopped: run budget — $2.20 spent, ceiling $2.00, turn 1]',
+    );
   });
 
   // ─── #442 — the run budget of the workspace, and the agent's first-token wait ─

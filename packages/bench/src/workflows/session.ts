@@ -80,8 +80,11 @@ export interface BenchRun {
    *  - `allowedReach` : les outils sortants que la configuration déclare
    *    (lecture seule), que le contrôle d'avant essai nomme sans refuser ;
    *  - `childEnv` : l'environnement de départ du `mcp serve` de chaque essai ;
-   *  - `modelUnderTest`, `campaign`, `configFingerprint` : portés par chaque ligne ;
-   *  - `maxTreeCostUsd` : le plafond de l'arbre de l'essai qui va partir.
+   *  - `modelUnderTest`, `campaign`, `configFingerprint` : portés par chaque ligne.
+   * Le plafond de coût d'un essai n'est pas ici : c'est le budget de run de
+   * l'espace, que le RUNNER tient sur tout l'arbre de délégation
+   * (apps/runner/src/job/run-budget.ts), et que la campagne pose avant chaque
+   * essai (`beforeTrial`).
    */
   readonly targetEntityId?: string;
   readonly allowedReach?: readonly AllowedReach[];
@@ -89,7 +92,6 @@ export interface BenchRun {
   readonly modelUnderTest?: string | null;
   readonly campaign?: string | null;
   readonly configFingerprint?: string | null;
-  readonly maxTreeCostUsd?: () => number | undefined;
 }
 
 /** Ce qu'une session dit à qui l'écoute. Tout est facultatif sauf `log`. */
@@ -191,7 +193,6 @@ export async function runBench(
           log: (l) => hooks.log(l),
           progress: (e) => hooks.progress?.(s, at, e),
         };
-        const maxTreeCostUsd = run.maxTreeCostUsd?.();
         const line = await runTrial(s, deps, {
           ...DEFAULT_TRIAL_OPTIONS,
           trigger: run.trigger,
@@ -201,7 +202,6 @@ export async function runBench(
           allowOwnerSends: run.allowOwnerSends,
           campaign: run.campaign ?? null,
           configFingerprint: run.configFingerprint ?? null,
-          ...(maxTreeCostUsd !== undefined ? { maxTreeCostUsd } : {}),
         });
         // Un essai coupé par l'arrêt ne mesure rien : pas de ligne.
         if (stop.stopped) break;

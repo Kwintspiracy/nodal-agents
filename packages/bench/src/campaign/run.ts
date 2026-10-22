@@ -153,6 +153,15 @@ export async function runCampaign(
       for (const model of models) {
         if (stop.stopped || budget.stopped !== null) break;
         const applying = await applier.apply(model);
+        // Ce que l'équipe DOIT être pendant cette ligne de la matrice : la
+        // configuration, avec le modèle testé de la ligne. La remise à zéro
+        // d'avant chaque essai compare l'équipe à CELLE-CI : comparée à la
+        // configuration seule, une ligne sur un autre modèle était prise pour
+        // une dérive, et la campagne s'arrêtait avant son premier essai.
+        const rowConfig: CampaignConfig = {
+          ...config,
+          models: { ...config.models, tested: { provider: model.provider, model: model.model } },
+        };
         try {
           const summary = await deps.runBench(
             {
@@ -168,7 +177,6 @@ export async function runCampaign(
               modelUnderTest: modelKey(model),
               campaign: req.id,
               configFingerprint: fingerprint,
-              maxTreeCostUsd: () => budget.nextTrialCap() ?? undefined,
             },
             db,
             stop,
@@ -176,9 +184,11 @@ export async function runCampaign(
               log: deps.log,
               trialEnd: (_s, _i, line) => deps.log(JSON.stringify(line)),
               beforeTrial: async () => {
-                const cap = budget.nextTrialCap();
+                // Le plafond de l'essai est RÉSERVÉ sur ce qui reste, puis posé
+                // comme budget de run : le runner le tient sur tout l'arbre.
+                const cap = budget.reserve();
                 if (cap === null) throw new Error(`campaign_budget_reached: ${budget.stopped}`);
-                await resetBetweenTrials(db, config, team, deps.folders);
+                await resetBetweenTrials(db, rowConfig, team, deps.folders);
                 const { setRunBudgetRepo } = await import('@nodal-agents/db');
                 await setRunBudgetRepo(db, team.tested.entityId, {
                   maxRunCostUsd: cap,

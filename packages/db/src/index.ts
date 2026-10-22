@@ -79,6 +79,8 @@ export type {
   SetAgentConnectorAssignmentInput,
 } from './repos/connectors.ts';
 export { addAgentWorkspaceRepo } from './repos/agent-workspaces.ts';
+export { readRunCost, runSpentUsd } from './repos/run-cost.ts';
+export type { RunCost } from './repos/run-cost.ts';
 export type { AddAgentWorkspaceInput } from './repos/agent-workspaces.ts';
 export { attachMcpServerToAgent } from './repos/agent-mcp-servers.ts';
 export type { AttachMcpServerInput, AttachMcpServerResult } from './repos/agent-mcp-servers.ts';
