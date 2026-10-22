@@ -51,7 +51,7 @@ vi.mock('../lib/postgres.ts', async (importOriginal) => {
 import { spawn, type ChildProcess } from 'node:child_process';
 import { execa } from 'execa';
 import { fileURLToPath } from 'node:url';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   postgresStopByHandLines,
@@ -62,10 +62,15 @@ import {
 } from '../commands/down.ts';
 import { runReset } from '../commands/reset.ts';
 import { CONFIG_DIR, PG_DATA_DIR } from '../lib/config.ts';
+import type { ClaimVerdict } from '../lib/orphans.ts';
 import { isPidAlive, waitForPidDead } from '../lib/processes.ts';
 import { processTable } from './process-table-available.ts';
 
 const lockfile = join(home, 'pg-data', 'postmaster.pid');
+
+const UNKNOWN: ClaimVerdict = { verdict: 'unknown', reason: 'a date is missing' };
+const NOT_OURS: ClaimVerdict = { verdict: 'not-ours', reason: 'a disproof' };
+const OURS: ClaimVerdict = { verdict: 'ours', reason: 'matches the lockfile' };
 
 /** A PowerShell single-quoted literal, an inner apostrophe doubled. */
 const psq = (value: string): string => `'${value.replace(/'/g, "''")}'`;
@@ -80,7 +85,7 @@ function context(overrides: Partial<KillContext>): KillContext {
     snapshot: new Map(),
     ownedPostgresPids: new Set(),
     tableAvailable: process.platform === 'win32',
-    postgresReadingWorked: false,
+    postgresClaim: UNKNOWN,
     ...overrides,
   };
 }
@@ -126,7 +131,7 @@ describe('down and the postmaster named by the lockfile @cap:installer-et-demarr
     writeLockfile(stranger.pid!);
 
     const stopped = await stopPostgresGracefully(
-      context({ ownedPostgresPids: new Set(), postgresReadingWorked: false }),
+      context({ ownedPostgresPids: new Set(), postgresClaim: UNKNOWN }),
     );
 
     expect(stopped).toBe('unconfirmed');
@@ -141,7 +146,7 @@ describe('down and the postmaster named by the lockfile @cap:installer-et-demarr
     writeLockfile(stranger.pid!);
 
     const stopped = await stopPostgresGracefully(
-      context({ ownedPostgresPids: new Set(), postgresReadingWorked: true }),
+      context({ ownedPostgresPids: new Set(), postgresClaim: NOT_OURS }),
     );
 
     expect(stopped).toBe('foreign');
@@ -154,7 +159,7 @@ describe('down and the postmaster named by the lockfile @cap:installer-et-demarr
     writeLockfile(stranger.pid!);
 
     await stopPostgresGracefully(
-      context({ ownedPostgresPids: new Set([stranger.pid! + 1]), postgresReadingWorked: true }),
+      context({ ownedPostgresPids: new Set([stranger.pid! + 1]), postgresClaim: NOT_OURS }),
     );
 
     expect(isPidAlive(stranger.pid!)).toBe(true);
@@ -188,7 +193,7 @@ describe('down and the postmaster named by the lockfile @cap:installer-et-demarr
     writeLockfile(stranger.pid!);
 
     const stopped = await stopPostgresGracefully(
-      context({ ownedPostgresPids: new Set([stranger.pid!]), postgresReadingWorked: true }),
+      context({ ownedPostgresPids: new Set([stranger.pid!]), postgresClaim: OURS }),
     );
 
     expect(stopped).toBe('stopped');
@@ -199,7 +204,7 @@ describe('down and the postmaster named by the lockfile @cap:installer-et-demarr
   it('names the command to stop it by hand, with the REAL data dir, and says it will keep refusing', async () => {
     writeLockfile(stranger.pid!);
 
-    await stopPostgresGracefully(context({ postgresReadingWorked: true }));
+    await stopPostgresGracefully(context({ postgresClaim: UNKNOWN }));
 
     const text = printed.join('\n');
     expect(text).toContain(
@@ -426,4 +431,115 @@ describe('reset decides from why a service was not stopped @cap:installer-et-dem
 
     expect(existsSync(CONFIG_DIR)).toBe(false);
   });
+});
+
+// The verdict, not "a table was read", is what tells a stranger from a pid
+// nobody could vouch for.
+describe('down keys on the evidence, not on whether a table was read @cap:installer-et-demarrer/moteur', () => {
+  it('a pid PROVEN not ours gets no stop command and no kill: nothing of ours runs there', async () => {
+    writeLockfile(stranger.pid!);
+
+    const outcome = await stopPostgresGracefully(context({ postgresClaim: NOT_OURS }));
+
+    const text = printed.join('\n');
+    expect(outcome).toBe('foreign');
+    expect(text).toContain("NOT this\n    install's postmaster");
+    expect(text).toContain('The lockfile is stale');
+    expect(text).not.toMatch(/stop -D|Stop-Process|kill \d+|last resort/);
+    expect(isPidAlive(stranger.pid!)).toBe(true);
+  });
+
+  it('a pid NOT PROVEN ours (a date is missing) is unconfirmed and carries the stop commands', async () => {
+    writeLockfile(stranger.pid!);
+
+    const outcome = await stopPostgresGracefully(context({ postgresClaim: UNKNOWN }));
+
+    const text = printed.join('\n');
+    expect(outcome).toBe('unconfirmed');
+    expect(text).toContain('a date is missing');
+    expect(text).toMatch(/stop -D/);
+    expect(isPidAlive(stranger.pid!)).toBe(true);
+  });
+});
+
+// The delete is safe whatever the verdict was: the data dir is set aside by an
+// atomic rename BEFORE anything is removed. A holder makes the rename fail
+// (Windows) or is found first (Linux), and nothing has been deleted.
+describe('reset never deletes the data dir in place @cap:installer-et-demarrer/moteur', () => {
+  const nothingLeft = async (): Promise<DownResult> => ({ unstopped: [] });
+  const realRename = renameSync;
+
+  it('a rename that fails leaves everything where it was and says what to do', async () => {
+    writeLockfile(stranger.pid!);
+    writeFileSync(join(home, 'config.json'), '{}', 'utf-8');
+    const busy = Object.assign(new Error('resource busy'), { code: 'EBUSY' });
+
+    const run = runReset({ yes: true }, nothingLeft, {
+      rename: () => {
+        throw busy;
+      },
+      findHolders: () => [],
+    });
+
+    await expect(run).rejects.toThrow(/Nothing was deleted: .* could not be set aside \(EBUSY\)/);
+    expect(existsSync(lockfile)).toBe(true);
+    expect(existsSync(join(home, 'config.json'))).toBe(true);
+  });
+
+  it('a process running out of the data dir is named, and nothing is touched', async () => {
+    writeLockfile(stranger.pid!);
+
+    const run = runReset({ yes: true }, nothingLeft, {
+      rename: realRename,
+      findHolders: () => [4321],
+    });
+
+    await expect(run).rejects.toThrow(/process 4321 runs out of/);
+    expect(existsSync(lockfile)).toBe(true);
+  });
+
+  it('on success the data dir is set aside BEFORE the home is removed', async () => {
+    writeLockfile(stranger.pid!);
+    const moves: Array<[string, string]> = [];
+
+    await runReset({ yes: true }, nothingLeft, {
+      rename: (from, to) => {
+        moves.push([from, to]);
+        // At the moment of the rename nothing else has been deleted yet.
+        expect(existsSync(lockfile)).toBe(true);
+        realRename(from, to);
+      },
+      findHolders: () => [],
+    });
+
+    expect(moves).toHaveLength(1);
+    expect(moves[0]![0]).toBe(PG_DATA_DIR);
+    expect(moves[0]![1]).toContain('pg-data.deleting-');
+    expect(existsSync(CONFIG_DIR)).toBe(false);
+  });
+
+  // The real thing: a process whose working directory is inside the data dir.
+  // On Windows that makes the rename fail; on Linux the holder is found first.
+  it.skipIf(process.platform !== 'win32' && process.platform !== 'linux')(
+    'a REAL process sitting in the data dir stops reset, and the data dir is intact',
+    async () => {
+      writeLockfile(stranger.pid!);
+      const holder = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+        cwd: join(home, 'pg-data'),
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        await expect(runReset({ yes: true }, nothingLeft)).rejects.toThrow(/Nothing was deleted/);
+
+        expect(existsSync(lockfile)).toBe(true);
+      } finally {
+        holder.kill();
+        await new Promise((resolve) => holder.once('exit', resolve));
+      }
+    },
+    60_000,
+  );
 });

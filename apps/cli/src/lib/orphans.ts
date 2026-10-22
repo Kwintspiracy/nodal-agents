@@ -145,6 +145,67 @@ export interface OwnershipInput {
 const START_TIME_TOLERANCE_MS = 2_000;
 
 /**
+ * What the evidence says about the pid a lockfile claims — THREE values, never
+ * two, because "not proven ours" and "proven not ours" license opposite actions.
+ *
+ *   - `ours`: every proof held (the pid is a live postgres whose creation date
+ *     agrees with the start time the postmaster wrote).
+ *   - `not-ours`: a DISPROOF was actually obtained — the table was read and the
+ *     pid is not a postgres, or both dates are KNOWN and they disagree, or (off
+ *     Windows) the kernel says it does not run out of this data dir.
+ *   - `unknown`: anything missing or unreadable — no table, no lockfile start
+ *     time, no creation date. A missing date is NEVER a mismatch.
+ *
+ * Only `not-ours` may be acted on as "this is a stranger" (`reset` leaves it
+ * alone and goes on); `unknown` always blocks. Treating the second as the
+ * first deletes a data dir under a postmaster that may well be live.
+ */
+export type ClaimVerdict = { verdict: 'ours' | 'not-ours' | 'unknown'; reason: string };
+
+/**
+ * Judge the pid the lockfile claims, from the rows the process table gave.
+ * The one rule behind `ownedPostgresPids` and behind `down`/`reset`.
+ */
+export function judgeClaimedPostmaster(input: OwnershipInput): ClaimVerdict {
+  const claim = input.claim;
+  if (claim === null) {
+    return { verdict: 'unknown', reason: 'no postmaster.pid claims this data dir' };
+  }
+  if (!input.tableRead) {
+    return { verdict: 'unknown', reason: 'the process table could not be read' };
+  }
+  const postmaster = input.rows.find((row) => row.pid === claim.pid);
+  if (postmaster === undefined && input.rows.length === 0) {
+    // A healthy query that finds no postgres at all and a query that failed
+    // quietly look the same here. Not a disproof.
+    return { verdict: 'unknown', reason: 'the table listed no postgres process at all' };
+  }
+  if (postmaster === undefined) {
+    // The table was read and the pid is not a live postgres: stale, or recycled
+    // onto something else entirely.
+    return { verdict: 'not-ours', reason: `lockfile pid ${claim.pid} is not a live postgres` };
+  }
+  if (postmaster.startedAt === undefined || claim.startedAtSeconds === null) {
+    // Nothing to compare: uncertainty, not a mismatch.
+    return {
+      verdict: 'unknown',
+      reason:
+        `pid ${claim.pid} started at ${String(postmaster.startedAt)}, lockfile says ` +
+        `${String(claim.startedAtSeconds)}: a date is missing, nothing can be compared`,
+    };
+  }
+  if (Math.abs(postmaster.startedAt - claim.startedAtSeconds * 1000) > START_TIME_TOLERANCE_MS) {
+    return {
+      verdict: 'not-ours',
+      reason:
+        `pid ${claim.pid} started at ${String(postmaster.startedAt)}, lockfile says ` +
+        `${String(claim.startedAtSeconds)}`,
+    };
+  }
+  return { verdict: 'ours', reason: `pid ${claim.pid} matches the lockfile` };
+}
+
+/**
  * Which Postgres processes this install owns.
  *
  * THE DATA DIRECTORY IS THE AUTHORITY. Everything else only confirms.
@@ -199,38 +260,16 @@ export function ownedPostgresPids(input: OwnershipInput): PostgresOwnership {
 
   const byPid = new Map<number, PostgresProcessRow>();
   for (const row of input.rows) byPid.set(row.pid, row);
-  const postmaster = byPid.get(claim.pid);
 
-  if (!input.tableRead) {
-    // Nothing to confirm the claim with, so the claim stands alone — and a
-    // claim alone is exactly what a stale lockfile on a recycled pid looks
-    // like. Callers that CAN date the pid another way say so by handing a row
-    // for it and `tableRead: true` (see `unconfirmedReading`); those that
-    // cannot get nothing, which is the side this module falls on.
-    for (const row of input.rows) {
-      skipped.push({ pid: row.pid, reason: 'the process table could not be read' });
-    }
+  const judged = judgeClaimedPostmaster(input);
+  if (judged.verdict !== 'ours') {
+    // Nothing to confirm the claim with, or the claim does not hold: it stands
+    // alone, and a claim alone is exactly what a stale lockfile on a recycled
+    // pid looks like. Callers that CAN date the pid another way say so by
+    // handing a row for it and `tableRead: true` (see `unconfirmedReading`);
+    // those that cannot get nothing, which is the side this module falls on.
+    for (const row of input.rows) skipped.push({ pid: row.pid, reason: judged.reason });
     return { owned, skipped };
-  }
-
-  {
-    if (postmaster === undefined) {
-      // The lockfile names a pid that is not a live postgres process. Stale, or
-      // recycled onto something else entirely — either way, not ours to touch.
-      for (const row of input.rows) {
-        skipped.push({ pid: row.pid, reason: `lockfile pid ${claim.pid} is not a live postgres` });
-      }
-      return { owned, skipped };
-    }
-    if (!startMatchesClaim(postmaster, claim)) {
-      for (const row of input.rows) {
-        skipped.push({
-          pid: row.pid,
-          reason: `pid ${claim.pid} started at ${String(postmaster.startedAt)}, lockfile says ${String(claim.startedAtSeconds)}`,
-        });
-      }
-      return { owned, skipped };
-    }
   }
 
   owned.push(claim.pid);
@@ -242,22 +281,6 @@ export function ownedPostgresPids(input: OwnershipInput): PostgresOwnership {
   }
 
   return { owned, skipped };
-}
-
-/**
- * Does this process's creation date agree with the start time the postmaster
- * wrote into the lockfile?
- *
- * A missing date is a NO, not a yes. It used to be a yes — "unknowable,
- * therefore accepted" — and that made the one check capable of catching a
- * recycled pid switch itself off exactly when the inputs were incomplete: an
- * older lockfile with no line 3, or a WMI row with no `CreationDate`. Measured
- * both ways, a foreign postmaster came back owned. Uncertainty must stop an
- * automatic kill, never license one (invariant #4).
- */
-function startMatchesClaim(process: PostgresProcessRow, claim: LockfileClaim): boolean {
-  if (process.startedAt === undefined || claim.startedAtSeconds === null) return false;
-  return Math.abs(process.startedAt - claim.startedAtSeconds * 1000) <= START_TIME_TOLERANCE_MS;
 }
 
 /** Does `row` descend from `ancestorPid`, walking up inside the table? */

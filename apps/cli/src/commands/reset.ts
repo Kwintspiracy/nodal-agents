@@ -2,9 +2,9 @@
 
 import chalk from 'chalk';
 import prompts from 'prompts';
-import { rmSync, existsSync } from 'fs';
+import { rmSync, existsSync, readdirSync, readlinkSync, realpathSync, renameSync } from 'fs';
 import { unregisterNodalInstance } from '@nodal-agents/shared/nodal-instances';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { CONFIG_DIR, PG_DATA_DIR } from '../lib/config.ts';
 import {
   describeUnstopped,
@@ -15,12 +15,83 @@ import {
 } from './down.ts';
 
 /**
- * `down` is a parameter so that the decision on its result can be tested for
- * every reason it can give, on every platform.
+ * The processes (other than this one) that have `dir` as their working
+ * directory, as far as the platform lets us look: Linux only, through
+ * `/proc/<pid>/cwd`. A postmaster `chdir()`s into its data directory and stays
+ * there, so this is the holder a rename would NOT notice on Unix (an open file
+ * does not stop a directory from being renamed there).
+ */
+export function findWorkingDirectoryHolders(dir: string): number[] {
+  if (process.platform !== 'linux') return [];
+  let root: string;
+  try {
+    root = realpathSync(dir);
+  } catch {
+    return [];
+  }
+  const holders: number[] = [];
+  for (const entry of readdirSync('/proc')) {
+    const pid = Number(entry);
+    if (!Number.isInteger(pid) || pid === process.pid) continue;
+    try {
+      const cwd = readlinkSync(`/proc/${pid}/cwd`);
+      if (cwd === root || cwd.startsWith(root + sep)) holders.push(pid);
+    } catch {
+      /* not ours to look at, or gone */
+    }
+  }
+  return holders;
+}
+
+/** What `runReset` does to the disk, replaceable so the failure paths can be exercised. */
+export interface ResetDisk {
+  rename: (from: string, to: string) => void;
+  findHolders: (dir: string) => number[];
+}
+
+const realDisk: ResetDisk = { rename: renameSync, findHolders: findWorkingDirectoryHolders };
+
+/**
+ * Set the data directory ASIDE before anything is deleted: an atomic rename.
+ *
+ * Deleting it in place is not safe whatever the verdict was. On Windows
+ * `rmSync` removes the files nothing holds, then throws on the first one that
+ * something does — a postmaster we could not see, an antivirus, an indexer —
+ * leaving a half-deleted cluster. A rename of a directory fails outright while
+ * a process holds a file or a working directory inside it, and it fails BEFORE
+ * deleting anything. On Unix a rename succeeds regardless, so the holders are
+ * looked for first, as far as the platform allows.
+ */
+function setDataDirAside(disk: ResetDisk): void {
+  if (!existsSync(PG_DATA_DIR)) return;
+  const holders = disk.findHolders(PG_DATA_DIR);
+  if (holders.length > 0) {
+    throw new Error(
+      `Nothing was deleted: process ${holders.join(', ')} runs out of ${PG_DATA_DIR}. ` +
+        'Stop it, then run `nodal-agents reset` again.',
+    );
+  }
+  const aside = `${PG_DATA_DIR}.deleting-${Date.now()}`;
+  try {
+    disk.rename(PG_DATA_DIR, aside);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? 'unknown';
+    throw new Error(
+      `Nothing was deleted: ${PG_DATA_DIR} could not be set aside (${code}). Something holds ` +
+        'a file or a folder inside it: a Postgres this tool could not see, an antivirus, an ' +
+        'indexer or a shell sitting in it. Close it, then run `nodal-agents reset` again.',
+    );
+  }
+}
+
+/**
+ * `down` and `disk` are parameters so that the decision on `down`'s result, and
+ * the failure of the delete, can be tested on every platform.
  */
 export async function runReset(
   options: { yes?: boolean } = {},
   down: () => Promise<DownResult> = runDown,
+  disk: ResetDisk = realDisk,
 ): Promise<void> {
   if (!options.yes) {
     const { confirm } = await prompts({
@@ -83,6 +154,10 @@ export async function runReset(
         'Deal with it as described, then run `nodal-agents reset` again.',
     );
   }
+
+  // The data directory first, and by rename: if anything holds it, this fails
+  // loud and NOTHING has been deleted (config and logs included).
+  setDataDirAside(disk);
 
   // Remove the config directory
   if (existsSync(CONFIG_DIR)) {

@@ -17,6 +17,7 @@ import {
   type ProcessRecord,
 } from '../lib/processes.ts';
 import { PG_DATA_DIR } from '../lib/config.ts';
+import type { ClaimVerdict } from '../lib/orphans.ts';
 import {
   readPostmasterPid,
   postgresProcessesForDataDir,
@@ -47,11 +48,13 @@ export interface KillContext {
    */
   tableAvailable: boolean;
   /**
-   * Whether a postgres ownership READING could be taken at all. False means the
-   * question went unanswered — a different fact from "the answer was no", and
-   * the two license different actions (invariant #4).
+   * What the evidence says about the pid the lockfile claims, three-valued:
+   * `ours`, `not-ours` (a disproof was actually obtained) or `unknown`
+   * (anything missing or unreadable). "Not proven ours" and "proven not ours"
+   * license opposite actions (invariant #4): only the second may be treated as
+   * a stranger.
    */
-  postgresReadingWorked: boolean;
+  postgresClaim: ClaimVerdict;
 }
 
 /** A snapshot row in the shape `pid-confirm` reads, or undefined. */
@@ -259,12 +262,21 @@ export async function postgresStopByHandLines(pgPid: number | null): Promise<str
  * to look at it, and — IF the user recognises it as this install's cluster —
  * exactly how to stop it themselves.
  */
-async function postgresRefusalText(pgPid: number, readingWorked: boolean): Promise<string> {
+async function postgresRefusalText(pgPid: number, claim: ClaimVerdict): Promise<string> {
+  if (claim.verdict === 'not-ours') {
+    // A disproof was obtained: this is a stranger. Nothing of this install runs
+    // on the data dir, so there is nothing to stop by hand, and no kill command
+    // is printed for a process that is not ours to stop.
+    return (
+      `  postgres (pid ${pgPid}) was NOT stopped — postmaster.pid names it, but it is NOT this\n` +
+      `    install's postmaster (${claim.reason}).\n` +
+      `    Nothing was signalled, and nothing of this install runs on ${PG_DATA_DIR}.\n` +
+      `    The lockfile is stale: ${join(PG_DATA_DIR, 'postmaster.pid')} can be deleted; the process is not touched.`
+    );
+  }
   return (
-    `  postgres (pid ${pgPid}) was NOT stopped — postmaster.pid names it, but ` +
-    (readingWorked
-      ? `a fresh\n    reading could not confirm it belongs to ${PG_DATA_DIR}.\n`
-      : `nothing on this\n    machine could confirm it belongs to ${PG_DATA_DIR}.\n`) +
+    `  postgres (pid ${pgPid}) was NOT stopped — postmaster.pid names it, but nothing could confirm\n` +
+    `    it belongs to ${PG_DATA_DIR} (${claim.reason}).\n` +
     `    Nothing was signalled. Look at it first:\n` +
     `      ${inspectPidCommand(pgPid)}\n` +
     `    If you recognise it as THIS install's cluster, stop it yourself:\n` +
@@ -298,13 +310,13 @@ export async function stopPostgresGracefully(ctx: KillContext): Promise<Postgres
   //
   // The probe answers three ways, and two of them are refusals:
   //   - owned: the data dir claims the pid and a fresh reading agrees;
-  //   - read and disowned: a reading was taken and it did NOT agree, so the
-  //     lockfile names somebody else's process (a crashed postmaster whose pid
-  //     the OS handed to a stranger);
-  //   - not read, or read without proof: no process table to ask (macOS), or
-  //     the proofs `unconfirmedReading` asks of the OS (working directory,
-  //     start time) did not all hold (Linux), or WMI did not answer (Windows).
-  //     It returns an empty `owned`; an empty set is an answer, not a licence.
+  //   - not-ours: a DISPROOF was obtained (the pid is not a postgres, both dates
+  //     are known and disagree, or the kernel says it runs out of another
+  //     directory): the lockfile names somebody else's process;
+  //   - unknown: anything missing or unreadable (no table, no creation date, no
+  //     lockfile start time, a question the platform cannot answer). A missing
+  //     date is never a mismatch. `owned` stays empty; an empty set is an
+  //     answer, not a licence.
   // A lockfile whose pid is not even alive has nothing left to signal.
   if (pgPid === null) {
     // A lockfile with no readable pid names nothing to stop; claiming "Stopped"
@@ -326,10 +338,11 @@ export async function stopPostgresGracefully(ctx: KillContext): Promise<Postgres
       );
       return 'none';
     }
-    console.log(chalk.yellow(await postgresRefusalText(pgPid, ctx.postgresReadingWorked)));
-    const code = ctx.postgresReadingWorked ? 'FOREIGN_POSTGRES' : 'POSTGRES_UNCONFIRMED';
+    console.log(chalk.yellow(await postgresRefusalText(pgPid, ctx.postgresClaim)));
+    const foreign = ctx.postgresClaim.verdict === 'not-ours';
+    const code = foreign ? 'FOREIGN_POSTGRES' : 'POSTGRES_UNCONFIRMED';
     process.stderr.write(`KILL_REFUSED code=${code} pid=${pgPid} lockfile=${pidFile}\n`);
-    return ctx.postgresReadingWorked ? 'foreign' : 'unconfirmed';
+    return foreign ? 'foreign' : 'unconfirmed';
   }
 
   try {
@@ -450,7 +463,7 @@ export async function runDown(): Promise<DownResult> {
     tableAvailable: process.platform === 'win32',
     snapshot: await processSnapshotWin(),
     ownedPostgresPids: new Set(pgReading.owned),
-    postgresReadingWorked: pgReading.read,
+    postgresClaim: pgReading.claim,
   };
 
   let stopped = 0;

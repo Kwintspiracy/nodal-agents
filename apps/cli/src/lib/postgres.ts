@@ -10,8 +10,10 @@ import {
 import { applyPostgresLoggingConfig, postgresLogDirFor } from './pg-logging.ts';
 import {
   formatForeignSkip,
+  judgeClaimedPostmaster,
   ownedPostgresPids,
   parseProcessRows,
+  type ClaimVerdict,
   type LockfileClaim,
 } from './orphans.ts';
 
@@ -25,6 +27,13 @@ export interface ProcessTableReading {
    */
   read: boolean;
   owned: number[];
+  /**
+   * What the evidence says about the pid the lockfile claims: `ours` (proven),
+   * `not-ours` (a disproof was actually obtained) or `unknown` (anything
+   * missing or unreadable). `read` says a table was read; this says what the
+   * evidence PROVED, and it is what a destructive caller keys on (`reset`).
+   */
+  claim: ClaimVerdict;
 }
 
 /**
@@ -214,15 +223,16 @@ export async function postgresProcessesForDataDir(
       );
       return unconfirmedReading(dataDir);
     }
-    const { owned, skipped } = ownedPostgresPids({
+    const ownership = {
       rows: parseProcessRows(stdout),
       tableRead: true,
       // The data directory answers; this table only confirms.
       claim: readPostmasterClaim(dataDir),
-    });
+    };
+    const { owned, skipped } = ownedPostgresPids(ownership);
     // Loud, not silent: a candidate left alone is reported with a code.
     for (const entry of skipped) process.stderr.write(`${formatForeignSkip(entry)}\n`);
-    return { read: true, owned };
+    return { read: true, owned, claim: judgeClaimedPostmaster(ownership) };
   } catch (err) {
     process.stderr.write(
       `ORPHAN_PROBE_UNREADABLE error=${err instanceof Error ? err.message : String(err)}\n`,
@@ -230,6 +240,23 @@ export async function postgresProcessesForDataDir(
     return unconfirmedReading(dataDir);
   }
 }
+
+/**
+ * The OS questions `unconfirmedReading` asks about ONE pid, injectable so the
+ * verdict logic runs on every platform in a test.
+ */
+export interface SinglePidProbes {
+  isRunning: (pid: number) => boolean;
+  /** True/false when the kernel says; null when it cannot be asked. */
+  holdsDataDir: (pid: number, dataDir: string) => boolean | null;
+  startedAtMs: (pid: number) => number | null;
+}
+
+const realProbes: SinglePidProbes = {
+  isRunning: (pid) => isPidRunning(pid),
+  holdsDataDir: (pid, dataDir) => postmasterHoldsDataDir(pid, dataDir),
+  startedAtMs: (pid) => processStartedAtMs(pid),
+};
 
 /**
  * What we own when the process table could not be read.
@@ -250,22 +277,33 @@ export async function postgresProcessesForDataDir(
  * here, so a refusal cannot be walked around. No workers are claimed: with no
  * table there is no ancestry to walk.
  */
-export function unconfirmedReading(dataDir: string): ProcessTableReading {
+export function unconfirmedReading(
+  dataDir: string,
+  probes: SinglePidProbes = realProbes,
+): ProcessTableReading {
   const claim = readPostmasterClaim(dataDir);
   if (claim === null) {
     // Silent until pass 12: a refusal with no code is a refusal nobody can
     // debug, and the summary above promised one for every condition.
     process.stderr.write(`ORPHAN_PROBE_NO_CLAIM dataDir=${dataDir}\n`);
-    return { read: false, owned: [] };
+    return {
+      read: false,
+      owned: [],
+      claim: { verdict: 'unknown', reason: 'no postmaster.pid claims this data dir' },
+    };
   }
   // Ask about THE PID WE READ, not about whatever the lockfile says a moment
   // later. `livePostmasterPid` re-reads the file, so a lockfile that vanished
   // or changed pid between the two reads produced "this pid is not alive" for a
   // process that had never been probed at all (pass-13 finding R1). The refusal
   // was safe; the diagnostic accused a death nobody had established.
-  if (!isPidRunning(claim.pid)) {
+  if (!probes.isRunning(claim.pid)) {
     process.stderr.write(`ORPHAN_PROBE_CLAIMED_PID_NOT_ALIVE pid=${claim.pid}\n`);
-    return { read: false, owned: [] };
+    return {
+      read: false,
+      owned: [],
+      claim: { verdict: 'not-ours', reason: `lockfile pid ${claim.pid} is not running` },
+    };
   }
   // Liveness is NOT confirmation. A stale lockfile whose pid the OS has since
   // handed to a stranger reads exactly like our own postmaster — the hole pass
@@ -277,30 +315,49 @@ export function unconfirmedReading(dataDir: string): ProcessTableReading {
   // catches what a clock comparison cannot, and that is more than a wound-back
   // clock: the time check is a WINDOW, so a pid reused inside it passes on its
   // own (see `readPostmasterClaim` for both shapes of that residue).
-  const holdsDataDir = postmasterHoldsDataDir(claim.pid, dataDir);
+  //
+  // The three answers keep their meaning in the verdict: the kernel saying the
+  // process runs out of ANOTHER directory is a DISPROOF (`not-ours`); the
+  // question going unanswerable is not (`unknown`).
+  const holdsDataDir = probes.holdsDataDir(claim.pid, dataDir);
   if (holdsDataDir !== true) {
     process.stderr.write(
       `ORPHAN_PROBE_NOT_IN_DATA_DIR pid=${claim.pid} holds=${String(holdsDataDir)}\n`,
     );
-    return { read: false, owned: [] };
+    return {
+      read: false,
+      owned: [],
+      claim:
+        holdsDataDir === false
+          ? { verdict: 'not-ours', reason: `pid ${claim.pid} does not run out of ${dataDir}` }
+          : {
+              verdict: 'unknown',
+              reason: `whether pid ${claim.pid} runs out of ${dataDir} cannot be asked on this platform`,
+            },
+    };
   }
-  const startedAt = processStartedAtMs(claim.pid);
+  const startedAt = probes.startedAtMs(claim.pid);
   if (startedAt === null) {
     process.stderr.write(
       `ORPHAN_PROBE_NO_START_TIME pid=${claim.pid} platform=${process.platform}\n`,
     );
-    return { read: false, owned: [] };
+    return {
+      read: false,
+      owned: [],
+      claim: { verdict: 'unknown', reason: `the start time of pid ${claim.pid} cannot be read` },
+    };
   }
-  const { owned, skipped } = ownedPostgresPids({
+  const ownership = {
     rows: [{ pid: claim.pid, ppid: 0, commandLine: '', startedAt }],
     tableRead: true,
     claim,
-  });
+  };
+  const { owned, skipped } = ownedPostgresPids(ownership);
   // The last refusal — a lockfile with no start time on line 3, or a start
   // time that disagrees — happened INSIDE the classifier, and its reason was
   // being dropped here (pass-12 finding R2).
   for (const entry of skipped) process.stderr.write(`${formatForeignSkip(entry)}\n`);
-  return { read: false, owned };
+  return { read: false, owned, claim: judgeClaimedPostmaster(ownership) };
 }
 
 /**
