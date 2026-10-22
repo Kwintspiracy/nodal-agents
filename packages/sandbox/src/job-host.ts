@@ -18,6 +18,12 @@
 // pour un conteneur par commande) ; le serveur meurt quand le conteneur est
 // tué, ET quand le processus qui le tient se termine.
 //
+// Le MÊME hôte tient les commandes NON confinées d'un job sous Windows
+// (#755) : lancé hors bac à sable, rangé dans un Job Object avant de recevoir
+// `init` (host-container.ts, windows-job-object.ts). Il ne lance rien avant
+// `init` : c'est ce qui ferme la fenêtre où un enfant pourrait naître hors
+// du job.
+//
 // LE CANAL est l'entrée et la sortie standard de l'hôte, que le courtier
 // (mxc-broker.ts) relaie au runner. Aucun réseau : le 14/10, on avait mesuré
 // que dès qu'un SECOND conteneur était lancé, ce qu'on écrivait sur l'entrée
@@ -41,7 +47,10 @@
 //                                            à l'hôte : ce que MXC y a remplacé
 //                                            (TEMP, TMP, LOCALAPPDATA…) est
 //                                            réimposé à chaque commande ;
-//                  {op:'run', id, file, argv0, rest, cwd, env}
+//                  {op:'run', id, file, argv0, rest, cwd, env, stdin?}
+//                  {op:'in', id, d}         l'entrée de la commande (base64),
+//                  {op:'in-end', id}        puis sa fin — seulement quand
+//                                            `run` a demandé `stdin: true` ;
 //   hôte → runner  {ready, pid}
 //                  {id, started}            le pid de la commande, pour la tuer
 //                                            de l'extérieur (taskkill /T est
@@ -76,6 +85,7 @@ const up = (k) => k.toUpperCase();
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 let overrides = {};
 let buffer = '';
+const children = new Map();
 process.on('uncaughtException', (e) => {
   try { out({ fatal: String((e && e.stack) || e) }); } catch {}
   setTimeout(() => process.exit(1), 50);
@@ -97,6 +107,12 @@ process.stdin.on('data', (chunk) => {
       out({ ready: true, pid: process.pid });
     } else if (m.op === 'run') {
       run(m);
+    } else if (m.op === 'in') {
+      const c = children.get(m.id);
+      if (c && c.stdin) c.stdin.write(Buffer.from(m.d, 'base64'));
+    } else if (m.op === 'in-end') {
+      const c = children.get(m.id);
+      if (c && c.stdin) c.stdin.end();
     }
   }
 });
@@ -113,17 +129,20 @@ function run(m) {
   for (const [k, v] of Object.entries(m.env)) if (v !== null && v !== undefined && !replaced.has(up(k))) env[k] = v;
   Object.assign(env, overrides);
   let finished = false;
-  const finish = (o) => { if (finished) return; finished = true; out(Object.assign({ id: m.id }, o)); };
+  const finish = (o) => { if (finished) return; finished = true; children.delete(m.id); out(Object.assign({ id: m.id }, o)); };
   let child;
   try {
     child = spawn(m.file, m.rest === '' ? [] : [m.rest], {
       argv0: m.argv0, windowsVerbatimArguments: true, cwd: m.cwd, env,
-      stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+      stdio: [m.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'], windowsHide: true,
     });
   } catch (e) {
     finish({ error: String((e && e.message) || e) });
     return;
   }
+  children.set(m.id, child);
+  // EPIPE quand la commande sort sans lire : pas une panne de l'hôte.
+  if (child.stdin) child.stdin.on('error', () => {});
   child.on('spawn', () => out({ id: m.id, started: child.pid }));
   child.stdout.on('data', (d) => { if (!finished) out({ id: m.id, s: 'o', d: d.toString('base64') }); });
   child.stderr.on('data', (d) => { if (!finished) out({ id: m.id, s: 'e', d: d.toString('base64') }); });

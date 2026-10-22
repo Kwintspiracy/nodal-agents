@@ -32,8 +32,9 @@ import {
  * `curl` vers un serveur HTTP local, un serveur joint par la commande
  * suivante) passent par le proxy : sous Windows ses jobs tournent donc sous
  * la valeur PRODUIT `proxy`. Là où le proxy n'est pas joignable
- * (windows-11-arm) le bac à sable est indisponible et ces cas se sautent
- * (`unconfinedWindows`). Ailleurs (Linux CI), le bac à sable de la plateforme.
+ * (windows-11-arm) le bac à sable est indisponible et ces cas tournent hors
+ * bac à sable, dans le Job Object du job (#755). Ailleurs (Linux CI), le bac
+ * à sable de la plateforme.
  */
 const flowSandbox =
   process.platform === 'win32' ? createSandbox(mxcBackend(undefined, 'proxy')) : defaultSandbox();
@@ -1273,11 +1274,6 @@ describe('run_command — what reaches a printer or the screen asks, and a decli
 
 // ─── #628 / #750 : la durée de vie de ce qu'une commande lance ────────────────
 
-// Sans bac à sable, sous Windows, un petit-enfant détaché n'est rattaché à
-// rien : seul le conteneur MXC du job le tient (sandbox-confinement-windows).
-const unconfinedWindows =
-  process.platform === 'win32' && (await flowSandbox.status()).state !== 'available';
-
 describe('run_command — what a command starts lives for the JOB, and Stop kills the running command (#628, #750) @cap:executer-une-commande/moteur', () => {
   let ruleId: string;
   const node = process.execPath;
@@ -1310,7 +1306,7 @@ describe('run_command — what a command starts lives for the JOB, and Stop kill
     ruleId = rule.id;
     await writeFile(
       join(workspaceDir, 'long.js'),
-      "require('fs').writeFileSync(process.argv[2], String(process.pid)); setTimeout(() => {}, 600000);\n",
+      "const fs = require('fs'); fs.writeFileSync(process.argv[2], String(process.pid)); let n = 0; setInterval(() => fs.writeFileSync(process.argv[2] + '.count', String(++n)), 100);\n",
     );
     await writeFile(
       join(workspaceDir, 'server.js'),
@@ -1366,59 +1362,62 @@ describe('run_command — what a command starts lives for the JOB, and Stop kill
     expect(Date.now() - started).toBeLessThan(60_000);
     await new Promise((r) => setTimeout(r, 1_000));
     expect(alive(pid)).toBe(false);
+    // Le compteur qu'elle écrivait toutes les 100 ms ne monte plus.
+    const frozen = await readFile(`${pidFile}.count`, 'utf8');
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await readFile(`${pidFile}.count`, 'utf8')).toBe(frozen);
     expect(openJobProcessScopeIds()).not.toContain(job.id);
   });
 
-  it.skipIf(unconfinedWindows)(
-    'a server started by command 1 answers command 2 of the same job, then dies when the job completes (skipped on a Windows without the sandbox, where nothing holds a detached grandchild)',
-    async () => {
-      const job = await createJob();
-      const port = 40_000 + Math.floor(Math.random() * 20_000);
-      const info = join(workspaceDir, `server-${job.id}.pid`);
-      const start =
-        process.platform === 'win32'
-          ? `start "" /b "${node}" server.js ${port} ${info} && node waitfor.js ${info}`
-          : `"${node}" server.js ${port} ${info} > /dev/null 2>&1 & node waitfor.js ${info}`;
-      const llmClient = makeMockLlmClient([
-        {
-          toolCalls: [
-            {
-              toolCallId: 'tc-life-1',
-              toolName: 'run_command',
-              args: { purpose: 'start a local server', command: start },
-            },
-          ],
-        },
-        {
-          toolCalls: [
-            {
-              toolCallId: 'tc-life-2',
-              toolName: 'run_command',
-              args: { purpose: 'call the local server', command: `node fetch.js ${port}` },
-            },
-          ],
-        },
-        {
-          text: 'Done.',
-          toolCalls: [
-            { toolCallId: 'tc-life-rr', toolName: 'return_result', args: { status: 'success' } },
-          ],
-        },
-      ]);
-      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
-      expect(result.status).toBe('completed');
-      const pid = Number(await readFile(info, 'utf8'));
-      // La commande 2 a joint le serveur de la commande 1 : sa sortie est dans
-      // le tool_result que l'agent a lu.
-      const [row] = await db
-        .select({ messages: agentJobs.messages })
-        .from(agentJobs)
-        .where(eq(agentJobs.id, job.id));
-      expect(JSON.stringify(row?.messages)).toContain(`pong ${pid}`);
-      // Le job fini, le serveur est mort, et le périmètre fermé.
-      await new Promise((r) => setTimeout(r, 1_000));
-      expect(alive(pid)).toBe(false);
-      expect(openJobProcessScopeIds()).not.toContain(job.id);
-    },
-  );
+  // Sous Windows sans bac à sable aussi (#755) : le Job Object du job tient le
+  // serveur que `start /b` a détaché, et la fin du job le tue.
+  it('a server started by command 1 answers command 2 of the same job, then dies when the job completes', async () => {
+    const job = await createJob();
+    const port = 40_000 + Math.floor(Math.random() * 20_000);
+    const info = join(workspaceDir, `server-${job.id}.pid`);
+    const start =
+      process.platform === 'win32'
+        ? `start "" /b "${node}" server.js ${port} ${info} && node waitfor.js ${info}`
+        : `"${node}" server.js ${port} ${info} > /dev/null 2>&1 & node waitfor.js ${info}`;
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-life-1',
+            toolName: 'run_command',
+            args: { purpose: 'start a local server', command: start },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-life-2',
+            toolName: 'run_command',
+            args: { purpose: 'call the local server', command: `node fetch.js ${port}` },
+          },
+        ],
+      },
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-life-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+    const pid = Number(await readFile(info, 'utf8'));
+    // La commande 2 a joint le serveur de la commande 1 : sa sortie est dans
+    // le tool_result que l'agent a lu.
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(JSON.stringify(row?.messages)).toContain(`pong ${pid}`);
+    // Le job fini, le serveur est mort, et le périmètre fermé.
+    await new Promise((r) => setTimeout(r, 1_000));
+    expect(alive(pid)).toBe(false);
+    expect(openJobProcessScopeIds()).not.toContain(job.id);
+  });
 });

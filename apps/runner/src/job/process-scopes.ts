@@ -21,14 +21,29 @@
 // L'arrêt du runner les ferme tous (`closeAllJobProcessScopes`) ; un runner
 // qui MEURT laisse mourir ses conteneurs avec lui (job-host.ts, mxc-broker.ts).
 
-import { inArray } from '@nodal-agents/db';
+import { eq, inArray } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { closeJobProcessScope, openJobProcessScopeIds } from '@nodal-agents/sandbox';
+import {
+  closeJobProcessScope,
+  killLeftoversOfJob,
+  openJobProcessScopeIds,
+} from '@nodal-agents/sandbox';
 import { TERMINAL_STATUSES } from './state.ts';
 
 /** Le balayage : assez court pour qu'un Stop sur un job suspendu se voie vite. */
 export const PROCESS_SWEEP_MS = 5_000;
+
+/** La relecture de la ligne pendant une preuve : le Stop la coupe dans ce délai. */
+export const JOB_END_POLL_MS = 2_000;
+
+/** Le critère de fin, un seul pour le balayage et la veille : statut terminal, ou ligne absente. */
+function hasEnded(status: string | null | undefined): boolean {
+  return (
+    status === undefined ||
+    (status !== null && (TERMINAL_STATUSES as readonly string[]).includes(status))
+  );
+}
 
 /** Journalisé quand un périmètre est fermé : le job et la raison. */
 export const JOB_PROCESSES_RELEASED = 'JOB_PROCESSES_RELEASED';
@@ -55,14 +70,33 @@ export async function releaseIfEnded(
   const released: string[] = [];
   for (const jobId of jobIds) {
     const s = status.get(jobId);
-    const ended = s === undefined || (TERMINAL_STATUSES as readonly string[]).includes(s ?? '');
-    if (!ended) continue;
+    if (!hasEnded(s)) continue;
     if (await closeJobProcessScope(jobId)) {
       released.push(jobId);
       log(JOB_PROCESSES_RELEASED, { jobId, status: s ?? 'missing' });
     }
   }
   return released;
+}
+
+/**
+ * Un job PERDU (#750) — repris d'un runner mort, ou fauché — : ses processus
+ * meurent, où qu'ils soient. Ceux que CE runner tient, par son périmètre ;
+ * ceux qu'un runner mort a laissés sur cette machine, par l'étiquette du job
+ * (Unix ; sous Windows, le noyau les a tués avec le Job Object du mort).
+ * Les faucheurs ne l'appellent jamais seuls : par `takeLostRun`
+ * (cron/take-lost-run.ts), une fois la ligne prise au run perdu.
+ */
+export async function releaseProcessesOfLostJob(jobId: string): Promise<void> {
+  try {
+    if (!(await closeJobProcessScope(jobId))) await killLeftoversOfJob(jobId);
+  } catch (err) {
+    console.error(
+      `[job-processes] JOB_PROCESSES_RELEASE_FAILED job=${jobId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
 }
 
 /** Ferme le périmètre de CE job s'il est fini — après un run, après une finalisation. */
@@ -78,6 +112,49 @@ export async function releaseJobProcessesIfEnded(db: AnyDrizzleDb, jobId: string
       }`,
     );
   }
+}
+
+/**
+ * Le Stop d'un travail qui tourne HORS d'un tour d'outils — la preuve d'un
+ * livrable, lancée par la finalisation, que n'importe quelle porte terminale
+ * appelle (la boucle, le runtime CLI, le cron du tableau de tâches) : le
+ * signal tombe dès que la ligne du job dit qu'il est FINI (le Stop le passe à
+ * `cancelled`), par le même critère que le balayage. Une ligne illisible est
+ * dite et relue au tour suivant ; elle ne coupe rien.
+ */
+export function watchJobEnd(
+  db: AnyDrizzleDb,
+  jobId: string,
+  pollMs: number = JOB_END_POLL_MS,
+): { signal: AbortSignal; stop: () => void } {
+  const controller = new AbortController();
+  let reading = false;
+  const timer = setInterval(() => {
+    if (reading || controller.signal.aborted) return;
+    reading = true;
+    void db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId))
+      .then((rows) => {
+        if (hasEnded(rows[0]?.status)) {
+          clearInterval(timer);
+          controller.abort();
+        }
+      })
+      .catch((err: unknown) => {
+        console.error(
+          `[job-processes] JOB_END_WATCH_UNREADABLE job=${jobId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      })
+      .finally(() => {
+        reading = false;
+      });
+  }, pollMs);
+  timer.unref();
+  return { signal: controller.signal, stop: () => clearInterval(timer) };
 }
 
 /** Le balayage périodique des périmètres ouverts. `stop()` à l'arrêt du runner. */

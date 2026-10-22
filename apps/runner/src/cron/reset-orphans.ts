@@ -14,6 +14,7 @@ import { sendTelegramMessage } from '@nodal-agents/delivery';
 import { failJob } from '../job/state.ts';
 import { resumeJobAfterApprovalResolution } from '../approvals/resume.ts';
 import { closeElicitationsOfLostJobs } from '../approvals/elicitation.ts';
+import { takeLostRun } from './take-lost-run.ts';
 import { resolveTelegramDeliveryTarget } from '../approvals/notify.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
@@ -175,6 +176,7 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
     .select({
       id: agentJobs.id,
       status: agentJobs.status,
+      claimGeneration: agentJobs.claimGeneration,
       pendingDelegation: agentJobs.pendingDelegation,
     })
     .from(agentJobs)
@@ -196,7 +198,7 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
     'awaiting_tasks',
   ];
 
-  const toReset: string[] = [];
+  const toReset: { id: string; status: string; claimGeneration: number }[] = [];
   const toBump: string[] = [];
 
   for (const c of candidates) {
@@ -241,7 +243,11 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
       continue;
     }
 
-    toReset.push(c.id);
+    toReset.push({
+      id: c.id,
+      status: c.status ?? 'processing',
+      claimGeneration: c.claimGeneration,
+    });
   }
 
   if (toBump.length > 0) {
@@ -255,7 +261,11 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
   // and (b) fills the user-facing `result` with an explanation so the outcome is
   // never silent (D1). Then deliver that notice to the job's channel.
   let reset = 0;
-  for (const jobId of toReset) {
+  for (const seen of toReset) {
+    const jobId = seen.id;
+    // Avant l'écriture, la règle des faucheurs (`takeLostRun`) : la ligne
+    // prise au run perdu et ses processus morts, ou rien.
+    if ((await takeLostRun(db, seen, cutoff)) === null) continue;
     const landed = await failJob(
       db,
       jobId,
@@ -356,12 +366,18 @@ export async function failStalePendingJobs(
   // failJob's non-terminal guard also protects against a job that flipped out of
   // pending between this select and the write.
   const stale = await db
-    .select({ id: agentJobs.id })
+    .select({ id: agentJobs.id, claimGeneration: agentJobs.claimGeneration })
     .from(agentJobs)
     .where(and(eq(agentJobs.status, 'pending'), lt(agentJobs.updatedAt, cutoff)));
 
   let failed = 0;
-  for (const { id } of stale) {
+  for (const { id, claimGeneration } of stale) {
+    // Avant l'écriture, la règle des faucheurs (`takeLostRun`) : la ligne
+    // prise (un job prenable est pris, comme un worker le prendrait) et ses
+    // processus morts, ou rien — un worker l'a pris entre-temps.
+    if ((await takeLostRun(db, { id, status: 'pending', claimGeneration }, cutoff)) === null) {
+      continue;
+    }
     const landed = await failJob(
       db,
       id,

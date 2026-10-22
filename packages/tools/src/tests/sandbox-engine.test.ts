@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -30,12 +31,17 @@ let outside: string;
 const node = process.execPath;
 const env = buildChildEnv(process.env);
 const scopes: JobProcessScope[] = [];
-/** Un périmètre sous un bac à sable donné, fermé en fin de suite. */
+/**
+ * Un périmètre sous un bac à sable donné, fermé en fin de suite. Son
+ * identifiant est unique : sous Unix, fermer un périmètre tue tout processus
+ * qui porte son identifiant (#750), et les fichiers de test tournent côte à
+ * côte.
+ */
 const scopeWith = (
   id: string,
   sandbox = createSandbox(null, { platform: 'linux', log: () => {} }),
 ): JobProcessScope => {
-  const s = new JobProcessScope(id, sandbox);
+  const s = new JobProcessScope(`${id}-${randomUUID()}`, sandbox);
   scopes.push(s);
   return s;
 };
@@ -251,70 +257,79 @@ describe('runShellCommand — le Stop du job (#750) @cap:executer-une-commande/m
   });
 });
 
-// Sans bac à sable, sous Windows, un petit-enfant DÉTACHÉ dont le parent est
-// mort n'est plus rattaché à rien : rien ne le tue (limite dite dans
-// job-scope.ts). Le conteneur MXC du job, lui, le tient : c'est
-// `sandbox-confinement-windows.test.ts` qui le prouve.
-describe.skipIf(process.platform === 'win32')(
-  'runShellCommand — sans bac à sable, ce qu’une commande laisse tourner vit jusqu’à la fin du JOB @cap:executer-une-commande/moteur (Unix: process groups; skipped on Windows, where only the MXC job container holds a detached grandchild)',
-  () => {
-    const startServer = (scope: JobProcessScope, infoFile: string) =>
-      runShellCommand({
-        target: {
-          command: `"${node}" "${join(dir, 'server.cjs')}" "${infoFile}" > /dev/null 2>&1 &`,
-        },
-        cwd: dir,
-        timeoutMs: 20_000,
-        env,
-        confinement: { writableRoots: [dir] },
-        scope,
-      });
-    const readInfo = async (infoFile: string): Promise<{ pid: number; port: number }> => {
-      await waitForFile(infoFile);
-      return JSON.parse(await readFile(infoFile, 'utf8')) as { pid: number; port: number };
-    };
-    const fetchFrom = (scope: JobProcessScope, port: number) =>
-      runShellCommand({
-        target: { file: node, args: [join(dir, 'fetch.cjs'), String(port)] },
-        cwd: dir,
-        timeoutMs: 20_000,
-        env,
-        confinement: { writableRoots: [dir] },
-        scope,
-      });
-
-    it('la commande 2 joint le serveur que la commande 1 a lancé ; fermer le job le tue', async () => {
-      const scope = scopeWith('lifetime');
-      const infoFile = join(dir, 'server-a.json');
-      const first = await startServer(scope, infoFile);
-      expect(first.outcome).toEqual({ kind: 'exit', exitCode: 0 });
-      const { pid, port } = await readInfo(infoFile);
-      const second = await fetchFrom(scope, port);
-      expect(second.stdout.trim()).toBe(`pong ${pid}`);
-      expect(alive(pid)).toBe(true);
-      await scope.close();
-      await new Promise((r) => setTimeout(r, 500));
-      expect(alive(pid)).toBe(false);
+// Sans bac à sable, ce qu'une commande détache vit pour la commande suivante
+// et meurt avec le job, sur chaque OS (#755) : sous Windows le Job Object du
+// job tient le serveur que `start /b` a détaché ; sous Unix, son groupe et
+// l'étiquette du job.
+describe('runShellCommand — sans bac à sable, ce qu’une commande laisse tourner vit jusqu’à la fin du JOB @cap:executer-une-commande/moteur', () => {
+  const startServer = (scope: JobProcessScope, infoFile: string) =>
+    runShellCommand({
+      target: {
+        command:
+          process.platform === 'win32'
+            ? `start "" /b "${node}" "${join(dir, 'server.cjs')}" "${infoFile}"`
+            : `"${node}" "${join(dir, 'server.cjs')}" "${infoFile}" > /dev/null 2>&1 &`,
+      },
+      cwd: dir,
+      timeoutMs: 20_000,
+      env,
+      confinement: { writableRoots: [dir] },
+      scope,
+    });
+  // Le fichier peut exister avant que le serveur ait fini de l'écrire : on
+  // relit jusqu'à un JSON complet (vu en CI : « Unexpected end of JSON »).
+  const readInfo = async (infoFile: string): Promise<{ pid: number; port: number }> => {
+    await waitForFile(infoFile);
+    for (let i = 0; ; i++) {
+      try {
+        return JSON.parse(await readFile(infoFile, 'utf8')) as { pid: number; port: number };
+      } catch (e) {
+        if (i >= 100) throw e;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+  };
+  const fetchFrom = (scope: JobProcessScope, port: number) =>
+    runShellCommand({
+      target: { file: node, args: [join(dir, 'fetch.cjs'), String(port)] },
+      cwd: dir,
+      timeoutMs: 20_000,
+      env,
+      confinement: { writableRoots: [dir] },
+      scope,
     });
 
-    it('fermer UN job ne touche pas aux processus d’un autre', async () => {
-      const a = scopeWith('job-a');
-      const b = scopeWith('job-b');
-      const infoA = join(dir, 'server-ja.json');
-      const infoB = join(dir, 'server-jb.json');
-      await startServer(a, infoA);
-      await startServer(b, infoB);
-      const pa = await readInfo(infoA);
-      const pb = await readInfo(infoB);
-      await a.close();
-      await new Promise((r) => setTimeout(r, 500));
-      expect(alive(pa.pid)).toBe(false);
-      expect(alive(pb.pid)).toBe(true);
-      expect((await fetchFrom(b, pb.port)).stdout.trim()).toBe(`pong ${pb.pid}`);
-      await b.close();
-    });
-  },
-);
+  it('la commande 2 joint le serveur que la commande 1 a lancé ; fermer le job le tue', async () => {
+    const scope = scopeWith('lifetime');
+    const infoFile = join(dir, 'server-a.json');
+    const first = await startServer(scope, infoFile);
+    expect(first.outcome).toEqual({ kind: 'exit', exitCode: 0 });
+    const { pid, port } = await readInfo(infoFile);
+    const second = await fetchFrom(scope, port);
+    expect(second.stdout.trim()).toBe(`pong ${pid}`);
+    expect(alive(pid)).toBe(true);
+    await scope.close();
+    await new Promise((r) => setTimeout(r, 500));
+    expect(alive(pid)).toBe(false);
+  });
+
+  it('fermer UN job ne touche pas aux processus d’un autre', async () => {
+    const a = scopeWith('job-a');
+    const b = scopeWith('job-b');
+    const infoA = join(dir, 'server-ja.json');
+    const infoB = join(dir, 'server-jb.json');
+    await startServer(a, infoA);
+    await startServer(b, infoB);
+    const pa = await readInfo(infoA);
+    const pb = await readInfo(infoB);
+    await a.close();
+    await new Promise((r) => setTimeout(r, 500));
+    expect(alive(pa.pid)).toBe(false);
+    expect(alive(pb.pid)).toBe(true);
+    expect((await fetchFrom(b, pb.port)).stdout.trim()).toBe(`pong ${pb.pid}`);
+    await b.close();
+  });
+});
 
 describe('runShellCommand — contrat et environnement communs aux deux régimes', () => {
   it('confinement absent ⇒ CONFINEMENT_REQUIRED ; périmètre absent ⇒ SCOPE_REQUIRED', () => {

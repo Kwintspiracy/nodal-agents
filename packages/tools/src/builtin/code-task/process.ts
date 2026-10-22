@@ -11,13 +11,20 @@
 //     CMD_UNSAFE_CHARS — fail loud, never escape.
 //   - stdin stays 'ignore' when no prompt is passed — a piped-but-unwritten
 //     stdin stalls claude 3 s and hangs codex FOREVER (étape-A finding 1).
-//   - tree-kill on timeout: taskkill /T /F on Windows, negative-pid SIGKILL
-//     elsewhere (same as run_command / run_skill_script).
+//   - the process belongs to its JOB (#750): it is launched through the job's
+//     process scope (@nodal-agents/sandbox job-scope.ts), like run_command —
+//     killed on timeout and on the job's Stop by the one tree-kill, and what
+//     it leaves running dies when the job ends (the Job Object on Windows,
+//     the process group and the job tag on Unix).
 
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { delimiter, extname, join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
+import {
+  SandboxStartError,
+  type JobProcessScope,
+  type StartedProcess,
+} from '@nodal-agents/sandbox';
 
 const WINDOWS_BATCH_EXECUTABLE_ENV = 'NODAL_CODE_TASK_EXECUTABLE';
 
@@ -124,7 +131,7 @@ export interface RunCliResult {
  * Never throws for process-level failures — spawn errors land in stderr with
  * exitCode null, so the caller can build one loud, complete error message.
  */
-export function runCli(
+export async function runCli(
   cli: ResolvedCli,
   args: string[],
   opts: {
@@ -156,26 +163,47 @@ export function runCli(
      * it observes.
      */
     onStdoutLine?: (line: string) => void;
+    /**
+     * REQUIRED. The process scope of the job this run belongs to
+     * (`jobProcessScope(ctx.jobId)`), or of the one-shot use that owns it (a
+     * doctor probe: `openProcessScope`, closed by its caller). The CLI and
+     * everything it starts die when that scope closes.
+     */
+    scope: JobProcessScope;
+    /** The job's Stop (#750): kills the CLI's tree at once, like the timeout. */
+    signal?: AbortSignal;
   },
 ): Promise<RunCliResult> {
   const { argv, envExtra } = buildSpawnArgv(cli, args);
   const [command, ...rest] = argv;
-  const isWindows = process.platform === 'win32';
   const startedAt = Date.now();
 
-  return new Promise<RunCliResult>((resolve) => {
-    const child = spawn(command as string, rest, {
+  let child: StartedProcess;
+  try {
+    child = await opts.scope.startOwned({
+      target: { file: command as string, args: rest },
       cwd: opts.cwd,
-      shell: false,
-      detached: !isWindows,
-      windowsHide: true,
-      stdio: [opts.stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
-      env: { ...opts.env, ...envExtra } as unknown as NodeJS.ProcessEnv,
+      env: { ...opts.env, ...envExtra },
+      ...(opts.stdin !== undefined ? { stdin: 'pipe' as const } : {}),
     });
+  } catch (err) {
+    // The job cannot hold the process (its Job Object, on Windows): refused,
+    // never launched outside the job — said like any spawn error.
+    if (!(err instanceof SandboxStartError)) throw err;
+    return {
+      exitCode: null,
+      stdout: '',
+      stderr: `spawn_error: ${err.message}`,
+      timedOut: false,
+      truncated: false,
+      truncatedStdout: false,
+      truncatedStderr: false,
+      durationMs: Date.now() - startedAt,
+    };
+  }
 
+  return new Promise<RunCliResult>((resolve) => {
     if (opts.stdin !== undefined && child.stdin) {
-      // EPIPE when the child dies before reading — not our failure to report.
-      child.stdin.on('error', () => {});
       child.stdin.end(opts.stdin);
     }
 
@@ -303,57 +331,14 @@ export function runCli(
 
     let graceTimer: ReturnType<typeof setTimeout> | undefined;
 
-    const killTree = (): void => {
-      if (child.pid) {
-        if (isWindows) {
-          // taskkill /T resolves the tree from a live snapshot — killing the
-          // parent FIRST orphans the children and taskkill then finds nothing.
-          // So: taskkill alone (it kills the root too), child.kill only as
-          // the fallback once taskkill failed to start or exited non-zero.
-          try {
-            const tk = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-              windowsHide: true,
-            });
-            tk.on('close', (code) => {
-              if (code !== 0) {
-                try {
-                  child.kill('SIGKILL');
-                } catch {
-                  /* already dead */
-                }
-              }
-            });
-            tk.on('error', () => {
-              try {
-                child.kill('SIGKILL');
-              } catch {
-                /* already dead */
-              }
-            });
-            return;
-          } catch {
-            /* taskkill unavailable — fall through to child.kill below */
-          }
-        } else {
-          try {
-            process.kill(-child.pid, 'SIGKILL');
-          } catch {
-            /* already dead */
-          }
-        }
-      }
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already dead */
-      }
-    };
+    const killTree = (): void => child.kill();
 
     const finish = (exitCode: number | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       if (graceTimer) clearTimeout(graceTimer);
+      opts.signal?.removeEventListener('abort', onAbort);
       // A stream that ends without a trailing newline leaves its last event in
       // the buffer. That last line is exactly the one that matters — the result
       // for claude, `turn.completed` for codex — so dropping it would lose the
@@ -381,25 +366,34 @@ export function runCli(
       });
     };
 
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const cut = (): void => {
+      if (settled || graceTimer) return;
       killTree();
-      // Resolve even if 'close' never fires (a stubborn grandchild can hold a
+      // Resolve even if the end never comes (a stubborn grandchild can hold a
       // pipe open after the tree-kill).
       graceTimer = setTimeout(() => finish(null), 3000);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      cut();
     }, opts.timeoutMs);
+    // The job's Stop: the same gesture as the timeout, at once.
+    const onAbort = (): void => cut();
+    if (opts.signal?.aborted) onAbort();
+    else opts.signal?.addEventListener('abort', onAbort, { once: true });
 
-    child.on('error', (err: Error) => {
-      stderr = append(
-        stderr,
-        `${stderr ? '\n' : ''}spawn_error: ${err.message}`,
-        MAX_STDERR_CHARS,
-        () => {
-          truncatedStderr = true;
-        },
-      );
-      finish(null);
+    void child.done.then((end) => {
+      if (end.kind === 'error') {
+        stderr = append(
+          stderr,
+          `${stderr ? '\n' : ''}spawn_error: ${end.message}`,
+          MAX_STDERR_CHARS,
+          () => {
+            truncatedStderr = true;
+          },
+        );
+      }
+      finish(end.kind === 'exit' ? end.exitCode : null);
     });
-    child.on('close', (code: number | null) => finish(code));
   });
 }

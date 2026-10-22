@@ -38,6 +38,7 @@ import {
   type NormalizedCliResult,
 } from '@nodal-agents/tools';
 import { claudeSettingSourcesFlags, claudeShellFlags } from '@nodal-agents/shared';
+import type { JobProcessScope } from '@nodal-agents/sandbox';
 
 export interface ClaudeTurnEvent {
   kind: 'tool_use' | 'tool_result' | 'assistant_text';
@@ -110,6 +111,12 @@ export interface ClaudeTurnOptions {
   effort?: string;
   resumeSessionId?: string;
   timeoutMs: number;
+  /**
+   * The process scope this turn's CLI runs in (#750): its job's
+   * (`jobProcessScope(job.id)`), or the one a chat turn opens and closes. The
+   * CLI and everything it starts die when that scope closes.
+   */
+  processScope: JobProcessScope;
   /** The person's Stop (#456): kills the CLI process tree at once. */
   abortSignal?: AbortSignal;
   /**
@@ -131,7 +138,11 @@ export interface ClaudeTurnOptions {
  * injection; see process.ts CMD_UNSAFE_CHARS). Both flags proven live
  * (2026-08-20).
  */
-export function buildClaudeTurnArgs(opts: ClaudeTurnOptions, personalityFile: string): string[] {
+export function buildClaudeTurnArgs(
+  // Ce qui forme la ligne de commande : le périmètre de processus n'y entre pas.
+  opts: Omit<ClaudeTurnOptions, 'processScope'>,
+  personalityFile: string,
+): string[] {
   const args = [
     '-p',
     '--output-format',
@@ -437,6 +448,7 @@ function spawnClaudeTurn(
     cwd: opts.cwd,
     stdin: opts.message,
     timeoutMs: opts.timeoutMs,
+    processScope: opts.processScope,
     ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
     ...(opts.maxToolCalls !== undefined ? { maxToolCalls: opts.maxToolCalls } : {}),
     // Chaque appel ouvert passe par la porte du garde anti-boucle, que la

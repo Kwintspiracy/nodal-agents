@@ -11,8 +11,10 @@
 // base ou au workspace, testable seul, avec une issue TYPÉE (exit / timeout /
 // spawn_error) au lieu d'un `exitCode: null` qui voulait dire deux choses.
 // run_command et run_skill_script s'en servent désormais ; code-task/process.ts
-// garde le sien (protocole d'événements propre au CLI) — le dire ici plutôt que
-// de laisser croire qu'il n'en reste qu'un.
+// garde sa capture (protocole d'événements propre au CLI) — le dire ici plutôt
+// que de laisser croire qu'il n'en reste qu'une. Le LANCEMENT et le tree-kill,
+// eux, n'existent plus qu'une fois pour tous : le périmètre du job
+// (@nodal-agents/sandbox job-scope.ts, #750).
 //
 // POLITIQUE SHELL (SHELL_POLICY_VERSION, @nodal-agents/shared) : la version
 // sous laquelle une commande de preuve a été approuvée. Elle couvre tout ce qui
@@ -25,7 +27,12 @@
 //   - capture bornée par flux, décodage UTF-8 par StringDecoder, politique
 //     `keep` explicite (tête ou queue) ;
 //   - (v2, #628) le bac à sable quand il est disponible, les variables de
-//     cache d'outils, le périmètre de processus du job.
+//     cache d'outils, le périmètre de processus du job. Que ce périmètre
+//     tienne AUSSI les descendants détachés hors bac à sable (#755 : Job
+//     Object sous Windows, étiquette d'environnement sous Unix) est la
+//     promesse de v2 enfin tenue, pas un changement de ce que la commande
+//     fait : la ligne de commande Windows est celle que Node produisait
+//     (command-line.ts), mot pour mot.
 // Changer l'un de ces points = bumper SHELL_POLICY_VERSION.
 //
 // BAC À SABLE (#628, étape 1) : chaque commande passe par
@@ -39,23 +46,25 @@
 // appelants : `run_command`, `run_skill_script`, les commandes de preuve.
 //
 // DURÉE DE VIE (décision du 14/10) : chaque commande tourne dans le PÉRIMÈTRE
-// de son job (`scope`, @nodal-agents/sandbox job-scope.ts). Ce qu'elle laisse
-// tourner en arrière-plan vit jusqu'à la fin du job — la commande suivante
-// joint le serveur que la précédente a lancé — et meurt quand le runner
-// ferme le périmètre. La fin d'une commande est la fin de son processus
-// racine, ses flux vidés au plus DRAIN_MS : un processus d'arrière-plan qui
-// garde le tuyau de sortie ne retient pas la commande jusqu'à son timeout.
-// Le Stop (`signal`) tue la commande comme le timeout.
+// de son job (`scope`, @nodal-agents/sandbox job-scope.ts), confinée
+// (`scope.container`) ou non (`scope.startOwned` : sous Windows dans le Job
+// Object du job, sous Unix cheffe de son groupe et étiquetée). Ce qu'elle
+// laisse tourner en arrière-plan vit jusqu'à la fin du job — la commande
+// suivante joint le serveur que la précédente a lancé — et meurt quand le
+// runner ferme le périmètre, détaché ou non. La fin d'une commande est la fin
+// de son processus racine, ses flux vidés au plus DRAIN_MS : un processus
+// d'arrière-plan qui garde le tuyau de sortie ne retient pas la commande
+// jusqu'à son timeout. Le Stop (`signal`) tue la commande comme le timeout,
+// par le même geste (`StartedProcess.kill`, un seul tree-kill dans le dépôt :
+// @nodal-agents/sandbox process-tree.ts).
 //
 // Les messages de ce module sont des CODES techniques (invariant #2 : aucun
 // texte utilisateur dans une couche que le runner exécute).
 
-import { spawn, type ChildProcess } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 import { VerifyCommandsSchema, type RunVerdict, type VerifyCommand } from '@nodal-agents/shared';
 import {
-  DRAIN_MS,
   SandboxStartError,
   extractRefusedWrites,
   resolveWritableRoots,
@@ -210,66 +219,13 @@ export interface CommandSpec {
   signal?: AbortSignal;
 }
 
-export interface CommandRunOptions {
-  /** Injectable pour tester la forme d'invocation sans lancer de processus. */
-  platform?: NodeJS.Platform;
-}
-
-/**
- * Tue tout l'arbre d'un processus enfant.
- *
- * Windows : `taskkill /T` résout l'arbre depuis un instantané VIVANT — tuer le
- * parent d'abord orphelinerait les enfants et taskkill ne trouverait plus
- * rien. Donc taskkill seul (il tue aussi la racine), et `child.kill` seulement
- * en repli si taskkill n'a pas pu démarrer ou a échoué. C'est exactement ce
- * que deux des trois copies faisaient à l'envers.
- *
- * Unix : le pid négatif vise le groupe créé par `detached:true`.
- */
-export function killProcessTree(child: ChildProcess, platform: NodeJS.Platform): void {
-  const isWindows = platform === 'win32';
-  const backstop = (): void => {
-    try {
-      child.kill('SIGKILL');
-    } catch {
-      /* déjà mort */
-    }
-  };
-  if (!child.pid) {
-    backstop();
-    return;
-  }
-  if (isWindows) {
-    try {
-      const tk = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
-      tk.on('close', (code) => {
-        if (code !== 0) backstop();
-      });
-      tk.on('error', backstop);
-      return;
-    } catch {
-      backstop();
-      return;
-    }
-  }
-  try {
-    process.kill(-child.pid, 'SIGKILL');
-  } catch {
-    /* déjà mort */
-  }
-  backstop();
-}
-
 /**
  * Lance une commande, capture sa sortie bornée, la tue au timeout ou au Stop,
  * et rend une issue typée. Ne lève JAMAIS pour une panne du processus (elle
  * devient `spawn_error`) ; lève pour un contrat violé par l'appelant
  * (`ENV_REQUIRED`, `CONFINEMENT_REQUIRED`, `SCOPE_REQUIRED`).
  */
-export function runShellCommand(
-  spec: CommandSpec,
-  opts: CommandRunOptions = {},
-): Promise<CommandRunResult> {
+export function runShellCommand(spec: CommandSpec): Promise<CommandRunResult> {
   if (spec.env === undefined || spec.env === null) {
     throw new Error('ENV_REQUIRED');
   }
@@ -279,11 +235,10 @@ export function runShellCommand(
   if (spec.scope === undefined || spec.scope === null) {
     throw new Error('SCOPE_REQUIRED');
   }
-  return runInScope(spec, opts);
+  return runInScope(spec);
 }
 
-async function runInScope(spec: CommandSpec, opts: CommandRunOptions): Promise<CommandRunResult> {
-  const platform = opts.platform ?? process.platform;
+async function runInScope(spec: CommandSpec): Promise<CommandRunResult> {
   const keep = spec.keep ?? 'head';
   const cap = spec.maxChars ?? DEFAULT_MAX_OUTPUT_CHARS;
   const sandbox = spec.scope.sandbox;
@@ -325,18 +280,18 @@ async function runInScope(spec: CommandSpec, opts: CommandRunOptions): Promise<C
   if (!isExistingDirectory(spec.cwd)) return notStarted(`CWD_NOT_FOUND: ${spec.cwd}`);
 
   let proc: StartedProcess;
-  if (confinement.kind === 'confined') {
-    try {
-      const container = await spec.scope.container(confinement.writableRoots, env);
-      proc = await container.start({ target: spec.target, cwd: spec.cwd, env });
-    } catch (e) {
-      if (!(e instanceof SandboxStartError)) throw e;
-      // Le bac à sable est là mais n'a pas pu démarrer CETTE commande : elle
-      // est refusée, avec la raison du backend. Jamais lancée sans lui.
-      return notStarted(e.message);
-    }
-  } else {
-    proc = startUnconfined(spec, env, platform);
+  try {
+    const launch = { target: spec.target, cwd: spec.cwd, env };
+    proc =
+      confinement.kind === 'confined'
+        ? await (await spec.scope.container(confinement.writableRoots, env)).start(launch)
+        : await spec.scope.startOwned(launch);
+  } catch (e) {
+    if (!(e instanceof SandboxStartError)) throw e;
+    // Le bac à sable est là mais n'a pas pu démarrer CETTE commande, ou le job
+    // ne peut pas la tenir (son Job Object, sous Windows) : elle est refusée,
+    // avec la raison. Jamais lancée sans confinement, ni hors de son job.
+    return notStarted(e.message);
   }
 
   const out = new StreamCapture(cap, keep);
@@ -417,61 +372,6 @@ function isExistingDirectory(path: string): boolean {
 }
 
 /**
- * Le lancement SANS bac à sable (indisponible sur ce système) — la forme
- * d'avant #628 : `shell:true` ⇒ cmd.exe / sh, `detached` sur Unix pour que la
- * commande soit cheffe de son groupe de processus.
- *
- * La commande est NOTÉE dans le périmètre de son job : ce qu'elle laisse
- * tourner vit jusqu'à la fin du job, puis meurt quand le runner ferme le
- * périmètre (le groupe entier sous Unix ; l'arbre encore rattaché sous
- * Windows — un petit-enfant détaché dont le parent est mort échappe, seul
- * le conteneur MXC le tient).
- *
- * La commande finit à la sortie de son processus racine, ses flux vidés au
- * plus DRAIN_MS : un processus d'arrière-plan qui hérite du tuyau ne la
- * retient pas.
- */
-function startUnconfined(
-  spec: CommandSpec,
-  env: Record<string, string | undefined>,
-  platform: NodeJS.Platform,
-): StartedProcess {
-  const isWindows = platform === 'win32';
-  const spawnOpts = {
-    cwd: spec.cwd,
-    detached: !isWindows,
-    windowsHide: true,
-    env: env as unknown as NodeJS.ProcessEnv,
-  };
-  const child =
-    'command' in spec.target
-      ? spawn(spec.target.command, { ...spawnOpts, shell: true })
-      : spawn(spec.target.file, [...spec.target.args], {
-          ...spawnOpts,
-          shell: false,
-          windowsVerbatimArguments: spec.target.windowsVerbatimArguments === true,
-        });
-  if (child.pid !== undefined) spec.scope.trackUnconfined(child.pid, platform);
-  const done = new Promise<ProcessEnd>((resolve) => {
-    child.on('error', (e: Error) => resolve({ kind: 'error', message: e.message }));
-    child.on('exit', (code: number | null) => {
-      const end: ProcessEnd = code === null ? { kind: 'signal' } : { kind: 'exit', exitCode: code };
-      const drained = setTimeout(() => resolve(end), DRAIN_MS);
-      child.once('close', () => {
-        clearTimeout(drained);
-        resolve(end);
-      });
-    });
-  });
-  return {
-    stdout: child.stdout,
-    stderr: child.stderr,
-    done,
-    kill: () => killProcessTree(child, platform),
-  };
-}
-
-/**
  * Capture bornée d'un flux, décodée par StringDecoder : les frontières de
  * chunks ne tombent pas sur des frontières UTF-8, et `chunk.toString()` par
  * morceau corrompait les caractères multi-octets (é → �).
@@ -543,7 +443,6 @@ export interface SequenceOptions {
   scope: JobProcessScope;
   /** Le Stop du job : la commande en cours est tuée, les suivantes ne partent pas. */
   signal?: AbortSignal;
-  platform?: NodeJS.Platform;
   keep?: 'head' | 'tail';
   maxChars?: number;
   /**
@@ -572,20 +471,17 @@ export async function runCommandSequence(
   }
   const results: SequenceStepResult[] = [];
   for (const [rank, entry] of parsed.data.entries()) {
-    const run = await runShellCommand(
-      {
-        target: { command: entry.command },
-        cwd: opts.cwd,
-        timeoutMs: entry.timeoutSeconds * 1000,
-        env: opts.env,
-        confinement: opts.confinement,
-        scope: opts.scope,
-        ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
-        keep: opts.keep ?? 'tail',
-        ...(opts.maxChars !== undefined ? { maxChars: opts.maxChars } : {}),
-      },
-      opts.platform !== undefined ? { platform: opts.platform } : {},
-    );
+    const run = await runShellCommand({
+      target: { command: entry.command },
+      cwd: opts.cwd,
+      timeoutMs: entry.timeoutSeconds * 1000,
+      env: opts.env,
+      confinement: opts.confinement,
+      scope: opts.scope,
+      ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+      keep: opts.keep ?? 'tail',
+      ...(opts.maxChars !== undefined ? { maxChars: opts.maxChars } : {}),
+    });
     const step: SequenceStepResult = { ...run, rank, command: entry.command };
     results.push(step);
     await opts.onCommandDone(step);

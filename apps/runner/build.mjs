@@ -72,6 +72,9 @@ const EXTERNALS = [
   // never bundled. Loaded by `import()` under Windows only; the pack declares
   // it as an OPTIONAL dependency (build-pack.mjs says why).
   '@microsoft/mxc-sdk',
+  // A job owns its processes (#755): the Windows Job Object, through koffi
+  // (FFI, prebuilt native binaries). Never bundled; `import()` on win32 only.
+  'koffi',
 ];
 
 // esbuild's external matches the literal import string. Deep imports
