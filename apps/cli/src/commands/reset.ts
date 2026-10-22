@@ -4,10 +4,24 @@ import chalk from 'chalk';
 import prompts from 'prompts';
 import { rmSync, existsSync } from 'fs';
 import { unregisterNodalInstance } from '@nodal-agents/shared/nodal-instances';
-import { CONFIG_DIR } from '../lib/config.ts';
-import { runDown } from './down.ts';
+import { join } from 'node:path';
+import { CONFIG_DIR, PG_DATA_DIR } from '../lib/config.ts';
+import {
+  describeUnstopped,
+  inspectPidCommand,
+  postgresStopByHandLines,
+  runDown,
+  type DownResult,
+} from './down.ts';
 
-export async function runReset(options: { yes?: boolean } = {}): Promise<void> {
+/**
+ * `down` is a parameter so that the decision on its result can be tested for
+ * every reason it can give, on every platform.
+ */
+export async function runReset(
+  options: { yes?: boolean } = {},
+  down: () => Promise<DownResult> = runDown,
+): Promise<void> {
   if (!options.yes) {
     const { confirm } = await prompts({
       type: 'confirm',
@@ -26,13 +40,47 @@ export async function runReset(options: { yes?: boolean } = {}): Promise<void> {
 
   // Stop any running processes first
   console.log(chalk.yellow('Stopping any running processes…'));
-  const { unstopped } = await runDown();
-  if (unstopped.length > 0) {
-    // The data directory is not deleted under a service that is still running:
-    // a live postmaster holds pg-data, and a runner holds the files in it.
+  const { unstopped } = await down();
+
+  // One rule, decided from the REASON `down` gives for each service it did not
+  // stop. The data directory is deleted only when no service of this install
+  // can still be using it:
+  //   - ours and alive, or nothing identifies it (it may well be ours): block;
+  //   - could not be confirmed either way (macOS, #840): block;
+  //   - a lockfile with no readable pid: block, nothing proves no server runs;
+  //   - a Postgres pid that a reading PROVED is not this install's postmaster
+  //     (a stranger that inherited a dead postmaster's number): it holds
+  //     nothing of ours, so it does not block, and it is never touched.
+  const blocking = unstopped.filter((u) => u.reason !== 'foreign');
+  for (const u of unstopped.filter((x) => x.reason === 'foreign')) {
+    console.log(
+      chalk.gray(
+        `  postgres (pid ${u.pid}) is not this install's postmaster: left alone, ` +
+          'its stale lockfile is deleted with the data directory.',
+      ),
+    );
+  }
+  if (blocking.length > 0) {
+    const remedies: string[] = [];
+    for (const u of blocking) {
+      remedies.push(`  - ${describeUnstopped(u)}`);
+      if (u.reason === 'no-pid') {
+        remedies.push(
+          `    Check that no postgres runs on ${PG_DATA_DIR}, then delete ` +
+            `${join(PG_DATA_DIR, 'postmaster.pid')} yourself.`,
+        );
+      } else if (u.service === 'postgres') {
+        remedies.push(...(await postgresStopByHandLines(u.pid)));
+      } else if (u.pid !== null) {
+        remedies.push(
+          `    Look at it: ${inspectPidCommand(u.pid)}`,
+          `    If it is this install's ${u.service}, stop it yourself.`,
+        );
+      }
+    }
     throw new Error(
-      `Nothing was deleted: ${unstopped.join(', ')} is still running (see above). ` +
-        'Stop it, then run `nodal-agents reset` again.',
+      `Nothing was deleted. Still there:\n${remedies.join('\n')}\n` +
+        'Deal with it as described, then run `nodal-agents reset` again.',
     );
   }
 
