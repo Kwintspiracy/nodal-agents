@@ -17,8 +17,8 @@ Windows, the commands an agent runs are now fenced by the operating system. A
 job owns every process it starts, so Stop and the end of a job really end them.
 A run budget covers the whole run, delegations included. Agents whose model
 sees can look at images, and the model no longer receives your e-mail address
-or a conversation's phone number. Node 24 is now the minimum. Thirty-eight pull
-requests, six database migrations.
+or a conversation's phone number. Node 24 is now the minimum. Forty pull requests,
+six database migrations.
 
 **Upgrading: what changes for you**
 
