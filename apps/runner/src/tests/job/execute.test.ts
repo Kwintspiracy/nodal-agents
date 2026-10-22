@@ -7545,6 +7545,33 @@ describe('reliability guards', () => {
     );
   });
 
+  it('Guard 1e: a continuation its queue relaunched shares the cap of the run it continues (review of #836, pass 3)', async () => {
+    // H ended with a message left in its inbox; R is its continuation
+    // (`relaunched_from_job_id`, #531). Before, R started with a fresh cap.
+    const finishedHead = await treeJob({ totalCostUsd: 1.5, status: 'completed' });
+    const relaunched = await treeJob({});
+    await db
+      .update(agentJobs)
+      .set({ relaunchedFromJobId: finishedHead })
+      .where(eq(agentJobs.id, relaunched));
+    await withRunBudget({ costUsd: 2.0 }, async () => {
+      const llmClient = makeMockLlmClient([
+        saveMemoryTurn(0.8, 'rel-1', 'Picked up the next message.'),
+        saveMemoryTurn(0.8, 'rel-2', 'Answered it.'),
+      ]);
+      const result = await executeJob(relaunched as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('failed');
+    });
+    const [row] = await db
+      .select({ error: agentJobs.error, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, relaunched));
+    expect(row?.error).toBe('cost_budget_exceeded');
+    expect(row?.result).toBe(
+      'Picked up the next message.\n\n[stopped: run budget — $2.30 spent, ceiling $2.00, turn 1]',
+    );
+  });
+
   // ─── #442 — the run budget of the workspace, and the agent's first-token wait ─
 
   /** The mock client, with the options each call really carried. */

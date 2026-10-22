@@ -54,12 +54,15 @@ export async function descendRunTree(
 }
 
 /**
- * La tête du run de `jobId` : on remonte `parent_job_id`, dans l'espace
- * seulement (comme `readJobRoots` côté web). Un parent d'un autre espace, ou
- * absent, arrête la remontée : le job où elle s'arrête est la tête. On ne
- * remonte PAS `relaunched_from_job_id` : une tête relancée commence un run
- * qui est la suite du précédent, et l'arrêt du précédent la couvre, pas
- * l'inverse.
+ * La tête du run de `jobId` : on remonte les MÊMES liens que la descente,
+ * `parent_job_id` (le job qui l'a délégué) et `relaunched_from_job_id` (le job
+ * dont la file l'a fait naître, #531), dans l'espace seulement (comme
+ * `readJobRoots` côté web). Un lien vers un autre espace, ou vers un job
+ * absent, arrête la remontée : le job où elle s'arrête est la tête.
+ *
+ * Le run est ainsi UN ensemble, symétrique (revue de #836, passe 3) : depuis
+ * n'importe quel job d'une chaîne de relances et de délégations, la même tête
+ * et le même arbre. Une continuation partage le budget du run qu'elle continue.
  */
 export async function runHeadOf(
   db: AnyDrizzleDb,
@@ -70,11 +73,11 @@ export async function runHeadOf(
   const seen = new Set<string>([jobId]);
   for (let hop = 0; hop < MAX_HEAD_HOPS; hop++) {
     const [row] = await db
-      .select({ parentJobId: agentJobs.parentJobId })
+      .select({ parentJobId: agentJobs.parentJobId, relaunchedFrom: agentJobs.relaunchedFromJobId })
       .from(agentJobs)
       .where(and(eq(agentJobs.id, head), eq(agentJobs.entityId, entityId)))
       .limit(1);
-    const parent = row?.parentJobId ?? null;
+    const parent = row?.parentJobId ?? row?.relaunchedFrom ?? null;
     if (parent === null || seen.has(parent)) break;
     const [inSpace] = await db
       .select({ id: agentJobs.id })

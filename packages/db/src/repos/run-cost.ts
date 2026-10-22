@@ -5,9 +5,16 @@
 // pourtant vérifié par JOB (Guard 1e, apps/runner/src/job/execute.ts) : chaque
 // délégué repartait avec le plafond entier, et un arbre de trois jobs pouvait
 // coûter trois fois le plafond (revue de #836, P1). Le run est celui que
-// l'arrêt arrête : UNE définition, `run-tree.ts` (la tête par `parent_job_id`,
-// puis tout ce qui en descend, délégués et têtes relancées), bornée à
-// l'espace du job à chaque niveau (revue de #836, passe 2).
+// l'arrêt arrête : UNE définition, `run-tree.ts` (la tête, en remontant les
+// délégations ET les relances, puis tout ce qui en descend), bornée à l'espace
+// du job à chaque niveau (revue de #836, passes 2 et 3). Une continuation née
+// de la file d'un run compte donc dans le budget de ce run.
+//
+// Un maillon absent au milieu d'une chaîne (un parent effacé) arrête la
+// remontée : le job où elle s'arrête devient la tête, et son run ne compte ni
+// ce maillon ni ce qui est au-dessus. Le budget s'ouvre alors plus large qu'il
+// ne devrait, jamais plus étroit : aucun arrêt sur une dépense qu'on ne sait
+// pas rattacher.
 //
 // La dépense de chaque job est celle qu'il a écrite à son dernier point de
 // reprise (`saveCheckpoint`, à chaque tour) : un job vivant y ajoute la sienne,
@@ -21,7 +28,7 @@ import { agentJobs } from '../schema/jobs.ts';
 import { descendRunTree, runHeadOf } from './run-tree.ts';
 
 export interface RunCost {
-  /** La tête du run (le job sans parent dans l'espace), ou le job lui-même quand sa chaîne sort de l'espace. */
+  /** La tête du run (sans délégant ni relance dans l'espace), ou le dernier job de sa chaîne dans l'espace. */
   readonly headJobId: string;
   /** Chaque job du run et la dépense qu'il a écrite (0 quand elle est inconnue). */
   readonly jobs: ReadonlyArray<{ readonly id: string; readonly costUsd: number }>;
