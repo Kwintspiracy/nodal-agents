@@ -15,6 +15,8 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { fixturePath } from '../../workflows/fixtures';
 import { readPdf } from '../../workflows/office';
+import { PRINT_FILE_REL } from '../../workflows/scenarios';
+import { play } from '../../workflows/tests/harness';
 import { benchPrinterServer } from '../declaration';
 import { BENCH_PRINTER_RECORDS_ENV } from '../identity';
 import { readRecords } from '../record';
@@ -243,6 +245,46 @@ describe('the bench printer, through a real MCP client over stdio', () => {
     expect(names).toHaveLength(4);
     expect(names.filter((n) => n.endsWith('.json'))).toHaveLength(2);
     expect(names.filter((n) => n.endsWith('.bytes'))).toHaveLength(2);
+  });
+});
+
+describe('the record the server wrote is what print-file judges', () => {
+  const attached = () => ({
+    teamTools: ['bench_printer__request_print'],
+    benchPrinter: { kind: 'attached' as const, recordsDir },
+  });
+
+  it('green when the agent has the real server print the posed file', async () => {
+    const posed = await play(
+      'print-file',
+      { tools: [{ name: 'bench_printer__request_print', input: {} }] },
+      async (root) => {
+        const r = await request({ filePath: join(root, PRINT_FILE_REL) });
+        expect(r.isError).toBe(false);
+      },
+      attached(),
+    );
+    expect(posed.reasons).toEqual([]);
+  });
+
+  it('red when the agent has the real server print another file', async () => {
+    const other = await play(
+      'print-file',
+      { tools: [{ name: 'bench_printer__request_print', input: {} }] },
+      async (root) => {
+        // Un autre fichier que le posé : le serveur reçoit ses octets, pas ceux de la fixture.
+        const path = join(root, 'nodal-bench', 'autre.pdf');
+        writeFileSync(path, '%PDF-1.4 another invoice');
+        const r = await request({ filePath: path });
+        expect(r.isError).toBe(false);
+      },
+      attached(),
+    );
+    expect(other.reasons).toEqual([
+      expect.stringMatching(
+        /^the content the bench printer received is not the posed file \(sha-256 [0-9a-f]{12}, expected [0-9a-f]{12}\)$/,
+      ),
+    ]);
   });
 });
 
