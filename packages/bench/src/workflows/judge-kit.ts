@@ -11,7 +11,6 @@
 // doit servir) sont écrites ici une fois et s'appliquent à tout scénario qui
 // déclare `productTools`, par runTrial, jamais dans un juge particulier.
 
-import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 import { DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
 import type { FileReadFact, FileWriteFact, JobFact, ToolCallFact, TreeFacts } from './facts';
 import type {
@@ -50,55 +49,6 @@ export function parseJson(s: string | null): unknown {
   } catch {
     return null;
   }
-}
-
-/**
- * Le résultat structuré d'un outil MCP, tel que sa ligne `tool_calls` le garde.
- *
- * Deux formes de ligne, distinguées par une MARQUE et non par une forme :
- *  - l'enveloppe de l'adaptateur (`packages/adapters/mcp/src/result.ts`), dont
- *    `format` vaut `MCP_TOOL_OUTPUT_FORMAT` : la forme machine du serveur est
- *    sous `structuredContent`, sinon sous `toolResult` (protocole 2024-10-07),
- *    sinon écrite en JSON dans un bloc texte (ce que la spec recommande aux
- *    serveurs pour les clients qui ne lisent que `content`) ;
- *  - toute ligne SANS cette marque, écrite avant elle : la charge du serveur à
- *    la racine — même quand elle porte elle-même un tableau `content` (une page
- *    Notion, une liste CRM). Les essais réels enregistrés (fixtures) et toute
- *    base existante en portent.
- *
- * Un bloc texte se lit par `jsonInText` : la règle y est dite.
- */
-export function mcpStructured(s: string | null): Record<string, unknown> | null {
-  const record = jsonObject(parseJson(s));
-  if (!record) return null;
-  if (record['format'] !== MCP_TOOL_OUTPUT_FORMAT) return record;
-  const payload = jsonObject(record['structuredContent']) ?? jsonObject(record['toolResult']);
-  if (payload) return payload;
-  const content = Array.isArray(record['content']) ? (record['content'] as unknown[]) : [];
-  for (const block of content) {
-    const b = block as { type?: unknown; text?: unknown } | null;
-    if (b?.type !== 'text' || typeof b.text !== 'string') continue;
-    const fromText = jsonInText(b.text);
-    if (fromText) return fromText;
-  }
-  return null;
-}
-
-/**
- * L'objet JSON qu'un bloc texte porte, selon UNE règle : le bloc SE TERMINE
- * (blancs de fin ignorés) par un objet JSON dont l'accolade ouvre une ligne —
- * seuls des blancs la précèdent sur sa ligne. Le bloc entier qui est un objet
- * JSON, blancs de tête compris, en est le premier cas ; « phrase.\n{ … } » le
- * second. Une accolade au milieu d'une phrase n'ouvre jamais rien, et rien ne
- * doit suivre l'objet : un texte qui cite du JSON en passant n'est pas une
- * charge.
- */
-function jsonInText(text: string): Record<string, unknown> | null {
-  for (const line of text.matchAll(/^[ \t]*\{/gm)) {
-    const found = jsonObject(text.slice((line.index ?? 0) + line[0].length - 1).trim());
-    if (found) return found;
-  }
-  return null;
 }
 
 /** An object, or a string that is the JSON of one; null for anything else. */
@@ -288,20 +238,6 @@ export const SOURCES_READ: UnverifiedCheck = {
   reason:
     'Nothing in the database records which web addresses a run really read; guessing it from tool outputs leaked four times.',
   ticket: '#648',
-};
-
-/**
- * Le fichier qu'un outil MCP imprime : `request_print` l'ouvre dans le
- * processus du serveur, la plateforme n'en enregistre aucune lecture
- * (`tool_call_reads`). Son entrée qui nomme le fichier ne prouve pas quels
- * octets ont été imprimés.
- */
-export const PRINTED_FILE_READ: UnverifiedCheck = {
-  check: 'the printed file is the one the bench posed',
-  state: 'not verified',
-  reason:
-    'request_print is an MCP tool: it opens the file in its own process, so the platform records no read of it; its input naming the file does not prove which bytes were printed.',
-  ticket: '#784',
 };
 
 // ─── commandes ───────────────────────────────────────────────────────────────
@@ -523,7 +459,8 @@ export function factsNotSeenOnTheWeb(
 //
 // Un outil MCP (`request_print`) ouvre le fichier dans son propre processus :
 // la plateforme n'enregistre aucune lecture, et un scénario ne peut pas
-// l'exiger (#784). Il le dit par un contrôle « not verified ».
+// l'exiger (#784) : le fichier imprimé se juge sur l'enregistrement de
+// l'imprimante du banc (#794, printer/), qui a reçu les octets.
 
 /** Le début de la raison du rouge, le même pour tous les scénarios. */
 export const PRODUCT_TOOL_NOT_USED = 'product tool available, not used';

@@ -301,11 +301,34 @@ declares them, never inside one judge:
     tool (`request_print`) opens the file in its own process and leaves no
     read (#784). Reading the arguments of a print server cannot tell which
     field it prints (review of #777, passes 5 to 7), so the bench does not try:
-    `print-file` needs the bench's own recording printer (`bench-printer`,
-    #794), which will say which file it received. Its judge is closed: it
-    is green only when that printer's record shows the content of the posed
-    file (its sha-256) and no other file. Until the record exists the judge
-    is never green, and the trial is skipped like every print scenario.
+    all three print scenarios (`print-file`, `print`, `recipe`) need the
+    bench's own recording printer (`bench-printer`, #794): an MCP server that
+    ships with the bench (`packages/bench/src/printer`, never in the product
+    pack), prints nothing and writes one record per request in the folder its
+    declaration names: the received bytes, their sha-256, the pages it would
+    print, the arguments as received. `print-file` is green only when a
+    record shows the content of the posed file (its sha-256) and no other
+    file; `print` and `recipe` are judged on the same record (a request was
+    created, it is still pending, the agent never confirmed); `print` looks
+    for the list in the RECEIVED BYTES (composed text, the visible text of an
+    HTML page, the text of a PDF or a .txt file), and says what it cannot read.
+    The server's identity is its whole declaration: transport, command,
+    arguments and environment must be exactly what `benchPrinterServer(dir)`
+    returns (any server whose tools the runner would prefix `bench_printer__`
+    included); anything else is `broken`, said with what differs, and the
+    exemption of its tools in the destination rule applies only to an attached
+    printer. A trial is judged on what it created: the bench sets aside the
+    requests of earlier trials (`previous/<trial>/` in the record folder)
+    before the job starts, and only counts requests received between the
+    start and the end of the trial. The need is closed by default, like
+    `no-mail-sender`: besides the printer, every MCP server of the team must
+    have listed its tools and offer only recognised reads (`get_`, `list_`,
+    `fetch_`...; the server's own `readOnlyHint` proves nothing, as the product
+    does not trust it). A harmless server with an unusual tool name is refused
+    too (a false refusal, said in the reason); tools whose names say they print
+    stay an extra alarm. Otherwise the trial is skipped with that reason. A
+    server of another name that also exposes `request_print` is an outbound
+    tool, like any other.
 
   Otherwise the trial is red, "product tool available, not used". When none
   is in the team's tools, the trial is skipped with that reason, like a missing

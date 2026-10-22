@@ -38,6 +38,8 @@ import {
   readRootModel,
   readStackCommit,
   readStackVersion,
+  readBenchPrinter,
+  readTeamMcpServers,
   readTeamTools,
   readUnlistedMcpServers,
   readWorkspaceRoots,
@@ -51,6 +53,7 @@ export async function readScenarioEnv(
   db: AnyDrizzleDb,
   entityId: string,
   startedMs: number,
+  opts: { readonly benchPrinterRecordsDir?: string } = {},
 ): Promise<ScenarioEnv> {
   const services: Record<string, ServiceProbe> = {};
   for (const [name, url] of Object.entries(readBenchConfig().services)) {
@@ -60,6 +63,8 @@ export async function readScenarioEnv(
     workspaceRoots: await readWorkspaceRoots(db, entityId),
     teamTools: await readTeamTools(db, entityId),
     unlistedMcpServers: await readUnlistedMcpServers(db, entityId),
+    benchPrinter: await readBenchPrinter(db, entityId, opts.benchPrinterRecordsDir ?? null),
+    teamMcpServers: await readTeamMcpServers(db, entityId),
     services,
     startedMs,
   };
@@ -92,6 +97,11 @@ export interface BenchRun {
   readonly modelUnderTest?: string | null;
   readonly campaign?: string | null;
   readonly configFingerprint?: string | null;
+  /**
+   * Le dossier d'enregistrements que le banc a donné à l'imprimante de l'instance,
+   * quand il le sait : la déclaration de l'imprimante doit le porter.
+   */
+  readonly benchPrinterRecordsDir?: string;
 }
 
 /** Ce qu'une session dit à qui l'écoute. Tout est facultatif sauf `log`. */
@@ -187,7 +197,12 @@ export async function runBench(
           read: (rootId) => readTreeFacts(db, rootId),
           cancel: (ent, rootId) => cancelTree(db, ent, rootId),
           foreign: () => readForeignActivity(db, DEFAULT_TRIAL_OPTIONS.chatQuietMs),
-          env: (startedMs) => readScenarioEnv(db, target.entityId, startedMs),
+          env: (startedMs) =>
+            readScenarioEnv(db, target.entityId, startedMs, {
+              ...(run.benchPrinterRecordsDir
+                ? { benchPrinterRecordsDir: run.benchPrinterRecordsDir }
+                : {}),
+            }),
           rootModel: () => readRootModel(db, target.entityId),
           subjects: () => readResearchSubjects(),
           log: (l) => hooks.log(l),
