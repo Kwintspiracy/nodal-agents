@@ -91,3 +91,21 @@ export async function killTaggedProcesses(
   }
   return tagged;
 }
+
+/**
+ * Ce système retrouve-t-il un descendant DÉTACHÉ d'un job (sorti du groupe de
+ * sa commande : `setsid`, double fork) ? Windows : oui, le Job Object le tient.
+ * Unix : seulement là où l'environnement des processus se lit (`/proc`,
+ * Linux) — pas sous macOS, limite dite en tête de ce fichier. Ce que les
+ * tests disent qu'ils prouvent se règle là-dessus, jamais sur un nom d'OS
+ * deviné.
+ */
+export function detachedDescendantsReachable(): boolean {
+  if (process.platform === 'win32') return true;
+  try {
+    readFileSync('/proc/self/environ');
+    return true;
+  } catch {
+    return false;
+  }
+}

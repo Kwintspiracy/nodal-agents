@@ -61,7 +61,7 @@ export {
   type KillLog,
   type KillTreeOptions,
 } from './process-tree';
-export { JOB_SCOPE_ENV, pidsTaggedWith } from './unix-job-processes';
+export { JOB_SCOPE_ENV, detachedDescendantsReachable, pidsTaggedWith } from './unix-job-processes';
 export { JobObjectError, openKillOnCloseJob, type KillOnCloseJob } from './windows-job-object';
 export { type HostChannel, openJobObjectContainer } from './host-container';
 export { DRAIN_MS, JOB_HOST_SOURCE, ensureJobHostScript, sandboxHostDir } from './job-host';

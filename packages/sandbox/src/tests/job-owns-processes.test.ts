@@ -1,10 +1,16 @@
 // job-owns-processes.test.ts — un job possède TOUT ce qu'il lance hors bac à
 // sable, détachés compris (#750, #755), sur de VRAIS processus.
 //
-// Le cas difficile, le même sur chaque OS : une commande lance un démon
-// DÉTACHÉ (`spawn({ detached: true })` : `DETACHED_PROCESS` sous Windows,
-// `setsid()` sous Unix — il quitte le groupe de processus de la commande),
-// puis sort. Le démon écrit un compteur toutes les 100 ms. Ce qui se prouve :
+// Une commande lance un démon, puis sort. Le démon écrit un compteur toutes
+// les 100 ms. Deux formes :
+//   - dans le GROUPE de sa commande (sous Windows, détaché de l'arbre : un
+//     enfant non détaché meurt avec le job Node de son parent) — chaque OS ;
+//   - DÉTACHÉ de sa commande (`spawn({ detached: true })` : `setsid()` sous
+//     Unix, il quitte le groupe) — là où le système sait le retrouver
+//     (`detachedDescendantsReachable` : Windows par le Job Object, Linux par
+//     l'étiquette ; pas macOS, limite dite dans unix-job-processes.ts). Ailleurs
+//     le cas est SAUTÉ, raison au titre, jamais rouge.
+// Ce qui se prouve :
 //   - il VIT pour la commande suivante du même job (décision du 14/10) ;
 //   - il MEURT à la fermeture du périmètre (la fin du job), et le compteur
 //     cesse de monter ;
@@ -30,6 +36,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JobProcessScope, killLeftoversOfJob } from '../job-scope';
 import { isProcessAlive } from '../process-tree';
+import { detachedDescendantsReachable } from '../unix-job-processes';
 import { createSandbox } from '../status';
 import type { StartedProcess } from '../types';
 
@@ -48,15 +55,32 @@ writeFileSync(
     'setInterval(() => fs.writeFileSync(process.argv[3], String(++n)), 100);',
   ].join('\n'),
 );
-// La commande : lance le démon détaché, sans tuyau commun, et SORT.
+// La commande : lance le démon, sans tuyau commun, et SORT. argv[4] dit la
+// forme : `detached` (sa propre session sous Unix) ou `group` (le groupe de la
+// commande ; sous Windows, détaché de l'arbre, sinon il mourrait avec elle).
 writeFileSync(
   join(dir, 'spawner.cjs'),
   [
     "const { spawn } = require('child_process');",
-    "const c = spawn(process.execPath, [require('path').join(__dirname, 'daemon.cjs'), process.argv[2], process.argv[3]], { detached: true, stdio: 'ignore' });",
+    "const detached = process.argv[4] === 'detached' || process.platform === 'win32';",
+    "const c = spawn(process.execPath, [require('path').join(__dirname, 'daemon.cjs'), process.argv[2], process.argv[3]], { detached, stdio: 'ignore' });",
     'c.unref();',
   ].join('\n'),
 );
+
+type Shape = 'group' | 'detached';
+const reachable = detachedDescendantsReachable();
+/** Les formes que CE système sait tenir, et celle qu'il ne sait pas, dite. */
+const SHAPES: [string, Shape, boolean][] = [
+  ['in its command’s process group', 'group', true],
+  [
+    reachable
+      ? 'detached from its command (own session)'
+      : 'detached from its command (own session): SKIPPED, this platform cannot find a detached descendant (macOS: no /proc, stated limit)',
+    'detached',
+    reachable,
+  ],
+];
 // La commande suivante : le démon répond-il encore ?
 writeFileSync(
   join(dir, 'probe.cjs'),
@@ -82,12 +106,16 @@ async function run(proc: StartedProcess): Promise<string> {
 async function startDaemon(
   scope: JobProcessScope,
   tag: string,
+  shape: Shape = 'detached',
 ): Promise<{ pid: number; counter: string }> {
   const pidFile = join(dir, `${tag}.pid`);
   const counter = join(dir, `${tag}.count`);
   const end = await scope
     .startOwned({
-      target: { file: process.execPath, args: [join(dir, 'spawner.cjs'), pidFile, counter] },
+      target: {
+        file: process.execPath,
+        args: [join(dir, 'spawner.cjs'), pidFile, counter, shape],
+      },
       cwd: dir,
       env: env(),
     })
@@ -113,54 +141,70 @@ async function deadWithin(pid: number, ms: number): Promise<boolean> {
 
 const count = (file: string): number => Number(readFileSync(file, 'utf8'));
 
-describe('a job owns every process it starts outside the sandbox, detached ones included (#750, #755) @cap:executer-une-commande/moteur', () => {
-  it('a detached grandchild whose parent exited lives for the next command, then dies when the scope closes', async () => {
-    const scope = new JobProcessScope(`owns-${randomUUID()}`, unconfined());
-    const { pid, counter } = await startDaemon(scope, 'one');
-    try {
-      // Sa commande est sortie ; lui vit, et travaille.
-      expect(isProcessAlive(pid)).toBe(true);
-      const before = count(counter);
-      await new Promise((r) => setTimeout(r, 400));
-      expect(count(counter)).toBeGreaterThan(before);
-      // La commande SUIVANTE du même job le joint.
-      const said = await run(
-        await scope.startOwned({
-          target: { file: process.execPath, args: [join(dir, 'probe.cjs'), join(dir, 'one.pid')] },
-          cwd: dir,
-          env: env(),
-        }),
-      );
-      expect(said.trim()).toBe(`alive ${pid}`);
-    } finally {
-      // La fin du job.
-      await scope.close();
-    }
-    expect(await deadWithin(pid, 5_000)).toBe(true);
-    const frozen = count(counter);
-    await new Promise((r) => setTimeout(r, 400));
-    expect(count(counter)).toBe(frozen);
-  }, 60_000);
+describe.each(SHAPES)(
+  'a job owns what a command leaves running, %s (#750, #755) @cap:executer-une-commande/moteur',
+  (_label, shape, enabled) => {
+    it.runIf(enabled)(
+      'a grandchild whose parent exited lives for the next command, then dies when the scope closes',
+      async () => {
+        const scope = new JobProcessScope(`owns-${randomUUID()}`, unconfined());
+        const { pid, counter } = await startDaemon(scope, `one-${shape}`, shape);
+        try {
+          // Sa commande est sortie ; lui vit, et travaille.
+          expect(isProcessAlive(pid)).toBe(true);
+          const before = count(counter);
+          await new Promise((r) => setTimeout(r, 400));
+          expect(count(counter)).toBeGreaterThan(before);
+          // La commande SUIVANTE du même job le joint.
+          const said = await run(
+            await scope.startOwned({
+              target: {
+                file: process.execPath,
+                args: [join(dir, 'probe.cjs'), join(dir, `one-${shape}.pid`)],
+              },
+              cwd: dir,
+              env: env(),
+            }),
+          );
+          expect(said.trim()).toBe(`alive ${pid}`);
+        } finally {
+          // La fin du job.
+          await scope.close();
+        }
+        expect(await deadWithin(pid, 5_000)).toBe(true);
+        const frozen = count(counter);
+        await new Promise((r) => setTimeout(r, 400));
+        expect(count(counter)).toBe(frozen);
+      },
+      60_000,
+    );
 
-  it('closing one job never kills the processes of another job', async () => {
-    const a = new JobProcessScope(`owns-a-${randomUUID()}`, unconfined());
-    const b = new JobProcessScope(`owns-b-${randomUUID()}`, unconfined());
-    const da = await startDaemon(a, 'a');
-    const db = await startDaemon(b, 'b');
-    try {
-      await a.close();
-      expect(await deadWithin(da.pid, 5_000)).toBe(true);
-      // L'autre job vit, et son démon travaille encore.
-      expect(isProcessAlive(db.pid)).toBe(true);
-      const before = count(db.counter);
-      await new Promise((r) => setTimeout(r, 400));
-      expect(count(db.counter)).toBeGreaterThan(before);
-    } finally {
-      await b.close();
-    }
-    expect(await deadWithin(db.pid, 5_000)).toBe(true);
-  }, 60_000);
+    it.runIf(enabled)(
+      'closing one job never kills the processes of another job',
+      async () => {
+        const a = new JobProcessScope(`owns-a-${randomUUID()}`, unconfined());
+        const b = new JobProcessScope(`owns-b-${randomUUID()}`, unconfined());
+        const da = await startDaemon(a, `a-${shape}`, shape);
+        const db = await startDaemon(b, `b-${shape}`, shape);
+        try {
+          await a.close();
+          expect(await deadWithin(da.pid, 5_000)).toBe(true);
+          // L'autre job vit, et son démon travaille encore.
+          expect(isProcessAlive(db.pid)).toBe(true);
+          const before = count(db.counter);
+          await new Promise((r) => setTimeout(r, 400));
+          expect(count(db.counter)).toBeGreaterThan(before);
+        } finally {
+          await b.close();
+        }
+        expect(await deadWithin(db.pid, 5_000)).toBe(true);
+      },
+      60_000,
+    );
+  },
+);
 
+describe('a job owns every process it starts outside the sandbox (#750, #755) @cap:executer-une-commande/moteur', () => {
   it('the running command itself is killed with its whole tree by kill() (timeout, Stop)', async () => {
     const scope = new JobProcessScope(`owns-kill-${randomUUID()}`, unconfined());
     try {
@@ -192,61 +236,67 @@ describe('a job owns every process it starts outside the sandbox, detached ones 
     }
   }, 60_000);
 
-  it('a runner killed outright leaves nothing of its job once the reclaiming runner calls killLeftoversOfJob', async () => {
-    const here = fileURLToPath(new URL('.', import.meta.url));
-    const tsx = resolve(here, '..', '..', 'node_modules', 'tsx', 'dist', 'cli.mjs');
-    const jobId = `owns-crash-${randomUUID()}`;
-    const pidFile = join(dir, 'crash.pid');
-    const counter = join(dir, 'crash.count');
-    const ready = join(dir, 'crash.ready');
-    writeFileSync(
-      join(dir, 'fake-runner.mts'),
-      [
-        `import { JobProcessScope } from ${JSON.stringify(pathToFileURL(resolve(here, '..', 'job-scope.ts')).href)};`,
-        `import { createSandbox } from ${JSON.stringify(pathToFileURL(resolve(here, '..', 'status.ts')).href)};`,
-        `import { writeFileSync } from 'node:fs';`,
-        `const scope = new JobProcessScope(${JSON.stringify(jobId)}, createSandbox(null, { platform: 'linux', log: () => {} }));`,
-        `const p = await scope.startOwned({ target: { file: process.execPath, args: [${JSON.stringify(join(dir, 'spawner.cjs'))}, ${JSON.stringify(pidFile)}, ${JSON.stringify(counter)}] }, cwd: ${JSON.stringify(dir)}, env: { ...process.env } });`,
-        `p.stdout?.resume(); p.stderr?.resume(); await p.done;`,
-        `writeFileSync(${JSON.stringify(ready)}, 'ok');`,
-        `setInterval(() => {}, 1000);`,
-      ].join('\n'),
-    );
-    const runner = spawn(process.execPath, [tsx, join(dir, 'fake-runner.mts')], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: process.env,
-      // Sous Unix, le faux runner est chef de son groupe : le tuer, c'est
-      // tuer SON groupe, pas celui du test.
-      detached: process.platform !== 'win32',
-    });
-    let said = '';
-    runner.stdout?.on('data', (d: Buffer) => (said += String(d)));
-    runner.stderr?.on('data', (d: Buffer) => (said += String(d)));
-    for (let i = 0; i < 400 && !(existsSync(ready) && existsSync(pidFile)); i++) {
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    expect(existsSync(pidFile), `the fake runner never started its daemon: ${said}`).toBe(true);
-    const pid = Number(readFileSync(pidFile, 'utf8'));
-    expect(isProcessAlive(pid)).toBe(true);
-    try {
-      // Tué, pas arrêté : aucun code de fermeture ne tourne. Le faux runner
-      // ENTIER (tsx relance le script dans un processus enfant) : son arbre
-      // sous Windows, son groupe sous Unix. Le démon, détaché, n'est ni dans
-      // l'un ni dans l'autre.
-      const exited = new Promise<void>((r) => runner.once('exit', () => r()));
-      if (process.platform === 'win32') {
-        spawn('taskkill', ['/PID', String(runner.pid), '/T', '/F'], { windowsHide: true });
-      } else {
-        process.kill(-(runner.pid as number), 'SIGKILL');
+  // Un runner mort ne ferme rien : seul ce qui retrouve un processus sans son
+  // arbre (le Job Object, l'étiquette) peut le tuer — pas sous macOS.
+  it.runIf(reachable)(
+    'a runner killed outright leaves nothing of its job once the reclaiming runner calls killLeftoversOfJob (skipped where a detached descendant cannot be found: macOS)',
+    async () => {
+      const here = fileURLToPath(new URL('.', import.meta.url));
+      const tsx = resolve(here, '..', '..', 'node_modules', 'tsx', 'dist', 'cli.mjs');
+      const jobId = `owns-crash-${randomUUID()}`;
+      const pidFile = join(dir, 'crash.pid');
+      const counter = join(dir, 'crash.count');
+      const ready = join(dir, 'crash.ready');
+      writeFileSync(
+        join(dir, 'fake-runner.mts'),
+        [
+          `import { JobProcessScope } from ${JSON.stringify(pathToFileURL(resolve(here, '..', 'job-scope.ts')).href)};`,
+          `import { createSandbox } from ${JSON.stringify(pathToFileURL(resolve(here, '..', 'status.ts')).href)};`,
+          `import { writeFileSync } from 'node:fs';`,
+          `const scope = new JobProcessScope(${JSON.stringify(jobId)}, createSandbox(null, { platform: 'linux', log: () => {} }));`,
+          `const p = await scope.startOwned({ target: { file: process.execPath, args: [${JSON.stringify(join(dir, 'spawner.cjs'))}, ${JSON.stringify(pidFile)}, ${JSON.stringify(counter)}, 'detached'] }, cwd: ${JSON.stringify(dir)}, env: { ...process.env } });`,
+          `p.stdout?.resume(); p.stderr?.resume(); await p.done;`,
+          `writeFileSync(${JSON.stringify(ready)}, 'ok');`,
+          `setInterval(() => {}, 1000);`,
+        ].join('\n'),
+      );
+      const runner = spawn(process.execPath, [tsx, join(dir, 'fake-runner.mts')], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: process.env,
+        // Sous Unix, le faux runner est chef de son groupe : le tuer, c'est
+        // tuer SON groupe, pas celui du test.
+        detached: process.platform !== 'win32',
+      });
+      let said = '';
+      runner.stdout?.on('data', (d: Buffer) => (said += String(d)));
+      runner.stderr?.on('data', (d: Buffer) => (said += String(d)));
+      for (let i = 0; i < 400 && !(existsSync(ready) && existsSync(pidFile)); i++) {
+        await new Promise((r) => setTimeout(r, 50));
       }
-      await exited;
-      // Le runner qui reprend le job.
-      await killLeftoversOfJob(jobId, () => undefined);
-      expect(await deadWithin(pid, 5_000)).toBe(true);
-    } finally {
-      if (isProcessAlive(pid)) process.kill(pid);
-    }
-  }, 90_000);
+      expect(existsSync(pidFile), `the fake runner never started its daemon: ${said}`).toBe(true);
+      const pid = Number(readFileSync(pidFile, 'utf8'));
+      expect(isProcessAlive(pid)).toBe(true);
+      try {
+        // Tué, pas arrêté : aucun code de fermeture ne tourne. Le faux runner
+        // ENTIER (tsx relance le script dans un processus enfant) : son arbre
+        // sous Windows, son groupe sous Unix. Le démon, détaché, n'est ni dans
+        // l'un ni dans l'autre.
+        const exited = new Promise<void>((r) => runner.once('exit', () => r()));
+        if (process.platform === 'win32') {
+          spawn('taskkill', ['/PID', String(runner.pid), '/T', '/F'], { windowsHide: true });
+        } else {
+          process.kill(-(runner.pid as number), 'SIGKILL');
+        }
+        await exited;
+        // Le runner qui reprend le job.
+        await killLeftoversOfJob(jobId, () => undefined);
+        expect(await deadWithin(pid, 5_000)).toBe(true);
+      } finally {
+        if (isProcessAlive(pid)) process.kill(pid);
+      }
+    },
+    90_000,
+  );
 });
 
 // Sous Windows, la forme que prennent les agents : une ligne shell qui détache

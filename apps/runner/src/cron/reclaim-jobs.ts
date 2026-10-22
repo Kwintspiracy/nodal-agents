@@ -328,6 +328,12 @@ export async function reclaimJobsOfDeadRunners(
       // tout depuis la ligne). Gardée sur `processing` : un job terminé entre
       // la lecture et ici n'est pas ressuscité. Le parent qui l'attend reste
       // `awaiting_delegation` — il sera repris quand l'enfant finira.
+      //
+      // Ce que les commandes du run PERDU avaient laissé tourner meurt AVANT
+      // la bascule (#750, revue de #834) : une fois `pending`, un worker peut
+      // prendre le job et lancer les commandes du nouveau run, que la
+      // libération tuerait. La règle des faucheurs (`releaseProcessesOfLostJob`).
+      await releaseProcessesOfLostJob(job.id);
       const repris = await db
         .update(agentJobs)
         .set({
@@ -341,9 +347,6 @@ export async function reclaimJobsOfDeadRunners(
       if (repris.length === 0) continue;
       // L'appel MCP en cours est mort avec le runner : sa question aussi.
       await closeElicitationsOfLostJobs(db, [job.id]);
-      // Et ce que ses commandes avaient laissé tourner (#750) : le run qui
-      // repart n'en hérite pas.
-      await releaseProcessesOfLostJob(job.id);
       out.resumed += 1;
       out.resumedJobIds.push(job.id);
       console.warn(
@@ -372,11 +375,13 @@ export async function reclaimJobsOfDeadRunners(
     const livrable = budgetDeliverable(texte, '', ligne);
 
     // `failJob` est conditionnelle sur un statut non terminal : un job qui
-    // vient de se terminer entre la lecture et ici n'est pas écrasé.
+    // vient de se terminer entre la lecture et ici n'est pas écrasé. Les
+    // processus du run perdu meurent avant l'écriture, par la même règle que
+    // la reprise (`releaseProcessesOfLostJob`).
+    await releaseProcessesOfLostJob(job.id);
     const landed = await failJob(db, job.id, decision.code, undefined, undefined, livrable);
     if (!landed) continue;
     await closeElicitationsOfLostJobs(db, [job.id]);
-    await releaseProcessesOfLostJob(job.id);
     out.reclaimed += 1;
     // Le FAIT, porté par le job : quels outils déjà exécutés ont empêché la
     // reprise (#443). L'écran le dira (#444).

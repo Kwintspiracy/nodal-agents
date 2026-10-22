@@ -18,8 +18,10 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agentJobs, cancelJobTree, eq } from '@nodal-agents/db';
 import {
   closeAllJobProcessScopes,
+  closeJobProcessScope,
   createSandbox,
   defaultSandbox,
+  detachedDescendantsReachable,
   isProcessAlive,
   type Sandbox,
   jobProcessScope,
@@ -120,17 +122,38 @@ describe('releaseIfEnded @cap:executer-une-commande/moteur', () => {
 // Les deux régimes d'une commande : hors bac à sable (le périmètre tient ses
 // processus : Job Object sous Windows, groupe et étiquette sous Unix), et dans
 // le bac à sable de la plateforme quand cette machine en a un (le conteneur).
+//
+// Et deux formes de ce que la commande laisse : dans le GROUPE de la commande
+// (chaque OS), ou DÉTACHÉ d'elle (sa propre session sous Unix). Hors bac à
+// sable, la forme détachée n'est tenue que là où le système retrouve un
+// descendant détaché (`detachedDescendantsReachable` : Windows, Linux ; pas
+// macOS, limite dite dans unix-job-processes.ts) : ailleurs le cas est SAUTÉ,
+// la raison au titre, jamais rouge. Dans le conteneur, les deux formes le sont.
 const unconfinedSandbox = createSandbox(null, { platform: 'linux', log: () => {} });
-const regimes: [string, Sandbox][] = [
-  ['without the sandbox', unconfinedSandbox],
-  ...((await defaultSandbox().status()).state === 'available'
-    ? ([['in the sandbox', defaultSandbox()]] as [string, Sandbox][])
+const sandboxAvailable = (await defaultSandbox().status()).state === 'available';
+const reachable = detachedDescendantsReachable();
+type Shape = 'group' | 'detached';
+const cases: [string, Sandbox, Shape, boolean][] = [
+  ['without the sandbox, in its command’s group', unconfinedSandbox, 'group', true],
+  [
+    reachable
+      ? 'without the sandbox, detached from its command'
+      : 'without the sandbox, detached from its command: SKIPPED, this platform cannot find a detached descendant (macOS: no /proc, stated limit)',
+    unconfinedSandbox,
+    'detached',
+    reachable,
+  ],
+  ...(sandboxAvailable
+    ? ([
+        ['in the sandbox, in its command’s group', defaultSandbox(), 'group', true],
+        ['in the sandbox, detached from its command', defaultSandbox(), 'detached', true],
+      ] as [string, Sandbox, Shape, boolean][])
     : []),
 ];
 
-describe.each(regimes)(
-  'every end of a job kills the detached process one of its commands left, %s (#750) @cap:executer-une-commande/moteur',
-  (_regime, sandbox) => {
+describe.each(cases)(
+  'every end of a job kills the process one of its commands left running, %s (#750) @cap:executer-une-commande/moteur',
+  (_label, sandbox, shape, enabled) => {
     const dir = mkdtempSync(join(tmpdir(), 'nodal-job-ends-'));
     afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
     const node = process.execPath;
@@ -138,11 +161,13 @@ describe.each(regimes)(
       join(dir, 'daemon.cjs'),
       "const fs = require('fs'); fs.writeFileSync(process.argv[2], String(process.pid)); let n = 0; setInterval(() => fs.writeFileSync(process.argv[3], String(++n)), 100);\n",
     );
-    // La commande lance le démon DÉTACHÉ (hors de son groupe, hors de son
-    // arbre une fois sortie) et sort.
+    // La commande lance le démon et sort. `detached` : sa propre session sous
+    // Unix. `group` : le groupe de la commande (sous Windows détaché de
+    // l'arbre quand même : un enfant non détaché meurt avec le job Node de
+    // son parent).
     writeFileSync(
       join(dir, 'spawner.cjs'),
-      "require('child_process').spawn(process.execPath, [require('path').join(__dirname, 'daemon.cjs'), process.argv[2], process.argv[3]], { detached: true, stdio: 'ignore' }).unref();\n",
+      "const detached = process.argv[4] === 'detached' || process.platform === 'win32'; require('child_process').spawn(process.execPath, [require('path').join(__dirname, 'daemon.cjs'), process.argv[2], process.argv[3]], { detached, stdio: 'ignore' }).unref();\n",
     );
     writeFileSync(
       join(dir, 'probe.cjs'),
@@ -164,7 +189,10 @@ describe.each(regimes)(
     async function daemonOf(jobId: string): Promise<{ pid: number; counter: string }> {
       const pidFile = join(dir, `${jobId}.pid`);
       const counter = join(dir, `${jobId}.count`);
-      const first = await command(jobId, `"${node}" spawner.cjs "${pidFile}" "${counter}"`);
+      const first = await command(
+        jobId,
+        `"${node}" spawner.cjs "${pidFile}" "${counter}" ${shape}`,
+      );
       expect(first.outcome).toEqual({ kind: 'exit', exitCode: 0 });
       for (let i = 0; i < 200 && !(existsSync(pidFile) && existsSync(counter)); i++) {
         await new Promise((r) => setTimeout(r, 50));
@@ -186,7 +214,7 @@ describe.each(regimes)(
       expect(readFileSync(d.counter, 'utf8')).toBe(frozen);
     }
 
-    it.each(['completed', 'failed'])(
+    (enabled ? it : it.skip).each(['completed', 'failed'])(
       'the job ends %s: the run that saw it end kills the daemon',
       async (end) => {
         const id = await job('processing');
@@ -199,30 +227,149 @@ describe.each(regimes)(
       60_000,
     );
 
-    it('Stop: the job is cancelled while suspended, the sweep kills the daemon', async () => {
-      const id = await job('awaiting_approval');
-      const d = await daemonOf(id);
-      const sweep = startJobProcessSweep(asDb(), 50);
-      try {
-        await cancelJobTree(asDb() as unknown as Parameters<typeof cancelJobTree>[0], {
-          entityId: seed.entityId,
-          jobId: id,
-        });
-        await expectDead(d);
-      } finally {
-        sweep.stop();
-      }
-    }, 60_000);
+    it.runIf(enabled)(
+      'Stop: the job is cancelled while suspended, the sweep kills the daemon',
+      async () => {
+        const id = await job('awaiting_approval');
+        const d = await daemonOf(id);
+        const sweep = startJobProcessSweep(asDb(), 50);
+        try {
+          await cancelJobTree(asDb() as unknown as Parameters<typeof cancelJobTree>[0], {
+            entityId: seed.entityId,
+            jobId: id,
+          });
+          await expectDead(d);
+        } finally {
+          sweep.stop();
+        }
+      },
+      60_000,
+    );
 
-    it('reclaimed: the job of a runner that stopped beating is failed, and its daemon dies', async () => {
-      const id = await job('processing');
-      const d = await daemonOf(id);
-      // Plus aucun battement depuis 10 minutes, vu de « maintenant ».
-      const result = await reclaimJobsOfDeadRunners(asDb(), {
-        now: new Date(Date.now() + 10 * 60_000),
-      });
-      expect(result.reclaimed + result.resumed).toBeGreaterThanOrEqual(1);
-      await expectDead(d);
-    }, 60_000);
+    it.runIf(enabled)(
+      'reclaimed: the job of a runner that stopped beating is failed, and its daemon dies',
+      async () => {
+        const id = await job('processing');
+        const d = await daemonOf(id);
+        // Plus aucun battement depuis 10 minutes, vu de « maintenant ».
+        const result = await reclaimJobsOfDeadRunners(asDb(), {
+          now: new Date(Date.now() + 10 * 60_000),
+        });
+        expect(result.reclaimed + result.resumed).toBeGreaterThanOrEqual(1);
+        await expectDead(d);
+      },
+      60_000,
+    );
   },
 );
+
+// #834, revue A passe 1 (P2-1) : un job REPRIS d'un runner mort repasse en
+// `pending`, et un worker peut le prendre dès cet instant. Les processus du
+// run perdu doivent être libérés AVANT que la ligne redevienne prenable —
+// sinon la libération tue ceux du NOUVEAU run. Ce qui se prouve : une commande
+// que le run repris lance juste après la bascule survit à la reprise.
+describe('a lost job releases its processes before the row can be claimed again (#750) @cap:executer-une-commande/moteur', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nodal-job-resume-'));
+  afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
+  writeFileSync(
+    join(dir, 'ticker.cjs'),
+    "const fs = require('fs'); let n = 0; setInterval(() => fs.writeFileSync(process.argv[2], String(++n)), 100);\n",
+  );
+
+  /**
+   * La base telle que la reprise la voit, avec un geste glissé juste APRÈS
+   * l'écriture qui rend le job à la file (`status: 'pending'`) : ce qu'un
+   * worker ferait en le prenant à cet instant.
+   */
+  function withHookAfterResumeFlip(real: TestDb, hook: () => Promise<void>): TestDb {
+    const afterAwait = <T extends object>(obj: T): T =>
+      new Proxy(obj, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop) as unknown;
+          if (prop === 'then' && typeof value === 'function') {
+            return (onOk: (v: unknown) => unknown, onErr: (e: unknown) => unknown) =>
+              (value as (a: (v: unknown) => unknown) => Promise<unknown>)
+                .call(target, async (v: unknown) => {
+                  await hook();
+                  return v;
+                })
+                .then(onOk, onErr);
+          }
+          if (typeof value === 'function') {
+            return (...args: unknown[]) => {
+              const out = (value as (...a: unknown[]) => unknown).apply(target, args);
+              return out && typeof out === 'object' ? afterAwait(out) : out;
+            };
+          }
+          return value;
+        },
+      });
+    return new Proxy(real, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop) as unknown;
+        if (prop !== 'update' || typeof value !== 'function') {
+          return typeof value === 'function' ? (value as () => unknown).bind(target) : value;
+        }
+        return (table: unknown) => {
+          const builder = (value as (t: unknown) => { set: (v: unknown) => object }).call(
+            target,
+            table,
+          );
+          const set = builder.set.bind(builder);
+          builder.set = (values: unknown) => {
+            const next = set(values);
+            return (values as { status?: string }).status === 'pending' ? afterAwait(next) : next;
+          };
+          return builder;
+        };
+      },
+    });
+  }
+
+  it('the resumed run’s command, started right after the row went back to pending, survives the reclaim', async () => {
+    const [row] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal',
+        task: 't',
+        status: 'processing',
+        turn: 3,
+        messages: [{ role: 'user', content: 't' }],
+        updatedAt: new Date(Date.now() - 10 * 60_000),
+      })
+      .returning({ id: agentJobs.id });
+    const id = row!.id;
+    const counter = join(dir, `${id}.count`);
+    let started: Awaited<ReturnType<ReturnType<typeof jobProcessScope>['startOwned']>> | null =
+      null;
+    try {
+      const reprise = await reclaimJobsOfDeadRunners(
+        withHookAfterResumeFlip(db, async () => {
+          if (started) return;
+          // Le nouveau run du job lance sa première commande.
+          started = await jobProcessScope(id, unconfinedSandbox).startOwned({
+            target: { file: process.execPath, args: [join(dir, 'ticker.cjs'), counter] },
+            cwd: dir,
+            env: buildChildEnv(process.env),
+          });
+          started.stdout?.resume();
+          started.stderr?.resume();
+          for (let i = 0; i < 100 && !existsSync(counter); i++) {
+            await new Promise((r) => setTimeout(r, 50));
+          }
+        }) as unknown as Parameters<typeof reclaimJobsOfDeadRunners>[0],
+      );
+      expect(reprise.resumedJobIds).toContain(id);
+      expect(started).not.toBeNull();
+      // Elle tourne encore : son compteur monte après la reprise.
+      const before = Number(readFileSync(counter, 'utf8'));
+      await new Promise((r) => setTimeout(r, 500));
+      expect(Number(readFileSync(counter, 'utf8'))).toBeGreaterThan(before);
+      expect(openJobProcessScopeIds()).toContain(id);
+    } finally {
+      await closeJobProcessScope(id);
+    }
+  }, 60_000);
+});

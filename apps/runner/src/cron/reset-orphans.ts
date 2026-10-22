@@ -257,6 +257,8 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
   // never silent (D1). Then deliver that notice to the job's channel.
   let reset = 0;
   for (const jobId of toReset) {
+    // Avant l'écriture, la règle des faucheurs (`releaseProcessesOfLostJob`).
+    await releaseProcessesOfLostJob(jobId);
     const landed = await failJob(
       db,
       jobId,
@@ -268,7 +270,6 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
     if (landed) {
       reset += 1;
       await closeElicitationsOfLostJobs(db, [jobId]);
-      await releaseProcessesOfLostJob(jobId);
       await notifyJobFailure(db, jobId, ORPHAN_RESET_NOTICE);
     }
   }
@@ -364,6 +365,8 @@ export async function failStalePendingJobs(
 
   let failed = 0;
   for (const { id } of stale) {
+    // Avant l'écriture, la règle des faucheurs (`releaseProcessesOfLostJob`).
+    await releaseProcessesOfLostJob(id);
     const landed = await failJob(
       db,
       id,
@@ -374,7 +377,6 @@ export async function failStalePendingJobs(
     );
     if (landed) {
       failed += 1;
-      await releaseProcessesOfLostJob(id);
       await notifyJobFailure(db, id, STALE_PENDING_NOTICE);
     }
   }

@@ -86,6 +86,14 @@ export async function releaseIfEnded(
  * (Unix ; sous Windows, le noyau les a tués avec le Job Object du mort).
  * Appelée par les deux faucheurs, que le job reparte (repris à son dernier
  * tour) ou non : un processus d'un run mort n'appartient plus à personne.
+ *
+ * LA RÈGLE D'ORDRE, une pour tous les faucheurs : on l'appelle AVANT
+ * d'écrire la ligne (revue de #834). Tant que la ligne est celle du run perdu,
+ * personne ne peut lancer de commande pour ce job ; une fois écrite, elle peut
+ * redevenir prenable (`pending`, une reprise) et un nouveau run y lancer les
+ * siennes, que la libération tuerait — l'identifiant du job est le même. Une
+ * écriture qui ne prend pas (le job a fini entre-temps) n'y change rien : un
+ * job fini n'a plus de processus à garder.
  */
 export async function releaseProcessesOfLostJob(jobId: string): Promise<void> {
   try {
