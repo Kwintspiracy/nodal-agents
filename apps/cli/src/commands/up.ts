@@ -59,10 +59,10 @@ import {
   spawnWeb,
   waitForHealth,
   assertWebRenders,
-  writePids,
   clearPids,
   readPids,
   recordServiceTree,
+  type RecordOutcome,
   sweepRecordedChildren,
   killProcessTree,
   killPidTree,
@@ -964,8 +964,30 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   const webPid = webProcess.pid ?? 0;
   webSpinner.succeed(chalk.green(`Web started (pid ${webPid})`));
 
-  // Save PIDs for `nodal-agents down`
-  writePids({ runner: runnerPid, web: webPid });
+  // Said once per pid, however many times the record is refreshed. Off Windows
+  // there is no process table, so there is nothing to identify with and nothing
+  // to report: `down` states that itself when it acts.
+  const noted = new Set<number>();
+  const reportUnidentified = (outcome: RecordOutcome): void => {
+    for (const pid of outcome.unidentified) {
+      if (noted.has(pid)) continue;
+      noted.add(pid);
+      const label = pid === runnerPid ? 'runner' : 'web';
+      console.log(
+        chalk.yellow(
+          `  ${label} (pid ${pid}) could not be identified in the process table: it is on record ` +
+            'as a bare number,\n' +
+            '    and `nodal-agents down` will refuse to stop a pid nothing identifies.',
+        ),
+      );
+    }
+  };
+
+  // Save PIDs for `nodal-agents down` — WITH their identity, now, not after the
+  // health check: `down` may be run the moment the web answers, and a pid on
+  // record without its creation tick is one it refuses to stop (#767). The same
+  // writer runs again once the tree is formed.
+  reportUnidentified(await recordServiceTree({ runner: runnerPid, web: webPid }));
 
   // ── 7. Wait for health ────────────────────────────────────────────────────
 
@@ -1028,7 +1050,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // Everything is up and the process tree is fully formed — the only moment
     // where it can be read reliably. Ctrl+C tears the links down faster than a
     // shutdown handler can walk them (see recordServiceTree).
-    await recordServiceTree({ runner: runnerPid, web: webPid });
+    reportUnidentified(await recordServiceTree({ runner: runnerPid, web: webPid }));
   } catch (err) {
     clearInterval(ticker);
     healthSpinner.fail(
