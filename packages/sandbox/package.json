@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "@microsoft/mxc-sdk": "1.0.0",
-    "@nodal-agents/shared": "workspace:*"
+    "@nodal-agents/shared": "workspace:*",
+    "koffi": "3.3.3"
   },
   "devDependencies": {
     "@nodal-agents/test-kit": "workspace:*",

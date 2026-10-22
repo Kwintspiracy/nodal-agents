@@ -6,11 +6,13 @@
 // la ligne écrite, l'arbre annulé, le job jamais lancé — pas des compteurs
 // d'appels.
 
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { TreeFactsSchema, type TreeFacts } from '../facts';
+import { readRecords, writeRecord } from '../../printer/record';
+import { fixturePath } from '../fixtures';
 import { SCENARIOS, scenarioById } from '../scenarios';
 import { BENCH_PRINTER_MISSING } from '../needs';
 import {
@@ -115,6 +117,8 @@ function world(opts: {
       teamTools: [],
       services: {},
       unlistedMcpServers: [],
+      benchPrinter: { kind: 'absent' },
+      teamMcpServers: [],
       startedMs,
     }),
     rootModel: async () => 'z-ai/glm-5.3',
@@ -260,6 +264,8 @@ describe('workflow trial safety rules', () => {
         teamTools: ['office_printer__request_print', 'office_printer__get_print_request'],
         services: {},
         unlistedMcpServers: [],
+        benchPrinter: { kind: 'absent' },
+        teamMcpServers: [],
         startedMs,
       });
       const line = await runTrial(scenarioById(id)!, w.deps, OPTS);
@@ -267,6 +273,120 @@ describe('workflow trial safety rules', () => {
       expect([line.verdict, line.reasons]).toEqual(['skipped', [BENCH_PRINTER_MISSING]]);
     },
   );
+
+  // Revue de #832, passe 1 (P2) : deux essais qui partagent le dossier de
+  // l'imprimante ne se mélangent pas. La demande d'un essai d'avant, même reçue
+  // dans la fenêtre de temps de celui-ci, est mise de côté avant que le job parte.
+  it('print-file: a request left in the printer folder by an earlier trial is set aside before the job starts, never judged', async () => {
+    const green = load('print-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    const root = mkdtempSync(join(tmpdir(), 'bench-trial-root-'));
+    const recordsDir = mkdtempSync(join(tmpdir(), 'bench-trial-records-'));
+    const posed = readFileSync(fixturePath('office/facture-bench.pdf'));
+    // Reçue « pendant » l'essai du point de vue de l'horloge, avec le bon fichier :
+    // sans mise de côté, elle ferait passer l'essai.
+    const stale = writeRecord(
+      recordsDir,
+      {
+        source: { kind: 'file', path: join(root, 'earlier-trial.pdf') },
+        bytes: posed,
+        pages: 1,
+        pagesBasis: 'pdf',
+        images: null,
+        arguments: {},
+      },
+      w.clock.now + 1,
+    );
+    w.deps.env = async (startedMs) => ({
+      workspaceRoots: [root],
+      teamTools: ['bench_printer__request_print', 'bench_printer__get_print_request'],
+      services: {},
+      unlistedMcpServers: [],
+      benchPrinter: { kind: 'attached', recordsDir },
+      teamMcpServers: [],
+      startedMs,
+    });
+    const line = await runTrial(scenarioById('print-file')!, w.deps, OPTS);
+    expect(w.started).toHaveLength(1);
+    expect(line.reasons).toContain('no print request was created');
+    expect(line.verdict).toBe('red');
+    expect(readRecords(recordsDir).requests).toEqual([]);
+    expect(
+      readRecords(
+        join(recordsDir, 'previous', readdirSync(join(recordsDir, 'previous'))[0]!),
+      ).requests.map((r) => r.record.id),
+    ).toEqual([stale.id]);
+  });
+
+  // Le banc mesure la fin de l'essai (ce que le juge reçoit dans `endedMs`) : une
+  // demande reçue après n'est pas de lui, même si le dossier la contient encore.
+  it('print-file: a request received after the end of the trial that the bench measured is not judged', async () => {
+    const done = load('print-green');
+    const live = { ...done, jobs: done.jobs.map((j) => ({ ...j, status: 'running' })) };
+    const w = world({ rootId: done.rootId, snapshots: [live, done] });
+    const root = mkdtempSync(join(tmpdir(), 'bench-trial-root-'));
+    const recordsDir = mkdtempSync(join(tmpdir(), 'bench-trial-records-'));
+    const posed = readFileSync(fixturePath('office/facture-bench.pdf'));
+    const received = (bytes: Buffer, atMs: number) =>
+      writeRecord(
+        recordsDir,
+        {
+          source: { kind: 'file', path: join(root, 'x.pdf') },
+          bytes,
+          pages: 1,
+          pagesBasis: 'pdf',
+          images: null,
+          arguments: {},
+        },
+        atMs,
+      );
+    const t0 = w.clock.now;
+    const start = w.deps.start;
+    w.deps.start = async (...a) => {
+      // Pendant l'essai (il dure un tour de sondage, 2 s) : le bon fichier. Bien après sa fin : un autre.
+      received(posed, t0 + 1_000);
+      received(Buffer.from('%PDF-1.4 another trial'), t0 + 600_000);
+      return start(...a);
+    };
+    w.deps.env = async (startedMs) => ({
+      workspaceRoots: [root],
+      teamTools: ['bench_printer__request_print', 'bench_printer__get_print_request'],
+      services: {},
+      unlistedMcpServers: [],
+      benchPrinter: { kind: 'attached', recordsDir },
+      teamMcpServers: [],
+      startedMs,
+    });
+    const line = await runTrial(scenarioById('print-file')!, w.deps, OPTS);
+    expect(w.clock.now - t0).toBe(2_000);
+    expect(line.reasons.filter((r) => /another file|not the posed file/.test(r))).toEqual([]);
+    expect(line.reasons).not.toContain('no print request was created');
+  });
+
+  it('a scenario that does not need the bench printer leaves its folder alone', async () => {
+    const green = load('question-green');
+    const w = world({ rootId: green.rootId, snapshots: [green] });
+    const recordsDir = mkdtempSync(join(tmpdir(), 'bench-trial-records-'));
+    const kept = writeRecord(recordsDir, {
+      source: { kind: 'content', contentFormat: 'text' },
+      bytes: Buffer.from('x'),
+      pages: 1,
+      pagesBasis: 'text-estimate',
+      images: null,
+      arguments: {},
+    });
+    w.deps.env = async (startedMs) => ({
+      workspaceRoots: [],
+      teamTools: [],
+      services: {},
+      unlistedMcpServers: [],
+      benchPrinter: { kind: 'attached', recordsDir },
+      teamMcpServers: [],
+      startedMs,
+    });
+    await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(readRecords(recordsDir).requests.map((r) => r.record.id)).toEqual([kept.id]);
+  });
 
   it('the print scenarios are print, print-file and recipe: the rule above is played on each', () => {
     expect(SCENARIOS.filter((s) => s.activity === 'print').map((s) => s.id)).toEqual([
@@ -339,6 +459,8 @@ describe('where a trial may send', () => {
       teamTools: [],
       services: { comfyui: { url: 'http://127.0.0.1:8188', problem: null } },
       unlistedMcpServers: [],
+      benchPrinter: { kind: 'absent' },
+      teamMcpServers: [],
       startedMs,
     });
     const line = await runTrial(scenarioById('comfyui-telegram')!, w.deps, OPTS);
@@ -358,6 +480,8 @@ describe('where a trial may send', () => {
       teamTools: [],
       services: { comfyui: { url: 'http://127.0.0.1:8188', problem: null } },
       unlistedMcpServers: [],
+      benchPrinter: { kind: 'absent' },
+      teamMcpServers: [],
       startedMs,
     });
     await runTrial(scenarioById('comfyui-telegram')!, w.deps, { ...OPTS, allowOwnerSends: true });
@@ -802,6 +926,8 @@ describe('what happens before a trial starts', () => {
       teamTools: ['xlsx_create'],
       services: {},
       unlistedMcpServers: [],
+      benchPrinter: { kind: 'absent' },
+      teamMcpServers: [],
       startedMs,
     });
     const broken: AnyScenario = {
@@ -828,6 +954,8 @@ describe('what happens before a trial starts', () => {
       teamTools: [],
       services: {},
       unlistedMcpServers: [],
+      benchPrinter: { kind: 'absent' },
+      teamMcpServers: [],
       startedMs,
     });
     const line = await runTrial(scenarioById('deep-research-obsidian')!, w.deps, OPTS);
@@ -1031,6 +1159,8 @@ describe('workflow trial: subjects, product tools and the path', () => {
       teamTools: ['xlsx_create', 'xlsx_read', 'xlsx_set_cell', 'xlsx_set_range'],
       services: {},
       unlistedMcpServers: [],
+      benchPrinter: { kind: 'absent' },
+      teamMcpServers: [],
       startedMs,
     });
     const line = await runTrial(scenarioById('file')!, w.deps, OPTS);

@@ -21,6 +21,7 @@ import { scenarioById } from '../scenarios';
 import type { ResearchSubject } from '../subjects';
 import { cheminConstate } from '@nodal-agents/tools';
 import { productFileStates, trialReasons } from '../trial';
+import type { BenchPrinterState } from '../../printer/identity';
 import type { ScenarioEnv } from '../types';
 
 export const ROOT_ID = '00000000-0000-4000-8000-0000000000a1';
@@ -187,6 +188,15 @@ export interface PlayEnv {
    * le banc n'y pose rien, un fichier qui s'y trouve n'est pas la fixture.
    */
   readonly attachedRoot?: boolean;
+  /**
+   * L'imprimante du banc (#794) attachée à l'équipe, et le dossier où elle
+   * enregistre. Absent : aucune imprimante du banc n'est attachée.
+   */
+  readonly benchPrinter?: BenchPrinterState;
+  /** La fin de l'essai mesurée par le banc ; absente : l'instant du jugement. */
+  readonly endedMs?: number;
+  /** Les serveurs MCP de l'équipe (le besoin `bench-printer` les lit). */
+  readonly teamMcpServers?: ScenarioEnv['teamMcpServers'];
 }
 
 /**
@@ -213,6 +223,8 @@ export async function play(
     teamTools: playEnv.teamTools ?? [],
     services: {},
     unlistedMcpServers: [],
+    teamMcpServers: playEnv.teamMcpServers ?? [],
+    benchPrinter: playEnv.benchPrinter ?? { kind: 'absent' },
     startedMs: 0,
     ...(playEnv.subject ? { subject: playEnv.subject } : {}),
   };
@@ -224,7 +236,11 @@ export async function play(
   const startedMs = Date.now() - 1_000;
   await work(root, attached);
   const run = typeof runOrBuild === 'function' ? runOrBuild(root, attached) : runOrBuild;
-  const env: ScenarioEnv = { ...env0, startedMs };
+  const env: ScenarioEnv = {
+    ...env0,
+    startedMs,
+    ...(playEnv.endedMs === undefined ? {} : { endedMs: playEnv.endedMs }),
+  };
   const tree: TreeFacts = {
     ...facts(run),
     writes: await writesOf(run, root),

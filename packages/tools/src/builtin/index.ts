@@ -150,7 +150,6 @@ export { buildChildEnv, safeEnvAllowlistSnapshot } from './child-env';
 export {
   runShellCommand,
   runCommandSequence,
-  killProcessTree,
   isGreen,
   sandboxReport,
   sandboxFact,

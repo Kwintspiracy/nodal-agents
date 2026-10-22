@@ -27,6 +27,7 @@ import {
   PROCESS_PATHS_RULE,
 } from '../file-ops/workspace';
 import { buildChildEnv } from '../child-env';
+import { jobProcessScope } from '@nodal-agents/sandbox';
 import { resolveCliPath, runCli } from './process';
 import { makeLiveToolRecorder, makeEssentialCapture } from './live-events';
 import {
@@ -343,10 +344,15 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     // finding 2). No extras are passed: étape B never injects an API key.
     const env = buildChildEnv(process.env);
 
+    // Le CLI et ce qu'il lance appartiennent au job (#750) : tués à son Stop,
+    // morts à sa fin.
+    const scope = jobProcessScope(ctx.jobId);
     const versionRun = await runCli(cli, ['--version'], {
       cwd,
       timeoutMs: VERSION_PROBE_TIMEOUT_MS,
       env,
+      scope,
+      ...(ctx.signal ? { signal: ctx.signal } : {}),
     });
     if (versionRun.exitCode !== 0 || versionRun.stdout.trim() === '') {
       throw new Error(
@@ -430,6 +436,8 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
         cwd,
         timeoutMs,
         env,
+        scope,
+        ...(ctx.signal ? { signal: ctx.signal } : {}),
         stdin: input.task,
         onStdoutLine: (line) => {
           liveRecorder.onLine(line);

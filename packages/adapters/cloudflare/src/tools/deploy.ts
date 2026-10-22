@@ -17,7 +17,13 @@
 import { stat, readdir } from 'node:fs/promises';
 import { z } from 'zod';
 import type { ConnectorToolDefinition } from '@nodal-agents/tools';
-import { resolveAndCheckPath, resolveCliPath, runCli, buildChildEnv } from '@nodal-agents/tools';
+import {
+  resolveAndCheckPath,
+  resolveCliPath,
+  runCli,
+  buildChildEnv,
+  jobProcessScope,
+} from '@nodal-agents/tools';
 import { CloudflareApiError } from '../errors.ts';
 import type { CloudflareAccountContext } from '../client.ts';
 
@@ -141,6 +147,9 @@ export function makeCloudflareDeployTool(
       const run = await runCli(npx, buildWranglerDeployArgs(input.name, assetsDir), {
         cwd: assetsDir,
         timeoutMs: DEPLOY_TIMEOUT_MS,
+        // wrangler et ce qu'il lance appartiennent au job (#750).
+        scope: jobProcessScope(ctx.jobId),
+        ...(ctx.signal ? { signal: ctx.signal } : {}),
         env: buildChildEnv(
           process.env,
           {

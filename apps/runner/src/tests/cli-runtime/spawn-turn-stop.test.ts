@@ -5,8 +5,17 @@
 // et exécuter ses outils. Ce qui se prouve ici, sur un VRAI processus : le
 // Stop tue l'arbre et le tour rend la main bien avant le délai.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { isProcessAlive, openProcessScope } from '@nodal-agents/sandbox';
 import { spawnCliTurn } from '../../cli-runtime/spawn-turn.ts';
+
+// La CLI tourne dans un périmètre de processus, comme dans un job (#750).
+const scope = openProcessScope(`spawn-turn-test:${randomUUID()}`);
+afterAll(() => scope.close());
 
 describe('spawnCliTurn — Stop @cap:parler-a-un-agent/moteur', () => {
   it('tue un processus qui ne finirait jamais, dès le Stop', async () => {
@@ -17,6 +26,7 @@ describe('spawnCliTurn — Stop @cap:parler-a-un-agent/moteur', () => {
       env: process.env,
       cwd: process.cwd(),
       stdin: '',
+      processScope: scope,
       timeoutMs: 600_000,
       abortSignal: stop.signal,
       onLine: () => 0,
@@ -41,6 +51,7 @@ describe('spawnCliTurn — Stop @cap:parler-a-un-agent/moteur', () => {
       env: process.env,
       cwd: process.cwd(),
       stdin: '',
+      processScope: scope,
       timeoutMs: 600_000,
       abortSignal: stop.signal,
       onLine: () => 0,
@@ -50,4 +61,50 @@ describe('spawnCliTurn — Stop @cap:parler-a-un-agent/moteur', () => {
     expect(Date.now() - started).toBeLessThan(10_000);
     expect(outcome.timedOut).toBe(false);
   }, 20_000);
+});
+
+// #750 : ce que la CLI laisse tourner (un serveur que son outil Bash a lancé en
+// arrière-plan, détaché) vit au-delà du tour — le tour suivant du même job le
+// joint — et meurt quand le périmètre du job se ferme.
+describe('spawnCliTurn — what the CLI leaves running belongs to its job (#750) @cap:parler-a-un-agent/moteur', () => {
+  it('a detached process the CLI started outlives the turn, then dies when the scope closes', async () => {
+    const own = openProcessScope(`spawn-turn-leftover:${randomUUID()}`);
+    const dir = mkdtempSync(join(tmpdir(), 'nodal-cli-leftover-'));
+    const pidFile = join(dir, 'daemon.pid');
+    const daemon =
+      "require('fs').writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000)";
+    try {
+      const outcome = await spawnCliTurn({
+        argv: [
+          process.execPath,
+          '-e',
+          `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(daemon)}, ${JSON.stringify(pidFile)}], { detached: true, stdio: 'ignore' }).unref()`,
+        ],
+        env: process.env,
+        cwd: dir,
+        stdin: '',
+        processScope: own,
+        timeoutMs: 30_000,
+        onLine: () => 0,
+        finish: (o) => o,
+      });
+      expect(outcome.exitCode).toBe(0);
+      for (let i = 0; i < 200 && !existsSync(pidFile); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const pid = Number(readFileSync(pidFile, 'utf8'));
+      expect(isProcessAlive(pid)).toBe(true);
+      await own.close();
+      let dead = false;
+      for (let i = 0; i < 100 && !dead; i++) {
+        dead = !isProcessAlive(pid);
+        if (!dead) await new Promise((r) => setTimeout(r, 50));
+      }
+      if (!dead) process.kill(pid);
+      expect(dead).toBe(true);
+    } finally {
+      await own.close();
+      rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    }
+  }, 60_000);
 });

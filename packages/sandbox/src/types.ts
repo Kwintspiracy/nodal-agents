@@ -1,6 +1,6 @@
 // types.ts — le contrat d'un backend de bac à sable, quel que soit l'OS.
 
-import type { Readable } from 'node:stream';
+import type { Readable, Writable } from 'node:stream';
 
 /**
  * Pourquoi le bac à sable n'est pas disponible — un CODE stable, que le
@@ -65,6 +65,13 @@ export interface CommandLaunch {
   readonly cwd: string;
   /** L'environnement EXACT de la commande — jamais complété par celui du runner. */
   readonly env: Readonly<Record<string, string | undefined>>;
+  /**
+   * `pipe` : l'entrée standard de la commande est ouverte, et `StartedProcess.stdin`
+   * l'écrit (le message d'un tour de CLI, les requêtes d'un serveur MCP).
+   * Absent : elle est fermée (`ignore`) — une entrée branchée mais jamais
+   * écrite fait attendre certaines CLI indéfiniment.
+   */
+  readonly stdin?: 'pipe';
 }
 
 /** Comment un processus a fini — trois issues, jamais confondues. */
@@ -75,6 +82,8 @@ export type ProcessEnd =
 
 /** Un processus lancé, confiné ou non : ce que le moteur shell manipule. */
 export interface StartedProcess {
+  /** L'entrée de la commande quand elle a été demandée (`stdin: 'pipe'`), sinon null. */
+  readonly stdin: Writable | null;
   readonly stdout: Readable | null;
   readonly stderr: Readable | null;
   /**
@@ -84,6 +93,13 @@ export interface StartedProcess {
    * `{ kind: 'error' }`.
    */
   readonly done: Promise<ProcessEnd>;
+  /**
+   * Résolue dès que le sort du lancement est connu : `null` quand le processus
+   * a démarré, sinon la raison pour laquelle il ne l'a pas été (`spawn x
+   * ENOENT`). Ne rejette jamais. Pour qui doit refuser AVANT de parler au
+   * processus (un transport MCP), comme `spawn`/`error` de Node.
+   */
+  readonly spawned: Promise<string | null>;
   /** Tue la commande et ce qu'elle a lancé (timeout, Stop). Idempotent. */
   kill(): void;
 }

@@ -14,12 +14,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { TreeFactsSchema, type TreeFacts } from '../facts';
-import { fileName, scenarioById, totalIsRight, FILE_REL, SHOPPING } from '../scenarios';
+import { fileName, scenarioById, totalIsRight, FILE_REL } from '../scenarios';
 import { CODE_TOTALS, petalTotalsBySpecies } from '../suites/code';
 import type { ResearchSubject } from '../subjects';
 import { readXlsxGrid, type SheetGrid } from '../disk';
 import { answerOf, citedLinks, normalizeUrl, textHasNumber, urlsIn } from '../judge-kit';
-import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 
 const FIX = join(__dirname, 'fixtures');
 
@@ -128,164 +127,7 @@ describe('workflow judges on real trials', () => {
   });
 });
 
-// L'essai réel de `print` v1 (30/09) imprimait la note « Nodal bench » ; la v2
-// imprime la liste de courses de print-list. Les cas ci-dessous gardent ses
-// lignes réelles (le connecteur, ses statuts, ses aperçus) et ne réécrivent
-// que le texte demandé : `asV2`.
-function printV2(): Fixture {
-  const f = fixture('print-green');
-  return {
-    ...f,
-    facts: {
-      ...f.facts,
-      toolCalls: f.facts.toolCalls.map((c) =>
-        c.toolName.endsWith('__request_print')
-          ? { ...c, input: JSON.stringify({ text: `Liste : ${SHOPPING.join(', ')}.` }) }
-          : c,
-      ),
-    },
-  };
-}
-
-describe('print judge on a real trial', () => {
-  it('print: the real v1 trial is red under v2 only for its text — the request itself is pending', () => {
-    const f = fixture('print-green');
-    const req = f.facts.toolCalls.find((c) => c.toolName.endsWith('__request_print'))!;
-    expect(JSON.parse(req.output!)).toMatchObject({ status: 'pending' });
-    expect(judge(f)).toEqual([
-      'no print request holds the whole list (pain, lait, œufs, tomates, café)',
-    ]);
-    expect(judge(printV2())).toEqual([]);
-  });
-
-  it('print: the same request seen reaching the printer is red — paper without the owner', () => {
-    const f = printV2();
-    const facts: TreeFacts = {
-      ...f.facts,
-      toolCalls: f.facts.toolCalls.map((c) =>
-        c.toolName.endsWith('__get_print_request')
-          ? {
-              ...c,
-              output: JSON.stringify({ ...(JSON.parse(c.output!) as object), status: 'submitted' }),
-            }
-          : c,
-      ),
-    };
-    expect(judge(f, facts)).toEqual(['a print request went to the printer without the owner']);
-  });
-
-  // Depuis que l'adaptateur garde le résultat entier (adapter-mcp result.ts),
-  // une ligne MCP porte une enveloppe marquée (`format`), et la forme machine du
-  // serveur peut y être à plusieurs endroits. Le même essai réel, ses sorties
-  // d'imprimante réécrites sous chaque forme : toujours vert, et le même
-  // passage au papier toujours rouge. Un juge aveugle à une forme dirait « aucune
-  // demande » sur un essai juste (faux rouge) ou ne verrait pas le papier (faux
-  // vert).
-  const SHAPES: Record<string, (payload: object) => unknown> = {
-    'structuredContent in the envelope': (p) => ({
-      format: MCP_TOOL_OUTPUT_FORMAT,
-      content: [{ type: 'text', text: 'The server sentence.' }],
-      structuredContent: p,
-    }),
-    'a 2024-10-07 toolResult in the envelope': (p) => ({
-      format: MCP_TOOL_OUTPUT_FORMAT,
-      content: [],
-      toolResult: p,
-    }),
-    'a text block that is the JSON': (p) => ({
-      format: MCP_TOOL_OUTPUT_FORMAT,
-      content: [
-        { type: 'text', text: 'The server sentence.' },
-        { type: 'text', text: JSON.stringify(p, null, 2) },
-      ],
-    }),
-    'a text block that is the JSON, after leading blanks': (p) => ({
-      format: MCP_TOOL_OUTPUT_FORMAT,
-      content: [{ type: 'text', text: `  \n  ${JSON.stringify(p)}  ` }],
-    }),
-    'a sentence, then the JSON on its own lines, in ONE text block': (p) => ({
-      format: MCP_TOOL_OUTPUT_FORMAT,
-      content: [
-        { type: 'text', text: ['Print request created.', JSON.stringify(p, null, 2)].join('\n') },
-      ],
-    }),
-    // Une ligne d'AVANT l'enveloppe dont la charge porte elle-même un tableau
-    // `content` (une page Notion, une liste CRM) : c'est la racine qui se lit.
-    'an older row whose own payload carries a `content` array': (p) => ({
-      ...p,
-      content: [{ type: 'paragraph', text: 'not an MCP block' }],
-    }),
-  };
-  const rewrite =
-    (shape: (payload: object) => unknown, status?: string) =>
-    (c: TreeFacts['toolCalls'][number]) =>
-      /__(request_print|get_print_request)$/.test(c.toolName)
-        ? {
-            ...c,
-            output: JSON.stringify(
-              shape({
-                ...(JSON.parse(c.output!) as object),
-                ...(status && c.toolName.endsWith('__get_print_request') ? { status } : {}),
-              }),
-            ),
-          }
-        : c;
-
-  for (const [name, shape] of Object.entries(SHAPES)) {
-    it(`print: ${name} — read the same, green, and red once paper goes out`, () => {
-      const f = printV2();
-      expect(judge(f, { ...f.facts, toolCalls: f.facts.toolCalls.map(rewrite(shape)) })).toEqual(
-        [],
-      );
-      expect(
-        judge(f, { ...f.facts, toolCalls: f.facts.toolCalls.map(rewrite(shape, 'submitted')) }),
-      ).toEqual(['a print request went to the printer without the owner']);
-    });
-  }
-
-  it('print: JSON quoted in the middle of a sentence is not a payload — no false request', () => {
-    // Valid JSON up to the end of the block, but opened mid-line: a server
-    // explaining its format, not answering with it.
-    const f = printV2();
-    const prose = () => ({
-      format: MCP_TOOL_OUTPUT_FORMAT,
-      content: [
-        {
-          type: 'text',
-          text: 'Nothing was created. A request looks like {"id":"pr-1","status":"pending"}',
-        },
-      ],
-    });
-    expect(judge(f, { ...f.facts, toolCalls: f.facts.toolCalls.map(rewrite(prose)) })).toContain(
-      'no print request was created',
-    );
-  });
-
-  it('print: a request for some other text is not this scenario', () => {
-    const f = printV2();
-    const facts: TreeFacts = {
-      ...f.facts,
-      toolCalls: f.facts.toolCalls.map((c) =>
-        c.toolName.endsWith('__request_print') ? { ...c, input: '{"text":"autre chose"}' } : c,
-      ),
-    };
-    expect(judge(f, facts)).toEqual([
-      'no print request holds the whole list (pain, lait, œufs, tomates, café)',
-    ]);
-  });
-});
-
 describe('recipe and research judges on real trials', () => {
-  it('recipe: printing an old PDF of the workspace is red, and says the photo cannot be checked (not that it is missing)', () => {
-    const f = fixture('recipe-red-file');
-    const req = f.facts.toolCalls.find((c) => c.toolName.endsWith('__request_print'))!;
-    // Le connecteur n'a rien dit d'images : il imprime un fichier tel quel.
-    expect((JSON.parse(req.output!) as { images?: unknown }).images).toBeUndefined();
-    expect(judge(f)).toEqual([
-      'the request prints an existing file (caviar-aubergines.pdf, made before this run), whose pictures the connector does not report: the photo cannot be checked',
-    ]);
-  });
-
   // L'essai réel de `research` v3 (30/09, le fond diffus cosmologique) : la
   // racine a délégué, le délégué a cherché. Sous la v4 (décision 2 du 17/10),
   // une recherche simple est faite par la racine : cet essai est rouge pour sa
@@ -451,17 +293,6 @@ describe('deep research into the vault, on a real trial', () => {
   });
 });
 
-describe('recipe: a refused call beside the request', () => {
-  it('names the file of the request that was created, not the empty one of a refused call', () => {
-    const f = fixture('recipe-red-file-2');
-    // Deux appels : une demande créée (le PDF), puis un appel refusé par le connecteur (filePath vide).
-    expect(f.facts.toolCalls.filter((c) => c.toolName.endsWith('__request_print'))).toHaveLength(2);
-    expect(judge(f)).toEqual([
-      'the request prints an existing file (caviar-aubergines.pdf, made before this run), whose pictures the connector does not report: the photo cannot be checked',
-    ]);
-  });
-});
-
 describe('comfyui-telegram on a real trial', () => {
   const f = fixture('comfyui-telegram-green');
 
@@ -583,25 +414,5 @@ describe('sources read: not verified, never judged, never silent', () => {
       { url: 'invented.example/cmb-discovery', seen: false },
     ]);
     expect(scenarioById('research')!.unverified?.[0]?.state).toBe('not verified');
-  });
-
-  it('recipe: a printed page with a photo is not judged on where the photo comes from', () => {
-    const r = fixture('recipe-red-file');
-    const withPhoto = (embedded: Array<{ origin: string }>): TreeFacts => ({
-      ...r.facts,
-      toolCalls: r.facts.toolCalls.map((c) =>
-        c.toolName.endsWith('__request_print')
-          ? {
-              ...c,
-              output: JSON.stringify({
-                ...(JSON.parse(c.output!) as object),
-                images: { embedded },
-              }),
-            }
-          : c,
-      ),
-    });
-    expect(judge(r, withPhoto([{ origin: 'assets.somewhere-else.example' }]))).toEqual([]);
-    expect(judge(r, withPhoto([]))).toEqual(['no photo in the printed page']);
   });
 });

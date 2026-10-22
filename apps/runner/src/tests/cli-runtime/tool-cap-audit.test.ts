@@ -35,6 +35,7 @@ async function fakeClaudeTurn(opts: CliTurnOptions): Promise<CliTurnResult> {
     cwd: opts.cwd,
     stdin: opts.message,
     timeoutMs: opts.timeoutMs,
+    processScope: opts.processScope,
     ...(opts.maxToolCalls !== undefined ? { maxToolCalls: opts.maxToolCalls } : {}),
     onLine: (line, gate) => {
       countToolUses(state, line, opts.onEvent, gate);

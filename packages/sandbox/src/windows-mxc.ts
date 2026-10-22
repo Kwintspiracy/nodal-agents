@@ -34,17 +34,15 @@
 // Linux il n'est jamais lu, et son absence d'une installation se dit
 // (`SANDBOX_BACKEND_MISSING`) au lieu de faire tomber le runner au démarrage.
 
-import { spawn as spawnHostSide } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PassThrough } from 'node:stream';
 import type * as MxcSdk from '@microsoft/mxc-sdk/v1';
 import type { ContainerRequest } from '@microsoft/mxc-sdk/v1';
-import { windowsSpawnParts } from './command-line';
 import { sandboxDeniedPaths, nodalDeniedEndpoints, NodalPortsUnknown } from './policy';
 import { startNodalProxy, type NodalProxy } from './proxy';
 import { ensureJobHostScript, sandboxHostDir } from './job-host';
+import { HostJobContainer, definedEnv } from './host-container';
 import { MxcBroker, mxcErrorText, type BrokeredContainer, type MxcErrorFields } from './mxc-broker';
 import {
   BrokerNodeUnavailable,
@@ -54,12 +52,10 @@ import {
 } from './broker-node';
 import {
   SandboxStartError,
-  type CommandLaunch,
   type JobContainer,
   type ProcessEnd,
   type SandboxBackend,
   type SandboxStatus,
-  type StartedProcess,
 } from './types';
 
 type MxcModule = typeof MxcSdk;
@@ -134,9 +130,6 @@ export function networkSetup(policy: NetworkPolicy, proxyUrl: string | null): Ne
 /** Le nom sous lequel ce backend apparaît dans le statut et les journaux. */
 export const MXC_BACKEND_NAME = 'mxc-processcontainer';
 
-/** Le temps laissé à l'hôte d'un conteneur pour se dire prêt. */
-const HOST_READY_TIMEOUT_MS = 60_000;
-
 /** Les lecteurs présents, déclarés en lecture seule. Lus une fois par processus. */
 let driveRoots: string[] | undefined;
 function readableDriveRoots(): string[] {
@@ -147,18 +140,6 @@ function readableDriveRoots(): string[] {
     .map((letter) => `${letter}:\\`)
     .filter((root) => existsSync(root));
   return driveRoots;
-}
-
-function definedEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(env)) if (v !== undefined) out[k] = v;
-  return out;
-}
-
-function comspecOf(env: Readonly<Record<string, string | undefined>>): string {
-  // ComSpec de l'environnement de l'ENFANT, comme Node le lit pour `shell: true`.
-  const key = Object.keys(env).find((k) => k.toUpperCase() === 'COMSPEC');
-  return (key && env[key]) || 'cmd.exe';
 }
 
 function hostRequest(
@@ -227,198 +208,6 @@ export function observedOutcome({ end, stderr }: ProbeRun): string {
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? mxcErrorText(e as MxcErrorFields) : String(e);
-}
-
-/**
- * Tue l'arbre d'une commande DEPUIS L'HÔTE Windows : `taskkill /T` lancé dans
- * le conteneur est refusé (« The user name or password is incorrect »,
- * mesuré le 14/10), lancé par le runner il tue l'arbre (mesuré aussi). Les
- * autres processus du conteneur — ceux des autres commandes du job — vivent.
- */
-function killTreeFromHost(pid: number): void {
-  try {
-    const tk = spawnHostSide('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
-    tk.on('error', () => undefined);
-  } catch {
-    /* déjà mort */
-  }
-}
-
-interface PendingCommand {
-  stdout: PassThrough;
-  stderr: PassThrough;
-  pid: number | null;
-  killRequested: boolean;
-  resolve: (end: ProcessEnd) => void;
-}
-
-interface HostMessage {
-  fatal?: string;
-  ready?: boolean;
-  id?: number;
-  started?: number;
-  s?: 'o' | 'e';
-  d?: string;
-  exit?: number | null;
-  signal?: string | null;
-  error?: string;
-}
-
-/**
- * Le conteneur d'un job : un hôte MXC, joint par ses flux standard que le
- * courtier relaie (job-host.ts dit pourquoi), et les commandes qu'il porte.
- */
-class MxcJobContainer implements JobContainer {
-  private nextId = 0;
-  private readonly pending = new Map<number, PendingCommand>();
-  private dead = false;
-  private hostOutput = '';
-  private buffer = '';
-  private readonly exited: Promise<void>;
-  private readyWaiter: { resolve: () => void; reject: (e: Error) => void } | null = null;
-
-  constructor(private readonly container: BrokeredContainer) {
-    container.onOutput((chunk) => this.receive(chunk));
-    // Ce que la racine du conteneur a écrit sur sa sortie d'erreur (une panne
-    // de Node au démarrage de l'hôte) arrive avec son arrêt, par le courtier —
-    // cité, borné. Une panne de l'hôte plus tard arrive par le canal (`fatal`).
-    this.exited = container.exited.then((r) => {
-      // Jamais une raison vide : sans un mot de l'hôte, au moins son code.
-      const said = r.output.trim() || `exit code ${r.code ?? 'unknown'}`;
-      this.hostOutput = `${this.hostOutput}${said}`.slice(-2_000);
-      this.markDead();
-    });
-  }
-
-  get alive(): boolean {
-    return !this.dead;
-  }
-
-  private reason(code: string): string {
-    const said = this.hostOutput.trim();
-    return said ? `${code}: ${said}` : code;
-  }
-
-  private markDead(): void {
-    if (this.dead) return;
-    this.dead = true;
-    this.readyWaiter?.reject(new SandboxStartError(this.reason('SANDBOX_HOST_EXITED')));
-    for (const [id, cmd] of this.pending) {
-      this.pending.delete(id);
-      cmd.stdout.end();
-      cmd.stderr.end();
-      cmd.resolve(
-        cmd.killRequested
-          ? { kind: 'signal' }
-          : { kind: 'error', message: this.reason('SANDBOX_CONTAINER_EXITED') },
-      );
-    }
-  }
-
-  /** Les lignes JSON de l'hôte ; une ligne illisible est ignorée. */
-  private receive(chunk: string): void {
-    this.buffer += chunk;
-    let at: number;
-    while ((at = this.buffer.indexOf('\n')) >= 0) {
-      const line = this.buffer.slice(0, at);
-      this.buffer = this.buffer.slice(at + 1);
-      let m: HostMessage;
-      try {
-        m = JSON.parse(line) as HostMessage;
-      } catch {
-        continue;
-      }
-      this.handle(m);
-    }
-  }
-
-  /** Attend l'hôte, lui donne l'environnement passé, attend son `ready`. */
-  async init(env: Record<string, string>): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new SandboxStartError(this.reason('SANDBOX_HOST_NOT_READY'))),
-        HOST_READY_TIMEOUT_MS,
-      );
-      this.readyWaiter = {
-        resolve: () => {
-          clearTimeout(timer);
-          resolve();
-        },
-        reject: (e) => {
-          clearTimeout(timer);
-          reject(e);
-        },
-      };
-      if (this.dead)
-        this.readyWaiter.reject(new SandboxStartError(this.reason('SANDBOX_HOST_EXITED')));
-      else this.send({ op: 'init', env });
-    });
-    this.readyWaiter = null;
-  }
-
-  private send(message: unknown): void {
-    this.container.write(`${JSON.stringify(message)}\n`);
-  }
-
-  private handle(m: HostMessage): void {
-    if (m.fatal !== undefined) {
-      this.hostOutput = `${this.hostOutput}${m.fatal}`.slice(-2_000);
-      return;
-    }
-    if (m.ready) {
-      this.readyWaiter?.resolve();
-      return;
-    }
-    const cmd = m.id === undefined ? undefined : this.pending.get(m.id);
-    if (!cmd || m.id === undefined) return;
-    if (m.started !== undefined) {
-      cmd.pid = m.started;
-      if (cmd.killRequested) killTreeFromHost(m.started);
-    } else if (m.d !== undefined) {
-      (m.s === 'e' ? cmd.stderr : cmd.stdout).write(Buffer.from(m.d, 'base64'));
-    } else if (m.error !== undefined || 'exit' in m) {
-      this.pending.delete(m.id);
-      cmd.stdout.end();
-      cmd.stderr.end();
-      cmd.resolve(
-        m.error !== undefined
-          ? { kind: 'error', message: m.error }
-          : typeof m.exit === 'number'
-            ? { kind: 'exit', exitCode: m.exit }
-            : { kind: 'signal' },
-      );
-    }
-  }
-
-  async start(launch: CommandLaunch): Promise<StartedProcess> {
-    if (this.dead) {
-      throw new SandboxStartError(this.reason('SANDBOX_CONTAINER_EXITED'));
-    }
-    const id = ++this.nextId;
-    const stdout = new PassThrough();
-    const stderr = new PassThrough();
-    let resolve!: (end: ProcessEnd) => void;
-    const done = new Promise<ProcessEnd>((r) => (resolve = r));
-    const cmd: PendingCommand = { stdout, stderr, pid: null, killRequested: false, resolve };
-    this.pending.set(id, cmd);
-    const parts = windowsSpawnParts(launch.target, comspecOf(launch.env));
-    this.send({ op: 'run', id, ...parts, cwd: launch.cwd, env: definedEnv(launch.env) });
-    return {
-      stdout,
-      stderr,
-      done,
-      kill: () => {
-        if (cmd.killRequested) return;
-        cmd.killRequested = true;
-        if (cmd.pid !== null) killTreeFromHost(cmd.pid);
-      },
-    };
-  }
-
-  async close(): Promise<void> {
-    if (!this.dead) this.container.kill();
-    await this.exited;
-  }
 }
 
 /**
@@ -494,7 +283,7 @@ export function mxcBackend(
       }
       throw e instanceof SandboxStartError ? e : new SandboxStartError(messageOf(e));
     }
-    const container = new MxcJobContainer(opened);
+    const container = new HostJobContainer(opened);
     try {
       await container.init(environment);
     } catch (e) {

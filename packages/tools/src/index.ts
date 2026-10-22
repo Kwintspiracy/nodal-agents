@@ -223,7 +223,6 @@ export {
   safeEnvAllowlistSnapshot,
   runShellCommand,
   runCommandSequence,
-  killProcessTree,
   isGreen,
   sandboxReport,
   sandboxFact,
@@ -315,3 +314,6 @@ export type { WorkspaceEntry } from './builtin/file-ops/workspace-list';
 export { workspacesRoot } from './builtin/file-ops/workspaces-root';
 export { toolsNamedButAbsent } from './personality-tools';
 export { cheminConstate } from './verification/record-constat';
+// Le périmètre de processus d'un job (#750) : un connecteur qui lance un
+// programme par `runCli` (wrangler) le range dans le job, comme `code_task`.
+export { jobProcessScope, openProcessScope, type JobProcessScope } from '@nodal-agents/sandbox';

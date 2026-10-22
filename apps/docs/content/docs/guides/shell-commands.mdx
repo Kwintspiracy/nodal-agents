@@ -297,7 +297,15 @@ safety net.
   outside it. That sets where the command starts, not what it can reach: see
   [what this list does not do](#what-an-agent-may-not-do-with-a-shell).
 - Default timeout: 300 seconds. Pass `timeout_seconds` to override. On timeout
-  the command and its child processes are killed.
+  the command and its child processes are killed. **Stop** kills the running
+  command at once, the same way.
+- Background processes: a process a command leaves running (a dev server,
+  `start /b …` on Windows, `… &` on Unix) keeps running for the next commands
+  of the same task, so a later command can reach the server. When the task
+  ends, however it ends (done, failed, stopped, or lost when Nodal restarted),
+  Nodal stops every process the task started, detached ones included. The
+  same goes for a coding CLI the agent runs (`code_task`, a Claude Code or
+  Codex runtime) and for the local MCP servers of the task.
 - Output cap: approximately 100 000 characters per stream. For verbose commands,
   redirect output to a file in the workspace and read it back with the file
   tools.
