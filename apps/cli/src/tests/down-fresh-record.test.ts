@@ -28,13 +28,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runDown } from '../commands/down.ts';
-import {
-  isPidAlive,
-  killPidTree,
-  readPids,
-  recordServiceTree,
-  waitForPidDead,
-} from '../lib/processes.ts';
+import { isPidAlive, readPids, recordServiceTree, waitForPidDead } from '../lib/processes.ts';
 import { processTable } from './process-table-available.ts';
 
 const onWindows = process.platform === 'win32';
@@ -44,16 +38,6 @@ const onWindows = process.platform === 'win32';
 const canRun = !onWindows || processTable.available;
 
 const spawned: ChildProcess[] = [];
-
-/**
- * Is this stand-in still the process WE spawned? The handle knows: once the
- * child has exited (killed by `down`, say) its pid is free and Windows hands it
- * to the next process that asks, so `isPidAlive(pid)` alone could tree-kill a
- * stranger that merely inherited the number.
- */
-function ours(child: ChildProcess): boolean {
-  return child.pid !== undefined && child.exitCode === null && child.signalCode === null;
-}
 
 function spawnIdle(): ChildProcess {
   const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
@@ -81,9 +65,12 @@ async function runDownCaptured(): Promise<{ stderr: string }> {
   return { stderr: said.join('') };
 }
 
-afterEach(async () => {
+afterEach(() => {
   for (const child of spawned.splice(0)) {
-    if (ours(child)) await killPidTree(child.pid!);
+    // Through its handle, never by number (#841): a stand-in is a lone process,
+    // and `child.kill` does nothing once it has exited (killed by `down`, say),
+    // when its pid may already belong to a stranger.
+    child.kill('SIGKILL');
   }
 }, 60_000);
 

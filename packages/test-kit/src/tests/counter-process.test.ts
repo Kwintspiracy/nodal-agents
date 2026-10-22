@@ -74,7 +74,7 @@ describe('counterRise: a bounded wait for a counting process, which says why it 
       expect(rise.why).toBe('');
       expect(rise.value).toBeGreaterThan(floor);
     } finally {
-      process.kill(d.pid);
+      d.watch.kill();
       d.watch.release();
     }
   });
@@ -82,7 +82,7 @@ describe('counterRise: a bounded wait for a counting process, which says why it 
   it('a daemon killed from outside ends the wait at once: dead, no crash record', async () => {
     const d = await startCounting('killed');
     try {
-      process.kill(d.pid, 'SIGKILL');
+      expect(d.watch.kill('SIGKILL')).toBe(true);
       await untilDead(d.watch);
       const floor = readCounter(d.counter);
       const started = Date.now();
@@ -113,7 +113,7 @@ describe('counterRise: a bounded wait for a counting process, which says why it 
       expect(readFileSync(crashRecordOf(d.counter), 'utf8')).toMatch(/^Error: E(PERM|ACCES)/);
     } finally {
       chmodSync(d.counter, 0o644);
-      if (d.watch.alive()) process.kill(d.pid);
+      d.watch.kill();
       d.watch.release();
     }
   });

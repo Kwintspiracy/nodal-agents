@@ -22,6 +22,7 @@ import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { attendreLaStack, lancerEtAttendre, finDuJournal, estPrete } from '../lib/boot-stack.mjs';
+import { watchProcess } from '../../packages/test-kit/src/process-watch.ts';
 
 describe('attendreLaStack', () => {
   // Horloge et sondes simulées : chaque appel à `attendre` avance le temps.
@@ -153,8 +154,14 @@ describe('lancerEtAttendre, sur de VRAIS processus', () => {
     });
     expect(v.etat).toBe('prete');
     // Toujours vivant : une redirection (307, l'écran de connexion) compte comme une réponse.
-    expect(() => process.kill(v.pid, 0)).not.toThrow();
-    process.kill(v.pid);
+    // Tenu avant d'être tué, jamais tué par son seul numéro (#841).
+    const veille = await watchProcess(v.pid);
+    try {
+      expect(veille.alive()).toBe(true);
+      veille.kill();
+    } finally {
+      veille.release();
+    }
   });
 
   it('la stack SURVIT à la fin du processus qui l’a lancée (l’étape suivante du workflow la teste)', async () => {
@@ -195,7 +202,12 @@ describe('lancerEtAttendre, sur de VRAIS processus', () => {
       redirect: 'manual',
     });
     expect(r.status).toBe(307);
-    process.kill(v.pid);
+    const veille = await watchProcess(v.pid);
+    try {
+      veille.kill();
+    } finally {
+      veille.release();
+    }
   }, 40_000);
 
   it('l’adresse répond AVANT le lancement : rien n’est lancé, et le verdict le dit', async () => {
