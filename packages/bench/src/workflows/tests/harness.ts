@@ -225,6 +225,7 @@ export async function play(
     unlistedMcpServers: [],
     teamMcpServers: playEnv.teamMcpServers ?? [],
     benchPrinter: playEnv.benchPrinter ?? { kind: 'absent' },
+    processStarters: [],
     startedMs: 0,
     ...(playEnv.subject ? { subject: playEnv.subject } : {}),
   };

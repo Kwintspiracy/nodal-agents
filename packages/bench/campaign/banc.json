@@ -68,7 +68,11 @@
         { "agent": "chercheur", "instructions": "Recherche approfondie, rapport avec sources" },
         { "agent": "imageur", "instructions": "Génération d'images" }
       ],
-      "printConnector": null
+      "printConnector": {
+        "mcpServer": "bench-printer",
+        "tools": ["request_print", "get_print_request"],
+        "autoApprove": ["request_print", "get_print_request"]
+      }
     },
     {
       "slug": "juge",

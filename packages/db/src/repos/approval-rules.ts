@@ -5,7 +5,7 @@
 // configuration à son instance par ces fonctions (règle 11). La garde
 // d'accès (le propriétaire seul hors local-trust) reste dans l'action.
 
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { ApprovalRuleCondition } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { approvalRules } from '../schema/approvals.ts';
@@ -64,6 +64,79 @@ export async function refuseGlobalGrantOverFolderRule(
 }
 
 export type RunCommandRuleAction = 'auto_approve' | 'require_approval' | 'block';
+
+export interface SetApprovalRuleInput {
+  /** L'agent depuis l'écran duquel la règle est posée ; l'appelant a vérifié qu'il est de l'espace. */
+  readonly agentId: string;
+  readonly toolName: string;
+  /** null : la règle est retirée, l'outil revient à son propre défaut. */
+  readonly action: RunCommandRuleAction | null;
+  /** `agent` : cet agent seulement ; `entity` : tout l'espace (agent_id NULL). */
+  readonly scope: 'agent' | 'entity';
+  /** La condition de la règle (`workspacePath`, #346), `{}` sans condition. */
+  readonly conditionJson: Readonly<Record<string, string>>;
+  /** La perte d'une règle de dossier a été montrée et acceptée (#401). */
+  readonly confirmWidening?: boolean;
+}
+
+/**
+ * Une règle d'approbation sur un outil, telle que l'écran la pose
+ * (`setAgentApprovalRuleAction` : la ligne d'un outil de l'onglet Autonomie,
+ * la carte « Always allow ») : le garde de dossier et son écriture dans la
+ * MÊME transaction (Reviewer C, passe 2), puis l'upsert sur (espace, agent,
+ * outil) qui réécrit la condition. Sortie de l'action pour que le banc (#794)
+ * pose la même règle par le même chemin ; la vérification que l'agent est de
+ * l'espace, et que le dossier est l'un des siens, reste chez l'appelant.
+ */
+export async function setApprovalRuleRepo(
+  db: AnyDrizzleDb,
+  entityId: string,
+  input: SetApprovalRuleInput,
+): Promise<{ refused: string } | { ok: true }> {
+  const { agentId, toolName, action, scope, conditionJson, confirmWidening } = input;
+  // agent_id IS NULL est la portée de l'espace (index unique NULLS NOT DISTINCT).
+  const ruleAgentId = scope === 'entity' ? null : agentId;
+  const scopeMatch =
+    ruleAgentId === null ? isNull(approvalRules.agentId) : eq(approvalRules.agentId, agentId);
+  const condition = { ...conditionJson };
+  const refused = await db.transaction(async (tx) => {
+    // `confirmWidening` ne DÉSACTIVE pas le garde : il dit que la perte a été
+    // montrée et acceptée (#401). Le garde n'a jamais protégé l'élargissement
+    // lui-même, seulement son silence.
+    if (
+      action === 'auto_approve' &&
+      condition['workspacePath'] === undefined &&
+      scope === 'agent' &&
+      confirmWidening !== true
+    ) {
+      const message = await refuseGlobalGrantOverFolderRule(tx, entityId, agentId, toolName);
+      if (message) return message;
+    }
+    if (action === null) {
+      await tx
+        .delete(approvalRules)
+        .where(
+          and(
+            eq(approvalRules.entityId, entityId),
+            scopeMatch,
+            eq(approvalRules.toolName, toolName),
+          ),
+        );
+      return null;
+    }
+    // L'upsert sur la contrainte unique (DB-1, audit #2) : une seule ligne
+    // canonique survit à deux gestes concurrents.
+    await tx
+      .insert(approvalRules)
+      .values({ entityId, agentId: ruleAgentId, toolName, action, conditionJson: condition })
+      .onConflictDoUpdate({
+        target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
+        set: { action, conditionJson: condition, updatedAt: new Date() },
+      });
+    return null;
+  });
+  return refused === null ? { ok: true } : { refused };
+}
 
 /**
  * La ligne « Run commands » de l'onglet Autonomie (#468) : une des trois

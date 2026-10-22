@@ -18,6 +18,7 @@ import {
   drainJobInbox,
   pendingHeadsOfConversation,
   approvalsOldestFirst,
+  decryptMcpServerEnv,
 } from '@nodal-agents/db';
 import {
   agentJobs,
@@ -2573,12 +2574,10 @@ async function runJobTracked(
         if (ms.transport === 'stdio') {
           // stdio: command + args + env vars (each value encrypted).
           if (!ms.command) continue; // bad row, skip silently
-          const rawEnv = (ms.envVars ?? {}) as Record<string, string>;
           let decryptedEnv: Record<string, string>;
           try {
-            decryptedEnv = Object.fromEntries(
-              Object.entries(rawEnv).map(([k, v]) => [k, decrypt(v)]),
-            );
+            // La lecture de `env_vars` que le banc fait aussi (#794).
+            decryptedEnv = decryptMcpServerEnv(ms.envVars, decrypt);
           } catch (err) {
             // Log loudly (F3, invariant #4) — a wrong/rotated master key
             // silently dropping an MCP server surfaces later as a missing tool.

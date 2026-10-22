@@ -6,7 +6,9 @@
 // consigne de délégation, la chaîne de repli nettoyée, la garde de dossier
 // d'une règle d'accord, le préréglage lecture seule qui ne retire que ses
 // propres lignes, le connecteur d'un autre espace refusé, le masquage hérité
-// d'un dossier, la skill de l'espace qui l'emporte sur celle du système.
+// d'un dossier, la skill de l'espace qui l'emporte sur celle du système, le
+// serveur MCP stdio et son environnement chiffré valeur par valeur, la règle
+// d'un outil posée comme l'écran la pose.
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { and, eq } from 'drizzle-orm';
@@ -19,9 +21,11 @@ import { createWorkspaceRepo, setRunBudgetRepo } from '../repos/workspaces.ts';
 import { createLlmKeyRepo } from '../repos/llm-keys.ts';
 import {
   READONLY_PRESET_TOOLS,
+  setApprovalRuleRepo,
   setReadOnlyPresetRepo,
   setRunCommandRuleRepo,
 } from '../repos/approval-rules.ts';
+import { createStdioMcpServerRepo, decryptMcpServerEnv } from '../repos/mcp-servers.ts';
 import { createApiKeyConnectorRepo, setAgentConnectorAssignmentRepo } from '../repos/connectors.ts';
 import { addAgentWorkspaceRepo } from '../repos/agent-workspaces.ts';
 import { resolveSkillIdsBySlug } from '../repos/skills.ts';
@@ -199,6 +203,92 @@ describe('the approval rules @cap:regler-autonomie/moteur', () => {
     await setRunCommandRuleRepo(db, seed.entityId, seed.agentId, null);
   });
 
+  // setApprovalRuleRepo : le chemin de `setAgentApprovalRuleAction` (l'écran)
+  // et de l'applicateur du banc (#794), sur n'importe quel outil.
+  it('a tool rule: for one agent or the whole workspace, replaced, removed, its condition rewritten', async () => {
+    const tool = 'bench_printer__request_print';
+    const rows = () =>
+      db
+        .select({
+          agentId: schema.approvalRules.agentId,
+          action: schema.approvalRules.action,
+          conditionJson: schema.approvalRules.conditionJson,
+        })
+        .from(schema.approvalRules)
+        .where(
+          and(
+            eq(schema.approvalRules.entityId, seed.entityId),
+            eq(schema.approvalRules.toolName, tool),
+          ),
+        );
+    const rule = (over: Partial<Parameters<typeof setApprovalRuleRepo>[2]>) =>
+      setApprovalRuleRepo(db, seed.entityId, {
+        agentId: seed.agentId,
+        toolName: tool,
+        action: 'auto_approve',
+        scope: 'agent',
+        conditionJson: {},
+        ...over,
+      });
+    expect(await rule({})).toEqual({ ok: true });
+    expect(await rows()).toEqual([
+      { agentId: seed.agentId, action: 'auto_approve', conditionJson: {} },
+    ]);
+    // Replaced in place: one row, never two.
+    expect(await rule({ action: 'block' })).toEqual({ ok: true });
+    expect(await rows()).toEqual([{ agentId: seed.agentId, action: 'block', conditionJson: {} }]);
+    // The workspace scope is its own row (agent_id NULL), beside the agent's.
+    expect(await rule({ scope: 'entity', action: 'require_approval' })).toEqual({ ok: true });
+    expect((await rows()).map((r) => [r.agentId, r.action]).sort()).toEqual(
+      [
+        [seed.agentId, 'block'],
+        [null, 'require_approval'],
+      ].sort(),
+    );
+    // Removing one scope leaves the other.
+    expect(await rule({ action: null })).toEqual({ ok: true });
+    expect(await rows()).toEqual([
+      { agentId: null, action: 'require_approval', conditionJson: {} },
+    ]);
+    expect(await rule({ scope: 'entity', action: null })).toEqual({ ok: true });
+    expect(await rows()).toEqual([]);
+  });
+
+  it('a tool rule never widens a rule confined to a folder in silence; the widening shown and accepted passes', async () => {
+    const tool = 'bench_printer__get_print_request';
+    const where = and(
+      eq(schema.approvalRules.agentId, seed.agentId),
+      eq(schema.approvalRules.toolName, tool),
+    );
+    const base = {
+      agentId: seed.agentId,
+      toolName: tool,
+      action: 'auto_approve' as const,
+      scope: 'agent' as const,
+    };
+    expect(
+      await setApprovalRuleRepo(db, seed.entityId, {
+        ...base,
+        conditionJson: { workspacePath: 'D:/work/project' },
+      }),
+    ).toEqual({ ok: true });
+    expect(await setApprovalRuleRepo(db, seed.entityId, { ...base, conditionJson: {} })).toEqual({
+      refused: `${tool} is already approved for this agent only inside D:/work/project. Change that rule on the approval card before allowing it everywhere.`,
+    });
+    const [kept] = await db.select().from(schema.approvalRules).where(where);
+    expect(kept!.conditionJson).toEqual({ workspacePath: 'D:/work/project' });
+    expect(
+      await setApprovalRuleRepo(db, seed.entityId, {
+        ...base,
+        conditionJson: {},
+        confirmWidening: true,
+      }),
+    ).toEqual({ ok: true });
+    const [widened] = await db.select().from(schema.approvalRules).where(where);
+    expect(widened!.conditionJson).toEqual({});
+    await db.delete(schema.approvalRules).where(where);
+  });
+
   it('the read-only preset blocks its tools, and removing it keeps a rule set by hand', async () => {
     await db.insert(schema.approvalRules).values({
       entityId: seed.entityId,
@@ -331,5 +421,70 @@ describe('resolveSkillIdsBySlug', () => {
     expect(found.get('obsidian')).toBe(own!.id);
     expect(found.get('obsidian')).not.toBe(system!.id);
     expect(found.has('citation-discipline')).toBe(false);
+  });
+});
+
+describe('a stdio MCP server and its environment @cap:connecter-un-service/moteur', () => {
+  it('is written active, its environment encrypted value by value, and read back as the runner reads it', async () => {
+    const { id } = await createStdioMcpServerRepo(db, seed.entityId, {
+      name: 'Bench printer',
+      slug: 'bench-printer',
+      command: 'node',
+      args: ['server.js'],
+      env: { RECORDS_DIR: 'D:/records', TOKEN: 'secret-token' },
+      availableTools: [{ name: 'request_print', inputSchema: {} }],
+      instructions: 'Print requests wait here.',
+    });
+    const [row] = await db.select().from(schema.mcpServers).where(eq(schema.mcpServers.id, id));
+    expect(row).toMatchObject({
+      entityId: seed.entityId,
+      slug: 'bench-printer',
+      transport: 'stdio',
+      command: 'node',
+      args: ['server.js'],
+      active: true,
+      instructions: 'Print requests wait here.',
+      availableTools: [{ name: 'request_print', inputSchema: {} }],
+    });
+    const stored = row!.envVars as Record<string, string>;
+    expect(Object.keys(stored).sort()).toEqual(['RECORDS_DIR', 'TOKEN']);
+    for (const v of Object.values(stored)) expect(v.startsWith('enc:v1:')).toBe(true);
+    expect(JSON.stringify(stored)).not.toContain('secret-token');
+    expect(decrypt(stored['TOKEN']!)).toBe('secret-token');
+    expect(decryptMcpServerEnv(row!.envVars)).toEqual({
+      RECORDS_DIR: 'D:/records',
+      TOKEN: 'secret-token',
+    });
+  });
+
+  it("encrypts with the caller's function when it lends one (the runner lends it to create_mcp)", async () => {
+    const { id } = await createStdioMcpServerRepo(
+      db,
+      seed.entityId,
+      {
+        name: 'x',
+        slug: 'x-server',
+        command: 'node',
+        args: [],
+        env: { A: 'one' },
+        availableTools: [],
+        instructions: null,
+      },
+      (v) => `lent:${v}`,
+    );
+    const [row] = await db.select().from(schema.mcpServers).where(eq(schema.mcpServers.id, id));
+    expect(row!.envVars).toEqual({ A: 'lent:one' });
+  });
+
+  it('an environment that cannot be read is said, never a variable dropped in silence', () => {
+    expect(decryptMcpServerEnv(null)).toEqual({});
+    expect(() => decryptMcpServerEnv(['a'])).toThrow(
+      /mcp_server_env_invalid: env_vars is not an object/,
+    );
+    expect(() => decryptMcpServerEnv({ A: 3 })).toThrow(
+      /mcp_server_env_invalid: A is not a string/,
+    );
+    // A value written in clear does not decrypt: the runner would not start the server.
+    expect(() => decryptMcpServerEnv({ A: 'D:/records' })).toThrow();
   });
 });

@@ -209,7 +209,14 @@ describe('a campaign, end to end, without a model', () => {
     expect(runs[0]!.allowedReach!.map((r) => `${r.agent}:${r.via}`)).toEqual([
       'chercheur:tavily',
       'chercheur:firecrawl',
+      'chef:bench-printer',
     ]);
+    // L'imprimante du banc enregistre DANS le dossier de la campagne (il part
+    // avec l'instance), et le juge de chaque essai lit ce dossier-là.
+    const instanceHome = campaignHome('20261022-110000-r1r1', userHome);
+    expect(summary.applied!.printerRecordsDir).toBe(join(instanceHome, 'bench-printer-records'));
+    expect(runs[0]!.benchPrinterRecordsDir).toBe(summary.applied!.printerRecordsDir);
+    expect(existsSync(summary.applied!.printerRecordsDir!)).toBe(false);
   });
 
   it('exports each trial’s line, facts and files before the reset wipes them, and a summary at the end', async () => {

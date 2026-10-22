@@ -195,6 +195,7 @@ export function instancePaths(instance: CampaignInstance): {
   benchConfig: string;
   marker: string;
   folders: string;
+  printerRecords: string;
 } {
   const env = { [NODALAI_HOME_ENV]: instance.home };
   return {
@@ -203,6 +204,9 @@ export function instancePaths(instance: CampaignInstance): {
     benchConfig: join(instance.home, 'bench.json'),
     marker: join(instance.home, 'campaign.json'),
     folders: join(instance.home, 'bench-folders'),
+    // Ce que l'imprimante du banc a reçu : dans le dossier de la campagne,
+    // effacé avec lui ; exporté dans les preuves avant (run.ts).
+    printerRecords: join(instance.home, 'bench-printer-records'),
   };
 }
 
