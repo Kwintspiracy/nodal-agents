@@ -15,7 +15,7 @@
     "serve": "tsx src/launch.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@nodal-agents/db": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
     "zod": "^4.6.6"

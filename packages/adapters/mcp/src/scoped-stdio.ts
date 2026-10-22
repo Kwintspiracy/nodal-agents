@@ -55,6 +55,22 @@ const parseCommand = (
 /** Le délai laissé au serveur pour sortir de lui-même, son entrée fermée (celui du SDK). */
 const GRACEFUL_EXIT_MS = 2_000;
 
+/**
+ * Le plafond d'UN message JSON-RPC lu sur la sortie du serveur (le `ReadBuffer`
+ * du SDK, borné depuis la 1.30).
+ *
+ * Le SDK le fixe à 10 Mo, pour tous. Ce n'est pas le bon plafond ici : le
+ * résultat d'un outil MCP arrive en UN message, et la plateforme sait en
+ * recevoir de gros (des pages rendues en images : dix images de 1 Mo font
+ * 14 Mo en base64) avant de décider elle-même ce qu'elle passe au modèle
+ * (`result.ts` : ce qui tient dans une requête, le reste dit et gardé hors
+ * ligne). 10 Mo aurait fermé la connexion sur un résultat que Nodal traite. Le
+ * plafond reste ce qu'il doit être, une borne contre un serveur emballé qui
+ * n'envoie jamais de fin de ligne, mais à la taille de ce que le produit
+ * accepte.
+ */
+export const MCP_STDIO_MAX_MESSAGE_BYTES = 100 * 1024 * 1024;
+
 type Started = Awaited<ReturnType<JobProcessScope['startOwned']>>;
 
 export interface ScopedStdioParams {
@@ -62,6 +78,11 @@ export interface ScopedStdioParams {
   args: readonly string[];
   /** L'environnement du connecteur, posé sur celui que le SDK hérite par défaut. */
   env: Record<string, string>;
+  /**
+   * Le plafond d'un message lu (comme `StdioServerParameters.maxBufferSize` du
+   * SDK). Par défaut `MCP_STDIO_MAX_MESSAGE_BYTES`.
+   */
+  maxBufferSize?: number;
 }
 
 export class ScopedStdioTransport implements Transport {
@@ -70,7 +91,14 @@ export class ScopedStdioTransport implements Transport {
   onmessage?: (message: JSONRPCMessage) => void;
 
   private proc: Started | null = null;
-  private readonly readBuffer = new ReadBuffer();
+  private readonly readBuffer: ReadBuffer;
+  private readonly maxBufferSize: number;
+  /**
+   * Pourquoi CE transport a fermé la connexion de lui-même (et non le serveur
+   * ou l'appelant), s'il l'a fait. Le SDK ne transmet à l'appel en cours que
+   * « Connection closed » : `explainClosed` (client.ts) ajoute cette raison.
+   */
+  closeReason?: Error;
   private closed = false;
   /** Le périmètre que CE transport a ouvert, faute d'un job : il le ferme. */
   private readonly ownScope: JobProcessScope | null;
@@ -82,6 +110,8 @@ export class ScopedStdioTransport implements Transport {
   ) {
     this.ownScope = scope ? null : openProcessScope(`mcp-stdio:${randomUUID()}`);
     this.scope = scope ?? (this.ownScope as JobProcessScope);
+    this.maxBufferSize = params.maxBufferSize ?? MCP_STDIO_MAX_MESSAGE_BYTES;
+    this.readBuffer = new ReadBuffer({ maxBufferSize: this.maxBufferSize });
   }
 
   async start(): Promise<void> {
@@ -109,8 +139,28 @@ export class ScopedStdioTransport implements Transport {
       throw new Error(failure);
     }
     this.proc = proc;
+    // Comme le SDK (>= 1.30) : un message qui dépasse le plafond du
+    // `ReadBuffer` fait LEVER `append` ; la connexion est fermée et l'erreur
+    // remontée, jamais laissée sortir du gestionnaire (exception non rattrapée
+    // du runner). Contrairement au SDK, la CAUSE est gardée (`closeReason`) :
+    // l'appel en cours échoue avec « Connection closed » côté SDK, et la raison
+    // doit atteindre celui qui l'a lancé. Une fois la connexion condamnée, les
+    // morceaux suivants (le serveur écrit pendant le délai de grâce) sont
+    // ignorés : l'erreur est dite UNE fois.
     proc.stdout?.on('data', (chunk: Buffer) => {
-      this.readBuffer.append(chunk);
+      if (this.closeReason) return;
+      try {
+        this.readBuffer.append(chunk);
+      } catch (e) {
+        this.closeReason = new Error(
+          `the MCP server "${this.params.command}" sent a message larger than ${this.maxBufferSize / (1024 * 1024)} MiB, ` +
+            `so Nodal closed the connection (${(e as Error).message})`,
+        );
+        this.readBuffer.clear();
+        this.onerror?.(this.closeReason);
+        this.close().catch(() => {});
+        return;
+      }
       this.processReadBuffer();
     });
     proc.stdout?.on('error', (e: Error) => this.onerror?.(e));
