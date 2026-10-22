@@ -46,15 +46,22 @@ vi.mock('../lib/postgres.ts', async (importOriginal) => {
 });
 
 import { spawn, type ChildProcess } from 'node:child_process';
+import { execa } from 'execa';
+import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { stopPostgresGracefully, type KillContext } from '../commands/down.ts';
+import { runDown, stopPostgresGracefully, type KillContext } from '../commands/down.ts';
+import { runReset } from '../commands/reset.ts';
+import { PG_DATA_DIR } from '../lib/config.ts';
+import { resolvePgCtl } from '../lib/postgres.ts';
 import { isPidAlive, waitForPidDead } from '../lib/processes.ts';
+import { processTable } from './process-table-available.ts';
 
 const lockfile = join(home, 'pg-data', 'postmaster.pid');
 
 let stranger: ChildProcess;
 let said: string[];
+let printed: string[];
 
 function context(overrides: Partial<KillContext>): KillContext {
   return {
@@ -75,6 +82,7 @@ function writeLockfile(pid: number): void {
 beforeEach(() => {
   stops.pids.length = 0;
   said = [];
+  printed = [];
   stranger = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
     stdio: 'ignore',
     windowsHide: true,
@@ -83,7 +91,9 @@ beforeEach(() => {
     said.push(String(chunk));
     return true;
   }) as never);
-  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'log').mockImplementation(((line: unknown) => {
+    printed.push(String(line));
+  }) as never);
 });
 
 afterEach(async () => {
@@ -106,7 +116,7 @@ describe('down and the postmaster named by the lockfile @cap:installer-et-demarr
       context({ ownedPostgresPids: new Set(), postgresReadingWorked: false }),
     );
 
-    expect(stopped).toBe(false);
+    expect(stopped).toBe('refused');
     expect(said.join('')).toContain(`KILL_REFUSED code=POSTGRES_UNCONFIRMED pid=${stranger.pid}`);
     expect(isPidAlive(stranger.pid!)).toBe(true);
     expect(stops.pids).toEqual([]);
@@ -121,7 +131,7 @@ describe('down and the postmaster named by the lockfile @cap:installer-et-demarr
       context({ ownedPostgresPids: new Set(), postgresReadingWorked: true }),
     );
 
-    expect(stopped).toBe(false);
+    expect(stopped).toBe('refused');
     expect(said.join('')).toContain(`KILL_REFUSED code=FOREIGN_POSTGRES pid=${stranger.pid}`);
     expect(isPidAlive(stranger.pid!)).toBe(true);
     expect(stops.pids).toEqual([]);
@@ -143,7 +153,7 @@ describe('down and the postmaster named by the lockfile @cap:installer-et-demarr
 
     const stopped = await stopPostgresGracefully(context({}));
 
-    expect(stopped).toBe(false);
+    expect(stopped).toBe('refused');
     expect(said.join('')).toContain('KILL_REFUSED code=POSTGRES_UNCONFIRMED');
     expect(stops.pids).toEqual([]);
   });
@@ -156,7 +166,7 @@ describe('down and the postmaster named by the lockfile @cap:installer-et-demarr
 
     const stopped = await stopPostgresGracefully(context({}));
 
-    expect(stopped).toBe(false);
+    expect(stopped).toBe('none');
     expect(stops.pids).toEqual([]);
     expect(existsSync(lockfile)).toBe(true);
   });
@@ -168,8 +178,94 @@ describe('down and the postmaster named by the lockfile @cap:installer-et-demarr
       context({ ownedPostgresPids: new Set([stranger.pid!]), postgresReadingWorked: true }),
     );
 
-    expect(stopped).toBe(true);
+    expect(stopped).toBe('stopped');
     expect(stops.pids).toEqual([stranger.pid]);
     expect(await waitForPidDead(stranger.pid!, 10_000)).toBe(true);
   });
+
+  it('names the command to stop it by hand, with the REAL data dir, and says it will keep refusing', async () => {
+    writeLockfile(stranger.pid!);
+
+    await stopPostgresGracefully(context({ postgresReadingWorked: true }));
+
+    const text = printed.join('\n');
+    const pgCtl = await resolvePgCtl();
+    if (pgCtl !== null) {
+      expect(text).toContain(`"${pgCtl}" stop -D "${PG_DATA_DIR}" -m fast`);
+    }
+    expect(text).toContain(
+      process.platform === 'win32' ? `Stop-Process -Id ${stranger.pid}` : `kill ${stranger.pid}`,
+    );
+    expect(text).toContain('will keep refusing this pid until its ownership can be proven');
+    expect(text).toContain('#840');
+    // Said, not done.
+    expect(isPidAlive(stranger.pid!)).toBe(true);
+    expect(stops.pids).toEqual([]);
+  });
+});
+
+// The whole `runDown`, nothing injected: the reading is the real probe, which
+// cannot own a process that is not a postmaster of this data dir.
+const canRunDown = process.platform !== 'win32' || processTable.available;
+
+describe('down summary when Postgres is refused @cap:installer-et-demarrer/moteur', () => {
+  it.skipIf(!canRunDown)(
+    'does not say stopped, names the postmaster, and returns it as unstopped',
+    async () => {
+      writeLockfile(stranger.pid!);
+
+      const result = await runDown();
+
+      const text = printed.join('\n');
+      expect(result.unstopped).toEqual([`postgres (pid ${stranger.pid})`]);
+      expect(text).toContain('NOT everything was stopped');
+      expect(text).toContain(`postgres (pid ${stranger.pid})`);
+      expect(text).not.toContain('Nodal-Agents stopped');
+      expect(text).not.toContain('No running Nodal-Agents processes found');
+      expect(isPidAlive(stranger.pid!)).toBe(true);
+      expect(stops.pids).toEqual([]);
+    },
+    120_000,
+  );
+
+  it.skipIf(!canRunDown)(
+    'the CLI exits non-zero and prints the same summary',
+    async () => {
+      writeLockfile(stranger.pid!);
+      const cliDir = fileURLToPath(new URL('../..', import.meta.url));
+
+      const run = await execa(
+        process.execPath,
+        ['--import', 'tsx', join(cliDir, 'src', 'index.ts'), 'down'],
+        {
+          cwd: cliDir,
+          env: { NODALAI_HOME: home },
+          extendEnv: true,
+          reject: false,
+          timeout: 110_000,
+        },
+      );
+
+      expect(run.exitCode).toBe(1);
+      expect(run.stdout).toContain('NOT everything was stopped');
+      expect(run.stdout).not.toContain('Nodal-Agents stopped');
+      expect(run.stderr).toContain(`KILL_REFUSED`);
+      expect(isPidAlive(stranger.pid!)).toBe(true);
+    },
+    120_000,
+  );
+
+  it.skipIf(!canRunDown)(
+    'reset deletes nothing under a postmaster that was refused',
+    async () => {
+      writeLockfile(stranger.pid!);
+
+      await expect(runReset({ yes: true })).rejects.toThrow(/Nothing was deleted/);
+
+      // The data directory, lockfile included, is still there.
+      expect(existsSync(lockfile)).toBe(true);
+      expect(isPidAlive(stranger.pid!)).toBe(true);
+    },
+    120_000,
+  );
 });

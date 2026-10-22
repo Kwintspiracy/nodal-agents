@@ -26,7 +26,15 @@ export async function runReset(options: { yes?: boolean } = {}): Promise<void> {
 
   // Stop any running processes first
   console.log(chalk.yellow('Stopping any running processes…'));
-  await runDown();
+  const { unstopped } = await runDown();
+  if (unstopped.length > 0) {
+    // The data directory is not deleted under a service that is still running:
+    // a live postmaster holds pg-data, and a runner holds the files in it.
+    throw new Error(
+      `Nothing was deleted: ${unstopped.join(', ')} is still running (see above). ` +
+        'Stop it, then run `nodal-agents reset` again.',
+    );
+  }
 
   // Remove the config directory
   if (existsSync(CONFIG_DIR)) {
