@@ -12,14 +12,23 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
-/** Les morceaux de chemin qui n'appartiennent qu'au studio. */
-export const STUDIO_PATH_MARKERS = ['bench-studio', '.next-studio'];
+/**
+ * Les morceaux de chemin qui n'appartiennent qu'au banc : le studio, et le
+ * serveur d'impression du banc (packages/bench/src/printer, #794).
+ */
+export const STUDIO_PATH_MARKERS = ['bench-studio', '.next-studio', 'bench-printer'];
 /**
  * Les littéraux qui n'existent que dans le code du studio : la garde de ses
  * routes (apps/web/src/lib/bench-studio/guard.ts) et sa lecture des fixtures
  * (packages/bench/src/studio/data.ts).
  */
-export const STUDIO_CONTENT_MARKERS = ['studio_not_behind_filter', 'studio_no_fixture'];
+export const STUDIO_CONTENT_MARKERS = [
+  'studio_not_behind_filter',
+  'studio_no_fixture',
+  // Le format des enregistrements de l'imprimante du banc (printer/record.ts) :
+  // ce serveur n'imprime rien et ne vit qu'avec le banc, jamais dans le produit.
+  'bench_printer_record_v1',
+];
 
 /**
  * Les traces du studio sous `dir`, en chemins relatifs. Vide = absent.
