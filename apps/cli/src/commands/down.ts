@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   readPids,
+  retainPids,
   clearPids,
   isPidAlive,
   killPidTree,
@@ -16,8 +17,11 @@ import {
   type ProcessRecord,
 } from '../lib/processes.ts';
 import { PG_DATA_DIR } from '../lib/config.ts';
-import { importEmbeddedPostgres } from '../lib/embedded-postgres-module.ts';
-import { readPostmasterPid, postgresProcessesForDataDir } from '../lib/postgres.ts';
+import {
+  readPostmasterPid,
+  postgresProcessesForDataDir,
+  stopOrphanPostgres,
+} from '../lib/postgres.ts';
 import {
   confirmRecordedPid,
   formatRefusal,
@@ -58,6 +62,12 @@ function liveOf(snapshot: Map<number, ProcessRecord>, pid: number): LiveProcess 
 }
 
 /**
+ * What became of one recorded service pid. `refused` and `alive` are the two
+ * outcomes where the process is still running and the record must outlive `down`.
+ */
+type KillOutcome = 'stopped' | 'gone' | 'refused' | 'alive';
+
+/**
  * Stop one service by pid, tree and all, and report what actually happened.
  *
  * `process.kill(pid,'SIGTERM')` used to stand here, and it lied twice over on
@@ -66,20 +76,20 @@ function liveOf(snapshot: Map<number, ProcessRecord>, pid: number): LiveProcess 
  * so `down` printed "Stopped web" over a web that was still serving. Now the
  * whole tree is killed and the pid is re-probed before anything is claimed.
  */
-async function killPid(pid: number, label: string, ctx: KillContext): Promise<boolean> {
+async function killPid(pid: number, label: string, ctx: KillContext): Promise<KillOutcome> {
   if (!isPidAlive(pid)) {
     console.log(chalk.gray(`  ${label} (pid ${pid}) was already stopped`));
-    return false;
+    return 'gone';
   }
   if (!ctx.tableAvailable) {
     console.log(chalk.gray(`  ${unconfirmedIdentityNotice(label, pid)}`));
     await killPidTree(pid, ctx.ownedPostgresPids);
     if (isPidAlive(pid)) {
       console.log(chalk.red(`  ${label} (pid ${pid}) is STILL RUNNING after SIGTERM then SIGKILL`));
-      return false;
+      return 'alive';
     }
     console.log(chalk.green(`  Stopped ${label} (pid ${pid})`));
-    return true;
+    return 'stopped';
   }
 
   // CONFIRM, then signal — never the other way round (issue #100).
@@ -103,17 +113,31 @@ async function killPid(pid: number, label: string, ctx: KillContext): Promise<bo
       ),
     );
     process.stderr.write(`${formatRefusal(verdict)}\n`);
-    return false;
+    if (verdict.code === 'IDENTITY_NOT_RECORDED') {
+      // The one refusal that is a fact about the RECORD, not about the process:
+      // a stack started by a version that wrote the pid before its identity, or
+      // a start interrupted before the identity was written (#767). The pid is
+      // kept on record and this is said again each run until it is gone. What
+      // is never done is to name a kill command for a number nobody identified.
+      console.log(
+        chalk.yellow(
+          `    Check what it is: powershell "Get-Process -Id ${pid} | Format-List Name,Path,StartTime"\n` +
+            `    If it is the ${label} of this install, stop it yourself; \`nodal-agents up\` then records\n` +
+            `    the new one with its identity.`,
+        ),
+      );
+    }
+    return 'refused';
   }
   // The record travels WITH the kill: `killPidTree` takes its own fresh reading
   // of the table, later than this one, and a pid can be recycled in between.
   await killPidTree(pid, ctx.ownedPostgresPids, recordedRoot(ctx.pids, pid));
   if (isPidAlive(pid)) {
     console.log(chalk.red(`  ${label} (pid ${pid}) is STILL RUNNING after SIGTERM then SIGKILL`));
-    return false;
+    return 'alive';
   }
   console.log(chalk.green(`  Stopped ${label} (pid ${pid})`));
-  return true;
+  return 'stopped';
 }
 
 /**
@@ -194,21 +218,22 @@ async function stopPostgresGracefully(ctx: KillContext): Promise<boolean> {
   }
 
   try {
-    const EmbeddedPostgres = await importEmbeddedPostgres();
-    // Re-create the handle pointing at the existing data dir. The constructor
-    // doesn't connect or start; .stop() reads postmaster.pid and signals the
-    // postmaster the same way pg_ctl does.
-    const pg = new EmbeddedPostgres({
-      databaseDir: PG_DATA_DIR,
-      user: 'nodalai',
-      password: 'nodalai',
-      // port is required by the type but only used for connection-time
-      // operations, not for stop().
-      port: 25432,
-      persistent: true,
-      onError: () => {},
-      onLog: () => {},
-    });
+    // `pg_ctl stop -m fast` against the pid the lockfile names — the same stop
+    // `up` uses for an orphan and the cluster handle uses for its own. A fresh
+    // `EmbeddedPostgres` handle used to stand here, and its `.stop()` opens with
+    // `if (!this.process) return;`: a handle that never started the cluster has
+    // no process, so `down` — which is always a different process from the
+    // `up` that started Postgres — signalled NOTHING and then reported
+    // "STILL RUNNING" fifteen seconds later (#767; the same defect as R3 in
+    // `stopOrphanPostgres`, left unfixed in this one caller).
+    //
+    // `stopOrphanPostgres` re-checks that the lockfile still names `pgPid`, so a
+    // postmaster we did not decide on is never stopped by the lockfile's word.
+    const pg = {
+      stop: async (): Promise<void> => {
+        if (pgPid !== null) await stopOrphanPostgres(pgPid, PG_DATA_DIR);
+      },
+    };
     // BOUNDED. `pg_ctl stop -m fast` returns once the postmaster has rolled
     // back and detached its shared memory, and a postmaster in CRASH RECOVERY
     // does not get there quickly — measured not returning at all within 60s on
@@ -305,8 +330,19 @@ export async function runDown(): Promise<void> {
 
   let stopped = 0;
 
-  if (pids?.runner) stopped += (await killPid(pids.runner, 'runner', ctx)) ? 1 : 0;
-  if (pids?.web) stopped += (await killPid(pids.web, 'web', ctx)) ? 1 : 0;
+  // Pids still running when `down` is done. They stay on record: erasing the
+  // handle on a stack that is still up is what turned a refusal into "No
+  // running Nodal-Agents processes found" (#767).
+  const survivors = new Set<number>();
+  for (const [label, pid] of [
+    ['runner', pids?.runner],
+    ['web', pids?.web],
+  ] as const) {
+    if (!pid) continue;
+    const outcome = await killPid(pid, label, ctx);
+    if (outcome === 'stopped') stopped++;
+    if (outcome === 'refused' || outcome === 'alive') survivors.add(pid);
+  }
 
   // The tree recorded at startup, when every parent/child link still existed.
   // `down` usually reaches everything through killPidTree, but not always: a
@@ -320,7 +356,19 @@ export async function runDown(): Promise<void> {
 
   if (await stopPostgresGracefully(ctx)) stopped++;
 
-  clearPids();
+  if (pids !== null && survivors.size > 0) retainPids(pids, survivors);
+  else clearPids();
+
+  if (survivors.size > 0) {
+    // Said instead of "stopped" / "No running … found": either would be false.
+    console.log(
+      chalk.yellow(
+        `\n  ${survivors.size} service(s) are STILL RUNNING and were not stopped (see above). ` +
+          'They stay on record.',
+      ),
+    );
+    return;
+  }
 
   if (stopped === 0) {
     console.log(chalk.yellow('No running Nodal-Agents processes found.'));
