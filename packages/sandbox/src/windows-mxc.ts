@@ -190,20 +190,39 @@ function hostRequest(
   };
 }
 
-/** Lance une commande d'épreuve dans un conteneur, draine ses flux, rend sa fin. */
+/** Ce qu'une commande d'épreuve a donné : sa fin, et ce qu'elle a écrit sur stderr (borné). */
+export interface ProbeRun {
+  readonly end: ProcessEnd;
+  readonly stderr: string;
+}
+
+const PROBE_STDERR_MAX = 400;
+
+/** Lance une commande d'épreuve dans un conteneur, draine ses flux, rend sa fin et son stderr. */
 async function runProbeCommand(
   container: JobContainer,
   command: string,
   env: Record<string, string | undefined>,
-): Promise<ProcessEnd> {
+): Promise<ProbeRun> {
   const proc = await container.start({
     target: { command },
     cwd: process.env['SYSTEMROOT'] ?? 'C:\\Windows',
     env,
   });
   proc.stdout?.resume();
-  proc.stderr?.resume();
-  return proc.done;
+  let stderr = '';
+  proc.stderr?.on('data', (chunk: Buffer | string) => {
+    if (stderr.length < PROBE_STDERR_MAX) stderr += String(chunk);
+  });
+  const end = await proc.done;
+  return { end, stderr: stderr.trim().slice(0, PROBE_STDERR_MAX) };
+}
+
+/** La fin d'une commande d'épreuve, dite telle qu'observée : `exit 7: ECONNREFUSED`, l'erreur, ou `signal`. */
+export function observedOutcome({ end, stderr }: ProbeRun): string {
+  const head =
+    end.kind === 'exit' ? `exit ${end.exitCode}` : end.kind === 'error' ? end.message : 'signal';
+  return stderr ? `${head}: ${stderr}` : head;
 }
 
 function messageOf(e: unknown): string {
@@ -533,17 +552,12 @@ export function mxcBackend(
     let container: JobContainer | null = null;
     try {
       container = await openContainer([], env);
-      const end = await runProbeCommand(container, 'exit 0', env);
-      if (end.kind !== 'exit' || end.exitCode !== 0) {
+      const selfTest = await runProbeCommand(container, 'exit 0', env);
+      if (selfTest.end.kind !== 'exit' || selfTest.end.exitCode !== 0) {
         return {
           state: 'unavailable',
           code: 'SANDBOX_SELF_TEST_FAILED',
-          reason:
-            end.kind === 'exit'
-              ? `exit ${end.exitCode}`
-              : end.kind === 'error'
-                ? end.message
-                : 'signal',
+          reason: observedOutcome(selfTest),
         };
       }
       // En régime proxy, le proxy côté hôte DOIT être joignable depuis le
@@ -554,14 +568,14 @@ export function mxcBackend(
         const url = new URL((await proxy()).url);
         const reach = await runProbeCommand(
           container,
-          `"${process.execPath}" -e "const s=require('net').connect(${url.port},'127.0.0.1');s.on('connect',()=>process.exit(0));s.on('error',()=>process.exit(7));setTimeout(()=>process.exit(8),5000)"`,
+          `"${process.execPath}" -e "const s=require('net').connect(${url.port},'127.0.0.1');s.on('connect',()=>process.exit(0));s.on('error',e=>{console.error(e.code||e.message);process.exit(7)});setTimeout(()=>{console.error('no answer in 5 s');process.exit(8)},5000)"`,
           env,
         );
-        if (reach.kind !== 'exit' || reach.exitCode !== 0) {
+        if (reach.end.kind !== 'exit' || reach.end.exitCode !== 0) {
           return {
             state: 'unavailable',
             code: 'SANDBOX_PROXY_UNREACHABLE',
-            reason: `the sandbox proxy at ${(await proxy()).url} is not reachable from the container on this Windows build`,
+            reason: `the sandbox proxy at ${(await proxy()).url} is not reachable from the container on this Windows build (the container's connect: ${observedOutcome(reach)})`,
           };
         }
       }

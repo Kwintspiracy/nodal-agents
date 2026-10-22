@@ -1,7 +1,7 @@
 // windows-mxc.test.ts — le backend MXC, sondé et démarré pour de vrai.
 
 import { describe, it, expect } from 'vitest';
-import { mxcBackend, MXC_BACKEND_NAME } from '../windows-mxc';
+import { mxcBackend, MXC_BACKEND_NAME, observedOutcome } from '../windows-mxc';
 import { mxcErrorText } from '../mxc-broker';
 import { SandboxStartError } from '../types';
 
@@ -16,6 +16,22 @@ describe('mxcBackend — SDK absent (tous systèmes)', () => {
       reason: "Cannot find package '@microsoft/mxc-sdk'",
     });
     await expect(backend.openContainer([], {})).rejects.toBeInstanceOf(SandboxStartError);
+  });
+});
+
+describe('observedOutcome — what a probe command did, said as observed (tous systèmes)', () => {
+  it('cites the exit code and what the command wrote on stderr', () => {
+    expect(observedOutcome({ end: { kind: 'exit', exitCode: 7 }, stderr: 'ETIMEDOUT' })).toBe(
+      'exit 7: ETIMEDOUT',
+    );
+    expect(observedOutcome({ end: { kind: 'exit', exitCode: 8 }, stderr: '' })).toBe('exit 8');
+  });
+
+  it('cites the error of the container, or the signal', () => {
+    expect(
+      observedOutcome({ end: { kind: 'error', message: 'policy_validation: x' }, stderr: '' }),
+    ).toBe('policy_validation: x');
+    expect(observedOutcome({ end: { kind: 'signal' }, stderr: '' })).toBe('signal');
   });
 });
 
@@ -98,12 +114,18 @@ describe.runIf(isWindows && tier === 'base-container')(
     // fournis globalement par le setupFile de test-kit (#628, P2-3).
 
     // Le proxy côté hôte est-il joignable depuis le conteneur sur CE build ?
-    // Empiriquement il l'est là où MXC porte `ingressHostLoopbackAllow`
-    // (26200.9711) et pas là où la capacité manque (26200.9457,
-    // windows-11-arm) : les deux branches sont prouvées, chacune sur sa
-    // machine. (La joignabilité réelle est ce que la sonde teste ; ici on la
-    // prédit par la capacité, vrai sur les deux machines connues.)
-    const proxyReachable = async (): Promise<boolean> =>
+    // La capacité `ingressHostLoopbackAllow` le prédit sur deux machines
+    // mesurées : là où MXC la porte (26200.9711, la machine de Quentin) il
+    // l'est, là où elle manque (26200.9457, windows-11-arm) il ne l'est pas.
+    // Une TROISIÈME l'a démentie le 22/10 : l'image windows-11-arm 20261018
+    // (26200.9711, Enterprise, arm64) porte la capacité et le conteneur n'y
+    // joint pourtant pas le proxy (`connect` : ETIMEDOUT, le paquet est jeté).
+    // La capacité reste donc la prédiction de la branche « injoignable
+    // attendu » ; la branche « joignable attendu » se prouve quand la machine
+    // laisse passer, et se SAUTE, en disant la précondition manquante, quand
+    // la sonde a observé dans le conteneur un paquet jeté. Tout autre refus
+    // (ECONNREFUSED : le proxy n'écoute pas) reste rouge.
+    const hasLoopbackCapability = async (): Promise<boolean> =>
       (await import('@microsoft/mxc-sdk/v1'))
         .getAvailableBackends()
         .some(
@@ -111,24 +133,37 @@ describe.runIf(isWindows && tier === 'base-container')(
             b.backend === 'processcontainer' && b.capabilities.includes('ingressHostLoopbackAllow'),
         );
 
-    it('régime proxy (produit) : `available` avec la limite raw-TCP si le proxy est joignable ; sinon SANDBOX_PROXY_UNREACHABLE', async () => {
+    it('régime proxy (produit) : `available` avec la limite raw-TCP si le proxy est joignable ; sinon SANDBOX_PROXY_UNREACHABLE', async (ctx) => {
       const status = await mxcBackend().probe();
-      if (await proxyReachable()) {
-        expect(status.state, JSON.stringify(status)).toBe('available');
-        const codes = (status.state === 'available' ? (status.limits ?? []) : []).map(
-          (l) => l.split(':')[0],
-        );
-        expect(codes).toEqual([
-          'SANDBOX_DATA_DIR_NEW_CHILD',
-          'SANDBOX_NETWORK_RAW_TCP_LOCAL',
-          'SANDBOX_NETWORK_SHARED_LOOPBACK',
-        ]);
-      } else {
+      if (!(await hasLoopbackCapability())) {
         expect(status, JSON.stringify(status)).toMatchObject({
           state: 'unavailable',
           code: 'SANDBOX_PROXY_UNREACHABLE',
         });
+        return;
       }
+      // L'indisponibilité dit ce que le conteneur a observé : seul un paquet
+      // jeté (délai dépassé, ou pas de réponse en 5 s) est une propriété de la
+      // machine. Tout autre refus tombe dans l'attente `available` ci-dessous.
+      if (
+        status.state === 'unavailable' &&
+        status.code === 'SANDBOX_PROXY_UNREACHABLE' &&
+        /the container's connect: (exit 7: ETIMEDOUT|exit 8: no answer)/.test(status.reason)
+      ) {
+        ctx.skip(
+          'precondition missing: MXC advertises ingressHostLoopbackAllow but this machine drops the ' +
+            `container's packets to the host loopback (${status.reason})`,
+        );
+      }
+      expect(status.state, JSON.stringify(status)).toBe('available');
+      const codes = (status.state === 'available' ? (status.limits ?? []) : []).map(
+        (l) => l.split(':')[0],
+      );
+      expect(codes).toEqual([
+        'SANDBOX_DATA_DIR_NEW_CHILD',
+        'SANDBOX_NETWORK_RAW_TCP_LOCAL',
+        'SANDBOX_NETWORK_SHARED_LOOPBACK',
+      ]);
     }, 120_000);
 
     it('régime deny-all (valeur de test de la CI) : `available`, aucun réseau, aucune limite réseau à dire (seule celle du dossier de données)', async () => {
