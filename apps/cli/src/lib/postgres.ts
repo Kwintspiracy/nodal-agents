@@ -8,6 +8,7 @@ import {
   importEmbeddedPostgresBinaries,
   armDetachedPostgresSpawn,
   releaseEmbeddedPostgresFromExit,
+  type DetachedSpawnArm,
 } from './embedded-postgres-module.ts';
 import { applyPostgresLoggingConfig, postgresLogDirFor } from './pg-logging.ts';
 import {
@@ -959,6 +960,7 @@ export async function startEmbeddedPostgres(
   // start while it's there, and the embedded-postgres package surfaces the
   // failure as a useless `Error: undefined` — see startup logs.
   if (alreadyInitialised) clearStalePostmasterPid(dataDir);
+  let arm: DetachedSpawnArm | null = null;
   try {
     if (!alreadyInitialised) {
       await pg.initialise();
@@ -972,14 +974,14 @@ export async function startEmbeddedPostgres(
     // 2026-09-15 that log did not exist. The only trace of two crashes that day
     // was the runner's side of the disconnect.
     applyPostgresLoggingConfig(dataDir, logDirectory);
-    const disarm = options.detached ? await armDetachedPostgresSpawn() : (): void => {};
+    arm = options.detached ? await armDetachedPostgresSpawn() : null;
     try {
       await startAndWaitUntilReady(pg, {
         logs: () => capturedLogs,
         gracefulStop: () => stopThisCluster(dataDir),
       });
     } finally {
-      disarm();
+      arm?.disarm();
     }
   } catch (err) {
     const errMsg = err instanceof Error && err.message ? err.message : String(err);
@@ -1015,6 +1017,24 @@ export async function startEmbeddedPostgres(
       `Postgres ${alreadyInitialised ? 'start' : 'init+start'} failed: ${errMsg}` +
         (detail ? `\n  ${detail}` : '') +
         sharedMemHint,
+    );
+  }
+
+  // A detached start that never saw its spawn detached is a cluster that will die
+  // with the launcher: the package's spawn no longer has the shape the arm was
+  // written against. Said NOW, before anything reports healthy, and the cluster
+  // just started is stopped rather than left to the launcher's exit (#835).
+  if (arm !== null && !arm.matched()) {
+    await stopQuietly(pg, {
+      logs: () => capturedLogs,
+      gracefulStop: () => stopThisCluster(dataDir),
+    });
+    throw new Error(
+      'EMBEDDED_POSTGRES_SPAWN_NOT_DETACHED: the postgres binary was started without going ' +
+        'through the detached spawn, so this cluster would die with the launcher. The ' +
+        'embedded-postgres package no longer spawns postgres the way this release was written ' +
+        'against (pinned to an exact version for that reason): do not use --detach with it ' +
+        'until that is fixed.',
     );
   }
 
