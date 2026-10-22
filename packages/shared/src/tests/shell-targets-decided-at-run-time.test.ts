@@ -473,25 +473,31 @@ describe('reading options that hide the command is linear, and bounded across ne
   // What these tests are about is HOW THE COST GROWS, not how fast a machine
   // reads: a fixed millisecond bound (200 ms here) turned red on a loaded CI
   // runner (270 ms, run 39819286388) with the reading unchanged. The growth is
-  // measured in the same run: the best of several reads of an input, against
-  // the best of several reads of one `GROWTH` times larger. Linear reading costs
-  // at most 16 times more (fixed costs lower it: measured 8 to 15); a
-  // quadratic one 256 times, an exponential one never ends. The limit sits at
-  // 40, far from both.
-  // The best of several runs filters a stall of the machine; the absolute
-  // ceiling is only a guard against a hang that the ratio would never see.
-  const GROWTH = 16;
-  const LINEAR_LIMIT = 40;
+  // measured in the same run: the median of several reads of an input, against
+  // the median of several reads of one `GROWTH` times larger, both big enough
+  // (several milliseconds) for a timer and a lucky fast read not to move them.
+  // Linear reading costs at most 8 times more (fixed costs lower it); a
+  // quadratic one 64 times, an exponential one never ends. The limit sits at
+  // 32 (CI Windows, run 39869704831: a first version at 16 times a 0.4 ms input,
+  // limit 40, read x52 on the same unchanged reading; 4 times the linear ratio
+  // is the room it needs). The absolute ceiling is only a guard against a hang
+  // that the ratio would never see.
+  const GROWTH = 8;
+  const LINEAR_LIMIT = 32;
   const HANG_GUARD_MS = 5_000;
-  const bestOf = (cmd: string): number => {
+  const medianOf = (cmd: string): number => {
     timed(cmd); // warm-up: the first read pays for the compilation
-    return Math.min(...Array.from({ length: 7 }, () => timed(cmd).ms));
+    const ms = Array.from({ length: 9 }, () => timed(cmd).ms).sort((x, y) => x - y);
+    return ms[4]!;
   };
-  const growth = (make: (size: number) => string, small: number): { x: number; ms: number } => {
-    const base = bestOf(make(small));
-    const large = bestOf(make(small * GROWTH));
-    expect(large, make(small * GROWTH).slice(0, 80)).toBeLessThan(HANG_GUARD_MS);
-    return { x: large / base, ms: large };
+  const growth = (
+    make: (size: number) => string,
+    small: number,
+  ): { x: number; smallMs: number; largeMs: number } => {
+    const smallMs = medianOf(make(small));
+    const largeMs = medianOf(make(small * GROWTH));
+    expect(largeMs, make(small * GROWTH).slice(0, 80)).toBeLessThan(HANG_GUARD_MS);
+    return { x: largeMs / smallMs, smallMs, largeMs };
   };
 
   it('60 unknown options: timeout, bash -c, wsl, sudo, each with the verdict of 2', () => {
@@ -529,25 +535,29 @@ describe('reading options that hide the command is linear, and bounded across ne
   });
 
   // The cost of reading grows in line with the input, in the same run (see GROWTH).
-  it('unknown options: 16 times the options cost about 16 times, not 256', () => {
+  it('unknown options: 8 times the options cost about 8 times, not 64', () => {
     for (const program of ['timeout', 'bash', 'wsl', 'sudo']) {
       const make = (k: number) =>
         program === 'bash'
           ? `bash ${unknown(k)} -c '${D}'`
           : `${program} ${unknown(k)}${program === 'timeout' ? ' 5' : ''} ${D}`;
-      const g = growth(make, 125);
-      expect(g.x, `${program}: x${g.x.toFixed(1)} for 16 times the options`).toBeLessThan(
-        LINEAR_LIMIT,
-      );
+      const g = growth(make, 1000);
+      expect(
+        g.x,
+        `${program}: x${g.x.toFixed(1)} for 8 times the options (${g.smallMs.toFixed(2)} -> ${g.largeMs.toFixed(2)} ms)`,
+      ).toBeLessThan(LINEAR_LIMIT);
     }
   });
 
-  it('nested programs: 16 times the nesting costs about 16 times, not 256', () => {
+  it('nested programs: 8 times the nesting costs about 8 times, not 64', () => {
     const level = (n: number) => `sudo --x${n} env --y${n} timeout --z${n} 5 nice --w${n}`;
     const make = (levels: number) =>
       [...Array.from({ length: levels }, (_, n) => level(n)), D].join(' ');
-    const g = growth(make, 10);
-    expect(g.x, `x${g.x.toFixed(1)} for 16 times the nesting`).toBeLessThan(LINEAR_LIMIT);
+    const g = growth(make, 80);
+    expect(
+      g.x,
+      `x${g.x.toFixed(1)} for 8 times the nesting (${g.smallMs.toFixed(2)} -> ${g.largeMs.toFixed(2)} ms)`,
+    ).toBeLessThan(LINEAR_LIMIT);
   });
 });
 
