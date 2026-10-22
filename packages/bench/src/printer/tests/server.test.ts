@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { fixturePath } from '../../workflows/fixtures';
 import { readPdf } from '../../workflows/office';
 import { PRINT_FILE_REL } from '../../workflows/scenarios';
@@ -56,19 +56,21 @@ async function call(name: string, args: Record<string, unknown>): Promise<Reply>
 
 const request = (args: Record<string, unknown>): Promise<Reply> => call('request_print', args);
 
-beforeAll(() => {
+// One server for the file: starting a tsx process costs seconds on a loaded
+// Windows runner. The server keeps nothing in memory (it reads its folder at
+// every call), so emptying the folder between tests is a clean slate.
+beforeAll(async () => {
   work = mkdtempSync(join(tmpdir(), 'bench-printer-work-'));
-});
-afterAll(() => {
-  rmSync(work, { recursive: true, force: true });
-});
-beforeEach(async () => {
   recordsDir = mkdtempSync(join(tmpdir(), 'bench-printer-records-'));
   client = await connect(recordsDir);
 });
-afterEach(async () => {
+afterAll(async () => {
   await client.close();
+  rmSync(work, { recursive: true, force: true });
   rmSync(recordsDir, { recursive: true, force: true });
+});
+beforeEach(() => {
+  for (const name of readdirSync(recordsDir)) rmSync(join(recordsDir, name), { force: true });
 });
 
 describe('the bench printer, through a real MCP client over stdio', () => {
@@ -317,12 +319,17 @@ describe('the bench printer server process', () => {
 
   it('keeps the records of a folder across restarts of the server', async () => {
     const created = await request({ content: '<p>pain</p>' });
-    await client.close();
+    const first = client;
     client = await connect(recordsDir);
-    const id = created.structured!['id'] as string;
-    expect((await call('get_print_request', { id })).structured).toMatchObject({
-      id,
-      status: 'pending',
-    });
+    try {
+      const id = created.structured!['id'] as string;
+      expect((await call('get_print_request', { id })).structured).toMatchObject({
+        id,
+        status: 'pending',
+      });
+    } finally {
+      await client.close();
+      client = first;
+    }
   });
 });
