@@ -8,14 +8,14 @@
 // by name, instead of passing or failing for a reason nobody reads.
 
 import { execSync } from 'node:child_process';
-import { compareVersions } from './lib/npm-floor.mjs';
+import { compareVersions, npmUnderTest } from './lib/npm-floor.mjs';
 
 const floor = process.argv[2];
 if (!floor) {
   console.error('usage: node scripts/check-npm-floor.mjs <floor version>');
   process.exit(1);
 }
-const npm = process.env.NODAL_SMOKE_NPM ? `npx -y npm@${process.env.NODAL_SMOKE_NPM}` : 'npm';
+const npm = npmUnderTest(process.env.NODAL_SMOKE_NPM);
 const version = execSync(`${npm} --version`, { encoding: 'utf-8' }).trim();
 if (compareVersions(version, floor) < 0) {
   console.error(`❌ npm ${version} is below the floor ${floor}`);
