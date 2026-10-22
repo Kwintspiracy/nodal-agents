@@ -55,6 +55,7 @@ import { restartResumeOf } from '../lib/runtime-restart.ts';
 import type { RestartResume } from '../lib/runtime-restart.ts';
 import { RUNNER_HEARTBEAT_MS } from '../job/heartbeat.ts';
 import { closeElicitationsOfLostJobs } from '../approvals/elicitation.ts';
+import { takeLostRun } from './take-lost-run.ts';
 
 /**
  * Au-delà de cette fenêtre sans battement, aucun runner vivant ne tient ce job.
@@ -276,6 +277,7 @@ export async function reclaimJobsOfDeadRunners(
     .select({
       id: agentJobs.id,
       status: agentJobs.status,
+      claimGeneration: agentJobs.claimGeneration,
       updatedAt: agentJobs.updatedAt,
       parentJobId: agentJobs.parentJobId,
       task: agentJobs.task,
@@ -327,6 +329,16 @@ export async function reclaimJobsOfDeadRunners(
       // tout depuis la ligne). Gardée sur `processing` : un job terminé entre
       // la lecture et ici n'est pas ressuscité. Le parent qui l'attend reste
       // `awaiting_delegation` — il sera repris quand l'enfant finira.
+      //
+      // La règle des faucheurs (`takeLostRun`, #750) : la ligne est prise au
+      // run perdu et ses processus meurent, ou rien ne se passe ; elle n'est
+      // rendue à la file qu'ensuite, sous la prise du faucheur.
+      const prise = await takeLostRun(
+        db,
+        { id: job.id, status: 'processing', claimGeneration: job.claimGeneration },
+        cutoff,
+      );
+      if (prise === null) continue;
       const repris = await db
         .update(agentJobs)
         .set({
@@ -335,7 +347,13 @@ export async function reclaimJobsOfDeadRunners(
           restartResumes: (job.restartResumes ?? 0) + 1,
           updatedAt: now,
         })
-        .where(and(eq(agentJobs.id, job.id), eq(agentJobs.status, 'processing')))
+        .where(
+          and(
+            eq(agentJobs.id, job.id),
+            eq(agentJobs.status, 'processing'),
+            eq(agentJobs.claimGeneration, prise),
+          ),
+        )
         .returning({ id: agentJobs.id });
       if (repris.length === 0) continue;
       // L'appel MCP en cours est mort avec le runner : sa question aussi.
@@ -368,7 +386,18 @@ export async function reclaimJobsOfDeadRunners(
     const livrable = budgetDeliverable(texte, '', ligne);
 
     // `failJob` est conditionnelle sur un statut non terminal : un job qui
-    // vient de se terminer entre la lecture et ici n'est pas écrasé.
+    // vient de se terminer entre la lecture et ici n'est pas écrasé. Avant
+    // elle, la règle des faucheurs (`takeLostRun`) : la ligne prise au run
+    // perdu et ses processus morts, ou rien.
+    if (
+      (await takeLostRun(
+        db,
+        { id: job.id, status: 'processing', claimGeneration: job.claimGeneration },
+        cutoff,
+      )) === null
+    ) {
+      continue;
+    }
     const landed = await failJob(db, job.id, decision.code, undefined, undefined, livrable);
     if (!landed) continue;
     await closeElicitationsOfLostJobs(db, [job.id]);

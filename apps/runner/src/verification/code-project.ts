@@ -162,6 +162,7 @@ async function runProof(
     // Le périmètre du job : une preuve qui lance un serveur ne le laisse pas
     // derrière elle — il meurt quand le job est fini.
     scope: jobProcessScope(scope.jobId),
+    ...(scope.signal ? { signal: scope.signal } : {}),
     keep: 'tail',
     maxChars: MAX_TAIL_CHARS,
     onCommandDone: async (step) => {

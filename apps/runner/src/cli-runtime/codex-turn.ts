@@ -114,7 +114,7 @@ export class CodexRestrictionsUnsupportedError extends Error {
  *
  * Lève quand l'agent porte des restrictions d'outils : voir ci-dessus.
  */
-export function buildCodexTurnArgs(opts: CodexTurnOptions): string[] {
+export function buildCodexTurnArgs(opts: Omit<CodexTurnOptions, 'processScope'>): string[] {
   if (opts.extraDisallowed && opts.extraDisallowed.length > 0) {
     throw new CodexRestrictionsUnsupportedError(opts.extraDisallowed);
   }
@@ -563,6 +563,7 @@ export async function runCodexTurn(opts: CodexTurnOptions): Promise<CodexTurnRes
     cwd: opts.cwd,
     stdin: buildCodexStdin({ message: opts.message, personality: opts.personality }),
     timeoutMs: opts.timeoutMs,
+    processScope: opts.processScope,
     ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
     ...(opts.maxToolCalls !== undefined ? { maxToolCalls: opts.maxToolCalls } : {}),
     // Codex ouvre un item d'outil par événement — jamais de lot, contrairement

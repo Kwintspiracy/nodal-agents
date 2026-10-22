@@ -8,10 +8,15 @@
 // Vrai processus enfant, pas de bouchon : `node -e` est présent partout où ces
 // tests tournent.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { openProcessScope } from '@nodal-agents/sandbox';
 import { runCli } from '../builtin/code-task/process';
 
 const nodeCli = { path: process.execPath, isBatch: false };
+// Le CLI tourne dans un périmètre de processus, comme dans un job (#750).
+const scope = openProcessScope(`code-task-stream:${randomUUID()}`);
+afterAll(() => scope.close());
 
 describe('runCli — flux ligne par ligne', () => {
   it('livre chaque ligne AVANT la fin du processus', async () => {
@@ -24,6 +29,7 @@ describe('runCli — flux ligne par ligne', () => {
     const recu: Array<{ line: string; at: number }> = [];
     const t0 = Date.now();
     const run = await runCli(nodeCli, ['-e', script], {
+      scope,
       cwd: process.cwd(),
       timeoutMs: 15_000,
       env: process.env as Record<string, string | undefined>,
@@ -45,6 +51,7 @@ describe('runCli — flux ligne par ligne', () => {
     const script = 'process.stdout.write(\'{"type":"result"}\')';
     const recu: string[] = [];
     await runCli(nodeCli, ['-e', script], {
+      scope,
       cwd: process.cwd(),
       timeoutMs: 15_000,
       env: process.env as Record<string, string | undefined>,
@@ -56,6 +63,7 @@ describe('runCli — flux ligne par ligne', () => {
   it('un crochet qui lève ne tue pas la session observée', async () => {
     const script = "process.stdout.write('a\\nb\\n')";
     const run = await runCli(nodeCli, ['-e', script], {
+      scope,
       cwd: process.cwd(),
       timeoutMs: 15_000,
       env: process.env as Record<string, string | undefined>,
@@ -70,6 +78,7 @@ describe('runCli — flux ligne par ligne', () => {
   it('sans crochet, le comportement est inchangé', async () => {
     const script = "process.stdout.write('x\\n')";
     const run = await runCli(nodeCli, ['-e', script], {
+      scope,
       cwd: process.cwd(),
       timeoutMs: 15_000,
       env: process.env as Record<string, string | undefined>,
@@ -93,6 +102,7 @@ describe('une ligne géante n’emporte pas ses voisines', () => {
 
     const recu: string[] = [];
     const run = await runCli(nodeCli, ['-e', script], {
+      scope,
       cwd: process.cwd(),
       timeoutMs: 30_000,
       env: process.env as Record<string, string | undefined>,
@@ -108,5 +118,26 @@ describe('une ligne géante n’emporte pas ses voisines', () => {
       recu.some((l) => l.length > 200_000),
       'la ligne géante a quand même été livrée',
     ).toBe(false);
+  }, 30_000);
+});
+
+// #750 : le Stop du job atteint `code_task` (et wrangler, par le même runCli) :
+// le CLI en cours meurt aussitôt, au lieu de courir jusqu'à son délai.
+describe('runCli — Stop @cap:executer-une-commande/moteur', () => {
+  it('the job’s Stop kills the running CLI at once, long before its timeout', async () => {
+    const stop = new AbortController();
+    const started = Date.now();
+    const running = runCli(nodeCli, ['-e', 'setInterval(() => {}, 1000)'], {
+      scope,
+      signal: stop.signal,
+      cwd: process.cwd(),
+      timeoutMs: 600_000,
+      env: process.env as Record<string, string | undefined>,
+    });
+    setTimeout(() => stop.abort(), 300);
+    const run = await running;
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(run.timedOut).toBe(false);
+    expect(run.exitCode).not.toBe(0);
   }, 30_000);
 });

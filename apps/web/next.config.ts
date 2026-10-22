@@ -80,6 +80,9 @@ const nextConfig: NextConfig = {
     // @nodal-agents/sandbox ← tools ← orchestration; the web never runs a
     // command, but the bundler still follows the import.
     '@microsoft/mxc-sdk',
+    // The Windows Job Object of a job's processes (#755): koffi, native,
+    // loaded by `import()` under Windows only, through the same package.
+    'koffi',
   ],
   allowedDevOrigins: ['localhost', '127.0.0.1', ...lanIPv4()],
   transpilePackages: [

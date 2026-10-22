@@ -11,13 +11,13 @@ import { lookup as dnsLookupCb } from 'node:dns';
 import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
   ElicitRequestSchema,
   type ElicitRequest,
   type ElicitResult,
 } from '@modelcontextprotocol/sdk/types.js';
-import { buildChildEnv } from '@nodal-agents/tools';
+import { buildChildEnv, type JobProcessScope } from '@nodal-agents/tools';
+import { ScopedStdioTransport } from './scoped-stdio.ts';
 import { Agent as UndiciAgent, fetch as undiciFetch } from 'undici';
 
 const dnsLookup = promisify(dnsLookupCb);
@@ -166,6 +166,14 @@ export type McpConnectOptions =
        * the caller is responsible for decryption before invoking us.
        */
       env: Record<string, string>;
+      /**
+       * The process scope the server runs in (#750): the job's
+       * (`jobProcessScope(jobId)`) when a job opens it — the server and what it
+       * starts belong to the job and die with it. Absent (the connectors page
+       * testing a server), the connection opens its own and closes it with
+       * itself. See scoped-stdio.ts.
+       */
+      processScope?: JobProcessScope;
     };
 
 /** A discovered MCP tool, straight from the server's `tools/list`. */
@@ -403,11 +411,10 @@ export async function connectMcp(
     for (const [k, v] of Object.entries(buildChildEnv(process.env))) {
       if (typeof v === 'string') scrubbedEnv[k] = v;
     }
-    const transport = new StdioClientTransport({
-      command: opts.command,
-      args: opts.args,
-      env: { ...scrubbedEnv, ...opts.env },
-    });
+    const transport = new ScopedStdioTransport(
+      { command: opts.command, args: opts.args, env: { ...scrubbedEnv, ...opts.env } },
+      opts.processScope,
+    );
     await withTimeout(
       client.connect(transport),
       connectTimeoutMs,
@@ -436,10 +443,10 @@ export async function connectMcp(
     instructions,
     close: async () => {
       // client.close() tears down the transport, which for stdio means
-      // closing stdin and waiting for the subprocess to exit. The MCP SDK
-      // handles tree-kill on the underlying child_process — on Windows
-      // shell:true is NOT used so taskkill /T is unnecessary (the child
-      // is spawned directly, no shell intermediary to leak).
+      // closing stdin, waiting up to 2 s for the server to exit, then killing
+      // its whole TREE (scoped-stdio.ts, #750): `npx` is a `.cmd` on Windows,
+      // so the real server is a grandchild, which the SDK's own transport
+      // (direct child only) left alive.
       await client.close();
       // P0-H7: release the dedicated undici Agent's connection pool.
       await httpAgent?.close();

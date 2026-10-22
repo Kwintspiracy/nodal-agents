@@ -12,9 +12,15 @@
 // FERMER, découper stdout en lignes, compter les appels d'outils, tuer l'arbre,
 // et rendre la main. Ce qu'il ne connaît pas : ce que les lignes veulent dire.
 // C'est l'appelant qui parse — un CLI, un parseur.
+//
+// LE LANCEMENT et le tree-kill ne sont plus ici (#750) : la CLI est lancée dans
+// le périmètre de processus de son job (`processScope`, @nodal-agents/sandbox
+// job-scope.ts), comme une commande de `run_command`. Ce qu'elle laisse
+// tourner (un serveur que son outil Bash a lancé en arrière-plan) vit jusqu'à
+// la fin du job, et meurt avec lui — détaché ou non.
 
-import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
+import { SandboxStartError, type JobProcessScope } from '@nodal-agents/sandbox';
 
 export interface SpawnTurnOptions<TResult> {
   /** argv complet, binaire en tête (sortie de `buildSpawnArgv`). */
@@ -24,6 +30,12 @@ export interface SpawnTurnOptions<TResult> {
   /** Écrit sur stdin puis fermé — le texte libre n'entre JAMAIS dans argv. */
   stdin: string;
   timeoutMs: number;
+  /**
+   * OBLIGATOIRE. Le périmètre de processus de ce tour : celui du job
+   * (`jobProcessScope(job.id)`), ou celui que le tour de chat ouvre et ferme
+   * (`openProcessScope`). La CLI et ce qu'elle lance meurent quand il se ferme.
+   */
+  processScope: JobProcessScope;
   /**
    * Le Stop de la personne (#456) : déclenché, il tue l'arbre de processus
    * comme l'expiration le fait, sans attendre le délai. Le tour se termine
@@ -107,25 +119,33 @@ const KILL_GRACE_MS = 3000;
 /** Au-delà, stderr n'est plus accumulé : on veut un extrait, pas un journal. */
 const STDERR_CAP = 50_000;
 
-export function spawnCliTurn<TResult>(opts: SpawnTurnOptions<TResult>): Promise<TResult> {
+export async function spawnCliTurn<TResult>(opts: SpawnTurnOptions<TResult>): Promise<TResult> {
   const [command, ...rest] = opts.argv;
-  const isWindows = process.platform === 'win32';
   const startedAt = Date.now();
 
-  return new Promise<TResult>((resolve) => {
-    const child = spawn(command as string, rest, {
+  let child: Awaited<ReturnType<JobProcessScope['startOwned']>>;
+  try {
+    child = await opts.processScope.startOwned({
+      target: { file: command as string, args: rest },
       cwd: opts.cwd,
-      shell: false,
-      detached: !isWindows,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
       env: opts.env,
+      stdin: 'pipe',
     });
+  } catch (err) {
+    // Le job ne peut pas tenir la CLI (son Job Object, sous Windows) : le tour
+    // n'est pas lancé hors de lui, et l'issue le dit comme un échec de lancement.
+    if (!(err instanceof SandboxStartError)) throw err;
+    return opts.finish({
+      exitCode: null,
+      timedOut: false,
+      durationMs: Date.now() - startedAt,
+      stderr: `spawn_error: ${err.message}`,
+    });
+  }
 
+  return new Promise<TResult>((resolve) => {
     // Le message est écrit puis FERMÉ — un stdin branché mais laissé ouvert fait
-    // attendre la CLI indéfiniment (étape-A, constat 1). EPIPE (l'enfant est
-    // mort avant) n'est pas notre échec.
-    child.stdin?.on('error', () => {});
+    // attendre la CLI indéfiniment (étape-A, constat 1).
     child.stdin?.end(opts.stdin);
 
     let stdoutBuffer = '';
@@ -185,50 +205,7 @@ export function spawnCliTurn<TResult>(opts: SpawnTurnOptions<TResult>): Promise<
       if (stderr.length < STDERR_CAP) stderr += errDecoder.write(chunk);
     });
 
-    const killTree = (): void => {
-      if (child.pid) {
-        if (isWindows) {
-          // taskkill /T résout l'arbre depuis un instantané vivant — tuer le
-          // parent d'abord orpheline les enfants. taskkill seul (il tue aussi la
-          // racine) ; child.kill uniquement si taskkill a échoué.
-          try {
-            const tk = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-              windowsHide: true,
-            });
-            tk.on('close', (code) => {
-              if (code !== 0) {
-                try {
-                  child.kill('SIGKILL');
-                } catch {
-                  /* déjà mort */
-                }
-              }
-            });
-            tk.on('error', () => {
-              try {
-                child.kill('SIGKILL');
-              } catch {
-                /* déjà mort */
-              }
-            });
-            return;
-          } catch {
-            /* taskkill indisponible — on continue */
-          }
-        } else {
-          try {
-            process.kill(-child.pid, 'SIGKILL');
-          } catch {
-            /* déjà mort */
-          }
-        }
-      }
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* déjà mort */
-      }
-    };
+    const killTree = (): void => child.kill();
 
     const finish = (exitCode: number | null): void => {
       if (settled) return;
@@ -265,10 +242,9 @@ export function spawnCliTurn<TResult>(opts: SpawnTurnOptions<TResult>): Promise<
     if (opts.abortSignal?.aborted) onStop();
     else opts.abortSignal?.addEventListener('abort', onStop, { once: true });
 
-    child.on('error', (err: Error) => {
-      stderr += `\nspawn_error: ${err.message}`;
-      finish(null);
+    void child.done.then((end) => {
+      if (end.kind === 'error') stderr += `\nspawn_error: ${end.message}`;
+      finish(end.kind === 'exit' ? end.exitCode : null);
     });
-    child.on('close', (code: number | null) => finish(code));
   });
 }

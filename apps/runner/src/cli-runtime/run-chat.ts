@@ -25,6 +25,7 @@ import {
   resolveRunWorkspaces,
 } from '@nodal-agents/tools';
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
+import { openProcessScope } from '@nodal-agents/sandbox';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { buildCliAuditRow } from './audit.ts';
 import { shellPostureForTurn, watchBrakeDuringTurn } from './shell-turn.ts';
@@ -253,6 +254,9 @@ export async function runCliRuntimeChatTurn(args: {
   const brake = watchBrakeDuringTurn(db, entityId, shellPosture, {
     ...(args.abortSignal ? { personStop: args.abortSignal } : {}),
   });
+  // Un tour de chat n'est pas un job : il possède ses processus lui-même
+  // (#750), et ils meurent avec lui — à la fin du tour, quelle qu'elle soit.
+  const processScope = openProcessScope(`chat-turn:${randomUUID()}`);
   let turn: CliTurnResult;
   try {
     turn = await binding.run(
@@ -271,6 +275,7 @@ export async function runCliRuntimeChatTurn(args: {
           effort: defaults.effort,
           ...(resumeSessionId ? { resumeSessionId } : {}),
           timeoutMs: RUNTIME_CHAT_TIMEOUT_MS,
+          processScope,
           ...(brake.signal ? { abortSignal: brake.signal } : {}),
           // Same anti-loop cap as the job path (invariant #8).
           maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
@@ -285,6 +290,7 @@ export async function runCliRuntimeChatTurn(args: {
     throw err;
   } finally {
     brake.stop();
+    await processScope.close();
     // ── L'ÉCRITURE FAIT VIEILLIR LE PROJET, ICI AUSSI (issue #101) ──────────
     //
     // Le chemin job monte l'époque deux fois : à l'intention, puis à la sortie

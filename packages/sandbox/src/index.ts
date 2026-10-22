@@ -13,7 +13,9 @@
 // Un seul mécanisme pour les trois appelants de l'étape 1 — `run_command`,
 // `run_skill_script` et les commandes de preuve — : le moteur shell
 // (`runShellCommand`) reçoit la politique et le périmètre du job de
-// l'appelant, et passe ici.
+// l'appelant, et passe ici. Le périmètre du job (job-scope.ts) porte aussi ce
+// que le job lance hors bac à sable (`code_task`, le CLI d'un runtime) : tout
+// meurt à la fin du job (#750, #755).
 
 export {
   type AllowedFolder,
@@ -44,11 +46,24 @@ export {
 export { type Sandbox, createSandbox, defaultSandbox, getSandboxStatus } from './status';
 export {
   JobProcessScope,
+  type OwnedProcessOptions,
   closeAllJobProcessScopes,
   closeJobProcessScope,
   jobProcessScope,
+  killLeftoversOfJob,
   openJobProcessScopeIds,
+  openProcessScope,
 } from './job-scope';
+export {
+  JOB_PROCESS_KILL_FAILED,
+  isProcessAlive,
+  killProcessTree,
+  type KillLog,
+  type KillTreeOptions,
+} from './process-tree';
+export { JOB_SCOPE_ENV, detachedDescendantsReachable, pidsTaggedWith } from './unix-job-processes';
+export { JobObjectError, openKillOnCloseJob, type KillOnCloseJob } from './windows-job-object';
+export { type HostChannel, openJobObjectContainer } from './host-container';
 export { DRAIN_MS, JOB_HOST_SOURCE, ensureJobHostScript, sandboxHostDir } from './job-host';
 export {
   quoteWindowsArg,

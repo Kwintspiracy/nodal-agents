@@ -529,6 +529,15 @@ const packPkg = {
   // and there move together when the SDK is upgraded. Not pinned by §7a.
   optionalDependencies: {
     'nodal-agents-sandbox-windows': '1.0.0',
+    // A job owns its processes (#755): on Windows without the sandbox, the
+    // job's Job Object is made through koffi (FFI, prebuilt N-API binaries for
+    // every platform npm offers). Declared on its own, not only through the
+    // MXC package, so that a Windows install where MXC failed still holds its
+    // jobs' processes. Optional, exact pin like the line above: a platform
+    // with no prebuilt binary skips it instead of failing the install, and is
+    // never a Windows one. Absent on Windows, a command is REFUSED with
+    // `JOB_OBJECT_FAILED: koffi: …`, never run outside its job.
+    koffi: '3.3.3',
   },
   // Ship exceljs INSIDE the tarball instead of letting `npm install -g` fetch it.
   // exceljs is stale and drags in deprecated transitives (glob@7 "security",
