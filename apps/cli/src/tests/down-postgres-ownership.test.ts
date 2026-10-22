@@ -52,7 +52,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { execa } from 'execa';
 import { fileURLToPath } from 'node:url';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import {
   postgresStopByHandLines,
   runDown,
@@ -60,7 +60,7 @@ import {
   type DownResult,
   type KillContext,
 } from '../commands/down.ts';
-import { runReset } from '../commands/reset.ts';
+import { runReset, type ResetDisk } from '../commands/reset.ts';
 import { CONFIG_DIR, PG_DATA_DIR } from '../lib/config.ts';
 import type { ClaimVerdict } from '../lib/orphans.ts';
 import { isPidAlive, waitForPidDead } from '../lib/processes.ts';
@@ -462,66 +462,140 @@ describe('down keys on the evidence, not on whether a table was read @cap:instal
   });
 });
 
-// The delete is safe whatever the verdict was: the data dir is set aside by an
-// atomic rename BEFORE anything is removed. A holder makes the rename fail
-// (Windows) or is found first (Linux), and nothing has been deleted.
-describe('reset never deletes the data dir in place @cap:installer-et-demarrer/moteur', () => {
+// The whole home disappears in ONE atomic step: renamed to a sibling after every
+// gate. A holder makes the rename fail (Windows) or is found first (Linux), and
+// nothing has been deleted. After the rename the install IS reset, whatever
+// happens to the slow, fallible deletion of the old folder.
+describe('reset sets the whole home aside in one step @cap:installer-et-demarrer/moteur', () => {
   const nothingLeft = async (): Promise<DownResult> => ({ unstopped: [] });
   const realRename = renameSync;
 
-  it('a rename that fails leaves everything where it was and says what to do', async () => {
+  /** The real disk, with the registry call recorded and the parts under test replaceable. */
+  function disk(
+    over: Partial<ResetDisk> = {},
+    seen: { unregisteredWhileHomeExisted?: boolean } = {},
+  ) {
+    return {
+      rename: realRename,
+      findHolders: () => [],
+      remove: (dir: string) => rmSync(dir, { recursive: true, force: true }),
+      unregister: () => {
+        seen.unregisteredWhileHomeExisted = existsSync(CONFIG_DIR);
+      },
+      ...over,
+    } satisfies ResetDisk;
+  }
+
+  it('a rename that fails leaves everything where it was, says what to do, and does not unregister', async () => {
     writeLockfile(stranger.pid!);
     writeFileSync(join(home, 'config.json'), '{}', 'utf-8');
     const busy = Object.assign(new Error('resource busy'), { code: 'EBUSY' });
+    const seen: { unregisteredWhileHomeExisted?: boolean } = {};
 
-    const run = runReset({ yes: true }, nothingLeft, {
-      rename: () => {
-        throw busy;
-      },
-      findHolders: () => [],
-    });
+    const run = runReset(
+      { yes: true },
+      nothingLeft,
+      disk(
+        {
+          rename: () => {
+            throw busy;
+          },
+        },
+        seen,
+      ),
+    );
 
     await expect(run).rejects.toThrow(/Nothing was deleted: .* could not be set aside \(EBUSY\)/);
     expect(existsSync(lockfile)).toBe(true);
     expect(existsSync(join(home, 'config.json'))).toBe(true);
+    expect(seen.unregisteredWhileHomeExisted).toBeUndefined();
   });
 
-  it('a process running out of the data dir is named, and nothing is touched', async () => {
+  it('a process running out of the home is named, and nothing is touched', async () => {
     writeLockfile(stranger.pid!);
 
-    const run = runReset({ yes: true }, nothingLeft, {
-      rename: realRename,
-      findHolders: () => [4321],
-    });
+    const run = runReset({ yes: true }, nothingLeft, disk({ findHolders: () => [4321] }));
 
     await expect(run).rejects.toThrow(/process 4321 runs out of/);
     expect(existsSync(lockfile)).toBe(true);
   });
 
-  it('on success the data dir is set aside BEFORE the home is removed', async () => {
+  it('on success the HOME is renamed to a sibling before anything is deleted, then unregistered, then removed', async () => {
     writeLockfile(stranger.pid!);
     const moves: Array<[string, string]> = [];
+    const seen: { unregisteredWhileHomeExisted?: boolean } = {};
 
-    await runReset({ yes: true }, nothingLeft, {
-      rename: (from, to) => {
-        moves.push([from, to]);
-        // At the moment of the rename nothing else has been deleted yet.
-        expect(existsSync(lockfile)).toBe(true);
-        realRename(from, to);
-      },
-      findHolders: () => [],
-    });
+    await runReset(
+      { yes: true },
+      nothingLeft,
+      disk(
+        {
+          rename: (from, to) => {
+            moves.push([from, to]);
+            // At the moment of the rename nothing has been deleted yet.
+            expect(existsSync(lockfile)).toBe(true);
+            realRename(from, to);
+          },
+        },
+        seen,
+      ),
+    );
 
     expect(moves).toHaveLength(1);
-    expect(moves[0]![0]).toBe(PG_DATA_DIR);
-    expect(moves[0]![1]).toContain('pg-data.deleting-');
+    expect(moves[0]![0]).toBe(CONFIG_DIR);
+    // A sibling: same parent, hence same volume, so the rename is atomic.
+    expect(dirname(moves[0]![1])).toBe(dirname(CONFIG_DIR));
+    expect(moves[0]![1]).toContain(`${basename(CONFIG_DIR)}.deleting-`);
+    // The install was already reset when the registry was told.
+    expect(seen.unregisteredWhileHomeExisted).toBe(false);
     expect(existsSync(CONFIG_DIR)).toBe(false);
+    expect(existsSync(moves[0]![1])).toBe(false);
   });
 
-  // The real thing: a process whose working directory is inside the data dir.
+  it('a deletion that fails AFTER the rename: the home path is free, the registry is told, the leftover is named', async () => {
+    writeLockfile(stranger.pid!);
+    const seen: { unregisteredWhileHomeExisted?: boolean } = {};
+    let aside = '';
+
+    const run = runReset(
+      { yes: true },
+      nothingLeft,
+      disk(
+        {
+          rename: (from, to) => {
+            aside = to;
+            realRename(from, to);
+          },
+          remove: () => {
+            throw Object.assign(new Error('antivirus holds a file'), { code: 'EBUSY' });
+          },
+        },
+        seen,
+      ),
+    );
+
+    try {
+      // Not a half-deleted LIVE home: the old path is free for a fresh `up`...
+      await expect(run).rejects.toThrow(
+        /Reset is done, but the old data could not be fully deleted \(EBUSY\)/,
+      );
+      await expect(run).rejects.toThrow(/no longer uses it/);
+      // ...the leftover folder is named exactly, with the way to delete it...
+      await expect(run).rejects.toThrow(aside);
+      await expect(run).rejects.toThrow(/Delete it yourself/);
+      expect(existsSync(CONFIG_DIR)).toBe(false);
+      expect(existsSync(aside)).toBe(true);
+      // ...and the registry was told right after the rename, not after the delete.
+      expect(seen.unregisteredWhileHomeExisted).toBe(false);
+    } finally {
+      rmSync(aside, { recursive: true, force: true });
+    }
+  });
+
+  // The real thing: a process whose working directory is inside the home.
   // On Windows that makes the rename fail; on Linux the holder is found first.
   it.skipIf(process.platform !== 'win32' && process.platform !== 'linux')(
-    'a REAL process sitting in the data dir stops reset, and the data dir is intact',
+    'a REAL process sitting in the data dir stops reset, and the home is intact',
     async () => {
       writeLockfile(stranger.pid!);
       const holder = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
@@ -532,7 +606,9 @@ describe('reset never deletes the data dir in place @cap:installer-et-demarrer/m
       try {
         await new Promise((resolve) => setTimeout(resolve, 500));
 
-        await expect(runReset({ yes: true }, nothingLeft)).rejects.toThrow(/Nothing was deleted/);
+        await expect(runReset({ yes: true }, nothingLeft, disk())).rejects.toThrow(
+          /Nothing was deleted/,
+        );
 
         expect(existsSync(lockfile)).toBe(true);
       } finally {

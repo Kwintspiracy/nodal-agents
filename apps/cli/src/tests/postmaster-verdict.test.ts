@@ -11,12 +11,20 @@
 // its three OS questions as injected probes, so every case runs on every
 // platform. The lockfile is a real file under a temp directory.
 
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('execa', () => ({ execa: vi.fn() }));
+
+import { execa } from 'execa';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { judgeClaimedPostmaster, type LockfileClaim } from '../lib/orphans.ts';
-import { unconfirmedReading, type SinglePidProbes } from '../lib/postgres.ts';
+import {
+  postgresProcessesForDataDir,
+  unconfirmedReading,
+  type SinglePidProbes,
+} from '../lib/postgres.ts';
 
 const PID = 4242;
 const STARTED_S = 1_790_000_000;
@@ -67,18 +75,39 @@ describe('judgeClaimedPostmaster @cap:installer-et-demarrer/moteur', () => {
     expect(v.verdict).toBe('not-ours');
   });
 
-  it('NOT ours when the table was read, lists other postgres, and not this pid', () => {
+  it('UNKNOWN when the pid is merely ABSENT from the list: absence is never a disproof', () => {
+    // A partial read that still exits 0 lists another install's postgres and
+    // misses our live postmaster. Whatever else is listed, a list cannot
+    // disprove a pid it does not show.
     const v = judgeClaimedPostmaster({
       rows: [row(PID + 1, STARTED_MS)],
       tableRead: true,
       claim: claim(STARTED_S),
     });
-    expect(v.verdict).toBe('not-ours');
+    expect(v.verdict).toBe('unknown');
+    expect(v.reason).toContain('a list cannot disprove it');
   });
 
-  it('UNKNOWN when the table lists no postgres at all: a failed query looks the same', () => {
-    const v = judgeClaimedPostmaster({ rows: [], tableRead: true, claim: claim(STARTED_S) });
-    expect(v.verdict).toBe('unknown');
+  it('NOT ours when a DIRECT query about this pid says it is another program', () => {
+    const v = judgeClaimedPostmaster({
+      rows: [row(PID + 1, STARTED_MS)],
+      tableRead: true,
+      claim: claim(STARTED_S),
+      direct: { exe: 'node.exe', startedAt: STARTED_MS },
+    });
+    expect(v.verdict).toBe('not-ours');
+    expect(v.reason).toContain('node.exe');
+  });
+
+  it('a DIRECT query that finds a postgres is judged like a row: dates agree -> ours, a date missing -> unknown', () => {
+    const base = { rows: [row(PID + 1)], tableRead: true, claim: claim(STARTED_S) };
+    expect(
+      judgeClaimedPostmaster({ ...base, direct: { exe: 'postgres.exe', startedAt: STARTED_MS } })
+        .verdict,
+    ).toBe('ours');
+    expect(judgeClaimedPostmaster({ ...base, direct: { exe: 'postgres.exe' } }).verdict).toBe(
+      'unknown',
+    );
   });
 
   it('UNKNOWN when the table could not be read, or nothing claims the data dir', () => {
@@ -160,5 +189,85 @@ describe('unconfirmedReading (no table: one pid, three OS questions) @cap:instal
     const r = unconfirmedReading(dir, probes({ isRunning: () => false }));
     spy.mockRestore();
     expect(r.claim.verdict).toBe('not-ours');
+  });
+});
+
+// The Windows reading, end to end, with WMI answered by a stand-in: the list can
+// only CONFIRM; a pid it does not show is asked about DIRECTLY, and only a
+// positive answer about that pid can disprove the claim.
+describe('postgresProcessesForDataDir on Windows: absence from the list proves nothing @cap:installer-et-demarrer/moteur', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nodal-verdict-win-'));
+  let original: PropertyDescriptor | undefined;
+  const mockExeca = vi.mocked(execa);
+
+  beforeEach(() => {
+    original = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    writeFileSync(
+      join(dir, 'postmaster.pid'),
+      `${PID}
+${dir}
+${STARTED_S}
+`,
+      'utf-8',
+    );
+    vi.spyOn(process.stderr, 'write').mockImplementation((() => true) as never);
+  });
+  afterEach(() => {
+    if (original) Object.defineProperty(process, 'platform', original);
+    vi.restoreAllMocks();
+    mockExeca.mockReset();
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  /** WMI stand-in: the LIST lists another install's postgres only. */
+  function wmi(direct: { exitCode: number; stdout: string }): void {
+    mockExeca.mockImplementation(((_file: string, args: string[]) => {
+      const command = args.at(-1) ?? '';
+      if (command.includes('ProcessId=')) {
+        return Promise.resolve({ ...direct, stderr: '' });
+      }
+      return Promise.resolve({
+        stdout: `5555|1|${STARTED_MS}|postgres -D C:/other/install`,
+        stderr: '',
+        exitCode: 0,
+      });
+    }) as unknown as typeof execa);
+  }
+
+  it('a partial list that misses our pid, and a direct query that does not answer: UNKNOWN, not "stale"', async () => {
+    wmi({ exitCode: 1, stdout: '' });
+
+    const reading = await postgresProcessesForDataDir(dir);
+
+    expect(reading.read).toBe(true);
+    expect(reading.claim.verdict).toBe('unknown');
+    expect(reading.owned).toEqual([]);
+  });
+
+  it('a direct query that finds ANOTHER program under the pid: NOT ours', async () => {
+    wmi({
+      exitCode: 0,
+      stdout: `node.exe|${STARTED_MS}
+`,
+    });
+
+    const reading = await postgresProcessesForDataDir(dir);
+
+    expect(reading.claim.verdict).toBe('not-ours');
+    expect(reading.claim.reason).toContain('node.exe');
+  });
+
+  it('a direct query that finds our postgres the list had dropped: OURS', async () => {
+    wmi({
+      exitCode: 0,
+      stdout: `postgres.exe|${STARTED_MS + 120}
+`,
+    });
+
+    const reading = await postgresProcessesForDataDir(dir);
+
+    expect(reading.claim.verdict).toBe('ours');
+    expect(reading.owned).toContain(PID);
   });
 });

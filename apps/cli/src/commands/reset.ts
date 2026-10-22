@@ -43,45 +43,67 @@ export function findWorkingDirectoryHolders(dir: string): number[] {
   return holders;
 }
 
-/** What `runReset` does to the disk, replaceable so the failure paths can be exercised. */
+/** What `runReset` does to the disk and the registry, replaceable so the failure paths can be exercised. */
 export interface ResetDisk {
   rename: (from: string, to: string) => void;
   findHolders: (dir: string) => number[];
+  /** Delete a folder and everything in it. */
+  remove: (dir: string) => void;
+  /** Take this instance out of the registry of instances. */
+  unregister: () => void;
 }
 
-const realDisk: ResetDisk = { rename: renameSync, findHolders: findWorkingDirectoryHolders };
+const realDisk: ResetDisk = {
+  rename: renameSync,
+  findHolders: findWorkingDirectoryHolders,
+  remove: (dir) => rmSync(dir, { recursive: true, force: true }),
+  unregister: () => unregisterNodalInstance(),
+};
 
 /**
- * Set the data directory ASIDE before anything is deleted: an atomic rename.
+ * Make the WHOLE home disappear in ONE atomic step: rename it to a sibling
+ * (same parent, same volume). From that instant the install is reset, and a
+ * later `up` creates a fresh home.
  *
- * Deleting it in place is not safe whatever the verdict was. On Windows
- * `rmSync` removes the files nothing holds, then throws on the first one that
- * something does — a postmaster we could not see, an antivirus, an indexer —
- * leaving a half-deleted cluster. A rename of a directory fails outright while
- * a process holds a file or a working directory inside it, and it fails BEFORE
- * deleting anything. On Unix a rename succeeds regardless, so the holders are
+ * Deleting in place, file by file, is not safe whatever the verdict was: on
+ * Windows `rmSync` removes what nothing holds and throws on the first file
+ * something does (a postmaster we could not see, an antivirus, an indexer),
+ * leaving a half-deleted LIVE home — a cluster with some of its files missing.
+ * A rename of a directory fails outright while a process holds a file or a
+ * working directory inside it, and it fails BEFORE anything is deleted. On Unix
+ * a rename succeeds regardless, so the processes running out of the home are
  * looked for first, as far as the platform allows.
+ *
+ * Returns the sibling's path, or null when there was no home.
  */
-function setDataDirAside(disk: ResetDisk): void {
-  if (!existsSync(PG_DATA_DIR)) return;
-  const holders = disk.findHolders(PG_DATA_DIR);
+function setHomeAside(disk: ResetDisk): string | null {
+  if (!existsSync(CONFIG_DIR)) return null;
+  const holders = disk.findHolders(CONFIG_DIR);
   if (holders.length > 0) {
     throw new Error(
-      `Nothing was deleted: process ${holders.join(', ')} runs out of ${PG_DATA_DIR}. ` +
+      `Nothing was deleted: process ${holders.join(', ')} runs out of ${CONFIG_DIR}. ` +
         'Stop it, then run `nodal-agents reset` again.',
     );
   }
-  const aside = `${PG_DATA_DIR}.deleting-${Date.now()}`;
+  const aside = `${CONFIG_DIR}.deleting-${Date.now()}`;
   try {
-    disk.rename(PG_DATA_DIR, aside);
+    disk.rename(CONFIG_DIR, aside);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code ?? 'unknown';
     throw new Error(
-      `Nothing was deleted: ${PG_DATA_DIR} could not be set aside (${code}). Something holds ` +
+      `Nothing was deleted: ${CONFIG_DIR} could not be set aside (${code}). Something holds ` +
         'a file or a folder inside it: a Postgres this tool could not see, an antivirus, an ' +
         'indexer or a shell sitting in it. Close it, then run `nodal-agents reset` again.',
     );
   }
+  return aside;
+}
+
+/** How to delete a folder by hand, in the user's default shell. */
+function deleteByHandCommand(dir: string): string {
+  return process.platform === 'win32'
+    ? `powershell -Command "Remove-Item -Recurse -Force '${dir.replace(/'/g, "''")}'"`
+    : `rm -rf "${dir}"`;
 }
 
 /**
@@ -155,19 +177,31 @@ export async function runReset(
     );
   }
 
-  // The data directory first, and by rename: if anything holds it, this fails
-  // loud and NOTHING has been deleted (config and logs included).
-  setDataDirAside(disk);
+  // The whole home disappears in ONE atomic step, after every gate above. If
+  // anything holds it this fails loud and NOTHING has been deleted.
+  const aside = setHomeAside(disk);
+  if (aside === null) console.log(chalk.gray(`  ${CONFIG_DIR} was already empty`));
 
-  // Remove the config directory
-  if (existsSync(CONFIG_DIR)) {
-    rmSync(CONFIG_DIR, { recursive: true, force: true });
-    console.log(chalk.green(`  Removed ${CONFIG_DIR}`));
-  } else {
-    console.log(chalk.gray(`  ${CONFIG_DIR} was already empty`));
+  // From here the install IS reset: the home path is free, and an `up` creates a
+  // fresh one. Its entry in the registry of instances goes at once, before the
+  // slow, fallible part.
+  disk.unregister();
+
+  if (aside !== null) {
+    try {
+      disk.remove(aside);
+      console.log(chalk.green(`  Removed ${CONFIG_DIR}`));
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code ?? 'unknown';
+      // The reset is done; what is left is a folder nothing uses any more. Said
+      // exactly, and the exit code says it too.
+      throw new Error(
+        `Reset is done, but the old data could not be fully deleted (${code}). ` +
+          `The folder ${aside} remains: Nodal-Agents no longer uses it. ` +
+          `Delete it yourself once nothing holds it: ${deleteByHandCommand(aside)}`,
+      );
+    }
   }
-  // Its entry in the registry of instances goes with it (an `up` writes it back).
-  unregisterNodalInstance();
 
   console.log('');
   console.log(chalk.green('  Reset complete.'));

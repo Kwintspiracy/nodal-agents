@@ -113,13 +113,13 @@ describe('ownedPostgresPids — the data directory answers', () => {
     expect(ownedPostgresPids({ rows, tableRead: true, claim: claims(8932) }).owned).toEqual([8932]);
   });
 
-  it('refuses when the lockfile names a pid that is not a live postgres', () => {
+  it('refuses when the lockfile names a pid that is absent from the list (absence proves nothing)', () => {
     const rows = [postmaster(41956, OURS)];
 
     const { owned, skipped } = ownedPostgresPids({ rows, tableRead: true, claim: claims(8932) });
 
     expect(owned).toEqual([]);
-    expect(skipped[0]?.reason).toContain('is not a live postgres');
+    expect(skipped[0]?.reason).toContain('a list cannot disprove it');
   });
 
   it('owns NOTHING when the table could not be read — a claim alone is not proof', () => {

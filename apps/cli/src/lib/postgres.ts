@@ -223,11 +223,21 @@ export async function postgresProcessesForDataDir(
       );
       return unconfirmedReading(dataDir);
     }
+    const rows = parseProcessRows(stdout);
+    const lockfileClaim = readPostmasterClaim(dataDir);
+    // The list can only CONFIRM. A pid missing from it proves nothing (a partial
+    // read still exits 0), so when the claimed pid is absent it is asked about
+    // DIRECTLY: only a positive answer about that pid can disprove the claim.
+    const direct =
+      lockfileClaim !== null && !rows.some((row) => row.pid === lockfileClaim.pid)
+        ? await queryPidDirectWin(lockfileClaim.pid)
+        : undefined;
     const ownership = {
-      rows: parseProcessRows(stdout),
+      rows,
       tableRead: true,
       // The data directory answers; this table only confirms.
-      claim: readPostmasterClaim(dataDir),
+      claim: lockfileClaim,
+      ...(direct === undefined ? {} : { direct }),
     };
     const { owned, skipped } = ownedPostgresPids(ownership);
     // Loud, not silent: a candidate left alone is reported with a code.
@@ -257,6 +267,43 @@ const realProbes: SinglePidProbes = {
   holdsDataDir: (pid, dataDir) => postmasterHoldsDataDir(pid, dataDir),
   startedAtMs: (pid) => processStartedAtMs(pid),
 };
+
+/**
+ * Ask WMI about ONE pid, directly (not through a list it might be missing from):
+ * its executable name and creation date. Undefined when the query did not
+ * answer or found nothing — which proves nothing about the pid.
+ */
+export async function queryPidDirectWin(
+  pid: number,
+): Promise<{ exe: string; startedAt?: number } | undefined> {
+  const { execa } = await import('execa');
+  try {
+    const { stdout, exitCode } = await execa(
+      'powershell',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" | ForEach-Object { ` +
+          '$ms = if ($_.CreationDate) ' +
+          "{ [int64]($_.CreationDate.ToUniversalTime() - (Get-Date '1970-01-01T00:00:00Z')" +
+          '.ToUniversalTime()).TotalMilliseconds } else { 0 }; ' +
+          '"$($_.Name)|$ms" }',
+      ],
+      { reject: false, timeout: 10_000 },
+    );
+    if (exitCode !== 0) return undefined;
+    const line = stdout.split(/\r?\n/).find((l) => l.includes('|'));
+    if (line === undefined) return undefined;
+    const cut = line.lastIndexOf('|');
+    const exe = line.slice(0, cut).trim();
+    const ms = Number.parseInt(line.slice(cut + 1), 10);
+    if (exe === '') return undefined;
+    return { exe, ...(Number.isInteger(ms) && ms > 0 ? { startedAt: ms } : {}) };
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * What we own when the process table could not be read.

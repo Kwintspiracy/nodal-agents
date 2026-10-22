@@ -124,6 +124,12 @@ export interface OwnershipInput {
   readonly tableRead: boolean;
   /** What our own data directory claims, or null when it claims nothing. */
   readonly claim: LockfileClaim | null;
+  /**
+   * What a DIRECT query about the claimed pid itself returned (not a list it
+   * might be absent from): its executable name and, when known, its creation
+   * date. Absent when no such query was made or it did not answer.
+   */
+  readonly direct?: { exe: string; startedAt?: number };
 }
 
 /**
@@ -174,16 +180,29 @@ export function judgeClaimedPostmaster(input: OwnershipInput): ClaimVerdict {
   if (!input.tableRead) {
     return { verdict: 'unknown', reason: 'the process table could not be read' };
   }
-  const postmaster = input.rows.find((row) => row.pid === claim.pid);
-  if (postmaster === undefined && input.rows.length === 0) {
-    // A healthy query that finds no postgres at all and a query that failed
-    // quietly look the same here. Not a disproof.
-    return { verdict: 'unknown', reason: 'the table listed no postgres process at all' };
-  }
+  let postmaster: PostgresProcessRow | undefined = input.rows.find((row) => row.pid === claim.pid);
   if (postmaster === undefined) {
-    // The table was read and the pid is not a live postgres: stale, or recycled
-    // onto something else entirely.
-    return { verdict: 'not-ours', reason: `lockfile pid ${claim.pid} is not a live postgres` };
+    // ABSENCE FROM AN ENUMERATION IS NEVER A DISPROOF, whatever else it lists:
+    // a partial read that still exits 0 (a provider error mid-enumeration, a row
+    // dropped by the parser) lists someone else's postgres and misses our live
+    // postmaster. `not-ours` comes only from a positive fact about THIS pid.
+    const direct = input.direct;
+    if (direct === undefined) {
+      return {
+        verdict: 'unknown',
+        reason: `lockfile pid ${claim.pid} is not in the postgres list, and a list cannot disprove it`,
+      };
+    }
+    if (!/^postgres(\.exe)?$/i.test(direct.exe)) {
+      // A query about this very pid says it is another program: a disproof.
+      return { verdict: 'not-ours', reason: `pid ${claim.pid} is ${direct.exe}, not postgres` };
+    }
+    postmaster = {
+      pid: claim.pid,
+      ppid: 0,
+      commandLine: '',
+      ...(direct.startedAt === undefined ? {} : { startedAt: direct.startedAt }),
+    };
   }
   if (postmaster.startedAt === undefined || claim.startedAtSeconds === null) {
     // Nothing to compare: uncertainty, not a mismatch.
