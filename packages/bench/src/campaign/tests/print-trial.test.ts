@@ -141,6 +141,8 @@ const noCommands: CampaignConfig = {
   })),
 };
 let recordsDir: string;
+/** Le journal de la liste fermée, dans le dossier jetable de l'essai. */
+let journal: string;
 let testedEntityId: string;
 let applied: Awaited<ReturnType<typeof applyCampaignConfig>>;
 
@@ -152,6 +154,7 @@ async function instance(c: CampaignConfig): Promise<void> {
   ({ db } = await freshInstanceDb());
   const scratch = mkdtempSync(join(tmpdir(), 'print-trial-campaign-'));
   recordsDir = join(scratch, 'bench-printer-records');
+  journal = join(scratch, 'bench', 'scenario-tools.journal.json');
   applied = await applyCampaignConfig(db, c, TEST_KEYS, {
     foldersRoot: join(scratch, 'folders'),
     printerRecordsDir: recordsDir,
@@ -172,6 +175,7 @@ async function trial(id: string, c: CampaignConfig) {
       targetEntityId: testedEntityId,
       allowedReach: allowedReachOf(c),
       benchPrinterRecordsDir: recordsDir,
+      scenarioToolsJournal: journal,
     },
     db,
     new BenchStop(),
@@ -273,6 +277,43 @@ describe('a print trial on the campaign instance', () => {
     // "run without asking", nothing blocked that the configuration does not block.
     expect(await teamDrift(db, config, applied)).toEqual([]);
     expect(await readProcessStarters(db, testedEntityId)).toEqual(before);
+  });
+
+  // Revue de #863, passe 1 (P2) : la session suivante remet ce qu'un banc tué a laissé.
+  it('a bench killed mid-trial: the next session puts back every rule from the journal before its first trial', async () => {
+    const { applyScenarioTools } = await import('../../workflows/scenario-tools');
+    await instance(config);
+    const chef = applied.agents['chef']!.id;
+    await d.setApprovalRuleRepo(db, testedEntityId, {
+      agentId: chef,
+      toolName: 'xlsx_read',
+      action: 'auto_approve',
+      scope: 'agent',
+      conditionJson: { workspacePath: 'D:/bench/project' },
+    });
+    const ruleRows = async () =>
+      (
+        await db
+          .select({
+            agentId: d.approvalRules.agentId,
+            toolName: d.approvalRules.toolName,
+            action: d.approvalRules.action,
+            conditionJson: d.approvalRules.conditionJson,
+          })
+          .from(d.approvalRules)
+          .where(d.eq(d.approvalRules.entityId, testedEntityId))
+      )
+        .map((r) => JSON.stringify(r))
+        .sort();
+    const before = await ruleRows();
+    // The earlier bench: the list of `code` posed, then killed.
+    await applyScenarioTools(db, testedEntityId, 'code', scenarioById('code')!.tools, journal);
+    expect(await ruleRows()).not.toEqual(before);
+    const sum = await trial('print', config);
+    expect(sum.lines[0]!.verdict).toBe('green');
+    // Recovered first, the print list posed and given back: the owner's
+    // folder rule is there, exactly.
+    expect(await ruleRows()).toEqual(before);
   });
 
   it('an agent on a CLI runtime cannot be closed by a list: the print trial is still skipped, naming it', async () => {

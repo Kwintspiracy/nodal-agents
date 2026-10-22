@@ -17,7 +17,7 @@ import {
   mcpServers,
   agentMcpServers,
 } from '@nodal-agents/db';
-import { resolveAgentToolNames } from '../job/resolve-agent-tools.ts';
+import { resolveAgentToolNames } from '@nodal-agents/orchestration';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };

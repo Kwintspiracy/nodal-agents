@@ -1,9 +1,10 @@
 // scenario-tools.test.ts — la liste fermée des outils d'un scénario, posée sur l'instance d'une campagne (décision 1B).
 //
 // Sur l'instance réellement appliquée (PGlite, semée comme `up` la sème) : ce
-// qu'un job de chaque agent pourrait APPELER, lu par les lecteurs du produit
-// (`computeAgentToolNames`, les outils de délégation) et jugé par la règle de
-// l'exécution (`matchApprovalRule`), avant, pendant et après la liste.
+// qu'un job de chaque agent pourrait APPELER, lu dans la liste du runner
+// (`resolveAgentToolNames`, dont un test du runner prouve qu'elle égale celle
+// d'`executeJob`) et jugé par la règle de l'exécution (`matchApprovalRule`),
+// avant, pendant et après la liste.
 
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,10 +14,12 @@ import * as d from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { matchApprovalRule } from '@nodal-agents/tools';
 import { SCENARIOS, scenarioById } from '../../workflows/scenarios';
+import { resolveAgentToolNames } from '@nodal-agents/orchestration';
+import { existsSync } from 'node:fs';
 import {
-  agentToolNames,
   applyScenarioTools,
   parseScenarioTools,
+  recoverScenarioTools,
   scenarioToolsFingerprint,
 } from '../../workflows/scenario-tools';
 import { readProcessStarters } from '../../workflows/stack';
@@ -30,12 +33,15 @@ const config = loadCampaignConfig();
 let db: AnyDrizzleDb;
 let applied: AppliedCampaign;
 let entityId: string;
+/** Le journal de la liste, dans un dossier jetable : jamais l'état du banc de la machine. */
+let journal: string;
 
 afterAll(() => home.restore());
 
 beforeEach(async () => {
   ({ db } = await freshInstanceDb());
   const scratch = mkdtempSync(join(tmpdir(), 'scenario-tools-'));
+  journal = join(scratch, 'bench', 'scenario-tools.journal.json');
   applied = await applyCampaignConfig(db, config, TEST_KEYS, {
     foldersRoot: join(scratch, 'folders'),
     printerRecordsDir: join(scratch, 'bench-printer-records'),
@@ -58,9 +64,9 @@ async function callable(slug: string): Promise<string[]> {
     })
     .from(d.approvalRules)
     .where(d.eq(d.approvalRules.entityId, entityId));
-  return (await agentToolNames(db, entityId, agentId)).filter(
-    (t) => matchApprovalRule(rules as never, t, agentId, entityId)?.action !== 'block',
-  );
+  return [...(await resolveAgentToolNames(db, agentId))]
+    .sort()
+    .filter((t) => matchApprovalRule(rules as never, t, agentId, entityId)?.action !== 'block');
 }
 
 /** Toutes les règles de l'espace, sans leurs identifiants ni leurs dates : l'état à retrouver. */
@@ -108,7 +114,13 @@ describe('the closed tool list of each scenario (decision 1B)', () => {
   });
 
   it('the print list: each agent can call exactly its listed tools, and nobody can start a process', async () => {
-    const t = await applyScenarioTools(db, entityId, 'print', scenarioById('print')!.tools);
+    const t = await applyScenarioTools(
+      db,
+      entityId,
+      'print',
+      scenarioById('print')!.tools,
+      journal,
+    );
     try {
       expect(await callable('chef')).toEqual([
         'ask_user',
@@ -121,6 +133,7 @@ describe('the closed tool list of each scenario (decision 1B)', () => {
         'file_read',
         'file_search',
         'file_write',
+        'load_tools',
         'mark_memory_helpful',
         'mark_memory_outdated',
         'nodal_docs',
@@ -131,6 +144,12 @@ describe('the closed tool list of each scenario (decision 1B)', () => {
         'search_history',
         'skill_view',
       ]);
+      // The runner gives every agent create_task and list_tasks (delegation's
+      // task tools): a task outlives the trial, so the list closes them.
+      const chefId = applied.agents['chef']!.id;
+      expect([...(await resolveAgentToolNames(db, chefId))]).toEqual(
+        expect.arrayContaining(['create_task', 'list_tasks', 'run_command']),
+      );
       // The Chercheur keeps neither its web connectors nor web_search here.
       expect(
         (await callable('chercheur')).filter((x) => /tavily|firecrawl|web_search/.test(x)),
@@ -157,7 +176,13 @@ describe('the closed tool list of each scenario (decision 1B)', () => {
     });
     const before = await rules();
     const callableBefore = await callable('chef');
-    const t = await applyScenarioTools(db, entityId, 'print', scenarioById('print')!.tools);
+    const t = await applyScenarioTools(
+      db,
+      entityId,
+      'print',
+      scenarioById('print')!.tools,
+      journal,
+    );
     expect(await rules()).not.toEqual(before);
     await t.restore();
     expect(await rules()).toEqual(before);
@@ -173,9 +198,21 @@ describe('the closed tool list of each scenario (decision 1B)', () => {
   });
 
   it('the next trial of another scenario gets ITS list, and nothing of the previous one', async () => {
-    const print = await applyScenarioTools(db, entityId, 'print', scenarioById('print')!.tools);
+    const print = await applyScenarioTools(
+      db,
+      entityId,
+      'print',
+      scenarioById('print')!.tools,
+      journal,
+    );
     await print.restore();
-    const code = await applyScenarioTools(db, entityId, 'code', scenarioById('code')!.tools);
+    const code = await applyScenarioTools(
+      db,
+      entityId,
+      'code',
+      scenarioById('code')!.tools,
+      journal,
+    );
     try {
       const chef = await callable('chef');
       expect(chef).toEqual(expect.arrayContaining(['run_command', 'declare_verification']));
@@ -188,7 +225,13 @@ describe('the closed tool list of each scenario (decision 1B)', () => {
     } finally {
       await code.restore();
     }
-    const excel = await applyScenarioTools(db, entityId, 'file', scenarioById('file')!.tools);
+    const excel = await applyScenarioTools(
+      db,
+      entityId,
+      'file',
+      scenarioById('file')!.tools,
+      journal,
+    );
     try {
       const chef = await callable('chef');
       expect(chef.filter(OFFICE).every((x) => x.startsWith('xlsx_'))).toBe(true);
@@ -203,8 +246,77 @@ describe('the closed tool list of each scenario (decision 1B)', () => {
   it('a list that names an unknown tool closes nothing: refused before any rule is written', async () => {
     const before = await rules();
     await expect(
-      applyScenarioTools(db, entityId, 'x', ['return_result', 'not_a_tool']),
+      applyScenarioTools(db, entityId, 'x', ['return_result', 'not_a_tool'], journal),
     ).rejects.toThrow('scenario_tools_invalid');
     expect(await rules()).toEqual(before);
+  });
+
+  // Revue de #863, passe 1 (P2) : un banc tué entre la pose et la remise.
+  it('a bench killed mid-trial: the next start puts every rule back from the journal, a folder rule with its folder', async () => {
+    const chef = applied.agents['chef']!.id;
+    await d.setApprovalRuleRepo(db, entityId, {
+      agentId: chef,
+      toolName: 'xlsx_read',
+      action: 'auto_approve',
+      scope: 'agent',
+      conditionJson: { workspacePath: 'D:/bench/project' },
+    });
+    const before = await rules();
+    // Applied, and the process dies: no finally, no restore.
+    await applyScenarioTools(db, entityId, 'print', scenarioById('print')!.tools, journal);
+    expect(existsSync(journal)).toBe(true);
+    expect(await rules()).not.toEqual(before);
+    // A new trial cannot start on top of it.
+    await expect(
+      applyScenarioTools(db, entityId, 'code', scenarioById('code')!.tools, journal),
+    ).rejects.toThrow('scenario_tools_journal_pending');
+    // The next start.
+    const back = await recoverScenarioTools(db, journal);
+    expect(back?.scenario).toBe('print');
+    expect(back!.rules).toBeGreaterThan(0);
+    expect(await rules()).toEqual(before);
+    expect(existsSync(journal)).toBe(false);
+    expect(await recoverScenarioTools(db, journal)).toBeNull();
+  });
+
+  // Revue de #863, passe 1 (P2) : les outils d'un serveur MCP dont la liste est vide ou périmée.
+  it('an MCP server whose tools are unknown is closed whole, by its server tier, unless the list opens it', async () => {
+    const { matchApprovalRule: match } = await import('@nodal-agents/tools');
+    const chef = applied.agents['chef']!.id;
+    const [server] = await db
+      .insert(d.mcpServers)
+      .values({ entityId, name: 'Notes', slug: 'notes-srv', transport: 'stdio', command: 'node' })
+      .returning({ id: d.mcpServers.id });
+    await d.attachMcpServerToAgent(db, { entityId, agentId: chef, mcpServerId: server!.id });
+    // Nothing of it is in the runner's list yet: its tools are unknown.
+    expect(
+      [...(await resolveAgentToolNames(db, chef))].filter((t) => t.startsWith('notes_srv__')),
+    ).toEqual([]);
+    const t = await applyScenarioTools(
+      db,
+      entityId,
+      'print',
+      scenarioById('print')!.tools,
+      journal,
+    );
+    try {
+      expect(t.closed['chef']).toContain('notes_srv__*');
+      const all = await db
+        .select()
+        .from(d.approvalRules)
+        .where(d.eq(d.approvalRules.entityId, entityId));
+      // Any tool the server may offer at the job's start is refused.
+      expect(match(all as never, 'notes_srv__write_note', chef, entityId)?.action).toBe('block');
+      // The bench printer, which the list opens, is not.
+      expect(match(all as never, 'bench_printer__request_print', chef, entityId)?.action).not.toBe(
+        'block',
+      );
+    } finally {
+      await t.restore();
+    }
+    // A list that names some of the server's tools one by one cannot close the rest: refused.
+    await expect(
+      applyScenarioTools(db, entityId, 'x', ['return_result', 'notes_srv__read'], journal),
+    ).rejects.toThrow();
   });
 });

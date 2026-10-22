@@ -47,7 +47,7 @@ import {
 } from './stack';
 import { readResearchSubjects } from './subjects';
 import { DEFAULT_TRIAL_OPTIONS, runTrial, type TrialDeps, type TrialProgress } from './trial';
-import { applyScenarioTools } from './scenario-tools';
+import { applyScenarioTools, recoverScenarioTools, scenarioToolsJournal } from './scenario-tools';
 import type { AnyScenario, ScenarioEnv, ServiceProbe, TrialLine } from './types';
 
 /** L'environnement d'un essai : dossiers de travail, outils de l'équipe, services déclarés et sondés. */
@@ -105,6 +105,12 @@ export interface BenchRun {
    * quand il le sait : la déclaration de l'imprimante doit le porter.
    */
   readonly benchPrinterRecordsDir?: string;
+  /**
+   * Le journal des règles que la liste fermée d'un scénario remplace
+   * (`scenarioToolsJournal()` par défaut : l'état du banc dans le dossier de
+   * Nodal de la stack). Les tests en donnent un temporaire.
+   */
+  readonly scenarioToolsJournal?: string;
 }
 
 /** Ce qu'une session dit à qui l'écoute. Tout est facultatif sauf `log`. */
@@ -176,6 +182,14 @@ export async function runBench(
       log: (l) => hooks.log(l),
     });
     stop.hold(lock);
+    // Un banc tué en plein essai a laissé la liste fermée d'un scénario posée :
+    // ses règles sont remises AVANT tout, depuis le journal, puis le journal part.
+    const journal = run.scenarioToolsJournal ?? scenarioToolsJournal();
+    const recovered = await recoverScenarioTools(db, journal);
+    if (recovered)
+      hooks.log(
+        `Put back ${recovered.rules} rule(s) the tool list of ${recovered.scenario} had replaced when an earlier bench stopped mid-trial.`,
+      );
     hooks.log(
       `Workflow bench — ${run.scenarios.length} scenario(s) × ${run.trials} · Nodal-Agents ${nodalVersion} @ ${stackCommit?.slice(0, 8) ?? 'unknown commit'} · ${run.stackDir} · bench space ${target.entityId} (root ${target.rootAgentSlug})`,
     );
@@ -215,7 +229,7 @@ export async function runBench(
         // l'essai, besoins compris (`no-real-printer` lit l'équipe ainsi
         // fermée), et retirée après, quoi qu'il arrive. Une liste qui ne tient
         // pas arrête la session : aucun essai ne part sur une surface inconnue.
-        const tools = await applyScenarioTools(db, target.entityId, s.id, s.tools);
+        const tools = await applyScenarioTools(db, target.entityId, s.id, s.tools, journal);
         let line: TrialLine;
         try {
           line = await runTrial(s, deps, {

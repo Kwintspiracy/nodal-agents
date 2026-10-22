@@ -12,7 +12,7 @@
 // pattern-match here is a heuristic, not a guarantee.
 //
 // Pure function: no DB, no I/O. `availableTools` is resolved by the caller
-// (resolveAgentToolNames, apps/runner/src/job/resolve-agent-tools.ts).
+// (resolveAgentToolNames, packages/orchestration/src/router/resolve-agent-tools.ts).
 
 export interface RoutineLintResult {
   warnings: string[];

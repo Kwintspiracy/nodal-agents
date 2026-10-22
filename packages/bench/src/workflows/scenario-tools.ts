@@ -32,9 +32,11 @@
 // refusée, et `return_result` doit y être : il ne se bloque pas.
 
 import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { z } from 'zod';
+import { nodalHomePath } from '@nodal-agents/shared/nodal-home';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import type { AgentId, EntityId } from '@nodal-agents/orchestration';
 import { mcpToolPrefix } from '@nodal-agents/shared';
 import { BENCH_PRINTER_SLUG, BENCH_PRINTER_TOOLS } from '../printer/identity';
 
@@ -52,6 +54,9 @@ import { BENCH_PRINTER_SLUG, BENCH_PRINTER_TOOLS } from '../printer/identity';
  */
 export const BASE = [
   'return_result',
+  // La mécanique qui charge les outils différés du job : elle ne donne rien
+  // qu'il n'ait déjà, et un outil bloqué reste bloqué une fois chargé.
+  'load_tools',
   'ask_user',
   'skill_view',
   'nodal_docs',
@@ -160,111 +165,203 @@ export function scenarioToolsFingerprint(list: readonly string[]): string {
 
 // ─── Poser la liste avant un essai, la retirer après ─────────────────────────
 
-/** Les outils qu'un job de l'agent recevrait : ceux du produit et ses outils de délégation. */
-export async function agentToolNames(
-  db: AnyDrizzleDb,
-  entityId: string,
-  agentId: string,
-): Promise<string[]> {
-  const { computeAgentToolNames, generateAssignTools } =
-    await import('@nodal-agents/orchestration');
-  const names = await computeAgentToolNames(agentId as AgentId, entityId as EntityId, db, {
-    hasDeliveryRecipient: true,
-  });
-  const assign = (await generateAssignTools(agentId as AgentId, db)).map((t) => t.name);
-  return [...new Set([...names, ...assign])].sort();
+/**
+ * Le journal des règles que la liste remplace, dans l'état du banc (à côté de
+ * son verrou, `bench/` du dossier de Nodal de la stack) : écrit AVANT la
+ * première règle posée, effacé seulement après une remise réussie. Un banc tué
+ * en plein essai le laisse ; la session suivante remet tout depuis lui avant
+ * quoi que ce soit (`recoverScenarioTools`). Sans lui, une règle bornée à un
+ * dossier que la liste avait remplacée serait perdue : l'écriture de la règle
+ * réécrit sa condition (revue de #863, passe 1).
+ */
+export function scenarioToolsJournal(): string {
+  return nodalHomePath('bench', 'scenario-tools.journal.json');
 }
 
-/** Ce que la liste a fermé pour un agent : l'outil, et la règle qu'il avait avant. */
-interface Closed {
-  readonly agentId: string;
-  readonly toolName: string;
-  readonly before: {
-    action: 'auto_approve' | 'require_approval' | 'block';
-    conditionJson: Record<string, string>;
-  } | null;
+/** Un nom d'outil qui n'existe pas : il vise le palier `<serveur>__*` de la chaîne de règles. */
+const ANY_TOOL_OF_SERVER = 'any_tool_the_list_does_not_name';
+
+/**
+ * Les outils qu'un job de l'agent recevrait vraiment : la liste du runner
+ * (`resolveAgentToolNames`, @nodal-agents/orchestration, dont un test prouve
+ * qu'elle égale celle d'`executeJob`), délégation, tâches (`create_task`,
+ * `list_tasks`) et `load_tools` compris.
+ */
+export async function agentToolNames(db: AnyDrizzleDb, agentId: string): Promise<string[]> {
+  const { resolveAgentToolNames } = await import('@nodal-agents/orchestration');
+  return [...(await resolveAgentToolNames(db, agentId))].sort();
 }
+
+/**
+ * Les préfixes d'outils des serveurs MCP actifs attribués à l'agent, que leurs
+ * outils soient connus ou non : un serveur dont la liste d'outils est vide ou
+ * périmée peut en offrir que personne n'a encore vus (le runner s'y connecte au
+ * lancement du job). Une liste les ferme par le palier `<serveur>__*` de la
+ * chaîne de règles, qui couvre aussi ces outils-là.
+ */
+async function heldMcpPrefixes(db: AnyDrizzleDb, agentId: string): Promise<string[]> {
+  const d = await import('@nodal-agents/db');
+  const rows = await db
+    .select({ slug: d.mcpServers.slug, active: d.mcpServers.active })
+    .from(d.agentMcpServers)
+    .innerJoin(d.mcpServers, d.eq(d.mcpServers.id, d.agentMcpServers.mcpServerId))
+    .where(d.eq(d.agentMcpServers.agentId, agentId));
+  return [
+    ...new Set(rows.filter((r) => r.active !== false).map((r) => mcpToolPrefix(r.slug))),
+  ].sort();
+}
+
+/**
+ * Comment la liste traite un serveur MCP : `open` (une entrée en ouvre tous
+ * les outils, `<serveur>__*`), `close` (aucune entrée ne le nomme : son palier
+ * est bloqué), ou `partial` (des outils nommés un à un : ses autres outils,
+ * peut-être inconnus, ne se ferment pas sans fermer ceux-là ; refusé).
+ */
+function serverTreatment(list: readonly string[], prefix: string): 'open' | 'close' | 'partial' {
+  if (listAllows(list, `${prefix}__${ANY_TOOL_OF_SERVER}`)) return 'open';
+  return list.some((e) => e.startsWith(`${prefix}__`)) ? 'partial' : 'close';
+}
+
+type RuleAction = 'auto_approve' | 'require_approval' | 'block';
+
+/** Une règle que la liste remplace : l'agent, l'outil (ou le palier d'un serveur), et ce qu'elle était. */
+const ClosedSchema = z
+  .object({
+    agentId: z.string(),
+    toolName: z.string(),
+    before: z
+      .object({
+        action: z.enum(['auto_approve', 'require_approval', 'block']),
+        conditionJson: z.record(z.string(), z.string()),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+type Closed = z.infer<typeof ClosedSchema>;
+
+const JournalSchema = z
+  .object({ entityId: z.string(), scenario: z.string(), closed: z.array(ClosedSchema) })
+  .strict();
 
 export interface AppliedScenarioTools {
-  /** Par agent (slug) : les outils que la liste a fermés. */
+  /** Par agent (slug) : les outils, et les paliers `<serveur>__*`, que la liste a fermés. */
   readonly closed: Readonly<Record<string, readonly string[]>>;
-  /** Remet chaque règle touchée telle qu'elle était. Idempotent. */
+  /** Remet chaque règle touchée telle qu'elle était, puis efface le journal. Idempotent. */
   restore(): Promise<void>;
+}
+
+/** Remet des règles telles qu'elles étaient (ou les retire), à rebours. */
+async function putBack(
+  db: AnyDrizzleDb,
+  entityId: string,
+  closed: readonly Closed[],
+): Promise<void> {
+  const d = await import('@nodal-agents/db');
+  for (const c of [...closed].reverse()) {
+    const r = await d.setApprovalRuleRepo(db, entityId, {
+      agentId: c.agentId,
+      toolName: c.toolName,
+      action: c.before?.action ?? null,
+      scope: 'agent',
+      conditionJson: c.before?.conditionJson ?? {},
+      confirmWidening: true,
+    });
+    if ('refused' in r)
+      throw new Error(`scenario_tools_restore_refused: ${c.toolName}: ${r.refused}`);
+  }
 }
 
 /**
  * Pose la liste du scénario sur l'espace : un `block` sur chaque outil qu'un
- * agent actif tient et qu'elle ne nomme pas. Vérifie ensuite, par la règle de
- * l'exécution (`matchApprovalRule`), qu'aucun outil hors liste ne reste
- * ouvert ; sinon tout est remis et l'essai ne part pas.
+ * agent actif recevrait et qu'elle ne nomme pas, et sur le palier
+ * `<serveur>__*` de chaque serveur MCP qu'elle ne nomme pas. Les règles
+ * remplacées sont journalisées AVANT la première écriture. Vérifie ensuite,
+ * par la règle de l'exécution (`matchApprovalRule`), que rien ne reste ouvert
+ * hors liste ; sinon tout est remis et l'essai ne part pas.
  */
 export async function applyScenarioTools(
   db: AnyDrizzleDb,
   entityId: string,
   scenario: string,
   rawList: readonly string[],
+  journal: string = scenarioToolsJournal(),
 ): Promise<AppliedScenarioTools> {
   const list = await parseScenarioTools(scenario, rawList);
+  if (existsSync(journal))
+    throw new Error(
+      `scenario_tools_journal_pending: ${journal} holds rules an earlier trial replaced; recover them first (recoverScenarioTools)`,
+    );
   const d = await import('@nodal-agents/db');
   const agents = await db
     .select({ id: d.agents.id, slug: d.agents.slug, active: d.agents.active })
     .from(d.agents)
     .where(d.eq(d.agents.entityId, entityId))
     .orderBy(d.agents.slug);
-  const touched: Closed[] = [];
+
+  // 1. Ce que la liste ferme, et la règle que chaque fermeture remplace : lu, rien n'est écrit.
+  const plan: Closed[] = [];
   const closed: Record<string, string[]> = {};
+  for (const a of agents.filter((x) => x.active !== false)) {
+    const targets: string[] = [];
+    for (const prefix of await heldMcpPrefixes(db, a.id)) {
+      const how = serverTreatment(list, prefix);
+      if (how === 'partial')
+        throw new Error(
+          `scenario_tools_partial_mcp: ${scenario} names some tools of the MCP server ${prefix} one by one; its other tools, possibly unknown yet, cannot be closed without closing those: list ${prefix}__* or none`,
+        );
+      if (how === 'close') targets.push(`${prefix}__*`);
+    }
+    for (const t of await agentToolNames(db, a.id)) {
+      // Un outil connu d'un serveur fermé par son palier a aussi sa propre règle :
+      // une règle d'outil exacte (« sans demande ») l'emporte sur le palier.
+      if (!listAllows(list, t)) targets.push(t);
+    }
+    for (const toolName of targets) {
+      const [row] = await db
+        .select({ action: d.approvalRules.action, conditionJson: d.approvalRules.conditionJson })
+        .from(d.approvalRules)
+        .where(
+          d.and(
+            d.eq(d.approvalRules.entityId, entityId),
+            d.eq(d.approvalRules.agentId, a.id),
+            d.eq(d.approvalRules.toolName, toolName),
+          ),
+        );
+      plan.push({
+        agentId: a.id,
+        toolName,
+        before: row
+          ? {
+              action: row.action as RuleAction,
+              conditionJson: (row.conditionJson ?? {}) as Record<string, string>,
+            }
+          : null,
+      });
+    }
+    closed[a.slug] = targets;
+  }
+
+  // 2. Le journal, avant la première règle écrite.
+  mkdirSync(dirname(journal), { recursive: true });
+  writeFileSync(journal, `${JSON.stringify({ entityId, scenario, closed: plan }, null, 1)}\n`);
+
+  const written: Closed[] = [];
   const restore = async (): Promise<void> => {
-    // À rebours : chaque règle revient telle qu'elle était, ou s'en va.
-    while (touched.length > 0) {
-      const c = touched.pop()!;
+    await putBack(db, entityId, written.splice(0));
+    rmSync(journal, { force: true });
+  };
+  try {
+    for (const c of plan) {
+      written.push(c);
       const r = await d.setApprovalRuleRepo(db, entityId, {
         agentId: c.agentId,
         toolName: c.toolName,
-        action: c.before?.action ?? null,
+        action: 'block',
         scope: 'agent',
-        conditionJson: c.before?.conditionJson ?? {},
-        confirmWidening: true,
+        conditionJson: {},
       });
-      if ('refused' in r)
-        throw new Error(`scenario_tools_restore_refused: ${c.toolName}: ${r.refused}`);
-    }
-  };
-  try {
-    for (const a of agents.filter((x) => x.active !== false)) {
-      const outside = (await agentToolNames(db, entityId, a.id)).filter(
-        (t) => !listAllows(list, t),
-      );
-      for (const toolName of outside) {
-        const [row] = await db
-          .select({ action: d.approvalRules.action, conditionJson: d.approvalRules.conditionJson })
-          .from(d.approvalRules)
-          .where(
-            d.and(
-              d.eq(d.approvalRules.entityId, entityId),
-              d.eq(d.approvalRules.agentId, a.id),
-              d.eq(d.approvalRules.toolName, toolName),
-            ),
-          );
-        touched.push({
-          agentId: a.id,
-          toolName,
-          before: row
-            ? {
-                action: row.action as 'auto_approve' | 'require_approval' | 'block',
-                conditionJson: (row.conditionJson ?? {}) as Record<string, string>,
-              }
-            : null,
-        });
-        const r = await d.setApprovalRuleRepo(db, entityId, {
-          agentId: a.id,
-          toolName,
-          action: 'block',
-          scope: 'agent',
-          conditionJson: {},
-        });
-        if ('refused' in r) throw new Error(`scenario_tools_refused: ${toolName}: ${r.refused}`);
-      }
-      closed[a.slug] = outside;
+      if ('refused' in r) throw new Error(`scenario_tools_refused: ${c.toolName}: ${r.refused}`);
     }
     const open = await openOutsideList(db, entityId, list);
     if (open.length > 0)
@@ -279,9 +376,34 @@ export async function applyScenarioTools(
 }
 
 /**
- * Les outils qu'un agent actif peut encore appeler hors de la liste, lus comme
- * l'exécution les juge (`matchApprovalRule`) : `agent:outil`. Vide : la liste
- * tient.
+ * Au départ d'une session : un journal resté (un banc tué en plein essai) est
+ * remis avant toute autre chose, puis effacé. Rend le scénario et le nombre de
+ * règles remises, ou null sans journal. Un journal illisible arrête la session
+ * en le nommant : jamais une règle du propriétaire perdue en silence.
+ */
+export async function recoverScenarioTools(
+  db: AnyDrizzleDb,
+  journal: string = scenarioToolsJournal(),
+): Promise<{ scenario: string; rules: number } | null> {
+  if (!existsSync(journal)) return null;
+  let parsed: z.infer<typeof JournalSchema>;
+  try {
+    parsed = JournalSchema.parse(JSON.parse(readFileSync(journal, 'utf8')));
+  } catch (e) {
+    throw new Error(
+      `scenario_tools_journal_unreadable: ${journal}: ${String(e instanceof Error ? e.message : e)}; the rules it holds must be put back by hand before the bench runs again`,
+    );
+  }
+  await putBack(db, parsed.entityId, parsed.closed);
+  rmSync(journal, { force: true });
+  return { scenario: parsed.scenario, rules: parsed.closed.length };
+}
+
+/**
+ * Ce qu'un agent actif peut encore appeler hors de la liste, lu comme
+ * l'exécution le juge (`matchApprovalRule`) : `agent:outil`, et
+ * `agent:serveur__*` pour un serveur MCP dont un outil inconnu passerait.
+ * Vide : la liste tient.
  */
 export async function openOutsideList(
   db: AnyDrizzleDb,
@@ -306,12 +428,16 @@ export async function openOutsideList(
     .from(d.agents)
     .where(d.eq(d.agents.entityId, entityId))
     .orderBy(d.agents.slug);
+  const blocked = (t: string, agentId: string): boolean =>
+    matchApprovalRule(rules as never, t, agentId, entityId)?.action === 'block';
   const out: string[] = [];
   for (const a of agents.filter((x) => x.active !== false)) {
-    for (const t of await agentToolNames(db, entityId, a.id)) {
-      if (listAllows(list, t)) continue;
-      if (matchApprovalRule(rules as never, t, a.id, entityId)?.action !== 'block')
-        out.push(`${a.slug}:${t}`);
+    for (const t of await agentToolNames(db, a.id)) {
+      if (!listAllows(list, t) && !blocked(t, a.id)) out.push(`${a.slug}:${t}`);
+    }
+    for (const prefix of await heldMcpPrefixes(db, a.id)) {
+      const probe = `${prefix}__${ANY_TOOL_OF_SERVER}`;
+      if (!listAllows(list, probe) && !blocked(probe, a.id)) out.push(`${a.slug}:${prefix}__*`);
     }
   }
   return out;

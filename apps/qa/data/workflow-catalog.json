@@ -49,6 +49,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -65,7 +66,7 @@
         "register_project",
         "assign_*"
       ],
-      "toolsFingerprint": "6e53f28a0ed9",
+      "toolsFingerprint": "1239b8e37f7c",
       "subject": null,
       "set": "nightly",
       "needs": [],
@@ -93,6 +94,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -110,7 +112,7 @@
         "assign_*",
         "run_command"
       ],
-      "toolsFingerprint": "6af8a5f0b1da",
+      "toolsFingerprint": "6d581487d28c",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -139,6 +141,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -156,7 +159,7 @@
         "assign_*",
         "web_search"
       ],
-      "toolsFingerprint": "d95c004ecdee",
+      "toolsFingerprint": "2a565229e21c",
       "subject": "research",
       "set": "nightly",
       "needs": [],
@@ -195,6 +198,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -214,7 +218,7 @@
         "tavily_*",
         "firecrawl_*"
       ],
-      "toolsFingerprint": "6eed47db5222",
+      "toolsFingerprint": "766cd13a074d",
       "subject": "deep-research",
       "set": "on-demand",
       "needs": [],
@@ -255,6 +259,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -274,7 +279,7 @@
         "tavily_*",
         "firecrawl_*"
       ],
-      "toolsFingerprint": "6eed47db5222",
+      "toolsFingerprint": "766cd13a074d",
       "subject": "deep-research",
       "set": "nightly",
       "needs": [
@@ -316,6 +321,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -336,7 +342,7 @@
         "code_task",
         "declare_verification"
       ],
-      "toolsFingerprint": "3cbe298fd0a2",
+      "toolsFingerprint": "12930ad4ab76",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -377,6 +383,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -397,7 +404,7 @@
         "code_task",
         "declare_verification"
       ],
-      "toolsFingerprint": "3cbe298fd0a2",
+      "toolsFingerprint": "12930ad4ab76",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -437,6 +444,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -457,7 +465,7 @@
         "code_task",
         "declare_verification"
       ],
-      "toolsFingerprint": "3cbe298fd0a2",
+      "toolsFingerprint": "12930ad4ab76",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -500,6 +508,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -520,7 +529,7 @@
         "code_task",
         "declare_verification"
       ],
-      "toolsFingerprint": "3cbe298fd0a2",
+      "toolsFingerprint": "12930ad4ab76",
       "subject": null,
       "set": "nightly",
       "needs": [],
@@ -562,6 +571,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -579,7 +589,7 @@
         "assign_*",
         "xlsx_*"
       ],
-      "toolsFingerprint": "e17e57208ca8",
+      "toolsFingerprint": "ab8e388a34fd",
       "subject": null,
       "set": "nightly",
       "needs": [],
@@ -622,6 +632,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -639,7 +650,7 @@
         "assign_*",
         "xlsx_*"
       ],
-      "toolsFingerprint": "e17e57208ca8",
+      "toolsFingerprint": "ab8e388a34fd",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -683,6 +694,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -700,7 +712,7 @@
         "assign_*",
         "xlsx_*"
       ],
-      "toolsFingerprint": "e17e57208ca8",
+      "toolsFingerprint": "ab8e388a34fd",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -745,6 +757,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -762,7 +775,7 @@
         "assign_*",
         "xlsx_*"
       ],
-      "toolsFingerprint": "e17e57208ca8",
+      "toolsFingerprint": "ab8e388a34fd",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -807,6 +820,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -824,7 +838,7 @@
         "assign_*",
         "docx_*"
       ],
-      "toolsFingerprint": "e3f663dd98b8",
+      "toolsFingerprint": "657cad9b95ae",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -866,6 +880,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -883,7 +898,7 @@
         "assign_*",
         "docx_*"
       ],
-      "toolsFingerprint": "e3f663dd98b8",
+      "toolsFingerprint": "657cad9b95ae",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -927,6 +942,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -944,7 +960,7 @@
         "assign_*",
         "docx_*"
       ],
-      "toolsFingerprint": "e3f663dd98b8",
+      "toolsFingerprint": "657cad9b95ae",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -987,6 +1003,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1004,7 +1021,7 @@
         "assign_*",
         "docx_*"
       ],
-      "toolsFingerprint": "e3f663dd98b8",
+      "toolsFingerprint": "657cad9b95ae",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -1047,6 +1064,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1064,7 +1082,7 @@
         "assign_*",
         "pptx_*"
       ],
-      "toolsFingerprint": "6dd805d7d8ab",
+      "toolsFingerprint": "94e0e964789b",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -1104,6 +1122,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1121,7 +1140,7 @@
         "assign_*",
         "pptx_*"
       ],
-      "toolsFingerprint": "6dd805d7d8ab",
+      "toolsFingerprint": "94e0e964789b",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -1164,6 +1183,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1181,7 +1201,7 @@
         "assign_*",
         "pptx_*"
       ],
-      "toolsFingerprint": "6dd805d7d8ab",
+      "toolsFingerprint": "94e0e964789b",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -1224,6 +1244,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1241,7 +1262,7 @@
         "assign_*",
         "pptx_*"
       ],
-      "toolsFingerprint": "6dd805d7d8ab",
+      "toolsFingerprint": "94e0e964789b",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -1276,6 +1297,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1296,7 +1318,7 @@
         "code_task",
         "declare_verification"
       ],
-      "toolsFingerprint": "3cbe298fd0a2",
+      "toolsFingerprint": "12930ad4ab76",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -1329,6 +1351,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1349,7 +1372,7 @@
         "code_task",
         "declare_verification"
       ],
-      "toolsFingerprint": "3cbe298fd0a2",
+      "toolsFingerprint": "12930ad4ab76",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -1392,6 +1415,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1408,7 +1432,7 @@
         "register_project",
         "assign_*"
       ],
-      "toolsFingerprint": "6e53f28a0ed9",
+      "toolsFingerprint": "1239b8e37f7c",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -1448,6 +1472,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1464,7 +1489,7 @@
         "register_project",
         "assign_*"
       ],
-      "toolsFingerprint": "6e53f28a0ed9",
+      "toolsFingerprint": "1239b8e37f7c",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -1512,6 +1537,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1528,7 +1554,7 @@
         "register_project",
         "assign_*"
       ],
-      "toolsFingerprint": "6e53f28a0ed9",
+      "toolsFingerprint": "1239b8e37f7c",
       "subject": null,
       "set": "on-demand",
       "needs": [],
@@ -1563,6 +1589,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1583,7 +1610,7 @@
         "code_task",
         "declare_verification"
       ],
-      "toolsFingerprint": "3cbe298fd0a2",
+      "toolsFingerprint": "12930ad4ab76",
       "subject": null,
       "set": "on-demand",
       "needs": [
@@ -1617,6 +1644,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1637,7 +1665,7 @@
         "code_task",
         "declare_verification"
       ],
-      "toolsFingerprint": "3cbe298fd0a2",
+      "toolsFingerprint": "12930ad4ab76",
       "subject": null,
       "set": "on-demand",
       "needs": [
@@ -1672,6 +1700,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1693,7 +1722,7 @@
         "declare_verification",
         "send_image"
       ],
-      "toolsFingerprint": "265a88db87c8",
+      "toolsFingerprint": "c1aefac232d6",
       "subject": null,
       "set": "on-demand",
       "needs": [
@@ -1729,6 +1758,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1746,7 +1776,7 @@
         "assign_*",
         "bench_printer__*"
       ],
-      "toolsFingerprint": "0520716f0fb2",
+      "toolsFingerprint": "cb45c4da380a",
       "subject": null,
       "set": "nightly",
       "needs": [
@@ -1785,6 +1815,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1802,7 +1833,7 @@
         "assign_*",
         "bench_printer__*"
       ],
-      "toolsFingerprint": "0520716f0fb2",
+      "toolsFingerprint": "cb45c4da380a",
       "subject": null,
       "set": "on-demand",
       "needs": [
@@ -1847,6 +1878,7 @@
       },
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1867,7 +1899,7 @@
         "tavily_*",
         "firecrawl_*"
       ],
-      "toolsFingerprint": "c059b8b595c5",
+      "toolsFingerprint": "8353498b4346",
       "subject": null,
       "set": "nightly",
       "needs": [
@@ -1907,6 +1939,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1923,7 +1956,7 @@
         "register_project",
         "assign_*"
       ],
-      "toolsFingerprint": "6e53f28a0ed9",
+      "toolsFingerprint": "1239b8e37f7c",
       "subject": null,
       "set": "nightly",
       "needs": [],
@@ -1954,6 +1987,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -1970,7 +2004,7 @@
         "register_project",
         "assign_*"
       ],
-      "toolsFingerprint": "6e53f28a0ed9",
+      "toolsFingerprint": "1239b8e37f7c",
       "subject": null,
       "set": "nightly",
       "needs": [
@@ -2002,6 +2036,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -2018,7 +2053,7 @@
         "register_project",
         "assign_*"
       ],
-      "toolsFingerprint": "6e53f28a0ed9",
+      "toolsFingerprint": "1239b8e37f7c",
       "subject": null,
       "set": "nightly",
       "needs": [
@@ -2051,6 +2086,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -2067,7 +2103,7 @@
         "register_project",
         "assign_*"
       ],
-      "toolsFingerprint": "6e53f28a0ed9",
+      "toolsFingerprint": "1239b8e37f7c",
       "subject": null,
       "set": "nightly",
       "needs": [],
@@ -2098,6 +2134,7 @@
       "productTools": null,
       "tools": [
         "return_result",
+        "load_tools",
         "ask_user",
         "skill_view",
         "nodal_docs",
@@ -2114,7 +2151,7 @@
         "register_project",
         "assign_*"
       ],
-      "toolsFingerprint": "6e53f28a0ed9",
+      "toolsFingerprint": "1239b8e37f7c",
       "subject": null,
       "set": "on-demand",
       "needs": [],

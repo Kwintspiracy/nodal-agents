@@ -164,6 +164,9 @@ export { checkRootJobComplete, getPendingTasksForRoot } from './planner/completi
 // ─── Team block (auto-generated from DB) ─────────────────────────────────────
 export { buildTeamBlock } from './team-block';
 export { resolveBuiltinToolNames } from './builtin-tool-names';
+// The tool names a job of an agent really receives — the runner's whitelist,
+// read back without running a job (#863: the bench's closed tool lists read it too).
+export { resolveAgentToolNames } from './router/resolve-agent-tools';
 export { resolveMcpToolNames } from './mcp-tool-names';
 export { holdersOfPath } from './path-holders';
 export type { PathHolders, RosterFolders } from './path-holders';
