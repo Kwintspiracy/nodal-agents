@@ -5,8 +5,14 @@
 // arrêté, repris d'un runner mort —, sur un démon détaché qu'une commande a
 // laissé derrière elle.
 //
-// Mutation vérifiée (annulée ensuite) : `releaseProcessesOfLostJob` retiré de
-// `reclaimJobsOfDeadRunners` → « reclaimed » rouge, le démon survit.
+// Mutations vérifiées (chacune annulée ensuite), sur `takeLostRun`, la règle
+// des faucheurs :
+//   - la libération retirée → « reclaimed » rouge, le démon survit ;
+//   - la prise sans ses conditions (statut, prise, ancienneté : la libération
+//     par seul identifiant de job) → les quatre cas « came back to life »
+//     rouges, la commande du run revenu meurt ;
+//   - la remise en file AVANT la prise et la libération → « the resumed run's
+//     command … survives » rouge.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -28,6 +34,7 @@ import {
   openJobProcessScopeIds,
 } from '@nodal-agents/sandbox';
 import { reclaimJobsOfDeadRunners } from '../../cron/reclaim-jobs.ts';
+import { failStalePendingJobs, resetOrphanedJobs } from '../../cron/reset-orphans.ts';
 import {
   JOB_PROCESSES_RELEASED,
   releaseIfEnded,
@@ -372,4 +379,149 @@ describe('a lost job releases its processes before the row can be claimed again 
       await closeJobProcessScope(id);
     }
   }, 60_000);
+});
+
+// #834, revue A passe 2 : la libération et la décision « ce run est perdu »
+// sont UN seul fait. Un faucheur lit ses candidats, puis — avant d'écrire — le
+// run qu'il croyait perdu repart (il se remet en file, il se suspend, un
+// worker le prend) : rien de ce run ne doit mourir, et la ligne reste ce que
+// le run en a fait. Chaque chemin de faucheur, une règle.
+describe('a reaper whose candidate came back to life releases nothing and writes nothing (#750) @cap:executer-une-commande/moteur', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nodal-job-alive-'));
+  afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
+  writeFileSync(
+    join(dir, 'ticker.cjs'),
+    "const fs = require('fs'); let n = 0; setInterval(() => fs.writeFileSync(process.argv[2], String(++n)), 100);\n",
+  );
+
+  /** La base, avec un geste glissé juste après la PREMIÈRE lecture du faucheur (ses candidats). */
+  function withHookAfterFirstRead(real: TestDb, hook: () => Promise<void>): TestDb {
+    let fired = false;
+    const afterAwait = <T extends object>(obj: T): T =>
+      new Proxy(obj, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop) as unknown;
+          if (prop === 'then' && typeof value === 'function') {
+            return (onOk: (v: unknown) => unknown, onErr: (e: unknown) => unknown) =>
+              (value as (a: (v: unknown) => unknown) => Promise<unknown>)
+                .call(target, async (v: unknown) => {
+                  if (!fired) {
+                    fired = true;
+                    await hook();
+                  }
+                  return v;
+                })
+                .then(onOk, onErr);
+          }
+          if (typeof value === 'function') {
+            return (...args: unknown[]) => {
+              const out = (value as (...a: unknown[]) => unknown).apply(target, args);
+              return out && typeof out === 'object' ? afterAwait(out) : out;
+            };
+          }
+          return value;
+        },
+      });
+    return new Proxy(real, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop) as unknown;
+        if (typeof value !== 'function') return value;
+        if (prop !== 'select' || fired) return (value as () => unknown).bind(target);
+        return (...args: unknown[]) =>
+          afterAwait((value as (...a: unknown[]) => object).apply(target, args));
+      },
+    });
+  }
+
+  const stale = (): Date => new Date(Date.now() - 10 * 60_000);
+
+  const cases: {
+    name: string;
+    row: { status: string; turn: number };
+    /** Ce que le run, vivant, fait de sa ligne entre la lecture et l'écriture. */
+    comesBack: Record<string, unknown>;
+    reap: (d: TestDb) => Promise<unknown>;
+  }[] = [
+    {
+      name: 'reclaimJobsOfDeadRunners, a job it would resume: the run suspends for an approval',
+      row: { status: 'processing', turn: 3 },
+      comesBack: { status: 'awaiting_approval' },
+      reap: (d) =>
+        reclaimJobsOfDeadRunners(d as unknown as Parameters<typeof reclaimJobsOfDeadRunners>[0]),
+    },
+    {
+      name: 'reclaimJobsOfDeadRunners, a job it would fail: the run self-chains back to pending',
+      row: { status: 'processing', turn: 0 },
+      comesBack: { status: 'pending' },
+      reap: (d) =>
+        reclaimJobsOfDeadRunners(d as unknown as Parameters<typeof reclaimJobsOfDeadRunners>[0]),
+    },
+    {
+      name: 'resetOrphanedJobs: the run suspends for an approval',
+      row: { status: 'processing', turn: 0 },
+      comesBack: { status: 'awaiting_approval' },
+      reap: (d) => resetOrphanedJobs(d as unknown as Parameters<typeof resetOrphanedJobs>[0]),
+    },
+    {
+      name: 'failStalePendingJobs: a worker claims the pending job',
+      row: { status: 'pending', turn: 0 },
+      comesBack: { status: 'processing', claimGeneration: 7 },
+      reap: (d) => failStalePendingJobs(d as unknown as Parameters<typeof failStalePendingJobs>[0]),
+    },
+  ];
+
+  it.each(cases)(
+    '$name: its command survives, its row is untouched',
+    async (c) => {
+      const [row] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'internal',
+          task: 't',
+          status: c.row.status,
+          turn: c.row.turn,
+          messages: [{ role: 'user', content: 't' }],
+          updatedAt: stale(),
+        })
+        .returning({ id: agentJobs.id });
+      const id = row!.id;
+      const counter = join(dir, `${id}.count`);
+      // La commande que le run, vivant, fait tourner.
+      const running = await jobProcessScope(id, unconfinedSandbox).startOwned({
+        target: { file: process.execPath, args: [join(dir, 'ticker.cjs'), counter] },
+        cwd: dir,
+        env: buildChildEnv(process.env),
+      });
+      running.stdout?.resume();
+      running.stderr?.resume();
+      for (let i = 0; i < 100 && !existsSync(counter); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      try {
+        await c.reap(
+          withHookAfterFirstRead(db, async () => {
+            // Le run repart, sa ligne toujours vieille (son battement a raté).
+            await db
+              .update(agentJobs)
+              .set({ ...c.comesBack, updatedAt: stale() })
+              .where(eq(agentJobs.id, id));
+          }),
+        );
+        const before = Number(readFileSync(counter, 'utf8'));
+        await new Promise((r) => setTimeout(r, 500));
+        expect(Number(readFileSync(counter, 'utf8'))).toBeGreaterThan(before);
+        const [after] = await db
+          .select({ status: agentJobs.status })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, id));
+        expect(after?.status).toBe(c.comesBack['status']);
+      } finally {
+        running.kill();
+        await closeJobProcessScope(id);
+      }
+    },
+    60_000,
+  );
 });
