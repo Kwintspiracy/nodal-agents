@@ -1150,6 +1150,9 @@ importers:
 
   packages/test-kit:
     dependencies:
+      koffi:
+        specifier: 3.3.3
+        version: 3.3.3
       zod:
         specifier: ^4.6.6
         version: 4.6.7

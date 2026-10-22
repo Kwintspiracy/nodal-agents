@@ -22,6 +22,11 @@
 //   cluster-registry— un cluster de test meurt avec son lanceur, Ctrl+C compris.
 //   shared-postgres — un serveur par run, une base par fichier `.pg` (#471) ;
 //                     son `globalSetup` est `pg-global-setup.ts`.
+//   counter-process — un démon de test qui prouve qu'il vit en comptant, et
+//                     l'attente BORNÉE de sa hausse, qui dit pourquoi elle
+//                     n'est pas venue (#834).
+//   process-watch   — la mort d'un processus de test lue sur le processus
+//                     TENU, jamais sur un pid que Windows a pu redonner (#834).
 //
 // Ce paquet est privé et ne part jamais dans le tarball : il n'est référencé que
 // par des devDependencies.
@@ -35,3 +40,5 @@ export * from './real-postgres';
 export * from './cluster-lock';
 export * from './cluster-registry';
 export * from './shared-postgres';
+export * from './counter-process';
+export * from './process-watch';

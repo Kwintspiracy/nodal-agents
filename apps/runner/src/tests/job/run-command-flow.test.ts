@@ -12,7 +12,7 @@
 //   delegation-parallel-tools.test.ts  (mock-LLM infra)
 //   execute.test.ts ~L2632–2681        (approval suspend→resume drive)
 
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, realpath, readFile, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -42,6 +42,7 @@ import { join } from 'node:path';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import { readCounter, watchProcess, type ProcessWatch } from '@nodal-agents/test-kit';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { cancelJobTree, eq } from '@nodal-agents/db';
 import {
@@ -1283,13 +1284,17 @@ describe('run_command — what a command starts lives for the JOB, and Stop kill
         await new Promise((r) => setTimeout(r, 50));
       }
     })();
-  const alive = (pid: number): boolean => {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
+  // Chaque pid est SURVEILLÉ dès que le test le lit (test-kit process-watch.ts) :
+  // sous Windows, le pid d'une commande morte peut déjà servir à un inconnu, et
+  // `process.kill(pid, 0)` la dirait vivante (« expected true to be false »).
+  const watches: ProcessWatch[] = [];
+  afterEach(() => {
+    for (const w of watches.splice(0)) w.release();
+  });
+  const watched = async (pid: number): Promise<ProcessWatch> => {
+    const w = await watchProcess(pid);
+    watches.push(w);
+    return w;
   };
 
   beforeAll(async () => {
@@ -1349,8 +1354,9 @@ describe('run_command — what a command starts lives for the JOB, and Stop kill
     const started = Date.now();
     const running = executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
     await waitFor(pidFile);
-    const pid = Number(await readFile(pidFile, 'utf8'));
-    expect(alive(pid)).toBe(true);
+    // Relu jusqu'à un entier : le fichier existe avant que son pid y soit écrit.
+    const watch = await watched(readCounter(pidFile));
+    expect(watch.alive()).toBe(true);
     // Le geste du bouton Stop : le chemin d'annulation unique.
     await cancelJobTree(db as unknown as Parameters<typeof cancelJobTree>[0], {
       entityId: seed.entityId,
@@ -1361,7 +1367,7 @@ describe('run_command — what a command starts lives for the JOB, and Stop kill
     // Le run_command durait 300 s par défaut : le Stop l'a coupé bien avant.
     expect(Date.now() - started).toBeLessThan(60_000);
     await new Promise((r) => setTimeout(r, 1_000));
-    expect(alive(pid)).toBe(false);
+    expect(watch.alive()).toBe(false);
     // Le compteur qu'elle écrivait toutes les 100 ms ne monte plus.
     const frozen = await readFile(`${pidFile}.count`, 'utf8');
     await new Promise((r) => setTimeout(r, 400));
@@ -1405,9 +1411,14 @@ describe('run_command — what a command starts lives for the JOB, and Stop kill
         ],
       },
     ]);
-    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    const running = executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    // Surveillé pendant que le job tourne, le serveur vivant : lu après la fin
+    // du job, son pid aurait déjà pu être redonné.
+    await waitFor(info);
+    const pid = readCounter(info);
+    const watch = await watched(pid);
+    const result = await running;
     expect(result.status).toBe('completed');
-    const pid = Number(await readFile(info, 'utf8'));
     // La commande 2 a joint le serveur de la commande 1 : sa sortie est dans
     // le tool_result que l'agent a lu.
     const [row] = await db
@@ -1417,7 +1428,7 @@ describe('run_command — what a command starts lives for the JOB, and Stop kill
     expect(JSON.stringify(row?.messages)).toContain(`pong ${pid}`);
     // Le job fini, le serveur est mort, et le périmètre fermé.
     await new Promise((r) => setTimeout(r, 1_000));
-    expect(alive(pid)).toBe(false);
+    expect(watch.alive()).toBe(false);
     expect(openJobProcessScopeIds()).not.toContain(job.id);
   });
 });
