@@ -150,10 +150,12 @@ describe.runIf(isWindows && tier === 'base-container')(
         status.code === 'SANDBOX_PROXY_UNREACHABLE' &&
         /the container's connect: (exit 7: ETIMEDOUT|exit 8: no answer)/.test(status.reason)
       ) {
-        ctx.skip(
+        const missing =
           'precondition missing: MXC advertises ingressHostLoopbackAllow but this machine drops the ' +
-            `container's packets to the host loopback (${status.reason})`,
-        );
+          `container's packets to the host loopback (${status.reason})`;
+        // The default reporter does not print a skip note: the log must say it.
+        console.warn(`SKIPPED régime proxy: ${missing}`);
+        ctx.skip(missing);
       }
       expect(status.state, JSON.stringify(status)).toBe('available');
       const codes = (status.state === 'available' ? (status.limits ?? []) : []).map(
