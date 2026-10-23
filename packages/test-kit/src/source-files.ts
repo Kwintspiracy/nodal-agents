@@ -20,15 +20,25 @@
 // liste de noms reviendrait à la règle qui a cassé (invariant #4). La CI et
 // les worktrees ont tous un `.git`.
 //
-// Le piège de ce refus : une copie sans `.git` posée DANS un autre dépôt. git
-// remonte alors jusqu'à lui (le dossier personnel du propriétaire en est un
-// sur sa machine, et un paquet de relecture s'extrait sous ce dossier), et
-// répondrait avec SES règles : s'il ignore la copie, aucun fichier, donc
-// aucune violation, en silence. Un dossier qui n'est pas le haut de son dépôt
-// et sous lequel ce dépôt ne suit RIEN est donc refusé lui aussi.
+// Une liste qui ne trouve RIEN là où il y a quelque chose à lire fait passer
+// chaque garde au vert sans qu'elle ait rien lu. Deux cas, un seul refus :
+//   - le dossier n'existe pas (un paquet renommé, une racine fausse) ;
+//   - il contient des fichiers, et git n'en montre aucun comme source (un
+//     dossier ignoré, ou une copie sans `.git` posée DANS un autre dépôt qui
+//     l'ignore : le dossier personnel du propriétaire est un dépôt sur sa
+//     machine, et un paquet de relecture s'extrait dessous).
+// Un dossier neuf du dépôt, rien encore ajouté, n'est ni l'un ni l'autre : git
+// en montre les fichiers (`--others`), ils sont lus. Un dossier vraiment vide
+// n'a rien à cacher : liste vide.
+//
+// Ce que la règle ne voit pas : une copie posée dans un autre dépôt qui n'en
+// cache qu'une PARTIE (une règle `*.js` du dépôt extérieur). Rien, dans ce que
+// git rend, ne distingue cette règle de celle du dépôt qui cache un build ;
+// il faudrait savoir quel dépôt le scan visait, et les scanners ne reçoivent
+// qu'un dossier. Les gardes du dépôt tournent dans un clone ou un worktree.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -62,30 +72,38 @@ function gitIn(root: string, args: readonly string[]): string {
  */
 export function sourceFilesUnder(dir: string): string[] {
   const root = resolve(dir);
-  if (!existsSync(root)) return [];
-  // '' au haut d'un dépôt, le chemin depuis ce haut ailleurs.
-  const fromTop = gitIn(root, ['rev-parse', '--show-prefix']).trim();
-  // `-t` étiquette chaque entrée : `? ` pour un fichier non suivi, une lettre
-  // (`H`, `S`…) pour un fichier suivi.
-  const entries = gitIn(root, [
-    'ls-files',
-    '-z',
-    '-t',
-    '--cached',
-    '--others',
-    '--exclude-standard',
-  ])
-    .split('\0')
-    .filter(Boolean)
-    .map((e) => ({ tracked: !e.startsWith('? '), rel: e.slice(2) }));
-  if (fromTop !== '' && !entries.some((e) => e.tracked)) {
+  if (!existsSync(root)) {
     throw new Error(
-      `source_files_not_tracked: ${root}: the git work tree around it tracks nothing under it ` +
-        `(it sits at ${fromTop} of that tree): a copy without its own .git inside another repository? ` +
-        "That repository's rules would decide what is source; run the scanners from a clone or a worktree",
+      `source_files_dir_missing: ${root} does not exist: a scan of it would read nothing and pass ` +
+        '(a renamed package, a wrong root?)',
     );
   }
-  return [...new Set(entries.map((e) => join(root, e.rel)).filter((f) => existsSync(f)))].sort();
+  const files = [
+    ...new Set(
+      gitIn(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'])
+        .split('\0')
+        .filter(Boolean)
+        .map((rel) => join(root, rel))
+        .filter((f) => existsSync(f)),
+    ),
+  ].sort();
+  if (files.length === 0 && holdsAFile(root)) {
+    throw new Error(
+      `source_files_none_visible: ${root} holds files, and git shows none of them as source ` +
+        '(all ignored): a scan of it would read nothing and pass. An ignored folder, or a copy ' +
+        'without its own .git inside a repository that ignores it? Run the scanners from a clone or a worktree',
+    );
+  }
+  return files;
+}
+
+/** Un fichier, à n'importe quelle profondeur sous `dir` ; s'arrête au premier. */
+function holdsAFile(dir: string): boolean {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (!e.isDirectory()) return true;
+    if (holdsAFile(join(dir, e.name))) return true;
+  }
+  return false;
 }
 
 /**

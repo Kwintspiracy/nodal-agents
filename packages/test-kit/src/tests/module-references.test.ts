@@ -41,7 +41,7 @@ writeFileSync(join(src, 'lib', 'door.ts'), "export const load = () => import('so
 
 describe('scanForModuleReferences', () => {
   const found = scanForModuleReferences({
-    srcDirs: [root],
+    srcDirs: [src],
     moduleName: 'some-pkg',
     allowFiles: ['lib/door.ts'],
   });

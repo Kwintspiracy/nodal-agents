@@ -15,10 +15,13 @@ const OUT = process.argv[2];
  * source (suivi, ou nouveau et non ignoré), la définition de tous les
  * scanners du dépôt (test-kit `sourceFilesUnder`). Une liste de dossiers de
  * build à sauter ratait le suivant (`.next-studio`, 0.9.8) ; le .gitignore les
- * connaît tous. Sans dépôt git, git échoue et l'inventaire avec lui.
+ * connaît tous. Sans dépôt git, git échoue et l'inventaire avec lui. Comme
+ * `sourceFilesUnder`, un dossier absent, ou dont git ne montre rien alors
+ * qu'il contient des fichiers, est refusé : un compte à zéro n'y serait pas
+ * une mesure.
  */
 function walk(dir, pred) {
-  if (!existsSync(dir)) return [];
+  if (!existsSync(dir)) throw new Error(`inventory_dir_missing: ${dir} does not exist`);
   const out = execFileSync(
     'git',
     ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
@@ -28,11 +31,22 @@ function walk(dir, pred) {
       maxBuffer: 256 * 1024 * 1024,
     },
   );
-  return out
+  const files = out
     .split('\0')
     .filter(Boolean)
     .map((rel) => join(dir, rel))
-    .filter((f) => existsSync(f) && pred(f));
+    .filter((f) => existsSync(f));
+  if (files.length === 0 && holdsAFile(dir))
+    throw new Error(
+      `inventory_none_visible: ${dir} holds files, and git shows none of them as source`,
+    );
+  return files.filter(pred);
+}
+
+function holdsAFile(dir) {
+  return readdirSync(dir, { withFileTypes: true }).some(
+    (e) => !e.isDirectory() || holdsAFile(join(dir, e.name)),
+  );
 }
 
 const isSrc = (f) => /\.(ts|tsx)$/.test(f) && !/\.(test|spec)\.tsx?$/.test(f);

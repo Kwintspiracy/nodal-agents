@@ -199,27 +199,108 @@ describe('without a git work tree, a scanner refuses instead of guessing', () =>
     }
   });
 
-  // Une archive extraite DANS un autre dépôt : git répondrait avec les règles
-  // de celui-ci. S'il ignore la copie, il ne rend rien, et zéro fichier lu
-  // serait zéro violation. Ignorée ou non, la copie est refusée.
-  for (const ignoredByOuter of [false, true]) {
-    it(`inside another repository that tracks nothing there${ignoredByOuter ? ' and ignores it' : ''}`, () => {
-      const outer = mkdtempSourceTree('source-files-outer-');
-      try {
-        if (ignoredByOuter) writeFileSync(join(outer, '.gitignore'), 'archive/\n');
-        const copy = join(outer, 'archive', 'packages', 'x', 'src');
-        mkdirSync(copy, { recursive: true });
-        copyFileSync(join(REPO_ROOT, '.gitignore'), join(outer, 'archive', '.gitignore'));
-        writeFileSync(join(copy, 'chunk.ts'), PLANTED);
-        expect(() => sourceFilesUnder(copy)).toThrow(
-          /^source_files_not_tracked: .*archive.*a copy without its own \.git inside another repository/,
-        );
-        expect(() => scanForNodalHomeCopies({ srcDir: copy })).toThrow(/source_files_not_tracked/);
-      } finally {
-        rmSync(outer, { recursive: true, force: true });
-      }
-    });
-  }
+  // Une archive extraite DANS un autre dépôt (le dossier personnel en est un
+  // sur la machine du propriétaire) : git répond avec ce dépôt-là. S'il ignore
+  // la copie, il n'en montre rien, et zéro fichier lu serait zéro violation.
+  it('inside another repository that ignores the copy: refuses, the folder holds files git hides', () => {
+    const outer = mkdtempSourceTree('source-files-outer-');
+    try {
+      writeFileSync(join(outer, '.gitignore'), 'archive/\n');
+      const copy = join(outer, 'archive', 'packages', 'x', 'src');
+      mkdirSync(copy, { recursive: true });
+      writeFileSync(join(copy, 'chunk.ts'), PLANTED);
+      expect(() => sourceFilesUnder(copy)).toThrow(
+        /^source_files_none_visible: .*archive.* holds files, and git shows none of them as source/,
+      );
+      expect(() => scanForNodalHomeCopies({ srcDir: copy })).toThrow(/source_files_none_visible/);
+    } finally {
+      rmSync(outer, { recursive: true, force: true });
+    }
+  });
+
+  // S'il ne l'ignore pas, git lit la copie avec les .gitignore qu'elle porte :
+  // ses sources sont lues, son dossier de build ne l'est pas.
+  it("inside another repository that does not ignore it: reads the copy by the copy's own .gitignore", () => {
+    const outer = mkdtempSourceTree('source-files-outer-');
+    try {
+      const archive = join(outer, 'archive');
+      mkdirSync(archive, { recursive: true });
+      copyFileSync(join(REPO_ROOT, '.gitignore'), join(archive, '.gitignore'));
+      const web = join(archive, 'apps', 'web');
+      plant(web, 'src');
+      plant(web, '.next-studio/dev/server/chunks');
+      expect(reportedBy(web).scanForMcpToolPrefixCopies).toEqual(['src/chunk.js', 'src/chunk.ts']);
+    } finally {
+      rmSync(outer, { recursive: true, force: true });
+    }
+  });
+});
+
+// Ce que la liste rend quand elle ne trouve RIEN. Un dossier qui n'existe pas
+// (un paquet renommé, une racine fausse) ou dont git ne montre rien alors qu'il
+// contient des fichiers ferait passer chaque garde au vert sans rien lire : la
+// liste refuse, avec la raison (invariant #4). Un dossier vraiment vide n'a rien
+// à cacher : il rend une liste vide.
+describe('a scan that would read nothing while there is something to read fails loud', () => {
+  let tree: string;
+
+  beforeAll(() => {
+    tree = mkdtempSourceTree('source-files-nothing-');
+    copyFileSync(join(REPO_ROOT, '.gitignore'), join(tree, '.gitignore'));
+    writeFileSync(join(tree, 'package.json'), '{ "name": "root" }\n');
+    git(tree, 'add', '--', '.gitignore', 'package.json');
+  });
+
+  afterAll(() => rmSync(tree, { recursive: true, force: true }));
+
+  it('a folder that does not exist: every scanner refuses, naming it', () => {
+    const missing = join(tree, 'packages', 'renamed', 'src');
+    expect(() => sourceFilesUnder(missing)).toThrow(
+      /^source_files_dir_missing: .*renamed.* does not exist/,
+    );
+    expect(() => listSourceFiles(missing)).toThrow(/source_files_dir_missing/);
+    expect(() => scanForNodalHomeCopies({ srcDir: missing })).toThrow(/source_files_dir_missing/);
+    expect(() =>
+      scanForModuleReferences({ srcDirs: [missing], moduleName: 'x', allowFiles: [] }),
+    ).toThrow(/source_files_dir_missing/);
+  });
+
+  it('a folder that holds only ignored files: refuses', () => {
+    plant(tree, 'apps/web/.next-studio/dev');
+    try {
+      expect(() => sourceFilesUnder(join(tree, 'apps', 'web', '.next-studio'))).toThrow(
+        /^source_files_none_visible: .*\.next-studio/,
+      );
+    } finally {
+      rmSync(join(tree, 'apps'), { recursive: true, force: true });
+    }
+  });
+
+  // Le bon dépôt, un dossier neuf dont rien n'est encore ajouté : git le montre
+  // (`--others`), il est lu. Ce n'est pas une copie dans un autre dépôt.
+  it('a new package of the repository, nothing added yet: its files are source', () => {
+    plant(tree, 'packages/new/src');
+    try {
+      const src = join(tree, 'packages', 'new', 'src');
+      expect(sourceFilesUnder(src).map((f) => relative(src, f).split(sep).join('/'))).toEqual([
+        'chunk.js',
+        'chunk.ts',
+      ]);
+      expect(reportedBy(src).scanForMcpToolPrefixCopies).toEqual(['chunk.js', 'chunk.ts']);
+    } finally {
+      rmSync(join(tree, 'packages'), { recursive: true, force: true });
+    }
+  });
+
+  it('an empty folder: nothing to read, nothing hidden, an empty list', () => {
+    const empty = join(tree, 'empty', 'nested');
+    mkdirSync(empty, { recursive: true });
+    try {
+      expect(sourceFilesUnder(join(tree, 'empty'))).toEqual([]);
+    } finally {
+      rmSync(join(tree, 'empty'), { recursive: true, force: true });
+    }
+  });
 });
 
 // Le dépôt lui-même : plus aucun test ne garde SA liste de dossiers de build à
