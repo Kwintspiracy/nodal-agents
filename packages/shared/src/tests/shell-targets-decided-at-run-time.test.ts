@@ -470,7 +470,37 @@ describe('reading options that hide the command is linear, and bounded across ne
     return { floor, kinds, ms: performance.now() - t };
   };
 
-  it('60 unknown options: timeout, bash -c, wsl, each read fast, with the verdict of 2', () => {
+  // What these tests are about is HOW THE COST GROWS, not how fast a machine
+  // reads: a fixed millisecond bound (200 ms here) turned red on a loaded CI
+  // runner (270 ms, run 39819286388) with the reading unchanged. The growth is
+  // measured in the same run: the median of several reads of an input, against
+  // the median of several reads of one `GROWTH` times larger, both big enough
+  // (several milliseconds) for a timer and a lucky fast read not to move them.
+  // Linear reading costs at most 8 times more (fixed costs lower it); a
+  // quadratic one 64 times, an exponential one never ends. The limit sits at
+  // 32 (CI Windows, run 39869704831: a first version at 16 times a 0.4 ms input,
+  // limit 40, read x52 on the same unchanged reading; 4 times the linear ratio
+  // is the room it needs). The absolute ceiling is only a guard against a hang
+  // that the ratio would never see.
+  const GROWTH = 8;
+  const LINEAR_LIMIT = 32;
+  const HANG_GUARD_MS = 5_000;
+  const medianOf = (cmd: string): number => {
+    timed(cmd); // warm-up: the first read pays for the compilation
+    const ms = Array.from({ length: 9 }, () => timed(cmd).ms).sort((x, y) => x - y);
+    return ms[4]!;
+  };
+  const growth = (
+    make: (size: number) => string,
+    small: number,
+  ): { x: number; smallMs: number; largeMs: number } => {
+    const smallMs = medianOf(make(small));
+    const largeMs = medianOf(make(small * GROWTH));
+    expect(largeMs, make(small * GROWTH).slice(0, 80)).toBeLessThan(HANG_GUARD_MS);
+    return { x: largeMs / smallMs, smallMs, largeMs };
+  };
+
+  it('60 unknown options: timeout, bash -c, wsl, sudo, each with the verdict of 2', () => {
     for (const k of [2, 60]) {
       for (const [harmless, destroyer] of [
         [`timeout ${unknown(k)} 5 ls`, `timeout ${unknown(k)} 5 ${D}`],
@@ -480,8 +510,6 @@ describe('reading options that hide the command is linear, and bounded across ne
       ] as const) {
         const safe = timed(harmless);
         const bad = timed(destroyer);
-        expect(safe.ms, harmless).toBeLessThan(200);
-        expect(bad.ms, destroyer).toBeLessThan(200);
         expect(safe.floor, harmless).toBe(false);
         expect(bad.floor, destroyer).toBe(true);
         expect(safe.kinds, harmless).toContain('inline_code');
@@ -496,15 +524,40 @@ describe('reading options that hide the command is linear, and bounded across ne
     // a few levels: read in full, the same verdict as one
     expect(timed(nested(1, 'ls')).floor).toBe(false);
     expect(timed(nested(1, D)).floor).toBe(true);
-    // many: fast, and what lies past what is followed is held by the floor
+    // many: never an exception, and what lies past what is followed is held by the floor
     for (const levels of [6, 20]) {
       for (const tail of ['ls', D]) {
         const cmd = nested(levels, tail);
         const read = timed(cmd);
-        expect(read.ms, cmd).toBeLessThan(200);
         if (tail === D) expect(read.floor, cmd).toBe(true);
       }
     }
+  });
+
+  // The cost of reading grows in line with the input, in the same run (see GROWTH).
+  it('unknown options: 8 times the options cost about 8 times, not 64', () => {
+    for (const program of ['timeout', 'bash', 'wsl', 'sudo']) {
+      const make = (k: number) =>
+        program === 'bash'
+          ? `bash ${unknown(k)} -c '${D}'`
+          : `${program} ${unknown(k)}${program === 'timeout' ? ' 5' : ''} ${D}`;
+      const g = growth(make, 1000);
+      expect(
+        g.x,
+        `${program}: x${g.x.toFixed(1)} for 8 times the options (${g.smallMs.toFixed(2)} -> ${g.largeMs.toFixed(2)} ms)`,
+      ).toBeLessThan(LINEAR_LIMIT);
+    }
+  });
+
+  it('nested programs: 8 times the nesting costs about 8 times, not 64', () => {
+    const level = (n: number) => `sudo --x${n} env --y${n} timeout --z${n} 5 nice --w${n}`;
+    const make = (levels: number) =>
+      [...Array.from({ length: levels }, (_, n) => level(n)), D].join(' ');
+    const g = growth(make, 80);
+    expect(
+      g.x,
+      `x${g.x.toFixed(1)} for 8 times the nesting (${g.smallMs.toFixed(2)} -> ${g.largeMs.toFixed(2)} ms)`,
+    ).toBeLessThan(LINEAR_LIMIT);
   });
 });
 

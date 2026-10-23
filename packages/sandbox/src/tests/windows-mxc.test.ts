@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { once } from 'node:events';
+import { forceUnreadableProbe, tier, tierLabel } from './mxc-tier';
 import { mxcBackend, MXC_BACKEND_NAME, networkSetup, observedOutcome } from '../windows-mxc';
 import type { SandboxStatus } from '../types';
 import { mxcErrorText } from '../mxc-broker';
@@ -94,6 +95,31 @@ describe('mxcBackend — palier d’isolation (tous systèmes)', () => {
   });
 });
 
+describe('mxcBackend — palier que la sonde du SDK n’a pas pu lire (tous systèmes)', () => {
+  it('sans `isolationTier` : indisponible, le palier dit `unknown`, aucune commande lancée', async () => {
+    let spawned = 0;
+    // `wxc-exec --probe` en échec ou en délai : le SDK laisse le champ absent.
+    const sdk = {
+      getPlatformSupport: () => ({
+        isSupported: true,
+        reason: '',
+        availableMethods: ['processcontainer'],
+      }),
+      spawn: () => {
+        spawned++;
+        throw new Error('must not be called');
+      },
+    };
+    const backend = mxcBackend(() => Promise.resolve(sdk as never));
+    expect(await backend.probe()).toEqual({
+      state: 'unavailable',
+      code: 'SANDBOX_PLATFORM_UNSUPPORTED',
+      reason: `isolationTier=${tierLabel(undefined)}`,
+    });
+    expect(spawned).toBe(0);
+  });
+});
+
 describe('mxcErrorText — une erreur du SDK dit quoi ET que faire (tous systèmes)', () => {
   it('la remédiation de MXC suit le message ; sans remédiation, `code: message` seul', () => {
     // Les champs d'un `MxcError` levé par le SDK 1.0.0 sur un Node trop ancien
@@ -116,12 +142,10 @@ describe('mxcErrorText — une erreur du SDK dit quoi ET que faire (tous systèm
   });
 });
 
-// Le palier que MXC choisit sur CETTE machine : base-container (Windows 11
-// récent) se confine ; les autres se disent indisponibles (voir la sonde).
+// Le palier que MXC choisit sur CETTE machine (mxc-tier.ts) : base-container
+// (Windows 11 récent) se confine ; les autres se disent indisponibles (voir la
+// sonde), et un palier que la sonde du SDK n'a pas pu lire se dit `unknown`.
 const isWindows = process.platform === 'win32';
-const tier = isWindows
-  ? (await import('@microsoft/mxc-sdk/v1')).getPlatformSupport().isolationTier
-  : undefined;
 
 describe.runIf(isWindows && tier !== 'base-container')(
   'mxcBackend — le vrai MXC, palier autre que base-container (Windows Server, Windows plus ancien)',
@@ -131,7 +155,7 @@ describe.runIf(isWindows && tier !== 'base-container')(
       expect(status.state).toBe('unavailable');
       expect(status.state === 'unavailable' && status.code).toBe('SANDBOX_PLATFORM_UNSUPPORTED');
       expect(status.state === 'unavailable' && status.reason).toMatch(
-        new RegExp(`^isolationTier=${String(tier)}`),
+        new RegExp(`^isolationTier=${tierLabel(tier)}`),
       );
     });
   },
@@ -276,6 +300,35 @@ describe.runIf(isWindows && tier === 'base-container' && !nodeInMxcRange)(
       expect(status.reason).toMatch(
         /\. Use Node\.js 24\.21\.0 or newer within Node\.js 24, or Node\.js 26\.8\.0 or newer on Windows\.$/,
       );
+    });
+  },
+);
+
+// Le vrai SDK dont la sonde native échoue (`forceUnreadableProbe`, mxc-tier.ts).
+// Le SDK ne le dit pas : il laisse `isolationTier` absent et GARDE cette
+// réponse. CI Windows, run 39796089254, 1re tentative : c'est ce que trois
+// suites ont lu, et le produit a répondu `unknown` là où elles attendaient
+// `undefined`. Rien n'est ouvert : la sonde s'arrête avant le conteneur. La
+// sonde du PRODUIT dit `unknown` ; c'est la suite qui lit le palier (mxc-tier.ts)
+// qui échoue, et ne se saute pas (mxc-tier.test.ts).
+describe.runIf(isWindows)(
+  'mxcBackend — le vrai SDK dont la sonde native échoue : palier illisible, dit tel quel (Windows)',
+  () => {
+    it('le SDK laisse le palier absent, et la sonde du produit dit SANDBOX_PLATFORM_UNSUPPORTED, `isolationTier=unknown`', async () => {
+      const restore = await forceUnreadableProbe();
+      try {
+        expect((await import('@microsoft/mxc-sdk/v1')).getPlatformSupport().isolationTier).toBe(
+          undefined,
+        );
+        const status = await mxcBackend().probe();
+        expect(status).toEqual({
+          state: 'unavailable',
+          code: 'SANDBOX_PLATFORM_UNSUPPORTED',
+          reason: `isolationTier=${tierLabel(undefined)}`,
+        });
+      } finally {
+        restore();
+      }
     });
   },
 );

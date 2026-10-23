@@ -27,6 +27,7 @@ import {
   mxcBackend,
   type RefusedWrite,
 } from '@nodal-agents/sandbox';
+import { unsupportedByTier } from '@nodal-agents/test-kit';
 import type { SandboxReport } from '../builtin/shell-engine';
 import { mustDie, readCounter, watchRegistry } from '@nodal-agents/test-kit';
 import { runCommandTool } from '../builtin/run-command';
@@ -116,8 +117,10 @@ afterEach(() => watches.releaseAll());
  * ancien, SDK absent) fait échouer la batterie, avec sa raison.
  */
 const hereStatus = isWindows ? await getSandboxStatus() : undefined;
-const tierUnsupported =
-  hereStatus?.state === 'unavailable' && hereStatus.code === 'SANDBOX_PLATFORM_UNSUPPORTED';
+// Un palier que la sonde du SDK n'a pas pu lire (`isolationTier=unknown`) n'est
+// PAS « sans base-container » : la batterie échoue, elle ne se saute pas (test-kit
+// mxc-tier.ts).
+const tierUnsupported = unsupportedByTier(hereStatus);
 
 describe.skipIf(!isWindows || tierUnsupported)(
   'sandbox, Windows (MXC) — run_command writes only inside its folders @cap:executer-une-commande/moteur (Windows only: the macOS and Linux backends come in later PRs of #628 — skipped on a Windows without the MXC base-container tier, e.g. the GitHub Windows Server runner)',
