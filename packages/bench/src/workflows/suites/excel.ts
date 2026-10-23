@@ -21,6 +21,7 @@ import {
 } from '../judge-kit';
 import { evaluateCell } from '../office';
 import { defineScenario, type AnyScenario } from '../types';
+import { BASE, FILES, TEAM, XLSX, toolList } from '../scenario-tools';
 
 const MIN = 60_000;
 const SHARED = "de l'espace de travail partagé";
@@ -94,7 +95,9 @@ const editColumn = defineScenario<WorkbookObservation>({
     "columns A to C are exactly the fixture's",
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (xlsx_*) s'applique.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM, XLSX),
   title: 'Edit a workbook without damaging the rest',
   path: 'xlsx_read, then xlsx_set_range. A script in their place is red.',
   deliverable: `${STOCK_REL}, changed`,
@@ -164,7 +167,9 @@ const readAnswer = defineScenario<{ hash: string | null }>({
     `${QUARTER_REL} is byte for byte the fixture (sha-256)`,
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (xlsx_read) s'applique.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM, XLSX),
   title: 'Read a workbook and answer',
   green: `The answer names "${bestProduct().name}" and its quarter total ${bestProduct().total}, read through xlsx_read (no command in its place), ${QUARTER_REL} is byte for byte the fixture, and nobody was asked anything.`,
   path: 'xlsx_read. A script in its place is red.',
@@ -213,7 +218,9 @@ const csvImport = defineScenario<WorkbookObservation>({
     `sheet "${CONTACTS_SHEET}": every cell equals the CSV's, header first, same order, and nothing outside`,
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (xlsx_*) s'applique.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM, XLSX),
   title: 'Convert data faithfully',
   path: 'Read the CSV, then xlsx_create. A script in its place is red.',
   deliverable: CONTACTS_XLSX_REL,

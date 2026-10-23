@@ -45,3 +45,4 @@ export * from './shared-postgres';
 export * from './counter-process';
 export * from './process-watch';
 export * from './mxc-tier';
+export * from './windows-env';

@@ -332,9 +332,10 @@ function printGateReasons(env: ScenarioEnv): string[] {
  * une connexion ajoutée en cours d'essai. Compter les imprimantes installées
  * n'en ferme qu'un ; une équipe qui ne peut lancer aucun processus les ferme
  * tous, par construction (règle 11 : fermé par défaut, revue de #855).
- * Aujourd'hui le Chef et l'Imageur tiennent `run_command` : les scénarios
- * d'impression sont sautés tant que la liste d'outils fermée par scénario
- * (décision 1B du propriétaire) n'existe pas.
+ * Le besoin est lu APRÈS la liste fermée du scénario (décision 1B,
+ * scenario-tools.ts) : celle des scénarios d'impression ferme `run_command` et
+ * `declare_verification`. Restent ce qu'aucune liste ne ferme (un agent en
+ * runtime de CLI) et un outil `process` que la liste nommerait.
  */
 export function noRealPrinterReason(env: ScenarioEnv): string | null {
   if (env.processStarters.length === 0) return null;
@@ -345,7 +346,7 @@ export function noRealPrinterReason(env: ScenarioEnv): string | null {
         : `${p.agent} (${p.tools.join(', ')})`,
     )
     .join(', ');
-  return `print scenarios need a team that cannot run commands: ${who}; the closed tool list per scenario (owner's decision 1B) is not built yet; see #842`;
+  return `print scenarios need a team that cannot run commands: ${who}; the scenario's tool list closes neither a CLI runtime nor a process tool it lists; see #842`;
 }
 
 /** Pourquoi le besoin manque, ou null quand il est là. */

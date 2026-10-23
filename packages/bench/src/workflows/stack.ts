@@ -333,7 +333,8 @@ export async function readTeamTools(db: AnyDrizzleDb, entityId: string): Promise
  * la déclaration `egress: 'process'` de chaque outil que Nodal sert
  * (`servedToolDefinitions`, où un test la rend obligatoire : la même liste que
  * le contrôle d'avant essai, space/guard.ts), croisée avec les outils qu'un job
- * de l'agent recevrait (`computeAgentToolNames`). Un tel outil ne compte pas
+ * de l'agent recevrait vraiment (`resolveAgentToolNames`, la liste du runner,
+ * tâches et délégation comprises). Un tel outil ne compte pas
  * quand la règle d'accord qui gagne pour lui est `block` (`matchApprovalRule`,
  * la règle de l'exécution) : l'agent le tient mais ne le lancera jamais. Ce
  * n'est pas une exception par outil : `declare_verification`, toujours donné à
@@ -345,7 +346,7 @@ export async function readProcessStarters(
   entityId: string,
 ): Promise<ProcessStarter[]> {
   const { sql } = await import('@nodal-agents/db');
-  const { computeAgentToolNames, servedToolDefinitions } =
+  const { resolveAgentToolNames, servedToolDefinitions } =
     await import('@nodal-agents/orchestration');
   const { matchApprovalRule } = await import('@nodal-agents/tools');
   const d = await import('@nodal-agents/db');
@@ -378,9 +379,8 @@ export async function readProcessStarters(
     );
   const out: ProcessStarter[] = [];
   for (const a of agents) {
-    const names = await computeAgentToolNames(a.id as AgentId, entityId as EntityId, db, {
-      hasDeliveryRecipient: true,
-    });
+    // Ce qu'un job de l'agent recevrait vraiment : la liste du runner (#863).
+    const names = await resolveAgentToolNames(db, a.id);
     const tools = [...names]
       .filter((n) => processTools.has(n))
       .filter((n) => matchApprovalRule(rules as never, n, a.id, entityId)?.action !== 'block')

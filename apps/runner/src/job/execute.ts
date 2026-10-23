@@ -95,7 +95,6 @@ import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { recheckNarratedAction } from '../llm/action-recheck.ts';
 import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
 import { deferredToolNames, toolsLoadedByCalls, toolsSentThisTurn } from './tool-loading.ts';
-import { resolveAgentToolNames } from './resolve-agent-tools.ts';
 import { createHumanWaitClock } from './human-wait.ts';
 import { loadApprovalRules } from './approval-rules.ts';
 import {
@@ -170,6 +169,7 @@ import {
   remainingDelegationHops,
   delegationDepthExceededMessage,
   assertTurnToolCallBudget,
+  resolveAgentToolNames,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {

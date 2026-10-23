@@ -42,6 +42,7 @@ import {
 import { NO_VAULT, obsidianVaults } from '../needs';
 import { subjectFacts, subjectOf, type ResearchSubject } from '../subjects';
 import { defineScenario, type AnyScenario } from '../types';
+import { BASE, FILES, TEAM, WEB, toolList } from '../scenario-tools';
 
 const MIN = 60_000;
 
@@ -49,6 +50,8 @@ const MIN = 60_000;
 
 function question(o: {
   id: string;
+  /** La liste fermée des outils de l'essai (décision 1B). */
+  tools: readonly string[];
   title: string;
   green: string;
   path: string;
@@ -66,7 +69,9 @@ function question(o: {
       ...o.facts.map((f) => `the root's final answer must ${f.says}`),
       ...(o.not ?? []).map((n) => `red if the final answer ${n.says}`),
     ],
-    version: 1,
+    // v2 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+    version: 2,
+    tools: o.tools,
     title: o.title,
     green: o.green,
     path: o.path,
@@ -94,6 +99,7 @@ const OTHER_WEEKDAYS =
 export const QUESTION_SCENARIOS: AnyScenario[] = [
   question({
     id: 'question',
+    tools: toolList(BASE, FILES, TEAM),
     title: 'Answer from memory, without a detour',
     green:
       'The answer names Canberra, the root answered itself (no delegation), and nobody was asked anything.',
@@ -104,6 +110,7 @@ export const QUESTION_SCENARIOS: AnyScenario[] = [
   }),
   question({
     id: 'question-weekday',
+    tools: toolList(BASE, FILES, TEAM, ['run_command']),
     title: 'Exact calculation: computed or guessed?',
     green:
       'The answer says Tuesday (mardi) and names no other weekday, the root answered itself, and nobody was asked anything.',
@@ -144,7 +151,9 @@ const research = defineScenario<ResearchObservation>({
   // v4 (catalogue du 17/10) : un sujet calibré au lieu du fond diffus
   // cosmologique, la racine seule (une délégation est rouge), le fait et chaque
   // lien vus dans une sortie d'outil web. v3 exigeait la délégation.
-  version: 4,
+  // v5 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 5,
+  tools: toolList(BASE, FILES, TEAM, ['web_search']),
   title: 'Find on the web a fact the model does not know',
   green: `The root answered itself after calling a web tool, with no delegation; the answer holds the calibrated subject's facts and a web tool output of the run holds them too; it links at least ${RESEARCH_MIN_HOSTS} sites and every link it cites was seen in a web tool output; nobody was asked anything. Whether the pages were really read is not verified yet (#648).`,
   path: 'The root alone, with web_search. A delegation is red (decision of 2026-10-17: the specialist is for in-depth research only).',
@@ -248,7 +257,9 @@ const deepResearchReport = defineScenario<ReportObservation>({
   // chaque fait vus dans une sortie d'outil web. Le minimum de 3 000 caractères
   // de deep-research-dna disparaît : la spécification juge des sections, des
   // sites et des faits, pas une longueur.
-  version: 1,
+  // v2 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 2,
+  tools: toolList(BASE, FILES, TEAM, WEB),
   title: 'In-depth research delivered as a Markdown report',
   green: `The research was handed to a teammate who called a web tool; ${REPORT_REL} was written during the run with at least ${REPORT_MIN_HEADINGS} section headings and links to ${REPORT_MIN_HOSTS} different sites, every link seen in a web tool output; it holds the calibrated subject's facts and a web tool output holds them too; nobody was asked anything. Whether the pages were really read is not verified yet (#648).`,
   path: 'Handed to the research specialist, who has the web tools (Firecrawl, Tavily…): the root doing it alone is red. The searches and pages opened are measured.',
@@ -327,7 +338,9 @@ const deepResearchObsidian = defineScenario<VaultObservation>({
   // v4 (catalogue du 17/10) : le sujet calibré du rapport Markdown au lieu de
   // Champollion, et les règles du rapport appliquées à la note (sections,
   // 4 sites vus, faits vus sur le web). v3 jugeait 1 500 caractères et 3 liens.
-  version: 4,
+  // v5 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 5,
+  tools: toolList(BASE, FILES, TEAM, WEB),
   title: 'The same in-depth research, delivered in Obsidian',
   green: `The research was handed to a teammate who called a web tool; a note was written in the vault during the run (in the "${BENCH_NOTE_FOLDER}" folder or tagged #${BENCH_NOTE_TAG}) with at least ${REPORT_MIN_HEADINGS} section headings and links to ${REPORT_MIN_HOSTS} different sites, every link seen in a web tool output; it holds the calibrated subject's facts and a web tool output holds them too; nobody was asked anything. Whether the pages were really read is not verified yet (#648).`,
   path: 'The same as the Markdown report (handed to the specialist, the root alone is red), then written in the vault.',
