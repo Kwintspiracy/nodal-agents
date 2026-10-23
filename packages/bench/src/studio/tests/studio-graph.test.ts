@@ -24,10 +24,11 @@
 // une compilation Next complète par PR pour la même preuve ; ce contrôle prend
 // une seconde et nomme la chaîne.
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 const BENCH = resolve(__dirname, '..', '..', '..');
 
@@ -48,7 +49,7 @@ function resolveRelative(from: string, spec: string): string | null {
 
 interface Edge {
   readonly spec: string;
-  /** Un import de types seulement : effacé à la compilation, jamais suivi. */
+  /** `import type` / `export type` de déclaration : effacé à la compilation, jamais suivi. */
   readonly typeOnly: boolean;
 }
 
@@ -64,24 +65,14 @@ export function readModule(file: string, text: string): { edges: Edge[]; resolve
   const visit = (n: ts.Node): void => {
     if (ts.isImportDeclaration(n)) {
       const spec = literal(n.moduleSpecifier);
-      const c = n.importClause;
-      const typeOnly =
-        !!c &&
-        (c.isTypeOnly ||
-          (!c.name &&
-            !!c.namedBindings &&
-            ts.isNamedImports(c.namedBindings) &&
-            c.namedBindings.elements.length > 0 &&
-            c.namedBindings.elements.every((e) => e.isTypeOnly)));
+      // Seul `import type …` est effacé : `import { type X }` reste un import
+      // pour ses effets sous `verbatimModuleSyntax`, et le bundler le suit.
+      const typeOnly = !!n.importClause?.isTypeOnly;
       if (spec) edges.push({ spec, typeOnly });
     } else if (ts.isExportDeclaration(n) && n.moduleSpecifier) {
       const spec = literal(n.moduleSpecifier);
-      const typeOnly =
-        n.isTypeOnly ||
-        (!!n.exportClause &&
-          ts.isNamedExports(n.exportClause) &&
-          n.exportClause.elements.length > 0 &&
-          n.exportClause.elements.every((e) => e.isTypeOnly));
+      // De même : seul `export type { … } from` est effacé.
+      const typeOnly = n.isTypeOnly;
       if (spec) edges.push({ spec, typeOnly });
     } else if (ts.isCallExpression(n)) {
       const arg = literal(n.arguments[0]);
@@ -155,12 +146,15 @@ function chainTo(parent: Map<string, string | null>, file: string): string {
 }
 
 /** Ce que le graphe d'une entrée fait qu'un bundler ne sait pas servir : une ligne par trouvaille, avec sa chaîne. */
-export function studioGraphFindings(entry: string): { reached: number; findings: string[] } {
+export function studioGraphFindings(
+  entry: string,
+  cliOnly: readonly string[] = CLI_ONLY,
+): { reached: number; findings: string[] } {
   const parent = walk(entry);
   const findings: string[] = [];
   for (const file of parent.keys()) {
     const norm = file.replace(/\\/g, '/');
-    if (CLI_ONLY.some((p) => (p.endsWith('/') ? norm.startsWith(p) : norm === p)))
+    if (cliOnly.some((p) => (p.endsWith('/') ? norm.startsWith(p) : norm === p)))
       findings.push(`reaches CLI-only code: ${chainTo(parent, file)}`);
     for (const r of readModule(file, readFileSync(file, 'utf8')).resolves)
       findings.push(`${r}: ${chainTo(parent, file)}`);
@@ -214,8 +208,48 @@ describe('what the Bench Studio server compiles', () => {
     expect(r.edges).toEqual([
       { spec: 'node:module', typeOnly: false },
       { spec: './types-only', typeOnly: true },
-      { spec: './also-types', typeOnly: true },
+      { spec: './also-types', typeOnly: false },
       { spec: './lazy', typeOnly: false },
     ]);
+  });
+});
+
+// Sous `verbatimModuleSyntax` (tsconfig.base.json), seul un `import type` /
+// `export type` DE DÉCLARATION est effacé. `import { type X } from './m'` sort
+// en `import {} from './m'` : un import pour ses effets, que le bundler suit et
+// compile. La garde le suit donc aussi (revue de #866, passe 1).
+describe('an inline type specifier still brings its module into the Studio graph', () => {
+  const tree = mkdtempSync(join(tmpdir(), 'studio-graph-'));
+  const campaign = join(tree, 'campaign');
+  mkdirSync(campaign, { recursive: true });
+  writeFileSync(
+    join(campaign, 'run.ts'),
+    'export type Campaign = { id: string };\nexport const started = 1;\n',
+  );
+  const cliOnly = [campaign.replace(/\\/g, '/') + '/'];
+  const entryWith = (name: string, line: string): string => {
+    const file = join(tree, name);
+    writeFileSync(file, `${line}\nexport const x = 1;\n`);
+    return file;
+  };
+  afterAll(() => rmSync(tree, { recursive: true, force: true }));
+
+  it.each([
+    ['import-inline', "import { type Campaign } from './campaign/run';"],
+    ['export-inline', "export { type Campaign } from './campaign/run';"],
+    ['import-mixed', "import { type Campaign, started } from './campaign/run';"],
+  ])('%s: a CLI-only module reached through it is a finding', (name, line) => {
+    const { findings } = studioGraphFindings(entryWith(`${name}.ts`, line), cliOnly);
+    expect(findings).toEqual([
+      expect.stringMatching(/^reaches CLI-only code: .*campaign\/run\.ts$/),
+    ]);
+  });
+
+  it.each([
+    ['import-type', "import type { Campaign } from './campaign/run';"],
+    ['export-type', "export type { Campaign } from './campaign/run';"],
+  ])('%s: a declaration erased at compile time reaches nothing', (name, line) => {
+    const { findings } = studioGraphFindings(entryWith(`${name}.ts`, line), cliOnly);
+    expect(findings).toEqual([]);
   });
 });

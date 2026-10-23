@@ -7,8 +7,8 @@
 // dossier dans cette même déclaration (`benchPrinterState`, identity.ts).
 
 import { createRequire } from 'node:module';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isAbsolute, join } from 'node:path';
+import { BENCH_DIR } from '../workflows/paths';
 import {
   BENCH_PRINTER_RECORDS_ENV,
   BENCH_PRINTER_SLUG,
@@ -18,18 +18,23 @@ import {
 export type { BenchPrinterServerDeclaration };
 
 /**
- * Où vivent, SUR LE DISQUE, le dossier de l'imprimante et le paquet du banc.
- * Les chemins de la déclaration en partent, et non d'une résolution par le
- * module lui-même : `createRequire(import.meta.url).resolve('tsx/cli')` et
+ * Où vit, SUR LE DISQUE, le dossier de l'imprimante. Les chemins de la
+ * déclaration partent du paquet du banc (`BENCH_DIR`, workflows/paths.ts), et
+ * non d'une résolution par le module lui-même :
+ * `createRequire(import.meta.url).resolve('tsx/cli')` et
  * `new URL('./main.ts', import.meta.url)` sont des motifs qu'un bundler SUIT.
  * Le serveur de Bench Studio (Turbopack) compile ce module, parce que ses
  * besoins lisent l'imprimante (`readBenchPrinter`) : il tentait d'embarquer
- * tsx, esbuild et son binaire natif, et la page répondait 500 (23/10). Lue
- * d'ici, la même déclaration sort du CLI comme du Studio, caractère pour
- * caractère (studio-graph.test.ts garde le motif hors du graphe du Studio).
+ * tsx, esbuild et son binaire natif, et la page répondait 500 (23/10).
+ *
+ * L'ancre est UNE, celle de tout ce que le banc lit et écrit sur le disque
+ * (`REPO`, d'où viennent aussi les résultats et le catalogue que le Studio
+ * affiche) : ce module n'en a plus de propre. Le CLI qui écrit la déclaration
+ * et le Studio qui la relit la calculent donc du même point ;
+ * identity.test.ts vérifie qu'elle est, champ pour champ, ce que l'entrée du
+ * CLI résout, quel que soit le dossier où le processus démarre.
  */
-const PRINTER_DIR = dirname(fileURLToPath(import.meta.url));
-const BENCH_DIR = resolve(PRINTER_DIR, '..', '..');
+const PRINTER_DIR = join(BENCH_DIR, 'src', 'printer');
 
 /**
  * La déclaration du serveur d'impression du banc, qui enregistre dans
