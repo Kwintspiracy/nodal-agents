@@ -42,3 +42,4 @@ export * from './cluster-registry';
 export * from './shared-postgres';
 export * from './counter-process';
 export * from './process-watch';
+export * from './windows-env';
