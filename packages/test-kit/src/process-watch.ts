@@ -45,6 +45,8 @@ import type * as KoffiModule from 'koffi';
 /** Un processus surveillé par le test. `release()` quand le test en a fini. */
 export interface ProcessWatch {
   readonly pid: number;
+  /** Quand la veille s'est ouverte (`Date.now()`) : depuis quand le test tient ce processus. */
+  readonly openedAt: number;
   /** Le processus surveillé vit encore (un processus suspendu ou affamé vit). */
   alive(): boolean;
   /**
@@ -119,6 +121,7 @@ export async function watchProcess(
     const alive = (): boolean => unixAlive(pid);
     return {
       pid,
+      openedAt: Date.now(),
       alive,
       kill: (signal) => killIfAlive(pid, alive, signal),
       release: () => undefined,
@@ -130,13 +133,20 @@ export async function watchProcess(
     const err = k.GetLastError();
     // Déjà mort, et son objet déjà détruit : il est mort, et le restera.
     if (err === ERROR_INVALID_PARAMETER) {
-      return { pid, alive: () => false, kill: () => false, release: () => undefined };
+      return {
+        pid,
+        openedAt: Date.now(),
+        alive: () => false,
+        kill: () => false,
+        release: () => undefined,
+      };
     }
     throw new Error(`watchProcess(${String(pid)}): OpenProcess error ${String(err)}`);
   }
   let open = true;
   const watch: ProcessWatch = {
     pid,
+    openedAt: Date.now(),
     kill(signal?: NodeJS.Signals): boolean {
       // `alive()` lève après `release()` : tuer un pid qu'on ne tient plus est
       // exactement ce que cette méthode existe pour empêcher.
@@ -171,4 +181,73 @@ function killIfAlive(pid: number, alive: () => boolean, signal?: NodeJS.Signals)
     if ((e as NodeJS.ErrnoException).code === 'ESRCH') return false;
     throw e;
   }
+}
+
+/** Ce qu'a donné l'attente de la mort d'un processus tenu. */
+export interface DeathWait {
+  dead: boolean;
+  /** Combien de temps on l'a attendue (`0` quand il était déjà mort). */
+  waitedMs: number;
+}
+
+/**
+ * Attend, borné, que le processus TENU meure : la mort est lue sur lui, jamais
+ * sur son pid, et jamais sur une fenêtre fixe qui ne dit pas combien de temps
+ * il a survécu.
+ */
+export async function waitForDeath(watch: ProcessWatch, ms: number): Promise<DeathWait> {
+  const started = Date.now();
+  for (;;) {
+    if (!watch.alive()) return { dead: true, waitedMs: Date.now() - started };
+    if (Date.now() - started >= ms) return { dead: false, waitedMs: Date.now() - started };
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+/**
+ * Le message d'un processus tenu qui a survécu à ce qui devait le tuer :
+ * « server (pid 4242) held since 12:00:00.000 still alive 5000 ms after closeJobProcessScope ».
+ * Un tel échec n'est pas une réutilisation de pid, la veille l'exclut : c'est
+ * un processus qui n'est pas mort.
+ */
+export function survivalMessage(
+  watch: ProcessWatch,
+  wait: DeathWait,
+  what: string,
+  after: string,
+): string {
+  const since = new Date(watch.openedAt).toISOString().slice(11, 23);
+  return `${what} (pid ${String(watch.pid)}) held since ${since} still alive ${String(wait.waitedMs)} ms after ${after}`;
+}
+
+/**
+ * Attend, borné, que le processus TENU meure, et fait échouer le test en
+ * disant depuis quand il est tenu et combien de temps il a survécu à `after`.
+ */
+export async function mustDie(
+  watch: ProcessWatch,
+  what: string,
+  after: string,
+  ms = 10_000,
+): Promise<void> {
+  const wait = await waitForDeath(watch, ms);
+  if (!wait.dead) throw new Error(survivalMessage(watch, wait, what, after));
+}
+
+/** Les veilles d'un fichier de test : `hold(pid)` à chaque pid lu, `releaseAll()` dans `afterEach`. */
+export function watchRegistry(): {
+  hold(pid: number): Promise<ProcessWatch>;
+  releaseAll(): void;
+} {
+  const open: ProcessWatch[] = [];
+  return {
+    async hold(pid) {
+      const watch = await watchProcess(pid);
+      open.push(watch);
+      return watch;
+    },
+    releaseAll() {
+      for (const w of open.splice(0)) w.release();
+    },
+  };
 }
