@@ -27,6 +27,8 @@
 //                     n'est pas venue (#834).
 //   process-watch   — la mort d'un processus de test lue sur le processus
 //                     TENU, jamais sur un pid que Windows a pu redonner (#834).
+//   mxc-tier        — un palier MXC que la sonde du SDK n'a pas pu lire fait
+//                     échouer la suite, il ne la saute pas.
 //
 // Ce paquet est privé et ne part jamais dans le tarball : il n'est référencé que
 // par des devDependencies.
@@ -42,3 +44,4 @@ export * from './cluster-registry';
 export * from './shared-postgres';
 export * from './counter-process';
 export * from './process-watch';
+export * from './mxc-tier';

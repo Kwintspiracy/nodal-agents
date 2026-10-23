@@ -4,10 +4,7 @@ import { describe, it, expect } from 'vitest';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { once } from 'node:events';
-import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { tier, tierLabel } from './mxc-tier';
+import { forceUnreadableProbe, tier, tierLabel } from './mxc-tier';
 import { mxcBackend, MXC_BACKEND_NAME, networkSetup, observedOutcome } from '../windows-mxc';
 import type { SandboxStatus } from '../types';
 import { mxcErrorText } from '../mxc-broker';
@@ -307,34 +304,22 @@ describe.runIf(isWindows && tier === 'base-container' && !nodeInMxcRange)(
   },
 );
 
-// Le vrai SDK dont la sonde native échoue (`wxc-exec --probe` : délai de 5 s sur
-// une machine chargée, binaire illisible). Le SDK ne le dit pas : il laisse
-// `isolationTier` absent et GARDE cette réponse. CI Windows, run 39796089254,
-// 1re tentative : c'est ce que trois suites ont lu, et le produit a répondu
-// `unknown` là où elles attendaient `undefined`. Rien n'est ouvert : la sonde
-// s'arrête avant le conteneur. Les crochets de test du SDK (`_setProbeRunner`,
-// `_resetPlatformSupportCache`) ne sont pas dans son index public : on les prend
-// dans son fichier, qui est le même module que celui du produit.
+// Le vrai SDK dont la sonde native échoue (`forceUnreadableProbe`, mxc-tier.ts).
+// Le SDK ne le dit pas : il laisse `isolationTier` absent et GARDE cette
+// réponse. CI Windows, run 39796089254, 1re tentative : c'est ce que trois
+// suites ont lu, et le produit a répondu `unknown` là où elles attendaient
+// `undefined`. Rien n'est ouvert : la sonde s'arrête avant le conteneur. La
+// sonde du PRODUIT dit `unknown` ; c'est la suite qui lit le palier (mxc-tier.ts)
+// qui échoue, et ne se saute pas (mxc-tier.test.ts).
 describe.runIf(isWindows)(
   'mxcBackend — le vrai SDK dont la sonde native échoue : palier illisible, dit tel quel (Windows)',
   () => {
     it('le SDK laisse le palier absent, et la sonde du produit dit SANDBOX_PLATFORM_UNSUPPORTED, `isolationTier=unknown`', async () => {
-      const dir = dirname(
-        createRequire(import.meta.url).resolve('@microsoft/mxc-sdk/package.json'),
-      );
-      const platform = (await import(
-        pathToFileURL(join(dir, 'dist', 'v1', 'platform.js')).href
-      )) as {
-        _setProbeRunner: (runner?: () => string) => void;
-        _resetPlatformSupportCache: () => void;
-      };
-      const sdk = await import('@microsoft/mxc-sdk/v1');
+      const restore = await forceUnreadableProbe();
       try {
-        platform._resetPlatformSupportCache();
-        platform._setProbeRunner(() => {
-          throw new Error('wxc-exec --probe: timed out after 5000 ms');
-        });
-        expect(sdk.getPlatformSupport().isolationTier).toBeUndefined();
+        expect((await import('@microsoft/mxc-sdk/v1')).getPlatformSupport().isolationTier).toBe(
+          undefined,
+        );
         const status = await mxcBackend().probe();
         expect(status).toEqual({
           state: 'unavailable',
@@ -342,9 +327,7 @@ describe.runIf(isWindows)(
           reason: `isolationTier=${tierLabel(undefined)}`,
         });
       } finally {
-        // Le SDK reprend sa vraie sonde, et la sienne seule.
-        platform._setProbeRunner(undefined);
-        platform._resetPlatformSupportCache();
+        restore();
       }
     });
   },
