@@ -18,6 +18,15 @@
 //     `COUNTER_DAEMON_SOURCE` écrit avant de sortir ;
 //   - il est mort sans trace : tué du dehors.
 // Le jour où l'échec revient, le message dit lequel.
+//
+// Un compteur n'est jamais VIDE (#843, run 39781190881) : `writeFileSync` vide
+// le fichier avant d'y écrire, et un démon tué entre les deux — la fermeture du
+// périmètre le tue, c'est le test — laisse un fichier vide pour toujours. Les
+// tests qui relisent le compteur APRÈS la mort du démon (« le compteur cesse de
+// monter ») levaient « no number in … » : la relecture bornée de `readCounter`
+// attend un écrivain qui n'existe plus. Le démon écrit donc ailleurs puis
+// RENOMME sur le compteur : le fichier du compteur a toujours une valeur entière
+// complète, quel que soit l'instant de la mort.
 
 import { readFileSync } from 'node:fs';
 import type { ProcessWatch } from './process-watch';
@@ -26,38 +35,72 @@ import type { ProcessWatch } from './process-watch';
 export const crashRecordOf = (counter: string): string => `${counter}.crash`;
 
 /**
- * Le démon : `node <script> <compteur> [<fichier du pid>]`. Il écrit son pid,
- * puis un compteur qui monte toutes les 100 ms. Une exception (une écriture
- * refusée) est écrite dans `<compteur>.crash` avant qu'il sorte : sans elle,
- * un démon qui se plante ne se distinguerait pas d'un démon tué.
+ * Les erreurs d'un fichier qu'un autre processus tient un instant (un
+ * antivirus, un lecteur) : sous Windows, renommer sur un fichier ouvert sans
+ * partage de suppression, ou l'ouvrir pendant qu'il est remplacé, les rend.
+ * Elles passent ; toute autre erreur est une vraie erreur.
+ */
+const TRANSIENT_FILE_ERRORS = ['EPERM', 'EBUSY', 'EACCES'];
+
+/**
+ * Le démon : `node <script> <compteur> [<fichier du pid> [<période en ms>]]`. Il
+ * écrit son pid, puis un compteur qui monte toutes les 100 ms (la période, si
+ * elle est donnée). Chaque valeur est écrite dans `<compteur>.next` puis
+ * RENOMMÉE sur le compteur : celui-ci n'est jamais vide, même si le démon est
+ * tué en pleine écriture. Un renommage que le système refuse un instant
+ * (EPERM/EBUSY/EACCES), ou une écriture refusée de même, est retenté à la période suivante, sans compter : le
+ * compteur ne monte que de ce qui est écrit. Toute autre exception est écrite
+ * dans `<compteur>.crash` avant qu'il sorte : sans elle, un démon qui se plante
+ * ne se distinguerait pas d'un démon tué.
  */
 export const COUNTER_DAEMON_SOURCE = [
   "const fs = require('fs');",
   'const counter = process.argv[2];',
   'const pidFile = process.argv[3];',
+  'const every = Number(process.argv[4]) || 100;',
+  "const staging = counter + '.next';",
+  `const transient = ${JSON.stringify(TRANSIENT_FILE_ERRORS)};`,
   "process.on('uncaughtException', (e) => {",
   "  try { fs.writeFileSync(counter + '.crash', String((e && e.stack) || e)); } catch {}",
   '  process.exit(70);',
   '});',
   'if (pidFile) fs.writeFileSync(pidFile, String(process.pid));',
   'let n = 0;',
-  'setInterval(() => fs.writeFileSync(counter, String(++n)), 100);',
+  'setInterval(() => {',
+  '  try {',
+  '    fs.writeFileSync(staging, String(n + 1));',
+  '    fs.renameSync(staging, counter);',
+  '  } catch (e) {',
+  '    if (transient.includes(e && e.code)) return;',
+  '    throw e;',
+  '  }',
+  '  n += 1;',
+  '}, every);',
   '',
 ].join('\n');
 
 /**
- * Lit le nombre qu'un processus écrit dans `file`. `writeFileSync` vide le
- * fichier avant de l'écrire : une lecture qui tombe entre les deux lit `''`
- * (vu en CI Linux : « expected 0 to be greater than 1 »). On relit, borné,
- * jusqu'à un entier.
+ * Lit le nombre qu'un processus écrit dans `file`. Un fichier qu'un autre
+ * processus tient un instant (EPERM/EBUSY/EACCES, sous Windows pendant le
+ * remplacement du compteur) est relu : on relit, borné, jusqu'à un entier. Un
+ * fichier qui ne contient pas d'entier à la fin de l'attente est une erreur
+ * dite, avec ce qu'il contenait.
  */
 export function readCounter(file: string): number {
+  let seen = 'nothing read';
   for (let i = 0; i < 200; i++) {
-    const text = readFileSync(file, 'utf8').trim();
-    if (/^\d+$/.test(text)) return Number(text);
+    try {
+      const text = readFileSync(file, 'utf8').trim();
+      if (/^\d+$/.test(text)) return Number(text);
+      seen = `content ${JSON.stringify(text)}`;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === undefined || !TRANSIENT_FILE_ERRORS.includes(code)) throw e;
+      seen = `read refused (${code})`;
+    }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
   }
-  throw new Error(`no number in ${file}`);
+  throw new Error(`no number in ${file} (${seen})`);
 }
 
 function crashOf(counter: string): string | null {

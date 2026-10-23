@@ -52,6 +52,12 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
 
 const DISCORD_DM = '1188000000000000001';
 const DISCORD_UNAPPROVED = '1188000000000000002';
+// A Telegram chat id as real as a user's, and one no random handle can spell: a
+// handle is `conv_` + 10 characters of [a-z2-7], so an id holding a `0`, `1`, `8`
+// or `9` can never be met inside one. The short '555' this file used to carry
+// turned the leak check red by chance (CI Windows, 2026-10-22: a handle holding
+// "555" is about 1 in 4 000 for 10 random characters).
+const TG_CHAT = '5550198765';
 const WA_DM = '33612345678@s.whatsapp.net';
 const WA_GROUP = '120363000000000001@g.us';
 const WA_PARTICIPANT = '33699999999@s.whatsapp.net';
@@ -141,7 +147,7 @@ beforeAll(async () => {
   await db.insert(telegramAllowedChats).values({
     entityId: seed.entityId,
     agentId: seed.agentId,
-    chatId: '555',
+    chatId: TG_CHAT,
     role: 'member',
     status: 'active',
     requesterName: 'Alice',
@@ -210,9 +216,17 @@ describe('conversation handles, model ↔ send tools @cap:parler-par-canal-exter
     const dc = await listConversations.execute({ channel: 'discord' }, ctx());
     const ids = {
       whatsapp: [WA_DM, WA_GROUP, '33612345678', WA_PARTICIPANT, '33699999999'],
-      telegram: ['555'],
+      telegram: [TG_CHAT],
       discord: [DISCORD_DM, DISCORD_UNAPPROVED],
     };
+    // The check below looks for each id as a substring of JSON that holds random
+    // handles. It proves something only if no handle can spell an id.
+    for (const id of Object.values(ids).flat()) {
+      expect({ id, spellableByAHandle: /^[a-z2-7_]+$/.test(id) }).toEqual({
+        id,
+        spellableByAHandle: false,
+      });
+    }
     for (const [channel, out] of [
       ['whatsapp', wa],
       ['telegram', tg],
@@ -265,10 +279,12 @@ describe('conversation handles, model ↔ send tools @cap:parler-par-canal-exter
     const handle = await conversationHandleFor(db as unknown as ToolContext['db'], {
       entityId: seed.entityId,
       channel: 'telegram',
-      conversationId: '555',
+      conversationId: TG_CHAT,
     });
     await sendImage.execute({ source: file, chatId: handle }, ctx());
-    expect(sent).toEqual([{ channel: 'telegram', token: 'tg-tok', chatId: '555', what: 'photo' }]);
+    expect(sent).toEqual([
+      { channel: 'telegram', token: 'tg-tok', chatId: TG_CHAT, what: 'photo' },
+    ]);
   });
 
   it('a handle of another entity is refused — it names nothing here', async () => {
@@ -279,7 +295,7 @@ describe('conversation handles, model ↔ send tools @cap:parler-par-canal-exter
     const theirs = await conversationHandleFor(db as unknown as ToolContext['db'], {
       entityId: other!.id,
       channel: 'telegram',
-      conversationId: '555',
+      conversationId: TG_CHAT,
     });
     await expect(sendMessage.execute({ chatId: theirs, text: 'x' }, ctx())).rejects.toMatchObject({
       name: 'conversation_handle_unknown',
@@ -308,8 +324,8 @@ describe('conversation handles, model ↔ send tools @cap:parler-par-canal-exter
   });
 
   it('a raw id still works as before, allowlist check included', async () => {
-    await sendMessage.execute({ chatId: '555', text: 'raw' }, ctx());
-    expect(sent).toEqual([{ channel: 'telegram', token: 'tg-tok', chatId: '555', what: 'raw' }]);
+    await sendMessage.execute({ chatId: TG_CHAT, text: 'raw' }, ctx());
+    expect(sent).toEqual([{ channel: 'telegram', token: 'tg-tok', chatId: TG_CHAT, what: 'raw' }]);
     await expect(sendMessage.execute({ chatId: '999', text: 'x' }, ctx())).rejects.toMatchObject({
       name: 'telegram_chat_not_allowed',
     });

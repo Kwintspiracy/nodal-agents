@@ -33,14 +33,12 @@ import {
   type JobContainer,
   type SandboxStatus,
 } from '../index';
+import { tier, tierLabel } from './mxc-tier';
 
 const isWindows = process.platform === 'win32';
 
-// Le palier MXC de CETTE machine (comme deny-data-dir.test.ts et
+// Le palier MXC de CETTE machine (mxc-tier.ts, comme deny-data-dir.test.ts et
 // windows-mxc.test.ts).
-const tier = isWindows
-  ? (await import('@microsoft/mxc-sdk/v1')).getPlatformSupport().isolationTier
-  : undefined;
 
 /**
  * Ce qu'un statut INDISPONIBLE doit dire sous le régime proxy, selon le palier
@@ -60,7 +58,7 @@ function expectUnavailableForTier(tierName: string | undefined, status: SandboxS
     code: 'SANDBOX_PLATFORM_UNSUPPORTED',
   });
   expect(status.state === 'unavailable' && status.reason).toMatch(
-    new RegExp(`^isolationTier=${String(tierName)}`),
+    new RegExp(`^isolationTier=${tierLabel(tierName)}`),
   );
 }
 
@@ -313,6 +311,24 @@ describe('sandbox proxy regime — what an unavailable status must say per tier 
       reason: `isolationTier=appcontainer-dacl | ${warning}`,
     });
     expectUnavailableForTier('appcontainer-dacl', status);
+  });
+
+  it('a tier the SDK probe could not read: the probe says `isolationTier=unknown`, and that is what the suite accepts', async () => {
+    const sdk = {
+      getPlatformSupport: () => ({ isSupported: true, reason: '', availableMethods: [] }),
+      spawn: () => {
+        throw new Error('must not be called');
+      },
+    } as never;
+    const status = await mxcBackend(() => Promise.resolve(sdk), 'proxy').probe();
+    expect(status).toEqual({
+      state: 'unavailable',
+      code: 'SANDBOX_PLATFORM_UNSUPPORTED',
+      reason: 'isolationTier=unknown',
+    });
+    expectUnavailableForTier(undefined, status);
+    // Un autre mot de palier n'est pas la réponse du produit pour un palier illisible.
+    expect(() => expectUnavailableForTier('appcontainer-dacl', status)).toThrow();
   });
 
   it('the proxy-unreachable code is NOT an acceptable answer on a tier other than base-container, and the tier code is not one on base-container', () => {
