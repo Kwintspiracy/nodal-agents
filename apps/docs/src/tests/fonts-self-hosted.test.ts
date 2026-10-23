@@ -3,8 +3,8 @@
 // Même cause que pour apps/web : `next/font/google` télécharge les polices
 // pendant `next build`, et le chargeur plante au hasard quand Google répond
 // mal. Les polices sont des fichiers du dépôt (`app/fonts/`), déclarés par
-// `fonts.css`. Ce paquet n'a pas @nodal-agents/test-kit : un parcours de
-// dossier de quelques lignes suffit.
+// `fonts.css`. Les sources lues sont celles que git connaît (test-kit
+// `listSourceFiles`) : un build (`.next`, `out`, `.source`) n'est jamais lu.
 //
 // La garde ne s'arrête pas au site : `docs.yml` publie aussi le portail qualité
 // (`apps/qa`) sous `/qa/`, et ce portail chargeait ses polices chez Google. Elle
@@ -13,27 +13,22 @@
 // workflow ni aucun build ne les lit, on les ouvre depuis le dépôt.
 
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { listSourceFiles } from '@nodal-agents/test-kit';
 
 const docsRoot = join(fileURLToPath(import.meta.url), '..', '..', '..');
 const fontsDir = join(docsRoot, 'app', 'fonts');
 const qaRoot = join(docsRoot, '..', 'qa');
 const FORBIDDEN = /next\/font\/google|@next\/font|fonts\.googleapis\.com|fonts\.gstatic\.com/;
 
-function sources(dir: string, acc: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
-      if (['node_modules', '.next', 'out', 'tests', '.source', 'dist', 'data'].includes(entry))
-        continue;
-      sources(full, acc);
-    } else if (/\.(tsx?|css|mjs|js|html)$/.test(entry) && !/\.test\.[mc]?[jt]s$/.test(entry)) {
-      acc.push(full);
-    }
-  }
-  return acc;
+// `tests` et `data` (les relevés JSON du portail) ne sont pas du code de page.
+function sources(dir: string): string[] {
+  return listSourceFiles(dir, {
+    skipDirs: ['tests', 'data'],
+    extensions: ['.ts', '.tsx', '.css', '.mjs', '.js', '.html'],
+  }).filter((f) => !/\.test\.[mc]?[jt]s$/.test(f));
 }
 
 describe('docs fonts are self-hosted (#688)', () => {

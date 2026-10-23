@@ -11,22 +11,15 @@
 // modèle n'écrit rien d'hostile.
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { listSourceFiles } from '@nodal-agents/test-kit';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 
-function tsFilesUnder(dir: string, acc: string[] = []): string[] {
-  for (const e of readdirSync(dir)) {
-    const full = join(dir, e);
-    if (statSync(full).isDirectory()) {
-      if (!['node_modules', 'dist', '.next'].includes(e)) tsFilesUnder(full, acc);
-    } else if (e.endsWith('.ts') && !e.endsWith('.test.ts')) {
-      acc.push(full);
-    }
-  }
-  return acc;
+function tsFilesUnder(dir: string): string[] {
+  return listSourceFiles(dir, { extensions: ['.ts'] }).filter((p) => !p.endsWith('.test.ts'));
 }
 
 describe('SKILL-002 — tout écrivain de skill passe par le linter', () => {

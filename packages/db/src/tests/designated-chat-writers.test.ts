@@ -19,19 +19,15 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { listSourceFiles } from '@nodal-agents/test-kit';
 
 const repoRoot = join(fileURLToPath(import.meta.url), '..', '..', '..', '..', '..');
 
-function sourceFiles(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    if (name === 'node_modules' || name === 'tests' || name === '__tests__' || name === 'dist') {
-      continue;
-    }
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) sourceFiles(p, out);
-    else if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)) out.push(p);
-  }
-  return out;
+function sourceFiles(dir: string): string[] {
+  return listSourceFiles(dir, {
+    skipDirs: ['tests', '__tests__'],
+    extensions: ['.ts', '.tsx'],
+  }).filter((p) => !/\.test\.tsx?$/.test(p));
 }
 
 function srcRoots(): string[] {

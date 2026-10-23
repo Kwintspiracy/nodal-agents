@@ -47,7 +47,7 @@ describe('architecture invariants', () => {
         'copie du préfixe d’outil MCP',
         scanForMcpToolPrefixCopies({
           srcDir: join(repo, root),
-          skipDirs: ['node_modules', 'tests', '__tests__', 'dist', '.next', '.turbo', 'coverage'],
+          skipDirs: ['tests', '__tests__'],
           skipFiles: ['packages/shared/src/mcp-tool-prefix.ts'],
         }),
       );
@@ -63,7 +63,7 @@ describe('architecture invariants', () => {
     const violations = ['apps', 'packages', 'scripts'].flatMap((root) =>
       scanForNodalHomeCopies({
         srcDir: join(repo, root),
-        skipDirs: ['node_modules', 'tests', '__tests__', 'dist', '.next', '.turbo', 'coverage'],
+        skipDirs: ['tests', '__tests__'],
         extensions: ['.ts', '.tsx', '.js', '.mjs', '.cjs'],
         // test-kit cannot depend on shared (shared's tests depend on it):
         // its test clusters avoid the DEFAULT install's ports, said there.

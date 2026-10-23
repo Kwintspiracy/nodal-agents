@@ -18,9 +18,10 @@
 // clé inutilisée est refusée aussi : la liste ne peut pas vieillir en silence.
 
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, relative, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { listSourceFiles } from '@nodal-agents/test-kit';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
 
@@ -53,17 +54,9 @@ const LISTE_BLANCHE: Record<string, string> = {
 };
 
 function fichiers(dir: string): string[] {
-  const out: string[] = [];
-  for (const nom of readdirSync(dir)) {
-    const p = join(dir, nom);
-    if (statSync(p).isDirectory()) {
-      if (nom === 'tests' || nom === '__tests__' || nom === 'node_modules') continue;
-      out.push(...fichiers(p));
-    } else if (nom.endsWith('.ts') && !nom.endsWith('.test.ts')) {
-      out.push(p);
-    }
-  }
-  return out;
+  return listSourceFiles(dir, { skipDirs: ['tests', '__tests__'], extensions: ['.ts'] }).filter(
+    (p) => !p.endsWith('.test.ts'),
+  );
 }
 
 interface Ecriture {

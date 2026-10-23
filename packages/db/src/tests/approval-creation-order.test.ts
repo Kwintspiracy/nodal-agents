@@ -8,9 +8,10 @@
 // (même `requested_at` pour toutes) : seul `seq` peut départager.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join, relative, sep } from 'node:path';
+import { listSourceFiles } from '@nodal-agents/test-kit';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agentJobs, approvalRequests, eq, inArray } from '../index';
@@ -184,38 +185,17 @@ describe('the guard that no reader orders approval_requests by requested_at @cap
 // lancer ici. Cette garde lit leurs sources.
 describe('no reader orders approval_requests by requested_at @cap:approuver-une-action/moteur', () => {
   const root = join(__dirname, '..', '..', '..', '..');
-  const skip = new Set([
-    'node_modules',
-    'dist',
-    '.next',
-    '.turbo',
-    '.claude',
-    'tests',
-    '__tests__',
-  ]);
-
-  function sources(dir: string, out: string[] = []): string[] {
-    for (const name of readdirSync(dir)) {
-      if (skip.has(name)) continue;
-      const p = join(dir, name);
-      const st = statSync(p);
-      if (st.isDirectory()) sources(p, out);
-      else if (/\.(ts|tsx|mjs|js)$/.test(name) && !/\.test\.[a-z]+$/.test(name)) out.push(p);
-    }
-    return out;
-  }
 
   it('finds none in apps/, packages/ and scripts/', () => {
     const offenders: string[] = [];
     for (const top of ['apps', 'packages', 'scripts']) {
-      let dir: string;
-      try {
-        dir = join(root, top);
-        statSync(dir);
-      } catch {
-        continue;
-      }
-      for (const file of sources(dir)) {
+      // Ce qui est source, c'est git qui le dit (test-kit `listSourceFiles`) :
+      // un dossier de build ignoré n'est jamais lu, quel que soit son nom.
+      const files = listSourceFiles(join(root, top), {
+        skipDirs: ['tests', '__tests__'],
+        extensions: ['.ts', '.tsx', '.mjs', '.js'],
+      }).filter((f) => !/\.test\.[a-z]+$/.test(f));
+      for (const file of files) {
         if (requestedAtOrderings(readFileSync(file, 'utf8')).length > 0) {
           offenders.push(relative(root, file).split(sep).join('/'));
         }

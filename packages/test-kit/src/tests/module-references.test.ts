@@ -7,12 +7,12 @@
 // fichier, et la prose qui cite le nom ne doit pas sonner.
 
 import { describe, it, expect, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { scanForModuleReferences } from '../architecture';
+import { mkdtempSourceTree } from '../source-files';
 
-const root = mkdtempSync(join(tmpdir(), 'nodal-modrefs-'));
+const root = mkdtempSourceTree('nodal-modrefs-');
 const src = join(root, 'src');
 mkdirSync(join(src, 'lib'), { recursive: true });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -41,7 +41,7 @@ writeFileSync(join(src, 'lib', 'door.ts'), "export const load = () => import('so
 
 describe('scanForModuleReferences', () => {
   const found = scanForModuleReferences({
-    srcDirs: [src],
+    srcDirs: [root],
     moduleName: 'some-pkg',
     allowFiles: ['lib/door.ts'],
   });

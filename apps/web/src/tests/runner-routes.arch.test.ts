@@ -12,26 +12,19 @@
 // `app.<méthode>('/…')` du runner (segments `:x` lus comme paramètres).
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { listSourceFiles } from '@nodal-agents/test-kit';
 
 const webRoot = join(fileURLToPath(import.meta.url), '..', '..', '..');
 const runnerSrc = join(webRoot, '..', 'runner', 'src');
 
-const SKIP_DIRS = new Set(['node_modules', '.next', 'tests', '__tests__', 'test-results']);
-
 function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
-      if (!SKIP_DIRS.has(entry)) out.push(...sourceFiles(full));
-    } else if (/\.(ts|tsx)$/.test(entry) && !/\.test\.tsx?$/.test(entry)) {
-      out.push(full);
-    }
-  }
-  return out;
+  return listSourceFiles(dir, {
+    skipDirs: ['tests', '__tests__'],
+    extensions: ['.ts', '.tsx'],
+  }).filter((p) => !/\.test\.tsx?$/.test(p));
 }
 
 /** `/api/jobs/${x}/file-diff` and `/api/jobs/:jobId/file-diff` → the same key. */

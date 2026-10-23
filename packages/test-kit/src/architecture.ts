@@ -13,8 +13,9 @@
 //
 // So the scanners live here and each package's suite becomes a call.
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { relative, resolve } from 'node:path';
+import { sourceFilesUnder } from './source-files';
 
 export interface Violation {
   file: string;
@@ -28,7 +29,8 @@ export interface ScanOptions {
   /** Directory to walk. Usually the package's `src/`. */
   srcDir: string;
   /**
-   * Directory names to skip.
+   * Directory names to skip, among the SOURCE files (git's view: build output,
+   * caches and dependencies are never read, whatever this list says).
    *
    * `tests` is skipped by default and that is deliberate, not laxity: a test
    * legitimately names an agent in a fixture. The cost is that a violation
@@ -61,25 +63,43 @@ function isSkipped(file: string, skipFiles: readonly string[]): boolean {
 
 const TS_EXTENSIONS = ['.ts', '.tsx'] as const;
 
+/**
+ * The source files under `dir` (git's view: tracked, or new and not ignored,
+ * `sourceFilesUnder`) with one of the extensions, outside the directories the
+ * scanner chooses not to read (`skip`: tests, never a build output, which git
+ * already leaves out).
+ */
 function collectTsFiles(
   dir: string,
   skip: readonly string[],
   acc: string[] = [],
   extensions: readonly string[] = TS_EXTENSIONS,
 ): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
-      if (skip.includes(entry)) continue;
-      collectTsFiles(full, skip, acc, extensions);
-    } else if (extensions.some((x) => entry.endsWith(x))) {
-      acc.push(full);
-    }
+  const base = resolve(dir);
+  for (const file of sourceFilesUnder(base)) {
+    if (!extensions.some((x) => file.endsWith(x))) continue;
+    const dirs = relative(base, file).split(/[\\/]/).slice(0, -1);
+    if (dirs.some((d) => skip.includes(d))) continue;
+    acc.push(file);
   }
   return acc;
 }
 
-const DEFAULT_SKIP = ['node_modules', 'tests', '__tests__', 'dist', '.next'] as const;
+/** What a scanner does not read by default: tests (see `ScanOptions.skipDirs`). */
+const DEFAULT_SKIP = ['tests', '__tests__'] as const;
+
+/**
+ * The source files under `dir` that a scanner reads: git's view of what is
+ * source (`sourceFilesUnder`), with one of `extensions`, outside the
+ * directories named in `skipDirs` (default: none). For a test that walks the
+ * tree itself: it walks THIS, and never keeps a list of build folders.
+ */
+export function listSourceFiles(
+  dir: string,
+  opts: { skipDirs?: readonly string[]; extensions?: readonly string[] } = {},
+): string[] {
+  return collectTsFiles(dir, opts.skipDirs ?? [], [], opts.extensions ?? TS_EXTENSIONS);
+}
 
 /**
  * Agent and server slugs that must never appear in shipped source.
@@ -590,7 +610,7 @@ export function scanForModuleReferences(opts: {
   for (const srcDir of opts.srcDirs) {
     const files = collectTsFiles(
       srcDir,
-      ['node_modules', 'dist', '.next'],
+      [],
       [],
       [...TS_EXTENSIONS, '.mts', '.cts', '.js', '.mjs', '.cjs'],
     ).filter((f) => !isSkipped(f, opts.allowFiles));

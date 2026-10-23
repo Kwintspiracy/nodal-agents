@@ -19,8 +19,9 @@
 // la liste des runs d'une automatisation.
 
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { listSourceFiles } from '@nodal-agents/test-kit';
 
 const SRC = path.resolve(import.meta.dirname, '../..');
 const MODULE = path.join('lib', 'run-page.ts');
@@ -41,17 +42,9 @@ const BASE_DE_RUN = /[`'"]\/(?:jobs|scheduled|chat\/runs|runs)\/?[`'"]/;
 const TABLE_DU_RAIL = path.join('components', 'sidebar-nav.ts');
 
 function sources(dir: string): string[] {
-  const out: string[] = [];
-  for (const name of readdirSync(dir)) {
-    const full = path.join(dir, name);
-    if (statSync(full).isDirectory()) {
-      if (name === '__tests__' || name === 'node_modules') continue;
-      out.push(...sources(full));
-    } else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name)) {
-      out.push(full);
-    }
-  }
-  return out;
+  return listSourceFiles(dir, { skipDirs: ['__tests__'], extensions: ['.ts', '.tsx'] }).filter(
+    (p) => !/\.test\.tsx?$/.test(p),
+  );
 }
 
 describe('les adresses de run passent par lib/run-page.ts (#501) @cap:suivre-execution/ecran', () => {
