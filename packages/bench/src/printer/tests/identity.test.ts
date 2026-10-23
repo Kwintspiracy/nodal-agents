@@ -7,8 +7,12 @@
 // l'équipe réelle d'un espace.
 
 import { randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { dirname, isAbsolute, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { seedMinimal, spinUpTestDb } from '@nodal-agents/db/test-utils';
@@ -65,6 +69,44 @@ describe('benchPrinterServer: the one declaration the instance wires', () => {
 
   it('refuses a relative record folder: the runner launches it from another folder', () => {
     expect(() => benchPrinterServer('records')).toThrow('bench_printer_records_dir_not_absolute');
+  });
+});
+
+// La déclaration est écrite par le CLI (campaign/apply.ts) et relue par le
+// Studio (stack.ts `readBenchPrinter`), qui la recalcule pour comparer. Les deux
+// doivent tomber sur les MÊMES chemins : l'identité de l'imprimante en dépend
+// (revue de #866, passe 1). Ce que le CLI résout se lit depuis son entrée, comme
+// Node le fait quand `pnpm bench:campaign` lance `tsx src/campaign/cli.ts`.
+describe('benchPrinterServer: the same declaration for the CLI that writes it and the Studio that reads it', () => {
+  const benchDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+  const cliEntry = join(benchDir, 'src', 'campaign', 'cli.ts');
+  const fromCli = {
+    tsx: createRequire(pathToFileURL(cliEntry)).resolve('tsx/cli'),
+    main: fileURLToPath(new URL('../printer/main.ts', pathToFileURL(cliEntry))),
+  };
+
+  it("resolves tsx and the printer's entry exactly as the CLI entry does", () => {
+    expect(existsSync(cliEntry)).toBe(true);
+    expect(benchPrinterServer(DIR).args).toEqual([fromCli.tsx, fromCli.main]);
+  });
+
+  it('gives the same declaration whatever folder the process starts in', () => {
+    const tsxCli = createRequire(pathToFileURL(cliEntry)).resolve('tsx/cli');
+    const declaration = pathToFileURL(join(benchDir, 'src', 'printer', 'declaration.ts')).href;
+    const script = `import(${JSON.stringify(declaration)}).then((m) => process.stdout.write(JSON.stringify(m.benchPrinterServer(${JSON.stringify(DIR)}))))`;
+    const cwd = mkdtempSync(join(tmpdir(), 'bench-declaration-'));
+    try {
+      const r = spawnSync(process.execPath, [tsxCli, '--eval', script], {
+        cwd,
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 60_000,
+      });
+      expect(r.status, r.stderr).toBe(0);
+      expect(JSON.parse(r.stdout)).toEqual(benchPrinterServer(DIR));
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
 

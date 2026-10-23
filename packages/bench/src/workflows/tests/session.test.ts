@@ -33,7 +33,8 @@ vi.mock('../mcp', () => ({
     return { jobId: await placeJob(target), close: () => Promise.resolve() };
   },
 }));
-vi.mock('../paths', () => ({
+vi.mock('../paths', async (orig) => ({
+  ...(await orig<typeof import('../paths')>()),
   RESULTS_FILE: join(mkdtempSync(join(tmpdir(), 'session-')), 'workflows.ndjson'),
   SUBJECTS_FILE: join(mkdtempSync(join(tmpdir(), 'session-subjects-')), 'research-subjects.json'),
 }));
