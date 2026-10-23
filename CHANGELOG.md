@@ -10,14 +10,14 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
-## v0.9.8 — Oct 22, 2026
+## v0.9.8 — Oct 23, 2026
 
 A release about what your agents can touch and what they leave behind. On
 Windows, the commands an agent runs are now fenced by the operating system. A
 job owns every process it starts, so Stop and the end of a job really end them.
 A run budget covers the whole run, delegations included. Agents whose model
 sees can look at images, and the model no longer receives your e-mail address
-or a conversation's phone number. Node 24 is now the minimum. Forty-one pull
+or a conversation's phone number. Node 24 is now the minimum. Forty-four pull
 requests, six database migrations.
 
 **Upgrading: what changes for you**
@@ -32,8 +32,10 @@ requests, six database migrations.
   to the request) and a few folders computed from your machine stay writable:
   Nodal's tool cache, the models and output of ComfyUI, the models of Ollama, the
   caches of Hugging Face, the image store of Docker. Everything else is
-  read-only; reading and the internet stay open. Details below. Every proof
-  command an agent declared for a deliverable asks for approval once more. (#753)
+  read-only; reading and the internet stay open. Details below. This is for
+  Windows only: on macOS and Linux, commands are not confined in this release.
+  Every proof command an agent declared for a deliverable asks for approval once
+  more. (#753)
 - **A job owns every process it starts.** Stop and the end of a job kill what a
   command left running, including processes that detached themselves. Details
   below. (#834)
@@ -81,14 +83,19 @@ requests, six database migrations.
   also downloads, once, the Node 24 build that runs its broker, and checks its
   SHA-256 at every launch. (#753)
 - **When the sandbox is absent, nothing is silent.** If the package is missing
-  (`SANDBOX_BACKEND_MISSING`), the Windows build is not supported
+  (`SANDBOX_BACKEND_MISSING`) or the Windows build is not supported
   (`SANDBOX_PLATFORM_UNSUPPORTED`; only machines with the `base-container`
-  isolation are accepted) or the platform is macOS or Linux
-  (`SANDBOX_NOT_IMPLEMENTED`; their sandbox is for a later release), commands run
-  as they did before, and every result says so with `sandbox: { confined:
-  false, code }`. The runner logs one `[sandbox]` line at start. If the
-  sandbox is available but a container cannot start, the command is refused
-  (`SANDBOX_START_FAILED`); it never runs outside the fence in its place. (#753)
+  isolation are accepted), commands run as they did before, and every result says
+  so with `sandbox: { confined: false, code }`. The runner logs one `[sandbox]`
+  line at start. If the sandbox is available but a container cannot start, the
+  command is refused (`SANDBOX_START_FAILED`); it never runs outside the fence in
+  its place. (#753)
+- **Known limit: the sandbox confines on Windows only.** On macOS and Linux,
+  commands run unconfined in 0.9.8, as they did before. The runner logs
+  `[sandbox] SANDBOX_UNAVAILABLE` at start, with the code
+  `SANDBOX_NOT_IMPLEMENTED`, and every command result says
+  `sandbox: { confined: false, code: "SANDBOX_NOT_IMPLEMENTED" }`. The macOS and
+  Linux backends come in 0.9.9. (#753)
 - **Named limits.** A non-HTTP client (raw TCP) has no route to a local service.
   A server one job starts on 127.0.0.1 is reachable by a command of another job
   through the filter, since the machine's loopback is shared. A folder created in
@@ -111,6 +118,10 @@ requests, six database migrations.
   refused (`JOB_OBJECT_FAILED`) rather than run outside its job. (#834)
 - **An MCP server started through `npx` or `uvx` ends with its job.** Only the
   direct child used to. (#834)
+- **Stopping a command never ends an unrelated program.** On Windows, a process
+  number is handed to a new process within seconds of its holder exiting. Stopping
+  a command that has already exited, or whose host process has died, now sends
+  nothing, where it could end whatever program had taken the number. (#857)
 
 **`down` and `reset`**
 
@@ -184,10 +195,15 @@ requests, six database migrations.
   hash of the bytes: tables `tool_call_reads` and `tool_call_writes`. Deliverable
   checks can then say who wrote a file. Nothing in the dashboard shows them yet.
   (#780, #783)
+- **Creating a stdio MCP server never reports success when nothing was saved.**
+  From the Connectors screen, from the catalog and from `create_mcp`, an insert
+  that returns no row is now an error, where it used to look like a success that
+  attached nothing. (#855)
 - **The build and its checks.** The pack smoke test and the Windows tests got
-  several reliability fixes, a CI check refuses a private name in what a push, a
+  several reliability fixes, a Windows test run that loses a worker now says
+  which file never reported, a CI check refuses a private name in what a push, a
   pull request or the pack adds, and tests that waited on a real `npx` no longer
-  do. (#772, #800, #809, #811, #813, #833, #838, #847, #850, #854)
+  do. (#772, #800, #809, #811, #813, #833, #838, #847, #850, #854, #857)
 - Everything from 0.9.7 is included: Nodal installs without git, the database
   starts with an old Visual C++ runtime, and WhatsApp pairing shows its QR code.
   (#766)
