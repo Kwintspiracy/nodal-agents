@@ -31,7 +31,7 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,18 +39,10 @@ import { connectMcp } from '../index.ts';
 import { runMcpCall } from '../client.ts';
 import { ScopedStdioTransport } from '../scoped-stdio.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { mustDie, readCounter, watchProcess, type ProcessWatch } from '@nodal-agents/test-kit';
 
 const dir = mkdtempSync(join(tmpdir(), 'nodal-mcp-limits-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
-
-const isProcessAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
 
 interface Seen {
   method: string | undefined;
@@ -133,14 +125,17 @@ describe('the stdio read buffer has the ceiling Nodal accepts, not the SDK defau
     const pidFile = join(dir, 'flood.pid');
     const uncaught: unknown[] = [];
     const onUncaught = (e: unknown) => uncaught.push(e);
+    let server: ProcessWatch | undefined;
     process.on('uncaughtException', onUncaught);
     // The ceiling is an operator setting; the production 100 MiB takes too long
     // to fill on CI (the SDK concatenates every chunk), so lower it.
     process.env['MCP_STDIO_MAX_MESSAGE_BYTES'] = String(2 * 1024 * 1024);
     try {
       const conn = await open(pidFile);
-      const pid = Number(readFileSync(pidFile, 'utf8'));
-      expect(isProcessAlive(pid)).toBe(true);
+      // Tenu dès que son pid est lu : sa mort se lit sur lui, jamais sur un pid
+      // que Windows peut avoir redonné (test-kit process-watch.ts).
+      server = await watchProcess(readCounter(pidFile));
+      expect(server.alive()).toBe(true);
       // What the agent, the tool_calls row and the user read: not a bare
       // `Connection closed`, which a crashed server would also give.
       await expect(
@@ -151,14 +146,12 @@ describe('the stdio read buffer has the ceiling Nodal accepts, not the SDK defau
         `MCP error -32000: Connection closed: the MCP server "${process.execPath}" sent a message larger than 2 MiB, ` +
           `so Nodal closed the connection (ReadBuffer exceeded maximum size of ${2 * 1024 * 1024} bytes)`,
       );
-      for (let i = 0; i < 160 && isProcessAlive(pid); i++) {
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      expect(isProcessAlive(pid)).toBe(false);
+      await mustDie(server, 'the flooding server', 'the oversized message', 8_000);
       expect(uncaught).toEqual([]);
     } finally {
       delete process.env['MCP_STDIO_MAX_MESSAGE_BYTES'];
       process.off('uncaughtException', onUncaught);
+      server?.release();
     }
   }, 90_000);
 

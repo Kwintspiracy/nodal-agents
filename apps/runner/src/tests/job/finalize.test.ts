@@ -26,6 +26,7 @@ import { mkdtemp, rm, writeFile, access, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import { mustDie, readCounter, watchProcess } from '@nodal-agents/test-kit';
 import { closeAllJobProcessScopes, getSandboxStatus } from '@nodal-agents/sandbox';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
@@ -1549,23 +1550,20 @@ describe('finalizeJobSuccess — où la preuve peut écrire (#628)', () => {
     for (let i = 0; i < 400 && !(await exists(counter)); i++) {
       await new Promise((r) => setTimeout(r, 50));
     }
-    const pid = Number(await readFile(pidFile, 'utf8'));
+    // Tenu dès que son pid est lu : sa mort se lit sur lui, jamais sur un pid
+    // que Windows peut avoir redonné (test-kit process-watch.ts).
+    const ticking = await watchProcess(readCounter(pidFile));
     // Le geste du bouton Stop sur la ligne du job.
     await db.update(agentJobs).set({ status: 'cancelled' }).where(eq(agentJobs.id, jobId));
     const outcome = await finalizing;
     expect(Date.now() - started).toBeLessThan(30_000);
     // Le job était déjà fini (annulé) : la finalisation n'écrit rien par-dessus.
     expect(outcome.kind).toBe('already_terminal');
-    let dead = false;
-    for (let i = 0; i < 100 && !dead; i++) {
-      try {
-        process.kill(pid, 0);
-        await new Promise((r) => setTimeout(r, 50));
-      } catch {
-        dead = true;
-      }
+    try {
+      await mustDie(ticking, 'the proof command', 'the Stop');
+    } finally {
+      ticking.release();
     }
-    expect(dead).toBe(true);
     const frozen = await readFile(counter, 'utf8');
     await new Promise((r) => setTimeout(r, 400));
     expect(await readFile(counter, 'utf8')).toBe(frozen);
