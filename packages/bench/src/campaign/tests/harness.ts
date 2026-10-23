@@ -7,7 +7,7 @@
 // des instances, la clé maîtresse et le dossier de Nodal par défaut des tests
 // n'atteignent jamais ceux de la machine.
 
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -112,16 +112,24 @@ export function fakeCommunityInstaller(db: AnyDrizzleDb): {
 
 // ─── Un faux CLI de Nodal, qui démarre un vrai processus ─────────────────────
 
+/**
+ * Trois ports libres, et DISTINCTS : les trois écouteurs restent ouverts
+ * jusqu'à ce que le dernier ait le sien. Fermé tout de suite, un port libéré
+ * pouvait être rendu deux fois (le runner et le Postgres sur le même port, CI
+ * Linux du 22/10 : EADDRINUSE).
+ */
 export async function freePorts(): Promise<InstancePorts> {
-  const one = (): Promise<number> =>
-    new Promise((resolve) => {
-      const s = createServer();
-      s.listen(0, '127.0.0.1', () => {
-        const port = (s.address() as { port: number }).port;
-        s.close(() => resolve(port));
-      });
-    });
-  return { web: await one(), runner: await one(), postgres: await one() };
+  const servers = [createServer(), createServer(), createServer()];
+  const [web, runner, postgres] = await Promise.all(
+    servers.map(
+      (s) =>
+        new Promise<number>((resolve) =>
+          s.listen(0, '127.0.0.1', () => resolve((s.address() as { port: number }).port)),
+        ),
+    ),
+  );
+  await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
+  return { web: web!, runner: runner!, postgres: postgres! };
 }
 
 /**
@@ -131,11 +139,22 @@ export async function freePorts(): Promise<InstancePorts> {
  * (mesuré sur la CI Windows du 22/10). L'état est celui du DERNIER processus
  * lancé sous ce PID : un PID réattribué à un nouveau lanceur ne se lit jamais
  * « sorti » au nom de l'ancien, même si l'`exit` de l'ancien arrive en retard.
+ *
+ * Le même piège vaut pour TUER (#841) : un `process.kill(pid)` sur le PID d'un
+ * lanceur déjà sorti tue le processus qui a reçu ce PID depuis — sur la CI
+ * Windows, un worker vitest d'un autre paquet, mort sans un mot. Un lanceur se
+ * tue donc par son `ChildProcess` (`killLauncher`) : le signal passe par le
+ * handle du processus, et ne part pas quand le processus est sorti.
  */
-const launchers = new Map<number, { exited: boolean }>();
+const launchers = new Map<number, { exited: boolean; child: ChildProcess }>();
 
 /** Ce faux lanceur est-il sorti ? (vrai seulement pour un processus lancé par `fakeCli`) */
 export const launcherExited = (pid: number): boolean => launchers.get(pid)?.exited === true;
+
+/** Tue le faux lanceur `pid` s'il vit encore, par son handle ; rien d'autre. */
+export function killLauncher(pid: number): void {
+  launchers.get(pid)?.child.kill();
+}
 
 /** Pour un PID qui n'est pas un faux lanceur : la sonde par PID, à n'utiliser qu'à défaut. */
 export const dead = (pid: number): boolean => !benchAlive(pid);
@@ -193,11 +212,7 @@ export function fakeCli(
   const down = async (env: Record<string, string>): Promise<void> => {
     if (opts.downKeepsAlive || !existsSync(pidFile(env))) return;
     const { pid } = JSON.parse(readFileSync(pidFile(env), 'utf8')) as { pid: number };
-    try {
-      process.kill(pid);
-    } catch {
-      /* déjà mort */
-    }
+    killLauncher(pid);
     await until(() => launcherExited(pid));
   };
   return {
@@ -219,7 +234,7 @@ export function fakeCli(
         windowsHide: true,
       });
       spawned.push(child.pid!);
-      const state = { exited: false };
+      const state = { exited: false, child };
       launchers.set(child.pid!, state);
       child.on('exit', () => (state.exited = true));
       mkdirSync(join(env['NODALAI_HOME']!, 'pids'), { recursive: true });
@@ -235,11 +250,7 @@ export function fakeCli(
         exited,
         output: () => output,
         kill: () => {
-          try {
-            process.kill(child.pid!);
-          } catch {
-            /* déjà mort */
-          }
+          child.kill();
         },
       };
     },

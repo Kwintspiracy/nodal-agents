@@ -1,4 +1,4 @@
-// job/resolve-agent-tools.ts — resolveAgentToolNames: the tool NAME surface
+// router/resolve-agent-tools.ts — resolveAgentToolNames: the tool NAME surface
 // an agent can actually call, as a standalone read-only helper.
 //
 // This factors out the SAME whitelist-assembly logic executeJob (execute.ts
@@ -70,12 +70,13 @@ import {
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
   createLazyMcpTools,
+  isUsableMcpToolCache,
   slugToPrefix,
   type McpToolDescriptor,
 } from '@nodal-agents/adapter-mcp';
-import { generateDelegationTools, resolveBuiltinToolNames } from '@nodal-agents/orchestration';
-import type { AgentId } from '@nodal-agents/orchestration';
-import { isUsableMcpToolCache } from './mcp-tool-cache.ts';
+import { generateDelegationTools } from '../delegation-tools';
+import { resolveBuiltinToolNames } from '../builtin-tool-names';
+import type { AgentId } from '../types';
 
 /**
  * Resolve the set of tool NAMES an agent can actually call — a read-only

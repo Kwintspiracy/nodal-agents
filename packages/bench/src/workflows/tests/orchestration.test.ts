@@ -300,6 +300,7 @@ describe('undoable-action judge', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' as const },
+      processStarters: [],
       teamMcpServers: [],
       startedMs: T0,
     };
@@ -372,6 +373,7 @@ describe('undoable-action judge', () => {
         teamTools: [],
         unlistedMcpServers: ['mystery-mail'],
         benchPrinter: { kind: 'absent' },
+        processStarters: [],
         teamMcpServers: [],
         startedMs: T0,
       }),

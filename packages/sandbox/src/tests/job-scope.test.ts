@@ -9,6 +9,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { watchProcess } from '@nodal-agents/test-kit';
 import { JobProcessScope, closeJobProcessScope, jobProcessScope } from '../job-scope';
 import { createSandbox, getSandboxStatus } from '../status';
 import type { CommandLaunch, JobContainer, SandboxBackend, StartedProcess } from '../types';
@@ -143,25 +144,24 @@ describe.runIf(status?.state === 'available')(
         await new Promise((r) => setTimeout(r, 50));
       }
       expect(existsSync(info), `the fake runner never started its server: ${said}`).toBe(true);
-      const pid = Number(readFileSync(info, 'utf8'));
-      const alive = (p: number): boolean => {
-        try {
-          process.kill(p, 0);
-          return true;
-        } catch {
-          return false;
+      // Tenu dès que son pid est lu (#841) : ni « vivant » ni le kill de secours
+      // ne peuvent viser un autre processus qui aurait reçu son pid.
+      const watch = await watchProcess(Number(readFileSync(info, 'utf8')));
+      try {
+        expect(watch.alive()).toBe(true);
+        // Tué, pas arrêté : aucun code de fermeture ne tourne.
+        // kill-by-pid: `runner` est un enfant tenu et vivant, son pid ne désigne que lui.
+        spawn('taskkill', ['/PID', String(runner.pid), '/T', '/F'], { windowsHide: true });
+        let dead = false;
+        for (let i = 0; i < 100 && !dead; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          dead = !watch.alive();
         }
-      };
-      expect(alive(pid)).toBe(true);
-      // Tué, pas arrêté : aucun code de fermeture ne tourne.
-      spawn('taskkill', ['/PID', String(runner.pid), '/T', '/F'], { windowsHide: true });
-      let dead = false;
-      for (let i = 0; i < 100 && !dead; i++) {
-        await new Promise((r) => setTimeout(r, 100));
-        dead = !alive(pid);
+        watch.kill();
+        expect(dead).toBe(true);
+      } finally {
+        watch.release();
       }
-      if (!dead) process.kill(pid);
-      expect(dead).toBe(true);
     }, 60_000);
   },
 );

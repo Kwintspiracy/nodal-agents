@@ -39,6 +39,7 @@ import {
   readStackCommit,
   readStackVersion,
   readBenchPrinter,
+  readProcessStarters,
   readTeamMcpServers,
   readTeamTools,
   readUnlistedMcpServers,
@@ -46,6 +47,7 @@ import {
 } from './stack';
 import { readResearchSubjects } from './subjects';
 import { DEFAULT_TRIAL_OPTIONS, runTrial, type TrialDeps, type TrialProgress } from './trial';
+import { applyScenarioTools, recoverScenarioTools, scenarioToolsJournal } from './scenario-tools';
 import type { AnyScenario, ScenarioEnv, ServiceProbe, TrialLine } from './types';
 
 /** L'environnement d'un essai : dossiers de travail, outils de l'équipe, services déclarés et sondés. */
@@ -65,6 +67,7 @@ export async function readScenarioEnv(
     unlistedMcpServers: await readUnlistedMcpServers(db, entityId),
     benchPrinter: await readBenchPrinter(db, entityId, opts.benchPrinterRecordsDir ?? null),
     teamMcpServers: await readTeamMcpServers(db, entityId),
+    processStarters: await readProcessStarters(db, entityId),
     services,
     startedMs,
   };
@@ -102,6 +105,12 @@ export interface BenchRun {
    * quand il le sait : la déclaration de l'imprimante doit le porter.
    */
   readonly benchPrinterRecordsDir?: string;
+  /**
+   * Le journal des règles que la liste fermée d'un scénario remplace
+   * (`scenarioToolsJournal()` par défaut : l'état du banc dans le dossier de
+   * Nodal de la stack). Les tests en donnent un temporaire.
+   */
+  readonly scenarioToolsJournal?: string;
 }
 
 /** Ce qu'une session dit à qui l'écoute. Tout est facultatif sauf `log`. */
@@ -173,6 +182,19 @@ export async function runBench(
       log: (l) => hooks.log(l),
     });
     stop.hold(lock);
+    // Un banc tué en plein essai a laissé la liste fermée d'un scénario posée :
+    // ses règles sont remises AVANT tout, depuis le journal, puis le journal part.
+    const journal = run.scenarioToolsJournal ?? scenarioToolsJournal();
+    const recovered = await recoverScenarioTools(db, journal);
+    if (recovered) {
+      hooks.log(
+        `The tool list of ${recovered.scenario} (session ${recovered.session}, ${recovered.writtenAt}) was still posed when an earlier bench stopped mid-trial: ${recovered.rules - recovered.changed.length} rule(s) put back.`,
+      );
+      if (recovered.changed.length > 0)
+        hooks.log(
+          `WARNING: rule(s) changed since that trial were left as they are, not put back: ${recovered.changed.join('; ')}`,
+        );
+    }
     hooks.log(
       `Workflow bench — ${run.scenarios.length} scenario(s) × ${run.trials} · Nodal-Agents ${nodalVersion} @ ${stackCommit?.slice(0, 8) ?? 'unknown commit'} · ${run.stackDir} · bench space ${target.entityId} (root ${target.rootAgentSlug})`,
     );
@@ -208,16 +230,30 @@ export async function runBench(
           log: (l) => hooks.log(l),
           progress: (e) => hooks.progress?.(s, at, e),
         };
-        const line = await runTrial(s, deps, {
-          ...DEFAULT_TRIAL_OPTIONS,
-          trigger: run.trigger,
-          nodalVersion,
-          stackCommit,
-          modelUnderTest: run.modelUnderTest ?? null,
-          allowOwnerSends: run.allowOwnerSends,
-          campaign: run.campaign ?? null,
-          configFingerprint: run.configFingerprint ?? null,
-        });
+        // La liste fermée des outils du scénario (décision 1B) : posée avant
+        // l'essai, besoins compris (`no-real-printer` lit l'équipe ainsi
+        // fermée), et retirée après, quoi qu'il arrive. Une liste qui ne tient
+        // pas arrête la session : aucun essai ne part sur une surface inconnue.
+        const tools = await applyScenarioTools(db, target.entityId, s.id, s.tools, journal);
+        let line: TrialLine;
+        try {
+          line = await runTrial(s, deps, {
+            ...DEFAULT_TRIAL_OPTIONS,
+            trigger: run.trigger,
+            nodalVersion,
+            stackCommit,
+            modelUnderTest: run.modelUnderTest ?? null,
+            allowOwnerSends: run.allowOwnerSends,
+            campaign: run.campaign ?? null,
+            configFingerprint: run.configFingerprint ?? null,
+          });
+        } finally {
+          const { changed } = await tools.restore();
+          if (changed.length > 0)
+            hooks.log(
+              `WARNING: rule(s) changed during the trial of ${s.id} were left as they are, not put back: ${changed.join('; ')}`,
+            );
+        }
         // Un essai coupé par l'arrêt ne mesure rien : pas de ligne.
         if (stop.stopped) break;
         appendFileSync(RESULTS_FILE, `${JSON.stringify(line)}\n`, 'utf8');

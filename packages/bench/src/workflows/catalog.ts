@@ -12,6 +12,7 @@ import { NEED_IDS } from './needs';
 import { SCENARIOS } from './scenarios';
 import { MEASURED_ON_EVERY_TRIAL } from './trial';
 import { ACTIVITIES } from './types';
+import { scenarioToolsFingerprint } from './scenario-tools';
 
 export interface CatalogScenario {
   readonly id: string;
@@ -25,6 +26,9 @@ export interface CatalogScenario {
   readonly deliverable: string;
   /** Les outils du produit attendus et les fichiers qu'ils traitent ; null : aucun. */
   readonly productTools: { tools: string[]; writes: string[]; reads: string[] } | null;
+  /** La liste fermée des outils que l'équipe garde pendant l'essai (décision 1B), et son empreinte. */
+  readonly tools: string[];
+  readonly toolsFingerprint: string;
   /** Le genre de sujet calibré que le scénario lit ; null : son sujet est dans sa demande. */
   readonly subject: string | null;
   readonly set: string;
@@ -83,6 +87,8 @@ export function buildCatalog(): Catalog {
             reads: [...s.productTools.reads],
           }
         : null,
+      tools: [...s.tools],
+      toolsFingerprint: scenarioToolsFingerprint(s.tools),
       subject: s.subject ?? null,
       set: s.set,
       needs: [...(s.needs ?? [])],

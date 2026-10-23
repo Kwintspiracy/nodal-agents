@@ -55,7 +55,7 @@ import { resolveBuiltinToolNames } from '@nodal-agents/orchestration';
 import { lintRoutineTask } from '@nodal-agents/tools';
 import type { JobId } from '@nodal-agents/orchestration';
 import { executeJob } from '../../job/execute.ts';
-import { resolveAgentToolNames } from '../../job/resolve-agent-tools.ts';
+import { resolveAgentToolNames } from '@nodal-agents/orchestration';
 import {
   type Body,
   type ScriptedReply,

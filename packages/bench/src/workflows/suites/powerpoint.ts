@@ -18,6 +18,7 @@ import {
 } from '../judge-kit';
 import { normalizeSpace, readPptx, type PptxSlide } from '../office';
 import { defineScenario, type AnyScenario } from '../types';
+import { BASE, FILES, PPTX, TEAM, toolList } from '../scenario-tools';
 
 const MIN = 60_000;
 const SHARED = "de l'espace de travail partagé";
@@ -83,7 +84,9 @@ const create = defineScenario<DeckObservation>({
     'exactly 5 slides; the first reads "Le recyclage du verre"; each of the next four holds a title and at least two other paragraphs',
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (pptx_create) s'applique.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM, PPTX),
   title: 'Create a presentation',
   path: 'pptx_create. A script in its place is red.',
   deliverable: GLASS_REL,
@@ -133,7 +136,9 @@ const append = defineScenario<DeckObservation>({
     '4 slides; the first three read exactly as the fixture\'s, paragraph by paragraph; the fourth reads "Prochaines étapes" and at least three more paragraphs',
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (pptx_append_slides) s'applique.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM, PPTX),
   title: 'Add a slide without touching the others',
   path: 'pptx_append_slides. A script in its place is red.',
   deliverable: `${PROJECT_REL}, changed`,
@@ -180,7 +185,9 @@ const replace = defineScenario<DeckObservation>({
     "2025 appears nowhere; with 2026 read back as 2025, every slide reads exactly as the fixture's",
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (pptx_replace_text) s'applique.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM, PPTX),
   title: 'Replace a text everywhere',
   path: 'pptx_replace_text. A script in its place is red.',
   deliverable: `${REVIEW_REL}, changed`,
@@ -223,7 +230,9 @@ const readAnswer = defineScenario<{ hash: string | null }>({
     `${OFFER_REL} is byte for byte the fixture (sha-256)`,
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (pptx_read) s'applique.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM, PPTX),
   title: 'Read a presentation and answer',
   path: 'pptx_read. A script in its place is red.',
   deliverable: 'The answer, in the conversation',

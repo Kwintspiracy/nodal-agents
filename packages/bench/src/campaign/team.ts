@@ -11,7 +11,9 @@
 
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { AgentId, EntityId } from '@nodal-agents/orchestration';
-import { metaToolsForAgent, parseRootGrants } from '@nodal-agents/shared';
+import { mcpToolPrefix, metaToolsForAgent, parseRootGrants } from '@nodal-agents/shared';
+import { BENCH_PRINTER_SLUG } from '../printer/identity';
+import { readBenchPrinter } from '../workflows/stack';
 import type { AppliedCampaign } from './apply';
 import type { CampaignConfig } from './config';
 
@@ -221,6 +223,22 @@ export async function teamDrift(
       );
     }
 
+    // L'imprimante du banc, telle que le juge la lit (`readBenchPrinter` : la
+    // déclaration entière, son environnement déchiffré comme le runner le lit,
+    // et le dossier que le banc a donné).
+    const printing = config.agents.some((a) => a.workspace === which && a.printConnector !== null);
+    const printer = await readBenchPrinter(
+      db,
+      entityId,
+      printing ? applied.printerRecordsDir : null,
+    );
+    if (printing && printer.kind !== 'attached')
+      out.push(
+        `${where} the bench printer is ${printer.kind}${printer.kind === 'broken' ? `: ${printer.reason}` : ''}`,
+      );
+    if (!printing && printer.kind !== 'absent')
+      out.push(`${where} a bench printer is attached, and the configuration gives it to nobody`);
+
     const wanted = config.agents.filter((a) => a.workspace === which);
     const extra = ws.agents
       .filter((v) => !wanted.some((a) => a.slug === v.slug))
@@ -274,6 +292,22 @@ export async function teamDrift(
         a.delegatesTo.map((t) => `assign_${t.agent.replace(/-/g, '_')}`).sort(),
       );
       const agentId = applied.agents[a.slug]!.id;
+      const prefix = `${mcpToolPrefix(BENCH_PRINTER_SLUG)}__`;
+      const printTools = (a.printConnector?.tools ?? []).map((t) => `${prefix}${t}`).sort();
+      eq(
+        'bench printer tools',
+        v.tools.filter((t) => t.startsWith(prefix)),
+        printTools,
+      );
+      for (const t of a.printConnector?.tools ?? []) {
+        eq(
+          `${prefix}${t} rule`,
+          await winningApproval(db, entityId, agentId, `${prefix}${t}`),
+          a.printConnector!.autoApprove.includes(t) ? 'auto_approve' : null,
+        );
+      }
+      for (const t of a.blockedTools)
+        eq(`${t} rule`, await winningApproval(db, entityId, agentId, t), 'block');
       const runCommand = await winningApproval(db, entityId, agentId, 'run_command');
       eq('run_command rule', runCommand, a.readOnly ? 'block' : a.runCommand);
       if (a.readOnly) {

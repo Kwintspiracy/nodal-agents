@@ -144,6 +144,8 @@ const session = () =>
       trigger: 'scheduled',
       allowOwnerSends: false,
       stackDir: '/stack',
+      // The closed tool lists' journal: never the bench state of this machine.
+      scenarioToolsJournal: join(mkdtempSync(join(tmpdir(), 'session-journal-')), 'journal.json'),
     },
     db,
     new BenchStop(),

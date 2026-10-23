@@ -25,6 +25,20 @@
 // Sous Unix, un pid n'est redonné qu'après avoir parcouru toute la plage
 // (`pid_max`, des millions sous Linux) : `process.kill(pid, 0)` suffit à
 // l'échelle d'un test, et la veille ne tient rien.
+//
+// TUER PAR LA VEILLE, jamais par le numéro (#841). Un `process.kill(pid)` sur
+// un pid dont le processus est mort tue celui qui l'a reçu depuis : sous
+// Windows, TerminateProcess, code de sortie 1, aucune sortie. Sur la CI
+// Windows, `pnpm test` lance trois paquets à la fois ; le nettoyage d'un test
+// du banc tuait les pid de lanceurs morts depuis vingt secondes, et l'audit des
+// processus du runner a montré ces pid déjà redonnés à des processus d'autres
+// paquets (run 39786905701). Quand le receveur était un worker vitest, le
+// paquet perdait un fichier sans un mot (« Worker exited unexpectedly »).
+// `kill()` ne signale que le processus TENU, et seulement s'il vit : le pid ne
+// peut pas désigner un autre processus tant que la veille est ouverte. La
+// règle vaut pour tous les tests du dépôt, et la garde
+// `src/tests/no-kill-by-pid.test.ts` refuse un `process.kill(pid, signal)` écrit
+// ailleurs qu'ici.
 
 import type * as KoffiModule from 'koffi';
 
@@ -33,6 +47,11 @@ export interface ProcessWatch {
   readonly pid: number;
   /** Le processus surveillé vit encore (un processus suspendu ou affamé vit). */
   alive(): boolean;
+  /**
+   * Tue le processus surveillé s'il vit encore ; ne fait rien s'il est mort.
+   * Rend `true` quand un signal est parti.
+   */
+  kill(signal?: NodeJS.Signals): boolean;
   /** Ferme la veille : le pid redevient libre d'être redonné. Idempotent. */
   release(): void;
 }
@@ -97,7 +116,13 @@ export async function watchProcess(
   platform: NodeJS.Platform = process.platform,
 ): Promise<ProcessWatch> {
   if (platform !== 'win32') {
-    return { pid, alive: () => unixAlive(pid), release: () => undefined };
+    const alive = (): boolean => unixAlive(pid);
+    return {
+      pid,
+      alive,
+      kill: (signal) => killIfAlive(pid, alive, signal),
+      release: () => undefined,
+    };
   }
   const k = await loadKernel32();
   const handle = k.OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
@@ -105,13 +130,18 @@ export async function watchProcess(
     const err = k.GetLastError();
     // Déjà mort, et son objet déjà détruit : il est mort, et le restera.
     if (err === ERROR_INVALID_PARAMETER) {
-      return { pid, alive: () => false, release: () => undefined };
+      return { pid, alive: () => false, kill: () => false, release: () => undefined };
     }
     throw new Error(`watchProcess(${String(pid)}): OpenProcess error ${String(err)}`);
   }
   let open = true;
-  return {
+  const watch: ProcessWatch = {
     pid,
+    kill(signal?: NodeJS.Signals): boolean {
+      // `alive()` lève après `release()` : tuer un pid qu'on ne tient plus est
+      // exactement ce que cette méthode existe pour empêcher.
+      return killIfAlive(pid, () => watch.alive(), signal);
+    },
     alive(): boolean {
       if (!open) throw new Error(`watchProcess(${String(pid)}): read after release`);
       const code = [0];
@@ -128,4 +158,17 @@ export async function watchProcess(
       k.CloseHandle(handle);
     },
   };
+  return watch;
+}
+
+function killIfAlive(pid: number, alive: () => boolean, signal?: NodeJS.Signals): boolean {
+  if (!alive()) return false;
+  try {
+    process.kill(pid, signal);
+    return true;
+  } catch (e) {
+    // ESRCH : il vient de mourir, entre la lecture et le signal.
+    if ((e as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    throw e;
+  }
 }

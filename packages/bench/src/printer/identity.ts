@@ -66,7 +66,10 @@ export interface AttachedMcpServer {
   readonly transport: string;
   readonly command: string | null;
   readonly args: readonly string[] | null;
+  /** En clair, comme le runner le passe au serveur. */
   readonly envVars: unknown;
+  /** Pourquoi l'environnement n'a pas pu être lu (une valeur qui ne se déchiffre pas). */
+  readonly envError?: string;
 }
 
 const sameList = (a: readonly string[], b: readonly string[]): boolean =>
@@ -119,6 +122,10 @@ export function benchPrinterState(
   const broken = (reason: string): BenchPrinterState => ({ kind: 'broken', reason });
   const dirs = new Set<string>();
   for (const s of mine) {
+    if (s.envError !== undefined)
+      return broken(
+        `the "${s.slug}" server's environment cannot be read as the runner reads it (${s.envError}): the runner would not start it`,
+      );
     const env = s.envVars;
     const dir =
       env !== null && typeof env === 'object'

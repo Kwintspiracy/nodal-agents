@@ -37,6 +37,7 @@ import {
 import type { ForeignActivity } from '../stack';
 import type { ResearchSubject } from '../subjects';
 import type { AnyScenario } from '../types';
+import { scenarioToolsFingerprint } from '../scenario-tools';
 
 const FIX = join(__dirname, 'fixtures');
 const load = (name: string): TreeFacts =>
@@ -118,6 +119,8 @@ function world(opts: {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
+      // A team that starts no process: the no-real-printer need is met.
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     }),
@@ -244,7 +247,7 @@ describe('workflow trial safety rules', () => {
     expect(line.reasons).toEqual([BENCH_PRINTER_MISSING]);
     expect(line).toMatchObject({
       activity: 'print',
-      needs: ['bench-printer'],
+      needs: ['bench-printer', 'no-real-printer'],
       rootModel: 'z-ai/glm-5.3',
     });
   });
@@ -265,6 +268,7 @@ describe('workflow trial safety rules', () => {
         services: {},
         unlistedMcpServers: [],
         benchPrinter: { kind: 'absent' },
+        processStarters: [],
         teamMcpServers: [],
         startedMs,
       });
@@ -303,6 +307,7 @@ describe('workflow trial safety rules', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'attached', recordsDir },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -354,6 +359,7 @@ describe('workflow trial safety rules', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'attached', recordsDir },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -381,6 +387,7 @@ describe('workflow trial safety rules', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'attached', recordsDir },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -417,7 +424,9 @@ describe('workflow trial safety rules', () => {
     const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
     expect(line).toMatchObject({
       scenario: 'question',
-      scenarioVersion: 1,
+      scenarioVersion: scenarioById('question')!.version,
+      // The surface the trial played on (decision 1B).
+      scenarioToolsFingerprint: scenarioToolsFingerprint(scenarioById('question')!.tools),
       verdict: 'green',
       reasons: [],
       jobs: 1,
@@ -460,6 +469,7 @@ describe('where a trial may send', () => {
       services: { comfyui: { url: 'http://127.0.0.1:8188', problem: null } },
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -481,6 +491,7 @@ describe('where a trial may send', () => {
       services: { comfyui: { url: 'http://127.0.0.1:8188', problem: null } },
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -927,6 +938,7 @@ describe('what happens before a trial starts', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -955,6 +967,7 @@ describe('what happens before a trial starts', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });
@@ -1160,6 +1173,7 @@ describe('workflow trial: subjects, product tools and the path', () => {
       services: {},
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' },
+      processStarters: [],
       teamMcpServers: [],
       startedMs,
     });

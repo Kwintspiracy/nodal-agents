@@ -10,7 +10,8 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isProcessAlive, openProcessScope } from '@nodal-agents/sandbox';
+import { openProcessScope } from '@nodal-agents/sandbox';
+import { watchProcess } from '@nodal-agents/test-kit';
 import { spawnCliTurn } from '../../cli-runtime/spawn-turn.ts';
 
 // La CLI tourne dans un périmètre de processus, comme dans un job (#750).
@@ -92,16 +93,22 @@ describe('spawnCliTurn — what the CLI leaves running belongs to its job (#750)
       for (let i = 0; i < 200 && !existsSync(pidFile); i++) {
         await new Promise((r) => setTimeout(r, 50));
       }
-      const pid = Number(readFileSync(pidFile, 'utf8'));
-      expect(isProcessAlive(pid)).toBe(true);
-      await own.close();
-      let dead = false;
-      for (let i = 0; i < 100 && !dead; i++) {
-        dead = !isProcessAlive(pid);
-        if (!dead) await new Promise((r) => setTimeout(r, 50));
+      // Tenu dès que son pid est lu (#841) : le tuer ensuite ne peut atteindre
+      // que lui, même si son pid avait été redonné.
+      const daemonWatch = await watchProcess(Number(readFileSync(pidFile, 'utf8')));
+      try {
+        expect(daemonWatch.alive()).toBe(true);
+        await own.close();
+        let dead = false;
+        for (let i = 0; i < 100 && !dead; i++) {
+          dead = !daemonWatch.alive();
+          if (!dead) await new Promise((r) => setTimeout(r, 50));
+        }
+        daemonWatch.kill();
+        expect(dead).toBe(true);
+      } finally {
+        daemonWatch.release();
       }
-      if (!dead) process.kill(pid);
-      expect(dead).toBe(true);
     } finally {
       await own.close();
       rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });

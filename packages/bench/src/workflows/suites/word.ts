@@ -11,6 +11,7 @@ import { CONTRACT, MINUTES, ORDER } from '../fixture-data';
 import { JUDGED_COMMON, answerOf, commonReasons, hasNumber, missingFacts } from '../judge-kit';
 import { isHeading, readDocx, normalizeSpace, type DocxView } from '../office';
 import { defineScenario, type AnyScenario } from '../types';
+import { BASE, DOCX, FILES, TEAM, toolList } from '../scenario-tools';
 
 const MIN = 60_000;
 const SHARED = "de l'espace de travail partagé";
@@ -66,7 +67,9 @@ const create = defineScenario<DocObservation>({
   ],
   // v2 (catalogue du 17/10) : fusion de word-table (le tableau de l'ordre du
   // jour), et la règle des outils du produit (docx_create) s'applique.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM, DOCX),
   title: 'Create a structured document',
   green: `${CONVOCATION_REL} was written during the run through docx_create (no command in its place), opens as a Word document, has a heading paragraph reading "Convocation" followed by at least three body paragraphs, names 12 novembre 2026, 14 h and salle B, holds a table headed ${AGENDA_COLUMNS.join(' / ')} with ${AGENDA_ROWS} filled rows, and nobody was asked anything.`,
   path: 'docx_create. A script in its place is red.',
@@ -132,7 +135,9 @@ const replace = defineScenario<DocObservation>({
     "every other character of the text is the fixture's",
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (docx_replace_text) s'applique.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM, DOCX),
   title: 'Replace a text everywhere, changing nothing else',
   path: 'docx_replace_text. A script in its place is red.',
   deliverable: `${CONTRACT_REL}, changed`,
@@ -181,7 +186,9 @@ const append = defineScenario<DocObservation>({
     'it starts with the fixture\'s paragraphs in order, then a heading reading "Décisions" and at least three non-empty paragraphs or list items',
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (docx_append_paragraphs) s'applique.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM, DOCX),
   title: 'Add a section without touching the rest',
   path: 'docx_append_paragraphs. A script in its place is red.',
   deliverable: `${MINUTES_REL}, changed`,
@@ -233,7 +240,9 @@ const readAnswer = defineScenario<{ hash: string | null }>({
     `the final answer gives ${ORDER.totalHt.toFixed(2)} (any writing): the value is written only in the last row of the document's table`,
     `${ORDER_REL} is byte for byte the fixture (sha-256)`,
   ],
-  version: 1,
+  // v2 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 2,
+  tools: toolList(BASE, FILES, TEAM, DOCX),
   title: 'Read a document and answer',
   green: `The answer gives the order's total before tax, ${ORDER.totalHt.toFixed(2)} €, read through docx_read (no command in its place); ${ORDER_REL} is byte for byte the fixture; nobody was asked anything.`,
   path: 'docx_read. A script in its place is red.',

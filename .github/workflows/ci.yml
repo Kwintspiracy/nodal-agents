@@ -256,9 +256,20 @@ jobs:
         timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
+      # Résultats par paquet et morts de workers (#841, voir ci-windows.yml).
       - name: Unit tests (${{ matrix.shard }})
         timeout-minutes: 10
+        env:
+          NODAL_VITEST_REPORT_DIR: ${{ runner.temp }}/vitest-reports
         run: ${{ matrix.run }}
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-reports-${{ matrix.shard }}
+          path: ${{ runner.temp }}/vitest-reports
+          if-no-files-found: warn
 
   # ── Le build seul ───────────────────────────────────────────────────────────
   # Audit finding: CI never actually built the apps (typecheck/lint catch

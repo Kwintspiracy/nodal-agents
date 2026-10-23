@@ -41,7 +41,7 @@
 // campagne dont le banc n'est plus vivant, avant d'écrire quoi que ce soit ; un
 // banc vivant fait refuser la nouvelle (les ports sont les mêmes).
 
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
@@ -195,6 +195,7 @@ export function instancePaths(instance: CampaignInstance): {
   benchConfig: string;
   marker: string;
   folders: string;
+  printerRecords: string;
 } {
   const env = { [NODALAI_HOME_ENV]: instance.home };
   return {
@@ -203,6 +204,9 @@ export function instancePaths(instance: CampaignInstance): {
     benchConfig: join(instance.home, 'bench.json'),
     marker: join(instance.home, 'campaign.json'),
     folders: join(instance.home, 'bench-folders'),
+    // Ce que l'imprimante du banc a reçu : dans le dossier de la campagne,
+    // effacé avec lui ; exporté dans les preuves avant (run.ts).
+    printerRecords: join(instance.home, 'bench-printer-records'),
   };
 }
 
@@ -303,8 +307,16 @@ export interface NodalCli {
   launch(args: readonly string[], env: Record<string, string>): LaunchedCli;
 }
 
-/** Tue un arbre de processus que le banc a lancé (sous Windows, le .cmd de pnpm et ses enfants). */
-function killTree(pid: number): void {
+/**
+ * Tue l'arbre d'un processus que le banc a lancé (sous Windows, le .cmd de pnpm
+ * et ses enfants), tant que Node le tient encore (#841). Un `taskkill /T` sur
+ * le PID d'un processus déjà sorti viserait celui qui a reçu ce PID depuis :
+ * Windows redonne vite un PID libéré. Tant que l'`exit` n'est pas arrivé, le
+ * handle que Node garde sur l'enfant réserve son PID.
+ */
+function killTree(child: ChildProcess): void {
+  const pid = child.pid;
+  if (pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
   try {
     if (process.platform === 'win32') {
       spawn('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
@@ -360,7 +372,7 @@ export function productCli(stackDir: string): NodalCli {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
-          if (child.pid) killTree(child.pid);
+          killTree(child);
           reject(
             new Error(
               `campaign_cli_timeout: nodal-agents ${args.join(' ')} ran over ${Math.round(timeoutMs / 1000)} s\n${output()}`,
@@ -378,8 +390,7 @@ export function productCli(stackDir: string): NodalCli {
       const { child, exited, output } = start(args, env);
       if (!child.pid)
         throw new Error(`campaign_cli_spawn: nodal-agents ${args.join(' ')} did not start`);
-      const pid = child.pid;
-      return { pid, exited, output, kill: () => killTree(pid) };
+      return { pid: child.pid, exited, output, kill: () => killTree(child) };
     },
   };
 }

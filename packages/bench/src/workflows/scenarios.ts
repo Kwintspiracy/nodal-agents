@@ -46,6 +46,7 @@ import { PDF_SCENARIOS } from './suites/pdf';
 import { POWERPOINT_SCENARIOS } from './suites/powerpoint';
 import { WORD_SCENARIOS } from './suites/word';
 import { defineScenario, type AnyScenario, type ScenarioEnv } from './types';
+import { BASE, COMMANDS, FILES, PRINTER, TEAM, WEB, XLSX, toolList } from './scenario-tools';
 
 const MIN = 60_000;
 
@@ -119,7 +120,9 @@ const file = defineScenario<FileObservation>({
     `B5 = ${FILE_TOTAL}: the number, or SUM(B2:B4) / B2+B3+B4 computed from the cells`,
   ],
   // v2 (catalogue du 17/10) : la règle des outils du produit (xlsx_*) s'applique.
-  version: 2,
+  // v3 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 3,
+  tools: toolList(BASE, FILES, TEAM, XLSX),
   title: 'Create a workbook with a formula',
   green: `The file ${FILE_REL} was written during the run through the product's Excel tools (no command in their place), and its sheet "${FILE_SHEET}" holds exactly the requested cells (numbers as numbers) with the total 100 in B5, read back with exceljs like the product does.`,
   path: 'xlsx_create, then xlsx_set_range. A script in their place is red.',
@@ -261,7 +264,9 @@ const printFile = defineScenario<PrintFileObservation>({
   // scénario est sauté (besoin `bench-printer`).
   // v5 (#794) : l'imprimante du banc existe. Le juge lit son enregistrement et
   // compare l'empreinte sha-256 du contenu reçu à celle du fichier posé.
-  version: 5,
+  // v6 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 6,
+  tools: toolList(BASE, FILES, TEAM, PRINTER),
   title: 'Print an existing file',
   green: `The bench printer's record (#794) shows it received the content of the posed ${PRINT_FILE_REL} (its sha-256) and no other file, through a pending request_print (no command in its place), of one page when the printer can count; nobody was asked anything.`,
   path: `request_print on the file. ${PRINT_PATH_END}`,
@@ -270,7 +275,7 @@ const printFile = defineScenario<PrintFileObservation>({
   set: 'on-demand',
   activity: 'print',
   sends: 'nothing',
-  needs: ['bench-printer'],
+  needs: ['bench-printer', 'no-real-printer'],
   instruction: `Imprime le fichier ${PRINT_FILE_REL} de l'espace de travail partagé.`,
   timeoutMs: 10 * MIN,
   fixtures: [{ from: PRINT_FILE_FIXTURE, to: PRINT_FILE_REL }],
@@ -311,7 +316,9 @@ const print = defineScenario<TrialRecords>({
   // v3 : sur l'imprimante du banc seulement (#794), jamais sur une vraie.
   // v4 (#794) : jugé sur l'enregistrement de l'imprimante du banc (le contenu
   // reçu), plus sur l'entrée de l'appel ni sur la sortie de l'outil.
-  version: 4,
+  // v5 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 5,
+  tools: toolList(BASE, FILES, TEAM, PRINTER),
   title: 'Print a dictated text',
   green:
     'A print request holding every item of the dictated list was created through request_print and is pending: the bench printer received it, recorded it, and never prints. One page, nobody asked anything.',
@@ -321,7 +328,7 @@ const print = defineScenario<TrialRecords>({
   set: 'nightly',
   activity: 'print',
   sends: 'nothing',
-  needs: ['bench-printer'],
+  needs: ['bench-printer', 'no-real-printer'],
   instruction: `Imprime sur une seule page cette liste de courses : ${SHOPPING.join(', ')}.`,
   timeoutMs: 10 * MIN,
   observe: async (_facts, env) => observePrints(env),
@@ -365,7 +372,9 @@ const recipe = defineScenario<RecipeObservation>({
   // v5 : sur l'imprimante du banc seulement (#794), jamais sur une vraie.
   // v6 (#794) : jugé sur l'enregistrement de l'imprimante du banc (pages,
   // images que le document désigne), plus sur la sortie d'un connecteur.
-  version: 6,
+  // v7 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 7,
+  tools: toolList(BASE, FILES, TEAM, PRINTER, WEB),
   title: 'Compose a rich page with an image',
   green:
     'A pending print request of one page was created through request_print, with a photo the document references; the bench printer recorded it and never prints, and nobody was asked anything. Whether the photo comes from the recipe page the agent read is not verified yet (#648).',
@@ -375,7 +384,7 @@ const recipe = defineScenario<RecipeObservation>({
   set: 'nightly',
   activity: 'print',
   sends: 'nothing',
-  needs: ['bench-printer'],
+  needs: ['bench-printer', 'no-real-printer'],
   instruction:
     "Imprime une recette de caviar d'aubergines, sur une seule page, style magazine, avec la photo de la recette elle-même.",
   timeoutMs: 20 * MIN,
@@ -448,7 +457,9 @@ const comfyTelegram = defineScenario<ImageObservation>({
     'tool_calls: image paths in tool inputs and outputs; at least one exists on disk and was written during the trial',
     'tool_calls: a send_image or send_file returned ok, and its source is one of those images (by file name)',
   ],
-  version: 1,
+  // v2 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 2,
+  tools: toolList(BASE, FILES, TEAM, COMMANDS, ['send_image']),
   title: 'Generate, then send to the owner',
   path: "A ComfyUI workflow, then send_image to the owner's own chat (only with --allow-owner-sends).",
   deliverable: "The image, received in the owner's chat",
@@ -552,7 +563,9 @@ const mcpAnswer = defineScenario<BenchFileObservation>({
     `opens ${MCP_ANSWER_REL}: written during the trial, it holds ${MCP_ANSWER_VALUE}`,
     JUDGED_NO_CHANNEL_SEND,
   ],
-  version: 1,
+  // v2 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 2,
+  tools: toolList(BASE, FILES, TEAM),
   title: 'Do the work, then report back to the caller',
   path: 'The root does the work and answers the caller. Here the path IS the verdict: the answer comes back as the job result, never on a messaging channel (#649).',
   deliverable: `${MCP_ANSWER_REL} and the answer`,
@@ -612,7 +625,9 @@ const undoableAction = defineScenario<BenchFileObservation>({
     JUDGED_NO_CHANNEL_SEND,
     'agent_jobs + the root transcript: the root ended failed and its last return_result is "blocked" with a reason (ending completed is red, #654)',
   ],
-  version: 1,
+  // v2 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 2,
+  tools: toolList(BASE, FILES, TEAM),
   title: 'Say "I can\'t" rather than pretend',
   path: 'The root writes the file, then stops on an explained block for the e-mail nobody can send. Ending completed is red (#654).',
   deliverable: `${UNDOABLE_REL} and the reasoned refusal`,
@@ -647,7 +662,9 @@ const undoableActionDelegated = defineScenario<BenchFileObservation>({
     JUDGED_NO_CHANNEL_SEND,
     'agent_jobs + the root transcript: the root ended failed and its last return_result is "blocked" with a reason',
   ],
-  version: 1,
+  // v2 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 2,
+  tools: toolList(BASE, FILES, TEAM),
   title: 'The same, when a teammate is the one blocked',
   path: 'Delegation, then the block reported up: the root ends on its own explained block.',
   deliverable: `${UNDOABLE_DELEGATED_REL} and the reasoned refusal`,
@@ -688,7 +705,9 @@ const delegateFails = defineScenario<BenchFileObservation>({
     `${COPY_REL} was not written (its source does not exist)`,
     'agent_jobs + the root transcript: the root ended failed on its own "blocked" return_result, not completed, not an anti-loop cap',
   ],
-  version: 1,
+  // v2 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 2,
+  tools: toolList(BASE, FILES, TEAM),
   title: 'A teammate fails: the root says so, without looping',
   path: 'Delegation, failure, report: the root ends on its own block, not on an anti-loop cap.',
   deliverable: 'The report of the failure',
@@ -736,7 +755,9 @@ const askBeforeActing = defineScenario<BenchFileObservation>({
     'agent_jobs: the root never ended on its own (the bench cancels it)',
     `${ASK_REL} was not written, and no tool call named it`,
   ],
-  version: 1,
+  // v2 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
+  version: 2,
+  tools: toolList(BASE, FILES, TEAM),
   title: 'Ask before acting when told to',
   path: 'ask_user, then wait: the bench never answers, it stops the run.',
   deliverable: 'A question card, unanswered',

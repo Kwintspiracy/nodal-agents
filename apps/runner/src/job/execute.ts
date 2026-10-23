@@ -18,6 +18,7 @@ import {
   drainJobInbox,
   pendingHeadsOfConversation,
   approvalsOldestFirst,
+  decryptMcpServerEnv,
 } from '@nodal-agents/db';
 import {
   agentJobs,
@@ -94,7 +95,6 @@ import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { recheckNarratedAction } from '../llm/action-recheck.ts';
 import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
 import { deferredToolNames, toolsLoadedByCalls, toolsSentThisTurn } from './tool-loading.ts';
-import { resolveAgentToolNames } from './resolve-agent-tools.ts';
 import { createHumanWaitClock } from './human-wait.ts';
 import { loadApprovalRules } from './approval-rules.ts';
 import {
@@ -169,6 +169,7 @@ import {
   remainingDelegationHops,
   delegationDepthExceededMessage,
   assertTurnToolCallBudget,
+  resolveAgentToolNames,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {
@@ -2573,12 +2574,10 @@ async function runJobTracked(
         if (ms.transport === 'stdio') {
           // stdio: command + args + env vars (each value encrypted).
           if (!ms.command) continue; // bad row, skip silently
-          const rawEnv = (ms.envVars ?? {}) as Record<string, string>;
           let decryptedEnv: Record<string, string>;
           try {
-            decryptedEnv = Object.fromEntries(
-              Object.entries(rawEnv).map(([k, v]) => [k, decrypt(v)]),
-            );
+            // La lecture de `env_vars` que le banc fait aussi (#794).
+            decryptedEnv = decryptMcpServerEnv(ms.envVars, decrypt);
           } catch (err) {
             // Log loudly (F3, invariant #4) — a wrong/rotated master key
             // silently dropping an MCP server surfaces later as a missing tool.

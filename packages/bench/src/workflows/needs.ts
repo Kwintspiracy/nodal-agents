@@ -1,8 +1,9 @@
 // workflows/needs.ts — ce qu'un scénario demande à la machine, et ce qui manque.
 //
 // Un scénario déclare ses besoins par leur NOM (`needs`) : un service local
-// (ComfyUI), un coffre Obsidian, l'imprimante du banc, ou l'assurance qu'aucun
-// courrier ne peut partir. Un besoin absent fait SAUTER l'essai, avec sa
+// (ComfyUI), un coffre Obsidian, l'imprimante du banc, l'assurance qu'aucun
+// courrier ne peut partir, ou qu'aucun agent ne peut lancer de commande (et
+// donc imprimer ailleurs que sur l'imprimante du banc). Un besoin absent fait SAUTER l'essai, avec sa
 // raison, sans lancer de job : ni rouge (rien n'a été essayé), ni silence (la
 // ligne `skipped` le dit, le portail l'affiche en gris).
 //
@@ -322,6 +323,32 @@ function printGateReasons(env: ScenarioEnv): string[] {
   ];
 }
 
+/**
+ * Le besoin `no-real-printer` : AUCUN agent de l'équipe ne peut lancer un
+ * processus pendant l'essai. Une commande imprime sans passer par l'imprimante
+ * du banc par bien des chemins : le spooler (winspool reste ouvert au bac à
+ * sable de Windows, #842), mais aussi une imprimante qui n'est installée nulle
+ * part (TCP 9100, IPP 631, LPR 515, `copy /b fichier \\hôte\imprimante`), ou
+ * une connexion ajoutée en cours d'essai. Compter les imprimantes installées
+ * n'en ferme qu'un ; une équipe qui ne peut lancer aucun processus les ferme
+ * tous, par construction (règle 11 : fermé par défaut, revue de #855).
+ * Le besoin est lu APRÈS la liste fermée du scénario (décision 1B,
+ * scenario-tools.ts) : celle des scénarios d'impression ferme `run_command` et
+ * `declare_verification`. Restent ce qu'aucune liste ne ferme (un agent en
+ * runtime de CLI) et un outil `process` que la liste nommerait.
+ */
+export function noRealPrinterReason(env: ScenarioEnv): string | null {
+  if (env.processStarters.length === 0) return null;
+  const who = env.processStarters
+    .map((p) =>
+      p.runtime !== null
+        ? `${p.agent} (${p.runtime} runtime${p.tools.length > 0 ? `, ${p.tools.join(', ')}` : ''})`
+        : `${p.agent} (${p.tools.join(', ')})`,
+    )
+    .join(', ');
+  return `print scenarios need a team that cannot run commands: ${who}; the scenario's tool list closes neither a CLI runtime nor a process tool it lists; see #842`;
+}
+
 /** Pourquoi le besoin manque, ou null quand il est là. */
 const CHECKS: Record<Need, (env: ScenarioEnv) => string | null> = {
   comfyui(env) {
@@ -353,6 +380,7 @@ const CHECKS: Record<Need, (env: ScenarioEnv) => string | null> = {
       ? null
       : `an agent of this workspace can send e-mail (${senders.join(', ')}): the bench sends nothing from the owner's account, so this scenario does not run here`;
   },
+  'no-real-printer': noRealPrinterReason,
 };
 
 /** Les raisons de sauter l'essai : une par besoin absent, vide quand tout est là. */

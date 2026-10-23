@@ -161,6 +161,7 @@ describe('comfyui judges', () => {
       teamTools: [],
       unlistedMcpServers: [],
       benchPrinter: { kind: 'absent' as const },
+      processStarters: [],
       teamMcpServers: [],
       startedMs: 0,
     };
@@ -722,6 +723,51 @@ describe('print judges, from the bench printer record (#794)', () => {
   });
 });
 
+// ─── le besoin « no-real-printer » (revue de #855) ───────────────────────────
+
+describe('the no-real-printer need: a team that cannot start a process', () => {
+  const env = (processStarters: ScenarioEnv['processStarters']): ScenarioEnv => ({
+    workspaceRoots: [],
+    teamTools: [],
+    unlistedMcpServers: [],
+    benchPrinter: { kind: 'absent' },
+    processStarters,
+    teamMcpServers: [],
+    services: {},
+    startedMs: 0,
+  });
+  const why = (who: string) =>
+    `print scenarios need a team that cannot run commands: ${who}; the scenario's tool list closes neither a CLI runtime nor a process tool it lists; see #842`;
+
+  it('is met when no agent can start a process', () => {
+    expect(missingNeeds(['no-real-printer'], env([]))).toEqual([]);
+  });
+
+  it('is missing, naming every agent and what it starts processes with', () => {
+    expect(
+      missingNeeds(
+        ['no-real-printer'],
+        env([
+          { agent: 'chef', tools: ['run_command'], runtime: null },
+          { agent: 'coder', tools: ['code_task', 'run_skill_script'], runtime: null },
+        ]),
+      ),
+    ).toEqual([why('chef (run_command), coder (code_task, run_skill_script)')]);
+  });
+
+  it('a CLI runtime counts on its own, with or without Nodal process tools', () => {
+    expect(
+      missingNeeds(
+        ['no-real-printer'],
+        env([
+          { agent: 'dev', tools: [], runtime: 'claude-code' },
+          { agent: 'ops', tools: ['run_command'], runtime: 'codex' },
+        ]),
+      ),
+    ).toEqual([why('dev (claude-code runtime), ops (codex runtime, run_command)')]);
+  });
+});
+
 // ─── le besoin « bench-printer » ─────────────────────────────────────────────
 
 describe('the bench-printer need (#794)', () => {
@@ -730,6 +776,7 @@ describe('the bench-printer need (#794)', () => {
     teamTools: [],
     unlistedMcpServers: [],
     benchPrinter: { kind: 'absent' },
+    processStarters: [],
     teamMcpServers: [],
     services: {},
     startedMs: 0,
@@ -738,9 +785,9 @@ describe('the bench-printer need (#794)', () => {
   const attached: ScenarioEnv['benchPrinter'] = { kind: 'attached', recordsDir: '/records' };
 
   it.each(['print-file', 'print', 'recipe'])(
-    '%s needs the bench printer, and no longer the real printer connector',
+    '%s needs the bench printer, and no real printer within reach of the commands (#842)',
     (id) => {
-      expect(scenarioById(id)!.needs).toEqual(['bench-printer']);
+      expect(scenarioById(id)!.needs).toEqual(['bench-printer', 'no-real-printer']);
     },
   );
 
@@ -760,6 +807,7 @@ describe('the bench-printer need (#794)', () => {
         ['bench-printer'],
         env({
           benchPrinter: attached,
+          processStarters: [],
           teamTools: ['bench_printer__request_print', 'bench_printer__get_print_request'],
         }),
       ),
@@ -772,6 +820,7 @@ describe('the bench-printer need (#794)', () => {
         ['bench-printer'],
         env({
           benchPrinter: { kind: 'broken', reason: 'the "bench-printer" server declares nothing' },
+          processStarters: [],
         }),
       ),
     ).toEqual(['the "bench-printer" server declares nothing']);
@@ -788,6 +837,7 @@ describe('the bench-printer need (#794)', () => {
         ['bench-printer'],
         env({
           benchPrinter: attached,
+          processStarters: [],
           teamMcpServers: [benchServer],
           teamTools: [
             ...BENCH_TOOLS,
@@ -822,6 +872,7 @@ describe('the bench-printer need (#794)', () => {
           ['bench-printer'],
           env({
             benchPrinter: attached,
+            processStarters: [],
             teamMcpServers: [benchServer, { slug, tools }],
             teamTools: [...BENCH_TOOLS, ...tools.map((x) => slug.replace('-', '_') + '__' + x)],
           }),
@@ -841,6 +892,7 @@ describe('the bench-printer need (#794)', () => {
         ['bench-printer'],
         env({
           benchPrinter: attached,
+          processStarters: [],
           teamMcpServers: [benchServer, { slug: 'mystery', tools: null }],
           teamTools: BENCH_TOOLS,
         }),
@@ -857,6 +909,7 @@ describe('the bench-printer need (#794)', () => {
         ['bench-printer'],
         env({
           benchPrinter: attached,
+          processStarters: [],
           teamMcpServers: [
             // Son propre serveur n'a pas encore listé ses outils : son identité suffit.
             { slug: 'bench-printer', tools: null },
@@ -877,6 +930,7 @@ describe('the bench-printer need (#794)', () => {
         ['bench-printer'],
         env({
           benchPrinter: attached,
+          processStarters: [],
           teamMcpServers: [{ slug: 'cups', tools: ['submit_job'] }],
           teamTools: ['cups__submit_job'],
         }),
