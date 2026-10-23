@@ -15,17 +15,17 @@
 // else first (`mergeConfig(defineConfig({ ... }), baseConfig)`) is red.
 
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, relative, sep } from 'node:path';
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
+import { listSourceFiles } from '../architecture';
+import { mkdtempSourceTree } from '../source-files';
 
 // Every extension vitest (and vite) accepts for a config file.
 const EXTENSIONS = ['ts', 'mts', 'cts', 'js', 'mjs', 'cjs'];
 const VITEST_CONFIGS = EXTENSIONS.map((e) => `vitest.config.${e}`);
 const VITE_CONFIGS = EXTENSIONS.map((e) => `vite.config.${e}`);
-const SKIP = new Set(['node_modules', 'dist', '.next', '.turbo', '.claude', '.git', 'fixtures']);
 
 function listDir(dir: string): string[] | null {
   try {
@@ -35,22 +35,20 @@ function listDir(dir: string): string[] | null {
   }
 }
 
-function vitestPackages(dir: string, out: string[] = []): string[] {
-  const names = listDir(dir) ?? [];
-  if (names.includes('package.json')) {
-    const test = (
-      JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
-        scripts?: { test?: string };
-      }
-    ).scripts?.test;
-    if (test && /\bvitest\b/.test(test)) out.push(dir);
-  }
-  for (const name of names) {
-    if (SKIP.has(name)) continue;
-    const p = join(dir, name);
-    if (listDir(p) !== null) vitestPackages(p, out);
-  }
-  return out;
+/** The packages under `dir` that run vitest: a `package.json` git knows (never a
+ *  dependency's, never a build's), outside the `fixtures` the suites keep. */
+function vitestPackages(dir: string): string[] {
+  return listSourceFiles(dir, { skipDirs: ['fixtures'], extensions: ['package.json'] })
+    .filter((f) => basename(f) === 'package.json')
+    .map((f) => dirname(f))
+    .filter((pkg) => {
+      const test = (
+        JSON.parse(readFileSync(join(pkg, 'package.json'), 'utf8')) as {
+          scripts?: { test?: string };
+        }
+      ).scripts?.test;
+      return test !== undefined && /\bvitest\b/.test(test);
+    });
 }
 
 /**
@@ -121,7 +119,7 @@ export function vitestConfigProblems(root: string): string[] {
 
 /** A throw-away repository tree, one per test: no test reads another's leftovers. */
 function problemsOf(files: Record<string, string>): string[] {
-  const root = mkdtempSync(join(tmpdir(), 'vitest-base-'));
+  const root = mkdtempSourceTree('vitest-base-');
   try {
     for (const [rel, content] of Object.entries(files)) {
       const p = join(root, rel);

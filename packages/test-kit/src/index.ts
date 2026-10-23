@@ -38,6 +38,8 @@ export * from './builders';
 export * from './gate';
 export * from './trust-boundary';
 export * from './architecture';
+// What is SOURCE in the repository, for every scanner: git's own view.
+export * from './source-files';
 export * from './real-postgres';
 export * from './cluster-lock';
 export * from './cluster-registry';

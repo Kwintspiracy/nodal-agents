@@ -31,14 +31,9 @@ describe('web fonts are self-hosted (#688)', () => {
         {
           srcDir: appRoot,
           // Le dossier des tests est exclu : celui-ci nomme le motif interdit.
-          skipDirs: [
-            'node_modules',
-            '.next',
-            'tests',
-            '__tests__',
-            'test-results',
-            'playwright-report',
-          ],
+          // Un build ou un rapport (`.next`, `test-results`…) n'est jamais lu :
+          // le scanner ne lit que ce que git tient pour source.
+          skipDirs: ['tests', '__tests__'],
           extensions: ['.ts', '.tsx', '.css', '.mjs', '.js', '.html'],
         },
         {

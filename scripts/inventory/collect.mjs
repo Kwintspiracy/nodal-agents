@@ -10,21 +10,43 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..').replaceAll(sep, '/');
 const OUT = process.argv[2];
 
-function walk(dir, pred, acc = []) {
-  if (!existsSync(dir)) return acc;
-  for (const e of readdirSync(dir)) {
-    const f = join(dir, e);
-    let st;
-    try {
-      st = statSync(f);
-    } catch {
-      continue;
-    }
-    if (st.isDirectory()) {
-      if (!['node_modules', 'dist', '.next', '.turbo', 'out'].includes(e)) walk(f, pred, acc);
-    } else if (pred(f)) acc.push(f);
-  }
-  return acc;
+/**
+ * Les fichiers SOURCE sous `dir` qui satisfont `pred` : ce que git tient pour
+ * source (suivi, ou nouveau et non ignoré), la définition de tous les
+ * scanners du dépôt (test-kit `sourceFilesUnder`). Une liste de dossiers de
+ * build à sauter ratait le suivant (`.next-studio`, 0.9.8) ; le .gitignore les
+ * connaît tous. Sans dépôt git, git échoue et l'inventaire avec lui. Comme
+ * `sourceFilesUnder`, un dossier absent, ou dont git ne montre rien alors
+ * qu'il contient des fichiers, est refusé : un compte à zéro n'y serait pas
+ * une mesure.
+ */
+function walk(dir, pred) {
+  if (!existsSync(dir)) throw new Error(`inventory_dir_missing: ${dir} does not exist`);
+  const out = execFileSync(
+    'git',
+    ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+    {
+      cwd: dir,
+      encoding: 'utf-8',
+      maxBuffer: 256 * 1024 * 1024,
+    },
+  );
+  const files = out
+    .split('\0')
+    .filter(Boolean)
+    .map((rel) => join(dir, rel))
+    .filter((f) => existsSync(f));
+  if (files.length === 0 && holdsAFile(dir))
+    throw new Error(
+      `inventory_none_visible: ${dir} holds files, and git shows none of them as source`,
+    );
+  return files.filter(pred);
+}
+
+function holdsAFile(dir) {
+  return readdirSync(dir, { withFileTypes: true }).some(
+    (e) => !e.isDirectory() || holdsAFile(join(dir, e.name)),
+  );
 }
 
 const isSrc = (f) => /\.(ts|tsx)$/.test(f) && !/\.(test|spec)\.tsx?$/.test(f);

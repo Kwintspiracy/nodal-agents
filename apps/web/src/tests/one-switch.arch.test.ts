@@ -86,10 +86,10 @@
 // (qui fait rougir le leurre de la pastille).
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, dirname, extname, relative } from 'node:path';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { listSourceFiles, mkdtempSourceTree } from '@nodal-agents/test-kit';
 
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -115,17 +115,8 @@ function estUnTest(chemin: string): boolean {
 
 const EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx']);
 
-function sources(dir: string, acc: string[] = []): string[] {
-  for (const nom of readdirSync(dir)) {
-    const p = join(dir, nom);
-    if (statSync(p).isDirectory()) {
-      if (nom === 'node_modules' || nom === '.next') continue;
-      sources(p, acc);
-      continue;
-    }
-    if (EXTENSIONS.has(extname(p))) acc.push(p);
-  }
-  return acc;
+function sources(dir: string): string[] {
+  return listSourceFiles(dir, { extensions: [...EXTENSIONS] });
 }
 
 /** Lit un dossier comme la garde lit `apps/web/src` — même marche, même filtre,
@@ -339,7 +330,7 @@ describe('architecture — la garde, sur des fichiers fabriqués', () => {
   ];
 
   function scanneUnCas(source: string): string[] {
-    const dir = mkdtempSync(join(tmpdir(), 'one-switch-'));
+    const dir = mkdtempSourceTree('one-switch-');
     try {
       writeFileSync(join(dir, 'Cas.tsx'), source, 'utf8');
       return interrupteursDessinesAilleurs(lire(dir));

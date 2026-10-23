@@ -27,27 +27,20 @@
 //     lignes en base (`src/lib/__tests__/approval-rule-folder-condition.test.ts`).
 
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
+import { listSourceFiles } from '@nodal-agents/test-kit';
 
 const SRC = join(import.meta.dirname, '..');
 
 /** La seule porte. Tout le reste passe par elle. */
 const PORTE = join('lib', 'actions.ts');
 
-function fichiersSources(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
-      if (entry === 'node_modules' || entry === '__tests__' || entry === 'tests') continue;
-      fichiersSources(full, out);
-      continue;
-    }
-    if (!/\.tsx?$/.test(entry)) continue;
-    if (/\.test\.tsx?$/.test(entry)) continue;
-    out.push(full);
-  }
-  return out;
+function fichiersSources(dir: string): string[] {
+  return listSourceFiles(dir, {
+    skipDirs: ['__tests__', 'tests'],
+    extensions: ['.ts', '.tsx'],
+  }).filter((p) => !/\.test\.tsx?$/.test(p));
 }
 
 describe("les règles d'approbation n'ont qu'une porte d'écriture", () => {

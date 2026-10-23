@@ -31,36 +31,21 @@
 // on one of the three lines above: `// kill-by-pid: <the reason>`.
 
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { listSourceFiles } from '../architecture';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
-const SKIP = new Set(['node_modules', 'dist', '.next', '.turbo', '.claude', '.git', 'coverage']);
-const SOURCE = /\.(ts|tsx|mts|cts|js|mjs|cjs)$/;
+const SOURCE = ['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs'];
 const MARKER = /kill-by-pid:\s*\S/;
 
 /** Test sources: anything under a `tests` / `__tests__` directory, or named `*.test.*`. */
-function testSources(dir: string, inTests = false, out: string[] = []): string[] {
-  let names: string[];
-  try {
-    names = readdirSync(dir, { withFileTypes: true }).map((d) =>
-      d.isDirectory() ? `${d.name}${sep}` : d.name,
-    );
-  } catch {
-    return out;
-  }
-  for (const name of names) {
-    if (name.endsWith(sep)) {
-      const bare = name.slice(0, -1);
-      if (SKIP.has(bare)) continue;
-      testSources(join(dir, bare), inTests || bare === 'tests' || bare === '__tests__', out);
-    } else if (SOURCE.test(name) && (inTests || /\.test\.[^.]+$/.test(name))) {
-      out.push(join(dir, name));
-    }
-  }
-  return out;
+function testSources(dir: string): string[] {
+  return listSourceFiles(dir, { extensions: SOURCE }).filter(
+    (p) => /(^|[\\/])(tests|__tests__)[\\/]/.test(relative(dir, p)) || /\.test\.[^.]+$/.test(p),
+  );
 }
 
 export interface KillByPid {

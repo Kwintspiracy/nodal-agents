@@ -111,8 +111,9 @@
  * preuve.
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { listSourceFiles } from '@nodal-agents/test-kit';
 
 /** Même forme que les scanners partagés, pour passer dans `assertNoViolations`. */
 export type Violation = { file: string; line: number; rule: string; text: string };
@@ -194,17 +195,11 @@ export function retirerCommentaires(texte: string): string {
   return out.join('');
 }
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry);
-    if (statSync(p).isDirectory()) {
-      if (entry === 'node_modules' || entry === '__tests__' || entry === 'tests') continue;
-      walk(p, out);
-    } else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) {
-      out.push(p);
-    }
-  }
-  return out;
+function walk(dir: string): string[] {
+  return listSourceFiles(dir, {
+    skipDirs: ['__tests__', 'tests'],
+    extensions: ['.ts', '.tsx'],
+  }).filter((p) => !/\.test\.tsx?$/.test(p));
 }
 
 /** Les bindings d'une clause d'import, sans les types (ils s'effacent à la compilation). */

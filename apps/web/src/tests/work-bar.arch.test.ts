@@ -37,9 +37,10 @@
 // légitime et cette garde n'a pas à en juger.
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
-import { join, dirname, extname, relative, resolve, sep } from 'node:path';
+import { readFileSync, statSync, existsSync } from 'node:fs';
+import { join, dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { listSourceFiles } from '@nodal-agents/test-kit';
 
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DASHBOARD = join(SRC_DIR, 'app', '(dashboard)');
@@ -78,17 +79,8 @@ function estUnTest(chemin: string): boolean {
   return /(^|[\\/])(__tests__|tests)[\\/]/.test(chemin) || /\.test\.tsx?$/.test(chemin);
 }
 
-function fichiers(dir: string, acc: string[] = []): string[] {
-  for (const nom of readdirSync(dir)) {
-    const p = join(dir, nom);
-    if (statSync(p).isDirectory()) {
-      if (nom === 'node_modules' || nom === '.next') continue;
-      fichiers(p, acc);
-      continue;
-    }
-    if (extname(p) === '.tsx' || extname(p) === '.ts') acc.push(p);
-  }
-  return acc;
+function fichiers(dir: string): string[] {
+  return listSourceFiles(dir, { extensions: ['.ts', '.tsx'] });
 }
 
 const TOUS = fichiers(SRC_DIR)

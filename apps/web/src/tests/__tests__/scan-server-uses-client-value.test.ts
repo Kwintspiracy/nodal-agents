@@ -12,18 +12,18 @@
 // se met à être couverte, le test rougit et on met le commentaire à jour.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   scanForServerUsesOfClientValues,
   retirerCommentaires,
 } from '../scan-server-uses-client-value.ts';
+import { mkdtempSourceTree } from '@nodal-agents/test-kit';
 
 let racine: string;
 
 beforeEach(() => {
-  racine = mkdtempSync(join(tmpdir(), 'scan-rsc-'));
+  racine = mkdtempSourceTree('scan-rsc-');
 });
 
 afterEach(() => {

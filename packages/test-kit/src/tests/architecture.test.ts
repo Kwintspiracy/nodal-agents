@@ -3,8 +3,7 @@
 // est propre ne prouve pas qu'il détecte).
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   scanForAgentSlugs,
@@ -20,11 +19,12 @@ import {
   scanForTerminalSendOutsideOutbox,
   scanFilesForDeliverableTypeLiterals,
 } from '../index';
+import { mkdtempSourceTree } from '../source-files';
 
 let dir: string;
 
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), 'archi-'));
+  dir = mkdtempSourceTree('archi-');
   mkdirSync(join(dir, 'nested'), { recursive: true });
   mkdirSync(join(dir, 'tests'), { recursive: true });
 
@@ -101,7 +101,7 @@ describe('scanForMutatingSpawnOutsideIntent', () => {
   let tree: string;
 
   beforeAll(() => {
-    tree = mkdtempSync(join(tmpdir(), 'archi-spawn-'));
+    tree = mkdtempSourceTree('archi-spawn-');
     for (const sub of ['engine', 'bad', 'allowed', 'runtime', 'tests']) {
       mkdirSync(join(tree, sub), { recursive: true });
     }
@@ -159,7 +159,7 @@ describe('règles « une porte terminale, une sortie » (V&C T13)', () => {
   let tree: string;
 
   beforeAll(() => {
-    tree = mkdtempSync(join(tmpdir(), 'archi-terminal-'));
+    tree = mkdtempSourceTree('archi-terminal-');
     mkdirSync(join(tree, 'job'), { recursive: true });
     mkdirSync(join(tree, 'tests'), { recursive: true });
     // La fautive : un `.set({ status: rootStatus })` ÉTALÉ sur plusieurs lignes.
@@ -278,7 +278,7 @@ describe('scanForProjectKeyCopies', () => {
 describe('scanForMcpToolPrefixCopies (#661)', () => {
   let own: string;
   beforeAll(() => {
-    own = mkdtempSync(join(tmpdir(), 'archi-prefix-'));
+    own = mkdtempSourceTree('archi-prefix-');
     mkdirSync(join(own, 'ui'), { recursive: true });
     writeFileSync(
       join(own, 'prefix.ts'),
@@ -356,7 +356,7 @@ describe('scanForMcpToolPrefixCopies (#661)', () => {
 describe('scanForNodalHomeCopies (NODALAI_HOME)', () => {
   let own: string;
   beforeAll(() => {
-    own = mkdtempSync(join(tmpdir(), 'archi-home-'));
+    own = mkdtempSourceTree('archi-home-');
     // Les trois guillemets, chacun dans le calcul que le dépôt recopiait.
     writeFileSync(join(own, 'single.ts'), "const d = join(homedir(), '.nodalai', 'logs');\n");
     writeFileSync(join(own, 'double.ts'), 'const d = join(homedir(), ".nodalai");\n');
