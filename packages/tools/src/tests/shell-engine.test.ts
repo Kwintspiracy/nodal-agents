@@ -4,13 +4,15 @@
 // son chemin contient un espace sur Windows (C:\Program Files\nodejs) — c'est
 // le cas de quoting qui compte.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runShellCommand, DEFAULT_MAX_OUTPUT_CHARS } from '../builtin/shell-engine';
 import { buildChildEnv } from '../builtin/child-env';
 import { JobProcessScope } from '@nodal-agents/sandbox';
+import { mustDie, readCounter, watchRegistry } from '@nodal-agents/test-kit';
 
 let dir: string;
 const node = process.execPath;
@@ -47,14 +49,10 @@ async function script(name: string, body: string): Promise<string> {
   return p;
 }
 
-const alive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
+// Un processus meurt SUR LE PROCESSUS TENU, jamais sur son pid : Windows redonne
+// un pid libéré en quelques secondes (test-kit process-watch.ts).
+const watches = watchRegistry();
+afterEach(() => watches.releaseAll());
 
 describe('runShellCommand — issue typée', () => {
   it('exit 0 : outcome exit, stdout capturé, durationMs mesuré', async () => {
@@ -132,26 +130,30 @@ describe('runShellCommand — issue typée', () => {
 
 describe('runShellCommand — tree-kill : le petit-enfant est mort', () => {
   it('à travers le shell, le processus node lancé par cmd.exe / sh ne survit pas au timeout', async () => {
+    const pidFile = join(dir, 'tree-kill.pid');
     const p = await script(
       'pid-sleep.js',
-      'process.stdout.write(String(process.pid)); setTimeout(() => {}, 60000)',
+      "require('fs').writeFileSync(process.argv[2], String(process.pid)); setTimeout(() => {}, 60000)",
     );
-    const r = await runShellCommand({
-      target: { command: `"${node}" "${p}"` },
+    // Le pid est lu, et le processus TENU, pendant que la commande tourne :
+    // après la coupure il serait déjà mort, et son pid peut servir à un autre.
+    const running = runShellCommand({
+      target: { command: `"${node}" "${p}" "${pidFile}"` },
       cwd: dir,
       confinement,
       scope,
-      timeoutMs: 1_000,
+      timeoutMs: 3_000,
       env,
     });
+    for (let i = 0; i < 100 && !existsSync(pidFile); i++) {
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    const grandchild = await watches.hold(readCounter(pidFile));
+    const r = await running;
     expect(r.outcome.kind).toBe('timeout');
-    const pid = Number(r.stdout.trim());
-    expect(Number.isInteger(pid) && pid > 0).toBe(true);
-    await new Promise((res) => setTimeout(res, 1_500));
-    // Jamais tué ici, même survivant (#841) : son pid n'a été lu qu'après la
-    // coupure, quand il pouvait déjà servir à un autre processus. Un survivant
-    // fait échouer le test, et sort seul au bout de 60 s.
-    expect(alive(pid), `pid ${String(pid)} survived the tree kill`).toBe(false);
+    // Jamais tué ici, même survivant (#841) : un survivant fait échouer le test
+    // en disant depuis quand il est tenu, et sort seul au bout de 60 s.
+    await mustDie(grandchild, 'the grandchild of the shell', 'the timeout kill');
   });
 });
 

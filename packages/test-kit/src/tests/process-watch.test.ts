@@ -9,10 +9,12 @@
 // Mutation vérifiée (annulée ensuite) : `watchProcess` qui ferme son handle
 // aussitôt ouvert (une veille qui ne tient rien) → « a watched pid is given to
 // no other process » rouge, le pid revient sous un inconnu.
+// Mutation vérifiée (annulée ensuite) : `waitForDeath` qui rend `dead: true`
+// sans lire la veille → « a process that does not die » rouge.
 
 import { describe, it, expect } from 'vitest';
 import { spawn } from 'node:child_process';
-import { watchProcess } from '../process-watch';
+import { survivalMessage, waitForDeath, watchProcess } from '../process-watch';
 
 /** Un processus qui dort, le temps qu'on le surveille. */
 function sleeper(): Promise<number> {
@@ -104,4 +106,40 @@ describe('ProcessWatch.kill: a test kills the process it holds, never a pid (#84
       }
     },
   );
+});
+
+describe('waitForDeath: a bounded wait on the held process, which says how long it survived', () => {
+  it('a process that does not die: not dead at the bound, and the message names who, since when and for how long', async () => {
+    const pid = await sleeper();
+    const watch = await watchProcess(pid);
+    try {
+      const wait = await waitForDeath(watch, 300);
+      expect(wait.dead).toBe(false);
+      expect(wait.waitedMs).toBeGreaterThanOrEqual(300);
+      const message = survivalMessage(watch, wait, 'server', 'closeJobProcessScope');
+      expect(message).toMatch(
+        new RegExp(
+          String.raw`^server \(pid ${String(pid)}\) held since \d\d:\d\d:\d\d\.\d{3} still alive \d+ ms after closeJobProcessScope$`,
+        ),
+      );
+      expect(watch.openedAt).toBeLessThanOrEqual(Date.now());
+    } finally {
+      watch.kill('SIGKILL');
+      watch.release();
+    }
+  });
+
+  it('a process that dies during the wait: dead, well before the bound', async () => {
+    const pid = await sleeper();
+    const watch = await watchProcess(pid);
+    try {
+      setTimeout(() => watch.kill('SIGKILL'), 150);
+      const started = Date.now();
+      const wait = await waitForDeath(watch, 10_000);
+      expect(wait.dead).toBe(true);
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      watch.release();
+    }
+  });
 });

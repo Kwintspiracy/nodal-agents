@@ -21,7 +21,17 @@
     "test": {
       "dependsOn": ["^build"],
       "cache": false,
-      "passThroughEnv": ["NODAL_VITEST_REPORT_DIR"]
+      "passThroughEnv": [
+        "NODAL_VITEST_REPORT_DIR",
+        "LOCALAPPDATA",
+        "USERNAME",
+        "USERDOMAIN",
+        "COMPUTERNAME",
+        "PUBLIC",
+        "OS",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE"
+      ]
     },
     "typecheck": {
       "dependsOn": ["^build"]

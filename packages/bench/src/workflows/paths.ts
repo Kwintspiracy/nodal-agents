@@ -4,6 +4,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
+/** Le paquet du banc sur le disque : d'où partent les chemins que le banc DÉCLARE (son imprimante). */
+export const BENCH_DIR = join(REPO, 'packages', 'bench');
 /** Une ligne par essai, ajoutée, jamais réécrite. */
 export const RESULTS_FILE = join(REPO, 'apps', 'qa', 'data', 'workflows.ndjson');
 /** Le catalogue des scénarios que lisent le portail et Bench Studio. */

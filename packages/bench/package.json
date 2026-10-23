@@ -46,6 +46,7 @@
     "pptxgenjs": "^4.0.1",
     "slugify": "^1.6.9",
     "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.6"
   }
 }
