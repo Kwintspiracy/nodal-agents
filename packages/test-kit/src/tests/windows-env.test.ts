@@ -13,7 +13,11 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { WINDOWS_PROFILE_ENV, missingWindowsProfileEnv } from '../windows-env';
+import {
+  TURBO_WINDOWS_DEFAULTS,
+  WINDOWS_PROFILE_ENV,
+  missingWindowsProfileEnv,
+} from '../windows-env';
 
 describe('Windows profile variables reach the test workers', () => {
   it('turbo.json lets the Windows profile variables through to `test` (tous systèmes)', () => {
@@ -40,8 +44,13 @@ describe('Windows profile variables reach the test workers', () => {
   );
 
   it('missingWindowsProfileEnv names what is absent, ignoring case (tous systèmes)', () => {
-    expect(missingWindowsProfileEnv({})).toEqual([...WINDOWS_PROFILE_ENV]);
-    const full = Object.fromEntries(WINDOWS_PROFILE_ENV.map((n) => [n.toLowerCase(), 'x']));
+    expect(missingWindowsProfileEnv({})).toEqual([
+      ...WINDOWS_PROFILE_ENV,
+      ...TURBO_WINDOWS_DEFAULTS,
+    ]);
+    const full = Object.fromEntries(
+      [...WINDOWS_PROFILE_ENV, ...TURBO_WINDOWS_DEFAULTS].map((n) => [n.toLowerCase(), 'x']),
+    );
     expect(missingWindowsProfileEnv(full)).toEqual([]);
     expect(missingWindowsProfileEnv({ ...full, localappdata: undefined })).toEqual([
       'LOCALAPPDATA',
