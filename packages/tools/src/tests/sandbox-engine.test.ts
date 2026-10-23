@@ -10,7 +10,7 @@
 // Les backends sont injectés : ce test prouve le moteur ;
 // `sandbox-confinement-windows.test.ts` prouve le mur et le conteneur du job.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -25,7 +25,7 @@ import {
 } from '@nodal-agents/sandbox';
 import { runShellCommand, runCommandSequence } from '../builtin/shell-engine';
 import { buildChildEnv } from '../builtin/child-env';
-import { watchProcess } from '@nodal-agents/test-kit';
+import { mustDie, readCounter, watchProcess, watchRegistry } from '@nodal-agents/test-kit';
 
 let dir: string;
 let outside: string;
@@ -79,14 +79,10 @@ const logs = (): { codes: string[]; log: (code: string, f: Record<string, unknow
   return { codes, log: (code) => codes.push(code) };
 };
 
-const alive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
+// Un serveur vit ou meurt SUR LE PROCESSUS TENU, jamais sur son pid : Windows
+// redonne un pid libéré en quelques secondes (test-kit process-watch.ts).
+const watches = watchRegistry();
+afterEach(() => watches.releaseAll());
 
 const waitForFile = async (path: string): Promise<void> => {
   for (let i = 0; i < 200 && !existsSync(path); i++) await new Promise((r) => setTimeout(r, 50));
@@ -230,13 +226,12 @@ describe('runShellCommand — le Stop du job (#750) @cap:executer-une-commande/m
       signal: controller.signal,
     });
     await waitForFile(pidFile);
-    const pid = Number(await readFile(pidFile, 'utf8'));
+    const long = await watches.hold(readCounter(pidFile));
     controller.abort();
     const r = await running;
     expect(r.outcome).toEqual({ kind: 'spawn_error', message: 'ABORTED' });
     expect(Date.now() - started).toBeLessThan(30_000);
-    await new Promise((res) => setTimeout(res, 1_000));
-    expect(alive(pid)).toBe(false);
+    await mustDie(long, 'the aborted command', 'the Stop signal');
   });
 
   it('un job déjà arrêté ne lance plus rien', async () => {
@@ -306,12 +301,12 @@ describe('runShellCommand — sans bac à sable, ce qu’une commande laisse tou
     const first = await startServer(scope, infoFile);
     expect(first.outcome).toEqual({ kind: 'exit', exitCode: 0 });
     const { pid, port } = await readInfo(infoFile);
+    const server = await watches.hold(pid);
     const second = await fetchFrom(scope, port);
     expect(second.stdout.trim()).toBe(`pong ${pid}`);
-    expect(alive(pid)).toBe(true);
+    expect(server.alive(), 'the server, after command 2').toBe(true);
     await scope.close();
-    await new Promise((r) => setTimeout(r, 500));
-    expect(alive(pid)).toBe(false);
+    await mustDie(server, 'server', 'scope.close()');
   });
 
   it('fermer UN job ne touche pas aux processus d’un autre', async () => {
@@ -323,12 +318,14 @@ describe('runShellCommand — sans bac à sable, ce qu’une commande laisse tou
     await startServer(b, infoB);
     const pa = await readInfo(infoA);
     const pb = await readInfo(infoB);
+    const serverA = await watches.hold(pa.pid);
+    const serverB = await watches.hold(pb.pid);
     await a.close();
-    await new Promise((r) => setTimeout(r, 500));
-    expect(alive(pa.pid)).toBe(false);
-    expect(alive(pb.pid)).toBe(true);
+    await mustDie(serverA, 'server of job A', 'a.close()');
+    expect(serverB.alive(), 'the server of job B, after job A closed').toBe(true);
     expect((await fetchFrom(b, pb.port)).stdout.trim()).toBe(`pong ${pb.pid}`);
     await b.close();
+    await mustDie(serverB, 'server of job B', 'b.close()');
   });
 });
 

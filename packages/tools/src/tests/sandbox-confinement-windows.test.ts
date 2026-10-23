@@ -13,7 +13,7 @@
 // Windows, un bac à sable INDISPONIBLE fait échouer la suite avec sa raison
 // (Node trop ancien, MXC non supporté…) — jamais un vert par absence.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile, realpath } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -29,6 +29,7 @@ import {
 } from '@nodal-agents/sandbox';
 import { unsupportedByTier } from '@nodal-agents/test-kit';
 import type { SandboxReport } from '../builtin/shell-engine';
+import { mustDie, readCounter, watchRegistry } from '@nodal-agents/test-kit';
 import { runCommandTool } from '../builtin/run-command';
 import { resolvePythonInterpreter } from '../builtin/run-skill-script';
 import type { ToolContext } from '../types';
@@ -96,14 +97,15 @@ function refusedOf(out: { sandbox?: SandboxReport }): readonly RefusedWrite[] {
   return out.sandbox.refusedWrites ?? [];
 }
 
-const alive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
+// La vie d'un serveur se lit sur le processus TENU, jamais sur son pid : Windows
+// redonne un pid libéré en quelques secondes (test-kit process-watch.ts), et
+// `process.kill(pid, 0)` dit alors « vivant » d'un inconnu (CI, run 39874357868).
+// La veille s'ouvre dès que le pid est lu ; un serveur qui survit à la fin de
+// son job fait échouer le test en le disant (« held since … still alive … ms
+// after closeJobProcessScope ») : ce n'est pas une réutilisation de pid, c'est
+// un processus qui n'est pas mort.
+const watches = watchRegistry();
+afterEach(() => watches.releaseAll());
 
 /**
  * Un Windows sans le palier MXC base-container (Windows Server, dont le runner
@@ -280,8 +282,17 @@ describe.skipIf(!isWindows || tierUnsupported)(
       );
     };
     const waitFor = (info: string): string => `"${node}" "${join(ws, 'waitfor.cjs')}" "${info}"`;
-    const readInfo = async (info: string): Promise<{ pid: number; port: number }> =>
-      JSON.parse(await readFile(info, 'utf8')) as { pid: number; port: number };
+    const readInfo = async (info: string): Promise<{ pid: number; port: number }> => {
+      // `writeFileSync` vide le fichier avant d'y écrire : la commande qui
+      // attend son EXISTENCE peut le lire vide. On relit, borné.
+      let text = '';
+      for (let i = 0; i < 100; i++) {
+        text = await readFile(info, 'utf8');
+        if (text.trim() !== '') break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return JSON.parse(text) as { pid: number; port: number };
+    };
 
     /** Les trois façons de laisser un serveur tourner, sous cmd.exe. */
     const backgroundForms: { name: string; command: (info: string) => string }[] = [
@@ -318,10 +329,10 @@ describe.skipIf(!isWindows || tierUnsupported)(
         const first = await run(`${command(info)} && ${waitFor(info)}`, 180, { jobId });
         expect(first.exitCode, first.stderr).toBe(0);
         const { pid } = await readInfo(info);
-        expect(alive(pid)).toBe(true);
+        const server = await watches.hold(pid);
+        expect(server.alive(), `${name}: the server outlives its command`).toBe(true);
         expect(await closeJobProcessScope(jobId)).toBe(true);
-        await new Promise((r) => setTimeout(r, 1_000));
-        expect(alive(pid)).toBe(false);
+        await mustDie(server, `${name} server`, 'closeJobProcessScope');
       },
       240_000,
     );
@@ -334,15 +345,14 @@ describe.skipIf(!isWindows || tierUnsupported)(
         `start "" /b "${node}" "${join(ws, 'server.cjs')}" "${info}" && ${waitFor(info)}`;
       await run(start(infoA), 60, { jobId: 'job-sbx-a' });
       await run(start(infoB), 60, { jobId: 'job-sbx-b' });
-      const a = await readInfo(infoA);
-      const b = await readInfo(infoB);
+      const a = await watches.hold((await readInfo(infoA)).pid);
+      const b = await watches.hold((await readInfo(infoB)).pid);
       await closeJobProcessScope('job-sbx-a');
-      await new Promise((r) => setTimeout(r, 1_000));
-      expect(alive(a.pid)).toBe(false);
-      expect(alive(b.pid)).toBe(true);
+      await mustDie(a, 'server of job A', 'closeJobProcessScope(A)');
+      // L'autre job vit encore : son serveur tenu n'est pas mort.
+      expect(b.alive(), 'the server of job B, after job A closed').toBe(true);
       await closeJobProcessScope('job-sbx-b');
-      await new Promise((r) => setTimeout(r, 1_000));
-      expect(alive(b.pid)).toBe(false);
+      await mustDie(b, 'server of job B', 'closeJobProcessScope(B)');
     });
 
     it('Stop (the job signal) kills the running command at once', async () => {
@@ -360,14 +370,13 @@ describe.skipIf(!isWindows || tierUnsupported)(
       for (let i = 0; i < 200 && !existsSync(pidFile); i++) {
         await new Promise((r) => setTimeout(r, 50));
       }
-      const pid = Number(await readFile(pidFile, 'utf8'));
+      const long = await watches.hold(readCounter(pidFile));
       controller.abort();
       const out = await running;
       expect(out.exitCode).toBeNull();
       expect(out.stderr).toContain('spawn_error: ABORTED');
       expect(Date.now() - started).toBeLessThan(30_000);
-      await new Promise((r) => setTimeout(r, 1_000));
-      expect(alive(pid)).toBe(false);
+      await mustDie(long, 'the stopped command', 'Stop (the job signal)');
       await closeJobProcessScope('job-sbx-stop');
     });
 

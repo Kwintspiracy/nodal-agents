@@ -10,6 +10,7 @@ import { closeJobProcessScope, createSandbox, jobProcessScope } from '@nodal-age
 import { mkdtemp, rm, writeFile, access, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { mustDie, readCounter, watchProcess } from '@nodal-agents/test-kit';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, codeProjects } from '@nodal-agents/db';
@@ -353,22 +354,18 @@ describe('code-project — runProof @cap:verifier-un-livrable/moteur', () => {
     for (let i = 0; i < 200 && !(await exists(counter)); i++) {
       await new Promise((r) => setTimeout(r, 50));
     }
-    const pid = Number(await readFile(pidFile, 'utf8'));
+    // Tenu dès que son pid est lu (test-kit process-watch.ts).
+    const ticking = await watchProcess(readCounter(pidFile));
     stop.abort();
     const proof = await running;
     expect(Date.now() - started).toBeLessThan(30_000);
     expect(proof.verdict).toBe('infra_error');
     expect(proof.records).toHaveLength(1);
-    let dead = false;
-    for (let i = 0; i < 100 && !dead; i++) {
-      try {
-        process.kill(pid, 0);
-        await new Promise((r) => setTimeout(r, 50));
-      } catch {
-        dead = true;
-      }
+    try {
+      await mustDie(ticking, 'the proof command', 'the abort signal');
+    } finally {
+      ticking.release();
     }
-    expect(dead).toBe(true);
     const frozen = await readFile(counter, 'utf8');
     await new Promise((r) => setTimeout(r, 400));
     expect(await readFile(counter, 'utf8')).toBe(frozen);
