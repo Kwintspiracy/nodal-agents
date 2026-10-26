@@ -36,6 +36,8 @@ import { AUTONOMY_OPTIONS } from '@/lib/autonomy.ts';
 import { autostartValue, type AutostartView } from '@/lib/autostart-view.ts';
 import { VERIFICATION_SURFACE_LABELS } from '@/lib/verification-runs-view.ts';
 import { runBudgetValue } from './run-budget-copy.ts';
+import type { SandboxView } from '@/lib/sandbox-actions.ts';
+import { sandboxRegime, unavailableWords } from '@/lib/sandbox-copy.ts';
 
 export type SettingGroup = 'access' | 'safety' | 'workspace' | 'advanced';
 
@@ -44,6 +46,7 @@ export type SettingId =
   | 'network'
   | 'password'
   | 'worker-secret'
+  | 'sandbox'
   | 'auto-run-brake'
   | 'verification'
   | 'repair-turns'
@@ -78,6 +81,8 @@ export type SettingsSource = {
   workerSecretConfigured: boolean;
   security: SecurityView | null;
   network: NetworkView | null;
+  /** #876 — lu par le RUNNER (GET /api/sandbox) ; `null` quand la lecture a échoué. */
+  sandbox: SandboxView | null;
   autoRunPause: AutoRunPauseView | null;
   verification: VerificationSurfacesView | null;
   proofRepair: ProofRepairView | null;
@@ -140,6 +145,12 @@ function installNotesValue(notes: string | null): string {
   const first = notes.trim().split('\n')[0]?.trim() ?? '';
   if (first === '') return 'Nothing yet';
   return first.length > 60 ? `${first.slice(0, 59)}…` : first;
+}
+
+function sandboxValue(view: SandboxView | null): string {
+  if (!view) return UNREAD;
+  if (view.status.state === 'unavailable') return unavailableWords(view.status.code);
+  return view.enabled ? `Active, ${view.status.backend}` : 'Off for this workspace';
 }
 
 function workspacesValue(rows: WorkspaceRow[]): string {
@@ -205,6 +216,23 @@ export function buildSettingRows(src: SettingsSource): SettingRow[] {
   });
 
   // ── Safety ────────────────────────────────────────────────────────────────
+  rows.push({
+    id: 'sandbox',
+    group: 'safety',
+    name: 'Sandbox',
+    lede: 'Where the commands your agents start can write, what they cannot read, and the switch that turns it off.',
+    value: sandboxValue(src.sandbox),
+    tag:
+      src.sandbox === null
+        ? { variant: 'warn', label: 'UNREAD' }
+        : sandboxRegime(src.sandbox) === 'active'
+          ? { variant: 'ok', label: 'ACTIVE' }
+          : sandboxRegime(src.sandbox) === 'off'
+            ? { variant: 'warn', label: 'OFF' }
+            : { variant: 'warn', label: 'UNAVAILABLE' },
+    toggle: src.sandbox !== null && sandboxRegime(src.sandbox) === 'active',
+  });
+
   rows.push({
     id: 'auto-run-brake',
     group: 'safety',

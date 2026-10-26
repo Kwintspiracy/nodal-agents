@@ -69,6 +69,7 @@ beforeAll(async () => {
 });
 
 type Actions = typeof import('@/lib/actions.ts');
+type SandboxView = import('@/lib/sandbox-actions.ts').SandboxView;
 type Rows = typeof import('../settings-rows.ts');
 
 async function actions(): Promise<Actions> {
@@ -84,6 +85,8 @@ const OFF_DB = {
   workerSecretConfigured: true,
   security: null,
   network: null,
+  // #876 — l'état du bac à sable est dit par le RUNNER, pas par la base.
+  sandbox: null,
   // #451 — un fait du SYSTÈME, lu par le CLI : il ne vit pas en base.
   autostart: {
     status: { state: 'at_login' as const, lingerCommand: 'sudo loginctl enable-linger pi' },
@@ -344,6 +347,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
       'network',
       'password',
       'worker-secret',
+      'sandbox',
       'auto-run-brake',
       'verification',
       'repair-turns',
@@ -368,6 +372,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
       'safety',
       'safety',
       'safety',
+      'safety',
       'workspace',
       'workspace',
       'workspace',
@@ -381,7 +386,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
     for (const mode of ['local-trust', 'bearer-token'] as const) {
       const rows = await rowsFromDb({ authMode: mode });
       expect(rows.map((r) => r.id)).not.toContain('password');
-      expect(rows).toHaveLength(15);
+      expect(rows).toHaveLength(16);
     }
   });
 });
@@ -392,6 +397,7 @@ describe('buildSettingRows — la config et l’environnement @cap:installer-et-
     workerSecretConfigured: true,
     security: null,
     network: null,
+    sandbox: null,
     autoRunPause: null,
     verification: null,
     proofRepair: null,
@@ -487,6 +493,49 @@ describe('buildSettingRows — la config et l’environnement @cap:installer-et-
     expect(loopback.tag).toEqual({ variant: 'ok', label: 'LOCAL' });
   });
 
+  it('#876 — Sandbox dit le régime que le runner rapporte : actif, coupé, indisponible', async () => {
+    const { buildSettingRows } = await rowsModule();
+    const view = (over: Partial<SandboxView>): SandboxView => ({
+      platform: 'win32',
+      status: { state: 'available', backend: 'mxc-processcontainer' },
+      enabled: true,
+      allowedFolders: [],
+      agents: [],
+      sharedFolder: null,
+      readRefused: [],
+      network: { deniedPorts: [3000, 3001] },
+      isOwner: true,
+      ...over,
+    });
+    const row = (sandbox: SandboxView | null) =>
+      buildSettingRows({ ...BASE, sandbox }).find((r) => r.id === 'sandbox')!;
+    expect(row(view({}))).toMatchObject({
+      value: 'Active, mxc-processcontainer',
+      tag: { variant: 'ok', label: 'ACTIVE' },
+      toggle: true,
+    });
+    expect(row(view({ enabled: false }))).toMatchObject({
+      value: 'Off for this workspace',
+      tag: { variant: 'warn', label: 'OFF' },
+      toggle: false,
+    });
+    expect(
+      row(
+        view({
+          status: { state: 'unavailable', code: 'SANDBOX_NOT_IMPLEMENTED', reason: 'darwin' },
+        }),
+      ),
+    ).toMatchObject({
+      value: 'Not available on this system yet',
+      tag: { variant: 'warn', label: 'UNAVAILABLE' },
+      toggle: false,
+    });
+    expect(row(null)).toMatchObject({
+      value: 'Could not be read',
+      tag: { variant: 'warn', label: 'UNREAD' },
+    });
+  });
+
   it('Worker secret dit ce qui casse quand il manque', async () => {
     const { buildSettingRows } = await rowsModule();
     const missing = buildSettingRows({ ...BASE, workerSecretConfigured: false }).find(
@@ -499,7 +548,14 @@ describe('buildSettingRows — la config et l’environnement @cap:installer-et-
   it('une lecture qui a échoué se DIT, elle ne se remplace pas par un défaut plausible', async () => {
     const { buildSettingRows } = await rowsModule();
     const rows = buildSettingRows(BASE);
-    for (const id of ['network', 'auto-run-brake', 'verification', 'timezone', 'install-notes']) {
+    for (const id of [
+      'network',
+      'sandbox',
+      'auto-run-brake',
+      'verification',
+      'timezone',
+      'install-notes',
+    ]) {
       expect(rows.find((r) => r.id === id)!.value, id).toBe('Could not be read');
     }
   });
@@ -543,6 +599,7 @@ describe('filterSettingRows @cap:installer-et-demarrer/moteur', () => {
       workerSecretConfigured: true,
       security: null,
       network: null,
+      sandbox: null,
       autoRunPause: null,
       verification: null,
       proofRepair: null,
