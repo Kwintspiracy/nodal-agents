@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentWorkspaces, entities, eq, sql } from '@nodal-agents/db';
+import { agentWorkspaces, agents, entities, eq, sql } from '@nodal-agents/db';
 import { toolCacheRoot, type SandboxStatus } from '@nodal-agents/sandbox';
 import { SandboxStateSchema } from '@nodal-agents/shared';
 import { sandboxRoute, type SandboxRouteSources } from '../../routes/sandbox.ts';
@@ -90,17 +90,66 @@ describe('GET /api/sandbox @cap:executer-une-commande/moteur', () => {
       { path: join(home, '.ollama', 'models'), source: 'ollama', state: 'allowed' },
       { path: mine, source: 'user', state: 'allowed' },
     ]);
-    expect(body.agents).toEqual([
+    expect(body.agentFolders).toEqual([
       {
-        id: seed.agentId,
-        name: 'Test Agent',
-        runtime: 'nodal',
-        folders: [{ label: 'project', path: agentFolder }],
+        path: agentFolder,
+        agents: [{ id: seed.agentId, name: 'Test Agent', runtime: 'nodal', commands: 'sandbox' }],
       },
     ]);
+    expect(body.agentsWithoutFolder).toEqual([]);
     expect(body.sharedFolder).toMatch(new RegExp(`${seed.entityId}.shared$`));
+    // project + shared + tool cache + ollama + models
+    expect(body.writableFolderCount).toBe(5);
     expect(body.readRefused).toContain(realpathSync.native(join(home, '.nodalai')));
     expect(body.network).toEqual({ deniedPorts: [3001, 3000, 25444] });
+  });
+
+  it('groups agent folders by real folder, counts each writable folder once, and says where each runtime runs its commands', async () => {
+    const [cli] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Coder',
+        slug: 'coder-876',
+        personality: 'p',
+        runtime: 'claude-code',
+      })
+      .returning({ id: agents.id });
+    const [bare] = await db
+      .insert(agents)
+      .values({ entityId: seed.entityId, name: 'Bare', slug: 'bare-876', personality: 'p' })
+      .returning({ id: agents.id });
+    // Le même dossier, écrit autrement (casse sous Windows) ; et un dossier
+    // d'agent qui est aussi un dossier permis.
+    const sameFolder = process.platform === 'win32' ? agentFolder.toUpperCase() : agentFolder;
+    await db.insert(agentWorkspaces).values([
+      { agentId: cli!.id, entityId: seed.entityId, label: 'p', path: sameFolder },
+      { agentId: cli!.id, entityId: seed.entityId, label: 'm', path: mine },
+    ]);
+    await db
+      .update(entities)
+      .set({ sandboxFolders: { added: [mine], removed: [] } })
+      .where(eq(entities.id, seed.entityId));
+    try {
+      const res = await app(sources(), { trusted: true }).request(
+        `/api/sandbox?entityId=${seed.entityId}`,
+      );
+      const body = SandboxStateSchema.parse(await res.json());
+      const coder = { id: cli!.id, name: 'Coder', runtime: 'claude-code', commands: 'outside' };
+      const test = { id: seed.agentId, name: 'Test Agent', runtime: 'nodal', commands: 'sandbox' };
+      expect(body.agentFolders).toHaveLength(2);
+      expect(body.agentFolders).toContainEqual({ path: sameFolder, agents: [coder, test] });
+      expect(body.agentFolders).toContainEqual({ path: mine, agents: [coder] });
+      expect(body.agentsWithoutFolder).toEqual([
+        { id: bare!.id, name: 'Bare', runtime: 'nodal', commands: 'sandbox' },
+      ]);
+      // project (once) + models (agent AND allowed: once) + shared + tool cache + ollama
+      expect(body.writableFolderCount).toBe(5);
+    } finally {
+      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.agentId, cli!.id));
+      await db.delete(agents).where(eq(agents.id, cli!.id));
+      await db.delete(agents).where(eq(agents.id, bare!.id));
+    }
   });
 
   it('reads the switch from the base at every call: off is said, and so is unavailable', async () => {

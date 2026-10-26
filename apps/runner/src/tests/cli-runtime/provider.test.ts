@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  commandsPlacement,
   resolveRuntime,
   isCliSetupError,
   SERVED_CLI_RUNTIMES,
@@ -291,5 +292,20 @@ describe('les quatre listes de runtimes disent la même chose', () => {
     expect(card, 'un champ de plafond en dollars est revenu sur la carte').not.toContain(
       'Daily budget (USD)',
     );
+  });
+});
+
+describe('commandsPlacement — where the commands of each runtime run (#876) @cap:executer-une-commande/moteur', () => {
+  it('nodal runs them through its tools, in the sandbox', () => {
+    expect(commandsPlacement('nodal')).toBe('sandbox');
+  });
+
+  it('every CLI runtime this runner serves runs them in its own harness, outside the sandbox', () => {
+    expect(SERVED_CLI_RUNTIMES.length).toBeGreaterThan(0);
+    for (const runtime of SERVED_CLI_RUNTIMES) expect(commandsPlacement(runtime)).toBe('outside');
+  });
+
+  it('a runtime this runner does not serve is unknown, never assumed confined', () => {
+    expect(commandsPlacement('some-future-cli')).toBe('unknown');
   });
 });

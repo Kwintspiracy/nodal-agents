@@ -333,9 +333,9 @@ export function allowedFolderRefusal(
 export function broadFolderKind(
   path: string,
   machine: MachineView = thisMachine(),
-): 'drive-root' | 'home' | null {
+): 'volume-root' | 'home' | null {
   const abs = resolve(path);
-  if (dirname(abs) === abs) return 'drive-root';
+  if (dirname(abs) === abs) return 'volume-root';
   if (key(abs, machine.platform) === key(machine.home, machine.platform)) return 'home';
   return null;
 }
@@ -718,4 +718,13 @@ export function defaultAllowedFolders(machine: MachineView = thisMachine()): All
 function key(path: string, platform: NodeJS.Platform): string {
   const r = resolve(path);
   return platform === 'win32' ? r.toLowerCase() : r;
+}
+
+/**
+ * La clé de comparaison de deux chemins de dossier sur un système : résolus,
+ * casse repliée sous Windows. Celle dont la composition se sert ; l'écran du
+ * bac à sable (GET /api/sandbox) regroupe et compte les dossiers avec elle.
+ */
+export function folderKey(path: string, platform: NodeJS.Platform = process.platform): string {
+  return key(path, platform);
 }

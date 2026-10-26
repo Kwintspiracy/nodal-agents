@@ -97,6 +97,25 @@ export const ALLOWED_FOLDER_SOURCES = [
 ] as const;
 export type AllowedFolderSourceKey = (typeof ALLOWED_FOLDER_SOURCES)[number];
 
+/**
+ * Où tournent les commandes d'un agent, selon son runtime — un fait du RUNNER
+ * (`commandsPlacement`, apps/runner/src/cli-runtime/provider.ts) :
+ *   - `sandbox` : par les outils de Nodal, donc dans ce bac à sable ;
+ *   - `outside` : par le harnais d'une CLI de code, hors de ce bac à sable ;
+ *   - `unknown` : un runtime que ce runner ne sert pas (une base plus récente).
+ */
+export const COMMANDS_PLACEMENTS = ['sandbox', 'outside', 'unknown'] as const;
+export type CommandsPlacement = (typeof COMMANDS_PLACEMENTS)[number];
+
+const SandboxAgentSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  /** La valeur de `agents.runtime` (`nodal`, `claude-code`, `codex`…). */
+  runtime: z.string(),
+  commands: z.enum(COMMANDS_PLACEMENTS),
+});
+export type SandboxAgent = z.infer<typeof SandboxAgentSchema>;
+
 export const SandboxStateSchema = z.object({
   /** Le système du runner (`win32`, `darwin`, `linux`…). */
   platform: z.string(),
@@ -111,18 +130,24 @@ export const SandboxStateSchema = z.object({
       state: z.enum(['allowed', 'removed', 'missing', 'refused']),
     }),
   ),
-  /** Les dossiers de chaque agent actif de l'espace, où ses commandes écrivent. */
-  agents: z.array(
-    z.object({
-      id: z.string(),
-      name: z.string(),
-      /** `nodal`, ou le CLI de code qui sert l'agent (hors de ce bac à sable). */
-      runtime: z.string(),
-      folders: z.array(z.object({ label: z.string(), path: z.string() })),
-    }),
-  ),
+  /**
+   * Les dossiers des agents actifs, UN par dossier réel (le même dossier
+   * attaché à deux agents n'apparaît qu'une fois, avec les deux), dans l'ordre
+   * de leur premier agent. Le regroupement est fait par le runner, qui sait
+   * comparer deux chemins sur ce système.
+   */
+  agentFolders: z.array(z.object({ path: z.string(), agents: z.array(SandboxAgentSchema) })),
+  /** Les agents actifs sans dossier à eux : ils n'écrivent que dans le dossier partagé. */
+  agentsWithoutFolder: z.array(SandboxAgentSchema),
   /** Le dossier partagé de l'espace, que tout agent écrit ; `null` s'il n'a pas pu être créé. */
   sharedFolder: z.string().nullable(),
+  /**
+   * Combien de dossiers DISTINCTS une commande confinée peut écrire : les
+   * dossiers des agents, le partagé, et les dossiers permis à l'état `allowed`
+   * — hors le dossier attaché à une demande et le temporaire de chaque run, qui
+   * n'existent que pendant un run.
+   */
+  writableFolderCount: z.number().int().nonnegative(),
   /** Les dossiers de données de Nodal qu'une commande confinée ne lit pas. */
   readRefused: z.array(z.string()),
   /** Les ports de Nodal refusés par le proxy, ou le code qui dit qu'ils sont inconnus. */

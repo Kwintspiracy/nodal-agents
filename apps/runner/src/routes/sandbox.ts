@@ -22,6 +22,7 @@ import { z } from 'zod';
 import { agents, and, eq, readWorkspaceSandbox } from '@nodal-agents/db';
 import {
   composeAllowedFolders,
+  folderKey,
   getSandboxStatus,
   nodalDataFolders,
   nodalDeniedEndpoints,
@@ -32,6 +33,7 @@ import {
 import { SANDBOX_SETTINGS_UNREADABLE, type SandboxState } from '@nodal-agents/shared';
 import { resolveRunWorkspaces } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../deps.ts';
+import { commandsPlacement } from '../cli-runtime/provider.ts';
 
 const QuerySchema = z.object({ entityId: z.string().guid() });
 
@@ -76,18 +78,38 @@ export async function sandboxRoute(
     .from(agents)
     .where(and(eq(agents.entityId, entityId), eq(agents.active, true)))
     .orderBy(agents.name);
+  // Regroupés PAR DOSSIER, avec la clé de comparaison du bac à sable lui-même
+  // (`folderKey`) : sous Windows, `D:\Dev` et `d:\dev` sont un seul dossier.
+  // Chaque agent dit où tournent ses commandes (`commandsPlacement`, la source
+  // unique, à côté du tableau des runtimes).
+  const platform = sources.machine?.platform ?? process.platform;
   let sharedFolder: string | null = null;
-  const agentFolders: SandboxState['agents'] = [];
+  const byFolder = new Map<string, SandboxState['agentFolders'][number]>();
+  const agentsWithoutFolder: SandboxState['agentsWithoutFolder'] = [];
   for (const a of agentRows) {
     const resolved = await resolveRunWorkspaces(db, a.id, entityId);
     sharedFolder = resolved.sharedPath;
-    agentFolders.push({
+    const agent = {
       id: a.id,
       name: a.name,
       runtime: a.runtime,
-      folders: resolved.attached.map((w) => ({ label: w.label, path: w.path })),
-    });
+      commands: commandsPlacement(a.runtime),
+    };
+    if (resolved.attached.length === 0) agentsWithoutFolder.push(agent);
+    for (const w of resolved.attached) {
+      const k = folderKey(w.path, platform);
+      const group = byFolder.get(k) ?? { path: w.path, agents: [] };
+      if (!group.agents.some((g) => g.id === agent.id)) group.agents.push(agent);
+      byFolder.set(k, group);
+    }
   }
+  const allowedFolders = composeAllowedFolders(settings.folders, sources.machine);
+  // Les dossiers DISTINCTS qu'une commande confinée peut écrire.
+  const writable = new Set<string>([
+    ...byFolder.keys(),
+    ...(sharedFolder ? [folderKey(sharedFolder, platform)] : []),
+    ...allowedFolders.filter((f) => f.state === 'allowed').map((f) => folderKey(f.path, platform)),
+  ]);
 
   let network: SandboxState['network'];
   try {
@@ -98,7 +120,7 @@ export async function sandboxRoute(
   }
 
   const body: SandboxState = {
-    platform: sources.machine?.platform ?? process.platform,
+    platform,
     status:
       status.state === 'available'
         ? {
@@ -108,13 +130,11 @@ export async function sandboxRoute(
           }
         : { state: 'unavailable', code: status.code, reason: status.reason },
     enabled: settings.enabled,
-    allowedFolders: composeAllowedFolders(settings.folders, sources.machine).map((f) => ({
-      path: f.path,
-      source: f.source,
-      state: f.state,
-    })),
-    agents: agentFolders,
+    allowedFolders: allowedFolders.map((f) => ({ path: f.path, source: f.source, state: f.state })),
+    agentFolders: [...byFolder.values()],
+    agentsWithoutFolder,
     sharedFolder,
+    writableFolderCount: writable.size,
     readRefused: nodalDataFolders(sources.machine),
     network,
   };

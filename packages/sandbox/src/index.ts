@@ -30,6 +30,7 @@ export {
   allowedFolderRefusal,
   broadFolderKind,
   composeAllowedFolders,
+  folderKey,
   defaultAllowedFolders,
   noWorkspaceSandbox,
   nodalDataFolders,

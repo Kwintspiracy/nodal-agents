@@ -330,7 +330,7 @@ describe('broadFolderKind — what asks for a confirmation before it is allowed'
     const m = machineAt();
     const root = resolve('/');
     expect(dirname(root)).toBe(root);
-    expect(broadFolderKind(root, m)).toBe('drive-root');
+    expect(broadFolderKind(root, m)).toBe('volume-root');
     expect(broadFolderKind(m.home, m)).toBe('home');
     expect(broadFolderKind(join(m.home, 'Documents'), m)).toBeNull();
   });
