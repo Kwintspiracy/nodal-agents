@@ -98,6 +98,8 @@ export default function SettingsSections({
               <p className="text-body-13 text-warn" data-testid={`setting-unread-${row.id}`}>
                 {row.value}. Reload the page, and check the runner is up.
               </p>
+            ) : row.panelFrame === 'none' ? (
+              panel
             ) : (
               <div className="rounded-lg border border-rule-2 bg-paper p-4">{panel}</div>
             )}

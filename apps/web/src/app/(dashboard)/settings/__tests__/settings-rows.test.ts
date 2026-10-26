@@ -500,7 +500,9 @@ describe('buildSettingRows — la config et l’environnement @cap:installer-et-
       status: { state: 'available', backend: 'mxc-processcontainer' },
       enabled: true,
       allowedFolders: [],
-      agents: [],
+      agentFolders: [],
+      agentsWithoutFolder: [],
+      writableFolderCount: 0,
       sharedFolder: null,
       readRefused: [],
       network: { deniedPorts: [3000, 3001] },
@@ -511,12 +513,13 @@ describe('buildSettingRows — la config et l’environnement @cap:installer-et-
       buildSettingRows({ ...BASE, sandbox }).find((r) => r.id === 'sandbox')!;
     expect(row(view({}))).toMatchObject({
       value: 'Active, mxc-processcontainer',
-      tag: { variant: 'ok', label: 'ACTIVE' },
       toggle: true,
+      panelFrame: 'none',
     });
+    // L'état se dit dans la carte de la section : pas de pastille dans l'en-tête.
+    expect(row(view({})).tag).toBeUndefined();
     expect(row(view({ enabled: false }))).toMatchObject({
       value: 'Off for this workspace',
-      tag: { variant: 'warn', label: 'OFF' },
       toggle: false,
     });
     expect(
@@ -527,7 +530,6 @@ describe('buildSettingRows — la config et l’environnement @cap:installer-et-
       ),
     ).toMatchObject({
       value: 'Not available on this system yet',
-      tag: { variant: 'warn', label: 'UNAVAILABLE' },
       toggle: false,
     });
     expect(row(null)).toMatchObject({

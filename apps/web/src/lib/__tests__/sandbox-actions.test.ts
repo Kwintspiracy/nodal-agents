@@ -91,11 +91,15 @@ describe('the allowed folders, persisted as gestures only @cap:executer-une-comm
     });
   });
 
-  it('refuses the data folder of Nodal and any folder under it, with the reason, writing nothing', async () => {
-    for (const p of [join(homedir(), '.nodalai'), join(homedir(), '.nodalai', 'workspaces')]) {
+  it('refuses the data folder of Nodal and any folder under it, with its code and the folder that holds it, writing nothing', async () => {
+    const data = join(homedir(), '.nodalai');
+    for (const p of [data, join(data, 'workspaces')]) {
       const r = await A.addSandboxFolderAction({ path: p });
-      expect(r).toMatchObject({ ok: false, code: 'SANDBOX_REACH_IS_NODAL_HOME' });
-      expect(r.ok === false && r.message).toContain('Nodal keeps its own data in');
+      expect(r).toMatchObject({
+        ok: true,
+        data: { kind: 'refused', code: 'SANDBOX_REACH_IS_NODAL_HOME' },
+      });
+      expect(r.ok && r.data.kind === 'refused' && resolve(r.data.within)).toBe(resolve(data));
     }
     expect((await stored()).folders).toEqual({ added: [], removed: [] });
   });
@@ -115,7 +119,7 @@ describe('the allowed folders, persisted as gestures only @cap:executer-une-comm
     const root = resolve('/');
     expect(await A.addSandboxFolderAction({ path: root })).toEqual({
       ok: true,
-      data: { kind: 'confirm', broad: 'drive-root' },
+      data: { kind: 'confirm', broad: 'volume-root' },
     });
     expect((await stored()).folders.added).toEqual([]);
     expect(await A.addSandboxFolderAction({ path: root, confirmedBroad: true })).toEqual({
@@ -163,7 +167,9 @@ describe('getSandboxAction reads the runner and checks its answer @cap:executer-
     status: { state: 'available', backend: 'mxc-processcontainer' },
     enabled: true,
     allowedFolders: [{ path: 'C:\\cache', source: 'tool-cache', state: 'allowed' }],
-    agents: [],
+    agentFolders: [],
+    agentsWithoutFolder: [],
+    writableFolderCount: 1,
     sharedFolder: null,
     readRefused: ['C:\\Users\\me\\.nodalai'],
     network: { deniedPorts: [3000, 3001, 25444] },

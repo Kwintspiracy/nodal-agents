@@ -191,11 +191,16 @@ const AddSchema = z
   .object({ path: z.string().min(1), confirmedBroad: z.boolean().optional() })
   .strict();
 
-/** Ce que l'ajout a fait, ou la confirmation qu'il attend. */
+/**
+ * Ce que l'ajout a fait, la confirmation qu'il attend, ou le refus de la règle
+ * du bac à sable (`SANDBOX_REACH_IS_NODAL_HOME`, avec le dossier de données
+ * qui contient le chemin) — un refus que l'écran dit en ligne, pas un échec.
+ */
 export type AddSandboxFolderResult =
   | { kind: 'added' }
   | { kind: 'restored' }
-  | { kind: 'confirm'; broad: 'drive-root' | 'home' };
+  | { kind: 'confirm'; broad: 'volume-root' | 'home' }
+  | { kind: 'refused'; code: string; within: string };
 
 /** Relit, applique `change`, réécrit. Le réglage illisible fait échouer, nommé. */
 async function updateFolders(
@@ -209,8 +214,8 @@ async function updateFolders(
 
 /**
  * Permet un dossier aux commandes de l'espace. Refusé : un chemin relatif, un
- * dossier absent, le dossier de données de Nodal ou un dossier sous lui (la
- * raison est dite). Une racine de disque ou le dossier personnel rendent
+ * dossier absent, le dossier de données de Nodal ou un dossier sous lui (rendu
+ * comme `refused`, avec son code). Une racine de volume ou le dossier personnel rendent
  * `confirm` tant que l'écran n'a pas confirmé. Un dossier détecté que
  * l'utilisateur avait retiré est simplement rétabli.
  */
@@ -228,12 +233,7 @@ export async function addSandboxFolderAction(
     // Le refus d'abord : un dossier de Nodal se refuse pour ce qu'il est, qu'il
     // existe encore ou non.
     const nodal = allowedFolderRefusal(path);
-    if (nodal) {
-      return fail(
-        nodal.code,
-        `Nodal keeps its own data in ${nodal.within}, its keys and settings included. A command allowed to write there could change what Nodal reads, so this folder cannot be added.`,
-      );
-    }
+    if (nodal) return ok({ kind: 'refused', code: nodal.code, within: nodal.within });
     let isDir = false;
     try {
       isDir = statSync(path).isDirectory();

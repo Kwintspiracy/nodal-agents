@@ -73,6 +73,12 @@ export type SettingRow = {
   tag?: { variant: 'ok' | 'warn'; label: string };
   /** The switch the board draws on two rows — a picture of the state, never a control. */
   toggle?: boolean;
+  /**
+   * How the page frames the setting's panel: `card` (default) puts it in the
+   * page's bordered box; `none` lets a panel made of its own cards (Sandbox,
+   * #876) sit directly under the heading, without a box around the boxes.
+   */
+  panelFrame?: 'card' | 'none';
 };
 
 /** Everything the list needs, gathered by the page from its actions. */
@@ -220,17 +226,12 @@ export function buildSettingRows(src: SettingsSource): SettingRow[] {
     id: 'sandbox',
     group: 'safety',
     name: 'Sandbox',
-    lede: 'Where the commands your agents start can write, what they cannot read, and the switch that turns it off.',
+    lede: "Where your agents' commands can write, what they cannot read, and what they can reach.",
     value: sandboxValue(src.sandbox),
-    tag:
-      src.sandbox === null
-        ? { variant: 'warn', label: 'UNREAD' }
-        : sandboxRegime(src.sandbox) === 'active'
-          ? { variant: 'ok', label: 'ACTIVE' }
-          : sandboxRegime(src.sandbox) === 'off'
-            ? { variant: 'warn', label: 'OFF' }
-            : { variant: 'warn', label: 'UNAVAILABLE' },
+    // L'état se dit dans la carte de la section, pas par une pastille de plus.
+    ...(src.sandbox === null ? { tag: { variant: 'warn' as const, label: 'UNREAD' } } : {}),
     toggle: src.sandbox !== null && sandboxRegime(src.sandbox) === 'active',
+    panelFrame: 'none',
   });
 
   rows.push({

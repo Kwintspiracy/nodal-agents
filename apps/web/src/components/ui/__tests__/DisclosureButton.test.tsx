@@ -228,7 +228,7 @@ describe('DisclosureButton — la garde du retrait', () => {
     ).toEqual([]);
   });
 
-  it('seules deux rangées demandent un retrait vertical réduit, et aucune un retrait nul (#399)', () => {
+  it('seules deux rangées demandent un retrait vertical réduit, et une seule un retrait nul (#399, #876)', () => {
     // Les rangées à hauteur fixe et Handoff passaient un `py-0` qui n'a jamais
     // été rendu ; elles ont été validées à 12 px et le gardent (aucune ne pose
     // `insetY`). HistoryGroup et ProjectShelf demandaient 8 px et les ont.
@@ -250,7 +250,11 @@ describe('DisclosureButton — la garde du retrait', () => {
       'app/(dashboard)/spaces/HistoryGroup.tsx',
       'app/(dashboard)/spaces/ProjectShelf.tsx',
     ]);
-    expect(none).toEqual([]);
+    // #876 : « N known limits » de la carte d'état du bac à sable n'est pas une
+    // rangée mais un lien de dépliage DANS le pied de la carte, dont le retrait
+    // est celui du pied (maquette validée par le propriétaire le 27/10, montrée
+    // en capture dans la PR #877).
+    expect(none).toEqual(['app/(dashboard)/settings/SandboxSection.tsx']);
   });
 
   it('CONTRE-ÉPREUVE : la lecture de la balise voit un px-* et ignore ce qui suit', () => {
