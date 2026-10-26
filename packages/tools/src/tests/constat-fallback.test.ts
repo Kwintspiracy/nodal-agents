@@ -30,6 +30,7 @@ import { fileProducedByDescendant } from '../descendant-files';
 import { constatedGitWrites, snapshotGitAvant } from '../verification/git-constat';
 import { snapshot } from '@nodal-agents/checkpoints';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
+import { noWorkspaceSandbox } from '@nodal-agents/sandbox';
 
 const run = promisify(execFile);
 
@@ -244,20 +245,20 @@ const ecrits = (c: Awaited<ReturnType<typeof constatedGitWrites>>) =>
 describe('the fallback reads a frozen copy of the snapshot, not the store as is (#590) @cap:travailler-sur-des-fichiers/moteur', () => {
   it('only what the call wrote is constated', async () => {
     const { ws, store, reel } = await photographie('delta', { 'a.txt': 'a', 'b.txt': 'b' });
-    const avant = await snapshotGitAvant([ws], { store, workspaces: [ws] });
+    const avant = await snapshotGitAvant([ws], noWorkspaceSandbox, { store, workspaces: [ws] });
     await writeFile(join(ws, 'c.txt'), 'c');
 
-    expect(ecrits(await constatedGitWrites(avant))).toEqual([
+    expect(ecrits(await constatedGitWrites(avant, noWorkspaceSandbox))).toEqual([
       { path: `${reel}/c.txt`, kind: 'added' },
     ]);
   });
 
   it('a file that was there and is rewritten is modified, not added', async () => {
     const { ws, store, reel } = await photographie('modifie', { 'a.txt': 'avant' });
-    const avant = await snapshotGitAvant([ws], { store, workspaces: [ws] });
+    const avant = await snapshotGitAvant([ws], noWorkspaceSandbox, { store, workspaces: [ws] });
     await writeFile(join(ws, 'a.txt'), 'après');
 
-    expect(ecrits(await constatedGitWrites(avant))).toEqual([
+    expect(ecrits(await constatedGitWrites(avant, noWorkspaceSandbox))).toEqual([
       { path: `${reel}/a.txt`, kind: 'modified' },
     ]);
   });
@@ -266,24 +267,24 @@ describe('the fallback reads a frozen copy of the snapshot, not the store as is 
     const fichiers: Record<string, string> = {};
     for (let i = 0; i < 1100; i++) fichiers[`img-${i}.png`] = `image ${i}`;
     const { ws, store, reel } = await photographie('gros', fichiers, 240_000);
-    const avant = await snapshotGitAvant([ws], { store, workspaces: [ws] });
+    const avant = await snapshotGitAvant([ws], noWorkspaceSandbox, { store, workspaces: [ws] });
     await writeFile(join(ws, 'neuve.png'), 'neuve');
 
-    expect(ecrits(await constatedGitWrites(avant))).toEqual([
+    expect(ecrits(await constatedGitWrites(avant, noWorkspaceSandbox))).toEqual([
       { path: `${reel}/neuve.png`, kind: 'added' },
     ]);
   }, 300_000);
 
   it('another job snapshotting between the before and the after does not swallow the write', async () => {
     const { ws, store, reel } = await photographie('concurrent', { 'a.txt': 'a' });
-    const avant = await snapshotGitAvant([ws], { store, workspaces: [ws] });
+    const avant = await snapshotGitAvant([ws], noWorkspaceSandbox, { store, workspaces: [ws] });
     await writeFile(join(ws, 'c.txt'), 'c');
     await writeFile(join(ws, 'a.txt'), 'a réécrit');
     // L'instantané d'un AUTRE job, sur le même workspace : il restage l'index
     // partagé, fichiers écrits par cet appel compris.
     await snapshot(store, ws, 'un autre job');
 
-    expect(ecrits(await constatedGitWrites(avant))).toEqual(
+    expect(ecrits(await constatedGitWrites(avant, noWorkspaceSandbox))).toEqual(
       expect.arrayContaining([
         { path: `${reel}/c.txt`, kind: 'added' },
         { path: `${reel}/a.txt`, kind: 'modified' },
@@ -296,9 +297,9 @@ describe('the fallback reads a frozen copy of the snapshot, not the store as is 
     const indexes = join(store, 'indexes');
     const [cle] = await readdir(indexes);
     const octetsAvant = await readFile(join(indexes, cle!));
-    const avant = await snapshotGitAvant([ws], { store, workspaces: [ws] });
+    const avant = await snapshotGitAvant([ws], noWorkspaceSandbox, { store, workspaces: [ws] });
     await writeFile(join(ws, 'c.txt'), 'c');
-    await constatedGitWrites(avant);
+    await constatedGitWrites(avant, noWorkspaceSandbox);
 
     expect((await readFile(join(indexes, cle!))).equals(octetsAvant)).toBe(true);
     expect(await readdir(indexes)).toEqual([cle]);
@@ -311,7 +312,7 @@ describe('the fallback reads a frozen copy of the snapshot, not the store as is 
       await mkdir(jamais, { recursive: true });
       // Un magasin qui existe, mais aucun instantané de CE workspace.
       const { store } = await photographie('autre-ws', { 'a.txt': 'a' });
-      await snapshotGitAvant([jamais], { store, workspaces: [jamais] });
+      await snapshotGitAvant([jamais], noWorkspaceSandbox, { store, workspaces: [jamais] });
       const dit = warn.mock.calls.map((c) => c.map(String).join(' '));
       expect(dit.some((l) => l.includes('reason=never_snapshotted'))).toBe(true);
       expect(dit.some((l) => l.includes('GIT_CONSTAT_STATUS_FAILED'))).toBe(false);
@@ -325,7 +326,10 @@ describe('the fallback reads a frozen copy of the snapshot, not the store as is 
     try {
       const { ws, store } = await photographie('couverture', { 'a.txt': 'a' });
       const appel = async (jobId: string) =>
-        constatedGitWrites(await snapshotGitAvant([ws], { store, workspaces: [ws], jobId }));
+        constatedGitWrites(
+          await snapshotGitAvant([ws], noWorkspaceSandbox, { store, workspaces: [ws], jobId }),
+          noWorkspaceSandbox,
+        );
       await appel('job-1');
       await appel('job-1');
       await appel('job-2');
@@ -346,24 +350,24 @@ describe('the fallback reads a frozen copy of the snapshot, not the store as is 
 
   it('a deleted file is constated deleted', async () => {
     const { ws, store, reel } = await photographie('supprime', { 'a.txt': 'a', 'b.txt': 'b' });
-    const avant = await snapshotGitAvant([ws], { store, workspaces: [ws] });
+    const avant = await snapshotGitAvant([ws], noWorkspaceSandbox, { store, workspaces: [ws] });
     await rm(join(ws, 'a.txt'));
 
-    expect(ecrits(await constatedGitWrites(avant))).toEqual([
+    expect(ecrits(await constatedGitWrites(avant, noWorkspaceSandbox))).toEqual([
       { path: `${reel}/a.txt`, kind: 'deleted' },
     ]);
   });
 
   it('a write in a path the snapshot excludes is not constated', async () => {
     const { ws, store, reel } = await photographie('exclu', { 'a.txt': 'a' });
-    const avant = await snapshotGitAvant([ws], { store, workspaces: [ws] });
+    const avant = await snapshotGitAvant([ws], noWorkspaceSandbox, { store, workspaces: [ws] });
     await mkdir(join(ws, 'dist'), { recursive: true });
     await writeFile(join(ws, 'dist', 'x.js'), 'x');
     await writeFile(join(ws, 'c.txt'), 'c');
 
     // Seul `c.txt` : `dist/` est une exclusion du magasin, et c'est la limite
     // que GIT_CONSTAT_FALLBACK_COVERAGE annonce.
-    expect(ecrits(await constatedGitWrites(avant))).toEqual([
+    expect(ecrits(await constatedGitWrites(avant, noWorkspaceSandbox))).toEqual([
       { path: `${reel}/c.txt`, kind: 'added' },
     ]);
   });
@@ -384,7 +388,7 @@ describe('the fallback reads a frozen copy of the snapshot, not the store as is 
           ),
         );
       }
-      const avant = await snapshotGitAvant([ws], { store, workspaces: [ws] });
+      const avant = await snapshotGitAvant([ws], noWorkspaceSandbox, { store, workspaces: [ws] });
 
       expect(avant).toEqual([]);
       const dit = warn.mock.calls.map((c) => c.map(String).join(' '));
@@ -406,7 +410,9 @@ describe('the fallback reads a frozen copy of the snapshot, not the store as is 
       // Un dossier à la place de l'index : il existe, mais ne se lit pas.
       await rm(join(indexes, cle!));
       await mkdir(join(indexes, cle!));
-      expect(await snapshotGitAvant([ws], { store, workspaces: [ws] })).toEqual([]);
+      expect(await snapshotGitAvant([ws], noWorkspaceSandbox, { store, workspaces: [ws] })).toEqual(
+        [],
+      );
       const dit = warn.mock.calls.map((c) => c.map(String).join(' '));
       expect(dit.some((l) => l.includes('reason=freeze_failed'))).toBe(true);
     } finally {
@@ -421,7 +427,9 @@ describe('the fallback reads a frozen copy of the snapshot, not the store as is 
       const indexes = join(store, 'indexes');
       const [cle] = await readdir(indexes);
       await writeFile(join(indexes, cle!), 'pas un index git');
-      expect(await snapshotGitAvant([ws], { store, workspaces: [ws] })).toEqual([]);
+      expect(await snapshotGitAvant([ws], noWorkspaceSandbox, { store, workspaces: [ws] })).toEqual(
+        [],
+      );
       const dit = warn.mock.calls.map((c) => c.map(String).join(' '));
       expect(dit.some((l) => l.includes('reason=snapshot_status_failed'))).toBe(true);
       expect(await readdir(indexes)).toEqual([cle]);
@@ -432,11 +440,14 @@ describe('the fallback reads a frozen copy of the snapshot, not the store as is 
 
   it('the same workspace listed twice is frozen once, and no copy is left behind', async () => {
     const { ws, store, reel } = await photographie('deux-fois', { 'a.txt': 'a' });
-    const avant = await snapshotGitAvant([ws], { store, workspaces: [ws, `${ws}/`] });
+    const avant = await snapshotGitAvant([ws], noWorkspaceSandbox, {
+      store,
+      workspaces: [ws, `${ws}/`],
+    });
     expect(avant).toHaveLength(1);
     await writeFile(join(ws, 'c.txt'), 'c');
 
-    expect(ecrits(await constatedGitWrites(avant))).toEqual([
+    expect(ecrits(await constatedGitWrites(avant, noWorkspaceSandbox))).toEqual([
       { path: `${reel}/c.txt`, kind: 'added' },
     ]);
     expect((await readdir(join(store, 'indexes'))).filter((f) => f.includes('.constat-'))).toEqual(

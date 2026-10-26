@@ -22,7 +22,11 @@
 // `child_process`, and putting a probe there would have broken the seam. Same
 // split as the inventory: the runner computes, the orchestration renders.
 
-import { withNodalPrograms, type ProgramRunner } from '@nodal-agents/sandbox';
+import {
+  withNodalPrograms,
+  type ProgramRunner,
+  type WorkspaceSandboxReader,
+} from '@nodal-agents/sandbox';
 import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
 
 /** A probe that hangs must not hold a job's start. */
@@ -121,9 +125,13 @@ export function gitProbeTarget(
  * the remotes, not the diff — a system prompt is not a dashboard, and every
  * extra line is paid on every turn of every job.
  */
-export async function probeWorkspaceGit(cwd: string): Promise<WorkspaceGitState | null> {
+export async function probeWorkspaceGit(
+  cwd: string,
+  /** Le réglage du bac à sable de l'espace du job (#876) : coupé, git tourne sur l'hôte. */
+  workspace: WorkspaceSandboxReader,
+): Promise<WorkspaceGitState | null> {
   // UNE session pour la sonde : ses quatre git partagent un conteneur, tué à la fin.
-  return withNodalPrograms((programs) => probeWith(programs, cwd));
+  return withNodalPrograms((programs) => probeWith(programs, cwd), { workspace });
 }
 
 async function probeWith(programs: ProgramRunner, cwd: string): Promise<WorkspaceGitState | null> {

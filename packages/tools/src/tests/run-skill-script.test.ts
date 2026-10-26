@@ -13,6 +13,13 @@ import {
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { SandboxReport } from '../builtin/shell-engine';
+import { workspaceDb, type WorkspaceDb } from './workspace-db';
+
+// Une vraie base : la commande relit le réglage du bac à sable de l'espace (#876).
+let wdb: WorkspaceDb;
+beforeAll(async () => {
+  wdb = await workspaceDb();
+});
 
 /** Les écritures refusées d'un résultat CONFINÉ ; un résultat non confiné fait échouer. */
 function refusedOf(out: { sandbox?: SandboxReport }): readonly RefusedWrite[] {
@@ -36,9 +43,8 @@ function ctx(over: Partial<ToolContext> = {}): ToolContext {
   return {
     jobId: JOB,
     agentId: 'a',
-    entityId: 'e',
-    // Builtin never touches the db — a stub is fine and keeps the test pure.
-    db: {} as ToolContext['db'],
+    entityId: wdb.entityId,
+    db: wdb.db,
     jobChatId: null,
     skillStoreDir: storeDir,
     assignedSkillSlugs: [SLUG],

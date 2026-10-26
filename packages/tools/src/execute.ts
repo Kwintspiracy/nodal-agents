@@ -1,6 +1,14 @@
 // @nodal-agents/tools — execution wrapper with approval gate and audit trail
 
-import { approvalRequests, toolCalls, jobCheckpoints, and, eq, inArray } from '@nodal-agents/db';
+import {
+  approvalRequests,
+  toolCalls,
+  jobCheckpoints,
+  and,
+  eq,
+  inArray,
+  workspaceSandboxReader,
+} from '@nodal-agents/db';
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
 import {
   redactSecretsForAudit,
@@ -889,6 +897,8 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
             dossiersVises.map((t) => t.path),
             (ctx.workspaces ?? []).map((w) => w.path),
           ),
+          // L'interrupteur du bac à sable de l'espace couvre ces git (#876).
+          workspaceSandboxReader(ctx.db, ctx.entityId),
           // Un workspace qu'aucun dépôt ne couvre est constaté contre son
           // instantané de checkpoint, pris juste au-dessus (#590).
           {
@@ -1039,7 +1049,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       //
       // Les bornes (chemins ignorés non comptés, deux jobs sur le même dépôt,
       // arbre trop sale) sont écrites dans `git-constat.ts`, pas ici.
-      const git = await constatedGitWrites(gitAvant);
+      const git = await constatedGitWrites(gitAvant, workspaceSandboxReader(ctx.db, ctx.entityId));
       const aConstater = {
         changedFiles: [
           ...fichiersDisque,
@@ -1583,8 +1593,9 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
   // imbriqué du workspace, qui lit SA config — un `core.fsmonitor` planté par
   // une commande confinée s'y exécutait sur l'hôte. Une session pour toute la
   // boucle : ses git partagent un conteneur, tué à la fin.
-  return withNodalPrograms((programs) =>
-    checkpointEachWorkspace(toolName, ctx, store, workspaces, programs),
+  return withNodalPrograms(
+    (programs) => checkpointEachWorkspace(toolName, ctx, store, workspaces, programs),
+    { workspace: workspaceSandboxReader(ctx.db, ctx.entityId) },
   );
 }
 

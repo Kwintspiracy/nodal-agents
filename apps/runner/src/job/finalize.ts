@@ -91,7 +91,7 @@
 // des données.
 
 import { randomUUID } from 'node:crypto';
-import { and, eq, isNull, lt, or, sql, ownJobRow } from '@nodal-agents/db';
+import { and, eq, isNull, lt, or, sql, ownJobRow, workspaceSandboxReader } from '@nodal-agents/db';
 import {
   agentJobs,
   entities,
@@ -955,7 +955,17 @@ export async function finalizeJobSuccess(
       writableRoots = withJobFolder(agentFolders, job.jobFolder).map((w) => w.path);
     }
 
-    return { entityId: job.entityId, plans, maxReparations, proofScope: { writableRoots, jobId } };
+    // Le réglage du bac à sable de l'espace, relu par le moteur à chaque
+    // commande de preuve (#876) — sur `db`, la preuve tournant hors transaction.
+    // Un job sans espace n'a aucun plan de preuve (FINALIZE_JOB_WITHOUT_ENTITY
+    // ci-dessus) : la chaîne vide n'est jamais lue.
+    const workspace = workspaceSandboxReader(db, job.entityId ?? '');
+    return {
+      entityId: job.entityId,
+      plans,
+      maxReparations,
+      proofScope: { writableRoots, jobId, workspace },
+    };
   });
 
   if (!opened) return alreadyTerminal;

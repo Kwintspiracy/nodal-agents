@@ -21,7 +21,13 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { JobProcessScope, createSandbox, mxcBackend, openNodalPrograms } from '../index';
+import {
+  JobProcessScope,
+  createSandbox,
+  mxcBackend,
+  noWorkspaceSandbox,
+  openNodalPrograms,
+} from '../index';
 import { tier } from './mxc-tier';
 
 const isWindows = process.platform === 'win32';
@@ -281,7 +287,10 @@ process.stdout.write('RESULT '+JSON.stringify(r));`,
         GIT_OBJECT_DIRECTORY: scratchObjects,
         GIT_ALTERNATE_OBJECT_DIRECTORIES: join(gitDir, 'objects'),
       };
-      const programs = await openNodalPrograms(sandbox);
+      const programs = await openNodalPrograms({
+        workspace: noWorkspaceSandbox,
+        ...(sandbox ? { sandbox } : {}),
+      });
       let attempts: Record<string, string> = {};
       try {
         expect(programs.confined).toBe(true);

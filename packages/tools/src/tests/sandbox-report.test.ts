@@ -12,6 +12,13 @@ import { closeJobProcessScope, createSandbox, jobProcessScope } from '@nodal-age
 import { runCommandTool } from '../builtin/run-command';
 import { runSkillScriptTool } from '../builtin/run-skill-script';
 import type { ToolContext } from '../types';
+import { workspaceDb, type WorkspaceDb } from './workspace-db';
+
+// Une vraie base : la commande relit le réglage du bac à sable de l'espace (#876).
+let wdb: WorkspaceDb;
+beforeAll(async () => {
+  wdb = await workspaceDb();
+});
 
 const JOB = 'job-sandbox-report';
 const SLUG = 'report-skill';
@@ -22,8 +29,8 @@ function ctx(): ToolContext {
   return {
     jobId: JOB,
     agentId: 'agent-report',
-    entityId: 'entity-report',
-    db: undefined as unknown as ToolContext['db'],
+    entityId: wdb.entityId,
+    db: wdb.db,
     jobChatId: null,
     workspaces: [{ label: 'ws', path: ws }],
     skillStoreDir: store,

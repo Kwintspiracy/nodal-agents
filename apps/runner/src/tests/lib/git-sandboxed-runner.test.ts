@@ -19,6 +19,7 @@ import {
   JobProcessScope,
   mxcBackend,
   nodalProgramsSandbox,
+  noWorkspaceSandbox,
 } from '@nodal-agents/sandbox';
 import { listCheckpoints, snapshot } from '@nodal-agents/checkpoints';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -130,7 +131,7 @@ describe.runIf(available)(
 
     it('la sonde décrit le dépôt sans rien lancer sur l’hôte', async () => {
       await plantedRepo();
-      const state = await probeWorkspaceGit(ws);
+      const state = await probeWorkspaceGit(ws, noWorkspaceSandbox);
       expect(state?.root).toBe(fwd(ws));
       expect(state?.dirtyCount).toBeGreaterThan(0);
       expect(existsSync(marker), 'the planted command ran on the HOST').toBe(false);
@@ -182,9 +183,9 @@ describe.runIf(available)(
       await plantedSubRepo();
       const store = join(root, 'checkpoints');
       const workspaces = [{ label: 'shared', path: ws }];
-      await takeCliTurnCheckpoints(db, seed.jobId, workspaces, 1);
+      await takeCliTurnCheckpoints(db, seed.jobId, workspaces, 1, seed.entityId);
       await touchSub();
-      await takeCliTurnCheckpoints(db, seed.jobId, workspaces, 2);
+      await takeCliTurnCheckpoints(db, seed.jobId, workspaces, 2, seed.entityId);
       expect(await listCheckpoints(store, ws)).toHaveLength(2);
       expect(existsSync(marker), 'the planted command ran on the HOST').toBe(false);
     }, 120_000);

@@ -57,6 +57,7 @@ import {
   // UNE transaction pour oublier un projet : les liens coupés et la ligne
   // supprimée arrivent ensemble, ou rien n'arrive.
   withTransaction,
+  workspaceSandboxReader,
 } from '@nodal-agents/db';
 import {
   normalizePath,
@@ -1606,7 +1607,10 @@ export async function createProjectAction(
     // et l'écran dira que rien n'a été posé (invariant #4).
     let gitInitializedAt: Date | null = null;
     if (input.initGit) {
-      const pose = await withNodalPrograms((programs) => initGitRepository(path, programs));
+      // L'interrupteur du bac à sable de l'espace couvre ce git aussi (#876).
+      const pose = await withNodalPrograms((programs) => initGitRepository(path, programs), {
+        workspace: workspaceSandboxReader(db, session.entityId),
+      });
       if (pose.kind === 'initialised') gitInitializedAt = new Date();
       else if (pose.kind === 'failed') {
         console.warn(`[projects] PROJECT_GIT_INIT_FAILED key=${key} reason=${pose.reason}`);

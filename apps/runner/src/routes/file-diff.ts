@@ -19,7 +19,15 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import { existsSync, statSync } from 'node:fs';
 import { relative } from 'node:path';
-import { agentJobs, agentWorkspaces, jobCheckpoints, toolCalls, and, eq } from '@nodal-agents/db';
+import {
+  agentJobs,
+  agentWorkspaces,
+  jobCheckpoints,
+  toolCalls,
+  and,
+  eq,
+  workspaceSandboxReader,
+} from '@nodal-agents/db';
 import {
   checkpointsRoot,
   diffFile,
@@ -239,8 +247,9 @@ export async function fileDiffRoute(c: Context, deps: RunnerDeps): Promise<Respo
   try {
     // Dans le bac à sable quand il est là (#628, audit P1-2) : le diff lance git
     // sur le workspace, qu'une commande confinée a pu piéger.
-    diff = await withNodalPrograms((programs) =>
-      diffFile(checkpointsRoot(), workspace, from.sha, toSha, relPath, programs),
+    diff = await withNodalPrograms(
+      (programs) => diffFile(checkpointsRoot(), workspace, from.sha, toSha, relPath, programs),
+      { workspace: workspaceSandboxReader(db, job.entityId ?? '') },
     );
   } catch (err) {
     // Le magasin n'a pas répondu. La route rendait `workspace_unreachable`,

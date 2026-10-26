@@ -45,6 +45,14 @@
 // (`getSandboxStatus()` la rend au bandeau). Un seul chemin pour les trois
 // appelants : `run_command`, `run_skill_script`, les commandes de preuve.
 //
+// L'INTERRUPTEUR DE L'ESPACE (#876) : le moteur relit le réglage de l'espace
+// à CHAQUE commande (`confinement.workspace`), jamais figé par la sonde.
+// Coupé, la commande tourne sans confinement et son résultat le dit par un
+// code à lui (`SANDBOX_DISABLED`). Les dossiers permis sont ceux de l'espace,
+// recomposés à chaque commande (détectés − retirés + ajoutés). Un réglage
+// illisible refuse la commande avec son code (`SANDBOX_SETTINGS_UNREADABLE`),
+// jamais une valeur supposée. Une commande déjà lancée n'est pas touchée.
+//
 // DURÉE DE VIE (décision du 14/10) : chaque commande tourne dans le PÉRIMÈTRE
 // de son job (`scope`, @nodal-agents/sandbox job-scope.ts), confinée
 // (`scope.container`) ou non (`scope.startOwned` : sous Windows dans le Job
@@ -63,8 +71,15 @@
 
 import { statSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
-import { VerifyCommandsSchema, type RunVerdict, type VerifyCommand } from '@nodal-agents/shared';
 import {
+  SANDBOX_SETTINGS_UNREADABLE,
+  VerifyCommandsSchema,
+  type RunVerdict,
+  type VerifyCommand,
+} from '@nodal-agents/shared';
+import {
+  NodalHomeReachError,
+  SANDBOX_DISABLED,
   SandboxStartError,
   extractRefusedWrites,
   resolveWritableRoots,
@@ -74,6 +89,7 @@ import {
   type LaunchTarget,
   type ProcessEnd,
   type RefusedWrite,
+  type SandboxStatus,
   type StartedProcess,
 } from '@nodal-agents/sandbox';
 
@@ -107,7 +123,12 @@ export type CommandConfinement =
     }
   | {
       kind: 'unconfined';
-      /** Pourquoi : le code stable de `getSandboxStatus()`. */
+      /**
+       * Pourquoi : le code stable de `getSandboxStatus()` quand la machine ne
+       * confine pas, `SANDBOX_DISABLED` quand l'utilisateur a coupé le bac à
+       * sable de l'espace, `SANDBOX_SETTINGS_UNREADABLE` quand la commande n'a
+       * pas pu lire ce réglage (elle n'est alors pas lancée).
+       */
       code: string;
     };
 
@@ -201,7 +222,9 @@ export interface CommandSpec {
    * quand le bac à sable est disponible : ses workspaces et le dossier
    * attaché à la demande. L'appelant les donne — le moteur ne devine aucune
    * racine. Une liste vide est permise et veut dire « nulle part » ;
-   * l'absence est une erreur d'appelant (`CONFINEMENT_REQUIRED`).
+   * l'absence est une erreur d'appelant (`CONFINEMENT_REQUIRED`). Avec eux,
+   * le réglage du bac à sable de l'espace (`workspace`, #876), relu à chaque
+   * commande : `workspaceSandboxReader(ctx.db, ctx.entityId)` pour un outil.
    */
   confinement: ConfinementPolicy;
   /**
@@ -229,7 +252,11 @@ export function runShellCommand(spec: CommandSpec): Promise<CommandRunResult> {
   if (spec.env === undefined || spec.env === null) {
     throw new Error('ENV_REQUIRED');
   }
-  if (spec.confinement === undefined || spec.confinement === null) {
+  if (
+    spec.confinement === undefined ||
+    spec.confinement === null ||
+    typeof spec.confinement.workspace !== 'function'
+  ) {
     throw new Error('CONFINEMENT_REQUIRED');
   }
   if (spec.scope === undefined || spec.scope === null) {
@@ -249,18 +276,34 @@ async function runInScope(spec: CommandSpec): Promise<CommandRunResult> {
   const env: Record<string, string | undefined> = { ...spec.env, ...toolCacheEnv() };
   const startedAt = Date.now();
 
-  const confinement: CommandConfinement =
-    status.state === 'available' && sandbox.backend
-      ? {
-          kind: 'confined',
-          backend: status.backend,
-          writableRoots: resolveWritableRoots(spec.confinement),
-          refusedWrites: [],
-        }
-      : {
-          kind: 'unconfined',
-          code: status.state === 'unavailable' ? status.code : 'SANDBOX_NOT_IMPLEMENTED',
-        };
+  // Le réglage de l'espace, relu MAINTENANT (#876), puis les dossiers où la
+  // commande peut écrire. L'un ou l'autre en échec — un réglage illisible, un
+  // dossier ajouté qui est dans les données de Nodal — refuse la commande avec
+  // son code : elle ne part jamais sous un régime supposé.
+  let confinement: CommandConfinement;
+  try {
+    confinement = await chooseConfinement(spec, status, sandbox.backend !== null);
+  } catch (e) {
+    // Seuls les refus CODÉS de la plateforme deviennent un refus de commande ;
+    // une autre erreur est un contrat violé par l'appelant, et lève.
+    const message = e instanceof Error ? e.message : String(e);
+    if (!(e instanceof NodalHomeReachError) && !message.startsWith(SANDBOX_SETTINGS_UNREADABLE)) {
+      throw e;
+    }
+    return {
+      outcome: { kind: 'spawn_error', message },
+      stdout: '',
+      stderr: '',
+      truncatedStdout: false,
+      truncatedStderr: false,
+      durationMs: Date.now() - startedAt,
+      cwd: spec.cwd,
+      confinement: {
+        kind: 'unconfined',
+        code: e instanceof NodalHomeReachError ? e.code : SANDBOX_SETTINGS_UNREADABLE,
+      },
+    };
+  }
   const notStarted = (message: string): CommandRunResult => ({
     outcome: { kind: 'spawn_error', message },
     stdout: '',
@@ -361,6 +404,32 @@ async function runInScope(spec: CommandSpec): Promise<CommandRunResult> {
       });
     });
   });
+}
+
+/**
+ * Le régime de CETTE commande : confinée quand la machine a un bac à sable ET
+ * que l'espace ne l'a pas coupé. La machine d'abord : sur un système sans bac
+ * à sable, l'interrupteur ne change rien, et le code dit la vraie raison.
+ */
+async function chooseConfinement(
+  spec: CommandSpec,
+  status: SandboxStatus,
+  hasBackend: boolean,
+): Promise<CommandConfinement> {
+  const settings = await spec.confinement.workspace();
+  if (status.state !== 'available' || !hasBackend) {
+    return {
+      kind: 'unconfined',
+      code: status.state === 'unavailable' ? status.code : 'SANDBOX_NOT_IMPLEMENTED',
+    };
+  }
+  if (!settings.enabled) return { kind: 'unconfined', code: SANDBOX_DISABLED };
+  return {
+    kind: 'confined',
+    backend: status.backend,
+    writableRoots: resolveWritableRoots(spec.confinement, settings.folders),
+    refusedWrites: [],
+  };
 }
 
 function isExistingDirectory(path: string): boolean {

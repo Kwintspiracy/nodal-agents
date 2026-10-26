@@ -27,6 +27,7 @@ import {
   nodalProgramsSandbox,
   withNodalPrograms,
   type ProgramRunner,
+  noWorkspaceSandbox,
 } from '@nodal-agents/sandbox';
 import { initGitRepository } from '../project-git.ts';
 
@@ -69,7 +70,9 @@ describe.runIf(available)(
       // Sans ce cas, un `git init` confiné qui échoue TOUJOURS (racines mal
       // passées, `chdir` refusé, modèles illisibles) laissait la CI verte, et
       // chaque pose de git en production rendait `failed`.
-      const out = await withNodalPrograms((programs) => initGitRepository(projet, programs));
+      const out = await withNodalPrograms((programs) => initGitRepository(projet, programs), {
+        workspace: noWorkspaceSandbox,
+      });
       expect(out).toEqual({ kind: 'initialised', gitignoreWritten: true });
       const { stdout } = await run('git', ['rev-parse', '--is-inside-work-tree', '--git-dir'], {
         cwd: projet,
@@ -86,8 +89,9 @@ describe.runIf(available)(
     });
 
     it('par les programmes de Nodal : rien n’arrive hors du projet, et l’échec est rendu', async () => {
-      const out = await withNodalPrograms((programs) =>
-        initGitRepository(projet, plantingFirst(programs)),
+      const out = await withNodalPrograms(
+        (programs) => initGitRepository(projet, plantingFirst(programs)),
+        { workspace: noWorkspaceSandbox },
       );
       expect(await readdir(hote), 'git init wrote outside the project').toEqual([]);
       expect(out.kind).toBe('failed');

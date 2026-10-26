@@ -158,7 +158,8 @@ async function runProof(
     env: buildChildEnv(process.env),
     // Le même bac à sable que `run_command` (#628) : une commande de preuve
     // n'écrit que dans les dossiers du job.
-    confinement: { writableRoots: scope.writableRoots },
+    // Avec le réglage du bac à sable de l'espace, relu à chaque commande (#876).
+    confinement: { writableRoots: scope.writableRoots, workspace: scope.workspace },
     // Le périmètre du job : une preuve qui lance un serveur ne le laisse pas
     // derrière elle — il meurt quand le job est fini.
     scope: jobProcessScope(scope.jobId),

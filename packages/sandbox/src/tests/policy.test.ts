@@ -5,15 +5,23 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import {
+  NodalHomeReachError,
   TOOL_CACHE_VARIABLES,
+  allowedFolderRefusal,
+  broadFolderKind,
+  composeAllowedFolders,
   defaultAllowedFolders,
+  nodalDataFolders,
   resolveWritableRoots,
   toolCacheEnv,
   toolCacheRoot,
   type MachineView,
 } from '../policy';
+
+/** Aucun geste de l'utilisateur : la liste détectée telle quelle. */
+const NO_GESTURE = { added: [], removed: [] };
 
 let base: string;
 beforeAll(() => {
@@ -43,15 +51,18 @@ describe('resolveWritableRoots', () => {
   it('les dossiers du job, puis les dossiers permis par défaut — jamais rien d’autre', () => {
     const ws = join(base, 'ws');
     mkdirSync(ws);
-    expect(resolveWritableRoots({ writableRoots: [ws] })).toEqual([ws, ...defaultRoots()]);
+    expect(resolveWritableRoots({ writableRoots: [ws] }, NO_GESTURE)).toEqual([
+      ws,
+      ...defaultRoots(),
+    ]);
   });
 
   it('une liste vide veut dire « les dossiers par défaut seulement », jamais « partout »', () => {
-    expect(resolveWritableRoots({ writableRoots: [] })).toEqual(defaultRoots());
+    expect(resolveWritableRoots({ writableRoots: [] }, NO_GESTURE)).toEqual(defaultRoots());
   });
 
   it('un chemin relatif est une erreur de l’appelant, pas un chemin résolu en silence', () => {
-    expect(() => resolveWritableRoots({ writableRoots: ['relative/dir'] })).toThrow(
+    expect(() => resolveWritableRoots({ writableRoots: ['relative/dir'] }, NO_GESTURE)).toThrow(
       'SANDBOX_ROOT_NOT_ABSOLUTE: relative/dir',
     );
   });
@@ -64,7 +75,7 @@ describe('resolveWritableRoots', () => {
       mkdirSync(target);
       const made = spawnSync('cmd', ['/c', 'mklink', '/J', link, target], { windowsHide: true });
       expect(made.status).toBe(0);
-      expect(resolveWritableRoots({ writableRoots: [link] })).toEqual([
+      expect(resolveWritableRoots({ writableRoots: [link] }, NO_GESTURE)).toEqual([
         link,
         target,
         ...defaultRoots(),
@@ -177,5 +188,150 @@ describe('toolCacheEnv', () => {
   it('les tests ne touchent jamais le vrai dossier personnel', () => {
     expect(process.env['NODALAI_TOOL_CACHE_ROOT']).toBeDefined();
     expect(toolCacheRoot()).toBe(process.env['NODALAI_TOOL_CACHE_ROOT']);
+  });
+});
+
+// ─── #876 : la liste de l'espace, détectés − retirés + ajoutés ────────────────
+
+/** Une machine fabriquée, sous `base` : un dossier personnel à elle. */
+const machineAt = (env: Record<string, string | undefined> = {}): MachineView => ({
+  platform: process.platform,
+  home: mkdtempSync(join(base, 'home-876-')),
+  env,
+});
+
+/** Les chemins que `resolveWritableRoots` déclare, résolus pour la comparaison. */
+const declared = (roots: string[]): string[] => roots.map((r) => resolve(r));
+
+describe('composeAllowedFolders — detected minus removed plus added @cap:executer-une-commande/moteur', () => {
+  it('applies the gestures to what is detected on a real machine, and the opening uses that list', () => {
+    const m = machineAt();
+    const ollama = join(m.home, '.ollama', 'models');
+    const hf = join(m.home, '.cache', 'huggingface');
+    mkdirSync(ollama, { recursive: true });
+    mkdirSync(hf, { recursive: true });
+    const mine = mkdtempSync(join(base, 'mine-'));
+    const folders = { added: [mine], removed: [hf] };
+
+    expect(composeAllowedFolders(folders, m)).toEqual([
+      { path: toolCacheRoot(), source: 'tool-cache', state: 'allowed' },
+      { path: ollama, source: 'ollama', state: 'allowed' },
+      { path: hf, source: 'huggingface', state: 'removed' },
+      { path: mine, source: 'user', state: 'allowed' },
+    ]);
+    const roots = declared(resolveWritableRoots({ writableRoots: [] }, folders, { machine: m }));
+    expect(roots).toContain(resolve(ollama));
+    expect(roots).toContain(resolve(mine));
+    expect(roots).toContain(resolve(toolCacheRoot()));
+    expect(roots, 'a removed store is no longer writable').not.toContain(resolve(hf));
+  });
+
+  it('only gestures are stored: a store installed later appears on its own', () => {
+    const m = machineAt();
+    const none = { added: [], removed: [] };
+    expect(composeAllowedFolders(none, m).map((f) => f.source)).toEqual(['tool-cache']);
+    const ollama = join(m.home, '.ollama', 'models');
+    mkdirSync(ollama, { recursive: true });
+    expect(composeAllowedFolders(none, m)).toContainEqual({
+      path: ollama,
+      source: 'ollama',
+      state: 'allowed',
+    });
+  });
+
+  it('the tool cache is never removed, even when the stored gestures name it', () => {
+    const m = machineAt();
+    const folders = { added: [], removed: [toolCacheRoot()] };
+    expect(composeAllowedFolders(folders, m)[0]).toEqual({
+      path: toolCacheRoot(),
+      source: 'tool-cache',
+      state: 'allowed',
+    });
+    expect(
+      declared(resolveWritableRoots({ writableRoots: [] }, folders, { machine: m })),
+    ).toContain(resolve(toolCacheRoot()));
+  });
+
+  it('an added folder that no longer exists is shown missing, ignored at opening, and logged with a code', () => {
+    const m = machineAt();
+    const gone = join(base, 'gone-876');
+    const logged: { code: string; fields: Record<string, unknown> }[] = [];
+    const folders = { added: [gone], removed: [] };
+    expect(composeAllowedFolders(folders, m)).toContainEqual({
+      path: gone,
+      source: 'user',
+      state: 'missing',
+    });
+    const roots = resolveWritableRoots({ writableRoots: [] }, folders, {
+      machine: m,
+      log: (code, fields) => logged.push({ code, fields }),
+    });
+    expect(declared(roots)).not.toContain(resolve(gone));
+    expect(logged).toEqual([{ code: 'SANDBOX_ALLOWED_FOLDER_MISSING', fields: { path: gone } }]);
+  });
+
+  it('a removal whose store is gone stays shown, so the gesture does not vanish', () => {
+    const m = machineAt();
+    const ollama = join(m.home, '.ollama', 'models');
+    expect(composeAllowedFolders({ added: [], removed: [ollama] }, m)).toContainEqual({
+      path: ollama,
+      source: 'ollama',
+      state: 'removed',
+    });
+  });
+});
+
+describe('allowedFolderRefusal — the data folder of Nodal can never be allowed @cap:executer-une-commande/moteur', () => {
+  it('refuses the data folder itself and any folder under it, naming the folder that holds it', () => {
+    const m = machineAt();
+    const data = join(m.home, '.nodalai');
+    mkdirSync(join(data, 'workspaces', 'e'), { recursive: true });
+
+    const itself = allowedFolderRefusal(data, m);
+    expect(itself).toBeInstanceOf(NodalHomeReachError);
+    expect(itself?.code).toBe('SANDBOX_REACH_IS_NODAL_HOME');
+    expect(resolve(itself!.within)).toBe(resolve(data));
+
+    const under = allowedFolderRefusal(join(data, 'workspaces', 'e'), m);
+    expect(under?.code).toBe('SANDBOX_REACH_IS_NODAL_HOME');
+    expect(under?.message).toContain('is inside');
+    expect(resolve(under!.within)).toBe(resolve(data));
+
+    expect(allowedFolderRefusal(join(m.home, 'Documents'), m)).toBeNull();
+  });
+
+  it('covers this instance too when it lives elsewhere (NODALAI_HOME), not just ~/.nodalai', () => {
+    const elsewhere = mkdtempSync(join(base, 'instance-876-'));
+    const m = machineAt({ NODALAI_HOME: elsewhere });
+    expect(allowedFolderRefusal(join(elsewhere, 'pg-data'), m)?.within).toBe(elsewhere);
+    expect(nodalDataFolders(m).map((p) => resolve(p))).toContain(
+      resolve(realpathSync.native(elsewhere)),
+    );
+  });
+
+  it('a stored addition inside the data folder is shown refused and makes the opening fail loud', () => {
+    const m = machineAt();
+    const inside = join(m.home, '.nodalai', 'pg-data');
+    mkdirSync(inside, { recursive: true });
+    const folders = { added: [inside], removed: [] };
+    expect(composeAllowedFolders(folders, m)).toContainEqual({
+      path: inside,
+      source: 'user',
+      state: 'refused',
+    });
+    expect(() => resolveWritableRoots({ writableRoots: [] }, folders, { machine: m })).toThrow(
+      NodalHomeReachError,
+    );
+  });
+});
+
+describe('broadFolderKind — what asks for a confirmation before it is allowed', () => {
+  it('a drive root and the home folder are broad; any other folder is not', () => {
+    const m = machineAt();
+    const root = resolve('/');
+    expect(dirname(root)).toBe(root);
+    expect(broadFolderKind(root, m)).toBe('drive-root');
+    expect(broadFolderKind(m.home, m)).toBe('home');
+    expect(broadFolderKind(join(m.home, 'Documents'), m)).toBeNull();
   });
 });

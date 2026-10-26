@@ -12,6 +12,7 @@ import {
   rememberCliSession,
   toolCalls,
   eq,
+  workspaceSandboxReader,
   type AnyDrizzleDb,
 } from '@nodal-agents/db';
 import { randomUUID } from 'node:crypto';
@@ -222,7 +223,7 @@ export async function runCliRuntimeChatTurn(args: {
       }
     }
 
-    const workspaceGit = await probeWorkspaceGit(cwd);
+    const workspaceGit = await probeWorkspaceGit(cwd, workspaceSandboxReader(db, entityId));
     // Le fil et son projet courant (P6) — même bloc `## Conversation` que sur le
     // chemin job : une session CLI de chat est une conversation comme une autre.
     const conversation = await loadConversationContext(db, conversationId, { task: message });

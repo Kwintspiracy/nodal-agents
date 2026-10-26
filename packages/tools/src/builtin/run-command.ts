@@ -32,6 +32,7 @@ import {
   SHARED_WORKSPACE_LABEL,
 } from './file-ops/workspace';
 import { jobProcessScope } from '@nodal-agents/sandbox';
+import { workspaceSandboxReader } from '@nodal-agents/db';
 import { buildChildEnv } from './child-env';
 import { planAllowedRun } from './command-allowlist';
 import {
@@ -248,7 +249,11 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
       // Où la commande peut écrire sous le bac à sable : les dossiers de
       // l'agent pour ce run, dossier du job et partagé compris — la liste
       // même que les outils de fichiers adressent.
-      confinement: { writableRoots: (ctx.workspaces ?? []).map((w) => w.path) },
+      // Et le réglage du bac à sable de l'espace, relu à chaque commande (#876).
+      confinement: {
+        writableRoots: (ctx.workspaces ?? []).map((w) => w.path),
+        workspace: workspaceSandboxReader(ctx.db, ctx.entityId),
+      },
       // Ce que la commande laisse tourner vit jusqu'à la fin du JOB, puis
       // meurt quand le runner ferme son périmètre ; le Stop la tue.
       scope: jobProcessScope(ctx.jobId),

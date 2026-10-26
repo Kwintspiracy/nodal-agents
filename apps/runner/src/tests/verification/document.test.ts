@@ -18,9 +18,14 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { projectKey } from '@nodal-agents/shared';
 import { DOCUMENT_MANIFEST_HASH, documentVerifier } from '../../verification/document.ts';
 import type { ProofCommandRecord, ProofScope, ReadyConfig } from '../../verification/types.ts';
+import { noWorkspaceSandbox } from '@nodal-agents/sandbox';
 
 /** Un document se constate sans rien lancer : la preuve n'a aucun dossier où écrire. */
-const NO_COMMANDS: ProofScope = { writableRoots: [], jobId: 'document-test' };
+const NO_COMMANDS: ProofScope = {
+  writableRoots: [],
+  jobId: 'document-test',
+  workspace: noWorkspaceSandbox,
+};
 
 let dir = '';
 beforeAll(() => {
