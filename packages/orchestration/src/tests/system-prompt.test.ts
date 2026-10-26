@@ -3,6 +3,7 @@
 import { nodalDocsTool } from '@nodal-agents/tools';
 import { systemSkills } from '@nodal-agents/catalog';
 import { describe, it, expect, beforeAll } from 'vitest';
+import { statedLimits } from '@nodal-agents/test-kit';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import {
   agents,
@@ -1714,12 +1715,7 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
   const withSend = [...ALWAYS_ON_TOOLS, ...DELIVERY_TOOL_NAMES];
   const deliveryLines = (prompt: string): string[] =>
     prompt.split('\n').filter((l) => l.startsWith('- delivery:'));
-  // A per-message size limit, in the forms the old catalog wrote it: "4096
-  // chars", "4 096 characters", "under_4096_chars", "4096-char", "≤4096". It is
-  // matched by its FORM, never by the bare number: the prompt carries random
-  // ids (seeded UUIDs) whose digits spell "2000" or "4096" now and then.
-  const statedLimits = (prompt: string): string[] =>
-    prompt.match(/(?:≤\s*)?\d[\d   ,.]*[\s_-]*(?:chars?|characters?|caractères)\b|≤\s*\d+/gi) ?? [];
+  // Une limite énoncée se reconnaît par sa FORME (test-kit, stated-limits.ts).
 
   it('a Telegram job states the channel facts once, and no hand-written channel rule (#613)', async () => {
     const { entityId, root } = await seedTeam();
