@@ -12,6 +12,7 @@
     "./nodal-home": "./src/nodal-home.ts",
     "./nodal-config": "./src/nodal-config.ts",
     "./nodal-instances": "./src/nodal-instances.ts",
+    "./sandbox-settings": "./src/sandbox-settings.ts",
     "./node-guard": "./src/node-guard.ts",
     "./node-version": "./src/node-version.ts"
   },

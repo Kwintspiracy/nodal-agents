@@ -123,6 +123,21 @@ export const entities = pgTable(
      * arrêté avec ce qu'il a déjà écrit (issue #442). `0` = aucune limite.
      */
     maxRunHours: real('max_run_hours').notNull().default(0),
+    /**
+     * L'interrupteur du bac à sable de l'espace (#876, migration 0153).
+     * Allumé par défaut. Coupé, les commandes de l'espace tournent sans
+     * confinement, chaque résultat le disant (`SANDBOX_DISABLED`). Relu par le
+     * runner à chaque lancement (`readWorkspaceSandbox`).
+     */
+    sandboxEnabled: boolean('sandbox_enabled').notNull().default(true),
+    /**
+     * Les gestes de l'utilisateur sur les dossiers permis (#876) : ses ajouts
+     * et les dossiers détectés qu'il a retirés, jamais la liste calculée. Lu
+     * par `parseSandboxFolders` (@nodal-agents/shared).
+     */
+    sandboxFolders: jsonb('sandbox_folders')
+      .notNull()
+      .default(sql`'{"added":[],"removed":[]}'::jsonb`),
   },
   (table) => [
     check(

@@ -119,6 +119,12 @@ export {
   INSTALL_NOTES_KEY,
 } from './repos/app-settings.ts';
 export { getVerificationSurfaces } from './repos/verification-surfaces.ts';
+export {
+  readWorkspaceSandbox,
+  workspaceSandboxReader,
+  setWorkspaceSandboxEnabled,
+  setWorkspaceSandboxFolders,
+} from './repos/workspace-sandbox.ts';
 export { listMemberWorkspaces, countMemberlessRootWorkspaces } from './repos/member-workspaces.ts';
 export type { MemberWorkspace } from './repos/member-workspaces.ts';
 export {
