@@ -16,7 +16,8 @@ export function SectionHead({
   right,
 }: {
   label: string;
-  hint?: string;
+  /** Une phrase ; un lien peut y vivre (le périmètre du bac à sable, #876). */
+  hint?: React.ReactNode;
   right?: React.ReactNode;
 }) {
   return (

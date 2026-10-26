@@ -1,9 +1,11 @@
+import { Suspense } from 'react';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { AuthError, NoEntityError } from '@nodal-agents/auth';
 import Sidebar from '@/components/Sidebar';
 import UserMenu from '@/components/UserMenu.tsx';
 import ThemedToaster from '@/components/ui/ThemedToaster';
+import SandboxBanner from '@/components/SandboxBanner.tsx';
 import { ApprovalsProvider, type PendingApproval } from '@/components/ApprovalsProvider';
 import { toPendingApproval } from '@/lib/pending-approval.ts';
 import { SkillUpdatesProvider, type SkillUpdateNotice } from '@/components/SkillUpdatesProvider';
@@ -160,6 +162,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
               colonne flex, l'écran prend le reste par `flex-1`, sans pourcentage,
               et Safari le calcule comme les autres.
             */}
+              {/* #876 : le bandeau PERMANENT du bac à sable, hors de la zone qui
+                  défile — il reste là tant que le bac à sable est coupé ou
+                  indisponible. Sous Suspense : un runner lent ne retient pas
+                  la page. */}
+              <Suspense fallback={null}>
+                <SandboxBanner />
+              </Suspense>
               <div className="flex min-h-0 flex-1 flex-col overflow-x-clip overflow-y-auto">
                 {children}
               </div>
