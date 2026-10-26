@@ -410,7 +410,10 @@ async function runScript(
     // DATABASE_URL/WORKER_SECRET/LLM keys via os.environ / process.env.
     env: buildChildEnv(process.env, envExtras),
     keep: 'head',
-    confinement: { writableRoots, workspace: workspaceSandboxReader(ctx.db, ctx.entityId) },
+    confinement: {
+      writableRoots,
+      workspace: workspaceSandboxReader(ctx.db, { entityId: ctx.entityId, agentId: ctx.agentId }),
+    },
     // The job's scope: what the script leaves running lives until the job ends.
     scope: jobProcessScope(ctx.jobId),
     ...(ctx.signal ? { signal: ctx.signal } : {}),

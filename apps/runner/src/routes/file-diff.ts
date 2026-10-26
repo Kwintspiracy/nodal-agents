@@ -249,7 +249,7 @@ export async function fileDiffRoute(c: Context, deps: RunnerDeps): Promise<Respo
     // sur le workspace, qu'une commande confinée a pu piéger.
     diff = await withNodalPrograms(
       (programs) => diffFile(checkpointsRoot(), workspace, from.sha, toSha, relPath, programs),
-      { workspace: workspaceSandboxReader(db, job.entityId ?? '') },
+      { workspace: workspaceSandboxReader(db, { entityId: job.entityId, agentId: job.agentId }) },
     );
   } catch (err) {
     // Le magasin n'a pas répondu. La route rendait `workspace_unreachable`,

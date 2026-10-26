@@ -957,9 +957,7 @@ export async function finalizeJobSuccess(
 
     // Le réglage du bac à sable de l'espace, relu par le moteur à chaque
     // commande de preuve (#876) — sur `db`, la preuve tournant hors transaction.
-    // Un job sans espace n'a aucun plan de preuve (FINALIZE_JOB_WITHOUT_ENTITY
-    // ci-dessus) : la chaîne vide n'est jamais lue.
-    const workspace = workspaceSandboxReader(db, job.entityId ?? '');
+    const workspace = workspaceSandboxReader(db, { entityId: job.entityId, agentId: job.agentId });
     return {
       entityId: job.entityId,
       plans,

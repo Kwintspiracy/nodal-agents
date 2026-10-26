@@ -28,6 +28,7 @@ export {
   ConversationScopeUnknownError,
 } from './queries/conversation-handles.ts';
 export type { ConversationScope } from './queries/conversation-handles.ts';
+export { workspaceOfScope, type WorkspaceScope } from './queries/workspace-scope.ts';
 export { findResumableCliSession, rememberCliSession } from './queries/cli-sessions.ts';
 export { isChatAllowed } from './queries/telegram-allowed.ts';
 export { dropApprovalRulesForDetachedSkill } from './queries/skill-approval-rules.ts';

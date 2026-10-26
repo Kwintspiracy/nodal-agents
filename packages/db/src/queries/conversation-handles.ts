@@ -41,6 +41,7 @@ import { channelAllowedConversations } from '../schema/channel-allowed-conversat
 import { telegramAllowedChats } from '../schema/telegram-allowed-chats.ts';
 import { agents } from '../schema/agents.ts';
 import type { AnyDrizzleDb } from '../client.ts';
+import { workspaceOfScope } from './workspace-scope.ts';
 
 const HANDLE_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 const HANDLE_LENGTH = 10;
@@ -267,21 +268,13 @@ export class ConversationScopeUnknownError extends Error {
 }
 
 /**
- * L'espace d'un texte, construit en UN endroit pour les trois chemins (chat,
- * CLI, embeddings) : le sien, sinon celui de son agent (`agents.entity_id` —
- * un agent appartient toujours à un espace : `createAgentRepo`, seul
- * écrivain, l'exige). Aucun des deux : `ConversationScopeUnknownError`.
+ * L'espace d'un texte, pour les trois chemins (chat, CLI, embeddings) : la
+ * règle unique de `workspaceOfScope` (le sien, sinon celui de son agent).
+ * Aucun des deux : `ConversationScopeUnknownError`.
  */
 async function workspaceOf(db: AnyDrizzleDb, scope: ConversationScope): Promise<string> {
-  if (scope.entityId) return scope.entityId;
-  if (scope.agentId) {
-    const [agent] = await db
-      .select({ entityId: agents.entityId })
-      .from(agents)
-      .where(eq(agents.id, scope.agentId))
-      .limit(1);
-    if (agent?.entityId) return agent.entityId;
-  }
+  const entityId = await workspaceOfScope(db, scope);
+  if (entityId) return entityId;
   throw new ConversationScopeUnknownError(scope.subject ?? 'a text for a model');
 }
 

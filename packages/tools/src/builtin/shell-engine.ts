@@ -224,7 +224,7 @@ export interface CommandSpec {
    * racine. Une liste vide est permise et veut dire « nulle part » ;
    * l'absence est une erreur d'appelant (`CONFINEMENT_REQUIRED`). Avec eux,
    * le réglage du bac à sable de l'espace (`workspace`, #876), relu à chaque
-   * commande : `workspaceSandboxReader(ctx.db, ctx.entityId)` pour un outil.
+   * commande : `workspaceSandboxReader(ctx.db, { entityId, agentId })` pour un outil.
    */
   confinement: ConfinementPolicy;
   /**

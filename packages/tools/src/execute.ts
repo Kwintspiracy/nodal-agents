@@ -898,7 +898,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
             (ctx.workspaces ?? []).map((w) => w.path),
           ),
           // L'interrupteur du bac à sable de l'espace couvre ces git (#876).
-          workspaceSandboxReader(ctx.db, ctx.entityId),
+          workspaceSandboxReader(ctx.db, { entityId: ctx.entityId, agentId: ctx.agentId }),
           // Un workspace qu'aucun dépôt ne couvre est constaté contre son
           // instantané de checkpoint, pris juste au-dessus (#590).
           {
@@ -1049,7 +1049,10 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       //
       // Les bornes (chemins ignorés non comptés, deux jobs sur le même dépôt,
       // arbre trop sale) sont écrites dans `git-constat.ts`, pas ici.
-      const git = await constatedGitWrites(gitAvant, workspaceSandboxReader(ctx.db, ctx.entityId));
+      const git = await constatedGitWrites(
+        gitAvant,
+        workspaceSandboxReader(ctx.db, { entityId: ctx.entityId, agentId: ctx.agentId }),
+      );
       const aConstater = {
         changedFiles: [
           ...fichiersDisque,
@@ -1595,7 +1598,7 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
   // boucle : ses git partagent un conteneur, tué à la fin.
   return withNodalPrograms(
     (programs) => checkpointEachWorkspace(toolName, ctx, store, workspaces, programs),
-    { workspace: workspaceSandboxReader(ctx.db, ctx.entityId) },
+    { workspace: workspaceSandboxReader(ctx.db, { entityId: ctx.entityId, agentId: ctx.agentId }) },
   );
 }
 

@@ -2212,7 +2212,10 @@ async function runJobTracked(
     sharedWorkspacePath,
   );
   const workspaceGit = gitProbePath
-    ? await probeWorkspaceGit(gitProbePath, workspaceSandboxReader(db, job.entityId ?? ''))
+    ? await probeWorkspaceGit(
+        gitProbePath,
+        workspaceSandboxReader(db, { entityId: job.entityId, agentId: agentRow.id }),
+      )
     : null;
   // Le fil dont ce job est un tour, et son projet courant (P6). `null` quand le
   // job n'appartient à aucune conversation, ou quand son uuid date d'avant P6 et

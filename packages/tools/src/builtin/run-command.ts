@@ -252,7 +252,7 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
       // Et le réglage du bac à sable de l'espace, relu à chaque commande (#876).
       confinement: {
         writableRoots: (ctx.workspaces ?? []).map((w) => w.path),
-        workspace: workspaceSandboxReader(ctx.db, ctx.entityId),
+        workspace: workspaceSandboxReader(ctx.db, { entityId: ctx.entityId, agentId: ctx.agentId }),
       },
       // Ce que la commande laisse tourner vit jusqu'à la fin du JOB, puis
       // meurt quand le runner ferme son périmètre ; le Stop la tue.

@@ -179,4 +179,34 @@ describe('the workspace sandbox switch, through the real tools @cap:executer-une
       .set({ sandboxFolders: { added: [], removed: [] } })
       .where(eq(entities.id, seed.entityId));
   });
+
+  it('a job created without a workspace (an internal /api/agent caller) follows the workspace of its agent', async () => {
+    await setEnabled(false);
+    const target = join(outside, 'no-entity.txt');
+    // Ce que le runner donne à un tel job : `entityId: job.entityId ?? ''`.
+    const out = await runCommandTool.execute(
+      {
+        purpose: 'sandbox switch',
+        command: `"${process.execPath}" -e "require('fs').writeFileSync(process.argv[1], 'written')" "${target}"`,
+      },
+      { ...ctx(), entityId: '' },
+    );
+    expect(out.sandbox).toEqual({ confined: false, code: 'SANDBOX_DISABLED' });
+    expect(readFileSync(target, 'utf8')).toBe('written');
+    await setEnabled(true);
+  });
+
+  it('a job whose agent belongs to no workspace either is refused, never run under a guessed setting', async () => {
+    const target = join(outside, 'no-workspace.txt');
+    const out = await runCommandTool.execute(
+      {
+        purpose: 'sandbox switch',
+        command: `"${process.execPath}" -e "require('fs').writeFileSync(process.argv[1], 'written')" "${target}"`,
+      },
+      { ...ctx(), entityId: '', agentId: '00000000-0000-4000-8000-000000000000' },
+    );
+    expect(out.sandbox).toEqual({ confined: false, code: 'SANDBOX_SETTINGS_UNREADABLE' });
+    expect(out.stderr).toContain('belongs to no workspace');
+    expect(existsSync(target)).toBe(false);
+  });
 });

@@ -183,9 +183,9 @@ describe.runIf(available)(
       await plantedSubRepo();
       const store = join(root, 'checkpoints');
       const workspaces = [{ label: 'shared', path: ws }];
-      await takeCliTurnCheckpoints(db, seed.jobId, workspaces, 1, seed.entityId);
+      await takeCliTurnCheckpoints(db, seed.jobId, workspaces, 1, { entityId: seed.entityId });
       await touchSub();
-      await takeCliTurnCheckpoints(db, seed.jobId, workspaces, 2, seed.entityId);
+      await takeCliTurnCheckpoints(db, seed.jobId, workspaces, 2, { entityId: seed.entityId });
       expect(await listCheckpoints(store, ws)).toHaveLength(2);
       expect(existsSync(marker), 'the planted command ran on the HOST').toBe(false);
     }, 120_000);

@@ -20,6 +20,7 @@ import {
   type WorkspaceSandbox,
 } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
+import { workspaceOfScope, type WorkspaceScope } from '../queries/workspace-scope.ts';
 import { entities } from '../schema/index.ts';
 
 /** Le réglage de l'espace `entityId`. Lève `SANDBOX_SETTINGS_UNREADABLE: …` sinon. */
@@ -55,12 +56,29 @@ export async function readWorkspaceSandbox(
  * lanceur appelle à chaque commande ou session, jamais une valeur gardée.
  * Le seul constructeur du dépôt : chaque appelant qui lance pour un espace
  * passe par lui.
+ *
+ * L'espace est donné tel quel, ou par le TRAVAIL qui lance (`WorkspaceScope`) :
+ * le sien, sinon celui de son agent — la règle unique de `workspaceOfScope`. Un
+ * job créé sans espace par un appelant interne relève donc de l'espace de son
+ * agent, pour ses commandes comme pour ses handles. Aucun des deux : le
+ * lecteur LÈVE `SANDBOX_SETTINGS_UNREADABLE`, jamais un réglage supposé.
  */
 export function workspaceSandboxReader(
   db: AnyDrizzleDb,
-  entityId: string,
+  workspace: string | WorkspaceScope,
 ): () => Promise<WorkspaceSandbox> {
-  return () => readWorkspaceSandbox(db, entityId);
+  return async () => {
+    const entityId =
+      typeof workspace === 'string' ? workspace : await workspaceOfScope(db, workspace);
+    if (!entityId) {
+      throw new Error(
+        `${SANDBOX_SETTINGS_UNREADABLE}: agent ${
+          typeof workspace === 'string' ? '' : (workspace.agentId ?? '')
+        } belongs to no workspace`,
+      );
+    }
+    return readWorkspaceSandbox(db, entityId);
+  };
 }
 
 /** Pose l'interrupteur de l'espace. Les droits sont vérifiés par l'appelant. */
