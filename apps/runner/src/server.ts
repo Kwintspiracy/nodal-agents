@@ -21,6 +21,7 @@ import { chatStopRoute } from './routes/chat-stop.ts';
 import { chatLiveRoute } from './routes/chat-live.ts';
 import { webhookRoute } from './routes/webhook.ts';
 import { codeTaskDoctorRoute } from './routes/code-task-doctor.ts';
+import { sandboxRoute } from './routes/sandbox.ts';
 import {
   installSkillRoute,
   uninstallSkillRoute,
@@ -234,6 +235,7 @@ export function createApp(
   app.use('/api/jobs/:jobId/file-diff', requireRunnerAuth);
   app.use('/api/whatsapp/pairing', requireRunnerAuth);
   app.use('/api/code-task/doctor', requireRunnerAuth);
+  app.use('/api/sandbox', requireRunnerAuth);
 
   // ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -274,6 +276,11 @@ export function createApp(
   // Coding-CLI doctor (étape B) — probes claude/codex health on this machine
   // for the capability UI's "Tester" button. Free (no subscription usage).
   app.post('/api/code-task/doctor', (c) => codeTaskDoctorRoute(c));
+
+  // Le bac à sable de cette machine pour un espace (#876) : son état, ses
+  // limites, son périmètre en chemins réels. Réglages → Safety → Sandbox, et le
+  // bandeau du tableau de bord, le lisent.
+  app.get('/api/sandbox', (c) => sandboxRoute(c, deps));
 
   // Inbound webhooks (Brique 5) — intentionally OUTSIDE requireRunnerAuth
   // (that gate is a literal-path app.use on the four /api/* routes above, so
