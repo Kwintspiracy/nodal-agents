@@ -36,9 +36,14 @@ concurrency:
   group: qa-mesure
   cancel-in-progress: false
 
+# Images de runner explicites (issue #882) : `*-latest` bouge sans que le dépôt
+# change. Le 30/10/2026 `ubuntu-latest` est passé à Ubuntu 26.04 et Playwright
+# 1.60 a refusé d'y installer Chromium, sur toutes les PR. Passer à 26.04 se
+# fera exprès, avec une version de Playwright qui la connaît. Garde :
+# scripts/tests/runner-images.test.mjs (étape « Script tests » de `checks`).
 jobs:
   mesure:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Chaque étape longue a sa borne, et le job vaut au moins leur SOMME :
     # ~2 min de mise en place, installation 10, couverture 35, banc 5,
     # version de Playwright 2, Playwright 15, démarrage 10, parcours 20,
