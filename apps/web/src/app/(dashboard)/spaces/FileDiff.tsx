@@ -177,7 +177,11 @@ export function DiffBody({ view }: { view: FileDiffView }) {
  * chemin qui porte le sens. Le chemin complet reste au survol.
  */
 export function FileName({ path }: { path: string }) {
-  const cut = path.lastIndexOf('/');
+  // Les deux séparateurs : un outil présente le chemin RÉSOLU, et sous Windows
+  // il porte des « \ ». Coupé sur « / » seul, tout le chemin passait pour le
+  // nom, ne se tronquait plus, et deux chemins sur une ligne (« moved A to
+  // B », #879) se chevauchaient.
+  const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
   const name = cut === -1 ? path : path.slice(cut + 1);
   const dir = cut === -1 ? '' : path.slice(0, cut + 1);
   return (

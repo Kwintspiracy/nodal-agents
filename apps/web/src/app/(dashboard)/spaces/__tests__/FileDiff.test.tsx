@@ -152,6 +152,19 @@ describe('FilesCard — un fichier déplacé ou copié dit d’où il vient (#87
       'moved scan.pdf docs/ to scan.pdf archive/',
       'copied export.xlsx docs/ to export.xlsx archive/',
     ]);
+    // Un chemin Windows se coupe aussi : le nom devant, le dossier derrière.
+    const windows = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={feedWith([
+          { path: 'D:\\ws\\Archive\\scan.pdf', action: 'moved', from: 'D:\\ws\\Inbox\\scan.pdf' },
+        ])}
+      />,
+    );
+    expect(
+      [...windows.matchAll(/data-testid="file-moved"[^>]*>([\s\S]*?)<\/li>/g)].map((m) =>
+        texteDe(m[1] ?? ''),
+      ),
+    ).toEqual(['moved scan.pdf D:\\ws\\Inbox\\ to scan.pdf D:\\ws\\Archive\\']);
     // Le contenu n'a pas changé : aucun diff à ouvrir, et la carte n'est pas une relecture.
     expect(html).not.toContain('aria-expanded');
     expect(html).not.toContain('diff review');
