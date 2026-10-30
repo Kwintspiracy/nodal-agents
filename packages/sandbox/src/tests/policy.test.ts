@@ -5,12 +5,12 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, parse, resolve } from 'node:path';
 import {
   NodalHomeReachError,
   TOOL_CACHE_VARIABLES,
   allowedFolderRefusal,
-  broadFolderKind,
+  broadFolder,
   composeAllowedFolders,
   defaultAllowedFolders,
   nodalDataFolders,
@@ -325,13 +325,94 @@ describe('allowedFolderRefusal — the data folder of Nodal can never be allowed
   });
 });
 
-describe('broadFolderKind — what asks for a confirmation before it is allowed', () => {
-  it('a drive root and the home folder are broad; any other folder is not', () => {
+describe('broadFolder — what asks for a confirmation before it is allowed, decided by what the folder holds @cap:executer-une-commande/moteur', () => {
+  it('a volume root and the home folder are broad, and say the Nodal data they hold; any other folder is not', () => {
     const m = machineAt();
-    const root = resolve('/');
+    // La racine du volume qui porte le dossier personnel (sous Windows, le
+    // temporaire n'est pas toujours sur le lecteur courant).
+    const root = parse(m.home).root;
+    const data = join(m.home, '.nodalai');
     expect(dirname(root)).toBe(root);
-    expect(broadFolderKind(root, m)).toBe('volume-root');
-    expect(broadFolderKind(m.home, m)).toBe('home');
-    expect(broadFolderKind(join(m.home, 'Documents'), m)).toBeNull();
+    expect(broadFolder(root, m)?.kind).toBe('volume-root');
+    expect(broadFolder(root, m)?.nodalData).toEqual([data]);
+    expect(broadFolder(m.home, m)).toEqual({ kind: 'home', nodalData: [data] });
+    expect(broadFolder(join(m.home, 'Documents'), m)).toBeNull();
+  });
+
+  it('a folder that holds the home folder asks too, on this machine', () => {
+    const m = machineAt();
+    expect(broadFolder(dirname(m.home), m)).toEqual({
+      kind: 'holds-home',
+      nodalData: [join(m.home, '.nodalai')],
+    });
+  });
+
+  // Les vues ci-dessous sont celles d'AUTRES machines : la contenance se lit
+  // avec les chemins de leur système, quel que soit celui qui fait tourner le
+  // test (le dossier personnel « q » n'existe sur aucune).
+  const windows: MachineView = { platform: 'win32', home: 'C:\\Users\\q', env: {} };
+  const posix: MachineView = { platform: 'linux', home: '/home/q', env: {} };
+
+  it('Windows view: C:\\Users holds the home and the data, the home holds the data, C:\\ is a volume root', () => {
+    expect(broadFolder('C:\\Users', windows)).toEqual({
+      kind: 'holds-home',
+      nodalData: ['C:\\Users\\q\\.nodalai'],
+    });
+    expect(broadFolder('c:\\users\\Q', windows)).toEqual({
+      kind: 'home',
+      nodalData: ['C:\\Users\\q\\.nodalai'],
+    });
+    expect(broadFolder('C:\\', windows)).toEqual({
+      kind: 'volume-root',
+      nodalData: ['C:\\Users\\q\\.nodalai'],
+    });
+    expect(broadFolder('D:\\', windows)).toEqual({ kind: 'volume-root', nodalData: [] });
+    expect(broadFolder('C:\\Users\\q\\Documents', windows)).toBeNull();
+    expect(broadFolder('C:\\Users\\qa', windows)).toBeNull();
+    expect(allowedFolderRefusal('C:\\Users\\q\\.nodalai\\pg-data', windows)?.within).toBe(
+      'C:\\Users\\q\\.nodalai',
+    );
+  });
+
+  it('Windows view: the parent of a moved NODALAI_HOME, and of a moved entry, holds Nodal data', () => {
+    const moved: MachineView = {
+      ...windows,
+      env: { NODALAI_HOME: 'D:\\nodal\\inst', NODALAI_WORKSPACES_ROOT: 'E:\\ws\\nodal' },
+    };
+    expect(broadFolder('D:\\nodal', moved)).toEqual({
+      kind: 'holds-nodal-data',
+      nodalData: ['D:\\nodal\\inst'],
+    });
+    expect(broadFolder('E:\\ws', moved)).toEqual({
+      kind: 'holds-nodal-data',
+      nodalData: ['E:\\ws\\nodal'],
+    });
+    expect(broadFolder('D:\\work', moved)).toBeNull();
+    expect(allowedFolderRefusal('D:\\nodal\\inst', moved)?.code).toBe(
+      'SANDBOX_REACH_IS_NODAL_HOME',
+    );
+  });
+
+  it('POSIX view: /home holds the home and the data, / is a volume root, a moved instance makes its parent broad', () => {
+    expect(broadFolder('/home', posix)).toEqual({
+      kind: 'holds-home',
+      nodalData: ['/home/q/.nodalai'],
+    });
+    expect(broadFolder('/home/q', posix)).toEqual({
+      kind: 'home',
+      nodalData: ['/home/q/.nodalai'],
+    });
+    expect(broadFolder('/', posix)).toEqual({
+      kind: 'volume-root',
+      nodalData: ['/home/q/.nodalai'],
+    });
+    // Sous POSIX la casse compte : /home/Q n'est pas le dossier personnel.
+    expect(broadFolder('/home/Q', posix)).toBeNull();
+    const moved: MachineView = { ...posix, env: { NODALAI_HOME: '/srv/nodal/inst' } };
+    expect(broadFolder('/srv/nodal', moved)).toEqual({
+      kind: 'holds-nodal-data',
+      nodalData: ['/srv/nodal/inst'],
+    });
+    expect(broadFolder('/srv/www', moved)).toBeNull();
   });
 });

@@ -98,6 +98,24 @@ export const ALLOWED_FOLDER_SOURCES = [
 export type AllowedFolderSourceKey = (typeof ALLOWED_FOLDER_SOURCES)[number];
 
 /**
+ * Un dossier dont la permission ouvre plus que lui-même (`broadFolder`,
+ * @nodal-agents/sandbox policy.ts), décidé par ce qu'il CONTIENT : l'écran
+ * demande une confirmation qui nomme la conséquence avant de l'ajouter.
+ *   - `volume-root` : une racine de volume (`C:\`, `/`, la racine d'un partage) ;
+ *   - `home` : le dossier personnel ;
+ *   - `holds-home` : un dossier qui contient le dossier personnel (`C:\Users`, `/home`) ;
+ *   - `holds-nodal-data` : un dossier qui contient des données de Nodal, et rien
+ *     de plus large.
+ * `nodalData` : les dossiers de données de Nodal qu'il contient. Ce qui y est
+ * déjà reste refusé, mais une commande peut y créer un fichier nouveau (la
+ * limite `SANDBOX_DATA_DIR_NEW_CHILD`) : la confirmation le dit.
+ */
+export interface BroadFolder {
+  readonly kind: 'volume-root' | 'home' | 'holds-home' | 'holds-nodal-data';
+  readonly nodalData: readonly string[];
+}
+
+/**
  * Où tournent les commandes d'un agent, selon son runtime — un fait du RUNNER
  * (`commandsPlacement`, apps/runner/src/cli-runtime/provider.ts) :
  *   - `sandbox` : par les outils de Nodal, donc dans ce bac à sable ;

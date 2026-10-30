@@ -18,26 +18,32 @@
 // UN AJOUT EST CONTRÔLÉ par la règle du bac à sable lui-même
 // (`allowedFolderRefusal`, @nodal-agents/sandbox policy.ts), jamais recopiée
 // ici : le dossier de données de Nodal, ou un dossier sous lui, est refusé avec
-// la raison. Une racine de disque ou le dossier personnel demandent une
-// confirmation (`broadFolderKind`) ; l'action la redemande si l'écran ne l'a
-// pas apportée.
+// la raison. Un dossier qui est ou contient une racine de volume, le dossier
+// personnel ou des données de Nodal demande une confirmation (`broadFolder`) ;
+// l'action la redemande si l'écran ne l'a pas apportée.
+//
+// CHAQUE GESTE EST ATOMIQUE (`changeWorkspaceSandboxFolders`) : la base
+// l'applique sous verrou de ligne, jamais une liste relue ici puis réécrite
+// entière. Deux onglets qui retirent et ajoutent en même temps gardent tous
+// les deux leur geste.
 
 import 'server-only';
 import { statSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute } from 'node:path';
 import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { requireAuth } from '@nodal-agents/auth';
 import {
+  changeWorkspaceSandboxFolders,
   eq,
   entities,
-  readWorkspaceSandbox,
   setWorkspaceSandboxEnabled,
-  setWorkspaceSandboxFolders,
+  type SandboxFolderGesture,
+  type SandboxFolderOutcome,
 } from '@nodal-agents/db';
-import { allowedFolderRefusal, broadFolderKind, toolCacheRoot } from '@nodal-agents/sandbox';
-import { SandboxStateSchema, type SandboxFolders, type SandboxState } from '@nodal-agents/shared';
+import { allowedFolderRefusal, broadFolder, folderKey, toolCacheRoot } from '@nodal-agents/sandbox';
+import { SandboxStateSchema, type BroadFolder, type SandboxState } from '@nodal-agents/shared';
 import { env } from './env.ts';
 import { applyActiveEntity, getAuthProvider, getDb } from './server.ts';
 
@@ -83,13 +89,6 @@ async function ownerRefusal(session: {
     return fail('forbidden', 'Only the workspace owner can change the sandbox.');
   }
   return null;
-}
-
-/** Deux chemins désignent-ils le même dossier ? Casse repliée sous Windows. */
-function samePath(a: string, b: string): boolean {
-  const ka = resolve(a);
-  const kb = resolve(b);
-  return process.platform === 'win32' ? ka.toLowerCase() === kb.toLowerCase() : ka === kb;
 }
 
 // ─── Lire ────────────────────────────────────────────────────────────────────
@@ -199,25 +198,29 @@ const AddSchema = z
 export type AddSandboxFolderResult =
   | { kind: 'added' }
   | { kind: 'restored' }
-  | { kind: 'confirm'; broad: 'volume-root' | 'home' }
+  | { kind: 'confirm'; broad: BroadFolder }
   | { kind: 'refused'; code: string; within: string };
 
-/** Relit, applique `change`, réécrit. Le réglage illisible fait échouer, nommé. */
-async function updateFolders(
+/**
+ * UN geste, appliqué atomiquement par la base, avec la clé de dossier de la
+ * composition (`folderKey`) : ce que l'écran appelle « le même dossier » est
+ * ce que l'ouverture du conteneur appelle ainsi. Un réglage illisible fait
+ * échouer, nommé.
+ */
+function applyGesture(
   entityId: string,
-  change: (current: SandboxFolders) => SandboxFolders,
-): Promise<void> {
-  const db = getDb();
-  const current = await readWorkspaceSandbox(db, entityId);
-  await setWorkspaceSandboxFolders(db, entityId, change(current.folders));
+  gesture: SandboxFolderGesture,
+): Promise<SandboxFolderOutcome> {
+  return changeWorkspaceSandboxFolders(getDb(), entityId, gesture, (p) => folderKey(p));
 }
 
 /**
  * Permet un dossier aux commandes de l'espace. Refusé : un chemin relatif, un
  * dossier absent, le dossier de données de Nodal ou un dossier sous lui (rendu
- * comme `refused`, avec son code). Une racine de volume ou le dossier personnel rendent
- * `confirm` tant que l'écran n'a pas confirmé. Un dossier détecté que
- * l'utilisateur avait retiré est simplement rétabli.
+ * comme `refused`, avec son code). Un dossier large (`broadFolder` : il est ou
+ * contient une racine de volume, le dossier personnel, des données de Nodal)
+ * rend `confirm`, avec ce qu'il contient, tant que l'écran n'a pas confirmé.
+ * Un dossier détecté que l'utilisateur avait retiré est simplement rétabli.
  */
 export async function addSandboxFolderAction(
   raw: unknown,
@@ -242,24 +245,21 @@ export async function addSandboxFolderAction(
     }
     if (!isDir) return fail('not_found', `${path} is not a folder on this machine.`);
 
-    const current = await readWorkspaceSandbox(getDb(), session.entityId);
-    if (current.folders.removed.some((p) => samePath(p, path))) {
-      await updateFolders(session.entityId, (f) => ({
-        ...f,
-        removed: f.removed.filter((p) => !samePath(p, path)),
-      }));
-      revalidatePath('/settings');
-      return ok({ kind: 'restored' });
-    }
-    if (current.folders.added.some((p) => samePath(p, path))) {
+    const broad = broadFolder(path);
+    const outcome = await applyGesture(session.entityId, {
+      op: 'add',
+      path,
+      awaitsConfirmation: broad !== null && parsed.data.confirmedBroad !== true,
+    });
+    if (outcome === 'needs-confirmation' && broad) return ok({ kind: 'confirm', broad });
+    if (outcome === 'already-allowed') {
       return fail('already_allowed', `${path} is already allowed.`);
     }
-    const broad = broadFolderKind(path);
-    if (broad && parsed.data.confirmedBroad !== true) return ok({ kind: 'confirm', broad });
-
-    await updateFolders(session.entityId, (f) => ({ ...f, added: [...f.added, path] }));
+    if (outcome !== 'added' && outcome !== 'restored') {
+      throw new Error(`addSandboxFolderAction: unexpected outcome ${outcome}`);
+    }
     revalidatePath('/settings');
-    return ok({ kind: 'added' });
+    return ok({ kind: outcome });
   } catch (err) {
     console.error('[addSandboxFolderAction]', err);
     return fail('db_error', 'Failed to save the allowed folders');
@@ -279,19 +279,13 @@ export async function removeSandboxFolderAction(raw: unknown): Promise<ActionRes
     const refused = await ownerRefusal(session);
     if (refused) return refused;
     const path = parsed.data.path;
-    if (samePath(path, toolCacheRoot())) {
+    if (folderKey(path) === folderKey(toolCacheRoot())) {
       return fail(
         'tool_cache_required',
         'The tool cache stays: without it, npm and pip start from an empty cache on every command.',
       );
     }
-    await updateFolders(session.entityId, (f) =>
-      f.added.some((p) => samePath(p, path))
-        ? { ...f, added: f.added.filter((p) => !samePath(p, path)) }
-        : f.removed.some((p) => samePath(p, path))
-          ? f
-          : { ...f, removed: [...f.removed, path] },
-    );
+    await applyGesture(session.entityId, { op: 'remove', path });
     revalidatePath('/settings');
     return ok(undefined);
   } catch (err) {
@@ -309,10 +303,7 @@ export async function restoreSandboxFolderAction(raw: unknown): Promise<ActionRe
     const refused = await ownerRefusal(session);
     if (refused) return refused;
     const path = parsed.data.path;
-    await updateFolders(session.entityId, (f) => ({
-      ...f,
-      removed: f.removed.filter((p) => !samePath(p, path)),
-    }));
+    await applyGesture(session.entityId, { op: 'restore', path });
     revalidatePath('/settings');
     return ok(undefined);
   } catch (err) {

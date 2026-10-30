@@ -42,7 +42,7 @@ import {
   Warning,
   X,
 } from '@phosphor-icons/react';
-import type { SandboxAgent } from '@nodal-agents/shared';
+import type { BroadFolder, SandboxAgent } from '@nodal-agents/shared';
 import {
   addSandboxFolderAction,
   removeSandboxFolderAction,
@@ -104,7 +104,7 @@ export default function SandboxSection({ initial }: Props) {
   const [confirmOff, setConfirmOff] = useState(false);
   const [picking, setPicking] = useState(false);
   const [limitsOpen, setLimitsOpen] = useState(false);
-  const [broad, setBroad] = useState<{ path: string; kind: 'volume-root' | 'home' } | null>(null);
+  const [broad, setBroad] = useState<{ path: string; folder: BroadFolder } | null>(null);
   const [refusal, setRefusal] = useState<{ path: string; within: string } | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -143,7 +143,7 @@ export default function SandboxSection({ initial }: Props) {
         return;
       }
       if (r.data.kind === 'confirm') {
-        setBroad({ path, kind: r.data.broad });
+        setBroad({ path, folder: r.data.broad });
         return;
       }
       if (r.data.kind === 'refused') {
@@ -578,9 +578,9 @@ export default function SandboxSection({ initial }: Props) {
       {broad && (
         <ConfirmDialog
           open
-          title={broadFolderWords(broad.kind, broad.path, initial.platform).title}
-          message={broadFolderWords(broad.kind, broad.path, initial.platform).message}
-          confirmLabel={broadFolderWords(broad.kind, broad.path, initial.platform).confirm}
+          title={broadFolderWords(broad.folder, broad.path, initial.platform).title}
+          message={broadFolderWords(broad.folder, broad.path, initial.platform).message}
+          confirmLabel={broadFolderWords(broad.folder, broad.path, initial.platform).confirm}
           destructive
           onConfirm={() => {
             const { path } = broad;

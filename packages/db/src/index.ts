@@ -124,7 +124,10 @@ export {
   readWorkspaceSandbox,
   workspaceSandboxReader,
   setWorkspaceSandboxEnabled,
-  setWorkspaceSandboxFolders,
+  changeWorkspaceSandboxFolders,
+  applySandboxFolderGesture,
+  type SandboxFolderGesture,
+  type SandboxFolderOutcome,
 } from './repos/workspace-sandbox.ts';
 export { listMemberWorkspaces, countMemberlessRootWorkspaces } from './repos/member-workspaces.ts';
 export type { MemberWorkspace } from './repos/member-workspaces.ts';

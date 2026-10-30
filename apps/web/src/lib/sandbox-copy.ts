@@ -10,7 +10,12 @@
  * lignes de Réglages le lisent.
  */
 
-import type { AllowedFolderSourceKey, SandboxAgent, SandboxState } from '@nodal-agents/shared';
+import type {
+  AllowedFolderSourceKey,
+  BroadFolder,
+  SandboxAgent,
+  SandboxState,
+} from '@nodal-agents/shared';
 import { CLI_RUNTIME_LABELS, isCliRuntimeValue } from './cli-runtimes.ts';
 
 // ─── Le système, le moteur ───────────────────────────────────────────────────
@@ -310,24 +315,54 @@ export const TURN_OFF_WORDS = {
   confirm: 'Turn off',
 } as const;
 
-/** La confirmation d'un dossier qui ouvre presque tout, avec sa conséquence. */
+/** `a`, `a and b`, `a, b and c`. */
+function listWords(items: readonly string[]): string {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/**
+ * La confirmation d'un dossier large (`BroadFolder`, rendu par le runner de la
+ * règle `broadFolder`), avec sa conséquence. Quand il contient des données de
+ * Nodal, elle dit la limite connue `SANDBOX_DATA_DIR_NEW_CHILD` : ce qui y est
+ * reste refusé, un fichier nouveau peut y être créé.
+ */
 export function broadFolderWords(
-  broad: 'volume-root' | 'home',
+  broad: BroadFolder,
   path: string,
   platform: string,
 ): { title: string; message: string; confirm: string } {
-  if (broad === 'volume-root') {
-    return {
-      title: `Allow all of ${path} ?`,
-      message: `Commands of every agent in this workspace could write anywhere on this drive, ${osName(platform)} and your programs included.`,
-      confirm: `Allow ${path}`,
-    };
+  const everyAgent = 'Commands of every agent in this workspace could write anywhere';
+  const data =
+    broad.nodalData.length === 0
+      ? ''
+      : ` It holds Nodal's data, in ${listWords(broad.nodalData)}. Commands could add new files there. What is already there stays refused.`;
+  switch (broad.kind) {
+    case 'volume-root':
+      return {
+        title: `Allow all of ${path} ?`,
+        message: `${everyAgent} on this drive, ${osName(platform)} and your programs included.${data}`,
+        confirm: `Allow ${path}`,
+      };
+    case 'home':
+      return {
+        title: 'Allow your whole home folder?',
+        message: `${everyAgent} in ${path}, your documents included.${data}`,
+        confirm: 'Allow',
+      };
+    case 'holds-home':
+      return {
+        title: `Allow all of ${path} ?`,
+        message: `${everyAgent} in ${path}, your home folder included.${data}`,
+        confirm: `Allow ${path}`,
+      };
+    case 'holds-nodal-data':
+      return {
+        title: `Allow all of ${path} ?`,
+        message: `${everyAgent} in ${path}.${data}`,
+        confirm: `Allow ${path}`,
+      };
   }
-  return {
-    title: 'Allow your whole home folder?',
-    message: `Commands of every agent in this workspace could write anywhere in ${path}, your documents included.`,
-    confirm: 'Allow',
-  };
 }
 
 // ─── Le bandeau ──────────────────────────────────────────────────────────────

@@ -114,12 +114,48 @@ describe('the words of the sandbox section @cap:executer-une-commande/ecran', ()
   });
 
   it('a volume root names the system it belongs to', () => {
-    expect(broadFolderWords('volume-root', '/', 'linux')).toEqual({
+    expect(broadFolderWords({ kind: 'volume-root', nodalData: [] }, '/', 'linux')).toEqual({
       title: 'Allow all of / ?',
       message:
         'Commands of every agent in this workspace could write anywhere on this drive, Linux and your programs included.',
       confirm: 'Allow /',
     });
+  });
+
+  it('a folder that holds the home folder or Nodal data names them, and the known limit on the data', () => {
+    expect(
+      broadFolderWords(
+        { kind: 'holds-home', nodalData: ['C:\Users\q\.nodalai'] },
+        'C:\Users',
+        'win32',
+      ),
+    ).toEqual({
+      title: 'Allow all of C:\Users ?',
+      message:
+        "Commands of every agent in this workspace could write anywhere in C:\Users, your home folder included. It holds Nodal's data, in C:\Users\q\.nodalai. Commands could add new files there. What is already there stays refused.",
+      confirm: 'Allow C:\Users',
+    });
+    expect(
+      broadFolderWords(
+        { kind: 'holds-nodal-data', nodalData: ['/srv/nodal/a', '/srv/nodal/b'] },
+        '/srv/nodal',
+        'linux',
+      ).message,
+    ).toBe(
+      "Commands of every agent in this workspace could write anywhere in /srv/nodal. It holds Nodal's data, in /srv/nodal/a and /srv/nodal/b. Commands could add new files there. What is already there stays refused.",
+    );
+    expect(
+      broadFolderWords({ kind: 'home', nodalData: ['/home/q/.nodalai'] }, '/home/q', 'linux'),
+    ).toEqual({
+      title: 'Allow your whole home folder?',
+      message:
+        "Commands of every agent in this workspace could write anywhere in /home/q, your documents included. It holds Nodal's data, in /home/q/.nodalai. Commands could add new files there. What is already there stays refused.",
+      confirm: 'Allow',
+    });
+    for (const kind of ['volume-root', 'home', 'holds-home', 'holds-nodal-data'] as const) {
+      const words = broadFolderWords({ kind, nodalData: ['X'] }, 'P', 'win32');
+      expect(`${words.title} ${words.message} ${words.confirm}`).not.toContain('—');
+    }
   });
 
   it('an agent outside the sandbox is named by the runtime label; an unknown runtime is never called confined', () => {

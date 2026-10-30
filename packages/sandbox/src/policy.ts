@@ -31,10 +31,14 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { isAbsolute, join, posix, resolve, sep, win32 } from 'node:path';
 import { defaultNodalHome, nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
 import { nodalInstanceRecord, readNodalInstances } from '@nodal-agents/shared/nodal-instances';
-import type { SandboxFolders, WorkspaceSandbox } from '@nodal-agents/shared/sandbox-settings';
+import type {
+  BroadFolder,
+  SandboxFolders,
+  WorkspaceSandbox,
+} from '@nodal-agents/shared/sandbox-settings';
 
 /** Ce que l'appelant déclare pour UNE commande. */
 export interface ConfinementPolicy {
@@ -254,9 +258,11 @@ function nodalDataLocations(machine: MachineView): {
   const homes = new Map<string, string>();
   const moved = new Map<string, string>();
   for (const i of instances) {
-    homes.set(pathKey(i.home), i.home);
+    homes.set(keyOn(i.home, machine.platform), i.home);
     for (const entry of i.moved) {
-      if (!isWithin(entry, i.home)) moved.set(pathKey(entry), entry);
+      if (!withinOn(entry, i.home, machine.platform)) {
+        moved.set(keyOn(entry, machine.platform), entry);
+      }
     }
   }
   return { homes, moved };
@@ -320,23 +326,38 @@ export function allowedFolderRefusal(
 ): NodalHomeReachError | null {
   const { homes, moved } = nodalDataLocations(machine);
   for (const data of [...homes.values(), ...moved.values()]) {
-    if (isWithin(path, data)) return new NodalHomeReachError(path, data);
+    if (withinOn(path, data, machine.platform)) return new NodalHomeReachError(path, data);
   }
   return null;
 }
 
 /**
- * Un dossier dont la permission vaut « partout » ou presque : une racine de
- * disque (`C:\`, `/`) ou le dossier personnel. L'écran demande une
- * confirmation qui nomme la conséquence avant de l'ajouter (#876).
+ * Un dossier dont la permission ouvre plus que lui-même (#876), décidé par ce
+ * qu'il CONTIENT, jamais par égalité avec une liste : il est ou contient une
+ * racine de volume, le dossier personnel, ou un dossier de données de Nodal
+ * (la même énumération que les refus, `nodalDataLocations`). L'écran demande
+ * alors une confirmation qui nomme la conséquence. Un dossier qui EST des
+ * données de Nodal ou se trouve DEDANS n'arrive pas ici : il est refusé
+ * (`allowedFolderRefusal`). `null` : le dossier n'ouvre que lui-même.
+ *
+ * Les chemins sont lus avec ceux du système de `machine` : une vue Windows
+ * se juge en chemins Windows, sur n'importe quelle machine.
  */
-export function broadFolderKind(
+export function broadFolder(
   path: string,
   machine: MachineView = thisMachine(),
-): 'volume-root' | 'home' | null {
-  const abs = resolve(path);
-  if (dirname(abs) === abs) return 'volume-root';
-  if (key(abs, machine.platform) === key(machine.home, machine.platform)) return 'home';
+): BroadFolder | null {
+  const { homes, moved } = nodalDataLocations(machine);
+  const nodalData = [...homes.values(), ...moved.values()].filter((data) =>
+    withinOn(data, path, machine.platform),
+  );
+  const abs = absOn(path, machine.platform);
+  if (pathOf(machine.platform).dirname(abs) === abs) return { kind: 'volume-root', nodalData };
+  if (keyOn(path, machine.platform) === keyOn(machine.home, machine.platform)) {
+    return { kind: 'home', nodalData };
+  }
+  if (withinOn(machine.home, path, machine.platform)) return { kind: 'holds-home', nodalData };
+  if (nodalData.length > 0) return { kind: 'holds-nodal-data', nodalData };
   return null;
 }
 
@@ -349,16 +370,40 @@ function real(path: string): string {
   }
 }
 
+function pathOf(platform: NodeJS.Platform): typeof posix {
+  return platform === 'win32' ? win32 : posix;
+}
+
+/**
+ * Un chemin absolu sur le système `platform` : réel quand c'est celui de ce
+ * processus (les jonctions et liens suivis), résolu avec les règles de ce
+ * système sinon.
+ */
+function absOn(path: string, platform: NodeJS.Platform): string {
+  return platform === process.platform ? real(path) : pathOf(platform).resolve(path);
+}
+
+/** La clé de comparaison d'un chemin sur `platform` : absolue, casse repliée sous Windows. */
+function keyOn(path: string, platform: NodeJS.Platform): string {
+  const r = absOn(path, platform);
+  return platform === 'win32' ? r.toLowerCase() : r;
+}
+
+/** `child` est `parent` ou descend de lui, sur le système `platform`. */
+function withinOn(child: string, parent: string, platform: NodeJS.Platform): boolean {
+  const c = keyOn(child, platform);
+  const p = keyOn(parent, platform);
+  const s = pathOf(platform).sep;
+  return c === p || c.startsWith(p.endsWith(s) ? p : p + s);
+}
+
 function pathKey(path: string): string {
-  const r = real(path);
-  return process.platform === 'win32' ? r.toLowerCase() : r;
+  return keyOn(path, process.platform);
 }
 
 /** `child` est `parent` ou descend de lui (chemins réels, casse repliée sous Windows). */
 function isWithin(child: string, parent: string): boolean {
-  const c = pathKey(child);
-  const p = pathKey(parent);
-  return c === p || c.startsWith(p.endsWith(sep) ? p : p + sep);
+  return withinOn(child, parent, process.platform);
 }
 
 /**

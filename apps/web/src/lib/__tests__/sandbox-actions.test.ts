@@ -5,12 +5,12 @@
 // de `fetch`, et l'action doit la valider, pas la croire.
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, parse, resolve } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { readWorkspaceSandbox, setWorkspaceSandboxFolders } from '@nodal-agents/db';
+import { eq, entities, readWorkspaceSandbox } from '@nodal-agents/db';
 import { toolCacheRoot } from '@nodal-agents/sandbox';
 
 let testDb: TestDb;
@@ -49,11 +49,15 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   caller = { userId: seed.userId, entityId: seed.entityId };
-  await setWorkspaceSandboxFolders(testDb, seed.entityId, { added: [], removed: [] });
+  await testDb
+    .update(entities)
+    .set({ sandboxFolders: { added: [], removed: [] } })
+    .where(eq(entities.id, seed.entityId));
 });
 afterAll(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe('the sandbox switch, persisted @cap:executer-une-commande/ecran', () => {
@@ -117,9 +121,9 @@ describe('the allowed folders, persisted as gestures only @cap:executer-une-comm
 
   it('a drive root asks for a confirmation first, and is written only once confirmed', async () => {
     const root = resolve('/');
-    expect(await A.addSandboxFolderAction({ path: root })).toEqual({
+    expect(await A.addSandboxFolderAction({ path: root })).toMatchObject({
       ok: true,
-      data: { kind: 'confirm', broad: 'volume-root' },
+      data: { kind: 'confirm', broad: { kind: 'volume-root' } },
     });
     expect((await stored()).folders.added).toEqual([]);
     expect(await A.addSandboxFolderAction({ path: root, confirmedBroad: true })).toEqual({
@@ -129,11 +133,55 @@ describe('the allowed folders, persisted as gestures only @cap:executer-une-comm
     expect((await stored()).folders.added).toEqual([root]);
   });
 
-  it('the home folder asks for a confirmation too', async () => {
-    expect(await A.addSandboxFolderAction({ path: homedir() })).toEqual({
-      ok: true,
-      data: { kind: 'confirm', broad: 'home' },
-    });
+  it('the home folder asks for a confirmation too, and names the Nodal data it holds', async () => {
+    const r = await A.addSandboxFolderAction({ path: homedir() });
+    expect(r).toMatchObject({ ok: true, data: { kind: 'confirm', broad: { kind: 'home' } } });
+    expect(r.ok && r.data.kind === 'confirm' && r.data.broad.nodalData).toContain(
+      join(homedir(), '.nodalai'),
+    );
+    expect((await stored()).folders.added).toEqual([]);
+  });
+
+  // Un dossier personnel posé à la racine (`/root`) n'a pas de parent qui ne soit pas une racine.
+  it.runIf(dirname(homedir()) !== parse(homedir()).root)(
+    'a folder that holds the home folder (C:\Users, /home) asks for a confirmation, and is written only once confirmed',
+    async () => {
+      const parent = dirname(homedir());
+      const r = await A.addSandboxFolderAction({ path: parent });
+      expect(r).toMatchObject({
+        ok: true,
+        data: { kind: 'confirm', broad: { kind: 'holds-home' } },
+      });
+      expect(r.ok && r.data.kind === 'confirm' && r.data.broad.nodalData).toContain(
+        join(homedir(), '.nodalai'),
+      );
+      expect((await stored()).folders.added).toEqual([]);
+      expect(await A.addSandboxFolderAction({ path: parent, confirmedBroad: true })).toEqual({
+        ok: true,
+        data: { kind: 'added' },
+      });
+      expect((await stored()).folders.added).toEqual([parent]);
+    },
+  );
+
+  it('the parent of a moved NODALAI_HOME asks for a confirmation; the instance itself stays refused', async () => {
+    const parent = folder('moved');
+    const instance = join(parent, 'inst');
+    mkdirSync(instance);
+    vi.stubEnv('NODALAI_HOME', instance);
+    try {
+      expect(await A.addSandboxFolderAction({ path: parent })).toEqual({
+        ok: true,
+        data: { kind: 'confirm', broad: { kind: 'holds-nodal-data', nodalData: [instance] } },
+      });
+      expect(await A.addSandboxFolderAction({ path: instance })).toMatchObject({
+        ok: true,
+        data: { kind: 'refused', code: 'SANDBOX_REACH_IS_NODAL_HOME' },
+      });
+      expect((await stored()).folders.added).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('removing an added folder forgets it; removing a detected one records the removal; adding it back restores it', async () => {

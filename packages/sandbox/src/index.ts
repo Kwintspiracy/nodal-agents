@@ -28,7 +28,7 @@ export {
   type WorkspaceSandboxReader,
   TOOL_CACHE_VARIABLES,
   allowedFolderRefusal,
-  broadFolderKind,
+  broadFolder,
   composeAllowedFolders,
   folderKey,
   defaultAllowedFolders,

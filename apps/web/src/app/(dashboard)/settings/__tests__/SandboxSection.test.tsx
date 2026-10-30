@@ -8,6 +8,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import type { BroadFolder } from '@nodal-agents/shared';
 import type { SandboxView } from '@/lib/sandbox-actions.ts';
 
 type AddResult =
@@ -15,7 +16,7 @@ type AddResult =
       ok: true;
       data:
         | { kind: 'added' }
-        | { kind: 'confirm'; broad: 'volume-root' | 'home' }
+        | { kind: 'confirm'; broad: BroadFolder }
         | { kind: 'refused'; code: string; within: string };
     }
   | { ok: false; code: string; message: string };
@@ -220,7 +221,7 @@ describe('SandboxSection, active @cap:executer-une-commande/ecran', () => {
   it('adding a volume root shows the confirmation the action asks for, then adds it confirmed', async () => {
     addSandboxFolderAction.mockImplementationOnce(async () => ({
       ok: true,
-      data: { kind: 'confirm', broad: 'volume-root' },
+      data: { kind: 'confirm', broad: { kind: 'volume-root', nodalData: [] } },
     }));
     await render(ACTIVE);
     await act(async () => buttonNamed('Add folder').click());
