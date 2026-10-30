@@ -355,6 +355,83 @@ describe('file_move — la porte d’écrasement de file_write, sur la destinati
     expect(await readFile(join(DOCS, 'take.txt'), 'utf8')).toBe('take 2');
   });
 
+  it('retirer du dossier partagé un fichier que ce run n’a pas écrit attend une personne, et rien ne bouge', async () => {
+    // Retirer le travail d'un autre le détruit autant que l'écraser : la même
+    // porte, la même question, sur la SOURCE d'un déplacement.
+    const jobId = await jobNeuf();
+    await writeFile(join(SHARED, 'brief.pdf'), OCTETS);
+
+    const res = await executeTool(
+      fileMoveTool,
+      { source: 'shared/brief.pdf', destination: 'docs/', purpose: 'Ranger le brief.' } as never,
+      ctx(jobId),
+      sansRegle,
+    );
+
+    expect(res.outcome).toBe('awaiting_approval');
+    expect(await readFile(join(SHARED, 'brief.pdf'))).toEqual(OCTETS);
+    expect(await existe(join(DOCS, 'brief.pdf'))).toBe(false);
+  });
+
+  it('COPIER depuis le dossier partagé le fichier d’un autre ne demande rien : la source reste', async () => {
+    await writeFile(join(SHARED, 'brief.pdf'), OCTETS);
+    const out = await deplacer({ source: 'shared/brief.pdf', destination: 'docs/', copy: true });
+    expect(out.ok).toBe(true);
+    expect(await readFile(join(SHARED, 'brief.pdf'))).toEqual(OCTETS);
+    expect(await readFile(join(DOCS, 'brief.pdf'))).toEqual(OCTETS);
+  });
+
+  it('retirer du dossier partagé un fichier que CE run a écrit ne demande rien', async () => {
+    const jobId = await jobNeuf();
+    const ecrit = await executeTool(
+      fileWriteTool,
+      { path: 'shared/notes.md', content: 'mes notes' },
+      ctx(jobId),
+      sansRegle,
+    );
+    expect(ecrit.outcome).toBe('success');
+
+    const out = await deplacer({ source: 'shared/notes.md', destination: 'docs/' }, ctx(jobId));
+
+    expect(out.ok).toBe(true);
+    expect(await readFile(join(DOCS, 'notes.md'), 'utf8')).toBe('mes notes');
+    expect(await existe(join(SHARED, 'notes.md'))).toBe(false);
+  });
+
+  it('une source partagée changée entre la porte et le renommage n’est pas retirée', async () => {
+    const jobId = await jobNeuf();
+    const source = join(SHARED, 'take.md');
+    await executeTool(
+      fileWriteTool,
+      { path: 'shared/take.md', content: 'take 1' },
+      ctx(jobId),
+      sansRegle,
+    );
+    const lent = {
+      ...fileMoveTool,
+      execute: async (
+        input: Parameters<typeof fileMoveTool.execute>[0],
+        c: Parameters<typeof fileMoveTool.execute>[1],
+      ) => {
+        await writeFile(source, 'edited meanwhile', 'utf8');
+        return fileMoveTool.execute(input, c);
+      },
+    } as typeof fileMoveTool;
+
+    const res = await executeTool(
+      lent,
+      { source: 'shared/take.md', destination: 'docs/' } as never,
+      ctx(jobId),
+      sansRegle,
+    );
+
+    const out = (res as { output: FileMoveOutput }).output;
+    expect(out.ok).toBe(false);
+    expect(!out.ok && out.reason).toContain('changed since this call was allowed');
+    expect(await readFile(source, 'utf8')).toBe('edited meanwhile');
+    expect(await existe(join(DOCS, 'take.md'))).toBe(false);
+  });
+
   it('un fichier NEUF dans le dossier partagé ne demande rien', async () => {
     await writeFile(join(DOCS, 'neuf.pdf'), OCTETS);
     const out = await deplacer({ source: 'docs/neuf.pdf', destination: 'shared/' });

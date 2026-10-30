@@ -191,14 +191,14 @@ describe('computeApprovalImpactLine — other tools (unchanged shape)', () => {
 });
 
 describe('computeApprovalImpactLine — file_move : le geste, puis l’écrasement (#879) @cap:travailler-sur-des-fichiers/ecran', () => {
-  it('un déplacement dit « Moves A to B » et ce qu’il remplace', () => {
+  it('un déplacement dit « Moves A to B » et qu’il remplace ou retire un fichier partagé', () => {
     expect(
       computeApprovalImpactLine('file_move', {
         source: 'docs/scan.pdf',
         destination: 'shared/inbox/',
       }),
     ).toBe(
-      'Moves "docs/scan.pdf" to "shared/inbox/", overwriting the existing file there in the shared workspace.',
+      'Moves "docs/scan.pdf" to "shared/inbox/", replacing or removing a file in the shared workspace that this run did not write.',
     );
   });
 

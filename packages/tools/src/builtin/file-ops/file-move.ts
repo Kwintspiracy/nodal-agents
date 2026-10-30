@@ -197,11 +197,16 @@ function systemFailure(err: unknown, verb: 'move' | 'copy', input: FileMoveInput
  * dossier de destination, renommé par-dessus la cible. Une copie interrompue
  * ne laisse jamais une destination à moitié écrite.
  */
-async function copyIntoPlace(ctx: ToolContext, source: string, destination: string): Promise<void> {
+async function copyIntoPlace(
+  ctx: ToolContext,
+  source: string,
+  destination: string,
+  destroyed: readonly string[],
+): Promise<void> {
   const tmp = `${dirname(destination)}/.${basename(destination)}.${randomBytes(6).toString('hex')}.tmp`;
   try {
     await copyFile(source, tmp);
-    await assertStillOursToReplace(ctx, destination);
+    await assertStillOurs(ctx, destroyed);
     await rename(tmp, destination);
   } catch (err) {
     await unlink(tmp).catch(() => undefined);
@@ -210,22 +215,33 @@ async function copyIntoPlace(ctx: ToolContext, source: string, destination: stri
 }
 
 /**
- * La dernière question de la porte d'écrasement, reposée juste avant de
- * remplacer la destination — la même que `writeFileAtomically` pose (#505) :
- * quand la porte a laissé passer l'appel sans personne, un fichier qui a
- * changé depuis n'est pas remplacé.
+ * Les fichiers existants que l'appel DÉTRUIT : la destination, qu'il remplace
+ * quand elle existe, et, pour un déplacement, la source, qu'il retire. Retirer
+ * du dossier partagé le fichier d'un autre détruit son travail autant que
+ * l'écraser : la porte d'écrasement pose donc la même question aux deux. Une
+ * copie laisse la source intacte.
  */
-async function assertStillOursToReplace(ctx: ToolContext, destination: string): Promise<void> {
-  if (
-    ctx.sharedOverwriteUnattended === true &&
-    (await computeSharedOverwriteApproval(ctx, destination)) === 'require_approval'
-  ) {
-    throw new WorkspaceError(
-      'shared_file_changed',
-      `Nothing was moved: "${basename(destination)}" in the shared folder changed since this ` +
-        'call was allowed, and it is no longer content this run wrote. Call again: the owner ' +
-        'will be asked before it is replaced.',
-    );
+function destroyedBy(copy: boolean, paths: { source: string; destination: string }): string[] {
+  return copy ? [paths.destination] : [paths.destination, paths.source];
+}
+
+/**
+ * La dernière question de la porte d'écrasement, reposée juste avant de
+ * toucher aux fichiers — la même que `writeFileAtomically` pose (#505) :
+ * quand la porte a laissé passer l'appel sans personne, un fichier qui a
+ * changé depuis n'est ni remplacé ni retiré.
+ */
+async function assertStillOurs(ctx: ToolContext, destroyed: readonly string[]): Promise<void> {
+  if (ctx.sharedOverwriteUnattended !== true) return;
+  for (const path of destroyed) {
+    if ((await computeSharedOverwriteApproval(ctx, path)) === 'require_approval') {
+      throw new WorkspaceError(
+        'shared_file_changed',
+        `Nothing was moved: "${basename(path)}" in the shared folder changed since this ` +
+          'call was allowed, and it is no longer content this run wrote. Call again: the owner ' +
+          'will be asked first.',
+      );
+    }
   }
 }
 
@@ -281,10 +297,11 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
       })),
     );
   },
-  // La porte d'écrasement de `file_write`, sur la DESTINATION : un fichier
-  // existant du dossier partagé que ce run n'a pas écrit ne se remplace pas
-  // sans personne. Un fichier neuf, ou un dossier de l'agent, ne demande rien :
-  // l'instantané le défait.
+  // La porte d'écrasement de `file_write`, sur chaque fichier que l'appel
+  // DÉTRUIT (`destroyedBy`) : un fichier existant du dossier partagé que ce run
+  // n'a pas écrit ne se remplace pas, et ne se retire pas, sans personne. Un
+  // fichier neuf, ou un dossier de l'agent, ne demande rien : l'instantané le
+  // défait.
   computeApproval: async (input, ctx) => {
     let paths: MovePaths;
     try {
@@ -295,7 +312,12 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
     if (!paths.ok) return undefined;
     if (await isProtectedWorkflowTemplate(ctx, paths.destination)) return undefined;
     if (!input.copy && (await isProtectedWorkflowTemplate(ctx, paths.source))) return undefined;
-    return computeSharedOverwriteApproval(ctx, paths.destination);
+    for (const path of destroyedBy(input.copy, paths)) {
+      if ((await computeSharedOverwriteApproval(ctx, path)) === 'require_approval') {
+        return 'require_approval';
+      }
+    }
+    return undefined;
   },
   execute: async (input, ctx) => {
     let paths: MovePaths;
@@ -317,21 +339,22 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
       return { ok: false, reason: WORKFLOW_TEMPLATE_PROTECTED_MESSAGE };
     }
     const verb = input.copy ? 'copy' : 'move';
+    const destroyed = destroyedBy(input.copy, paths);
     try {
       if (input.create_dirs) await mkdir(dirname(destination), { recursive: true });
       if (input.copy) {
-        await copyIntoPlace(ctx, source, destination);
+        await copyIntoPlace(ctx, source, destination, destroyed);
         return { ok: true, operation: 'copied', source, destination, bytes };
       }
       try {
-        await assertStillOursToReplace(ctx, destination);
+        await assertStillOurs(ctx, destroyed);
         await rename(source, destination);
       } catch (err) {
         // Deux volumes (un autre disque, un partage monté) : un renommage n'y
         // traverse pas. Le déplacement se fait alors en deux temps, copie puis
         // suppression.
         if (errnoOf(err) !== 'EXDEV') throw err;
-        await copyIntoPlace(ctx, source, destination);
+        await copyIntoPlace(ctx, source, destination, destroyed);
         try {
           await unlink(source);
         } catch (unlinkErr) {

@@ -155,12 +155,15 @@ export function computeApprovalImpactLine(
     case 'file_edit':
       return `Overwrites the existing file "${str(input['path'])}" in the shared workspace.`;
     case 'file_move':
-      // Gaté par la même porte que file_write : la destination existe dans le
-      // dossier partagé (#879). Le geste se dit d'abord, l'écrasement ensuite.
-      return (
-        `${input['copy'] === true ? 'Copies' : 'Moves'} "${str(input['source'])}" to ` +
-        `"${str(input['destination'])}", overwriting the existing file there in the shared workspace.`
-      );
+      // Gaté par la même porte que file_write, sur chaque fichier que l'appel
+      // détruit (#879) : la destination qu'une copie remplace ; la destination
+      // ou la source qu'un déplacement remplace ou retire. Le geste se dit
+      // d'abord, ce qu'il détruit ensuite.
+      return input['copy'] === true
+        ? `Copies "${str(input['source'])}" to "${str(input['destination'])}", overwriting ` +
+            'the existing file there in the shared workspace.'
+        : `Moves "${str(input['source'])}" to "${str(input['destination'])}", replacing or ` +
+            'removing a file in the shared workspace that this run did not write.';
     case 'run_command': {
       const cmd = input['command'];
       return typeof cmd === 'string' && cmd.trim().length > 0
