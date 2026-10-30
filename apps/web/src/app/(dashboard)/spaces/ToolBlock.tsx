@@ -34,6 +34,7 @@ import { formatMs, shortToolName } from './format.ts';
 // qui est rendu côté serveur, la reprend telle quelle pour sa carte d'envoi, et
 // le serveur ne reçoit d'un module `'use client'` que des références.
 import { DOT } from './feed-dots.ts';
+import { pathWithOrigin } from '@/lib/file-change-groups.ts';
 
 type ToolStep = Extract<Step, { kind: 'tool' }>;
 
@@ -229,7 +230,8 @@ export function StepLine({ step }: { step: ToolStep }) {
     case 'files':
       return (
         <>
-          {p.total} {p.total === 1 ? 'file' : 'files'} · {p.files[0]?.path ?? ''}
+          {p.total} {p.total === 1 ? 'file' : 'files'} ·{' '}
+          {p.files[0] === undefined ? '' : pathWithOrigin(p.files[0].path, p.files[0].from)}
         </>
       );
     case 'sent': {

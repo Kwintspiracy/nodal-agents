@@ -130,6 +130,7 @@ describe('the closed tool list of each scenario (decision 1B)', () => {
         'bench_printer__request_print',
         'file_edit',
         'file_list',
+        'file_move',
         'file_read',
         'file_search',
         'file_write',

@@ -430,6 +430,8 @@ export type DeliveryFileChange = {
    * fichier créé jusqu'à ce que quelqu'un l'ouvre.
    */
   changeKind?: FileChangeGesture;
+  /** D'où vient un fichier déplacé ou copié (#879) ; absent pour tout autre geste. */
+  from?: string;
 };
 
 /**

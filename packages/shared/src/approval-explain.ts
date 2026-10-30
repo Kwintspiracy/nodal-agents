@@ -274,6 +274,12 @@ export function explainApproval(opts: ExplainOptions): ApprovalExplanation {
       effect = 'write';
       target = typeof input['path'] === 'string' ? input['path'] : null;
       break;
+    case 'file_move':
+      // La cible est là où le fichier arrive : c'est elle que la porte
+      // d'écrasement protège (#879).
+      effect = 'write';
+      target = typeof input['destination'] === 'string' ? input['destination'] : null;
+      break;
     case 'run_command':
     case 'run_skill_script':
       effect = 'destructive';

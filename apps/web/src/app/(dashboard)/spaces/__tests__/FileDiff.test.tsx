@@ -71,7 +71,9 @@ const toolStep = (
   ...over,
 });
 
-const feedWith = (files: Array<{ path: string; action: string }>): ConversationFeed => ({
+const feedWith = (
+  files: Array<{ path: string; action: string; from?: string }>,
+): ConversationFeed => ({
   items: [
     {
       kind: 'turn',
@@ -123,6 +125,36 @@ describe('FilesCard — qui se déplie', () => {
     const html = renderToStaticMarkup(<ConversationFeedView feed={feed} />);
     expect(html).not.toContain('aria-expanded');
     expect(html).toContain('src/code.ts');
+  });
+});
+
+describe('FilesCard — un fichier déplacé ou copié dit d’où il vient (#879) @cap:travailler-sur-des-fichiers/ecran', () => {
+  const texteDe = (html: string): string =>
+    html
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  it('« moved A to B » et « copied A to B », sans bouton de diff', () => {
+    const html = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={feedWith([
+          { path: 'archive/scan.pdf', action: 'moved', from: 'docs/scan.pdf' },
+          { path: 'archive/export.xlsx', action: 'copied', from: 'docs/export.xlsx' },
+        ])}
+      />,
+    );
+    const lignes = [...html.matchAll(/data-testid="file-moved"[^>]*>([\s\S]*?)<\/li>/g)].map((m) =>
+      texteDe(m[1] ?? ''),
+    );
+    // `FileName` met le nom devant, le dossier derrière.
+    expect(lignes).toEqual([
+      'moved scan.pdf docs/ to scan.pdf archive/',
+      'copied export.xlsx docs/ to export.xlsx archive/',
+    ]);
+    // Le contenu n'a pas changé : aucun diff à ouvrir, et la carte n'est pas une relecture.
+    expect(html).not.toContain('aria-expanded');
+    expect(html).not.toContain('diff review');
   });
 });
 

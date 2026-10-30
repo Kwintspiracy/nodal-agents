@@ -136,6 +136,7 @@ import FirstTokenWaitField from './FirstTokenWaitField.tsx';
 import AgentBudgetSection from './AgentBudgetSection.tsx';
 import { ProviderRow } from './CodeTaskProviderRow.tsx';
 import type { OperationDescriptor, RootGrants } from '@nodal-agents/shared';
+import { READONLY_PRESET_TOOLS } from '@nodal-agents/shared';
 
 /**
  * One built-in tool as returned by listInternalToolsAction.
@@ -2667,18 +2668,13 @@ function CodeTaskSection({
 //
 // Visible for EVERY agent — no skill gate, unlike CommandExecutionSection /
 // CodeTaskSection above. Read-only is a posture any agent can adopt, not a
-// capability that needs unlocking first. Blocking these 5 tools is exactly
+// capability that needs unlocking first. Blocking the preset's tools is exactly
 // what code_task's own read-only detection already keys off of
 // (assertNotReadOnlyAgent, packages/tools/src/builtin/code-task/db.ts, checks
-// file_write specifically) — this section is the UI affordance for that.
-
-const READONLY_PRESET_TOOLS = [
-  'file_write',
-  'file_edit',
-  'skill_file_write',
-  'run_command',
-  'run_skill_script',
-] as const;
+// file_write specifically) — this section is the UI affordance for that. The
+// list is READONLY_PRESET_TOOLS (@nodal-agents/shared), the one the server
+// action writes: a copy here would count « all blocked » on an agent that can
+// still write.
 
 function ReadOnlyAgentSection({
   agentId,
@@ -2699,7 +2695,7 @@ function ReadOnlyAgentSection({
     rules.some((r) => r.toolName === toolName && r.action === 'block'),
   ).length;
   const allBlocked = blockedCount === READONLY_PRESET_TOOLS.length;
-  // Some, but not all, of the 5 tools are already blocked (set individually
+  // Some, but not all, of the preset's tools are already blocked (set individually
   // in the tool list above) — the toggle shows OFF (it didn't create this
   // state) with a note explaining why, rather than a misleading partial ON.
   const partiallyBlocked = blockedCount > 0 && !allBlocked;

@@ -497,6 +497,8 @@ export function describeGatedAction(toolName: string, toolInput: unknown): strin
       );
     case 'skill_file_write':
       return `skill_file_write: ${str(input['skill'])} → ${str(input['path'])}`;
+    case 'file_move':
+      return `file_move: ${input['copy'] === true ? 'copy' : 'move'} ${str(input['source'])} → ${str(input['destination'])}`;
     default: {
       // Generic: tool name + a compact, truncated view of the input.
       const compact = str(input);

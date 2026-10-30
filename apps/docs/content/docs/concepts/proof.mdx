@@ -102,12 +102,12 @@ Three guards:
 **Settings → Safety → Verification surfaces** decides which ways of working are
 placed under verification. Four surfaces, all on by default:
 
-| Surface                        | Covers                                               |
-| ------------------------------ | ---------------------------------------------------- |
-| **Coding tool**                | `code_task` — a coding CLI called as a tool          |
-| **Claude Code / Codex agents** | Agents that _are_ a coding CLI session               |
-| **File tools**                 | `file_write`, `file_edit`, and the Office file tools |
-| **Commands and scripts**       | `run_command`, `run_skill_script`                    |
+| Surface                        | Covers                                                            |
+| ------------------------------ | ----------------------------------------------------------------- |
+| **Coding tool**                | `code_task` — a coding CLI called as a tool                       |
+| **Claude Code / Codex agents** | Agents that _are_ a coding CLI session                            |
+| **File tools**                 | `file_write`, `file_edit`, `file_move`, and the Office file tools |
+| **Commands and scripts**       | `run_command`, `run_skill_script`                                 |
 
 A surface you switch off produces no verification intent, and the run **says so**
 ("surface outside verification") rather than falling silent.

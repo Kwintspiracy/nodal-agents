@@ -190,6 +190,31 @@ describe('computeApprovalImpactLine — other tools (unchanged shape)', () => {
   });
 });
 
+describe('computeApprovalImpactLine — file_move : le geste, puis l’écrasement (#879) @cap:travailler-sur-des-fichiers/ecran', () => {
+  it('un déplacement dit « Moves A to B » et ce qu’il remplace', () => {
+    expect(
+      computeApprovalImpactLine('file_move', {
+        source: 'docs/scan.pdf',
+        destination: 'shared/inbox/',
+      }),
+    ).toBe(
+      'Moves "docs/scan.pdf" to "shared/inbox/", overwriting the existing file there in the shared workspace.',
+    );
+  });
+
+  it('une copie dit « Copies A to B »', () => {
+    expect(
+      computeApprovalImpactLine('file_move', {
+        source: 'docs/scan.pdf',
+        destination: 'shared/scan.pdf',
+        copy: true,
+      }),
+    ).toBe(
+      'Copies "docs/scan.pdf" to "shared/scan.pdf", overwriting the existing file there in the shared workspace.',
+    );
+  });
+});
+
 describe('computeApprovalImpactLine — code_task (lot approbations 24/08)', () => {
   it('mode write : dit ce qui est réversible ET ce qui ne l’est pas (revue P0 du 25/08)', () => {
     const line = computeApprovalImpactLine('code_task', { task: 'add a button', mode: 'write' });

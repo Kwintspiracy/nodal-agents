@@ -43,7 +43,7 @@ Every agent gets these tools on every job, regardless of skills (`ALWAYS_ON_TOOL
 - `nodal_docs` — search this documentation: what Nodal-Agents can do and where in the dashboard it is done. Offline, no model, no network.
 - `web_search` — search the web, using the agent's configured Tavily/Firecrawl provider if any, otherwise a free best-effort search.
 - `dashboard_publish` — publish the agent's substantive output to the dashboard (it becomes the job's `result`).
-- `file_read`, `file_write`, `file_edit`, `file_list`, `file_search` — read and edit files in the agent's workspaces.
+- `file_read`, `file_write`, `file_edit`, `file_move`, `file_list`, `file_search` — read, edit, move and copy files in the agent's workspaces.
 - `register_project` — declare a folder it worked in as a [project](/docs/concepts/projects).
 - `declare_verification` — declare the commands that prove what it just built, so Nodal runs and records them. Requires approval by default, exactly like `run_command`. See [Proof](/docs/concepts/proof).
 

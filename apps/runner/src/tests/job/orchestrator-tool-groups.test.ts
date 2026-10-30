@@ -284,6 +284,7 @@ describe("a worker's list is exactly what it was @cap:assigner-outils/moteur", (
     'list_models',
     'search_history',
     'mark_memory_helpful',
+    'file_move',
     ...XLSX,
     'run_command',
   ].sort();

@@ -40,6 +40,7 @@ import FileDiff, { FileName, LineDelta } from './FileDiff.tsx';
 // fichier est rendu côté serveur, qui ne reçoit d'un module `'use client'`
 // qu'une référence par export, jamais la table elle-même.
 import { DOT, FILE_DOT } from './feed-dots.ts';
+import { GESTE_LIBELLE } from '@/lib/file-change-groups.ts';
 import HistoryGroup from './HistoryGroup.tsx';
 import DelegationDisclosure from './DelegationDisclosure.tsx';
 import DelegationBlock from './DelegationBlock.tsx';
@@ -601,7 +602,13 @@ function FilesCard({
   // par `coding-changes.ts` : la même lecture que la page Code, donc les mêmes
   // nombres sur les deux écrans. Un fichier écrit par un outil sans texte (un
   // classeur) n'en a pas — et n'affiche rien, plutôt qu'un zéro.
-  const wrote = payload.files.some((f) => f.action !== 'listed');
+  //
+  // Un fichier déplacé ou copié (#879) n'a pas de diff à relire : son contenu
+  // n'a pas changé, il a changé de place. Il ne fait donc pas d'une carte une
+  // « diff review ».
+  const wrote = payload.files.some(
+    (f) => f.action !== 'listed' && f.action !== 'moved' && f.action !== 'copied',
+  );
   const perFile = payload.files.map((f) => findLineCounts(step.lineCounts, f.path));
   const total = perFile.reduce<LineCounts | null>(
     (acc, c) =>
@@ -641,6 +648,38 @@ function FilesCard({
             ) : status !== undefined ? (
               <DeliverableNote status={status} />
             ) : undefined;
+          // Un fichier DÉPLACÉ ou COPIÉ (#879) dit d'où il vient et où il est,
+          // « moved A to B », sur une ligne sans chevron : il n'a pas de diff,
+          // son contenu est le même qu'avant.
+          if (f.action === 'moved' || f.action === 'copied') {
+            return (
+              <li key={i} className="border-t border-rule-2 first:border-t-0">
+                <div
+                  className="flex h-[42px] items-center gap-2 pr-3.5 pl-[38px]"
+                  data-testid="file-moved"
+                >
+                  <span
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${FILE_DOT[f.action] ?? 'bg-ink-4'}`}
+                  />
+                  <span className="shrink-0 text-mono-12 font-bold text-feed-tool">
+                    {GESTE_LIBELLE[f.action]}
+                  </span>
+                  {f.from !== undefined && (
+                    <>
+                      <FileName path={f.from} />
+                      <span className="shrink-0 text-mono-11 text-ink-4">to</span>
+                    </>
+                  )}
+                  <FileName path={f.path} />
+                  {f.bytes !== undefined && (
+                    <span className="shrink-0 text-mono-11 text-ink-4">
+                      {formatTokens(f.bytes)} B
+                    </span>
+                  )}
+                </div>
+              </li>
+            );
+          }
           // P11 — un fichier ÉCRIT se déplie sur son diff. Un fichier `listed`
           // vient d'une lecture : il n'a pas d'avant, donc pas de bouton — une
           // pastille qui s'ouvrirait sur « aucun changement » serait pire que

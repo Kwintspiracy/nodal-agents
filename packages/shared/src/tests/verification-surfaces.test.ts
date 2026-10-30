@@ -49,7 +49,7 @@ describe('parseVerificationSurfaces', () => {
 });
 
 describe('VERIFICATION_SURFACE_TOOLS', () => {
-  it('table exhaustive et disjointe : les cinq outils mutants d’origine + les vingt outils Office écrivains + generate_speech, aucun dans deux clés', () => {
+  it('table exhaustive et disjointe : les cinq outils mutants d’origine + les vingt outils Office écrivains + generate_speech + file_move, aucun dans deux clés', () => {
     const all = VERIFICATION_SURFACE_KEYS.flatMap((k) => [...VERIFICATION_SURFACE_TOOLS[k]]);
     const office = [
       'docx_create',
@@ -77,6 +77,7 @@ describe('VERIFICATION_SURFACE_TOOLS', () => {
       [
         'code_task',
         'file_edit',
+        'file_move',
         'file_write',
         'generate_speech',
         'run_command',

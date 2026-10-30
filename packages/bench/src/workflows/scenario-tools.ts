@@ -71,6 +71,7 @@ export const FILES = [
   'file_read',
   'file_write',
   'file_edit',
+  'file_move',
   'file_list',
   'file_search',
   'register_project',

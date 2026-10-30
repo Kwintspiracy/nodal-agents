@@ -40,27 +40,12 @@ import { useMemo, useState } from 'react';
 import { fragmentDiff } from '@nodal-agents/shared';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import type { CodingChangeView } from '@/lib/coding-changes.ts';
-import type { FileChangeGesture, FileChangeGroup } from '@/lib/file-change-groups.ts';
-
-/**
- * LE MOT DU GESTE, celui que git emploie.
- *
- * L'étiquette portait le nom de l'OUTIL (`file_write`, `file_edit`), ce qui
- * n'avait de sens que tant que la liste venait des outils. Depuis #199 elle
- * vient du constat, où un fichier peut avoir été supprimé ou renommé sans
- * qu'aucun outil l'ait nommé — deux gestes que le vocabulaire d'avant ne
- * savait pas dire.
- */
-export const GESTE_LIBELLE: Record<FileChangeGesture, string> = {
-  added: 'added',
-  modified: 'modified',
-  deleted: 'deleted',
-  renamed: 'renamed',
-  // `file_write` ECRIT OU ÉCRASE, et sa carte ne distingue pas les deux
-  // (Reviewer C, PR #380). Le mot reste celui de la carte plutôt que d'affirmer
-  // une création sur chaque écrasement.
-  written: 'written',
-};
+import {
+  GESTE_LIBELLE,
+  pathWithOrigin,
+  type FileChangeGesture,
+  type FileChangeGroup,
+} from '@/lib/file-change-groups.ts';
 
 /**
  * Au-delà, la plaque s'arrête et le dit. La page portait déjà une borne (80
@@ -322,10 +307,11 @@ export default function FileChangeBlock({
             du fichier (même règle que `FileName` dans le fil). */}
         <span
           dir="rtl"
-          title={group.filePath}
+          title={pathWithOrigin(group.filePath, group.from)}
           className="min-w-0 flex-1 truncate text-left text-mono-12 text-feed-path"
         >
-          <bdi dir="ltr">{group.filePath}</bdi>
+          {/* Un fichier déplacé ou copié dit d'où il vient (#879). */}
+          <bdi dir="ltr">{pathWithOrigin(group.filePath, group.from)}</bdi>
         </span>
         <span className="shrink-0 text-mono-11">
           {group.addedLines > 0 && <span className="text-ok">+{group.addedLines}</span>}

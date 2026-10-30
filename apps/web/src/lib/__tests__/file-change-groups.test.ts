@@ -184,3 +184,42 @@ describe('regroupement par fichier @cap:travailler-sur-des-fichiers/moteur', () 
     expect(groupes[0]?.edits).toHaveLength(2);
   });
 });
+
+describe('un fichier déplacé ou copié garde d’où il vient (#879) @cap:travailler-sur-des-fichiers/moteur', () => {
+  const deplacement = (
+    from: string,
+    path: string,
+    action: 'moved' | 'copied',
+  ): AuditRowForChanges => ({
+    toolName: 'file_move',
+    toolInput: { source: from, destination: path, copy: action === 'copied' },
+    toolOutput: '{"ok":true}',
+    presented: {
+      card: 'files',
+      total: 1,
+      truncated: false,
+      files: [{ path, action, from, bytes: 12 }],
+    },
+  });
+
+  it('le geste et la source voyagent de la carte jusqu’à la liste livrée, rebasés comme le chemin', () => {
+    const groupes = fileChangesOfAuditRows(
+      [
+        deplacement('D:/ws/docs/scan.pdf', 'D:/ws/archive/scan.pdf', 'moved'),
+        deplacement('D:/ws/docs/export.xlsx', 'D:/ws/archive/export.xlsx', 'copied'),
+      ],
+      ['D:/ws'],
+    );
+    expect(
+      groupes.map((g) => ({
+        path: g.filePath,
+        kind: g.changeKind,
+        from: g.from,
+        lines: g.addedLines,
+      })),
+    ).toEqual([
+      { path: 'archive/scan.pdf', kind: 'moved', from: 'docs/scan.pdf', lines: 0 },
+      { path: 'archive/export.xlsx', kind: 'copied', from: 'docs/export.xlsx', lines: 0 },
+    ]);
+  });
+});

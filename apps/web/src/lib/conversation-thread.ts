@@ -521,6 +521,7 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
     addedLines: g.addedLines,
     removedLines: g.removedLines,
     changeKind: g.changeKind,
+    ...(g.from !== undefined ? { from: g.from } : {}),
   }));
   const counted = job.audit
     .filter((row) => callHappened(outcomeOfToolOutput(row.toolOutput)))

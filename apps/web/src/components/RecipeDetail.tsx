@@ -1,6 +1,8 @@
 'use client';
 
 import type { AgentRecipe, RecipeNeed, RecipeSkillMeta } from '@nodal-agents/catalog';
+// The tools the reviewer preset blocks: the very list the recipe path writes.
+import { READONLY_PRESET_TOOLS } from '@nodal-agents/shared';
 import type { RecipeConnectorMeta } from '@/lib/recipe-connectors.ts';
 import Modal, { ModalFooter } from './ui/Modal.tsx';
 import PrimaryButton from './ui/PrimaryButton.tsx';
@@ -20,15 +22,6 @@ import { MonoMicroTag } from './ui/MonoMicroTag.tsx';
  * Everything shown here is READ from the recipe and the catalog — nothing is
  * described that is not actually applied by createAgentAction's recipe path.
  */
-
-/** Mirrors the five tools the reviewer preset blocks (actions.ts, READONLY_PRESET_TOOLS). */
-const READ_ONLY_BLOCKED_TOOLS = [
-  'file_write',
-  'file_edit',
-  'skill_file_write',
-  'run_command',
-  'run_skill_script',
-] as const;
 
 const NEED_COPY: Record<RecipeNeed, { title: string; detail: string }> = {
   workspace: {
@@ -189,7 +182,7 @@ export default function RecipeDetail({
                 per tool and can be turned off any time.
               </p>
               <p className="text-mono-11 text-ink-3 mt-1.5">
-                blocked: {READ_ONLY_BLOCKED_TOOLS.join(', ')}
+                blocked: {READONLY_PRESET_TOOLS.join(', ')}
               </p>
               <p className="text-body-13 text-ink-3 mt-1.5">
                 Everything else uses the workspace default, as for any new agent.

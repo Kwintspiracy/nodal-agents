@@ -154,6 +154,13 @@ export function computeApprovalImpactLine(
     case 'file_write':
     case 'file_edit':
       return `Overwrites the existing file "${str(input['path'])}" in the shared workspace.`;
+    case 'file_move':
+      // Gaté par la même porte que file_write : la destination existe dans le
+      // dossier partagé (#879). Le geste se dit d'abord, l'écrasement ensuite.
+      return (
+        `${input['copy'] === true ? 'Copies' : 'Moves'} "${str(input['source'])}" to ` +
+        `"${str(input['destination'])}", overwriting the existing file there in the shared workspace.`
+      );
     case 'run_command': {
       const cmd = input['command'];
       return typeof cmd === 'string' && cmd.trim().length > 0

@@ -107,7 +107,9 @@ export function searchCard(a: {
 
 export type FileEntry = {
   path: string;
-  action: 'created' | 'modified' | 'written' | 'listed';
+  action: 'created' | 'modified' | 'written' | 'listed' | 'moved' | 'copied';
+  /** Où était le fichier, pour `moved` et `copied` : `path` est où il est maintenant. */
+  from?: string;
   bytes?: number;
   detail?: string;
   /** P12 — les premières lignes de ce que le fichier contient maintenant. */
@@ -123,6 +125,7 @@ export function filesCard(
   const shown = files.slice(0, CARD_ITEMS_MAX).map((f) => ({
     path: clip(f.path, CARD_LABEL_MAX),
     action: f.action,
+    ...(f.from !== undefined ? { from: clip(f.from, CARD_LABEL_MAX) } : {}),
     ...(f.bytes !== undefined ? { bytes: f.bytes } : {}),
     ...(f.detail !== undefined ? { detail: clip(f.detail, CARD_LABEL_MAX) } : {}),
     ...(f.preview !== undefined ? { preview: f.preview } : {}),

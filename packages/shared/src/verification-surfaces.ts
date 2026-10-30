@@ -62,6 +62,8 @@ export const VERIFICATION_SURFACE_TOOLS: Readonly<
   fileOps: [
     'file_write',
     'file_edit',
+    // Déplacer ou copier un fichier (#879) : il en crée un, et en retire un.
+    'file_move',
     'docx_create',
     'docx_append_paragraphs',
     'docx_replace_text',

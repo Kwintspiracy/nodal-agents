@@ -409,3 +409,39 @@ describe('DeliveryBlock — un média livré se montre, se joue, se télécharge
     }
   });
 });
+
+describe('DeliveryBlock — un fichier déplacé ou copié dit « moved A to B » (#879) @cap:travailler-sur-des-fichiers/ecran', () => {
+  const RANGES: DeliverySummary = {
+    ...EMPTY,
+    files: 2,
+    fileChanges: [
+      {
+        path: 'archive/rapport.md',
+        addedLines: 0,
+        removedLines: 0,
+        changeKind: 'moved' as const,
+        from: 'docs/rapport.md',
+      },
+      {
+        path: 'archive/scan.png',
+        addedLines: 0,
+        removedLines: 0,
+        changeKind: 'copied' as const,
+        from: 'docs/scan.png',
+      },
+    ],
+  };
+
+  it('la plaque d’un document et la rangée d’une image nomment la source et la destination', async () => {
+    await render(<DeliveryBlock summary={RANGES} jobId="job-7" filesJobId="job-7" />);
+
+    const plaque = container.querySelector('[data-testid="file-change-kind"]');
+    expect(plaque?.textContent).toBe('moved');
+    expect(plaque?.closest('button')?.textContent).toBe(
+      'moveddocs/rapport.md to archive/rapport.md',
+    );
+
+    const media = container.querySelector('[data-testid="delivery-media"]');
+    expect(media?.textContent).toContain('copieddocs/scan.png to archive/scan.png');
+  });
+});
