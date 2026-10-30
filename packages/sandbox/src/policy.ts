@@ -21,16 +21,24 @@
 //      d'un cache vide à chaque commande sous MXC, et échoue avec un message
 //      trompeur sous Landlock (essais #731 et #733) — et les magasins de
 //      modèles et d'images que Nodal trouve sur la machine pour ComfyUI,
-//      Ollama, Docker et Hugging Face. Le réglage global, que l'utilisateur
-//      pourra étendre, viendra avec l'écran qui le montre ; cette liste en est
-//      la valeur pré-remplie ;
+//      Ollama, Docker et Hugging Face. L'utilisateur règle cette liste par
+//      espace (Réglages → Safety → Sandbox, #876) : il AJOUTE des dossiers et
+//      RETIRE des dossiers détectés. Seuls ses gestes sont gardés ; la liste
+//      appliquée est recomposée à chaque ouverture de conteneur — détectés −
+//      retirés + ajoutés (`composeAllowedFolders`) —, si bien qu'un magasin
+//      installé plus tard apparaît tout seul ;
 //   4. rien d'autre.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join, resolve, sep } from 'node:path';
+import { isAbsolute, join, posix, resolve, sep, win32 } from 'node:path';
 import { defaultNodalHome, nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
 import { nodalInstanceRecord, readNodalInstances } from '@nodal-agents/shared/nodal-instances';
+import type {
+  BroadFolder,
+  SandboxFolders,
+  WorkspaceSandbox,
+} from '@nodal-agents/shared/sandbox-settings';
 
 /** Ce que l'appelant déclare pour UNE commande. */
 export interface ConfinementPolicy {
@@ -41,7 +49,29 @@ export interface ConfinementPolicy {
    * permis par défaut » — jamais « partout ».
    */
   readonly writableRoots: readonly string[];
+  /**
+   * Le réglage du bac à sable de l'ESPACE pour lequel la commande tourne
+   * (#876) : son interrupteur et ses gestes sur les dossiers permis. Une
+   * fonction, appelée par le moteur à CHAQUE commande — jamais une valeur
+   * gardée : couper ou rallumer prend effet à la commande suivante. Elle LÈVE
+   * quand le réglage est illisible (`SANDBOX_SETTINGS_UNREADABLE`), et la
+   * commande est alors refusée. Un lancement qui n'appartient à aucun espace
+   * (une sonde d'interprète) passe `noWorkspaceSandbox`.
+   */
+  readonly workspace: WorkspaceSandboxReader;
 }
+
+/** Relit le réglage d'un espace (voir `ConfinementPolicy.workspace`). */
+export type WorkspaceSandboxReader = () => Promise<WorkspaceSandbox>;
+
+/**
+ * Le réglage d'un lancement qui n'appartient à AUCUN espace — la sonde de
+ * l'interprète Python, la restauration d'un instantané depuis le CLI : il n'a
+ * pas d'interrupteur à lire, il suit donc la machine (confiné quand le bac à
+ * sable est là) avec la liste détectée telle quelle.
+ */
+export const noWorkspaceSandbox: WorkspaceSandboxReader = () =>
+  Promise.resolve({ enabled: true, folders: { added: [], removed: [] } });
 
 /**
  * Le dossier des caches d'outils, propriété de Nodal. Surchargeable pour les
@@ -189,23 +219,7 @@ export function sandboxDeniedPaths(
   mustReach: readonly string[],
   machine: MachineView = thisMachine(),
 ): string[] {
-  const current = nodalInstanceRecord(machine.env, machine.home, machine.platform);
-  const instances = [
-    { home: current.home, moved: Object.values(current.entries) },
-    { home: defaultNodalHome(machine.home, machine.platform), moved: [] },
-    ...readNodalInstances(machine.home, machine.platform).map((r) => ({
-      home: r.home,
-      moved: Object.values(r.entries),
-    })),
-  ];
-  const homes = new Map<string, string>();
-  const moved = new Map<string, string>();
-  for (const i of instances) {
-    homes.set(pathKey(i.home), i.home);
-    for (const entry of i.moved) {
-      if (!isWithin(entry, i.home)) moved.set(pathKey(entry), entry);
-    }
-  }
+  const { homes, moved } = nodalDataLocations(machine);
   for (const home of homes.values()) {
     if (!existsSync(home)) continue;
     const reach = mustReach.find((r) => pathKey(r) === pathKey(home));
@@ -220,21 +234,131 @@ export function sandboxDeniedPaths(
 }
 
 /**
+ * OÙ VIVENT LES DONNÉES DE NODAL sur cette machine : le dossier de chaque
+ * instance de cet utilisateur (CETTE instance, `~/.nodalai`, chaque instance
+ * inscrite) et les entrées qu'une variable étroite a envoyées HORS de leur
+ * dossier. La seule énumération du dépôt : le refus de lecture
+ * (`sandboxDeniedPaths`), le refus d'un dossier permis (`allowedFolderRefusal`)
+ * et l'écran (`nodalDataFolders`) la lisent tous les trois. Un registre
+ * illisible lève, nommé.
+ */
+function nodalDataLocations(machine: MachineView): {
+  homes: Map<string, string>;
+  moved: Map<string, string>;
+} {
+  const current = nodalInstanceRecord(machine.env, machine.home, machine.platform);
+  const instances = [
+    { home: current.home, moved: Object.values(current.entries) },
+    { home: defaultNodalHome(machine.home, machine.platform), moved: [] },
+    ...readNodalInstances(machine.home, machine.platform).map((r) => ({
+      home: r.home,
+      moved: Object.values(r.entries),
+    })),
+  ];
+  const homes = new Map<string, string>();
+  const moved = new Map<string, string>();
+  for (const i of instances) {
+    homes.set(keyOn(i.home, machine.platform), i.home);
+    for (const entry of i.moved) {
+      if (!withinOn(entry, i.home, machine.platform)) {
+        moved.set(keyOn(entry, machine.platform), entry);
+      }
+    }
+  }
+  return { homes, moved };
+}
+
+/**
+ * Les dossiers de données de Nodal qu'une commande confinée ne peut pas lire,
+ * tels qu'ils existent sur cette machine — ce que l'écran du bac à sable
+ * montre sous « Read refused ». Chemins réels, sans doublon.
+ */
+export function nodalDataFolders(machine: MachineView = thisMachine()): string[] {
+  const { homes, moved } = nodalDataLocations(machine);
+  const out = new Set<string>();
+  for (const p of [...homes.values(), ...moved.values()]) {
+    if (existsSync(p)) out.add(real(p));
+  }
+  return [...out];
+}
+
+/**
  * Un chemin que le conteneur doit atteindre est le dossier d'une instance de
  * Nodal (NODALAI_HOME, `~/.nodalai`, ou une instance inscrite). Y travailler
  * exposerait sa clé maîtresse et sa configuration ; en refuser le contenu
  * casserait le job. L'ouverture est refusée.
+ *
+ * Le même refus vaut pour un dossier que l'utilisateur voudrait PERMETTRE
+ * (#876) quand ce dossier est un dossier de données de Nodal ou se trouve
+ * DESSOUS (`within` = le dossier de données qui le contient) : une commande
+ * pourrait y écrire, donc y planter ce que Nodal relit. `allowedFolderRefusal`
+ * le rend, et l'ouverture le lève si un tel dossier est dans le réglage.
  */
 export class NodalHomeReachError extends Error {
   readonly code = 'SANDBOX_REACH_IS_NODAL_HOME';
-  constructor(readonly path: string) {
+  constructor(
+    readonly path: string,
+    readonly within: string = path,
+  ) {
     super(
-      `SANDBOX_REACH_IS_NODAL_HOME: ${path} is the home folder of a Nodal instance. ` +
+      (pathKey(path) === pathKey(within)
+        ? `SANDBOX_REACH_IS_NODAL_HOME: ${path} is the home folder of a Nodal instance. `
+        : `SANDBOX_REACH_IS_NODAL_HOME: ${path} is inside ${within}, the data of a Nodal instance. `) +
         'A confined command cannot work in it without reading that instance’s secrets. ' +
         'Point the workspace at a folder of its own, or move that instance (NODALAI_HOME).',
     );
     this.name = 'NodalHomeReachError';
   }
+}
+
+/**
+ * Un dossier que l'utilisateur veut PERMETTRE à ses commandes (#876) est-il
+ * refusé ? Oui quand il EST un dossier de données de Nodal (une instance, ou
+ * une entrée déplacée) ou se trouve DESSOUS — ce qui comprend le cache
+ * d'outils et les workspaces, déjà accessibles par leur propre chemin. La
+ * règle est celle de `sandboxDeniedPaths`, sur la même énumération : l'écran
+ * qui refuse l'ajout et l'ouverture qui refuse le réglage disent la même
+ * chose. Rend `null` quand le dossier peut être permis.
+ */
+export function allowedFolderRefusal(
+  path: string,
+  machine: MachineView = thisMachine(),
+): NodalHomeReachError | null {
+  const { homes, moved } = nodalDataLocations(machine);
+  for (const data of [...homes.values(), ...moved.values()]) {
+    if (withinOn(path, data, machine.platform)) return new NodalHomeReachError(path, data);
+  }
+  return null;
+}
+
+/**
+ * Un dossier dont la permission ouvre plus que lui-même (#876), décidé par ce
+ * qu'il CONTIENT, jamais par égalité avec une liste : il est ou contient une
+ * racine de volume, le dossier personnel, ou un dossier de données de Nodal
+ * (la même énumération que les refus, `nodalDataLocations`). L'écran demande
+ * alors une confirmation qui nomme la conséquence. Un dossier qui EST des
+ * données de Nodal ou se trouve DEDANS n'arrive pas ici : il est refusé
+ * (`allowedFolderRefusal`). `null` : le dossier n'ouvre que lui-même.
+ *
+ * Les chemins sont lus avec ceux du système de `machine` : une vue Windows
+ * se juge en chemins Windows, sur n'importe quelle machine.
+ */
+export function broadFolder(
+  path: string,
+  machine: MachineView = thisMachine(),
+): BroadFolder | null {
+  const { homes, moved } = nodalDataLocations(machine);
+  const nodalData = [...homes.values(), ...moved.values()].filter((data) =>
+    withinOn(data, path, machine.platform),
+  );
+  const abs = absOn(path, machine.platform);
+  if (pathOf(machine.platform).dirname(abs) === abs) return { kind: 'volume-root', nodalData };
+  if (keyOn(path, machine.platform) === keyOn(machine.home, machine.platform)) {
+    return { kind: 'home', nodalData };
+  }
+  if (withinOn(machine.home, path, machine.platform)) return { kind: 'holds-home', nodalData };
+  if (nodalData.length > 0) return { kind: 'holds-nodal-data', nodalData };
+  return null;
 }
 
 /** Le chemin réel quand il existe, sinon tel quel, résolu. */
@@ -246,16 +370,40 @@ function real(path: string): string {
   }
 }
 
+function pathOf(platform: NodeJS.Platform): typeof posix {
+  return platform === 'win32' ? win32 : posix;
+}
+
+/**
+ * Un chemin absolu sur le système `platform` : réel quand c'est celui de ce
+ * processus (les jonctions et liens suivis), résolu avec les règles de ce
+ * système sinon.
+ */
+function absOn(path: string, platform: NodeJS.Platform): string {
+  return platform === process.platform ? real(path) : pathOf(platform).resolve(path);
+}
+
+/** La clé de comparaison d'un chemin sur `platform` : absolue, casse repliée sous Windows. */
+function keyOn(path: string, platform: NodeJS.Platform): string {
+  const r = absOn(path, platform);
+  return platform === 'win32' ? r.toLowerCase() : r;
+}
+
+/** `child` est `parent` ou descend de lui, sur le système `platform`. */
+function withinOn(child: string, parent: string, platform: NodeJS.Platform): boolean {
+  const c = keyOn(child, platform);
+  const p = keyOn(parent, platform);
+  const s = pathOf(platform).sep;
+  return c === p || c.startsWith(p.endsWith(s) ? p : p + s);
+}
+
 function pathKey(path: string): string {
-  const r = real(path);
-  return process.platform === 'win32' ? r.toLowerCase() : r;
+  return keyOn(path, process.platform);
 }
 
 /** `child` est `parent` ou descend de lui (chemins réels, casse repliée sous Windows). */
 function isWithin(child: string, parent: string): boolean {
-  const c = pathKey(child);
-  const p = pathKey(parent);
-  return c === p || c.startsWith(p.endsWith(sep) ? p : p + sep);
+  return withinOn(child, parent, process.platform);
 }
 
 /**
@@ -348,12 +496,24 @@ export function toolCacheEnv(): Record<string, string> {
  * est une jonction vers un autre disque ne s'écrit qu'à travers sa cible —
  * mesure 1i de l'essai MXC : une jonction préexistante vers un dossier non
  * permis ne laisse pas passer l'écriture), sans doublon. Les dossiers permis
- * par défaut sont ajoutés ici, pour tous les appelants.
+ * sont ajoutés ici, pour tous les appelants : la liste composée de l'espace
+ * (`composeAllowedFolders` — détectés − retirés + ajoutés).
+ *
+ * Un dossier AJOUTÉ qui n'existe plus est ignoré, sans casser la commande, et
+ * le journal le dit (`SANDBOX_ALLOWED_FOLDER_MISSING`). Un dossier ajouté qui
+ * est dans les données de Nodal LÈVE `NodalHomeReachError` : la commande est
+ * refusée plutôt que de lui ouvrir ce dossier.
  *
  * Un chemin relatif est une erreur de l'appelant : on échoue fort plutôt que
  * de le résoudre contre le dossier courant du runner (invariant #4).
  */
-export function resolveWritableRoots(policy: ConfinementPolicy): string[] {
+export function resolveWritableRoots(
+  policy: Pick<ConfinementPolicy, 'writableRoots'>,
+  folders: SandboxFolders,
+  opts: { machine?: MachineView; log?: PolicyLog } = {},
+): string[] {
+  const machine = opts.machine ?? thisMachine();
+  const log = opts.log ?? defaultPolicyLog;
   const out: string[] = [];
   const seen = new Set<string>();
   const add = (p: string): void => {
@@ -362,8 +522,16 @@ export function resolveWritableRoots(policy: ConfinementPolicy): string[] {
     seen.add(key);
     out.push(p);
   };
-  const defaults = defaultAllowedFolders().map((f) => f.path);
-  for (const root of [...policy.writableRoots, ...defaults]) {
+  const allowed: string[] = [];
+  for (const entry of composeAllowedFolders(folders, machine)) {
+    if (entry.state === 'allowed') allowed.push(entry.path);
+    else if (entry.state === 'missing') {
+      log('SANDBOX_ALLOWED_FOLDER_MISSING', { path: entry.path });
+    } else if (entry.state === 'refused') {
+      throw allowedFolderRefusal(entry.path, machine) ?? new NodalHomeReachError(entry.path);
+    }
+  }
+  for (const root of [...policy.writableRoots, ...allowed]) {
     if (!isAbsolute(root)) {
       throw new Error(`SANDBOX_ROOT_NOT_ABSOLUTE: ${root}`);
     }
@@ -381,12 +549,88 @@ export function resolveWritableRoots(policy: ConfinementPolicy): string[] {
 
 // ─── Les dossiers permis par défaut (décision D3) ────────────────────────────
 
-/** D'où vient un dossier permis par défaut — pour l'écran qui les montrera. */
-export type AllowedFolderSource = 'tool-cache' | 'comfyui' | 'ollama' | 'huggingface' | 'docker';
+/** D'où vient un dossier permis : détecté (son programme), ou ajouté par l'utilisateur. */
+export type AllowedFolderSource =
+  | 'tool-cache'
+  | 'comfyui'
+  | 'ollama'
+  | 'huggingface'
+  | 'docker'
+  | 'user';
 
 export interface AllowedFolder {
   readonly path: string;
   readonly source: AllowedFolderSource;
+}
+
+/**
+ * Une entrée de la liste composée, telle que l'écran la montre et que
+ * l'ouverture l'applique :
+ *   - `allowed` : un dossier détecté gardé, ou un dossier ajouté présent ;
+ *   - `removed` : un dossier détecté que l'utilisateur a retiré ;
+ *   - `missing` : un dossier ajouté absent du disque, ignoré à l'ouverture ;
+ *   - `refused` : un dossier ajouté qui est dans les données de Nodal.
+ */
+export type AllowedFolderState = 'allowed' | 'removed' | 'missing' | 'refused';
+
+export interface AllowedFolderEntry extends AllowedFolder {
+  readonly state: AllowedFolderState;
+}
+
+/** Le journal de la politique — injectable pour les tests. */
+export type PolicyLog = (code: string, fields: Record<string, unknown>) => void;
+const defaultPolicyLog: PolicyLog = (code, fields) => {
+  console.warn(`[sandbox] ${code}`, fields);
+};
+
+/**
+ * LA liste des dossiers permis d'un espace (#876) : les dossiers détectés
+ * (`defaultAllowedFolders`) moins ceux que l'utilisateur a retirés, plus ceux
+ * qu'il a ajoutés. Recomposée à chaque appel, depuis la machine : seuls les
+ * gestes sont gardés en base.
+ *
+ * Le cache d'outils ne se retire pas : sans lui, `npm install` repart d'un
+ * cache vide à chaque commande. Une demande de retrait qui le nommerait ne
+ * s'applique pas (l'écran ne la propose pas, l'action la refuse).
+ *
+ * Un retrait qui ne correspond à aucun dossier détecté (le programme a été
+ * désinstallé) reste MONTRÉ, `removed`, pour que le geste ne disparaisse pas
+ * en silence. Un ajout déjà détecté n'apparaît qu'une fois.
+ */
+export function composeAllowedFolders(
+  folders: SandboxFolders,
+  machine: MachineView = thisMachine(),
+): AllowedFolderEntry[] {
+  const removed = new Set(folders.removed.map((p) => key(p, machine.platform)));
+  const out: AllowedFolderEntry[] = [];
+  const seen = new Set<string>();
+  for (const f of defaultAllowedFolders(machine)) {
+    const k = key(f.path, machine.platform);
+    seen.add(k);
+    const state: AllowedFolderState =
+      f.source !== 'tool-cache' && removed.has(k) ? 'removed' : 'allowed';
+    out.push({ ...f, state });
+  }
+  const candidates = storeCandidates(machine);
+  for (const p of folders.removed) {
+    const k = key(p, machine.platform);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const known = candidates.find((c) => key(c.path, machine.platform) === k);
+    out.push({ path: p, source: known?.source ?? 'user', state: 'removed' });
+  }
+  for (const p of folders.added) {
+    const k = key(p, machine.platform);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const state: AllowedFolderState = allowedFolderRefusal(p, machine)
+      ? 'refused'
+      : isAbsolute(p) && isDirectory(p)
+        ? 'allowed'
+        : 'missing';
+    out.push({ path: p, source: 'user', state });
+  }
+  return out;
 }
 
 /** Ce que la détection lit de la machine — injectable pour les tests. */
@@ -498,8 +742,8 @@ function storeCandidates(m: MachineView): AllowedFolder[] {
  * LA liste des dossiers permis par défaut (D3) : le cache d'outils de Nodal
  * (créé ici, il est à Nodal), puis les magasins de modèles et d'images que
  * Nodal TROUVE sur cette machine — seulement ceux qui existent, absolus, sans
- * doublon. C'est la valeur pré-remplie du réglage global que l'écran
- * montrera et que l'utilisateur pourra étendre.
+ * doublon. C'est la liste pré-remplie de l'écran ; `composeAllowedFolders` y
+ * applique les gestes de l'utilisateur.
  */
 export function defaultAllowedFolders(machine: MachineView = thisMachine()): AllowedFolder[] {
   const cache = toolCacheRoot();
@@ -519,4 +763,13 @@ export function defaultAllowedFolders(machine: MachineView = thisMachine()): All
 function key(path: string, platform: NodeJS.Platform): string {
   const r = resolve(path);
   return platform === 'win32' ? r.toLowerCase() : r;
+}
+
+/**
+ * La clé de comparaison de deux chemins de dossier sur un système : résolus,
+ * casse repliée sous Windows. Celle dont la composition se sert ; l'écran du
+ * bac à sable (GET /api/sandbox) regroupe et compte les dossiers avec elle.
+ */
+export function folderKey(path: string, platform: NodeJS.Platform = process.platform): string {
+  return key(path, platform);
 }

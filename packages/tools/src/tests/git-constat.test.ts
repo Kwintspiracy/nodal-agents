@@ -36,6 +36,7 @@ import {
   snapshotRepo,
   _resetGitBinaryCache,
 } from '../verification/git-constat';
+import { noWorkspaceSandbox } from '@nodal-agents/sandbox';
 
 const run = promisify(execFile);
 
@@ -105,7 +106,7 @@ async function poserUnFauxGit(chemin: string): Promise<boolean> {
 
 describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
   it('liste EXACTEMENT les fichiers du run, avec leur genre', async () => {
-    const avant = await snapshotGitAvant([depot]);
+    const avant = await snapshotGitAvant([depot], noWorkspaceSandbox);
     expect(avant).toHaveLength(1);
 
     // Le « run » : deux fichiers écrits — un neuf, un existant — et un effacé.
@@ -113,7 +114,7 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     await writeFile(join(depot, 'garde.ts'), 'export const garde = 42;\n');
     await unlink(join(depot, 'efface.ts'));
 
-    const constat = await constatedGitWrites(avant);
+    const constat = await constatedGitWrites(avant, noWorkspaceSandbox);
 
     // Le CONTENU du constat, pas son cardinal : trois lignes, ces trois-là,
     // chacune sous son genre.
@@ -134,13 +135,13 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
   });
 
   it('un fichier ÉCRIT SOUS UN CHEMIN IGNORÉ n’est pas livré', async () => {
-    const avant = await snapshotGitAvant([depot]);
+    const avant = await snapshotGitAvant([depot], noWorkspaceSandbox);
 
     await mkdir(join(depot, 'node_modules', 'paquet'), { recursive: true });
     await writeFile(join(depot, 'node_modules', 'paquet', 'index.js'), 'module.exports = 1;\n');
     await writeFile(join(depot, 'vu.ts'), 'export const vu = 1;\n');
 
-    const constat = await constatedGitWrites(avant);
+    const constat = await constatedGitWrites(avant, noWorkspaceSandbox);
 
     const noms = constat.writes.map((w) => w.path);
     expect(noms.some((p) => p.endsWith('/vu.ts'))).toBe(true);
@@ -154,10 +155,10 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     // Le cas que les seuls codes de statut ne voient pas : ` M` avant, ` M`
     // après. Seules les empreintes le distinguent.
     await writeFile(join(depot, 'garde.ts'), 'export const garde = 7;\n');
-    const avant = await snapshotGitAvant([depot]);
+    const avant = await snapshotGitAvant([depot], noWorkspaceSandbox);
 
     await writeFile(join(depot, 'garde.ts'), 'export const garde = 8;\n');
-    const constat = await constatedGitWrites(avant);
+    const constat = await constatedGitWrites(avant, noWorkspaceSandbox);
 
     expect(constat.writes.map((w) => w.path.slice(w.path.lastIndexOf('/') + 1))).toEqual([
       'garde.ts',
@@ -172,10 +173,10 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     // écriture-là ne se voyait nulle part — un fichier rendu à son état
     // d'origine n'est pas un fichier qui n'a pas bougé.
     await writeFile(join(depot, 'garde.ts'), 'export const garde = 99;\n');
-    const avant = await snapshotGitAvant([depot]);
+    const avant = await snapshotGitAvant([depot], noWorkspaceSandbox);
 
     await git(['checkout', '--', 'garde.ts']);
-    const constat = await constatedGitWrites(avant);
+    const constat = await constatedGitWrites(avant, noWorkspaceSandbox);
 
     expect(
       constat.writes.map((w) => ({ nom: w.path.slice(w.path.lastIndexOf('/') + 1), kind: w.kind })),
@@ -192,10 +193,10 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     // Le fichier est modifié AVANT d'être renommé : c'est ce qui lui donne une
     // ligne dans le statut d'avant, donc ce qui déclenchait la relecture.
     await writeFile(join(depot, 'garde.ts'), 'export const garde = 5;\n');
-    const avant = await snapshotGitAvant([depot]);
+    const avant = await snapshotGitAvant([depot], noWorkspaceSandbox);
 
     await git(['mv', 'garde.ts', 'renomme.ts']);
-    const constat = await constatedGitWrites(avant);
+    const constat = await constatedGitWrites(avant, noWorkspaceSandbox);
 
     expect(
       constat.writes.map((w) => ({ nom: w.path.slice(w.path.lastIndexOf('/') + 1), kind: w.kind })),
@@ -212,10 +213,10 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     // relecture du contenu, tout ce qu'il committe passerait pour écrit.
     await writeFile(join(depot, 'commite.ts'), 'export const c = 1;\n');
     await git(['add', 'commite.ts']);
-    const avant = await snapshotGitAvant([depot]);
+    const avant = await snapshotGitAvant([depot], noWorkspaceSandbox);
 
     await git(['commit', '-m', 'pendant le run']);
-    const constat = await constatedGitWrites(avant);
+    const constat = await constatedGitWrites(avant, noWorkspaceSandbox);
 
     expect(constat.writes).toEqual([]);
   });
@@ -226,11 +227,11 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     // dépôt, et ce dossier temporaire « sans git » s'en voyait attribuer la
     // racine. Le constat aurait porté sur tout le profil de la personne. La
     // racine n'est donc retenue que si elle tombe dans le périmètre du run.
-    const avant = await snapshotGitAvant([horsDepot]);
+    const avant = await snapshotGitAvant([horsDepot], noWorkspaceSandbox);
     expect(avant).toEqual([]);
 
     await writeFile(join(horsDepot, 'ecrit.ts'), 'export const e = 1;\n');
-    const constat = await constatedGitWrites(avant);
+    const constat = await constatedGitWrites(avant, noWorkspaceSandbox);
     expect(constat).toEqual({ writes: [], fallbackWrites: [], roots: [], indecis: [] });
   });
 
@@ -257,7 +258,7 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
       return;
     }
 
-    const avant = await snapshotGitAvant([lien]);
+    const avant = await snapshotGitAvant([lien], noWorkspaceSandbox);
 
     expect(avant).toHaveLength(1);
     expect(avant[0]?.root).toBe(await repoRootOf(depot));
@@ -274,7 +275,7 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     await mkdir(sous, { recursive: true });
     expect(await repoRootOf(sous)).toBe(await repoRootOf(depot));
 
-    const avant = await snapshotGitAvant([sous, depot]);
+    const avant = await snapshotGitAvant([sous, depot], noWorkspaceSandbox);
     expect(avant).toHaveLength(1);
     expect(avant[0]?.root).toBe(await repoRootOf(depot));
 
@@ -290,9 +291,9 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     await mkdir(sous, { recursive: true });
 
     // Ce qu'un outil comme `code_task` déclare, seul : rien n'est constaté.
-    expect(await snapshotGitAvant(perimetreGit([sous], []))).toEqual([]);
+    expect(await snapshotGitAvant(perimetreGit([sous], []), noWorkspaceSandbox)).toEqual([]);
     // Le même appel, avec le dossier de l'agent : son dépôt est constaté.
-    const avant = await snapshotGitAvant(perimetreGit([sous], [depot]));
+    const avant = await snapshotGitAvant(perimetreGit([sous], [depot]), noWorkspaceSandbox);
     expect(avant).toHaveLength(1);
     expect(avant[0]?.root).toBe(await repoRootOf(depot));
 
@@ -310,7 +311,7 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     await mkdir(sous, { recursive: true });
     await run('git', ['init', '--initial-branch=main'], { cwd: sous, windowsHide: true });
 
-    const avant = await snapshotGitAvant(perimetreGit([sous], [depot]));
+    const avant = await snapshotGitAvant(perimetreGit([sous], [depot]), noWorkspaceSandbox);
     expect(avant.map((s) => s.root).sort()).toEqual(
       [await repoRootOf(depot), await repoRootOf(sous)].sort(),
     );
@@ -319,7 +320,7 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     // constatées, chacune par le dépôt qui la voit.
     await writeFile(join(sous, 'dedans.ts'), 'export const d = 1;\n');
     await writeFile(join(depot, 'a-cote.ts'), 'export const c = 1;\n');
-    const constat = await constatedGitWrites(avant);
+    const constat = await constatedGitWrites(avant, noWorkspaceSandbox);
 
     const noms = constat.writes.map((w) => w.path);
     expect(noms.some((p) => p.endsWith('/vendor/dedans.ts'))).toBe(true);
@@ -335,14 +336,14 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     // répertoire personnel versionné faisait constater tout le profil.
     const sous = join(depot, 'coin-seul');
     await mkdir(sous, { recursive: true });
-    expect(await snapshotGitAvant([sous])).toEqual([]);
+    expect(await snapshotGitAvant([sous], noWorkspaceSandbox)).toEqual([]);
     await rm(sous, { recursive: true, force: true });
   });
 
   it('un dossier PROFOND rend la racine du dépôt, une seule fois', async () => {
     const sous = join(depot, 'src', 'a', 'b');
     await mkdir(sous, { recursive: true });
-    const avant = await snapshotGitAvant([sous, depot]);
+    const avant = await snapshotGitAvant([sous, depot], noWorkspaceSandbox);
     expect(avant).toHaveLength(1);
     expect(avant[0]?.root).toBe(await repoRootOf(depot));
     await rm(join(depot, 'src'), { recursive: true, force: true });
@@ -463,7 +464,7 @@ describe('quel git est lancé @cap:travailler-sur-des-fichiers/moteur', () => {
     // ET le constat marche encore : si le faux avait été lancé, sa sortie
     // n'aurait rien d'un `git status`, l'instantané serait nul, et le run
     // entier retomberait en silence sur le constat disque.
-    const avant = await snapshotGitAvant([depot]);
+    const avant = await snapshotGitAvant([depot], noWorkspaceSandbox);
     expect(avant).toHaveLength(1);
     expect(avant[0]?.root).toBe(await repoRootOf(depot));
 

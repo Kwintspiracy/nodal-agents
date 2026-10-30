@@ -71,6 +71,7 @@ import {
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import FolderPickerModal from './FolderPickerModal.tsx';
+import { SANDBOX_SETTINGS_HREF } from '@/lib/sandbox-copy.ts';
 import {
   FOLDER_LIMIT_CONFIRM_LABEL,
   FOLDER_LIMIT_TITLE,
@@ -3814,7 +3815,26 @@ function SettingsTab(props: {
       <SectionCard>
         <SectionHead
           label="Knowledge"
-          hint="Folders scope file_* tools. Add multiple paths with distinct labels."
+          hint={
+            // #876 : ces dossiers SONT le périmètre d'écriture de ses commandes
+            // sous le bac à sable. Un agent servi par un CLI de code n'y passe
+            // pas (son CLI tourne hors du bac à sable de Nodal) : la phrase ne
+            // le lui promet donc pas.
+            isCliRuntimeValue(runtime) ? (
+              'Folders scope file_* tools. Add multiple paths with distinct labels.'
+            ) : (
+              <>
+                Its commands can write only in these folders and in the{' '}
+                <Link
+                  href={SANDBOX_SETTINGS_HREF}
+                  className="text-ink-2 underline underline-offset-2 hover:text-ink"
+                >
+                  allowed folders of the Sandbox
+                </Link>
+                . Use distinct labels.
+              </>
+            )
+          }
         />
 
         {/* Existing folders with per-folder file lists + upload */}

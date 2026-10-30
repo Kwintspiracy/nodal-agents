@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runShellCommand, DEFAULT_MAX_OUTPUT_CHARS } from '../builtin/shell-engine';
 import { buildChildEnv } from '../builtin/child-env';
-import { JobProcessScope } from '@nodal-agents/sandbox';
+import { JobProcessScope, noWorkspaceSandbox } from '@nodal-agents/sandbox';
 import { mustDie, readCounter, watchRegistry } from '@nodal-agents/test-kit';
 
 let dir: string;
@@ -24,6 +24,7 @@ const confinement = {
   get writableRoots() {
     return [dir];
   },
+  workspace: noWorkspaceSandbox,
 };
 
 beforeAll(async () => {

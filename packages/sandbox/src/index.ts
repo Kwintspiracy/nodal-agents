@@ -19,11 +19,21 @@
 
 export {
   type AllowedFolder,
+  type AllowedFolderEntry,
   type AllowedFolderSource,
+  type AllowedFolderState,
   type ConfinementPolicy,
   type MachineView,
+  type PolicyLog,
+  type WorkspaceSandboxReader,
   TOOL_CACHE_VARIABLES,
+  allowedFolderRefusal,
+  broadFolder,
+  composeAllowedFolders,
+  folderKey,
   defaultAllowedFolders,
+  noWorkspaceSandbox,
+  nodalDataFolders,
   resolveWritableRoots,
   sandboxDeniedPaths,
   nodalDeniedEndpoints,
@@ -33,6 +43,8 @@ export {
   toolCacheRoot,
 } from './policy';
 export {
+  SANDBOX_DISABLED,
+  type SandboxUnconfinedCode,
   type CommandLaunch,
   type JobContainer,
   type LaunchTarget,
@@ -99,6 +111,7 @@ export {
   hostPrograms,
   _setNodalProgramsSandboxForTests,
   type NodalPrograms,
+  type NodalProgramsOptions,
   type ProgramRunner,
   type ProgramRunOptions,
   type ProgramChild,

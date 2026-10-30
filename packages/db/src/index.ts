@@ -28,6 +28,7 @@ export {
   ConversationScopeUnknownError,
 } from './queries/conversation-handles.ts';
 export type { ConversationScope } from './queries/conversation-handles.ts';
+export { workspaceOfScope, type WorkspaceScope } from './queries/workspace-scope.ts';
 export { findResumableCliSession, rememberCliSession } from './queries/cli-sessions.ts';
 export { isChatAllowed } from './queries/telegram-allowed.ts';
 export { dropApprovalRulesForDetachedSkill } from './queries/skill-approval-rules.ts';
@@ -119,6 +120,15 @@ export {
   INSTALL_NOTES_KEY,
 } from './repos/app-settings.ts';
 export { getVerificationSurfaces } from './repos/verification-surfaces.ts';
+export {
+  readWorkspaceSandbox,
+  workspaceSandboxReader,
+  setWorkspaceSandboxEnabled,
+  changeWorkspaceSandboxFolders,
+  applySandboxFolderGesture,
+  type SandboxFolderGesture,
+  type SandboxFolderOutcome,
+} from './repos/workspace-sandbox.ts';
 export { listMemberWorkspaces, countMemberlessRootWorkspaces } from './repos/member-workspaces.ts';
 export type { MemberWorkspace } from './repos/member-workspaces.ts';
 export {

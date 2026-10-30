@@ -70,7 +70,12 @@
 
 import { realpath } from 'node:fs/promises';
 import { normalizePath } from '@nodal-agents/shared';
-import { hostPrograms, withNodalPrograms, type ProgramRunner } from '@nodal-agents/sandbox';
+import {
+  hostPrograms,
+  withNodalPrograms,
+  type ProgramRunner,
+  type WorkspaceSandboxReader,
+} from '@nodal-agents/sandbox';
 import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
 import type { ConstatedChangeKind, ConstatedWrite } from '@nodal-agents/shared';
 import { fingerprint, type FileFingerprint } from './observed';
@@ -540,6 +545,11 @@ export function perimetreGit(
 export async function snapshotGitAvant(
   dirs: readonly string[],
   /**
+   * Le réglage du bac à sable de l'espace de l'appel (#876) : coupé, les git
+   * du constat tournent sur l'hôte, comme les commandes de cet espace.
+   */
+  workspace: WorkspaceSandboxReader,
+  /**
    * Les workspaces de l'agent et le magasin de ses instantanés (#590). Un
    * workspace qu'aucun dépôt ne couvre — hors dépôt, ou dépôt enraciné
    * au-dessus de lui — est constaté contre l'index de son instantané de
@@ -557,19 +567,21 @@ export async function snapshotGitAvant(
   // et suivie, le dossier visé peut arriver en 8.3 ou à travers une jonction.
   const perimetre = await Promise.all(dirs.map((d) => cheminReel(d)));
   // UNE session pour la phase : ses git partagent un conteneur, tué à la fin.
-  return withNodalPrograms((programs) =>
-    lireAvant(
-      { programs, roots: [...perimetre, ...(shadow?.workspaces ?? [])] },
-      perimetre,
-      shadow,
-    ),
+  return withNodalPrograms(
+    (programs) =>
+      lireAvant(
+        { programs, roots: [...perimetre, ...(shadow?.workspaces ?? [])] },
+        perimetre,
+        shadow,
+      ),
+    { workspace },
   );
 }
 
 async function lireAvant(
   reader: GitReader,
   perimetre: readonly string[],
-  shadow: Parameters<typeof snapshotGitAvant>[1],
+  shadow: Parameters<typeof snapshotGitAvant>[2],
 ): Promise<GitConstatBefore> {
   const racines = new Map<string, RepoSnapshot>();
   const vus = new Set<string>();
@@ -703,10 +715,15 @@ export interface GitConstat {
  * Files montrait deux fois le même déplacement, sous deux noms. Les noms
  * d'avant annoncés par git sont écartés de la relecture : ils sont déjà dits.
  */
-export async function constatedGitWrites(before: GitConstatBefore): Promise<GitConstat> {
+export async function constatedGitWrites(
+  before: GitConstatBefore,
+  /** Le réglage du bac à sable de l'espace, comme pour l'avant (#876). */
+  workspace: WorkspaceSandboxReader,
+): Promise<GitConstat> {
   // UNE session pour la phase, comme l'avant (voir `GitReader`).
-  return withNodalPrograms((programs) =>
-    lireApres({ programs, roots: before.map((avant) => avant.root) }, before),
+  return withNodalPrograms(
+    (programs) => lireApres({ programs, roots: before.map((avant) => avant.root) }, before),
+    { workspace },
   );
 }
 

@@ -6,6 +6,7 @@
 //   - awaiting_approval does NOT bump chain_count
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { statedLimits } from '@nodal-agents/test-kit';
 import { offeredToolNames } from '../offered-tools.ts';
 import { unconditionalSendOrders } from '../send-orders.ts';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -1469,12 +1470,15 @@ describe('executeJob', () => {
           'several messages automatically, ' +
           'so send each reply once, whole.',
       );
-      for (const gone of ['## Channel etiquette', 'MarkdownV2', '4096']) {
+      for (const gone of ['## Channel etiquette', 'MarkdownV2']) {
         expect({ gone, found: tgRow?.systemPrompt?.includes(gone) }).toEqual({
           gone,
           found: false,
         });
       }
+      // La limite de 4096 par sa FORME : le prompt porte des UUID tirés au
+      // hasard dont les chiffres épellent « 4096 » de temps en temps (CI #877).
+      expect(statedLimits(tgRow?.systemPrompt ?? '')).toEqual([]);
     } finally {
       await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
     }

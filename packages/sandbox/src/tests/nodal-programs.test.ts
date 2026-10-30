@@ -15,6 +15,9 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hostPrograms, nodalProgramsSandbox, openNodalPrograms } from '../nodal-programs';
+import { noWorkspaceSandbox } from '../policy';
+import { createSandbox } from '../status';
+import type { SandboxBackend } from '../types';
 
 const isWindows = process.platform === 'win32';
 const fwd = (p: string): string => p.split('\\').join('/');
@@ -103,7 +106,7 @@ describe.runIf(confined)(
   'openNodalPrograms — git on a planted repo runs IN the sandbox, nothing on the host @cap:executer-une-commande/moteur (Windows, MXC available)',
   () => {
     it('git lance la commande plantée (trace) DANS le conteneur, JAMAIS sur l’hôte ; sa sortie est juste', async () => {
-      const programs = await openNodalPrograms();
+      const programs = await openNodalPrograms({ workspace: noWorkspaceSandbox });
       let stderr = '';
       try {
         expect(programs.confined).toBe(true);
@@ -128,7 +131,7 @@ describe.runIf(confined)(
     }, 60_000);
 
     it('rejette comme execFile dans le conteneur : `code` non nul, `killed` sur la borne', async () => {
-      const programs = await openNodalPrograms();
+      const programs = await openNodalPrograms({ workspace: noWorkspaceSandbox });
       try {
         const node = process.execPath;
         const fail = await programs
@@ -149,3 +152,66 @@ describe.runIf(confined)(
     }, 60_000);
   },
 );
+
+// ─── #876 : l'interrupteur de l'espace couvre aussi les programmes de Nodal ──
+
+/** Un bac à sable DISPONIBLE dont le conteneur ne s'ouvre jamais : s'il servait, le test le dirait. */
+function availableSandbox(): ReturnType<typeof createSandbox> {
+  const backend: SandboxBackend = {
+    probe: async () => ({ state: 'available', backend: 'fake' }),
+    openContainer: async () => {
+      throw new Error('CONTAINER_OPENED');
+    },
+  };
+  return createSandbox(backend, { log: () => {} });
+}
+
+describe('openNodalPrograms — the workspace switch @cap:executer-une-commande/moteur', () => {
+  it('switched off: the session runs on the host, and the program really runs there', async () => {
+    let reads = 0;
+    const programs = await openNodalPrograms({
+      sandbox: availableSandbox(),
+      workspace: async () => {
+        reads++;
+        return { enabled: false, folders: { added: [], removed: [] } };
+      },
+    });
+    try {
+      expect(programs.confined).toBe(false);
+      const r = await programs.execFile(process.execPath, ['-e', 'process.stdout.write("host")'], {
+        writableRoots: [],
+        readableRoots: [],
+      });
+      expect(r.stdout).toBe('host');
+    } finally {
+      await programs.close();
+    }
+    expect(reads).toBe(1);
+  });
+
+  it('switched on: the session goes through the sandbox (its container is asked for)', async () => {
+    const programs = await openNodalPrograms({
+      sandbox: availableSandbox(),
+      workspace: noWorkspaceSandbox,
+    });
+    try {
+      expect(programs.confined).toBe(true);
+      await expect(
+        programs.execFile(process.execPath, ['-e', '0'], { writableRoots: [], readableRoots: [] }),
+      ).rejects.toThrow('CONTAINER_OPENED');
+    } finally {
+      await programs.close();
+    }
+  });
+
+  it('an unreadable setting opens no session at all, it is never read as on or off', async () => {
+    await expect(
+      openNodalPrograms({
+        sandbox: availableSandbox(),
+        workspace: async () => {
+          throw new Error('SANDBOX_SETTINGS_UNREADABLE: test');
+        },
+      }),
+    ).rejects.toThrow('SANDBOX_SETTINGS_UNREADABLE');
+  });
+});

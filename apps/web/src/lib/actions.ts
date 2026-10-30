@@ -188,6 +188,7 @@ import {
   cancelJobTree,
   approvalsNewestFirst,
   showConversationsTo,
+  workspaceSandboxReader,
 } from '@nodal-agents/db';
 import {
   deliverableStatuses,
@@ -15449,7 +15450,10 @@ export async function setCodeProjectInitGitAction(
       });
     }
 
-    const pose = await withNodalPrograms((programs) => initGitRepository(projet.path, programs));
+    // L'interrupteur du bac à sable de l'espace couvre ce git aussi (#876).
+    const pose = await withNodalPrograms((programs) => initGitRepository(projet.path, programs), {
+      workspace: workspaceSandboxReader(db, session.entityId),
+    });
     if (pose.kind === 'failed') {
       // L'option n'est PAS écrite : elle dirait que ce dossier est versionné
       // alors qu'il ne l'est pas. L'échec se dit, et l'interrupteur reste où

@@ -34,6 +34,8 @@ import {
 // Le courtier tourne sur le Node dédié téléchargé (D5), quel que soit celui du runner de test.
 const batterySandbox = createSandbox(mxcBackend(undefined, 'deny-all'));
 
+import { workspaceSandboxReader } from '@nodal-agents/db';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import type { ToolContext } from '@nodal-agents/tools';
 import { codeProjectVerifier } from '../../verification/code-project.ts';
@@ -54,13 +56,16 @@ let base: string;
 let ws: string;
 let canary: string;
 let store: string;
+/** Une vraie base : chaque chemin relit le réglage du bac à sable de l'espace (#876). */
+let db: Awaited<ReturnType<typeof spinUpTestDb>>['db'];
+let entityId: string;
 
 function ctx(): ToolContext {
   return {
     jobId: 'job-3p',
     agentId: 'agent-3p',
-    entityId: 'entity-3p',
-    db: undefined as unknown as ToolContext['db'],
+    entityId,
+    db: db as unknown as ToolContext['db'],
     jobChatId: null,
     workspaces: [{ label: 'ws', path: ws }],
     skillStoreDir: store,
@@ -122,7 +127,11 @@ const paths: { name: string; run: (inside: string, outside: string) => Promise<P
         },
         async () => {},
         // Ce que la finalisation passe : les dossiers du job.
-        { writableRoots: [ws], jobId: 'job-3p' },
+        {
+          writableRoots: [ws],
+          jobId: 'job-3p',
+          workspace: workspaceSandboxReader(db as unknown as ToolContext['db'], entityId),
+        },
       );
       const record = proof.records[0];
       return { exitCode: record?.exitCode ?? null, stderr: record?.stderrTail ?? '' };
@@ -147,6 +156,8 @@ describe.skipIf(!isWindows || tierUnsupported)(
   'sandbox — run_command, run_skill_script and proof commands go through ONE confinement @cap:executer-une-commande/moteur (Windows only: the macOS and Linux backends come in later PRs of #628 — skipped on a Windows without the MXC base-container tier, e.g. the GitHub Windows Server runner)',
   () => {
     beforeAll(async () => {
+      db = (await spinUpTestDb()).db;
+      entityId = (await seedMinimal(db)).entityId;
       const status = await batterySandbox.status();
       jobProcessScope('job-3p', batterySandbox);
       // `limits` (la boucle locale de la machine, fermée sur certains builds)

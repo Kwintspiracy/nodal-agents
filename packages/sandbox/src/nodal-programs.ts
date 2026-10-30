@@ -21,7 +21,13 @@
 // écrivent déjà : le conteneur de git n'en reçoit pas plus qu'elles.
 // Bac à sable indisponible : le programme tourne sur l'hôte, exactement comme
 // avant (`execFile` / `spawn` de Node) — pas de confinement ici quand il n'y en
-// a pour aucune commande.
+// a pour aucune commande. De même quand l'utilisateur a COUPÉ le bac à sable de
+// l'espace pour lequel Nodal lance ce programme (#876) : l'interrupteur couvre
+// tous les lancements confinés de l'espace, ses commandes comme son git — une
+// commande non confinée peut déjà tout faire sur l'hôte, confiner le git qui
+// relit son dossier n'y retirerait rien. L'appelant DIT pour quel espace il
+// lance (`workspace`), relu à chaque session ; hors espace (le CLI qui
+// restaure un instantané), `noWorkspaceSandbox`.
 //
 // UNE SESSION PAR OPÉRATION (un instantané, une phase de constat) : ses appels
 // partagent un conteneur par jeu de dossiers (mesuré : ~170 ms pour un
@@ -32,6 +38,7 @@ import { execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process
 import { tmpdir } from 'node:os';
 import type { Readable } from 'node:stream';
 import { JobProcessScope } from './job-scope';
+import type { WorkspaceSandboxReader } from './policy';
 import { createSandbox, type Sandbox } from './status';
 import { mxcBackend } from './windows-mxc';
 
@@ -157,12 +164,25 @@ export function nodalProgramsSandbox(): Sandbox {
 
 let sessions = 0;
 
+/** Pour quel espace Nodal lance ses programmes, et sous quel bac à sable. */
+export interface NodalProgramsOptions {
+  /**
+   * Le réglage du bac à sable de l'espace (#876), relu à l'ouverture de la
+   * session : coupé, les programmes tournent sur l'hôte. `noWorkspaceSandbox`
+   * pour un lancement qui n'appartient à aucun espace. LÈVE quand le réglage
+   * est illisible : la session ne s'ouvre pas.
+   */
+  readonly workspace: WorkspaceSandboxReader;
+  /** Le bac à sable (tests) ; celui des programmes de Nodal par défaut. */
+  readonly sandbox?: Sandbox;
+}
+
 /** Ouvre une session de programmes de Nodal (une par opération). */
-export async function openNodalPrograms(
-  sandbox: Sandbox = nodalProgramsSandbox(),
-): Promise<NodalPrograms> {
+export async function openNodalPrograms(opts: NodalProgramsOptions): Promise<NodalPrograms> {
+  const sandbox = opts.sandbox ?? nodalProgramsSandbox();
   const status = await sandbox.status();
-  if (status.state !== 'available' || !sandbox.backend) {
+  const settings = await opts.workspace();
+  if (status.state !== 'available' || !sandbox.backend || !settings.enabled) {
     return { ...hostPrograms, confined: false, close: async () => undefined };
   }
   const scope = new JobProcessScope(`nodal-programs-${++sessions}`, sandbox);
@@ -194,9 +214,9 @@ export async function openNodalPrograms(
 /** Ouvre une session, y fait `fn`, la ferme — quoi qu'il arrive. */
 export async function withNodalPrograms<T>(
   fn: (programs: NodalPrograms) => Promise<T>,
-  sandbox?: Sandbox,
+  opts: NodalProgramsOptions,
 ): Promise<T> {
-  const programs = await openNodalPrograms(sandbox);
+  const programs = await openNodalPrograms(opts);
   try {
     return await fn(programs);
   } finally {

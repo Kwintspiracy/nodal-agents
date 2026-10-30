@@ -31,6 +31,7 @@ import {
   type Sandbox,
   jobProcessScope,
   openJobProcessScopeIds,
+  noWorkspaceSandbox,
 } from '@nodal-agents/sandbox';
 import {
   COUNTER_DAEMON_SOURCE,
@@ -207,7 +208,7 @@ describe.each(cases)(
         cwd: dir,
         timeoutMs: 30_000,
         env: buildChildEnv(process.env),
-        confinement: { writableRoots: [dir] },
+        confinement: { writableRoots: [dir], workspace: noWorkspaceSandbox },
         scope: jobProcessScope(jobId, sandbox),
       });
 
