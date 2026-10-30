@@ -48,7 +48,8 @@ import { BENCH_PRINTER_SLUG, BENCH_PRINTER_TOOLS } from '../printer/identity';
  * demandé, le bloquer cacherait la question), lire un skill et le manuel de
  * Nodal, et la mémoire, que chaque job de Nodal consulte (la bloquer mesurerait
  * un Nodal amputé). Les autres outils toujours donnés sont bloqués là où aucun
- * scénario n'en a besoin : `list_models`, `list_schedules`, `dashboard_publish`
+ * scénario n'en a besoin : `list_models`, `list_schedules`, `file_move` (aucun
+ * scénario ne range un fichier, #879), `dashboard_publish`
  * (une page publiée hors du dossier de travail), `web_search` (sauf `WEB`) et
  * `declare_verification` (un outil `process`, sauf `COMMANDS`).
  */
@@ -71,7 +72,6 @@ export const FILES = [
   'file_read',
   'file_write',
   'file_edit',
-  'file_move',
   'file_list',
   'file_search',
   'register_project',
