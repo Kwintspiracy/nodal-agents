@@ -20,6 +20,8 @@ const panne = vi.hoisted(() => ({
   renameCode: 'EXDEV',
   /** `unlink(chemin)` lève EBUSY quand `chemin` est celui-ci. */
   unlinkOf: null as string | null,
+  /** Les pannes réellement levées : un faux qui ne se déclenche pas ne prouve rien. */
+  levees: [] as string[],
 }));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -28,6 +30,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const meme = (a: unknown, b: string | null): boolean =>
     b !== null && typeof a === 'string' && resolve(a).toLowerCase() === resolve(b).toLowerCase();
   const leve = (code: string): never => {
+    panne.levees.push(code);
     throw Object.assign(new Error(`${code}: simulated`), { code });
   };
   return {
@@ -93,6 +96,7 @@ afterEach(async () => {
   panne.renameFrom = null;
   panne.renameCode = 'EXDEV';
   panne.unlinkOf = null;
+  panne.levees = [];
   await rm(racine, { recursive: true, force: true }).catch(() => undefined);
 });
 
@@ -391,12 +395,20 @@ describe('file_move — le constat range la destination créée et la source ret
 });
 
 describe('file_move — entre deux volumes, et un fichier tenu par un autre programme @cap:travailler-sur-des-fichiers/moteur', () => {
+  // Le faux vise le chemin RÉEL de la source, celui que l'outil renomme après
+  // `resolveAndCheckPath`. Sous Windows, `tmpdir()` peut rendre la forme
+  // courte 8.3 (`C:\Users\RUNNER~1\…`) et le chemin réel la forme longue :
+  // viser `join(DOCS, …)` laissait le faux muet sur la CI Windows, et le
+  // renommage réel passait (constat de la CI Windows de #881).
+  const sourceReelle = async (): Promise<string> => realpath(join(DOCS, 'scan.pdf'));
+
   it('un renommage entre deux volumes (EXDEV) se fait en copie puis suppression', async () => {
     await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
-    panne.renameFrom = join(DOCS, 'scan.pdf');
+    panne.renameFrom = await sourceReelle();
 
     const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
 
+    expect(panne.levees).toEqual(['EXDEV']);
     expect(out.ok && out.operation).toBe('moved');
     expect(await readFile(join(ARCHIVE, 'scan.pdf'))).toEqual(OCTETS);
     expect(await existe(join(DOCS, 'scan.pdf'))).toBe(false);
@@ -406,11 +418,12 @@ describe('file_move — entre deux volumes, et un fichier tenu par un autre prog
 
   it('une suppression ratée après la copie est DITE : les deux fichiers existent', async () => {
     await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
-    panne.renameFrom = join(DOCS, 'scan.pdf');
-    panne.unlinkOf = join(DOCS, 'scan.pdf');
+    panne.renameFrom = await sourceReelle();
+    panne.unlinkOf = await sourceReelle();
 
     const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
 
+    expect(panne.levees).toEqual(['EXDEV', 'EBUSY']);
     expect(out.ok).toBe(false);
     expect(!out.ok && out.reason).toMatch(
       /^"docs\/scan\.pdf" was copied to ".*scan\.pdf", but the original could not be removed \(EBUSY: EBUSY: simulated\)\. Both files exist now\.$/,
@@ -421,11 +434,12 @@ describe('file_move — entre deux volumes, et un fichier tenu par un autre prog
 
   it('un fichier encore ouvert ailleurs (EBUSY) échoue avec sa raison, et rien ne bouge', async () => {
     await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
-    panne.renameFrom = join(DOCS, 'scan.pdf');
+    panne.renameFrom = await sourceReelle();
     panne.renameCode = 'EBUSY';
 
     const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
 
+    expect(panne.levees).toEqual(['EBUSY']);
     expect(out).toEqual({
       ok: false,
       reason:
