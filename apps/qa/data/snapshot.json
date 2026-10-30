@@ -1,11 +1,11 @@
 {
-  "genereLe": "2026-10-28T10:09:51.190Z",
-  "tableauLe": "2026-10-28T10:09:51.190Z",
+  "genereLe": "2026-10-30T10:32:15.079Z",
+  "tableauLe": "2026-10-30T10:32:15.079Z",
   "execution": {
-    "id": "40665860754",
-    "url": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/40665860754"
+    "id": "41037416427",
+    "url": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/41037416427"
   },
-  "commit": "57fe1516",
+  "commit": "46e96bee",
   "branche": "main",
   "paquets": [
     {
@@ -426,19 +426,19 @@
       "nom": "@nodal-agents/db",
       "chemin": "packages/db",
       "tests": {
-        "fichiers": 66,
-        "cas": 445,
+        "fichiers": 68,
+        "cas": 457,
         "e2e": 0,
         "casE2e": 0
       },
       "couverture": {
-        "instructions": 69.71,
-        "branches": 59.63,
-        "fonctions": 57.22,
-        "lignes": 71.61,
-        "lignesCouvertes": 787,
-        "lignesTotal": 1099,
-        "fichiersMesures": 74
+        "instructions": 70.55,
+        "branches": 60.18,
+        "fonctions": 58.71,
+        "lignes": 72.23,
+        "lignesCouvertes": 822,
+        "lignesTotal": 1138,
+        "fichiersMesures": 76
       },
       "mesure": {
         "etat": "mesuree",
@@ -610,19 +610,19 @@
       "nom": "@nodal-agents/runner",
       "chemin": "apps/runner",
       "tests": {
-        "fichiers": 231,
-        "cas": 2256,
+        "fichiers": 232,
+        "cas": 2266,
         "e2e": 0,
         "casE2e": 0
       },
       "couverture": {
-        "instructions": 86.11,
+        "instructions": 86.15,
         "branches": 77.95,
-        "fonctions": 85.67,
-        "lignes": 88.36,
-        "lignesCouvertes": 8078,
-        "lignesTotal": 9142,
-        "fichiersMesures": 150
+        "fonctions": 85.62,
+        "lignes": 88.41,
+        "lignesCouvertes": 8123,
+        "lignesTotal": 9187,
+        "fichiersMesures": 151
       },
       "mesure": {
         "etat": "mesuree",
@@ -657,17 +657,17 @@
       "chemin": "packages/sandbox",
       "tests": {
         "fichiers": 19,
-        "cas": 128,
+        "cas": 144,
         "e2e": 0,
         "casE2e": 0
       },
       "couverture": {
-        "instructions": 64.87,
-        "branches": 58.19,
-        "fonctions": 61.71,
-        "lignes": 66.54,
-        "lignesCouvertes": 728,
-        "lignesTotal": 1094,
+        "instructions": 68.58,
+        "branches": 62.02,
+        "fonctions": 65.01,
+        "lignes": 70.43,
+        "lignesCouvertes": 817,
+        "lignesTotal": 1160,
         "fichiersMesures": 18
       },
       "mesure": {
@@ -708,13 +708,13 @@
         "casE2e": 0
       },
       "couverture": {
-        "instructions": 87.2,
-        "branches": 80.2,
-        "fonctions": 87.97,
-        "lignes": 89.25,
-        "lignesCouvertes": 3248,
-        "lignesTotal": 3639,
-        "fichiersMesures": 84
+        "instructions": 87.13,
+        "branches": 80.11,
+        "fonctions": 87.73,
+        "lignes": 89.15,
+        "lignesCouvertes": 3256,
+        "lignesTotal": 3652,
+        "fichiersMesures": 85
       },
       "mesure": {
         "etat": "mesuree",
@@ -731,13 +731,13 @@
         "casE2e": 0
       },
       "couverture": {
-        "instructions": 66.3,
-        "branches": 66.66,
-        "fonctions": 63.5,
-        "lignes": 67.21,
+        "instructions": 66.21,
+        "branches": 66.27,
+        "fonctions": 63.18,
+        "lignes": 67.11,
         "lignesCouvertes": 447,
-        "lignesTotal": 665,
-        "fichiersMesures": 18
+        "lignesTotal": 666,
+        "fichiersMesures": 19
       },
       "mesure": {
         "etat": "mesuree",
@@ -748,19 +748,19 @@
       "nom": "@nodal-agents/tools",
       "chemin": "packages/tools",
       "tests": {
-        "fichiers": 118,
-        "cas": 1639,
+        "fichiers": 119,
+        "cas": 1647,
         "e2e": 0,
         "casE2e": 0
       },
       "couverture": {
         "instructions": 86.8,
-        "branches": 75.92,
-        "fonctions": 87.8,
-        "lignes": 89.32,
-        "lignesCouvertes": 4864,
-        "lignesTotal": 5445,
-        "fichiersMesures": 114
+        "branches": 75.98,
+        "fonctions": 87.83,
+        "lignes": 89.31,
+        "lignesCouvertes": 4875,
+        "lignesTotal": 5458,
+        "fichiersMesures": 115
       },
       "mesure": {
         "etat": "mesuree",
@@ -771,19 +771,19 @@
       "nom": "@nodal-agents/web",
       "chemin": "apps/web",
       "tests": {
-        "fichiers": 269,
-        "cas": 3034,
+        "fichiers": 272,
+        "cas": 3071,
         "e2e": 46,
         "casE2e": 299
       },
       "couverture": {
-        "instructions": 73.28,
-        "branches": 66.74,
-        "fonctions": 69.45,
-        "lignes": 74.91,
-        "lignesCouvertes": 10657,
-        "lignesTotal": 14226,
-        "fichiersMesures": 378
+        "instructions": 73.54,
+        "branches": 67.14,
+        "fonctions": 69.88,
+        "lignes": 75.18,
+        "lignesCouvertes": 10917,
+        "lignesTotal": 14520,
+        "fichiersMesures": 381
       },
       "mesure": {
         "etat": "mesuree",
@@ -816,23 +816,23 @@
   ],
   "resume": {
     "paquets": 35,
-    "fichiersDeTest": 1114,
-    "casDeTest": 12774,
+    "fichiersDeTest": 1121,
+    "casDeTest": 12857,
     "specsE2e": 46,
     "casE2e": 299,
     "specsE2eJoueesParLaCi": 46,
     "paquetsMesures": 35,
     "paquetsExclus": 0,
     "paquetsSansMesure": 0,
-    "lignesCouvertes": 42525,
-    "lignesTotal": 51117,
-    "couvertureLignes": 83.19,
+    "lignesCouvertes": 42973,
+    "lignesTotal": 51588,
+    "couvertureLignes": 83.3,
     "capacites": 24,
     "capacitesVerifiees": 23,
     "capacitesSansMoteur": 0,
     "capacitesSansPreuve": 0,
-    "testsEnMemoire": 15561,
-    "testsInstables": 15,
+    "testsEnMemoire": 15645,
+    "testsInstables": 13,
     "testsCasses": 22
   },
   "capacites": {
@@ -1634,6 +1634,13 @@
               "niveau": "moteur",
               "origine": "apps/web/src/app/(dashboard)/settings/__tests__/settings-rows.test.ts",
               "titre": "buildSettingRows — la config et l’environnement @cap:installer-et-demarrer/moteur Network access montre l’adresse que les autres appareils doivent taper",
+              "sort": "vert"
+            },
+            {
+              "capacite": "installer-et-demarrer",
+              "niveau": "moteur",
+              "origine": "apps/web/src/app/(dashboard)/settings/__tests__/settings-rows.test.ts",
+              "titre": "buildSettingRows — la config et l’environnement @cap:installer-et-demarrer/moteur #876 — Sandbox dit le régime que le runner rapporte : actif, coupé, indisponible",
               "sort": "vert"
             },
             {
@@ -4200,6 +4207,13 @@
             "niveau": "moteur",
             "origine": "apps/web/src/app/(dashboard)/settings/__tests__/settings-rows.test.ts",
             "titre": "buildSettingRows — la config et l’environnement @cap:installer-et-demarrer/moteur Network access montre l’adresse que les autres appareils doivent taper",
+            "sort": "vert"
+          },
+          {
+            "capacite": "installer-et-demarrer",
+            "niveau": "moteur",
+            "origine": "apps/web/src/app/(dashboard)/settings/__tests__/settings-rows.test.ts",
+            "titre": "buildSettingRows — la config et l’environnement @cap:installer-et-demarrer/moteur #876 — Sandbox dit le régime que le runner rapporte : actif, coupé, indisponible",
             "sort": "vert"
           },
           {
@@ -14372,41 +14386,6 @@
             {
               "capacite": "parler-a-un-agent",
               "niveau": "moteur",
-              "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
-              "titre": "un job que plus aucun runner ne tient @cap:parler-a-un-agent/moteur échoue avec le code typé et une ligne de faits, jamais en silence",
-              "sort": "vert"
-            },
-            {
-              "capacite": "parler-a-un-agent",
-              "niveau": "moteur",
-              "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
-              "titre": "un job que plus aucun runner ne tient @cap:parler-a-un-agent/moteur un job qui BAT ENCORE n’est pas touché",
-              "sort": "vert"
-            },
-            {
-              "capacite": "parler-a-un-agent",
-              "niveau": "moteur",
-              "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
-              "titre": "un job que plus aucun runner ne tient @cap:parler-a-un-agent/moteur un orchestrateur dont le TABLEAU DE TÂCHES tourne encore n’est pas touché",
-              "sort": "vert"
-            },
-            {
-              "capacite": "parler-a-un-agent",
-              "niveau": "moteur",
-              "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
-              "titre": "les faits d’un runner redémarré, mis en mots @cap:parler-a-un-agent/moteur la ligne lue par la personne est une ligne de plateforme, entre crochets",
-              "sort": "vert"
-            },
-            {
-              "capacite": "parler-a-un-agent",
-              "niveau": "moteur",
-              "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
-              "titre": "les faits d’un runner redémarré, mis en mots @cap:parler-a-un-agent/moteur sous la minute, elle le dit en secondes",
-              "sort": "vert"
-            },
-            {
-              "capacite": "parler-a-un-agent",
-              "niveau": "moteur",
               "origine": "apps/runner/src/tests/cli-runtime/claude-setting-sources.test.ts",
               "titre": "claude launched headless loads only the user settings (#628) @cap:parler-a-un-agent/moteur the shared definition is exactly `--setting-sources user`, never project or local",
               "sort": "vert"
@@ -14500,6 +14479,41 @@
               "niveau": "moteur",
               "origine": "apps/runner/src/tests/cli-runtime/spawn-turn-stop.test.ts",
               "titre": "spawnCliTurn — what the CLI leaves running belongs to its job (#750) @cap:parler-a-un-agent/moteur a detached process the CLI started outlives the turn, then dies when the scope closes",
+              "sort": "vert"
+            },
+            {
+              "capacite": "parler-a-un-agent",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
+              "titre": "un job que plus aucun runner ne tient @cap:parler-a-un-agent/moteur échoue avec le code typé et une ligne de faits, jamais en silence",
+              "sort": "vert"
+            },
+            {
+              "capacite": "parler-a-un-agent",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
+              "titre": "un job que plus aucun runner ne tient @cap:parler-a-un-agent/moteur un job qui BAT ENCORE n’est pas touché",
+              "sort": "vert"
+            },
+            {
+              "capacite": "parler-a-un-agent",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
+              "titre": "un job que plus aucun runner ne tient @cap:parler-a-un-agent/moteur un orchestrateur dont le TABLEAU DE TÂCHES tourne encore n’est pas touché",
+              "sort": "vert"
+            },
+            {
+              "capacite": "parler-a-un-agent",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
+              "titre": "les faits d’un runner redémarré, mis en mots @cap:parler-a-un-agent/moteur la ligne lue par la personne est une ligne de plateforme, entre crochets",
+              "sort": "vert"
+            },
+            {
+              "capacite": "parler-a-un-agent",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
+              "titre": "les faits d’un runner redémarré, mis en mots @cap:parler-a-un-agent/moteur sous la minute, elle le dit en secondes",
               "sort": "vert"
             },
             {
@@ -15475,41 +15489,6 @@
           {
             "capacite": "parler-a-un-agent",
             "niveau": "moteur",
-            "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
-            "titre": "un job que plus aucun runner ne tient @cap:parler-a-un-agent/moteur échoue avec le code typé et une ligne de faits, jamais en silence",
-            "sort": "vert"
-          },
-          {
-            "capacite": "parler-a-un-agent",
-            "niveau": "moteur",
-            "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
-            "titre": "un job que plus aucun runner ne tient @cap:parler-a-un-agent/moteur un job qui BAT ENCORE n’est pas touché",
-            "sort": "vert"
-          },
-          {
-            "capacite": "parler-a-un-agent",
-            "niveau": "moteur",
-            "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
-            "titre": "un job que plus aucun runner ne tient @cap:parler-a-un-agent/moteur un orchestrateur dont le TABLEAU DE TÂCHES tourne encore n’est pas touché",
-            "sort": "vert"
-          },
-          {
-            "capacite": "parler-a-un-agent",
-            "niveau": "moteur",
-            "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
-            "titre": "les faits d’un runner redémarré, mis en mots @cap:parler-a-un-agent/moteur la ligne lue par la personne est une ligne de plateforme, entre crochets",
-            "sort": "vert"
-          },
-          {
-            "capacite": "parler-a-un-agent",
-            "niveau": "moteur",
-            "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
-            "titre": "les faits d’un runner redémarré, mis en mots @cap:parler-a-un-agent/moteur sous la minute, elle le dit en secondes",
-            "sort": "vert"
-          },
-          {
-            "capacite": "parler-a-un-agent",
-            "niveau": "moteur",
             "origine": "apps/runner/src/tests/cli-runtime/claude-setting-sources.test.ts",
             "titre": "claude launched headless loads only the user settings (#628) @cap:parler-a-un-agent/moteur the shared definition is exactly `--setting-sources user`, never project or local",
             "sort": "vert"
@@ -15603,6 +15582,41 @@
             "niveau": "moteur",
             "origine": "apps/runner/src/tests/cli-runtime/spawn-turn-stop.test.ts",
             "titre": "spawnCliTurn — what the CLI leaves running belongs to its job (#750) @cap:parler-a-un-agent/moteur a detached process the CLI started outlives the turn, then dies when the scope closes",
+            "sort": "vert"
+          },
+          {
+            "capacite": "parler-a-un-agent",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
+            "titre": "un job que plus aucun runner ne tient @cap:parler-a-un-agent/moteur échoue avec le code typé et une ligne de faits, jamais en silence",
+            "sort": "vert"
+          },
+          {
+            "capacite": "parler-a-un-agent",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
+            "titre": "un job que plus aucun runner ne tient @cap:parler-a-un-agent/moteur un job qui BAT ENCORE n’est pas touché",
+            "sort": "vert"
+          },
+          {
+            "capacite": "parler-a-un-agent",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
+            "titre": "un job que plus aucun runner ne tient @cap:parler-a-un-agent/moteur un orchestrateur dont le TABLEAU DE TÂCHES tourne encore n’est pas touché",
+            "sort": "vert"
+          },
+          {
+            "capacite": "parler-a-un-agent",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
+            "titre": "les faits d’un runner redémarré, mis en mots @cap:parler-a-un-agent/moteur la ligne lue par la personne est une ligne de plateforme, entre crochets",
+            "sort": "vert"
+          },
+          {
+            "capacite": "parler-a-un-agent",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/cron/reclaim-jobs.test.ts",
+            "titre": "les faits d’un runner redémarré, mis en mots @cap:parler-a-un-agent/moteur sous la minute, elle le dit en secondes",
             "sort": "vert"
           },
           {
@@ -17384,6 +17398,13 @@
             {
               "capacite": "suivre-execution",
               "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/scheduled/__tests__/scheduled-run-redirect.test.tsx",
+              "titre": "/scheduled/<id> @cap:suivre-execution/ecran redirige vers /runs/<id>, qui range le run dans SA section",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "ecran",
               "origine": "apps/web/src/app/(dashboard)/runs/__tests__/LiveRunStrip.test.tsx",
               "titre": "la bande du run en cours (#444) @cap:suivre-execution/ecran la bande dit le tour, ce qui s’écrit, le dernier morceau, et le budget face aux plafonds",
               "sort": "vert"
@@ -17848,13 +17869,6 @@
               "niveau": "ecran",
               "origine": "apps/web/src/app/(dashboard)/runs/__tests__/sections.test.tsx",
               "titre": "ReviewSection @cap:suivre-execution/ecran sans verdict, la ligne le dit — et n’est pas un bouton",
-              "sort": "vert"
-            },
-            {
-              "capacite": "suivre-execution",
-              "niveau": "ecran",
-              "origine": "apps/web/src/app/(dashboard)/scheduled/__tests__/scheduled-run-redirect.test.tsx",
-              "titre": "/scheduled/<id> @cap:suivre-execution/ecran redirige vers /runs/<id>, qui range le run dans SA section",
               "sort": "vert"
             },
             {
@@ -22265,6 +22279,13 @@
           {
             "capacite": "suivre-execution",
             "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/scheduled/__tests__/scheduled-run-redirect.test.tsx",
+            "titre": "/scheduled/<id> @cap:suivre-execution/ecran redirige vers /runs/<id>, qui range le run dans SA section",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "ecran",
             "origine": "apps/web/src/app/(dashboard)/runs/__tests__/LiveRunStrip.test.tsx",
             "titre": "la bande du run en cours (#444) @cap:suivre-execution/ecran la bande dit le tour, ce qui s’écrit, le dernier morceau, et le budget face aux plafonds",
             "sort": "vert"
@@ -22729,13 +22750,6 @@
             "niveau": "ecran",
             "origine": "apps/web/src/app/(dashboard)/runs/__tests__/sections.test.tsx",
             "titre": "ReviewSection @cap:suivre-execution/ecran sans verdict, la ligne le dit — et n’est pas un bouton",
-            "sort": "vert"
-          },
-          {
-            "capacite": "suivre-execution",
-            "niveau": "ecran",
-            "origine": "apps/web/src/app/(dashboard)/scheduled/__tests__/scheduled-run-redirect.test.tsx",
-            "titre": "/scheduled/<id> @cap:suivre-execution/ecran redirige vers /runs/<id>, qui range le run dans SA section",
             "sort": "vert"
           },
           {
@@ -27658,13 +27672,6 @@
             {
               "capacite": "parler-par-canal-externe",
               "niveau": "moteur",
-              "origine": "apps/runner/src/tests/cron/child-birth-after-cancel.test.ts",
-              "titre": "a task claimed before a stop spawns no child after it @cap:parler-par-canal-externe/moteur the cancel lands between the claim and the insert: no child row, nothing executed, the task stays cancelled",
-              "sort": "vert"
-            },
-            {
-              "capacite": "parler-par-canal-externe",
-              "niveau": "moteur",
               "origine": "apps/runner/src/tests/cli-runtime/cancel-cli-runtime.test.ts",
               "titre": "a job served by a CLI runtime acts only while its row says processing @cap:parler-par-canal-externe/moteur claude-code: stop_conversation_run, called by a later head of the conversation, cuts the earlier CLI run",
               "sort": "vert"
@@ -27856,6 +27863,13 @@
               "niveau": "moteur",
               "origine": "apps/runner/src/tests/cli-runtime/inbox-after-cli-turn.test.ts",
               "titre": "a job served by a CLI reads its inbox AFTER its turn, through a new head (#531) @cap:parler-par-canal-externe/moteur a REPLY TURN served by a CLI gets the running work in its prompt, on the CLI surface (no Nodal tool offered)",
+              "sort": "vert"
+            },
+            {
+              "capacite": "parler-par-canal-externe",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/cron/child-birth-after-cancel.test.ts",
+              "titre": "a task claimed before a stop spawns no child after it @cap:parler-par-canal-externe/moteur the cancel lands between the claim and the insert: no child row, nothing executed, the task stays cancelled",
               "sort": "vert"
             },
             {
@@ -30077,13 +30091,6 @@
           {
             "capacite": "parler-par-canal-externe",
             "niveau": "moteur",
-            "origine": "apps/runner/src/tests/cron/child-birth-after-cancel.test.ts",
-            "titre": "a task claimed before a stop spawns no child after it @cap:parler-par-canal-externe/moteur the cancel lands between the claim and the insert: no child row, nothing executed, the task stays cancelled",
-            "sort": "vert"
-          },
-          {
-            "capacite": "parler-par-canal-externe",
-            "niveau": "moteur",
             "origine": "apps/runner/src/tests/cli-runtime/cancel-cli-runtime.test.ts",
             "titre": "a job served by a CLI runtime acts only while its row says processing @cap:parler-par-canal-externe/moteur claude-code: stop_conversation_run, called by a later head of the conversation, cuts the earlier CLI run",
             "sort": "vert"
@@ -30275,6 +30282,13 @@
             "niveau": "moteur",
             "origine": "apps/runner/src/tests/cli-runtime/inbox-after-cli-turn.test.ts",
             "titre": "a job served by a CLI reads its inbox AFTER its turn, through a new head (#531) @cap:parler-par-canal-externe/moteur a REPLY TURN served by a CLI gets the running work in its prompt, on the CLI surface (no Nodal tool offered)",
+            "sort": "vert"
+          },
+          {
+            "capacite": "parler-par-canal-externe",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/cron/child-birth-after-cancel.test.ts",
+            "titre": "a task claimed before a stop spawns no child after it @cap:parler-par-canal-externe/moteur the cancel lands between the claim and the insert: no child row, nothing executed, the task stays cancelled",
             "sort": "vert"
           },
           {
@@ -45146,6 +45160,258 @@
             {
               "capacite": "executer-une-commande",
               "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+              "titre": "the sandbox switch, persisted @cap:executer-une-commande/ecran the owner turns it off and on; the base says so, read by the runner reader",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+              "titre": "the sandbox switch, persisted @cap:executer-une-commande/ecran anyone else is refused, and nothing changes",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+              "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran adds a real folder; adding it again is refused as already allowed",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+              "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran refuses the data folder of Nodal and any folder under it, with its code and the folder that holds it, writing nothing",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+              "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran a relative path or a missing folder is refused",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+              "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran a drive root asks for a confirmation first, and is written only once confirmed",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+              "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran the home folder asks for a confirmation too, and names the Nodal data it holds",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+              "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran a folder that holds the home folder (C:Users, /home) asks for a confirmation, and is written only once confirmed",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+              "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran the parent of a moved NODALAI_HOME asks for a confirmation; the instance itself stays refused",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+              "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran removing an added folder forgets it; removing a detected one records the removal; adding it back restores it",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+              "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran the tool cache cannot be removed, and the reason is said",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+              "titre": "getSandboxAction reads the runner and checks its answer @cap:executer-une-commande/ecran asks for the workspace of the session, and adds who may change it",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+              "titre": "getSandboxAction reads the runner and checks its answer @cap:executer-une-commande/ecran an answer of another shape is an error said, never half a screen",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+              "titre": "getSandboxAction reads the runner and checks its answer @cap:executer-une-commande/ecran a refusal of the runner keeps its code; an unreachable runner is said",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+              "titre": "sandboxBannerWords @cap:executer-une-commande/ecran silent only when the runner says the sandbox confines",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+              "titre": "sandboxBannerWords @cap:executer-une-commande/ecran speaks while it is off, unavailable, not on this system, or unread",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+              "titre": "sandboxBannerWords @cap:executer-une-commande/ecran a code it does not know is shown as it is, never replaced by a made-up sentence",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+              "titre": "the words of the sandbox section @cap:executer-une-commande/ecran splits a folder into its name and its parent, a volume root being its own name, on any system",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+              "titre": "the words of the sandbox section @cap:executer-une-commande/ecran tags a folder by where it comes from, or by why it does not apply",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+              "titre": "the words of the sandbox section @cap:executer-une-commande/ecran the perimeter counts what the runner counted, in warn only when the user turned it off",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+              "titre": "the words of the sandbox section @cap:executer-une-commande/ecran a volume root names the system it belongs to",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+              "titre": "the words of the sandbox section @cap:executer-une-commande/ecran a folder that holds the home folder or Nodal data names them, and the known limit on the data",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+              "titre": "the words of the sandbox section @cap:executer-une-commande/ecran an agent outside the sandbox is named by the runtime label; an unknown runtime is never called confined",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+              "titre": "SandboxSection, active @cap:executer-une-commande/ecran the state card says it confines, names the engine in words and when it applies",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+              "titre": "SandboxSection, active @cap:executer-une-commande/ecran the known limits open as plain sentences indexed by code, never the backend text",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+              "titre": "SandboxSection, active @cap:executer-une-commande/ecran the three perimeter cards: the folder count the runner gives, the data folder, the refused ports",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+              "titre": "SandboxSection, active @cap:executer-une-commande/ecran allowed folders: name, parent, source tag, one action column, removed ones apart",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+              "titre": "SandboxSection, active @cap:executer-une-commande/ecran agent folders are grouped by folder, with a pill per agent; a runtime outside the sandbox is warned, not hidden",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+              "titre": "SandboxSection, active @cap:executer-une-commande/ecran turning it off asks first with the consequence; confirmed, the card turns to off",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+              "titre": "SandboxSection, active @cap:executer-une-commande/ecran adding a volume root shows the confirmation the action asks for, then adds it confirmed",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+              "titre": "SandboxSection, active @cap:executer-une-commande/ecran a refusal of Nodal's data folder is said inline, and can be dismissed",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+              "titre": "SandboxSection, active @cap:executer-une-commande/ecran someone who is not the owner sees everything and changes nothing",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+              "titre": "SandboxSection, active @cap:executer-une-commande/ecran uses no em dash (UI copy rule)",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+              "titre": "SandboxSection, off and unavailable @cap:executer-une-commande/ecran off: the card says so in warn, the perimeter is Anywhere / Nothing / Everything, folders are kept but not applied",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+              "titre": "SandboxSection, off and unavailable @cap:executer-une-commande/ecran turning it back on asks nothing",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+              "titre": "SandboxSection, off and unavailable @cap:executer-une-commande/ecran on a system without an engine yet, it names the system, and every control is off",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "ecran",
               "origine": "apps/web/src/app/(dashboard)/agents/[id]/edit/__tests__/RuntimeShellSetting.test.tsx",
               "titre": "Runtime card, shell commands setting @cap:executer-une-commande/ecran Claude Code in write mode: enabling asks first, then sends shell auto",
               "sort": "vert"
@@ -45529,6 +45795,69 @@
             {
               "capacite": "executer-une-commande",
               "niveau": "moteur",
+              "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+              "titre": "readWorkspaceSandbox @cap:executer-une-commande/moteur a new workspace: the switch on, no gesture on the folders",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+              "titre": "readWorkspaceSandbox @cap:executer-une-commande/moteur persists the switch and the gestures, and the reader returns what was written",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+              "titre": "readWorkspaceSandbox @cap:executer-une-commande/moteur a column in an unknown shape fails loud with its code, never read as an empty list, and no gesture writes over it",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+              "titre": "readWorkspaceSandbox @cap:executer-une-commande/moteur an unknown workspace fails loud, it is never read as on",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+              "titre": "readWorkspaceSandbox @cap:executer-une-commande/moteur a value the reader would refuse is never written",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+              "titre": "readWorkspaceSandbox @cap:executer-une-commande/moteur a gesture that changes nothing writes nothing, and says what it found",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+              "titre": "applySandboxFolderGesture — one gesture on the gestures already made @cap:executer-une-commande/moteur add: a removed folder is restored first, even one that would need a confirmation",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+              "titre": "applySandboxFolderGesture — one gesture on the gestures already made @cap:executer-une-commande/moteur remove: an addition is forgotten, a detected folder is recorded removed once",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+              "titre": "applySandboxFolderGesture — one gesture on the gestures already made @cap:executer-une-commande/moteur restore: only a removed folder is restored",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
               "origine": "packages/db/src/tests/shell-checklist-migration.pg.test.ts",
               "titre": "migration 0125_shell_checklist @cap:executer-une-commande/moteur démarre un vrai Postgres et applique les VRAIES migrations",
               "sort": "vert"
@@ -45573,6 +45902,27 @@
               "niveau": "moteur",
               "origine": "packages/db/src/tests/shell-policy-retired-kinds-migration.pg.test.ts",
               "titre": "migration 0128_shell_policy_retired_kinds @cap:executer-une-commande/moteur retire les raisons des deux sortes sur les demandes, et vide celles qui n’avaient qu’elles",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/db/src/tests/workspace-sandbox-gestures.pg.test.ts",
+              "titre": "simultaneous gestures on the allowed folders all land @cap:executer-une-commande/moteur starts a real Postgres and applies the real migrations",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/db/src/tests/workspace-sandbox-gestures.pg.test.ts",
+              "titre": "simultaneous gestures on the allowed folders all land @cap:executer-une-commande/moteur a removal and an addition at the same time: both are in the base, the removed folder stays removed",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/db/src/tests/workspace-sandbox-gestures.pg.test.ts",
+              "titre": "simultaneous gestures on the allowed folders all land @cap:executer-une-commande/moteur two additions, and a restoration with a removal, at the same time: nothing is lost",
               "sort": "vert"
             },
             {
@@ -45769,6 +46119,27 @@
               "niveau": "moteur",
               "origine": "apps/runner/src/tests/cli-runtime/cli-shell-posture.test.ts",
               "titre": "an unreadable brake stops a turn with a shell, and says so @cap:executer-une-commande/moteur chat path: a brake that stops being readable DURING the turn cuts the CLI",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/cli-runtime/provider.test.ts",
+              "titre": "commandsPlacement — where the commands of each runtime run (#876) @cap:executer-une-commande/moteur nodal runs them through its tools, in the sandbox",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/cli-runtime/provider.test.ts",
+              "titre": "commandsPlacement — where the commands of each runtime run (#876) @cap:executer-une-commande/moteur every CLI runtime this runner serves runs them in its own harness, outside the sandbox",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/cli-runtime/provider.test.ts",
+              "titre": "commandsPlacement — where the commands of each runtime run (#876) @cap:executer-une-commande/moteur a runtime this runner does not serve is unknown, never assumed confined",
               "sort": "vert"
             },
             {
@@ -46029,6 +46400,48 @@
               "origine": "apps/runner/src/tests/lib/git-sandboxed-runner.test.ts",
               "titre": "takeCliTurnCheckpoints runs git in the sandbox: a planted sub-repository never runs on the host @cap:executer-une-commande/moteur (Windows, MXC available) la photo de deux tours ne lance rien sur l’hôte",
               "sort": "ignoré"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/routes/sandbox.test.ts",
+              "titre": "GET /api/sandbox @cap:executer-une-commande/moteur says the state, the limits and the perimeter with the real paths of this machine",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/routes/sandbox.test.ts",
+              "titre": "GET /api/sandbox @cap:executer-une-commande/moteur groups agent folders by real folder, counts each writable folder once, and says where each runtime runs its commands",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/routes/sandbox.test.ts",
+              "titre": "GET /api/sandbox @cap:executer-une-commande/moteur reads the switch from the base at every call: off is said, and so is unavailable",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/routes/sandbox.test.ts",
+              "titre": "GET /api/sandbox @cap:executer-une-commande/moteur unknown Nodal ports are said with their code, never left out",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/routes/sandbox.test.ts",
+              "titre": "GET /api/sandbox @cap:executer-une-commande/moteur an unreadable setting answers 500 with its code, never a guessed state",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/routes/sandbox.test.ts",
+              "titre": "GET /api/sandbox @cap:executer-une-commande/moteur a session caller reads only its own workspace; another one is not found",
+              "sort": "vert"
             },
             {
               "capacite": "executer-une-commande",
@@ -46309,6 +46722,118 @@
               "origine": "packages/sandbox/src/tests/nodal-programs.test.ts",
               "titre": "openNodalPrograms — git on a planted repo runs IN the sandbox, nothing on the host @cap:executer-une-commande/moteur (Windows, MXC available) rejette comme execFile dans le conteneur : `code` non nul, `killed` sur la borne",
               "sort": "ignoré"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/nodal-programs.test.ts",
+              "titre": "openNodalPrograms — the workspace switch @cap:executer-une-commande/moteur switched off: the session runs on the host, and the program really runs there",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/nodal-programs.test.ts",
+              "titre": "openNodalPrograms — the workspace switch @cap:executer-une-commande/moteur switched on: the session goes through the sandbox (its container is asked for)",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/nodal-programs.test.ts",
+              "titre": "openNodalPrograms — the workspace switch @cap:executer-une-commande/moteur an unreadable setting opens no session at all, it is never read as on or off",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/policy.test.ts",
+              "titre": "composeAllowedFolders — detected minus removed plus added @cap:executer-une-commande/moteur applies the gestures to what is detected on a real machine, and the opening uses that list",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/policy.test.ts",
+              "titre": "composeAllowedFolders — detected minus removed plus added @cap:executer-une-commande/moteur only gestures are stored: a store installed later appears on its own",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/policy.test.ts",
+              "titre": "composeAllowedFolders — detected minus removed plus added @cap:executer-une-commande/moteur the tool cache is never removed, even when the stored gestures name it",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/policy.test.ts",
+              "titre": "composeAllowedFolders — detected minus removed plus added @cap:executer-une-commande/moteur an added folder that no longer exists is shown missing, ignored at opening, and logged with a code",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/policy.test.ts",
+              "titre": "composeAllowedFolders — detected minus removed plus added @cap:executer-une-commande/moteur a removal whose store is gone stays shown, so the gesture does not vanish",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/policy.test.ts",
+              "titre": "allowedFolderRefusal — the data folder of Nodal can never be allowed @cap:executer-une-commande/moteur refuses the data folder itself and any folder under it, naming the folder that holds it",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/policy.test.ts",
+              "titre": "allowedFolderRefusal — the data folder of Nodal can never be allowed @cap:executer-une-commande/moteur covers this instance too when it lives elsewhere (NODALAI_HOME), not just ~/.nodalai",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/policy.test.ts",
+              "titre": "allowedFolderRefusal — the data folder of Nodal can never be allowed @cap:executer-une-commande/moteur a stored addition inside the data folder is shown refused and makes the opening fail loud",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/policy.test.ts",
+              "titre": "broadFolder — what asks for a confirmation before it is allowed, decided by what the folder holds @cap:executer-une-commande/moteur a volume root and the home folder are broad, and say the Nodal data they hold; any other folder is not",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/policy.test.ts",
+              "titre": "broadFolder — what asks for a confirmation before it is allowed, decided by what the folder holds @cap:executer-une-commande/moteur a folder that holds the home folder asks too, on this machine",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/policy.test.ts",
+              "titre": "broadFolder — what asks for a confirmation before it is allowed, decided by what the folder holds @cap:executer-une-commande/moteur Windows view: C:\\Users holds the home and the data, the home holds the data, C:\\ is a volume root",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/policy.test.ts",
+              "titre": "broadFolder — what asks for a confirmation before it is allowed, decided by what the folder holds @cap:executer-une-commande/moteur Windows view: the parent of a moved NODALAI_HOME, and of a moved entry, holds Nodal data",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/sandbox/src/tests/policy.test.ts",
+              "titre": "broadFolder — what asks for a confirmation before it is allowed, decided by what the folder holds @cap:executer-une-commande/moteur POSIX view: /home holds the home and the data, / is a volume root, a moved instance makes its parent broad",
+              "sort": "vert"
             },
             {
               "capacite": "executer-une-commande",
@@ -51577,6 +52102,62 @@
             {
               "capacite": "executer-une-commande",
               "niveau": "moteur",
+              "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+              "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur on by default: the command goes to the container, with the job folders",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+              "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur switched off: run_command runs unconfined, writes for real, and says SANDBOX_DISABLED",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+              "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur switched off: run_skill_script says SANDBOX_DISABLED too, its real output intact",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+              "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur the setting is re-read at every command: on, off, on again within the same job",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+              "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur a folder the user added reaches the writable roots of the next container",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+              "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur an unreadable setting refuses the command with its code, and nothing runs",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+              "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur a job created without a workspace (an internal /api/agent caller) follows the workspace of its agent",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
+              "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+              "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur a job whose agent belongs to no workspace either is refused, never run under a guessed setting",
+              "sort": "vert"
+            },
+            {
+              "capacite": "executer-une-commande",
+              "niveau": "moteur",
               "origine": "packages/tools/src/tests/script-content-gate.test.ts",
               "titre": "a command that runs a script is judged by the script (#635) @cap:executer-une-commande/moteur the run of the ticket: a Python script that pip-installs asks for installing software",
               "sort": "vert"
@@ -53919,6 +54500,69 @@
           {
             "capacite": "executer-une-commande",
             "niveau": "moteur",
+            "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+            "titre": "readWorkspaceSandbox @cap:executer-une-commande/moteur a new workspace: the switch on, no gesture on the folders",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+            "titre": "readWorkspaceSandbox @cap:executer-une-commande/moteur persists the switch and the gestures, and the reader returns what was written",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+            "titre": "readWorkspaceSandbox @cap:executer-une-commande/moteur a column in an unknown shape fails loud with its code, never read as an empty list, and no gesture writes over it",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+            "titre": "readWorkspaceSandbox @cap:executer-une-commande/moteur an unknown workspace fails loud, it is never read as on",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+            "titre": "readWorkspaceSandbox @cap:executer-une-commande/moteur a value the reader would refuse is never written",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+            "titre": "readWorkspaceSandbox @cap:executer-une-commande/moteur a gesture that changes nothing writes nothing, and says what it found",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+            "titre": "applySandboxFolderGesture — one gesture on the gestures already made @cap:executer-une-commande/moteur add: a removed folder is restored first, even one that would need a confirmation",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+            "titre": "applySandboxFolderGesture — one gesture on the gestures already made @cap:executer-une-commande/moteur remove: an addition is forgotten, a detected folder is recorded removed once",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/db/src/tests/workspace-sandbox.test.ts",
+            "titre": "applySandboxFolderGesture — one gesture on the gestures already made @cap:executer-une-commande/moteur restore: only a removed folder is restored",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
             "origine": "packages/db/src/tests/shell-checklist-migration.pg.test.ts",
             "titre": "migration 0125_shell_checklist @cap:executer-une-commande/moteur démarre un vrai Postgres et applique les VRAIES migrations",
             "sort": "vert"
@@ -53963,6 +54607,27 @@
             "niveau": "moteur",
             "origine": "packages/db/src/tests/shell-policy-retired-kinds-migration.pg.test.ts",
             "titre": "migration 0128_shell_policy_retired_kinds @cap:executer-une-commande/moteur retire les raisons des deux sortes sur les demandes, et vide celles qui n’avaient qu’elles",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/db/src/tests/workspace-sandbox-gestures.pg.test.ts",
+            "titre": "simultaneous gestures on the allowed folders all land @cap:executer-une-commande/moteur starts a real Postgres and applies the real migrations",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/db/src/tests/workspace-sandbox-gestures.pg.test.ts",
+            "titre": "simultaneous gestures on the allowed folders all land @cap:executer-une-commande/moteur a removal and an addition at the same time: both are in the base, the removed folder stays removed",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/db/src/tests/workspace-sandbox-gestures.pg.test.ts",
+            "titre": "simultaneous gestures on the allowed folders all land @cap:executer-une-commande/moteur two additions, and a restoration with a removal, at the same time: nothing is lost",
             "sort": "vert"
           },
           {
@@ -54159,6 +54824,27 @@
             "niveau": "moteur",
             "origine": "apps/runner/src/tests/cli-runtime/cli-shell-posture.test.ts",
             "titre": "an unreadable brake stops a turn with a shell, and says so @cap:executer-une-commande/moteur chat path: a brake that stops being readable DURING the turn cuts the CLI",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/cli-runtime/provider.test.ts",
+            "titre": "commandsPlacement — where the commands of each runtime run (#876) @cap:executer-une-commande/moteur nodal runs them through its tools, in the sandbox",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/cli-runtime/provider.test.ts",
+            "titre": "commandsPlacement — where the commands of each runtime run (#876) @cap:executer-une-commande/moteur every CLI runtime this runner serves runs them in its own harness, outside the sandbox",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/cli-runtime/provider.test.ts",
+            "titre": "commandsPlacement — where the commands of each runtime run (#876) @cap:executer-une-commande/moteur a runtime this runner does not serve is unknown, never assumed confined",
             "sort": "vert"
           },
           {
@@ -54419,6 +55105,48 @@
             "origine": "apps/runner/src/tests/lib/git-sandboxed-runner.test.ts",
             "titre": "takeCliTurnCheckpoints runs git in the sandbox: a planted sub-repository never runs on the host @cap:executer-une-commande/moteur (Windows, MXC available) la photo de deux tours ne lance rien sur l’hôte",
             "sort": "ignoré"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/routes/sandbox.test.ts",
+            "titre": "GET /api/sandbox @cap:executer-une-commande/moteur says the state, the limits and the perimeter with the real paths of this machine",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/routes/sandbox.test.ts",
+            "titre": "GET /api/sandbox @cap:executer-une-commande/moteur groups agent folders by real folder, counts each writable folder once, and says where each runtime runs its commands",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/routes/sandbox.test.ts",
+            "titre": "GET /api/sandbox @cap:executer-une-commande/moteur reads the switch from the base at every call: off is said, and so is unavailable",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/routes/sandbox.test.ts",
+            "titre": "GET /api/sandbox @cap:executer-une-commande/moteur unknown Nodal ports are said with their code, never left out",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/routes/sandbox.test.ts",
+            "titre": "GET /api/sandbox @cap:executer-une-commande/moteur an unreadable setting answers 500 with its code, never a guessed state",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/routes/sandbox.test.ts",
+            "titre": "GET /api/sandbox @cap:executer-une-commande/moteur a session caller reads only its own workspace; another one is not found",
+            "sort": "vert"
           },
           {
             "capacite": "executer-une-commande",
@@ -54699,6 +55427,118 @@
             "origine": "packages/sandbox/src/tests/nodal-programs.test.ts",
             "titre": "openNodalPrograms — git on a planted repo runs IN the sandbox, nothing on the host @cap:executer-une-commande/moteur (Windows, MXC available) rejette comme execFile dans le conteneur : `code` non nul, `killed` sur la borne",
             "sort": "ignoré"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/nodal-programs.test.ts",
+            "titre": "openNodalPrograms — the workspace switch @cap:executer-une-commande/moteur switched off: the session runs on the host, and the program really runs there",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/nodal-programs.test.ts",
+            "titre": "openNodalPrograms — the workspace switch @cap:executer-une-commande/moteur switched on: the session goes through the sandbox (its container is asked for)",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/nodal-programs.test.ts",
+            "titre": "openNodalPrograms — the workspace switch @cap:executer-une-commande/moteur an unreadable setting opens no session at all, it is never read as on or off",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/policy.test.ts",
+            "titre": "composeAllowedFolders — detected minus removed plus added @cap:executer-une-commande/moteur applies the gestures to what is detected on a real machine, and the opening uses that list",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/policy.test.ts",
+            "titre": "composeAllowedFolders — detected minus removed plus added @cap:executer-une-commande/moteur only gestures are stored: a store installed later appears on its own",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/policy.test.ts",
+            "titre": "composeAllowedFolders — detected minus removed plus added @cap:executer-une-commande/moteur the tool cache is never removed, even when the stored gestures name it",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/policy.test.ts",
+            "titre": "composeAllowedFolders — detected minus removed plus added @cap:executer-une-commande/moteur an added folder that no longer exists is shown missing, ignored at opening, and logged with a code",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/policy.test.ts",
+            "titre": "composeAllowedFolders — detected minus removed plus added @cap:executer-une-commande/moteur a removal whose store is gone stays shown, so the gesture does not vanish",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/policy.test.ts",
+            "titre": "allowedFolderRefusal — the data folder of Nodal can never be allowed @cap:executer-une-commande/moteur refuses the data folder itself and any folder under it, naming the folder that holds it",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/policy.test.ts",
+            "titre": "allowedFolderRefusal — the data folder of Nodal can never be allowed @cap:executer-une-commande/moteur covers this instance too when it lives elsewhere (NODALAI_HOME), not just ~/.nodalai",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/policy.test.ts",
+            "titre": "allowedFolderRefusal — the data folder of Nodal can never be allowed @cap:executer-une-commande/moteur a stored addition inside the data folder is shown refused and makes the opening fail loud",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/policy.test.ts",
+            "titre": "broadFolder — what asks for a confirmation before it is allowed, decided by what the folder holds @cap:executer-une-commande/moteur a volume root and the home folder are broad, and say the Nodal data they hold; any other folder is not",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/policy.test.ts",
+            "titre": "broadFolder — what asks for a confirmation before it is allowed, decided by what the folder holds @cap:executer-une-commande/moteur a folder that holds the home folder asks too, on this machine",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/policy.test.ts",
+            "titre": "broadFolder — what asks for a confirmation before it is allowed, decided by what the folder holds @cap:executer-une-commande/moteur Windows view: C:\\Users holds the home and the data, the home holds the data, C:\\ is a volume root",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/policy.test.ts",
+            "titre": "broadFolder — what asks for a confirmation before it is allowed, decided by what the folder holds @cap:executer-une-commande/moteur Windows view: the parent of a moved NODALAI_HOME, and of a moved entry, holds Nodal data",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/sandbox/src/tests/policy.test.ts",
+            "titre": "broadFolder — what asks for a confirmation before it is allowed, decided by what the folder holds @cap:executer-une-commande/moteur POSIX view: /home holds the home and the data, / is a volume root, a moved instance makes its parent broad",
+            "sort": "vert"
           },
           {
             "capacite": "executer-une-commande",
@@ -59967,6 +60807,62 @@
           {
             "capacite": "executer-une-commande",
             "niveau": "moteur",
+            "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+            "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur on by default: the command goes to the container, with the job folders",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+            "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur switched off: run_command runs unconfined, writes for real, and says SANDBOX_DISABLED",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+            "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur switched off: run_skill_script says SANDBOX_DISABLED too, its real output intact",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+            "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur the setting is re-read at every command: on, off, on again within the same job",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+            "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur a folder the user added reaches the writable roots of the next container",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+            "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur an unreadable setting refuses the command with its code, and nothing runs",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+            "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur a job created without a workspace (an internal /api/agent caller) follows the workspace of its agent",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
+            "origine": "packages/tools/src/tests/sandbox-switch.test.ts",
+            "titre": "the workspace sandbox switch, through the real tools @cap:executer-une-commande/moteur a job whose agent belongs to no workspace either is refused, never run under a guessed setting",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "moteur",
             "origine": "packages/tools/src/tests/script-content-gate.test.ts",
             "titre": "a command that runs a script is judged by the script (#635) @cap:executer-une-commande/moteur the run of the ticket: a Python script that pip-installs asks for installing software",
             "sort": "vert"
@@ -61992,6 +62888,258 @@
             "niveau": "ecran",
             "origine": "apps/web/src/lib/__tests__/cli-permissions-actions.test.ts",
             "titre": "CLI runtime permissions, as stored @cap:executer-une-commande/ecran shell auto is refused in no setting at all (read by default), and nothing is stored",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+            "titre": "the sandbox switch, persisted @cap:executer-une-commande/ecran the owner turns it off and on; the base says so, read by the runner reader",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+            "titre": "the sandbox switch, persisted @cap:executer-une-commande/ecran anyone else is refused, and nothing changes",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+            "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran adds a real folder; adding it again is refused as already allowed",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+            "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran refuses the data folder of Nodal and any folder under it, with its code and the folder that holds it, writing nothing",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+            "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran a relative path or a missing folder is refused",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+            "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran a drive root asks for a confirmation first, and is written only once confirmed",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+            "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran the home folder asks for a confirmation too, and names the Nodal data it holds",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+            "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran a folder that holds the home folder (C:Users, /home) asks for a confirmation, and is written only once confirmed",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+            "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran the parent of a moved NODALAI_HOME asks for a confirmation; the instance itself stays refused",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+            "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran removing an added folder forgets it; removing a detected one records the removal; adding it back restores it",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+            "titre": "the allowed folders, persisted as gestures only @cap:executer-une-commande/ecran the tool cache cannot be removed, and the reason is said",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+            "titre": "getSandboxAction reads the runner and checks its answer @cap:executer-une-commande/ecran asks for the workspace of the session, and adds who may change it",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+            "titre": "getSandboxAction reads the runner and checks its answer @cap:executer-une-commande/ecran an answer of another shape is an error said, never half a screen",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-actions.test.ts",
+            "titre": "getSandboxAction reads the runner and checks its answer @cap:executer-une-commande/ecran a refusal of the runner keeps its code; an unreachable runner is said",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+            "titre": "sandboxBannerWords @cap:executer-une-commande/ecran silent only when the runner says the sandbox confines",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+            "titre": "sandboxBannerWords @cap:executer-une-commande/ecran speaks while it is off, unavailable, not on this system, or unread",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+            "titre": "sandboxBannerWords @cap:executer-une-commande/ecran a code it does not know is shown as it is, never replaced by a made-up sentence",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+            "titre": "the words of the sandbox section @cap:executer-une-commande/ecran splits a folder into its name and its parent, a volume root being its own name, on any system",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+            "titre": "the words of the sandbox section @cap:executer-une-commande/ecran tags a folder by where it comes from, or by why it does not apply",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+            "titre": "the words of the sandbox section @cap:executer-une-commande/ecran the perimeter counts what the runner counted, in warn only when the user turned it off",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+            "titre": "the words of the sandbox section @cap:executer-une-commande/ecran a volume root names the system it belongs to",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+            "titre": "the words of the sandbox section @cap:executer-une-commande/ecran a folder that holds the home folder or Nodal data names them, and the known limit on the data",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/lib/__tests__/sandbox-copy.test.ts",
+            "titre": "the words of the sandbox section @cap:executer-une-commande/ecran an agent outside the sandbox is named by the runtime label; an unknown runtime is never called confined",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+            "titre": "SandboxSection, active @cap:executer-une-commande/ecran the state card says it confines, names the engine in words and when it applies",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+            "titre": "SandboxSection, active @cap:executer-une-commande/ecran the known limits open as plain sentences indexed by code, never the backend text",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+            "titre": "SandboxSection, active @cap:executer-une-commande/ecran the three perimeter cards: the folder count the runner gives, the data folder, the refused ports",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+            "titre": "SandboxSection, active @cap:executer-une-commande/ecran allowed folders: name, parent, source tag, one action column, removed ones apart",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+            "titre": "SandboxSection, active @cap:executer-une-commande/ecran agent folders are grouped by folder, with a pill per agent; a runtime outside the sandbox is warned, not hidden",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+            "titre": "SandboxSection, active @cap:executer-une-commande/ecran turning it off asks first with the consequence; confirmed, the card turns to off",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+            "titre": "SandboxSection, active @cap:executer-une-commande/ecran adding a volume root shows the confirmation the action asks for, then adds it confirmed",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+            "titre": "SandboxSection, active @cap:executer-une-commande/ecran a refusal of Nodal's data folder is said inline, and can be dismissed",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+            "titre": "SandboxSection, active @cap:executer-une-commande/ecran someone who is not the owner sees everything and changes nothing",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+            "titre": "SandboxSection, active @cap:executer-une-commande/ecran uses no em dash (UI copy rule)",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+            "titre": "SandboxSection, off and unavailable @cap:executer-une-commande/ecran off: the card says so in warn, the perimeter is Anywhere / Nothing / Everything, folders are kept but not applied",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+            "titre": "SandboxSection, off and unavailable @cap:executer-une-commande/ecran turning it back on asks nothing",
+            "sort": "vert"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx",
+            "titre": "SandboxSection, off and unavailable @cap:executer-une-commande/ecran on a system without an engine yet, it names the system, and every control is off",
             "sort": "vert"
           },
           {
@@ -70884,6 +72032,13 @@
               "capacite": "verifier-un-livrable",
               "niveau": "moteur",
               "origine": "apps/runner/src/tests/verification/code-project.test.ts",
+              "titre": "code-project — runProof @cap:verifier-un-livrable/moteur the workspace switch covers proof commands: off, each one runs and records SANDBOX_DISABLED; on again, the next proof is confined (#876)",
+              "sort": "vert"
+            },
+            {
+              "capacite": "verifier-un-livrable",
+              "niveau": "moteur",
+              "origine": "apps/runner/src/tests/verification/code-project.test.ts",
               "titre": "code-project — runProof @cap:verifier-un-livrable/moteur preuve verte : verdict green, onCommandDone appelé une fois au rang 0, exitCode 0",
               "sort": "vert"
             },
@@ -72674,6 +73829,13 @@
             "niveau": "moteur",
             "origine": "apps/runner/src/tests/verification/code-project.test.ts",
             "titre": "code-project — runProof @cap:verifier-un-livrable/moteur chaque commande de preuve dit son régime : sans bac à sable, le code stable (#628)",
+            "sort": "vert"
+          },
+          {
+            "capacite": "verifier-un-livrable",
+            "niveau": "moteur",
+            "origine": "apps/runner/src/tests/verification/code-project.test.ts",
+            "titre": "code-project — runProof @cap:verifier-un-livrable/moteur the workspace switch covers proof commands: off, each one runs and records SANDBOX_DISABLED; on again, the next proof is confined (#876)",
             "sort": "vert"
           },
           {
@@ -77141,7 +78303,7 @@
     "fautes": []
   },
   "memoire": {
-    "total": 15561,
+    "total": 15645,
     "reparations": {
       "durees": [
         0.99,
@@ -77149,6 +78311,7 @@
         1.51,
         1.96,
         1.96,
+        2.02,
         2.68,
         2.68,
         3.57,
@@ -77159,8 +78322,8 @@
       ],
       "mediane": 2.68
     },
-    "joues": 14566,
-    "instables": 15,
+    "joues": 14649,
+    "instables": 13,
     "casses": 22,
     "pires": [
       {
@@ -77244,16 +78407,16 @@
         "cle": "apps/runner/src/tests/cli-runtime/checkpoint-cli-runtime.test.ts::run-job : l’instantané AVANT binding.run (P11) un tour refusé par la BORNE nomme la taille du dossier et le geste @cap:executer-une-commande/moteur",
         "fichier": "apps/runner/src/tests/cli-runtime/checkpoint-cli-runtime.test.ts",
         "titre": "run-job : l’instantané AVANT binding.run (P11) un tour refusé par la BORNE nomme la taille du dossier et le geste @cap:executer-une-commande/moteur",
-        "tours": 41,
+        "tours": 42,
         "echecs": 2,
-        "recents": "vvvvvvrvvvvvvvrvvvvvvvvvvvvvvv",
-        "dernierTourLe": "2026-10-28T10:09:51.190Z",
+        "recents": "vvvvvrvvvvvvvrvvvvvvvvvvvvvvvv",
+        "dernierTourLe": "2026-10-30T10:32:15.079Z",
         "dernierEchecLe": "2026-10-12T11:22:34.744Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": "2026-10-12T11:22:34.744Z",
         "repareLe": "2026-10-13T11:14:39.248Z",
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/38238564095",
-        "dureeMs": 86.09386300000006,
+        "dureeMs": 84.30623899999955,
         "verdict": "instable",
         "tauxEchec": 6.7,
         "fenetre": 30,
@@ -77264,14 +78427,16 @@
         "cle": "apps/web/tests/e2e/credentials-reuse.spec.ts::Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
         "fichier": "apps/web/tests/e2e/credentials-reuse.spec.ts",
         "titre": "Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
-        "tours": 61,
+        "tours": 62,
         "echecs": 6,
-        "recents": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvr",
-        "dernierTourLe": "2026-10-28T10:09:51.190Z",
+        "recents": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvrv",
+        "dernierTourLe": "2026-10-30T10:32:15.079Z",
         "dernierEchecLe": "2026-10-28T10:09:51.190Z",
-        "rougeDepuis": "2026-10-28T10:09:51.190Z",
-        "dureeMs": 52792,
+        "rougeDepuis": null,
+        "dureeMs": 8247,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/40665860754",
+        "dernierRougeDepuis": "2026-10-28T10:09:51.190Z",
+        "repareLe": "2026-10-30T10:32:15.079Z",
         "verdict": "instable",
         "tauxEchec": 3.3,
         "fenetre": 30,
@@ -77282,13 +78447,13 @@
         "cle": "apps/web/tests/e2e/airtable-oauth.spec.ts::Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
         "fichier": "apps/web/tests/e2e/airtable-oauth.spec.ts",
         "titre": "Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
-        "tours": 61,
+        "tours": 62,
         "echecs": 5,
-        "recents": "vvvvvvvvvvvvvvvvvvvvvvvvfvfvvv",
-        "dernierTourLe": "2026-10-28T10:09:51.190Z",
+        "recents": "vvvvvvvvvvvvvvvvvvvvvvvfvfvvvv",
+        "dernierTourLe": "2026-10-30T10:32:15.079Z",
         "dernierEchecLe": "2026-09-13T08:45:37.417Z",
         "rougeDepuis": null,
-        "dureeMs": 7279,
+        "dureeMs": 8107,
         "verdict": "instable",
         "tauxEchec": 0,
         "fenetre": 30,
@@ -77299,13 +78464,13 @@
         "cle": "apps/web/tests/e2e/automations-notify-runnow.spec.ts::Scenario C — Notify persistence: checkbox survives edit + save creates schedule, edits to check notify, re-opens edit form, notify is still checked",
         "fichier": "apps/web/tests/e2e/automations-notify-runnow.spec.ts",
         "titre": "Scenario C — Notify persistence: checkbox survives edit + save creates schedule, edits to check notify, re-opens edit form, notify is still checked",
-        "tours": 61,
+        "tours": 62,
         "echecs": 0,
-        "recents": "vvvvvvvvvvvvvvvvvvvvvvvvvfvvvv",
-        "dernierTourLe": "2026-10-28T10:09:51.190Z",
+        "recents": "vvvvvvvvvvvvvvvvvvvvvvvvfvvvvv",
+        "dernierTourLe": "2026-10-30T10:32:15.079Z",
         "dernierEchecLe": null,
         "rougeDepuis": null,
-        "dureeMs": 3874,
+        "dureeMs": 5127,
         "verdict": "instable",
         "tauxEchec": 0,
         "fenetre": 30,
@@ -77316,73 +78481,53 @@
         "cle": "apps/web/tests/e2e/brique31-flows.spec.ts::Test D — Skill edit flow navigate to skill edit page, modify content, save, toast Skill updated",
         "fichier": "apps/web/tests/e2e/brique31-flows.spec.ts",
         "titre": "Test D — Skill edit flow navigate to skill edit page, modify content, save, toast Skill updated",
-        "tours": 61,
+        "tours": 62,
         "echecs": 0,
-        "recents": "fvvvvvvfvvvvvvfvvvvfvfvvvvvvvv",
-        "dernierTourLe": "2026-10-28T10:09:51.190Z",
+        "recents": "vvvvvvfvvvvvvfvvvvfvfvvvvvvvvv",
+        "dernierTourLe": "2026-10-30T10:32:15.079Z",
         "dernierEchecLe": null,
         "rougeDepuis": null,
-        "dureeMs": 5605,
+        "dureeMs": 6254,
         "verdict": "instable",
         "tauxEchec": 0,
         "fenetre": 30,
         "rouges": 0,
-        "verts": 25
+        "verts": 26
       },
       {
         "cle": "apps/web/tests/e2e/code-verification.spec.ts::Proof commands — la page du projet @cap:verifier-un-livrable/ecran A — configurer puis approuver, hash écrit EN BASE",
         "fichier": "apps/web/tests/e2e/code-verification.spec.ts",
         "titre": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran A — configurer puis approuver, hash écrit EN BASE",
-        "tours": 41,
+        "tours": 42,
         "echecs": 0,
-        "recents": "ffffffffffvfvffffffvfvvvfvfffv",
-        "dernierTourLe": "2026-10-28T10:09:51.190Z",
+        "recents": "fffffffffvfvffffffvfvvvfvfffvv",
+        "dernierTourLe": "2026-10-30T10:32:15.079Z",
         "dernierEchecLe": null,
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": null,
-        "dureeMs": 6443,
+        "dureeMs": 7603,
         "verdict": "instable",
         "tauxEchec": 0,
         "fenetre": 30,
         "rouges": 0,
-        "verts": 8
-      },
-      {
-        "cle": "apps/web/tests/e2e/code-verification.spec.ts::Proof commands — la page du projet @cap:verifier-un-livrable/ecran F — /code mène à Projects : la liste a disparu, le panneau est sur le projet",
-        "fichier": "apps/web/tests/e2e/code-verification.spec.ts",
-        "titre": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran F — /code mène à Projects : la liste a disparu, le panneau est sur le projet",
-        "tours": 31,
-        "echecs": 0,
-        "recents": "fvvvvvvvvvvvvvvvvvvvvvvvvvvvvv",
-        "dernierTourLe": "2026-10-28T10:09:51.190Z",
-        "dernierEchecLe": null,
-        "rougeDepuis": null,
-        "dernierRougeDepuis": null,
-        "repareLe": null,
-        "dernierRougeExecution": null,
-        "dureeMs": 6514,
-        "verdict": "instable",
-        "tauxEchec": 0,
-        "fenetre": 30,
-        "rouges": 0,
-        "verts": 29
+        "verts": 9
       },
       {
         "cle": "apps/web/tests/e2e/oauth-flow.spec.ts::Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status and toast",
         "fichier": "apps/web/tests/e2e/oauth-flow.spec.ts",
         "titre": "Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status and toast",
-        "tours": 56,
+        "tours": 57,
         "echecs": 3,
-        "recents": "vvvvfvvvvvvvvvfvvvvvvvvvvvvvvv",
-        "dernierTourLe": "2026-10-28T10:09:51.190Z",
+        "recents": "vvvfvvvvvvvvvfvvvvvvvvvvvvvvvv",
+        "dernierTourLe": "2026-10-30T10:32:15.079Z",
         "dernierEchecLe": "2026-09-15T16:50:11.180Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": "2026-09-14T09:10:31.227Z",
         "repareLe": "2026-09-16T08:14:49.335Z",
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34995269564",
-        "dureeMs": 3495,
+        "dureeMs": 3766,
         "verdict": "instable",
         "tauxEchec": 0,
         "fenetre": 30,
@@ -77393,16 +78538,16 @@
         "cle": "apps/web/tests/e2e/run-budget.spec.ts::Run budget @cap:suivre-execution/ecran the workspace sets what a run may cost and how long it may work",
         "fichier": "apps/web/tests/e2e/run-budget.spec.ts",
         "titre": "Run budget @cap:suivre-execution/ecran the workspace sets what a run may cost and how long it may work",
-        "tours": 35,
+        "tours": 36,
         "echecs": 0,
-        "recents": "vvvvvvvvvvvvvvvvfvvvvvvvvvvvvv",
-        "dernierTourLe": "2026-10-28T10:09:51.190Z",
+        "recents": "vvvvvvvvvvvvvvvfvvvvvvvvvvvvvv",
+        "dernierTourLe": "2026-10-30T10:32:15.079Z",
         "dernierEchecLe": null,
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": null,
-        "dureeMs": 2854,
+        "dureeMs": 3625,
         "verdict": "instable",
         "tauxEchec": 0,
         "fenetre": 30,
@@ -77413,62 +78558,24 @@
         "cle": "apps/web/tests/e2e/smoke.spec.ts::agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran creates an agent, sends a task, and shows the job in the list",
         "fichier": "apps/web/tests/e2e/smoke.spec.ts",
         "titre": "agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran creates an agent, sends a task, and shows the job in the list",
-        "tours": 56,
+        "tours": 57,
         "echecs": 0,
-        "recents": "vvfvffvfffvfvffffffvvvvvvvvffv",
-        "dernierTourLe": "2026-10-28T10:09:51.190Z",
+        "recents": "vfvffvfffvfvffffffvvvvvvvvffvv",
+        "dernierTourLe": "2026-10-30T10:32:15.079Z",
         "dernierEchecLe": null,
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": null,
-        "dureeMs": 13209,
+        "dureeMs": 9936,
         "verdict": "instable",
         "tauxEchec": 0,
         "fenetre": 30,
         "rouges": 0,
         "verts": 15
-      },
-      {
-        "cle": "apps/web/tests/e2e/smoke.spec.ts::dashboard navigation @cap:installer-et-demarrer/ecran the dashboard moved to /dashboard, and nothing redirects back to the root",
-        "fichier": "apps/web/tests/e2e/smoke.spec.ts",
-        "titre": "dashboard navigation @cap:installer-et-demarrer/ecran the dashboard moved to /dashboard, and nothing redirects back to the root",
-        "tours": 41,
-        "echecs": 0,
-        "recents": "fvvvvvvvvvvvvvvvvvvvvvvvvvvvvv",
-        "dernierTourLe": "2026-10-28T10:09:51.190Z",
-        "dernierEchecLe": null,
-        "rougeDepuis": null,
-        "dernierRougeDepuis": null,
-        "repareLe": null,
-        "dernierRougeExecution": null,
-        "dureeMs": 2443,
-        "verdict": "instable",
-        "tauxEchec": 0,
-        "fenetre": 30,
-        "rouges": 0,
-        "verts": 29
       }
     ],
     "regressions": [
-      {
-        "cle": "apps/web/tests/e2e/credentials-reuse.spec.ts::Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
-        "fichier": "apps/web/tests/e2e/credentials-reuse.spec.ts",
-        "titre": "Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
-        "tours": 61,
-        "echecs": 6,
-        "recents": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvr",
-        "dernierTourLe": "2026-10-28T10:09:51.190Z",
-        "dernierEchecLe": "2026-10-28T10:09:51.190Z",
-        "rougeDepuis": "2026-10-28T10:09:51.190Z",
-        "dureeMs": 52792,
-        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/40665860754",
-        "verdict": "instable",
-        "tauxEchec": 3.3,
-        "fenetre": 30,
-        "rouges": 1,
-        "verts": 29
-      },
       {
         "cle": "apps/web/tests/e2e/code-verification.spec.ts::Proof commands — la page du projet @cap:verifier-un-livrable/ecran F — /code mène à Workspaces : la liste a disparu, le panneau est sur le projet",
         "fichier": "apps/web/tests/e2e/code-verification.spec.ts",
@@ -78117,8 +79224,8 @@
     ],
     "dernierRun": {
       "run": {
-        "startedAt": "2026-10-28T10:02:10.236Z",
-        "gitSha": "57fe1516",
+        "startedAt": "2026-10-30T10:24:41.307Z",
+        "gitSha": "46e96bee",
         "sections": [
           {
             "sectionId": "architecture",
@@ -78195,7 +79302,7 @@
                 "detail": []
               }
             ],
-            "durationMs": 1544
+            "durationMs": 1483
           },
           {
             "sectionId": "gate",
@@ -78253,7 +79360,7 @@
                 "direction": "exact"
               }
             ],
-            "durationMs": 16
+            "durationMs": 19
           },
           {
             "sectionId": "trust-boundary",
@@ -78857,44 +79964,8 @@
     }
   ],
   "prixCi": {
-    "runs": 26,
+    "runs": 21,
     "serie": [
-      {
-        "le": "2026-10-22T17:03:23Z",
-        "valeur": 14.5
-      },
-      {
-        "le": "2026-10-22T17:14:16Z",
-        "valeur": 14.6
-      },
-      {
-        "le": "2026-10-22T17:15:33Z",
-        "valeur": 10.3
-      },
-      {
-        "le": "2026-10-22T18:04:05Z",
-        "valeur": 9.2
-      },
-      {
-        "le": "2026-10-22T18:08:27Z",
-        "valeur": 11.3
-      },
-      {
-        "le": "2026-10-22T18:52:33Z",
-        "valeur": 8.5
-      },
-      {
-        "le": "2026-10-22T19:43:49Z",
-        "valeur": 14
-      },
-      {
-        "le": "2026-10-22T21:24:29Z",
-        "valeur": 14
-      },
-      {
-        "le": "2026-10-22T22:17:02Z",
-        "valeur": 9
-      },
       {
         "le": "2026-10-22T22:22:57Z",
         "valeur": 10.9
@@ -78962,14 +80033,30 @@
       {
         "le": "2026-10-26T17:09:25Z",
         "valeur": 10.3
+      },
+      {
+        "le": "2026-10-30T03:18:33Z",
+        "valeur": 8
+      },
+      {
+        "le": "2026-10-30T04:27:24Z",
+        "valeur": 9.8
+      },
+      {
+        "le": "2026-10-30T05:30:12Z",
+        "valeur": 10
+      },
+      {
+        "le": "2026-10-30T06:00:52Z",
+        "valeur": 10.1
       }
     ],
-    "mediane": 10.75,
-    "medianeRecente": 10.75,
-    "dernier": 10.3,
+    "mediane": 10.1,
+    "medianeRecente": 10.05,
+    "dernier": 10.1,
     "pire": 108.6,
-    "hausse": -1.8,
-    "deltaMin": -0.2,
+    "hausse": -1.5,
+    "deltaMin": -0.1,
     "tendance": "stable"
   },
   "parcours": [
@@ -78986,19 +80073,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 11000,
+        "dureeMs": 12142,
         "cas": [
           {
             "titre": "a run is one row, unfolded into its calls @cap:suivre-execution/ecran",
             "titreComplet": "a run is one row, unfolded into its calls @cap:suivre-execution/ecran",
             "sort": "vert",
-            "dureeMs": 6049
+            "dureeMs": 6460
           },
           {
             "titre": "the old Runs page has left the menu and /jobs lands on Activity @cap:suivre-execution/ecran",
             "titreComplet": "the old Runs page has left the menu and /jobs lands on Activity @cap:suivre-execution/ecran",
             "sort": "vert",
-            "dureeMs": 4951
+            "dureeMs": 5682
           }
         ]
       },
@@ -79017,13 +80104,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 6761,
+        "dureeMs": 7561,
         "cas": [
           {
             "titre": "shows what the agent spent, sets a ceiling, warns, then says the pause",
             "titreComplet": "Agent budget @cap:voir-le-cout/ecran shows what the agent spent, sets a ceiling, warns, then says the pause",
             "sort": "vert",
-            "dureeMs": 6761
+            "dureeMs": 7561
           }
         ]
       },
@@ -79042,13 +80129,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 3331,
+        "dureeMs": 3762,
         "cas": [
           {
             "titre": "choisir un dossier dans Browse… l’ajoute ; un libellé pris se dit et se corrige",
             "titreComplet": "Dossiers d’un agent @cap:travailler-sur-des-fichiers/ecran choisir un dossier dans Browse… l’ajoute ; un libellé pris se dit et se corrige",
             "sort": "vert",
-            "dureeMs": 3331
+            "dureeMs": 3762
           }
         ]
       },
@@ -79067,19 +80154,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 2750,
+        "dureeMs": 3421,
         "cas": [
           {
             "titre": "a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
             "titreComplet": "agent recipes @cap:configurer-agent/ecran a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
             "sort": "vert",
-            "dureeMs": 1662
+            "dureeMs": 1929
           },
           {
             "titre": "\"Customize a new agent\" is selected by default and Next opens the empty form",
             "titreComplet": "agent recipes @cap:configurer-agent/ecran \"Customize a new agent\" is selected by default and Next opens the empty form",
             "sort": "vert",
-            "dureeMs": 1088
+            "dureeMs": 1492
           }
         ]
       },
@@ -79098,31 +80185,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 9963,
+        "dureeMs": 11101,
         "cas": [
           {
             "titre": "Scenario A — Tools & Connectors section renders with the test connector",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario A — Tools & Connectors section renders with the test connector",
             "sort": "vert",
-            "dureeMs": 1761
+            "dureeMs": 1808
           },
           {
             "titre": "Scenario B — checking connector checkbox creates assignment row in DB",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario B — checking connector checkbox creates assignment row in DB",
             "sort": "vert",
-            "dureeMs": 2515
+            "dureeMs": 2581
           },
           {
             "titre": "Scenario C — unchecking connector removes assignment from DB",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario C — unchecking connector removes assignment from DB",
             "sort": "vert",
-            "dureeMs": 2173
+            "dureeMs": 2470
           },
           {
             "titre": "Scenario D — Enable all button keeps enabledOperations=null in DB",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario D — Enable all button keeps enabledOperations=null in DB",
             "sort": "vert",
-            "dureeMs": 3514
+            "dureeMs": 4242
           }
         ]
       },
@@ -79141,13 +80228,13 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 888,
+        "dureeMs": 854,
         "cas": [
           {
             "titre": "render, dark mode, add-worker modal, keyboard drag round-trip",
             "titreComplet": "Agents page redesign @cap:organiser-equipe/ecran render, dark mode, add-worker modal, keyboard drag round-trip",
             "sort": "ignoré",
-            "dureeMs": 888
+            "dureeMs": 854
           }
         ]
       },
@@ -79166,13 +80253,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 7279,
+        "dureeMs": 8107,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status",
             "titreComplet": "Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
             "sort": "vert",
-            "dureeMs": 7279
+            "dureeMs": 8107
           }
         ]
       },
@@ -79191,13 +80278,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 3394,
+        "dureeMs": 3826,
         "cas": [
           {
             "titre": "marketplace card opens modal; connect with name + apiKey creates active instance",
             "titreComplet": "Apify api_key connector smoke test marketplace card opens modal; connect with name + apiKey creates active instance",
             "sort": "vert",
-            "dureeMs": 3394
+            "dureeMs": 3826
           }
         ]
       },
@@ -79216,25 +80303,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 9981,
+        "dureeMs": 11999,
         "cas": [
           {
             "titre": "shows warning when notify checked + bot-less agent; hides on uncheck",
             "titreComplet": "Scenario A — Garde-fou: Telegram notify warning for bot-less agent shows warning when notify checked + bot-less agent; hides on uncheck",
             "sort": "vert",
-            "dureeMs": 2582
+            "dureeMs": 3199
           },
           {
             "titre": "creates a schedule then clicks Run now and sees success toast",
             "titreComplet": "Scenario B — Run now button shows success toast creates a schedule then clicks Run now and sees success toast",
             "sort": "vert",
-            "dureeMs": 3525
+            "dureeMs": 3673
           },
           {
             "titre": "creates schedule, edits to check notify, re-opens edit form, notify is still checked",
             "titreComplet": "Scenario C — Notify persistence: checkbox survives edit + save creates schedule, edits to check notify, re-opens edit form, notify is still checked",
             "sort": "vert",
-            "dureeMs": 3874
+            "dureeMs": 5127
           }
         ]
       },
@@ -79253,31 +80340,31 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 6897,
+        "dureeMs": 6797,
         "cas": [
           {
             "titre": "find an existing agent to navigate to",
             "titreComplet": "Approvals tab @cap:regler-autonomie/ecran find an existing agent to navigate to",
             "sort": "vert",
-            "dureeMs": 1131
+            "dureeMs": 1232
           },
           {
             "titre": "Autonomy tab is visible in the agent editor",
             "titreComplet": "Approvals tab @cap:regler-autonomie/ecran Autonomy tab is visible in the agent editor",
             "sort": "vert",
-            "dureeMs": 1840
+            "dureeMs": 1867
           },
           {
             "titre": "Autonomy tab renders without errors (empty state or tool list)",
             "titreComplet": "Approvals tab @cap:regler-autonomie/ecran Autonomy tab renders without errors (empty state or tool list)",
             "sort": "vert",
-            "dureeMs": 2076
+            "dureeMs": 2011
           },
           {
             "titre": "3-way control is present and interactive when write tools exist",
             "titreComplet": "Approvals tab @cap:regler-autonomie/ecran 3-way control is present and interactive when write tools exist",
             "sort": "ignoré",
-            "dureeMs": 1850
+            "dureeMs": 1687
           }
         ]
       },
@@ -79296,37 +80383,37 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 11742,
+        "dureeMs": 13295,
         "cas": [
           {
             "titre": "navigate to /llm-providers, add a provider, test connection, save, row appears",
             "titreComplet": "Test A — LLM key add + test connection + save navigate to /llm-providers, add a provider, test connection, save, row appears",
             "sort": "vert",
-            "dureeMs": 1980
+            "dureeMs": 2621
           },
           {
             "titre": "change LLM provider dropdown on agent edit → model field updates → save → toast",
             "titreComplet": "Test B — Agent edit picks LLM provider @cap:choisir-modele/ecran change LLM provider dropdown on agent edit → model field updates → save → toast",
             "sort": "vert",
-            "dureeMs": 2129
+            "dureeMs": 2358
           },
           {
             "titre": "job row has chatId set + task is pristine when Telegram checkbox is ticked",
             "titreComplet": "Test C — Send-task with Telegram checkbox (Brique 31 acceptance) job row has chatId set + task is pristine when Telegram checkbox is ticked",
             "sort": "ignoré",
-            "dureeMs": 460
+            "dureeMs": 355
           },
           {
             "titre": "navigate to skill edit page, modify content, save, toast Skill updated",
             "titreComplet": "Test D — Skill edit flow navigate to skill edit page, modify content, save, toast Skill updated",
             "sort": "vert",
-            "dureeMs": 5605
+            "dureeMs": 6254
           },
           {
             "titre": "Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
             "titreComplet": "Test E — Skill delete with ConfirmDialog (invariant #10) Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
             "sort": "vert",
-            "dureeMs": 1568
+            "dureeMs": 1707
           }
         ]
       },
@@ -79345,19 +80432,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 7180,
+        "dureeMs": 6987,
         "cas": [
           {
             "titre": "a delegate's pending approval is answered from the conversation",
             "titreComplet": "approvals in the conversation @cap:approuver-une-action/ecran a delegate's pending approval is answered from the conversation",
             "sort": "vert",
-            "dureeMs": 4783
+            "dureeMs": 5008
           },
           {
             "titre": "confirming sets the kind of action to Never for that agent",
             "titreComplet": "Never for this agent, from the conversation @cap:regler-autonomie/ecran confirming sets the kind of action to Never for that agent",
             "sort": "vert",
-            "dureeMs": 2397
+            "dureeMs": 1979
           }
         ]
       },
@@ -79376,19 +80463,19 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 2759,
+        "dureeMs": 3005,
         "cas": [
           {
             "titre": "sur un fil existant",
             "titreComplet": "Saisie ancrée pendant une réponse @cap:parler-a-un-agent/ecran sur un fil existant",
             "sort": "ignoré",
-            "dureeMs": 1770
+            "dureeMs": 1919
           },
           {
             "titre": "sur une conversation neuve (l’écran où Quentin l’a vu)",
             "titreComplet": "Saisie ancrée pendant une réponse @cap:parler-a-un-agent/ecran sur une conversation neuve (l’écran où Quentin l’a vu)",
             "sort": "vert",
-            "dureeMs": 989
+            "dureeMs": 1086
           }
         ]
       },
@@ -79407,13 +80494,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 1950,
+        "dureeMs": 2147,
         "cas": [
           {
             "titre": "la page rouverte montre ce qui est déjà écrit, et Stop arrête ce tour",
             "titreComplet": "revenir pendant la réponse @cap:parler-a-un-agent/ecran la page rouverte montre ce qui est déjà écrit, et Stop arrête ce tour",
             "sort": "vert",
-            "dureeMs": 1950
+            "dureeMs": 2147
           }
         ]
       },
@@ -79432,13 +80519,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 1588,
+        "dureeMs": 1565,
         "cas": [
           {
             "titre": "Envoyer devient Stop pendant la réponse, et Stop arrête CETTE conversation",
             "titreComplet": "Stop dans le chat @cap:parler-a-un-agent/ecran Envoyer devient Stop pendant la réponse, et Stop arrête CETTE conversation",
             "sort": "vert",
-            "dureeMs": 1588
+            "dureeMs": 1565
           }
         ]
       },
@@ -79457,49 +80544,49 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 23473,
+        "dureeMs": 38934,
         "cas": [
           {
             "titre": "A — configurer puis approuver, hash écrit EN BASE",
             "titreComplet": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran A — configurer puis approuver, hash écrit EN BASE",
             "sort": "vert",
-            "dureeMs": 6443
+            "dureeMs": 7603
           },
           {
             "titre": "B — éditer une commande approuvée retire l’approbation",
             "titreComplet": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran B — éditer une commande approuvée retire l’approbation",
             "sort": "vert",
-            "dureeMs": 4368
+            "dureeMs": 2686
           },
           {
             "titre": "C — le cap de cinq est visible : l’ajout disparaît",
             "titreComplet": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran C — le cap de cinq est visible : l’ajout disparaît",
             "sort": "vert",
-            "dureeMs": 1331
+            "dureeMs": 1915
           },
           {
             "titre": "D — non-owner : champs désactivés, pilule owner only, pas d’approbation",
             "titreComplet": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran D — non-owner : champs désactivés, pilule owner only, pas d’approbation",
             "sort": "ignoré",
-            "dureeMs": 1469
+            "dureeMs": 1086
           },
           {
             "titre": "E — un échec serveur ne ment pas",
             "titreComplet": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran E — un échec serveur ne ment pas",
             "sort": "vert",
-            "dureeMs": 1497
+            "dureeMs": 2861
           },
           {
             "titre": "G — RIEN ne déborde du panneau, chemin long et commande longue comprises",
             "titreComplet": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran G — RIEN ne déborde du panneau, chemin long et commande longue comprises",
             "sort": "vert",
-            "dureeMs": 1851
+            "dureeMs": 3415
           },
           {
             "titre": "F — /code mène à Projects : la liste a disparu, le panneau est sur le projet",
             "titreComplet": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran F — /code mène à Projects : la liste a disparu, le panneau est sur le projet",
             "sort": "vert",
-            "dureeMs": 6514
+            "dureeMs": 19368
           }
         ]
       },
@@ -79518,25 +80605,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 26914,
+        "dureeMs": 17121,
         "cas": [
           {
             "titre": "an owner names two commands, reads them back, then removes the list @cap:assigner-outils/ecran",
             "titreComplet": "an owner names two commands, reads them back, then removes the list @cap:assigner-outils/ecran",
             "sort": "vert",
-            "dureeMs": 18150
+            "dureeMs": 10393
           },
           {
             "titre": "\"Block all commands\" saves an empty list, which is not the same as no list",
             "titreComplet": "\"Block all commands\" saves an empty list, which is not the same as no list",
             "sort": "vert",
-            "dureeMs": 6825
+            "dureeMs": 4867
           },
           {
             "titre": "a shell on the list is refused, and the reason is shown next to the field",
             "titreComplet": "a shell on the list is refused, and the reason is shown next to the field",
             "sort": "vert",
-            "dureeMs": 1939
+            "dureeMs": 1861
           }
         ]
       },
@@ -79555,13 +80642,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 6922,
+        "dureeMs": 7402,
         "cas": [
           {
             "titre": "Run commands: three choices, Block reads back, and no rule lets the workspace decide @cap:executer-une-commande/ecran",
             "titreComplet": "Run commands: three choices, Block reads back, and no rule lets the workspace decide @cap:executer-une-commande/ecran",
             "sort": "vert",
-            "dureeMs": 6922
+            "dureeMs": 7402
           }
         ]
       },
@@ -79580,13 +80667,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 8507,
+        "dureeMs": 9102,
         "cas": [
           {
             "titre": "can create two instances of the same api_key connector and both appear in Active Connectors",
             "titreComplet": "Connector multi-instance can create two instances of the same api_key connector and both appear in Active Connectors",
             "sort": "vert",
-            "dureeMs": 8507
+            "dureeMs": 9102
           }
         ]
       },
@@ -79605,31 +80692,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 6306,
+        "dureeMs": 7085,
         "cas": [
           {
             "titre": "Google Drive states it reaches the ENTIRE Drive",
             "titreComplet": "Connector scope disclosure @cap:connecter-un-service/ecran Google Drive states it reaches the ENTIRE Drive",
             "sort": "vert",
-            "dureeMs": 1224
+            "dureeMs": 1385
           },
           {
             "titre": "Google Sheets and Docs disclose their reach too",
             "titreComplet": "Connector scope disclosure @cap:connecter-un-service/ecran Google Sheets and Docs disclose their reach too",
             "sort": "vert",
-            "dureeMs": 2627
+            "dureeMs": 2892
           },
           {
             "titre": "a connector whose reach matches its name shows NO disclosure",
             "titreComplet": "Connector scope disclosure @cap:connecter-un-service/ecran a connector whose reach matches its name shows NO disclosure",
             "sort": "vert",
-            "dureeMs": 1231
+            "dureeMs": 1392
           },
           {
             "titre": "la PREMIÈRE connexion est un chemin à part, et il est éprouvé",
             "titreComplet": "Connector scope disclosure @cap:connecter-un-service/ecran la PREMIÈRE connexion est un chemin à part, et il est éprouvé",
             "sort": "vert",
-            "dureeMs": 1224
+            "dureeMs": 1416
           }
         ]
       },
@@ -79644,17 +80731,17 @@
       "ciIllisible": false,
       "resultat": {
         "total": 1,
-        "vert": 0,
-        "rouge": 1,
+        "vert": 1,
+        "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 52792,
+        "dureeMs": 8247,
         "cas": [
           {
             "titre": "connect Drive via wizard → reuse credential for Gmail via dropdown",
             "titreComplet": "Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
-            "sort": "rouge",
-            "dureeMs": 52792
+            "sort": "vert",
+            "dureeMs": 8247
           }
         ]
       },
@@ -79673,19 +80760,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 2316,
+        "dureeMs": 2036,
         "cas": [
           {
             "titre": "a delegation that produced nothing shows its reason, never a promise",
             "titreComplet": "what the thread says when a delegation ends @cap:organiser-equipe/ecran a delegation that produced nothing shows its reason, never a promise",
             "sort": "vert",
-            "dureeMs": 1433
+            "dureeMs": 1084
           },
           {
             "titre": "a delegation that delivered puts the specialist’s own work in the thread",
             "titreComplet": "what the thread says when a delegation ends @cap:organiser-equipe/ecran a delegation that delivered puts the specialist’s own work in the thread",
             "sort": "vert",
-            "dureeMs": 883
+            "dureeMs": 952
           }
         ]
       },
@@ -79704,19 +80791,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 977,
+        "dureeMs": 1008,
         "cas": [
           {
             "titre": "dans une carte de 294 px, la méta est SOUS le nom",
             "titreComplet": "EdRow dans une grille étroite dans une carte de 294 px, la méta est SOUS le nom",
             "sort": "vert",
-            "dureeMs": 756
+            "dureeMs": 806
           },
           {
             "titre": "dans 400 px, rien ne se recouvre",
             "titreComplet": "EdRow dans une grille étroite dans 400 px, rien ne se recouvre",
             "sort": "vert",
-            "dureeMs": 110
+            "dureeMs": 91
           },
           {
             "titre": "large, tout reste sur UNE ligne",
@@ -79741,19 +80828,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 3366,
+        "dureeMs": 3279,
         "cas": [
           {
             "titre": "wizard shows 4 Google API links and format hint",
             "titreComplet": "Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide/ecran wizard shows 4 Google API links and format hint",
             "sort": "vert",
-            "dureeMs": 1898
+            "dureeMs": 1667
           },
           {
             "titre": "\"Where do I get this?\" expander reveals console.apify.com link",
             "titreComplet": "Help guides — api_key connector (Apify) @cap:consulter-l-aide/ecran \"Where do I get this?\" expander reveals console.apify.com link",
             "sort": "vert",
-            "dureeMs": 1468
+            "dureeMs": 1612
           }
         ]
       },
@@ -79772,31 +80859,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 14982,
+        "dureeMs": 16153,
         "cas": [
           {
             "titre": "the section lists the built-in tools, always — no fixtures needed",
             "titreComplet": "Built-in tools — per-tool controls the section lists the built-in tools, always — no fixtures needed",
             "sort": "vert",
-            "dureeMs": 3035
+            "dureeMs": 2984
           },
           {
             "titre": "return_result is shown but locked, with the reason",
             "titreComplet": "Built-in tools — per-tool controls return_result is shown but locked, with the reason",
             "sort": "vert",
-            "dureeMs": 2942
+            "dureeMs": 3555
           },
           {
             "titre": "blocking a built-in tool persists across a reload",
             "titreComplet": "Built-in tools — per-tool controls blocking a built-in tool persists across a reload",
             "sort": "vert",
-            "dureeMs": 4356
+            "dureeMs": 4866
           },
           {
             "titre": "and can be handed back — the restriction is reversible",
             "titreComplet": "Built-in tools — per-tool controls and can be handed back — the restriction is reversible",
             "sort": "vert",
-            "dureeMs": 4649
+            "dureeMs": 4748
           }
         ]
       },
@@ -79815,31 +80902,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 7769,
+        "dureeMs": 6571,
         "cas": [
           {
             "titre": "renders the Learned Skills page at /learned-skills",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran renders the Learned Skills page at /learned-skills",
             "sort": "vert",
-            "dureeMs": 5436
+            "dureeMs": 3939
           },
           {
             "titre": "toggle switches the reflection_enabled flag (UI responds)",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran toggle switches the reflection_enabled flag (UI responds)",
             "sort": "vert",
-            "dureeMs": 724
+            "dureeMs": 905
           },
           {
             "titre": "no window.confirm / window.alert / window.prompt is called (dialog uses ConfirmDialog)",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran no window.confirm / window.alert / window.prompt is called (dialog uses ConfirmDialog)",
             "sort": "vert",
-            "dureeMs": 526
+            "dureeMs": 658
           },
           {
             "titre": "assignment-mode control renders both options and is interactive",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran assignment-mode control renders both options and is interactive",
             "sort": "vert",
-            "dureeMs": 1083
+            "dureeMs": 1069
           }
         ]
       },
@@ -79858,19 +80945,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 3905,
+        "dureeMs": 5014,
         "cas": [
           {
             "titre": "Scenario A — /mcp renders the connected Cogni Cortex server",
             "titreComplet": "MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
             "sort": "vert",
-            "dureeMs": 2837
+            "dureeMs": 3856
           },
           {
             "titre": "Scenario B — sidebar shows API Connectors and MCP Connectors",
             "titreComplet": "MCP Connectors page Scenario B — sidebar shows API Connectors and MCP Connectors",
             "sort": "vert",
-            "dureeMs": 1068
+            "dureeMs": 1158
           }
         ]
       },
@@ -79889,19 +80976,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4638,
+        "dureeMs": 5379,
         "cas": [
           {
             "titre": "it is written, it survives a reload, and the search finds it again",
             "titreComplet": "a fact taught on the screen is kept @cap:se-souvenir/ecran it is written, it survives a reload, and the search finds it again",
             "sort": "vert",
-            "dureeMs": 3409
+            "dureeMs": 4108
           },
           {
             "titre": "archiving a fact takes it out of what the agent is given",
             "titreComplet": "a fact taught on the screen is kept @cap:se-souvenir/ecran archiving a fact takes it out of what the agent is given",
             "sort": "vert",
-            "dureeMs": 1229
+            "dureeMs": 1271
           }
         ]
       },
@@ -79920,31 +81007,31 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 10405,
+        "dureeMs": 11106,
         "cas": [
           {
             "titre": "create with explicit Telegram channel, persists across reload + edit",
             "titreComplet": "Scenario 1 — Schedule form: Notify via lists only the agent's real active channels create with explicit Telegram channel, persists across reload + edit",
             "sort": "ignoré",
-            "dureeMs": 2606
+            "dureeMs": 2609
           },
           {
             "titre": "create with notify ON, channel Auto, badge appears, then delete (never POST)",
             "titreComplet": "Scenario 2 — Webhook form: Notify via + Auto persists, badge on the row create with notify ON, channel Auto, badge appears, then delete (never POST)",
             "sort": "vert",
-            "dureeMs": 4107
+            "dureeMs": 4706
           },
           {
             "titre": "warns for a channel-less agent, clears when switching to a connected one",
             "titreComplet": "Scenario 3 — Agent switch: \"no channel connected\" warning for a channel-less agent warns for a channel-less agent, clears when switching to a connected one",
             "sort": "vert",
-            "dureeMs": 1544
+            "dureeMs": 1696
           },
           {
             "titre": "schedule form notify controls render correctly in both themes",
             "titreComplet": "Scenario 4 — Dark mode: notify controls stay theme-aware schedule form notify controls render correctly in both themes",
             "sort": "vert",
-            "dureeMs": 2148
+            "dureeMs": 2095
           }
         ]
       },
@@ -79963,13 +81050,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4227,
+        "dureeMs": 4680,
         "cas": [
           {
             "titre": "connect with api_key shows connected status and persists",
             "titreComplet": "Notion Internal Integration (api_key) — regression connect with api_key shows connected status and persists",
             "sort": "vert",
-            "dureeMs": 4227
+            "dureeMs": 4680
           }
         ]
       },
@@ -79988,13 +81075,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 3786,
+        "dureeMs": 3811,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status (no Refresh button)",
             "titreComplet": "Notion OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status (no Refresh button)",
             "sort": "vert",
-            "dureeMs": 3786
+            "dureeMs": 3811
           }
         ]
       },
@@ -80013,13 +81100,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 3495,
+        "dureeMs": 3766,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status and toast",
             "titreComplet": "Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status and toast",
             "sort": "vert",
-            "dureeMs": 3495
+            "dureeMs": 3766
           }
         ]
       },
@@ -80038,19 +81125,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4797,
+        "dureeMs": 5638,
         "cas": [
           {
             "titre": "the workspace sets what a run may cost and how long it may work",
             "titreComplet": "Run budget @cap:suivre-execution/ecran the workspace sets what a run may cost and how long it may work",
             "sort": "vert",
-            "dureeMs": 2854
+            "dureeMs": 3625
           },
           {
             "titre": "an agent gets its own wait for the first word, and gives it back",
             "titreComplet": "Run budget @cap:suivre-execution/ecran an agent gets its own wait for the first word, and gives it back",
             "sort": "vert",
-            "dureeMs": 1943
+            "dureeMs": 2013
           }
         ]
       },
@@ -80069,19 +81156,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5404,
+        "dureeMs": 5556,
         "cas": [
           {
             "titre": "is present with a default of 5 on the New schedule form",
             "titreComplet": "Daily budget field on ScheduleForm @cap:planifier-une-tache/ecran is present with a default of 5 on the New schedule form",
             "sort": "vert",
-            "dureeMs": 1589
+            "dureeMs": 1552
           },
           {
             "titre": "persists a custom value on create, and an edit updates it",
             "titreComplet": "Daily budget field on ScheduleForm @cap:planifier-une-tache/ecran persists a custom value on create, and an edit updates it",
             "sort": "vert",
-            "dureeMs": 3815
+            "dureeMs": 4004
           }
         ]
       },
@@ -80100,31 +81187,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 10501,
+        "dureeMs": 13775,
         "cas": [
           {
             "titre": "Network section renders with radio buttons and read-only URL fields",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran Network section renders with radio buttons and read-only URL fields",
             "sort": "vert",
-            "dureeMs": 1965
+            "dureeMs": 2038
           },
           {
             "titre": "clicking LAN radio shows LAN addresses or \"No LAN interface detected\"",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran clicking LAN radio shows LAN addresses or \"No LAN interface detected\"",
             "sort": "vert",
-            "dureeMs": 1231
+            "dureeMs": 1118
           },
           {
             "titre": "re-saving the mode already in force reports no restart needed",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran re-saving the mode already in force reports no restart needed",
             "sort": "vert",
-            "dureeMs": 2780
+            "dureeMs": 2516
           },
           {
             "titre": "saving the other mode persists it, demands a restart, and is put back",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran saving the other mode persists it, demands a restart, and is put back",
             "sort": "vert",
-            "dureeMs": 4525
+            "dureeMs": 8103
           }
         ]
       },
@@ -80143,25 +81230,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4275,
+        "dureeMs": 5822,
         "cas": [
           {
             "titre": "la section rend ses quatre cases et la pilule owner only",
             "titreComplet": "Verification surfaces — /settings la section rend ses quatre cases et la pilule owner only",
             "sort": "vert",
-            "dureeMs": 1086
+            "dureeMs": 1676
           },
           {
             "titre": "décocher demande confirmation, annuler laisse la case cochée",
             "titreComplet": "Verification surfaces — /settings décocher demande confirmation, annuler laisse la case cochée",
             "sort": "vert",
-            "dureeMs": 1149
+            "dureeMs": 1821
           },
           {
             "titre": "décocher puis recocher : le second geste n’ouvre aucun dialogue",
             "titreComplet": "Verification surfaces — /settings décocher puis recocher : le second geste n’ouvre aucun dialogue",
             "sort": "vert",
-            "dureeMs": 2040
+            "dureeMs": 2325
           }
         ]
       },
@@ -80180,13 +81267,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 2945,
+        "dureeMs": 3526,
         "cas": [
           {
             "titre": "a new agent downloads and runs inline code without asking, and asks for the rest; \"Never\" for deleting is saved and read back",
             "titreComplet": "the shell checklist @cap:regler-autonomie/ecran a new agent downloads and runs inline code without asking, and asks for the rest; \"Never\" for deleting is saved and read back",
             "sort": "vert",
-            "dureeMs": 2945
+            "dureeMs": 3526
           }
         ]
       },
@@ -80205,61 +81292,61 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 32808,
+        "dureeMs": 32159,
         "cas": [
           {
             "titre": "the root page IS a new conversation, with no login form and no redirect away",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran the root page IS a new conversation, with no login form and no redirect away",
             "sort": "vert",
-            "dureeMs": 631
+            "dureeMs": 689
           },
           {
             "titre": "the dashboard moved to /dashboard, and nothing redirects back to the root",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran the dashboard moved to /dashboard, and nothing redirects back to the root",
             "sort": "vert",
-            "dureeMs": 2443
+            "dureeMs": 3745
           },
           {
             "titre": "the rail carries the five destinations on every page",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran the rail carries the five destinations on every page",
             "sort": "vert",
-            "dureeMs": 532
+            "dureeMs": 1012
           },
           {
             "titre": "every dashboard section is one panel away",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran every dashboard section is one panel away",
             "sort": "vert",
-            "dureeMs": 4074
+            "dureeMs": 4605
           },
           {
             "titre": "the Work panel opens on Nodal chats, already unfolded",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran the Work panel opens on Nodal chats, already unfolded",
             "sort": "vert",
-            "dureeMs": 488
+            "dureeMs": 556
           },
           {
             "titre": "\"New Chat\" opens \"Nodal chats\" and leads to the empty conversation screen",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran \"New Chat\" opens \"Nodal chats\" and leads to the empty conversation screen",
             "sort": "vert",
-            "dureeMs": 720
+            "dureeMs": 805
           },
           {
             "titre": "creates an agent, sends a task, and shows the job in the list",
             "titreComplet": "agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran creates an agent, sends a task, and shows the job in the list",
             "sort": "vert",
-            "dureeMs": 13209
+            "dureeMs": 9936
           },
           {
             "titre": "every (dashboard) route returns 200 and renders an h1",
             "titreComplet": "settings pages render without runtime errors @cap:installer-et-demarrer/ecran every (dashboard) route returns 200 and renders an h1",
             "sort": "vert",
-            "dureeMs": 7920
+            "dureeMs": 7451
           },
           {
             "titre": "les routes à paramètre rendent, atteintes par les liens de l’app",
             "titreComplet": "settings pages render without runtime errors @cap:installer-et-demarrer/ecran les routes à paramètre rendent, atteintes par les liens de l’app",
             "sort": "vert",
-            "dureeMs": 2791
+            "dureeMs": 3360
           }
         ]
       },
@@ -80278,25 +81365,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 11678,
+        "dureeMs": 12248,
         "cas": [
           {
             "titre": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke @cap:parler-par-canal-externe/ecran",
             "titreComplet": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke @cap:parler-par-canal-externe/ecran",
             "sort": "vert",
-            "dureeMs": 4632
+            "dureeMs": 4737
           },
           {
             "titre": "B — Approve a pending chat activates it",
             "titreComplet": "B — Approve a pending chat activates it",
             "sort": "vert",
-            "dureeMs": 3447
+            "dureeMs": 3625
           },
           {
             "titre": "C — Revoke a member deletes the row (via ConfirmDialog)",
             "titreComplet": "C — Revoke a member deletes the row (via ConfirmDialog)",
             "sort": "vert",
-            "dureeMs": 3599
+            "dureeMs": 3886
           }
         ]
       },
@@ -80315,31 +81402,31 @@
         "rouge": 0,
         "ignoré": 4,
         "instable": 0,
-        "dureeMs": 8517,
+        "dureeMs": 8697,
         "cas": [
           {
             "titre": "A — un fil long s’ouvre sur son dernier message @cap:suivre-execution/ecran",
             "titreComplet": "A — un fil long s’ouvre sur son dernier message @cap:suivre-execution/ecran",
             "sort": "ignoré",
-            "dureeMs": 1865
+            "dureeMs": 2047
           },
           {
             "titre": "C — remonter APRÈS un fil déjà en bas : le geste du lecteur n’est pas avalé",
             "titreComplet": "C — remonter APRÈS un fil déjà en bas : le geste du lecteur n’est pas avalé",
             "sort": "ignoré",
-            "dureeMs": 2331
+            "dureeMs": 2217
           },
           {
             "titre": "D — remonter PENDANT qu’un défilement automatique est en vol",
             "titreComplet": "D — remonter PENDANT qu’un défilement automatique est en vol",
             "sort": "ignoré",
-            "dureeMs": 2056
+            "dureeMs": 2209
           },
           {
             "titre": "B — remonter dans l’historique tient : on n’est pas ramené en bas @cap:reprendre-conversation/ecran",
             "titreComplet": "B — remonter dans l’historique tient : on n’est pas ramené en bas @cap:reprendre-conversation/ecran",
             "sort": "ignoré",
-            "dureeMs": 2265
+            "dureeMs": 2224
           }
         ]
       },
@@ -80358,25 +81445,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5109,
+        "dureeMs": 5344,
         "cas": [
           {
             "titre": "C — déplier DEPUIS LE BAS ne fait pas filer la zone visible",
             "titreComplet": "déplier un bloc du fil @cap:parler-a-un-agent/ecran C — déplier DEPUIS LE BAS ne fait pas filer la zone visible",
             "sort": "vert",
-            "dureeMs": 1093
+            "dureeMs": 1189
           },
           {
             "titre": "A — depuis le milieu du fil, le dépliage grandit SOUS la zone visible",
             "titreComplet": "déplier un bloc du fil @cap:parler-a-un-agent/ecran A — depuis le milieu du fil, le dépliage grandit SOUS la zone visible",
             "sort": "vert",
-            "dureeMs": 1349
+            "dureeMs": 1439
           },
           {
             "titre": "B — revenu en bas après un dépliage, le lecteur est de nouveau suivi",
             "titreComplet": "déplier un bloc du fil @cap:parler-a-un-agent/ecran B — revenu en bas après un dépliage, le lecteur est de nouveau suivi",
             "sort": "vert",
-            "dureeMs": 2667
+            "dureeMs": 2716
           }
         ]
       },
@@ -80395,19 +81482,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 11129,
+        "dureeMs": 11894,
         "cas": [
           {
             "titre": "A — une arrivée TARDIVE ne déplace pas le lecteur qui vient d’ouvrir",
             "titreComplet": "déplier une PETITE boîte @cap:parler-a-un-agent/ecran A — une arrivée TARDIVE ne déplace pas le lecteur qui vient d’ouvrir",
             "sort": "vert",
-            "dureeMs": 5352
+            "dureeMs": 6165
           },
           {
             "titre": "B — revenu en bas, le lecteur est de nouveau suivi",
             "titreComplet": "déplier une PETITE boîte @cap:parler-a-un-agent/ecran B — revenu en bas, le lecteur est de nouveau suivi",
             "sort": "vert",
-            "dureeMs": 5777
+            "dureeMs": 5729
           }
         ]
       },
@@ -80426,37 +81513,37 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 16300,
+        "dureeMs": 17599,
         "cas": [
           {
             "titre": "Tools tab lists every tool group the catalogue declares @cap:assigner-outils/ecran",
             "titreComplet": "Tools tab lists every tool group the catalogue declares @cap:assigner-outils/ecran",
             "sort": "vert",
-            "dureeMs": 2883
+            "dureeMs": 3223
           },
           {
             "titre": "disclosure expands to show the gated tool names as chips",
             "titreComplet": "disclosure expands to show the gated tool names as chips",
             "sort": "vert",
-            "dureeMs": 3125
+            "dureeMs": 3160
           },
           {
             "titre": "\"Includes guidance\" badge opens a read-only modal with the skill content",
             "titreComplet": "\"Includes guidance\" badge opens a read-only modal with the skill content",
             "sort": "vert",
-            "dureeMs": 3099
+            "dureeMs": 3578
           },
           {
             "titre": "tool groups are absent from the agent's Skills tab, command-execution is NOT",
             "titreComplet": "tool groups are absent from the agent's Skills tab, command-execution is NOT",
             "sort": "vert",
-            "dureeMs": 2838
+            "dureeMs": 3084
           },
           {
             "titre": "a tool group assigned to this agent is still absent from /skills Assigned",
             "titreComplet": "a tool group assigned to this agent is still absent from /skills Assigned",
             "sort": "vert",
-            "dureeMs": 4355
+            "dureeMs": 4554
           }
         ]
       },
@@ -80475,13 +81562,13 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 2866,
+        "dureeMs": 3389,
         "cas": [
           {
             "titre": "shows email in sidebar, signs out, redirects to /login, re-logs in",
             "titreComplet": "UserMenu — sign-out + re-login round-trip @cap:se-connecter/ecran shows email in sidebar, signs out, redirects to /login, re-logs in",
             "sort": "ignoré",
-            "dureeMs": 2866
+            "dureeMs": 3389
           }
         ]
       },
@@ -80500,13 +81587,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 3975,
+        "dureeMs": 4532,
         "cas": [
           {
             "titre": "create, copy URL, toggle, rotate, delete, empty state",
             "titreComplet": "Webhooks section — full click flow @cap:declencher-sur-evenement/ecran create, copy URL, toggle, rotate, delete, empty state",
             "sort": "vert",
-            "dureeMs": 3975
+            "dureeMs": 4532
           }
         ]
       },
@@ -80525,13 +81612,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 1123,
+        "dureeMs": 1200,
         "cas": [
           {
             "titre": "the entry opens the run under /chat/runs, and the sidebar stays on Work",
             "titreComplet": "a run from the MCP folder opens in Work @cap:suivre-execution/ecran the entry opens the run under /chat/runs, and the sidebar stays on Work",
             "sort": "vert",
-            "dureeMs": 1123
+            "dureeMs": 1200
           }
         ]
       },
@@ -80540,6 +81627,82 @@
   ],
   "chantiers": {
     "cartes": [
+      {
+        "type": "issue",
+        "numero": 885,
+        "titre": "CI runner-image guard: minor gaps from the review of #883",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/885",
+        "etiquettes": [],
+        "majLe": "2026-10-30T05:28:21Z",
+        "creeLe": "2026-10-30T05:28:21Z",
+        "finiLe": null,
+        "release": "0.9.9",
+        "parPr": null,
+        "revue": null,
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "In progress"
+      },
+      {
+        "type": "issue",
+        "numero": 884,
+        "titre": "The delivered-files list drops the workspace label: a move between folders loses the folder names",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/884",
+        "etiquettes": [],
+        "majLe": "2026-10-30T04:05:40Z",
+        "creeLe": "2026-10-30T04:05:40Z",
+        "finiLe": null,
+        "release": "0.9.9",
+        "parPr": null,
+        "revue": null,
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "In progress"
+      },
+      {
+        "type": "issue",
+        "numero": 880,
+        "titre": "Sandbox: minor findings from the review of #877 (coded refusal, restore gate, mounted volumes, a test title)",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/880",
+        "etiquettes": [],
+        "majLe": "2026-10-30T03:56:24Z",
+        "creeLe": "2026-10-30T02:43:38Z",
+        "finiLe": null,
+        "release": "0.9.9",
+        "parPr": null,
+        "revue": null,
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "In progress"
+      },
+      {
+        "type": "issue",
+        "numero": 879,
+        "titre": "A built-in file_move tool (with a copy option) for the agent's folders",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/879",
+        "etiquettes": [],
+        "majLe": "2026-10-30T02:09:00Z",
+        "creeLe": "2026-10-30T02:09:00Z",
+        "finiLe": null,
+        "release": "0.9.9",
+        "parPr": 881,
+        "revue": {
+          "passes": 0,
+          "lastReviewer": null,
+          "lastDate": null,
+          "lastVerdict": null,
+          "counts": null,
+          "status": "in-review",
+          "warnings": []
+        },
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "In review"
+      },
       {
         "type": "issue",
         "numero": 878,
@@ -80556,31 +81719,6 @@
         "parUnAgent": true,
         "faitsVerifies": true,
         "colonne": "In progress"
-      },
-      {
-        "type": "issue",
-        "numero": 876,
-        "titre": "Sandbox: let the user see its state, turn it on or off, and set its perimeter",
-        "etat": "OPEN",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/876",
-        "etiquettes": [],
-        "majLe": "2026-10-26T10:11:29Z",
-        "creeLe": "2026-10-26T09:30:32Z",
-        "finiLe": null,
-        "release": "0.9.9",
-        "parPr": 877,
-        "revue": {
-          "passes": 0,
-          "lastReviewer": null,
-          "lastDate": null,
-          "lastVerdict": null,
-          "counts": null,
-          "status": "in-review",
-          "warnings": []
-        },
-        "parUnAgent": true,
-        "faitsVerifies": true,
-        "colonne": "In review"
       },
       {
         "type": "issue",
@@ -83264,7 +84402,7 @@
         "etiquettes": [
           "test"
         ],
-        "majLe": "2026-10-27T09:42:44Z",
+        "majLe": "2026-10-28T10:10:21Z",
         "creeLe": "2026-09-20T08:58:17Z",
         "finiLe": null,
         "release": null,
@@ -83560,6 +84698,40 @@
         "parUnAgent": true,
         "faitsVerifies": true,
         "colonne": "To test"
+      },
+      {
+        "type": "issue",
+        "numero": 882,
+        "titre": "CI: pin every runner image; ubuntu-latest moved to 26.04 and broke e2e-smoke",
+        "etat": "CLOSED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/882",
+        "etiquettes": [],
+        "majLe": "2026-10-30T05:28:47Z",
+        "creeLe": "2026-10-30T03:12:48Z",
+        "finiLe": "2026-10-30T05:28:47Z",
+        "release": "0.9.9",
+        "parPr": null,
+        "revue": null,
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "Done"
+      },
+      {
+        "type": "issue",
+        "numero": 876,
+        "titre": "Sandbox: let the user see its state, turn it on or off, and set its perimeter",
+        "etat": "CLOSED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/876",
+        "etiquettes": [],
+        "majLe": "2026-10-30T05:40:48Z",
+        "creeLe": "2026-10-26T09:30:32Z",
+        "finiLe": "2026-10-30T05:40:48Z",
+        "release": "0.9.9",
+        "parPr": null,
+        "revue": null,
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "Done"
       },
       {
         "type": "issue",
@@ -85292,52 +86464,18 @@
         "colonne": "Done"
       },
       {
-        "type": "issue",
-        "numero": 457,
-        "titre": "Chat: leaving the page mid-answer hides the answer until it is finished",
-        "etat": "CLOSED",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/457",
-        "etiquettes": [],
-        "majLe": "2026-09-25T10:58:09Z",
-        "creeLe": "2026-09-23T10:20:23Z",
-        "finiLe": "2026-09-25T10:58:09Z",
-        "release": "0.9.3",
-        "parPr": null,
-        "revue": null,
-        "parUnAgent": true,
-        "faitsVerifies": true,
-        "colonne": "Done"
-      },
-      {
-        "type": "issue",
-        "numero": 456,
-        "titre": "Chat: Send becomes Stop while the agent answers, and Stop ends the answer",
-        "etat": "CLOSED",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/456",
-        "etiquettes": [],
-        "majLe": "2026-09-23T17:56:13Z",
-        "creeLe": "2026-09-23T10:20:21Z",
-        "finiLe": "2026-09-23T17:56:13Z",
-        "release": "0.9.3",
-        "parPr": null,
-        "revue": null,
-        "parUnAgent": true,
-        "faitsVerifies": true,
-        "colonne": "Done"
-      },
-      {
         "type": "pr",
-        "numero": 877,
-        "titre": "feat: a Sandbox section that shows the sandbox and sets its folders (#876)",
+        "numero": 881,
+        "titre": "feat(tools): file_move, move or copy a file inside the agent's folders (#879)",
         "etat": "OPEN",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/877",
-        "branche": "feat/sandbox-settings",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/881",
+        "branche": "feat/file-move",
         "brouillon": false,
         "etiquettes": [],
-        "majLe": "2026-10-26T17:55:07Z",
-        "creeLe": "2026-10-26T11:23:46Z",
+        "majLe": "2026-10-30T06:00:48Z",
+        "creeLe": "2026-10-30T02:54:11Z",
         "finiLe": null,
-        "release": null,
+        "release": "0.9.9",
         "ci": "vert",
         "revue": {
           "passes": 0,
@@ -85351,6 +86489,62 @@
         "parUnAgent": true,
         "faitsVerifies": true,
         "colonne": "In review"
+      },
+      {
+        "type": "pr",
+        "numero": 883,
+        "titre": "ci: name every runner image, refuse a moving *-latest label",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/883",
+        "branche": "ci/pin-runner-images",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-10-30T05:30:02Z",
+        "creeLe": "2026-10-30T03:18:29Z",
+        "finiLe": "2026-10-30T05:28:45Z",
+        "release": null,
+        "ci": "vert",
+        "revue": {
+          "passes": 0,
+          "lastReviewer": null,
+          "lastDate": null,
+          "lastVerdict": null,
+          "counts": null,
+          "status": "in-review",
+          "warnings": [
+            "unreadable review pass header: \"Review pass 1 (Reviewer A): P2 fixed, P3 n°2 and n°3 closed\""
+          ]
+        },
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "Done"
+      },
+      {
+        "type": "pr",
+        "numero": 877,
+        "titre": "feat: a Sandbox section that shows the sandbox and sets its folders (#876)",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/877",
+        "branche": "feat/sandbox-settings",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-10-30T05:44:29Z",
+        "creeLe": "2026-10-26T11:23:46Z",
+        "finiLe": "2026-10-30T05:40:47Z",
+        "release": null,
+        "ci": "vert",
+        "revue": {
+          "passes": 0,
+          "lastReviewer": null,
+          "lastDate": null,
+          "lastVerdict": null,
+          "counts": null,
+          "status": "in-review",
+          "warnings": []
+        },
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -86682,85 +87876,27 @@
         "parUnAgent": true,
         "faitsVerifies": true,
         "colonne": "Done"
-      },
-      {
-        "type": "pr",
-        "numero": 764,
-        "titre": "MUTATION B (never merge)",
-        "etat": "CLOSED",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/764",
-        "branche": "dev-ci-mut/race-b",
-        "brouillon": true,
-        "etiquettes": [],
-        "majLe": "2026-10-16T11:31:56Z",
-        "creeLe": "2026-10-16T11:21:11Z",
-        "finiLe": "2026-10-16T11:31:54Z",
-        "release": null,
-        "ci": "rouge",
-        "revue": {
-          "passes": 0,
-          "lastReviewer": null,
-          "lastDate": null,
-          "lastVerdict": null,
-          "counts": null,
-          "status": "in-review",
-          "warnings": []
-        },
-        "parUnAgent": false,
-        "faitsVerifies": true,
-        "colonne": "Abandoned"
-      },
-      {
-        "type": "pr",
-        "numero": 763,
-        "titre": "Exclusive file creation refuses a dangling symlink on Windows (project-git, host-checks flake)",
-        "etat": "MERGED",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/763",
-        "branche": "fix/exclusive-create-symlink",
-        "brouillon": false,
-        "etiquettes": [],
-        "majLe": "2026-10-16T12:55:41Z",
-        "creeLe": "2026-10-16T11:06:19Z",
-        "finiLe": "2026-10-16T12:52:15Z",
-        "release": null,
-        "ci": "vert",
-        "revue": {
-          "passes": 0,
-          "lastReviewer": null,
-          "lastDate": null,
-          "lastVerdict": null,
-          "counts": null,
-          "status": "in-review",
-          "warnings": [
-            "unreadable review pass header: \"Review pass 1 (P2) and what changed since 46762c35\"",
-            "unreadable review pass header: \"Review pass 1 (Nodal Reviewer A, head 46762c35): triage\"",
-            "unreadable review pass header: \"Review pass 2 (Nodal Reviewer A), delta 46762c35 → caf7c4b2: no P1 and no P2\""
-          ]
-        },
-        "parUnAgent": true,
-        "faitsVerifies": true,
-        "colonne": "Done"
       }
     ]
   },
   "release": {
     "npmInjoignable": false,
     "jamaisPubliee": false,
-    "verifieLe": "2026-10-28T10:10:05.626Z",
+    "verifieLe": "2026-10-30T10:32:28.396Z",
     "surNpm": "0.9.8",
     "publieeLe": "2026-10-23T10:36:59.041Z",
     "versionDuDepot": "0.9.8",
     "dernierTag": "v0.9.8",
-    "commitsDepuisLeTag": 26,
+    "commitsDepuisLeTag": 42,
     "depotEnAvance": false
   },
   "deploiement": {
     "runsLus": 30,
     "dernierSucces": {
-      "le": "2026-10-28T07:23:03Z",
+      "le": "2026-10-30T10:27:47Z",
       "evenement": "schedule",
       "sha": null,
-      "url": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/40649540642"
+      "url": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/41040704500"
     },
     "depuis": {
       "enCours": 0,
@@ -86777,11 +87913,11 @@
       }
     ],
     "complet": false,
-    "le": "2026-10-28T10:10:07.460Z"
+    "le": "2026-10-30T10:32:29.630Z"
   },
   "depotNom": "Kwintspiracy/nodal-agents",
   "rangement": {
-    "le": "2026-10-28T10:10:07.895Z",
+    "le": "2026-10-30T10:32:30.110Z",
     "fichiers": {
       "apps/cli/src/tests/already-running.test.ts": {
         "domaine": "install",
@@ -88158,6 +89294,11 @@
         "raison": "\"diff\" in the file name",
         "absent": false
       },
+      "apps/runner/src/tests/routes/sandbox.test.ts": {
+        "domaine": "approvals",
+        "raison": "\"sandbox\" in the file name",
+        "absent": false
+      },
       "apps/runner/src/tests/routes/skills-install.test.ts": {
         "domaine": "skills",
         "raison": "\"skill\" in the file name",
@@ -88536,6 +89677,11 @@
       "apps/web/src/app/(dashboard)/settings/__tests__/RunBudgetSection.test.tsx": {
         "domaine": "runs",
         "raison": "\"run\" in the file name",
+        "absent": false
+      },
+      "apps/web/src/app/(dashboard)/settings/__tests__/SandboxSection.test.tsx": {
+        "domaine": "approvals",
+        "raison": "\"sandbox\" in the file name",
         "absent": false
       },
       "apps/web/src/app/(dashboard)/settings/__tests__/SettingsList.test.tsx": {
@@ -89391,6 +90537,16 @@
       "apps/web/src/lib/__tests__/run-schedule-now-overlap.test.ts": {
         "domaine": "automations",
         "raison": "\"schedule\" in the file name",
+        "absent": false
+      },
+      "apps/web/src/lib/__tests__/sandbox-actions.test.ts": {
+        "domaine": "approvals",
+        "raison": "\"sandbox\" in the file name",
+        "absent": false
+      },
+      "apps/web/src/lib/__tests__/sandbox-copy.test.ts": {
+        "domaine": "approvals",
+        "raison": "\"sandbox\" in the file name",
         "absent": false
       },
       "apps/web/src/lib/__tests__/schedule-budget-actions.test.ts": {
@@ -91073,6 +92229,16 @@
         "raison": "lives in packages/db",
         "absent": false
       },
+      "packages/db/src/tests/workspace-sandbox-gestures.pg.test.ts": {
+        "domaine": "database",
+        "raison": "lives in packages/db",
+        "absent": false
+      },
+      "packages/db/src/tests/workspace-sandbox.test.ts": {
+        "domaine": "database",
+        "raison": "lives in packages/db",
+        "absent": false
+      },
       "packages/db/src/tests/workspace-setup-repos.test.ts": {
         "domaine": "database",
         "raison": "lives in packages/db",
@@ -92559,6 +93725,11 @@
         "absent": false
       },
       "packages/tools/src/tests/sandbox-report.test.ts": {
+        "domaine": "approvals",
+        "raison": "\"sandbox\" in the file name",
+        "absent": false
+      },
+      "packages/tools/src/tests/sandbox-switch.test.ts": {
         "domaine": "approvals",
         "raison": "\"sandbox\" in the file name",
         "absent": false
