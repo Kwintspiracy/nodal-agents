@@ -23,6 +23,8 @@ import {
   inArray,
   type AnyDrizzleDb,
   heldBy,
+  workspaceSandboxReader,
+  type WorkspaceScope,
 } from '@nodal-agents/db';
 import {
   buildSystemPrompt,
@@ -378,13 +380,16 @@ export async function takeCliTurnCheckpoints(
   jobId: string,
   workspaces: ReadonlyArray<{ label: string; path: string }>,
   turn: number,
+  /** Le job : l'interrupteur du bac à sable de son espace couvre ces git aussi (#876). */
+  scope: WorkspaceScope,
 ): Promise<void> {
   const store = checkpointsRoot();
   // Les git de la photo dans le bac à sable quand il est là (#628, audit P1-2 :
   // un sous-dépôt imbriqué du workspace fait exécuter sa config par `snapshot`).
   // Une session pour la boucle, tuée à la fin.
-  await withNodalPrograms((programs) =>
-    snapshotEachWorkspace(db, jobId, workspaces, turn, store, programs),
+  await withNodalPrograms(
+    (programs) => snapshotEachWorkspace(db, jobId, workspaces, turn, store, programs),
+    { workspace: workspaceSandboxReader(db, scope) },
   );
 }
 
@@ -718,10 +723,16 @@ export async function runCliRuntimeJob(args: {
       // P11 — l'état d'avant du tour, AVANT que la CLI touche au disque. Même
       // place et même filet que l'intention ci-dessus : un échec relâche les
       // verrous et refuse le tour. Voir takeCliTurnCheckpoints.
-      await takeCliTurnCheckpoints(db, jobId, args.workspaces, cliTurn);
+      await takeCliTurnCheckpoints(db, jobId, args.workspaces, cliTurn, {
+        entityId: job.entityId,
+        agentId: agentRow.id,
+      });
     }
 
-    const workspaceGit = await probeWorkspaceGit(cwd);
+    const workspaceGit = await probeWorkspaceGit(
+      cwd,
+      workspaceSandboxReader(db, { entityId: job.entityId, agentId: agentRow.id }),
+    );
     // Le fil et son projet courant (P6) — `null` pour un job hors conversation,
     // ou dont l'uuid date d'avant P6 et ne pointe aucune ligne.
     const conversation = job.conversationId

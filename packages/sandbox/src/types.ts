@@ -25,6 +25,17 @@ export type SandboxUnavailableCode =
   /** Les ports de Nodal à refuser n'ont pas pu être déterminés (config absente). */
   | 'SANDBOX_NODAL_PORTS_UNKNOWN';
 
+/**
+ * L'utilisateur a COUPÉ le bac à sable de l'espace (#876, Réglages → Safety →
+ * Sandbox) : la commande tourne sans confinement parce qu'il l'a voulu, pas
+ * parce que la machine ne le permet pas. Un code à lui, jamais un code
+ * d'indisponibilité détourné : le bandeau et le résultat disent la vraie raison.
+ */
+export const SANDBOX_DISABLED = 'SANDBOX_DISABLED';
+
+/** Pourquoi une commande n'a pas été confinée : la machine, ou l'utilisateur. */
+export type SandboxUnconfinedCode = SandboxUnavailableCode | typeof SANDBOX_DISABLED;
+
 export type SandboxStatus =
   | {
       readonly state: 'available';

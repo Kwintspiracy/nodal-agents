@@ -6,14 +6,20 @@
 // d'appels.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { closeJobProcessScope, createSandbox, jobProcessScope } from '@nodal-agents/sandbox';
+import {
+  SandboxStartError,
+  closeJobProcessScope,
+  createSandbox,
+  jobProcessScope,
+  noWorkspaceSandbox,
+} from '@nodal-agents/sandbox';
 import { mkdtemp, rm, writeFile, access, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mustDie, readCounter, watchProcess } from '@nodal-agents/test-kit';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, codeProjects } from '@nodal-agents/db';
+import { eq, codeProjects, entities, workspaceSandboxReader } from '@nodal-agents/db';
 import {
   ENV_ALLOWLIST_VERSION,
   SHELL_POLICY_VERSION,
@@ -207,7 +213,7 @@ describe('code-project — runProof @cap:verifier-un-livrable/moteur', () => {
         async (r) => {
           seen.push(r);
         },
-        { writableRoots: [dir], jobId },
+        { writableRoots: [dir], jobId, workspace: noWorkspaceSandbox },
       );
       expect(seen.map((r) => r.sandbox)).toEqual(['SANDBOX_NOT_IMPLEMENTED']);
     } finally {
@@ -215,8 +221,71 @@ describe('code-project — runProof @cap:verifier-un-livrable/moteur', () => {
     }
   });
 
+  it('the workspace switch covers proof commands: off, each one runs and records SANDBOX_DISABLED; on again, the next proof is confined (#876)', async () => {
+    const jobId = 'code-project-switch';
+    const opened: (readonly string[])[] = [];
+    jobProcessScope(
+      jobId,
+      createSandbox(
+        {
+          probe: async () => ({ state: 'available', backend: 'fake-backend' }),
+          openContainer: async (roots) => {
+            opened.push(roots);
+            throw new SandboxStartError('FAKE_CONTAINER: this proof would have been confined');
+          },
+        },
+        { log: () => {} },
+      ),
+    );
+    const workspace = workspaceSandboxReader(db, seed.entityId);
+    try {
+      const ok = await script('switch-ok.js', "process.stdout.write('ran')");
+      const commands = [
+        { command: ok, timeoutSeconds: 20 },
+        { command: ok, timeoutSeconds: 20 },
+      ];
+      await db
+        .update(entities)
+        .set({ sandboxEnabled: false })
+        .where(eq(entities.id, seed.entityId));
+      const off: ProofCommandRecord[] = [];
+      const offProof = await codeProjectVerifier.runProof(
+        readyOf(commands),
+        async (r) => {
+          off.push(r);
+        },
+        { writableRoots: [dir], jobId, workspace },
+      );
+      expect(offProof.verdict).toBe('green');
+      expect(off.map((r) => r.sandbox)).toEqual(['SANDBOX_DISABLED', 'SANDBOX_DISABLED']);
+      expect(off.map((r) => r.stdoutTail)).toEqual(['ran', 'ran']);
+      expect(opened).toHaveLength(0);
+
+      await db.update(entities).set({ sandboxEnabled: true }).where(eq(entities.id, seed.entityId));
+      const on: ProofCommandRecord[] = [];
+      const onProof = await codeProjectVerifier.runProof(
+        readyOf(commands),
+        async (r) => {
+          on.push(r);
+        },
+        { writableRoots: [dir], jobId, workspace },
+      );
+      expect(onProof.verdict).toBe('infra_error');
+      expect(on.map((r) => r.sandbox)).toEqual(['confined']);
+      expect(opened).toHaveLength(1);
+      expect(opened[0]).toContain(dir);
+    } finally {
+      await db.update(entities).set({ sandboxEnabled: true }).where(eq(entities.id, seed.entityId));
+      await closeJobProcessScope(jobId);
+    }
+  });
+
   /** Le dossier de test est le seul inscriptible de la preuve (#628). */
-  const scope = (): ProofScope => ({ writableRoots: [dir], jobId: 'code-project-test' });
+  const scope = (): ProofScope => ({
+    writableRoots: [dir],
+    jobId: 'code-project-test',
+    workspace: noWorkspaceSandbox,
+  });
   const readyOf = (commands: VerifyCommand[]): ReadyConfig => ({
     kind: 'ready',
     manifestHash: manifestHashOf(commands, projectKey(projectPath)),

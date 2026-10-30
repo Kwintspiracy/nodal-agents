@@ -22,6 +22,13 @@ import { runCommandTool } from '../builtin/run-command';
 import { runSkillScriptTool } from '../builtin/run-skill-script';
 import { codeTaskTool } from '../builtin/code-task/index';
 import type { ToolContext } from '../types';
+import { workspaceDb, type WorkspaceDb } from './workspace-db';
+
+// Une vraie base : la commande relit le réglage du bac à sable de l'espace (#876).
+let wdb: WorkspaceDb;
+beforeAll(async () => {
+  wdb = await workspaceDb();
+});
 
 let racine: string;
 let comfy: string;
@@ -49,8 +56,8 @@ function ctx(workspaces: ToolContext['workspaces']): ToolContext {
   return {
     jobId: 'job-paths',
     agentId: 'agent-paths',
-    entityId: 'entity-paths',
-    db: {} as ToolContext['db'],
+    entityId: wdb.entityId,
+    db: wdb.db,
     jobChatId: null,
     workspaces,
     skillStoreDir: store,

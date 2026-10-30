@@ -66,6 +66,7 @@ export * from './verify-command-discovery';
 export * from './types/verification';
 export * from './verification-manifest';
 export * from './verification-surfaces';
+export * from './sandbox-settings';
 export * from './fragment-diff';
 export * from './failure-codes';
 export * from './job-result-kind';

@@ -91,7 +91,7 @@
 // des données.
 
 import { randomUUID } from 'node:crypto';
-import { and, eq, isNull, lt, or, sql, ownJobRow } from '@nodal-agents/db';
+import { and, eq, isNull, lt, or, sql, ownJobRow, workspaceSandboxReader } from '@nodal-agents/db';
 import {
   agentJobs,
   entities,
@@ -955,7 +955,15 @@ export async function finalizeJobSuccess(
       writableRoots = withJobFolder(agentFolders, job.jobFolder).map((w) => w.path);
     }
 
-    return { entityId: job.entityId, plans, maxReparations, proofScope: { writableRoots, jobId } };
+    // Le réglage du bac à sable de l'espace, relu par le moteur à chaque
+    // commande de preuve (#876) — sur `db`, la preuve tournant hors transaction.
+    const workspace = workspaceSandboxReader(db, { entityId: job.entityId, agentId: job.agentId });
+    return {
+      entityId: job.entityId,
+      plans,
+      maxReparations,
+      proofScope: { writableRoots, jobId, workspace },
+    };
   });
 
   if (!opened) return alreadyTerminal;

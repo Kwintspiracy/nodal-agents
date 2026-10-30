@@ -29,7 +29,8 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from '../types';
 import { terminalCard } from '../presenters';
 import { resolveSkillRoot, resolveWithinSkill } from './skill-ops/skill-files';
-import { jobProcessScope, openProcessScope } from '@nodal-agents/sandbox';
+import { jobProcessScope, noWorkspaceSandbox, openProcessScope } from '@nodal-agents/sandbox';
+import { workspaceSandboxReader } from '@nodal-agents/db';
 import { buildChildEnv } from './child-env';
 import {
   SHARED_WORKSPACE_LABEL,
@@ -81,8 +82,9 @@ export function resolvePythonInterpreter(): Promise<string | null> {
           cwd: tmpdir(),
           timeoutMs: 5_000,
           env: buildChildEnv(process.env),
-          // Nothing to write: a `--version` needs no folder.
-          confinement: { writableRoots: [] },
+          // Nothing to write: a `--version` needs no folder. It belongs to no
+          // workspace either, so it follows the machine's sandbox (#876).
+          confinement: { writableRoots: [], workspace: noWorkspaceSandbox },
           scope,
         });
         if (probe.outcome.kind === 'exit' && probe.outcome.exitCode === 0) return candidate;
@@ -408,7 +410,10 @@ async function runScript(
     // DATABASE_URL/WORKER_SECRET/LLM keys via os.environ / process.env.
     env: buildChildEnv(process.env, envExtras),
     keep: 'head',
-    confinement: { writableRoots },
+    confinement: {
+      writableRoots,
+      workspace: workspaceSandboxReader(ctx.db, { entityId: ctx.entityId, agentId: ctx.agentId }),
+    },
     // The job's scope: what the script leaves running lives until the job ends.
     scope: jobProcessScope(ctx.jobId),
     ...(ctx.signal ? { signal: ctx.signal } : {}),

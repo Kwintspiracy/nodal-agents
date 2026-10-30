@@ -19,6 +19,7 @@
 
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { DeliverableType, RunVerdict, VerifyCommand } from '@nodal-agents/shared';
+import type { WorkspaceSandboxReader } from '@nodal-agents/sandbox';
 
 /** Le livrable visé : l'espace qui le possède, et sa clé canonique. */
 export interface VerifierTarget {
@@ -139,6 +140,12 @@ export interface ProofResult {
  */
 export interface ProofScope {
   readonly writableRoots: readonly string[];
+  /**
+   * Le réglage du bac à sable de l'espace du job (#876), relu à CHAQUE
+   * commande de preuve : coupé, la preuve tourne sans confinement et chaque
+   * trace le dit (`verification_runs.sandbox` = `SANDBOX_DISABLED`).
+   */
+  readonly workspace: WorkspaceSandboxReader;
   /**
    * Le job dont la preuve fait partie : ses commandes tournent dans le
    * périmètre de ce job (@nodal-agents/sandbox, `jobProcessScope`), et ce

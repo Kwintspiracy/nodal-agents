@@ -34,6 +34,8 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'Safety',
     lede: 'What your agents may do on their own, and what stops them.',
     ids: [
+      // En tête (#876) : ce qui confine les commandes avant ce qui les freine.
+      'sandbox',
       'auto-run-brake',
       'verification',
       'repair-turns',

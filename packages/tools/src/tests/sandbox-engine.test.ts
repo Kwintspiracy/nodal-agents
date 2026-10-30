@@ -21,6 +21,8 @@ import {
   SandboxStartError,
   TOOL_CACHE_VARIABLES,
   createSandbox,
+  noWorkspaceSandbox,
+  type ConfinementPolicy,
   type SandboxBackend,
 } from '@nodal-agents/sandbox';
 import { runShellCommand, runCommandSequence } from '../builtin/shell-engine';
@@ -98,7 +100,7 @@ describe('runShellCommand — bac à sable indisponible @cap:executer-une-comman
       cwd: dir,
       timeoutMs: 20_000,
       env,
-      confinement: { writableRoots: [dir] },
+      confinement: { writableRoots: [dir], workspace: noWorkspaceSandbox },
       scope,
     });
     const second = await runShellCommand({
@@ -106,7 +108,7 @@ describe('runShellCommand — bac à sable indisponible @cap:executer-une-comman
       cwd: dir,
       timeoutMs: 20_000,
       env,
-      confinement: { writableRoots: [dir] },
+      confinement: { writableRoots: [dir], workspace: noWorkspaceSandbox },
       scope,
     });
     // Sans bac à sable, rien n'empêche l'écriture dehors : c'est la transition D2.
@@ -142,7 +144,7 @@ describe('runShellCommand — bac à sable indisponible @cap:executer-une-comman
       cwd: dir,
       timeoutMs: 20_000,
       env,
-      confinement: { writableRoots: [dir] },
+      confinement: { writableRoots: [dir], workspace: noWorkspaceSandbox },
       scope,
     });
     expect(r.stdout).toBe('ran');
@@ -172,7 +174,7 @@ describe('runShellCommand — bac à sable disponible qui ne démarre pas @cap:e
       cwd: dir,
       timeoutMs: 20_000,
       env,
-      confinement: { writableRoots: [dir] },
+      confinement: { writableRoots: [dir], workspace: noWorkspaceSandbox },
       scope,
     });
     expect(r.outcome).toEqual({
@@ -198,7 +200,7 @@ describe('runShellCommand — bac à sable disponible qui ne démarre pas @cap:e
     const seq = await runCommandSequence([{ command: `"${node}" -e "0"`, timeoutSeconds: 20 }], {
       cwd: dir,
       env,
-      confinement: { writableRoots: [dir] },
+      confinement: { writableRoots: [dir], workspace: noWorkspaceSandbox },
       scope,
       onCommandDone: async () => {},
     });
@@ -221,7 +223,7 @@ describe('runShellCommand — le Stop du job (#750) @cap:executer-une-commande/m
       cwd: dir,
       timeoutMs: 120_000,
       env,
-      confinement: { writableRoots: [dir] },
+      confinement: { writableRoots: [dir], workspace: noWorkspaceSandbox },
       scope,
       signal: controller.signal,
     });
@@ -244,7 +246,7 @@ describe('runShellCommand — le Stop du job (#750) @cap:executer-une-commande/m
       cwd: dir,
       timeoutMs: 20_000,
       env,
-      confinement: { writableRoots: [dir] },
+      confinement: { writableRoots: [dir], workspace: noWorkspaceSandbox },
       scope,
       signal: controller.signal,
     });
@@ -269,7 +271,7 @@ describe('runShellCommand — sans bac à sable, ce qu’une commande laisse tou
       cwd: dir,
       timeoutMs: 20_000,
       env,
-      confinement: { writableRoots: [dir] },
+      confinement: { writableRoots: [dir], workspace: noWorkspaceSandbox },
       scope,
     });
   // Le fichier peut exister avant que le serveur ait fini de l'écrire : on
@@ -291,7 +293,7 @@ describe('runShellCommand — sans bac à sable, ce qu’une commande laisse tou
       cwd: dir,
       timeoutMs: 20_000,
       env,
-      confinement: { writableRoots: [dir] },
+      confinement: { writableRoots: [dir], workspace: noWorkspaceSandbox },
       scope,
     });
 
@@ -338,7 +340,7 @@ describe('runShellCommand — contrat et environnement communs aux deux régimes
         cwd: dir,
         timeoutMs: 1000,
         env,
-        confinement: undefined as unknown as { writableRoots: string[] },
+        confinement: undefined as unknown as ConfinementPolicy,
         scope,
       }),
     ).toThrow('CONFINEMENT_REQUIRED');
@@ -348,7 +350,7 @@ describe('runShellCommand — contrat et environnement communs aux deux régimes
         cwd: dir,
         timeoutMs: 1000,
         env,
-        confinement: { writableRoots: [dir] },
+        confinement: { writableRoots: [dir], workspace: noWorkspaceSandbox },
         scope: undefined as unknown as JobProcessScope,
       }),
     ).toThrow('SCOPE_REQUIRED');
@@ -376,7 +378,7 @@ describe('runShellCommand — contrat et environnement communs aux deux régimes
         cwd: missing,
         timeoutMs: 5_000,
         env,
-        confinement: { writableRoots: [dir] },
+        confinement: { writableRoots: [dir], workspace: noWorkspaceSandbox },
         scope,
       });
       expect(r.outcome).toEqual({ kind: 'spawn_error', message: `CWD_NOT_FOUND: ${missing}` });
@@ -389,7 +391,7 @@ describe('runShellCommand — contrat et environnement communs aux deux régimes
       cwd: dir,
       timeoutMs: 20_000,
       env,
-      confinement: { writableRoots: [dir] },
+      confinement: { writableRoots: [dir], workspace: noWorkspaceSandbox },
       scope: scopeWith('cache-env'),
     });
     const seen = JSON.parse(r.stdout) as Record<string, string>;
@@ -415,7 +417,7 @@ describe('runShellCommand — contrat et environnement communs aux deux régimes
       cwd: dir,
       timeoutMs: 30_000,
       env,
-      confinement: { writableRoots: [dir] },
+      confinement: { writableRoots: [dir], workspace: noWorkspaceSandbox },
       scope,
     });
     expect(r.outcome).toEqual({ kind: 'exit', exitCode: 0 });

@@ -21,6 +21,7 @@ import {
   mxcBackend,
   nodalProgramsSandbox,
   withNodalPrograms,
+  noWorkspaceSandbox,
 } from '@nodal-agents/sandbox';
 import { restoreCheckpoint, snapshot } from '@nodal-agents/checkpoints';
 import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
@@ -86,7 +87,9 @@ async function plantedAndSnapshotted(): Promise<string> {
   hostGit(sub, 'add', 'f.txt');
   hostGit(sub, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'init');
   await confined(`execFileSync(git, ['config', 'core.fsmonitor', hook]);\n`, sub);
-  const one = await withNodalPrograms((programs) => snapshot(store, ws, 'one', { programs }));
+  const one = await withNodalPrograms((programs) => snapshot(store, ws, 'one', { programs }), {
+    workspace: noWorkspaceSandbox,
+  });
   await confined(
     `fs.writeFileSync('sub/f.txt', 'changed ' + Date.now());\n` +
       `fs.writeFileSync('a.txt', 'changed ' + Date.now());\n`,

@@ -15,8 +15,21 @@ type Props = {
    *  a border-top + bg-canvas/40 pad (per the handoff's `.ed-row[expanded]`
    *  treatment used for per-op whitelisting). */
   expanded?: ReactNode;
+  /**
+   * `card` (default): the row is its own bordered card, as in the Composer.
+   * `list`: the row is one line of a list inside a card — no frame of its
+   * own, a rule above it (the Sandbox section's folder lists, #876).
+   */
+  frame?: 'card' | 'list';
+  /** The row is shown but not in force (a setting kept while switched off). */
+  dimmed?: boolean;
   className?: string;
 };
+
+const FRAME = {
+  card: 'overflow-hidden rounded-[10px] border border-rule-2 bg-paper',
+  list: 'border-t border-rule-2',
+} as const;
 
 /**
  * EdRow — canonical `.ed-row` row used inside the Agent Composer
@@ -35,6 +48,8 @@ export default function EdRow({
   meta,
   actions,
   expanded,
+  frame = 'card',
+  dimmed = false,
   className = '',
 }: Props) {
   return (
@@ -43,7 +58,7 @@ export default function EdRow({
        structure. Il suffisait de changer le rayon pour les rendre muets. */
     <div
       data-testid="ed-row"
-      className={`overflow-hidden rounded-[10px] border border-rule-2 bg-paper ${className}`}
+      className={`${FRAME[frame]} ${dimmed ? 'opacity-50' : ''} ${className}`}
     >
       {/* ⚠️ LA RANGÉE SE REPLIE QUAND ELLE EST ÉTROITE (issue #310), et c'est le
           COMPOSANT qui le décide, pas l'appelant. Dans la grille de trois

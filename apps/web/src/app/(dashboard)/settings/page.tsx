@@ -43,6 +43,8 @@ import AutostartSection from './AutostartSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
 import SettingsSections from './SettingsSections.tsx';
+import SandboxSection from './SandboxSection.tsx';
+import { getSandboxAction } from '@/lib/sandbox-actions.ts';
 import { resolveSettingsPage } from './settings-pages.ts';
 import { buildSettingRows, type SettingId } from './settings-rows.ts';
 import PageShell from '@/components/ui/PageShell';
@@ -75,6 +77,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     installNotesResult,
     tzResult,
     autostartResult,
+    sandboxResult,
   ] = await Promise.all([
     getSettingsAction(),
     getSecuritySettingsAction(),
@@ -90,6 +93,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     getInstallNotesAction(),
     getWorkspaceTimezoneAction(),
     getAutostartAction(),
+    getSandboxAction(),
   ]);
   const workspaces: WorkspaceRow[] = wsResult.ok ? wsResult.data : [];
 
@@ -111,6 +115,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     workerSecretConfigured: s.workerSecretConfigured,
     security: securityResult.ok ? securityResult.data : null,
     network: networkResult.ok ? networkResult.data : null,
+    sandbox: sandboxResult.ok ? sandboxResult.data : null,
     autoRunPause: autoRunPauseResult.ok ? autoRunPauseResult.data : null,
     verification: verificationSurfacesResult.ok ? verificationSurfacesResult.data : null,
     proofRepair: proofRepairResult.ok ? proofRepairResult.data : null,
@@ -132,6 +137,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     network: networkResult.ok ? <NetworkForm initial={networkResult.data} /> : null,
     password: s.authMode === 'local-auth' ? <PasswordForm /> : null,
     'worker-secret': <WorkerSecretPanel configured={s.workerSecretConfigured} />,
+    sandbox: sandboxResult.ok ? <SandboxSection initial={sandboxResult.data} /> : null,
     'auto-run-brake': autoRunPauseResult.ok ? (
       <AutoRunPauseSection initial={autoRunPauseResult.data} />
     ) : null,

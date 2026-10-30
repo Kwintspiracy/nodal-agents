@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
-type Variant = 'agent' | 'skill' | 'conn' | 'ink' | 'neutral';
-type Size = 'sm' | 'md' | 'lg' | 'xl';
+type Variant = 'agent' | 'skill' | 'conn' | 'ink' | 'neutral' | 'warn' | 'outline';
+type Size = 'sm' | 'md' | 'lg' | 'xl' | 'xxl';
 type Shape = 'round' | 'square';
 
 const VARIANT_BG: Record<Variant, string> = {
@@ -10,6 +10,10 @@ const VARIANT_BG: Record<Variant, string> = {
   conn: 'bg-conn-vivid text-white',
   ink: 'bg-ink text-canvas',
   neutral: 'bg-hover text-ink-3',
+  // #876 : un fait qui demande l'attention (un dossier introuvable, un bac à
+  // sable coupé), et une place vide (un dossier retiré).
+  warn: 'bg-warn-bg text-warn',
+  outline: 'border border-dashed border-rule-2 text-ink-4',
 };
 
 const SIZE_BOX: Record<Size, string> = {
@@ -17,6 +21,8 @@ const SIZE_BOX: Record<Size, string> = {
   md: 'h-[34px] w-[34px]',
   lg: 'h-[38px] w-[38px]',
   xl: 'h-[42px] w-[42px]',
+  // #876 : le pictogramme d'état d'une carte (la section Sandbox).
+  xxl: 'h-12 w-12',
 };
 
 const SIZE_ICON: Record<Size, string> = {
@@ -24,6 +30,7 @@ const SIZE_ICON: Record<Size, string> = {
   md: '[&_svg]:h-[14px] [&_svg]:w-[14px]',
   lg: '[&_svg]:h-[16px] [&_svg]:w-[16px]',
   xl: '[&_svg]:h-[18px] [&_svg]:w-[18px]',
+  xxl: '[&_svg]:h-6 [&_svg]:w-6',
 };
 
 type Props = {

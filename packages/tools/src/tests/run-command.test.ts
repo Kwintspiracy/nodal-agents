@@ -16,6 +16,13 @@ import { computeToolWhitelist } from '../whitelist';
 import type { ToolContext, ToolDefinition } from '../types';
 import { presentToolResult } from '../cards';
 import type { z } from 'zod';
+import { workspaceDb, type WorkspaceDb } from './workspace-db';
+
+// Une vraie base : la commande relit le réglage du bac à sable de l'espace (#876).
+let wdb: WorkspaceDb;
+beforeAll(async () => {
+  wdb = await workspaceDb();
+});
 
 let workspaceDir: string;
 
@@ -37,13 +44,13 @@ afterAll(async () => {
   }
 });
 
-// run_command.execute only reads ctx.workspaces — db is never touched.
+// run_command relit le réglage du bac à sable de l'espace dans la base (#876).
 function ctx(overrides?: Partial<ToolContext>): ToolContext {
   return {
     jobId: 'job-1',
     agentId: 'agent-1',
-    entityId: 'entity-1',
-    db: undefined as unknown as ToolContext['db'],
+    entityId: wdb.entityId,
+    db: wdb.db,
     jobChatId: null,
     workspaces: [{ label: 'ws', path: workspaceDir }],
     ...overrides,

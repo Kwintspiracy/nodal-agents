@@ -41,6 +41,7 @@ vi.mock('@nodal-agents/shared/git-binary', async (importOriginal) => {
 import { resolveGitBinary, _resetGitBinaryCache } from '@nodal-agents/shared/git-binary';
 
 import { probeWorkspaceGit } from '../../lib/workspace-git.ts';
+import { noWorkspaceSandbox } from '@nodal-agents/sandbox';
 
 const run = promisify(execFile);
 
@@ -127,7 +128,7 @@ describe('la sonde git du workspace @cap:travailler-sur-des-fichiers/moteur', ()
     // que la question soit vraiment reposée avec le faux en place.
     _resetGitBinaryCache();
 
-    const etat = await probeWorkspaceGit(depot);
+    const etat = await probeWorkspaceGit(depot, noWorkspaceSandbox);
 
     // Une VRAIE réponse, pas un `null` : le git du système a tourné.
     expect(etat, 'la sonde ne rend rien : un faux git a pu répondre').not.toBeNull();
@@ -148,7 +149,7 @@ describe('la sonde git du workspace @cap:travailler-sur-des-fichiers/moteur', ()
     resolutionForcee.valeur = null;
     try {
       expect(
-        await probeWorkspaceGit(depot),
+        await probeWorkspaceGit(depot, noWorkspaceSandbox),
         'la sonde a sondé alors que la résolution a dit « aucun git »',
       ).toBeNull();
     } finally {

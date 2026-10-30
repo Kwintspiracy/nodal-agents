@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommandSequence } from '../builtin/shell-engine';
 import { buildChildEnv } from '../builtin/child-env';
-import { JobProcessScope } from '@nodal-agents/sandbox';
+import { JobProcessScope, noWorkspaceSandbox } from '@nodal-agents/sandbox';
 
 let dir: string;
 const node = process.execPath;
@@ -22,6 +22,7 @@ const confinement = {
   get writableRoots() {
     return [dir];
   },
+  workspace: noWorkspaceSandbox,
 };
 
 beforeAll(async () => {

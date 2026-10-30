@@ -19,6 +19,7 @@ import {
   pendingHeadsOfConversation,
   approvalsOldestFirst,
   decryptMcpServerEnv,
+  workspaceSandboxReader,
 } from '@nodal-agents/db';
 import {
   agentJobs,
@@ -2210,7 +2211,12 @@ async function runJobTracked(
     agentWorkspacesList.map((w) => w.path),
     sharedWorkspacePath,
   );
-  const workspaceGit = gitProbePath ? await probeWorkspaceGit(gitProbePath) : null;
+  const workspaceGit = gitProbePath
+    ? await probeWorkspaceGit(
+        gitProbePath,
+        workspaceSandboxReader(db, { entityId: job.entityId, agentId: agentRow.id }),
+      )
+    : null;
   // Le fil dont ce job est un tour, et son projet courant (P6). `null` quand le
   // job n'appartient à aucune conversation, ou quand son uuid date d'avant P6 et
   // ne pointe aucune ligne — le bloc `## Conversation` est alors simplement omis.

@@ -12,6 +12,7 @@
 
 import { conversationIdsAsHandles } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import type { CommandsPlacement } from '@nodal-agents/shared';
 import { runClaudeTurn, ClaudeCliNotFoundError } from './claude-turn.ts';
 import type { ClaudeTurnOptions, ClaudeTurnResult } from './claude-turn.ts';
 import {
@@ -51,6 +52,25 @@ export const SERVED_CLI_RUNTIMES: readonly string[] = Object.keys(RUNTIMES);
  */
 export function resolveRuntime(runtime: string): RuntimeBinding | null {
   return RUNTIMES[runtime] ?? null;
+}
+
+/**
+ * OÙ TOURNENT LES COMMANDES d'un agent de ce runtime (#876) — lu par l'écran du
+ * bac à sable (GET /api/sandbox), décidé ICI, à côté du tableau qui dit
+ * comment chaque runtime est servi :
+ *   - `nodal` (la valeur par défaut de `agents.runtime`) : ses commandes sont
+ *     les outils de Nodal (`run_command`, `run_skill_script`), donc le moteur
+ *     shell, donc le bac à sable → `sandbox` ;
+ *   - un runtime de ce tableau : la CLI de code lance ses commandes elle-même,
+ *     dans son propre processus (`JobProcessScope.startOwned`), hors du bac à
+ *     sable de Nodal → `outside` ;
+ *   - toute autre valeur : un runtime que ce runner ne sert pas (une base plus
+ *     récente) → `unknown`, jamais supposé confiné.
+ * Ajouter une CLI au tableau la range d'elle-même dans `outside`.
+ */
+export function commandsPlacement(runtime: string): CommandsPlacement {
+  if (resolveRuntime(runtime)) return 'outside';
+  return runtime === 'nodal' ? 'sandbox' : 'unknown';
 }
 
 /**

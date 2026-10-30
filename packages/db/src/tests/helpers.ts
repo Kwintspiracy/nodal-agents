@@ -83,7 +83,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
         CHECK (max_run_cost_usd >= 0 AND max_run_cost_usd <= 1000),
       max_run_hours real NOT NULL DEFAULT 0
         CONSTRAINT entities_max_run_hours_check
-        CHECK (max_run_hours >= 0 AND max_run_hours <= 72)
+        CHECK (max_run_hours >= 0 AND max_run_hours <= 72),
+      -- mirrors migration 0153
+      sandbox_enabled boolean NOT NULL DEFAULT true,
+      sandbox_folders jsonb NOT NULL DEFAULT '{"added":[],"removed":[]}'
     );
 
     CREATE TABLE IF NOT EXISTS entity_members (

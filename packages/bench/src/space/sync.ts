@@ -86,6 +86,10 @@ export const ENTITY_POLICY = {
   proofRepairAttempts: 'copy',
   maxRunCostUsd: 'set',
   maxRunHours: 'copy',
+  // Le bac à sable de l'espace (#876) : l'interrupteur se copie, comme le frein ;
+  // les dossiers ajoutés sont les vrais répertoires du propriétaire, jamais copiés.
+  sandboxEnabled: 'copy',
+  sandboxFolders: 'own',
 } as const satisfies Record<string, ColumnPolicy>;
 
 export const AGENT_POLICY = {

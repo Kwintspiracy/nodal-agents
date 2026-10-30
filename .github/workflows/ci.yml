@@ -48,6 +48,11 @@ permissions:
 # Hors périmètre : le cache turbo distant (payant, décision de Quentin) et
 # rendre les tests eux-mêmes plus rapides (#280, dette 0.9.2).
 
+# Images de runner explicites (issue #882) : `*-latest` bouge sans que le dépôt
+# change. Le 30/10/2026 `ubuntu-latest` est passé à Ubuntu 26.04 et Playwright
+# 1.60 a refusé d'y installer Chromium, sur toutes les PR. Passer à 26.04 se
+# fera exprès, avec une version de Playwright qui la connaît. Garde :
+# scripts/tests/runner-images.test.mjs (étape « Script tests » de `checks`).
 jobs:
   # ── Contrôles statiques ─────────────────────────────────────────────────────
   # Typecheck 3 min 56 s à froid, lint 1 min 04 s, format 30 s, les scans et
@@ -55,7 +60,7 @@ jobs:
   # 6 min 30 s. Mesuré à 6 min 51 s sur la PR de #291 (run 35517309819,
   # cache turbo froid pour cette lignée) → budget 14.
   checks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v5
@@ -215,7 +220,7 @@ jobs:
   # et 3 min 20 s, runner 3 min 37 s et 3 min 16 s, packages 4 min 45 s,
   # install et builds des dépendances compris → budget 10.
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -282,7 +287,7 @@ jobs:
   # 23 min et c'est lui que le délai coupait. Mesuré à 3 min 25 s sur la PR de
   # #291 (run 35517309819, cache froid) → budget 7.
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
@@ -343,7 +348,7 @@ jobs:
   # inside better-auth's optional peers. The install docs tell users to update.
   pack-smoke:
     name: pack-smoke (npm ${{ matrix.npm }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Steps bounded below: 10 + 2 + 14 = 26, + 5 min of margin.
     timeout-minutes: 31
     strategy:
@@ -397,7 +402,7 @@ jobs:
   # tous les fichiers ici coûterait un ordre de grandeur de plus que ce que ça
   # rapporte ; la mesure nocturne (`qa.yml`) les joue TOUS.
   e2e-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The job bound is the SUM of its steps' bounds, so no step can be cut by
     # the job before its own bound (review of PR #516): ~2 setup, 10 install,
     # 2 Playwright version, 15 Playwright install, 10 boot, 10 journeys, ~2

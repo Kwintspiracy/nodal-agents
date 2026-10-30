@@ -33,6 +33,13 @@ import { mustDie, readCounter, watchRegistry } from '@nodal-agents/test-kit';
 import { runCommandTool } from '../builtin/run-command';
 import { resolvePythonInterpreter } from '../builtin/run-skill-script';
 import type { ToolContext } from '../types';
+import { workspaceDb, type WorkspaceDb } from './workspace-db';
+
+// Une vraie base : la commande relit le réglage du bac à sable de l'espace (#876).
+let wdb: WorkspaceDb;
+beforeAll(async () => {
+  wdb = await workspaceDb();
+});
 
 const isWindows = process.platform === 'win32';
 
@@ -63,8 +70,8 @@ function ctx(jobId = 'job-sbx', signal?: AbortSignal): ToolContext {
     jobId,
     ...(signal ? { signal } : {}),
     agentId: 'agent-sbx',
-    entityId: 'entity-sbx',
-    db: undefined as unknown as ToolContext['db'],
+    entityId: wdb.entityId,
+    db: wdb.db,
     jobChatId: null,
     workspaces: [{ label: 'ws', path: ws }],
   };

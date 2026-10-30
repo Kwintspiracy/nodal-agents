@@ -31,6 +31,7 @@ import {
   mxcBackend,
   nodalProgramsSandbox,
   withNodalPrograms,
+  noWorkspaceSandbox,
 } from '@nodal-agents/sandbox';
 import { restoreCheckpoint, snapshot, listCheckpoints } from '@nodal-agents/checkpoints';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -147,10 +148,10 @@ describe.runIf(available)(
 
     it('les deux phases du constat lisent le dépôt piégé sans rien lancer sur l’hôte, et constatent l’écriture', async () => {
       await plantedRepo();
-      const before = await snapshotGitAvant([ws]);
+      const before = await snapshotGitAvant([ws], noWorkspaceSandbox);
       expect(before.length).toBe(1);
       await writeFile(join(ws, 'nouveau.txt'), 'écrit pendant l’appel\n');
-      const after = await constatedGitWrites(before);
+      const after = await constatedGitWrites(before, noWorkspaceSandbox);
       expect(after.writes.map((w) => w.path)).toContain(fwd(join(ws, 'nouveau.txt')));
       expect(existsSync(marker), 'the planted command ran on the HOST').toBe(false);
     }, 120_000);
@@ -230,21 +231,27 @@ describe.runIf(available)(
 
     it('le repli du constat sur l’index figé ne lance rien sur l’hôte', async () => {
       await plantedSubRepo();
-      await withNodalPrograms((programs) => snapshot(store, ws, 'one', { programs }));
+      await withNodalPrograms((programs) => snapshot(store, ws, 'one', { programs }), {
+        workspace: noWorkspaceSandbox,
+      });
       await touchSub();
       // Le workspace n'est pas un dépôt : le constat se replie sur l'index de
       // son instantané (statusAgainstFrozenIndex), qui relit le sous-dépôt.
-      const before = await snapshotGitAvant([ws], { store, workspaces: [ws] });
+      const before = await snapshotGitAvant([ws], noWorkspaceSandbox, { store, workspaces: [ws] });
       expect(before.some((b) => b.frozen !== undefined)).toBe(true);
-      await constatedGitWrites(before);
+      await constatedGitWrites(before, noWorkspaceSandbox);
       expect(existsSync(marker), 'the planted command ran on the HOST').toBe(false);
     }, 120_000);
 
     it('la restauration ne lance rien sur l’hôte', async () => {
       await plantedSubRepo();
-      const one = await withNodalPrograms((programs) => snapshot(store, ws, 'one', { programs }));
+      const one = await withNodalPrograms((programs) => snapshot(store, ws, 'one', { programs }), {
+        workspace: noWorkspaceSandbox,
+      });
       await touchSub();
-      await withNodalPrograms((programs) => restoreCheckpoint(store, ws, one!.sha, programs));
+      await withNodalPrograms((programs) => restoreCheckpoint(store, ws, one!.sha, programs), {
+        workspace: noWorkspaceSandbox,
+      });
       expect(existsSync(marker), 'the planted command ran on the HOST').toBe(false);
     }, 120_000);
   },
