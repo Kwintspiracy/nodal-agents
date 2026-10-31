@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { createMcpTools, type McpToolset } from '../index.ts';
 import type { McpToolOutput } from '../result.ts';
 import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
-import type { ToolContext, ToolImage } from '@nodal-agents/tools';
+import type { ToolContext, ToolAttachment } from '@nodal-agents/tools';
 
 const FIXTURE = fileURLToPath(new URL('./fixtures/mcp-result-server.mjs', import.meta.url));
 const SHAPES = ['mixed', 'structured', 'resources', 'echoed', 'blank', 'error', 'empty'] as const;
@@ -97,9 +97,9 @@ describe('an MCP tool result, kept whole and read by the model @cap:connecter-un
   });
 
   it('the image block is handed to the seam: attached when admitted, its reason said when not', async () => {
-    const offered: ToolImage[] = [];
+    const offered: ToolAttachment[] = [];
     const attached = await call('mixed', {
-      attachImage: (image) => {
+      attachForModel: (image) => {
         offered.push(image);
         return { attached: true };
       },
@@ -121,7 +121,7 @@ describe('an MCP tool result, kept whole and read by the model @cap:connecter-un
     expect(JSON.stringify(attached.record)).not.toContain(offered[0]?.data);
 
     const refused = await call('mixed', {
-      attachImage: () => ({
+      attachForModel: () => ({
         attached: false,
         reason: 'the model this agent runs (z-ai/glm-5.3) does not take images as input',
       }),

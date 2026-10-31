@@ -359,7 +359,11 @@ describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/mo
     );
     expect(parts[1]!.text).toContain('/capture.20261031');
 
-    const hydrated = await hydrateForLlm(job.messages as ModelMessage[], { sees: true }, new Map());
+    const hydrated = await hydrateForLlm(
+      job.messages as ModelMessage[],
+      { image: { sees: true }, pdf: { sees: true } },
+      new Map(),
+    );
     const body = await wireBody(hydrated);
     const b64 = Buffer.from(PNG).toString('base64');
     expect(body).toContain(

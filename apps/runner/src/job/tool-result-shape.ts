@@ -40,10 +40,10 @@ function pathOfFileUrl(url: string): string | null {
 /**
  * A tool result's output as text, for every reader that has only text to give:
  * a text value as written, a value serialized, and an output that carries
- * images (`content`, `ctx.attachImage`) as its text with each image said — an
- * image is not text, and where only text goes (a delegation's side results,
- * the reflection transcript) it is not
- * carried. That is said, never dropped, and the base64 never becomes text.
+ * files (`content`, `ctx.attachForModel`: an image, a PDF) as its text with
+ * each file said — a file is not text, and where only text goes (a
+ * delegation's side results, the reflection transcript) it is not carried.
+ * That is said, never dropped, and the base64 never becomes text.
  */
 export function toolResultOutputText(output: { type?: unknown; value?: unknown }): string {
   if (typeof output.value === 'string') return output.value;
@@ -51,13 +51,16 @@ export function toolResultOutputText(output: { type?: unknown; value?: unknown }
     return (output.value as Array<{ type?: unknown; text?: unknown; url?: unknown }>)
       .map((v) => {
         if (v.type === 'text' && typeof v.text === 'string') return v.text;
-        // A tool's image is kept as a file (job/model-images.ts): its path is
-        // what can be read again.
+        // A tool's file is kept as a file (job/model-images.ts): its path is
+        // what can be read again. An image is an `image-*` part, a document a
+        // `file-*` one.
+        const what =
+          typeof v.type === 'string' && v.type.startsWith('file') ? 'A document' : 'An image';
         const at =
           typeof v.url === 'string' && v.url.startsWith('file:') ? pathOfFileUrl(v.url) : null;
         return at === null
-          ? '[An image was attached to this result; it is not carried here.]'
-          : `[An image was attached to this result, saved at ${at}; it is not carried here. Read it again to see it.]`;
+          ? `[${what} was attached to this result; it is not carried here.]`
+          : `[${what} was attached to this result, saved at ${at}; it is not carried here. Read it again to see it.]`;
       })
       .join('\n');
   }

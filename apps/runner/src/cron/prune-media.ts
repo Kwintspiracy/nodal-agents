@@ -9,9 +9,9 @@
 //     (the Telegram photos written before #899)
 //   <workspacesRoot>/<entityId>/shared/discord/<channelId>/<jobId>.<ext>
 //     (apps/runner/src/channels/discord/handler.ts attachInboundImage)
-// and the images a job's tools fetched, beside them, one folder per job:
+// and the images and PDFs a job's tools fetched, beside them, one folder per job:
 //   <workspacesRoot>/<entityId>/shared/tools/<jobId>/<toolCallId>-<n>.<ext>
-//     (apps/runner/src/job/model-images.ts saveToolImages)
+//     (apps/runner/src/job/model-images.ts saveToolAttachments)
 //
 // DB retention (packages/db's pruneOldJobs) only deletes the agent_jobs row —
 // it must never touch the filesystem (only the runner owns workspace paths).

@@ -481,6 +481,8 @@ const packPkg = {
     '@tavily/core': '^0.7.0',
     'apify-client': '^2.23.0',
     'pdf-parse': '^2.4.5',
+    // file_read: the pages of a PDF a model reads, cut out of the document (#903).
+    'pdf-lib': '^1.17.1',
     mammoth: '^1.12.0',
     exceljs: '^4.4.0',
     docx: '^9.7.1',

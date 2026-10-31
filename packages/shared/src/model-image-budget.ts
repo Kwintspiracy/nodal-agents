@@ -1,6 +1,6 @@
 // model-image-budget.ts — how many images, and how many bytes of them, one
 // request to a model carries. One budget for every provider, read in two
-// places that must agree: the tool seam (`admitModelImage`, @nodal-agents/tools:
+// places that must agree: the tool seam (`admitModelAttachment`, @nodal-agents/tools:
 // what one call may attach) and the request builder (`hydrateForLlm`,
 // apps/runner/src/job/model-images.ts, where every image of a job's request
 // becomes bytes: what one request sends — the person's images first, then the
@@ -28,9 +28,23 @@
 // Mistral's page lists the questions of its limits without their answers in
 // the text served (docs.mistral.ai/capabilities/vision), so no number here
 // rests on it.
+//
+// A PDF document (#903) spends the SAME budget, never one of its own: every
+// model that takes a PDF reads each page as an image (Anthropic: "each page is
+// converted into an image", platform.claude.com/docs/en/build-with-claude/
+// pdf-support; OpenAI: "the API extracts both text and page images",
+// developers.openai.com/api/docs/guides/pdf-files; Gemini: "Each document page
+// is equivalent to 258 tokens", ai.google.dev/gemini-api/docs/document-
+// processing), and its bytes ride in the same request as the images'. So a
+// PDF counts ONE IMAGE PER PAGE and its bytes with theirs. The documented PDF
+// limits are all looser, read on 2026-10-31: Anthropic 100 pages per request
+// (under a 1M-token window) and 32 MB; OpenAI 50 MB per file and per request;
+// Gemini 50 MB or 1000 pages per file, inside its 20 MB inline request. A
+// looser page cap would also be a costlier one: 1 500 to 3 000 tokens of text
+// per page on Anthropic, plus the page's image.
 
-/** At most this many images in one request. */
+/** At most this many images in one request, a PDF counting one per page. */
 export const MODEL_REQUEST_MAX_IMAGES = 20;
 
-/** At most this many bytes of images (decoded) in one request. */
+/** At most this many bytes of images and PDFs (decoded) in one request. */
 export const MODEL_REQUEST_MAX_IMAGE_BYTES = 10 * 1024 * 1024;

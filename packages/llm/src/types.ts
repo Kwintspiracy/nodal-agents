@@ -1,6 +1,6 @@
 // @nodal-agents/llm — core types
 
-import type { generateText, streamText, generateObject } from 'ai';
+import type { generateText, streamText, generateObject, ModelMessage } from 'ai';
 import type { ReasoningEffort } from '@nodal-agents/shared';
 
 // ─── Call progress ─────────────────────────────────────────────────────────────
@@ -164,6 +164,15 @@ export interface GenerateTextCallOptions {
    * caller gets `LLMOutputLimitError` (#554): its default is to act.
    */
   inspectOnly?: true;
+  /**
+   * The request's messages FOR THE MODEL THAT SERVES IT, asked by each client
+   * of the chain with its own config just before it sends (#903, review of
+   * #905): what a request carries for a model — an image, a PDF — depends on
+   * that model, and a failover chain picks it inside the call. Replaces
+   * `messages` when set. Without it, every link would be sent what was
+   * prepared for the link the caller saw before the call.
+   */
+  messagesForModel?: (config: ProviderConfig) => Promise<ModelMessage[]>;
 }
 
 /**
