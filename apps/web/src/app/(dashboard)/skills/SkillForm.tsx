@@ -10,11 +10,13 @@ import {
   type SkillRow,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import StatusPill from '@/components/ui/StatusPill';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import RowActionButton from '@/components/ui/RowActionButton';
 import TextInput from '@/components/ui/TextInput';
 import TextArea from '@/components/ui/TextArea';
 import { ModalFooter } from '@/components/ui/Modal';
+import SkillUpdateAction, { toUpdatableSkill } from './SkillUpdateAction.tsx';
 
 interface CreateProps {
   mode?: 'create';
@@ -65,6 +67,17 @@ export default function SkillForm(props: Props) {
       toast.success('Skill reset to default');
       router.refresh();
     });
+  }
+
+  /** Leaves the form the way a save does: the fields hold the text as it was
+   *  when the form opened, which an update or a reset has just replaced. */
+  function leaveForm() {
+    if (props.onClose) {
+      props.onClose();
+      router.refresh();
+    } else {
+      router.push('/skills');
+    }
   }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -134,16 +147,38 @@ export default function SkillForm(props: Props) {
     >
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-ink">{isEdit ? 'Edit skill' : 'New skill'}</h3>
-        {canReset && (
-          <RowActionButton
-            onClick={() => setConfirmResetOpen(true)}
-            disabled={isPending}
-            title="Restore the catalog default content for this skill"
-            className="!border-warn/30 !text-warn hover:!bg-warn-bg hover:!text-warn"
-          >
-            Reset to default
-          </RowActionButton>
-        )}
+        <div className="flex items-center gap-2">
+          {initial?.updateAvailable && (
+            <SkillUpdateAction skill={toUpdatableSkill(initial)} onUpdated={leaveForm}>
+              {({ onClick, pending }) => (
+                <>
+                  <StatusPill variant="warn" label="Update available" />
+                  <RowActionButton
+                    onClick={onClick}
+                    disabled={pending || isPending}
+                    title={
+                      initial.contentOverridden
+                        ? 'Install the new version (replaces your changes)'
+                        : 'Install the new version'
+                    }
+                  >
+                    Update
+                  </RowActionButton>
+                </>
+              )}
+            </SkillUpdateAction>
+          )}
+          {canReset && (
+            <RowActionButton
+              onClick={() => setConfirmResetOpen(true)}
+              disabled={isPending}
+              title="Restore the catalog default content for this skill"
+              className="!border-warn/30 !text-warn hover:!bg-warn-bg hover:!text-warn"
+            >
+              Reset to default
+            </RowActionButton>
+          )}
+        </div>
       </div>
       <ConfirmDialog
         open={confirmResetOpen}
