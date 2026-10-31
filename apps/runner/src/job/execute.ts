@@ -4126,18 +4126,21 @@ async function runJobTracked(
   // now an explicit opt-out only (LLM_COMPACTION_TOKENS) — unset means "guard the
   // window, nothing else". Verified vs Hermes (per-tool payload caps + caching,
   // no early compaction) and Cowork (no compaction while context fits the window).
-  const compactionThreshold = (() => {
-    const ctxWindow = modelContextWindow(
-      llmClient.config.provider,
-      llmClient.config.model,
-      llmClient.config.contextWindow,
-    );
+  //
+  // The window is the one of the model that SERVES (review of #905, pass 2): a
+  // failover chain moves its active model during the job, and picks a link
+  // inside a call. Read from the config it is asked for, never a snapshot of
+  // the primary taken at the job's start — a 200K primary failing over to a
+  // 64K fallback otherwise kept compacting at 0.7 × 200K, and the next call
+  // died with context_window_exceeded instead of compacting.
+  const compactionThresholdFor = (config: NodalLlmClient['config']): number => {
+    const ctxWindow = modelContextWindow(config.provider, config.model, config.contextWindow);
     const fracRaw = Number(process.env['LLM_COMPACTION_FRACTION']);
     const frac = Number.isFinite(fracRaw) && fracRaw > 0 && fracRaw < 1 ? fracRaw : 0.7;
     const absRaw = Number(process.env['LLM_COMPACTION_TOKENS']);
     const abs = Number.isFinite(absRaw) && absRaw > 0 ? absRaw : Infinity;
     return Math.min(Math.floor(frac * ctxWindow), abs);
-  })();
+  };
   const compactionKeepRecentToolMsgs = (() => {
     const raw = Number(process.env['LLM_COMPACTION_KEEP_TURNS']);
     return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 3;
@@ -4710,15 +4713,51 @@ async function runJobTracked(
       // the reason for one that does not) into a fresh array — the stored
       // `messages` keep the lean path so it can still travel to a delegated
       // child. A turn being resumed (#441) carries its partial text and the
-      // resume line on top, in the request only. Hydrated for the model that
+      // resume line on top, in the request only. Prepared for the model that
       // serves the request: the active one, and each link a failover chain
       // tries inside the call (`messagesForModel`), once per model.
+      //
+      // Guard 1c before the call (review of #905, pass 2): a request that
+      // would cross the compaction threshold of the model about to read it is
+      // compacted FIRST — its estimate (`estimateContextTokens`, the one the
+      // cut-call accounting uses) against that model's window. For the active
+      // model the transcript itself is compacted, as after a turn; for another
+      // link of the chain, its request (the next turn's check, on the live
+      // config, keeps it).
+      const outilsEstimes = await estimateToolTokens(aiSdkTools);
+      const ajusteAuModele = (
+        msgs: ModelMessage[],
+        config: NodalLlmClient['config'],
+        quand: 'before_call' | 'failover_link',
+      ): ModelMessage[] => {
+        const estime =
+          estimateContextTokens({ system: systemPrompt, messages: msgs }) + outilsEstimes;
+        const seuil = compactionThresholdFor(config);
+        if (estime <= seuil) return msgs;
+        const ev = compactOldToolResults(msgs, compactionKeepRecentToolMsgs);
+        if (ev.evicted === 0) return msgs;
+        trace('context_compacted', {
+          turn,
+          when: quand,
+          model: config.model,
+          estimatedTokens: estime,
+          threshold: seuil,
+          evictedToolResults: ev.evicted,
+        });
+        return ev.messages;
+      };
+      messages = ajusteAuModele(messages, llmClient.config, 'before_call');
       const pourCeTour = messagesForResume(messages, partielCeTour);
+      const modeleActif = llmClient.config.model;
       const hydratees = new Map<string, Promise<ModelMessage[]>>();
-      const messagesForModel = (config: { model: string }): Promise<ModelMessage[]> => {
+      const messagesForModel = (config: NodalLlmClient['config']): Promise<ModelMessage[]> => {
         let hydratee = hydratees.get(config.model);
         if (hydratee === undefined) {
-          hydratee = hydrateForLlm(pourCeTour, takenBy(config.model), imageCache, pdfPageCache);
+          const ajustes =
+            config.model === modeleActif
+              ? pourCeTour
+              : ajusteAuModele(pourCeTour, config, 'failover_link');
+          hydratee = hydrateForLlm(ajustes, takenBy(config.model), imageCache, pdfPageCache);
           hydratees.set(config.model, hydratee);
         }
         return hydratee;
@@ -5158,12 +5197,17 @@ async function runJobTracked(
       // OLD tool-result bodies (keeping the last N turns) shrinks every subsequent
       // prompt, preventing window overflow and bounding cost. `promptT` is this
       // turn's prompt size (not the cumulative budget above).
+      // The threshold of the model that served (the live config: a failover
+      // inside this call moved it).
+      const compactionThreshold = compactionThresholdFor(llmClient.config);
       if (promptT > compactionThreshold) {
         const ev = compactOldToolResults(messages, compactionKeepRecentToolMsgs);
         if (ev.evicted > 0) {
           messages = ev.messages;
           trace('context_compacted', {
             turn,
+            when: 'after_call',
+            model: llmClient.config.model,
             promptTokens: promptT,
             threshold: compactionThreshold,
             evictedToolResults: ev.evicted,
