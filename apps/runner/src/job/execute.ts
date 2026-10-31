@@ -2148,8 +2148,8 @@ async function runJobTracked(
   // Inbound media (e.g. a Telegram photo) lives in the user message as an image
   // part whose `image` is a LOCAL FILE PATH (telegram/handler.ts keeps it a path
   // so the messages JSONB stays lean AND the path can travel to a delegated
-  // child). Whether THIS agent can see it depends on its model — computed once;
-  // each LLM call resolves the path into bytes (vision) or a routing note
+  // child). Whether THIS agent can see it depends on its model — the one SERVING
+  // (below); each LLM call resolves the path into bytes (vision) or a routing note
   // (non-vision) via hydrateForLlm WITHOUT touching the stored/persisted messages.
   // One source, per model, for every reader: the attach rule, hydrateForLlm and
   // the team block (review of #798: a per-provider flag said "sees" for every
@@ -2157,16 +2157,20 @@ async function runJobTracked(
   // What a tool that comes back with an image or a PDF is told
   // (`ctx.attachForModel`, packages/tools/src/model-images.ts) and what
   // hydrateForLlm applies to every file of the request: the same facts, per
-  // kind of file, for every file of this job (#903: a PDF is read by fewer
-  // models than an image, `modelPdfInputFor`). A tool's file is kept as a file
-  // in the shared folder (job/model-images.ts): a run without one keeps none,
-  // and says so.
+  // kind of file (#903: a PDF is read by fewer models than an image,
+  // `modelPdfInputFor`), read for the model that SERVES — never a snapshot
+  // taken at the job's start. A failover chain moves its active model during
+  // the job and picks a link inside a call (review of #905, pass 1): a tool
+  // is told what the model active when it runs takes (`modelInputNow`), and
+  // each link of a call gets the request hydrated for ITS model
+  // (`messagesForModel`). A tool's file is kept as a file in the shared folder
+  // (job/model-images.ts): a run without one keeps none, and says so.
   const imageCache = new Map<string, Uint8Array>();
   const pdfPageCache = new Map<string, number | string>();
-  const seenByModel: ModelAttachmentInput = {
-    image: modelImageInputFor(llmClient.config.model),
-    pdf: modelPdfInputFor(llmClient.config.model),
-  };
+  const takenBy = (model: string): ModelAttachmentInput => ({
+    image: modelImageInputFor(model),
+    pdf: modelPdfInputFor(model),
+  });
   const keptInSharedFolder = (
     support: ModelAttachmentInput['image'],
     what: string,
@@ -2174,9 +2178,12 @@ async function runJobTracked(
     support.sees && sharedWorkspacePath === null
       ? { sees: false, reason: `this run has no shared folder to keep ${what} in` }
       : support;
-  const modelInput: ModelAttachmentInput = {
-    image: keptInSharedFolder(seenByModel.image, 'an image'),
-    pdf: keptInSharedFolder(seenByModel.pdf, 'a PDF document'),
+  const modelInputNow = (): ModelAttachmentInput => {
+    const taken = takenBy(llmClient.config.model);
+    return {
+      image: keptInSharedFolder(taken.image, 'an image'),
+      pdf: keptInSharedFolder(taken.pdf, 'a PDF document'),
+    };
   };
 
   // ── 4. Orchestrator? ──────────────────────────────────────────────────────────
@@ -3119,7 +3126,7 @@ async function runJobTracked(
     // The files the tool attached (`ctx.attachForModel`, admitted against this
     // job's model) follow its text, in the order it attached them: saved
     // beside the channel photos, the result keeping their paths, never their
-    // bytes (job/model-images.ts). `modelInput` admits none without a shared
+    // bytes (job/model-images.ts). `modelInputNow` admits none without a shared
     // folder.
     if (!result.attachments || result.attachments.length === 0 || sharedWorkspacePath === null) {
       return read;
@@ -3360,7 +3367,7 @@ async function runJobTracked(
                   resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
                     resolveAgentToolNames(db, targetAgentId, placement),
                   requestUserInput,
-                  modelInput,
+                  modelInput: modelInputNow(),
                 },
                 {
                   approvalRules: resumeApprovalRules,
@@ -4699,21 +4706,28 @@ async function runJobTracked(
           outputTokens: sortieEstimee,
         });
       };
+      // Resolve every image and PDF (path → bytes for a model that takes it, or
+      // the reason for one that does not) into a fresh array — the stored
+      // `messages` keep the lean path so it can still travel to a delegated
+      // child. A turn being resumed (#441) carries its partial text and the
+      // resume line on top, in the request only. Hydrated for the model that
+      // serves the request: the active one, and each link a failover chain
+      // tries inside the call (`messagesForModel`), once per model.
+      const pourCeTour = messagesForResume(messages, partielCeTour);
+      const hydratees = new Map<string, Promise<ModelMessage[]>>();
+      const messagesForModel = (config: { model: string }): Promise<ModelMessage[]> => {
+        let hydratee = hydratees.get(config.model);
+        if (hydratee === undefined) {
+          hydratee = hydrateForLlm(pourCeTour, takenBy(config.model), imageCache, pdfPageCache);
+          hydratees.set(config.model, hydratee);
+        }
+        return hydratee;
+      };
       try {
         response = await llmClient.generateText(
           {
             system: systemPrompt,
-            // Resolve any image attachment (path → bytes for vision, or a routing
-            // note for non-vision) into a fresh array — the stored `messages` keep
-            // the lean path so it can still travel to a delegated child. A turn
-            // being resumed (#441) carries its partial text and the resume line
-            // on top, in the request only.
-            messages: await hydrateForLlm(
-              messagesForResume(messages, partielCeTour),
-              seenByModel,
-              imageCache,
-              pdfPageCache,
-            ),
+            messages: await messagesForModel(llmClient.config),
             tools: aiSdkTools,
             // The model decides, on every turn, for every model (#600). Forcing
             // a tool call on turn 1 made a thinking model plan a whole
@@ -4728,6 +4742,7 @@ async function runJobTracked(
           // coupé tant qu'il écrit (packages/llm/src/turn-clocks.ts).
           {
             streamed: true,
+            messagesForModel,
             abortSignal: veille.signal,
             onProgress: (progres) => {
               productionDeLAppel.onProgress(progres);
@@ -5710,7 +5725,7 @@ async function runJobTracked(
         resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
           resolveAgentToolNames(db, targetAgentId, placement),
         requestUserInput,
-        modelInput,
+        modelInput: modelInputNow(),
       };
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
@@ -6029,7 +6044,7 @@ async function runJobTracked(
                 ...(speechGenerator ? { speechGenerator } : {}),
                 resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
                   resolveAgentToolNames(db, targetAgentId, placement),
-                modelInput,
+                modelInput: modelInputNow(),
               },
               {
                 approvalRules: approvalRuleList,

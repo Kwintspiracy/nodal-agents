@@ -524,7 +524,13 @@ export function createLlmClient(
   };
 
   const clientGenerateText: NodalLlmClient['generateText'] = async (rawArgs, callOpts) => {
-    const args = prepareMessages(rawArgs);
+    // The messages for THIS client's model, when the caller says what they
+    // depend on (`messagesForModel`): a failover chain asks each link in turn.
+    const args = prepareMessages(
+      callOpts?.messagesForModel
+        ? { ...rawArgs, messages: await callOpts.messagesForModel(config) }
+        : rawArgs,
+    );
     // The cap the request states (#563): this client's, or the caller's when
     // LOWER. A caller never raises it (revue Codex de #571): asking 131 072
     // stated a cap the provider cut under, without `length`, as in #563.
