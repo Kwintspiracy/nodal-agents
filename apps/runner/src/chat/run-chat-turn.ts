@@ -769,9 +769,10 @@ export async function runChatTurn(opts: {
   // 5b. ESCALATION RECOVERY. The model produced a reply but NO run_task call. A
   //     reasoning model (MiniMax M3) intermittently narrates an action without
   //     calling the tool, ~1 turn in 5. Since tool_choice is never forced
-  //     (#600), the reply is re-read ONCE through the mechanism the job loop
-  //     shares (llm/action-recheck.ts): the model either escalates or confirms
-  //     it was conversation.
+  //     (#600), the reply is re-read ONCE (llm/action-recheck.ts): the model
+  //     either escalates or confirms it was conversation. The job loop no
+  //     longer re-reads its replies (#886); this one stays until it is
+  //     measured.
   //
   //     ET ELLE NE REJOUE PAS LE TOUR ENTIER. Mesuré sur la base de Quentin le
   //     09/09 : cette relance envoyait le prompt système COMPLET et tout
@@ -801,14 +802,9 @@ export async function runChatTurn(opts: {
       const recheck = await recheckNarratedAction(llmClient, {
         request: message,
         reply: text,
-        // Le relevé de ce que le tour a fait depuis la demande (#711) : rien,
-        // et c'est exact. Un tour de chat n'exécute aucun outil avant sa
-        // relance — son seul outil, `run_task`, part APRÈS elle, et une
-        // réponse qui l'a appelé n'est jamais relue (`runTask` ci-dessus). Ce
-        // que les tours d'avant ont fait est dans l'historique, que la relance
-        // ne rejoue pas : la consigne dit qu'une réponse qui le rappelle
-        // n'engage à rien.
-        run: [],
+        // Son relevé est vide, et c'est exact (llm/action-recheck.ts) : une
+        // réponse qui a appelé `run_task` n'est jamais relue (`runTask`
+        // ci-dessus), et aucun autre outil ne tourne avant la relance.
         tools: CHAT_TOOLS,
         ...(abortSignal ? { abortSignal } : {}),
       });

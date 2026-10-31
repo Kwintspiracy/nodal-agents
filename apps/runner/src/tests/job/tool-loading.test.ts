@@ -25,12 +25,10 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agentSchedules, eq } from '@nodal-agents/db';
 import type { JobId } from '@nodal-agents/orchestration';
 import { executeJob } from '../../job/execute.ts';
-import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
 import {
   type Body,
   type ScriptedReply,
   jobRow as readJobRow,
-  lastMessageText,
   lastResult,
   makeDeps,
   offered,
@@ -227,28 +225,5 @@ describe('a job reads the schemas it needs and keeps its whole whitelist @cap:as
     // Never run, never offered for approval either.
     const row = await jobRow(jobId);
     expect(row.status).not.toBe('awaiting_approval');
-  });
-
-  // #604's action recheck re-asks the model with "the job's tools". It must be
-  // the tools offered on THIS turn (eager + loaded + load_tools), never the
-  // whole whitelist: otherwise every recheck would carry every schema again.
-  it('the action recheck offers exactly the tools of its turn, loaded ones included', async () => {
-    const { bodies } = await runJob({
-      model: 'openai/gpt-5.6-sol',
-      role: 'orchestrator',
-      script: [
-        { calls: [{ name: 'load_tools', args: { names: ['list_models'] } }] },
-        { text: 'I will now list the schedules.' },
-        { text: 'Nothing to run.' },
-      ],
-    });
-
-    const recheck = bodies.find((b) => lastMessageText(b).endsWith(ACTION_RECHECK));
-    expect(recheck, 'the prose turn was rechecked').toBeDefined();
-    const turn = bodies[bodies.indexOf(recheck!) - 1]!;
-    expect(offered(recheck!)).toEqual(offered(turn));
-    expect(offered(recheck!)).toContain('list_models');
-    expect(offered(recheck!)).toContain('load_tools');
-    expect(offered(recheck!)).not.toContain('search_history');
   });
 });

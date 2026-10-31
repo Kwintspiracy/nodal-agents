@@ -2077,10 +2077,10 @@
     },
     {
       "id": "delegate-fails",
-      "version": 2,
+      "version": 3,
       "activity": "orchestration",
       "title": "A teammate fails: the root says so, without looping",
-      "green": "The root delegated, a delegated job ended failed (the source file does not exist), no copy was made, and the root ended on its own explained block (status failed, its last return_result \"blocked\" with a reason), not completed and not killed by an anti-loop cap. Nobody was asked anything.",
+      "green": "The root delegated once, a delegated job ended failed (the source file does not exist), no copy was made, and the root ended on its own explained block (status failed, its last return_result \"blocked\" with a reason), not completed and not killed by an anti-loop cap. Nobody was asked anything.",
       "path": "Delegation, failure, report: the root ends on its own block, not on an anti-loop cap.",
       "deliverable": "The report of the failure",
       "productTools": null,
@@ -2113,6 +2113,7 @@
       "judgedBy": [
         "approval_requests: the tree raised no approval and no question (the bench never answers one)",
         "agent_jobs: at least one delegated job, and one of them ended failed",
+        "agent_jobs: the root delegated once, not the same copy a second time (#886)",
         "nodal-bench/copie-bench.txt was not written (its source does not exist)",
         "agent_jobs + the root transcript: the root ended failed on its own \"blocked\" return_result, not completed, not an anti-loop cap"
       ],

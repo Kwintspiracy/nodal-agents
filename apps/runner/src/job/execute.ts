@@ -93,7 +93,6 @@ import { liveCallProgress, watchCallProgress } from './call-progress.ts';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
 import { resolveSpeechGenerator } from './resolve-speech.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
-import { recheckNarratedAction } from '../llm/action-recheck.ts';
 import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
 import { deferredToolNames, toolsLoadedByCalls, toolsSentThisTurn } from './tool-loading.ts';
 import { createHumanWaitClock } from './human-wait.ts';
@@ -169,7 +168,6 @@ import {
   retryBlockedMessage,
   remainingDelegationHops,
   delegationDepthExceededMessage,
-  assertTurnToolCallBudget,
   resolveAgentToolNames,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
@@ -1890,8 +1888,8 @@ async function runJobTracked(
   });
 
   // Un appel refusé par le client parce qu'il est coupé ou que sa sortie n'est
-  // pas rapportée (#555, #563) a été servi et facturé : il compte, qu'il soit le
-  // tour ou sa relance (#600). Un compte inconnu, d'entrée ou de sortie, n'est
+  // pas rapportée (#555, #563) a été servi et facturé : il compte. Un compte
+  // inconnu, d'entrée ou de sortie, n'est
   // pas 0 : le total correspondant du job, et son coût estimé, deviennent
   // inconnus (null sur la ligne).
   const compterAppelRefuse = (err: LLMOutputLimitError): void => {
@@ -4957,8 +4955,7 @@ async function runJobTracked(
       // completionTokens → outputTokens. Both can be `undefined` when the
       // provider doesn't report usage (local providers like LM Studio /
       // Ollama sometimes omit it) — Number(undefined) is NaN, hence the
-      // isFinite guard below. Une closure : le tour ET sa relance (#600, plus
-      // bas) sont des appels servis, comptés de la même façon.
+      // isFinite guard below.
       const compterAppel = (res: typeof response) => {
         const usage = res.usage;
         // Ce que l'appel a RAPPORTÉ, lu par la même règle que le client : un
@@ -5050,9 +5047,14 @@ async function runJobTracked(
       const { promptT, promptTok, cachedT, effectiveT, completionT, callCostUsd } =
         compterAppel(response);
 
-      // Les gardes avant d'agir, lues sur ce que le run a dépensé JUSQU'ICI :
-      // après le tour, puis de nouveau après sa relance quand elle a été
-      // servie (#600). Rendent l'arrêt du run, ou null pour continuer.
+      // Les gardes avant d'agir, lues sur ce que le run a dépensé JUSQU'ICI, ce
+      // tour compris. Rendent l'arrêt du run, ou null pour continuer.
+      //
+      // Un tour qui finit en prose sans appel d'outil est la réponse (#886) :
+      // aucune relance ne demande au modèle de relire son propre texte. Les
+      // gardes qui le jugent lisent des faits, plus bas : la livraison sur un
+      // canal qui n'en a pas d'autre, les livrables déclarés introuvables, les
+      // échecs d'outil non résolus, l'approbation en attente, le tour vide.
       const avantDAgir = async (): Promise<ExecuteJobResult | null> => {
         // Dernière lecture avant d'agir : un Stop arrivé entre deux lectures, ou
         // pendant que la réponse se terminait, n'exécute aucun des outils
@@ -5115,84 +5117,6 @@ async function runJobTracked(
       const arretApresTour = await avantDAgir();
       if (arretApresTour) return arretApresTour;
 
-      // Relecture d'une réponse qui promettait une action (#600). Le modèle
-      // décide seul d'appeler un outil, à chaque tour : un tour qui finit en
-      // prose ANNONÇANT une action (« Je délègue à Dev-C. ») sans l'appel qui
-      // la fait n'a rien fait, et finissait `completed` sur un travail jamais
-      // lancé. Le MÊME mécanisme que le chat (llm/action-recheck.ts) : une
-      // relance locale et courte (la tâche, la réponse, le relevé de ce que le
-      // run a déjà fait, la consigne, les outils du job), jamais le tour
-      // rejoué. Le relevé (#711) : une réponse qui RAPPORTE un envoi fait ne se
-      // relit plus comme la promesse de l'envoyer encore. Si le modèle appelle un outil,
-      // ses appels deviennent ceux de CE tour, sous les mêmes gardes (Stop,
-      // plafonds de jetons et de coût, 50 appels par tour). Sinon la prose
-      // reste la réponse, jugée plus bas comme avant.
-      //
-      // Elle part APRÈS les gardes : un tour déjà au-dessus d'un plafond
-      // s'arrête sans payer de relance. Et les gardes sont relues après elle.
-      //
-      // Un tour qui attend une approbation se suspend sans finir (branche g) :
-      // rien à relire. Un tour vide non plus.
-      //
-      // Limite connue : si la relance DÉCLINE (le modèle n'appelle rien), une
-      // annonce finit `completed` avec l'annonce pour réponse. Aucune lecture
-      // du texte ne tranche à sa place (invariants #2 et #4).
-      let relecture: typeof response | null = null;
-      if (
-        (response.toolCalls ?? []).length === 0 &&
-        texteDuTour.trim() !== '' &&
-        !approvalPending
-      ) {
-        fermerVeilleOutils();
-        const veilleRelecture = watchJobRow(db, jobId as string, prise, STOP_POLL_MS);
-        // Ce que CE run a déjà fait depuis sa tâche (#711) : la frontière de
-        // `currentTurnMessages`, SANS son repli sur la transcription entière —
-        // l'historique rejoué avant la tâche n'est pas ce que ce run a fait.
-        // Introuvable, le relevé le dit (déjà tracé : `current_turn_boundary_missing`).
-        const debutDuRun = findTaskBoundary(messages, job.task);
-        try {
-          relecture = await recheckNarratedAction(llmClient, {
-            request: job.task,
-            reply: texteDuTour.trim(),
-            run: debutDuRun === -1 ? null : messages.slice(debutDuRun),
-            tools: aiSdkTools,
-            abortSignal: veilleRelecture.signal,
-          });
-          compterAppel(relecture);
-          // Une relance dégénérée (plus d'appels que la règle du tour n'en
-          // admet) est ABANDONNÉE : aucun de ses appels ne s'exécute, et la
-          // prose du tour reste la réponse. Le tour lui-même garde la règle
-          // #564 (`counters.admitTurn` plus bas) : seul le filet change.
-          assertTurnToolCallBudget((relecture.toolCalls ?? []).length);
-          trace('action_recheck', {
-            turn,
-            toolCalls: (relecture.toolCalls ?? []).map((tc) => tc.toolName),
-          });
-        } catch (err) {
-          // Une relance coupée au plafond de sortie est ABANDONNÉE, comme toute
-          // autre panne de relance : sa sortie tronquée n'est jamais exécutée,
-          // et la prose du tour, complète, reste la réponse. Elle a été servie :
-          // ce qu'elle a facturé compte, comme pour un tour coupé.
-          if (err instanceof LLMOutputLimitError) compterAppelRefuse(err);
-          // Stop pendant la relance : la relecture des gardes juste en dessous
-          // arrête le run, avec le texte du tour.
-          // Toute autre panne : la relance est un filet, la prose reste la
-          // réponse, et la panne est dite.
-          relecture = null;
-          const detail = err instanceof Error ? err.message.slice(0, 200) : String(err);
-          if (!(err instanceof LLMCallCancelledError)) {
-            console.warn(`[exec ${jobId}] action recheck failed on turn ${turn}: ${detail}`);
-          }
-          trace('action_recheck_failed', { turn, error: detail });
-        } finally {
-          veilleRelecture.stop();
-        }
-        const arretApresRelance = await avantDAgir();
-        if (arretApresRelance) return arretApresRelance;
-      }
-      const reponseQuiAgit =
-        relecture !== null && (relecture.toolCalls ?? []).length > 0 ? relecture : null;
-
       // Guard 1c — compact when THIS turn's prompt crossed the threshold. Evicting
       // OLD tool-result bodies (keeping the last N turns) shrinks every subsequent
       // prompt, preventing window overflow and bounding cost. `promptT` is this
@@ -5210,7 +5134,7 @@ async function runJobTracked(
         }
       }
 
-      const rawToolCalls = (reponseQuiAgit ?? response).toolCalls ?? [];
+      const rawToolCalls = response.toolCalls ?? [];
       trace('llm_call_done', {
         turn,
         toolCalls: rawToolCalls.map((tc) => tc.toolName),
@@ -5279,12 +5203,7 @@ async function runJobTracked(
       // providerMetadata into providerOptions so the signature lands where the
       // SDK looks. Each provider reads only its own namespaced key (anthropic /
       // openrouter / …), so this is a safe no-op for models that don't need it.
-      // La relance qui agit apporte son propre raisonnement : c'est lui qui
-      // accompagne ses appels d'outils, et qu'un modèle de raisonnement relit.
-      const reasoningParts = [
-        ...(response.reasoning ?? []),
-        ...(reponseQuiAgit?.reasoning ?? []),
-      ].map((p) => {
+      const reasoningParts = (response.reasoning ?? []).map((p) => {
         const part = p as { providerMetadata?: unknown; providerOptions?: unknown };
         return part.providerMetadata != null && part.providerOptions == null
           ? { ...p, providerOptions: part.providerMetadata }

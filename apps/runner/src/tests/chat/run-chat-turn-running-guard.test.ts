@@ -492,7 +492,7 @@ describe('runChatTurn — every final prose reply is re-read, once per turn (#60
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.reply).toBe('Launching the search.');
     expect(relectures(captured)).toEqual([
-      actionRecheckMessages('status?', 'Launching the search.', []),
+      actionRecheckMessages('status?', 'Launching the search.'),
     ]);
     const [, tour] = await travauxDuFil();
     expect(tour).toMatchObject({
@@ -530,7 +530,7 @@ describe('runChatTurn — every final prose reply is re-read, once per turn (#60
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.spawnedJobId).toBeTruthy();
     expect(relectures(captured)).toEqual([
-      actionRecheckMessages('and 0.9.3?', 'I will fetch the 0.9.3 changelog.', []),
+      actionRecheckMessages('and 0.9.3?', 'I will fetch the 0.9.3 changelog.'),
     ]);
     expect((await travauxDuFil()).map((j) => [j.task, j.handoffNote])).toContainEqual([
       'and 0.9.3?',

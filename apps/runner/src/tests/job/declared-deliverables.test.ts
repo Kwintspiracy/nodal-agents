@@ -574,9 +574,9 @@ describe('un livrable DÉCLARÉ est vérifié avant le succès @cap:verifier-un-
 
     await executeJob(id as JobId, makeDeps(client), testEnv);
 
-    // Deux tours, puis la relecture du tour en prose (#600), qui n'appelle rien.
-    expect(prompts).toHaveLength(3);
-    expect(prompts[2]).toContain('Re-read your previous reply');
+    // Deux tours, et rien d'autre : le tour en prose est la réponse (#886), et
+    // c'est la garde des faits (#509) qui le juge.
+    expect(prompts).toHaveLength(2);
     const row = await jobRow(id);
     expect(row.status).toBe('failed');
     expect(row.error).toBe('deliverable_not_verified');

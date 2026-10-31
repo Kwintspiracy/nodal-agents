@@ -1,15 +1,14 @@
 // job/tool-result-shape.ts — ce que le runner écrit comme résultat d'outil, et
 // la SEULE lecture de son issue.
 //
-// Deux lecteurs lisaient l'issue d'un appel chacun à sa façon : la garde de la
-// boucle qui retient un `return_result` à côté d'un outil en échec
-// (`isToolErrorBlock`, execute.ts), et le relevé que reçoit la relecture d'une
-// réponse (#711, llm/action-recheck.ts). Leurs grammaires divergeaient (revue
-// Nodal de la PR #740, passe 1) : `{ error: 500 }` était une erreur pour l'une
-// et un résultat rendu pour l'autre. Une seule fonction les sert maintenant.
+// La garde de la boucle qui retient un `return_result` à côté d'un outil en
+// échec (`isToolErrorBlock`, execute.ts) lit l'issue d'un appel ici, et nulle
+// part ailleurs : deux grammaires avaient divergé (revue Nodal de la PR #740,
+// passe 1), `{ error: 500 }` étant une erreur pour l'une et un résultat rendu
+// pour l'autre.
 //
-// Les marques écrites par le runner vivent ici aussi : la boucle les écrit, le
-// relevé les lit, et un texte recopié à deux endroits finit par diverger.
+// Les marques écrites par le runner vivent ici aussi : la boucle les écrit et
+// les relit, et un texte recopié à deux endroits finit par diverger.
 
 import { fileURLToPath } from 'node:url';
 
@@ -43,7 +42,7 @@ function pathOfFileUrl(url: string): string | null {
  * a text value as written, a value serialized, and an output that carries
  * images (`content`, `ctx.attachImage`) as its text with each image said — an
  * image is not text, and where only text goes (a delegation's side results,
- * the reflection transcript, the run record a recheck reads) it is not
+ * the reflection transcript) it is not
  * carried. That is said, never dropped, and the base64 never becomes text.
  */
 export function toolResultOutputText(output: { type?: unknown; value?: unknown }): string {
