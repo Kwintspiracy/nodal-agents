@@ -814,11 +814,15 @@ describe('the inbound folder of a channel, keyed by job, and the layout before i
         })),
       )
       .returning({ id: agentJobs.id });
-    for (const { id } of bJobs) {
-      await mkdir(join(folder, id));
-      await writeFile(join(folder, id, 'scan.pdf'), 'B');
-      await utimes(join(folder, id), yesterday, yesterday);
-    }
+    // En parallèle : 600 opérations de disque à la suite dépassaient la minute
+    // sur le runner Windows de la CI.
+    await Promise.all(
+      bJobs.map(async ({ id }) => {
+        await mkdir(join(folder, id));
+        await writeFile(join(folder, id, 'scan.pdf'), 'B');
+        await utimes(join(folder, id), yesterday, yesterday);
+      }),
+    );
 
     telegramFiles.set('b-201', INVOICE);
     const inB = await deliver(
@@ -832,7 +836,8 @@ describe('the inbound folder of a channel, keyed by job, and the layout before i
     );
     // Rien de promis n'est effacé, ni chez A, ni chez B…
     expect(await readFile(join(folder, aJob, 'facture.pdf'), 'utf8')).toBe('A');
-    for (const { id } of bJobs) expect(await readdir(join(folder, id))).toEqual(['scan.pdf']);
+    const bLeft = await Promise.all(bJobs.map(({ id }) => readdir(join(folder, id))));
+    expect(bLeft).toEqual(bJobs.map(() => ['scan.pdf']));
     // … et le fichier de trop est dit au modèle, avec sa raison.
     expect(inB.parts[1]!.text).toContain('NOT received');
     expect(inB.parts[1]!.text).toContain('already has 200 received files under shared/telegram/');
@@ -847,10 +852,12 @@ describe('the inbound folder of a channel, keyed by job, and the layout before i
     expect(inA.parts[1]!.text).toContain(`Saved at shared/telegram/${inA.jobId}/a2.pdf`);
     expect(await readFile(join(folder, inA.jobId, 'a2.pdf'))).toEqual(INVOICE);
 
-    for (const { id } of [{ id: aJob }, ...bJobs]) {
-      await rm(join(folder, id), { recursive: true, force: true });
-    }
-  });
+    await Promise.all(
+      [{ id: aJob }, ...bJobs].map(({ id }) =>
+        rm(join(folder, id), { recursive: true, force: true }),
+      ),
+    );
+  }, 180_000);
 
   // Revue de #911 (P2) : les fils d'avant #910 portent l'adresse de leur
   // conversation, que le modèle lit comme un handle. Au démarrage, leurs
