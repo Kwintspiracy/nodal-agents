@@ -269,8 +269,8 @@ describe('an MCP tool result reaches the model as the server wrote it @cap:conne
     );
     expect(result).toContain(
       '[Image returned by the tool (image/png, 1.0 MiB): not passed to you: this call already ' +
-        'attached 10 image(s) (10.0 MiB), and a request to a model carries at most 20 images and ' +
-        '10.0 MiB of them.]',
+        'attached 10 file(s) (10 image(s) or PDF page(s), 10.0 MiB), and a request to a model ' +
+        'carries at most 20 images and 10.0 MiB of them, a PDF page counting as one image.]',
     );
     // No row keeps a byte: not the audit row, not the transcript every
     // checkpoint rewrites (`agent_jobs.messages`), which names the saved files.

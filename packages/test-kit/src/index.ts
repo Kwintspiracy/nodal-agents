@@ -49,3 +49,5 @@ export * from './process-watch';
 export * from './mxc-tier';
 export * from './windows-env';
 export * from './stated-limits';
+// A real small PDF (a text page, a scanned page) built in the test (#903).
+export * from './pdf';

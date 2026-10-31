@@ -86,7 +86,7 @@ import {
 } from './verification/record-constat';
 import { recordToolCallReads } from './verification/tool-call-reads';
 import { recordToolCallWrites } from './verification/tool-call-writes';
-import { admitModelImage, type ToolImage } from './model-images';
+import { admitModelAttachment, type ToolAttachment } from './model-images';
 import { attachProductionToProject } from './projects/attach';
 import { loadDeclaredCodeRoots, projectRootPredicate } from './projects/declared';
 
@@ -830,18 +830,18 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // Les empreintes des octets que l'outil LIT (le pendant des écritures) :
   // rangées dans `tool_call_reads` une fois la ligne d'audit écrite.
   const contenusLus = new Map<string, string>();
-  // Les images que CET APPEL donne au modèle (`model-images.ts`) : admises par
-  // la règle unique, rendues avec le résultat, jamais posées sur la ligne.
-  const imagesForModel: ToolImage[] = [];
+  // Les fichiers (images, PDF) que CET APPEL donne au modèle (`model-images.ts`) :
+  // admis par la règle unique, rendus avec le résultat, jamais posés sur la ligne.
+  const attachmentsForModel: ToolAttachment[] = [];
   const execCtx: ToolContext = {
     ...ctx,
     ...(mutationTargets === null ? {} : { declaredMutationTargets: mutationTargets }),
     ...(porteLaisseePasserSansPersonne ? { sharedOverwriteUnattended: true } : {}),
     reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
     reportReadContent: (absPath, sha256) => contenusLus.set(absPath, sha256),
-    attachImage: (image) => {
-      const outcome = admitModelImage(ctx.modelImageInput, image, imagesForModel);
-      if (outcome.attached) imagesForModel.push(image);
+    attachForModel: (attachment) => {
+      const outcome = admitModelAttachment(ctx.modelInput, attachment, attachmentsForModel);
+      if (outcome.attached) attachmentsForModel.push(attachment);
       return outcome;
     },
   };
@@ -1143,8 +1143,8 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         mutationTargets,
       );
     }
-    return imagesForModel.length > 0
-      ? { outcome: 'success', output, images: imagesForModel }
+    return attachmentsForModel.length > 0
+      ? { outcome: 'success', output, attachments: attachmentsForModel }
       : { outcome: 'success', output };
   } catch (err) {
     // Re-throw fatal runner errors — never swallow these

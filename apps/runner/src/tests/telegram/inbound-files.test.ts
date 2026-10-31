@@ -32,7 +32,7 @@ import {
   registerBuiltins,
   resolveRunWorkspaces,
 } from '@nodal-agents/tools';
-import type { ModelImageInput, ToolContext } from '@nodal-agents/tools';
+import type { ModelAttachmentInput, ToolContext } from '@nodal-agents/tools';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../../deps.ts';
 import { hydrateForLlm } from '../../job/model-images.ts';
@@ -68,6 +68,7 @@ import {
 } from '../../channels/inbound-files.ts';
 import { pruneJobMediaFiles } from '../../cron/prune-media.ts';
 import { attachInboundImage } from '../../channels/discord/handler.ts';
+import { buildTestPdf } from '@nodal-agents/test-kit';
 
 const CHAT = 4242;
 let db: TestDb;
@@ -379,7 +380,11 @@ describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/mo
     );
     expect(parts[1]!.text).toContain('/capture.20261031');
 
-    const hydrated = await hydrateForLlm(job.messages as ModelMessage[], { sees: true }, new Map());
+    const hydrated = await hydrateForLlm(
+      job.messages as ModelMessage[],
+      { image: { sees: true }, pdf: { sees: true } },
+      new Map(),
+    );
     const body = await wireBody(hydrated);
     const b64 = Buffer.from(PNG).toString('base64');
     expect(body).toContain(
@@ -814,6 +819,9 @@ describe('the inbound folder of a channel, keyed by job, and the layout before i
 
 const DISCORD_CHANNEL = '998877665544332211';
 
+/** Un vrai PDF d'une page : `file_read` le passe au modèle tel quel (#905). */
+const INVOICE = buildTestPdf([{ text: 'Facture EDF 2026' }]);
+
 /**
  * Le chemin d'une image qu'un modèle ne voit pas, dans sa note
  * (`visionRoutingNote`). La note dit aujourd'hui « saved at saved at » : la
@@ -824,7 +832,7 @@ const ROUTING_NOTE_PATH = /IMAGE \((?:saved at )+(.+?)\)\. It was not passed to 
 /** La requête que le fournisseur reçoit : `hydrateForLlm` puis la frontière des handles. */
 async function requestAsTheProviderGetsIt(
   messages: ModelMessage[],
-  input: ModelImageInput,
+  input: ModelAttachmentInput,
 ): Promise<{ system: string; text: string }> {
   const sent: Array<{ system?: unknown; messages?: unknown }> = [];
   const provider = {
@@ -860,7 +868,7 @@ async function callFileTool(
   name: string,
   input: Record<string, unknown>,
   autonomy?: 'fully_autonomous',
-) {
+): Promise<{ output: { ok: boolean; reason?: string }; attached: string[] }> {
   const registry = createToolRegistry();
   registerBuiltins(registry);
   const tool = registry.get(name);
@@ -878,6 +886,8 @@ async function callFileTool(
     jobChatId: String(CHAT),
     turn: 1,
     workspaces,
+    // Un modèle qui prend les images et les PDF : `file_read` les lui passe (#905).
+    modelInput: { image: { sees: true }, pdf: { sees: true } },
   };
   const res = await executeTool(tool, input as never, ctx, {
     approvalRules: [],
@@ -885,7 +895,11 @@ async function callFileTool(
     onApprovalRequired: async () => {},
   });
   if (res.outcome !== 'success') throw new Error(`${name}: ${JSON.stringify(res)}`);
-  return res.output as { ok: boolean; reason?: string; content?: string };
+  return {
+    output: res.output as { ok: boolean; reason?: string },
+    // Les octets passés au modèle, en base64.
+    attached: (res.attachments ?? []).map((a) => a.data),
+  };
 }
 
 /** Les deux chemins que la note d'un fichier reçu donne au modèle (le JSON de la requête). */
@@ -916,7 +930,7 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
   ])(
     'Telegram $chat.type chat: file_read and file_move succeed on exactly the paths the model read',
     async ({ chat, caption }) => {
-      telegramFiles.set('doc-910', PDF);
+      telegramFiles.set('doc-910', INVOICE);
       const { jobId, job } = await deliver(
         update(
           {
@@ -932,7 +946,8 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
       );
 
       const request = await requestAsTheProviderGetsIt(job.messages as ModelMessage[], {
-        sees: true,
+        image: { sees: true },
+        pdf: { sees: true },
       });
       // La frontière a réécrit cette requête : l'adresse du chat est partie.
       const handle = await conversationHandleFor(db as unknown as AnyDrizzleDb, {
@@ -945,14 +960,13 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
 
       const { workspacePath, absolutePath } = pathsTheModelReads(request.text);
 
-      const read = await callFileTool(jobId, 'file_read', { path: workspacePath });
-      expect(read.reason ?? null).toBeNull();
-      expect(read).toMatchObject({ ok: true });
-      expect(read.content).toContain('%PDF-1.7');
-      const readAbsolute = await callFileTool(jobId, 'file_read', { path: absolutePath });
-      expect(readAbsolute.reason ?? null).toBeNull();
-      expect(readAbsolute).toMatchObject({ ok: true });
-      expect(readAbsolute.content).toContain('%PDF-1.7');
+      // Le PDF arrive au modèle : ses octets, ceux du disque.
+      for (const path of [workspacePath, absolutePath]) {
+        const read = await callFileTool(jobId, 'file_read', { path });
+        expect(read.output.reason ?? null).toBeNull();
+        expect(read.output).toMatchObject({ ok: true });
+        expect(read.attached).toEqual([INVOICE.toString('base64')]);
+      }
 
       const classement = join(root, seed.entityId, 'shared', 'Classement');
       const copied = await callFileTool(jobId, 'file_move', {
@@ -961,9 +975,9 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
         copy: true,
         create_dirs: true,
       });
-      expect(copied.reason ?? null).toBeNull();
-      expect(copied).toMatchObject({ ok: true, operation: 'copied' });
-      expect(new Uint8Array(await readFile(join(classement, 'copie.pdf')))).toEqual(PDF);
+      expect(copied.output.reason ?? null).toBeNull();
+      expect(copied.output).toMatchObject({ ok: true, operation: 'copied' });
+      expect(await readFile(join(classement, 'copie.pdf'))).toEqual(INVOICE);
 
       // Retirer un fichier du dossier partagé que le run n'a pas écrit passe
       // par une personne (la porte d'écrasement, #881) : le déplacement est
@@ -975,9 +989,9 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
         { source: workspacePath, destination: 'shared/Classement/Facture EDF.pdf' },
         'fully_autonomous',
       );
-      expect(moved.reason ?? null).toBeNull();
-      expect(moved).toMatchObject({ ok: true, operation: 'moved' });
-      expect(new Uint8Array(await readFile(join(classement, 'Facture EDF.pdf')))).toEqual(PDF);
+      expect(moved.output.reason ?? null).toBeNull();
+      expect(moved.output).toMatchObject({ ok: true, operation: 'moved' });
+      expect(await readFile(join(classement, 'Facture EDF.pdf'))).toEqual(INVOICE);
       await rm(classement, { recursive: true });
 
       // Et ce chemin est celui du dossier du job, sans adresse de conversation.
@@ -991,8 +1005,8 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
       update({ caption: 'regarde', photo: [{ file_id: 'photo-910', width: 9, height: 9 }] }),
     );
     const request = await requestAsTheProviderGetsIt(job.messages as ModelMessage[], {
-      sees: false,
-      reason: 'this model does not take images',
+      image: { sees: false, reason: 'this model does not take images' },
+      pdf: { sees: true },
     });
     const m = ROUTING_NOTE_PATH.exec(request.text);
     expect(m).not.toBeNull();
@@ -1005,8 +1019,8 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
       copy: true,
       create_dirs: true,
     });
-    expect(copied.reason ?? null).toBeNull();
-    expect(copied).toMatchObject({ ok: true, operation: 'copied' });
+    expect(copied.output.reason ?? null).toBeNull();
+    expect(copied.output).toMatchObject({ ok: true, operation: 'copied' });
     const classement = join(root, seed.entityId, 'shared', 'Classement');
     const [kept] = await readdir(classement);
     expect(new Uint8Array(await readFile(join(classement, kept!)))).toEqual(JPEG);
@@ -1053,8 +1067,8 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
     }
     const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
     const request = await requestAsTheProviderGetsIt(job!.messages as ModelMessage[], {
-      sees: false,
-      reason: 'this model does not take images',
+      image: { sees: false, reason: 'this model does not take images' },
+      pdf: { sees: true },
     });
     const discordHandle = await conversationHandleFor(db as unknown as AnyDrizzleDb, {
       entityId: seed.entityId,
@@ -1074,8 +1088,8 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
       copy: true,
       create_dirs: true,
     });
-    expect(copied.reason ?? null).toBeNull();
-    expect(copied).toMatchObject({ ok: true, operation: 'copied' });
+    expect(copied.output.reason ?? null).toBeNull();
+    expect(copied.output).toMatchObject({ ok: true, operation: 'copied' });
     const classement = join(root, seed.entityId, 'shared', 'Classement');
     const [kept] = await readdir(classement);
     expect(new Uint8Array(await readFile(join(classement, kept!)))).toEqual(PNG);

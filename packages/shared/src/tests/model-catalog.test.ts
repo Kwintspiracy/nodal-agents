@@ -13,6 +13,9 @@ import {
   modelCanSeeImages,
   modelIdKey,
   modelImageInputFor,
+  modelPdfInputFor,
+  modelCanReadPdfs,
+  PDF_MODEL_IDS,
   VISION_MODEL_IDS,
   modelOutputCap,
   TURN_OUTPUT_TOKEN_CAP,
@@ -761,5 +764,53 @@ describe('cacheControl: the model, not the route, says it takes Anthropic-style 
       .filter((c) => c.provider === 'openrouter' && c.entry.capabilities.cacheControl !== true)
       .map((c) => c.entry.modelId);
     expect(missing).toEqual([]);
+  });
+});
+
+describe('which models take a PDF document (#903) @cap:choisir-modele/moteur', () => {
+  it('read through the same key as images: the owner’s OpenRouter Haiku, its native twin, Gemini', () => {
+    expect(modelPdfInputFor('anthropic/claude-haiku-5.5')).toEqual({ sees: true });
+    expect(modelCanReadPdfs('claude-haiku-4-5')).toBe(true);
+    expect(modelCanReadPdfs('anthropic/claude-sonnet-4.6')).toBe(true);
+    expect(modelCanReadPdfs('gemini-3.7-flash')).toBe(true);
+  });
+
+  it('a model that sees images is not, for that, a model that takes PDFs', () => {
+    expect(modelCanSeeImages('z-ai/glm-5.3-flash')).toBe(true);
+    expect(modelPdfInputFor('z-ai/glm-5.3-flash')).toEqual({
+      sees: false,
+      reason: 'the model this agent runs (z-ai/glm-5.3-flash) does not take PDF documents as input',
+    });
+    expect(modelPdfInputFor('my-local-model')).toEqual({
+      sees: false,
+      reason:
+        'the model this agent runs (my-local-model) is not known to take PDF documents as input: ' +
+        'it is not in the list of models Nodal knows to take them',
+    });
+  });
+
+  it('every model that takes PDFs sees images, and is catalogued', () => {
+    const catalogued = new Set(
+      Object.values(MODEL_CATALOG).flatMap((es) => es.map((e) => e.modelId)),
+    );
+    expect([...PDF_MODEL_IDS].filter((id) => !modelCanSeeImages(id))).toEqual([]);
+    expect([...PDF_MODEL_IDS].filter((id) => !catalogued.has(id))).toEqual([]);
+  });
+
+  it('no catalogued model that takes no PDF shares its key with one that does', () => {
+    const reading = new Set([...PDF_MODEL_IDS].map(modelIdKey));
+    const others = Object.values(MODEL_CATALOG)
+      .flat()
+      .filter((e) => !PDF_MODEL_IDS.has(e.modelId))
+      .map((e) => e.modelId);
+    expect(others.length).toBeGreaterThan(0);
+    expect(others.filter((id) => reading.has(modelIdKey(id)))).toEqual([]);
+  });
+
+  it('the catalog entry says it too', () => {
+    expect(
+      findModelCatalogEntry('openrouter', 'anthropic/claude-haiku-5.5')?.capabilities.pdf,
+    ).toBe(true);
+    expect(findModelCatalogEntry('openrouter', 'z-ai/glm-5.3-flash')?.capabilities.pdf).toBe(false);
   });
 });

@@ -7,9 +7,9 @@
 //     (apps/runner/src/channels/inbound-files.ts receiveInboundFiles, #899, #910)
 //   <workspacesRoot>/<entityId>/shared/discord/<jobId>.<ext>
 //     (apps/runner/src/channels/discord/handler.ts attachInboundImage, #910)
-// and the images a job's tools fetched, beside them, one folder per job:
+// and the images and PDFs a job's tools fetched, beside them, one folder per job:
 //   <workspacesRoot>/<entityId>/shared/tools/<jobId>/<toolCallId>-<n>.<ext>
-//     (apps/runner/src/job/model-images.ts saveToolImages)
+//     (apps/runner/src/job/model-images.ts saveToolAttachments)
 // Before #910 the channel folders had one more level, the conversation
 // address, and what was written then is still on disk:
 //   <workspacesRoot>/<entityId>/shared/telegram/<chatId>/<jobId>/<original name>
