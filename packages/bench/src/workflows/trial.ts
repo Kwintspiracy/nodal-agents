@@ -138,22 +138,65 @@ export const DEFAULT_TRIAL_OPTIONS: Omit<
   chatQuietMs: 5 * 60_000,
 };
 
+/** Ce que get_task dit d'un run qui court encore. */
+function viewIsLive(view: GetTaskReply): boolean {
+  return view.status === 'running' || view.status === 'waiting_for_person';
+}
+
+/** La vue de l'appelant et la base disent-elles toutes deux que le run vit, ou toutes deux qu'il est fini ? */
+export function callerViewAgrees(view: GetTaskReply, facts: TreeFacts): boolean {
+  return viewIsLive(view) === facts.jobs.some((j) => isLive(j.status));
+}
+
+/** Combien de paires (get_task, base) lire au plus avant de dire qu'elles divergent. */
+export const CALLER_VIEW_READS = 3;
+
+/**
+ * La vue de l'appelant ET une lecture de la base, prises l'une après l'autre
+ * jusqu'à ce qu'elles s'accordent sur « le run vit / est fini », au plus
+ * CALLER_VIEW_READS fois. Deux lectures ne sont pas un instantané : la tête
+ * que la file relance à la fin d'un run (#531) peut naître ou finir entre
+ * les deux, et un écart de vivacité n'est alors que la course du banc, pas le
+ * contrat de get_task (revue de #889, passe 1). Rend la dernière paire lue.
+ */
+export async function readCallerView(
+  getTask: () => Promise<GetTaskReply>,
+  read: () => Promise<TreeFacts>,
+  sleep: (ms: number) => Promise<void>,
+  pollMs: number,
+): Promise<{ view: GetTaskReply; facts: TreeFacts }> {
+  for (let i = 1; ; i++) {
+    const view = await getTask();
+    const facts = await read();
+    if (callerViewAgrees(view, facts) || i >= CALLER_VIEW_READS) return { view, facts };
+    await sleep(pollMs);
+  }
+}
+
 /**
  * Ce qui sépare la réponse que l'appelant a lue par `get_task` de ce que la
- * base porte, une raison par écart. Rien quand get_task n'a pas répondu : sa
- * panne est déjà une raison.
+ * base porte, sur une paire lue par `readCallerView`, une raison par écart.
+ * Rien quand get_task n'a pas répondu : sa panne est déjà une raison.
+ *
+ * Le résultat et le statut terminal ne se comparent que sur un run que les
+ * deux disent fini : c'est ce qui ne bouge plus. Un écart de vivacité n'est
+ * une raison qu'après CALLER_VIEW_READS paires qui divergent toutes.
  */
 export function callerViewReasons(view: GetTaskReply | null, facts: TreeFacts): string[] {
   if (view === null) return [];
+  const live = facts.jobs.filter((j) => isLive(j.status)).length;
+  if (!callerViewAgrees(view, facts))
+    return [
+      `get_task and the database still disagree after ${CALLER_VIEW_READS} reads: ` +
+        `get_task says ${view.status}, ${live} job(s) of the run are live`,
+    ];
+  if (live > 0) return [];
   const root = facts.jobs.find((j) => j.id === facts.rootId);
   const out: string[] = [];
+  if ((root?.status ?? null) !== view.status)
+    out.push(`get_task says ${view.status} although the root job is ${root?.status ?? 'missing'}`);
   if ((root?.result ?? null) !== view.result)
     out.push('get_task returned another result than the root job holds');
-  const settled = facts.jobs.every((j) => !isLive(j.status));
-  if (settled && (view.status === 'running' || view.status === 'waiting_for_person'))
-    out.push(`get_task says ${view.status} although no job of the run is live`);
-  if (!settled && view.status !== 'running' && view.status !== 'waiting_for_person')
-    out.push(`get_task says ${view.status} although a job of the run is still live`);
   return out;
 }
 
@@ -716,7 +759,7 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
 
   let cancelled = false;
   const benchReasons: string[] = [];
-  let callerView: GetTaskReply | null = null;
+  let callerView: { view: GetTaskReply; facts: TreeFacts } | null = null;
   const cancel = async (why: string): Promise<void> => {
     if (entityId === null) {
       // L'entité n'est connue qu'après la première lecture ; la relire ici
@@ -773,7 +816,12 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
     // La réponse que l'APPELANT obtient, par `get_task` (#887), lue avant de
     // fermer le client : la même que tout client MCP.
     try {
-      callerView = await session.getTask();
+      callerView = await readCallerView(
+        () => session.getTask(),
+        () => deps.read(rootId),
+        (ms) => deps.sleep(ms),
+        o.pollMs,
+      );
     } catch (e) {
       benchReasons.push(
         `the caller could not read the answer through get_task: ${String(e instanceof Error ? e.message : e)}`,
@@ -826,9 +874,9 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
   }
   // Ce que l'appelant a lu doit être ce que la base porte : un écart est le
   // contrat de get_task cassé, et l'essai le dit (jamais un vert dessus).
-  benchReasons.push(...callerViewReasons(callerView, facts));
+  if (callerView) benchReasons.push(...callerViewReasons(callerView.view, callerView.facts));
   const reasons = [...new Set([...benchReasons, ...judged])];
-  const result = callerView?.result ?? null;
+  const result = callerView?.view.result ?? null;
   return {
     ...emptyLine(s, o, startedMs, rootModel),
     ...measure(facts),

@@ -29,6 +29,7 @@ import {
   DELIVERY_CONTENT_FIELDS,
   DELIVERY_TARGET_FIELDS,
   busyReason,
+  callerViewReasons,
   destinationReasons,
   measure,
   runTrial,
@@ -475,7 +476,7 @@ describe('the answer a trial keeps is the one the caller read through get_task (
     expect(line.answer).toBe('Vérification rapide des fichiers livrés :');
   });
 
-  it('get_task saying running on a finished run makes the trial red, named', async () => {
+  it('get_task saying running on a finished run, read after read, makes the trial red, named', async () => {
     const green = load('question-green');
     const w = world({
       rootId: green.rootId,
@@ -484,7 +485,56 @@ describe('the answer a trial keeps is the one the caller read through get_task (
     });
     const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
     expect(line.verdict).toBe('red');
-    expect(line.reasons).toContain('get_task says running although no job of the run is live');
+    expect(line.reasons).toContain(
+      'get_task and the database still disagree after 3 reads: get_task says running, 0 job(s) of the run are live',
+    );
+  });
+
+  it('a successor job that ends BETWEEN the get_task read and the database read is not a contract breach', async () => {
+    // La course de la revue de #889 (passe 1), rendue déterministe : get_task
+    // lit le run pendant que la tête relancée par la file (#531) court encore,
+    // et elle finit avant que le banc ne relise la base. Les deux lectures sont
+    // justes, chacune à son instant ; comparées comme un instantané, elles
+    // rendaient rouge un essai correct.
+    // Mutation exécutée : revenir à une seule paire comparée telle quelle fait
+    // rougir CE test (« get_task says running … no job … is live »).
+    const green = load('question-green');
+    const root = green.jobs.find((j) => j.id === green.rootId)!;
+    let views = 0;
+    const w = world({
+      rootId: green.rootId,
+      snapshots: [green],
+      getTask: (f) =>
+        views++ === 0
+          ? { jobId: green.rootId, status: 'running', result: root.result }
+          : callerViewOf(f),
+    });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.reasons).toEqual([]);
+    expect(line.verdict).toBe('green');
+    expect(line.answer).toBe(root.result);
+  });
+
+  it('on a run both reads see live, nothing that can still move is compared', () => {
+    // La tête a déjà un texte, mais un délégué court : get_task dit « running »
+    // sans résultat définitif. Ni le statut ni le résultat ne sont figés.
+    // Mutation exécutée : comparer aussi sur un run vivant fait rougir CE test.
+    const after = load('file-red-approval');
+    const live = beforeCancel(after);
+    const view: GetTaskReply = { jobId: live.rootId, status: 'running', result: null };
+    expect(callerViewReasons(view, live)).toEqual([]);
+  });
+
+  it('get_task saying completed with the wrong status of the head stays red', async () => {
+    const green = load('question-green');
+    const w = world({
+      rootId: green.rootId,
+      snapshots: [green],
+      getTask: (f) => ({ ...callerViewOf(f), status: 'failed' }),
+    });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.verdict).toBe('red');
+    expect(line.reasons).toContain('get_task says failed although the root job is completed');
   });
 
   it('a get_task that fails is a reason, and the line keeps no answer', async () => {
