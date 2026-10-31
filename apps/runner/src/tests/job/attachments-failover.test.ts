@@ -185,7 +185,7 @@ describe('a file is judged against the model that serves, through a failover cha
     expect(files(after)).toEqual([]);
     expect(JSON.stringify(after)).not.toContain(PNG_B64);
     expect(toolText(after)).toContain(
-      '"apercu.png" is an image (image/png, 29 B), and it was not read: the model this agent ' +
+      'is an image (image/png, 29 B), and it was not read: the model this agent ' +
         `runs (${BLIND}) does not take images as input.`,
     );
     expect(toolText(after)).not.toContain('"image":{');
