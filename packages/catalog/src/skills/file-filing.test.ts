@@ -7,7 +7,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { systemSkills, systemSkillSlugs } from '../index';
-import { fileFilingSkill, FILE_FILING_FOLDERS_HEADING } from './file-filing';
+import {
+  fileFilingSkill,
+  FILE_FILING_FOLDERS_HEADING,
+  FILE_FILING_PLACEHOLDER,
+} from './file-filing';
 
 /** The body of "Your folders": everything after its heading, up to the next heading. */
 function foldersSection(content: string): string {
@@ -18,9 +22,12 @@ function foldersSection(content: string): string {
   return next < 0 ? rest : rest.slice(0, next);
 }
 
-/** What a person (or the model) would call "written" in that section: text outside HTML comments. */
+/**
+ * What a person (or the model) would call "written" in that section: everything
+ * but the placeholder line. A line the owner wrote counts wherever it sits.
+ */
 function writtenFolders(section: string): string {
-  return section.replace(/<!--[\s\S]*?-->/g, '').trim();
+  return section.replace(FILE_FILING_PLACEHOLDER, '').trim();
 }
 
 // A drive letter (`C:\`, `D:/`), a UNC share, a home folder, or a POSIX absolute
@@ -63,17 +70,62 @@ describe('file-filing skill', () => {
       'a section follows "Your folders": the owner would write inside the wrong one',
     ).not.toMatch(/\n#{1,6} /);
     const section = foldersSection(c);
-    expect(section, 'the section no longer tells the owner what to write').toMatch(
-      /<!--[\s\S]+-->/,
+    expect(section, 'the section no longer tells the owner what to write').toContain(
+      FILE_FILING_PLACEHOLDER,
     );
     expect(writtenFolders(section), 'a folder is shipped in the catalog').toBe('');
-    // The instruction names a relative example only.
-    expect(section).toMatch(/Example/);
+  });
+
+  // P2-2 (review of #895): the placeholder was an HTML comment, and the owner
+  // was invited to write INSIDE it, where the method counts it as empty. A
+  // visible line has no inside: the owner replaces it, the model reads the same
+  // text. No comment may come back anywhere in the skill.
+  it('the placeholder is a visible line, never an HTML comment the owner could write inside', () => {
+    const c = fileFilingSkill.content;
+    expect(c).not.toContain('<!--');
+    expect(c).not.toContain('-->');
+    expect(FILE_FILING_PLACEHOLDER).not.toContain('\n');
+    expect(FILE_FILING_PLACEHOLDER).toMatch(/^\(Not filled in yet\./);
+    expect(FILE_FILING_PLACEHOLDER, 'it must tell the owner to REPLACE the line').toMatch(
+      /Replace this line/,
+    );
+    // The example inside the placeholder is relative and generic.
+    expect(FILE_FILING_PLACEHOLDER).not.toMatch(ABSOLUTE_PATH);
+  });
+
+  it('the method defines the empty case by that very line, and says its example is not a folder', () => {
+    const c = fileFilingSkill.content;
+    expect(c).toContain('holds only its placeholder line (the one starting "(Not filled in yet.")');
+    expect(c).toMatch(/its example is not a folder/);
+  });
+
+  // P2-1: "ask when unreadable" and "move when clear" had no precedence, and the
+  // empty case asked where things go even when the request already said it.
+  it('defines "place is clear": read and fits one folder, OR the person named it', () => {
+    const c = fileFilingSkill.content;
+    expect(c).toMatch(
+      /A place is clear when you read the document and its content fits one folder, or when the person named the destination or the kind of document in the request/,
+    );
+    expect(c, 'the request outranks the section').toMatch(/the request outranks "Your folders"/);
+  });
+
+  it('an unreadable document is never filed on its name, unless the person named the place', () => {
+    const c = fileFilingSkill.content;
+    expect(c).toMatch(/its name and extension are no evidence/);
+    expect(c).toMatch(
+      /say so and ask where it goes, unless the person already named the destination/,
+    );
+  });
+
+  it('the empty-folders question is skipped when the request already answers it', () => {
+    const c = fileFilingSkill.content;
+    expect(c).toMatch(
+      /unless the request already names the destination or the kind: then file there and ask nothing/,
+    );
   });
 
   it('tells the model what an empty "Your folders" means, and where the owner writes it once', () => {
     const c = fileFilingSkill.content;
-    expect(c).toMatch(/holds only its instruction comment/);
     expect(c).toContain('Skills -> File filing -> "Your folders"');
   });
 
@@ -83,9 +135,7 @@ describe('file-filing skill', () => {
       /List the destination folder before moving/,
     );
     expect(c, 'content, not name').toMatch(/by what it IS/);
-    expect(c, 'ask on unreadable').toMatch(
-      /cannot \(an image without text, an unreadable file\), say so and ask/,
-    );
+    expect(c, 'ask on unreadable').toMatch(/cannot \(an image without text, an unreadable file\)/);
     expect(c, 'plan for several files').toMatch(/show the plan[\s\S]*wait for the person's go/);
     expect(c, 'one question').toMatch(/one question, never several/);
     expect(c, 'dated name').toContain('YYYY-MM-DD Subject.ext');
@@ -98,7 +148,7 @@ describe('file-filing skill', () => {
   it('stays well under the print skill, the upper bound for a catalog skill', () => {
     const print = systemSkills.find((s) => s.slug === 'print-request');
     expect(print).toBeDefined();
-    expect(fileFilingSkill.content.length).toBeLessThan(print!.content.length / 1.5);
+    expect(fileFilingSkill.content.length).toBeLessThan(print!.content.length * 0.75);
   });
 });
 
