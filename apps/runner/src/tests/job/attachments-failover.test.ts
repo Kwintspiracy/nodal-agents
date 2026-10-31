@@ -132,6 +132,14 @@ async function run(
 
 type Part = { type?: string; file?: { file_data?: string }; image_url?: { url?: string } };
 
+/** The text of the tool messages of a request. */
+function toolText(b: Body): string {
+  return b.messages
+    .filter((m) => m.role === 'tool')
+    .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
+    .join('\n');
+}
+
 /** The files of a request: OpenRouter `file` parts and `image_url` parts. */
 function files(b: Body): string[] {
   return b.messages.flatMap((m) =>
@@ -160,9 +168,12 @@ describe('a file is judged against the model that serves, through a failover cha
     const after = served[1]!;
     expect(files(after)).toEqual([]);
     expect(JSON.stringify(after)).not.toContain(PDF_B64);
-    expect(JSON.stringify(after)).toContain(
-      `the model this agent runs (${SEES_NO_PDF}) does not take PDF documents as input`,
+    // The TOOL says it, at the call: it never claims a read the model did not get.
+    expect(toolText(after)).toContain(
+      'and it was not read: the model this agent runs ' +
+        `(${SEES_NO_PDF}) does not take PDF documents as input.`,
     );
+    expect(toolText(after)).not.toContain('"document":{');
   });
 
   it('image: the primary fails from the start; the fallback does not see, so the image is refused in ITS name', async () => {
@@ -173,9 +184,11 @@ describe('a file is judged against the model that serves, through a failover cha
     const after = served[1]!;
     expect(files(after)).toEqual([]);
     expect(JSON.stringify(after)).not.toContain(PNG_B64);
-    expect(JSON.stringify(after)).toContain(
-      `the model this agent runs (${BLIND}) does not take images as input`,
+    expect(toolText(after)).toContain(
+      '"apercu.png" is an image (image/png, 29 B), and it was not read: the model this agent ' +
+        `runs (${BLIND}) does not take images as input.`,
     );
+    expect(toolText(after)).not.toContain('"image":{');
   });
 
   it('the reverse chain: the fallback reads PDFs, so the PDF reaches it — no refusal in the primary’s name', async () => {
