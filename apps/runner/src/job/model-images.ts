@@ -3,7 +3,9 @@
 // receives. One place for every kind of file a job holds:
 //
 //   - an image the PERSON sent (a channel photo): a user-message part whose
-//     `image` is the absolute path of the file the channel handler saved;
+//     `image` is the `file:` URL of the file the channel intake saved
+//     (channels/inbound-files.ts), or its absolute path (Discord, and the
+//     Telegram photos saved before #899);
 //   - a file a TOOL fetched (`ctx.attachForModel`: file_read on an image or a
 //     PDF, an MCP image block): saved by `saveToolAttachments` beside the
 //     channel photos, in the entity's shared folder, and kept in the tool
@@ -168,9 +170,10 @@ function personImageSource(p: unknown): ImageSource | null {
   if (value instanceof ArrayBuffer)
     return { kind: 'inline', data: new Uint8Array(value), mediaType };
   if (typeof value !== 'string') return unreadable(typeof value);
-  // A channel photo: the absolute path its handler saved (telegram, discord),
+  // A channel photo as an absolute path (discord, and telegram before #899),
   // always with its extension. Base64 never holds a dot, even when it starts
-  // with `/` as a JPEG's does (`/9j/…`).
+  // with `/` as a JPEG's does (`/9j/…`). The channel intake writes a `file:`
+  // URL instead, read below whatever the file's name (review of #902).
   if (isAbsolute(value) && /\.[a-z0-9]{2,5}$/i.test(value)) return { kind: 'file', path: value };
   // A URL (`data:`, `https:`, `file:`, any other scheme: unreadable), else base64.
   if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return sourceOfLocation(value, mediaType);

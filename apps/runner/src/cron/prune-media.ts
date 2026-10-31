@@ -3,8 +3,10 @@
 //
 // Telegram and Discord attachments are written to the entity's SHARED
 // workspace at:
+//   <workspacesRoot>/<entityId>/shared/telegram/<chatId>/<jobId>/<original name>
+//     (apps/runner/src/channels/inbound-files.ts receiveInboundFiles, #899)
 //   <workspacesRoot>/<entityId>/shared/telegram/<chatId>/<jobId>.<ext>
-//     (apps/runner/src/telegram/handler.ts attachInboundPhoto)
+//     (the Telegram photos written before #899)
 //   <workspacesRoot>/<entityId>/shared/discord/<channelId>/<jobId>.<ext>
 //     (apps/runner/src/channels/discord/handler.ts attachInboundImage)
 // and the images and PDFs a job's tools fetched, beside them, one folder per job:
@@ -17,7 +19,7 @@
 // on disk grows the workspace unbounded. This walks every entity's
 // shared/{telegram,discord,tools} directories for what belongs to a pruned
 // job — a file whose basename (sans extension) is its id, or a folder named
-// after it — and deletes it.
+// after it, at either level — and deletes it.
 //
 // Best-effort PER FILE (a locked file must not fail the whole phase) but
 // LOUD: every failure is console.warn'd so it stays diagnosable.
@@ -83,6 +85,10 @@ export async function pruneJobMediaFiles(
         // A folder named after the pruned job holds only that job's media.
         const wholeFolder = jobIdSet.has(convoDir.name);
         for (const file of files) {
+          if (file.isDirectory() && jobIdSet.has(file.name)) {
+            filesDeleted += await removeJobFolder(join(convoPath, file.name));
+            continue;
+          }
           if (!file.isFile()) continue;
           const stem = basename(file.name, extname(file.name));
           if (!wholeFolder && !jobIdSet.has(stem)) continue;
@@ -100,4 +106,20 @@ export async function pruneJobMediaFiles(
   }
 
   return { filesDeleted };
+}
+
+/**
+ * Delete a job's folder of received files (<chat>/<jobId>/, #899) and return
+ * how many files it held. Loud on failure, like every deletion here.
+ */
+async function removeJobFolder(dir: string): Promise<number> {
+  const entries = await safeReaddir(dir);
+  if (!entries) return 0;
+  try {
+    await rm(dir, { recursive: true });
+    return entries.filter((e) => e.isFile()).length;
+  } catch (err) {
+    console.warn(`[retention] failed to delete pruned-job media folder "${dir}":`, err);
+    return 0;
+  }
 }

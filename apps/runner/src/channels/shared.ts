@@ -41,7 +41,8 @@ function isUnsafeNameCodePoint(code: number): boolean {
   return false;
 }
 
-function stripUnsafeNameChars(s: string): string {
+/** `s` without the control, zero-width and bidi characters above — for any name a sender chose (a display name, a file name). */
+export function stripUnsafeNameChars(s: string): string {
   let out = '';
   for (const ch of s) {
     if (!isUnsafeNameCodePoint(ch.codePointAt(0) ?? 0)) out += ch;
