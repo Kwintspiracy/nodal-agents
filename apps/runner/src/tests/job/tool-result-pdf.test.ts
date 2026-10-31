@@ -138,7 +138,7 @@ describe('a PDF file_read returns reaches a model that takes PDFs @cap:travaille
     // The tool result says what was read, never the bytes.
     const tools = toolText(after);
     expect(tools).toContain(
-      `"document":{"media_type":"application/pdf","bytes":${PDF.length},"pages":2}`,
+      `"document":{"media_type":"application/pdf","bytes":${PDF.length},"pages":2,"attached_pages":"1-2"}`,
     );
     expect(tools).not.toContain(PDF_B64);
     // The document follows the tool message, introduced by its call.

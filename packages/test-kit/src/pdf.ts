@@ -8,8 +8,12 @@
 // scan). The scanned page draws its words as pixels, in a 5×7 bitmap font, so
 // a model that reads it sees them and a text extractor finds nothing.
 
-/** One page: text set in Helvetica, or the same words as a scanned image. */
-export type TestPdfPage = { text: string } | { scanned: string };
+/**
+ * One page: text set in Helvetica, or the same words as a scanned image.
+ * `scale`: pixels per bitmap dot (default 6) — a larger one makes a heavier
+ * page, as a high-resolution scan is (about 63 × scale² bytes a letter).
+ */
+export type TestPdfPage = { text: string } | { scanned: string; scale?: number };
 
 /** The 5×7 glyphs a scanned page can draw (uppercase, digits, space). */
 const GLYPHS: Readonly<Record<string, readonly string[]>> = {
@@ -29,15 +33,18 @@ const GLYPHS: Readonly<Record<string, readonly string[]>> = {
   '7': ['11111', '00001', '00010', '00100', '01000', '01000', '01000'],
 };
 
-/** Pixels per bitmap dot. */
+/** Pixels per bitmap dot, by default. */
 const SCALE = 6;
 
 /** A grey image (8 bits, 0 = black) of `words`, white around them. */
-function bitmap(words: string): { width: number; height: number; pixels: Buffer } {
+function bitmap(
+  words: string,
+  scale: number = SCALE,
+): { width: number; height: number; pixels: Buffer } {
   const cols = words.length * 6 + 1;
   const rows = 9;
-  const width = cols * SCALE;
-  const height = rows * SCALE;
+  const width = cols * scale;
+  const height = rows * scale;
   const pixels = Buffer.alloc(width * height, 0xff);
   [...words].forEach((ch, n) => {
     const glyph = GLYPHS[ch];
@@ -47,10 +54,10 @@ function bitmap(words: string): { width: number; height: number; pixels: Buffer 
     glyph.forEach((line, gy) => {
       [...line].forEach((dot, gx) => {
         if (dot !== '1') return;
-        const x0 = (1 + n * 6 + gx) * SCALE;
-        const y0 = (1 + gy) * SCALE;
-        for (let y = y0; y < y0 + SCALE; y += 1)
-          pixels.fill(0x00, y * width + x0, y * width + x0 + SCALE);
+        const x0 = (1 + n * 6 + gx) * scale;
+        const y0 = (1 + gy) * scale;
+        for (let y = y0; y < y0 + scale; y += 1)
+          pixels.fill(0x00, y * width + x0, y * width + x0 + scale);
       });
     });
   });
@@ -88,7 +95,7 @@ export function buildTestPdf(pages: readonly TestPdfPage[]): Buffer {
       resources = `<< /Font << /F1 ${font} 0 R >> >>`;
       content = `BT /F1 24 Tf 72 700 Td (${pdfString(page.text)}) Tj ET`;
     } else {
-      const { width, height, pixels } = bitmap(page.scanned);
+      const { width, height, pixels } = bitmap(page.scanned, page.scale);
       const image = add(
         stream(
           `/Type /XObject /Subtype /Image /Width ${width} /Height ${height} ` +

@@ -159,6 +159,29 @@ export async function countPdfPages(
   }
 }
 
+/**
+ * Pages `first` to `last` (1-based, inclusive) of a PDF, as a PDF of their
+ * own (pdf-lib), or why they could not be cut out. What a model is handed of a
+ * document longer than a request carries: a window of it, never nothing.
+ * Loaded on demand, like pdf-parse.
+ */
+export async function cutPdfPages(
+  bytes: Uint8Array,
+  first: number,
+  last: number,
+): Promise<{ bytes: Uint8Array } | { error: string }> {
+  try {
+    const { PDFDocument } = await import('pdf-lib');
+    const source = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+    const out = await PDFDocument.create({ updateMetadata: false });
+    const indices = Array.from({ length: last - first + 1 }, (_, k) => first - 1 + k);
+    for (const page of await out.copyPages(source, indices)) out.addPage(page);
+    return { bytes: await out.save() };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 const NOUN: Readonly<Record<keyof ModelAttachmentInput, string>> = {
   image: 'images',
   pdf: 'PDF documents',
@@ -226,8 +249,8 @@ export function admitModelAttachment(
         attached: false,
         reason:
           `the PDF has ${attachment.pages} pages, and a request to a model carries at most ` +
-          `${MODEL_REQUEST_MAX_IMAGES} images, a PDF page counting as one; a copy of ` +
-          `${MODEL_REQUEST_MAX_IMAGES} pages or fewer can be passed`,
+          `${MODEL_REQUEST_MAX_IMAGES} images, a PDF page counting as one; file_read reads a ` +
+          `PDF ${MODEL_REQUEST_MAX_IMAGES} pages at a time (its "pages" argument)`,
       };
     }
   }

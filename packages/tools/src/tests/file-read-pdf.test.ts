@@ -35,6 +35,12 @@ const SCAN_B64 = SCAN.toString('base64');
 const TOO_LONG = buildTestPdf(
   Array.from({ length: MODEL_REQUEST_MAX_IMAGES + 1 }, (_, k) => ({ text: `Page ${k + 1}` })),
 );
+// A printer's scan at a high resolution: each page about 4 MiB, five of them.
+const HEAVY = buildTestPdf(
+  ['A', 'C', 'E', 'I', 'M'].map((letter) => ({ scanned: letter, scale: 258 })),
+);
+// One page heavier than a PDF can be passed at.
+const ONE_HEAVY_PAGE = buildTestPdf([{ scanned: 'A', scale: 420 }]);
 // Starts like a PDF, is not one.
 const BROKEN = Buffer.from('%PDF-1.4\nthis is not a pdf at all\n');
 // A binary that is no PDF, whatever its name says.
@@ -62,6 +68,9 @@ beforeAll(async () => {
   await writeFile(join(ws, 'long.pdf'), TOO_LONG);
   await writeFile(join(ws, 'broken.pdf'), BROKEN);
   await writeFile(join(ws, 'binary.pdf'), BINARY);
+  await writeFile(join(ws, 'heavy.pdf'), HEAVY);
+  await writeFile(join(ws, 'one-heavy-page.pdf'), ONE_HEAVY_PAGE);
+  await writeFile(join(ws, 'notes.txt'), 'some notes\n');
   // Above the cap: a real PDF, then padding after its end, as a large scan has.
   await writeFile(
     join(ws, 'huge.pdf'),
@@ -87,8 +96,31 @@ function ctx(modelInput?: ModelAttachmentInput): ToolContext {
 
 const opts = { approvalRules: [], onApprovalRequired: async () => {} } as never;
 
-async function read(path: string, input?: ModelAttachmentInput): Promise<ToolExecutionResult> {
-  return executeTool(fileReadTool as never, { path }, ctx(input), opts);
+async function read(
+  path: string,
+  input?: ModelAttachmentInput,
+  pages?: string,
+): Promise<ToolExecutionResult> {
+  return executeTool(
+    fileReadTool as never,
+    { path, ...(pages === undefined ? {} : { pages }) },
+    ctx(input),
+    opts,
+  );
+}
+
+/** The pages of the PDF a call attached, and the text of each. */
+async function attachedPages(r: ToolExecutionResult): Promise<string[]> {
+  if (r.outcome !== 'success') throw new Error('expected success');
+  const [attachment] = r.attachments ?? [];
+  if (attachment === undefined) throw new Error('nothing was attached');
+  const { PDFParse } = await import('pdf-parse');
+  const parser = new PDFParse({ data: new Uint8Array(Buffer.from(attachment.data, 'base64')) });
+  try {
+    return (await parser.getText()).pages.map((p) => p.text.trim());
+  } finally {
+    await parser.destroy();
+  }
 }
 
 /** The output the audit row of the last file_read on `path` keeps. */
@@ -114,7 +146,12 @@ describe('file_read — a PDF reaches a model that takes PDFs @cap:travailler-su
       expect(r.attachments).toEqual([{ mediaType: 'application/pdf', data: SCAN_B64, pages: 2 }]);
       const said = {
         ok: true,
-        document: { media_type: 'application/pdf', bytes: SCAN.length, pages: 2 },
+        document: {
+          media_type: 'application/pdf',
+          bytes: SCAN.length,
+          pages: 2,
+          attached_pages: '1-2',
+        },
       };
       expect(r.output).toEqual(said);
       // The row is an audit, not a store: type, size and pages, no base64.
@@ -147,23 +184,106 @@ describe('file_read — a PDF reaches a model that takes PDFs @cap:travailler-su
     );
   });
 
-  it('a PDF above the cap is refused with its size and the cap, before it is opened', async () => {
+  it('a file above the cap whose pages weigh less is passed as its pages, cut out of it', async () => {
     const r = await read('huge.pdf', TAKES_PDFS);
     if (r.outcome !== 'success') throw new Error('expected the tool to answer');
-    expect(r.attachments).toBeUndefined();
-    const reason = (r.output as { reason: string }).reason;
-    expect(reason).toContain('"huge.pdf" is a PDF document (10.0 MiB), and it was not read');
-    expect(reason).toContain('a PDF can be passed at 10.0 MiB at most');
+    expect(await attachedPages(r)).toEqual(['Invoice 4217 from ACME', '']);
+    expect(r.attachments?.[0]?.pages).toBe(2);
+    expect(r.output).toEqual({
+      ok: true,
+      document: {
+        media_type: 'application/pdf',
+        bytes: SCAN.length + MAX_MODEL_PDF_BYTES + 1024,
+        pages: 2,
+        attached_pages: '1-2',
+      },
+    });
+  });
+});
+
+describe('file_read — a PDF longer than a request carries is read by windows of pages (#905 review) @cap:travailler-sur-des-fichiers/moteur', () => {
+  const MAX = MODEL_REQUEST_MAX_IMAGES;
+
+  it(`without "pages": its first ${MAX} pages, the rest said with how to read it`, async () => {
+    const r = await read('long.pdf', TAKES_PDFS);
+    const pages = await attachedPages(r);
+    expect(pages).toEqual(Array.from({ length: MAX }, (_, k) => `Page ${k + 1}`));
+    if (r.outcome !== 'success') throw new Error('expected success');
+    expect(r.attachments?.[0]?.pages).toBe(MAX);
+    expect(r.output).toEqual({
+      ok: true,
+      document: {
+        media_type: 'application/pdf',
+        bytes: TOO_LONG.length,
+        pages: MAX + 1,
+        attached_pages: `1-${MAX}`,
+        note:
+          `Pages 1-${MAX} of ${MAX + 1} are attached (a request to a model carries ${MAX} ` +
+          `images at most, a PDF page counting as one); read the next ones with "pages": ` +
+          `"${MAX + 1}".`,
+      },
+    });
   });
 
-  it('a PDF with more pages than a request carries is refused, the pages and the limit named', async () => {
-    const r = await read('long.pdf', TAKES_PDFS);
+  it('with "pages": that window, and nothing else', async () => {
+    const r = await read('long.pdf', TAKES_PDFS, `${MAX + 1}`);
+    expect(await attachedPages(r)).toEqual([`Page ${MAX + 1}`]);
+    expect((r as { output: unknown }).output).toMatchObject({
+      ok: true,
+      document: {
+        pages: MAX + 1,
+        attached_pages: `${MAX + 1}`,
+        note: `Page ${MAX + 1} of ${MAX + 1} is attached.`,
+      },
+    });
+    const middle = await read('long.pdf', TAKES_PDFS, '3-5');
+    expect(await attachedPages(middle)).toEqual(['Page 3', 'Page 4', 'Page 5']);
+  });
+
+  it('pages that are not in the document: refused, its pages named', async () => {
+    const r = await read('long.pdf', TAKES_PDFS, `${MAX}-${MAX + 5}`);
     if (r.outcome !== 'success') throw new Error('expected the tool to answer');
     expect(r.attachments).toBeUndefined();
     expect((r.output as { reason: string }).reason).toContain(
-      `the PDF has ${MODEL_REQUEST_MAX_IMAGES + 1} pages, and a request to a model carries at ` +
-        `most ${MODEL_REQUEST_MAX_IMAGES} images, a PDF page counting as one`,
+      `: pages "${MAX}-${MAX + 5}" are not in it; its pages are 1-${MAX + 1}.`,
     );
+  });
+
+  it('pages that weigh more than a PDF can be passed at: as many as fit, said', async () => {
+    const r = await read('heavy.pdf', TAKES_PDFS);
+    if (r.outcome !== 'success') throw new Error('expected success');
+    const [attachment] = r.attachments ?? [];
+    expect(attachment?.pages).toBe(2);
+    expect(Buffer.from(attachment?.data ?? '', 'base64').length).toBeLessThanOrEqual(
+      MAX_MODEL_PDF_BYTES,
+    );
+    expect(await countPdfPages(Buffer.from(attachment?.data ?? '', 'base64'))).toEqual({
+      pages: 2,
+    });
+    expect((r.output as { document: { note: string } }).document.note).toBe(
+      'Pages 1-2 of 5 are attached (a PDF can be passed at 10.0 MiB at most); read the next ' +
+        'ones with "pages": "3-5".',
+    );
+  });
+
+  it('one page heavier than a PDF can be passed at: refused, that page and the cap named', async () => {
+    const r = await read('one-heavy-page.pdf', TAKES_PDFS);
+    if (r.outcome !== 'success') throw new Error('expected the tool to answer');
+    expect(r.attachments).toBeUndefined();
+    expect((r.output as { reason: string }).reason).toContain(
+      'and it was not read: page 1 alone is 10.6 MiB, above the 10.0 MiB a PDF can be passed at',
+    );
+  });
+
+  it('"pages" on a file that is no PDF: said, never ignored', async () => {
+    const r = await read('notes.txt', TAKES_PDFS, '1');
+    if (r.outcome !== 'success') throw new Error('expected the tool to answer');
+    expect(r.output).toEqual({
+      ok: false,
+      reason:
+        '"pages" reads a PDF document, and "notes.txt" is not a PDF: call file_read without it ' +
+        '(offset and limit window a text file).',
+    });
   });
 
   it('a file that only starts like a PDF is refused as one, why said, never read as text', async () => {

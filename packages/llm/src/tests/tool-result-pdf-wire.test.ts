@@ -23,7 +23,7 @@ const PNG_B64 = Buffer.concat([
   Buffer.from('a rendered worksheet'),
 ]).toString('base64');
 
-const READ_TEXT = `{"ok":true,"document":{"media_type":"application/pdf","bytes":${PDF.length},"pages":2}}`;
+const READ_TEXT = `{"ok":true,"document":{"media_type":"application/pdf","bytes":${PDF.length},"pages":2,"attached_pages":"1-2"}}`;
 
 /** A transcript whose last tool result carries a PDF, as the runner sends it (`hydrateForLlm`). */
 function withPdf(extra: unknown[] = []): ModelMessage[] {
