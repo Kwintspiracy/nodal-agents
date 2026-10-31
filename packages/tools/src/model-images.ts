@@ -1,24 +1,36 @@
-// model-images.ts — an image a tool hands to the model with its result.
+// model-images.ts — a file a tool hands to the model with its result: an
+// image, or a PDF document (#903).
 //
-// One rule for every tool that comes back with a picture (file_read on an
-// image file, an MCP server's image block): the image reaches the model when
-// the model takes images as input, in a format models take, within the
-// whole-read cap. Otherwise it does not, and the tool says why in its result —
-// never the bytes as text, never silence (invariant #4).
+// One rule for every tool that comes back with one (file_read on an image or a
+// PDF, an MCP server's image block): the file reaches the model when the model
+// takes that kind of file as input (`ctx.modelInput`: images, PDFs), in a
+// format models take, within its cap and the request's budget. Otherwise it
+// does not, and the tool says why in its result — never the bytes as text,
+// never silence (invariant #4).
 //
-// The tool asks `ctx.attachImage` (installed per call by `executeTool`); the
-// runner says what its model takes (`ctx.modelImageInput`); `executeTool`
-// returns the attached images next to the output, and the runner puts them in
+// The tool asks `ctx.attachForModel` (installed per call by `executeTool`);
+// the runner says what its model takes (`ctx.modelInput`); `executeTool`
+// returns the attached files next to the output, and the runner puts them in
 // the tool result the model reads. The `tool_calls` row never keeps the bytes:
 // it is an audit, not a store.
+//
+// A PDF is not a second path: it is the same attachment, with its own
+// capability (a model that takes PDFs is not every model that sees) and its
+// own size cap, spending the same request budget as the images — a page
+// counts as an image (`@nodal-agents/shared` model-image-budget.ts).
 
 import { MODEL_REQUEST_MAX_IMAGES, MODEL_REQUEST_MAX_IMAGE_BYTES } from '@nodal-agents/shared';
 import { MAX_READ_BYTES } from './builtin/file-ops/workspace';
 
-import type { ImageAttachOutcome, ModelImageInput, ToolImage } from './types';
+import type {
+  ModelAttachOutcome,
+  ModelAttachmentInput,
+  ModelInputSupport,
+  ToolAttachment,
+} from './types';
 
 // The types live with ToolContext (`types.ts`), which carries them.
-export type { ImageAttachOutcome, ModelImageInput, ToolImage };
+export type { ModelAttachOutcome, ModelAttachmentInput, ModelInputSupport, ToolAttachment };
 
 /**
  * The formats every vision provider Nodal speaks to takes as image input
@@ -38,6 +50,18 @@ export const MODEL_IMAGE_MEDIA_TYPES: readonly string[] = [
  * 1 MiB), well under every provider's own per-image limit.
  */
 export const MAX_MODEL_IMAGE_BYTES = MAX_READ_BYTES;
+
+/** The one document type models take. */
+export const PDF_MEDIA_TYPE = 'application/pdf';
+
+/**
+ * The largest PDF passed to a model, decoded: the whole request budget
+ * (`MODEL_REQUEST_MAX_IMAGE_BYTES`, 10 MiB), which a PDF shares with the
+ * images. Read whole like an image (no window of lines of it means anything),
+ * so above the whole-read cap of a text. A printer's scan is commonly 0.2 to
+ * 3 MiB a page.
+ */
+export const MAX_MODEL_PDF_BYTES = MODEL_REQUEST_MAX_IMAGE_BYTES;
 
 /** Decoded size of a base64 payload, without decoding it. */
 export function base64DecodedBytes(data: string): number {
@@ -87,54 +111,162 @@ export function sniffImageMediaType(head: Uint8Array): string | null {
   return null;
 }
 
+/** Whether a file's first bytes declare a PDF (`%PDF-`): the bytes, never the name. */
+export function isPdf(head: Uint8Array): boolean {
+  return ascii(head, '%PDF-');
+}
+
 /**
- * Whether `image` may reach the model of this call, and if not, why. The one
- * rule `executeTool` applies to every image a tool attaches. `attached` is
- * what this call already attached: one call never attaches more than one
- * request carries (`MODEL_REQUEST_MAX_IMAGES`, `MODEL_REQUEST_MAX_IMAGE_BYTES`,
- * @nodal-agents/shared), whatever the tool — an MCP server returning thirty
- * images included.
+ * The type a file's first bytes declare among the files a tool can hand a
+ * model: an image type (`sniffImageMediaType`), `application/pdf`, or `null`.
  */
-export function admitModelImage(
-  input: ModelImageInput | undefined,
-  image: ToolImage,
-  attached: readonly ToolImage[] = [],
-): ImageAttachOutcome {
+export function sniffAttachmentMediaType(head: Uint8Array): string | null {
+  return sniffImageMediaType(head) ?? (isPdf(head) ? PDF_MEDIA_TYPE : null);
+}
+
+/** Which kind of file a type is, for the capability it needs; `null` for neither. */
+export function attachmentKind(mediaType: string): keyof ModelAttachmentInput | null {
+  if (mediaType.startsWith('image/')) return 'image';
+  if (mediaType === PDF_MEDIA_TYPE) return 'pdf';
+  return null;
+}
+
+/** What a file spends of a request's count: one for an image, its pages for a PDF. */
+export function attachmentUnits(attachment: Pick<ToolAttachment, 'mediaType' | 'pages'>): number {
+  return attachment.mediaType === PDF_MEDIA_TYPE ? (attachment.pages ?? 0) : 1;
+}
+
+/**
+ * The pages of a PDF, read by pdf-parse (the library Nodal already ships for
+ * Drive PDFs), or why they could not be: a file that only starts like a PDF,
+ * a damaged or encrypted one. Loaded on demand: pdfjs weighs, and only a PDF
+ * needs it.
+ */
+export async function countPdfPages(
+  bytes: Uint8Array,
+): Promise<{ pages: number } | { error: string }> {
+  try {
+    const { PDFParse } = await import('pdf-parse');
+    const parser = new PDFParse({ data: new Uint8Array(bytes) });
+    try {
+      const info = await parser.getInfo();
+      return info.total > 0 ? { pages: info.total } : { error: 'it has no page' };
+    } finally {
+      await parser.destroy();
+    }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Pages `first` to `last` (1-based, inclusive) of a PDF, as a PDF of their
+ * own (pdf-lib), or why they could not be cut out. What a model is handed of a
+ * document longer than a request carries: a window of it, never nothing.
+ * Loaded on demand, like pdf-parse.
+ */
+export async function cutPdfPages(
+  bytes: Uint8Array,
+  first: number,
+  last: number,
+): Promise<{ bytes: Uint8Array } | { error: string }> {
+  try {
+    const { PDFDocument } = await import('pdf-lib');
+    const source = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+    const out = await PDFDocument.create({ updateMetadata: false });
+    const indices = Array.from({ length: last - first + 1 }, (_, k) => first - 1 + k);
+    for (const page of await out.copyPages(source, indices)) out.addPage(page);
+    return { bytes: await out.save() };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+const NOUN: Readonly<Record<keyof ModelAttachmentInput, string>> = {
+  image: 'images',
+  pdf: 'PDF documents',
+};
+
+/**
+ * Whether `attachment` may reach the model of this call, and if not, why. The
+ * one rule `executeTool` applies to every file a tool attaches. `attached` is
+ * what this call already attached: one call never attaches more than one
+ * request carries (`MODEL_REQUEST_MAX_IMAGES` images, a PDF counting its
+ * pages; `MODEL_REQUEST_MAX_IMAGE_BYTES` of them; @nodal-agents/shared),
+ * whatever the tool — an MCP server returning thirty images included.
+ */
+export function admitModelAttachment(
+  input: ModelAttachmentInput | undefined,
+  attachment: ToolAttachment,
+  attached: readonly ToolAttachment[] = [],
+): ModelAttachOutcome {
+  const kind = attachmentKind(attachment.mediaType);
+  if (kind === null) {
+    return {
+      attached: false,
+      reason:
+        `${attachment.mediaType} is not a format models take as input ` +
+        `(${[...MODEL_IMAGE_MEDIA_TYPES, PDF_MEDIA_TYPE].join(', ')})`,
+    };
+  }
   if (input === undefined) {
-    return {
-      attached: false,
-      reason: 'this run does not pass images to a model',
-    };
+    return { attached: false, reason: `this run does not pass ${NOUN[kind]} to a model` };
   }
-  if (!input.sees) return { attached: false, reason: input.reason };
-  if (!MODEL_IMAGE_MEDIA_TYPES.includes(image.mediaType)) {
-    return {
-      attached: false,
-      reason:
-        `${image.mediaType} is not a format models take as input ` +
-        `(${MODEL_IMAGE_MEDIA_TYPES.join(', ')})`,
-    };
+  const support: ModelInputSupport = input[kind];
+  if (!support.sees) return { attached: false, reason: support.reason };
+  const bytes = base64DecodedBytes(attachment.data);
+  if (kind === 'image') {
+    if (!MODEL_IMAGE_MEDIA_TYPES.includes(attachment.mediaType)) {
+      return {
+        attached: false,
+        reason:
+          `${attachment.mediaType} is not a format models take as input ` +
+          `(${MODEL_IMAGE_MEDIA_TYPES.join(', ')})`,
+      };
+    }
+    if (bytes > MAX_MODEL_IMAGE_BYTES) {
+      return {
+        attached: false,
+        reason:
+          `the image is ${formatBytes(bytes)}, above the ${formatBytes(MAX_MODEL_IMAGE_BYTES)} ` +
+          `an image can be passed at; a smaller copy (scaled down, or JPEG) can be`,
+      };
+    }
+  } else {
+    if (attachment.pages === undefined || attachment.pages < 1) {
+      return { attached: false, reason: 'its pages were not counted, so its cost is not known' };
+    }
+    if (bytes > MAX_MODEL_PDF_BYTES) {
+      return {
+        attached: false,
+        reason:
+          `the PDF is ${formatBytes(bytes)}, above the ${formatBytes(MAX_MODEL_PDF_BYTES)} a PDF ` +
+          'can be passed at; a lighter copy (fewer pages, a lower scan resolution) can be',
+      };
+    }
+    if (attachment.pages > MODEL_REQUEST_MAX_IMAGES) {
+      return {
+        attached: false,
+        reason:
+          `the PDF has ${attachment.pages} pages, and a request to a model carries at most ` +
+          `${MODEL_REQUEST_MAX_IMAGES} images, a PDF page counting as one; file_read reads a ` +
+          `PDF ${MODEL_REQUEST_MAX_IMAGES} pages at a time (its "pages" argument)`,
+      };
+    }
   }
-  const bytes = base64DecodedBytes(image.data);
-  if (bytes > MAX_MODEL_IMAGE_BYTES) {
-    return {
-      attached: false,
-      reason:
-        `the image is ${formatBytes(bytes)}, above the ${formatBytes(MAX_MODEL_IMAGE_BYTES)} ` +
-        `an image can be passed at; a smaller copy (scaled down, or JPEG) can be`,
-    };
-  }
-  const already = attached.reduce((sum, i) => sum + base64DecodedBytes(i.data), 0);
+  const already = attached.reduce((sum, a) => sum + base64DecodedBytes(a.data), 0);
+  const spent = attached.reduce((sum, a) => sum + attachmentUnits(a), 0);
   if (
-    attached.length >= MODEL_REQUEST_MAX_IMAGES ||
+    spent + attachmentUnits(attachment) > MODEL_REQUEST_MAX_IMAGES ||
     already + bytes > MODEL_REQUEST_MAX_IMAGE_BYTES
   ) {
     return {
       attached: false,
       reason:
-        `this call already attached ${attached.length} image(s) (${formatBytes(already)}), and a ` +
-        `request to a model carries at most ${MODEL_REQUEST_MAX_IMAGES} images and ` +
-        `${formatBytes(MODEL_REQUEST_MAX_IMAGE_BYTES)} of them`,
+        `this call already attached ${attached.length} file(s) (${spent} image(s) or PDF ` +
+        `page(s), ${formatBytes(already)}), and a request to a model carries at most ` +
+        `${MODEL_REQUEST_MAX_IMAGES} images and ${formatBytes(MODEL_REQUEST_MAX_IMAGE_BYTES)} of ` +
+        'them, a PDF page counting as one image',
     };
   }
   return { attached: true };

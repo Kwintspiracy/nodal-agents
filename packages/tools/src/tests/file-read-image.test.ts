@@ -23,9 +23,9 @@ import { executeTool } from '../execute';
 import { fileReadTool } from '../builtin/file-ops/file-read';
 import {
   MAX_MODEL_IMAGE_BYTES,
-  admitModelImage,
+  admitModelAttachment,
   sniffImageMediaType,
-  type ModelImageInput,
+  type ModelAttachmentInput,
 } from '../model-images';
 import type { ToolContext, ToolExecutionResult } from '../types';
 
@@ -44,10 +44,16 @@ const WEBP = Buffer.concat([
 ]);
 const BMP = Buffer.concat([Buffer.from('BM'), Buffer.alloc(20, 1)]);
 
-const SEES: ModelImageInput = { sees: true };
-const BLIND: ModelImageInput = {
-  sees: false,
-  reason: 'the model this agent runs (z-ai/glm-5.3) does not take images as input',
+const SEES: ModelAttachmentInput = { image: { sees: true }, pdf: { sees: true } };
+const BLIND: ModelAttachmentInput = {
+  image: {
+    sees: false,
+    reason: 'the model this agent runs (z-ai/glm-5.3) does not take images as input',
+  },
+  pdf: {
+    sees: false,
+    reason: 'the model this agent runs (z-ai/glm-5.3) does not take PDF documents as input',
+  },
 };
 
 let db: TestDb;
@@ -79,7 +85,7 @@ afterAll(async () => {
   await rm(outside, { recursive: true, force: true });
 });
 
-function ctx(modelImageInput?: ModelImageInput): ToolContext {
+function ctx(modelInput?: ModelAttachmentInput): ToolContext {
   return {
     db: db as unknown as ToolContext['db'],
     entityId: seed.entityId,
@@ -87,13 +93,13 @@ function ctx(modelImageInput?: ModelImageInput): ToolContext {
     jobId: seed.jobId,
     jobChatId: null,
     workspaces: [{ label: 'ws', path: ws }],
-    ...(modelImageInput ? { modelImageInput } : {}),
+    ...(modelInput ? { modelInput } : {}),
   };
 }
 
 const opts = { approvalRules: [], onApprovalRequired: async () => {} } as never;
 
-async function read(path: string, input?: ModelImageInput): Promise<ToolExecutionResult> {
+async function read(path: string, input?: ModelAttachmentInput): Promise<ToolExecutionResult> {
   return executeTool(fileReadTool as never, { path }, ctx(input), opts);
 }
 
@@ -121,7 +127,7 @@ describe('file_read — an image file reaches a model that sees it @cap:travaill
       const r = await read(path, SEES);
       expect(r.outcome).toBe('success');
       if (r.outcome !== 'success') throw new Error('expected success');
-      expect(r.images).toEqual([{ mediaType: type, data: bytes.toString('base64') }]);
+      expect(r.attachments).toEqual([{ mediaType: type, data: bytes.toString('base64') }]);
       expect(r.output).toEqual({ ok: true, image: { media_type: type, bytes: bytes.length } });
       // The row is an audit, not a store: type and size, no base64.
       const row = await recorded(path);
@@ -133,7 +139,7 @@ describe('file_read — an image file reaches a model that sees it @cap:travaill
   it('a model that does not see: refused with its reason, no image, no bytes as text', async () => {
     const r = await read('shot.png', BLIND);
     if (r.outcome !== 'success') throw new Error('expected the tool to answer');
-    expect(r.images).toBeUndefined();
+    expect(r.attachments).toBeUndefined();
     expect(r.output).toEqual({
       ok: false,
       reason:
@@ -145,7 +151,7 @@ describe('file_read — an image file reaches a model that sees it @cap:travaill
   it('a run that says nothing about its model passes no image, and says so', async () => {
     const r = await read('photo.jpg');
     if (r.outcome !== 'success') throw new Error('expected the tool to answer');
-    expect(r.images).toBeUndefined();
+    expect(r.attachments).toBeUndefined();
     expect((r.output as { reason: string }).reason).toBe(
       '"photo.jpg" is an image (image/jpeg, 13 B), and it was not read: this run does not pass ' +
         'images to a model.',
@@ -155,7 +161,7 @@ describe('file_read — an image file reaches a model that sees it @cap:travaill
   it('a format models do not take is refused as an image, named, never read as text', async () => {
     const r = await read('scan.bmp', SEES);
     if (r.outcome !== 'success') throw new Error('expected the tool to answer');
-    expect(r.images).toBeUndefined();
+    expect(r.attachments).toBeUndefined();
     expect((r.output as { ok: boolean; reason: string }).reason).toBe(
       '"scan.bmp" is an image (image/bmp, 22 B), and it was not read: image/bmp is not a format ' +
         'models take as input (image/png, image/jpeg, image/gif, image/webp).',
@@ -165,7 +171,7 @@ describe('file_read — an image file reaches a model that sees it @cap:travaill
   it('an image above the whole-read cap is refused with its size, even to a model that sees', async () => {
     const r = await read('huge.png', SEES);
     if (r.outcome !== 'success') throw new Error('expected the tool to answer');
-    expect(r.images).toBeUndefined();
+    expect(r.attachments).toBeUndefined();
     const reason = (r.output as { reason: string }).reason;
     expect(reason).toContain('"huge.png" is an image (image/png, 1.0 MiB)');
     expect(reason).toContain('an image can be passed at 1.0 MiB at most');
@@ -174,7 +180,7 @@ describe('file_read — an image file reaches a model that sees it @cap:travaill
   it('an image outside the readable folders is refused by the folder rule, before any byte', async () => {
     const r = await read(join(outside, 'secret.png'), SEES);
     if (r.outcome !== 'success') throw new Error('expected the tool to answer');
-    expect(r.images).toBeUndefined();
+    expect(r.attachments).toBeUndefined();
     expect((r.output as { ok: boolean }).ok).toBe(false);
     expect((r.output as { reason: string }).reason).toContain(
       'does not reside in any configured workspace',
@@ -184,7 +190,7 @@ describe('file_read — an image file reaches a model that sees it @cap:travaill
   it('a text file named .png is read as text', async () => {
     const r = await read('notes.png', SEES);
     if (r.outcome !== 'success') throw new Error('expected success');
-    expect(r.images).toBeUndefined();
+    expect(r.attachments).toBeUndefined();
     expect((r.output as { content: string }).content).toBe('just text, despite the name\n');
   });
 });
@@ -211,21 +217,24 @@ describe('the one rule for every image a tool attaches @cap:travailler-sur-des-f
 
   it('admits a model format within the cap to a seeing model, and says why otherwise', () => {
     const png = { mediaType: 'image/png', data: PNG.toString('base64') };
-    expect(admitModelImage(SEES, png)).toEqual({ attached: true });
-    expect(admitModelImage(BLIND, png)).toEqual({ attached: false, reason: BLIND.reason });
-    expect(admitModelImage(undefined, png)).toEqual({
+    expect(admitModelAttachment(SEES, png)).toEqual({ attached: true });
+    expect(admitModelAttachment(BLIND, png)).toEqual({
+      attached: false,
+      reason: (BLIND.image as { reason: string }).reason,
+    });
+    expect(admitModelAttachment(undefined, png)).toEqual({
       attached: false,
       reason: 'this run does not pass images to a model',
     });
-    expect(admitModelImage(SEES, { mediaType: 'image/svg+xml', data: 'PHN2Zy8+' })).toEqual({
+    expect(admitModelAttachment(SEES, { mediaType: 'image/svg+xml', data: 'PHN2Zy8+' })).toEqual({
       attached: false,
       reason:
         'image/svg+xml is not a format models take as input (image/png, image/jpeg, image/gif, image/webp)',
     });
     const big = Buffer.alloc(MAX_MODEL_IMAGE_BYTES + 1).toString('base64');
-    expect(admitModelImage(SEES, { mediaType: 'image/png', data: big }).attached).toBe(false);
+    expect(admitModelAttachment(SEES, { mediaType: 'image/png', data: big }).attached).toBe(false);
     const atCap = Buffer.alloc(MAX_MODEL_IMAGE_BYTES).toString('base64');
-    expect(admitModelImage(SEES, { mediaType: 'image/png', data: atCap })).toEqual({
+    expect(admitModelAttachment(SEES, { mediaType: 'image/png', data: atCap })).toEqual({
       attached: true,
     });
   });
@@ -242,7 +251,7 @@ describe('one call attaches no more than one request carries @cap:travailler-sur
       card: 'generic',
       execute: async (_input: unknown, c: ToolContext) =>
         Array.from({ length: count }, (_, k) =>
-          c.attachImage?.({
+          c.attachForModel?.({
             mediaType: 'image/png',
             data: Buffer.alloc(bytes, k).toString('base64'),
           }),
@@ -253,21 +262,21 @@ describe('one call attaches no more than one request carries @cap:travailler-sur
   it('by count: the first 20 are attached, each one past them is refused with the budget named', async () => {
     const r = await executeTool(attaching(23, 10) as never, {}, ctx(SEES), opts);
     if (r.outcome !== 'success') throw new Error('expected success');
-    expect(r.images).toHaveLength(MODEL_REQUEST_MAX_IMAGES);
+    expect(r.attachments).toHaveLength(MODEL_REQUEST_MAX_IMAGES);
     const refused = (r.output as Array<{ attached: boolean; reason?: string }>).filter(
       (o) => !o.attached,
     );
     expect(refused).toHaveLength(3);
     expect(refused[0]?.reason).toBe(
-      'this call already attached 20 image(s) (200 B), and a request to a model carries at ' +
-        'most 20 images and 10.0 MiB of them',
+      'this call already attached 20 file(s) (20 image(s) or PDF page(s), 200 B), and a request ' +
+        'to a model carries at most 20 images and 10.0 MiB of them, a PDF page counting as one image',
     );
   });
 
   it('by bytes: 1 MiB images, as many as fit 10 MiB', async () => {
     const r = await executeTool(attaching(12, MAX_MODEL_IMAGE_BYTES) as never, {}, ctx(SEES), opts);
     if (r.outcome !== 'success') throw new Error('expected success');
-    expect(r.images).toHaveLength(MODEL_REQUEST_MAX_IMAGE_BYTES / MAX_MODEL_IMAGE_BYTES);
+    expect(r.attachments).toHaveLength(MODEL_REQUEST_MAX_IMAGE_BYTES / MAX_MODEL_IMAGE_BYTES);
     expect((r.output as Array<{ attached: boolean }>).filter((o) => !o.attached)).toHaveLength(2);
   });
 });

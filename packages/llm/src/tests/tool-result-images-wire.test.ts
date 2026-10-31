@@ -4,7 +4,7 @@
 // The AI SDK's chat-completions builders (`@ai-sdk/openai` chat,
 // `openai-compatible`, `mistral`, `deepseek`, `groq`) write a tool result's
 // `content` output as `JSON.stringify(value)`: an image left in the result
-// reaches those models as base64 TEXT. `withToolResultImagesAsUserParts`
+// reaches those models as base64 TEXT. `withToolResultAttachmentsAsUserParts`
 // (applied by `createLlmClient` to every request) moves it to a user message,
 // the one place every provider takes an image. Here the REAL builders run and
 // only `fetch` is replaced: what is read back is the body each one sends.
@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { ModelMessage } from 'ai';
 import { createLlmClient } from '../client';
-import { withToolResultImagesAsUserParts } from '../message-structure';
+import { withToolResultAttachmentsAsUserParts } from '../message-structure';
 import type { ProviderConfig } from '../types';
 
 vi.mock('../transport', () => ({
@@ -116,9 +116,9 @@ describe('an image a tool attached reaches every provider as an image @cap:trava
   );
 });
 
-describe('withToolResultImagesAsUserParts @cap:travailler-sur-des-fichiers/moteur', () => {
+describe('withToolResultAttachmentsAsUserParts @cap:travailler-sur-des-fichiers/moteur', () => {
   it('the tool result keeps its text; the image follows in a user message, introduced by its call', () => {
-    const out = withToolResultImagesAsUserParts(MESSAGES);
+    const out = withToolResultAttachmentsAsUserParts(MESSAGES);
     expect(out).toHaveLength(4);
     expect(out[2]).toEqual({
       role: 'tool',
@@ -192,7 +192,7 @@ describe('withToolResultImagesAsUserParts @cap:travailler-sur-des-fichiers/moteu
         ],
       },
     ];
-    const out = withToolResultImagesAsUserParts(two);
+    const out = withToolResultAttachmentsAsUserParts(two);
     const tool = out[2] as Extract<ModelMessage, { role: 'tool' }>;
     expect(tool.content.map((r) => (r.type === 'tool-result' ? r.output : null))).toEqual([
       { type: 'text', value: 'one' },
@@ -212,6 +212,6 @@ describe('withToolResultImagesAsUserParts @cap:travailler-sur-des-fichiers/moteu
 
   it('a transcript without images is returned as it was', () => {
     const plain = MESSAGES.slice(0, 2);
-    expect(withToolResultImagesAsUserParts(plain)).toBe(plain);
+    expect(withToolResultAttachmentsAsUserParts(plain)).toBe(plain);
   });
 });

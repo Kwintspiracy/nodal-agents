@@ -52,7 +52,7 @@ describe('file_read — small file (< 1 MiB): unchanged behavior', () => {
     const r = await fileReadTool.execute({ path: 'small.txt' }, ctx());
     expect(r.ok).toBe(true);
     if (!r.ok) throw new Error(r.reason);
-    if ('image' in r) throw new Error('expected a text read');
+    if (!('content' in r)) throw new Error('expected a text read');
     // join('\n') of split('\n') reconstructs the original content exactly.
     expect(r.content).toBe('line1\nline2\nline3\n');
     expect(r.total_lines).toBe(4); // trailing '\n' => empty last line counted
@@ -88,7 +88,7 @@ describe('file_read — medium file (1 MiB < size <= 50 MiB): streaming window m
     const r = await fileReadTool.execute({ path: 'medium.txt', offset, limit }, ctx());
     expect(r.ok).toBe(true);
     if (!r.ok) throw new Error(r.reason);
-    if ('image' in r) throw new Error('expected a text read');
+    if (!('content' in r)) throw new Error('expected a text read');
 
     const startIdx = offset - 1;
     const endIdx = Math.min(reference.length, startIdx + limit);
@@ -119,7 +119,7 @@ describe('file_read — medium file (1 MiB < size <= 50 MiB): streaming window m
     );
     expect(r.ok).toBe(true);
     if (!r.ok) throw new Error(r.reason);
-    if ('image' in r) throw new Error('expected a text read');
+    if (!('content' in r)) throw new Error('expected a text read');
     expect(r.total_lines).toBe(reference.length);
     expect(r.truncated).toBe(false);
     const startIdx = reference.length - 2 - 1;
