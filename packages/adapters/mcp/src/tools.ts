@@ -297,7 +297,7 @@ async function callMcpTool(
   const record = recordMcpResult(result, (image) =>
     result.isError === true
       ? { attached: false, reason: 'the call failed, and a failed call passes no image' }
-      : (scope.ctx?.attachImage?.(image) ?? {
+      : (scope.ctx?.attachForModel?.(image) ?? {
           attached: false,
           reason: 'this run does not pass images to a model',
         }),

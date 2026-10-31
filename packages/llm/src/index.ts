@@ -44,7 +44,7 @@ export type { LlmCallObservation, LlmCallObserver, LlmClientMeta } from './obser
 export {
   validateMessageStructure,
   withoutNamelessToolCalls,
-  withToolResultImagesAsUserParts,
+  withToolResultAttachmentsAsUserParts,
 } from './message-structure';
 
 // Retry utility
