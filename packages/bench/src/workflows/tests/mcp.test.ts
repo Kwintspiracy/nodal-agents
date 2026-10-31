@@ -84,6 +84,30 @@ describe('startRunTask targets the resolved agent, through the real MCP transpor
   });
 });
 
+describe('the session reads the answer back through get_task, on the same client (#887)', () => {
+  it('getTask calls get_task with the created jobId and returns what the server answered', async () => {
+    const session = await startRunTask(
+      '/unused',
+      'Quelle est la capitale ?',
+      'nodal-bench/question',
+      BENCH_ROOT,
+      { command: process.execPath, args: [FAKE], cwd: __dirname },
+    );
+    try {
+      const view = await session.getTask();
+      expect(view).toEqual({
+        jobId: '11111111-1111-4111-8111-111111111111',
+        status: 'completed',
+        result: 'Canberra.',
+      });
+      const seen = JSON.parse(readFileSync(`${out}.get`, 'utf8')) as { args: unknown };
+      expect(seen.args).toEqual({ jobId: '11111111-1111-4111-8111-111111111111' });
+    } finally {
+      await session.close();
+    }
+  });
+});
+
 describe('runTaskEnv', () => {
   it('drops every case variant and sets only the target agent, keeping the rest', () => {
     expect(

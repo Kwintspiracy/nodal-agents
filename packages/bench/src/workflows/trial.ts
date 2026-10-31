@@ -30,6 +30,7 @@ import { benchDeliverables, findInRoots } from './disk';
 import { fileHash, fixturePath, prepareTrial, sharedRoot } from './fixtures';
 import type { TreeFacts } from './facts';
 import { isLive, liveJobs, pendingApprovals } from './facts';
+import type { GetTaskReply, RunTaskSession } from './mcp';
 import { cheminConstate, DELIVERY_TOOL_NAMES, PURPOSE_KEY } from '@nodal-agents/tools';
 import {
   answerOf,
@@ -78,7 +79,7 @@ export interface TrialDeps {
   now(): number;
   sleep(ms: number): Promise<void>;
   /** Envoie la demande par le chemin MCP de l'utilisateur. */
-  start(instruction: string, caller: string): Promise<{ jobId: string; close(): Promise<void> }>;
+  start(instruction: string, caller: string): Promise<RunTaskSession>;
   read(rootId: string): Promise<TreeFacts>;
   cancel(entityId: string, rootId: string): Promise<unknown>;
   foreign(): Promise<ForeignActivity>;
@@ -136,6 +137,25 @@ export const DEFAULT_TRIAL_OPTIONS: Omit<
   idlePollMs: 30_000,
   chatQuietMs: 5 * 60_000,
 };
+
+/**
+ * Ce qui sépare la réponse que l'appelant a lue par `get_task` de ce que la
+ * base porte, une raison par écart. Rien quand get_task n'a pas répondu : sa
+ * panne est déjà une raison.
+ */
+export function callerViewReasons(view: GetTaskReply | null, facts: TreeFacts): string[] {
+  if (view === null) return [];
+  const root = facts.jobs.find((j) => j.id === facts.rootId);
+  const out: string[] = [];
+  if ((root?.result ?? null) !== view.result)
+    out.push('get_task returned another result than the root job holds');
+  const settled = facts.jobs.every((j) => !isLive(j.status));
+  if (settled && (view.status === 'running' || view.status === 'waiting_for_person'))
+    out.push(`get_task says ${view.status} although no job of the run is live`);
+  if (!settled && view.status !== 'running' && view.status !== 'waiting_for_person')
+    out.push(`get_task says ${view.status} although a job of the run is still live`);
+  return out;
+}
 
 export function benchCaller(s: AnyScenario): string {
   return `nodal-bench/${s.id}/v${s.version}`;
@@ -680,7 +700,7 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
   }
 
   const startedMs = deps.now();
-  let session: { jobId: string; close(): Promise<void> };
+  let session: RunTaskSession;
   try {
     session = await deps.start(request, benchCaller(s));
   } catch (e) {
@@ -696,6 +716,7 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
 
   let cancelled = false;
   const benchReasons: string[] = [];
+  let callerView: GetTaskReply | null = null;
   const cancel = async (why: string): Promise<void> => {
     if (entityId === null) {
       // L'entité n'est connue qu'après la première lecture ; la relire ici
@@ -749,6 +770,15 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
         `could not verify the run was stopped: ${String(e instanceof Error ? e.message : e)}`,
       );
     }
+    // La réponse que l'APPELANT obtient, par `get_task` (#887), lue avant de
+    // fermer le client : la même que tout client MCP.
+    try {
+      callerView = await session.getTask();
+    } catch (e) {
+      benchReasons.push(
+        `the caller could not read the answer through get_task: ${String(e instanceof Error ? e.message : e)}`,
+      );
+    }
     await session.close();
   }
 
@@ -794,8 +824,11 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
   } catch (e) {
     judged = [`the judge failed: ${String(e instanceof Error ? e.message : e)}`];
   }
+  // Ce que l'appelant a lu doit être ce que la base porte : un écart est le
+  // contrat de get_task cassé, et l'essai le dit (jamais un vert dessus).
+  benchReasons.push(...callerViewReasons(callerView, facts));
   const reasons = [...new Set([...benchReasons, ...judged])];
-  const result = facts.jobs.find((j) => j.id === facts.rootId)?.result ?? null;
+  const result = callerView?.result ?? null;
   return {
     ...emptyLine(s, o, startedMs, rootModel),
     ...measure(facts),

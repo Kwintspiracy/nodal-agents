@@ -24,13 +24,27 @@
 // reste ouvert pendant tout l'essai : le réveil du runner est envoyé par le
 // serveur MCP en tâche de fond, et fermer le processus tout de suite pourrait
 // le couper.
+//
+// La réponse se relit par le MÊME client, avec `get_task` (#887) : la réponse
+// que l'essai garde est celle qu'un client MCP obtient, pas une lecture de la
+// base que seul quelqu'un sur la machine peut faire.
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { z } from 'zod';
 
+/** Ce que `get_task` rend, et ce que le banc en garde. */
+export const GetTaskReplySchema = z.object({
+  jobId: z.string().uuid(),
+  status: z.string(),
+  result: z.string().nullable(),
+});
+export type GetTaskReply = z.infer<typeof GetTaskReplySchema>;
+
 export interface RunTaskSession {
   readonly jobId: string;
+  /** Relit le job par `get_task`, sans attendre : ce que l'appelant voit maintenant. */
+  getTask(): Promise<GetTaskReply>;
   close(): Promise<void>;
 }
 
@@ -130,7 +144,17 @@ export async function startRunTask(
     const text = content.map((c) => c.text ?? '').join('\n');
     if (res.isError === true) throw new Error(`run_task refused: ${text}`);
     const reply = RunTaskReply.parse(JSON.parse(text));
-    return { jobId: reply.jobId, close };
+    const getTask = async (): Promise<GetTaskReply> => {
+      const got = await client.callTool({ name: 'get_task', arguments: { jobId: reply.jobId } });
+      const body = z
+        .array(z.object({ type: z.string(), text: z.string().optional() }))
+        .parse(got.content)
+        .map((c) => c.text ?? '')
+        .join('\n');
+      if (got.isError === true) throw new Error(`get_task refused: ${body}`);
+      return GetTaskReplySchema.parse(JSON.parse(body));
+    };
+    return { jobId: reply.jobId, getTask, close };
   } catch (err) {
     await close();
     const why = err instanceof Error ? err.message : String(err);

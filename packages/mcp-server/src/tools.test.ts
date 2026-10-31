@@ -80,12 +80,14 @@ async function connect(
 }
 
 describe('le contrat run_task', () => {
-  it("expose UN outil, et c'est run_task", async () => {
+  it('expose run_task, la seule porte qui écrit, et get_task, sa relecture (#887)', async () => {
     // Constat « create_task contourne la hiérarchie » : les outils internes ne
-    // sont plus servis du tout. La seule porte est celle du chat.
+    // sont plus servis du tout. La seule porte qui ÉCRIT est celle du chat ;
+    // get_task relit un job qu'elle a créé et n'accorde rien (get-task.test.ts).
     const client = await connect(seed.agentId);
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toEqual(['run_task']);
+    expect(tools.map((t) => t.name)).toEqual(['run_task', 'get_task']);
+    expect(tools.find((t) => t.name === 'get_task')?.annotations?.readOnlyHint).toBe(true);
     await client.close();
   });
 

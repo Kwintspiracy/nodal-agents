@@ -1,4 +1,5 @@
-// tools.ts — ce que ce serveur expose : UN outil, `run_task`.
+// tools.ts — ce que ce serveur expose : `run_task`, la seule porte qui ÉCRIT,
+// et `get_task`, qui relit un job que cette porte a créé (#887).
 //
 // La première version exposait directement `create_task` / `list_tasks` /
 // `assign_*`, et la review l'a démontée en six constats avec une seule racine :
@@ -11,6 +12,10 @@
 // job — et c'est ce job qui exécute, avec sa boucle, ses gardes et son audit.
 // Ce serveur applique le même contrat : un client MCP est une surface sans job,
 // il reçoit la même porte d'entrée que le chat, pas les outils internes.
+//
+// `get_task` n'y fait pas exception : il n'écrit rien et n'accorde rien. Il
+// relit un job de CE workspace créé sur le canal `mcp` — la réponse que
+// l'appelant de `run_task` attendait et qui ne lui revenait jamais (#887).
 
 import { z } from 'zod';
 import { AgentSlugSchema } from '@nodal-agents/shared';
@@ -83,6 +88,44 @@ export const RUN_TASK_DESCRIPTION =
   'Hand a request to this Nodal agent. Creates a TRACKED JOB the agent runs ' +
   'with its full toolset — connectors, skills, delegation to its team — under ' +
   'its own approval rules and budgets. Returns the job id immediately; the ' +
-  'work itself runs asynchronously and lands on the Runs page. State the ' +
+  'work itself runs asynchronously. To get the answer, call `get_task` with ' +
+  'that jobId (optionally with waitSeconds to wait for it). State the ' +
   'request faithfully and self-contained: the agent sees nothing of this ' +
   'MCP session.';
+
+/** L'attente la plus longue qu'un appel `get_task` peut demander, en secondes. */
+export const GET_TASK_MAX_WAIT_SECONDS = 60;
+
+export const getTaskInputSchema = z.object({
+  jobId: z
+    .string()
+    .uuid()
+    .describe('The jobId that run_task returned. Only jobs this MCP server created can be read.'),
+  waitSeconds: z
+    .number()
+    .int()
+    .min(0)
+    .max(GET_TASK_MAX_WAIT_SECONDS)
+    .optional()
+    .describe(
+      `Optional, 0 to ${GET_TASK_MAX_WAIT_SECONDS}. Wait up to this many seconds for the job ` +
+        'to finish or to need a person, and return as soon as it does. Omit or 0 to read ' +
+        'the current state at once.',
+    ),
+});
+
+export type GetTaskInput = z.infer<typeof getTaskInputSchema>;
+
+/**
+ * Ce que `get_task` rend, dit au client. Le statut est celui du RUN — la tête
+ * et tout ce qu'elle a délégué — pas celui d'une ligne : une tête qui attend
+ * un délégué est `running`.
+ */
+export const GET_TASK_DESCRIPTION =
+  'Read back a job that run_task created on this server: its status, the agent’s ' +
+  'result, its deliverables, and anything waiting for a person. Read-only. ' +
+  'status is the state of the whole run, delegated work included: running, ' +
+  'waiting_for_person (an approval or a question to answer on the Nodal dashboard; ' +
+  'see waitingForPerson), completed, failed or cancelled. result is the agent’s own ' +
+  'answer, set once the run is over. Pass waitSeconds to wait for the run to finish ' +
+  'or to need a person instead of polling.';

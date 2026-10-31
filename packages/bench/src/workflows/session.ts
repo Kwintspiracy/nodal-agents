@@ -19,7 +19,7 @@ import { dirname } from 'node:path';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { readTreeFacts } from './facts';
 import { BENCH_LOCK_FILE, claimStack, type BenchLock, type BenchStop } from './lock';
-import { startRunTask } from './mcp';
+import { startRunTask, type RunTaskSession } from './mcp';
 import { assertSpaceCannotSend, type AllowedReach } from '../space/guard';
 import {
   jobOffTarget,
@@ -286,7 +286,7 @@ async function startOnTarget(
   instruction: string,
   caller: string,
   target: BenchTarget,
-): Promise<{ jobId: string; close(): Promise<void> }> {
+): Promise<RunTaskSession> {
   await assertSpaceCannotSend(db, target.entityId, run.allowedReach ?? []);
   const session = await startRunTask(
     run.stackDir,
