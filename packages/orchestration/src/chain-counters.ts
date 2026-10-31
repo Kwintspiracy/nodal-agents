@@ -309,7 +309,7 @@ export const VERIFY_BEFORE_ASSERT_NUDGE =
  * the two curator passes, and the calls of a chat turn (`runTaskOf` in
  * `apps/runner/src/chat/run-chat-turn.ts`, which acts on the first
  * `run_task` only, and still refuses a turn over the budget). The re-read of
- * a prose turn (`apps/runner/src/llm/action-recheck.ts`, job and chat) runs
+ * a chat turn's prose (`apps/runner/src/llm/action-recheck.ts`) runs
  * the same check, but an over-budget re-read is ABANDONED, not the turn: it is
  * only a safety net, and the turn's prose stands (PR #604). Incident
  * 2026-09-28: a 307-call turn was executed call by call up to the 50th.

@@ -442,14 +442,17 @@ export const promptCaching: Probe = {
     // Long enough to clear provider minimums (Anthropic: 1024 tokens).
     const prefix = 'Contexte de référence. '.repeat(400);
     try {
-      const first = await client.generateText({
-        prompt: `${prefix}\n\nRéponds: A`,
+      // A `messages` call, as the runner makes: the caching layer annotates
+      // those. A bare `prompt` has no message to hang a breakpoint on, so it
+      // goes out unmarked and a model that needs the marker would read as
+      // "no cache" (#425).
+      const call = {
+        system: 'Tu es un assistant concis.',
+        messages: [{ role: 'user' as const, content: `${prefix}\n\nRéponds: A` }],
         maxOutputTokens: 8,
-      });
-      const second = await client.generateText({
-        prompt: `${prefix}\n\nRéponds: A`,
-        maxOutputTokens: 8,
-      });
+      };
+      const first = await client.generateText(call);
+      const second = await client.generateText(call);
       const u1 = usageOf(first);
       const u2 = usageOf(second);
       const cached = u2.cachedInputTokens ?? 0;

@@ -321,7 +321,8 @@ function celluleResume(r) {
       ? `median ${duree(r.dureeMs)} · ${typeof r.coutMedianUsd === 'number' ? `$${r.coutMedianUsd.toFixed(3)}` : 'cost not measured'}`
       : 'no green run: no median';
   const total = `total $${r.coutTotalUsd.toFixed(3)} for ${r.tentes} run${r.tentes > 1 ? 's' : ''}${r.coutInconnu > 0 ? `, ${r.coutInconnu} without a cost` : ''}`;
-  return `<div class="wf-c wf-c--resume" role="cell"><span class="wf-c__taux">${taux} % green <span class="wf-nd">(${r.verts}/${r.tentes})</span></span><span class="wf-c__chiffres">${esc(medianes)}</span><span class="wf-c__chiffres">${esc(total)}</span>${r.sautes > 0 ? `<span class="wf-nd">${r.sautes} skipped, not counted</span>` : ''}</div>`;
+  const cache = `cache read ${typeof r.partCacheLue === 'number' ? `${Math.round(100 * r.partCacheLue)} % of input` : 'not measured'}`;
+  return `<div class="wf-c wf-c--resume" role="cell"><span class="wf-c__taux">${taux} % green <span class="wf-nd">(${r.verts}/${r.tentes})</span></span><span class="wf-c__chiffres">${esc(medianes)}</span><span class="wf-c__chiffres">${esc(total)}</span><span class="wf-c__chiffres">${esc(cache)}</span>${r.sautes > 0 ? `<span class="wf-nd">${r.sautes} skipped, not counted</span>` : ''}</div>`;
 }
 
 /**

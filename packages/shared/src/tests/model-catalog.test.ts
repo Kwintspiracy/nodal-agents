@@ -744,3 +744,22 @@ describe('one match from an id to a known model: modelIdKey (review of #798, pas
     expect(findModelCatalogEntry('anthropic', 'claude-instant-1.2')).toBeUndefined();
   });
 });
+
+describe('cacheControl: the model, not the route, says it takes Anthropic-style cache markers (#425)', () => {
+  const claudeEntries = Object.entries(MODEL_CATALOG).flatMap(([provider, entries]) =>
+    entries.filter((e) => /(^|\/)claude-/.test(e.modelId)).map((e) => ({ provider, entry: e })),
+  );
+
+  it('there are Claude entries on both the native and the OpenRouter route to check', () => {
+    const providers = new Set(claudeEntries.map((c) => c.provider));
+    expect(providers.has('anthropic')).toBe(true);
+    expect(providers.has('openrouter')).toBe(true);
+  });
+
+  it('every OpenRouter Claude entry declares it (a Claude added without it would silently lose its cache)', () => {
+    const missing = claudeEntries
+      .filter((c) => c.provider === 'openrouter' && c.entry.capabilities.cacheControl !== true)
+      .map((c) => c.entry.modelId);
+    expect(missing).toEqual([]);
+  });
+});

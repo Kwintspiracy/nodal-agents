@@ -10,7 +10,7 @@ import {
   LLMCallCancelledError,
   LLMOutputLimitError,
 } from './errors';
-import { CAPABILITY_MATRIX } from './providers/registry';
+import { capabilitiesFor } from './providers/registry';
 import {
   validateMessageStructure,
   withoutNamelessToolCalls,
@@ -328,7 +328,7 @@ export function createLlmClient(
   }
 
   const model = buildModel(config);
-  const capabilities: ProviderCapabilities = CAPABILITY_MATRIX[config.provider];
+  const capabilities: ProviderCapabilities = capabilitiesFor(config.provider, config.model);
 
   const retryOpts = {
     provider: config.provider,
@@ -385,14 +385,16 @@ export function createLlmClient(
   const withStatedCap = <A extends object>(args: A, statedCap: number | undefined): A =>
     statedCap === undefined ? args : { ...args, maxOutputTokens: statedCap };
 
-  // Anthropic does NOT auto-cache — opt it in by annotating cache_control
-  // breakpoints (system + sliding last message). Other providers either cache
-  // transparently (DeepSeek/OpenRouter) or don't support it; they pass through
-  // untouched. `cachingEnabled === false` is an explicit opt-out.
-  const cachingOn =
-    config.provider === 'anthropic' &&
-    capabilities.promptCaching &&
-    config.cachingEnabled !== false;
+  // Anthropic does NOT auto-cache: a Claude model reads nothing from the cache
+  // unless the request carries cache_control breakpoints (system + sliding last
+  // message), on every route that reaches it. OpenRouter forwards them to
+  // Anthropic as they are (#425: 852 calls to Claude through OpenRouter, 0 cache
+  // reads before this). So it is the MODEL that decides (`capabilities.
+  // promptCaching`, resolved by `promptCachingFor` from the catalog), not the
+  // route. Models that cache on their own (GLM, DeepSeek, MiMo) and models that
+  // do not honour the marker pass through untouched.
+  // `cachingEnabled === false` is an explicit opt-out, on every route.
+  const cachingOn = capabilities.promptCaching && config.cachingEnabled !== false;
 
   // Observation plumbing (étape D): one observation per invocation of this
   // client, success or terminal failure — the retry/stale stack inside

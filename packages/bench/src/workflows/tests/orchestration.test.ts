@@ -27,6 +27,7 @@ import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 
 const ROOT = '00000000-0000-4000-8000-000000000001';
 const KID = '00000000-0000-4000-8000-000000000002';
+const KID2 = '00000000-0000-4000-8000-000000000003';
 const T0 = 1_790_000_000_000;
 
 function job(over: Partial<JobFact> & { id: string }): JobFact {
@@ -484,6 +485,34 @@ describe('delegate-fails judge', () => {
       returnResults: [blocked(ROOT)],
     });
     expect(judge('delegate-fails', f, noCopy)).toEqual(['the work was not delegated']);
+  });
+
+  // #886 : la racine, son compte rendu reçu, confiait la même copie à un
+  // second membre de l'équipe (job c09795be, 12/10).
+  it('red: the root delegated the same copy a second time', () => {
+    const f = facts({
+      jobs: [
+        job({ id: ROOT, status: 'failed' }),
+        kid('failed', 'The source file does not exist.'),
+        job({ id: KID2, parentJobId: ROOT, agentSlug: 'lead', status: 'completed' }),
+      ],
+      returnResults: [blocked(KID), blocked(ROOT, 'The copy was not made: the source is missing.')],
+    });
+    expect(judge('delegate-fails', f, noCopy)).toEqual([
+      'the root delegated 2 times for one request (files, lead): the work was repeated',
+    ]);
+  });
+
+  it('green: a teammate who delegates in turn is not a second delegation of the root', () => {
+    const f = facts({
+      jobs: [
+        job({ id: ROOT, status: 'failed' }),
+        kid('failed', 'The source file does not exist.'),
+        job({ id: KID2, parentJobId: KID, agentSlug: 'helper', status: 'failed' }),
+      ],
+      returnResults: [blocked(KID), blocked(ROOT, 'The copy was not made: the source is missing.')],
+    });
+    expect(judge('delegate-fails', f, noCopy)).toEqual([]);
   });
 });
 

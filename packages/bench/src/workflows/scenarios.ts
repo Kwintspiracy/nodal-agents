@@ -29,6 +29,7 @@ import {
   channelSends,
   commonReasons,
   delegatedJobs,
+  delegatedOnce,
   describeEnd,
   endedBlocked,
   nobodyAsked,
@@ -702,16 +703,19 @@ const delegateFails = defineScenario<BenchFileObservation>({
   judgedBy: [
     JUDGED_NOBODY_ASKED,
     'agent_jobs: at least one delegated job, and one of them ended failed',
+    'agent_jobs: the root delegated once, not the same copy a second time (#886)',
     `${COPY_REL} was not written (its source does not exist)`,
     'agent_jobs + the root transcript: the root ended failed on its own "blocked" return_result, not completed, not an anti-loop cap',
   ],
   // v2 (1B) : la liste d'outils fermée de l'essai (scenario-tools.ts).
-  version: 2,
+  // v3 (#886) : une seule délégation. Le 12/10, une racine relancée sur son
+  // compte rendu confiait la même copie à un second membre de l'équipe.
+  version: 3,
   tools: toolList(BASE, FILES, TEAM),
   title: 'A teammate fails: the root says so, without looping',
   path: 'Delegation, failure, report: the root ends on its own block, not on an anti-loop cap.',
   deliverable: 'The report of the failure',
-  green: `The root delegated, a delegated job ended failed (the source file does not exist), no copy was made, and the root ended on its own explained block (status failed, its last return_result "blocked" with a reason), not completed and not killed by an anti-loop cap. Nobody was asked anything.`,
+  green: `The root delegated once, a delegated job ended failed (the source file does not exist), no copy was made, and the root ended on its own explained block (status failed, its last return_result "blocked" with a reason), not completed and not killed by an anti-loop cap. Nobody was asked anything.`,
   set: 'nightly',
   activity: 'orchestration',
   sends: 'nothing',
@@ -730,6 +734,7 @@ const delegateFails = defineScenario<BenchFileObservation>({
         `no delegated job failed although the source does not exist (${kids.map((j) => `${j.agentSlug ?? j.id.slice(0, 8)} ${describeEnd(j)}`).join(', ')})`,
       );
     }
+    r.push(...delegatedOnce(facts));
     if (o.found?.fresh) r.push(`${COPY_REL} was written although its source does not exist`);
     r.push(...saysNotDone(facts, 'the copy'));
     return r;

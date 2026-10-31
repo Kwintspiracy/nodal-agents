@@ -73,9 +73,9 @@ describe('a tool call without a name @cap:parler-a-un-agent/moteur', () => {
 
       const outcome = await executeJob(jobId as JobId, makeDeps(db));
 
-      // Turn 2, then the runner's own re-read of a text-only turn: neither
-      // carries a call without a name, in any message.
-      expect(bodies.length).toBeGreaterThanOrEqual(2);
+      // Turn 2, the text-only answer, is the last request (#886): it carries
+      // no call without a name, in any message.
+      expect(bodies).toHaveLength(2);
       for (const body of bodies.slice(1)) {
         for (const name of wireToolCallNames(body)) {
           expect(typeof name === 'string' && name.trim() !== '').toBe(true);
