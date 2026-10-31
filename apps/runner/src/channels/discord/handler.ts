@@ -24,7 +24,7 @@ import { agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { triggerWorker } from '../../routes/agent.ts';
-import { pruneTelegramWorkspace } from '../../telegram/handler.ts';
+import { pruneInboundFolder } from '../inbound-files.ts';
 import { sanitizeSenderName, checkConversationAuthorization } from '../shared.ts';
 import { groupMessagePrefix } from '../../person-for-model.ts';
 import { takeChannelTurn, isPlatformCommand, type ChannelStopResult } from '../turn.ts';
@@ -253,11 +253,9 @@ export function triggerJobWorker(jobId: string, env: RunnerEnv): void {
  * gateway AFTER the create-job transaction commits (network I/O must not sit
  * inside a DB txn) and BEFORE the worker is triggered.
  *
- * Reuses pruneTelegramWorkspace as-is: it only takes a directory + db handle
- * and keys files by `<jobId>.<ext>` — already channel-neutral in behavior,
- * the "telegram" in its name is a naming-only artifact of where it was first
- * written. Renaming it to a channel-neutral name is cleanup-phase work, not
- * this ticket.
+ * Prunes with pruneInboundFolder (channels/inbound-files.ts), which keys an
+ * entry by its `<jobId>.<ext>` name as written here. Moving this path onto
+ * receiveInboundFiles, the intake Telegram uses since #899, is #900.
  */
 export async function attachInboundImage(args: {
   jobId: string;
@@ -312,7 +310,7 @@ export async function attachInboundImage(args: {
     );
   }
 
-  await pruneTelegramWorkspace(dir, db).catch((err) => {
+  await pruneInboundFolder(dir, db).catch((err) => {
     console.warn(
       `[discord] workspace prune failed for ${dir}: ${err instanceof Error ? err.message : String(err)}`,
     );

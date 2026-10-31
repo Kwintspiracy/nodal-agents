@@ -23,7 +23,7 @@ import type { RunnerEnv } from '../env.ts';
 import {
   handleTelegramUpdate,
   triggerJobWorker,
-  attachInboundPhoto,
+  attachInboundFiles,
   type HandleResult,
 } from './handler.ts';
 import { handleApprovalCallback } from './approval-callback.ts';
@@ -421,7 +421,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
       }
 
       let createdJobId: string | undefined;
-      let createdPhoto: HandleResult['photo'];
+      let createdFiles: HandleResult['files'];
       let createdPendingAuth: HandleResult['pendingAuth'];
       let stopResult: HandleResult['stop'];
 
@@ -443,7 +443,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
           await mirrorOffsetToBinding(tx as unknown as RunnerDeps['db'], agentId, newOffset);
 
           createdJobId = result.jobId;
-          createdPhoto = result.photo;
+          createdFiles = result.files;
           createdPendingAuth = result.pendingAuth;
           stopResult = result.stop;
         });
@@ -527,21 +527,22 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
       failureCounts.delete(update.update_id);
       offset = newOffset;
 
-      // Inbound photo: download it (network — out of the txn) and attach it to
-      // the job BEFORE the worker runs, so the agent sees the image. Best-effort:
-      // a failed download leaves the job text-only and the worker still runs.
-      if (createdJobId && createdPhoto) {
+      // Inbound files (#899): download them (network — out of the txn) and put
+      // them in the job BEFORE the worker runs, so the agent sees them. A file
+      // that cannot be fetched is said in the job's message (inbound-files.ts);
+      // only the DB write can throw here, and the worker still runs.
+      if (createdJobId && createdFiles) {
         try {
-          await attachInboundPhoto({
+          await attachInboundFiles({
             jobId: createdJobId,
             entityId: agentEntityId,
             botToken,
-            photo: createdPhoto,
+            inbound: createdFiles,
             db: deps.db,
           });
         } catch (err) {
           console.warn(
-            `[telegram-poller agent=${agentId}] photo attach failed for job ${createdJobId}: ${
+            `[telegram-poller agent=${agentId}] inbound files attach failed for job ${createdJobId}: ${
               err instanceof Error ? err.message : String(err)
             }`,
           );

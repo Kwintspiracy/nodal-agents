@@ -18,7 +18,8 @@ import {
 } from '@nodal-agents/db';
 import { projectKey } from '@nodal-agents/shared';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
-import { handleTelegramUpdate, pruneTelegramWorkspace } from '../../telegram/handler.ts';
+import { handleTelegramUpdate } from '../../telegram/handler.ts';
+import { pruneInboundFolder } from '../../channels/inbound-files.ts';
 import type { RunnerDeps } from '../../deps.ts';
 
 let db: TestDb;
@@ -504,7 +505,11 @@ describe('handleTelegramUpdate — group chats', () => {
     });
 
     const task = '[Message from Alice]: Image envoyée (sans légende).';
-    expect(result.photo).toEqual({ fileId: 'large', chatId: '-100123', text: task });
+    expect(result.files).toEqual({
+      chatId: '-100123',
+      text: task,
+      files: [{ fileId: 'large', name: null, mediaType: 'image/jpeg', size: null }],
+    });
     const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
     expect(job?.task).toBe(task);
     const [conv] = await db
@@ -868,7 +873,7 @@ describe('handleTelegramUpdate — /ask command', () => {
   });
 });
 
-describe('pruneTelegramWorkspace — F-13 bounded cleanup', () => {
+describe('pruneInboundFolder — F-13 bounded cleanup', () => {
   let workDir: string;
 
   afterEach(async () => {
@@ -911,7 +916,7 @@ describe('pruneTelegramWorkspace — F-13 bounded cleanup', () => {
     await utimes(activeFile, fortyDaysAgo, fortyDaysAgo);
     await utimes(doneFile, fortyDaysAgo, fortyDaysAgo);
 
-    await pruneTelegramWorkspace(workDir, db as unknown as RunnerDeps['db']);
+    await pruneInboundFolder(workDir, db as unknown as RunnerDeps['db']);
 
     const remaining = await readdir(workDir);
     // Before the fix: age alone decided deletion, and BOTH files (equally
@@ -927,7 +932,7 @@ describe('pruneTelegramWorkspace — F-13 bounded cleanup', () => {
     const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
     await utimes(orphanFile, fortyDaysAgo, fortyDaysAgo);
 
-    await pruneTelegramWorkspace(workDir, db as unknown as RunnerDeps['db']);
+    await pruneInboundFolder(workDir, db as unknown as RunnerDeps['db']);
 
     const remaining = await readdir(workDir);
     expect(remaining).not.toContain('00000000-0000-0000-0000-000000000000.jpg');
@@ -960,7 +965,7 @@ describe('pruneTelegramWorkspace — F-13 bounded cleanup', () => {
       await utimes(file, mtime, mtime);
     }
 
-    await pruneTelegramWorkspace(workDir, db as unknown as RunnerDeps['db']);
+    await pruneInboundFolder(workDir, db as unknown as RunnerDeps['db']);
 
     const remainingNames = new Set(await readdir(workDir));
     expect(remainingNames.size).toBe(200);

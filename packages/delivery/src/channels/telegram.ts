@@ -603,7 +603,7 @@ export interface TelegramFileDownload {
  * malicious or misbehaving upstream (or a server lying about Content-Length)
  * could force an unbounded `arrayBuffer()` read into memory (F-13).
  */
-const TELEGRAM_MAX_FILE_BYTES = 20 * 1024 * 1024; // 20 MB
+export const TELEGRAM_MAX_FILE_BYTES = 20 * 1024 * 1024; // 20 MB
 
 /** Read a Response body up to `maxBytes`, throwing `telegram_file_too_large` if exceeded. */
 async function readBoundedBody(res: Response, maxBytes: number): Promise<Uint8Array> {
@@ -765,6 +765,15 @@ export async function setTelegramMessageReaction(opts: {
 // loop per configured agent.
 
 /** A single Telegram update — minimal shape we care about. */
+/** The part of a Bot API file object (Document, Audio, Voice, Video, VideoNote, Animation) a bot reads. */
+export interface TelegramFileRef {
+  file_id: string;
+  file_unique_id?: string;
+  file_name?: string;
+  mime_type?: string;
+  file_size?: number;
+}
+
 export interface TelegramUpdate {
   update_id: number;
   message?: {
@@ -782,7 +791,19 @@ export interface TelegramUpdate {
       file_size?: number;
     }>;
     /** A file attachment (e.g. an image sent as a document to preserve quality). */
-    document?: { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
+    document?: TelegramFileRef;
+    /** A music file. */
+    audio?: TelegramFileRef;
+    /** A voice message (OGG/Opus, no file name). */
+    voice?: TelegramFileRef;
+    /** A video. */
+    video?: TelegramFileRef;
+    /** A round video message (MP4, neither file name nor MIME type). */
+    video_note?: TelegramFileRef;
+    /** A GIF or silent MP4. Telegram ALSO sets `document` to the same file for it. */
+    animation?: TelegramFileRef;
+    /** Set on each message of an album (several files sent at once): one update per file. */
+    media_group_id?: string;
     chat?: { id?: number; type?: string };
     from?: { id?: number; first_name?: string; username?: string; is_bot?: boolean };
     /** The message this one replies to: its author, and its id (a reply to a
