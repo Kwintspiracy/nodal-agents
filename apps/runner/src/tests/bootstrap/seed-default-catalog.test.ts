@@ -192,3 +192,123 @@ describe('skill seeding guards', () => {
     expect(distinct.size).toBe(1);
   });
 });
+
+// A system skill the owner edited keeps their text on every boot — and used to
+// stop receiving improvements in silence: only default_content moved, nothing
+// said a newer version existed. The seeder now raises update_available, the
+// same flag a community skill's source check raises, when the catalog text
+// differs from the one stored. Each case runs over EVERY system skill, on its
+// own database, and asserts the rows.
+describe('a newer version of an edited system skill @cap:apprendre-une-skill/moteur', () => {
+  async function seededDb(): Promise<TestDb> {
+    const { db } = await spinUpTestDb();
+    await seedSingleEntityFixture(db);
+    await seedDefaultSkills(db, env);
+    return db;
+  }
+
+  async function rowsBySlug(db: TestDb) {
+    const rows = await db
+      .select({
+        slug: agentSkills.slug,
+        content: agentSkills.content,
+        defaultContent: agentSkills.defaultContent,
+        contentOverridden: agentSkills.contentOverridden,
+        updateAvailable: agentSkills.updateAvailable,
+        updateDetail: agentSkills.updateDetail,
+      })
+      .from(agentSkills);
+    return new Map(rows.map((r) => [r.slug, r]));
+  }
+
+  it('edited + the catalog text changed since: update_available goes true, the edit is untouched', async () => {
+    const db = await seededDb();
+    // The state an older release leaves: the owner edited the text, and the
+    // stored default is the catalog text of THAT release.
+    await db.update(agentSkills).set({
+      content: 'MY EDIT',
+      defaultContent: 'CATALOG TEXT OF AN OLDER RELEASE',
+      contentOverridden: true,
+    });
+
+    await seedDefaultSkills(db, env);
+
+    const rows = await rowsBySlug(db);
+    for (const skill of systemSkills) {
+      const row = rows.get(skill.slug);
+      expect(row?.updateAvailable, `${skill.slug}: the newer version is not announced`).toBe(true);
+      expect(row?.updateDetail).toMatchObject({ contentChanged: true, scriptsChanged: false });
+      expect(row?.content, `${skill.slug}: the owner's edit was overwritten`).toBe('MY EDIT');
+      expect(row?.contentOverridden).toBe(true);
+      expect(row?.defaultContent).toBe(skill.content);
+    }
+
+    // The flag survives the next boot, where the catalog text no longer
+    // differs from the stored default: it clears only when the owner applies.
+    await seedDefaultSkills(db, env);
+    const again = await rowsBySlug(db);
+    for (const skill of systemSkills) {
+      expect(again.get(skill.slug)?.updateAvailable, `${skill.slug}: badge lost on reboot`).toBe(
+        true,
+      );
+    }
+  });
+
+  it('edited + the catalog text unchanged: no badge (which version was edited is not guessed)', async () => {
+    const db = await seededDb();
+    await db.update(agentSkills).set({ content: 'MY EDIT', contentOverridden: true });
+
+    await seedDefaultSkills(db, env);
+
+    const rows = await rowsBySlug(db);
+    for (const skill of systemSkills) {
+      const row = rows.get(skill.slug);
+      expect(row?.updateAvailable, `${skill.slug}: a badge with no newer version`).toBe(false);
+      expect(row?.content).toBe('MY EDIT');
+    }
+  });
+
+  it('edited back to exactly the new catalog text: nothing newer than what the owner has', async () => {
+    const db = await seededDb();
+    for (const skill of systemSkills) {
+      await db
+        .update(agentSkills)
+        .set({
+          content: skill.content,
+          defaultContent: 'CATALOG TEXT OF AN OLDER RELEASE',
+          contentOverridden: true,
+        })
+        .where(eq(agentSkills.slug, skill.slug));
+    }
+
+    await seedDefaultSkills(db, env);
+
+    const rows = await rowsBySlug(db);
+    for (const skill of systemSkills) {
+      expect(rows.get(skill.slug)?.updateAvailable, skill.slug).toBe(false);
+    }
+  });
+
+  it('not edited: the new text is installed silently, and no badge is left', async () => {
+    const db = await seededDb();
+    await db.update(agentSkills).set({
+      content: 'CATALOG TEXT OF AN OLDER RELEASE',
+      defaultContent: 'CATALOG TEXT OF AN OLDER RELEASE',
+      contentOverridden: false,
+      updateAvailable: true,
+      updateDetail: { contentChanged: true, scriptsChanged: false, checkedAt: 'then' },
+    });
+
+    await seedDefaultSkills(db, env);
+
+    const rows = await rowsBySlug(db);
+    for (const skill of systemSkills) {
+      const row = rows.get(skill.slug);
+      expect(row?.content, `${skill.slug}: not upgraded`).toBe(skill.content);
+      expect(row?.updateAvailable, `${skill.slug}: badge on a skill already up to date`).toBe(
+        false,
+      );
+      expect(row?.updateDetail).toBeNull();
+    }
+  });
+});

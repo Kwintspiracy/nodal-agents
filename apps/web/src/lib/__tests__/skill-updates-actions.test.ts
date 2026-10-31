@@ -1,12 +1,14 @@
 // skill-updates-actions.test.ts — unit tests for updateCommunitySkillAction and
-// listSkillUpdatesAction (community-skill update tracking).
+// listSkillUpdatesAction (skill update tracking, every origin) and the reset
+// that applies a system skill's update.
 // Asserts on the real request sent to the runner and on real DB rows —
 // never on call counts (CLAUDE.md invariant 5).
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentSkills, type SkillUpdateDetail } from '@nodal-agents/db';
+import { agentSkills, entities, users, eq, type SkillUpdateDetail } from '@nodal-agents/db';
+import { systemSkillSlugs } from '@nodal-agents/catalog';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -163,7 +165,7 @@ describe('updateCommunitySkillAction', () => {
 });
 
 describe('listSkillUpdatesAction', () => {
-  it('returns only community skills with updateAvailable=true for the active entity', async () => {
+  it('returns the skills with updateAvailable=true for the active entity', async () => {
     const { listSkillUpdatesAction } = await import('../actions.ts');
 
     await insertCommunitySkill({
@@ -318,5 +320,125 @@ describe('acknowledgeSkillUpdateAction', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('validation_failed');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// Un skill MODIFIÉ par son propriétaire reçoit encore l'annonce d'une version
+// plus récente, quelle que soit son origine — et l'appliquer l'y met vraiment.
+// Pour un skill système, la nouvelle version est default_content (le seeder la
+// tient sur le texte du catalogue et lève le drapeau) : l'appliquer, c'est
+// « Reset to default ». Pour un skill communautaire, elle est encore à sa
+// source : le reset remet la base installée, et le drapeau reste.
+describe('a newer version of an edited skill @cap:apprendre-une-skill/moteur', () => {
+  const PENDING: SkillUpdateDetail = {
+    contentChanged: true,
+    scriptsChanged: false,
+    checkedAt: '2026-10-31T00:00:00.000Z',
+  };
+
+  /** A second workspace, the way the boot seeder's bookkeeping owner can differ from the active one. */
+  async function otherEntity(): Promise<string> {
+    const [user] = await testDb
+      .insert(users)
+      .values({ email: `other-${Date.now()}-${Math.random()}@test.com` })
+      .returning();
+    const [entity] = await testDb
+      .insert(entities)
+      .values({ userId: user!.id, name: 'Other', slug: `other-${Date.now()}-${Math.random()}` })
+      .returning();
+    return entity!.id;
+  }
+
+  it('the bell lists an edited system skill with a newer version, in every workspace the list shows it', async () => {
+    const { listSkillUpdatesAction } = await import('../actions.ts');
+    const ownerEntity = await otherEntity();
+    const slug = systemSkillSlugs[0]!;
+    await testDb.insert(agentSkills).values({
+      entityId: ownerEntity,
+      name: 'System skill edited',
+      slug,
+      content: 'MY EDIT',
+      defaultContent: 'CATALOG V2',
+      contentOverridden: true,
+      createdBy: 'system',
+      updateAvailable: true,
+      updateDetail: PENDING,
+    });
+    // Another workspace's own skill stays out of this one's bell.
+    await testDb.insert(agentSkills).values({
+      entityId: ownerEntity,
+      name: 'Someone else custom',
+      slug: 'someone-else-custom',
+      content: 'x',
+      isCommunity: true,
+      source: 'owner/someone-else-custom',
+      updateAvailable: true,
+      updateDetail: PENDING,
+    });
+
+    const result = await listSkillUpdatesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.find((r) => r.slug === slug)).toEqual({
+      slug,
+      name: 'System skill edited',
+      problem: null,
+    });
+    expect(result.data.map((r) => r.slug)).not.toContain('someone-else-custom');
+  });
+
+  it('applying it on a system skill (reset to default) installs the new version and clears both flags', async () => {
+    const { resetSkillToDefaultAction } = await import('../actions.ts');
+    const [row] = await testDb
+      .insert(agentSkills)
+      .values({
+        entityId: seed.entityId,
+        name: 'Edited system',
+        slug: `edited-system-${Date.now()}`,
+        content: 'MY EDIT',
+        defaultContent: 'CATALOG V2',
+        contentOverridden: true,
+        createdBy: 'system',
+        updateAvailable: true,
+        updateDetail: PENDING,
+      })
+      .returning();
+
+    const result = await resetSkillToDefaultAction(row!.id);
+    expect(result.ok).toBe(true);
+
+    const [after] = await testDb.select().from(agentSkills).where(eq(agentSkills.id, row!.id));
+    expect(after!.content).toBe('CATALOG V2');
+    expect(after!.contentOverridden).toBe(false);
+    expect(after!.updateAvailable).toBe(false);
+    expect(after!.updateDetail).toBeNull();
+  });
+
+  it('a reset on a community skill restores its installed text but keeps the badge: the newer version is still at its source', async () => {
+    const { resetSkillToDefaultAction } = await import('../actions.ts');
+    const [row] = await testDb
+      .insert(agentSkills)
+      .values({
+        entityId: seed.entityId,
+        name: 'Edited community',
+        slug: `edited-community-${Date.now()}`,
+        content: 'MY EDIT',
+        defaultContent: 'UPSTREAM V1',
+        contentOverridden: true,
+        isCommunity: true,
+        source: 'owner/edited-community',
+        updateAvailable: true,
+        updateDetail: PENDING,
+      })
+      .returning();
+
+    const result = await resetSkillToDefaultAction(row!.id);
+    expect(result.ok).toBe(true);
+
+    const [after] = await testDb.select().from(agentSkills).where(eq(agentSkills.id, row!.id));
+    expect(after!.content).toBe('UPSTREAM V1');
+    expect(after!.contentOverridden).toBe(false);
+    expect(after!.updateAvailable).toBe(true);
+    expect(after!.updateDetail).toEqual(PENDING);
   });
 });

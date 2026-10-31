@@ -8785,8 +8785,10 @@ export type SkillRow = {
   source: string | null;
   installedScripts: InstalledScript[] | null;
   /**
-   * True when the runner's last update check found a newer version of this
-   * community skill at its source. Always false for system/custom skills.
+   * True when a newer version than the one in use exists, whatever the
+   * skill's origin: a community skill's source check found one, or the boot
+   * seeder found that the catalog text of a system skill the owner edited has
+   * changed since. Always false for custom skills (they have no other version).
    */
   updateAvailable: boolean;
   /** Detail behind `updateAvailable` — null until the first check has run. */
@@ -9309,10 +9311,14 @@ export async function acknowledgeSkillUpdateAction(
 export type SkillUpdateNotice = { slug: string; name: string; problem: SkillSourceProblem | null };
 
 /**
- * Light read for the notifications bell: the slug + name of every community
- * skill in the active workspace with a pending update OR a source problem
- * (the last check could not read its source as this skill). A problem is the
- * owner's to see: a badge that turned into a problem must not just vanish.
+ * Light read for the notifications bell: the slug + name of every skill the
+ * skills list shows (the active workspace's own, plus the install-wide system
+ * skills — same scope as listSkillsAction) with a pending update OR a source
+ * problem (the last check could not read a community skill's source as this
+ * skill). An update is announced whatever the skill's origin: a community
+ * skill's source check, or the boot seeder for an edited system skill. A
+ * problem is the owner's to see: a badge that turned into a problem must not
+ * just vanish.
  * Kept separate from listSkillsAction (which pays joins the bell doesn't need)
  * so polling it every 15s stays cheap.
  */
@@ -9329,8 +9335,10 @@ export async function listSkillUpdatesAction(): Promise<ActionResult<SkillUpdate
       .from(agentSkills)
       .where(
         and(
-          eq(agentSkills.entityId, session.entityId),
-          eq(agentSkills.isCommunity, true),
+          or(
+            eq(agentSkills.entityId, session.entityId),
+            and(inArray(agentSkills.slug, systemSkillSlugs), eq(agentSkills.createdBy, 'system')),
+          ),
           or(
             eq(agentSkills.updateAvailable, true),
             sql`${agentSkills.updateDetail}->>'sourceProblem' IS NOT NULL`,
@@ -9496,6 +9504,7 @@ export async function resetSkillToDefaultAction(id: string): Promise<ActionResul
       .select({
         id: agentSkills.id,
         defaultContent: agentSkills.defaultContent,
+        isCommunity: agentSkills.isCommunity,
       })
       .from(agentSkills)
       .where(and(eq(agentSkills.id, id), eq(agentSkills.entityId, session.entityId)));
@@ -9504,11 +9513,20 @@ export async function resetSkillToDefaultAction(id: string): Promise<ActionResul
       return fail('not_applicable', 'No default available — this is a user-created skill');
     }
 
+    // `update_available` says a newer version than the one in use exists. The
+    // reset puts default_content in use, so the flag clears exactly when
+    // default_content IS that newer version: a system skill's, which the boot
+    // seeder refreshes to the catalog text and flags (seed-default-skills.ts)
+    // — this reset is how its update is applied. A community skill's newer
+    // version is still at its source (default_content is the installed
+    // baseline the check compared it to), so its flag stays until the runner
+    // applies that update.
     await db
       .update(agentSkills)
       .set({
         content: existing.defaultContent,
         contentOverridden: false,
+        ...(existing.isCommunity ? {} : { updateAvailable: false, updateDetail: null }),
         updatedAt: new Date(),
       })
       .where(eq(agentSkills.id, id));
