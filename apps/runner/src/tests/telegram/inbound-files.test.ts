@@ -443,7 +443,15 @@ describe('receiveInboundFiles — never overwrites @cap:parler-par-canal-externe
 
   // Revue de #902 (F1) : sous Windows, une écriture vers `con .txt` part dans
   // la console et ne laisse rien sur le disque, alors que le job disait « Saved ».
-  it.each(['con .txt', 'nul .pdf', 'aux .mp3', 'com1 .docx'])(
+  it.each([
+    'con .txt',
+    'nul .pdf',
+    'aux .mp3',
+    'com1 .docx',
+    'conin$.log',
+    'conout$ .txt',
+    'CONOUT$',
+  ])(
     'a file named like a Windows device (%j) is written, with its bytes, under a name that is not one',
     async (name) => {
       const [job] = await db
@@ -471,6 +479,38 @@ describe('receiveInboundFiles — never overwrites @cap:parler-par-canal-externe
       expect(await readdir(dir)).toEqual([`_${name}`]);
       expect(new Uint8Array(await readFile(join(dir, `_${name}`)))).toEqual(bytes);
       expect(outcomes[0]).toMatchObject({ received: true, path: join(dir, `_${name}`) });
+    },
+  );
+
+  // CLOCK$ n'est dans aucune liste de Microsoft : il garde son nom, et son
+  // écriture réelle (sur la CI Windows aussi) laisse bien le fichier et ses octets.
+  it.each(['CLOCK$', 'clock$.txt', 'conin$x.txt'])(
+    'a name Windows does not resolve to a device (%j) keeps its name, and its bytes land on disk',
+    async (name) => {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          task: 't',
+          chatId: '4',
+          status: 'pending',
+        })
+        .returning({ id: agentJobs.id });
+      const bytes = new Uint8Array(Buffer.from(`content of ${name}`));
+      await receiveInboundFiles({
+        db: db as unknown as RunnerDeps['db'],
+        jobId: job!.id,
+        entityId: seed.entityId,
+        channel: 'telegram',
+        conversationId: '4',
+        text: 't',
+        files: [{ name, mediaType: null, size: bytes.byteLength, download: async () => bytes }],
+      });
+      const dir = join(chatFolder(4), job!.id);
+      expect(await readdir(dir)).toEqual([name]);
+      expect(new Uint8Array(await readFile(join(dir, name)))).toEqual(bytes);
     },
   );
 
@@ -556,6 +596,11 @@ describe('safeFileName — a name every OS accepts, as close to the original as 
     ['aux .mp3', null, '_aux .mp3'],
     ['com1 .docx', null, '_com1 .docx'],
     ['LPT¹.txt', null, '_LPT¹.txt'],
+    ['conin$.log', null, '_conin$.log'],
+    ['conout$ .txt', null, '_conout$ .txt'],
+    ['CONOUT$', null, '_CONOUT$'],
+    ['conin$x.txt', null, 'conin$x.txt'],
+    ['CLOCK$', null, 'CLOCK$'],
     ['context .txt', null, 'context .txt'],
     ['', 'image/jpeg', 'image.jpg'],
     [null, 'audio/ogg', 'audio.ogg'],
