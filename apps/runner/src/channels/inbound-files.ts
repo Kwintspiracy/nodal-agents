@@ -21,8 +21,8 @@
 //     chemin pour les outils fichiers (`shared/…`) et son chemin absolu (un
 //     runtime CLI n'a que lui), son nom, son type, sa taille ;
 //   - garde en plus sa partie image quand ses octets sont une image qu'un modèle
-//     prend — la forme des photos d'avant (`{ type: 'image', image: <absolu> }`),
-//     que `hydrateForLlm` change en octets au moment de l'appel ;
+//     prend (`{ type: 'image', image: <file: URL> }`), que `hydrateForLlm`
+//     change en octets au moment de l'appel, quel que soit le nom du fichier ;
 //   - ou, quand il n'a pas pu être obtenu ou écrit (trop gros pour le canal,
 //     réseau, délai), devient une partie texte qui dit lequel et pourquoi :
 //     l'agent le dit dans sa réponse. Jamais abandonné.
@@ -32,6 +32,7 @@
 
 import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { and, eq, inArray } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import {
@@ -39,6 +40,7 @@ import {
   SHARED_WORKSPACE_LABEL,
   formatBytes,
   sniffImageMediaType,
+  windowsDeviceName,
   workspacesRoot,
 } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../deps.ts';
@@ -168,7 +170,11 @@ export async function receiveInboundFiles(args: {
     outcomes.push(outcome);
     parts.push({ type: 'text', text: receivedNote(outcome, workspaceFolder) });
     if (mediaType !== null && MODEL_IMAGE_MEDIA_TYPES.includes(mediaType)) {
-      parts.push({ type: 'image', image: saved.path });
+      // Un `file:` URL, jamais le chemin nu : `hydrateForLlm` lit une URL sans
+      // rien deviner, alors qu'un chemin nu n'y est reconnu qu'à son extension
+      // (`capture.20261031` n'en a pas une qu'il connaisse, et `C:` y passe
+      // pour un schéma d'URL). Revue de #902.
+      parts.push({ type: 'image', image: pathToFileURL(saved.path).href });
     }
   }
 
@@ -251,10 +257,19 @@ function displayName(file: InboundFile): string {
 /** Octets UTF-8 au plus pour un nom : sous les 255 de ext4, APFS et NTFS, avec de la marge pour le chemin. */
 const MAX_NAME_BYTES = 150;
 
-/** Les noms que Windows réserve, avec ou sans extension (`CON`, `nul.txt`, `COM1.pdf`…). */
-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\.|$)/i;
+/**
+ * Un nom que Windows prend pour un périphérique (`CON`, `nul.txt`, `con .txt`,
+ * `COM1.pdf`…) reçoit un `_` devant. La règle est celle des outils fichiers
+ * (`windowsDeviceName`), appliquée sur TOUS les systèmes : un fichier du
+ * dossier partagé doit rester lisible par un runner Windows, et sous Windows
+ * une écriture vers `con .txt` part dans la console — aucun octet sur le
+ * disque (revue de #902).
+ */
+function notADevice(name: string): string {
+  return windowsDeviceName(name) === null ? name : `_${name}`;
+}
 
-/** L'extension d'un type, pour un nom qui n'en a pas (une image doit en avoir une pour être relue). */
+/** L'extension d'un type, pour un nom qui n'en a pas. */
 const EXTENSION_OF_TYPE: Readonly<Record<string, string>> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
@@ -305,7 +320,7 @@ function cleanSegment(raw: string): string {
 function safePathSegment(raw: string): string {
   const cleaned = cutToBytes(cleanSegment(raw), MAX_NAME_BYTES);
   if (cleaned === '' || /^\.+$/.test(cleaned)) return '_';
-  return WINDOWS_RESERVED.test(cleaned) ? `_${cleaned}` : cleaned;
+  return notADevice(cleaned);
 }
 
 /**
@@ -330,7 +345,7 @@ export function safeFileName(raw: string | null, mediaType: string | null): stri
     const stem = ext === '' ? name : name.slice(0, dot);
     name = `${cutToBytes(stem, MAX_NAME_BYTES - utf8Length(ext)).replace(/[. ]+$/, '')}${ext}`;
   }
-  return WINDOWS_RESERVED.test(name) ? `_${name}` : name;
+  return notADevice(name);
 }
 
 /**

@@ -10,6 +10,9 @@
 import { mkdtemp, readFile, readdir, rm, mkdir, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import type { ModelMessage } from 'ai';
+import { createLlmClient } from '@nodal-agents/llm';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -17,6 +20,13 @@ import { eq } from '@nodal-agents/db';
 import { agentJobs, conversations, telegramAllowedChats } from '@nodal-agents/db';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../../deps.ts';
+import { hydrateForLlm } from '../../job/model-images.ts';
+
+// Provider calls leave through packages/llm's own transport (#609): routed to
+// the global fetch stubbed in `wireBody`, the network boundary.
+vi.mock('../../../../../packages/llm/src/transport.ts', () => ({
+  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
 
 /** Ce que le Bot API rend pour chaque file_id : des octets, ou une erreur. */
 const telegramFiles = new Map<string, Uint8Array | Error>();
@@ -298,7 +308,7 @@ describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/mo
     expect(note).not.toContain('no stub');
   });
 
-  it('a photo keeps its image part (the absolute path of the saved JPEG), plus its file part', async () => {
+  it('a photo keeps its image part (the file: URL of the saved JPEG), plus its file part', async () => {
     telegramFiles.set('big', JPEG);
     const { jobId, parts } = await deliver(
       update({
@@ -312,7 +322,7 @@ describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/mo
     expect(new Uint8Array(await readFile(onDisk))).toEqual(JPEG);
     expect(parts[0]).toEqual({ type: 'text', text: 'Image envoyée (sans légende).' });
     expect(parts[1]!.text).toContain(`shared/telegram/${CHAT}/${jobId}/image.jpg`);
-    expect(parts[2]).toEqual({ type: 'image', image: onDisk });
+    expect(parts[2]).toEqual({ type: 'image', image: pathToFileURL(onDisk).href });
   });
 
   it('an image sent as a document gets an image part too: its bytes decide, not its kind', async () => {
@@ -320,9 +330,42 @@ describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/mo
     const { jobId, parts } = await deliver(
       update({ caption: 'en qualité', document: { file_id: 'png-doc', file_name: 'scan' } }),
     );
-    // Sans extension, le nom prend celle de son type : une image se relit par son extension.
+    // Sans extension, le nom prend celle de son type.
     const onDisk = join(chatFolder(), jobId, 'scan.png');
-    expect(parts[2]).toEqual({ type: 'image', image: onDisk });
+    expect(parts[2]).toEqual({ type: 'image', image: pathToFileURL(onDisk).href });
+  });
+
+  // Revue de #902 (F2) : le chemin nu n'était lu comme un fichier que s'il
+  // finissait par une extension de 2 à 5 caractères ; `capture.20261031` en a
+  // une de 8, et l'image tombait en « illisible » avant le modèle.
+  it('an image whose name ends in an extension of any length reaches the model, in the request body', async () => {
+    const PNG = new Uint8Array([
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a,
+      ...Buffer.from('a capture of a bill'),
+    ]);
+    telegramFiles.set('capture', PNG);
+    const { job, parts } = await deliver(
+      update({
+        caption: 'range-la',
+        document: { file_id: 'capture', file_name: 'capture.20261031' },
+      }),
+    );
+    expect(parts[1]!.text).toContain('/capture.20261031');
+
+    const hydrated = await hydrateForLlm(job.messages as ModelMessage[], { sees: true }, new Map());
+    const body = await wireBody(hydrated);
+    const b64 = Buffer.from(PNG).toString('base64');
+    expect(body).toContain(
+      `"type":"image","source":{"type":"base64","media_type":"image/png","data":"${b64}"}`,
+    );
+    expect(body).not.toContain('holds no image Nodal can read');
   });
 
   it('a job already claimed while the file downloaded keeps its transcript (G1), the file stays on disk', async () => {
@@ -398,6 +441,39 @@ describe('receiveInboundFiles — never overwrites @cap:parler-par-canal-externe
     ]);
   });
 
+  // Revue de #902 (F1) : sous Windows, une écriture vers `con .txt` part dans
+  // la console et ne laisse rien sur le disque, alors que le job disait « Saved ».
+  it.each(['con .txt', 'nul .pdf', 'aux .mp3', 'com1 .docx'])(
+    'a file named like a Windows device (%j) is written, with its bytes, under a name that is not one',
+    async (name) => {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          task: 't',
+          chatId: '3',
+          status: 'pending',
+        })
+        .returning({ id: agentJobs.id });
+      const bytes = new Uint8Array(Buffer.from(`content of ${name}`));
+      const { outcomes } = await receiveInboundFiles({
+        db: db as unknown as RunnerDeps['db'],
+        jobId: job!.id,
+        entityId: seed.entityId,
+        channel: 'telegram',
+        conversationId: '3',
+        text: 't',
+        files: [{ name, mediaType: null, size: bytes.byteLength, download: async () => bytes }],
+      });
+      const dir = join(chatFolder(3), job!.id);
+      expect(await readdir(dir)).toEqual([`_${name}`]);
+      expect(new Uint8Array(await readFile(join(dir, `_${name}`)))).toEqual(bytes);
+      expect(outcomes[0]).toMatchObject({ received: true, path: join(dir, `_${name}`) });
+    },
+  );
+
   it('a file already in the folder under the same name is not overwritten', async () => {
     const [job] = await db
       .insert(agentJobs)
@@ -437,6 +513,30 @@ describe('receiveInboundFiles — never overwrites @cap:parler-par-canal-externe
   });
 });
 
+/** The body the Anthropic builder sends for these messages; nothing is downloaded. */
+async function wireBody(messages: ModelMessage[]): Promise<string> {
+  const bodies: string[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (typeof init?.body !== 'string')
+        throw new Error(`a download was attempted: ${String(input)}`);
+      bodies.push(init.body);
+      return new Response(JSON.stringify({ error: { message: 'stub' } }), { status: 400 });
+    }),
+  );
+  try {
+    await createLlmClient({ provider: 'anthropic', model: 'claude-sonnet-5', apiKey: 'k' })
+      .generateText({ system: 's', messages })
+      .catch(() => undefined);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+  const body = bodies[0];
+  if (body === undefined) throw new Error('no request was sent');
+  return body;
+}
+
 describe('safeFileName — a name every OS accepts, as close to the original as possible', () => {
   it.each([
     ['Facture EDF.pdf', 'application/pdf', 'Facture EDF.pdf'],
@@ -450,6 +550,13 @@ describe('safeFileName — a name every OS accepts, as close to the original as 
     ['nul.txt', null, '_nul.txt'],
     ['com1.pdf', null, '_com1.pdf'],
     ['console.log', null, 'console.log'],
+    // Windows retire l'espace avant le point : ces noms SONT des périphériques (revue de #902).
+    ['con .txt', null, '_con .txt'],
+    ['nul .pdf', null, '_nul .pdf'],
+    ['aux .mp3', null, '_aux .mp3'],
+    ['com1 .docx', null, '_com1 .docx'],
+    ['LPT¹.txt', null, '_LPT¹.txt'],
+    ['context .txt', null, 'context .txt'],
     ['', 'image/jpeg', 'image.jpg'],
     [null, 'audio/ogg', 'audio.ogg'],
     [null, null, 'file'],
