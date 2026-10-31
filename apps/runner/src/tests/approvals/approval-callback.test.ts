@@ -153,6 +153,19 @@ describe('describeGatedAction', () => {
     ).toContain('comfyui → workflows/z.json');
     expect(describeGatedAction('mystery_tool', { a: 1 })).toContain('mystery_tool');
   });
+
+  it('dit le geste d’un file_move, déplacement ou copie (#879) @cap:travailler-sur-des-fichiers/ecran', () => {
+    expect(
+      describeGatedAction('file_move', { source: 'docs/scan.pdf', destination: 'shared/' }),
+    ).toBe('file_move: move docs/scan.pdf → shared/');
+    expect(
+      describeGatedAction('file_move', {
+        source: 'docs/scan.pdf',
+        destination: 'shared/scan.pdf',
+        copy: true,
+      }),
+    ).toBe('file_move: copy docs/scan.pdf → shared/scan.pdf');
+  });
 });
 
 describe('handleApprovalCallback — security boundary', () => {

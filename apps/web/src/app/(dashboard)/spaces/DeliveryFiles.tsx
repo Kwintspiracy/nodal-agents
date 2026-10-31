@@ -113,6 +113,7 @@ export default function DeliveryFiles({
               // déduirait de fragments qui ne sont pas encore là, et un fichier
               // créé se lirait « modified » jusqu'au dépli.
               changeKind: f.changeKind,
+              ...(f.from !== undefined ? { from: f.from } : {}),
               edits: parChemin.get(f.path)?.[n] ?? AUCUN,
             }}
           />

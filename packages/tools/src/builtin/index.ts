@@ -18,6 +18,7 @@ import {
   fileReadTool,
   fileWriteTool,
   fileEditTool,
+  fileMoveTool,
   fileListTool,
   fileSearchTool,
 } from './file-ops';
@@ -74,6 +75,7 @@ export {
   fileReadTool,
   fileWriteTool,
   fileEditTool,
+  fileMoveTool,
   fileListTool,
   fileSearchTool,
   WorkspaceError,
@@ -195,6 +197,7 @@ export function registerBuiltins(registry: ToolRegistry): void {
   registry.register(fileReadTool);
   registry.register(fileWriteTool);
   registry.register(fileEditTool);
+  registry.register(fileMoveTool);
   registry.register(fileListTool);
   registry.register(fileSearchTool);
   // Office tools — gated behind the "office-editing" skill, NOT always-on.
@@ -301,6 +304,7 @@ export const ALWAYS_ON_TOOLS = [
   'file_read',
   'file_write',
   'file_edit',
+  'file_move',
   'file_list',
   'file_search',
 ] as const;
@@ -395,6 +399,7 @@ export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<AlwaysOnToolDoc> = (
     fileReadTool,
     fileWriteTool,
     fileEditTool,
+    fileMoveTool,
     fileListTool,
     fileSearchTool,
   ] as ReadonlyArray<{

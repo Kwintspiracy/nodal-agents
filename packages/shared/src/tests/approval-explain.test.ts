@@ -125,6 +125,19 @@ describe('explainApproval — built-in tools keep their deterministic impact', (
     expect(x.effect).toBe('write');
   });
 
+  it('file_move : une écriture ciblée sur la destination, là où le fichier arrive (#879) @cap:travailler-sur-des-fichiers/ecran', () => {
+    const x = explainApproval({
+      toolName: 'file_move',
+      toolInput: { source: 'docs/scan.pdf', destination: 'shared/scan.pdf', copy: true },
+    });
+    expect(x.provenance.kind).toBe('builtin');
+    expect(x.effect).toBe('write');
+    expect(x.target).toBe('shared/scan.pdf');
+    expect(x.impact).toBe(
+      'Copies "docs/scan.pdf" to "shared/scan.pdf", overwriting the existing file there in the shared workspace.',
+    );
+  });
+
   it('register_project : une écriture ciblée sur le dossier, jamais « destructive » (P10b, passe 44)', () => {
     const x = explainApproval({
       toolName: 'register_project',

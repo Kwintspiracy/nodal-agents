@@ -39,4 +39,8 @@ export const FILE_DOT: Readonly<Record<string, string>> = {
   created: 'bg-ok',
   modified: 'bg-warn',
   listed: 'bg-ink-4',
+  // Déplacé : un fichier qui existait change de place ; copié : un fichier de
+  // plus (#879).
+  moved: 'bg-warn',
+  copied: 'bg-ok',
 };

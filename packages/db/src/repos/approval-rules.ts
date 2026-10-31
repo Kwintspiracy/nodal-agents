@@ -7,6 +7,7 @@
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { ApprovalRuleCondition } from '@nodal-agents/shared';
+import { READONLY_PRESET_TOOLS } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { approvalRules } from '../schema/approvals.ts';
 
@@ -187,20 +188,10 @@ export async function setRunCommandRuleRepo(
   return refused === null ? { ok: true } : { refused };
 }
 
-/**
- * Le préréglage « relecteur en lecture seule » : action='block' sur chaque
- * outil d'écriture qu'il couvre. La détection de lecture seule de code_task
- * (assertNotReadOnlyAgent, packages/tools/src/builtin/code-task/db.ts) s'appuie
- * sur l'un d'eux — file_write bloqué ⇒ le mode « write » est refusé aussi —, la
- * liste doit donc rester un sur-ensemble qui contient 'file_write'.
- */
-export const READONLY_PRESET_TOOLS = [
-  'file_write',
-  'file_edit',
-  'skill_file_write',
-  'run_command',
-  'run_skill_script',
-] as const;
+// Le préréglage « relecteur en lecture seule » : sa liste vit dans
+// `@nodal-agents/shared` (`readonly-preset.ts`), que l'écran lit aussi.
+// Ré-exportée ici pour ceux qui la prennent au dépôt (le banc, les tests).
+export { READONLY_PRESET_TOOLS };
 
 /**
  * enabled=true  → une ligne 'block' par outil (insertion groupée + onConflictDoUpdate).

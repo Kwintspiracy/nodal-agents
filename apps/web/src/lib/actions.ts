@@ -7383,7 +7383,7 @@ export async function setCliProviderEnabledAction(raw: unknown): Promise<ActionR
 //                 or auto_approve rule the user set by hand on, say,
 //                 run_command is a separate, deliberate choice and survives.
 
-// The tools it blocks: READONLY_PRESET_TOOLS (@nodal-agents/db, repos/approval-rules.ts).
+// The tools it blocks: READONLY_PRESET_TOOLS (@nodal-agents/shared, readonly-preset.ts).
 
 const SetReviewerReadOnlyPresetSchema = z.object({
   agentId: z.string().guid(),

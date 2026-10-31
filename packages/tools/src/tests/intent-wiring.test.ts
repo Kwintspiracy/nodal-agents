@@ -59,6 +59,8 @@ const MINIMAL_INPUT: Readonly<Record<string, Readonly<Record<string, unknown>>>>
   file_write: { path: 'nouveau.txt', content: 'x' },
   generate_speech: { text: 'x', path: 'audio.wav' },
   file_edit: { path: 'a-editer.txt', old_string: 'avant', new_string: 'apres' },
+  // Ses deux cibles (destination, source retirée) sont dans le même projet.
+  file_move: { source: 'a-editer.txt', destination: 'deplace.txt' },
   run_command: { purpose: 'test', command: 'echo ok' },
   run_skill_script: { purpose: 'test', skill: 'skill-inexistante', script: 'scripts/x.js' },
   code_task: { purpose: 'test', provider: 'claude', task: 'ne rien faire', mode: 'write' },

@@ -418,13 +418,14 @@ describe('setCliProviderEnabledAction — per-provider allow-flag on cli_default
 const READONLY_PRESET_TOOLS = [
   'file_write',
   'file_edit',
+  'file_move',
   'skill_file_write',
   'run_command',
   'run_skill_script',
 ];
 
 describe('setReviewerReadOnlyPresetAction', () => {
-  it('enable sets a block row on all 5 preset tools', async () => {
+  it('enable sets a block row on every preset tool', async () => {
     const agentId = await makeAgent('Audit2 ReadOnly Agent');
     const { setReviewerReadOnlyPresetAction } = await import('../src/lib/actions.ts');
 
@@ -440,7 +441,7 @@ describe('setReviewerReadOnlyPresetAction', () => {
     expect(rows.every((r) => r.action === 'block')).toBe(true);
   });
 
-  it('enable is idempotent — calling it twice still leaves exactly 5 rows', async () => {
+  it('enable is idempotent — calling it twice still leaves one row per preset tool', async () => {
     const agentId = await makeAgent('Audit2 ReadOnly Idempotent Agent');
     const { setReviewerReadOnlyPresetAction } = await import('../src/lib/actions.ts');
 

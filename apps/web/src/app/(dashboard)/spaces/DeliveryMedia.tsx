@@ -21,7 +21,7 @@
 import { useState } from 'react';
 import { DownloadSimple, FilmStrip, Image as ImageIcon, SpeakerHigh } from '@phosphor-icons/react';
 import RowActionButton from '@/components/ui/RowActionButton';
-import { GESTE_LIBELLE } from '@/app/(dashboard)/code/[id]/FileChangeBlock.tsx';
+import { GESTE_LIBELLE, pathWithOrigin } from '@/lib/file-change-groups.ts';
 import { deliveredMediaUrl, type MediaKind } from '@/lib/media-kinds.ts';
 import type { DeliveryFileChange } from '@/lib/conversation-feed.ts';
 
@@ -99,10 +99,10 @@ export default function DeliveryMedia({
         {/* Tronqué par la GAUCHE, comme la plaque : la fin porte le nom. */}
         <span
           dir="rtl"
-          title={file.path}
+          title={pathWithOrigin(file.path, file.from)}
           className="min-w-0 flex-1 truncate text-left text-mono-12 text-feed-path"
         >
-          <bdi dir="ltr">{file.path}</bdi>
+          <bdi dir="ltr">{pathWithOrigin(file.path, file.from)}</bdi>
         </span>
         <RowActionButton
           square

@@ -125,7 +125,12 @@ export const FilesCardSchema = z.object({
     .array(
       z.object({
         path: text(CARD_LABEL_MAX),
-        action: z.enum(['created', 'modified', 'written', 'listed']),
+        action: z.enum(['created', 'modified', 'written', 'listed', 'moved', 'copied']),
+        /**
+         * Où était le fichier, pour `moved` et `copied` (#879) : `path` est
+         * où il se trouve maintenant. Absent pour tout autre geste.
+         */
+        from: text(CARD_LABEL_MAX).optional(),
         bytes: z.number().int().nonnegative().optional(),
         /** Ce que l'outil dit de ce fichier (« 3 lignes ajoutées · feuille Data »). */
         detail: text(CARD_LABEL_MAX).optional(),

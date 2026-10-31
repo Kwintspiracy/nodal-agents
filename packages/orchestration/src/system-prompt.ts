@@ -1047,7 +1047,7 @@ function buildWorkspacesBlock(
     return (
       `\n\n## Workspace\n\n` +
       `Your workspace label is **${ws.label}** (path: \`${ws.path}\`)${note(ws)}. ` +
-      `When using file_read / file_write / file_edit / file_list / file_search, ` +
+      `When using file_read / file_write / file_edit / file_move / file_list / file_search, ` +
       `you may use bare relative paths (e.g. \`notes.md\`) or prefix with the label ` +
       `(e.g. \`${ws.label}/notes.md\`). Both resolve to the same root. ${whereFilesGo}`
     );

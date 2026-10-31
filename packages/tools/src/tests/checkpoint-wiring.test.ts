@@ -65,7 +65,7 @@ vi.mock('node:child_process', async (importOriginal) => {
  * l'éternité que le git qui pend promet : le verdict ne peut pas basculer.
  */
 const BORNE_MS = 200;
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -73,12 +73,13 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agents, jobCheckpoints, and, eq } from '@nodal-agents/db';
 import { executeTool } from '../execute';
 import { createSandbox, _setNodalProgramsSandboxForTests } from '@nodal-agents/sandbox';
-import { listCheckpoints, ensureStore } from '@nodal-agents/checkpoints';
+import { listCheckpoints, ensureStore, restoreCheckpoint } from '@nodal-agents/checkpoints';
 import { createToolRegistry } from '../registry';
 import { registerBuiltins } from '../builtin';
 import { officeMutationTargets } from '../builtin/office-ops';
 import { fileWriteTool } from '../builtin/file-ops/file-write';
 import { fileReadTool } from '../builtin/file-ops/file-read';
+import { fileMoveTool } from '../builtin/file-ops/file-move';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
 
 let db: TestDb;
@@ -109,6 +110,7 @@ const MINIMAL_INPUT: Readonly<Record<string, Readonly<Record<string, unknown>>>>
   file_write: { path: 'nouveau.txt', content: 'x' },
   generate_speech: { text: 'x', path: 'audio.wav' },
   file_edit: { path: 'a-editer.txt', old_string: 'avant', new_string: 'apres' },
+  file_move: { source: 'a-editer.txt', destination: 'deplace.txt' },
   run_command: { purpose: 'test', command: 'echo ok' },
   run_skill_script: { purpose: 'test', skill: 'skill-inexistante', script: 'scripts/x.js' },
   code_task: { purpose: 'test', provider: 'claude', task: 'ne rien faire', mode: 'write' },
@@ -688,5 +690,72 @@ describe('job_checkpoints — la ligne du tour (P11)', () => {
       .from(jobCheckpoints)
       .where(and(eq(jobCheckpoints.jobId, seed.jobId), eq(jobCheckpoints.turn, 61)));
     expect(lignes.map((l) => l.workspace).sort()).toEqual([autre, ws].sort());
+  });
+});
+
+describe('file_move : l’instantané couvre les DEUX dossiers, par le vrai seam (#879) @cap:travailler-sur-des-fichiers/moteur', () => {
+  // Le brief : un déplacement d'un dossier de l'agent à un autre se défait
+  // comme toute écriture. Prouvé par `executeTool`, jamais par la fonction de
+  // l'outil appelée seule : c'est le branchement qui fait le filet (en-tête de
+  // ce fichier). Le contenu restauré est relu sur le disque, octet par octet.
+  const OCTETS = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff, 0x0a, 0x80, 0x7f]);
+
+  it('un fichier déplacé de docs vers archive revient à sa place, octets intacts', async () => {
+    const docs = join(root, 'docs');
+    const archive = join(root, 'archive');
+    await mkdir(docs, { recursive: true });
+    await mkdir(archive, { recursive: true });
+    await writeFile(join(docs, 'scan.pdf'), OCTETS);
+    // Un dossier vide n'a rien à photographier : la destination porte déjà
+    // un fichier, comme un vrai dossier de classement.
+    await writeFile(join(archive, 'index.md'), '# Archive');
+
+    const res = await executeTool(
+      fileMoveTool as never,
+      { source: 'docs/scan.pdf', destination: 'archive/' },
+      ctx({
+        turn: 71,
+        workspaces: [
+          { label: 'docs', path: docs } as never,
+          { label: 'archive', path: archive } as never,
+        ],
+      }),
+      opts,
+    );
+    expect(res.outcome).toBe('success');
+    expect(await readFile(join(archive, 'scan.pdf'))).toEqual(OCTETS);
+    expect(await stat(join(docs, 'scan.pdf')).catch(() => null)).toBeNull();
+
+    // Les deux dossiers ont leur instantané, pris AVANT l'appel et nommé par lui.
+    const avantDocs = await listCheckpoints(store, docs);
+    const avantArchive = await listCheckpoints(store, archive);
+    expect(avantDocs.length, 'le dossier source a été vidé sans filet').toBe(1);
+    expect(avantArchive.length, 'le dossier destination a été écrit sans filet').toBe(1);
+    expect(avantDocs[0]!.label).toContain('file_move');
+
+    // Restaurer le dossier source rend le fichier parti, octets intacts.
+    await restoreCheckpoint(store, docs, avantDocs[0]!.sha);
+    expect(await readFile(join(docs, 'scan.pdf'))).toEqual(OCTETS);
+  });
+
+  it('une copie qui remplace un fichier se défait : l’ancien contenu revient', async () => {
+    // Dans un dossier de l'agent, remplacer ne demande rien : c'est
+    // l'instantané qui le défait, et il doit donc avoir été pris AVANT.
+    await writeFile(join(ws, 'export.bin'), OCTETS);
+    await writeFile(join(ws, 'rapport.pdf'), 'ancienne version');
+    const res = await executeTool(
+      fileMoveTool as never,
+      { source: 'export.bin', destination: 'rapport.pdf', copy: true },
+      // Un dossier de l'agent, pas `shared` : là, remplacer passerait par la porte.
+      ctx({ turn: 72, workspaces: [{ label: 'dossier', path: ws }] as never }),
+      opts,
+    );
+    expect(res.outcome).toBe('success');
+    expect(await readFile(join(ws, 'rapport.pdf'))).toEqual(OCTETS);
+    const cps = await listCheckpoints(store, ws);
+    expect(cps.length).toBe(1);
+    await restoreCheckpoint(store, ws, cps[0]!.sha);
+    expect(await readFile(join(ws, 'rapport.pdf'), 'utf8')).toBe('ancienne version');
+    expect(await readFile(join(ws, 'export.bin'))).toEqual(OCTETS);
   });
 });

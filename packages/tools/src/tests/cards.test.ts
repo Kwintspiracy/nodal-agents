@@ -116,6 +116,7 @@ const EXPECTED_CARDS: Record<string, ToolCard> = {
   docx_replace_text: 'files',
   file_edit: 'files',
   file_list: 'files',
+  file_move: 'files',
   file_read: 'read',
   file_search: 'search',
   file_write: 'files',

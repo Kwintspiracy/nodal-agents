@@ -152,6 +152,7 @@ describe('the profile is applied through createAgentAction', () => {
       .where(eq(approvalRules.agentId, res.data.id));
     expect(rules.map((r) => r.toolName).sort()).toEqual([
       'file_edit',
+      'file_move',
       'file_write',
       'run_command',
       'run_skill_script',
@@ -312,7 +313,16 @@ describe('createAgentAction with a profile — one gesture, nothing half-done', 
       .select({ toolName: approvalRules.toolName })
       .from(approvalRules)
       .where(eq(approvalRules.agentId, res.data.id));
-    expect(rules).toHaveLength(5);
+    // Les outils bloqués eux-mêmes, pas leur nombre : un compte resterait vert
+    // si un outil d'écriture en remplaçait un autre.
+    expect(rules.map((r) => r.toolName).sort()).toEqual([
+      'file_edit',
+      'file_move',
+      'file_write',
+      'run_command',
+      'run_skill_script',
+      'skill_file_write',
+    ]);
   });
 
   it('rolls the agent back when a promised skill is missing from the install', async () => {

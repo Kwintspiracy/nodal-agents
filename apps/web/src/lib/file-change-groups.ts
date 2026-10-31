@@ -36,7 +36,46 @@ import type { ConstatedChangeKind } from '@nodal-agents/shared';
  * `written` dans les deux cas : le ranger d'office dans `added` affirmait une
  * création sur chaque écrasement. Le mot de la carte est le seul vrai.
  */
-export type FileChangeGesture = ConstatedChangeKind | 'written';
+export type FileChangeGesture = ConstatedChangeKind | 'written' | 'moved' | 'copied';
+
+/**
+ * LE MOT DU GESTE, celui que git emploie, tel que TOUS les écrans le disent :
+ * la plaque d'un fichier changé, l'encart de livraison, et la carte du fil.
+ *
+ * Ici, dans un module SANS directive, et non plus dans `FileChangeBlock.tsx` :
+ * le fil est rendu côté serveur, et l'export d'un module `'use client'` n'y
+ * est qu'une référence (voir `feed-dots.ts`). Une seule table pour les trois
+ * surfaces, donc un seul mot pour un même geste.
+ *
+ * L'étiquette portait le nom de l'OUTIL (`file_write`, `file_edit`), ce qui
+ * n'avait de sens que tant que la liste venait des outils. Depuis #199 elle
+ * vient du constat, où un fichier peut avoir été supprimé ou renommé sans
+ * qu'aucun outil l'ait nommé — deux gestes que le vocabulaire d'avant ne
+ * savait pas dire.
+ */
+export const GESTE_LIBELLE: Record<FileChangeGesture, string> = {
+  added: 'added',
+  modified: 'modified',
+  deleted: 'deleted',
+  renamed: 'renamed',
+  // `file_write` ECRIT OU ÉCRASE, et sa carte ne distingue pas les deux
+  // (Reviewer C, PR #380). Le mot reste celui de la carte plutôt que d'affirmer
+  // une création sur chaque écrasement.
+  written: 'written',
+  // Un fichier déplacé ou copié (#879) : la ligne dit d'où il vient, « moved
+  // A to B », jamais seulement où il est.
+  moved: 'moved',
+  copied: 'copied',
+};
+
+/**
+ * Le chemin tel qu'une ligne le dit : « A to B » pour un fichier déplacé ou
+ * copié (`from` posé), le chemin seul sinon. Une seule forme pour toutes les
+ * surfaces qui nomment un fichier changé.
+ */
+export function pathWithOrigin(path: string, from: string | undefined): string {
+  return from === undefined ? path : `${from} to ${path}`;
+}
 
 /**
  * L'HISTOIRE COMPLÈTE D'UN FICHIER dans un pipeline — l'unité du panneau
@@ -64,6 +103,11 @@ export type FileChangeGroup = {
    * carte de l'outil qui le dit, elle qui ne distingue pas les deux.
    */
   changeKind?: FileChangeGesture;
+  /**
+   * Où était le fichier, pour `moved` et `copied` (#879), au même format que
+   * `filePath`. Absent pour tout autre geste.
+   */
+  from?: string;
 };
 
 /**
@@ -152,7 +196,13 @@ export type AuditRowForChanges = {
  * écrit aucun fragment (`isRefusedToolCall`).
  */
 /** Ce que la carte a dit d'un fichier livré, avec le chemin brut qui l'identifie. */
-type DisplayedFile = { path: string; changeKind: FileChangeGesture; rawPath: string };
+type DisplayedFile = {
+  path: string;
+  changeKind: FileChangeGesture;
+  rawPath: string;
+  /** D'où vient un fichier déplacé ou copié, canonique comme `path`. */
+  from?: string;
+};
 
 /**
  * LA LISTE DES FICHIERS LIVRÉS, telle que les cartes la disent : clé canonique
@@ -184,6 +234,7 @@ function displayedFiles(
           path: canonicalChangePath(f.path, workspaceRoots),
           changeKind: f.action === 'created' ? 'added' : f.action,
           rawPath,
+          ...(f.from !== undefined ? { from: canonicalChangePath(f.from, workspaceRoots) } : {}),
         });
       }
     });
@@ -226,6 +277,7 @@ export function fileChangesOfAuditRows(
     return {
       filePath: dit.path,
       changeKind: dit.changeKind,
+      ...(dit.from !== undefined ? { from: dit.from } : {}),
       addedLines: group?.addedLines ?? 0,
       removedLines: group?.removedLines ?? 0,
       // Les fragments portent le chemin MASQUÉ eux aussi : ils voyagent jusqu'à
