@@ -6,15 +6,27 @@
 // que la veille le tient. Sans veille, Windows le redonne : mesuré le 22/10
 // (Windows 11 26200), au bout d'environ 240 créations de processus.
 //
+// Ce test ne cherche PAS à voir le pid revenir en créant des centaines de
+// processus (#901) : le retour d'un pid est affaire de chance (revu le 31/10 sur
+// la même machine : 315 à plus de 1500 créations, ou jamais), donc une boucle
+// bornée ne prouvait rien de façon fiable, et sa durée suivait la charge de la
+// machine (60 s sur un runner chargé). Il lit la garantie dont la veille se sert :
+// tant qu'un handle tient le processus, le noyau garde son objet, et le pid avec
+// lui. Une ouverture indépendante réussit sur le processus mort si la veille le
+// tient, échoue sinon. Même verdict à chaque exécution, quelle que soit la charge.
+//
 // Mutation vérifiée (annulée ensuite) : `watchProcess` qui ferme son handle
-// aussitôt ouvert (une veille qui ne tient rien) → « a watched pid is given to
-// no other process » rouge, le pid revient sous un inconnu.
+// aussitôt ouvert (une veille qui ne tient rien) → « a watched pid stays
+// reserved » rouge, le pid n'est plus réservé.
 // Mutation vérifiée (annulée ensuite) : `waitForDeath` qui rend `dead: true`
 // sans lire la veille → « a process that does not die » rouge.
 
 import { describe, it, expect } from 'vitest';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+import type * as KoffiModule from 'koffi';
 import { survivalMessage, waitForDeath, watchProcess } from '../process-watch';
+
+const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
 /** Un processus qui dort, le temps qu'on le surveille. */
 function sleeper(): Promise<number> {
@@ -23,6 +35,66 @@ function sleeper(): Promise<number> {
     c.once('spawn', () => resolve(c.pid as number));
     c.once('error', reject);
   });
+}
+
+/** Un processus qui dort, avec sa fin à attendre. */
+async function sleeperChild(): Promise<{
+  child: ChildProcess;
+  pid: number;
+  exited: Promise<void>;
+}> {
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
+  const exited = new Promise<void>((r) => child.once('exit', () => r()));
+  await new Promise<void>((resolve, reject) => {
+    child.once('spawn', () => resolve());
+    child.once('error', reject);
+  });
+  return { child, pid: child.pid as number, exited };
+}
+
+/** Attend (30 s au plus) que la sonde rende faux. */
+async function untilFalse(probe: () => Promise<boolean>): Promise<boolean> {
+  for (let i = 0; i < 600 && (await probe()); i++) await new Promise((r) => setTimeout(r, 50));
+  return !(await probe());
+}
+
+/** La sonde reste vraie pendant toute la durée (1 s) : rend faux dès qu'elle lâche. */
+async function staysTrue(probe: () => Promise<boolean>): Promise<boolean> {
+  for (let i = 0; i < 20; i++) {
+    if (!(await probe())) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return true;
+}
+
+/**
+ * Le pid désigne-t-il encore un objet processus du noyau ? Une ouverture
+ * indépendante de la veille : elle réussit tant qu'un handle quelconque tient le
+ * processus, mort ou vif, et échoue quand plus personne ne le tient (le pid est
+ * alors libre d'être redonné). C'est la garantie même de Windows que la veille
+ * exploite, lue directement, sans compter sur le hasard d'une réutilisation.
+ */
+let probe: Promise<(pid: number) => boolean> | undefined;
+
+async function pidIsReserved(pid: number): Promise<boolean> {
+  // Les types koffi ne s'enregistrent qu'une fois par processus.
+  probe ??= (async () => {
+    const imported = (await import('koffi')) as unknown as { default?: unknown };
+    const koffi = (imported.default ?? imported) as typeof KoffiModule;
+    const lib = koffi.load('kernel32.dll');
+    koffi.pointer('PROBE_HANDLE', koffi.opaque());
+    const open = lib.func(
+      'PROBE_HANDLE __stdcall OpenProcess(uint32 access, int inherit, uint32 pid)',
+    );
+    const close = lib.func('int __stdcall CloseHandle(PROBE_HANDLE h)');
+    return (target: number): boolean => {
+      const handle = open(PROCESS_QUERY_LIMITED_INFORMATION, 0, target);
+      if (!handle) return false;
+      close(handle);
+      return true;
+    };
+  })();
+  return (await probe)(pid);
 }
 
 async function untilDead(alive: () => boolean): Promise<boolean> {
@@ -44,27 +116,32 @@ describe('watchProcess: a test reads the death of the process it holds, never of
   });
 
   it.runIf(process.platform === 'win32')(
-    'a watched pid is given to no other process, and `process.kill(pid, 0)` reads its death too',
+    'a watched pid stays reserved by the system once its process is dead, so no other process can be given it',
     async () => {
-      const pid = await sleeper();
-      const watch = await watchProcess(pid);
+      // Deux processus identiques morts ensemble, un seul tenu par une veille.
+      // Le noyau libère un processus mort un instant après sa mort, et ce
+      // délai suit la charge : le témoin NON tenu sert d'horloge. Quand son pid
+      // est libre, celui de la veille, mort au même moment, ne tient plus que
+      // par elle.
+      const held = await sleeperChild();
+      const witness = await sleeperChild();
+      const watch = await watchProcess(held.pid);
       try {
         expect(watch.kill('SIGKILL')).toBe(true);
+        witness.child.kill('SIGKILL');
         expect(await untilDead(() => watch.alive())).toBe(true);
-        // De quoi faire revenir le pid sans veille : 2,5 fois l'écart mesuré.
-        const given: number[] = [];
-        for (let i = 0; i < 600; i++) {
-          const c = spawn('cmd.exe', ['/d', '/c', 'exit'], { stdio: 'ignore', windowsHide: true });
-          given.push(await new Promise<number>((r) => c.once('exit', () => r(c.pid as number))));
-          if (given.at(-1) === pid) break;
-        }
-        expect(given).not.toContain(pid);
-        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }));
+        await Promise.all([held.exited, witness.exited]);
+        expect(await untilFalse(() => pidIsReserved(witness.pid))).toBe(true);
+        // Le noyau libère un processus mort avec un retard variable (0 à 40 ms
+        // mesurés) : le pid tenu doit rester réservé bien au-delà, pas à un instant.
+        expect(await staysTrue(() => pidIsReserved(held.pid))).toBe(true);
+        expect(() => process.kill(held.pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }));
         expect(watch.alive()).toBe(false);
         // Et le tuer ne part vers personne (#841).
         expect(watch.kill('SIGKILL')).toBe(false);
       } finally {
         watch.release();
+        witness.child.kill('SIGKILL');
       }
     },
     60_000,
