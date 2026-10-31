@@ -178,10 +178,17 @@ describe('la surface chat ne reçoit que ce qu’elle peut obéir', () => {
   // rougir. Ce que ce cas protège, c'est le coût du chat : il est borné
   // directement. Ce que le chat ne reçoit pas du job, les cas ci-dessus le
   // prouvent par le contenu.
+  //
+  // Plafond 13 500 → 13 700 le 31/10/2026, avec la skill « File filing ». Le
+  // chat pesait déjà 13 484 caractères, 16 sous l'ancien plafond : toute skill
+  // `capability` nouvelle le dépassait, car le bloc « Capabilities you can
+  // request » (`buildDiscoverabilityBlock`) met le slug ET la description de
+  // chaque skill non assignée dans le prompt de TOUS les agents. Cette skill
+  // coûte 165 caractères. Le plafond reste un plafond : 13 649 aujourd'hui.
   it('le prompt du chat reste sous son plafond, et sous celui d’un job', async () => {
     const c = (await chat()).length;
     const j = (await job()).length;
-    expect(c, `chat ${c} car. (14 711 avant le régime du socle)`).toBeLessThanOrEqual(13_500);
+    expect(c, `chat ${c} car. (14 711 avant le régime du socle)`).toBeLessThanOrEqual(13_700);
     expect(c, `chat ${c} car. vs job ${j} car.`).toBeLessThan(j);
   });
 });

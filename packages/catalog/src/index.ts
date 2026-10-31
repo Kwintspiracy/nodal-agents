@@ -31,6 +31,7 @@ import { safeToolUseSkill } from './skills/safe-tool-use';
 import { platformSupportSkill } from './skills/platform-support';
 import { platformQuestionsSkill } from './skills/platform-questions';
 import { workspaceHygieneSkill } from './skills/workspace-hygiene';
+import { fileFilingSkill } from './skills/file-filing';
 import { officeEditingSkill } from './skills/office-editing';
 import { spreadsheetEditingSkill } from './skills/spreadsheet-editing';
 import { documentEditingSkill } from './skills/document-editing';
@@ -77,6 +78,7 @@ export const systemSkills: SystemSkill[] = [
   platformSupportSkill,
   platformQuestionsSkill,
   workspaceHygieneSkill,
+  fileFilingSkill,
   officeEditingSkill,
   spreadsheetEditingSkill,
   documentEditingSkill,
