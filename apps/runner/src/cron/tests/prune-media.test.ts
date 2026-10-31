@@ -4,7 +4,7 @@
 // inbound Telegram photos and Discord attachments live on disk under the
 // shared workspace and are never referenced again once their job is pruned.
 // pruneJobMediaFiles sweeps those orphaned files. Builds the REAL directory
-// structure attachInboundPhoto/attachInboundImage write to
+// structure attachInboundFiles/attachInboundImage write to
 // (<workspacesRoot>/<entityId>/shared/<telegram|discord>/<chatOrChannelId>/<jobId>.<ext>)
 // in a tmpdir, prunes one job id, and asserts ONLY that job's files vanished.
 
