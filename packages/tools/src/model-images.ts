@@ -139,8 +139,9 @@ export function attachmentUnits(attachment: Pick<ToolAttachment, 'mediaType' | '
 /**
  * The pages of a PDF, read by pdf-parse (the library Nodal already ships for
  * Drive PDFs), or why they could not be: a file that only starts like a PDF,
- * a damaged or encrypted one. Loaded on demand: pdfjs weighs, and only a PDF
- * needs it.
+ * a damaged one, one locked by a password (PDF.js opens a restricted one, with
+ * an empty user password, and so does this). Loaded on demand: pdfjs weighs,
+ * and only a PDF needs it.
  */
 export async function countPdfPages(
   bytes: Uint8Array,
