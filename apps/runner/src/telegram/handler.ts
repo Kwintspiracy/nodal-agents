@@ -96,9 +96,12 @@ export interface HandleResult {
   };
 }
 
-/** The files of one Telegram message, described (nothing downloaded yet). */
+/**
+ * The files of one Telegram message, described (nothing downloaded yet). No
+ * chat id: the folder they land in is keyed by the job, never by the chat
+ * (#910), so the intake has no use for it.
+ */
 export interface TelegramInboundFiles {
-  chatId: string;
   /** The job's text, as its message holds it. */
   text: string;
   files: TelegramFileDescriptor[];
@@ -294,7 +297,7 @@ export async function handleTelegramUpdate(args: {
 
   return {
     jobId: turn.jobId,
-    files: hasFile ? { chatId: String(chatId), text: turn.taskText, files } : undefined,
+    files: hasFile ? { text: turn.taskText, files } : undefined,
   };
 }
 
@@ -356,9 +359,10 @@ export function triggerJobWorker(jobId: string, env: RunnerEnv): void {
  * the worker is triggered (so it sees the complete job).
  *
  * The files land in the entity's SHARED workspace at
- *   <shared>/telegram/<chatId>/<jobId>/<original name>
+ *   <shared>/telegram/<jobId>/<original name>
  * — persistent, traceable, and reachable by the agent's `file_*` tools and by any
- * sub-agent it delegates to. A file the Bot API will not hand a bot (over
+ * sub-agent it delegates to. No chat id in the path (#910): the model reads the
+ * chat id as its handle, and would be shown a path that does not exist. A file the Bot API will not hand a bot (over
  * 20 MB) or that fails to download is said to the agent, never dropped.
  */
 export async function attachInboundFiles(args: {
@@ -388,7 +392,6 @@ export async function attachInboundFiles(args: {
     jobId,
     entityId,
     channel: 'telegram',
-    conversationId: inbound.chatId,
     text: inbound.text,
     files,
   });

@@ -16,19 +16,22 @@
 // Anything else in a guild channel is ignored (group_filter), same rule as
 // telegram's group chats.
 
-import { writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
-import { workspacesRoot } from '@nodal-agents/tools';
 import { eq, and } from '@nodal-agents/db';
-import { agentJobs, agents } from '@nodal-agents/db';
+import { agents } from '@nodal-agents/db';
+import { formatBytes } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { triggerWorker } from '../../routes/agent.ts';
-import { pruneInboundFolder } from '../inbound-files.ts';
+import {
+  captionlessTask,
+  receiveInboundFiles,
+  type InboundFile,
+  type InboundFileOutcome,
+} from '../inbound-files.ts';
 import { sanitizeSenderName, checkConversationAuthorization } from '../shared.ts';
 import { groupMessagePrefix } from '../../person-for-model.ts';
 import { takeChannelTurn, isPlatformCommand, type ChannelStopResult } from '../turn.ts';
-import type { DiscordInboundMessage } from './types.ts';
+import type { DiscordInboundAttachment, DiscordInboundMessage } from './types.ts';
 
 export interface DiscordHandleResult {
   /** A job was created — caller should triggerJobWorker after the transaction commits. */
@@ -40,11 +43,11 @@ export interface DiscordHandleResult {
    */
   stop?: ChannelStopResult;
   /**
-   * Present when the message carried an eligible image attachment. Download is
-   * network I/O and so happens OUTSIDE the DB transaction — see
-   * attachInboundImage below, called by the gateway after the job is created.
+   * Present when the message carried image attachments. Download is network
+   * I/O and so happens OUTSIDE the DB transaction — see attachInboundFiles
+   * below, called by the gateway after the job is created.
    */
-  attachment?: { url: string; contentType: string; size: number; channelId: string; text: string };
+  files?: DiscordInboundFiles;
   skipped?:
     | 'bot_author'
     | 'no_content'
@@ -73,6 +76,13 @@ export interface DiscordHandleResult {
 /** Discord's own default (non-boosted-server) upload cap — a reasonable inbound bound too. */
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
+/** The files of one Discord message, described (nothing downloaded yet). */
+export interface DiscordInboundFiles {
+  /** The job's text, as its message holds it. */
+  text: string;
+  files: DiscordInboundAttachment[];
+}
+
 export async function handleDiscordMessage(args: {
   message: DiscordInboundMessage;
   receivingAgentId: string;
@@ -88,10 +98,10 @@ export async function handleDiscordMessage(args: {
   if (message.author.bot) return { skipped: 'bot_author' };
 
   const text = message.content ?? '';
-  const imageAttachment = message.attachments.find((a) =>
-    (a.contentType ?? '').startsWith('image/'),
-  );
-  if (!text && !imageAttachment) return { skipped: 'no_content' };
+  // Every image, whatever its size: one Discord will not let through is said to
+  // the model by the intake, never dropped here (review of #911, pass 2).
+  const images = message.attachments.filter((a) => (a.contentType ?? '').startsWith('image/'));
+  if (!text && images.length === 0) return { skipped: 'no_content' };
 
   const isGuild = message.channelType === 'guild_text';
   const senderName = sanitizeSenderName(message.author.globalName ?? message.author.username);
@@ -205,8 +215,8 @@ export async function handleDiscordMessage(args: {
     groupPrefix = groupMessagePrefix(senderName);
   }
 
-  if (!taskText.trim() && imageAttachment) {
-    taskText = 'Image envoyée (sans légende).';
+  if (!taskText.trim() && images.length > 0) {
+    taskText = captionlessTask(images.map((a) => ({ mediaType: a.contentType })));
   }
 
   // La fin du parcours est commune aux quatre canaux (channels/turn.ts) : `/new`,
@@ -226,16 +236,7 @@ export async function handleDiscordMessage(args: {
 
   return {
     jobId: turn.jobId,
-    attachment:
-      imageAttachment && imageAttachment.size <= MAX_IMAGE_BYTES
-        ? {
-            url: imageAttachment.url,
-            contentType: imageAttachment.contentType ?? 'application/octet-stream',
-            size: imageAttachment.size,
-            channelId: conversationId,
-            text: turn.taskText,
-          }
-        : undefined,
+    files: images.length > 0 ? { text: turn.taskText, files: images } : undefined,
   };
 }
 
@@ -248,83 +249,58 @@ export function triggerJobWorker(jobId: string, env: RunnerEnv): void {
 }
 
 /**
- * Download an inbound Discord image attachment and attach it to the job — the
- * Discord analog of telegram/handler.ts's attachInboundFiles, images only. Runs in the
- * gateway AFTER the create-job transaction commits (network I/O must not sit
- * inside a DB txn) and BEFORE the worker is triggered.
+ * The files of an inbound Discord message, put in its job — through the ONE
+ * intake every channel uses (`receiveInboundFiles`, channels/inbound-files.ts).
+ * Runs in the gateway AFTER the create-job transaction commits (network I/O
+ * must not sit inside a DB txn) and BEFORE the worker is triggered.
  *
- * Prunes with pruneInboundFolder (channels/inbound-files.ts), which keys an
- * entry by its `<jobId>.<ext>` name as written here. Moving this path onto
- * receiveInboundFiles, the intake Telegram uses since #899, is #900.
+ * Discord had its own copy until the review of #911 (pass 2): an image it
+ * could not take — the conversation's inbox full, a failed download, a file
+ * over the cap — threw, the gateway only logged it, and the model answered
+ * without knowing an image had been sent. Through the common intake, each of
+ * them becomes the same "NOT received" part, with its reason, that Telegram
+ * gives; and a received image is written, named and attached the same way
+ * (`<shared>/discord/<jobId>/<name>`, a `file:` URL for the model).
+ *
+ * Only DB writes throw. Images only, as before: the other kinds of files are
+ * #900.
  */
-export async function attachInboundImage(args: {
+export async function attachInboundFiles(args: {
   jobId: string;
   entityId: string;
-  attachment: { url: string; contentType: string; size: number; channelId: string; text: string };
+  inbound: DiscordInboundFiles;
   db: RunnerDeps['db'];
-}): Promise<string> {
-  const { jobId, entityId, attachment, db } = args;
-
-  const res = await fetch(attachment.url);
-  if (!res.ok) {
-    throw new Error(`discord_image_fetch_failed: HTTP ${res.status} from ${attachment.url}`);
-  }
-  const buf = new Uint8Array(await res.arrayBuffer());
-  if (buf.byteLength > MAX_IMAGE_BYTES) {
-    throw new Error(
-      `discord_image_too_large: ${buf.byteLength} bytes exceeds cap of ${MAX_IMAGE_BYTES} bytes`,
-    );
-  }
-
-  // Mirrors telegram's shared workspace layout: <workspacesRoot>/<entityId>/shared/<channel>/<conversationId>/<jobId>.<ext>
-  const dir = join(workspacesRoot(), entityId, 'shared', 'discord', attachment.channelId);
-  await mkdir(dir, { recursive: true });
-  const ext = extFromContentType(attachment.contentType);
-  const filePath = join(dir, `${jobId}.${ext}`);
-  await writeFile(filePath, buf);
-
-  // Conditional on the job still being `pending` (mirrors telegram's TOCTOU
-  // guard, audit followup G1): the download is out-of-txn network I/O; in
-  // that window the worker (or a cron pickup) can claim the job. Guarding on
-  // `pending` makes claim win — we log loudly rather than silently clobber.
-  const attached = await db
-    .update(agentJobs)
-    .set({
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: attachment.text },
-            { type: 'image', image: filePath },
-          ],
-        },
-      ],
-    })
-    .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'pending')))
-    .returning({ id: agentJobs.id });
-
-  if (attached.length === 0) {
-    console.warn(
-      `[discord] inbound image for job ${jobId} arrived after the job left 'pending' ` +
-        `(claimed/worker started); image saved to ${filePath} but not attached to the transcript.`,
-    );
-  }
-
-  await pruneInboundFolder(dir, db).catch((err) => {
-    console.warn(
-      `[discord] workspace prune failed for ${dir}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+}): Promise<InboundFileOutcome[]> {
+  const { jobId, entityId, inbound, db } = args;
+  const files: InboundFile[] = inbound.files.map((a) => ({
+    name: a.name,
+    mediaType: a.contentType,
+    size: a.size,
+    download: async () => {
+      if (a.size > MAX_IMAGE_BYTES) {
+        throw new Error(tooLarge(a.size));
+      }
+      const res = await fetch(a.url);
+      if (!res.ok) throw new Error(`Discord answered HTTP ${res.status} to its download`);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.byteLength > MAX_IMAGE_BYTES) throw new Error(tooLarge(bytes.byteLength));
+      return bytes;
+    },
+  }));
+  const { outcomes } = await receiveInboundFiles({
+    db,
+    jobId,
+    entityId,
+    channel: 'discord',
+    text: inbound.text,
+    files,
   });
-
-  return filePath;
+  return outcomes;
 }
 
-function extFromContentType(contentType: string): string {
-  const map: Record<string, string> = {
-    'image/jpeg': 'jpg',
-    'image/png': 'png',
-    'image/webp': 'webp',
-    'image/gif': 'gif',
-  };
-  return map[contentType] ?? 'bin';
+function tooLarge(bytes: number): string {
+  return (
+    `Nodal takes Discord files up to ${formatBytes(MAX_IMAGE_BYTES)}, ` +
+    `and this one is ${formatBytes(bytes)}`
+  );
 }

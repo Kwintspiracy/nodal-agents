@@ -74,7 +74,7 @@ describe('attachInboundFiles — conditional on pending (G1)', () => {
       jobId,
       entityId: seed.entityId,
       botToken: '123:fake',
-      inbound: { chatId: '77', text: 'a photo', files: [PHOTO] },
+      inbound: { text: 'a photo', files: [PHOTO] },
       db: db as unknown as RunnerDeps['db'],
     });
 
@@ -92,7 +92,7 @@ describe('attachInboundFiles — conditional on pending (G1)', () => {
       jobId,
       entityId: seed.entityId,
       botToken: '123:fake',
-      inbound: { chatId: '77', text: 'a photo', files: [PHOTO] },
+      inbound: { text: 'a photo', files: [PHOTO] },
       db: db as unknown as RunnerDeps['db'],
     });
 

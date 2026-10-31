@@ -4,12 +4,12 @@
 // inbound Telegram photos and Discord attachments live on disk under the
 // shared workspace and are never referenced again once their job is pruned.
 // pruneJobMediaFiles sweeps those orphaned files. Builds the REAL directory
-// structure attachInboundFiles/attachInboundImage write to
+// structure the channel intakes wrote to
 // (<workspacesRoot>/<entityId>/shared/<telegram|discord>/<chatOrChannelId>/<jobId>.<ext>)
 // in a tmpdir, prunes one job id, and asserts ONLY that job's files vanished.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, readdir, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pruneJobMediaFiles } from '../prune-media.ts';
@@ -35,8 +35,13 @@ async function writeMediaFile(
   await mkdir(dir, { recursive: true });
   const filePath = join(dir, `${jobId}.${ext}`);
   await writeFile(filePath, `fake bytes for ${jobId}`);
+  // Past the 30 days a received file is promised for: a pruned job's file
+  // younger than that is kept (see the last describe).
+  await utimes(filePath, FORTY_DAYS_AGO, FORTY_DAYS_AGO);
   return filePath;
 }
+
+const FORTY_DAYS_AGO = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
 
 describe('pruneJobMediaFiles', () => {
   it('deletes only the files belonging to the pruned job id, leaving every other file untouched', async () => {
@@ -148,10 +153,42 @@ describe('pruneJobMediaFiles — the images a job tools fetched', () => {
     const result = await pruneJobMediaFiles(root, ['job-pruned-aaa']);
 
     expect(result.filesDeleted).toBe(2);
-    expect(await readdir(dirOf('job-pruned-aaa'))).toEqual([]);
+    // Le dossier du job part avec ses fichiers (#910 : un dossier de job, à tout niveau).
+    await expect(readdir(dirOf('job-pruned-aaa'))).rejects.toMatchObject({ code: 'ENOENT' });
     expect((await readdir(dirOf('job-surviving-bbb'))).sort()).toEqual([
       'call_1-1.png',
       'call_2-1.jpg',
     ]);
+  });
+});
+
+// Revue de #911 : la note d'un fichier reçu promet 30 jours au modèle. Une
+// rétention plus courte (RETENTION_DAYS) purge la ligne du job, jamais son
+// fichier avant ce délai ; les images des outils n'ont pas de promesse.
+// Mutation vérifiée : `stillPromised` qui rend toujours false → rouge.
+describe('pruneJobMediaFiles — a received file outlives a shorter retention @cap:parler-par-canal-externe/moteur', () => {
+  it('keeps the inbox entries of a pruned job still within 30 days, removes the older ones and the tools images', async () => {
+    const shared = join(root, 'entity-1', 'shared');
+    const young = 'job-young-aaa';
+    const old = 'job-old-bbb';
+    for (const id of [young, old]) {
+      await mkdir(join(shared, 'telegram', id), { recursive: true });
+      await writeFile(join(shared, 'telegram', id, 'facture.pdf'), 'pdf');
+      await mkdir(join(shared, 'discord'), { recursive: true });
+      await writeFile(join(shared, 'discord', `${id}.png`), 'png');
+    }
+    for (const p of [join(shared, 'telegram', old), join(shared, 'discord', `${old}.png`)]) {
+      await utimes(p, FORTY_DAYS_AGO, FORTY_DAYS_AGO);
+    }
+    await mkdir(join(shared, 'tools', young), { recursive: true });
+    await writeFile(join(shared, 'tools', young, 'call_1-1.png'), 'png');
+
+    const result = await pruneJobMediaFiles(root, [young, old]);
+
+    expect(result.filesDeleted).toBe(3);
+    expect(await readdir(join(shared, 'telegram'))).toEqual([young]);
+    expect(await readdir(join(shared, 'telegram', young))).toEqual(['facture.pdf']);
+    expect(await readdir(join(shared, 'discord'))).toEqual([`${young}.png`]);
+    expect(await readdir(join(shared, 'tools'))).toEqual([]);
   });
 });
