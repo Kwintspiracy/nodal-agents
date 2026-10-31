@@ -31,7 +31,7 @@ export const fileFilingSkill: SystemSkill = {
   slug: 'file-filing',
   name: 'File filing',
   description:
-    'Use when the person asks to file, sort, tidy, rename or put away documents, or when a document just produced (a scan, a download) must be put in its place. The method: where it goes, what to call it, what never to overwrite or delete, what to report.',
+    'Use to file, sort, tidy, rename or put away documents, or to place one just produced (a scan, a download): where it goes, its name, what to report.',
   requiredBuiltins: [],
   content: `# File filing
 
