@@ -323,6 +323,41 @@ export async function processAddressing(
   return parts.join(' ');
 }
 
+// ─── windowsDeviceName ────────────────────────────────────────────────────────
+
+/**
+ * The device names Windows resolves a path to. Two Microsoft lists, together:
+ * the runtime resolution table of `RtlIsDosDeviceName_U` (LPTn, COMn, PRN,
+ * AUX, NUL, CON, CONIN$, CONOUT$) and the "Naming Files" page (COM0/LPT0 and
+ * the superscript digits ¹²³). CLOCK$ is in neither, and a write to it lands
+ * as a plain file (Windows 11 build 26200, Node and cmd.exe, 2026-10-31).
+ */
+const WINDOWS_DEVICE_RE = /^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])$/i;
+
+/**
+ * The reserved Windows device a path segment resolves to, or null. THE rule,
+ * for every caller: the file tools' guard below (`windowsPathViolation`) and
+ * the names the runner gives the files a person sends (#899).
+ *
+ * Windows reserves the device name at the segment's leading component
+ * regardless of how many extensions follow, and regardless of the spaces it
+ * strips before the dot: "aux.config.js", "con.txt.bak", "nul.tar.gz",
+ * "con. ", "con .txt", "conout$ .txt" all resolve to their device under the
+ * classic rule. Recent Windows (11, build 26200) applies it to fewer names in
+ * a full path, but Windows 10 and older servers do not, and a file in a
+ * shared folder must stay reachable from all of them. This DOES mean a project
+ * file literally named "aux.config.js" is unreachable through this guard —
+ * but that mirrors real Windows behavior (such a file is unreachable through
+ * the normal filesystem API on a Windows box that applies the rule), so this
+ * is an accepted, OS-faithful trade-off rather than an over-eager guard.
+ *
+ * Pure and platform-blind: the caller decides when Windows rules apply.
+ */
+export function windowsDeviceName(segment: string): string | null {
+  const base = (segment.split('.')[0] ?? '').replace(/\s+$/, '');
+  return WINDOWS_DEVICE_RE.test(base) ? base : null;
+}
+
 // ─── windowsPathViolation ─────────────────────────────────────────────────────
 
 /**
@@ -370,19 +405,10 @@ export function windowsPathViolation(
 
   if (platform !== 'win32') return null;
 
-  const DEVICE_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
   for (const seg of requestedPath.split(/[\\/]+/).filter(Boolean)) {
-    // Windows reserves the device name at the segment's leading component
-    // regardless of how many extensions follow, and regardless of trailing
-    // dots/spaces: "aux.config.js", "con.txt.bak", "nul.tar.gz", "con. " all
-    // resolve to their device. This DOES mean a project file literally named
-    // "aux.config.js" is unreachable through this guard — but that mirrors
-    // real Windows behavior (such a file is unreachable through the normal
-    // filesystem API on an actual Windows box too), so this is an accepted,
-    // OS-faithful trade-off rather than an over-eager guard.
-    const base = (seg.split('.')[0] ?? '').replace(/\s+$/, '');
-    if (DEVICE_RE.test(base)) {
-      return `Path segment "${seg}" is a reserved Windows device name ("${base.toUpperCase()}"), never a legitimate workspace target.`;
+    const device = windowsDeviceName(seg);
+    if (device !== null) {
+      return `Path segment "${seg}" is a reserved Windows device name ("${device.toUpperCase()}"), never a legitimate workspace target.`;
     }
   }
 

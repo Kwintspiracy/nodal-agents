@@ -57,11 +57,15 @@ const PROVIDERS: Array<[string, ProviderConfig, string]> = [
 
 let dir: string;
 let file: string;
+/** A file a person sent, under a name whose extension says nothing about it (review of #902). */
+let oddlyNamed: string;
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'nodal-model-images-'));
   file = join(dir, 'photo.png');
   await writeFile(file, PNG);
+  oddlyNamed = join(dir, 'capture.20261031');
+  await writeFile(oddlyNamed, PNG);
 });
 
 afterEach(() => {
@@ -97,6 +101,11 @@ const toolWith = (part: unknown): ModelMessage[] => [
 /** Every shape, and whether its image can be delivered (a remote URL is refused). */
 const SHAPES: Array<[string, () => ModelMessage[], 'delivered' | 'refused']> = [
   ['person: a channel photo path', () => userWith({ type: 'image', image: file }), 'delivered'],
+  [
+    'person: a channel file: URL, whatever its name',
+    () => userWith({ type: 'image', image: pathToFileURL(oddlyNamed).href }),
+    'delivered',
+  ],
   ['person: bytes', () => userWith({ type: 'image', image: new Uint8Array(PNG) }), 'delivered'],
   [
     'person: a data: URL',
