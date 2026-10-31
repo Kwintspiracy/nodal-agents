@@ -93,20 +93,45 @@ describe('file-filing skill', () => {
     expect(FILE_FILING_PLACEHOLDER).not.toMatch(ABSOLUTE_PATH);
   });
 
-  it('the method defines the empty case by that very line, and says its example is not a folder', () => {
+  // The paragraph of the empty case, up to the next heading.
+  const emptyCase = (): string => {
     const c = fileFilingSkill.content;
-    expect(c).toContain('holds only its placeholder line (the one starting "(Not filled in yet.")');
-    expect(c).toMatch(/its example is not a folder/);
+    const at = c.indexOf('## When "Your folders" is empty');
+    expect(at, 'the empty-case section is gone').toBeGreaterThan(-1);
+    const rest = c.slice(at + 3);
+    const next = rest.search(/\n## /);
+    return rest.slice(0, next);
+  };
+
+  // Pass 2 (P2-B): "empty" fired only on the placeholder line, so an owner who
+  // deleted it and wrote nothing was "not empty" and the model filed into the
+  // real tree without asking. Empty = the section NAMES NO FOLDER.
+  it('the method defines the empty case as "names no folder": blank, or the placeholder alone', () => {
+    const e = emptyCase();
+    expect(e).toContain(
+      'names no folder (it is blank, or holds only its placeholder line, the one starting "(Not filled in yet.")',
+    );
+    expect(e).toMatch(/example is not a folder/);
+    expect(e, 'it no longer says empty means ONLY the placeholder').not.toContain(
+      'If the section below holds only',
+    );
   });
 
-  // P2-1: "ask when unreadable" and "move when clear" had no precedence, and the
-  // empty case asked where things go even when the request already said it.
-  it('defines "place is clear": read and fits one folder, OR the person named it', () => {
+  // Pass 1 (P2-1) and pass 2 (P2-A): "a named kind makes the place clear" met
+  // "no folder fits" and a literal model filed a prescription into the finance
+  // folder. A place is clear only when ONE folder fits, and "no folder fits"
+  // always wins.
+  it('defines "place is clear" as ONE folder that fits, and lets "no folder fits" win', () => {
     const c = fileFilingSkill.content;
-    expect(c).toMatch(
-      /A place is clear when you read the document and its content fits one folder, or when the person named the destination or the kind of document in the request/,
+    expect(c).toContain(
+      'A place is clear when ONE folder fits: you read the document and its content fits it, or the person named the destination, or named a kind of document that "Your folders" maps to it.',
     );
-    expect(c, 'the request outranks the section').toMatch(/the request outranks "Your folders"/);
+    expect(c).toContain(
+      'When no folder fits, the place is never clear, whatever the request says.',
+    );
+    expect(c, 'the old "or the kind" clause is gone').not.toContain(
+      'or the kind of document in the request',
+    );
   });
 
   it('an unreadable document is never filed on its name, unless the person named the place', () => {
@@ -117,11 +142,15 @@ describe('file-filing skill', () => {
     );
   });
 
-  it('the empty-folders question is skipped when the request already answers it', () => {
-    const c = fileFilingSkill.content;
-    expect(c).toMatch(
-      /unless the request already names the destination or the kind: then file there and ask nothing/,
+  it('in the empty case only a named DESTINATION skips the question, never a named kind', () => {
+    const e = emptyCase();
+    expect(e).toContain(
+      'unless the person named the destination in the request: then file there and ask nothing',
     );
+    expect(
+      e.slice(e.indexOf('unless')),
+      'a kind alone has no "there" in an empty section',
+    ).not.toMatch(/\bkind\b/);
   });
 
   it('tells the model what an empty "Your folders" means, and where the owner writes it once', () => {
