@@ -13,14 +13,30 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ModelMessage } from 'ai';
 import { createLlmClient } from '@nodal-agents/llm';
+import type { NodalLlmClient } from '@nodal-agents/llm';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, conversations, telegramAllowedChats } from '@nodal-agents/db';
+import {
+  agentJobs,
+  channelAllowedConversations,
+  conversationHandleFor,
+  conversations,
+  telegramAllowedChats,
+} from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import {
+  createToolRegistry,
+  executeTool,
+  registerBuiltins,
+  resolveRunWorkspaces,
+} from '@nodal-agents/tools';
+import type { ModelImageInput, ToolContext } from '@nodal-agents/tools';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../../deps.ts';
 import { hydrateForLlm } from '../../job/model-images.ts';
+import { addressedByHandle } from '../../llm/addressed-by-handle.ts';
 
 // Provider calls leave through packages/llm's own transport (#609): routed to
 // the global fetch stubbed in `wireBody`, the network boundary.
@@ -51,6 +67,7 @@ import {
   pruneInboundFolder,
 } from '../../channels/inbound-files.ts';
 import { pruneJobMediaFiles } from '../../cron/prune-media.ts';
+import { attachInboundImage } from '../../channels/discord/handler.ts';
 
 const CHAT = 4242;
 let db: TestDb;
@@ -136,8 +153,9 @@ async function deliver(u: TelegramUpdate) {
   return { jobId, job: job!, parts, outcomes };
 }
 
-function chatFolder(chat: number | string = CHAT): string {
-  return join(root, seed.entityId, 'shared', 'telegram', String(chat));
+/** Le dossier d'arrivée de Telegram : un dossier par job, aucune adresse de chat (#910). */
+function telegramFolder(): string {
+  return join(root, seed.entityId, 'shared', 'telegram');
 }
 
 const PDF = new Uint8Array(Buffer.from('%PDF-1.7\n1 0 obj << /Type /Catalog >> endobj\n%%EOF\n'));
@@ -158,7 +176,7 @@ describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/mo
       }),
     );
 
-    const onDisk = join(chatFolder(), jobId, 'Facture EDF.pdf');
+    const onDisk = join(telegramFolder(), jobId, 'Facture EDF.pdf');
     expect(new Uint8Array(await readFile(onDisk))).toEqual(PDF);
 
     expect(job.task).toBe('Range moi ça , merci');
@@ -166,7 +184,7 @@ describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/mo
     expect(parts).toHaveLength(2);
     const note = parts[1]!.text!;
     expect(parts[1]!.type).toBe('text');
-    expect(note).toContain(`shared/telegram/${CHAT}/${jobId}/Facture EDF.pdf`);
+    expect(note).toContain(`shared/telegram/${jobId}/Facture EDF.pdf`);
     expect(note).toContain(onDisk);
     expect(note).toContain('"Facture EDF.pdf"');
     expect(note).toContain('application/pdf');
@@ -225,12 +243,12 @@ describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/mo
     for (const ref of Object.values(fields)) telegramFiles.set(ref.file_id, bytes);
     const { jobId, parts } = await deliver(update({ caption: 'tiens', ...fields }));
 
-    expect(new Uint8Array(await readFile(join(chatFolder(), jobId, saved)))).toEqual(bytes);
-    expect(await readdir(join(chatFolder(), jobId))).toEqual([saved]);
+    expect(new Uint8Array(await readFile(join(telegramFolder(), jobId, saved)))).toEqual(bytes);
+    expect(await readdir(join(telegramFolder(), jobId))).toEqual([saved]);
     expect(parts[0]).toEqual({ type: 'text', text: 'tiens' });
     const notes = parts.slice(1);
     expect(notes).toHaveLength(1);
-    expect(notes[0]!.text).toContain(`shared/telegram/${CHAT}/${jobId}/${saved}`);
+    expect(notes[0]!.text).toContain(`shared/telegram/${jobId}/${saved}`);
     expect(notes[0]!.text).toContain(type);
   });
 
@@ -243,8 +261,10 @@ describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/mo
     );
     expect(job.task).toBe('Fichier envoyé (sans légende).');
     expect(parts[0]).toEqual({ type: 'text', text: 'Fichier envoyé (sans légende).' });
-    expect(parts[1]!.text).toContain(`shared/telegram/${CHAT}/${jobId}/contrat.pdf`);
-    expect(new Uint8Array(await readFile(join(chatFolder(), jobId, 'contrat.pdf')))).toEqual(PDF);
+    expect(parts[1]!.text).toContain(`shared/telegram/${jobId}/contrat.pdf`);
+    expect(new Uint8Array(await readFile(join(telegramFolder(), jobId, 'contrat.pdf')))).toEqual(
+      PDF,
+    );
   });
 
   it('in a group, a file whose caption is only the bot mention still becomes a job', async () => {
@@ -259,7 +279,7 @@ describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/mo
       ),
     );
     expect(parts[0]!.text).toBe('[Message from Quentin]: Fichier envoyé (sans légende).');
-    expect(parts[1]!.text).toContain(`shared/telegram/-100777/${jobId}/devis.pdf`);
+    expect(parts[1]!.text).toContain(`shared/telegram/${jobId}/devis.pdf`);
   });
 
   it('a download that fails: the job exists, and a part names the file and the reason', async () => {
@@ -283,7 +303,7 @@ describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/mo
         reason: 'telegram_request_failed: file download HTTP 502',
       },
     ]);
-    await expect(readdir(join(chatFolder(), jobId))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readdir(join(telegramFolder(), jobId))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('a file over the Bot API 20 MB limit: said with its size, never fetched', async () => {
@@ -318,10 +338,10 @@ describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/mo
         ],
       }),
     );
-    const onDisk = join(chatFolder(), jobId, 'image.jpg');
+    const onDisk = join(telegramFolder(), jobId, 'image.jpg');
     expect(new Uint8Array(await readFile(onDisk))).toEqual(JPEG);
     expect(parts[0]).toEqual({ type: 'text', text: 'Image envoyée (sans légende).' });
-    expect(parts[1]!.text).toContain(`shared/telegram/${CHAT}/${jobId}/image.jpg`);
+    expect(parts[1]!.text).toContain(`shared/telegram/${jobId}/image.jpg`);
     expect(parts[2]).toEqual({ type: 'image', image: pathToFileURL(onDisk).href });
   });
 
@@ -331,7 +351,7 @@ describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/mo
       update({ caption: 'en qualité', document: { file_id: 'png-doc', file_name: 'scan' } }),
     );
     // Sans extension, le nom prend celle de son type.
-    const onDisk = join(chatFolder(), jobId, 'scan.png');
+    const onDisk = join(telegramFolder(), jobId, 'scan.png');
     expect(parts[2]).toEqual({ type: 'image', image: pathToFileURL(onDisk).href });
   });
 
@@ -394,7 +414,7 @@ describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/mo
 
     const [after] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
     expect(after!.messages).toEqual(before!.messages);
-    expect(await readdir(join(chatFolder(), jobId))).toEqual(['tard.pdf']);
+    expect(await readdir(join(telegramFolder(), jobId))).toEqual(['tard.pdf']);
   });
 });
 
@@ -419,7 +439,6 @@ describe('receiveInboundFiles — never overwrites @cap:parler-par-canal-externe
       jobId: job!.id,
       entityId: seed.entityId,
       channel: 'telegram',
-      conversationId: '1',
       text: 't',
       files: [
         { name: 'Facture.pdf', mediaType: 'application/pdf', size: 3, download: async () => first },
@@ -431,13 +450,13 @@ describe('receiveInboundFiles — never overwrites @cap:parler-par-canal-externe
         },
       ],
     });
-    const dir = join(chatFolder(1), job!.id);
+    const dir = join(telegramFolder(), job!.id);
     expect((await readdir(dir)).sort()).toEqual(['Facture (2).pdf', 'Facture.pdf']);
     expect(new Uint8Array(await readFile(join(dir, 'Facture.pdf')))).toEqual(first);
     expect(new Uint8Array(await readFile(join(dir, 'Facture (2).pdf')))).toEqual(second);
     expect(outcomes.map((o) => (o.received ? o.workspacePath : null))).toEqual([
-      `shared/telegram/1/${job!.id}/Facture.pdf`,
-      `shared/telegram/1/${job!.id}/Facture (2).pdf`,
+      `shared/telegram/${job!.id}/Facture.pdf`,
+      `shared/telegram/${job!.id}/Facture (2).pdf`,
     ]);
   });
 
@@ -471,11 +490,10 @@ describe('receiveInboundFiles — never overwrites @cap:parler-par-canal-externe
         jobId: job!.id,
         entityId: seed.entityId,
         channel: 'telegram',
-        conversationId: '3',
         text: 't',
         files: [{ name, mediaType: null, size: bytes.byteLength, download: async () => bytes }],
       });
-      const dir = join(chatFolder(3), job!.id);
+      const dir = join(telegramFolder(), job!.id);
       expect(await readdir(dir)).toEqual([`_${name}`]);
       expect(new Uint8Array(await readFile(join(dir, `_${name}`)))).toEqual(bytes);
       expect(outcomes[0]).toMatchObject({ received: true, path: join(dir, `_${name}`) });
@@ -504,11 +522,10 @@ describe('receiveInboundFiles — never overwrites @cap:parler-par-canal-externe
         jobId: job!.id,
         entityId: seed.entityId,
         channel: 'telegram',
-        conversationId: '4',
         text: 't',
         files: [{ name, mediaType: null, size: bytes.byteLength, download: async () => bytes }],
       });
-      const dir = join(chatFolder(4), job!.id);
+      const dir = join(telegramFolder(), job!.id);
       expect(await readdir(dir)).toEqual([name]);
       expect(new Uint8Array(await readFile(join(dir, name)))).toEqual(bytes);
     },
@@ -526,7 +543,7 @@ describe('receiveInboundFiles — never overwrites @cap:parler-par-canal-externe
         status: 'pending',
       })
       .returning({ id: agentJobs.id });
-    const dir = join(chatFolder(2), job!.id);
+    const dir = join(telegramFolder(), job!.id);
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'notes.txt'), 'already here');
     await receiveInboundFiles({
@@ -534,7 +551,6 @@ describe('receiveInboundFiles — never overwrites @cap:parler-par-canal-externe
       jobId: job!.id,
       entityId: seed.entityId,
       channel: 'telegram',
-      conversationId: '2',
       text: 't',
       files: [
         {
@@ -680,5 +696,390 @@ describe('pruneInboundFolder / pruneJobMediaFiles — a folder per job (#899)', 
     } finally {
       await rm(cronRoot, { recursive: true, force: true });
     }
+  });
+});
+
+// #910 : les fichiers reçus vivent sous <shared>/<canal>/<jobId>/ (Discord :
+// <shared>/discord/<jobId>.<ext>), et ce qui a été écrit avant, un niveau plus
+// bas sous l'adresse de la conversation, se vide toujours.
+//
+// Mutations vérifiées : `pruneInboundFolder` qui ne descend plus dans les
+// sous-dossiers → « the old conversation folders » rougit ; le cron qui ne lit
+// plus les entrées du dossier du canal lui-même → « the retention cron, both
+// layouts » rougit.
+describe('the inbound folder of a channel, keyed by job, and the layout before it (#910) @cap:parler-par-canal-externe/moteur', () => {
+  async function jobWith(status: string): Promise<string> {
+    const [row] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        task: 't',
+        status,
+      })
+      .returning({ id: agentJobs.id });
+    return row!.id;
+  }
+  const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+  async function oldFolder(path: string): Promise<void> {
+    await mkdir(path, { recursive: true });
+    await writeFile(join(path, 'x.pdf'), 'x');
+    await utimes(path, old, old);
+  }
+  async function oldFile(path: string): Promise<void> {
+    await writeFile(path, 'x');
+    await utimes(path, old, old);
+  }
+
+  it('the old conversation folders are pruned like the channel folder, and nothing deeper', async () => {
+    const channel = await mkdtemp(join(tmpdir(), 'nodal-inbound-channel-'));
+    try {
+      const live = await jobWith('pending');
+      const done = await jobWith('completed');
+      const alsoDone = await jobWith('failed');
+      const deepDone = await jobWith('completed');
+      // Le dossier du canal (depuis #910).
+      await oldFolder(join(channel, done));
+      await oldFolder(join(channel, live));
+      // Un fil d'avant #910, avec ses deux formes d'entrée, et un dossier de l'agent.
+      const chat = join(channel, '4242');
+      await mkdir(chat);
+      await oldFolder(join(chat, alsoDone));
+      await oldFile(join(chat, `${done}.jpg`));
+      await oldFolder(join(chat, live));
+      await oldFolder(join(chat, 'Archives', deepDone));
+
+      await pruneInboundFolder(channel, db as unknown as RunnerDeps['db']);
+
+      expect((await readdir(channel)).sort()).toEqual(['4242', live].sort());
+      expect((await readdir(chat)).sort()).toEqual(['Archives', live].sort());
+      expect(await readdir(join(chat, 'Archives'))).toEqual([deepDone]);
+    } finally {
+      await rm(channel, { recursive: true, force: true });
+    }
+  });
+
+  it('the retention cron, both layouts: a pruned job leaves nothing, at either level', async () => {
+    const cronRoot = await mkdtemp(join(tmpdir(), 'nodal-inbound-cron-'));
+    try {
+      const pruned = '11111111-1111-4111-8111-111111111111';
+      const kept = '22222222-2222-4222-8222-222222222222';
+      const shared = join(cronRoot, 'entity-1', 'shared');
+      const legacyChat = join(shared, 'telegram', '42');
+      const legacyChannel = join(shared, 'discord', '998877');
+      for (const id of [pruned, kept]) {
+        await mkdir(join(shared, 'telegram', id), { recursive: true });
+        await writeFile(join(shared, 'telegram', id, 'a.pdf'), 'a');
+        await mkdir(join(legacyChat, id), { recursive: true });
+        await writeFile(join(legacyChat, id, 'b.pdf'), 'b');
+        await mkdir(legacyChannel, { recursive: true });
+        await writeFile(join(shared, 'discord', `${id}.png`), 'p');
+        await writeFile(join(legacyChannel, `${id}.png`), 'p');
+      }
+
+      const result = await pruneJobMediaFiles(cronRoot, [pruned]);
+
+      expect(result.filesDeleted).toBe(4);
+      expect((await readdir(join(shared, 'telegram'))).sort()).toEqual(['42', kept].sort());
+      expect(await readdir(join(shared, 'telegram', kept))).toEqual(['a.pdf']);
+      expect(await readdir(legacyChat)).toEqual([kept]);
+      expect((await readdir(join(shared, 'discord'))).sort()).toEqual(
+        ['998877', `${kept}.png`].sort(),
+      );
+      expect(await readdir(legacyChannel)).toEqual([`${kept}.png`]);
+    } finally {
+      await rm(cronRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── #910 : le chemin que lit le MODÈLE est celui du disque ───────────────────
+//
+// Le 31/10, le PDF était écrit sous shared/telegram/<chat id>/<jobId>/, et le
+// modèle lisait shared/telegram/conv_<handle>/<jobId>/ : la frontière vers le
+// fournisseur (`addressedByHandle`, #824) remplace chaque identifiant de
+// conversation connu par son handle dans TOUT ce que le modèle lit, et rien ne
+// relit les entrées des outils. Trois `file_read` en « File not found ».
+//
+// Le parcours entier, pour chaque canal qui écrit des fichiers reçus : la
+// réception réelle, puis la requête TELLE QUE LE FOURNISSEUR LA REÇOIT (la vraie
+// frontière, au-dessus d'un client qui ne fait que la garder), puis les VRAIS
+// outils fichiers (registre, `executeTool`, dossiers du run), appelés avec
+// exactement le chemin que le modèle a lu.
+//
+// Mutation vérifiée : remettre l'adresse de la conversation dans le chemin
+// (`inboundFolder` et `workspaceFolder`, ou le dossier de Discord) → chaque cas
+// rougit, sur « File not found ».
+
+const DISCORD_CHANNEL = '998877665544332211';
+
+/**
+ * Le chemin d'une image qu'un modèle ne voit pas, dans sa note
+ * (`visionRoutingNote`). La note dit aujourd'hui « saved at saved at » : la
+ * phrase et son `where` portent chacun les mots.
+ */
+const ROUTING_NOTE_PATH = /IMAGE \((?:saved at )+(.+?)\)\. It was not passed to you/;
+
+/** La requête que le fournisseur reçoit : `hydrateForLlm` puis la frontière des handles. */
+async function requestAsTheProviderGetsIt(
+  messages: ModelMessage[],
+  input: ModelImageInput,
+): Promise<{ system: string; text: string }> {
+  const sent: Array<{ system?: unknown; messages?: unknown }> = [];
+  const provider = {
+    config: { provider: 'anthropic', model: 'mock' },
+    capabilities: {},
+    generateText: async (args: { system?: unknown; messages?: unknown }) => {
+      sent.push(args);
+      return { text: 'ok' };
+    },
+    generateObject: async () => {
+      throw new Error('not used');
+    },
+    streamText: () => {
+      throw new Error('not used');
+    },
+  } as unknown as NodalLlmClient;
+  const client = addressedByHandle(provider, db as unknown as AnyDrizzleDb, {
+    entityId: seed.entityId,
+  });
+  await client.generateText({
+    // Le prompt d'un job de canal nomme sa conversation : il prouve que la
+    // frontière a bien réécrit CETTE requête.
+    system: `Conversation telegram ${CHAT}, discord ${DISCORD_CHANNEL}.`,
+    messages: await hydrateForLlm(messages, input, new Map()),
+  });
+  const request = sent[0]!;
+  return { system: String(request.system), text: JSON.stringify(request.messages) };
+}
+
+/** Un vrai outil du registre, par le vrai seam, dans les dossiers du run. */
+async function callFileTool(
+  jobId: string,
+  name: string,
+  input: Record<string, unknown>,
+  autonomy?: 'fully_autonomous',
+) {
+  const registry = createToolRegistry();
+  registerBuiltins(registry);
+  const tool = registry.get(name);
+  if (!tool) throw new Error(`no tool ${name}`);
+  const { workspaces } = await resolveRunWorkspaces(
+    db as unknown as AnyDrizzleDb,
+    seed.agentId,
+    seed.entityId,
+  );
+  const ctx: ToolContext = {
+    jobId,
+    agentId: seed.agentId,
+    entityId: seed.entityId,
+    db: db as unknown as ToolContext['db'],
+    jobChatId: String(CHAT),
+    turn: 1,
+    workspaces,
+  };
+  const res = await executeTool(tool, input as never, ctx, {
+    approvalRules: [],
+    ...(autonomy ? { autonomy } : {}),
+    onApprovalRequired: async () => {},
+  });
+  if (res.outcome !== 'success') throw new Error(`${name}: ${JSON.stringify(res)}`);
+  return res.output as { ok: boolean; reason?: string; content?: string };
+}
+
+/** Les deux chemins que la note d'un fichier reçu donne au modèle (le JSON de la requête). */
+function pathsTheModelReads(requestText: string): { workspacePath: string; absolutePath: string } {
+  const m = /Saved at (.+?) for the file tools \(absolute path: (.+?)\)\./.exec(requestText);
+  if (!m) throw new Error(`no file note in the request: ${requestText}`);
+  // Les chemins sont lus dans du JSON : un antislash Windows y est doublé.
+  const unjson = (s: string) => JSON.parse(`"${s}"`) as string;
+  return { workspacePath: unjson(m[1]!), absolutePath: unjson(m[2]!) };
+}
+
+describe('a received file opens at the path the model is given (#910) @cap:parler-par-canal-externe/moteur', () => {
+  beforeEach(async () => {
+    await db.delete(channelAllowedConversations);
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      conversationId: DISCORD_CHANNEL,
+      kind: 'channel',
+      status: 'active',
+    });
+  });
+
+  it.each([
+    { chat: { id: CHAT, type: 'private' as const }, caption: 'Range moi ça' },
+    { chat: { id: -100777, type: 'group' as const }, caption: '@nodal_bot range le' },
+  ])(
+    'Telegram $chat.type chat: file_read and file_move succeed on exactly the paths the model read',
+    async ({ chat, caption }) => {
+      telegramFiles.set('doc-910', PDF);
+      const { jobId, job } = await deliver(
+        update(
+          {
+            caption,
+            document: {
+              file_id: 'doc-910',
+              file_name: 'Facture EDF.pdf',
+              mime_type: 'application/pdf',
+            },
+          },
+          chat,
+        ),
+      );
+
+      const request = await requestAsTheProviderGetsIt(job.messages as ModelMessage[], {
+        sees: true,
+      });
+      // La frontière a réécrit cette requête : l'adresse du chat est partie.
+      const handle = await conversationHandleFor(db as unknown as AnyDrizzleDb, {
+        entityId: seed.entityId,
+        channel: 'telegram',
+        conversationId: String(CHAT),
+      });
+      expect(request.system).toContain(handle);
+      expect(request.system).not.toContain(String(CHAT));
+
+      const { workspacePath, absolutePath } = pathsTheModelReads(request.text);
+
+      const read = await callFileTool(jobId, 'file_read', { path: workspacePath });
+      expect(read.reason ?? null).toBeNull();
+      expect(read).toMatchObject({ ok: true });
+      expect(read.content).toContain('%PDF-1.7');
+      const readAbsolute = await callFileTool(jobId, 'file_read', { path: absolutePath });
+      expect(readAbsolute.reason ?? null).toBeNull();
+      expect(readAbsolute).toMatchObject({ ok: true });
+      expect(readAbsolute.content).toContain('%PDF-1.7');
+
+      const classement = join(root, seed.entityId, 'shared', 'Classement');
+      const copied = await callFileTool(jobId, 'file_move', {
+        source: workspacePath,
+        destination: 'shared/Classement/copie.pdf',
+        copy: true,
+        create_dirs: true,
+      });
+      expect(copied.reason ?? null).toBeNull();
+      expect(copied).toMatchObject({ ok: true, operation: 'copied' });
+      expect(new Uint8Array(await readFile(join(classement, 'copie.pdf')))).toEqual(PDF);
+
+      // Retirer un fichier du dossier partagé que le run n'a pas écrit passe
+      // par une personne (la porte d'écrasement, #881) : le déplacement est
+      // joué ici comme sous une autonomie complète, celle où la porte ne
+      // demande rien. Ce qu'il prouve est le chemin, pas la porte.
+      const moved = await callFileTool(
+        jobId,
+        'file_move',
+        { source: workspacePath, destination: 'shared/Classement/Facture EDF.pdf' },
+        'fully_autonomous',
+      );
+      expect(moved.reason ?? null).toBeNull();
+      expect(moved).toMatchObject({ ok: true, operation: 'moved' });
+      expect(new Uint8Array(await readFile(join(classement, 'Facture EDF.pdf')))).toEqual(PDF);
+      await rm(classement, { recursive: true });
+
+      // Et ce chemin est celui du dossier du job, sans adresse de conversation.
+      expect(workspacePath).toBe(`shared/telegram/${jobId}/Facture EDF.pdf`);
+    },
+  );
+
+  it('Telegram photo for a model that does not see: the routing note names a path the file tools open', async () => {
+    telegramFiles.set('photo-910', JPEG);
+    const { jobId, job } = await deliver(
+      update({ caption: 'regarde', photo: [{ file_id: 'photo-910', width: 9, height: 9 }] }),
+    );
+    const request = await requestAsTheProviderGetsIt(job.messages as ModelMessage[], {
+      sees: false,
+      reason: 'this model does not take images',
+    });
+    const m = ROUTING_NOTE_PATH.exec(request.text);
+    expect(m).not.toBeNull();
+    const noted = JSON.parse(`"${m![1]!}"`) as string;
+    // Le modèle qui ne voit pas en fait un fichier : une copie par le chemin de la note.
+    // (`file_read` d'une image, pour lui, dit « image, not read » : il ne lit pas d'image.)
+    const copied = await callFileTool(jobId, 'file_move', {
+      source: noted,
+      destination: 'shared/Classement/',
+      copy: true,
+      create_dirs: true,
+    });
+    expect(copied.reason ?? null).toBeNull();
+    expect(copied).toMatchObject({ ok: true, operation: 'copied' });
+    const classement = join(root, seed.entityId, 'shared', 'Classement');
+    const [kept] = await readdir(classement);
+    expect(new Uint8Array(await readFile(join(classement, kept!)))).toEqual(JPEG);
+    await rm(classement, { recursive: true });
+    expect(noted).toBe(join(telegramFolder(), jobId, 'image.jpg'));
+  });
+
+  it('Discord image for a model that does not see: the routing note names a path the file tools open', async () => {
+    const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const [created] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'discord',
+        chatId: DISCORD_CHANNEL,
+        task: 'regarde',
+        status: 'pending',
+      })
+      .returning({ id: agentJobs.id });
+    const jobId = created!.id;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(PNG, { status: 200 })),
+    );
+    // Ce que le gateway lui passe, tel quel (un canal qui donnait son id le
+    // garde ici : la réception doit l'ignorer).
+    const attachment = {
+      url: 'https://cdn.discordapp.test/a.png',
+      contentType: 'image/png',
+      size: PNG.byteLength,
+      text: 'regarde',
+      channelId: DISCORD_CHANNEL,
+    };
+    try {
+      await attachInboundImage({
+        jobId,
+        entityId: seed.entityId,
+        attachment,
+        db: db as unknown as RunnerDeps['db'],
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+    const request = await requestAsTheProviderGetsIt(job!.messages as ModelMessage[], {
+      sees: false,
+      reason: 'this model does not take images',
+    });
+    const discordHandle = await conversationHandleFor(db as unknown as AnyDrizzleDb, {
+      entityId: seed.entityId,
+      channel: 'discord',
+      conversationId: DISCORD_CHANNEL,
+    });
+    expect(request.system).toContain(discordHandle);
+
+    const m = ROUTING_NOTE_PATH.exec(request.text);
+    expect(m).not.toBeNull();
+    const noted = JSON.parse(`"${m![1]!}"`) as string;
+    // Le modèle qui ne voit pas en fait un fichier : une copie par le chemin de la note.
+    // (`file_read` d'une image, pour lui, dit « image, not read » : il ne lit pas d'image.)
+    const copied = await callFileTool(jobId, 'file_move', {
+      source: noted,
+      destination: 'shared/Classement/',
+      copy: true,
+      create_dirs: true,
+    });
+    expect(copied.reason ?? null).toBeNull();
+    expect(copied).toMatchObject({ ok: true, operation: 'copied' });
+    const classement = join(root, seed.entityId, 'shared', 'Classement');
+    const [kept] = await readdir(classement);
+    expect(new Uint8Array(await readFile(join(classement, kept!)))).toEqual(PNG);
+    await rm(classement, { recursive: true });
+    expect(noted).toBe(join(root, seed.entityId, 'shared', 'discord', `${jobId}.png`));
   });
 });

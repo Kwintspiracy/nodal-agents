@@ -18,13 +18,12 @@
 
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { workspacesRoot } from '@nodal-agents/tools';
 import { eq, and } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { triggerWorker } from '../../routes/agent.ts';
-import { pruneInboundFolder } from '../inbound-files.ts';
+import { inboundFolder, pruneInboundFolder } from '../inbound-files.ts';
 import { sanitizeSenderName, checkConversationAuthorization } from '../shared.ts';
 import { groupMessagePrefix } from '../../person-for-model.ts';
 import { takeChannelTurn, isPlatformCommand, type ChannelStopResult } from '../turn.ts';
@@ -44,7 +43,7 @@ export interface DiscordHandleResult {
    * network I/O and so happens OUTSIDE the DB transaction — see
    * attachInboundImage below, called by the gateway after the job is created.
    */
-  attachment?: { url: string; contentType: string; size: number; channelId: string; text: string };
+  attachment?: { url: string; contentType: string; size: number; text: string };
   skipped?:
     | 'bot_author'
     | 'no_content'
@@ -232,7 +231,6 @@ export async function handleDiscordMessage(args: {
             url: imageAttachment.url,
             contentType: imageAttachment.contentType ?? 'application/octet-stream',
             size: imageAttachment.size,
-            channelId: conversationId,
             text: turn.taskText,
           }
         : undefined,
@@ -253,14 +251,18 @@ export function triggerJobWorker(jobId: string, env: RunnerEnv): void {
  * gateway AFTER the create-job transaction commits (network I/O must not sit
  * inside a DB txn) and BEFORE the worker is triggered.
  *
- * Prunes with pruneInboundFolder (channels/inbound-files.ts), which keys an
- * entry by its `<jobId>.<ext>` name as written here. Moving this path onto
+ * Writes into the channel's inbound folder (`inboundFolder`, the one Telegram
+ * uses), which carries no Discord channel id (#910): the model reads a channel
+ * id as its handle, and a path holding one names a file that does not exist
+ * (the routing note of an image a model cannot see says that path). Prunes
+ * with pruneInboundFolder (channels/inbound-files.ts), which keys an entry by
+ * its `<jobId>.<ext>` name as written here. Moving this path onto
  * receiveInboundFiles, the intake Telegram uses since #899, is #900.
  */
 export async function attachInboundImage(args: {
   jobId: string;
   entityId: string;
-  attachment: { url: string; contentType: string; size: number; channelId: string; text: string };
+  attachment: { url: string; contentType: string; size: number; text: string };
   db: RunnerDeps['db'];
 }): Promise<string> {
   const { jobId, entityId, attachment, db } = args;
@@ -276,8 +278,8 @@ export async function attachInboundImage(args: {
     );
   }
 
-  // Mirrors telegram's shared workspace layout: <workspacesRoot>/<entityId>/shared/<channel>/<conversationId>/<jobId>.<ext>
-  const dir = join(workspacesRoot(), entityId, 'shared', 'discord', attachment.channelId);
+  // <workspacesRoot>/<entityId>/shared/discord/<jobId>.<ext>
+  const dir = inboundFolder(entityId, 'discord');
   await mkdir(dir, { recursive: true });
   const ext = extFromContentType(attachment.contentType);
   const filePath = join(dir, `${jobId}.${ext}`);

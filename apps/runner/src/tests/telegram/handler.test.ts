@@ -505,8 +505,8 @@ describe('handleTelegramUpdate — group chats', () => {
     });
 
     const task = '[Message from Alice]: Image envoyée (sans légende).';
+    // Aucun identifiant de chat : le dossier des fichiers est celui du job (#910).
     expect(result.files).toEqual({
-      chatId: '-100123',
       text: task,
       files: [{ fileId: 'large', name: null, mediaType: 'image/jpeg', size: null }],
     });

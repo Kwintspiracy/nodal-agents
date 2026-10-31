@@ -11,12 +11,19 @@
 // UNE réception pour tous les canaux. Un canal ne fait que traduire son API en
 // une liste de `InboundFile` (un nom, un type, une taille, et de quoi obtenir les
 // octets) ; ici, chaque fichier :
-//   - est rangé dans le dossier partagé de l'espace, un dossier par job sous le
-//     fil : <shared>/<canal>/<conversation>/<jobId>/<nom d'origine>. Le nom
-//     d'origine est gardé (nettoyé pour Windows, macOS et Linux), jamais écrasé
-//     (suffixe « (2) » si le nom existe déjà). Le dossier du job porte la clé
-//     que lisent les deux ménages (`pruneInboundFolder` ici, `pruneJobMediaFiles`
-//     du cron) : sans lui, un nom d'origine ne dirait plus à quel job il est ;
+//   - est rangé dans le dossier partagé de l'espace, un dossier par job sous
+//     son canal : <shared>/<canal>/<jobId>/<nom d'origine>. Le nom d'origine
+//     est gardé (nettoyé pour Windows, macOS et Linux), jamais écrasé (suffixe
+//     « (2) » si le nom existe déjà). Le dossier du job porte la clé que lisent
+//     les deux ménages (`pruneInboundFolder` ici, `pruneJobMediaFiles` du
+//     cron) : sans lui, un nom d'origine ne dirait plus à quel job il est.
+//     Le chemin ne porte AUCUNE adresse de canal (#910) : la frontière vers le
+//     modèle (`addressedByHandle`) remplace chaque identifiant de conversation
+//     connu par son handle dans tout ce que le modèle lit, et les entrées des
+//     outils ne sont pas relues. Un chemin <shared>/telegram/<chat id>/… lui
+//     était donc montré `…/conv_<handle>/…`, un chemin qui n'existe pas : trois
+//     `file_read` en « File not found » au premier PDF du propriétaire. Le
+//     jobId, lui, est un identifiant de Nodal qu'aucune frontière ne réécrit ;
 //   - devient UNE partie texte du premier message du job, pour l'agent : son
 //     chemin pour les outils fichiers (`shared/…`) et son chemin absolu (un
 //     runtime CLI n'a que lui), son nom, son type, sa taille ;
@@ -79,15 +86,13 @@ export type InboundFileOutcome =
       readonly reason: string;
     };
 
-/** Le fil d'un canal sous le dossier partagé : <shared>/<canal>/<conversation>. */
-export function inboundFolder(entityId: string, channel: string, conversationId: string): string {
-  return join(
-    workspacesRoot(),
-    entityId,
-    'shared',
-    safePathSegment(channel),
-    safePathSegment(conversationId),
-  );
+/**
+ * Le dossier d'arrivée d'un canal sous le dossier partagé : <shared>/<canal>.
+ * Il ne prend pas d'adresse de conversation, et c'est voulu (#910) : ce qui
+ * est rangé sous lui est nommé au modèle, qui doit pouvoir le retaper tel quel.
+ */
+export function inboundFolder(entityId: string, channel: string): string {
+  return join(workspacesRoot(), entityId, 'shared', safePathSegment(channel));
 }
 
 /**
@@ -119,20 +124,14 @@ export async function receiveInboundFiles(args: {
   jobId: string;
   entityId: string;
   channel: string;
-  conversationId: string;
   /** Le texte du message de la personne, tel que le job le porte déjà. */
   text: string;
   files: readonly InboundFile[];
 }): Promise<{ attached: boolean; outcomes: InboundFileOutcome[] }> {
-  const { db, jobId, entityId, channel, conversationId, text, files } = args;
-  const folder = inboundFolder(entityId, channel, conversationId);
+  const { db, jobId, entityId, channel, text, files } = args;
+  const folder = inboundFolder(entityId, channel);
   const jobFolder = join(folder, jobId);
-  const workspaceFolder = [
-    SHARED_WORKSPACE_LABEL,
-    safePathSegment(channel),
-    safePathSegment(conversationId),
-    jobId,
-  ].join('/');
+  const workspaceFolder = [SHARED_WORKSPACE_LABEL, safePathSegment(channel), jobId].join('/');
 
   const outcomes: InboundFileOutcome[] = [];
   const parts: unknown[] = [{ type: 'text', text }];
@@ -194,8 +193,8 @@ export async function receiveInboundFiles(args: {
     );
   }
 
-  // Ménage borné du fil (F-13), au mieux : il ne fait jamais échouer une
-  // réception déjà faite.
+  // Ménage borné du dossier du canal (F-13), au mieux : il ne fait jamais
+  // échouer une réception déjà faite.
   await pruneInboundFolder(folder, db).catch((err) => {
     console.warn(
       `[${channel}] inbound folder prune failed for ${folder}: ${
@@ -316,7 +315,7 @@ function cleanSegment(raw: string): string {
     .replace(/[. ]+$/, '');
 }
 
-/** Un segment de chemin sûr (un nom de canal, un identifiant de conversation). */
+/** Un segment de chemin sûr (un nom de canal). */
 function safePathSegment(raw: string): string {
   const cleaned = cutToBytes(cleanSegment(raw), MAX_NAME_BYTES);
   if (cleaned === '' || /^\.+$/.test(cleaned)) return '_';
@@ -373,9 +372,9 @@ async function writeUnique(
   }
 }
 
-// ─── Le ménage d'un fil ───────────────────────────────────────────────────────
+// ─── Le ménage d'un dossier d'arrivée ─────────────────────────────────────────
 
-/** Au plus ce nombre d'entrées (un job chacune) par fil. */
+/** Au plus ce nombre d'entrées (un job chacune) par dossier. */
 const INBOUND_FOLDER_MAX_ENTRIES = 200;
 /** Une entrée plus vieille que ça est supprimée, quel que soit leur nombre. */
 const INBOUND_FOLDER_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 jours
@@ -388,11 +387,16 @@ interface PrunableEntry {
 }
 
 /**
- * Ménage borné d'un fil <shared>/<canal>/<conversation>/ (F-13) : supprime ce
- * qui a plus de 30 jours, puis, s'il reste plus de 200 entrées, les plus
- * anciennes. Une entrée est le dossier d'un job (`<jobId>/`, les fichiers reçus
- * depuis #899) ou un fichier `<jobId>.<ext>` (les images d'avant, et celles de
- * Discord).
+ * Ménage borné du dossier d'arrivée d'un canal, <shared>/<canal>/ (F-13) :
+ * supprime ce qui a plus de 30 jours, puis, s'il reste plus de 200 entrées, les
+ * plus anciennes. Une entrée est le dossier d'un job (`<jobId>/`, les fichiers
+ * reçus depuis #899) ou un fichier `<jobId>.<ext>` (les images de Discord).
+ *
+ * Chaque sous-dossier qui n'est pas celui d'un job reçoit le même ménage, avec
+ * ses propres bornes, et rien plus bas : ce sont les fils <canal>/<conversation>/
+ * que les réceptions d'avant #910 ont laissés sur le disque (les photos d'avant
+ * #899, les fichiers de #902), qui sinon ne se videraient qu'à la purge de
+ * leurs jobs (`pruneJobMediaFiles`).
  *
  * Ne supprime JAMAIS l'entrée d'un job qui n'est pas encore terminé : un job
  * peut attendre une approbation, une délégation, ou son tour, avant que son
@@ -401,7 +405,15 @@ interface PrunableEntry {
  * (purgé) n'a pas ce risque.
  */
 export async function pruneInboundFolder(dir: string, db: RunnerDeps['db']): Promise<void> {
+  for (const below of await pruneJobEntries(dir, db)) await pruneJobEntries(below, db);
+}
+
+/** Le ménage des entrées de job d'UN dossier ; rend ses sous-dossiers qui n'en sont pas. */
+async function pruneJobEntries(dir: string, db: RunnerDeps['db']): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
+  const otherFolders = entries
+    .filter((e) => e.isDirectory() && !isUuid(e.name))
+    .map((e) => join(dir, e.name));
   const stats = await Promise.all(
     entries
       .filter((e) => e.isFile() || e.isDirectory())
@@ -454,6 +466,7 @@ export async function pruneInboundFolder(dir: string, db: RunnerDeps['db']): Pro
     const excess = candidates.length - INBOUND_FOLDER_MAX_ENTRIES;
     for (const f of candidates.slice(0, excess)) await remove(f.path);
   }
+  return otherFolders;
 }
 
 /** La colonne `agent_jobs.id` est un uuid : un autre nom ne peut pas en être un, et Postgres refuserait la requête. */

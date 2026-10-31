@@ -148,7 +148,8 @@ describe('pruneJobMediaFiles — the images a job tools fetched', () => {
     const result = await pruneJobMediaFiles(root, ['job-pruned-aaa']);
 
     expect(result.filesDeleted).toBe(2);
-    expect(await readdir(dirOf('job-pruned-aaa'))).toEqual([]);
+    // Le dossier du job part avec ses fichiers (#910 : un dossier de job, à tout niveau).
+    await expect(readdir(dirOf('job-pruned-aaa'))).rejects.toMatchObject({ code: 'ENOENT' });
     expect((await readdir(dirOf('job-surviving-bbb'))).sort()).toEqual([
       'call_1-1.png',
       'call_2-1.jpg',
