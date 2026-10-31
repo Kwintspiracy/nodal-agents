@@ -291,8 +291,8 @@ describe('an image and a delegation @cap:organiser-equipe/moteur', () => {
     const assign = `assign_${child.slug.replace(/-/g, '_')}`;
 
     // The child runs in the parent's run: the requests follow one another,
-    // the parent's two turns, the child's two, then the parent resumed — with
-    // the final-answer rechecks (#711) in between, which have no system prompt.
+    // the parent's two turns, the child's two, then the parent resumed, and
+    // nothing else: a final answer in prose is not re-read (#886).
     const bodies = await run(jobId, [
       { calls: [{ name: 'file_read', args: { path: join(dir, 'apercu.png') } }] },
       { calls: [{ name: assign, args: { task: `Check ${join(dir, 'apercu.png')}` } }] },
@@ -301,11 +301,8 @@ describe('an image and a delegation @cap:organiser-equipe/moteur', () => {
     ]);
     const parent = bodies.filter((b) => systemOf(b).includes('Your agents:'));
     const childBodies = bodies.filter((b) => systemOf(b).includes('You are Checker'));
-    const rechecks = bodies.filter((b) => !parent.includes(b) && !childBodies.includes(b));
     expect(childBodies).toHaveLength(2);
-    // A recheck reads the run's results as text: an image is said, never its base64.
-    expect(rechecks.length).toBeGreaterThan(0);
-    for (const r of rechecks) expect(JSON.stringify(r)).not.toContain(PNG_B64);
+    expect(bodies.filter((b) => !parent.includes(b) && !childBodies.includes(b))).toEqual([]);
 
     // The parent saw its own image.
     expect(imageUrls(parent[1] as Body)).toEqual([`data:image/png;base64,${PNG_B64}`]);

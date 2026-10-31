@@ -1145,11 +1145,11 @@ describe('executeJob', () => {
 
     expect(rows[0]?.status).toBe('completed');
     expect(rows[0]?.result).toBe('Here is my answer to the task.');
-    // The prose turn is re-read once (#600, llm/action-recheck.ts), and that
-    // call is billed too: 10/5 for the turn + 10/5 for the re-read.
-    expect(rows[0]?.inputTokens).toBe(20);
-    expect(rows[0]?.outputTokens).toBe(10);
-    expect(rows[0]?.turn).toBe(1); // one turn: the re-read is not a turn of its own
+    // The prose turn is the answer (#886): one call, 10/5, and no re-read
+    // billed on top of it.
+    expect(rows[0]?.inputTokens).toBe(10);
+    expect(rows[0]?.outputTokens).toBe(5);
+    expect(rows[0]?.turn).toBe(1);
     // Wall-clock timer: should have elapsed time (>= 0, often > 0). On very
     // fast runs Date.now() can resolve to the same ms, so assert non-null.
     expect(rows[0]?.totalDurationMs).not.toBeNull();
@@ -3492,8 +3492,8 @@ describe('executeJob', () => {
     const job = await createTestJob(db, seed);
 
     // Two-turn scenario: first calls save_memory, second returns final text.
-    // Mock returns 10/5 per call → 30/15 after 3 calls: the two turns and the
-    // re-read of the final prose turn (#600).
+    // Mock returns 10/5 per call → 20/10 after the two turns: the final prose
+    // turn is the answer, with no re-read billed on top (#886).
     const llmClient = makeMockLlmClient([
       {
         toolCalls: [
@@ -3519,9 +3519,9 @@ describe('executeJob', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
 
-    expect(rows[0]?.inputTokens).toBe(30);
-    expect(rows[0]?.outputTokens).toBe(15);
-    expect(rows[0]?.turn).toBe(2); // two turns; the re-read is not a turn
+    expect(rows[0]?.inputTokens).toBe(20);
+    expect(rows[0]?.outputTokens).toBe(10);
+    expect(rows[0]?.turn).toBe(2);
   });
 
   it('completes when LLM calls dashboard_publish + return_result (Brique 33)', async () => {
@@ -6231,6 +6231,94 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
       .where(eq(telegramAllowedChats.entityId, approvalSeed.entityId));
   });
 
+  // #886 : le tour en prose n'est plus relu. Celui qui répond à l'approbation
+  // en attente par du TEXTE (la branche texte, `approvalPending`) suspend
+  // toujours le job : il ne finit ni `completed`, ni `failed`.
+  it('approval pending, the heads-up answered in PROSE: the job still suspends, nothing completes', async () => {
+    await approvalDb.insert(approvalRules).values({
+      entityId: approvalSeed.entityId,
+      agentId: null,
+      toolName: 'save_memory',
+      action: 'require_approval',
+    });
+    await approvalDb
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, approvalSeed.agentId));
+    await approvalDb.insert(telegramAllowedChats).values({
+      entityId: approvalSeed.entityId,
+      agentId: approvalSeed.agentId,
+      chatId: '199791465',
+      role: 'owner',
+      status: 'active',
+    });
+    const [tgJob] = await approvalDb
+      .insert(agentJobs)
+      .values({
+        entityId: approvalSeed.entityId,
+        agentId: approvalSeed.agentId,
+        channel: 'telegram',
+        chatId: '199791465',
+        chatChannel: 'telegram',
+        task: 'Mémorise un autre truc',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!tgJob) throw new Error('Failed to create telegram approval test job');
+
+    const prompts: unknown[] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-gated-prose',
+              toolName: 'save_memory',
+              args: {
+                fact: 'autre truc',
+                category: 'context',
+                purpose: 'Garder ce fait pour la suite du travail.',
+              },
+            },
+          ],
+        },
+        // The heads-up turn, in prose only: no delivery tool, no return_result.
+        { text: "J'attends ton approbation." },
+      ],
+      prompts,
+    );
+
+    const result = await executeJob(tgJob.id as JobId, makeApprovalDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('awaiting_approval');
+    const [row] = await approvalDb
+      .select({ status: agentJobs.status, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, tgJob.id));
+    expect(row?.status).toBe('awaiting_approval');
+    expect(row?.result ?? null).toBeNull();
+    const approvalRows = await approvalDb
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, tgJob.id));
+    expect(
+      approvalRows.filter((r) => r.toolName === 'save_memory' && r.status === 'pending'),
+    ).toHaveLength(1);
+    // Two turns: the gated call, then the prose heads-up. Nothing after.
+    expect(prompts).toHaveLength(2);
+
+    await approvalDb.delete(approvalRules).where(eq(approvalRules.entityId, approvalSeed.entityId));
+    await approvalDb
+      .update(agents)
+      .set({ telegramBotToken: null })
+      .where(eq(agents.id, approvalSeed.agentId));
+    await approvalDb
+      .delete(telegramAllowedChats)
+      .where(eq(telegramAllowedChats.entityId, approvalSeed.entityId));
+  });
+
   it('Bug C: approve → save_memory ACTUALLY runs (agent_memory row created) and executed_at stamped', async () => {
     // Seed the require_approval rule for save_memory.
     await approvalDb.insert(approvalRules).values({
@@ -6616,8 +6704,7 @@ describe('reliability guards', () => {
     });
 
     // Real DB row: raw input persisted as 1000, but the budgeted EFFECTIVE input
-    // is only the 5 non-cached tokens. The re-read of the prose turn (#600)
-    // adds its own 10 uncached input tokens to both.
+    // is only the 5 non-cached tokens (the prose turn is not re-read, #886).
     const [row] = await db
       .select({
         status: agentJobs.status,
@@ -6629,8 +6716,8 @@ describe('reliability guards', () => {
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('completed');
     expect(row?.error).toBeNull();
-    expect(row?.inputTokens).toBe(1010);
-    expect(row?.effectiveInputTokens).toBe(15);
+    expect(row?.inputTokens).toBe(1000);
+    expect(row?.effectiveInputTokens).toBe(5);
   });
 
   it('Guard 1a still trips on FRESH tokens: same raw input, zero cache ⇒ token_budget_exceeded', async () => {
@@ -6960,6 +7047,62 @@ describe('reliability guards', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(() => validateMessageStructure(persisted!.messages as never)).not.toThrow();
+  });
+
+  // #886 : la même garde sur la branche TEXTE. Une livraison ratée, puis une
+  // réponse en prose seule : le run reçoit le rappel, puis échoue sur le fait
+  // (l'outil de livraison en échec), jamais sur la lecture de son texte.
+  it('Guard 3b on the text branch: a DELIVERY failure then a prose answer fails loud, after the nudge', async () => {
+    const { z } = await import('zod');
+    const { createEmbeddingClient } = await import('@nodal-agents/llm');
+    const { LocalTrustProvider } = await import('@nodal-agents/auth');
+    const { createToolRegistry: makeReg, registerBuiltins: regBuiltins } =
+      await import('@nodal-agents/tools');
+
+    const job = await createTestJob(db, seed);
+    const customRegistry = makeReg();
+    regBuiltins(customRegistry);
+    customRegistry.register({
+      name: 'dashboard_publish',
+      description: 'failing dashboard_publish for the text-branch delivery-failure test',
+      inputSchema: z.object({ text: z.string() }),
+      riskLevel: 'write' as const,
+      execute: async () => {
+        throw new Error('publish failed');
+      },
+    });
+
+    const prompts: unknown[] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        { toolCalls: [{ toolCallId: 'dp', toolName: 'dashboard_publish', args: { text: 'hi' } }] },
+        { text: 'Published.' },
+      ],
+      prompts,
+    );
+    setActiveLlmClient(llmClient);
+    const customDeps: RunnerDeps = {
+      db: db as RunnerDeps['db'],
+      llmClient,
+      embeddingClient: createEmbeddingClient({ provider: 'keyword' }),
+      registry: customRegistry,
+      authProvider: new LocalTrustProvider(),
+      close: async () => {},
+    };
+
+    const result = await executeJob(job.id as JobId, customDeps, testEnv);
+
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') expect(result.error).toBe('unresolved_tool_failure');
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('unresolved_tool_failure');
+    // The model was told, in a request it received, which action failed.
+    expect(JSON.stringify(prompts)).toContain('dashboard_publish');
+    expect(JSON.stringify(prompts)).toContain("Ne déclare pas un succès qui n'a pas eu lieu");
   });
 
   it('Guard 3b: an honest return_result(status="blocked") after a failure finalizes as agent_blocked', async () => {

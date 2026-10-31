@@ -1166,10 +1166,10 @@ describe('runChatTurn — la relance d’escalade (coût d’un tour, 09/09)', (
     expect(String(relance?.messages[2]?.content)).toMatch(
       /^Record of this run: no tool has been called since the request\.\n\n/,
     );
-    // Le MÊME mécanisme que la boucle de job (#600) : la relance du chat est
-    // exactement celle que construit llm/action-recheck.ts, consigne comprise.
+    // La relance du chat est exactement celle que construit
+    // llm/action-recheck.ts, consigne comprise (#600).
     expect(relance?.messages).toEqual(
-      actionRecheckMessages('Bonjour, tu es là ?', 'Bonjour Quentin, je suis là.', []),
+      actionRecheckMessages('Bonjour, tu es là ?', 'Bonjour Quentin, je suis là.'),
     );
   });
 

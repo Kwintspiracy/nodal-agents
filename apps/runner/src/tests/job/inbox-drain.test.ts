@@ -74,7 +74,6 @@ import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { executeJob } from '../../job/execute.ts';
 import { loadThreadHistory } from '../../job/thread-history.ts';
-import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
 
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -139,9 +138,8 @@ type Sent = Array<{ role: string; content: unknown }>;
 
 /**
  * Le réseau : chaque appel au modèle est enregistré tel que le fournisseur le
- * reçoit ; la relecture d'action (#600) répond sans rien faire ; les autres
- * appels suivent `script`, et `onCall(n)` s'exécute AVANT la réponse n — pendant
- * l'appel, du point de vue du run.
+ * reçoit, et répond en suivant `script` ; `onCall(n)` s'exécute AVANT la
+ * réponse n — pendant l'appel, du point de vue du run.
  */
 function network(script: readonly Reply[], onCall: (n: number) => Promise<void> = async () => {}) {
   const turns: Sent[] = [];
@@ -157,15 +155,10 @@ function network(script: readonly Reply[], onCall: (n: number) => Promise<void> 
       }
       if (!url.includes('/chat/completions')) throw new Error(`unexpected fetch ${url}`);
       const body = JSON.parse(init?.body as string) as { stream?: boolean; messages: Sent };
-      const last = body.messages[body.messages.length - 1];
-      const recheck = textOf(last?.content).endsWith(ACTION_RECHECK);
-      let reply: Reply = { text: 'ok' };
-      if (!recheck) {
-        turns.push(body.messages);
-        await onCall(n);
-        reply = script[Math.min(n, script.length - 1)] ?? {};
-        n += 1;
-      }
+      turns.push(body.messages);
+      await onCall(n);
+      const reply: Reply = script[Math.min(n, script.length - 1)] ?? {};
+      n += 1;
       const usage = { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 };
       const delta: Record<string, unknown> = { role: 'assistant' };
       if (reply.text) delta['content'] = reply.text;

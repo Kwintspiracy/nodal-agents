@@ -33,6 +33,20 @@ export function delegatedJobs(facts: TreeFacts): JobFact[] {
   return facts.jobs.filter((j) => j.id !== facts.rootId);
 }
 
+/**
+ * Une demande qui appelle UNE délégation, faite une fois (#886) : la tête qui
+ * confie le même travail à un second membre de l'équipe, son premier compte
+ * rendu reçu, le refait. Lu sur les jobs enfants de la tête, jamais sur ce
+ * qu'elle écrit.
+ */
+export function delegatedOnce(facts: TreeFacts): string[] {
+  const direct = facts.jobs.filter((j) => j.parentJobId === facts.rootId);
+  if (direct.length <= 1) return [];
+  return [
+    `the root delegated ${direct.length} times for one request (${direct.map((j) => j.agentSlug ?? j.id.slice(0, 8)).join(', ')}): the work was repeated`,
+  ];
+}
+
 /** Les appels d'un outil, par son nom (le préfixe d'un connecteur `x__` compris). */
 export function callsOf(facts: TreeFacts, name: string | RegExp): ToolCallFact[] {
   return facts.toolCalls.filter((c) =>
