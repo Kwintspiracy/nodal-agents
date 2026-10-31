@@ -249,7 +249,7 @@ export function triggerJobWorker(jobId: string, env: RunnerEnv): void {
 
 /**
  * Download an inbound Discord image attachment and attach it to the job — the
- * Discord analog of telegram/handler.ts's attachInboundPhoto. Runs in the
+ * Discord analog of telegram/handler.ts's attachInboundFiles, images only. Runs in the
  * gateway AFTER the create-job transaction commits (network I/O must not sit
  * inside a DB txn) and BEFORE the worker is triggered.
  *
