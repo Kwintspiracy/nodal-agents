@@ -40,7 +40,7 @@ import type { RunnerEnv } from '../../env.ts';
 import {
   handleDiscordMessage,
   triggerJobWorker,
-  attachInboundImage,
+  attachInboundFiles,
   type DiscordHandleResult,
 } from './handler.ts';
 import { routeDiscordInteraction } from './interactions.ts';
@@ -206,18 +206,19 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
       return;
     }
 
-    // Image attach: download it (network — out of the txn) and attach it to
-    // the job BEFORE the worker runs, so the agent sees the image. Best-effort:
-    // a failed download leaves the job text-only and the worker still runs.
-    if (result.jobId && result.attachment) {
-      await attachInboundImage({
+    // Inbound files: download them (network — out of the txn) and put them in
+    // the job BEFORE the worker runs, so the agent sees them. A file that
+    // cannot be taken is said in the job's message (channels/inbound-files.ts);
+    // only the DB write can throw here, and the worker still runs.
+    if (result.jobId && result.files) {
+      await attachInboundFiles({
         jobId: result.jobId,
         entityId: agentEntityId,
-        attachment: result.attachment,
+        inbound: result.files,
         db: deps.db,
       }).catch((err) => {
         console.warn(
-          `[discord-gateway agent=${agentId}] image attach failed for job ${result.jobId}: ${
+          `[discord-gateway agent=${agentId}] inbound files attach failed for job ${result.jobId}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );

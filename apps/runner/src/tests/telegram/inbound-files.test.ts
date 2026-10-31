@@ -68,7 +68,11 @@ import {
   pruneInboundFolder,
 } from '../../channels/inbound-files.ts';
 import { pruneJobMediaFiles } from '../../cron/prune-media.ts';
-import { attachInboundImage } from '../../channels/discord/handler.ts';
+import {
+  attachInboundFiles as attachDiscordFiles,
+  handleDiscordMessage,
+} from '../../channels/discord/handler.ts';
+import type { DiscordInboundAttachment } from '../../channels/discord/types.ts';
 import { buildTestPdf } from '@nodal-agents/test-kit';
 
 const CHAT = 4242;
@@ -979,6 +983,55 @@ describe('the inbound folder of a channel, keyed by job, and the layout before i
 
 const DISCORD_CHANNEL = '998877665544332211';
 
+/**
+ * Un message Discord privé (DM) de bout en bout, comme le gateway le traite :
+ * `handleDiscordMessage` (la base de test), puis la réception des fichiers
+ * HORS transaction, son échec seulement journalisé — la séquence exacte de
+ * `gateway.ts`. Le CDN de Discord est le `fetch` donné.
+ */
+async function deliverDiscord(
+  content: string,
+  attachments: DiscordInboundAttachment[],
+  cdn: (url: string) => Promise<Response>,
+) {
+  const result = await handleDiscordMessage({
+    message: {
+      channelId: DISCORD_CHANNEL,
+      channelType: 'dm',
+      content,
+      author: { id: 'u-910', bot: false, username: 'quentin', globalName: 'Quentin' },
+      mentionedUserIds: [],
+      attachments,
+    },
+    receivingAgentId: seed.agentId,
+    receivingAgentEntityId: seed.entityId,
+    receivingAgentBotUserId: 'bot-910',
+    tx: db as unknown as RunnerDeps['db'],
+  });
+  expect(result.jobId).toBeDefined();
+  const jobId = result.jobId!;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => cdn(String(input))),
+  );
+  try {
+    if (result.files) {
+      await attachDiscordFiles({
+        jobId,
+        entityId: seed.entityId,
+        inbound: result.files,
+        db: db as unknown as RunnerDeps['db'],
+      }).catch((err: unknown) => {
+        console.warn(`test gateway: inbound files attach failed: ${String(err)}`);
+      });
+    }
+  } finally {
+    vi.unstubAllGlobals();
+  }
+  const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+  return { jobId, job: job! };
+}
+
 /** Un vrai PDF d'une page : `file_read` le passe au modèle tel quel (#905). */
 const INVOICE = buildTestPdf([{ text: 'Facture EDF 2026' }]);
 
@@ -1256,43 +1309,20 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
 
   it('Discord image for a model that does not see: the routing note names a path the file tools open', async () => {
     const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
-    const [created] = await db
-      .insert(agentJobs)
-      .values({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        channel: 'discord',
-        chatId: DISCORD_CHANNEL,
-        task: 'regarde',
-        status: 'pending',
-      })
-      .returning({ id: agentJobs.id });
-    const jobId = created!.id;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => new Response(PNG, { status: 200 })),
+    const { jobId, job: delivered } = await deliverDiscord(
+      'regarde',
+      [
+        {
+          url: 'https://cdn.discordapp.test/a.png',
+          contentType: 'image/png',
+          size: PNG.byteLength,
+          name: 'a.png',
+        },
+      ],
+      async () => new Response(PNG, { status: 200 }),
     );
-    // Ce que le gateway lui passe, tel quel (un canal qui donnait son id le
-    // garde ici : la réception doit l'ignorer).
-    const attachment = {
-      url: 'https://cdn.discordapp.test/a.png',
-      contentType: 'image/png',
-      size: PNG.byteLength,
-      text: 'regarde',
-      channelId: DISCORD_CHANNEL,
-    };
-    try {
-      await attachInboundImage({
-        jobId,
-        entityId: seed.entityId,
-        attachment,
-        db: db as unknown as RunnerDeps['db'],
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
-    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
-    const request = await requestAsTheProviderGetsIt(job!.messages as ModelMessage[], {
+    const job = delivered;
+    const request = await requestAsTheProviderGetsIt(job.messages as ModelMessage[], {
       image: { sees: false, reason: 'this model does not take images' },
       pdf: { sees: true },
     });
@@ -1320,6 +1350,109 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
     const [kept] = await readdir(classement);
     expect(new Uint8Array(await readFile(join(classement, kept!)))).toEqual(PNG);
     await rm(classement, { recursive: true });
-    expect(noted).toBe(join(root, seed.entityId, 'shared', 'discord', `${jobId}.png`));
+    expect(noted).toBe(join(root, seed.entityId, 'shared', 'discord', jobId, 'a.png'));
   });
+
+  // Revue de #911, passe 2 (P2) : Discord avait sa propre réception, dont les
+  // refus (boîte pleine, téléchargement en échec, fichier trop gros) levaient
+  // une erreur que le gateway ne faisait que journaliser : le modèle répondait
+  // sans savoir qu'une image avait été envoyée, et la personne la croyait
+  // arrivée. Par la réception commune, chacun devient la même partie
+  // « NOT received » que sur Telegram, avec sa raison.
+  // Mutations vérifiées : le refus de Discord remis en `throw` avant la
+  // réception commune (le gateway le journalise) → « inbox full » rouge ;
+  // l'image trop grosse de nouveau écartée par le handler → « over the cap » rouge.
+  it.each([
+    {
+      case: 'inbox full',
+      size: 3,
+      cdn: async () => new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { status: 200 }),
+      full: true,
+      reason: 'already has 200 received files under shared/discord/',
+    },
+    {
+      case: 'download failed',
+      size: 3,
+      cdn: async () => new Response('gone', { status: 404 }),
+      full: false,
+      reason: 'Discord answered HTTP 404 to its download',
+    },
+    {
+      case: 'over the cap',
+      size: 11 * 1024 * 1024,
+      cdn: async (): Promise<Response> => {
+        throw new Error('test: an image over the cap is never fetched');
+      },
+      full: false,
+      reason: 'Nodal takes Discord files up to 10.0 MiB, and this one is 11.0 MiB',
+    },
+  ])(
+    'Discord, $case: the model is told the image was NOT received, and why',
+    async ({ size, cdn, full, reason }) => {
+      const discord = join(root, seed.entityId, 'shared', 'discord');
+      const filled: string[] = [];
+      if (full) {
+        const rows = await db
+          .insert(agentJobs)
+          .values(
+            Array.from({ length: 200 }, (_, i) => ({
+              entityId: seed.entityId,
+              agentId: seed.agentId,
+              channel: 'discord' as const,
+              chatId: DISCORD_CHANNEL,
+              task: `d ${i}`,
+              status: 'completed' as const,
+            })),
+          )
+          .returning({ id: agentJobs.id });
+        await mkdir(discord, { recursive: true });
+        await Promise.all(
+          rows.map(async ({ id }) => {
+            filled.push(id);
+            await mkdir(join(discord, id));
+            await writeFile(join(discord, id, 'x.png'), 'x');
+          }),
+        );
+      }
+
+      const { job } = await deliverDiscord(
+        'tiens',
+        [
+          {
+            url: 'https://cdn.discordapp.test/p.png',
+            contentType: 'image/png',
+            size,
+            name: 'p.png',
+          },
+        ],
+        cdn,
+      );
+
+      const request = await requestAsTheProviderGetsIt(job.messages as ModelMessage[], {
+        image: { sees: true },
+        pdf: { sees: true },
+      });
+      const shown = JSON.parse(request.text) as Array<{ role: string; content: unknown }>;
+      expect(shown).toHaveLength(1);
+      expect(shown[0]!.content).toEqual([
+        { type: 'text', text: 'tiens' },
+        {
+          type: 'text',
+          text:
+            `[A file sent with this message was NOT received: "p.png" (image/png, ` +
+            `${size === 3 ? '3 B' : '11.0 MiB'}). Reason: ${
+              full
+                ? 'this conversation already has 200 received files under shared/discord/ from ' +
+                  'the last 30 days that were not moved; moving or deleting some of them makes room'
+                : reason
+            }. Tell the user it did not arrive.]`,
+        },
+      ]);
+      expect(request.text).toContain(reason);
+      await Promise.all(
+        filled.map((id) => rm(join(discord, id), { recursive: true, force: true })),
+      );
+    },
+    180_000,
+  );
 });

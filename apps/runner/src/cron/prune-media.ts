@@ -3,10 +3,10 @@
 //
 // Telegram and Discord attachments are written to the entity's SHARED
 // workspace at:
-//   <workspacesRoot>/<entityId>/shared/telegram/<jobId>/<original name>
+//   <workspacesRoot>/<entityId>/shared/<telegram|discord>/<jobId>/<original name>
 //     (apps/runner/src/channels/inbound-files.ts receiveInboundFiles, #899, #910)
 //   <workspacesRoot>/<entityId>/shared/discord/<jobId>.<ext>
-//     (apps/runner/src/channels/discord/handler.ts attachInboundImage, #910)
+//     (Discord's own intake, until the review of #911)
 // and the images and PDFs a job's tools fetched, beside them, one folder per job:
 //   <workspacesRoot>/<entityId>/shared/tools/<jobId>/<toolCallId>-<n>.<ext>
 //     (apps/runner/src/job/model-images.ts saveToolAttachments)
