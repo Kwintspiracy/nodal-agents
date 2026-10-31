@@ -462,6 +462,7 @@ describe('la matrice activités × modèles', () => {
       coutMedianUsd: 0.0358,
       coutTotalUsd: 0.0358 + 0.1,
       coutInconnu: 1,
+      partCacheLue: 60000 / (3 * 33722),
     });
     const html = htmlMatrice(construireMatrice([QUESTION_V2, rouge, sansCout, saute], CATALOGUE));
     expect(html).toContain(
@@ -470,6 +471,19 @@ describe('la matrice activités × modèles', () => {
     expect(html).toContain('median 21 s · $0.036');
     expect(html).toContain('total $0.136 for 3 runs, 1 without a cost');
     expect(html).toContain('1 skipped, not counted');
+    expect(html).toContain('cache read 59 % of input');
+  });
+
+  it('dit la part du cache relue par colonne : un modèle qui ne relit plus rien se voit à 0 %, un cache non rapporté reste « not measured »', () => {
+    const zero = { ...QUESTION_V2, cachedTokens: 0 };
+    expect(resumerColonne([zero]).partCacheLue).toBe(0);
+    expect(htmlMatrice(construireMatrice([zero], CATALOGUE))).toContain('cache read 0 % of input');
+
+    const inconnu = { ...QUESTION_V2, cachedTokens: null };
+    expect(resumerColonne([inconnu]).partCacheLue).toBeNull();
+    const html = htmlMatrice(construireMatrice([inconnu], CATALOGUE));
+    expect(html).toContain('cache read not measured');
+    expect(html).not.toContain('cache read 0 %');
   });
 
   it('dit en une phrase ce qui est comparé : les modèles, les essais par cellule, la période', () => {

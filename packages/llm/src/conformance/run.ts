@@ -6,8 +6,8 @@
 // probe flipping from pass to fail between two runs of the SAME suite.
 
 import { createLlmClient } from '../client.ts';
-import { CAPABILITY_MATRIX } from '../providers/registry.ts';
-import type { ProviderConfig, ProviderName } from '../types.ts';
+import { capabilitiesFor } from '../providers/registry.ts';
+import type { ProviderCapabilities, ProviderConfig, ProviderName } from '../types.ts';
 import { ALL_PROBES, type Probe, type ProbeResult, type ProbeStatus } from './probes.ts';
 
 export interface ConformanceRunOptions {
@@ -30,7 +30,7 @@ export interface ConformanceReport {
    * complete when each has been driven with its own native credentials.
    */
   harness: ProviderName;
-  declared: (typeof CAPABILITY_MATRIX)[ProviderName];
+  declared: ProviderCapabilities;
   results: ProbeResult[];
   summary: Record<ProbeStatus, number>;
   /** Probes whose outcome contradicts CAPABILITY_MATRIX. The audit-relevant list. */
@@ -59,7 +59,7 @@ export async function runConformance(opts: ConformanceRunOptions): Promise<Confo
   const t0 = Date.now();
 
   const client = createLlmClient(opts.config);
-  const declared = CAPABILITY_MATRIX[opts.config.provider];
+  const declared = capabilitiesFor(opts.config.provider, opts.config.model);
   const ctx = { client, declared };
 
   const selected = opts.only?.length

@@ -76,6 +76,18 @@ export interface ModelCapabilities {
    * flip the always-on reasoning default the `reasoning` flag implies).
    */
   reasoningControl?: ReasoningControl;
+  /**
+   * The model honours Anthropic-style `cache_control` breakpoints sent in the
+   * request, WHICHEVER route carries them (a direct Anthropic key, OpenRouter).
+   * A fact about the MODEL, read by `promptCachingFor` (@nodal-agents/llm):
+   * the route does not decide it. Anthropic does not cache on its own, so a
+   * Claude model reached through OpenRouter read nothing from the cache
+   * until the client sent the breakpoints (#425: 0 of 852 calls). Set on the
+   * Claude entries only; a model that caches by itself (GLM, DeepSeek, MiMo)
+   * leaves it unset and its request carries no marker. Unset = the provider's
+   * own default (`CAPABILITY_MATRIX`), never a guess from the model's name.
+   */
+  cacheControl?: boolean;
 }
 
 /**
@@ -588,6 +600,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Opus 5',
       capabilities: {
         tools: true,
+        cacheControl: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
@@ -603,6 +616,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Sonnet 5',
       capabilities: {
         tools: true,
+        cacheControl: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
@@ -618,6 +632,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Fable 5',
       capabilities: {
         tools: true,
+        cacheControl: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
@@ -641,6 +656,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Fable 5.1',
       capabilities: {
         tools: true,
+        cacheControl: true,
         reasoningControl: {
           kind: 'effort',
           levels: ['low', 'medium', 'high', 'max'],
@@ -665,6 +681,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Sonnet 5.5',
       capabilities: {
         tools: true,
+        cacheControl: true,
         reasoningControl: {
           kind: 'effort',
           levels: ['low', 'medium', 'high', 'max'],
@@ -693,6 +710,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Haiku 5.5',
       capabilities: {
         tools: true,
+        cacheControl: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
@@ -857,6 +875,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Haiku 4.5',
       capabilities: {
         tools: true,
+        cacheControl: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 200_000,
@@ -874,6 +893,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Opus 4.7',
       capabilities: {
         tools: true,
+        cacheControl: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
@@ -889,6 +909,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Opus 4.8',
       capabilities: {
         tools: true,
+        cacheControl: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
@@ -904,6 +925,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Sonnet 4.6',
       capabilities: {
         tools: true,
+        cacheControl: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
