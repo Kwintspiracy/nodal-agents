@@ -8,6 +8,8 @@
 // scan). The scanned page draws its words as pixels, in a 5×7 bitmap font, so
 // a model that reads it sees them and a text extractor finds nothing.
 
+import { createHash } from 'node:crypto';
+
 /**
  * One page: text set in Helvetica, or the same words as a scanned image.
  * `scale`: pixels per bitmap dot (default 6) — a larger one makes a heavier
@@ -67,22 +69,87 @@ function bitmap(
 /** PDF string escaping for a `( … ) Tj` operand. */
 const pdfString = (t: string): string => t.replace(/[\\()]/g, (c) => `\\${c}`);
 
+/** RC4, the cipher of the PDF Standard security handler, revision 2. */
+function rc4(key: Buffer, data: Buffer): Buffer {
+  const s = Array.from({ length: 256 }, (_, i) => i);
+  let j = 0;
+  for (let i = 0; i < 256; i += 1) {
+    j = (j + s[i]! + key[i % key.length]!) & 0xff;
+    [s[i], s[j]] = [s[j]!, s[i]!];
+  }
+  const out = Buffer.alloc(data.length);
+  let a = 0;
+  let b = 0;
+  for (let k = 0; k < data.length; k += 1) {
+    a = (a + 1) & 0xff;
+    b = (b + s[a]!) & 0xff;
+    [s[a], s[b]] = [s[b]!, s[a]!];
+    out[k] = data[k]! ^ s[(s[a]! + s[b]!) & 0xff]!;
+  }
+  return out;
+}
+
+const md5 = (...parts: Buffer[]): Buffer => createHash('md5').update(Buffer.concat(parts)).digest();
+
+/** The padding string of the Standard security handler (PDF 1.7, 7.6.3.3). */
+const PAD = Buffer.from('28BF4E5E4E758A4164004E56FFFA01082E2E00B6D0683E802F0CA9FE6453697A', 'hex');
+
+/**
+ * What `{ restricted }` encrypts with: the Standard security handler,
+ * revision 2 (RC4, 40-bit), an EMPTY user password — every reader opens the
+ * file without asking — and an owner password that restricts it (`P`: no
+ * copying, no changing). A bank statement is commonly saved this way.
+ */
+function restriction(): {
+  objectKey: (n: number) => Buffer;
+  dict: string;
+  id: string;
+} {
+  const id = createHash('md5').update('nodal test pdf').digest();
+  const ownerKey = md5(
+    Buffer.concat([Buffer.from('owner', 'latin1'), PAD]).subarray(0, 32),
+  ).subarray(0, 5);
+  const O = rc4(ownerKey, PAD);
+  const P = -44;
+  const p = Buffer.alloc(4);
+  p.writeInt32LE(P);
+  const key = md5(PAD, O, p, id).subarray(0, 5);
+  const U = rc4(key, PAD);
+  return {
+    objectKey: (n) =>
+      md5(key, Buffer.from([n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, 0, 0])).subarray(0, 10),
+    dict:
+      `<< /Filter /Standard /V 1 /R 2 /O <${O.toString('hex')}> /U <${U.toString('hex')}> ` +
+      `/P ${P} >>`,
+    id: id.toString('hex'),
+  };
+}
+
 /**
  * A PDF of `pages`, US Letter: each `{ text }` page sets its text, each
- * `{ scanned }` page holds one image of its words and no text.
+ * `{ scanned }` page holds one image of its words and no text. `restricted`:
+ * encrypted with an empty user password and an owner's restrictions
+ * (`restriction`), as readers open it without a word.
  */
-export function buildTestPdf(pages: readonly TestPdfPage[]): Buffer {
+export function buildTestPdf(
+  pages: readonly TestPdfPage[],
+  opts: { restricted?: boolean } = {},
+): Buffer {
+  const lock = opts.restricted === true ? restriction() : null;
   const objects: Buffer[] = [];
   const add = (body: Buffer | string): number => {
     objects.push(typeof body === 'string' ? Buffer.from(body, 'latin1') : body);
     return objects.length;
   };
-  const stream = (dict: string, data: Buffer): Buffer =>
-    Buffer.concat([
+  // A stream is encrypted with the key of the object it will be.
+  const stream = (dict: string, plain: Buffer): Buffer => {
+    const data = lock === null ? plain : rc4(lock.objectKey(objects.length + 1), plain);
+    return Buffer.concat([
       Buffer.from(`<< ${dict} /Length ${data.length} >>\nstream\n`, 'latin1'),
       data,
       Buffer.from('\nendstream', 'latin1'),
     ]);
+  };
 
   add('<< /Type /Catalog /Pages 2 0 R >>');
   add('PAGES'); // placeholder, rewritten once the kids are known
@@ -121,6 +188,7 @@ export function buildTestPdf(pages: readonly TestPdfPage[]): Buffer {
     `<< /Type /Pages /Kids [${kids.map((k) => `${k} 0 R`).join(' ')}] /Count ${kids.length} >>`,
     'latin1',
   );
+  const encrypt = lock === null ? null : add(lock.dict);
 
   const chunks: Buffer[] = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', 'latin1')];
   let offset = chunks[0]!.length;
@@ -138,7 +206,11 @@ export function buildTestPdf(pages: readonly TestPdfPage[]): Buffer {
   const xref =
     `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n` +
     offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('') +
-    `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${offset}\n%%EOF\n`;
+    `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R` +
+    (lock === null || encrypt === null
+      ? ''
+      : ` /Encrypt ${encrypt} 0 R /ID [<${lock.id}> <${lock.id}>]`) +
+    ` >>\nstartxref\n${offset}\n%%EOF\n`;
   chunks.push(Buffer.from(xref, 'latin1'));
   return Buffer.concat(chunks);
 }

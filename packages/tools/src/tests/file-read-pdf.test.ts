@@ -41,6 +41,14 @@ const HEAVY = buildTestPdf(
 );
 // One page heavier than a PDF can be passed at.
 const ONE_HEAVY_PAGE = buildTestPdf([{ scanned: 'A', scale: 420 }]);
+// A statement saved with restrictions: encrypted, an empty user password (every
+// reader opens it), longer than a request carries.
+const LOCKED = buildTestPdf(
+  Array.from({ length: MODEL_REQUEST_MAX_IMAGES + 1 }, (_, k) => ({
+    text: `Statement page ${k + 1}`,
+  })),
+  { restricted: true },
+);
 // Starts like a PDF, is not one.
 const BROKEN = Buffer.from('%PDF-1.4\nthis is not a pdf at all\n');
 // A binary that is no PDF, whatever its name says.
@@ -71,6 +79,7 @@ beforeAll(async () => {
   await writeFile(join(ws, 'heavy.pdf'), HEAVY);
   await writeFile(join(ws, 'one-heavy-page.pdf'), ONE_HEAVY_PAGE);
   await writeFile(join(ws, 'notes.txt'), 'some notes\n');
+  await writeFile(join(ws, 'statement.pdf'), LOCKED);
   // Above the cap: a real PDF, then padding after its end, as a large scan has.
   await writeFile(
     join(ws, 'huge.pdf'),
@@ -272,6 +281,40 @@ describe('file_read — a PDF longer than a request carries is read by windows o
     expect(r.attachments).toBeUndefined();
     expect((r.output as { reason: string }).reason).toContain(
       'and it was not read: page 1 alone is 10.6 MiB, above the 10.0 MiB a PDF can be passed at',
+    );
+  });
+
+  it('an encrypted (restricted) PDF: its window is rendered from the decrypted pages, their text intact, and said', async () => {
+    // What it is: encrypted, yet every reader opens it.
+    const { PDFDocument } = await import('pdf-lib');
+    expect((await PDFDocument.load(LOCKED, { ignoreEncryption: true })).isEncrypted).toBe(true);
+    expect(await countPdfPages(LOCKED)).toEqual({ pages: MAX + 1 });
+
+    const r = await read('statement.pdf', TAKES_PDFS);
+    expect(await attachedPages(r)).toEqual(
+      Array.from({ length: MAX }, (_, k) => `Statement page ${k + 1}`),
+    );
+    if (r.outcome !== 'success') throw new Error('expected success');
+    // What is handed over is a PDF any model opens: not encrypted.
+    const handed = Buffer.from(r.attachments?.[0]?.data ?? '', 'base64');
+    expect((await PDFDocument.load(handed)).isEncrypted).toBe(false);
+    // Each page is the image PDF.js rendered of it, at 144 dpi (US Letter: 1224 × 1584).
+    const { PDFParse } = await import('pdf-parse');
+    const parser = new PDFParse({ data: new Uint8Array(handed) });
+    try {
+      const images = await parser.getImage({
+        partial: [1],
+        imageBuffer: false,
+        imageDataUrl: false,
+      });
+      expect(images.pages[0]?.images.map((i) => [i.width, i.height])).toEqual([[1224, 1584]]);
+    } finally {
+      await parser.destroy();
+    }
+    expect((r.output as { document: { note: string } }).document.note).toBe(
+      `Pages 1-${MAX} of ${MAX + 1} are attached (a request to a model carries ${MAX} images ` +
+        `at most, a PDF page counting as one); read the next ones with "pages": "${MAX + 1}". ` +
+        'The document is encrypted: these pages were rendered from it, each an image with its text.',
     );
   });
 

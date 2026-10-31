@@ -195,10 +195,11 @@ async function pdfResult(
         'counting as one'
       : null;
   let window: Uint8Array;
+  let rendered = false;
   for (;;) {
     const whole = asked.first === 1 && count === total && bytes.length <= MAX_MODEL_PDF_BYTES;
     const cut = whole
-      ? { bytes: new Uint8Array(bytes) }
+      ? { bytes: new Uint8Array(bytes), rendered: false }
       : await cutPdfPages(bytes, asked.first, asked.first + count - 1);
     if ('error' in cut) {
       return {
@@ -210,6 +211,7 @@ async function pdfResult(
     }
     if (cut.bytes.length <= MAX_MODEL_PDF_BYTES) {
       window = cut.bytes;
+      rendered = cut.rendered;
       break;
     }
     if (count === 1) {
@@ -243,10 +245,16 @@ async function pdfResult(
     last < total
       ? `; read the next ones with "pages": "${range(last + 1, Math.min(total, last + MODEL_REQUEST_MAX_IMAGES))}"`
       : '';
-  const note = partial
-    ? `${count === 1 ? 'Page' : 'Pages'} ${range(asked.first, last)} of ${total} ` +
-      `${count === 1 ? 'is' : 'are'} attached${why === null ? '' : ` (${why})`}${next}.`
-    : undefined;
+  // An encrypted document's window is rendered (`cutPdfPages`): said, since
+  // its pages reach the model as images with their text, not as stored.
+  const how = rendered
+    ? ' The document is encrypted: these pages were rendered from it, each an image with its text.'
+    : '';
+  const note =
+    partial || rendered
+      ? `${count === 1 ? 'Page' : 'Pages'} ${range(asked.first, last)} of ${total} ` +
+        `${count === 1 ? 'is' : 'are'} attached${why === null ? '' : ` (${why})`}${next}.${how}`
+      : undefined;
   return {
     ok: true,
     document: {

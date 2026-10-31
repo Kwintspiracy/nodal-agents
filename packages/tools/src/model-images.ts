@@ -161,24 +161,95 @@ export async function countPdfPages(
 
 /**
  * Pages `first` to `last` (1-based, inclusive) of a PDF, as a PDF of their
- * own (pdf-lib), or why they could not be cut out. What a model is handed of a
- * document longer than a request carries: a window of it, never nothing.
- * Loaded on demand, like pdf-parse.
+ * own, or why they could not be cut out. What a model is handed of a document
+ * longer than a request carries: a window of it, never nothing. Loaded on
+ * demand, like pdf-parse.
+ *
+ * pdf-lib copies a page as it is stored. An ENCRYPTED document (a statement
+ * saved with restrictions and an empty user password, which every reader
+ * opens) stores its pages encrypted, and pdf-lib does not decrypt: the copy
+ * would be an unencrypted file of encrypted bytes — blank or garbage pages
+ * handed over as read (review of #905, pass 2). Such a window is RENDERED
+ * instead, by PDF.js, which decrypts it (`renderPdfPages`), and `rendered`
+ * says so.
  */
 export async function cutPdfPages(
   bytes: Uint8Array,
   first: number,
   last: number,
-): Promise<{ bytes: Uint8Array } | { error: string }> {
+): Promise<{ bytes: Uint8Array; rendered: boolean } | { error: string }> {
   try {
     const { PDFDocument } = await import('pdf-lib');
     const source = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+    if (source.isEncrypted) return await renderPdfPages(bytes, first, last);
     const out = await PDFDocument.create({ updateMetadata: false });
     const indices = Array.from({ length: last - first + 1 }, (_, k) => first - 1 + k);
     for (const page of await out.copyPages(source, indices)) out.addPage(page);
-    return { bytes: await out.save() };
+    return { bytes: await out.save(), rendered: false };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Pixels per PDF point a rendered page is drawn at: 144 dpi, a legible scan. */
+const RENDER_SCALE = 2;
+
+/** A page's text as the standard Helvetica can carry it (WinAnsi): anything else becomes "?". */
+const winAnsi = (text: string): string =>
+  [...text]
+    .map((c) => {
+      const code = c.charCodeAt(0);
+      return c === '\n' || (code >= 0x20 && code <= 0x7e) || (code >= 0xa0 && code <= 0xff)
+        ? c
+        : '?';
+    })
+    .join('');
+
+/**
+ * Pages `first` to `last` of a PDF as PDF.js reads them — decrypted — in a new
+ * PDF: each page its rendered image, at its size, with the page's text over it
+ * in invisible ink, so that a model reads the page as it looks AND as text,
+ * as it reads a PDF that was never encrypted.
+ */
+async function renderPdfPages(
+  bytes: Uint8Array,
+  first: number,
+  last: number,
+): Promise<{ bytes: Uint8Array; rendered: boolean } | { error: string }> {
+  const { PDFParse } = await import('pdf-parse');
+  const { PDFDocument, StandardFonts, TextRenderingMode, setTextRenderingMode } =
+    await import('pdf-lib');
+  const partial = Array.from({ length: last - first + 1 }, (_, k) => first + k);
+  const parser = new PDFParse({ data: new Uint8Array(bytes) });
+  try {
+    const shots = await parser.getScreenshot({
+      partial,
+      scale: RENDER_SCALE,
+      imageBuffer: true,
+      imageDataUrl: false,
+    });
+    const texts = await parser.getText({ partial });
+    const out = await PDFDocument.create({ updateMetadata: false });
+    const font = await out.embedFont(StandardFonts.Helvetica);
+    for (const n of partial) {
+      const shot = shots.pages.find((s) => s.pageNumber === n);
+      if (shot === undefined) return { error: `page ${n} could not be rendered` };
+      const width = shot.width / shot.scale;
+      const height = shot.height / shot.scale;
+      const page = out.addPage([width, height]);
+      page.drawImage(await out.embedPng(shot.data), { x: 0, y: 0, width, height });
+      const words = winAnsi(texts.pages.find((p) => p.num === n)?.text ?? '').trim();
+      if (words.length === 0) continue;
+      const lines = words.split('\n').length;
+      const size = Math.max(1, Math.min(8, (height - 8) / (lines * 1.2)));
+      page.pushOperators(setTextRenderingMode(TextRenderingMode.Invisible));
+      page.drawText(words, { x: 4, y: height - 4 - size, size, lineHeight: size * 1.2, font });
+    }
+    return { bytes: await out.save(), rendered: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    await parser.destroy();
   }
 }
 
