@@ -20,17 +20,29 @@ export type {
   UserInputResponse,
 } from './types';
 
-// Images a tool hands to the model with its result: one rule for every tool
-// (file_read on an image file, an MCP server's image block).
+// Files (images, PDFs) a tool hands to the model with its result: one rule for every tool
+// (file_read on an image or a PDF, an MCP server's image block).
 export {
   MODEL_IMAGE_MEDIA_TYPES,
   MAX_MODEL_IMAGE_BYTES,
-  admitModelImage,
+  MAX_MODEL_PDF_BYTES,
+  PDF_MEDIA_TYPE,
+  admitModelAttachment,
+  attachmentKind,
+  attachmentUnits,
   base64DecodedBytes,
+  countPdfPages,
   formatBytes,
+  isPdf,
+  sniffAttachmentMediaType,
   sniffImageMediaType,
 } from './model-images';
-export type { ToolImage, ModelImageInput, ImageAttachOutcome } from './model-images';
+export type {
+  ToolAttachment,
+  ModelAttachmentInput,
+  ModelInputSupport,
+  ModelAttachOutcome,
+} from './model-images';
 
 // Intention de mutation (plan « Vérifier & Corriger ») — posée au seam
 // d'exécution ; exportée pour les surfaces qui n'y passent PAS (le runtime CLI

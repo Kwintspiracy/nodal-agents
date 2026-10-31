@@ -1226,6 +1226,9 @@ importers:
       officeparser:
         specifier: ^7.1.0
         version: 7.1.0
+      pdf-parse:
+        specifier: ^2.4.5
+        version: 2.4.5
       pptx-automizer:
         specifier: ^0.8.2
         version: 0.8.2

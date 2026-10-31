@@ -49,6 +49,7 @@ import {
   serverTimezone,
   modelContextWindow,
   modelImageInputFor,
+  modelPdfInputFor,
   estimateCallCostUsd,
   isUntrustedTool,
   TOOL_RESULT_MODEL_CHARS,
@@ -130,7 +131,7 @@ import type {
   ToolProvisioning,
   ApprovalGateRequest,
   ToolExecutionResult,
-  ModelImageInput,
+  ModelAttachmentInput,
 } from '@nodal-agents/tools';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import {
@@ -209,7 +210,7 @@ import {
   toolResultShape,
   toolResultOutputText,
 } from './tool-result-shape.ts';
-import { hydrateForLlm, saveToolImages, toolImagesDir } from './model-images.ts';
+import { hydrateForLlm, saveToolAttachments, toolImagesDir } from './model-images.ts';
 import { unansweredToolCalls } from './close-transcript.ts';
 import {
   APPROVED_CALL_OUTCOME_UNKNOWN,
@@ -2153,17 +2154,30 @@ async function runJobTracked(
   // One source, per model, for every reader: the attach rule, hydrateForLlm and
   // the team block (review of #798: a per-provider flag said "sees" for every
   // model of anthropic, openai and google, text-only ones included).
-  // What a tool that comes back with an image is told (`ctx.attachImage`,
-  // packages/tools/src/model-images.ts) and what hydrateForLlm applies to the
-  // person's images: the same fact, for every image of this job. A tool image
-  // is kept as a file in the shared folder (job/model-images.ts): a run without
-  // one keeps none, and says so.
+  // What a tool that comes back with an image or a PDF is told
+  // (`ctx.attachForModel`, packages/tools/src/model-images.ts) and what
+  // hydrateForLlm applies to every file of the request: the same facts, per
+  // kind of file, for every file of this job (#903: a PDF is read by fewer
+  // models than an image, `modelPdfInputFor`). A tool's file is kept as a file
+  // in the shared folder (job/model-images.ts): a run without one keeps none,
+  // and says so.
   const imageCache = new Map<string, Uint8Array>();
-  const seenByModel = modelImageInputFor(llmClient.config.model);
-  const modelImageInput: ModelImageInput =
-    seenByModel.sees && sharedWorkspacePath === null
-      ? { sees: false, reason: 'this run has no shared folder to keep an image in' }
-      : seenByModel;
+  const pdfPageCache = new Map<string, number | string>();
+  const seenByModel: ModelAttachmentInput = {
+    image: modelImageInputFor(llmClient.config.model),
+    pdf: modelPdfInputFor(llmClient.config.model),
+  };
+  const keptInSharedFolder = (
+    support: ModelAttachmentInput['image'],
+    what: string,
+  ): ModelAttachmentInput['image'] =>
+    support.sees && sharedWorkspacePath === null
+      ? { sees: false, reason: `this run has no shared folder to keep ${what} in` }
+      : support;
+  const modelInput: ModelAttachmentInput = {
+    image: keptInSharedFolder(seenByModel.image, 'an image'),
+    pdf: keptInSharedFolder(seenByModel.pdf, 'a PDF document'),
+  };
 
   // ── 4. Orchestrator? ──────────────────────────────────────────────────────────
   // A unified orchestrator receives BOTH delegation toolsets (assign_* + create_task)
@@ -3017,15 +3031,20 @@ async function runJobTracked(
   // ── 11.6 ToolResultOutput type + coerce helper (shared by resume step + loop) ──
   // AI SDK v6 ToolResultPart.output is a discriminated union; we coerce all raw
   // tool outputs here so every writer uses the same canonical shape.
-  // `content`: a success that came back with images (`ctx.attachImage`), the
-  // tool's text first, then each image — what `packages/llm` sends to every
-  // provider in the form it takes (`withToolResultImagesAsUserParts`).
+  // `content`: a success that came back with images or PDFs
+  // (`ctx.attachForModel`), the tool's text first, then each file — what
+  // `packages/llm` sends to every provider in the form it takes
+  // (`withToolResultAttachmentsAsUserParts`).
   type ToolResultOutput =
     | { type: 'text'; value: string }
     | { type: 'json'; value: unknown }
     | {
         type: 'content';
-        value: Array<{ type: 'text'; text: string } | { type: 'image-url'; url: string }>;
+        value: Array<
+          | { type: 'text'; text: string }
+          | { type: 'image-url'; url: string }
+          | { type: 'file-url'; url: string }
+        >;
       };
   //
   // INJECT-001. `toolName` is what decides whether the payload gets framed as
@@ -3097,17 +3116,19 @@ async function runJobTracked(
       });
     }
     const read = toResultOutput(toolOutputForModel(tool, result.output), toolName);
-    // The images the tool attached (`ctx.attachImage`, admitted against this
-    // job's model) follow its text, in the order it attached them: saved as
-    // files beside the channel photos, the result keeping their paths, never
-    // their bytes (job/model-images.ts). `modelImageInput` admits none without
-    // a shared folder.
-    if (!result.images || result.images.length === 0 || sharedWorkspacePath === null) return read;
+    // The files the tool attached (`ctx.attachForModel`, admitted against this
+    // job's model) follow its text, in the order it attached them: saved
+    // beside the channel photos, the result keeping their paths, never their
+    // bytes (job/model-images.ts). `modelInput` admits none without a shared
+    // folder.
+    if (!result.attachments || result.attachments.length === 0 || sharedWorkspacePath === null) {
+      return read;
+    }
     try {
-      const kept = await saveToolImages(
+      const kept = await saveToolAttachments(
         toolImagesDir(sharedWorkspacePath, jobId as string),
         toolCallId,
-        result.images,
+        result.attachments,
       );
       return {
         type: 'content',
@@ -3118,7 +3139,7 @@ async function runJobTracked(
       return {
         type: 'text',
         value:
-          `${toolResultOutputText(read)}\n[The ${result.images.length} image(s) this call returned ` +
+          `${toolResultOutputText(read)}\n[The ${result.attachments.length} file(s) this call returned ` +
           `could not be saved (${why}), so none is passed to you.]`,
       };
     }
@@ -3339,7 +3360,7 @@ async function runJobTracked(
                   resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
                     resolveAgentToolNames(db, targetAgentId, placement),
                   requestUserInput,
-                  modelImageInput,
+                  modelInput,
                 },
                 {
                   approvalRules: resumeApprovalRules,
@@ -4691,6 +4712,7 @@ async function runJobTracked(
               messagesForResume(messages, partielCeTour),
               seenByModel,
               imageCache,
+              pdfPageCache,
             ),
             tools: aiSdkTools,
             // The model decides, on every turn, for every model (#600). Forcing
@@ -5688,7 +5710,7 @@ async function runJobTracked(
         resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
           resolveAgentToolNames(db, targetAgentId, placement),
         requestUserInput,
-        modelImageInput,
+        modelInput,
       };
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
@@ -6007,7 +6029,7 @@ async function runJobTracked(
                 ...(speechGenerator ? { speechGenerator } : {}),
                 resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
                   resolveAgentToolNames(db, targetAgentId, placement),
-                modelImageInput,
+                modelInput,
               },
               {
                 approvalRules: approvalRuleList,

@@ -18,7 +18,8 @@ import type { ModelMessage } from 'ai';
 import { createLlmClient } from '@nodal-agents/llm';
 import type { ProviderConfig } from '@nodal-agents/llm';
 import { MODEL_REQUEST_MAX_IMAGES } from '@nodal-agents/shared';
-import type { ModelImageInput } from '@nodal-agents/tools';
+import type { ModelAttachmentInput } from '@nodal-agents/tools';
+import { buildTestPdf } from '@nodal-agents/test-kit';
 import { hydrateForLlm } from '../../job/model-images.ts';
 
 // Provider calls leave through packages/llm's own transport (#609): routed to
@@ -32,10 +33,14 @@ const PNG = Buffer.concat([
   Buffer.from('pixels of a worksheet'),
 ]);
 const B64 = PNG.toString('base64');
-const SEES: ModelImageInput = { sees: true };
-const BLIND: ModelImageInput = {
-  sees: false,
-  reason: 'the model this agent runs (z-ai/glm-5.3) does not take images as input',
+const SEES: ModelAttachmentInput = { image: { sees: true }, pdf: { sees: true } };
+const BLIND_REASON = 'the model this agent runs (z-ai/glm-5.3) does not take images as input';
+const BLIND: ModelAttachmentInput = {
+  image: { sees: false, reason: BLIND_REASON },
+  pdf: {
+    sees: false,
+    reason: 'the model this agent runs (z-ai/glm-5.3) does not take PDF documents as input',
+  },
 };
 /**
  * Each provider, and the exact form an image takes in its body: an image block
@@ -202,7 +207,7 @@ describe('every image shape, at the wire @cap:travailler-sur-des-fichiers/moteur
         expect(body).not.toContain(B64);
         expect(body).not.toContain('"type":"image"');
         expect(body).not.toContain('image_url');
-        expect(body).toContain(BLIND.reason);
+        expect(body).toContain(BLIND_REASON);
       });
     });
   }
@@ -252,5 +257,68 @@ describe('every image shape, at the wire @cap:travailler-sur-des-fichiers/moteur
     expect(body.split('"type":"image_url"').length - 1).toBe(MODEL_REQUEST_MAX_IMAGES);
     expect(body.split('[An earlier image (image/png').length - 1).toBe(3);
     expect(body).toContain('It was not kept as a file, so it cannot be read again.');
+  });
+});
+
+// #903: a PDF is one more file of the same inventory, with its own capability,
+// spending the same budget a page per image.
+describe('a PDF of the transcript @cap:travailler-sur-des-fichiers/moteur', () => {
+  const PDF = buildTestPdf([{ text: 'Invoice 4217' }, { scanned: 'INVOICE 4217' }]);
+  const PDF_B64 = PDF.toString('base64');
+  const toolResult = (value: unknown[]): ModelMessage[] => [
+    { role: 'user', content: 'Read them.' },
+    {
+      role: 'assistant',
+      content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'file_read', input: {} }],
+    },
+    {
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          toolCallId: 'c1',
+          toolName: 'file_read',
+          output: { type: 'content', value: [{ type: 'text', text: 'read' }, ...value] },
+        },
+      ],
+    } as ModelMessage,
+  ];
+
+  it('a saved PDF reaches Anthropic as a document block, its pages spending the image budget', async () => {
+    const pdfPath = join(dir, 'c1-1.pdf');
+    await writeFile(pdfPath, PDF);
+    // The PDF is the newest file: its 2 pages go first, then 18 of the 19 images.
+    const images = Array.from({ length: MODEL_REQUEST_MAX_IMAGES - 1 }, () => ({
+      type: 'image-data',
+      data: B64,
+      mediaType: 'image/png',
+    }));
+    const msgs = toolResult([...images, { type: 'file-url', url: pathToFileURL(pdfPath).href }]);
+    const body = await wireBody(PROVIDERS[0]![1], await hydrateForLlm(msgs, SEES, new Map()));
+    expect(body).toContain(
+      `"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"${PDF_B64}"}`,
+    );
+    expect(body.split('"type":"image","source"').length - 1).toBe(MODEL_REQUEST_MAX_IMAGES - 2);
+    expect(body.split('[An earlier image (image/png').length - 1).toBe(1);
+  });
+
+  it('a model that takes no PDF: the reason in its place, the bytes never read', async () => {
+    const msgs = toolResult([{ type: 'file-url', url: pathToFileURL(join(dir, 'gone.pdf')).href }]);
+    const body = await wireBody(PROVIDERS[0]![1], await hydrateForLlm(msgs, BLIND, new Map()));
+    expect(body).toContain(
+      'A PDF document was attached to this result, saved at ' +
+        JSON.stringify(join(dir, 'gone.pdf')).slice(1, -1) +
+        ': not passed to you: the model this agent runs (z-ai/glm-5.3) does not take PDF ' +
+        'documents as input.',
+    );
+  });
+
+  it('a .pdf whose bytes are an image is sent as the image it is', async () => {
+    const lying = join(dir, 'c2-1.pdf');
+    await writeFile(lying, PNG);
+    const msgs = toolResult([{ type: 'file-url', url: pathToFileURL(lying).href }]);
+    const body = await wireBody(PROVIDERS[0]![1], await hydrateForLlm(msgs, SEES, new Map()));
+    expect(body).toContain(`"type":"image","source":{"type":"base64","media_type":"image/png"`);
+    expect(body).not.toContain('application/pdf');
   });
 });

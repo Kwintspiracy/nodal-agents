@@ -22,14 +22,14 @@
 // as their type and size, never their bytes: the row is an audit, not a store.
 //
 // An IMAGE block reaches the model itself when the model takes images: its
-// bytes are handed to `ctx.attachImage` at record time (the one rule of
+// bytes are handed to `ctx.attachForModel` at record time (the one rule of
 // `@nodal-agents/tools`' model-images.ts), and its record says whether it was
 // attached and, when not, why — which is what the model reads in its place.
 
 import { isDeepStrictEqual } from 'node:util';
 import { MCP_TOOL_OUTPUT_FORMAT } from '@nodal-agents/shared';
 import { base64DecodedBytes, formatBytes } from '@nodal-agents/tools';
-import type { ImageAttachOutcome, ToolImage } from '@nodal-agents/tools';
+import type { ModelAttachOutcome, ToolAttachment } from '@nodal-agents/tools';
 
 // audit#2026-07-07 F6: nothing capped the size of a returned MCP tool result.
 // A third-party MCP server — buggy or actively malicious — can return several
@@ -89,7 +89,7 @@ export type McpRecordedBlock =
    * `toModel`: whether the image was attached for the model and, if not, why.
    * Absent on rows written before images reached the model.
    */
-  | { type: 'image'; mimeType: string; bytes: number; toModel?: ImageAttachOutcome }
+  | { type: 'image'; mimeType: string; bytes: number; toModel?: ModelAttachOutcome }
   | {
       type: 'resource_link';
       uri: string;
@@ -126,7 +126,7 @@ export interface McpToolOutput {
 const base64Bytes = base64DecodedBytes;
 
 /** Hands an image block to the model; what became of it is recorded. */
-export type AttachImage = (image: ToolImage) => ImageAttachOutcome;
+export type AttachImage = (image: ToolAttachment) => ModelAttachOutcome;
 
 function str(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined;
