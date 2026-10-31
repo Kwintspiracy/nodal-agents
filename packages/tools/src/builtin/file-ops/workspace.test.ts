@@ -61,6 +61,39 @@ describe('windowsPathViolation — win32', () => {
     expect(windowsPathViolation('COM1.txt', 'C:\\work\\COM1.txt', 'win32')).not.toBeNull();
   });
 
+  // The space Windows strips before the dot still names the device (review of #902).
+  it.each([
+    'con .txt',
+    'nul .pdf',
+    'aux .mp3',
+    'com1 .docx',
+    'LPT¹.txt',
+    'COM0',
+    // RtlIsDosDeviceName_U's table (review of #902, pass 2).
+    'conin$.log',
+    'conout$ .txt',
+    'CONOUT$',
+    'CONIN$',
+  ])('blocks a reserved device name the way Windows reads it (%j)', (name) => {
+    expect(windowsPathViolation(name, `C:\\work\\${name}`, 'win32')).toContain(
+      'reserved Windows device name',
+    );
+  });
+
+  it.each([
+    'console.log',
+    'context .txt',
+    'com10.txt',
+    '_con .txt',
+    'auxiliary.md',
+    'conout.txt',
+    'conin$x.txt',
+    'clock$.txt',
+    'CLOCK$',
+  ])('allows a name that only starts like a device (%j)', (name) => {
+    expect(windowsPathViolation(name, `C:\\work\\${name}`, 'win32')).toBeNull();
+  });
+
   it('blocks an Alternate Data Stream marker on a file', () => {
     expect(
       windowsPathViolation('file.txt:hidden', 'C:\\work\\file.txt:hidden', 'win32'),
