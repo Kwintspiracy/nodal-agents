@@ -26,6 +26,8 @@ export interface ResultLine {
   readonly needs?: string[];
   readonly durationMs?: number | null;
   readonly inputTokens?: number | null;
+  /** Lectures de cache, comprises dans `inputTokens`. */
+  readonly cachedTokens?: number | null;
   readonly outputTokens?: number | null;
   readonly costUsd?: number | null;
   readonly modelUnderTest?: string | null;
@@ -350,6 +352,13 @@ export interface ResumeColonne {
   coutMedianUsd: number | null;
   coutTotalUsd: number;
   coutInconnu: number;
+  /**
+   * La part de l'entrée relue depuis le cache du fournisseur (0 à 1), sur les
+   * essais tentés qui ont rapporté les deux nombres ; null quand aucun ne l'a
+   * fait. Une chute à 0 chez un modèle qui cachait se voit à la passe suivante
+   * (#425 : 0 appel sur 852 relisait le cache chez Claude via OpenRouter).
+   */
+  partCacheLue: number | null;
 }
 
 /**
@@ -374,7 +383,19 @@ export function resumerColonne(essais: readonly ResultLine[]): ResumeColonne {
       .filter((c): c is number => typeof c === 'number')
       .reduce((a, b) => a + b, 0),
     coutInconnu: couts.filter((c) => typeof c !== 'number').length,
+    partCacheLue: partCacheLue(tentes),
   };
+}
+
+function partCacheLue(essais: readonly ResultLine[]): number | null {
+  let entree = 0;
+  let relu = 0;
+  for (const l of essais) {
+    if (typeof l.inputTokens !== 'number' || typeof l.cachedTokens !== 'number') continue;
+    entree += l.inputTokens;
+    relu += l.cachedTokens;
+  }
+  return entree > 0 ? relu / entree : null;
 }
 
 export interface ScenarioDeMatrice {

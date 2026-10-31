@@ -1,5 +1,6 @@
 // @nodal-agents/llm — provider registry: presets + capability matrix
 
+import { findModelCatalogEntry } from '@nodal-agents/shared';
 import type { ProviderName, ProviderCapabilities } from '../types';
 
 // ─── Provider presets (default baseURL + model) ────────────────────────────────
@@ -58,7 +59,10 @@ export const PROVIDER_PRESETS = {
  * Capabilities are conservative: flag only what works reliably across all
  * models for a given provider. Orchestration only requires toolUse.
  *
- * promptCaching: only Anthropic supports the extended-TTL cache_control header.
+ * promptCaching: the PROVIDER'S default for "this client sends Anthropic-style
+ * cache_control breakpoints". Only the native Anthropic route says yes for every
+ * model it serves. A route that carries many vendors' models (OpenRouter) says no
+ * here and lets the model decide: `promptCachingFor` below.
  * Whether a model takes images is not here: it is per model
  * (`modelCanSeeImages`, @nodal-agents/shared/model-catalog), the one source.
  * structuredOutputs: native schema-enforced JSON mode.
@@ -109,7 +113,7 @@ export const CAPABILITY_MATRIX: Record<ProviderName, ProviderCapabilities> = {
   },
   openrouter: {
     toolUse: true,
-    promptCaching: false, // depends on underlying model; conservative default
+    promptCaching: false, // per MODEL: the catalog's `cacheControl` (promptCachingFor)
     structuredOutputs: false,
     streaming: true,
   },
@@ -134,3 +138,35 @@ export const CAPABILITY_MATRIX: Record<ProviderName, ProviderCapabilities> = {
     streaming: true,
   },
 } as const;
+
+/**
+ * Does the client send Anthropic-style `cache_control` breakpoints for this
+ * (provider, model)? Decided from the MODEL, not from the route (#425).
+ *
+ * Anthropic does not cache a repeated prefix by itself: the request has to
+ * carry the breakpoints. That is true of a Claude model whichever door it is
+ * reached by, so the catalog states it per model (`capabilities.cacheControl`)
+ * and the answer follows the model through every route: OpenRouter today, a
+ * direct Anthropic key as before.
+ *
+ * - A catalogued model that states it: its own answer.
+ * - Otherwise the provider's default in `CAPABILITY_MATRIX`: the native
+ *   Anthropic route is `true` for any model id (a new Claude not yet
+ *   catalogued keeps its cache); an aggregator or any other provider is
+ *   `false`, so an uncatalogued model sends no marker (a marker some servers
+ *   reject is not worth a guess made from the model's name). A Claude missing
+ *   from the catalog is a catalog gap, which the catalog test
+ *   (`model-catalog.test.ts`) refuses.
+ */
+export function promptCachingFor(provider: ProviderName, modelId: string): boolean {
+  const stated = findModelCatalogEntry(provider, modelId)?.capabilities.cacheControl;
+  return stated ?? CAPABILITY_MATRIX[provider].promptCaching;
+}
+
+/**
+ * The capability row of a provider with the answers that depend on the model
+ * resolved for it: what the client and the conformance suite read.
+ */
+export function capabilitiesFor(provider: ProviderName, modelId: string): ProviderCapabilities {
+  return { ...CAPABILITY_MATRIX[provider], promptCaching: promptCachingFor(provider, modelId) };
+}

@@ -146,7 +146,60 @@ export function patchOpenRouterRequestBody(body: unknown): unknown {
   if (isGeminiModel(modelId) && Array.isArray(b['tools'])) {
     b['tools'] = sanitizeGeminiTools(b['tools']);
   }
+  if (Array.isArray(b['messages'])) {
+    b['messages'] = markCacheBreakpointsInParts(b['messages']);
+  }
   return body;
+}
+
+/**
+ * The provider SDK writes a prompt-cache breakpoint (#425) on the wire message
+ * as it finds it: INSIDE a content part for a system and a user message, but at
+ * the TOP LEVEL of the message for an assistant and for a tool message. An
+ * OpenRouter request only honours a breakpoint inside a content part — Hermes
+ * measured a top-level marker on `role: tool` as a silent hang, and on an
+ * assistant turn as ignored (`agent/prompt_caching.py`, "envelope" layout). The
+ * sliding breakpoint rides the LAST message, which in a tool loop is a tool
+ * message, so it has to be moved:
+ *
+ * - a top-level marker goes onto the message's last content part (a string is
+ *   wrapped in one text part), so it caches the same prefix;
+ * - a message with nothing to hang it on (empty content) loses it: a marker
+ *   that cannot be honoured is dropped, never sent;
+ * - one tool-role turn becomes one wire message PER tool result, all carrying
+ *   the turn's marker: only the last of a run keeps it, because Anthropic takes
+ *   four breakpoints in all and the system prompt already holds one or two.
+ *
+ * Pure, and a no-op for a request that carries no top-level marker (every model
+ * the catalog does not mark). Exported for unit testing.
+ */
+export function markCacheBreakpointsInParts(messages: unknown[]): unknown[] {
+  const isMarked = (m: unknown): m is Record<string, unknown> =>
+    typeof m === 'object' && m !== null && 'cache_control' in m;
+  return messages.map((m, i) => {
+    if (!isMarked(m)) return m;
+    const { cache_control: marker, ...rest } = m;
+    if (marker === undefined || marker === null) return rest;
+    const next = messages[i + 1];
+    const staysForNextTool =
+      m['role'] === 'tool' &&
+      typeof next === 'object' &&
+      next !== null &&
+      (next as Record<string, unknown>)['role'] === 'tool' &&
+      isMarked(next);
+    if (staysForNextTool) return rest;
+    const content = m['content'];
+    if (typeof content === 'string' && content !== '') {
+      return { ...rest, content: [{ type: 'text', text: content, cache_control: marker }] };
+    }
+    if (Array.isArray(content) && content.length > 0) {
+      const last = content[content.length - 1];
+      if (typeof last === 'object' && last !== null) {
+        return { ...rest, content: [...content.slice(0, -1), { ...last, cache_control: marker }] };
+      }
+    }
+    return rest;
+  });
 }
 
 function createOpenRouterFetch(

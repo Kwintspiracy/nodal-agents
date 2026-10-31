@@ -1,7 +1,7 @@
 // @nodal-agents/llm — Anthropic prompt-cache wiring.
 //
-// Anthropic does NOT auto-cache (unlike DeepSeek / OpenRouter, which cache a
-// repeated prefix transparently). To get the ~10x cost reduction Claude Cowork
+// Anthropic does NOT auto-cache (unlike DeepSeek, GLM or MiMo, which cache a
+// repeated prefix by themselves). To get the ~10x cost reduction Claude Cowork
 // enjoys, the request itself must carry `cache_control` breakpoints. The AI SDK
 // reads `providerOptions.anthropic.cacheControl` from (a) a system message and
 // (b) the last part of the last message (falling back to message-level
@@ -26,8 +26,11 @@ const EPHEMERAL = { anthropic: { cacheControl: { type: 'ephemeral' as const } } 
 /**
  * Annotate generateText/streamText args with Anthropic cache_control breakpoints.
  * Pure: returns a new args object, never mutates the input. The caller gates this
- * on `provider === 'anthropic' && capabilities.promptCaching` so non-Anthropic
- * providers keep their plain `system` string untouched. Generic over the full
+ * on `capabilities.promptCaching` (decided per MODEL: `promptCachingFor`), so a
+ * model that does not honour the marker keeps its plain `system` string.
+ * The same markers serve the native Anthropic route and OpenRouter: the
+ * OpenRouter provider reads `providerOptions.anthropic.cacheControl` and writes
+ * `cache_control` on the matching part of the wire message. Generic over the full
  * args type so tools / toolChoice / every other field passes through unchanged.
  */
 export function withAnthropicPromptCaching<T extends object>(args: T): T {
@@ -105,7 +108,7 @@ export function withAnthropicPromptCaching<T extends object>(args: T): T {
 
 /**
  * Strip the E1 cache boundary marker from a plain `system` string. Applied on
- * the NON-caching path (non-Anthropic providers) so the marker — which only the
+ * the NON-caching path (models that take no marker) so the marker — which only the
  * Anthropic split consumes — never leaks into the prompt those providers see.
  */
 export function stripSystemCacheBoundary<T extends object>(args: T): T {
