@@ -7,7 +7,7 @@
 // (la base de test) puis attachInboundFiles. Seul le Bot API est remplacé
 // (getTelegramFile) ; le disque est un vrai dossier temporaire.
 
-import { mkdtemp, readFile, readdir, rm, mkdir, writeFile, utimes } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, mkdir, stat, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -62,6 +62,7 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
 
 import { handleTelegramUpdate, attachInboundFiles } from '../../telegram/handler.ts';
 import {
+  moveLegacyInboundFolders,
   receiveInboundFiles,
   safeFileName,
   pruneInboundFolder,
@@ -683,6 +684,7 @@ describe('pruneInboundFolder / pruneJobMediaFiles — a folder per job (#899)', 
 
   it('the retention cron removes the folder of a pruned job with its files', async () => {
     const cronRoot = await mkdtemp(join(tmpdir(), 'nodal-inbound-cron-'));
+    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
     try {
       const pruned = '11111111-1111-4111-8111-111111111111';
       const kept = '22222222-2222-4222-8222-222222222222';
@@ -691,6 +693,8 @@ describe('pruneInboundFolder / pruneJobMediaFiles — a folder per job (#899)', 
         await mkdir(join(chat, id), { recursive: true });
         await writeFile(join(chat, id, 'a.pdf'), 'a');
         await writeFile(join(chat, id, 'b.ogg'), 'b');
+        // Past the 30 days their note promised (#911).
+        await utimes(join(chat, id), old, old);
       }
 
       const result = await pruneJobMediaFiles(cronRoot, [pruned]);
@@ -765,6 +769,147 @@ describe('the inbound folder of a channel, keyed by job, and the layout before i
     }
   });
 
+  // Revue de #911 (P2) : le dossier du canal tient toutes ses conversations.
+  // Une borne au nombre qui supprimait les plus anciennes y effaçait le fichier
+  // non déplacé d'une AUTRE conversation avant les 30 jours promis.
+  // Échec d'abord sur 871fc36d : la borne au nombre efface le fichier de A.
+  // Mutations vérifiées : aucun refus à l'entrée → rouge (B reçoit, sans le
+  // dire) ; la place comptée sur tout le canal au lieu de la conversation →
+  // rouge (A est refusé).
+  it('a busy conversation never deletes another one’s promised file; its own next file is refused, and said', async () => {
+    const folder = telegramFolder();
+    await mkdir(folder, { recursive: true });
+    const jobFor = async (chatId: string) => {
+      const [row] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId,
+          task: 't',
+          status: 'completed',
+        })
+        .returning({ id: agentJobs.id });
+      return row!.id;
+    };
+    // A : un fichier reçu il y a deux jours, son job fini, jamais déplacé.
+    const aJob = await jobFor(String(CHAT));
+    await mkdir(join(folder, aJob));
+    await writeFile(join(folder, aJob, 'facture.pdf'), 'A');
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    await utimes(join(folder, aJob), twoDaysAgo, twoDaysAgo);
+    // B : le groupe, 200 fichiers d'hier.
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const bJobs = await db
+      .insert(agentJobs)
+      .values(
+        Array.from({ length: 200 }, (_, i) => ({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram' as const,
+          chatId: '-100777',
+          task: `b ${i}`,
+          status: 'completed' as const,
+        })),
+      )
+      .returning({ id: agentJobs.id });
+    for (const { id } of bJobs) {
+      await mkdir(join(folder, id));
+      await writeFile(join(folder, id, 'scan.pdf'), 'B');
+      await utimes(join(folder, id), yesterday, yesterday);
+    }
+
+    telegramFiles.set('b-201', INVOICE);
+    const inB = await deliver(
+      update(
+        {
+          caption: '@nodal_bot encore',
+          document: { file_id: 'b-201', file_name: 'b201.pdf', mime_type: 'application/pdf' },
+        },
+        { id: -100777, type: 'group' },
+      ),
+    );
+    // Rien de promis n'est effacé, ni chez A, ni chez B…
+    expect(await readFile(join(folder, aJob, 'facture.pdf'), 'utf8')).toBe('A');
+    for (const { id } of bJobs) expect(await readdir(join(folder, id))).toEqual(['scan.pdf']);
+    // … et le fichier de trop est dit au modèle, avec sa raison.
+    expect(inB.parts[1]!.text).toContain('NOT received');
+    expect(inB.parts[1]!.text).toContain('already has 200 received files under shared/telegram/');
+
+    telegramFiles.set('a-2', INVOICE);
+    const inA = await deliver(
+      update({
+        caption: 'et celui-ci',
+        document: { file_id: 'a-2', file_name: 'a2.pdf', mime_type: 'application/pdf' },
+      }),
+    );
+    expect(inA.parts[1]!.text).toContain(`Saved at shared/telegram/${inA.jobId}/a2.pdf`);
+    expect(await readFile(join(folder, inA.jobId, 'a2.pdf'))).toEqual(INVOICE);
+
+    for (const { id } of [{ id: aJob }, ...bJobs]) {
+      await rm(join(folder, id), { recursive: true, force: true });
+    }
+  });
+
+  // Revue de #911 (P2) : les fils d'avant #910 portent l'adresse de leur
+  // conversation, que le modèle lit comme un handle. Au démarrage, leurs
+  // entrées de job remontent dans le dossier du canal.
+  // Mutation vérifiée : `moveLegacyInboundFolders` qui ne déplace rien →
+  // rouge (« legacy folder listed then read »).
+  it('the pre-#910 conversation folders move up at boot; a folder an agent made stays', async () => {
+    await db.delete(channelAllowedConversations);
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      conversationId: DISCORD_CHANNEL,
+      kind: 'channel',
+      status: 'active',
+    });
+    const telegram = telegramFolder();
+    const discord = join(root, seed.entityId, 'shared', 'discord');
+    const legacy = join(telegram, String(CHAT));
+    const legacyDiscord = join(discord, DISCORD_CHANNEL);
+    const archives = join(telegram, 'Archives');
+    const jobA = '33333333-3333-4333-8333-333333333333';
+    const jobB = '44444444-4444-4444-8444-444444444444';
+    const jobC = '55555555-5555-4555-8555-555555555555';
+    const jobD = '66666666-6666-4666-8666-666666666666';
+    await mkdir(join(legacy, jobA), { recursive: true });
+    await writeFile(join(legacy, jobA, 'ancien.pdf'), 'a');
+    await writeFile(join(legacy, `${jobB}.jpg`), 'b');
+    await utimes(join(legacy, `${jobB}.jpg`), old, old);
+    await writeFile(join(legacy, 'notes.txt'), 'not a job entry');
+    await mkdir(legacyDiscord, { recursive: true });
+    await writeFile(join(legacyDiscord, `${jobC}.png`), 'c');
+    await mkdir(join(archives, jobD), { recursive: true });
+    await writeFile(join(archives, jobD, 'garde.pdf'), 'd');
+
+    const result = await moveLegacyInboundFolders(db as unknown as RunnerDeps['db'], root);
+
+    expect(result.moved).toBe(3);
+    expect(await readFile(join(telegram, jobA, 'ancien.pdf'), 'utf8')).toBe('a');
+    expect(await readFile(join(telegram, `${jobB}.jpg`), 'utf8')).toBe('b');
+    // La date suit le fichier : son délai de 30 jours court toujours.
+    expect((await stat(join(telegram, `${jobB}.jpg`))).mtimeMs).toBe(old.getTime());
+    expect(await readFile(join(discord, `${jobC}.png`), 'utf8')).toBe('c');
+    await expect(readdir(legacyDiscord)).rejects.toMatchObject({ code: 'ENOENT' });
+    // Ce qui n'est pas une entrée de job reste, et le fil avec lui (c'est dit).
+    expect(await readdir(legacy)).toEqual(['notes.txt']);
+    expect(result.left).toEqual([legacy]);
+    // Un dossier dont le nom n'est pas une adresse connue n'est pas un fil.
+    expect(await readdir(join(archives, jobD))).toEqual(['garde.pdf']);
+
+    // Idempotent.
+    expect((await moveLegacyInboundFolders(db as unknown as RunnerDeps['db'], root)).moved).toBe(0);
+
+    for (const p of [legacy, archives, join(telegram, jobA), join(telegram, `${jobB}.jpg`)]) {
+      await rm(p, { recursive: true, force: true });
+    }
+    await rm(discord, { recursive: true, force: true });
+  });
+
   it('the retention cron, both layouts: a pruned job leaves nothing, at either level', async () => {
     const cronRoot = await mkdtemp(join(tmpdir(), 'nodal-inbound-cron-'));
     try {
@@ -781,6 +926,14 @@ describe('the inbound folder of a channel, keyed by job, and the layout before i
         await mkdir(legacyChannel, { recursive: true });
         await writeFile(join(shared, 'discord', `${id}.png`), 'p');
         await writeFile(join(legacyChannel, `${id}.png`), 'p');
+        for (const p of [
+          join(shared, 'telegram', id),
+          join(legacyChat, id),
+          join(shared, 'discord', `${id}.png`),
+          join(legacyChannel, `${id}.png`),
+        ]) {
+          await utimes(p, old, old);
+        }
       }
 
       const result = await pruneJobMediaFiles(cronRoot, [pruned]);
@@ -904,7 +1057,10 @@ async function callFileTool(
 
 /** Les deux chemins que la note d'un fichier reçu donne au modèle (le JSON de la requête). */
 function pathsTheModelReads(requestText: string): { workspacePath: string; absolutePath: string } {
-  const m = /Saved at (.+?) for the file tools \(absolute path: (.+?)\)\./.exec(requestText);
+  // Jusqu'à la phrase qui suit : un nom peut lui-même contenir « ). ».
+  const m = /Saved at (.+?) for the file tools \(absolute path: (.+?)\)\. Files left under/.exec(
+    requestText,
+  );
   if (!m) throw new Error(`no file note in the request: ${requestText}`);
   // Les chemins sont lus dans du JSON : un antislash Windows y est doublé.
   const unjson = (s: string) => JSON.parse(`"${s}"`) as string;
@@ -925,11 +1081,32 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
   });
 
   it.each([
-    { chat: { id: CHAT, type: 'private' as const }, caption: 'Range moi ça' },
-    { chat: { id: -100777, type: 'group' as const }, caption: '@nodal_bot range le' },
+    {
+      chat: { id: CHAT, type: 'private' as const },
+      caption: 'Range moi ça',
+      fileName: 'Facture EDF.pdf',
+    },
+    {
+      chat: { id: -100777, type: 'group' as const },
+      caption: '@nodal_bot range le',
+      fileName: 'Facture EDF.pdf',
+    },
+    // Revue de #911 : un nom qui porte une adresse connue (celle du chat, ou
+    // celle d'un autre) passait la frontière réécrit, et le modèle ne
+    // trouvait pas le fichier.
+    {
+      chat: { id: CHAT, type: 'private' as const },
+      caption: 'Range moi ça',
+      fileName: `${CHAT}.pdf`,
+    },
+    {
+      chat: { id: -100777, type: 'group' as const },
+      caption: '@nodal_bot range le',
+      fileName: `Relevé ${CHAT} (oct).pdf`,
+    },
   ])(
-    'Telegram $chat.type chat: file_read and file_move succeed on exactly the paths the model read',
-    async ({ chat, caption }) => {
+    'Telegram $chat.type chat, file $fileName: file_read and file_move succeed on exactly the paths the model read',
+    async ({ chat, caption, fileName }) => {
       telegramFiles.set('doc-910', INVOICE);
       const { jobId, job } = await deliver(
         update(
@@ -937,7 +1114,7 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
             caption,
             document: {
               file_id: 'doc-910',
-              file_name: 'Facture EDF.pdf',
+              file_name: fileName,
               mime_type: 'application/pdf',
             },
           },
@@ -994,10 +1171,52 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
       expect(await readFile(join(classement, 'Facture EDF.pdf'))).toEqual(INVOICE);
       await rm(classement, { recursive: true });
 
-      // Et ce chemin est celui du dossier du job, sans adresse de conversation.
-      expect(workspacePath).toBe(`shared/telegram/${jobId}/Facture EDF.pdf`);
+      // Et ce chemin est celui du dossier du job, sans adresse de conversation ;
+      // un nom qui en portait une est écrit tel que le modèle le lit.
+      const onDisk = fileName.replace(String(CHAT), handle);
+      expect(workspacePath).toBe(`shared/telegram/${jobId}/${onDisk}`);
     },
   );
+
+  it('a pre-#910 folder, moved at boot: what file_list shows the model, file_read opens', async () => {
+    const [done] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: String(CHAT),
+        task: 'ancien',
+        status: 'completed',
+      })
+      .returning({ id: agentJobs.id });
+    const legacy = join(telegramFolder(), String(CHAT), done!.id);
+    await mkdir(legacy, { recursive: true });
+    await writeFile(join(legacy, 'ancien.pdf'), INVOICE);
+
+    await moveLegacyInboundFolders(db as unknown as RunnerDeps['db'], root);
+
+    const listed = await callFileTool(done!.id, 'file_list', {
+      path: 'shared/telegram',
+      recursive: true,
+    });
+    // Le résultat de l'outil, tel que le modèle le lit au tour suivant.
+    const request = await requestAsTheProviderGetsIt(
+      [{ role: 'user', content: JSON.stringify(listed.output) }],
+      { image: { sees: true }, pdf: { sees: true } },
+    );
+    const shown = JSON.parse(JSON.parse(request.text)[0].content) as {
+      entries: Array<{ name: string }>;
+    };
+    const entry = shown.entries.find((e) => e.name.endsWith('/ancien.pdf'));
+    expect(entry).toBeDefined();
+
+    const read = await callFileTool(done!.id, 'file_read', { path: `shared/${entry!.name}` });
+    expect(read.output.reason ?? null).toBeNull();
+    expect(read.attached).toEqual([INVOICE.toString('base64')]);
+    await rm(join(telegramFolder(), done!.id), { recursive: true, force: true });
+    await rm(join(telegramFolder(), String(CHAT)), { recursive: true, force: true });
+  });
 
   it('Telegram photo for a model that does not see: the routing note names a path the file tools open', async () => {
     telegramFiles.set('photo-910', JPEG);

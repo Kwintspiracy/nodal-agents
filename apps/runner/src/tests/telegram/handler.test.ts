@@ -938,10 +938,13 @@ describe('pruneInboundFolder — F-13 bounded cleanup', () => {
     expect(remaining).not.toContain('00000000-0000-0000-0000-000000000000.jpg');
   });
 
-  it('enforces the 200-file cap among terminal jobs, evicting the oldest first', async () => {
+  // Revue de #911 : plus de borne au nombre qui efface les plus anciens. La note
+  // de chaque fichier lui promet 30 jours ; le nombre est borné à l'entrée,
+  // par conversation (`inboundRoom`, inbound-files.test.ts).
+  it('never evicts a finished job file still within its 30 days, whatever their number', async () => {
     workDir = await mkdtemp(join(tmpdir(), 'nodalai-telegram-prune-'));
 
-    const TOTAL = 205; // 5 over the module's TELEGRAM_WORKSPACE_MAX_FILES cap
+    const TOTAL = 205; // over the 200 that the old count bound kept
     const jobs = await db
       .insert(agentJobs)
       .values(
@@ -960,7 +963,6 @@ describe('pruneInboundFolder — F-13 bounded cleanup', () => {
     for (const [i, job] of jobs.entries()) {
       const file = join(workDir, `${job.id}.jpg`);
       await writeFile(file, Buffer.from([i % 256]));
-      // index 0 = oldest, index TOTAL-1 = newest — strictly increasing mtime.
       const mtime = new Date(now - (TOTAL - i) * 1000);
       await utimes(file, mtime, mtime);
     }
@@ -968,16 +970,8 @@ describe('pruneInboundFolder — F-13 bounded cleanup', () => {
     await pruneInboundFolder(workDir, db as unknown as RunnerDeps['db']);
 
     const remainingNames = new Set(await readdir(workDir));
-    expect(remainingNames.size).toBe(200);
-    // The 5 oldest (lowest index) were evicted; the 200 newest survive.
-    const oldest5 = jobs.slice(0, 5);
-    const newest200 = jobs.slice(5);
-    for (const job of oldest5) {
-      expect(remainingNames.has(`${job.id}.jpg`)).toBe(false);
-    }
-    for (const job of newest200) {
-      expect(remainingNames.has(`${job.id}.jpg`)).toBe(true);
-    }
+    expect(remainingNames.size).toBe(TOTAL);
+    for (const job of jobs) expect(remainingNames.has(`${job.id}.jpg`)).toBe(true);
   });
 });
 

@@ -23,7 +23,15 @@
 //     outils ne sont pas relues. Un chemin <shared>/telegram/<chat id>/… lui
 //     était donc montré `…/conv_<handle>/…`, un chemin qui n'existe pas : trois
 //     `file_read` en « File not found » au premier PDF du propriétaire. Le
-//     jobId, lui, est un identifiant de Nodal qu'aucune frontière ne réécrit ;
+//     jobId, lui, est un identifiant de Nodal qu'aucune frontière ne réécrit.
+//     Le NOM aussi passe la frontière : un fichier que la personne a nommé
+//     d'après une adresse connue (`4242.pdf` dans le chat 4242) est écrit sous
+//     le nom que le modèle lira (`conv_<handle>.pdf`, `asTheModelReadsIt`) ;
+//   - n'est jamais supprimé avant le délai que sa note promet au modèle
+//     (30 jours) : le ménage ne retire que par l'âge. Une conversation qui a
+//     déjà 200 fichiers reçus non déplacés dans ce délai voit les suivants
+//     refusés, et c'est dit (une partie « NOT received » qui dit pourquoi),
+//     jamais un fichier promis effacé à leur place (revue de #911) ;
 //   - devient UNE partie texte du premier message du job, pour l'agent : son
 //     chemin pour les outils fichiers (`shared/…`) et son chemin absolu (un
 //     runtime CLI n'a que lui), son nom, son type, sa taille ;
@@ -37,11 +45,13 @@
 // Le texte de ces parties s'adresse au MODÈLE, comme les notes d'image de
 // job/model-images.ts : il n'est pas montré à la personne par le runner.
 
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { and, eq, inArray } from '@nodal-agents/db';
+import { and, conversationIdsAsHandles, eq, inArray } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
+import { isConversationHandle } from '@nodal-agents/shared';
 import {
   MODEL_IMAGE_MEDIA_TYPES,
   SHARED_WORKSPACE_LABEL,
@@ -117,7 +127,9 @@ export function captionlessTask(files: readonly Pick<InboundFile, 'mediaType'>[]
  * silence (invariant #4).
  *
  * Un fichier qui n'a pas pu être obtenu ou écrit ne fait pas échouer les
- * autres : il devient sa phrase. Seule l'écriture en base peut lever.
+ * autres : il devient sa phrase. De même un fichier pour lequel la
+ * conversation n'a plus de place (`inboundRoom`). Seule l'écriture en base
+ * peut lever.
  */
 export async function receiveInboundFiles(args: {
   db: RunnerDeps['db'];
@@ -132,11 +144,35 @@ export async function receiveInboundFiles(args: {
   const folder = inboundFolder(entityId, channel);
   const jobFolder = join(folder, jobId);
   const workspaceFolder = [SHARED_WORKSPACE_LABEL, safePathSegment(channel), jobId].join('/');
+  const inbox = `${SHARED_WORKSPACE_LABEL}/${safePathSegment(channel)}/`;
+
+  // La place de la conversation, AVANT tout téléchargement : le ménage par
+  // l'âge d'abord, puis le compte de ce qu'elle y a encore. Une place qui n'a
+  // pas pu être lue n'est pas supposée : les fichiers ne sont pas reçus, et
+  // c'est dit (invariant #4).
+  let room: number;
+  let noRoomReason: string;
+  try {
+    room = await inboundRoom(folder, db, jobId);
+    noRoomReason =
+      `this conversation already has ${INBOUND_FOLDER_MAX_ENTRIES} received files under ` +
+      `${inbox} from the last ${KEPT_DAYS} days that were not moved; moving or deleting ` +
+      'some of them makes room';
+  } catch (err) {
+    room = 0;
+    noRoomReason = `the folder ${inbox} could not be checked: ${errorText(err)}`;
+  }
 
   const outcomes: InboundFileOutcome[] = [];
   const parts: unknown[] = [{ type: 'text', text }];
   for (const file of files) {
     const shownName = displayName(file);
+    if (room <= 0) {
+      const outcome = failed(file, shownName, noRoomReason);
+      outcomes.push(outcome);
+      parts.push({ type: 'text', text: notReceivedNote(outcome) });
+      continue;
+    }
     let bytes: Uint8Array;
     try {
       bytes = await file.download();
@@ -151,13 +187,15 @@ export async function receiveInboundFiles(args: {
     let saved: { path: string; name: string };
     try {
       await mkdir(jobFolder, { recursive: true });
-      saved = await writeUnique(jobFolder, safeFileName(file.name, mediaType), bytes);
+      const name = await asTheModelReadsIt(db, entityId, safeFileName(file.name, mediaType));
+      saved = await writeUnique(jobFolder, name, bytes);
     } catch (err) {
       const outcome = failed(file, shownName, `it could not be saved: ${errorText(err)}`);
       outcomes.push(outcome);
       parts.push({ type: 'text', text: notReceivedNote(outcome) });
       continue;
     }
+    room -= 1;
     const outcome: InboundFileOutcome = {
       received: true,
       name: shownName,
@@ -193,16 +231,6 @@ export async function receiveInboundFiles(args: {
     );
   }
 
-  // Ménage borné du dossier du canal (F-13), au mieux : il ne fait jamais
-  // échouer une réception déjà faite.
-  await pruneInboundFolder(folder, db).catch((err) => {
-    console.warn(
-      `[${channel}] inbound folder prune failed for ${folder}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  });
-
   return { attached: attached.length > 0, outcomes };
 }
 
@@ -217,12 +245,11 @@ function receivedNote(
   o: Extract<InboundFileOutcome, { received: true }>,
   workspaceFolder: string,
 ): string {
-  const days = Math.round(INBOUND_FOLDER_MAX_AGE_MS / (24 * 60 * 60 * 1000));
   const inbox = workspaceFolder.slice(0, workspaceFolder.lastIndexOf('/') + 1);
   return (
     `[File sent with this message: ${describe(o.name, o.mediaType, o.size)}. ` +
     `Saved at ${o.workspacePath} for the file tools (absolute path: ${o.path}). ` +
-    `Files left under ${inbox} are deleted after ${days} days: move it to keep it.]`
+    `Files left under ${inbox} are deleted after ${KEPT_DAYS} days: move it to keep it.]`
   );
 }
 
@@ -348,6 +375,22 @@ export function safeFileName(raw: string | null, mediaType: string | null): stri
 }
 
 /**
+ * Le nom tel que le modèle le lira : chaque adresse de conversation connue
+ * qu'il contient remplacée par son handle, par la frontière elle-même
+ * (`conversationIdsAsHandles`, celle de `addressedByHandle`). Le fichier est
+ * écrit sous CE nom, et le chemin que lit le modèle est celui du disque. Une
+ * personne qui l'ouvre depuis un écran lit le nom d'origine
+ * (`showConversationsTo`). Un nom sans adresse est rendu tel quel.
+ */
+async function asTheModelReadsIt(
+  db: RunnerDeps['db'],
+  entityId: string,
+  name: string,
+): Promise<string> {
+  return conversationIdsAsHandles(db, { entityId, subject: 'a received file name' }, name);
+}
+
+/**
  * Écrit `bytes` sous `name` dans `dir` sans jamais écraser : `wx` refuse un nom
  * déjà pris (y compris à la casse près, sur un système qui l'ignore), et le nom
  * suivant est essayé — `nom (2).ext`, `nom (3).ext`…
@@ -374,10 +417,19 @@ async function writeUnique(
 
 // ─── Le ménage d'un dossier d'arrivée ─────────────────────────────────────────
 
-/** Au plus ce nombre d'entrées (un job chacune) par dossier. */
+/**
+ * Le délai que la note d'un fichier reçu promet au modèle : avant lui, le
+ * fichier n'est jamais supprimé — ni par ce ménage, ni par la purge des jobs
+ * (`pruneJobMediaFiles`, cron).
+ */
+export const INBOUND_FILES_KEPT_MS = 30 * 24 * 60 * 60 * 1000; // 30 jours
+const KEPT_DAYS = Math.round(INBOUND_FILES_KEPT_MS / (24 * 60 * 60 * 1000));
+/**
+ * Au plus ce nombre d'entrées (un job chacune) par CONVERSATION dans le délai :
+ * au-delà, un nouveau fichier de cette conversation est refusé, et c'est dit.
+ * Une conversation n'en prive jamais une autre.
+ */
 const INBOUND_FOLDER_MAX_ENTRIES = 200;
-/** Une entrée plus vieille que ça est supprimée, quel que soit leur nombre. */
-const INBOUND_FOLDER_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 jours
 
 interface PrunableEntry {
   path: string;
@@ -387,30 +439,68 @@ interface PrunableEntry {
 }
 
 /**
- * Ménage borné du dossier d'arrivée d'un canal, <shared>/<canal>/ (F-13) :
- * supprime ce qui a plus de 30 jours, puis, s'il reste plus de 200 entrées, les
- * plus anciennes. Une entrée est le dossier d'un job (`<jobId>/`, les fichiers
- * reçus depuis #899) ou un fichier `<jobId>.<ext>` (les images de Discord).
+ * Ménage du dossier d'arrivée d'un canal, <shared>/<canal>/ (F-13) : supprime
+ * ce qui a plus de 30 jours, et rien d'autre. Une entrée est le dossier d'un
+ * job (`<jobId>/`, les fichiers reçus depuis #899) ou un fichier
+ * `<jobId>.<ext>` (les images de Discord). Rend les jobs des entrées qui
+ * restent.
  *
- * Chaque sous-dossier qui n'est pas celui d'un job reçoit le même ménage, avec
- * ses propres bornes, et rien plus bas : ce sont les fils <canal>/<conversation>/
- * que les réceptions d'avant #910 ont laissés sur le disque (les photos d'avant
- * #899, les fichiers de #902), qui sinon ne se videraient qu'à la purge de
- * leurs jobs (`pruneJobMediaFiles`).
+ * Il n'y a PAS de borne au nombre qui supprimerait les plus anciennes (revue
+ * de #911) : depuis #910 le dossier tient toutes les conversations, et une
+ * conversation chargée effaçait le fichier non déplacé d'une autre avant les
+ * 30 jours promis. Le nombre est borné à l'ENTRÉE, par conversation
+ * (`inboundRoom`).
+ *
+ * Chaque sous-dossier qui n'est pas celui d'un job reçoit le même ménage, et
+ * rien plus bas : ce sont les fils <canal>/<conversation>/ des réceptions
+ * d'avant #910 que `moveLegacyInboundFolders` n'a pas pu vider.
  *
  * Ne supprime JAMAIS l'entrée d'un job qui n'est pas encore terminé : un job
  * peut attendre une approbation, une délégation, ou son tour, avant que son
- * agent lise le fichier. L'âge ou le nombre seuls le supprimeraient sous ses
- * pieds — une perte silencieuse. L'entrée d'un job qui n'existe plus en base
- * (purgé) n'a pas ce risque.
+ * agent lise le fichier. L'âge seul la supprimerait sous ses pieds — une perte
+ * silencieuse. L'entrée d'un job qui n'existe plus en base (purgé) n'a pas ce
+ * risque.
  */
-export async function pruneInboundFolder(dir: string, db: RunnerDeps['db']): Promise<void> {
-  for (const below of await pruneJobEntries(dir, db)) await pruneJobEntries(below, db);
+export async function pruneInboundFolder(dir: string, db: RunnerDeps['db']): Promise<string[]> {
+  const top = await pruneJobEntries(dir, db);
+  const kept = [...top.kept];
+  for (const below of top.otherFolders) kept.push(...(await pruneJobEntries(below, db)).kept);
+  return kept;
 }
 
-/** Le ménage des entrées de job d'UN dossier ; rend ses sous-dossiers qui n'en sont pas. */
-async function pruneJobEntries(dir: string, db: RunnerDeps['db']): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
+/**
+ * La place qu'a encore la conversation du job `jobId` dans le dossier
+ * d'arrivée `dir` (créé s'il n'existe pas), après son ménage : le nombre
+ * d'entrées qu'elle peut y ajouter. La conversation d'une entrée est celle de
+ * son job (`agent_jobs.chat_id`) ; l'entrée d'un job purgé n'est à personne.
+ */
+export async function inboundRoom(
+  dir: string,
+  db: RunnerDeps['db'],
+  jobId: string,
+): Promise<number> {
+  await mkdir(dir, { recursive: true });
+  const kept = (await pruneInboundFolder(dir, db)).filter((id) => id !== jobId);
+  if (kept.length === 0) return INBOUND_FOLDER_MAX_ENTRIES;
+  const rows = await db
+    .select({ id: agentJobs.id, chatId: agentJobs.chatId })
+    .from(agentJobs)
+    .where(inArray(agentJobs.id, [...new Set([...kept, jobId])]));
+  const chatOf = new Map(rows.map((r) => [r.id, r.chatId]));
+  if (!chatOf.has(jobId)) {
+    throw new Error(`inbound_job_unknown: job ${jobId} is not in the database`);
+  }
+  const conversation = chatOf.get(jobId);
+  const used = kept.filter((id) => chatOf.has(id) && chatOf.get(id) === conversation).length;
+  return INBOUND_FOLDER_MAX_ENTRIES - used;
+}
+
+/** Le ménage des entrées de job d'UN dossier : celles qui restent, et ses sous-dossiers qui n'en sont pas. */
+async function pruneJobEntries(
+  dir: string,
+  db: RunnerDeps['db'],
+): Promise<{ kept: string[]; otherFolders: string[] }> {
+  const entries = await readdirOrNone(dir);
   const otherFolders = entries
     .filter((e) => e.isDirectory() && !isUuid(e.name))
     .map((e) => join(dir, e.name));
@@ -421,12 +511,7 @@ async function pruneJobEntries(dir: string, db: RunnerDeps['db']): Promise<strin
         const path = join(dir, e.name);
         try {
           const st = await stat(path);
-          let jobId = e.name;
-          if (e.isFile()) {
-            const lastDot = e.name.lastIndexOf('.');
-            jobId = lastDot > 0 ? e.name.slice(0, lastDot) : '';
-          }
-          return { path, jobId, mtimeMs: st.mtimeMs };
+          return { path, jobId: jobOfEntry(e.name, e.isFile()), mtimeMs: st.mtimeMs };
         } catch {
           // Supprimée entre readdir et stat : rien à faire.
           return null;
@@ -436,37 +521,127 @@ async function pruneJobEntries(dir: string, db: RunnerDeps['db']): Promise<strin
   // Seules les entrées nommées d'après un job sont à nous : un fichier ou un
   // dossier qu'un agent a posé là sous un autre nom n'est jamais supprimé (et
   // un nom qui n'est pas un uuid ferait échouer la requête ci-dessous).
-  let candidates = stats.filter((s): s is PrunableEntry => s !== null && isUuid(s.jobId));
+  const ours = stats.filter((s): s is PrunableEntry => s !== null && isUuid(s.jobId));
 
-  const jobIds = [...new Set(candidates.map((c) => c.jobId))];
+  let activeJobIds = new Set<string>();
+  const jobIds = [...new Set(ours.map((c) => c.jobId))];
   if (jobIds.length > 0) {
     const rows = await db
       .select({ id: agentJobs.id, status: agentJobs.status })
       .from(agentJobs)
       .where(inArray(agentJobs.id, jobIds));
-    const activeJobIds = new Set(
+    activeJobIds = new Set(
       rows
         .filter((r) => r.status === null || !(TERMINAL_STATUSES as string[]).includes(r.status))
         .map((r) => r.id),
     );
-    candidates = candidates.filter((c) => !activeJobIds.has(c.jobId));
   }
 
-  const remove = (path: string) => rm(path, { recursive: true, force: true }).catch(() => {});
   const now = Date.now();
-  const stillFresh: typeof candidates = [];
-  for (const f of candidates) {
-    if (now - f.mtimeMs > INBOUND_FOLDER_MAX_AGE_MS) await remove(f.path);
-    else stillFresh.push(f);
+  const kept: string[] = [];
+  for (const f of ours) {
+    if (!activeJobIds.has(f.jobId) && now - f.mtimeMs > INBOUND_FILES_KEPT_MS) {
+      await rm(f.path, { recursive: true, force: true }).catch(() => {});
+    } else {
+      kept.push(f.jobId);
+    }
   }
-  candidates = stillFresh;
+  return { kept, otherFolders };
+}
 
-  if (candidates.length > INBOUND_FOLDER_MAX_ENTRIES) {
-    candidates.sort((a, b) => a.mtimeMs - b.mtimeMs);
-    const excess = candidates.length - INBOUND_FOLDER_MAX_ENTRIES;
-    for (const f of candidates.slice(0, excess)) await remove(f.path);
+/** Le job d'une entrée : le nom d'un dossier, ou celui d'un fichier sans son extension. */
+function jobOfEntry(name: string, isFile: boolean): string {
+  if (!isFile) return name;
+  const lastDot = name.lastIndexOf('.');
+  return lastDot > 0 ? name.slice(0, lastDot) : '';
+}
+
+// ─── Les fils d'avant #910 ────────────────────────────────────────────────────
+
+/** Les canaux qui ont écrit des fils <canal>/<conversation>/ avant #910. */
+const LEGACY_INBOUND_CHANNELS = ['telegram', 'discord'] as const;
+
+/**
+ * Remonte dans le dossier de leur canal les entrées de job des fils
+ * <shared>/<canal>/<conversation>/ que les réceptions d'avant #910 ont écrits,
+ * et supprime chaque fil vidé (revue de #911). Sans cela, `file_list` et
+ * `file_search` montraient au modèle `…/telegram/conv_<handle>/…` : le nom du
+ * fil est l'adresse de la conversation, la frontière la remplace, et le modèle
+ * ne pouvait pas ouvrir ce qu'il listait.
+ *
+ * Un fil est un sous-dossier du canal dont le nom EST une adresse de
+ * conversation que l'espace connaît — la lecture de la frontière elle-même
+ * (`conversationIdsAsHandles` en fait un handle), jamais une forme devinée : un
+ * dossier qu'un agent a créé là (`Archives`) n'est pas touché. Seules les
+ * entrées de job (`<jobId>/`, `<jobId>.<ext>`) remontent, leur date gardée
+ * (le délai de 30 jours court toujours) ; ce qui ne peut pas remonter (un nom
+ * déjà pris, un fichier tenu) reste, et c'est dit.
+ *
+ * Joué à chaque démarrage du runner : idempotent, un fil déjà vidé n'existe
+ * plus.
+ */
+export async function moveLegacyInboundFolders(
+  db: RunnerDeps['db'],
+  root: string = workspacesRoot(),
+): Promise<{ moved: number; left: string[] }> {
+  let moved = 0;
+  const left: string[] = [];
+  const entities = await readdirOrNone(root);
+  for (const entity of entities) {
+    // Un espace est un uuid ; un autre dossier n'en est pas un, et la base le refuserait.
+    if (!entity.isDirectory() || !isUuid(entity.name)) continue;
+    for (const channel of LEGACY_INBOUND_CHANNELS) {
+      const channelDir = join(root, entity.name, 'shared', channel);
+      for (const sub of await readdirOrNone(channelDir)) {
+        if (!sub.isDirectory() || isUuid(sub.name)) continue;
+        const asRead = await conversationIdsAsHandles(
+          db,
+          { entityId: entity.name, subject: 'an inbound folder name' },
+          sub.name,
+        );
+        if (!isConversationHandle(asRead)) continue;
+        const conversationDir = join(channelDir, sub.name);
+        for (const e of await readdirOrNone(conversationDir)) {
+          if (!isUuid(jobOfEntry(e.name, e.isFile()))) continue;
+          const from = join(conversationDir, e.name);
+          const to = join(channelDir, e.name);
+          if ((await stat(to).catch(() => null)) !== null) {
+            left.push(from);
+            continue;
+          }
+          try {
+            await rename(from, to);
+            moved += 1;
+          } catch (err) {
+            console.warn(`[inbound] could not move ${from} to ${to}: ${errorText(err)}`);
+            left.push(from);
+          }
+        }
+        await rmdir(conversationDir).catch(() => {
+          left.push(conversationDir);
+        });
+      }
+    }
   }
-  return otherFolders;
+  if (moved > 0) {
+    console.warn(`[inbound] moved ${moved} received file entr(ies) out of pre-#910 folders`);
+  }
+  for (const path of left) {
+    console.warn(
+      `[inbound] left in place (its folder name is a conversation address, which the model ` +
+        `reads as a handle): ${path}`,
+    );
+  }
+  return { moved, left };
+}
+
+async function readdirOrNone(dir: string): Promise<Dirent[]> {
+  try {
+    return await readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
+  }
 }
 
 /** La colonne `agent_jobs.id` est un uuid : un autre nom ne peut pas en être un, et Postgres refuserait la requête. */

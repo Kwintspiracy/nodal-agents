@@ -23,7 +23,7 @@ import { agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { triggerWorker } from '../../routes/agent.ts';
-import { inboundFolder, pruneInboundFolder } from '../inbound-files.ts';
+import { inboundFolder, inboundRoom } from '../inbound-files.ts';
 import { sanitizeSenderName, checkConversationAuthorization } from '../shared.ts';
 import { groupMessagePrefix } from '../../person-for-model.ts';
 import { takeChannelTurn, isPlatformCommand, type ChannelStopResult } from '../turn.ts';
@@ -254,9 +254,9 @@ export function triggerJobWorker(jobId: string, env: RunnerEnv): void {
  * Writes into the channel's inbound folder (`inboundFolder`, the one Telegram
  * uses), which carries no Discord channel id (#910): the model reads a channel
  * id as its handle, and a path holding one names a file that does not exist
- * (the routing note of an image a model cannot see says that path). Prunes
- * with pruneInboundFolder (channels/inbound-files.ts), which keys an entry by
- * its `<jobId>.<ext>` name as written here. Moving this path onto
+ * (the routing note of an image a model cannot see says that path). Checks
+ * the channel's room with inboundRoom (channels/inbound-files.ts), which
+ * prunes by age and keys an entry by its `<jobId>.<ext>` name as written here. Moving this path onto
  * receiveInboundFiles, the intake Telegram uses since #899, is #900.
  */
 export async function attachInboundImage(args: {
@@ -266,6 +266,17 @@ export async function attachInboundImage(args: {
   db: RunnerDeps['db'];
 }): Promise<string> {
   const { jobId, entityId, attachment, db } = args;
+
+  // <workspacesRoot>/<entityId>/shared/discord/<jobId>.<ext>
+  const dir = inboundFolder(entityId, 'discord');
+  // The conversation's room in the inbox, before any download (review of #911):
+  // a file already promised to a model is never deleted to make room.
+  if ((await inboundRoom(dir, db, jobId)) <= 0) {
+    throw new Error(
+      `discord_inbox_full: this channel already has its maximum of received files under ` +
+        `shared/discord/ that were not moved; the image was not saved`,
+    );
+  }
 
   const res = await fetch(attachment.url);
   if (!res.ok) {
@@ -278,8 +289,6 @@ export async function attachInboundImage(args: {
     );
   }
 
-  // <workspacesRoot>/<entityId>/shared/discord/<jobId>.<ext>
-  const dir = inboundFolder(entityId, 'discord');
   await mkdir(dir, { recursive: true });
   const ext = extFromContentType(attachment.contentType);
   const filePath = join(dir, `${jobId}.${ext}`);
@@ -311,12 +320,6 @@ export async function attachInboundImage(args: {
         `(claimed/worker started); image saved to ${filePath} but not attached to the transcript.`,
     );
   }
-
-  await pruneInboundFolder(dir, db).catch((err) => {
-    console.warn(
-      `[discord] workspace prune failed for ${dir}: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  });
 
   return filePath;
 }
